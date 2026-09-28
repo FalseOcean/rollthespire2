@@ -1,0 +1,12 @@
+; RolltheSpire2 uses code-only Godot UI. No PCK is required by the production package.
+config_version=5
+
+[application]
+config/name="RolltheSpire2"
+config/features=PackedStringArray("4.5", "C#", "Forward Plus")
+
+[dotnet]
+project/assembly_name="RolltheSpire2"
+
+[rendering]
+renderer/rendering_method="gl_compatibility"

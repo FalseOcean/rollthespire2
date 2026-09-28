@@ -1,0 +1,312 @@
+{
+  "SchemaVersion": 2,
+  "Id": "user:fdf59129649145d5ad5114bac490c1ba",
+  "Title": "\u5546\u5E97\u65E0\u9650",
+  "Description": "\u5728\u7B2C\u4E8C\u5E55\u83B7\u5F97\u5BBE\u90A6\uFF0C\u5728\u968F\u540E\u7684\u5546\u5E97\u8FDB\u884C\u5012\u8F6C",
+  "QuerySnapshot": {
+    "NeowAny": "",
+    "NeowAll": "",
+    "NeowBan": "",
+    "RequireBones": false,
+    "BonesAny": "",
+    "BonesAll": "",
+    "BonesBan": "",
+    "RequireSmallCapsule": false,
+    "RequireLargeCapsule": false,
+    "CapsuleRelicAny": "",
+    "RequireWhetstone": false,
+    "RequireWarPaint": false,
+    "RequiredFinalCurse": "",
+    "BannedFinalCurses": "",
+    "ValidationPreset": false,
+    "NeowRouteDraft": {
+      "RouteRelicKey": "RELIC:NEOWS_BONES",
+      "RequiredBonesRelics": [
+        "RELIC:LARGE_CAPSULE",
+        "RELIC:CURSED_PEARL"
+      ],
+      "BonesOrderMode": 0,
+      "EffectConditions": [
+        {
+          "SourceRelicKey": "RELIC:LARGE_CAPSULE",
+          "Kind": 1,
+          "Scope": 2,
+          "OutputKind": 0,
+          "OutputKeys": [
+            "RELIC:THE_COURIER",
+            "RELIC:LUCKY_FYSH"
+          ],
+          "SpecialOffer": 0,
+          "AllowDuplicateOutputs": false,
+          "KaleidoscopeGroupOrder": 0,
+          "KaleidoscopePositionalSlots": [],
+          "IsEmpty": false
+        }
+      ]
+    },
+    "AncientMatrixDraft": {
+      "Rows": [
+        {
+          "Act": 2,
+          "AncientKey": "EVENT:DARV",
+          "IsActive": false,
+          "SelectedOptionKeys": [],
+          "SeaGlassTargetKeys": []
+        },
+        {
+          "Act": 2,
+          "AncientKey": "EVENT:OROBAS",
+          "IsActive": false,
+          "SelectedOptionKeys": [],
+          "SeaGlassTargetKeys": []
+        },
+        {
+          "Act": 2,
+          "AncientKey": "EVENT:PAEL",
+          "IsActive": false,
+          "SelectedOptionKeys": [],
+          "SeaGlassTargetKeys": []
+        },
+        {
+          "Act": 2,
+          "AncientKey": "EVENT:TEZCATARA",
+          "IsActive": false,
+          "SelectedOptionKeys": [],
+          "SeaGlassTargetKeys": []
+        },
+        {
+          "Act": 3,
+          "AncientKey": "EVENT:DARV",
+          "IsActive": false,
+          "SelectedOptionKeys": [],
+          "SeaGlassTargetKeys": []
+        },
+        {
+          "Act": 3,
+          "AncientKey": "EVENT:NONUPEIPE",
+          "IsActive": false,
+          "SelectedOptionKeys": [],
+          "SeaGlassTargetKeys": []
+        },
+        {
+          "Act": 3,
+          "AncientKey": "EVENT:TANX",
+          "IsActive": false,
+          "SelectedOptionKeys": [],
+          "SeaGlassTargetKeys": []
+        },
+        {
+          "Act": 3,
+          "AncientKey": "EVENT:VAKUU",
+          "IsActive": false,
+          "SelectedOptionKeys": [],
+          "SeaGlassTargetKeys": []
+        }
+      ]
+    },
+    "BossMapDraft": {
+      "Rows": [
+        {
+          "Act": 1,
+          "ActKey": "ACT:OVERGROWTH",
+          "HasSelectableVariant": true,
+          "IsVariantActive": false,
+          "AllBossKeys": [
+            "ENCOUNTER:CEREMONIAL_BEAST_BOSS",
+            "ENCOUNTER:THE_KIN_BOSS",
+            "ENCOUNTER:VANTOM_BOSS"
+          ],
+          "FirstBossAny": [],
+          "SecondBossAny": []
+        },
+        {
+          "Act": 1,
+          "ActKey": "ACT:UNDERDOCKS",
+          "HasSelectableVariant": true,
+          "IsVariantActive": false,
+          "AllBossKeys": [
+            "ENCOUNTER:LAGAVULIN_MATRIARCH_BOSS",
+            "ENCOUNTER:SOUL_FYSH_BOSS",
+            "ENCOUNTER:WATERFALL_GIANT_BOSS"
+          ],
+          "FirstBossAny": [],
+          "SecondBossAny": []
+        },
+        {
+          "Act": 2,
+          "ActKey": "ACT:HIVE",
+          "HasSelectableVariant": false,
+          "IsVariantActive": false,
+          "AllBossKeys": [
+            "ENCOUNTER:KAISER_CRAB_BOSS",
+            "ENCOUNTER:KNOWLEDGE_DEMON_BOSS",
+            "ENCOUNTER:THE_INSATIABLE_BOSS"
+          ],
+          "FirstBossAny": [],
+          "SecondBossAny": []
+        },
+        {
+          "Act": 3,
+          "ActKey": "ACT:GLORY",
+          "HasSelectableVariant": false,
+          "IsVariantActive": false,
+          "AllBossKeys": [
+            "ENCOUNTER:AEONGLASS_BOSS",
+            "ENCOUNTER:QUEEN_BOSS",
+            "ENCOUNTER:TEST_SUBJECT_BOSS"
+          ],
+          "FirstBossAny": [],
+          "SecondBossAny": []
+        }
+      ],
+      "CatalogBound": true,
+      "IncludeSecondAct3Boss": true
+    },
+    "CombatRewardDraft": {
+      "Cards": {
+        "Count": 1,
+        "OrderMode": 0,
+        "Slots": [
+          null,
+          null,
+          null
+        ],
+        "HasAnyValue": false
+      },
+      "Potions": {
+        "Count": 1,
+        "OrderMode": 0,
+        "Slots": [
+          {
+            "Requirement": null,
+            "PotionKey": null,
+            "IsEmpty": true
+          },
+          {
+            "Requirement": null,
+            "PotionKey": null,
+            "IsEmpty": true
+          },
+          {
+            "Requirement": null,
+            "PotionKey": null,
+            "IsEmpty": true
+          }
+        ],
+        "HasAnyValue": false
+      },
+      "HasAnyValue": false
+    },
+    "CapsuleRelicAll": "",
+    "CapsuleRelicBan": "",
+    "BonesAcquisitionOrder": "",
+    "EffectOutputSource": "",
+    "EffectOutputAny": "",
+    "EffectOutputAll": "",
+    "EffectOutputBan": "",
+    "BossAct": 1,
+    "BossAny": "",
+    "BossAll": "",
+    "BossBan": "",
+    "BossOrdinal": 0,
+    "BossOrdinalAny": "",
+    "BossOrdinalAll": "",
+    "BossOrdinalBan": "",
+    "AncientAct": 1,
+    "AncientAny": "",
+    "AncientAll": "",
+    "AncientBan": "",
+    "AncientOptionAny": "",
+    "AncientOptionAll": "",
+    "AncientOptionBan": "",
+    "SeaGlassTargetAny": "",
+    "SeaGlassTargetAll": "",
+    "SeaGlassTargetBan": "",
+    "RelicSequenceDraft": [
+      {
+        "Lane": 3,
+        "RangeMode": 0,
+        "RangeValue": 1,
+        "Keys": {
+          "Any": [
+            "RELIC:MEMBERSHIP_CARD"
+          ],
+          "All": [],
+          "Ban": [],
+          "IsEmpty": false
+        },
+        "IsEmpty": false
+      }
+    ],
+    "EventSequenceDraft": [
+      {
+        "Act": 2,
+        "Source": null,
+        "RangeMode": 0,
+        "RangeValue": 1,
+        "Keys": {
+          "Any": [
+            "EVENT:DOLL_ROOM"
+          ],
+          "All": [],
+          "Ban": [],
+          "IsEmpty": false
+        },
+        "IsEmpty": false
+      }
+    ],
+    "RelicSequenceConditions": "SHOP FIRST 1 ANY RELIC:MEMBERSHIP_CARD",
+    "EventSequenceConditions": "A2 ANY FIRST 1 ANY EVENT:DOLL_ROOM",
+    "TezcataraHasBasicStrike": true,
+    "NonupeipeSwiftEnchantableAtLeast4": true,
+    "TanxInstinctEnchantableAtLeast3": true,
+    "PaelGoopyDefendCardsAtLeast3": true,
+    "PaelAllowLegionNoEventPet": true,
+    "PaelRemovableCardsAtLeast5": true,
+    "OrobasArchaicToothConditionMet": true,
+    "OrobasTouchOfOrobasConditionMet": true,
+    "DarvAllowPandorasBoxRelicSet": true
+  },
+  "ConditionCount": 5,
+  "VisualIcons": [
+    {
+      "Kind": "Relic",
+      "StableContentIdentity": "RELIC:BING_BONG",
+      "ResourceHint": ""
+    },
+    {
+      "Kind": "Relic",
+      "StableContentIdentity": "RELIC:MEMBERSHIP_CARD",
+      "ResourceHint": ""
+    },
+    {
+      "Kind": "Relic",
+      "StableContentIdentity": "RELIC:THE_COURIER",
+      "ResourceHint": ""
+    }
+  ],
+  "SavedProbability": {
+    "Status": "Complete",
+    "TotalProbability": 3.6109442738997414E-11,
+    "CapturedAtUtc": "2026-08-21T06:00:45.5547348+00:00"
+  },
+  "Provenance": {
+    "GameVersion": "0.111.0",
+    "FingerprintSchemaVersion": 1,
+    "SemanticFingerprint": "27f92e36a782cca447e32d4321e36f4539b783a1bf6a705b5be231f1724a713b",
+    "EnvironmentStatus": "VerifiedVanillaMatch",
+    "MatchedBaselineGameVersion": "0.111.0",
+    "ComparisonBaselineGameVersion": "0.111.0",
+    "EnvironmentReason": "RuntimeSemanticFingerprintMatchesVerifiedSameVersionBaseline",
+    "VanillaUnlockKind": "Full",
+    "CapturedAtUtc": "2026-08-21T06:00:45.5547348+00:00",
+    "EnvironmentKind": "",
+    "UnlockKind": ""
+  },
+  "CreatedAtUtc": "2026-08-21T06:00:45.5547348+00:00",
+  "Name": "",
+  "VisualRelicKey": "",
+  "DescriptionKey": "",
+  "CharacterKey": "CHARACTER:IRONCLAD",
+  "Ascension": 10
+}

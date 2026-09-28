@@ -1,0 +1,124 @@
+<Project>
+  <!--
+    RolltheSpire2 STS2 path discovery.
+
+    Resolution priority (highest first):
+      1. MSBuild command-line/global properties: Sts2ReferenceDir, Rt2ModsDir, Sts2Path
+      2. Environment variables: STS2_REFERENCE_DIR, RT2_MODS_DIR
+      3. Optional local.props: Sts2ReferenceDir, Rt2ModsDir, Sts2Path
+      4. Platform-specific Steam discovery/defaults
+
+    A discovered runtime directory is accepted only when both sts2.dll and
+    0Harmony.dll exist. Explicit/environment/local values are never silently
+    replaced by a lower-priority automatic candidate when invalid.
+  -->
+
+  <!-- Snapshot global properties before local.props is imported. Global
+       command-line properties remain immutable, but these markers also make
+       the discovery source explicit in build diagnostics. -->
+  <PropertyGroup>
+    <_Rt2ExplicitSts2Path>$(Sts2Path)</_Rt2ExplicitSts2Path>
+    <_Rt2ExplicitSts2ReferenceDir>$(Sts2ReferenceDir)</_Rt2ExplicitSts2ReferenceDir>
+    <_Rt2ExplicitRt2ModsDir>$(Rt2ModsDir)</_Rt2ExplicitRt2ModsDir>
+  </PropertyGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)local.props"
+          Condition="Exists('$(MSBuildThisFileDirectory)local.props')" />
+
+  <!-- Capture local.props values before environment variables are applied. -->
+  <PropertyGroup>
+    <_Rt2LocalSts2Path Condition="'$(_Rt2ExplicitSts2Path)' == ''">$(Sts2Path)</_Rt2LocalSts2Path>
+    <_Rt2LocalSts2ReferenceDir Condition="'$(_Rt2ExplicitSts2ReferenceDir)' == ''">$(Sts2ReferenceDir)</_Rt2LocalSts2ReferenceDir>
+    <_Rt2LocalRt2ModsDir Condition="'$(_Rt2ExplicitRt2ModsDir)' == ''">$(Rt2ModsDir)</_Rt2LocalRt2ModsDir>
+
+    <!-- Environment variables outrank local.props, but cannot override MSBuild
+         global properties supplied on the MSBuild command line. -->
+    <Sts2ReferenceDir Condition="'$(_Rt2ExplicitSts2ReferenceDir)' == '' and '$(STS2_REFERENCE_DIR)' != ''">$(STS2_REFERENCE_DIR)</Sts2ReferenceDir>
+    <Rt2ModsDir Condition="'$(_Rt2ExplicitRt2ModsDir)' == '' and '$(RT2_MODS_DIR)' != ''">$(RT2_MODS_DIR)</Rt2ModsDir>
+
+    <_Rt2IsWindows>$([MSBuild]::IsOSPlatform('Windows'))</_Rt2IsWindows>
+    <_Rt2IsLinux>$([MSBuild]::IsOSPlatform('Linux'))</_Rt2IsLinux>
+    <_Rt2IsMacOS>$([MSBuild]::IsOSPlatform('OSX'))</_Rt2IsMacOS>
+
+    <_Rt2PlatformDataSubdir Condition="'$(_Rt2IsWindows)' == 'true'">data_sts2_windows_x86_64</_Rt2PlatformDataSubdir>
+    <_Rt2PlatformDataSubdir Condition="'$(_Rt2IsLinux)' == 'true'">data_sts2_linuxbsd_x86_64</_Rt2PlatformDataSubdir>
+    <_Rt2PlatformDataSubdir Condition="'$(_Rt2IsMacOS)' == 'true'">SlayTheSpire2.app/Contents/Resources/data_sts2_macos_x86_64</_Rt2PlatformDataSubdir>
+
+    <Sts2PathDiscoverySource Condition="'$(_Rt2ExplicitSts2ReferenceDir)' != '' or '$(_Rt2ExplicitSts2Path)' != ''">Explicit</Sts2PathDiscoverySource>
+    <Sts2PathDiscoverySource Condition="'$(Sts2PathDiscoverySource)' == '' and '$(STS2_REFERENCE_DIR)' != ''">Environment</Sts2PathDiscoverySource>
+    <Sts2PathDiscoverySource Condition="'$(Sts2PathDiscoverySource)' == '' and ('$(_Rt2LocalSts2ReferenceDir)' != '' or '$(_Rt2LocalSts2Path)' != '')">LocalProps</Sts2PathDiscoverySource>
+    <Rt2ModsDiscoverySource Condition="'$(_Rt2ExplicitRt2ModsDir)' != ''">Explicit</Rt2ModsDiscoverySource>
+    <Rt2ModsDiscoverySource Condition="'$(Rt2ModsDiscoverySource)' == '' and '$(RT2_MODS_DIR)' != ''">Environment</Rt2ModsDiscoverySource>
+    <Rt2ModsDiscoverySource Condition="'$(Rt2ModsDiscoverySource)' == '' and '$(_Rt2LocalRt2ModsDir)' != ''">LocalProps</Rt2ModsDiscoverySource>
+  </PropertyGroup>
+
+  <!-- Sts2Path from an explicit property or local.props is authoritative. Derive
+       the platform runtime directory and let validation report incomplete DLLs. -->
+  <PropertyGroup Condition="'$(Sts2ReferenceDir)' == '' and '$(Sts2Path)' != '' and '$(_Rt2PlatformDataSubdir)' != ''">
+    <Sts2ReferenceDir>$(Sts2Path)/$(_Rt2PlatformDataSubdir)</Sts2ReferenceDir>
+  </PropertyGroup>
+
+  <!-- Windows Steam discovery. Registry InstallLocation is preferred, then the
+       current user's SteamPath, then the standard Steam installation path. -->
+  <PropertyGroup Condition="'$(_Rt2IsWindows)' == 'true'">
+    <RegistrySts2Path>$([MSBuild]::GetRegistryValueFromView('HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Steam App 2868840', 'InstallLocation', '', RegistryView.Registry64, RegistryView.Registry32))</RegistrySts2Path>
+    <_Rt2RegistryReferenceDir Condition="'$(RegistrySts2Path)' != ''">$(RegistrySts2Path)/data_sts2_windows_x86_64</_Rt2RegistryReferenceDir>
+
+    <_Rt2SteamPath>$([MSBuild]::GetRegistryValueFromView('HKEY_CURRENT_USER\Software\Valve\Steam', 'SteamPath', '', RegistryView.Registry64, RegistryView.Registry32))</_Rt2SteamPath>
+    <_Rt2SteamRegistryGameRoot Condition="'$(_Rt2SteamPath)' != ''">$(_Rt2SteamPath)/steamapps/common/Slay the Spire 2</_Rt2SteamRegistryGameRoot>
+    <_Rt2SteamRegistryReferenceDir Condition="'$(_Rt2SteamRegistryGameRoot)' != ''">$(_Rt2SteamRegistryGameRoot)/data_sts2_windows_x86_64</_Rt2SteamRegistryReferenceDir>
+
+    <_Rt2SteamDefaultGameRoot>C:/Program Files (x86)/Steam/steamapps/common/Slay the Spire 2</_Rt2SteamDefaultGameRoot>
+    <_Rt2SteamDefaultReferenceDir>$(_Rt2SteamDefaultGameRoot)/data_sts2_windows_x86_64</_Rt2SteamDefaultReferenceDir>
+
+    <_Rt2CheckedReferenceDirs Condition="'$(_Rt2RegistryReferenceDir)' != ''">$(_Rt2RegistryReferenceDir)</_Rt2CheckedReferenceDirs>
+    <_Rt2CheckedReferenceDirs Condition="'$(_Rt2SteamRegistryReferenceDir)' != '' and '$(_Rt2CheckedReferenceDirs)' != ''">$(_Rt2CheckedReferenceDirs); $(_Rt2SteamRegistryReferenceDir)</_Rt2CheckedReferenceDirs>
+    <_Rt2CheckedReferenceDirs Condition="'$(_Rt2SteamRegistryReferenceDir)' != '' and '$(_Rt2CheckedReferenceDirs)' == ''">$(_Rt2SteamRegistryReferenceDir)</_Rt2CheckedReferenceDirs>
+    <_Rt2CheckedReferenceDirs Condition="'$(_Rt2CheckedReferenceDirs)' != ''">$(_Rt2CheckedReferenceDirs); $(_Rt2SteamDefaultReferenceDir)</_Rt2CheckedReferenceDirs>
+    <_Rt2CheckedReferenceDirs Condition="'$(_Rt2CheckedReferenceDirs)' == ''">$(_Rt2SteamDefaultReferenceDir)</_Rt2CheckedReferenceDirs>
+
+    <Sts2Path Condition="'$(Sts2ReferenceDir)' == '' and '$(RegistrySts2Path)' != '' and Exists('$(_Rt2RegistryReferenceDir)/sts2.dll') and Exists('$(_Rt2RegistryReferenceDir)/0Harmony.dll')">$(RegistrySts2Path)</Sts2Path>
+    <Sts2ReferenceDir Condition="'$(Sts2ReferenceDir)' == '' and '$(Sts2Path)' == '$(RegistrySts2Path)'">$(_Rt2RegistryReferenceDir)</Sts2ReferenceDir>
+    <Sts2PathDiscoverySource Condition="'$(Sts2ReferenceDir)' != '' and '$(Sts2ReferenceDir)' == '$(_Rt2RegistryReferenceDir)' and '$(Sts2PathDiscoverySource)' == ''">Registry</Sts2PathDiscoverySource>
+
+    <Sts2Path Condition="'$(Sts2ReferenceDir)' == '' and '$(_Rt2SteamRegistryGameRoot)' != '' and Exists('$(_Rt2SteamRegistryReferenceDir)/sts2.dll') and Exists('$(_Rt2SteamRegistryReferenceDir)/0Harmony.dll')">$(_Rt2SteamRegistryGameRoot)</Sts2Path>
+    <Sts2ReferenceDir Condition="'$(Sts2ReferenceDir)' == '' and '$(Sts2Path)' == '$(_Rt2SteamRegistryGameRoot)'">$(_Rt2SteamRegistryReferenceDir)</Sts2ReferenceDir>
+    <Sts2PathDiscoverySource Condition="'$(Sts2ReferenceDir)' != '' and '$(Sts2ReferenceDir)' == '$(_Rt2SteamRegistryReferenceDir)' and '$(Sts2PathDiscoverySource)' == ''">SteamRegistry</Sts2PathDiscoverySource>
+
+    <Sts2Path Condition="'$(Sts2ReferenceDir)' == '' and Exists('$(_Rt2SteamDefaultReferenceDir)/sts2.dll') and Exists('$(_Rt2SteamDefaultReferenceDir)/0Harmony.dll')">$(_Rt2SteamDefaultGameRoot)</Sts2Path>
+    <Sts2ReferenceDir Condition="'$(Sts2ReferenceDir)' == '' and '$(Sts2Path)' == '$(_Rt2SteamDefaultGameRoot)'">$(_Rt2SteamDefaultReferenceDir)</Sts2ReferenceDir>
+    <Sts2PathDiscoverySource Condition="'$(Sts2ReferenceDir)' != '' and '$(Sts2ReferenceDir)' == '$(_Rt2SteamDefaultReferenceDir)' and '$(Sts2PathDiscoverySource)' == ''">SteamDefault</Sts2PathDiscoverySource>
+  </PropertyGroup>
+
+  <!-- Linux default Steam location. -->
+  <PropertyGroup Condition="'$(_Rt2IsLinux)' == 'true'">
+    <SteamLibraryPath Condition="'$(SteamLibraryPath)' == ''">$(HOME)/.local/share/Steam/steamapps</SteamLibraryPath>
+    <_Rt2LinuxGameRoot>$(SteamLibraryPath)/common/Slay the Spire 2</_Rt2LinuxGameRoot>
+    <_Rt2LinuxReferenceDir>$(_Rt2LinuxGameRoot)/data_sts2_linuxbsd_x86_64</_Rt2LinuxReferenceDir>
+    <_Rt2CheckedReferenceDirs>$(_Rt2LinuxReferenceDir)</_Rt2CheckedReferenceDirs>
+    <Sts2Path Condition="'$(Sts2ReferenceDir)' == '' and Exists('$(_Rt2LinuxReferenceDir)/sts2.dll') and Exists('$(_Rt2LinuxReferenceDir)/0Harmony.dll')">$(_Rt2LinuxGameRoot)</Sts2Path>
+    <Sts2ReferenceDir Condition="'$(Sts2ReferenceDir)' == '' and '$(Sts2Path)' == '$(_Rt2LinuxGameRoot)'">$(_Rt2LinuxReferenceDir)</Sts2ReferenceDir>
+    <Sts2PathDiscoverySource Condition="'$(Sts2ReferenceDir)' != '' and '$(Sts2ReferenceDir)' == '$(_Rt2LinuxReferenceDir)' and '$(Sts2PathDiscoverySource)' == ''">LinuxDefault</Sts2PathDiscoverySource>
+  </PropertyGroup>
+
+  <!-- macOS default Steam location. -->
+  <PropertyGroup Condition="'$(_Rt2IsMacOS)' == 'true'">
+    <SteamLibraryPath Condition="'$(SteamLibraryPath)' == ''">$(HOME)/Library/Application Support/Steam/steamapps</SteamLibraryPath>
+    <_Rt2MacGameRoot>$(SteamLibraryPath)/common/Slay the Spire 2</_Rt2MacGameRoot>
+    <_Rt2MacReferenceDir>$(_Rt2MacGameRoot)/SlayTheSpire2.app/Contents/Resources/data_sts2_macos_x86_64</_Rt2MacReferenceDir>
+    <_Rt2CheckedReferenceDirs>$(_Rt2MacReferenceDir)</_Rt2CheckedReferenceDirs>
+    <Sts2Path Condition="'$(Sts2ReferenceDir)' == '' and Exists('$(_Rt2MacReferenceDir)/sts2.dll') and Exists('$(_Rt2MacReferenceDir)/0Harmony.dll')">$(_Rt2MacGameRoot)</Sts2Path>
+    <Sts2ReferenceDir Condition="'$(Sts2ReferenceDir)' == '' and '$(Sts2Path)' == '$(_Rt2MacGameRoot)'">$(_Rt2MacReferenceDir)</Sts2ReferenceDir>
+    <Sts2PathDiscoverySource Condition="'$(Sts2ReferenceDir)' != '' and '$(Sts2ReferenceDir)' == '$(_Rt2MacReferenceDir)' and '$(Sts2PathDiscoverySource)' == ''">MacOSDefault</Sts2PathDiscoverySource>
+  </PropertyGroup>
+
+  <!-- Automatic installs have an authoritative game root, so derive mods. Explicit,
+       environment and local.props Rt2ModsDir values remain higher priority. -->
+  <PropertyGroup>
+    <Rt2ModsDir Condition="'$(Rt2ModsDir)' == '' and '$(Sts2Path)' != '' and '$(_Rt2IsMacOS)' != 'true'">$(Sts2Path)/mods</Rt2ModsDir>
+    <Rt2ModsDir Condition="'$(Rt2ModsDir)' == '' and '$(Sts2Path)' != '' and '$(_Rt2IsMacOS)' == 'true'">$(Sts2Path)/SlayTheSpire2.app/Contents/MacOS/mods</Rt2ModsDir>
+    <Rt2ModsDiscoverySource Condition="'$(Rt2ModsDiscoverySource)' == '' and '$(Rt2ModsDir)' != ''">DerivedFromGameRoot</Rt2ModsDiscoverySource>
+    <Sts2PathDiscoverySource Condition="'$(Sts2PathDiscoverySource)' == ''">NotFound</Sts2PathDiscoverySource>
+    <Rt2ModsDiscoverySource Condition="'$(Rt2ModsDiscoverySource)' == ''">NotResolved</Rt2ModsDiscoverySource>
+  </PropertyGroup>
+</Project>
