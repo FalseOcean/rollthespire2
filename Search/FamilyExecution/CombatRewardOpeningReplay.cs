@@ -13,7 +13,8 @@ internal static class CombatRewardOpeningReplay
 
     internal static bool TryReplayQueryLiteralRelicRewardsConsumption(
         byte relicId, Beta110FastEffectCatalog catalog, int ascension, bool usesDefectScrollBoxesRule,
-        ref Beta110FastRng rewards, ref Beta110FastRng niche, bool requireAuthority = true)
+        ref Beta110FastRng rewards, ref Beta110FastRng niche, bool requireAuthority = true, bool multiplayer = false,
+        bool nicheKnown = true)
     {
         // Capsule nested identity is deliberately ignored here. The authored
         // Capsule itself consumes one Rewards rarity roll per contained relic;
@@ -28,6 +29,12 @@ internal static class CombatRewardOpeningReplay
         {
             _ = rewards.NextFloat();
             return true;
+        }
+
+        if (relicId == Beta110FastRelicCatalog.MassiveScroll && multiplayer)
+        {
+            Span<ushort> offer = stackalloc ushort[3];
+            return GenerateNormalCardOffer(catalog.MultiplayerRewardPool, ascension, ref rewards, offer);
         }
 
         if (relicId == Beta110FastRelicCatalog.ArcaneScroll)
@@ -59,6 +66,20 @@ internal static class CombatRewardOpeningReplay
         }
         if (relicId == Beta110FastRelicCatalog.Kaleidoscope)
         {
+            if ((!requireAuthority || catalog.OtherCharacterCardAuthorityExact) && catalog.OtherCharacterPools.Length >= 3 &&
+                catalog.OtherCharacterPools.All(p => p.TotalCount > 0))
+            {
+                // Each selected pool generates one card with a fresh exclusion set:
+                // rarity + successful identity + upgrade, even with rarity fallback.
+                // The six-card Rewards continuation is independent of the Niche permutation.
+                for (int group = 0; group < 2; group++)
+                {
+                    if (nicheKnown) niche.ConsumeUnstableShuffle(catalog.OtherCharacterPools.Length);
+                    for (int draw = 0; draw < 9; draw++) _ = rewards.NextDouble();
+                }
+                return true;
+            }
+            if (!nicheKnown) return false;
             Span<ushort> offers = stackalloc ushort[6];
             offers.Fill(Beta110FastDenseId.Invalid);
             return GenerateKaleidoscopeOffers(ascension, catalog, ref rewards, ref niche, offers, requireAuthority);
@@ -74,6 +95,7 @@ internal static class CombatRewardOpeningReplay
             return GenerateScrollBoxes(
                 catalog, usesDefectScrollBoxesRule, ref rewards, cards, bundleSizes, clawBundles, requireAuthority);
         }
+        if (relicId == Beta110FastRelicCatalog.NewLeaf && nicheKnown) _ = niche.NextDouble();
 
         // Relics whose opening behavior uses only other RNG streams, player choice,
         // deck mutation, or no RNG do not change the Rewards continuation consumed by C.

@@ -23,6 +23,7 @@ internal sealed partial class NeowChoiceStrip : VBoxContainer
     public const int ChildIconMaxWidth = 32;
 
     private readonly IGameIconResolver _icons;
+    public bool HorizontalChoices { get; set; }
 
     public NeowChoiceStrip(IGameIconResolver icons)
     {
@@ -42,13 +43,19 @@ internal sealed partial class NeowChoiceStrip : VBoxContainer
         string firstPickupLabel)
     {
         Clear();
+        HBoxContainer? primaryRow = null;
+        var routeRows = new List<Control>();
+        if (HorizontalChoices)
+        {
+            primaryRow = new HBoxContainer(); primaryRow.AddThemeConstantOverride("separation", 6); AddChild(primaryRow);
+        }
         foreach (NeowChoiceViewModel choice in choices.OrderBy(choice => choice.SlotIndex))
         {
             bool splitBonesRoutes = HasAmbiguousBonesRoutes(choice);
             bool selectedRoot = choice.RelicKey == selectedRootRelicKey;
             bool selectedPrimary = selectedRoot && !splitBonesRoutes &&
-                                   choice.OpeningRoutes.Any(route =>
-                                       string.Equals(route.RouteId, selectedOpeningRouteId, StringComparison.Ordinal));
+                                   (choice.OpeningRoutes.Count == 0 || choice.OpeningRoutes.Any(route =>
+                                       string.Equals(route.RouteId, selectedOpeningRouteId, StringComparison.Ordinal)));
             Button primary = BuildRelicButton(
                 choice.RelicDisplay,
                 selectedPrimary,
@@ -64,7 +71,7 @@ internal sealed partial class NeowChoiceStrip : VBoxContainer
                     SelectionRequested?.Invoke(choice.RelicKey, routeId);
                 };
             }
-            AddChild(primary);
+            if (HorizontalChoices) primaryRow!.AddChild(primary); else AddChild(primary);
 
             if (choice.BonesOutcome is not { } bones || !splitBonesRoutes)
             {
@@ -81,12 +88,11 @@ internal sealed partial class NeowChoiceStrip : VBoxContainer
                 continue;
             }
 
-            var childColumn = new VBoxContainer
-            {
-                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-                SizeFlagsVertical = Control.SizeFlags.ShrinkBegin
-            };
-            childColumn.AddThemeConstantOverride("separation", 4);
+            BoxContainer childColumn = HorizontalChoices ? new HBoxContainer() : new VBoxContainer();
+            childColumn.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+            childColumn.SizeFlagsStretchRatio = HorizontalChoices ? 1.8f : 1f;
+            childColumn.SizeFlagsVertical = Control.SizeFlags.ShrinkBegin;
+            childColumn.AddThemeConstantOverride("separation", HorizontalChoices ? 6 : 4);
             Label firstPickupHeader = Ui1Theme.Label(firstPickupLabel, Ui1TextRole.Muted, wrap: false);
             firstPickupHeader.SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin;
             firstPickupHeader.MouseFilter = Control.MouseFilterEnum.Ignore;
@@ -112,12 +118,13 @@ internal sealed partial class NeowChoiceStrip : VBoxContainer
                     SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
                     SizeFlagsVertical = Control.SizeFlags.ShrinkBegin
                 };
-                indent.AddThemeConstantOverride("margin_left", 18);
+                indent.AddThemeConstantOverride("margin_left", HorizontalChoices ? 0 : 18);
                 indent.AddChild(route);
                 childColumn.AddChild(indent);
             }
-            AddChild(childColumn);
+            if (HorizontalChoices) routeRows.Add(childColumn); else AddChild(childColumn);
         }
+        foreach (var routes in routeRows) primaryRow!.AddChild(routes);
     }
 
     public static bool HasAmbiguousBonesRoutes(NeowChoiceViewModel choice) =>

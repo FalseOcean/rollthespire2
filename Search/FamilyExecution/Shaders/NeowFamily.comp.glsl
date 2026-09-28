@@ -6,6 +6,7 @@
 #define CAPSULE_PHYSICAL __RT2_CAPSULE_PHYSICAL__
 #define N_LEAFY_PRE_GATE __RT2_N_LEAFY_PRE_GATE__
 #define N_AUTHORED_UPGRADES __RT2_AUTHORED_UPGRADES__
+#define N_LOCAL_RESULTS __RT2_LOCAL_RESULTS__
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_float64 : require
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
@@ -26,6 +27,7 @@ layout(set=0,binding=12,std430) restrict buffer PairSurvivors { uint values[]; }
 #endif
 uint plan_value(uint i) { return plan_meta.values[i]; }
 uint64_t plan_u64(uint i) { return uint64_t(plan_value(i)) | (uint64_t(plan_value(i+1u)) << 32u); }
+uint n_arrival=0u;
 /*__RT2_NEOW_LOCAL_DONOR__*/
 /*__RT2_CAPSULE_COMPOSITE__*/
 
@@ -43,6 +45,7 @@ bool bones_kaleidoscope_rarity_gate(RngState arrival, uint targets) {
 }
 #endif
 
+#if N_LOCAL_RESULTS
 bool local_operator(uint source, inout RouteRngState state) {
     if (source == 255u) return true;
     uint o = source * 5u;
@@ -59,13 +62,16 @@ bool local_operator(uint source, inout RouteRngState state) {
 #if N_DIRECT_NESTED == 101
         if(predicate && !bones_kaleidoscope_rarity_gate(state.rewards,count)) return false;
 #endif
-        if (rewards) return execute_kaleidoscope_route(count,t0,t1,predicate,state);
+        if (rewards) return predicate && (flags & 4u) != 0u
+            ? execute_kaleidoscope_ordered_route(t0,t1,state)
+            : execute_kaleidoscope_route(count,t0,t1,predicate,state);
         if (niche) { shuffled_pool_order(plan_value(9u),state.niche); shuffled_pool_order(plan_value(9u),state.niche); }
     }
     if (source == 19u && niche) return execute_new_leaf_route(t0,predicate,state);
     if (source == 4u && (streams & 4u) != 0u) return execute_leafy_route(count,t0,t1,predicate,state);
     if (source == 20u && (streams & 8u) != 0u) return execute_phial_holster_route(count,t0,t1,predicate,state);
     if (!rewards) return true;
+    if (source == 17u) return execute_massive_scroll_route(t0,predicate,state);
     if (source == 10u) return execute_arcane_scroll_route(t0,predicate,state);
     if (source == 2u) return execute_hefty_tablet_route(t0,predicate,state);
     if (source == 15u) return execute_lead_paperweight_route(t0,predicate,state);
@@ -87,7 +93,7 @@ uint authored_upgrade_advance(uint source, uint prior) {
     return conditions.values[160u+(source==28u ? 0u : 33u)+(prior==255u ? 32u : prior)];
 }
 #endif
-bool route(uint64_t root, RngState rewards, uint a, uint b) {
+bool route_at_arrival(uint64_t root, RngState rewards, uint a, uint b, uint advance_a, uint advance_b) {
 #if NR_CAPSULE == 1
     return capsule_composite(a,rewards,root);
 #endif
@@ -96,11 +102,6 @@ bool route(uint64_t root, RngState rewards, uint a, uint b) {
         if (source != a && source != b) return false;
     }
     RouteRngState state = initialize_route_rng_state(root,rewards);
-#if N_AUTHORED_UPGRADES
-    uint advance_a=authored_upgrade_advance(a,255u), advance_b=authored_upgrade_advance(b,a);
-    // Compile-time unresolved mandatory count: identity-only local sieve.
-    if(advance_a==0xffffffffu || advance_b==0xffffffffu) return true;
-#endif
     if (!local_operator(a,state)) return false;
 #if N_AUTHORED_UPGRADES
     for(uint i=0u;i<advance_a;i++) next_u64(state.niche);
@@ -116,6 +117,21 @@ bool route(uint64_t root, RngState rewards, uint a, uint b) {
     }
     return true;
 }
+bool route(uint64_t root, RngState rewards, uint a, uint b) {
+    uint prefix=85u+plan_value(84u), da=0u, db=0u;
+#if N_AUTHORED_UPGRADES
+    da=authored_upgrade_advance(a,255u); db=authored_upgrade_advance(b,a);
+#endif
+    uint bound=plan_value(prefix+3u);
+    if((da==0xffffffffu||db==0xffffffffu)&&bound==0xffffffffu)return true;
+    uint min_a=da==0xffffffffu?0u:da, max_a=da==0xffffffffu?bound:da;
+    uint min_b=db==0xffffffffu?0u:db, max_b=db==0xffffffffu?bound:db;
+    for(n_arrival=0u;n_arrival<max(1u,plan_value(prefix+2u));++n_arrival)
+    for(uint x=min_a;x<=max_a;++x)for(uint y=min_b;y<=max_b;++y)
+        if(route_at_arrival(root,rewards,a,b,x,y))return true;
+    return false;
+}
+#endif
 bool pair_identity(inout RngState rewards, out uint a, out uint b) {
     bool identity = true;
     a = plan_value(81u); b = 255u;
@@ -149,6 +165,7 @@ bool pair_identity(inout RngState rewards, out uint a, out uint b) {
 }
 /*__RT2_BONES_K__*/
 bool local_matches(uint64_t root, RngState rewards, uint a, uint b) {
+#if N_LOCAL_RESULTS
 #if BONES_K_MODE != 0
     return bones_k_matches(root,rewards,a,b);
 #endif
@@ -175,6 +192,9 @@ bool local_matches(uint64_t root, RngState rewards, uint a, uint b) {
     if ((plan_value(56u) & 2u)==0u || plan_value(12u)!=255u) return forward;
     bool reverse=route(root,rewards,b,a);
     return forward || reverse;
+#else
+    return true;
+#endif
 }
 bool matches(uint64_t root) {
 #if NR_CAPSULE == 1 && CAPSULE_PHYSICAL != 0 && CAPSULE_PHYSICAL != 5 && CAPSULE_PHYSICAL != 6

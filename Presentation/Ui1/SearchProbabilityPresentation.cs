@@ -2,6 +2,7 @@ using RolltheSpire2.Core.Relics;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.Selectivity;
 using RolltheSpire2.Search.Semantics;
+using RolltheSpire2.Search.FamilyExecution;
 
 namespace RolltheSpire2.Presentation.Ui1;
 
@@ -22,7 +23,8 @@ internal enum SearchProbabilityRowKind : byte
     Ancient = 5,
     CombatReward = 6,
     EventResult = 7,
-    Shop = 8
+    Shop = 8,
+    TransformationAggregate = 9
 }
 
 internal sealed record SearchProbabilityQuickViewRow(
@@ -69,58 +71,119 @@ internal static class SearchProbabilityPresentationBuilder
         SearchFeasibilityResult feasibility = SearchFeasibilityAnalyzer.Analyze(compiled);
         var rows = new List<SearchProbabilityQuickViewRow>(6);
 
+        var resolved = CompiledSearchEvaluationProjector.Project(compiled).Evaluation;
+        bool sharedOpeningIdentity = TransformationAggregateCondition.SharedNeowIdentityOnly(resolved);
+        TransformationAggregateProbability? aggregateAttribution = null;
+        if(sharedOpeningIdentity) {
+            var request=new ExactSearchExecutionRequest(compiled,new("000000000000",1,1,1),"000000000000",1,
+                resolved,input.CombatRewardRoutePolicy,compiled.SemanticFingerprint);
+            aggregateAttribution=TransformationAggregateProbability.Build(new(request));
+        }
         bool capsuleRelicShared = joint.DependencyGraph.Nodes.Any(node =>
             string.Equals(node.Id, "shared:relicbag-cur", StringComparison.Ordinal)) ||
             joint.KnownComponents.Any(component => string.Equals(component.Id, "shared:capsule-relic-cur", StringComparison.Ordinal));
-        bool hasCurRelic = filter.RelicSequenceConditions.Any(condition =>
-            !condition.IsEmpty && condition.Lane is RelicSequenceKind.Common or RelicSequenceKind.Uncommon or RelicSequenceKind.Rare);
+        bool hasBagRelic = filter.RelicSequenceConditions.Any(condition =>
+            !condition.IsEmpty && condition.Lane != RelicSequenceKind.Shop);
         bool hasTypedShopRelic = filter.RelicShopSequenceConditions.Any(condition => !condition.IsEmpty);
         bool hasLegacyShopRelic = filter.RelicSequenceConditions.Any(condition =>
             !condition.IsEmpty && condition.Lane == RelicSequenceKind.Shop);
+        bool hasShopRelic = hasTypedShopRelic || hasLegacyShopRelic;
+        double? shopRelicProbability = FindComponentProbability(joint, "remainder:relic-shop");
 
         if (capsuleRelicShared)
         {
             rows.Add(new SearchProbabilityQuickViewRow(
                 SearchProbabilityRowKind.CapsuleRelicJoint,
-                FindComponentProbability(joint, "shared:capsule-relic-cur")));
+                FindComponentProbability(joint, "shared:capsule-relic-cur") * (hasShopRelic ? shopRelicProbability : 1d)));
         }
         else
         {
-            if (filter.HasNeowConstraints)
+            bool openingOwnedByT = sharedOpeningIdentity;
+            if(openingOwnedByT && aggregateAttribution is { } opening)
+                rows.Add(new SearchProbabilityQuickViewRow(SearchProbabilityRowKind.Neow,opening.IdentityProbability));
+            if (filter.HasNeowConstraints && !openingOwnedByT)
             {
                 rows.Add(new SearchProbabilityQuickViewRow(
                     SearchProbabilityRowKind.Neow,
-                    FindDomainProbability(joint, SearchSelectivityDomain.Neow)));
+                    FindDomainProbability(joint, SearchSelectivityDomain.Neow) ?? SearchSelectivityEstimator.EstimateStage(input, SearchSelectivityDomain.Neow).Probability));
             }
 
-            if (hasCurRelic)
+            if (hasBagRelic || hasShopRelic)
             {
-                double? relicProbability = FindComponentProbability(joint, "domain:relic-cur");
-                if (!relicProbability.HasValue && !hasTypedShopRelic)
-                    relicProbability = FindDomainProbability(joint, SearchSelectivityDomain.Relic);
+                // Shop relics belong to R, regardless of the editor page. Regroup
+                // the existing distinct-lane factors without changing query probability.
+                double? relicProbability = hasTypedShopRelic
+                    ? (hasBagRelic ? FindComponentProbability(joint, "domain:relic-cur") : 1d) * shopRelicProbability
+                    : FindDomainProbability(joint, SearchSelectivityDomain.Relic) ??
+                        SearchSelectivityEstimator.EstimateStage(input, SearchSelectivityDomain.Relic).Probability;
                 rows.Add(new SearchProbabilityQuickViewRow(SearchProbabilityRowKind.Relic, relicProbability));
             }
         }
 
-        bool hasAncient = filter.AncientBranchConditions.Any(branch => branch.IsValid) ||
-                          filter.AncientIdentityFilters.Any(item => !item.IsEmpty);
-        if (hasAncient)
+        // Family attribution follows resolved predicates, not the page that authored them.
+        // W owns Ancient identity; A owns the parent-conditioned offer/result predicate.
+        bool hasAncientIdentity = resolved.AncientBranchConditions.Any(branch => branch.IsValid) ||
+                                  resolved.AncientIdentityFilters.Any(item => !item.IsEmpty);
+        bool hasAncientOptions = resolved.AncientBranchConditions.Any(branch => branch.OptionAny.Count > 0 || branch.SeaGlassTargetAny.Count > 0) ||
+                                 resolved.AncientOptionFilters.Any(item => !item.IsEmpty) ||
+                                 resolved.AncientSeaGlassTargetFilters.Any(item => !item.IsEmpty);
+        double? identityProbability = null;
+        if (hasAncientIdentity)
         {
-            JointSelectivityResult? ancient = AncientProbabilityEstimator.Estimate(input);
-            rows.Add(new SearchProbabilityQuickViewRow(
-                SearchProbabilityRowKind.Ancient,
-                ancient?.JointlyPriced == true ? ancient.Probability : null));
+            var identity = AncientIdentityProbabilityEstimator.Estimate(input);
+            if (identity.IsPriced) identityProbability = identity.Probability;
+        }
+        if (hasAncientOptions)
+        {
+            var ancient = AncientProbabilityEstimator.Estimate(input);
+            // P(options | accepted identities) = P(identity AND options) / P(identity).
+            // This retains the authority's OR mixtures and cross-Act shared assignment;
+            // multiplying individual branch option marginals would be incorrect.
+            double? conditional = resolved.AncientBranchConditions.Any(branch => branch.IsValid) && ancient?.JointlyPriced == true && ancient.Probability is { } combined &&
+                                  identityProbability is > 0 && combined <= identityProbability.Value + 1e-12
+                ? Math.Clamp(combined / identityProbability.Value, 0, 1) : null;
+            rows.Add(new SearchProbabilityQuickViewRow(SearchProbabilityRowKind.Ancient, conditional));
         }
 
-        bool hasBossEvent = filter.BossFilters.Any(item => !item.IsEmpty) ||
-                            filter.BossOrdinalFilters.Any(item => !item.IsEmpty) ||
-                            filter.EventSequenceConditions.Any(item => !item.IsEmpty);
-        if (hasBossEvent)
+        bool hasBossEvent = resolved.BossFilters.Any(item => !item.IsEmpty) ||
+                            resolved.BossOrdinalFilters.Any(item => !item.IsEmpty) ||
+                            resolved.EventSequenceConditions.Any(item => !item.IsEmpty) || compiled.NormalizedQuery.VariantBossBranches.Count > 0;
+        if (hasBossEvent || hasAncientIdentity)
         {
-            JointSelectivityResult? world = WorldProbabilityEstimator.Estimate(input);
-            rows.Add(new SearchProbabilityQuickViewRow(
-                SearchProbabilityRowKind.WorldEvent,
-                world?.JointlyPriced == true ? world.Probability : null));
+            double? worldProbability;
+            if (WorldVariantQueryProbability.Needed(input))
+            {
+                // The flat World authority cannot see authored Variant branches.
+                // Reuse the query mixture on W's predicates so the selected Variant
+                // prior and its Boss/Event/Ancient identities are counted together.
+                var query = compiled.NormalizedQuery;
+                var worldQuery = SearchQuery.Empty with
+                {
+                    VariantBossBranches = query.VariantBossBranches,
+                    EventSequenceConstraints = query.EventSequenceConstraints,
+                    AncientBranches = query.AncientBranches.Select(branch => branch with
+                    {
+                        OptionAny = [],
+                        SeaGlassTargetAny = []
+                    }).ToArray(),
+                    LegacyWorld = query.LegacyWorld with
+                    {
+                        AncientOptionFilters = [],
+                        AncientSeaGlassTargetFilters = []
+                    }
+                };
+                worldProbability = JointSelectivityEstimator.EstimateQuery(SearchSelectivityInput.From(
+                    SearchCompiler.Compile(worldQuery, compiled.Context))).Probability;
+            }
+            else
+            {
+                var world = hasBossEvent ? WorldProbabilityEstimator.Estimate(input) : null;
+                worldProbability = hasBossEvent ? world?.JointlyPriced == true ? world.Probability : null : 1d;
+                if (hasAncientIdentity)
+                    worldProbability = identityProbability == 0 || worldProbability == 0 ? 0 :
+                        identityProbability.HasValue && worldProbability.HasValue ? identityProbability.Value * worldProbability.Value : null;
+            }
+            rows.Add(new SearchProbabilityQuickViewRow(SearchProbabilityRowKind.WorldEvent, worldProbability));
         }
 
         EventResultSearchCondition[] eventResults = filter.EventResultConditions
@@ -136,23 +199,11 @@ internal static class SearchProbabilityPresentationBuilder
 
         bool hasShopColorless = filter.MerchantColorlessConditions.Any(condition => condition.IsValid) ||
                                 filter.MerchantColorlessSequenceConditions.Any(condition => !condition.IsEmpty);
-        bool hasShopRelic = hasTypedShopRelic || hasLegacyShopRelic;
-        if (hasShopRelic || hasShopColorless)
+        if (hasShopColorless)
         {
-            double? relicShopProbability = hasTypedShopRelic
-                ? FindComponentProbability(joint, "remainder:relic-shop")
-                : hasLegacyShopRelic && !hasCurRelic
-                    ? FindDomainProbability(joint, SearchSelectivityDomain.Relic)
-                    : null;
-            double? colorlessProbability = FindComponentProbability(joint, "shop-colorless:conditional");
-            double? shopProbability = hasShopRelic && hasShopColorless
-                ? FindComponentProbability(joint, "presentation:shop")
-                : hasShopRelic
-                    ? relicShopProbability
-                    : colorlessProbability;
             rows.Add(new SearchProbabilityQuickViewRow(
                 SearchProbabilityRowKind.Shop,
-                shopProbability));
+                FindComponentProbability(joint, "shop-colorless:conditional")));
         }
 
         if (filter.RequiresNormalCombatRewardDomain)
@@ -167,6 +218,12 @@ internal static class SearchProbabilityPresentationBuilder
                 estimate.Probability,
                 explanation));
         }
+
+        if (compiled.NormalizedQuery.TransformationAggregate is not null)
+            rows.Add(new(SearchProbabilityRowKind.TransformationAggregate,
+                aggregateAttribution is {IdentityProbability: >0, QueryHitProbability: { } aggregateP}
+                    ? aggregateP/aggregateAttribution.IdentityProbability
+                    : aggregateAttribution is not null ? null : FindComponentProbability(joint, "transformation-aggregate")));
 
         SearchProbabilityQuickViewStatus status = feasibility.IsImpossible
             ? SearchProbabilityQuickViewStatus.Impossible

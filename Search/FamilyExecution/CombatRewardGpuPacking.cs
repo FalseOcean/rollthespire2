@@ -8,7 +8,7 @@ namespace RolltheSpire2.Search.FamilyExecution;
 
 internal static class Beta110GpuCombatRewardConstants
 {
-    public const int PlanAbiVersion = 5;
+    public const int PlanAbiVersion = 10;
     public const int ShaderAbiVersion = 7;
     public const uint SyntheticCandidatePassFlag = 0x80000000u;
     public const uint RealRouteMaskBits = 0x0000001fu;
@@ -21,7 +21,7 @@ internal static class Beta110GpuCombatRewardConstants
     public const int HeaderUIntCount = 16;
     public const int CompactOutputCountHeaderIndex = 9;
     public const int CompactOutputOverflowHeaderIndex = 10;
-    public const int PredicateStrideUInts = 14;
+    public const int PredicateStrideUInts = 16;
     public const int PoolFixedUIntCount = 48;
     public const int OrdinaryDescriptorStrideUInts = 4;
     public const int TopCapabilityStrideUInts = 2;
@@ -51,13 +51,20 @@ internal static class CombatRewardGpuPacking
         bool allUnlocked, bool scrollAllowed, bool defect, int bonesPoolCount,
         Beta110CombatRewardFastPlan reward, uint tag, Beta110FastEffectCatalog catalog,
         Beta110GpuCombatRewardRoutePolicy routePolicy, byte pinnedRelicId,
-        byte requestedBonesFirstId, byte requestedBonesSecondId, Beta110GpuCombatRewardHotLoopPlan hotLoop)
+        byte requestedBonesFirstId, byte requestedBonesSecondId, Beta110GpuCombatRewardHotLoopPlan hotLoop,
+        int? precedingNicheDraws = 0, int[]? capsuleNicheAdvances = null,
+        bool kaleidoscopeCountOnly = false, bool conservativeOpening = false,
+        bool actualBonesPair = false, byte[]? bonesPool = null, bool dynamicCapsuleNicheUnknown = false,
+        bool capsuleHeldReplay = false)
     {
-        const int fixedHeader = 44;
+        const int fixedHeader = 61;
         int cardTableUInts = hotLoop.Enabled ? hotLoop.CardStateCount * 4 : 0;
         int potionDropUInts = hotLoop.Enabled ? hotLoop.PotionDropNodeCount * 2 : 0;
         int potionRarityUInts = hotLoop.Enabled ? 4 : 0;
-        var meta = new uint[fixedHeader + cardTableUInts + potionDropUInts + potionRarityUInts];
+        int bonesOffset = fixedHeader + cardTableUInts + potionDropUInts + potionRarityUInts;
+        int cardAssignmentOffset = bonesOffset + (bonesPool?.Length ?? 0);
+        int potionAssignmentOffset = cardAssignmentOffset + reward.CardAssignmentTargets.Length;
+        var meta = new uint[potionAssignmentOffset + reward.PotionAssignmentTargets.Length * 2];
         meta[0] = Beta110GpuCombatRewardConstants.PlanAbiVersion;
         meta[1] = tag;
         meta[2] = checked((uint)playerSlot);
@@ -110,8 +117,8 @@ internal static class CombatRewardGpuPacking
         meta[39] = unchecked((uint)(ushort)reward.ExplicitContext.FixedGoldAmount);
         // 40-43 carry the authored opening RNG-consumption replay. This is not
         // Neow result state: it only tells C which player-authored mechanics must
-        // be replayed before Reward generation. Missing Bones/Capsule children are
-        // ordinary placeholders and therefore absent from this list.
+        // be replayed before Reward generation. MP partial Bones instead recovers
+        // the actual root pair via [51..53]; Capsule latent obtains stay neutral.
         meta[40] = reward.OpeningConsumption.ReplayBonesOffer ? 1u : 0u;
         meta[41] = checked((uint)Math.Min(2, reward.OpeningConsumption.OrderedRelicIds.Length));
         meta[42] = reward.OpeningConsumption.OrderedRelicIds.Length > 0
@@ -120,6 +127,30 @@ internal static class CombatRewardGpuPacking
         meta[43] = reward.OpeningConsumption.OrderedRelicIds.Length > 1
             ? reward.OpeningConsumption.OrderedRelicIds[1]
             : Beta110FastRelicCatalog.InvalidId;
+        // Immutable proven P1..P4 opening prefix; no per-candidate state or ABI1 payload.
+        meta[44] = precedingNicheDraws.HasValue ? checked((uint)precedingNicheDraws.Value) : uint.MaxValue;
+        for (int index = 0; index < 4; index++) meta[45 + index] = unchecked((uint)(capsuleNicheAdvances?[index] ?? 0));
+        meta[49] = kaleidoscopeCountOnly ? 1u : 0u;
+        meta[50] = conservativeOpening ? 1u : 0u;
+        meta[51] = actualBonesPair ? 1u : 0u;
+        meta[52] = checked((uint)bonesOffset);
+        meta[53] = dynamicCapsuleNicheUnknown ? 1u : 0u;
+        meta[54] = capsuleHeldReplay ? 1u : 0u;
+        meta[55] = reward.CardAssignmentWindow;
+        meta[56] = checked((uint)reward.CardAssignmentTargets.Length);
+        meta[57] = checked((uint)cardAssignmentOffset);
+        meta[58] = reward.PotionAssignmentWindow;
+        meta[59] = checked((uint)reward.PotionAssignmentTargets.Length);
+        meta[60] = checked((uint)potionAssignmentOffset);
+        for (int index = 0; index < reward.CardAssignmentTargets.Length; index++)
+            meta[cardAssignmentOffset + index] = reward.CardAssignmentTargets[index];
+        for (int index = 0; index < reward.PotionAssignmentTargets.Length; index++)
+        {
+            meta[potionAssignmentOffset + index * 2] = reward.PotionAssignmentRequirements[index];
+            meta[potionAssignmentOffset + index * 2 + 1] = reward.PotionAssignmentTargets[index];
+        }
+        if (bonesPool is not null)
+            for (int index = 0; index < bonesPool.Length; index++) meta[bonesOffset + index] = bonesPool[index];
         int potionRarityOffset = potionDropOffset + potionDropUInts;
         meta[34] = checked((uint)potionRarityOffset);
         meta[35] = checked((uint)hotLoop.MaximumBattleOrdinal);
@@ -143,7 +174,8 @@ internal static class CombatRewardGpuPacking
         return meta;
     }
 
-    internal static uint[] BuildPoolMeta(Beta110FastEffectCatalog catalog, out uint[] denseIds)
+    internal static uint[] BuildPoolMeta(Beta110FastEffectCatalog catalog, out uint[] denseIds,
+        IReadOnlySet<ushort>? explicitHeldIds = null)
     {
         int otherCount = catalog.OtherCharacterPools.Length;
         int bucketCount = catalog.PlayerRelicBuckets.Length;
@@ -151,7 +183,8 @@ internal static class CombatRewardGpuPacking
         int otherBase = Beta110GpuCombatRewardConstants.PoolFixedUIntCount;
         int bucketBase = otherBase + otherCount * 6;
         int ordinaryBase = bucketBase + bucketCount * 2;
-        var meta = new uint[ordinaryBase + ordinaryCount * Beta110GpuCombatRewardConstants.OrdinaryDescriptorStrideUInts];
+        int multiplayerBase = ordinaryBase + ordinaryCount * Beta110GpuCombatRewardConstants.OrdinaryDescriptorStrideUInts;
+        var meta = new uint[multiplayerBase + 6];
         var values = new List<uint>(4096);
 
         void Append(IEnumerable<ushort> source, int offset)
@@ -188,6 +221,8 @@ internal static class CombatRewardGpuPacking
         meta[44] = checked((uint)ordinaryCount);
         meta[45] = checked((uint)bucketBase);
         meta[46] = checked((uint)ordinaryBase);
+        meta[47] = checked((uint)multiplayerBase);
+        AppendCardPool(catalog.MultiplayerRewardPool, multiplayerBase);
 
         for (int index = 0; index < otherCount; index++)
             AppendCardPool(catalog.OtherCharacterPools[index], otherBase + index * 6);
@@ -208,7 +243,8 @@ internal static class CombatRewardGpuPacking
             // GPU rarity encoding is 1=Common, 2=Uncommon, 3=Rare, 4=Shop.
             // EffectRelicRarity is zero-based in C#, so the packed ABI must shift it.
             meta[offset + 1] = checked((uint)relic.Rarity + 1u);
-            meta[offset + 2] = PackCapability(relic.RewardCapability);
+            meta[offset + 2] = PackCapability(relic.RewardCapability) |
+                (explicitHeldIds?.Contains(relic.DenseId) == true ? 4u : 0u);
             meta[offset + 3] = unchecked((uint)(ushort)relic.RewardCapability.FixedGoldAmount);
         }
 
@@ -240,6 +276,8 @@ internal static class CombatRewardGpuPacking
             Append(predicate.PotionAny, offset + 8);
             Append(predicate.PotionAll, offset + 10);
             Append(predicate.PotionBan, offset + 12);
+            meta[offset + 14] = unchecked((uint)(predicate.HasMinimumGold ? predicate.MinimumGold : int.MinValue));
+            meta[offset + 15] = unchecked((uint)(predicate.HasMaximumGold ? predicate.MaximumGold : int.MaxValue));
         }
         targets = values.ToArray();
         return meta;

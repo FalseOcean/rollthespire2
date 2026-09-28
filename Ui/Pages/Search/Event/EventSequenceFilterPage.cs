@@ -31,6 +31,10 @@ internal sealed partial class EventSequenceFilterPage : MarginContainer
     private readonly HBoxContainer _trashResultEditor;
     private readonly HBoxContainer _colorfulResultEditor;
     private readonly HBoxContainer _fakeResultEditor;
+    private readonly HBoxContainer _morphicResultEditor;
+    private readonly SearchCardResultSlot _morphicSlot;
+    private readonly SearchCardResultSlot _morphicSecondSlot;
+    private readonly Label _morphicHelp;
     private readonly SearchCardResultSlot _trashGrabSlot;
     private readonly NeowModelKeySlot _trashDiveSlot;
     private readonly NeowModelKeySlot _colorfulSlot;
@@ -43,6 +47,14 @@ internal sealed partial class EventSequenceFilterPage : MarginContainer
     private IGameContentNameResolver? _names;
     private bool _suppressChanges;
     private bool _running;
+    private bool _morphicManaged;
+    internal void SetMorphicManaged(bool managed)
+    {
+        if (_morphicManaged == managed) return;
+        _morphicManaged = managed;
+        if (managed) TryCancelTransientSurface();
+        ConfigureMorphicSlot();
+    }
 
     public EventSequenceFilterPage(
         EventThumbnailProvider thumbnails,
@@ -122,15 +134,18 @@ internal sealed partial class EventSequenceFilterPage : MarginContainer
         _catalogNotice.Visible = false;
         builderColumn.AddChild(_catalogNotice);
         builderPanel.AddChild(builderColumn);
-        root.AddChild(builderPanel);
+        var advanced = BuildEventSurfaces(root);
+        advanced.AddChild(builderPanel);
 
         _resultPicker = new RelicPickerPanel(icons, characterPoolIcons, cardPickerFilterIcons, tooltipHost);
         _trashGrabSlot = new SearchCardResultSlot(icons, _resultPicker.Open);
         _trashDiveSlot = new NeowModelKeySlot(icons, _resultPicker.Open);
         _colorfulSlot = new NeowModelKeySlot(icons, _resultPicker.Open);
         _fakeRelicSlot = new NeowModelKeySlot(icons, _resultPicker.Open);
+        _morphicSlot = new SearchCardResultSlot(icons, _resultPicker.Open);
+        _morphicSecondSlot = new SearchCardResultSlot(icons, _resultPicker.Open);
         foreach (SearchHorizontalResultSlot slot in new SearchHorizontalResultSlot[]
-                 { _trashGrabSlot, _trashDiveSlot, _colorfulSlot, _fakeRelicSlot })
+                 { _trashGrabSlot, _trashDiveSlot, _colorfulSlot, _fakeRelicSlot, _morphicSlot, _morphicSecondSlot })
         {
             slot.Changed += () =>
             {
@@ -158,8 +173,17 @@ internal sealed partial class EventSequenceFilterPage : MarginContainer
         _fakeRelicSlot.UseInlineLabel(112f);
         _fakeRelicSlot.UseCompactInlineWidth(300f);
         _fakeResultEditor.AddChild(_fakeRelicSlot);
+        _morphicResultEditor = new HBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        var morphicColumn = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        _morphicHelp = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta, true);
+        morphicColumn.AddChild(_morphicHelp);
+        var morphicSlots = new HFlowContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        morphicSlots.AddChild(_morphicSlot);
+        morphicSlots.AddChild(_morphicSecondSlot);
+        morphicColumn.AddChild(morphicSlots);
+        _morphicResultEditor.AddChild(morphicColumn);
         _addedTitle = Ui1Theme.Label(string.Empty, Ui1TextRole.SectionTitle);
-        root.AddChild(_addedTitle);
+        advanced.AddChild(_addedTitle);
 
         var scroll = new ScrollContainer
         {
@@ -175,7 +199,7 @@ internal sealed partial class EventSequenceFilterPage : MarginContainer
         };
         _conditionsHost.AddThemeConstantOverride("separation", 8);
         scroll.AddChild(_conditionsHost);
-        root.AddChild(scroll);
+        advanced.AddChild(scroll);
 
         _empty = Ui1Theme.Label(string.Empty, Ui1TextRole.Muted, true);
         _empty.HorizontalAlignment = HorizontalAlignment.Center;
@@ -201,6 +225,7 @@ internal sealed partial class EventSequenceFilterPage : MarginContainer
             if (_picker.IsOpen) _picker.Cancel();
             if (_resultPicker.IsOpen) _resultPicker.Cancel();
         };
+        MountResultEditors();
         RefreshBuilderState();
     }
 
@@ -220,7 +245,9 @@ internal sealed partial class EventSequenceFilterPage : MarginContainer
     }
 
     public event Action? Changed;
-    public int EnabledConditionCount => _conditions.Count + BuildEventResultConditions().Count;
+    public ModelKey? MorphicGroveContainsCard => _morphicSlot.SelectedKey ?? _morphicSecondSlot.SelectedKey;
+    public ModelKey? MorphicGroveSecondCard => _morphicSlot.SelectedKey.HasValue ? _morphicSecondSlot.SelectedKey : null;
+    public int EnabledConditionCount => _conditions.Count + _retainedConditions.Count + BuildEventResultConditions().Count + (!_morphicManaged && MorphicGroveContainsCard.HasValue ? 1 : 0);
 
     public IReadOnlyList<EventSequenceSearchCondition> BuildSearchConditions() =>
         _conditions
@@ -232,7 +259,7 @@ internal sealed partial class EventSequenceFilterPage : MarginContainer
                 condition.MatchMode == EventSequenceUiMatchMode.Appears
                     ? new ModelKeySetFilter(new[] { condition.EventKey }, Array.Empty<ModelKey>(), Array.Empty<ModelKey>())
                     : new ModelKeySetFilter(Array.Empty<ModelKey>(), Array.Empty<ModelKey>(), new[] { condition.EventKey })))
-            .ToArray();
+            .Concat(_retainedConditions).ToArray();
 
     public string SerializedConditions => string.Join(";", _conditions.Select(condition => condition.Serialize()));
 
@@ -298,6 +325,7 @@ internal sealed partial class EventSequenceFilterPage : MarginContainer
             pickerTitle: text.Get(Ui1TextKey.SearchEventResultFakePicker));
         _picker.ApplyLocalization(text, names);
         _resultPicker.ApplyLocalization(text, names);
+        ConfigureMorphicSlot();
         _authoringControls.ApplyText(
             text.Get(Ui1TextKey.SearchEventRangeFirstN),
             text.Get(Ui1TextKey.SearchEventRangeUnit),
@@ -306,6 +334,7 @@ internal sealed partial class EventSequenceFilterPage : MarginContainer
             text.Get(Ui1TextKey.SearchSequenceAppearsTooltip),
             text.Get(Ui1TextKey.SearchSequenceExcludedTooltip));
         PopulateActSelector();
+        LocalizeEventSurfaces();
         RebuildConditions();
         RefreshBuilderState();
     }
@@ -313,6 +342,7 @@ internal sealed partial class EventSequenceFilterPage : MarginContainer
     public void BindCatalog(EventSequenceSearchUiCatalog catalog)
     {
         _catalog = catalog;
+        ConfigureMorphicSlot();
         if (_picker.IsOpen) _picker.Cancel();
         RebuildConditions();
         RefreshBuilderState();
@@ -330,6 +360,7 @@ internal sealed partial class EventSequenceFilterPage : MarginContainer
         _trashDiveSlot.SetEnabled(!running);
         _colorfulSlot.SetEnabled(!running);
         _fakeRelicSlot.SetEnabled(!running);
+        ConfigureMorphicSlot();
         RebuildConditions();
         RefreshBuilderState();
     }
@@ -340,12 +371,22 @@ internal sealed partial class EventSequenceFilterPage : MarginContainer
     public void RestoreDraft(
         IReadOnlyList<EventSequenceSearchCondition>? conditions,
         IReadOnlyList<EventResultSearchCondition>? resultConditions,
-        bool notify)
+        bool notify,
+        ModelKey? morphicGroveContainsCard = null,
+        ModelKey? morphicGroveSecondCard = null)
     {
         if (_running) return;
         _conditions.Clear();
+        _retainedConditions.Clear();
         foreach (EventSequenceSearchCondition condition in conditions ?? Array.Empty<EventSequenceSearchCondition>())
         {
+            // Preserve OR sets and source-scoped predicates verbatim; the single-key
+            // editor must never turn an Any group into an AND of rows.
+            if (condition.Source.HasValue || condition.Keys.Any.Count > 1)
+            {
+                _retainedConditions.Add(condition);
+                continue;
+            }
             foreach (ModelKey key in condition.Keys.Any.Concat(condition.Keys.All).Distinct(ModelKeyComparer.Instance))
             {
                 if (key.IsValid)
@@ -367,11 +408,17 @@ internal sealed partial class EventSequenceFilterPage : MarginContainer
         _trashDiveSlot.Select(null, notify: false);
         _colorfulSlot.Select(null, notify: false);
         _fakeRelicSlot.Select(null, notify: false);
+        _morphicSlot.Select(morphicGroveContainsCard, notify: false);
+        _morphicSecondSlot.Select(morphicGroveSecondCard, notify: false);
         foreach (EventResultSearchCondition condition in resultConditions ?? Array.Empty<EventResultSearchCondition>())
         {
             if (!condition.IsValid) continue;
             switch (condition.Kind)
             {
+                case EventResultConditionKind.MorphicGroveGroupInitialBasicsContains:
+                    _morphicSlot.Select(morphicGroveContainsCard ?? condition.TargetKey, notify: false);
+                    _morphicSecondSlot.Select(morphicGroveSecondCard ?? condition.MorphicGroveSecondCard, notify: false);
+                    break;
                 case EventResultConditionKind.TrashHeapGrabCard:
                     _trashGrabSlot.Select(condition.TargetKey, notify: false);
                     break;
@@ -387,6 +434,7 @@ internal sealed partial class EventSequenceFilterPage : MarginContainer
             }
         }
         SelectAct(1);
+        ResetSimplePresentation();
         _authoringControls.ResetDefaults(notify: false);
         if (_picker.IsOpen) _picker.Cancel();
         RebuildConditions();
@@ -399,11 +447,15 @@ internal sealed partial class EventSequenceFilterPage : MarginContainer
         if (_running) return;
         bool hadConditions = EnabledConditionCount > 0 || _authoringControls.NeedsReset;
         _conditions.Clear();
+        _retainedConditions.Clear();
         _trashGrabSlot.Select(null, notify: false);
         _trashDiveSlot.Select(null, notify: false);
         _colorfulSlot.Select(null, notify: false);
         _fakeRelicSlot.Select(null, notify: false);
+        _morphicSlot.Select(null, notify: false);
+        _morphicSecondSlot.Select(null, notify: false);
         SelectAct(1);
+        ResetSimplePresentation();
         _authoringControls.ResetDefaults(notify: false);
         if (_picker.IsOpen) _picker.Cancel();
         RebuildConditions();
@@ -477,61 +529,35 @@ internal sealed partial class EventSequenceFilterPage : MarginContainer
 
     private void RebuildConditions()
     {
-        DetachResultEditors();
         foreach (Node child in _conditionsHost.GetChildren())
         {
             if (ReferenceEquals(child, _empty)) continue;
             _conditionsHost.RemoveChild(child);
             child.QueueFree();
         }
-
-        if (_text is null || _names is null)
-        {
-            _empty.Text = string.Empty;
-            _empty.Visible = true;
-            return;
-        }
-
-        int resultCount = BuildEventResultConditions().Count;
-        _addedTitle.Text = _text.Format(Ui1TextKey.SearchEventAddedConditions, _conditions.Count + resultCount);
+        if (_text is null || _names is null) return;
+        _addedTitle.Text = _text.Format(Ui1TextKey.SearchEventAddedConditions, _conditions.Count + _retainedConditions.Count);
         _clear.Disabled = _running || EnabledConditionCount == 0;
-        if (_conditions.Count == 0 && resultCount == 0)
-        {
-            _empty.Text = _text.Get(Ui1TextKey.SearchEventNoConditions);
-            _empty.Visible = true;
-            return;
-        }
-
-        _empty.Visible = false;
-        var attached = new HashSet<string>(StringComparer.Ordinal);
+        _empty.Visible = _conditions.Count + _retainedConditions.Count == 0;
         foreach (EventSequenceUiCondition condition in _conditions)
         {
-            EventSearchUiCandidate? candidate = _catalog.Find(condition.Act, condition.EventKey);
             string eventName = _names.Resolve(condition.EventKey, GameContentKind.Event);
-            string tooltip = candidate is null ? eventName : BuildCandidateTooltip(candidate);
-            Control? effectEditor = null;
-            if (string.Equals(condition.EventKey.Entry, Beta111EventResultCatalog.TrashHeapEventEntry, StringComparison.Ordinal) && attached.Add("trash"))
-                effectEditor = _trashResultEditor;
-            else if (string.Equals(condition.EventKey.Entry, Beta111EventResultCatalog.ColorfulPhilosophersEventEntry, StringComparison.Ordinal) && attached.Add("colorful"))
-                effectEditor = _colorfulResultEditor;
-            else if (string.Equals(condition.EventKey.Entry, Beta111EventResultCatalog.FakeMerchantEventEntry, StringComparison.Ordinal) && attached.Add("fake"))
-                effectEditor = _fakeResultEditor;
             _conditionsHost.AddChild(new EventSequenceConditionCard(
-                _thumbnails.Resolve(condition.EventKey),
-                eventName,
-                ConditionDetail(condition),
-                tooltip,
-                _text.Get(Ui1TextKey.SearchEventRemoveCondition),
-                _running,
-                () => RemoveCondition(condition.Id),
-                effectEditor));
+                _thumbnails.Resolve(condition.EventKey), eventName, ConditionDetail(condition), eventName,
+                _text.Get(Ui1TextKey.SearchEventRemoveCondition), _running, () => RemoveCondition(condition.Id)));
         }
-        AddResultOnlyEditor("trash", _trashResultEditor, attached.Contains("trash"), _text.Get(Ui1TextKey.SearchEventResultTrashHeap),
-            () => ClearResultSlots(_trashGrabSlot, _trashDiveSlot));
-        AddResultOnlyEditor("colorful", _colorfulResultEditor, attached.Contains("colorful"), _text.Get(Ui1TextKey.SearchEventResultColorful),
-            () => ClearResultSlots(_colorfulSlot));
-        AddResultOnlyEditor("fake", _fakeResultEditor, attached.Contains("fake"), _text.Get(Ui1TextKey.SearchEventResultFakeMerchant),
-            () => ClearResultSlots(_fakeRelicSlot));
+        foreach (var condition in _retainedConditions.ToArray())
+        {
+            string Keys(IEnumerable<ModelKey> keys) => string.Join(", ", keys.Select(k => _names.Resolve(k, GameContentKind.Event)));
+            var box = new HBoxContainer();
+            box.AddChild(Ui1Theme.Label($"{ActText(condition.Act)} · {condition.Source} · {condition.RangeMode} {condition.RangeValue}\n" +
+                $"Any: {Keys(condition.Keys.Any)} · All: {Keys(condition.Keys.All)} · Ban: {Keys(condition.Keys.Ban)}", Ui1TextRole.Meta, true));
+            var remove = new Button { Text = "×", Disabled = _running };
+            remove.Pressed += () => { _retainedConditions.Remove(condition); RebuildConditions(); Changed?.Invoke(); };
+            box.AddChild(remove);
+            _conditionsHost.AddChild(box);
+        }
+        RefreshSimpleQueue();
     }
 
     private string ConditionDetail(EventSequenceUiCondition condition)
@@ -545,9 +571,6 @@ internal sealed partial class EventSequenceFilterPage : MarginContainer
                 ? _text.Format(Ui1TextKey.SearchEventConditionDetailExactAppears, ActText(condition.Act), condition.RangeValue)
                 : _text.Format(Ui1TextKey.SearchEventConditionDetailExactExcluded, ActText(condition.Act), condition.RangeValue);
     }
-
-    private string BuildCandidateTooltip(EventSearchUiCandidate candidate) =>
-        _names?.Resolve(candidate.EventKey, GameContentKind.Event) ?? candidate.EventKey.Entry;
 
     private string ActText(int act)
     {
@@ -569,6 +592,7 @@ internal sealed partial class EventSequenceFilterPage : MarginContainer
             _catalog.CandidatesForAct(SelectedAct()).Count == 0 ||
             _authoringControls.RangeValue is < 1 or > 10;
         _clear.Disabled = _running || EnabledConditionCount == 0;
+        RefreshSimpleQueue();
     }
 
     private int SelectedAct() =>
@@ -598,55 +622,19 @@ internal sealed partial class EventSequenceFilterPage : MarginContainer
         return option;
     }
 
-    private void DetachResultEditors()
+    private void ConfigureMorphicSlot()
     {
-        foreach (HBoxContainer editor in new[] { _trashResultEditor, _colorfulResultEditor, _fakeResultEditor })
+        if (_text is null || _names is null) return;
+        var pool = _catalog.MorphicGroveScenario?.Targets.FirstOrDefault()?.OrderedSourceCandidates;
+        foreach (var slot in new[] { _morphicSlot, _morphicSecondSlot })
         {
-            editor.GetParent()?.RemoveChild(editor);
-            editor.Visible = true;
+            slot.Configure(_text.Get(Ui1TextKey.SearchEventMorphicContains),
+                pool?.Select(c => c.CardKey).Distinct().ToArray() ?? [], GameContentKind.Card,
+                IconVariant.CardPickerLarge, _names, _text.Get(Ui1TextKey.SearchEventResultNeutral),
+                _text.Get(Ui1TextKey.SearchEventMorphicPremise), pickerTitle: _text.Get(Ui1TextKey.SearchEventMorphicContains));
+            slot.SetEnabled(!_running && !_morphicManaged && pool is { Count: > 0 });
         }
-    }
-
-    private void AddResultOnlyEditor(
-        string group,
-        HBoxContainer editor,
-        bool attached,
-        string title,
-        Action clear)
-    {
-        if (attached || !HasResultGroup(group) || _text is null || _names is null) return;
-        ModelKey eventKey = group switch
-        {
-            "trash" => new ModelKey(BaseGameModelKeys.Categories.Event, Beta111EventResultCatalog.TrashHeapEventEntry),
-            "colorful" => new ModelKey(BaseGameModelKeys.Categories.Event, Beta111EventResultCatalog.ColorfulPhilosophersEventEntry),
-            _ => new ModelKey(BaseGameModelKeys.Categories.Event, Beta111EventResultCatalog.FakeMerchantEventEntry)
-        };
-        _conditionsHost.AddChild(new EventSequenceConditionCard(
-            _thumbnails.Resolve(eventKey),
-            title,
-            _text.Get(Ui1TextKey.SearchEventResultConditionalHelper),
-            title,
-            _text.Get(Ui1TextKey.SearchEventRemoveCondition),
-            _running,
-            () =>
-            {
-                clear();
-                RebuildConditions();
-                Changed?.Invoke();
-            },
-            editor));
-    }
-
-    private bool HasResultGroup(string group) => group switch
-    {
-        "trash" => _trashGrabSlot.SelectedKey.HasValue || _trashDiveSlot.SelectedKey.HasValue,
-        "colorful" => _colorfulSlot.SelectedKey.HasValue,
-        "fake" => _fakeRelicSlot.SelectedKey.HasValue,
-        _ => false
-    };
-
-    private static void ClearResultSlots(params SearchHorizontalResultSlot[] slots)
-    {
-        foreach (SearchHorizontalResultSlot slot in slots) slot.Select(null, notify: false);
+        _morphicHelp.Text = _text.Get(pool is { Count: > 0 } ? Ui1TextKey.SearchEventMorphicHelp : Ui1TextKey.SearchEventMorphicUnavailable);
+        if (_morphicManaged) _morphicHelp.Text = _text.LanguageCode.StartsWith("zh") ? "已由「变牌组合」管理" : "Managed by Transformation Aggregate";
     }
 }

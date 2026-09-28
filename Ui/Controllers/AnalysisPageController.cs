@@ -20,7 +20,7 @@ using RolltheSpire2.Ui.Settings;
 
 namespace RolltheSpire2.Ui.Controllers;
 
-internal sealed class AnalysisPageController
+internal sealed partial class AnalysisPageController
 {
     private readonly AnalysisPage _page;
     private readonly ModRuntimeSnapshot _runtime;
@@ -46,6 +46,14 @@ internal sealed class AnalysisPageController
         _page.AnalyzeRequested += Analyze;
         _page.RandomSeedRequested += GenerateRandomSeed;
         _page.PredictorContextChanged += PersistPredictorContext;
+        _page.PartyPlayerSelected += SelectPartyPlayer;
+        _page.PartyModeSelected += SelectPartyMode;
+        _page.PartyConfigurationRequested += OpenPartyConfiguration;
+        _page.OpeningExplicitlySelected += slot =>
+        {
+            _strictLibrarySeed = "";
+            if (_partyDraft is not null) _partyExplicitSelections.Add(slot); else _soloExplicitOpening = true;
+        };
     }
 
     private void GenerateRandomSeed()
@@ -64,6 +72,17 @@ internal sealed class AnalysisPageController
         int? preferredOpeningChoiceSlotIndex,
         string preferredRewardRouteGroupId)
     {
+        if (_partyDraft is not null && !_bindingPartyDocument)
+        {
+            _partySelections[draft.PlayerSlotIndex] = (preferredOpeningChoiceSlotIndex, preferredOpeningRouteId);
+            // Premise-only updates no longer enter AnalyzeParty. Keep the seat's
+            // authored context current for switching players and seed favorites.
+            _partyDraft = _partyDraft with { Query = _partyDraft.Query with
+            {
+                Players = _partyDraft.Query.Players.Select(p => p.Slot == draft.PlayerSlotIndex
+                    ? p with { AncientPremises = draft.AncientOptionConditions } : p).ToArray()
+            } };
+        }
         _persistence.SavePredictorContext(
             draft.RawSeed,
             draft.CharacterKey,
@@ -75,12 +94,15 @@ internal sealed class AnalysisPageController
             preferredOpeningRouteId,
             preferredOpeningChoiceSlotIndex,
             preferredRewardRouteGroupId);
+        PersistPartyConfiguration();
     }
 
     public void AnalyzeCurrentDraft() => Analyze(_page.CurrentDraft);
 
     private void Analyze(AnalysisRequestDraft draft)
     {
+        _libraryPredictionIssue = "";
+        PreparePartySelection(draft);
         PersistPredictorContext(
             draft,
             _page.PreferredOpeningRouteId,
@@ -90,6 +112,7 @@ internal sealed class AnalysisPageController
         _setGlobalStatus(GlobalStatusKind.Busy, _page.Text(Ui1TextKey.Analyzing), draft.RawSeed.Trim());
         try
         {
+            if (_partyDraft is not null) { AnalyzeParty(draft); return; }
             CharacterIdentity character = CharacterIdentity.FromKey(draft.CharacterKey);
             RuntimeContextAuthoritySnapshot authority = RuntimeContextAuthorityCapture.CaptureRuntimeReadOnly(
                 _runtime.Profile,
@@ -100,7 +123,8 @@ internal sealed class AnalysisPageController
                 draft.PlayersCount,
                 draft.PlayerSlotIndex,
                 predictionGameMode: draft.PlayersCount > 1 ? WorldGameMode.Multiplayer : WorldGameMode.Singleplayer,
-                predictionGameModeAuthority: PredictionGameModeAuthority.ExplicitRequest);
+                predictionGameModeAuthority: PredictionGameModeAuthority.ExplicitRequest,
+                explicitUnlockState: CapturePredictionUnlocks());
 
             if (!SeedPredictionRequest.TryCreate(
                     draft.RawSeed,
@@ -117,6 +141,7 @@ internal sealed class AnalysisPageController
                     out SeedPredictionRequestError requestError))
             {
                 _page.ShowRequestError(requestError);
+                _libraryPredictionIssue = requestError.ToString();
                 _setGlobalStatus(GlobalStatusKind.Error, _page.Text(Ui1TextKey.AnalysisFailed), draft.RawSeed.Trim());
                 RuntimeLog.Error($"ui1AnalysisRequestRejected={requestError}");
                 _diagnosticSink.TryWrite(RuntimePredictionDiagnosticEvent.Create(
@@ -141,6 +166,8 @@ internal sealed class AnalysisPageController
 
             request = request!.WithComplexBonesDeckInteractions(_predictionSettings.EnableComplexBonesDeckInteractions);
             SeedPredictionDocument document = RuntimeProfileRegistry.Predict(_runtime.Detection, request!);
+            if (_strictLibrarySeed == document.CanonicalSeed && _librarySoloSelection is { } savedSelection)
+                ValidateLibrarySelection(document.Sections.SelectMany(s => s.NeowChoices).ToArray(), savedSelection.ChoiceSlot, savedSelection.Route);
             var predictionFailures = document.Diagnostics.Where(d => d.Code == PredictionDiagnosticCodes.Exception).Select(d => d.Value).ToArray();
             if (predictionFailures.Length > 0)
                 RuntimeLog.FaultEvidence($"predictorFault=true;request={document.Context.RequestId.Serialized};seed={document.CanonicalSeed};profile={document.ProfileId}", string.Join("\n", predictionFailures), "Prediction failed: " + document.CanonicalSeed);
@@ -308,6 +335,7 @@ internal sealed class AnalysisPageController
         }
         catch (Exception ex)
         {
+            _libraryPredictionIssue = ex.Message;
             _page.ShowUnhandledError();
             _setGlobalStatus(GlobalStatusKind.Error, _page.Text(Ui1TextKey.AnalysisFailed), draft.RawSeed.Trim());
             RuntimeLog.Fault("ui1AnalysisFailedSafely=true", ex);

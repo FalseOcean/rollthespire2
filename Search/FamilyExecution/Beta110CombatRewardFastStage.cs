@@ -16,7 +16,7 @@ internal readonly record struct Beta110CombatRewardRouteEvaluation(
 /// </summary>
 internal static class Beta110CombatRewardFastStage
 {
-    private const int BattleCount = 3;
+    private const int BattleCount = 6;
     private const int CardsPerReward = 3;
     private const int MaximumCardsPerBattle = 12;
     private const float PotionOddsStep = 0.1f;
@@ -156,7 +156,7 @@ internal static class Beta110CombatRewardFastStage
                         catalog.CombatRewardPowerPool,
                         ref cardOffset,
                         output[..outputCount],
-                        out ushort power))
+                        out ushort power, baseOdds: true))
                 {
                     return new(Beta110CombatRewardRouteProjectionStatus.ConservativeKeep,
                         battle1, battle2, battle3, "CombatRewardLastingCandyPowerPoolExhausted");
@@ -164,7 +164,7 @@ internal static class Beta110CombatRewardFastStage
                 if (outputCount >= output.Length)
                     return new(Beta110CombatRewardRouteProjectionStatus.ConservativeKeep,
                         battle1, battle2, battle3, "CombatRewardCardScratchCapacityExceeded");
-                output[outputCount++] = power;
+                if (power != Beta110FastDenseId.Invalid) output[outputCount++] = power;
             }
 
             for (int reward = 0; reward < opening.AdditionalCardRewardCount; reward++)
@@ -189,14 +189,50 @@ internal static class Beta110CombatRewardFastStage
 
             if (battleOrdinal == 1) battle1++;
             else if (battleOrdinal == 2) battle2++;
-            else battle3++;
+            else if (battleOrdinal == 3) battle3++;
+        }
+
+        if (plan.HasDistinctBattleAssignments)
+        {
+            ulong cardStates = 1, potionStates = 1;
+            for (int battle = 0; battle < maxBattle; battle++)
+            {
+                if (battle < plan.CardAssignmentWindow)
+                {
+                    uint matches = 0;
+                    var cards = battleCards.Slice(battle * MaximumCardsPerBattle, battleCardCounts[battle]);
+                    for (int target = 0; target < plan.CardAssignmentTargets.Length; target++)
+                        if (cards.Contains(plan.CardAssignmentTargets[target])) matches |= 1u << target;
+                    cardStates = AdvanceAssignmentStates(cardStates, matches, plan.CardAssignmentTargets.Length);
+                }
+                if (battle < plan.PotionAssignmentWindow)
+                {
+                    uint matches = 0;
+                    for (int target = 0; target < plan.PotionAssignmentTargets.Length; target++)
+                    {
+                        bool match = (CombatPotionSlotRequirement)plan.PotionAssignmentRequirements[target] switch
+                        {
+                            CombatPotionSlotRequirement.NoDrop => battlePotionDropped[battle] == 0,
+                            CombatPotionSlotRequirement.DropAny => battlePotionDropped[battle] != 0,
+                            CombatPotionSlotRequirement.DropSpecific => battlePotionDropped[battle] != 0 &&
+                                battlePotions[battle] == plan.PotionAssignmentTargets[target],
+                            _ => true
+                        };
+                        if (match) matches |= 1u << target;
+                    }
+                    potionStates = AdvanceAssignmentStates(potionStates, matches, plan.PotionAssignmentTargets.Length);
+                }
+            }
+            if ((cardStates & (1UL << ((1 << plan.CardAssignmentTargets.Length) - 1))) == 0 ||
+                (potionStates & (1UL << ((1 << plan.PotionAssignmentTargets.Length) - 1))) == 0)
+                return new(Beta110CombatRewardRouteProjectionStatus.Rejected, battle1, battle2, battle3, "DistinctBattleAssignmentRejected");
         }
 
         foreach (Beta110CombatRewardFastPredicate predicate in plan.Predicates)
         {
             bool matched = false;
             int firstBattle = predicate.IsAnyBattle ? 1 : predicate.BattleOrdinal;
-            int lastBattle = predicate.IsAnyBattle ? BattleCount : predicate.BattleOrdinal;
+            int lastBattle = predicate.IsAnyBattle ? maxBattle : predicate.BattleOrdinal;
             for (int battleOrdinal = firstBattle; battleOrdinal <= lastBattle; battleOrdinal++)
             {
                 if (battleOrdinal > maxBattle) continue;
@@ -229,6 +265,19 @@ internal static class Beta110CombatRewardFastStage
     private static Beta110CombatRewardRouteEvaluation PrefixResult(Beta110CombatRewardRouteProjectionStatus status, int observedBattle) =>
         new(status, observedBattle >= 1 ? 1 : 0, observedBattle >= 2 ? 1 : 0, observedBattle >= 3 ? 1 : 0,
             "CpuPotionPrefix");
+
+    private static ulong AdvanceAssignmentStates(ulong states, uint matches, int count)
+    {
+        ulong next = states;
+        for (int subset = 0; subset < (1 << count); subset++)
+        {
+            if ((states & (1UL << subset)) == 0) continue;
+            for (int target = 0; target < count; target++)
+                if ((matches & (1u << target)) != 0 && (subset & (1 << target)) == 0)
+                    next |= 1UL << (subset | (1 << target));
+        }
+        return next;
+    }
 
     private static bool GenerateCardReward(
         ref Beta110FastRng rewards,
@@ -266,9 +315,18 @@ internal static class Beta110CombatRewardFastStage
         Beta110FastCardPool pool,
         ref float cardOffset,
         ReadOnlySpan<ushort> selected,
-        out ushort card)
+        out ushort card, bool baseOdds = false)
     {
-        byte rolledRarity = RollCardRarity(rewards.NextFloat(), ascension, ref cardOffset);
+        if (baseOdds)
+        {
+            // Vanilla Candy retries without exclusions only when all Powers are used.
+            if (pool.Common.Length + pool.Uncommon.Length + pool.Rare.Length == 0)
+            { card = Beta110FastDenseId.Invalid; return true; }
+            if (CountAvailable(pool.Common, selected) + CountAvailable(pool.Uncommon, selected) + CountAvailable(pool.Rare, selected) == 0)
+                selected = ReadOnlySpan<ushort>.Empty;
+        }
+        float roll = rewards.NextFloat();
+        byte rolledRarity = baseOdds ? RollBaseCardRarity(roll, ascension) : RollCardRarity(roll, ascension, ref cardOffset);
         byte rarity = rolledRarity;
         for (int attempt = 0; attempt < 3; attempt++)
         {
@@ -290,6 +348,12 @@ internal static class Beta110CombatRewardFastStage
         }
         card = Beta110FastDenseId.Invalid;
         return false;
+    }
+
+    private static byte RollBaseCardRarity(float value, int ascension)
+    {
+        float rare = ascension >= 7 ? .0149f : .03f;
+        return value < rare ? (byte)3 : value < rare + UncommonBase ? (byte)2 : (byte)1;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

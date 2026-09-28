@@ -5,8 +5,8 @@ using RolltheSpire2.Search.Contracts;
 namespace RolltheSpire2.Search.FamilyExecution;
 
 // R owns one initial World Relic Bag for Capsule and sequence observations.
-// Supported direct and fixed-Bones Capsule shapes use Rfull GPU; every other
-// shape retains the CPU CapsuleAndSequenceReplay reference without changing Coverage.
+// Tracked-rank Rfull handles common shapes; multiplayer general arrivals reuse
+// the opening draw donor and full local bag. Coverage and ABI1 remain unchanged.
 internal sealed partial class CapsuleRelicFamily : IFamilyInvocation
 {
     private readonly GpuCostSamples _costSamples = new();
@@ -53,6 +53,8 @@ internal sealed partial class CapsuleRelicFamily : IFamilyInvocation
             $"rCapsuleFamilyReady=true;physical={(_gpuPlan is null ? "CpuCapsuleAndSequenceReplay" : "GpuRfull")};" +
             $"physicalIssue={issue};exactOnly={string.Join(',', route.ExactOnly)}");
     }
+
+    internal bool MatchesReference(ulong root) => _replay.Matches(root);
 
     public string FamilyId => "R.Relic";
     public FamilyAnalyticalCostProjection AnalyticalCost => _models.Full;

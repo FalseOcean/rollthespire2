@@ -10,24 +10,27 @@ using RolltheSpire2.Search.Semantics;
 namespace RolltheSpire2.Search.Selectivity;
 
 /// <summary>
-/// Product-projected probability authority for the first three normal-combat rewards.
+/// Product-projected probability authority for the first six normal-combat card and potion rewards.
+/// Legacy any-battle rows retain their three-battle window.
 /// It prices the portion of real seed space that is compatible with the current
 /// Query-literal Search projection; it is not a complete latent-game-world rarity model.
 /// The chronological DP mirrors the accepted Beta110 reward-generation topology:
 /// potion pity, card-rarity pity, per-card-reward no-duplicate selection, Prayer Wheel,
 /// White Beast Statue, Lasting Candy and deterministic opening fixed-gold effects.
 ///
-/// For an explicitly selected Capsule source, latent nested outcomes are used only to
+/// In the inherited solo model, latent nested outcomes for an explicit Capsule are used only to
 /// measure projection compatibility. Unsupported implicit Reward-influence branches are
 /// excluded from searchable probability instead of being re-evaluated under their own
 /// latent Reward contexts. Query-authored opening RNG consumption is a deterministic part
 /// of the projected C continuation and is replayed by the Fast evaluator; it is not a
 /// probability compatibility penalty. Bones-unspecified children are not expanded into
-/// hidden Capsule routes because current Search does not own that projection.
+/// hidden Capsule routes in that solo model. Multiplayer instead integrates the actual
+/// held reward effects of Capsule draws and unspecified Bones companions, conditioned
+/// on authored opening/bag predicates; unavailable effects retain Unknown probability.
 /// </summary>
-internal static class CombatRewardProbabilityEstimator
+internal static partial class CombatRewardProbabilityEstimator
 {
-    private const int BattleCount = 3;
+    private const int BattleCount = 6;
     private const int CardsPerReward = 3;
     private const double InitialCardRarityOffset = -0.05d;
     private const double CardRarityOffsetCap = 0.4d;
@@ -103,8 +106,8 @@ internal static class CombatRewardProbabilityEstimator
         int CardPityStreak,
         int PotionStep,
         BigInteger AnyConditionMask,
-        byte CardAssignmentStates,
-        byte PotionAssignmentStates);
+        ulong CardAssignmentStates,
+        ulong PotionAssignmentStates);
 
     private readonly record struct ModernCardConstraint(ModelKey Target, int? OrderedBattleOrdinal);
     private readonly record struct ModernPotionConstraint(CombatPotionRewardSlotSearchCondition Slot, int? OrderedBattleOrdinal);
@@ -128,7 +131,7 @@ internal static class CombatRewardProbabilityEstimator
 
     private readonly record struct CapsuleDrawPosition(int Lane, int Ordinal);
     private readonly record struct CapsuleRarityChoice(int PreferredLane, double Probability, string Label);
-    private sealed record CapsuleGroup(ModelKey Source, int DrawCount, NeowStructuredEffectSearchCondition? Constraint);
+    private sealed record CapsuleGroup(ModelKey Source, int DrawCount, IReadOnlyList<NeowStructuredEffectSearchCondition> Constraints);
 
     private enum CombatRewardProbabilityMode : byte
     {
@@ -169,8 +172,8 @@ internal static class CombatRewardProbabilityEstimator
         bool neutralPrefix = prefixDraws.HasValue;
         var query = request.CompiledSearch.NormalizedQuery;
         var cardSequence = query.CombatCardRewards;
-        bool repeatedExistential = (neutralPrefix || !fast.OpeningConsumption.HasReplay) &&
-            fast.PredicateCount is >= 1 and <= 3 && fast.Predicates.All(p => p.IsAnyBattle &&
+        bool repeatedExistential = !fast.HasDistinctBattleAssignments && (neutralPrefix || !fast.OpeningConsumption.HasReplay) &&
+            fast.PredicateCount is >= 1 and <= 6 && fast.Predicates.All(p => p.IsAnyBattle &&
                 p.CardAny.Length == 1 && p.CardAll.Length == 0 && p.CardBan.Length == 0 &&
                 !p.HasPotionDropPredicate && !p.HasPotionIdentityPredicate && !p.HasGoldPredicate) &&
             fast.Predicates.Select(p => p.CardAny[0]).Distinct().Count() == 1 &&
@@ -178,7 +181,7 @@ internal static class CombatRewardProbabilityEstimator
             cardSequence.Slots.Where(k => k.HasValue).Select(k => k!.Value).Distinct().Count() == 1 &&
             query.LegacyCombatRewardConstraints.Count == 0;
         string? issue = fast.OpeningConsumption.HasReplay && !neutralPrefix ? "AuthoredPrefixDistribution" :
-            fast.Predicates.Any(p => p.IsAnyBattle) && !repeatedExistential ? "UnorderedFastExistentialsNotDistinctAssignment" :
+            fast.Predicates.Any(p => p.IsAnyBattle) && !repeatedExistential && !fast.HasDistinctBattleAssignments ? "UnorderedFastExistentialsNotDistinctAssignment" :
             fast.PredicateCount > 6 ? "BoundedMatcherCapacity" : null;
         int domains = (fast.CardPredicateCount > 0 ? 1 : 0) +
             (fast.PotionDropPredicateCount + fast.PotionIdentityPredicateCount > 0 ? 1 : 0) +
@@ -198,16 +201,16 @@ internal static class CombatRewardProbabilityEstimator
         if (repeatedExistential)
         {
             // C's identical existential rows collapse to one observation over
-            // all three simulated battles. This is a probability-only matcher
+            // all simulated battles. This is a probability-only matcher
             // projection, NOT a change to authored Query/Exact multiplicity.
             ModelKey target = cardSequence!.Slots.First(k => k.HasValue)!.Value;
-            var matcherQuery = query with { CombatCardRewards = new(3,
-                CombatRewardSequenceOrderMode.Unordered, [target, null, null]) };
+            var matcherQuery = query with { CombatCardRewards = new(fast.MaximumBattleOrdinal,
+                CombatRewardSequenceOrderMode.Unordered, Enumerable.Range(0, fast.MaximumBattleOrdinal).Select(i => i == 0 ? (ModelKey?)target : null).ToArray()) };
             input = SearchSelectivityInput.From(SearchCompiler.Compile(matcherQuery, request.CompiledSearch.Context));
         }
         var result = EstimateCore(input, fast.ExplicitContext, CombatRewardProbabilityMode.PhysicalFastGate);
         return result with { EvidenceCode = (neutralPrefix ? $"C.FixedAuthoredPrefixDraws={prefixDraws};" : "") +
-            (repeatedExistential ? "C.IdenticalExistentialThreeBattleUnion;" : "") + result.EvidenceCode };
+            (repeatedExistential ? "C.IdenticalExistentialWindowUnion;" : "") + result.EvidenceCode };
     }
 
     // Mirrors the donor's zero-consumption branch and its single forced-Rare
@@ -247,7 +250,7 @@ internal static class CombatRewardProbabilityEstimator
         request.Evaluation.StructuredNeowEffects.All(c => c.Scope == NeowStructuredEffectScope.FinalCurse))) return null;
         int draws = fast.OpeningConsumption.OrderedRelicIds.Count(id => id == Beta110FastRelicCatalog.ArcaneScroll);
         if (draws > 1 || draws == 1 && (request.Authority.EffectAuthority?.HasExactCharacterRewardPool != true ||
-            !request.Authority.EffectAuthority.CharacterRewardPool.Any(c => c.Rarity == EffectCardRarity.Rare))) return null;
+            !request.Authority.EffectAuthority.CharacterRewardPool!.Any(c => c.Rarity == EffectCardRarity.Rare))) return null;
         return draws;
     }
 
@@ -352,7 +355,7 @@ internal static class CombatRewardProbabilityEstimator
                     SearchSelectivityCoverage.PartialRequestedConjunction,
                     SearchSelectivityDependencyClass.RouteDependent);
             }
-            if (!TryBuildCardPool(authority, matcher.CardTargetIndex, out cards, out string cardIssue))
+            if (!TryBuildCardPool(authority, matcher.CardTargetIndex, plan.Authority.PlayersCount > 1, out cards, out string cardIssue))
             {
                 return SearchSelectivityEstimate.Unpriced(
                     "Probability.CombatReward.CardPoolAuthority:" + cardIssue,
@@ -380,7 +383,7 @@ internal static class CombatRewardProbabilityEstimator
                     SearchSelectivityCoverage.PartialRequestedConjunction,
                     SearchSelectivityDependencyClass.RouteDependent);
             }
-            if (!TryBuildPotionPool(authority, matcher.PotionTargetIndex, out potions, out string potionIssue))
+            if (!TryBuildPotionPool(authority, matcher.PotionTargetIndex, plan.Authority.PlayersCount > 1, out potions, out string potionIssue))
             {
                 return SearchSelectivityEstimate.Unpriced(
                     "Probability.CombatReward.PotionPoolAuthority:" + potionIssue,
@@ -391,6 +394,9 @@ internal static class CombatRewardProbabilityEstimator
                     SearchSelectivityDependencyClass.RouteDependent);
             }
         }
+
+        if (plan.Authority.PlayersCount > 1 && mode == CombatRewardProbabilityMode.ProductProjected)
+            return EstimateParty(plan, semantic, matcher, cards, potions);
 
         if ((explicitContext.InfluenceFlags &
              (Beta110CombatRewardInfluenceFlags.UnknownRewardImpact |
@@ -531,7 +537,90 @@ internal static class CombatRewardProbabilityEstimator
         AmethystAubergine: (context.InfluenceFlags & Beta110CombatRewardInfluenceFlags.AmethystAubergineFixedGold) != 0 ||
                            context.FixedGoldAmount > 0);
 
+    // Authoring-only support query. Reuses chronological generation; does not extend Search horizon.
+    internal static bool CanAuthorCards(int ascension,
+        IReadOnlyList<(ModelKey Key, EffectCardRarity Rarity, EffectCardType Type)> candidates,
+        IReadOnlyList<ModelKey?> slots, bool unordered, bool wheel, bool candy)
+    {
+        if (slots.Count is < 1 or > 6) throw new ArgumentOutOfRangeException(nameof(slots));
+        var targets = slots.Where(k => k.HasValue).Select(k => k!.Value).ToArray();
+        if (targets.Length == 0) return true;
+        var indexes = targets.Distinct().Select((k, i) => (k, i)).ToDictionary(x => x.k, x => x.i);
+        if (targets.Any(k => !candidates.Any(c => c.Key == k))) return false;
+        var entries = candidates.Select(c => new CardPoolEntry(c.Key, c.Rarity, c.Type, indexes.GetValueOrDefault(c.Key, -1))).ToArray();
+        var totals = new int[3]; var powers = new int[3];
+        foreach (var e in entries) { int r = RarityIndex(e.Rarity); if (r < 0) continue; totals[r]++; if (e.Type == EffectCardType.Power) powers[r]++; }
+        var pool = new CardPoolModel(entries, totals, powers, indexes, indexes.Count);
+        var profile = new RewardInfluenceProfile(wheel, false, candy, false);
+        var states = new HashSet<(int Pity, int Assigned)> { (0, 0) };
+        var memo = new Dictionary<(int Battle, int Pity), IReadOnlyList<(CardBattleState State, double Probability)>>();
+        int full = (1 << targets.Length) - 1;
+        for (int battle = 1; battle <= slots.Count; battle++)
+        {
+            var next = new HashSet<(int Pity, int Assigned)>();
+            foreach (var state in states)
+            {
+                if (!memo.TryGetValue((battle, state.Pity), out var outcomes))
+                    memo[(battle, state.Pity)] = outcomes = GenerateBattleCards(pool, ascension, battle, state.Pity, profile);
+                foreach (var (result, mass) in outcomes)
+                {
+                    if (mass <= 0) continue;
+                    bool Has(ModelKey key) => (result.ObservedMask & (BigInteger.One << indexes[key])) != 0;
+                    if (!unordered)
+                    {
+                        if (slots[battle - 1] is { } target && !Has(target)) continue;
+                        next.Add((result.PityStreak, 0));
+                    }
+                    else
+                    {
+                        next.Add((result.PityStreak, state.Assigned));
+                        // Match at most one requirement to this battle, as the existing C assignment donor does.
+                        for (int i = 0; i < targets.Length; i++)
+                            if ((state.Assigned & (1 << i)) == 0 && Has(targets[i]))
+                                next.Add((result.PityStreak, state.Assigned | (1 << i)));
+                    }
+                }
+            }
+            states = next;
+            if (states.Count == 0) return false;
+        }
+        return !unordered || states.Any(s => s.Assigned == full);
+    }
+
     private static double EstimateForProfile(
+        int ascension,
+        CardPoolModel cards,
+        PotionPoolModel potions,
+        MatcherContext matcher,
+        RewardInfluenceProfile profile)
+    {
+        string? key = ProfileProbabilityCacheKey(ascension, cards, potions, matcher, profile);
+        if (key is not null)
+        {
+            lock (ProfileProbabilityCacheGate)
+                if (ProfileProbabilityCache.TryGetValue(key, out double cached)) return cached;
+        }
+
+        Interlocked.Increment(ref _profileProbabilityComputations);
+        double probability = EstimateForProfileUncached(ascension, cards, potions, matcher, profile);
+        if (key is not null)
+        {
+            lock (ProfileProbabilityCacheGate)
+            {
+                // Concurrent misses may finish together; retain only one scalar.
+                if (!ProfileProbabilityCache.ContainsKey(key))
+                {
+                    if (ProfileProbabilityCache.Count == ProfileProbabilityCacheCapacity)
+                        ProfileProbabilityCache.Remove(ProfileProbabilityCacheOrder.Dequeue());
+                    ProfileProbabilityCache.Add(key, probability);
+                    ProfileProbabilityCacheOrder.Enqueue(key);
+                }
+            }
+        }
+        return probability;
+    }
+
+    private static double EstimateForProfileUncached(
         int ascension,
         CardPoolModel cards,
         PotionPoolModel potions,
@@ -588,8 +677,8 @@ internal static class CombatRewardProbabilityEstimator
                             state.CardAssignmentStates,
                             state.PotionAssignmentStates,
                             out BigInteger anyMask,
-                            out byte cardAssignmentStates,
-                            out byte potionAssignmentStates))
+                            out ulong cardAssignmentStates,
+                            out ulong potionAssignmentStates))
                     {
                         continue;
                     }
@@ -630,7 +719,7 @@ internal static class CombatRewardProbabilityEstimator
             [new CardBattleState(startingPity, BigInteger.Zero)] = 1d
         };
 
-        bool candy = profile.LastingCandy && battleOrdinal == 2;
+        bool candy = profile.LastingCandy && battleOrdinal % 2 == 0;
         states = GenerateCardRewardGroup(states, pool, ascension, candy);
         for (int extra = 0; extra < profile.AdditionalCardRewardCount; extra++)
             states = GenerateCardRewardGroup(states, pool, ascension, includeTrailingPowerCard: false);
@@ -657,19 +746,24 @@ internal static class CombatRewardProbabilityEstimator
             var next = new Dictionary<CardSequenceState, double>();
             foreach ((CardSequenceState state, double mass) in sequence)
             {
-                foreach ((EffectCardRarity rolledRarity, int nextPity, double rarityMass) in RarityBranches(ascension, state.PityStreak))
+                if (requiredPower && pool.PowerByRarity.Sum() == 0)
+                { AddMass(next, state, mass); continue; }
+                CardGroupState selectionGroup = requiredPower && Enumerable.Range(0, 3).Sum(r => AvailableCount(pool, state.Group, r, true)) == 0
+                    ? default : state.Group;
+                var rarityBranches = requiredPower ? CandyRarityBranches(ascension, state.PityStreak) : RarityBranches(ascension, state.PityStreak);
+                foreach ((EffectCardRarity rolledRarity, int nextPity, double rarityMass) in rarityBranches)
                 {
                     if (rarityMass <= 0d) continue;
-                    int selectedRarity = NextAvailableRarity(pool, state.Group, rolledRarity, requiredPower);
+                    int selectedRarity = NextAvailableRarity(pool, selectionGroup, rolledRarity, requiredPower);
                     if (selectedRarity < 0) continue;
-                    int available = AvailableCount(pool, state.Group, selectedRarity, requiredPower);
+                    int available = AvailableCount(pool, selectionGroup, selectedRarity, requiredPower);
                     if (available <= 0) continue;
 
-                    foreach ((int TargetIndex, bool IsPower, int Count) candidate in CandidateCategories(pool, state.Group, selectedRarity, requiredPower))
+                    foreach ((int TargetIndex, bool IsPower, int Count) candidate in CandidateCategories(pool, selectionGroup, selectedRarity, requiredPower))
                     {
                         if (candidate.Count <= 0) continue;
                         double candidateMass = (double)candidate.Count / available;
-                        CardGroupState group = ConsumeCard(state.Group, selectedRarity, candidate.IsPower, candidate.TargetIndex);
+                        CardGroupState group = ConsumeCard(selectionGroup, selectedRarity, candidate.IsPower, candidate.TargetIndex);
                         BigInteger observed = state.ObservedMask;
                         if (candidate.TargetIndex >= 0) observed |= BigInteger.One << candidate.TargetIndex;
                         AddMass(next,
@@ -686,6 +780,14 @@ internal static class CombatRewardProbabilityEstimator
         foreach ((CardSequenceState state, double mass) in sequence)
             AddMass(output, new CardBattleState(state.PityStreak, state.ObservedMask), mass);
         return output;
+    }
+
+    private static IEnumerable<(EffectCardRarity Rarity, int NextPity, double Probability)> CandyRarityBranches(int ascension, int pityStreak)
+    {
+        double rare = ascension >= 7 ? .0149d : .03d;
+        yield return (EffectCardRarity.Rare, pityStreak, rare);
+        yield return (EffectCardRarity.Uncommon, pityStreak, UncommonBase);
+        yield return (EffectCardRarity.Common, pityStreak, 1d - rare - UncommonBase);
     }
 
     private static IEnumerable<(EffectCardRarity Rarity, int NextPity, double Probability)> RarityBranches(int ascension, int pityStreak)
@@ -830,11 +932,11 @@ internal static class CombatRewardProbabilityEstimator
         PotionOutcome potion,
         int gold,
         BigInteger existingAnyMask,
-        byte existingCardAssignmentStates,
-        byte existingPotionAssignmentStates,
+        ulong existingCardAssignmentStates,
+        ulong existingPotionAssignmentStates,
         out BigInteger anyMask,
-        out byte cardAssignmentStates,
-        out byte potionAssignmentStates)
+        out ulong cardAssignmentStates,
+        out ulong potionAssignmentStates)
     {
         anyMask = existingAnyMask;
         cardAssignmentStates = existingCardAssignmentStates;
@@ -842,6 +944,7 @@ internal static class CombatRewardProbabilityEstimator
         for (int index = 0; index < matcher.Conditions.Length; index++)
         {
             NormalCombatRewardSearchCondition condition = matcher.Conditions[index];
+            if (condition.BattleOrdinal == 0 && battleOrdinal > 3) continue;
             if (condition.BattleOrdinal != 0 && condition.BattleOrdinal != battleOrdinal) continue;
             bool matched = MatchesCondition(matcher, condition, cardMask, potion, gold);
             if (condition.BattleOrdinal == battleOrdinal)
@@ -882,28 +985,28 @@ internal static class CombatRewardProbabilityEstimator
         return true;
     }
 
-    private static byte AdvanceAssignmentStates(byte states, int requirementCount, Func<int, bool> matches)
+    private static ulong AdvanceAssignmentStates(ulong states, int requirementCount, Func<int, bool> matches)
     {
-        byte next = states;
+        ulong next = states;
         int maxSubset = 1 << requirementCount;
         for (int subset = 0; subset < maxSubset; subset++)
         {
-            if ((states & (1 << subset)) == 0) continue;
+            if ((states & (1UL << subset)) == 0) continue;
             for (int requirement = 0; requirement < requirementCount; requirement++)
             {
                 if ((subset & (1 << requirement)) != 0 || !matches(requirement)) continue;
                 int expanded = subset | (1 << requirement);
-                next = (byte)(next | (1 << expanded));
+                next |= 1UL << expanded;
             }
         }
         return next;
     }
 
-    private static bool AssignmentComplete(byte states, int requirementCount)
+    private static bool AssignmentComplete(ulong states, int requirementCount)
     {
         if (requirementCount <= 0) return true;
         int fullSubset = (1 << requirementCount) - 1;
-        return (states & (1 << fullSubset)) != 0;
+        return (states & (1UL << fullSubset)) != 0;
     }
 
     private static bool MatchesCardTarget(
@@ -1026,7 +1129,7 @@ internal static class CombatRewardProbabilityEstimator
         int legacyMaximum = conditions.Length == 0
             ? 0
             : conditions.Any(condition => condition.BattleOrdinal == 0)
-                ? BattleCount
+                ? 3
                 : Math.Clamp(conditions.Max(condition => condition.BattleOrdinal), 1, BattleCount);
         int maximumBattleOrdinal = Math.Max(
             legacyMaximum,
@@ -1056,13 +1159,14 @@ internal static class CombatRewardProbabilityEstimator
     private static bool TryBuildCardPool(
         NeowEffectAuthoritySnapshot authority,
         IReadOnlyDictionary<ModelKey, int> targetIndexes,
+        bool multiplayer,
         out CardPoolModel model,
         out string issue)
     {
         issue = string.Empty;
         model = default!;
         NeowEffectCardSnapshot[] source = authority.CharacterRewardPool!
-            .Where(card => !card.IsMultiplayerOnly)
+            .Where(card => multiplayer || !card.IsMultiplayerOnly)
             .Where(card => card.EligibleForPostCombatRewardByPoolMembership)
             .Where(card => card.IsUnlockedInCapturedPool)
             .Where(card => card.Rarity is EffectCardRarity.Common or EffectCardRarity.Uncommon or EffectCardRarity.Rare)
@@ -1112,13 +1216,14 @@ internal static class CombatRewardProbabilityEstimator
     private static bool TryBuildPotionPool(
         NeowEffectAuthoritySnapshot authority,
         IReadOnlyDictionary<ModelKey, int> targetIndexes,
+        bool multiplayer,
         out PotionPoolModel model,
         out string issue)
     {
         issue = string.Empty;
         model = default!;
         NeowEffectPotionSnapshot[] source = authority.PotionPool!
-            .Where(potion => !potion.IsMultiplayerOnly)
+            .Where(potion => multiplayer || !potion.IsMultiplayerOnly)
             .Where(potion => potion.Rarity is EffectPotionRarity.Common or EffectPotionRarity.Uncommon or EffectPotionRarity.Rare)
             .OrderBy(potion => potion.PoolOrder)
             .ToArray();
@@ -1241,6 +1346,17 @@ internal static class CombatRewardProbabilityEstimator
         return true;
     }
 
+    internal static bool TryEstimateCapsuleBagConjunction(SearchSelectivityInput plan,
+        IReadOnlyList<ModelKey> capsuleSources, bool includeExplicitRelicSequence,
+        out double probability, out string detail, out string issue)
+    {
+        var matcher = new MatcherContext([], [], [], new Dictionary<ModelKey, int>(),
+            new Dictionary<ModelKey, int>(), new Dictionary<int, int>(), BigInteger.Zero,
+            0, false, false, false, 0, 0, 0, 0);
+        return TryBuildCapsuleInfluenceDistribution(plan, matcher, default, capsuleSources,
+            out _, out detail, out issue, out probability, includeExplicitRelicSequence);
+    }
+
     private static bool TryBuildCapsuleInfluenceDistribution(
         SearchSelectivityInput plan,
         MatcherContext matcher,
@@ -1248,8 +1364,11 @@ internal static class CombatRewardProbabilityEstimator
         IReadOnlyList<ModelKey> capsuleSources,
         out IReadOnlyList<RewardInfluenceMass> distribution,
         out string detail,
-        out string issue)
+        out string issue,
+        out double acceptedMass,
+        bool includeExplicitRelicSequence = true)
     {
+        acceptedMass = 0;
         distribution = Array.Empty<RewardInfluenceMass>();
         detail = string.Empty;
         issue = string.Empty;
@@ -1277,36 +1396,27 @@ internal static class CombatRewardProbabilityEstimator
                                 condition.Scope == NeowStructuredEffectScope.NestedRelics &&
                                 condition.OutputKind == NeowStructuredOutputKind.Relic)
             .ToArray();
-        if (capsuleConstraints.GroupBy(condition => condition.SourceRelicKey, ModelKeyComparer.Instance).Any(group => group.Count() > 1))
-        {
-            issue = "MultipleNestedConstraintsPerCapsule";
-            detail = "Current Product contracts permit one normalized NestedRelics predicate per Capsule source.";
-            return false;
-        }
-
         var groupsBySource = new Dictionary<ModelKey, CapsuleGroup>(ModelKeyComparer.Instance);
-        var groupedConstraint=capsuleConstraints.FirstOrDefault(NeowReplayPlan.IsGroupedCapsule);
-        if (groupedConstraint is not null && (capsuleConstraints.Length != 1 || capsuleSources.Count != 2))
-        { issue="GroupedCapsuleInfluenceShapeUnsupported"; return false; }
-        if (groupedConstraint is not null)
-            groupsBySource[BaseGameModelKeys.Relics.NeowsBones]=new CapsuleGroup(BaseGameModelKeys.Relics.NeowsBones,3,groupedConstraint);
-        foreach (ModelKey source in groupedConstraint is null ? capsuleSources : Array.Empty<ModelKey>())
+        foreach (ModelKey source in capsuleSources)
         {
             int drawCount = source == BaseGameModelKeys.Relics.LargeCapsule ? 2 : 1;
-            NeowStructuredEffectSearchCondition? constraint = capsuleConstraints.FirstOrDefault(item => item.SourceRelicKey == source);
-            groupsBySource[source] = new CapsuleGroup(source, drawCount, constraint);
+            groupsBySource[source] = new CapsuleGroup(source, drawCount, capsuleConstraints.Where(item => item.SourceRelicKey == source).ToArray());
         }
-        if (capsuleConstraints.Any(condition => !groupsBySource.ContainsKey(condition.SourceRelicKey)))
+        if (capsuleConstraints.Any(condition => !NeowReplayPlan.IsGroupedCapsule(condition) && !groupsBySource.ContainsKey(condition.SourceRelicKey)))
         {
-            issue = "NestedCapsuleConstraintOutsideSelectedRoute";
             detail = "A nested Capsule predicate references a Capsule identity that is not explicitly present on the selected opening route.";
-            return false;
+            return true;
         }
+        var sourceFilter = ProbabilitySemanticProjection.From(plan).NumericalFilter;
+        if (sourceFilter.RequireSmallCapsule && !groupsBySource.ContainsKey(BaseGameModelKeys.Relics.SmallCapsule) ||
+            sourceFilter.RequireLargeCapsule && !groupsBySource.ContainsKey(BaseGameModelKeys.Relics.LargeCapsule) ||
+            capsuleConstraints.Any(NeowReplayPlan.IsGroupedCapsule) && groupsBySource.Count != 2)
+        { detail = "RequiredCapsuleSourceAbsent"; return true; }
 
         CapsuleGroup[][] routeGroupings;
-        if (groupsBySource.Count == 1)
+        if (groupsBySource.Count <= 1)
         {
-            routeGroupings = new[] { new[] { groupsBySource.Values.Single() } };
+            routeGroupings = [groupsBySource.Values.ToArray()];
         }
         else
         {
@@ -1324,7 +1434,7 @@ internal static class CombatRewardProbabilityEstimator
         }
 
         int totalDraws = groupsBySource.Values.Sum(group => group.DrawCount);
-        if (totalDraws is < 1 or > 3)
+        if (totalDraws is < 0 or > 3)
         {
             issue = "CapsuleDrawCountUnsupported:" + totalDraws;
             detail = "Current opening Capsule topology supports one direct Capsule or the Bones Large+Small three-draw combination.";
@@ -1332,42 +1442,75 @@ internal static class CombatRewardProbabilityEstimator
         }
 
         var distinguished = new HashSet<ModelKey>(ModelKeyComparer.Instance);
-        foreach (ModelKey key in RelevantImpactRelics(matcher)) distinguished.Add(key);
+        foreach (ModelKey key in RelevantImpactRelics(matcher))
+            if (plan.Authority.PlayersCount == 1 ||
+                matcher.UsesCards && (key == PrayerWheel || key == LastingCandy) ||
+                matcher.UsesPotions && key == WhiteBeastStatue || matcher.UsesGold && key == AmethystAubergine) distinguished.Add(key);
         foreach (NeowStructuredEffectSearchCondition constraint in capsuleConstraints)
             foreach (ModelKey key in constraint.OutputKeys.Where(key => key.IsValid)) distinguished.Add(key);
-        // Explicit Relic Queue identities do not need their own Capsule assignment
-        // category unless they are also a Reward-impact or nested-Capsule target.
-        // FiniteSequenceProbabilitySolver already carries those queue predicates.
-        // Keeping them inside the aggregate `other` category avoids a combinatorial
-        // UI-preview blow-up while preserving the exact shared-bag probability.
-        if (distinguished.Count > 12)
+        var capsuleFilter = ProbabilitySemanticProjection.From(plan).NumericalFilter;
+        foreach (var key in capsuleFilter.CapsuleContainedRelics.All) distinguished.Add(key);
+        if (capsuleFilter.RequireWhetstone) distinguished.Add(BaseGameModelKeys.OrdinaryRelics.Whetstone);
+        if (capsuleFilter.RequireWarPaint) distinguished.Add(BaseGameModelKeys.OrdinaryRelics.WarPaint);
+        var unmodeled = new HashSet<ModelKey>();
+        if (capsuleSources.Count > 0 && plan.Authority.PlayersCount > 1)
         {
-            issue = "CapsuleDistinguishedIdentityBudgetExceeded:" + distinguished.Count;
-            detail = "The exact compressed Capsule projection-compatibility model exceeded the distinguished-identity budget.";
-            return false;
+            var authored = PartyInitialQuery.CapsuleEffectPremise(plan.CompiledSearch.NormalizedQuery).Values.SelectMany(k => k).ToHashSet();
+            foreach (var key in lanes.SelectMany(l => l))
+            {
+                RewardInfluenceProfile held = default;
+                bool unsupportedObtain = authored.Contains(key) &&
+                    (!RolltheSpire2.Core.Rewards.VanillaRelicRewardEffects.TryGet(plan.ProfileId, key, out var effect) ||
+                     (effect.OnObtainCapabilities & (RolltheSpire2.Core.Rewards.RelicOnObtainRewardEffects.ChangesCardRewardPool |
+                        RolltheSpire2.Core.Rewards.RelicOnObtainRewardEffects.ChangesPotionRewardPool |
+                        RolltheSpire2.Core.Rewards.RelicOnObtainRewardEffects.ChangesPotionRewardState |
+                        RolltheSpire2.Core.Rewards.RelicOnObtainRewardEffects.NestedRelicObtain |
+                        RolltheSpire2.Core.Rewards.RelicOnObtainRewardEffects.Unknown)) != 0);
+                if ((matcher.UsesCards || matcher.UsesPotions || matcher.UsesGold) &&
+                    !TryPartyHeldProfile(plan, key, matcher, ref held) || unsupportedObtain)
+                { unmodeled.Add(key); }
+            }
         }
+        // All and structured identities need individual categories. Any/Ban and
+        // unsupported-hook sets stay aggregate sequence constraints; their size
+        // must not turn a legal three-draw observation into an arbitrary budget failure.
+        var requiredIdentities = capsuleConstraints.SelectMany(c => c.OutputKeys)
+            .Concat(capsuleFilter.CapsuleContainedRelics.All).ToHashSet();
+        if (capsuleFilter.RequireWhetstone) requiredIdentities.Add(BaseGameModelKeys.OrdinaryRelics.Whetstone);
+        if (capsuleFilter.RequireWarPaint) requiredIdentities.Add(BaseGameModelKeys.OrdinaryRelics.WarPaint);
+        if (requiredIdentities.Count > totalDraws)
+        { detail = "CapsuleRequiredIdentitiesExceedDrawCount"; return true; }
+        distinguished.IntersectWith(lanes.SelectMany(l => l));
 
         var laneByKey = new Dictionary<ModelKey, int>(ModelKeyComparer.Instance);
         for (int lane = 0; lane < 3; lane++)
             foreach (ModelKey key in lanes[lane]) laneByKey[key] = lane;
 
         var profileMass = new Dictionary<RewardInfluenceProfile, double>();
-        double acceptedMass = 0d;
         int acceptedScenarioCount = 0;
         foreach ((CapsuleRarityChoice[] rolls, double rollMass, string _) in EnumerateCapsuleRarityPatterns(totalDraws))
         {
             CapsuleDrawPosition?[] positions = ProjectCapsulePositions(rolls, lanes.Take(3).Select(items => items.Length).ToArray());
-            if (positions.Any(position => !position.HasValue))
-            {
-                issue = "CapsuleCircletFallbackOutsideProbabilityScope";
-                detail = "A Capsule rarity branch exhausted the standard player relic lanes and entered Circlet fallback; fail closed instead of inventing a bag identity probability.";
-                return false;
-            }
-
             foreach (ModelKey?[] assignment in EnumerateCompressedAssignments(positions, lanes, distinguished, laneByKey))
             {
-                if (!RouteGroupingAccepts(routeGroupings, assignment)) continue;
-                double bagMass = SolveCompressedAssignmentBagMass(lanes, ProbabilitySemanticProjection.From(plan).NumericalFilter.RelicSequenceConditions, positions, assignment, distinguished, out string solveIssue);
+                if (!RouteGroupingAccepts(routeGroupings, assignment) ||
+                    capsuleConstraints.Where(NeowReplayPlan.IsGroupedCapsule).Any(c => !MatchesCapsuleConstraint(assignment, c))) continue;
+                var actualKeys = assignment.Where(k => k.HasValue).Select(k => k!.Value).ToArray();
+                if (!capsuleFilter.CapsuleContainedRelics.All.All(actualKeys.Contains) ||
+                    capsuleFilter.RequireWhetstone && !actualKeys.Contains(BaseGameModelKeys.OrdinaryRelics.Whetstone) ||
+                    capsuleFilter.RequireWarPaint && !actualKeys.Contains(BaseGameModelKeys.OrdinaryRelics.WarPaint)) continue;
+                double BagMass(IReadOnlyCollection<ModelKey> extraBan, out string solveIssue)
+                {
+                    ModelKey[] bans = capsuleFilter.CapsuleContainedRelics.Ban.Concat(extraBan).Distinct().ToArray();
+                    var explicitRelics = includeExplicitRelicSequence ? capsuleFilter.RelicSequenceConditions : [];
+                    double all = SolveCompressedAssignmentBagMass(lanes, explicitRelics, positions, assignment,
+                        distinguished, out solveIssue, bans);
+                    if (double.IsNaN(all) || all <= 0 || capsuleFilter.CapsuleContainedRelics.Any.Count == 0) return all;
+                    double none = SolveCompressedAssignmentBagMass(lanes, explicitRelics, positions, assignment,
+                        distinguished, out solveIssue, bans.Concat(capsuleFilter.CapsuleContainedRelics.Any).Distinct().ToArray());
+                    return double.IsNaN(none) ? none : Math.Max(0, all - none);
+                }
+                double bagMass = BagMass([], out string solveIssue);
                 if (double.IsNaN(bagMass))
                 {
                     issue = "CapsuleBagSolver:" + solveIssue;
@@ -1375,6 +1518,13 @@ internal static class CombatRewardProbabilityEstimator
                     return false;
                 }
                 if (bagMass <= 0d) continue;
+                if (unmodeled.Count > 0)
+                {
+                    double knownMass = BagMass(unmodeled, out solveIssue);
+                    if (double.IsNaN(knownMass)) { issue = "CapsuleBagSolver:" + solveIssue; return false; }
+                    if (bagMass - knownMass > 1e-14)
+                    { issue = "UnmodeledHeldOrAuthoredPoolChangePositiveMass"; return false; }
+                }
                 double mass = rollMass * bagMass;
                 acceptedMass += mass;
                 acceptedScenarioCount++;
@@ -1392,8 +1542,9 @@ internal static class CombatRewardProbabilityEstimator
             return true;
         }
 
+        double normalizationMass = acceptedMass;
         distribution = profileMass
-            .Select(pair => new RewardInfluenceMass(pair.Key, pair.Value / acceptedMass, "ConditionalOnSelectedCapsuleRoute"))
+            .Select(pair => new RewardInfluenceMass(pair.Key, pair.Value / normalizationMass, "ConditionalOnSelectedCapsuleRoute"))
             .OrderBy(item => item.Profile.Label, StringComparer.Ordinal)
             .ToArray();
         detail = $"ExplicitCapsuleRoute;draws={totalDraws};acceptedScenarios={acceptedScenarioCount};conditionalMass={acceptedMass:G17};profiles={string.Join(',', distribution.Select(item => item.Profile.Label + '=' + item.Mass.ToString("G8", System.Globalization.CultureInfo.InvariantCulture)))}";
@@ -1417,7 +1568,14 @@ internal static class CombatRewardProbabilityEstimator
                 yield return (ModelKey?[])buffer.Clone();
                 yield break;
             }
-            int lane = positions[index]!.Value.Lane;
+            if (positions[index] is not { } position)
+            {
+                buffer[index] = BaseGameModelKeys.OrdinaryRelics.Circlet;
+                foreach (ModelKey?[] result in Walk(index + 1)) yield return result;
+                buffer[index] = null;
+                yield break;
+            }
+            int lane = position.Lane;
             ModelKey[] candidates = distinguished.Where(key => laneByKey.TryGetValue(key, out int keyLane) && keyLane == lane && !used.Contains(key)).ToArray();
             foreach (ModelKey key in candidates)
             {
@@ -1430,7 +1588,7 @@ internal static class CombatRewardProbabilityEstimator
             int distinguishedInLane = distinguished.Count(key => laneByKey.TryGetValue(key, out int keyLane) && keyLane == lane);
             int alreadyUsedOtherSlots = 0;
             for (int prior = 0; prior < index; prior++)
-                if (positions[prior]!.Value.Lane == lane && !buffer[prior].HasValue) alreadyUsedOtherSlots++;
+                if (positions[prior] is { } previous && previous.Lane == lane && !buffer[prior].HasValue) alreadyUsedOtherSlots++;
             int otherAvailable = lanes[lane].Length - distinguishedInLane - alreadyUsedOtherSlots;
             if (otherAvailable > 0)
             {
@@ -1447,9 +1605,13 @@ internal static class CombatRewardProbabilityEstimator
         IReadOnlyList<CapsuleDrawPosition?> positions,
         IReadOnlyList<ModelKey?> assignment,
         IReadOnlySet<ModelKey> distinguished,
-        out string issue)
+        out string issue,
+        IReadOnlyCollection<ModelKey>? globalBans = null)
     {
         issue = string.Empty;
+        globalBans ??= [];
+        for (int draw = 0; draw < positions.Count; draw++)
+            if (positions[draw] is null && globalBans.Contains(BaseGameModelKeys.OrdinaryRelics.Circlet)) return 0;
         double probability = 1d;
         for (int lane = 0; lane < 3; lane++)
         {
@@ -1461,11 +1623,11 @@ internal static class CombatRewardProbabilityEstimator
             ModelKey[] distinguishedLane = distinguished.Where(key => lanes[lane].Contains(key, ModelKeyComparer.Instance)).ToArray();
             for (int draw = 0; draw < positions.Count; draw++)
             {
-                if (positions[draw]!.Value.Lane != lane) continue;
-                int ordinal = positions[draw]!.Value.Ordinal;
+                if (positions[draw] is not { } position || position.Lane != lane) continue;
+                int ordinal = position.Ordinal;
                 ModelKeySetFilter filter = assignment[draw].HasValue
-                    ? new ModelKeySetFilter(new[] { assignment[draw]!.Value }, Array.Empty<ModelKey>(), Array.Empty<ModelKey>())
-                    : new ModelKeySetFilter(Array.Empty<ModelKey>(), Array.Empty<ModelKey>(), distinguishedLane);
+                    ? new ModelKeySetFilter(new[] { assignment[draw]!.Value }, [], globalBans.ToArray())
+                    : new ModelKeySetFilter([], [], distinguishedLane.Concat(globalBans).Distinct().ToArray());
                 constraints.Add(new FiniteSequenceProbabilitySolver.Constraint(SearchSequenceRangeMode.ExactSlot, ordinal, filter));
             }
 
@@ -1489,7 +1651,7 @@ internal static class CombatRewardProbabilityEstimator
             {
                 ModelKey?[] outputs = assignment.Skip(offset).Take(group.DrawCount).ToArray();
                 offset += group.DrawCount;
-                if (group.Constraint is not null && !MatchesCapsuleConstraint(outputs, group.Constraint))
+                if (group.Constraints.Any(c => !MatchesCapsuleConstraint(outputs, c)))
                 {
                     accepted = false;
                     break;
@@ -1515,7 +1677,7 @@ internal static class CombatRewardProbabilityEstimator
         {
             return constraint.Kind == NeowStructuredConditionKind.ExactUnorderedPair &&
                    outputs.Count == 2 &&
-                   constraint.OutputKeys.All(target => actual.Contains(target, ModelKeyComparer.Instance));
+                   constraint.OutputKeys.GroupBy(k => k).All(g => actual.Count(k => k == g.Key) >= g.Count());
         }
         return false;
     }

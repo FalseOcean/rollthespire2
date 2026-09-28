@@ -7,9 +7,11 @@ using RolltheSpire2.Presentation.ContentNames;
 using RolltheSpire2.Presentation.Localization;
 using RolltheSpire2.Presentation.Ui1;
 using RolltheSpire2.Search.Contracts;
+using RolltheSpire2.Search.Semantics;
 using RolltheSpire2.Ui.Icons;
 using RolltheSpire2.Ui.Pages.Search;
 using RolltheSpire2.Ui.Persistence;
+using RolltheSpire2.Ui.Shell;
 using RolltheSpire2.Ui.Theme;
 using RolltheSpire2.Ui.Tooltips;
 
@@ -29,6 +31,7 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
     private readonly PanelContainer _dialog;
     private readonly Label _title;
     private readonly Button _close;
+    private readonly Button _createCurrent;
     private readonly VBoxContainer _list;
     private readonly Dictionary<SearchPresetSource, bool> _expanded = new()
     {
@@ -49,12 +52,14 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
     private readonly Label _probabilityValue;
     private readonly VBoxContainer _summary;
     private readonly Button _saveAsUser;
+    private readonly Button _updateCurrent;
     private readonly Button _share;
     private readonly Button _delete;
     private readonly Button _cancel;
     private readonly Button _load;
 
     private IUiTextProvider? _text;
+    private IUiTextProvider? _workbenchText;
     private IGameContentNameResolver? _names;
     private IReadOnlyList<SearchPresetDefinition> _entries = Array.Empty<SearchPresetDefinition>();
     private string _selectedId = string.Empty;
@@ -104,7 +109,11 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
         _close = new Button { Text = "×", CustomMinimumSize = new Vector2(42f, 34f) };
         Ui1Theme.ApplyButton(_close, Ui1ButtonRole.Ghost);
         _close.Pressed += Cancel;
+        _createCurrent = new Button { CustomMinimumSize = new Vector2(156f, 34f), Visible = false };
+        Ui1Theme.ApplyButton(_createCurrent, Ui1ButtonRole.Secondary);
+        _createCurrent.Pressed += () => CreateCurrentRequested?.Invoke();
         header.AddChild(_title);
+        header.AddChild(_createCurrent);
         header.AddChild(_close);
         root.AddChild(header);
 
@@ -206,11 +215,13 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
         _delete = new Button { CustomMinimumSize = new Vector2(104f, 34f) };
         _share = new Button { CustomMinimumSize = new Vector2(104f, 34f), Disabled = true };
         _saveAsUser = new Button { CustomMinimumSize = new Vector2(154f, 34f) };
+        _updateCurrent = new Button { CustomMinimumSize = new Vector2(156f, 34f), Visible = false };
         _cancel = new Button { CustomMinimumSize = new Vector2(92f, 34f) };
         _load = new Button { CustomMinimumSize = new Vector2(104f, 34f) };
         Ui1Theme.ApplyButton(_delete, Ui1ButtonRole.Danger);
         Ui1Theme.ApplyButton(_share, Ui1ButtonRole.Ghost);
         Ui1Theme.ApplyButton(_saveAsUser, Ui1ButtonRole.Secondary);
+        Ui1Theme.ApplyButton(_updateCurrent, Ui1ButtonRole.Secondary);
         Ui1Theme.ApplyButton(_cancel, Ui1ButtonRole.Ghost);
         Ui1Theme.ApplyButton(_load, Ui1ButtonRole.Primary);
         _delete.Pressed += () =>
@@ -221,6 +232,10 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
         {
             if (!string.IsNullOrWhiteSpace(_selectedId)) SaveAsUserRequested?.Invoke(_selectedId);
         };
+        _updateCurrent.Pressed += () =>
+        {
+            if (!string.IsNullOrWhiteSpace(_selectedId)) UpdateCurrentRequested?.Invoke(_selectedId);
+        };
         _cancel.Pressed += Cancel;
         _load.Pressed += () =>
         {
@@ -229,6 +244,7 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
         footer.AddChild(_delete);
         footer.AddChild(_share);
         footer.AddChild(_saveAsUser);
+        footer.AddChild(_updateCurrent);
         footer.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill });
         footer.AddChild(_cancel);
         footer.AddChild(_load);
@@ -240,11 +256,16 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
     public event Action<string>? SaveAsUserRequested;
     public event Action<string>? EditMetadataRequested;
     public event Action<string>? DeleteRequested;
+    public event Action? CreateCurrentRequested;
+    public event Action<string>? UpdateCurrentRequested;
+    public event Action? Cancelled;
     public bool IsOpen => Visible;
+    public bool WorkbenchMode { get; set; }
 
     public void ApplyLocalization(IUiTextProvider text, IGameContentNameResolver names)
     {
         _text = text ?? throw new ArgumentNullException(nameof(text));
+        _workbenchText = JsonUiTextProvider.CreateUi13(text.LanguageCode);
         _names = names ?? throw new ArgumentNullException(nameof(names));
         _title.Text = text.Get(Ui1TextKey.SearchPresetLibraryTitle);
         _editInfo.Text = text.Get(Ui1TextKey.SearchPresetEditInfo);
@@ -252,6 +273,9 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
         _share.Text = text.Get(Ui1TextKey.SearchPresetShare);
         _share.TooltipText = text.Get(Ui1TextKey.SearchPresetShareUnavailable);
         _saveAsUser.Text = text.Get(Ui1TextKey.SearchPresetSaveAsMine);
+        _createCurrent.Text = Local("保存当前条件", "Save current conditions");
+        _updateCurrent.Text = Local("用当前条件更新", "Update from current");
+        _updateCurrent.TooltipText = Local("以当前工作台的完整条件替换此预设；保存前需确认。", "Replace this preset with the current workbench conditions after confirmation.");
         _cancel.Text = text.Get(Ui1TextKey.SearchPresetCancel);
         _load.Text = text.Get(Ui1TextKey.SearchPresetLoadConfirm);
         _probabilityTitle.Text = text.Get(Ui1TextKey.SearchPresetSavedProbability);
@@ -264,6 +288,7 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
     public void Open(IReadOnlyList<SearchPresetDefinition> entries)
     {
         _entries = entries ?? Array.Empty<SearchPresetDefinition>();
+        _createCurrent.Visible = WorkbenchMode;
         EnsureVisibleSelection();
         RebuildList();
         RefreshDetail();
@@ -279,15 +304,24 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
         RefreshDetail();
     }
 
+    public void ShowIssue(string message)
+    {
+        _compatibilityNotice.Text = message ?? string.Empty;
+        _compatibilityNotice.TooltipText = string.Empty;
+        _compatibilityNotice.Visible = !string.IsNullOrWhiteSpace(message);
+    }
+
     public void Cancel()
     {
+        if (!Visible) return;
         _tooltipHost.Dismiss();
         Visible = false;
+        Cancelled?.Invoke();
     }
 
     public override void _UnhandledKeyInput(InputEvent @event)
     {
-        if (Visible && @event is InputEventKey { Pressed: true, Keycode: Key.Escape })
+        if (IsVisibleInTree() && @event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Escape })
         {
             Cancel();
             GetViewport().SetInputAsHandled();
@@ -359,7 +393,7 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
             {
                 ButtonPressed = string.Equals(_selectedId, preset.Id, StringComparison.Ordinal)
             };
-            button.Bind(label, preset.VisualIcons, _names);
+            button.Bind(label, FormatListContext(preset), preset.VisualIcons, _names);
             button.Pressed += () =>
             {
                 _selectedId = preset.Id;
@@ -377,14 +411,24 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
         SearchPresetDefinition? preset = _entries.FirstOrDefault(entry =>
             string.Equals(entry.Id, _selectedId, StringComparison.Ordinal));
         bool valid = preset is not null;
-        SearchPresetLoadResolution? loadResolution = valid
+        SearchPresetLoadResolution? loadResolution = valid && !preset!.IsWorkbench
             ? SearchPresetCompatibilityResolver.Resolve(preset!, RuntimeAuthorityEnvironment.Current.Authority)
             : null;
-        _load.Disabled = !valid || loadResolution?.CanLoad != true;
+        SearchPresetWorkbenchLoadResolution? workbenchResolution = valid && preset!.IsWorkbench && WorkbenchMode
+            ? SearchPresetCompatibilityResolver.ResolveWorkbench(preset, RuntimeAuthorityEnvironment.Current.Authority)
+            : null;
+        bool canLoad = workbenchResolution?.CanLoad == true || loadResolution?.CanLoad == true &&
+            (!WorkbenchMode || loadResolution.Kind == SearchPresetLoadResolutionKind.Full);
+        _load.Disabled = !canLoad;
         _delete.Visible = valid && preset!.Source == SearchPresetSource.User;
-        _share.Visible = valid && preset!.Source == SearchPresetSource.User;
+        _share.Visible = !WorkbenchMode && valid && preset!.Source == SearchPresetSource.User;
         _editInfo.Visible = valid && preset!.Source == SearchPresetSource.User;
-        _saveAsUser.Visible = valid && preset!.Source == SearchPresetSource.Temporary;
+        _saveAsUser.Visible = valid && (WorkbenchMode || preset!.Source == SearchPresetSource.Temporary);
+        _saveAsUser.Disabled = WorkbenchMode && !canLoad;
+        _saveAsUser.Text = WorkbenchMode ? Local("另存为我的预设", "Save as my preset") : _text?.Get(Ui1TextKey.SearchPresetSaveAsMine) ?? string.Empty;
+        _updateCurrent.Visible = WorkbenchMode && valid && preset!.Source == SearchPresetSource.User;
+        // An unknown payload must remain intact until it can be resolved by a compatible version.
+        _updateCurrent.Disabled = !canLoad;
 
         if (!valid || _text is null || _names is null)
         {
@@ -413,7 +457,18 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
             SearchPresetSource.Temporary => _text.Get(Ui1TextKey.SearchPresetTemporary),
             _ => _text.Get(Ui1TextKey.SearchPresetUser)
         };
-        BindCompatibilityNotice(value, loadResolution!);
+        if (value.IsWorkbench || WorkbenchMode && !canLoad)
+        {
+            string explanation = value.IsWorkbench && !WorkbenchMode
+                ? Local("此预设包含完整工作台条件，请在新工作台的“预设”中打开。", "This preset contains workbench conditions. Open it from Presets in the new workbench.")
+                : !canLoad
+                    ? Local("无法完整应用此预设。原始内容已保留；请使用兼容版本，或在所需内容可用后重试。", "This preset cannot be applied in full. Its original content is preserved; use a compatible version or retry when the required content is available.")
+                    : Local("应用将切换到此预设的模式并替换该模式的全部条件；多人预设同时恢复整桌人物与解锁设置。不会自动开始筛种。", "Apply switches to this preset's mode and replaces that mode's conditions, including the full party roster and unlock settings. Search does not start automatically.");
+            _compatibilityNotice.Text = explanation;
+            _compatibilityNotice.TooltipText = workbenchResolution?.Issue ?? loadResolution?.Issue ?? string.Empty;
+            _compatibilityNotice.Visible = true;
+        }
+        else BindCompatibilityNotice(value, loadResolution!);
         _probabilityValue.Text = FormatProbability(value.SavedProbability);
         BuildSemanticSummary(value);
     }
@@ -498,7 +553,6 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
     private string FormatContext(SearchPresetDefinition preset)
     {
         if (_text is null || _names is null) return string.Empty;
-        string character = _names.Resolve(preset.CharacterKey, GameContentKind.Character);
         string unlock = preset.Provenance.UnlockKind switch
         {
             SearchPresetUnlockKinds.Full => _text.Get(Ui1TextKey.SearchPresetUnlockFull),
@@ -522,7 +576,23 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
         string version = string.IsNullOrWhiteSpace(preset.Provenance.GameVersion)
             ? _text.Get(Ui1TextKey.SearchPresetVersionUnknown)
             : preset.Provenance.GameVersion;
-        return $"{character} · A{preset.Ascension} · {unlock} · {environment} · {version}";
+        return $"{FormatListContext(preset)}\n{unlock} · {environment} · {version}";
+    }
+
+    private string Local(string chinese, string english) => _text?.LanguageCode.StartsWith("zh", StringComparison.OrdinalIgnoreCase) == true ? chinese : english;
+
+    private string FormatListContext(SearchPresetDefinition preset)
+    {
+        if (_names is null) return string.Empty;
+        string roster = preset.Workbench is { Players.Count: > 0 } workbench
+            ? string.Join(" / ", workbench.Players.Select(p => $"P{p.Slot + 1} {_names.Resolve(p.Character, GameContentKind.Character)}"))
+            : _names.Resolve(preset.CharacterKey, GameContentKind.Character);
+        string mode = preset.IsMultiplayer
+            ? Local($"多人 · {preset.Workbench!.Players.Count} 人", $"Party · {preset.Workbench!.Players.Count} players")
+            : preset.IsWorkbench && preset.Workbench is null
+                ? Local("模式待解析", "Mode unavailable")
+                : Local("单人", "Solo");
+        return $"{mode} · A{preset.Ascension} · {Local($"{preset.ConditionCount} 项条件", $"{preset.ConditionCount} conditions")}\n{roster}";
     }
 
     private string FormatProbability(SearchPresetProbabilitySnapshot snapshot)
@@ -537,6 +607,11 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
     private void BuildSemanticSummary(SearchPresetDefinition preset)
     {
         if (_text is null || _names is null) return;
+        if (preset.Workbench is { } workbench)
+        {
+            BuildWorkbenchSummary(workbench);
+            return;
+        }
         if (preset.Draft is null)
         {
             _summary.AddChild(Ui1Theme.Label(_text.Get(Ui1TextKey.SearchPresetQueryUnavailable), Ui1TextRole.Warning, true));
@@ -605,15 +680,28 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
         Add(_text.Get(Ui1TextKey.SearchCategoryEvents), draft.EventSequenceDraft
             .Where(condition => !condition.IsEmpty)
             .Select(FormatEventCondition));
+        if ((draft.MorphicGroveContainsCard ?? draft.MorphicGroveSecondCard) is { } morphicCard)
+            Add(_text.Get(Ui1TextKey.SearchCategoryEvents), new[] {
+                _text.Get(Ui1TextKey.SearchEventMorphicContains) + ": " + _names!.Resolve(morphicCard, GameContentKind.Card) +
+                (draft.MorphicGroveContainsCard.HasValue && draft.MorphicGroveSecondCard is { } second ? " + " + _names.Resolve(second, GameContentKind.Card) : "") });
+        if (draft.TransformationAggregate is { } aggregate)
+            Add(_text.LanguageCode.StartsWith("zh") ? "变牌组合" : "Transformation aggregate", new[] {
+                aggregate.Opening + " · " + aggregate.PickupOrder + " · " +
+                string.Join(" + ", new[] { aggregate.MorphicGrove ? "Morphic ×2" : null, aggregate.AromaOfChaos ? "Aroma ×1" : null, aggregate.WhisperingHollow ? "Whisper ×1" : null }.Where(x => x is not null)),
+                aggregate.Predicate == RolltheSpire2.Search.Semantics.TransformationAggregatePredicate.RareCountAtLeast
+                    ? (_text.LanguageCode.StartsWith("zh") ? "稀有牌至少 " : "Rare cards ≥ ") + aggregate.MinimumRareCount
+                    : string.Join(" + ", aggregate.TargetMultiset.Select(k => _names.Resolve(k, GameContentKind.Card))) });
 
         Add(_text.Get(Ui1TextKey.SearchCategoryEvents), draft.EventResultDraft.Where(c => c.IsValid).Select(c => {
             var (key, kind) = c.Kind switch {
                 EventResultConditionKind.TrashHeapGrabCard => ("trash_grab", GameContentKind.Card),
+                EventResultConditionKind.MorphicGroveGroupInitialBasicsContains => ("morphic_contains", GameContentKind.Card),
                 EventResultConditionKind.TrashHeapDiveRelic => ("trash_dive", GameContentKind.Relic),
                 EventResultConditionKind.ColorfulPhilosophersOfferedColor => ("color", GameContentKind.Character),
                 _ => ("fake_relic", GameContentKind.Relic)
             };
-            return _text.Get("ui1.search.event_result." + key) + " · " + _names.Resolve(c.TargetKey, kind);
+            return _text.Get("ui1.search.event_result." + key) + " · " + _names.Resolve(c.TargetKey, kind) +
+                (c.MorphicGroveSecondCard is { } second ? " + " + _names.Resolve(second, GameContentKind.Card) : "");
         }));
         var shop = new List<string>();
         shop.AddRange(draft.MerchantColorlessSequenceDraft.Where(c => !c.IsEmpty).Select(c =>
@@ -652,6 +740,148 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
         }
         if (sections.Count == 0)
             _summary.AddChild(Ui1Theme.Label(_text.Get(Ui1TextKey.SearchPresetSummaryEmpty), Ui1TextRole.Muted, true));
+    }
+
+    private void BuildWorkbenchSummary(WorkbenchSearchDraft draft)
+    {
+        if (draft.Players.Count == 0)
+            AddQuerySummary(draft.Query, Local("单人条件", "Solo conditions"));
+        else
+        {
+            AddQuerySummary(draft.Query, Local("整桌共享条件", "Shared party conditions"));
+            foreach (WorkbenchPlayerDraft player in draft.Players)
+            {
+                string source = player.UnlockSource switch
+                {
+                    "AssumedFullyUnlocked" => Local("假定全解锁", "Assumed fully unlocked"),
+                    "CapturedLobbySlot" => Local("读取的大厅解锁", "Captured lobby unlocks"),
+                    _ => player.UnlockSource
+                };
+                string title = $"P{player.Slot + 1} · {_names!.Resolve(player.Character, GameContentKind.Character)} · {source}";
+                PlayerOfferQuery? personal = draft.Query.Players.FirstOrDefault(p => p.Slot == player.Slot);
+                if (personal is null)
+                {
+                    AddSummaryCard(title, [Local("此席位的条件无法解析", "This slot's conditions are unavailable")]);
+                    continue;
+                }
+                var offers = new List<string>();
+                if (!personal.Offers.IsEmpty) offers.Add("N · " + FormatKeyFilter(personal.Offers, GameContentKind.Relic));
+                if (personal.SelectedOption is { } plan)
+                    offers.Add("N · " + _names.Resolve(plan.Option, GameContentKind.Relic));
+                offers.AddRange(personal.Results.Select(FormatStructuredEffect));
+                AddQuerySummary(personal.Conditions, title, offers);
+            }
+        }
+    }
+
+    private void AddQuerySummary(SearchQuery query, string title, IEnumerable<string>? extra = null)
+    {
+        var lines = new List<string>(extra ?? []);
+        if (query.OpeningRoute is { } route) lines.Add("N · " + _names!.Resolve(route.RouteRelicKey, GameContentKind.Relic));
+        if (query.OpeningRouteRelicRequirement is { } bones)
+            lines.Add("N · " + string.Join(bones.OrderMode == BonesRouteOrderMode.ExactOrder ? " → " : " + ", bones.RequiredRelicKeys.Select(k => _names!.Resolve(k, GameContentKind.Relic))));
+        lines.AddRange(query.StructuredOpeningEffects.Select(FormatStructuredEffect));
+        if (!query.LegacyNeow.NeowRelics.IsEmpty) lines.Add("N · " + FormatKeyFilter(query.LegacyNeow.NeowRelics, GameContentKind.Relic));
+        if (query.LegacyNeow.RequiredFinalCurse is { } curse) lines.Add("N · " + _text!.Get(Ui1TextKey.SearchFinalCurse) + " · " + _names!.Resolve(curse, GameContentKind.Card));
+        lines.AddRange(query.RelicSequenceConstraints.Select(c => "R · " + FormatRelicCondition(c)));
+        lines.AddRange(query.EventSequenceConstraints.Select(c => "E · " + FormatEventCondition(c)));
+        lines.AddRange(query.EventResultConditions.Select(c => "E · " + FormatEventResult(c)));
+        lines.AddRange(query.AncientBranches.Select(c => $"A · {_text!.Format(Ui1TextKey.SearchPresetSummaryAct, c.Act)} · {_names!.Resolve(c.AncientKey, GameContentKind.Ancient)}" +
+            (c.OptionAny.Count > 0 ? " · " + string.Join(" / ", c.OptionAny.Select(k => _names.Resolve(k, GameContentKind.Relic))) : "") +
+            (c.SeaGlassTargetAny.Count > 0 ? " · " + string.Join(" / ", c.SeaGlassTargetAny.Select(k => _names.Resolve(k, GameContentKind.Character))) : "")));
+        lines.AddRange(query.LegacyWorld.AncientIdentityFilters.Select(c => $"A · {_text!.Format(Ui1TextKey.SearchPresetSummaryAct, c.Act)} · {FormatKeyFilter(c.Keys, GameContentKind.Ancient)}"));
+        lines.AddRange(query.LegacyWorld.AncientOptionFilters.Select(c => $"A · {_text!.Format(Ui1TextKey.SearchPresetSummaryAct, c.Act)} · {FormatKeyFilter(c.Keys, GameContentKind.Relic)}"));
+        lines.AddRange(query.VariantBossBranches.Select(c => $"W · {_text!.Format(Ui1TextKey.SearchPresetSummaryAct, c.Act)} · {_names!.Resolve(c.VariantKey, GameContentKind.Act)}" +
+            (!c.FirstBoss.IsEmpty ? " · " + FormatKeyFilter(c.FirstBoss, GameContentKind.Encounter) : "") +
+            (!c.SecondBoss.IsEmpty ? " · #2 " + FormatKeyFilter(c.SecondBoss, GameContentKind.Encounter) : "")));
+        lines.AddRange(query.LegacyWorld.BossFilters.Select(c => $"W · {_text!.Format(Ui1TextKey.SearchPresetSummaryAct, c.Act)} · {FormatKeyFilter(c.Keys, GameContentKind.Encounter)}"));
+        lines.AddRange(query.LegacyWorld.BossOrdinalFilters.Select(c => $"W · {_text!.Format(Ui1TextKey.SearchPresetSummaryAct, c.Act)} · #{c.Ordinal} · {FormatKeyFilter(c.Keys, GameContentKind.Encounter)}"));
+        lines.AddRange(query.StandardMaps.Select(FormatMapCondition));
+        lines.AddRange(query.RelicShopSequenceConditions.Select(c => "S · " + _text!.Get(Ui1TextKey.SearchRelicLaneShop) + " · " + FormatOrderMode(c.OrderMode) + " · " + FormatSlots(c.Slots.Take(c.Count), GameContentKind.Relic)));
+        lines.AddRange(query.MerchantColorlessSequenceConditions.Select(c => "S · " + _text!.Get(c.Slot == MerchantColorlessSlot.Uncommon ? Ui1TextKey.SearchShopUncommon : Ui1TextKey.SearchShopRare) + " · " + FormatOrderMode(c.OrderMode) + " · " + FormatSlots(c.Slots.Take(c.Count), GameContentKind.Card)));
+        lines.AddRange(query.MerchantColorlessConditions.Select(c => $"S · #{c.MerchantOrdinal} · " + _text!.Get(c.Slot == MerchantColorlessSlot.Uncommon ? Ui1TextKey.SearchShopUncommon : Ui1TextKey.SearchShopRare) + " · " + _names!.Resolve(c.TargetCardKey, GameContentKind.Card)));
+        if (query.CombatCardRewards is { } cards)
+            lines.Add("C · " + _text!.Format(Ui1TextKey.SearchPresetSummaryRewardCards, cards.Count, FormatOrderMode(cards.OrderMode)) + " · " + FormatSlots(cards.Slots.Take(cards.Count), GameContentKind.Card));
+        if (query.CombatPotionRewards is { } potions)
+            lines.Add("C · " + _text!.Format(Ui1TextKey.SearchPresetSummaryRewardPotions, potions.Count, FormatOrderMode(potions.OrderMode)) + " · " +
+                string.Join(" / ", potions.Slots.Take(potions.Count).Select(s => s.PotionKey is { } key ? _names!.Resolve(key, GameContentKind.Potion) :
+                    s.Requirement == CombatPotionSlotRequirement.NoDrop ? _text.Get(Ui1TextKey.SearchCombatRewardPotionNoDrop) :
+                    s.Requirement == CombatPotionSlotRequirement.DropAny ? _text.Get(Ui1TextKey.SearchCombatRewardPotionDrop) : "—")));
+        if (query.TransformationAggregate is { } transform)
+            lines.Add("T · " + (transform.Predicate == TransformationAggregatePredicate.RareCountAtLeast
+                ? Local("稀有牌至少 ", "Rare cards ≥ ") + transform.MinimumRareCount
+                : string.Join(" + ", transform.TargetMultiset.Select(k => _names!.Resolve(k, GameContentKind.Card)))));
+        AddSummaryCard(title, lines.Count > 0 ? lines : [_text!.Get(Ui1TextKey.SearchPresetSummaryEmpty)]);
+    }
+
+    private string FormatStructuredEffect(NeowStructuredEffectSearchCondition effect)
+    {
+        GameContentKind kind = effect.OutputKind == NeowStructuredOutputKind.Relic ? GameContentKind.Relic :
+            effect.OutputKind == NeowStructuredOutputKind.Potion ? GameContentKind.Potion : GameContentKind.Card;
+        string targets = effect.KaleidoscopePositionalSlots.Count > 0
+            ? FormatSlots(effect.KaleidoscopePositionalSlots, kind)
+            : string.Join(" + ", effect.OutputKeys.Select(k => _names!.Resolve(k, kind)));
+        if (effect.SpecialOffer == NeowSpecialOfferKind.ScrollBoxesTripleClaw)
+            targets = _names!.Resolve(BaseGameModelKeys.Cards.Claw, GameContentKind.Card) + " ×3";
+        return $"N · {_names!.Resolve(effect.SourceRelicKey, GameContentKind.Relic)} · {targets}";
+    }
+
+    private string FormatEventResult(EventResultSearchCondition condition)
+    {
+        string eventId = condition.Kind switch
+        {
+            EventResultConditionKind.TrashHeapGrabCard or EventResultConditionKind.TrashHeapDiveRelic => "TRASH_HEAP",
+            EventResultConditionKind.ColorfulPhilosophersOfferedColor => "COLORFUL_PHILOSOPHERS",
+            EventResultConditionKind.FakeMerchantOfferedFakeRelic => "FAKE_MERCHANT",
+            EventResultConditionKind.MorphicGroveGroupInitialBasicsContains => "MORPHIC_GROVE",
+            EventResultConditionKind.SymbioteInitialBasicTransform => "SYMBIOTE",
+            EventResultConditionKind.AromaOfChaosInitialBasicTransform => "AROMA_OF_CHAOS",
+            EventResultConditionKind.WhisperingHollowInitialBasicTransform => "WHISPERING_HOLLOW",
+            EventResultConditionKind.TrialCase or EventResultConditionKind.TrialNondescriptInitialBasicsContains => "TRIAL",
+            _ => "TINKER_TIME"
+        };
+        string target;
+        if (condition.TrialCase is { } trial)
+            target = _workbenchText!.Get($"query.event.results.case_{(int)trial + 1}");
+        else if (condition.TinkerCardType is { } cardType)
+            target = _workbenchText!.Get($"query.event.results.card_type_{(int)cardType + 1}") +
+                (condition.TinkerRider is { } rider ? " · " + _workbenchText.Get("query.event.results.rider." + rider.ToString().ToLowerInvariant()) : "");
+        else
+        {
+            GameContentKind kind = condition.Kind switch
+            {
+                EventResultConditionKind.TrashHeapDiveRelic or EventResultConditionKind.FakeMerchantOfferedFakeRelic => GameContentKind.Relic,
+                EventResultConditionKind.ColorfulPhilosophersOfferedColor => GameContentKind.Character,
+                _ => GameContentKind.Card
+            };
+            target = _names!.Resolve(condition.TargetKey, kind) + (condition.MorphicGroveSecondCard is { } second ? " + " + _names.Resolve(second, GameContentKind.Card) : "");
+        }
+        return _names!.Resolve(new ModelKey("EVENT", eventId), GameContentKind.Event) + " · " + target;
+    }
+
+    private string FormatMapCondition(StandardMapSearchCondition condition)
+    {
+        string metric = condition.Metric switch
+        {
+            StandardMapMetric.GuaranteedMonster => "monster", StandardMapMetric.GuaranteedElite => "elite",
+            StandardMapMetric.GuaranteedRest => "rest", StandardMapMetric.GuaranteedUnknown => "unknown",
+            StandardMapMetric.ReachableMaxMonster => "max_monster", StandardMapMetric.ReachableMaxElite => "max_elite",
+            StandardMapMetric.ReachableMaxRest => "max_rest", StandardMapMetric.ReachableMaxUnknown => "max_unknown", _ => "prefix"
+        };
+        string scope = _workbenchText!.Get(condition.Scope == 0 ? "query.map.scope.total" : $"query.map.scope.act{condition.Scope}");
+        return $"M · {scope} · {_workbenchText.Get(condition.RouteObjective ? "query.map.route" : "query.map.property")} · {_workbenchText.Get("query.map.property." + metric)} {(condition.Comparison == StandardMapComparison.AtLeast ? "≥" : "≤")} {condition.Value}";
+    }
+
+    private void AddSummaryCard(string title, IEnumerable<string> lines)
+    {
+        var card = new PanelContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        Ui1Theme.ApplyPanel(card, Ui1SurfaceRole.Input, 3f, 1, 8f);
+        var column = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        column.AddThemeConstantOverride("separation", 3);
+        column.AddChild(Ui1Theme.Label(title, Ui1TextRole.Meta, true));
+        foreach (string line in lines) column.AddChild(Ui1Theme.Label(line, Ui1TextRole.Body, true));
+        card.AddChild(column);
+        _summary.AddChild(card);
     }
 
     private bool TryResolveRelicIcon(
@@ -730,6 +960,7 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
         private readonly AnchoredTooltipHost _tooltipHost;
         private readonly HBoxContainer _row;
         private readonly Label _label;
+        private readonly Label _context;
         private readonly List<(Control Host, ModelKey Key)> _hoverIcons = new();
 
         public PresetListItemButton(IGameIconResolver icons, AnchoredTooltipHost tooltipHost)
@@ -738,7 +969,7 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
             _tooltipHost = tooltipHost;
             ToggleMode = true;
             Text = string.Empty;
-            CustomMinimumSize = new Vector2(0f, 48f);
+            CustomMinimumSize = new Vector2(0f, 88f);
             SizeFlagsHorizontal = SizeFlags.ExpandFill;
             Ui1Theme.ApplyButton(this, Ui1ButtonRole.Secondary);
 
@@ -753,11 +984,17 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
             _label.VerticalAlignment = VerticalAlignment.Center;
             _label.ClipText = true;
             _label.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+            _context = Ui1Theme.Label(string.Empty, Ui1TextRole.Muted);
+            _context.MouseFilter = MouseFilterEnum.Ignore;
+            _context.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            _context.ClipText = true;
+            _context.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
             AddChild(_row);
         }
 
         public void Bind(
             string label,
+            string context,
             IReadOnlyList<SearchPresetVisualIconRef> icons,
             IGameContentNameResolver? names)
         {
@@ -788,8 +1025,18 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
                 _hoverIcons.Add((host, key));
             }
             _label.Text = label ?? string.Empty;
-            _row.AddChild(_label);
-            TooltipText = label ?? string.Empty;
+            _context.Text = context ?? string.Empty;
+            var identity = new VBoxContainer
+            {
+                MouseFilter = MouseFilterEnum.Ignore,
+                SizeFlagsHorizontal = SizeFlags.ExpandFill,
+                SizeFlagsVertical = SizeFlags.ShrinkCenter
+            };
+            identity.AddThemeConstantOverride("separation", 2);
+            identity.AddChild(_label);
+            identity.AddChild(_context);
+            _row.AddChild(identity);
+            TooltipText = (label ?? string.Empty) + "\n" + context;
             if (names is not null && _hoverIcons.Count > 0)
             {
                 MouseEntered += () =>

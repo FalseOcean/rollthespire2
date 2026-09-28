@@ -103,6 +103,13 @@ internal sealed partial class SearchCategoryHost : PanelContainer
         _pages[SearchCategoryKey.Shop] = ShopPage;
         _pageStack.AddChild(ShopPage);
         ShopPage.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        TransformationPage = new(icons, characterPoolIcons, cardPickerFilterIcons, tooltipHost) { Visible = false };
+        _pages[SearchCategoryKey.Transformation] = TransformationPage;
+        _pageStack.AddChild(TransformationPage);
+        TransformationPage.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        TransformationPage.OpeningRequested += NeowPage.SetTransformationOpening;
+        NeowPage.Changed += UpdateCompositeOwnership;
+        TransformationPage.Changed += UpdateCompositeOwnership;
         Select(SearchCategoryKey.Neow);
     }
 
@@ -114,6 +121,7 @@ internal sealed partial class SearchCategoryHost : PanelContainer
     public CombatRewardFilterPage CombatRewardPage { get; }
     public EventSequenceFilterPage EventPage { get; }
     public ShopColorlessFilterPage ShopPage { get; }
+    public TransformationAggregatePage TransformationPage { get; }
 
     public void ApplyLocalization(IUiTextProvider text, IGameContentNameResolver names)
     {
@@ -124,6 +132,7 @@ internal sealed partial class SearchCategoryHost : PanelContainer
         CombatRewardPage.ApplyLocalization(text, names);
         EventPage.ApplyLocalization(text, names);
         ShopPage.ApplyLocalization(text, names);
+        TransformationPage.ApplyLocalization(text, names);
     }
 
     public void Select(SearchCategoryKey category)
@@ -143,6 +152,7 @@ internal sealed partial class SearchCategoryHost : PanelContainer
         {
             page.Visible = key == category;
         }
+        UpdateCompositeOwnership();
         if (changed)
         {
             RuntimeLog.Ui($"Search category activated: {category}");
@@ -157,17 +167,26 @@ internal sealed partial class SearchCategoryHost : PanelContainer
         SearchCategoryKey.CombatReward => CombatRewardPage.TryCancelTransientSurface(),
         SearchCategoryKey.Event => EventPage.TryCancelTransientSurface(),
         SearchCategoryKey.Shop => ShopPage.TryCancelTransientSurface(),
+        SearchCategoryKey.Transformation => TransformationPage.TryCancelTransientSurface(),
         _ => false
     };
 
     public void CancelAllTransientSurfaces()
     {
+        TransformationPage.TryCancelTransientSurface();
         NeowPage.TryCancelTransientSurface();
         AncientPage.TryCancelTransientSurface();
         RelicPage.TryCancelTransientSurface();
         CombatRewardPage.TryCancelTransientSurface();
         EventPage.TryCancelTransientSurface();
         ShopPage.TryCancelTransientSurface();
+    }
+
+    internal void UpdateCompositeOwnership()
+    {
+        TransformationPage.ReadNeow(NeowPage.ReadOpeningSelection());
+        NeowPage.Visible = _selectedCategory == SearchCategoryKey.Neow;
+        EventPage.SetMorphicManaged(TransformationPage.UsesMorphic);
     }
 
     private void AddPage(SearchCategoryKey category)

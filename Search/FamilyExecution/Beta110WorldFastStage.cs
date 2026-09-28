@@ -75,6 +75,8 @@ internal sealed record WorldFastActPlan(
 {
     internal bool FamilyVariantAllowed { get; init; } = true;
     internal WorldFamilyBossBranch[] FamilyBossBranches { get; init; } = [];
+    internal ushort FamilyFirstBossOverride { get; init; } = ushort.MaxValue;
+    internal bool FamilyBossBranchesConjunctive { get; init; }
     public bool HasEventPredicate => EventPredicates.Length > 0;
     public bool HasBossPredicate =>
         BossActPredicates.Length > 0 ||
@@ -295,14 +297,14 @@ internal static class Beta110WorldFastPlanCompiler
             (generation.WorldGenerationHooksExact || authority.UsesBestEffortModel) &&
             generation.DirectSourceAudited &&
             (generation.IsVanilla || authority.UsesBestEffortModel) &&
-            generation.GameMode == WorldGameMode.Singleplayer &&
-            !generation.IsMultiplayer &&
-            generation.PlayerCount == 1;
+            ((generation.GameMode == WorldGameMode.Singleplayer && !generation.IsMultiplayer && generation.PlayerCount == 1) ||
+                family && generation.HasExactFixedParty);
         if (!exactFoundation)
             return Beta110WorldFastPlan.Disabled("WorldNumericAuthorityIncomplete");
         // Family consumes exact numerical inputs; historical fixture-promotion
         // flags are not an execution Gate. Tutorial override is real semantics.
-        if (family && ((hasBossRequest || branches.Any(b => !b.FirstBoss.IsEmpty || !b.SecondBoss.IsEmpty)) && generation.TutorialBossOverrideWillApply ||
+        if (family && ((hasBossRequest || branches.Any(b => !b.FirstBoss.IsEmpty || !b.SecondBoss.IsEmpty)) &&
+            generation.TutorialBossOverrideWillApply && !(generation.IsMultiplayer && generation.PartyBossDiscoveryExact) ||
             hasEventRequest && (EventStaticEligibilityCatalog.ProjectionPrecision(profile) != PredictionPrecision.Exact || !generation.EventAuthority.HasExactFilteringAuthority)))
             return Beta110WorldFastPlan.Disabled("WRequestedAuthorityIncomplete");
         if (!family && hasBossRequest && !generation.CanReplayBossIdentityForFastSearch)
@@ -390,6 +392,7 @@ internal static class Beta110WorldFastPlanCompiler
                 foreach (ModelKey key in group.EligibleActsInSourceOrder) Add(key);
             if (generation.Act1OverrideResolvedKey is ModelKey overrideKey && overrideKey.IsValid) Add(overrideKey);
             foreach (ModelKey key in generation.SharedAncients) Add(key);
+            foreach (ModelKey key in generation.PartyBossDiscoveryOverrides.Values) Add(key);
             foreach (Beta109ActGenerationSnapshot act in generation.OrderedActCatalog)
             {
                 Add(act.ActKey);
@@ -439,6 +442,11 @@ internal static class Beta110WorldFastPlanCompiler
 
         foreach (Beta109ActGenerationSnapshot act in generation.OrderedActCatalog)
         {
+            // The game still consumes the boss draw before replacing its result.
+            // Keep the original pool for that draw and the Act 3 second-boss pool.
+            ushort firstBossOverride = family && generation.IsMultiplayer &&
+                generation.PartyBossDiscoveryOverrides.TryGetValue(act.ActKey.Serialized, out var replacement)
+                ? Add(replacement) : ushort.MaxValue;
             ModelKey[] possibleAncients = act.OrderedAncients
                 .Concat(generation.SharedAncients)
                 .Distinct(ModelKeyComparer.Instance)
@@ -590,6 +598,8 @@ internal static class Beta110WorldFastPlanCompiler
                 eventPredicates)
             {
                 FamilyVariantAllowed = !family || !branches.Any(b => b.Act == act.Act) || branches.Any(b => b.Act == act.Act && b.VariantKey == act.ActKey),
+                FamilyFirstBossOverride = firstBossOverride,
+                FamilyBossBranchesConjunctive = family && generation.IsMultiplayer,
                 FamilyBossBranches = branches.Where(b => b.Act == act.Act && b.VariantKey == act.ActKey).Select(b => new WorldFamilyBossBranch(CompileSet(b.FirstBoss), CompileSet(b.SecondBoss))).ToArray()
             });
             if (branches.Any(b => b.Act == act.Act && (!b.FirstBoss.IsEmpty || !b.SecondBoss.IsEmpty)))
@@ -933,10 +943,12 @@ internal static class Beta110WorldFastStage
             if (act.Bosses.Length == 0)
                 return Keep(WorldFastStageDiagnosticCode.WorldContinuationUnavailable);
             ushort firstBoss = act.Bosses[upFront.NextInt(act.Bosses.Length)];
+            if (family && act.FamilyFirstBossOverride != ushort.MaxValue) firstBoss = act.FamilyFirstBossOverride;
             bossDrawCalls++;
             firstBossBySelectedAct[selectedIndex] = firstBoss;
             if (family && act.FamilyBossBranches.Length > 0 &&
-                !act.FamilyBossBranches.Any(b => Matches(new[] { firstBoss }, b.First)))
+                !(act.FamilyBossBranchesConjunctive ? act.FamilyBossBranches.All(b => Matches(new[] { firstBoss }, b.First)) :
+                    act.FamilyBossBranches.Any(b => Matches(new[] { firstBoss }, b.First))))
                 return RejectCurrent(WorldFastStageDiagnosticCode.BossPredicateRejected);
             if (act.HasBossPredicate)
             {
@@ -1014,7 +1026,8 @@ internal static class Beta110WorldFastStage
                 return Keep(WorldFastStageDiagnosticCode.WorldContinuationUnavailable);
             ushort secondBoss = secondPool[upFront.NextInt(secondCount)];
             if (family && finalAct.FamilyBossBranches.Length > 0 &&
-                !finalAct.FamilyBossBranches.Any(b => Matches(new[] { firstBoss }, b.First) && Matches(new[] { secondBoss }, b.Second)))
+                !(finalAct.FamilyBossBranchesConjunctive ? finalAct.FamilyBossBranches.All(b => Matches(new[] { firstBoss }, b.First) && Matches(new[] { secondBoss }, b.Second)) :
+                    finalAct.FamilyBossBranches.Any(b => Matches(new[] { firstBoss }, b.First) && Matches(new[] { secondBoss }, b.Second))))
                 return RejectCurrent(WorldFastStageDiagnosticCode.BossPredicateRejected);
             bossDrawCalls++;
             bossStageInput++;

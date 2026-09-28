@@ -79,6 +79,13 @@ internal static class SeedPredictionDocumentFactory
 
         if (worldPrediction is not null)
         {
+            sections.Add(new PredictionSection(PredictionSectionKind.EncounterSequences, PredictionDomain.EncounterSequence,
+                PredictionScope.InitialEncounterQueues, PredictionSourceState.SeedAndAuthoritySnapshot, [])
+            {
+                EncounterSequences = worldPrediction.EncounterSequences,
+                DomainStatus = worldPrediction.EncounterSequences.Count > 0 ? SeedDomainEvaluationStatus.Evaluated : SeedDomainEvaluationStatus.Unknown,
+                AuthoritySnapshotFingerprint = worldSnapshotFingerprint
+            });
             sections.Add(new PredictionSection(
                 PredictionSectionKind.BossIdentity,
                 PredictionDomain.Boss,

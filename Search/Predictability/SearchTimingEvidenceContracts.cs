@@ -15,7 +15,22 @@ internal enum SearchVerificationFamily
     WorldOnly,
     CombatRewardOnly,
     MixedWithoutReward,
-    MixedWithReward
+    MixedWithReward,
+    MapOnly,
+    MapMixedWithoutReward,
+    MapMixedWithReward,
+    Party2,
+    Party3,
+    Party4,
+    Party2Map,
+    Party3Map,
+    Party4Map,
+    Party2Reward,
+    Party3Reward,
+    Party4Reward,
+    Party2MapReward,
+    Party3MapReward,
+    Party4MapReward
 }
 
 internal sealed record SearchVerificationEvidence(

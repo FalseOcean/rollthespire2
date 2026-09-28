@@ -88,12 +88,18 @@ internal static class SearchPredictabilityVerificationStore
         IReadOnlyList<ExactTimingDomain> domains,
         long exactAttempts,
         double exactAggregateWorkMs,
+        string evidence) => SubmitExactTimingSample(
+            ResolveFamily(domains), exactAttempts, exactAggregateWorkMs, evidence);
+
+    internal static void SubmitExactTimingSample(
+        SearchVerificationFamily family,
+        long exactAttempts,
+        double exactAggregateWorkMs,
         string evidence)
     {
         if (exactAttempts <= 0 || !(exactAggregateWorkMs > 0d) || !double.IsFinite(exactAggregateWorkMs)) return;
         SearchPerformanceDeviceIdentity identity = SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity();
         if (string.IsNullOrWhiteSpace(identity.CpuIdentity)) return;
-        SearchVerificationFamily family = ResolveFamily(domains);
         double observedMsPerAttempt = exactAggregateWorkMs / exactAttempts;
         if (!(observedMsPerAttempt > 0d) || !double.IsFinite(observedMsPerAttempt)) return;
 

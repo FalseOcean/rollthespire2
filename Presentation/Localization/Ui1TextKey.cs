@@ -620,6 +620,10 @@ public static class Ui1TextKey
     public const string SearchEventResultColorful = "ui1.search.event_result.colorful";
     public const string SearchEventResultFakeMerchant = "ui1.search.event_result.fake_merchant";
     public const string SearchEventResultTrashGrab = "ui1.search.event_result.trash_grab";
+    public const string SearchEventMorphicContains = "ui1.search.event_result.morphic_contains";
+    public const string SearchEventMorphicHelp = "ui1.search.event_result.morphic_help";
+    public const string SearchEventMorphicPremise = "ui1.search.event_result.morphic_premise";
+    public const string SearchEventMorphicUnavailable = "ui1.search.event_result.morphic_unavailable";
     public const string SearchEventResultTrashDive = "ui1.search.event_result.trash_dive";
     public const string SearchEventResultColor = "ui1.search.event_result.color";
     public const string SearchEventResultFakeRelic = "ui1.search.event_result.fake_relic";

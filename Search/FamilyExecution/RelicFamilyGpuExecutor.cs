@@ -197,7 +197,8 @@ internal sealed class RelicFamilyGpuExecutor : IDisposable
                 buffers.Add(Add(FamilyGpuComputeUtility.CreateStorageBuffer(
                     rd, FamilyGpuComputeUtility.ToBytesNonEmpty(fullPlan.CapsuleMetadata))));
 
-            string source = ShaderSource(fullPlan is not null, fullPlan?.UsesBonesKBoundary == true, bonesKRouteMask);
+            string source = ShaderSource(fullPlan is not null, fullPlan?.UsesBonesKBoundary == true, bonesKRouteMask,
+                fullPlan?.GenericReplay == true, plan.LocalStateCapacity);
             if (privateInput is not null)
             {
                 const string bounds = "if (logical >= batch_meta.values[2u]) return;";
@@ -231,16 +232,19 @@ internal sealed class RelicFamilyGpuExecutor : IDisposable
         }
     }
 
-    internal static string ShaderSource(bool rfull, bool bonesKBoundary = false, bool bonesKRouteMask = false)
+    internal static string ShaderSource(bool rfull, bool bonesKBoundary = false, bool bonesKRouteMask = false,
+        bool genericReplay = false, int localStateCapacity = 64)
     {
         string source = FamilyGpuComputeUtility.LoadFamilyShaderWithVisibleSeedRootHash(ShaderSuffix);
+        source = source.Replace("const int MAX_LOCAL_STATE = 64;", $"const int MAX_LOCAL_STATE = {localStateCapacity};", StringComparison.Ordinal);
         if (bonesKRouteMask) source = source.Replace(
             "uint logical = batch_meta.values[4u] == 0u ? invocation : input_ordinals.values[invocation];",
             "uint packed=input_ordinals.values[invocation]; nr_route_mask=packed>>24u; uint logical=packed&0xffffffu; if(nr_route_mask==0u || nr_route_mask>3u || logical>=batch_meta.values[2u]) { atomicExchange(output_header.values[3u],1u); return; }", StringComparison.Ordinal);
         string binding = rfull
             ? "layout(set = 0, binding = 13, std430) readonly restrict buffer RfullCapsuleMeta { uint values[]; } rfull_capsule;"
             : string.Empty;
-        string functions = rfull ? FamilyGpuComputeUtility.LoadEmbeddedShader(RfullShaderSuffix) : string.Empty;
+        string functions = genericReplay ? RelicFullGpuPlan.GenericShaderFunctions() : rfull ? FamilyGpuComputeUtility.LoadEmbeddedShader(RfullShaderSuffix) : string.Empty;
+        if (genericReplay) source = source.Replace("#version 450", "#version 450\n#extension GL_EXT_shader_explicit_arithmetic_types_float64 : require", StringComparison.Ordinal);
         if (bonesKBoundary) functions = "#define RFULL_TRACK_HEAVY_ENTRY\n#define BONES_K_MASK " + (bonesKRouteMask ? "1" : "0") + "\nuint nr_heavy_entries; uint nr_route_mask;\n" + functions.Replace(
             "return rfull_prepare_rewards(root) && rfull_capsule_after_rewards(root);",
             FamilyGpuComputeUtility.LoadEmbeddedShader("RelicFullBonesKBoundary.glsl"), StringComparison.Ordinal);
@@ -455,7 +459,7 @@ internal sealed class RelicFamilyGpuExecutor : IDisposable
         checked((uint)plan.Pool.BucketCount), checked((uint)plan.LastRequiredBucket),
         plan.AlwaysReject ? 1u : 0u, checked((uint)plan.Predicates.Length),
         checked((uint)plan.ShopPredicates.Length), OutputCapacity,
-        RelicFamilyPlanCompiler.MaximumShaderLocalState, SeedsPerInvocation,
+        checked((uint)plan.LocalStateCapacity), SeedsPerInvocation,
         .. plan.PositiveDepthByLane.Select(value => (uint)value),
         .. plan.ExclusionDepthByLane.Select(value => (uint)value),
         .. plan.TrackedOffsetsByLane.Select(value => (uint)value),

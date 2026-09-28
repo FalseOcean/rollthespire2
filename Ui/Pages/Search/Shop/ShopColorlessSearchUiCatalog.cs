@@ -13,6 +13,10 @@ internal sealed record ShopColorlessSearchUiCatalog(
     bool AuthorityExact,
     string EvidenceCode)
 {
+    // Authoring can display captured identities without claiming that a Mod's
+    // merchant hooks or inventory RNG consumption are supported by Exact.
+    public bool CatalogAvailable => UncommonCandidates.Count > 0 || RareCandidates.Count > 0;
+
     public IReadOnlyDictionary<ModelKey, CardPickerCandidateMetadata> CardPickerMetadata { get; init; } =
         new Dictionary<ModelKey, CardPickerCandidateMetadata>(ModelKeyComparer.Instance);
 
@@ -69,7 +73,10 @@ internal sealed record ShopColorlessSearchUiCatalog(
                     group.Key,
                     Array.Empty<ModelKey>(),
                     group.First().Rarity,
-                    group.First().CardType),
+                    group.First().CardType)
+                {
+                    IsColorlessPoolMember = true
+                },
                 ModelKeyComparer.Instance);
 
         bool exact = profileId == RuntimeProfileId.Beta111 &&

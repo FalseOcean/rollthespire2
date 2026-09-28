@@ -91,6 +91,8 @@ public sealed record OpeningRewardContinuation(
     IReadOnlyList<EvidenceCode> EvidenceCodes,
     IReadOnlyList<string> UnknownReasonCodes)
 {
+    internal RewardsRngStateSnapshot? NicheState { get; init; }
+    internal RewardsRngStateSnapshot? CombatPotionGenerationState { get; init; }
     public IReadOnlyList<RewardImpactSourceKey> ActiveRewardImpactSources { get; init; } =
         Array.Empty<RewardImpactSourceKey>();
 
@@ -131,6 +133,8 @@ public sealed record NormalCombatRewardProjectionRequest(
     ModelKey? PinnedRootRelicKey = null,
     IReadOnlyList<ModelKey>? RequiredAcquisitionOrder = null)
 {
+    public int BattleCount { get; init; } = 3;
+
     public static NormalCombatRewardProjectionRequest RichAnalysis { get; } = new(
         NormalCombatRewardProjectionScope.RichAnalysis,
         NormalCombatRewardRouteSelectionMode.AllRealRoutes);

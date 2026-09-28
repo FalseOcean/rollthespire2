@@ -11,8 +11,8 @@ namespace RolltheSpire2.Ui.Pages.DeveloperNotes;
 
 internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IResponsiveAppPage
 {
-    private const float RailWidth = 176f;
-    private const float CompactRailWidth = 146f;
+    private const float RailWidth = 220f;
+    private const float CompactRailWidth = 176f;
     private const float ReadingMaxWidth = 840f;
     private const float ReadingMinimumSideMargin = 14f;
 
@@ -27,6 +27,7 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
     private readonly MarginContainer _readingHost;
     private readonly Label _articleTitle;
     private readonly Label _articleSummary;
+    private readonly Label _articleNotice;
     private readonly HSeparator _articleDivider;
     private readonly DeveloperNotesArticleRenderer _renderer;
     private IUiTextProvider? _uiText;
@@ -69,10 +70,14 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
             CustomMinimumSize = new Vector2(RailWidth, 0),
             SizeFlagsVertical = Control.SizeFlags.ExpandFill
         };
-        Ui1Theme.ApplyPanel(_railPanel, Ui1SurfaceRole.Card, 4f, 1, 8f);
+        _railPanel.AddThemeStyleboxOverride("panel", new StyleBoxEmpty());
         _railColumn = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         _railColumn.AddThemeConstantOverride("separation", 5);
-        _railPanel.AddChild(_railColumn);
+        var rail = new VBoxContainer { SizeFlagsVertical = SizeFlags.ExpandFill };
+        rail.AddThemeConstantOverride("separation", 14);
+        rail.AddChild(_railColumn);
+        _railPanel.AddChild(rail);
+        BuildReadingNavigation(rail);
 
         var divider = new VSeparator();
         Ui1Theme.ApplySeparator(divider);
@@ -89,18 +94,26 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
             HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
             VerticalScrollMode = ScrollContainer.ScrollMode.Auto
         };
+        _articleScroll.FocusMode = FocusModeEnum.None;
+        _articleScroll.GetVScrollBar().ValueChanged += _ => UpdateReadingProgress();
         _readingHost = new MarginContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         var articleColumn = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-        articleColumn.AddThemeConstantOverride("separation", 10);
+        articleColumn.AddThemeConstantOverride("separation", 18);
         _articleTitle = Ui1Theme.Label(string.Empty, Ui1TextRole.SectionTitle, wrap: true);
+        _articleTitle.AddThemeFontSizeOverride("font_size", 30);
         _articleSummary = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta, wrap: true);
+        _articleSummary.AddThemeFontSizeOverride("font_size", 18);
+        _articleNotice = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta, wrap: true);
+        _articleNotice.Visible = false;
         _articleDivider = new HSeparator();
         Ui1Theme.ApplySeparator(_articleDivider);
         _renderer = new DeveloperNotesArticleRenderer();
         articleColumn.AddChild(_articleTitle);
         articleColumn.AddChild(_articleSummary);
+        articleColumn.AddChild(_articleNotice);
         articleColumn.AddChild(_articleDivider);
         articleColumn.AddChild(_renderer);
+        articleColumn.AddChild(_chapterFooter);
         _readingHost.AddChild(articleColumn);
         _articleScroll.AddChild(_readingHost);
         _articlePane.AddChild(_articleScroll);
@@ -119,12 +132,15 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
 
     public void ApplyLocalization(IUiTextProvider uiText, IGameContentNameResolver contentNames)
     {
+        SaveReadingPosition();
         _uiText = uiText;
         _pageTitle.Text = uiText.Get(Ui1TextKey.DeveloperNotesTitle);
         _pageSubtitle.Text = uiText.Get(Ui1TextKey.DeveloperNotesSubtitle);
 
         DeveloperNotesResolution resolution = _provider.Resolve(uiText.LanguageCode);
         _document = resolution.Document;
+        if (_document is not null)
+            _pageSubtitle.Text = uiText.Format("ui1.developer_notes.edition", _document.TargetModVersion, _document.UpdatedAt);
         _resolvedLocale = resolution.ResolvedLocale;
         if (resolution.UsedEnglishFallback)
         {
@@ -138,6 +154,7 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
         }
         RebuildChapterRail();
         RenderSelectedChapter();
+        RestoreReadingPosition();
 
         if (!resolution.IsAvailable)
         {
@@ -148,6 +165,8 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
     public void ApplyDisplayMode(AppDisplayMode mode)
     {
     }
+
+    public void OpenChapter(string chapterId) => SelectChapter(chapterId);
 
     public void SetCompact(bool compact)
     {
@@ -180,7 +199,8 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
                 Alignment = HorizontalAlignment.Left,
                 CustomMinimumSize = new Vector2(0, 42),
                 FocusMode = Control.FocusModeEnum.All,
-                TooltipText = chapter.Title
+                TooltipText = chapter.Title,
+                TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis
             };
             string chapterId = chapter.Id;
             button.Pressed += () => SelectChapter(chapterId);
@@ -196,21 +216,19 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
         {
             return;
         }
+        if (_selectedChapterId == chapterId) return;
+        SaveReadingPosition();
         _selectedChapterId = chapterId;
         RefreshChapterButtonStyles();
         RenderSelectedChapter();
-        ResetArticleScroll();
+        RestoreReadingPosition();
     }
 
     private void RefreshChapterButtonStyles()
     {
         foreach ((string id, Button button) in _chapterButtons)
         {
-            Ui1Theme.ApplyButton(
-                button,
-                string.Equals(id, _selectedChapterId, StringComparison.Ordinal)
-                    ? Ui1ButtonRole.NavigationSelected
-                    : Ui1ButtonRole.Ghost);
+            StyleReadingLink(button, string.Equals(id, _selectedChapterId, StringComparison.Ordinal));
         }
     }
 
@@ -218,11 +236,13 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
     {
         if (_document is null)
         {
+            _articleNotice.Visible = false;
             _articleTitle.Text = _uiText?.Get(Ui1TextKey.DeveloperNotesUnavailableTitle) ?? "Developer Notes unavailable";
             _articleSummary.Text = _uiText?.Get(Ui1TextKey.DeveloperNotesUnavailableMessage) ?? "The bundled notes could not be loaded.";
             _articleSummary.Visible = true;
             _articleDivider.Visible = true;
             _renderer.ClearBlocks();
+            RebuildReadingNavigation();
             ResetArticleScroll();
             return;
         }
@@ -231,8 +251,13 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
         _articleTitle.Text = chapter.Title;
         _articleSummary.Text = chapter.Summary ?? string.Empty;
         _articleSummary.Visible = !string.IsNullOrWhiteSpace(chapter.Summary);
+        _articleNotice.Visible = chapter.Id == DeveloperNotesChapterIds.Next;
+        _articleNotice.Text = _articleNotice.Visible
+            ? _uiText!.Format("ui1.developer_notes.plan_context", _document.UpdatedAt)
+            : string.Empty;
         _articleDivider.Visible = true;
         _renderer.Render(chapter);
+        RebuildReadingNavigation();
         RuntimeLog.Detail($"developerNotesChapterRendered=true;chapter={chapter.Id};locale={_resolvedLocale}");
     }
 

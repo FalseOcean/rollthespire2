@@ -4,11 +4,11 @@ namespace RolltheSpire2.Search.FamilyExecution;
 
 internal sealed class WorldFamilyGpuPlan
 {
-    // Production retains bounded donor arrays and a small observed
-    // Event horizon. Larger compatibility queries choose CPU before invocation.
+    // Scratch is bounded by the actual pool, not the authored event horizon.
+    // Oversized FirstN observes the entire pool; an absent ExactSlot rejects.
     internal static bool Supports(WorldFamilyReplay replay) => replay.Plan.ActSelectionGroups.Length <= 8 &&
         replay.Plan.SharedAncients.Length <= 512 && replay.Plan.MaxEncounterPoolCount <= 512 &&
-        replay.Plan.Acts.All(a => a.EventCandidates.Length <= 512 && a.EventPredicates.All(p => p.RangeValue <= 255));
+        replay.Plan.Acts.All(a => a.EventCandidates.Length <= 512);
     internal uint[][] Buffers { get; }
     internal int Capacity { get; }
     internal int GroupingK { get; } = 4;

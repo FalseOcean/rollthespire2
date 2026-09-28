@@ -47,4 +47,7 @@ internal sealed class NeowEffectRngContext
         Transformations.Clone(),
         Niche.Clone(),
         CombatPotionGeneration.Clone());
+
+    internal NeowEffectRngContext WithShared(Xoshiro256StarStar niche, Xoshiro256StarStar potions) =>
+        new(Rewards, Transformations, niche, potions);
 }

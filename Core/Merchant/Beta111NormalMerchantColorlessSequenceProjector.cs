@@ -21,8 +21,8 @@ public sealed record Beta111MerchantColorlessAuthority(
 {
     public bool HasExactV1Inputs =>
         ProfileId == RuntimeProfileId.Beta111 &&
-        PlayersCount == 1 &&
-        PlayerSlotIndex == 0 &&
+        PlayersCount >= 1 &&
+        PlayerSlotIndex >= 0 && PlayerSlotIndex < PlayersCount &&
         OrderedPoolExact &&
         PoolIdentityHooksExact &&
         RarityIdentityHooksExact &&

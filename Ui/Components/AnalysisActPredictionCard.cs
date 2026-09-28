@@ -57,6 +57,9 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
     private RuntimeProfileId _profileId;
     private int _playersCount = 1;
     private Beta111EventResultProjection? _eventResults;
+    private readonly Button _mapButton;
+    public event Action<int>? MapRequested;
+    public Control MapButtonAnchor => _mapButton;
 
     public AnalysisActPredictionCard(
         int act,
@@ -110,7 +113,14 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
         bossIdentityInset.AddChild(_bossContent);
         bossColumn.AddChild(bossIdentityInset);
         bossColumn.AddChild(_bossStatus);
-        bossSubcard.AddChild(bossColumn);
+        var bossRow = new HBoxContainer();
+        bossRow.AddChild(bossColumn);
+        _mapButton = new Button { Name = "MapPreviewButton", Disabled = true, ExpandIcon = true,
+            CustomMinimumSize = new Vector2(48, 48), SizeFlagsVertical = SizeFlags.ShrinkCenter };
+        Ui1Theme.ApplyButton(_mapButton, Ui1ButtonRole.Ghost);
+        _mapButton.Pressed += () => MapRequested?.Invoke(_act);
+        bossRow.AddChild(_mapButton);
+        bossSubcard.AddChild(bossRow);
         body.AddChild(bossSubcard);
 
         PanelContainer eventSubcard = NewSubcard("EventSubcard");
@@ -151,7 +161,26 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
         _firstBossLabel = uiText.Get(Ui1TextKey.AnalysisBossFirst);
         _secondBossLabel = uiText.Get(Ui1TextKey.AnalysisBossSecond);
         _eventTitle.Text = uiText.Get(Ui1TextKey.AnalysisSubsectionEvents);
+        _mapButton.TooltipText = uiText.Get("ui1.map.open");
+        const string mapIcon = "res://images/atlases/ui_atlas.sprites/top_bar/top_bar_map.tres";
+        if (ResourceLoader.Exists(mapIcon)) _mapButton.Icon = ResourceLoader.Load<Texture2D>(mapIcon);
+        else _mapButton.Text = uiText.Get("ui1.map.open");
     }
+
+    public void SetMapAvailable(bool available) => _mapButton.Disabled = !available;
+    internal void BindEventTooltipContext(RuntimeProfileId profileId, int playersCount,
+        Beta111EventResultProjection? eventResults, IUiTextProvider uiText)
+    {
+        _profileId = profileId;
+        _playersCount = Math.Max(1, playersCount);
+        _eventResults = eventResults;
+        _uiText = uiText;
+    }
+
+    internal void ShowEventTooltipFor(Control anchor, EventPoolSequenceEntryViewModel entry) =>
+        ShowEventTooltip(anchor, entry);
+
+    internal void DismissEventTooltipFor(Control anchor) => _tooltipHost.Dismiss(anchor);
 
     public void Bind(
         SeedDomainViewModel<BossPredictionViewModel> bossDomain,

@@ -1,28 +1,57 @@
-# RolltheSpire2 1.2.0
+# RolltheSpire2
 
 English | [简体中文](README.zh-CN.md)
 
-An in-game seed search and prediction mod for **Slay the Spire 2**. This is the frozen **1.2.0** source snapshot, targeting **Windows / game 0.111.0**. It is retained for historical use and is not under ongoing maintenance.
+**Find the seed you want, then see what it has in store.**
 
-## Features
+RolltheSpire2 (RT2) is an in-game seed search and analysis mod for **Slay the Spire 2**. Combine your desired conditions, search for matching seeds, and inspect their predicted openings, rewards, maps and more.
 
-- Search for desired opening conditions and inspect predicted seed results.
-- Filter Neow, shop, relic, combat reward, Boss, Ancient and supported event outcomes.
-- Use CPU/GPU search where supported, with rarity and search-time estimates.
-- Use English or Chinese UI and save search presets.
+This source tree is version **1.3.0**. The primary tested environment is **Windows, game version 0.111.0**.
 
-This snapshot predates the 1.3.0 interface, multiplayer workflow, encyclopedia and seed-favorites release. Game updates or other mods may affect prediction accuracy; estimates are approximate.
+## What you can do
 
-## Installation
+- Search for Neow starts, shop contents, Bosses, Ancient options, events, relics, combat rewards, map conditions and transformation combinations.
+- Configure single-player or **2–4 player** searches, with personal conditions and shared party conditions.
+- Inspect a seed's predicted results, preview maps, draw routes and browse routes tied for the best value of a selected metric.
+- See condition rarity, search speed and the estimated time for **one result**, with CPU/GPU search selected automatically where supported.
+- Save search presets and favorite seeds with their context and notes. Read the in-game encyclopedia in English or Chinese.
 
-Download `RolltheSpire2-1.2.0.zip` from the matching GitHub Release. Close the game, then place the `RolltheSpire2` folder inside the game's `mods` directory. It contains the mod DLL and manifest; no PCK is required. Avoid loading duplicate Workshop and manual copies. Source ZIPs must be built before use.
+## Download and get started
 
-Open RolltheSpire2 from the game's main menu. For the current Workshop distribution, see [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3755166888); the Workshop version can differ from this historical snapshot.
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3755166888)
 
-## Source and feedback
+Download `RolltheSpire2-1.3.0.zip` from the matching GitHub Release. The manual package contains the DLL and manifest; no PCK is required. Avoid loading duplicate Workshop and manual copies. Older versions will be kept as frozen downloads, without ongoing maintenance.
 
-See [BUILDING.md](BUILDING.md) to build with game deployment disabled. Game binaries are not included. Report issues in Workshop comments or email rollthespire2@outlook.com, including seed, conditions, game/mod versions and relevant logs.
+For a manual installation package, place its `RolltheSpire2` folder inside the game's `mods` folder. Source archives need to be built first.
+
+1. Open **RolltheSpire2** at the upper left of the game's main menu.
+2. Choose single-player or multiplayer, set your characters and ascension, and add the conditions you want.
+3. Start searching. Open a result in **Seed Analysis**, or enter a seed there directly.
+
+The in-game encyclopedia explains individual conditions and prediction assumptions. Settings lets you change the language, open the log folder and adjust the search starting point.
+
+## Multiplayer and compatibility
+
+Multiplayer assumes full unlocks by default; you can explicitly read the actual lobby context. Seed Analysis has its own multiplayer configuration. Its Neow pickups follow **P1 → P2 → P3 → P4**, including the displayed default choices, so earlier choices can affect later players' predictions.
+
+Multiplayer transformation combinations are not included. Map filtering currently uses the CPU; drawing a route does not simulate every action in a complete run.
+
+Game updates and mods that change game rules can affect prediction accuracy. Vanilla single-player has the most testing; combinations of multiplayer, mods and partial unlocks still need broader coverage. Rarity and ETA are estimates, and complex queries may have incomplete estimates.
+
+## Feedback
+
+Report problems in the Workshop comments or email **rollthespire2@outlook.com**. A seed, the selected conditions, game/mod versions and a relevant log make bugs much easier to investigate. You can open the RT2 log folder from Settings.
+
+## Build from source
+
+You need the **.NET 9 SDK** and a local Slay the Spire 2 installation. See [BUILDING.md](BUILDING.md) for dependencies, build commands and output locations. Game binaries are not included in the source distribution.
 
 ## License
 
-Original RT2 source and project documentation are licensed under [MPL-2.0](LICENSE). Game content and third-party materials retain their respective rights; in particular, `Localization/game_content/*.json` contains game content names and is not a grant of ownership over those names. RT2 is not affiliated with Mega Crit.
+RolltheSpire2's original source code and accompanying project documentation are licensed under [MPL-2.0](LICENSE), except where otherwise noted. When distributing a modified version, provide the corresponding MPL-covered source, including your modifications. Independent files containing no MPL-covered code may use other licenses.
+
+This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+Game and third-party materials retain their respective rights and licenses. RT2 is a community project and is not affiliated with Mega Crit.
+
+`Localization/game_content/*.json` contains game content names, which retain their respective rights and are not relicensed as original RT2 content.

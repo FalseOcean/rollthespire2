@@ -12,6 +12,17 @@ internal sealed class NeowCpuPreGate
     internal bool IdentityOnly { get; }
     internal bool FixedPair => _pair is not null;
     internal double GateSurvival { get; }
+    // Donor e89849e: the fixed direct two-draw operator only. Other replay
+    // bodies retain their own configuration boundary.
+    internal bool BoundedLeafyWorkers => !IdentityOnly && !FixedPair && !_plan.Bones && !_plan.RequireBones &&
+        _plan.Selected == Beta110FastRelicCatalog.LeafyPoultice &&
+        _plan.StructuredConditions is [{ Kind: Beta110FastStructuredConditionKind.LeafyPoulticeTransforms, TargetCount: 2 } condition] &&
+        condition.SourceRelicId == _plan.Selected && _plan.ExactOnly.Length == 0 && !_plan.HasFinalCurseFastProjection &&
+        _plan.EnabledDomains == Beta110FastDomain.LeafyPoulticeTransforms &&
+        _plan.Authority.PlayersCount == 1 && _plan.Authority.AllCharacterCardPoolsUnlocked &&
+        _plan.Authority.ScrollBoxesAllowed && _plan.Authority.EligibleCurseRelicIds.Length == 10 &&
+        _plan.Authority.EffectCatalog.LeafyTransformAuthorityExact &&
+        (_plan.AuthoredUpgrades?.Advance(_plan.Selected, 255) ?? 0) == 0;
     private NeowCpuPreGate(NeowReplayPlan plan, NeowIdentityCpuPlan? pair, ulong allowed, bool identityOnly)
     {
         _plan = plan; _pair = pair; _allowedCurses = allowed; IdentityOnly = identityOnly;

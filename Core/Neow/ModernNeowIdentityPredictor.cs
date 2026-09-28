@@ -52,6 +52,21 @@ internal static class ModernNeowIdentityPredictor
     internal static IReadOnlyList<ModelKey> BasePositivePoolForAuthority => PositivePool;
     internal static IReadOnlyList<ModelKey> BaseCursePoolForFiltering => CursePool;
 
+    internal static bool CanCoOffer(IEnumerable<ModelKey> targets)
+    {
+        ModelKey[] selected = targets.Distinct(ModelKeyComparer.Instance).ToArray();
+        if (selected.Length > 3) return false;
+        ModelKey[] curses = selected.Where(key => CursePool.Contains(key, ModelKeyComparer.Instance)).ToArray();
+        if (curses.Length > 1) return false;
+        ModelKey[] positives = selected.Where(key => !curses.Contains(key, ModelKeyComparer.Instance)).ToArray();
+        if (positives.Length > 2 || positives.Any(key => !IsPositiveCandidate(key))) return false;
+        if (ContainsBoth(positives, BaseGameModelKeys.Relics.LavaRock, BaseGameModelKeys.Relics.SmallCapsule) ||
+            ContainsBoth(positives, BaseGameModelKeys.Relics.NutritiousOyster, BaseGameModelKeys.Relics.StoneHumidifier) ||
+            ContainsBoth(positives, BaseGameModelKeys.Relics.NeowsTalisman, BaseGameModelKeys.Relics.Pomander))
+            return false;
+        return curses.Length == 0 || positives.All(positive => !Conflicts(curses[0], positive));
+    }
+
     public static ModernNeowIdentityResult PredictBeta109(
         string canonicalSeed,
         RuntimeContextAuthoritySnapshot authority) =>
@@ -150,58 +165,45 @@ internal static class ModernNeowIdentityPredictor
     /// enumerated exactly and the two visible positive offers are treated as the
     /// first two entries of a uniform shuffle.
     /// </summary>
-    internal static bool TryEstimatePositiveOfferProbability(
-        RuntimeContextAuthoritySnapshot authority,
-        ModelKey target,
-        out double probability,
-        out string evidence)
-    {
-        ArgumentNullException.ThrowIfNull(authority);
-        probability = 0d;
-        evidence = string.Empty;
-        if (!target.IsValid ||
-            !TryGetEligibleCursePool(authority, out IReadOnlyList<ModelKey> curses))
-        {
-            evidence = "NeowPositiveAuthorityMissing";
-            return false;
-        }
+    internal static bool TryEstimatePositiveOfferProbability(RuntimeContextAuthoritySnapshot authority,
+        ModelKey target, out double probability, out string evidence) =>
+        TryEstimateOfferProbability(authority, (a,b,c) => a == target || b == target || c == target, out probability, out evidence);
 
-        double total = 0d;
+    internal static bool TryEstimateOfferProbability(RuntimeContextAuthoritySnapshot authority,
+        Func<ModelKey, ModelKey, ModelKey, bool> accepts, out double probability, out string evidence)
+    {
+        double sum = 0;
+        bool exact = TryVisitOfferSpace(authority, (a,b,c,mass) => { if (accepts(a,b,c)) sum += mass; });
+        probability = exact ? Math.Clamp(sum, 0, 1) : 0;
+        evidence = "NeowOfferJoint;CurseConditionedPool;BinarySlotsAndUnorderedPositivePairs;OneSharedOffer";
+        return exact;
+    }
+
+    internal static bool TryVisitOfferSpace(RuntimeContextAuthoritySnapshot authority,
+        Action<ModelKey, ModelKey, ModelKey, double> visit)
+    {
+        if (!TryGetEligibleCursePool(authority, out var curses)) return false;
         foreach (ModelKey curse in curses)
         {
-            var binaryBranches = new List<(ModelKey? CapsuleSlot, ModelKey OysterSlot, ModelKey TalismanSlot, double Weight)>();
             ModelKey?[] capsuleChoices = curse == BaseGameModelKeys.Relics.LargeCapsule
-                ? new ModelKey?[] { null }
-                : new ModelKey?[] { BaseGameModelKeys.Relics.LavaRock, BaseGameModelKeys.Relics.SmallCapsule };
-            double branchWeight = 1d / (capsuleChoices.Length * 2d * 2d);
+                ? [null] : [BaseGameModelKeys.Relics.LavaRock, BaseGameModelKeys.Relics.SmallCapsule];
             foreach (ModelKey? capsule in capsuleChoices)
             foreach (ModelKey oyster in new[] { BaseGameModelKeys.Relics.NutritiousOyster, BaseGameModelKeys.Relics.StoneHumidifier })
             foreach (ModelKey talisman in new[] { BaseGameModelKeys.Relics.NeowsTalisman, BaseGameModelKeys.Relics.Pomander })
-                binaryBranches.Add((capsule, oyster, talisman, branchWeight));
-
-            double conditional = 0d;
-            foreach ((ModelKey? capsule, ModelKey oyster, ModelKey talisman, double weight) in binaryBranches)
             {
-                List<ModelKey> positives = PositivePool.ToList();
+                var positives = PositivePool.ToList();
                 RemoveConflict(positives, curse);
                 if (capsule.HasValue) positives.Add(capsule.Value);
-                positives.Add(oyster);
-                positives.Add(talisman);
+                positives.Add(oyster); positives.Add(talisman);
+                if (positives.Any(key => !IsAllowed(key, authority).HasValue)) return false;
                 positives.RemoveAll(key => IsAllowed(key, authority) == false);
-
                 int n = positives.Count;
-                int targetMultiplicity = positives.Count(key => key == target);
-                if (n < 2 || targetMultiplicity <= 0) continue;
-                double miss = targetMultiplicity >= n
-                    ? 0d
-                    : ((n - targetMultiplicity) * (n - targetMultiplicity - 1d)) / (n * (n - 1d));
-                conditional += weight * (1d - miss);
+                if (n < 2) return false;
+                double mass = 2d / (curses.Count * capsuleChoices.Length * 4d * n * (n - 1));
+                for (int i = 0; i < n; i++) for (int j = i + 1; j < n; j++)
+                    visit(positives[i], positives[j], curse, mass);
             }
-            total += conditional / curses.Count;
         }
-
-        probability = Math.Clamp(total, 0d, 1d);
-        evidence = $"CurseMixture={curses.Count};BinaryPositiveSlotsEnumerated=true;TwoOfferUniformShuffle=true";
         return true;
     }
 
@@ -251,4 +253,26 @@ internal static class ModernNeowIdentityPredictor
             positives.Remove(BaseGameModelKeys.Relics.LostCoffer);
         }
     }
+
+    private static bool IsPositiveCandidate(ModelKey key) =>
+        PositivePool.Contains(key, ModelKeyComparer.Instance) ||
+        key == BaseGameModelKeys.Relics.LavaRock ||
+        key == BaseGameModelKeys.Relics.SmallCapsule ||
+        key == BaseGameModelKeys.Relics.NutritiousOyster ||
+        key == BaseGameModelKeys.Relics.StoneHumidifier ||
+        key == BaseGameModelKeys.Relics.NeowsTalisman ||
+        key == BaseGameModelKeys.Relics.Pomander;
+
+    private static bool ContainsBoth(IReadOnlyCollection<ModelKey> values, ModelKey first, ModelKey second) =>
+        values.Contains(first, ModelKeyComparer.Instance) && values.Contains(second, ModelKeyComparer.Instance);
+
+    private static bool Conflicts(ModelKey curse, ModelKey positive) =>
+        curse == BaseGameModelKeys.Relics.CursedPearl && positive == BaseGameModelKeys.Relics.GoldenPearl ||
+        curse == BaseGameModelKeys.Relics.HeftyTablet && positive == BaseGameModelKeys.Relics.ArcaneScroll ||
+        curse == BaseGameModelKeys.Relics.LargeCapsule &&
+            (positive == BaseGameModelKeys.Relics.LavaRock || positive == BaseGameModelKeys.Relics.SmallCapsule) ||
+        curse == BaseGameModelKeys.Relics.LeafyPoultice && positive == BaseGameModelKeys.Relics.NewLeaf ||
+        curse == BaseGameModelKeys.Relics.PrecariousShears && positive == BaseGameModelKeys.Relics.PreciseScissors ||
+        curse == BaseGameModelKeys.Relics.NeowsSacrifice &&
+            (positive == BaseGameModelKeys.Relics.PhialHolster || positive == BaseGameModelKeys.Relics.LostCoffer);
 }

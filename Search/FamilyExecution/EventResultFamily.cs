@@ -21,10 +21,11 @@ internal sealed partial class EventResultFamily : IFamilyInvocation
     }
     private EventResultFamily(ExactSearchExecutionRequest request)
     {
-        _request = request; Plan = new(request); _cpu = new(request, FamilyId, "E.EventResult.Cpu.EventLocal.20260907.v1");
+        _request = request; Plan = new(request); _cpu = new(request, FamilyId, CpuRevision);
         RuntimeLog.TryBackgroundInfo($"eventResultFamilyReady=true;family={FamilyId};physicalRevision={ConditionPerformance.PhysicalImplementationRevision};gpu={Plan.GpuSupported};recovery=None");
     }
     public string FamilyId => "E.EventResult";
+    internal string CpuRevision => Plan.HasNewWhitelist ? "E.EventResult.Cpu.Whitelist.20260919.v1" : Plan.HasMorphic ? "E.EventResult.Cpu.GroupInitialBasicsContains.20260913.v1" : "E.EventResult.Cpu.EventLocal.20260907.v1";
     bool IFamilyInvocation.CanBindPrivateSerial => Plan.GpuSupported;
     FamilyPrivateGpuExecution IFamilyInvocation.BindPrivateSerial(Godot.RenderingDevice rd,
         PrivateOrdinalBuffer? input, PrivateOrdinalBuffer? output)
@@ -46,7 +47,7 @@ internal sealed partial class EventResultFamily : IFamilyInvocation
     public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId, Plan.Capacity, [], "EventLocalExpectedWorkUnavailable");
     public FamilyConditionPerformanceProjection ConditionPerformance => ResolveConditionPerformance(false);
     public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compact) => !Plan.GpuSupported ? _cpu.Condition(compact) :
-        new(FamilyId, $"E.EventResult.Gpu.EventLocal.{(compact ? "CompactAbi1" : "Dense")}.CanonicalAbi1Ready.20260907.v1",
+        new(FamilyId, $"E.EventResult.Gpu.Whitelist.{(compact ? "CompactAbi1" : "Dense")}.CanonicalAbi1Ready.20260919.v1",
             "E.EventResult.Neutral.20260907.v1", 1, "NoAcceptedWithinPathCurve;CanonicalAbi1Ready", usesGpu: true);
     public FamilyPerformanceObservation CapturePerformanceObservation()
     {

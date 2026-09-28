@@ -4,6 +4,11 @@ using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Ui.Pages.Search;
 using RolltheSpire2.Ui.Pages.Search.BossMap;
 using RolltheSpire2.Ui.Pages.Search.CombatReward;
+using RolltheSpire2.Ui.Shell;
+using RolltheSpire2.Core.World.Snapshots;
+using RolltheSpire2.Core.Prediction;
+using System.Collections;
+using System.Reflection;
 
 namespace RolltheSpire2.Ui.Persistence;
 
@@ -18,6 +23,14 @@ internal sealed record SearchPresetUnresolvedReference(
     string Path,
     string StableIdentity,
     string Reason);
+
+internal sealed record SearchPresetWorkbenchLoadResolution(
+    WorkbenchSearchDraft? Draft,
+    IReadOnlyList<SearchPresetUnresolvedReference> Unresolved,
+    string Issue)
+{
+    public bool CanLoad => Draft is not null;
+}
 
 internal sealed record SearchPresetLoadResolution(
     SearchPresetLoadResolutionKind Kind,
@@ -72,6 +85,138 @@ internal sealed record SearchPresetCompatibilityAssessment(
 /// </summary>
 internal static class SearchPresetCompatibilityResolver
 {
+    /// <summary>
+    /// Typed templates are indivisible: roster, per-seat conditions and dormant
+    /// editor selections are resolved together. This is content compatibility only;
+    /// the current compiler and editor catalog still own admission/representability.
+    /// </summary>
+    internal static SearchPresetWorkbenchLoadResolution ResolveWorkbench(
+        SearchPresetDefinition preset, RuntimeAuthoritySnapshot authority)
+    {
+        ArgumentNullException.ThrowIfNull(preset);
+        ArgumentNullException.ThrowIfNull(authority);
+        if (preset.Workbench is not { } draft)
+            return new(null, [], preset.IsWorkbench ? "PresetWorkbenchShapeUnresolved" : "PresetRequiresLegacyConversion");
+        var unresolved = new List<SearchPresetUnresolvedReference>();
+        try
+        {
+            ValidateWorkbenchShape(draft);
+            unresolved.AddRange(FindUnresolvedIntentReferences(draft.WithoutCapturedAuthority(), authority, "Workbench", deferActVariants: true));
+        }
+        catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException or ArgumentException)
+        {
+            return new(null, unresolved, "PresetWorkbenchShapeUnresolved:" + ex.Message);
+        }
+        if (unresolved.Count != 0)
+            return new(null, unresolved, HasAuthorityIncomplete(unresolved)
+                ? "CurrentSemanticAuthorityIncomplete" : "PresetWorkbenchReferencesUnavailable");
+        return new(draft.WithoutCapturedAuthority(), [], string.Empty);
+    }
+
+    internal static IReadOnlyList<SearchPresetUnresolvedReference> FindUnresolvedIntentReferences(
+        object intent, RuntimeAuthoritySnapshot authority, string rootPath, bool deferActVariants = false)
+    {
+        var universe = new SemanticUniverseIndex(authority);
+        var unresolved = new List<SearchPresetUnresolvedReference>();
+        VisitWorkbenchIntent(intent, rootPath, (key, path) =>
+        {
+            // RuntimeAuthority has no Act domain. Workbench variant membership is
+            // checked by the live editor transaction; seed opening contexts have no Acts.
+            if (deferActVariants && key.Category == "ACT") return;
+            universe.TryResolveAny(key, path, unresolved);
+        });
+        return unresolved;
+    }
+
+    internal static void ValidateWorkbenchShape(WorkbenchSearchDraft draft)
+    {
+        if (draft.Version is not (1 or 2 or 3 or 4))
+            throw new InvalidDataException("PresetWorkbenchVersionUnsupported");
+        // Inspect only authored/init properties, never computed getters (which may
+        // assume complete DTOs), runtime authority, or serializable unlock internals.
+        VisitWorkbenchIntent(draft, "Workbench", (_, _) => { });
+        if (!draft.Character.IsValid || draft.Ascension is < SeedPredictionInputLimits.MinimumAscension or > SeedPredictionInputLimits.MaximumAscension)
+            throw new InvalidDataException("PresetWorkbenchContextInvalid");
+        bool party = draft.Mode == WorldGameMode.Multiplayer;
+        if (draft.Mode is not (WorldGameMode.Singleplayer or WorldGameMode.Multiplayer) ||
+            party != (draft.Players.Count > 0) ||
+            draft.Query.Players.Count != draft.Players.Count)
+            throw new InvalidDataException("PresetWorkbenchModeMismatch");
+        if (!party) return;
+        if (draft.Version < 2 || draft.Players.Count is < 2 or > SeedPredictionInputLimits.MaximumPlayers || draft.Character != draft.Players[0].Character ||
+            draft.Players.Where((p, i) => p.Slot != i || draft.Query.Players[i].Slot != i ||
+                !p.Character.IsValid || p.Unlocks is null || string.IsNullOrWhiteSpace(p.UnlockSource)).Any())
+            throw new InvalidDataException("PresetWorkbenchRosterInvalid");
+        if (draft.Query.TransformationAggregate is not null || draft.Query.Players.Any(p =>
+            p.Conditions.Players.Count != 0 || p.Conditions.TransformationAggregate is not null))
+            throw new InvalidDataException("PresetWorkbenchPartyConditionsUnsupported");
+    }
+
+    private static void VisitWorkbenchIntent(object value, string path, Action<ModelKey, string> visitKey)
+    {
+        if (value is ModelKey key)
+        {
+            if (!key.IsValid) throw new InvalidDataException("PresetStableIdentityInvalid:" + path);
+            visitKey(key, path);
+            return;
+        }
+        Type type = value.GetType();
+        if (type.IsEnum && !Enum.IsDefined(type, value))
+            throw new InvalidDataException("PresetEnumValueUnsupported:" + path);
+        if (value is string || type.IsPrimitive || type.IsEnum || type.IsValueType) return;
+        // Unlock state is a game-owned serializable DTO and carries no ModelKey
+        // identity. Strict JSON materialization preserves it without interpretation.
+        if (value is MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState) return;
+        if (value is IEnumerable sequence)
+        {
+            int index = 0;
+            foreach (object? item in sequence)
+            {
+                if (item is null)
+                {
+                    if (value is not IEnumerable<ModelKey?>)
+                        throw new InvalidDataException("PresetNullListEntry:" + path);
+                }
+                else VisitWorkbenchIntent(item, $"{path}[{index}]", visitKey);
+                index++;
+            }
+            return;
+        }
+        var nullability = new NullabilityInfoContext();
+        foreach (PropertyInfo property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            if (property.GetMethod is null || property.SetMethod is null || property.GetIndexParameters().Length != 0) continue;
+            // Captured pools are deliberately excluded; they are removed before
+            // writing and rebound by the existing Workbench compiler.
+            if (property.Name is "MorphicGroveScenario" or "EventScenario") continue;
+            object? child = property.GetValue(value);
+            if (child is not null) VisitWorkbenchIntent(child, path + "." + property.Name, visitKey);
+            else if (nullability.Create(property).WriteState == NullabilityState.NotNull)
+                throw new InvalidDataException("PresetRequiredValueMissing:" + path + "." + property.Name);
+        }
+    }
+
+    // Missing optional draft blocks use DTO defaults. Explicit nulls and truncated
+    // constructor-backed blocks cannot safely be projected as empty conditions.
+    internal static bool HasCompleteShape(SearchDraft draft) =>
+        draft.NeowRouteDraft is { RequiredBonesRelics: not null, EffectConditions: not null } neow &&
+        neow.EffectConditions.All(c => c is { OutputKeys: not null, KaleidoscopePositionalSlots: not null }) &&
+        draft.AncientMatrixDraft is { Rows: not null } ancient &&
+        ancient.Rows.All(row => row is { SelectedOptionKeys: not null, SeaGlassTargetKeys: not null }) &&
+        draft.BossMapDraft is { Rows: not null } boss &&
+        boss.Rows.All(row => row is { AllBossKeys: not null, FirstBossAny: not null, SecondBossAny: not null }) &&
+        draft.CombatRewardDraft is { Cards.Slots: not null, Potions.Slots: not null } combat &&
+        combat.Potions.Slots.All(slot => slot is not null) &&
+        draft.RelicSequenceDraft is not null && draft.RelicSequenceDraft.All(c => CompleteKeys(c?.Keys)) &&
+        draft.EventSequenceDraft is not null && draft.EventSequenceDraft.All(c => CompleteKeys(c?.Keys)) &&
+        draft.EventResultDraft is not null && draft.EventResultDraft.All(c => c is not null) &&
+        draft.MerchantColorlessDraft is not null && draft.MerchantColorlessDraft.All(c => c is not null) &&
+        draft.MerchantColorlessSequenceDraft is not null && draft.MerchantColorlessSequenceDraft.All(c => c is { Slots: not null }) &&
+        draft.RelicShopSequenceDraft is not null && draft.RelicShopSequenceDraft.All(c => c is { Slots: not null }) &&
+        (draft.TransformationAggregate is null || draft.TransformationAggregate.TargetMultiset is not null);
+
+    private static bool CompleteKeys(ModelKeySetFilter? keys) => keys is { Any: not null, All: not null, Ban: not null };
+
     public static SearchPresetLoadResolution Resolve(
         SearchPresetDefinition preset,
         RuntimeAuthoritySnapshot authority)
@@ -80,7 +225,7 @@ internal static class SearchPresetCompatibilityResolver
         ArgumentNullException.ThrowIfNull(authority);
 
         int authored = Math.Max(0, preset.ConditionCount);
-        if (preset.Draft is null)
+        if (preset.Draft is null || !HasCompleteShape(preset.Draft))
             return SearchPresetLoadResolution.Unavailable(authored, "PresetQueryShapeUnresolved");
 
         var universe = new SemanticUniverseIndex(authority);
@@ -94,6 +239,9 @@ internal static class SearchPresetCompatibilityResolver
         }
 
         SearchDraft source = preset.Draft;
+        if (source.TransformationAggregate is { } aggregate && aggregate.TargetMultiset.Any(target =>
+            !universe.TryResolve(RuntimeAuthorityDomains.Cards, target, "TransformationAggregate.Target", unresolved)))
+            return SearchPresetLoadResolution.Unavailable(authored, "Transformation aggregate target unavailable; aggregate cannot be partially dropped.", unresolved);
         int droppedConditions = 0;
 
         NeowRouteFilterDraft neow = ResolveNeow(source.NeowRouteDraft, universe, unresolved, ref droppedConditions);
@@ -102,7 +250,22 @@ internal static class SearchPresetCompatibilityResolver
         IReadOnlyList<RelicSequenceSearchCondition> relicSequence = ResolveRelicSequence(source.RelicSequenceDraft, universe, unresolved, ref droppedConditions);
         IReadOnlyList<EventSequenceSearchCondition> eventSequence = ResolveEventSequence(source.EventSequenceDraft, universe, unresolved, ref droppedConditions);
         IReadOnlyList<EventResultSearchCondition> eventResults = ResolveEventResults(source.EventResultDraft, universe, unresolved, ref droppedConditions);
+        ModelKey? morphicCard = source.MorphicGroveContainsCard;
+        ModelKey? morphicSecond = source.MorphicGroveSecondCard;
+        bool morphicResolved = (morphicCard is not { } target || universe.TryResolve(RuntimeAuthorityDomains.Cards, target,
+            "MorphicGrove.ContainsCard", unresolved)) &
+            (morphicSecond is not { } second || universe.TryResolve(RuntimeAuthorityDomains.Cards, second,
+            "MorphicGrove.SecondCard", unresolved));
+        if (!morphicResolved) { morphicCard = null; morphicSecond = null; droppedConditions++; }
         IReadOnlyList<MerchantColorlessSlotCondition> merchantColorless = ResolveMerchantColorless(source.MerchantColorlessDraft, universe, unresolved, ref droppedConditions);
+        var merchantSequences = source.MerchantColorlessSequenceDraft.Where((condition, index) =>
+            AllResolved(condition.Slots.Take(Math.Max(0, condition.Count)).Where(key => key.HasValue).Select(key => key!.Value), RuntimeAuthorityDomains.Cards,
+                $"MerchantColorlessSequence[{index}]", universe, unresolved)).ToArray();
+        droppedConditions += source.MerchantColorlessSequenceDraft.Count - merchantSequences.Length;
+        var relicShopSequences = source.RelicShopSequenceDraft.Where((condition, index) =>
+            AllResolved(condition.Slots.Take(Math.Max(0, condition.Count)).Where(key => key.HasValue).Select(key => key!.Value), RuntimeAuthorityDomains.Relics,
+                $"RelicShopSequence[{index}]", universe, unresolved)).ToArray();
+        droppedConditions += source.RelicShopSequenceDraft.Count - relicShopSequences.Length;
         CombatRewardSearchDraft rewards = ResolveCombatRewards(source.CombatRewardDraft, universe, unresolved, ref droppedConditions);
 
         (string neowAny, string neowAll, string neowBan) = ResolveLegacySetGroup(
@@ -186,12 +349,16 @@ internal static class SearchPresetCompatibilityResolver
             RelicSequenceDraft = relicSequence,
             EventSequenceDraft = eventSequence,
             EventResultDraft = eventResults,
+            MorphicGroveContainsCard = morphicCard,
+            MorphicGroveSecondCard = morphicSecond,
             MerchantColorlessDraft = merchantColorless,
+            MerchantColorlessSequenceDraft = merchantSequences,
+            RelicShopSequenceDraft = relicShopSequences,
             // When typed sequence authority exists in the asset, keep compatibility
             // strings inert. If the asset only has historical string conditions they
             // remain preserved above and Search's existing compatibility parser owns them.
-            RelicSequenceConditions = relicSequence.Count > 0 ? string.Empty : source.RelicSequenceConditions,
-            EventSequenceConditions = eventSequence.Count > 0 ? string.Empty : source.EventSequenceConditions
+            RelicSequenceConditions = source.RelicSequenceDraft.Count > 0 ? string.Empty : source.RelicSequenceConditions,
+            EventSequenceConditions = source.EventSequenceDraft.Count > 0 ? string.Empty : source.EventSequenceConditions
         };
 
         if (source.RelicSequenceDraft.Count == 0 && !string.IsNullOrWhiteSpace(source.RelicSequenceConditions))
@@ -299,7 +466,7 @@ internal static class SearchPresetCompatibilityResolver
         List<SearchPresetUnresolvedReference> unresolved,
         ref int dropped)
     {
-        if (source.RouteRelicKey is not { IsValid: true } route)
+        if (source.RouteRelicKey is not { } route)
             return source;
         int originalCount = 1 + (source.RequiredBonesRelics.Count > 0 ? 1 : 0) + source.EffectConditions.Count;
         if (!universe.TryResolve(RuntimeAuthorityDomains.Relics, route, "Neow.RouteRelic", unresolved))
@@ -430,6 +597,12 @@ internal static class SearchPresetCompatibilityResolver
         for (int i = 0; i < source.Count; i++)
         {
             RelicSequenceSearchCondition condition = source[i];
+            if (!condition.Keys.IsEmpty && condition.IsEmpty)
+            {
+                unresolved.Add(new SearchPresetUnresolvedReference($"RelicSequence[{i}]", string.Empty, "SequenceRangeInvalid"));
+                dropped++;
+                continue;
+            }
             if (SetResolved(condition.Keys, RuntimeAuthorityDomains.Relics, $"RelicSequence[{i}]", universe, unresolved))
                 output.Add(condition);
             else
@@ -448,6 +621,12 @@ internal static class SearchPresetCompatibilityResolver
         for (int i = 0; i < source.Count; i++)
         {
             EventSequenceSearchCondition condition = source[i];
+            if (!condition.Keys.IsEmpty && condition.IsEmpty)
+            {
+                unresolved.Add(new SearchPresetUnresolvedReference($"EventSequence[{i}]", string.Empty, "SequenceActOrRangeInvalid"));
+                dropped++;
+                continue;
+            }
             if (SetResolved(condition.Keys, RuntimeAuthorityDomains.Events, $"EventSequence[{i}]", universe, unresolved))
                 output.Add(condition);
             else
@@ -469,6 +648,11 @@ internal static class SearchPresetCompatibilityResolver
             string domain = condition.Kind switch
             {
                 EventResultConditionKind.TrashHeapGrabCard => RuntimeAuthorityDomains.Cards,
+                EventResultConditionKind.MorphicGroveGroupInitialBasicsContains => RuntimeAuthorityDomains.Cards,
+                EventResultConditionKind.SymbioteInitialBasicTransform or EventResultConditionKind.AromaOfChaosInitialBasicTransform or
+                EventResultConditionKind.WhisperingHollowInitialBasicTransform or EventResultConditionKind.TrialNondescriptInitialBasicsContains or
+                EventResultConditionKind.TinkerTimeTypeAndRider => RuntimeAuthorityDomains.Cards,
+                EventResultConditionKind.TrialCase => RuntimeAuthorityDomains.Events,
                 EventResultConditionKind.TrashHeapDiveRelic => RuntimeAuthorityDomains.Relics,
                 EventResultConditionKind.FakeMerchantOfferedFakeRelic => RuntimeAuthorityDomains.Relics,
                 EventResultConditionKind.ColorfulPhilosophersOfferedColor => RuntimeAuthorityDomains.Characters,
@@ -477,6 +661,8 @@ internal static class SearchPresetCompatibilityResolver
             string path = $"EventResult[{i}]";
             bool ok = condition.IsValid &&
                       domain.Length > 0 &&
+                      (condition.MorphicGroveSecondCard is not { } secondCard ||
+                       universe.TryResolve(RuntimeAuthorityDomains.Cards, secondCard, path + ".SecondCard", unresolved)) &&
                       universe.TryResolve(domain, condition.TargetKey, path + ".Target", unresolved);
             if (ok)
             {
@@ -570,7 +756,7 @@ internal static class SearchPresetCompatibilityResolver
         List<SearchPresetUnresolvedReference> unresolved)
     {
         bool ok = true;
-        foreach (ModelKey key in keys.Where(key => key.IsValid).Distinct(ModelKeyComparer.Instance))
+        foreach (ModelKey key in keys.Distinct(ModelKeyComparer.Instance))
             ok &= universe.TryResolve(domain, key, path, unresolved);
         return ok;
     }
@@ -598,7 +784,9 @@ internal static class SearchPresetCompatibilityResolver
         ref int dropped)
     {
         if (string.IsNullOrWhiteSpace(text)) return string.Empty;
-        if (!TryParseToken(text.Trim(), out ModelKey key) || !universe.TryResolve(domain, key, path, unresolved))
+        bool parsed = TryParseToken(text.Trim(), out ModelKey key);
+        if (!parsed) unresolved.Add(new SearchPresetUnresolvedReference(path, text, "StableIdentityInvalid"));
+        if (!parsed || !universe.TryResolve(domain, key, path, unresolved))
         {
             dropped++;
             return string.Empty;
@@ -615,8 +803,7 @@ internal static class SearchPresetCompatibilityResolver
         ref int dropped)
     {
         if (string.IsNullOrWhiteSpace(text)) return string.Empty;
-        ModelKey[] keys = ParseTokens(text, new[] { ',', '\n', '\r' });
-        if (keys.Length == 0 || !AllResolved(keys, domain, path, universe, unresolved))
+        if (!LegacySetTextResolved(text, domain, path, universe, unresolved))
         {
             dropped++;
             return string.Empty;
@@ -685,11 +872,16 @@ internal static class SearchPresetCompatibilityResolver
         string domain,
         string path,
         SemanticUniverseIndex universe,
-        List<SearchPresetUnresolvedReference> unresolved)
+        List<SearchPresetUnresolvedReference> unresolved,
+        char[]? separators = null)
     {
         if (string.IsNullOrWhiteSpace(text)) return true;
-        string[] tokens = text.Split(new[] { ',', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (tokens.Length == 0) return true;
+        string[] tokens = text.Split(separators ?? new[] { ',', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (tokens.Length == 0)
+        {
+            unresolved.Add(new SearchPresetUnresolvedReference(path, text, "StableIdentityInvalid"));
+            return false;
+        }
         bool ok = true;
         foreach (string token in tokens)
         {
@@ -736,8 +928,7 @@ internal static class SearchPresetCompatibilityResolver
         ref int dropped)
     {
         if (string.IsNullOrWhiteSpace(text)) return string.Empty;
-        ModelKey[] keys = ParseTokens(text, new[] { '>', ',', '\n', '\r' });
-        if (keys.Length == 0 || !AllResolved(keys, domain, path, universe, unresolved))
+        if (!LegacySetTextResolved(text, domain, path, universe, unresolved, new[] { '>', ',', '\n', '\r' }))
         {
             dropped++;
             return string.Empty;
@@ -781,13 +972,13 @@ internal static class SearchPresetCompatibilityResolver
             string[] tokens = condition.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             if (tokens.Length == 0)
                 continue;
-            ModelKey[] keys = condition
-                .Split(new[] { ' ', ',', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Where(token => token.Contains(':', StringComparison.Ordinal))
-                .Select(token => TryParseToken(token, out ModelKey key) ? key : default)
-                .Where(key => key.IsValid)
-                .ToArray();
-            if (keys.Length > 0 && AllResolved(keys, domain, $"{path}[{i}]", universe, unresolved))
+            // The existing query parser owns the header grammar. Inspect every
+            // identity after that header; do not silently ignore invalid tokens.
+            int headerLength = domain == RuntimeAuthorityDomains.Relics ? 4 : 5;
+            string keysText = string.Join(' ', tokens.Skip(headerLength));
+            bool valid = !string.IsNullOrWhiteSpace(keysText);
+            if (!valid) unresolved.Add(new SearchPresetUnresolvedReference($"{path}[{i}]", condition, "StableIdentityInvalid"));
+            if (valid && LegacySetTextResolved(keysText, domain, $"{path}[{i}]", universe, unresolved))
                 kept.Add(condition);
             else
                 dropped++;
@@ -828,14 +1019,18 @@ internal static class SearchPresetCompatibilityResolver
             }
         }
         count += draft.AncientMatrixDraft.Rows.Count(row => row.IsActive);
-        count += draft.RelicSequenceDraft.Count(condition => !condition.IsEmpty);
+        count += draft.RelicSequenceDraft.Count(condition => !condition.Keys.IsEmpty);
         if (draft.RelicSequenceDraft.Count == 0 && !string.IsNullOrWhiteSpace(draft.RelicSequenceConditions))
             count += draft.RelicSequenceConditions.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length;
-        count += draft.EventSequenceDraft.Count(condition => !condition.IsEmpty);
+        count += draft.EventSequenceDraft.Count(condition => !condition.Keys.IsEmpty);
         if (draft.EventSequenceDraft.Count == 0 && !string.IsNullOrWhiteSpace(draft.EventSequenceConditions))
             count += draft.EventSequenceConditions.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length;
         count += draft.EventResultDraft.Count(condition => condition.IsValid);
+        if (draft.MorphicGroveContainsCard.HasValue || draft.MorphicGroveSecondCard.HasValue) count++;
+        if (draft.TransformationAggregate is not null) count++;
         count += draft.MerchantColorlessDraft.Count(condition => condition.IsValid);
+        count += draft.MerchantColorlessSequenceDraft.Count(condition => !condition.IsEmpty);
+        count += draft.RelicShopSequenceDraft.Count(condition => !condition.IsEmpty);
         if (draft.CombatRewardDraft.Cards.HasAnyValue) count += Math.Max(1, draft.CombatRewardDraft.Cards.Count);
         if (draft.CombatRewardDraft.Potions.HasAnyValue) count += Math.Max(1, draft.CombatRewardDraft.Potions.Count);
 
@@ -897,6 +1092,11 @@ internal static class SearchPresetCompatibilityResolver
             string path,
             List<SearchPresetUnresolvedReference> unresolved)
         {
+            if (!key.IsValid)
+            {
+                unresolved.Add(new SearchPresetUnresolvedReference(path, key.Serialized, "StableIdentityInvalid"));
+                return false;
+            }
             if (!_complete.Contains(domain) || !_domains.TryGetValue(domain, out HashSet<string>? values))
             {
                 unresolved.Add(new SearchPresetUnresolvedReference(path, key.Serialized, "CurrentSemanticDomainAuthorityIncomplete:" + domain));

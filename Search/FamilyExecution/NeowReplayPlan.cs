@@ -24,6 +24,10 @@ internal sealed record NeowReplayPlan(
 {
     // Physical applicability fact from existing immutable authority, not condition ownership.
     internal bool DirectNestedVanilla111 { get; init; }
+    internal int SharedNicheDraws { get; init; }
+    internal int SharedPotionDraws { get; init; }
+    internal (int Niche, int Potions)[] SharedArrivals { get; init; } = [];
+    internal int CapsuleUpgradeUpperBound { get; init; } = -1;
     internal NeowAuthoredUpgradeContinuation? AuthoredUpgrades { get; init; }
     internal bool HasFinalCurseFastProjection => (EnabledDomains & Beta110FastDomain.FinalCurse) != 0;
 
@@ -38,6 +42,7 @@ internal sealed record NeowReplayPlan(
         condition.OutputKeys.Count is >= 1 and <= 3;
     internal static bool HasCapsule(ExactSearchExecutionRequest request) =>
         request.Evaluation.StructuredNeowEffects.Any(condition => !condition.IsEmpty && IsCapsule(condition)) ||
+        request.Evaluation.EffectOutputConditions.Any(condition => !condition.IsEmpty && IsCapsule(condition.SourceRelicKey)) ||
         !request.Evaluation.CapsuleContainedRelics.IsEmpty || request.Evaluation.RequireWhetstone || request.Evaluation.RequireWarPaint;
 
     internal static NeowSearchFilter NeowFilter(ExactSearchExecutionRequest request, bool capsule)
@@ -66,11 +71,13 @@ internal sealed record NeowReplayPlan(
     internal static NeowReplayPlan Compile(ExactSearchExecutionRequest request, bool capsule)
     {
         NeowSearchFilter filter = NeowFilter(request, capsule);
+        if (!capsule) filter = filter with { StructuredNeowEffects = filter.StructuredNeowEffects
+            .Concat(NeowChoiceCommitment.CombinedConditions(filter.StructuredNeowEffects)).ToArray() };
         if (capsule && filter.NeowRoute is null)
             throw new InvalidOperationException("RFamilyUnboundCapsuleRoute_ExactOnly");
         var exactOnly = new List<string>();
-        if (request.Evaluation.EffectOutputConditions.Any(c => !c.IsEmpty)) exactOnly.Add("LegacyEffectOutputConditions");
         if (request.Evaluation.Preset != NeowSearchPreset.None) exactOnly.Add("LegacyPreset");
+        if (request.Evaluation.EffectOutputConditions.Any(c => !c.IsEmpty)) exactOnly.Add("LegacyEffectOutputConditions");
         // Legacy unbound Capsule presence can be satisfied by a Bones route too;
         // it is not equivalent to requiring a top-level Capsule offer.
         if (!capsule && filter.NeowRoute is null && filter.RequiredBonesCombination.Count == 0 &&
@@ -141,6 +148,14 @@ internal sealed record NeowReplayPlan(
         byte selected = Id(filter.NeowRoute?.RouteRelicKey);
         bool bones = selected == Beta110FastRelicCatalog.NeowsBones || filter.RequireNeowsBones ||
             filter.RequiredBonesCombination.Count != 0 || !filter.BonesRelics.IsEmpty || finalCurse || filter.RequiredBonesAcquisitionOrder.Count != 0;
+        if (!capsule && !bones && selected == Beta110FastRelicCatalog.InvalidId && conditions.Count > 0)
+        {
+            // Current UI authors result conditions only under a selected route.
+            // Imported unbound rows remain Exact-owned, without a route-OR kernel.
+            exactOnly.Add("UnboundStructuredRoute");
+            conditions.Clear();
+            domains = Beta110FastDomain.None;
+        }
         var requestDto = new SearchExecutionRequest(request.CompiledSearch, request.RunOptions, request.CanonicalStartSeed,
             request.ResolvedScanCount, filter, request.CombatRewardRoutePolicy, request.SnapshotFingerprint);
         if (!capsule) catalog = catalog with { OrdinaryRelics = [], SharedRelicConsumeShuffleLengths = [], PlayerRelicBuckets = [], RelicBagAuthorityExact = false };
@@ -187,6 +202,8 @@ internal sealed record NeowReplayPlan(
             bones, filter.RequireNeowsBones, leafyBonesInitialTransformInvariant, exactOnly.ToArray())
         {
             AuthoredUpgrades = capsule ? null : NeowAuthoredUpgradeContinuation.Compile(request),
+            CapsuleUpgradeUpperBound = request.Authority.PlayersCount > 1 && effectAuthority?.HasExactDeck == true
+                ? checked(2 * (effectAuthority.OrderedDeck!.Count + 6)) : -1,
             DirectNestedVanilla111 = request.Authority.CanUseCurrentModel && request.Authority.NoRunModifiers == true &&
                 request.Authority.IsAuditedBeta111SourceContext && effectAuthority?.CapturedProfileId == RuntimeProfileId.Beta111
         };

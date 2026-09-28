@@ -130,8 +130,9 @@ public static class RelicSequencePredictor
         if (!bestEffort && (!SourceAuthorityRules.SupportsExactIdentity(world.SourceAuthority) ||
             world.Completeness != SnapshotCompleteness.Complete))
             return Unknown(world, profile.ProfileId, "MissingModernRelicSequenceSourceAuthority");
-        if (modern.GameMode != WorldGameMode.Singleplayer || modern.IsMultiplayer || modern.PlayerCount != 1)
-            return Unknown(world, profile.ProfileId, "ModernRelicSequenceSingleplayerOnly");
+        if (!(modern.GameMode == WorldGameMode.Singleplayer && !modern.IsMultiplayer && modern.PlayerCount == 1) &&
+            !(modern.HasExactFixedParty && modern.PersonalPlayerSlot >= 0 && modern.PersonalPlayerSlot < modern.PlayerCount))
+            return Unknown(world, profile.ProfileId, "ModernRelicSequencePartyAuthorityMissing");
         if (modern.RunSeedHashKind != Beta109RunSeedHashKind.ModernXxHash64 ||
             modern.OldSeedBranchStatus != Beta109OldSeedBranchStatus.NewSeedHashed)
             return Unknown(world, profile.ProfileId, "ModernRelicSequenceSeedBranchUnsupported");
@@ -192,6 +193,17 @@ public static class RelicSequencePredictor
         foreach (RelicBucket bucket in sharedBuckets)
         {
             rng.UnstableShuffle(bucket.Entries);
+        }
+        if (world.Beta109Generation is { IsMultiplayer: true } party)
+        {
+            // RunState populates every personal bag in slot order with the same UpFront stream.
+            // These are initial snapshots; later pickups never mutate the displayed sequences.
+            for (int slot = 0; slot < party.PersonalPlayerSlot; slot++)
+                foreach (var bucket in party.PartyRelicBuckets[slot])
+                {
+                    var preceding = bucket.OrderedRelics.ToList();
+                    rng.UnstableShuffle(preceding);
+                }
         }
         foreach (RelicBucket bucket in playerBuckets)
         {
@@ -263,7 +275,29 @@ public static class RelicSequencePredictor
                 evidenceCode + "." + rarity.ToLowerInvariant())
             {
                 TotalCount = effectiveEntries.Length,
+                FullEntries = primaryPullOrder.Select((entry, index) => new RelicSequenceEntryResult(
+                    index + 1, entry.RelicKey, precision, evidenceCode + "." + rarity.ToLowerInvariant())).ToArray(),
                 TailEntries = tailEntries
+            });
+        }
+
+        var treasureRoomLanes = new List<RelicSequenceLaneResult>(3);
+        foreach (string rarity in LaneRarities.Take(3))
+        {
+            RelicBucket? bucket = sharedBuckets.FirstOrDefault(item => RarityEquals(item.RarityCode, rarity));
+            if (bucket is null) continue;
+
+            RelicSequenceEntryResult[] fullEntries = bucket.Entries
+                .Select((entry, index) => new RelicSequenceEntryResult(index + 1, entry.RelicKey,
+                    precision, evidenceCode + ".treasure." + rarity.ToLowerInvariant()))
+                .ToArray();
+            treasureRoomLanes.Add(new RelicSequenceLaneResult(
+                ParseKind(rarity), rarity, RelicSequencePullDirection.Front,
+                fullEntries.Take(previewCount).ToArray(), precision, resultAuthority,
+                resultCompleteness, evidenceCode + ".treasure." + rarity.ToLowerInvariant())
+            {
+                TotalCount = fullEntries.Length,
+                FullEntries = fullEntries
             });
         }
 
@@ -271,8 +305,9 @@ public static class RelicSequencePredictor
             ? world.SnapshotFingerprint
             : authorityFingerprintOverride;
         string catalogFingerprint = Fingerprint(
-            RuntimeProfilePolicies.CatalogFingerprintPrefix(profile.ProfileId) + "-relic-sequence-v1",
-            playerBuckets.SelectMany(DescribeBucket));
+            RuntimeProfilePolicies.CatalogFingerprintPrefix(profile.ProfileId) + "-relic-sequence-v2",
+            sharedBuckets.SelectMany(DescribeBucket).Select(item => "shared:" + item)
+                .Concat(playerBuckets.SelectMany(DescribeBucket).Select(item => "player:" + item)));
         return new RelicSequencePredictionResult(
             profile.ProfileId,
             SeedDomainEvaluationStatus.Evaluated,
@@ -299,7 +334,10 @@ public static class RelicSequencePredictor
                     productionValidated ? "Accepted" : profile.ProfileId == RuntimeProfileId.Beta111
                         ? Beta111ValidationAuthority.RuntimeSupportStatus
                         : Beta110ValidationAuthority.RuntimeSupportStatus)
-            });
+            })
+        {
+            TreasureRoomLanes = treasureRoomLanes
+        };
     }
 
     private static RelicCatalogEntry[] ConvertLegacySource(

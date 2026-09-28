@@ -40,6 +40,7 @@ internal sealed partial class SearchCategoryNavigationBar : HBoxContainer
         AddTab(tabs, SearchCategoryKey.Shop);
         AddTab(tabs, SearchCategoryKey.CombatReward);
         AddTab(tabs, SearchCategoryKey.Event);
+        AddTab(tabs, SearchCategoryKey.Transformation);
         AddTab(tabs, SearchCategoryKey.BossAndMap);
         AddTab(tabs, SearchCategoryKey.Relic);
 
@@ -70,6 +71,7 @@ internal sealed partial class SearchCategoryNavigationBar : HBoxContainer
         _buttons[SearchCategoryKey.CombatReward].SetLabel(text.Get(Ui1TextKey.SearchTabCombatReward));
         _buttons[SearchCategoryKey.Event].SetLabel(text.Get(Ui1TextKey.SearchTabEvent));
         _buttons[SearchCategoryKey.Shop].SetLabel(text.Get(Ui1TextKey.SearchTabShop));
+        _buttons[SearchCategoryKey.Transformation].SetLabel(text.LanguageCode.StartsWith("zh") ? "变牌组合" : "Transforms");
         RefreshClearButton();
     }
 

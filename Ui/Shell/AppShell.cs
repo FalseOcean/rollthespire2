@@ -75,6 +75,24 @@ internal sealed partial class AppShell : Control
     private Vector2 _sizeStart;
 
     public event Action? TopLevelCloseRequested;
+    private bool _retainedTools;
+    internal bool HasActiveSearch => _searchController?.HasActiveSearch == true;
+
+    internal void InitializeRetainedTools(ModRuntimeSnapshot runtime, SearchWorkspacePersistence persistence)
+    {
+        _retainedTools = true;
+        _searchPersistence = persistence;
+        Initialize(runtime);
+    }
+
+    internal void ActivateRetainedTools()
+    {
+        _searchPersistence!.ApplyPreferencesToRuntimeSettings(_predictionSettings);
+        _searchPage?.RefreshGpuBackendControls();
+        _searchController?.RefreshPersistedResults();
+        SetLanguage(PreferredUiLanguage());
+        Show();
+    }
 
     public void Initialize(ModRuntimeSnapshot runtime)
     {
@@ -88,7 +106,7 @@ internal sealed partial class AppShell : Control
         MouseFilter = Control.MouseFilterEnum.Stop;
         ZIndex = UiZLayers.ShellSurface;
         ClipContents = false;
-        _searchPersistence = new SearchWorkspacePersistence(OS.GetUserDataDir(), runtime.Profile.ProfileId);
+        _searchPersistence ??= new SearchWorkspacePersistence(OS.GetUserDataDir(), runtime.Profile.ProfileId);
         _searchPersistence.ApplyPreferencesToRuntimeSettings(_predictionSettings);
         SearchEnvironmentSignature currentEnvironment = SearchEnvironmentSignatureBuilder.Capture(runtime);
         _searchPersistence.EnsureEnvironment(currentEnvironment);
@@ -152,7 +170,7 @@ internal sealed partial class AppShell : Control
         RuntimeLog.Detail(
             $"uiZIndexAudit=true;maxAssignedZIndex={UiZLayers.HighestAssigned};withinCanvasItemLimit=true;");
         SetLanguage(_languageCode);
-        AppPageKey initialPage = ResolvePersistedPage();
+        AppPageKey initialPage = _retainedTools ? AppPageKey.Advanced : ResolvePersistedPage();
         Navigate(initialPage);
         SetRuntimeAwareIdleStatus();
         RuntimeLog.Ui($"App shell initialized: restoredPage={initialPage}; fallbackDefault=Analysis; readableLog={RuntimeLog.CurrentLogPath}");
@@ -166,6 +184,7 @@ internal sealed partial class AppShell : Control
 
     public override void _UnhandledKeyInput(InputEvent @event)
     {
+        if (!IsVisibleInTree()) return;
         if (@event is not InputEventKey key || !key.Pressed || key.Echo || key.Keycode != Key.Escape)
         {
             return;
@@ -213,6 +232,9 @@ internal sealed partial class AppShell : Control
 
     public override void _Process(double delta)
     {
+        // Child SearchPage polling continues while hidden to finish cancellation;
+        // the inactive host must not write stale settings over the main workbench.
+        if (_retainedTools && !IsVisibleInTree()) return;
         RuntimeLog.PumpOnMainThread();
         SearchPredictabilityVerificationStore.TryFlushPendingOnMainThread();
         GpuCostCalibration.TryFlushPendingOnMainThread();
@@ -226,7 +248,7 @@ internal sealed partial class AppShell : Control
         if (_searchPersistence is not null)
         {
             _searchPersistence.CapturePreferences(_languageCode, Size, _predictionSettings);
-            _searchPersistence.Tick(delta);
+            if (!_retainedTools) _searchPersistence.Tick(delta);
         }
         if (_dragging)
         {
@@ -432,9 +454,11 @@ internal sealed partial class AppShell : Control
     {
         if (result is null || string.IsNullOrWhiteSpace(result.Seed))
             return;
+        if (result.Party is not null) return; // A saved witness is not a restorable party draft.
         Navigate(AppPageKey.Analysis, analyzeOnEntry: false);
         if (_analysisPage is null || _analysisController is null)
             return;
+        _analysisController.SetPartyDraft(null);
         ModelKey character = BaseGameModelKeys.Characters.Silent;
         if (!string.IsNullOrWhiteSpace(result.CharacterKey) &&
             ModelKey.TryParseExact(result.CharacterKey, out ModelKey restoredCharacter) &&
@@ -640,7 +664,7 @@ internal sealed partial class AppShell : Control
     private void SetLanguage(string languageCode)
     {
         _languageCode = string.Equals(languageCode, "zh", StringComparison.OrdinalIgnoreCase) ? "zh" : "en";
-        _uiText = JsonUiTextProvider.Create(_languageCode);
+        _uiText = JsonUiTextProvider.CreatePredictorUi13(_languageCode);
         _contentNames = RuntimeGameContentNameResolver.Create(_languageCode);
         _header!.ApplyLocalization(_uiText);
         _navigation!.ApplyLocalization(_uiText);
@@ -761,6 +785,11 @@ internal sealed partial class AppShell : Control
     {
         if (_searchPersistence is null)
             return;
+        if (_retainedTools && !IsVisibleInTree())
+        {
+            _searchPersistence.ApplyPreferencesToRuntimeSettings(_predictionSettings);
+            _languageCode = PreferredUiLanguage();
+        }
         _searchPersistence.CapturePreferences(_languageCode, Size, _predictionSettings);
         _searchPersistence.FlushAll();
     }

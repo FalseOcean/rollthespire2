@@ -28,6 +28,22 @@ internal static class SearchFeasibilityAnalyzer
             return SearchFeasibilityResult.Impossible(NormalizationProof(compiled.Normalization.Diagnostics));
         }
 
+        var query = compiled.NormalizedQuery;
+        if (compiled.Context.Authority.PlayersCount == 1 && !query.LegacyNeow.NeowRelics.IsEmpty)
+        {
+            bool accepted = false;
+            var filter = query.LegacyNeow.NeowRelics;
+            var selected = query.OpeningRoute?.RouteRelicKey;
+            bool exact = Core.Neow.ModernNeowIdentityPredictor.TryVisitOfferSpace(compiled.Context.Authority, (a,b,c,_) =>
+            {
+                bool Has(ModelKey key) => key == a || key == b || key == c;
+                accepted |= (!selected.HasValue || Has(selected.Value)) &&
+                    (filter.Any.Count == 0 || filter.Any.Any(Has)) && filter.All.All(Has) && !filter.Ban.Any(Has);
+            });
+            if (exact && !accepted) return SearchFeasibilityResult.Impossible(new(
+                SearchImpossibilityReasonCode.IncludeExcludeConflict, Diagnostic: "NeowOfferedOptionsConflictWithSelectedOpening"));
+        }
+
         if (TryProveBonesGrantImpossible(compiled, out SearchImpossibilityProof? bonesProof))
             return SearchFeasibilityResult.Impossible(bonesProof!);
 
@@ -588,7 +604,7 @@ internal static class SearchFeasibilityAnalyzer
         if (cards is { IsEmpty: false } && authority.HasExactCharacterRewardPool)
         {
             HashSet<ModelKey> legal = authority.CharacterRewardPool!
-                .Where(card => !card.IsMultiplayerOnly)
+                .Where(card => compiled.Context.Authority.PlayersCount > 1 || !card.IsMultiplayerOnly)
                 .Where(card => card.EligibleForPostCombatRewardByPoolMembership)
                 .Where(card => card.IsUnlockedInCapturedPool)
                 .Where(card => card.Rarity is EffectCardRarity.Common or EffectCardRarity.Uncommon or EffectCardRarity.Rare)
@@ -615,7 +631,7 @@ internal static class SearchFeasibilityAnalyzer
         if (potions is { IsEmpty: false } && authority.HasExactPotions)
         {
             HashSet<ModelKey> legal = authority.PotionPool!
-                .Where(potion => !potion.IsMultiplayerOnly)
+                .Where(potion => compiled.Context.Authority.PlayersCount > 1 || !potion.IsMultiplayerOnly)
                 .Where(potion => potion.Rarity is EffectPotionRarity.Common or EffectPotionRarity.Uncommon or EffectPotionRarity.Rare)
                 .Select(potion => potion.PotionKey)
                 .Where(key => key.IsValid)

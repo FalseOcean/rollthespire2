@@ -22,21 +22,23 @@ internal static partial class AutomaticPrivateSerialPricing
 
     internal static PricedOrder? Price(double roots, IFamilyInvocation[] order, bool privateEdges,
         Func<IFamilyInvocation, FamilyPhysicalQuoteRequest, FamilyPhysicalQuote?> quote,
-        Func<IFamilyInvocation, IReadOnlySet<string>, double?> survival, long? cpuScanLimit = null)
+        Func<IFamilyInvocation, IReadOnlySet<string>, double?> survival, long? cpuScanLimit = null,
+        bool firstCompactInput = false, int? rootWindowOverride = null, double? initialSetupMs = null)
     {
         if (!double.IsFinite(roots) || roots < 0) return null;
         if(cpuScanLimit.HasValue && roots>0 && order.Length>0 && order.All(f=>f is FamilyCpuExecution))
             roots=Math.Min(cpuScanLimit.Value,Math.Ceiling(roots/65536)*65536);
-        double fraction = 1, ms = 0; double? setup = 100;
+        double fraction = 1, ms = 0; double? setup = initialSetupMs ?? (order.All(f=>f is FamilyCpuExecution) ? 0 : 100);
         var passed = new HashSet<string>(StringComparer.Ordinal);
         var evidence = new List<string>();
-        int rootWindow = order.All(f=>f is FamilyCpuExecution) ? 65536 : PrivateOrdinalBuffer.Capacity;
+        int rootWindow = rootWindowOverride ?? (order.All(f=>f is FamilyCpuExecution) ? 65536 : PrivateOrdinalBuffer.Capacity);
         for (int i = 0; i < order.Length; i++)
         {
             bool terminal = i == order.Length - 1;
             double population = roots * fraction;
             double mean = Math.Min(roots, rootWindow) * fraction;
-            var geometry = new FamilyPhysicalQuoteRequest(i != 0, privateEdges && !terminal, mean, privateEdges && i != 0);
+            var geometry = new FamilyPhysicalQuoteRequest(i != 0 || firstCompactInput, privateEdges && !terminal,
+                mean, privateEdges && i != 0);
             var q = order[i] is FamilyCpuExecution cpu ? cpu.Quote(geometry,passed) : quote(order[i], geometry);
             double? s = survival(order[i], passed);
             if (q is null || q.WindowCapacity <= 0 || !double.IsFinite(q.NanosecondsPerInput) ||
@@ -52,14 +54,18 @@ internal static partial class AutomaticPrivateSerialPricing
                 if (privateEdges) return null;
                 ms += numerical + windows * q.FixedWindowMilliseconds;
                 fraction *= s.Value;
-                setup = null; // per-search CPU compilation has no calibrated setup quote
+                // Most CPU Families still leave setup unknown. Consume an explicit
+                // owned quote when available; never silently turn Unknown into zero.
+                setup = setup.HasValue && q.SetupMilliseconds.HasValue ? setup + q.SetupMilliseconds : null;
                 evidence.Add($"{order[i].FamilyId}:{q.Shape}:input={F(population)}:s={F(s.Value)}:ns={F(q.NanosecondsPerInput)}:CPUCanonicalIncludesAbi1:{q.Evidence}");
                 passed.UnionWith(order[i].Coverage);
                 continue;
             }
             if (i > 0 && order[i-1] is FamilyCpuExecution)
                 ms += population * 5 / 1e6 * q.GpuCostRatio; // existing public upload edge, not CPU materialization
-            ms += numerical + windows * .15 * q.GpuCostRatio;
+            else if (i == 0 && firstCompactInput)
+                ms += population * 5 / 1e6 * q.GpuCostRatio;
+            ms += numerical + windows * (.15 + q.FixedWindowMilliseconds) * q.GpuCostRatio;
             // No synchronous per-stage logging envelope: operational logging
             // consolidated those writes behind opt-in detail. Empty stages never submit.
             double inputFraction = fraction;

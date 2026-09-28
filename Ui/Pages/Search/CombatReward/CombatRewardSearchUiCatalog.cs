@@ -5,7 +5,7 @@ using RolltheSpire2.Ui.Controls.Pickers;
 
 namespace RolltheSpire2.Ui.Pages.Search.CombatReward;
 
-internal sealed record CombatRewardSearchUiCatalog(
+internal sealed partial record CombatRewardSearchUiCatalog(
     RuntimeProfileId ProfileId,
     IReadOnlyList<ModelKey> CardCandidates,
     IReadOnlyList<ModelKey> PotionCandidates,
@@ -17,6 +17,9 @@ internal sealed record CombatRewardSearchUiCatalog(
 {
     public IReadOnlyDictionary<ModelKey, CardPickerCandidateMetadata> CardPickerMetadata { get; init; } =
         new Dictionary<ModelKey, CardPickerCandidateMetadata>(ModelKeyComparer.Instance);
+    public IReadOnlySet<ModelKey> MultiplayerOnlyCards { get; init; } = new HashSet<ModelKey>(ModelKeyComparer.Instance);
+    public bool CardSupportModelAvailable { get; init; }
+    public bool CardSupportProofAvailable { get; init; }
 
     public CardPickerContext CreateCardPickerContext(string sourceId) => new(
         CardCandidates,
@@ -38,7 +41,9 @@ internal sealed record CombatRewardSearchUiCatalog(
 
     public static CombatRewardSearchUiCatalog FromAuthority(
         RuntimeProfileId profileId,
-        NeowEffectAuthoritySnapshot? authority)
+        NeowEffectAuthoritySnapshot? authority,
+        bool includeMultiplayerOnly = false,
+        ModelKey? characterKey = null)
     {
         if (authority is null)
         {
@@ -46,7 +51,7 @@ internal sealed record CombatRewardSearchUiCatalog(
         }
 
         ModelKey[] cards = (authority.CharacterRewardPool ?? Array.Empty<NeowEffectCardSnapshot>())
-            .Where(card => !card.IsMultiplayerOnly)
+            .Where(card => includeMultiplayerOnly || !card.IsMultiplayerOnly)
             .Where(card => card.EligibleForPostCombatRewardByPoolMembership)
             .Where(card => card.IsUnlockedInCapturedPool)
             .Where(card => card.Rarity is EffectCardRarity.Common or EffectCardRarity.Uncommon or EffectCardRarity.Rare)
@@ -57,7 +62,7 @@ internal sealed record CombatRewardSearchUiCatalog(
             .ToArray();
 
         ModelKey[] potions = (authority.PotionPool ?? Array.Empty<NeowEffectPotionSnapshot>())
-            .Where(potion => !potion.IsMultiplayerOnly)
+            .Where(potion => includeMultiplayerOnly || !potion.IsMultiplayerOnly)
             .Where(potion => potion.Rarity is EffectPotionRarity.Common or EffectPotionRarity.Uncommon or EffectPotionRarity.Rare)
             .OrderBy(potion => potion.PoolOrder)
             .Select(potion => potion.PotionKey)
@@ -99,6 +104,16 @@ internal sealed record CombatRewardSearchUiCatalog(
             potionAvailable,
             $"combat-reward-ui-runtime-catalog:{precision}")
         {
+            CardSupportModelAvailable = cardAvailable && RuntimeProfilePolicies.UsesBeta110SharedAlgorithms(profileId),
+            // HasExactCharacterRewardPool also admits best-effort Mod models. The
+            // raw capture flags, not that admission property, authorize exclusions.
+            CardSupportProofAvailable = authority.HasCapturedIdentityFoundation &&
+                authority.CharacterRewardPoolExact && authority.CharacterRewardHooksNoOpExact &&
+                RuntimeProfilePolicies.UsesBeta110SharedAlgorithms(profileId),
+            MultiplayerOnlyCards = (authority.CharacterRewardPool ?? Array.Empty<NeowEffectCardSnapshot>())
+                .Where(card => card.IsMultiplayerOnly && cards.Contains(card.CardKey, ModelKeyComparer.Instance))
+                .Select(card => card.CardKey)
+                .ToHashSet(ModelKeyComparer.Instance),
             CardPickerMetadata = (authority.CharacterRewardPool ?? Array.Empty<NeowEffectCardSnapshot>())
                 .Where(card => cards.Contains(card.CardKey, ModelKeyComparer.Instance))
                 .GroupBy(card => card.CardKey, ModelKeyComparer.Instance)
@@ -106,7 +121,7 @@ internal sealed record CombatRewardSearchUiCatalog(
                     group => group.Key,
                     group => new CardPickerCandidateMetadata(
                         group.Key,
-                        Array.Empty<ModelKey>(),
+                        characterKey is { IsValid: true } character ? new[] { character } : Array.Empty<ModelKey>(),
                         group.First().Rarity,
                         group.First().CardType),
                     ModelKeyComparer.Instance)

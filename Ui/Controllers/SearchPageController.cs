@@ -197,6 +197,13 @@ internal sealed class SearchPageController
             $"cursor={_persistence.DescribeCursor()}");
     }
 
+    internal void RefreshPersistedResults()
+    {
+        if (_session is not null) return;
+        _page.RestorePersistedResults(_persistence.GetPersistedResults());
+        RefreshResultsStaleness();
+    }
+
 
 
     private void ShowPresetLibrary() =>
@@ -616,7 +623,7 @@ internal sealed class SearchPageController
                 $"familyPipelineMs={EtaLogNumber(projection.TargetFamilyPipelineMs)};exactTailMs={EtaLogNumber(projection.TargetExactTailMs)};" +
                 $"missingEvidence={missing};acceptedResultRootModel=QueryWideProbabilityAuthority;" +
                 "etaAuthority=FamilyPlan+FamilySurvival+SelectedPhysicalPerformance+ExactTimingOnly;" +
-                $"steadyStateComposition=max(FamilyPipeline,ExactTail);startupIncluded={projection.Plan.EstimatedSetupMilliseconds.HasValue};searchAdmissionAffected=false");
+                $"steadyStateComposition=BoundedWindowPipelineFillDrain;startupIncluded={projection.Plan.EstimatedSetupMilliseconds.HasValue};searchAdmissionAffected=false");
         }
         catch (Exception ex)
         {
@@ -672,9 +679,15 @@ internal sealed class SearchPageController
             EventSequenceSearchUiCatalog eventSequenceCatalog = EventSequenceSearchUiCatalog.FromAuthority(
                 _runtime.Profile.ProfileId,
                 authority.WorldAuthority);
+            if (_runtime.Profile.ProfileId == RuntimeProfileId.Beta111)
+            {
+                try { eventSequenceCatalog = eventSequenceCatalog with {
+                    MorphicGroveScenario = Beta111MorphicGroveAuthorityCapture.CaptureAuthoredInitialBasics(authority) }; }
+                catch (Exception ex) { RuntimeLog.Warn("morphicGroveUiPoolUnavailable=" + ex.Message); }
+            }
             CombatRewardSearchUiCatalog combatRewardCatalog = CombatRewardSearchUiCatalog.FromAuthority(
                 _runtime.Profile.ProfileId,
-                authority.EffectAuthority);
+                authority.EffectAuthority, characterKey: _page.CharacterKey);
             ShopColorlessSearchUiCatalog shopColorlessCatalog = ShopColorlessSearchUiCatalog.FromAuthority(
                 _runtime.Profile.ProfileId,
                 authority.EffectAuthority);
@@ -864,23 +877,62 @@ internal sealed class SearchPageController
         out RuntimeContextAuthoritySnapshot authority,
         out string issue)
     {
-        compiled = null;
+        compiled = CompileAuthoredDraft(draft, _runtime, characterKey, ascension, out authority);
         issue = string.Empty;
+        if (compiled.Status == QueryNormalizationStatus.Impossible)
+            issue = "SearchQueryImpossible:" + string.Join(",", compiled.Normalization.Diagnostics);
+        return true;
+    }
+
+    // Same existing authoring adapter for the old page and the new workbench.
+    // Captures read-only authority; no Search session, cursor or persistence mutation.
+    internal static CompiledSearch CompileAuthoredDraft(SearchDraft draft, ModRuntimeSnapshot runtime,
+        ModelKey characterKey, int ascension, out RuntimeContextAuthoritySnapshot authority)
+    {
         BuildSearchQuery(draft, out SearchQuery query, out AncientOptionConditionProfile ancientAssumptions);
+        query = query with { TransformationAggregate = draft.TransformationAggregate };
+        if ((draft.MorphicGroveContainsCard ?? draft.MorphicGroveSecondCard) is { } card)
+            query = query with { EventResultConditions = query.EventResultConditions.Append(new EventResultSearchCondition(
+                EventResultConditionKind.MorphicGroveGroupInitialBasicsContains, card) {
+                MorphicGroveSecondCard = draft.MorphicGroveContainsCard.HasValue ? draft.MorphicGroveSecondCard : null
+            }).ToArray() };
+        return CompileAuthoredQuery(query, ancientAssumptions, runtime, characterKey, ascension, out authority);
+    }
+
+    // Shared compilation seam; neither caller needs the legacy SearchPage UI.
+    internal static CompiledSearch CompileAuthoredQuery(SearchQuery query, AncientOptionConditionProfile ancientAssumptions,
+        ModRuntimeSnapshot runtime, ModelKey characterKey, int ascension, out RuntimeContextAuthoritySnapshot authority)
+    {
         CharacterIdentity character = CharacterIdentity.FromKey(characterKey);
-        string contextAuthoritySeed = new string(_runtime.Profile.SeedAlphabet[0], _runtime.Profile.SeedLength);
+        string contextAuthoritySeed = new string(runtime.Profile.SeedAlphabet[0], runtime.Profile.SeedLength);
         authority = RuntimeContextAuthorityCapture.CaptureRuntimeReadOnly(
-            _runtime.Profile, contextAuthoritySeed, character, ascension, _runtime.Detection.DisplayVersion,
+            runtime.Profile, contextAuthoritySeed, character, ascension, runtime.Detection.DisplayVersion,
             playersCount: 1, playerSlotIndex: 0,
             predictionGameMode: WorldGameMode.Singleplayer,
             predictionGameModeAuthority: PredictionGameModeAuthority.ExplicitRequest);
         SearchContext context = SearchContextFactory.From(
-            _runtime.Profile.ProfileId, characterKey, ascension, authority, _runtime.Detection, ancientAssumptions);
+            runtime.Profile.ProfileId, characterKey, ascension, authority, runtime.Detection, ancientAssumptions);
+        var capturedAuthority = authority;
+        query = query with { EventResultConditions = query.EventResultConditions.Select(c =>
+            EventResultTransformSemantics.IsTransform(c.Kind)
+                ? c with { MorphicGroveScenario = Beta111MorphicGroveAuthorityCapture.CaptureAuthoredEventResult(capturedAuthority, c.Kind) }
+                : c).ToArray() };
+        if (query.TransformationAggregate is { } aggregate)
+            query = query with { TransformationAggregate = aggregate with { EventScenario = aggregate.UsesEvents
+                ? CaptureAggregateEventPremises(authority, aggregate) : null } };
         RolltheSpire2.Infrastructure.Snapshots.ProductionSearchReplay.ExportIfRequested(context, query);
-        compiled = SearchCompiler.Compile(query, context);
-        if (compiled.Status == QueryNormalizationStatus.Impossible)
-            issue = "SearchQueryImpossible:" + string.Join(",", compiled.Normalization.Diagnostics);
-        return true;
+        return SearchCompiler.Compile(query, context);
+    }
+
+    private static RolltheSpire2.Core.Prediction.MorphicGroveScenario CaptureAggregateEventPremises(
+        RuntimeContextAuthoritySnapshot authority, TransformationAggregateCondition aggregate)
+    {
+        var source = Beta111MorphicGroveAuthorityCapture.CaptureAuthoredBasics(authority, aggregate.MorphicGrove || aggregate.TrialNondescript ? 2 : 1);
+        return new(source.Authority, source.Premises with { EventOccurrenceBasis =
+            "Authored transformation events: " + (aggregate.MorphicGrove ? "Morphic Grove / Group; " : "") +
+            (aggregate.AromaOfChaos ? "Aroma of Chaos / LetGo; " : "") + (aggregate.WhisperingHollow ? "Whispering Hollow / Hug; " : "") +
+            (aggregate.Symbiote ? "Symbiote / transform; " : "") + (aggregate.TrialNondescript ? "Trial / require Nondescript case and two transforms; " : "") +
+            "legal initial Strike/Defend targets and unchanged local pool/RNG premises at each entry; occurrence and deck history not proven." }, source.Targets);
     }
 
     private void Start(SearchDraft draft, SearchRunDraft runDraft)
@@ -1055,6 +1107,8 @@ internal sealed class SearchPageController
         _setGlobalStatus(GlobalStatusKind.Warning, _page.Localize(Ui1TextKey.SearchStatusStopping), string.Empty);
     }
 
+    internal bool HasActiveSearch => _session is not null;
+
     internal void CancelForPanelClose()
     {
         _pendingPresetLoad = null;
@@ -1106,8 +1160,10 @@ internal sealed class SearchPageController
 
         CheckpointCursorFromSession(session, flush: false, allowWrapCommit: false);
         SearchProgressSnapshot segmentProgress = session.GetProgress();
-        if (segmentProgress.State != SearchRunState.Running)
+        bool completed = session.Completion.IsCompleted;
+        if (completed)
         {
+            segmentProgress = session.GetProgress();
             // A terminal session may still have more than the normal per-frame drain
             // budget buffered. Drain it before detaching the session so accepted Exact
             // results are never stranded in the channel.
@@ -1117,6 +1173,9 @@ internal sealed class SearchPageController
                     ConsumeCandidate(finalCandidate);
             }
         }
+        // A terminal receipt can precede asynchronous family/owner cleanup. Keep
+        // the session attached (and Search unavailable) until it has fully ended.
+        if (segmentProgress.State != SearchRunState.Running && !completed) return;
         SearchProgressSnapshot displayProgress = AggregateProgress(segmentProgress);
         if (_panelCloseCancellationRequested)
             _page.SetRunning(false);

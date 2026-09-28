@@ -50,16 +50,17 @@ internal sealed partial class RelicPickerPanel : Control
     private readonly Label _empty;
     private readonly Dictionary<RelicPickerCategory, Button> _categoryButtons = new();
     private readonly List<RelicPickerCandidate> _allCandidates = new();
-    private readonly HashSet<ModelKey> _selectedCharacters = new(ModelKeyComparer.Instance);
-    private readonly HashSet<EffectCardRarity> _selectedRarities = new();
-    private readonly HashSet<EffectCardType> _selectedTypes = new();
+    private readonly CardPickerFilterState _cardFilters = new();
+    private HashSet<ModelKey> _selectedCharacters => _cardFilters.Characters;
+    private HashSet<EffectCardRarity> _selectedRarities => _cardFilters.Rarities;
+    private HashSet<EffectCardType> _selectedTypes => _cardFilters.Types;
 
     private IUiTextProvider? _text;
     private IGameContentNameResolver? _names;
     private RelicPickerRequest? _request;
     private RelicPickerCategory? _activeCategory;
     private CardPickerContext? _cardContext;
-    private bool _allCharactersSelected = true;
+    private bool _allCharactersSelected { get => _cardFilters.AllCharacters; set => _cardFilters.AllCharacters = value; }
     private float _cardTileWidth = RelicPickerTile.CardTileMaxWidth;
 
     public RelicPickerPanel(IGameIconResolver icons, AnchoredTooltipHost tooltipHost)
@@ -483,37 +484,21 @@ internal sealed partial class RelicPickerPanel : Control
 
     private void ToggleCharacter(ModelKey character)
     {
-        bool alreadySelected = !_allCharactersSelected &&
-                               _selectedCharacters.Count == 1 &&
-                               _selectedCharacters.Contains(character);
-        _selectedCharacters.Clear();
-        if (alreadySelected)
-        {
-            _allCharactersSelected = true;
-        }
-        else
-        {
-            _allCharactersSelected = false;
-            _selectedCharacters.Add(character);
-        }
+        _cardFilters.ToggleCharacter(character);
         RebuildCardFilters();
         RebuildGrid();
     }
 
     private void ToggleRarity(EffectCardRarity rarity)
     {
-        bool alreadySelected = _selectedRarities.Count == 1 && _selectedRarities.Contains(rarity);
-        _selectedRarities.Clear();
-        if (!alreadySelected) _selectedRarities.Add(rarity);
+        _cardFilters.ToggleRarity(rarity);
         RebuildCardFilters();
         RebuildGrid();
     }
 
     private void ToggleType(EffectCardType type)
     {
-        bool alreadySelected = _selectedTypes.Count == 1 && _selectedTypes.Contains(type);
-        _selectedTypes.Clear();
-        if (!alreadySelected) _selectedTypes.Add(type);
+        _cardFilters.ToggleType(type);
         RebuildCardFilters();
         RebuildGrid();
     }
@@ -665,16 +650,7 @@ internal sealed partial class RelicPickerPanel : Control
     private bool CardFilterMatches(RelicPickerCandidate candidate)
     {
         if (_request?.ContentKind != GameContentKind.Card || _cardContext is null) return true;
-        if (!_cardContext.IsAllowed(candidate.ModelKey)) return false;
-        if (!_cardContext.TryGet(candidate.ModelKey, out CardPickerCandidateMetadata metadata))
-        {
-            return _selectedCharacters.Count == 0 && _selectedRarities.Count == 0 && _selectedTypes.Count == 0;
-        }
-        bool characterMatches = _allCharactersSelected || _selectedCharacters.Count == 0 ||
-                                metadata.CharacterKeys.Any(_selectedCharacters.Contains);
-        bool rarityMatches = _selectedRarities.Count == 0 || _selectedRarities.Contains(metadata.Rarity);
-        bool typeMatches = _selectedTypes.Count == 0 || _selectedTypes.Contains(metadata.CardType);
-        return characterMatches && rarityMatches && typeMatches;
+        return _cardFilters.Matches(_cardContext, candidate.ModelKey);
     }
 
     private string RarityText(EffectCardRarity rarity) => rarity switch

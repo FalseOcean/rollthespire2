@@ -37,6 +37,10 @@ internal sealed class SearchCategoryTabIconProvider : ISearchCategoryTabIconProv
     private const string RunHistoryTreasureIconPath =
         "res://images/ui/run_history/treasure.png";
 
+    // NGameOverScreen uses this silhouette for the Bosses Slain score line.
+    private const string BossScoreIconPath =
+        "res://images/ui/game_over_screen/score_boss.png";
+
     private const string AncientBlueFlameFrame0Path =
         "res://images/atlases/compressed.sprites/card_template/ancient_flame/ancient_card_flame_0.tres";
 
@@ -95,6 +99,9 @@ internal sealed class SearchCategoryTabIconProvider : ISearchCategoryTabIconProv
                     IconVariant.WorldCompendiumAncientIcon,
                     "search-category-neow-runtime-ancient-icon"),
                 SearchCategoryKey.Ancient => ResolveOfficialAncientGlyph(),
+                SearchCategoryKey.BossIdentity => LoadExactTexture(
+                    BossScoreIconPath,
+                    "search-category-boss-score-silhouette"),
                 SearchCategoryKey.BossAndMap => ResolveOfficialMapLocationIcon(),
                 SearchCategoryKey.Relic => LoadExactTexture(
                     RunHistoryTreasureIconPath,
@@ -102,12 +109,17 @@ internal sealed class SearchCategoryTabIconProvider : ISearchCategoryTabIconProv
                 SearchCategoryKey.CombatReward => LoadExactTexture(
                     CombatRewardCardIconPath,
                     "search-category-combat-reward-card-icon"),
-                SearchCategoryKey.Event => ResolveOfficialEventRoomIcon(),
+                SearchCategoryKey.Event => ResolveOfficialRoomIcon("Event"),
                 SearchCategoryKey.Shop => ResolveModelIcon(
                     MembershipCardKey,
                     GameContentKind.Relic,
                     IconVariant.Small,
                     "search-category-shop-membership-card"),
+                SearchCategoryKey.Transformation => ResolveModelIcon(
+                    BaseGameModelKeys.Relics.NewLeaf,
+                    GameContentKind.Relic,
+                    IconVariant.Small,
+                    "search-category-transformation-new-leaf"),
                 _ => SearchCategoryTabIconAsset.Missing("search-category-unsupported")
             };
         }
@@ -209,10 +221,10 @@ internal sealed class SearchCategoryTabIconProvider : ISearchCategoryTabIconProv
         }
     }
 
-    private SearchCategoryTabIconAsset ResolveOfficialEventRoomIcon()
+    private SearchCategoryTabIconAsset ResolveOfficialRoomIcon(string roomName)
     {
-        const string evidencePrefix =
-            "search-category-event:ImageHelper.GetRoomIconPath(Unknown,Event,null)";
+        string evidencePrefix =
+            $"search-category-{roomName.ToLowerInvariant()}:ImageHelper.GetRoomIconPath(Unknown,{roomName},null)";
 
         try
         {
@@ -242,8 +254,8 @@ internal sealed class SearchCategoryTabIconProvider : ISearchCategoryTabIconProv
             MethodInfo method = matches[0];
             ParameterInfo[] parameters = method.GetParameters();
             object mapPointUnknown = Enum.Parse(parameters[0].ParameterType, "Unknown", ignoreCase: false);
-            object roomEvent = Enum.Parse(parameters[1].ParameterType, "Event", ignoreCase: false);
-            string? path = method.Invoke(null, new object?[] { mapPointUnknown, roomEvent, null }) as string;
+            object roomType = Enum.Parse(parameters[1].ParameterType, roomName, ignoreCase: false);
+            string? path = method.Invoke(null, new object?[] { mapPointUnknown, roomType, null }) as string;
             if (string.IsNullOrWhiteSpace(path))
             {
                 return SearchCategoryTabIconAsset.Missing($"{evidencePrefix}:official-path-empty");

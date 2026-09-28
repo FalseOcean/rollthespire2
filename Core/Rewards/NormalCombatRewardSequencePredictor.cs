@@ -21,7 +21,6 @@ namespace RolltheSpire2.Core.Rewards;
 /// </summary>
 public static class NormalCombatRewardSequencePredictor
 {
-    private const int BattleCount = 3;
     private const int CardsPerBattle = 3;
     private const float PotionOddsStep = 0.1f;
     private const float InitialCardRarityOffset = -0.05f;
@@ -234,7 +233,7 @@ public static class NormalCombatRewardSequencePredictor
         }
 
         List<NeowEffectCardSnapshot> cards = effectAuthority.CharacterRewardPool
-            .Where(card => !card.IsMultiplayerOnly)
+            .Where(card => worldAuthority?.Beta109Generation?.IsMultiplayer == true || !card.IsMultiplayerOnly)
             // Post-combat CardReward uses runtime reward-pool membership. It does not
             // apply CardModel.CanBeGeneratedInCombat, which is a separate combat-only filter.
             .Where(card => card.EligibleForPostCombatRewardByPoolMembership)
@@ -243,7 +242,7 @@ public static class NormalCombatRewardSequencePredictor
             .OrderBy(card => card.PoolOrder)
             .ToList();
         List<NeowEffectPotionSnapshot> potions = effectAuthority.PotionPool
-            .Where(potion => !potion.IsMultiplayerOnly)
+            .Where(potion => worldAuthority?.Beta109Generation?.IsMultiplayer == true || !potion.IsMultiplayerOnly)
             .Where(potion => potion.Rarity is EffectPotionRarity.Common or EffectPotionRarity.Uncommon or EffectPotionRarity.Rare)
             .OrderBy(potion => potion.PoolOrder)
             .ToList();
@@ -343,7 +342,7 @@ public static class NormalCombatRewardSequencePredictor
                 actKey,
                 clampedAscension,
                 cards,
-                potions));
+                potions, projectionRequest.BattleCount));
         }
 
         bool anyEvaluated = routeResults.Any(route => route.Status == SeedDomainEvaluationStatus.Evaluated);
@@ -433,7 +432,7 @@ public static class NormalCombatRewardSequencePredictor
                 new PredictionDiagnostic(PredictionDiagnosticCodes.RuntimeAuditFingerprint, RuntimeProfilePolicies.AuditFingerprint(profile.ProfileId)),
                 new PredictionDiagnostic(PredictionDiagnosticCodes.RuntimeCardCatalogFingerprint, effectAuthority.CatalogFingerprint),
                 new PredictionDiagnostic(PredictionDiagnosticCodes.CardBaseOddsPolicy, RuntimeProfilePolicies.BaseOddsPolicy(profile.ProfileId).ToString()),
-                new PredictionDiagnostic("reward-rarity-policy", "StatefulCardRarityOdds.Roll;RollWithBaseOddsNotUsed"),
+                new PredictionDiagnostic("reward-rarity-policy", "Encounter=StatefulCardRarityOdds.Roll;Candy=Other.BaseOdds.NoPityMutation"),
                 new PredictionDiagnostic("reward-gold-projection", NormalCombatGoldProjectionStatus.ConditionalDefaultMonsterFullKill.ToString()),
                 new PredictionDiagnostic("reward-card-creation-flags", "IsFromCombat|IsCardReward"),
                 new PredictionDiagnostic("reward-force-potion-policy", "opening-relic-adapter-aware"),
@@ -468,8 +467,9 @@ public static class NormalCombatRewardSequencePredictor
         ModelKey actKey,
         int ascension,
         IReadOnlyList<NeowEffectCardSnapshot> cards,
-        IReadOnlyList<NeowEffectPotionSnapshot> potions)
+        IReadOnlyList<NeowEffectPotionSnapshot> potions, int battleCount)
     {
+        if (battleCount is < 1 or > 6) throw new ArgumentOutOfRangeException(nameof(battleCount));
         if (!TryBuildRouteImpactPlan(profileId, continuation, out RouteRewardImpactPlan impactPlan, out string impactIssue))
         {
             return UnknownRoute(
@@ -482,12 +482,12 @@ public static class NormalCombatRewardSequencePredictor
         Xoshiro256StarStar rewards = continuation.RewardsRngState!.Restore();
         float potionOdds = continuation.PotionRewardState;
         float cardOffset = InitialCardRarityOffset;
-        var battles = new List<NormalCombatRewardBattleResult>(BattleCount);
+        var battles = new List<NormalCombatRewardBattleResult>(battleCount);
         RouteRewardImpactState impactState = impactPlan.CreateState();
         IReadOnlyList<NormalCombatRewardConditionalAssumption> conditionalAssumptions =
             BuildConditionalAssumptions(impactPlan);
 
-        for (int battleOrdinal = 1; battleOrdinal <= BattleCount; battleOrdinal++)
+        for (int battleOrdinal = 1; battleOrdinal <= battleCount; battleOrdinal++)
         {
             int callsBefore = rewards.CallCount;
             float potionBefore = potionOdds;
@@ -766,6 +766,7 @@ public static class NormalCombatRewardSequencePredictor
 
             for (int added = 0; added < Math.Max(0, impact.Amount); added++)
             {
+                if (!cards.Any(c => c.CardType == EffectCardType.Power)) continue;
                 int cardOrdinal = cardResults.Count + 1;
                 NormalCombatRewardCardResult generated = GenerateCard(
                     profileId,
@@ -829,7 +830,14 @@ public static class NormalCombatRewardSequencePredictor
             trace,
             battleOrdinal,
             $"{stagePrefix}card-{cardOrdinal}{specialSuffix}-rarity");
-        CardRarityRollOutcome rarityOutcome = RollCardRarity(rarityRoll, ascension, ref cardOffset);
+        // The only typed extra card here is Candy: CardCreationSource.Other,
+        // base odds and no Encounter pity read/update (including a Rare result).
+        bool candy = requiredCardType == EffectCardType.Power;
+        float rare = ascension >= 7 ? .0149f : .03f;
+        CardRarityRollOutcome rarityOutcome = candy
+            ? new(rarityRoll < rare ? EffectCardRarity.Rare : rarityRoll < rare + UncommonBase ? EffectCardRarity.Uncommon : EffectCardRarity.Common,
+                cardOffset, rare, rare + UncommonBase, cardOffset)
+            : RollCardRarity(rarityRoll, ascension, ref cardOffset);
         NormalCombatRewardRngTraceEntry rarityTrace = trace[^1];
         trace[^1] = rarityTrace with
         {
@@ -843,10 +851,12 @@ public static class NormalCombatRewardSequencePredictor
         IReadOnlyList<NeowEffectCardSnapshot> eligibleCards = requiredCardType is EffectCardType cardType
             ? cards.Where(card => card.CardType == cardType).ToArray()
             : cards;
+        var exclusions = candy && !eligibleCards.Any(c => !selectedThisReward.Contains(c.CardKey))
+            ? new HashSet<ModelKey>() : selectedThisReward;
         EffectCardRarity? selectedRarity = NextAvailableRarity(
             rarityOutcome.Rarity,
             eligibleCards,
-            selectedThisReward);
+            exclusions);
         if (selectedRarity is null)
         {
             throw new InvalidOperationException(
@@ -854,7 +864,7 @@ public static class NormalCombatRewardSequencePredictor
         }
 
         List<NeowEffectCardSnapshot> candidates = eligibleCards
-            .Where(card => card.Rarity == selectedRarity.Value && !selectedThisReward.Contains(card.CardKey))
+            .Where(card => card.Rarity == selectedRarity.Value && !exclusions.Contains(card.CardKey))
             .ToList();
         NeowEffectCardSnapshot selectedCard = NextItem(
             rewards,

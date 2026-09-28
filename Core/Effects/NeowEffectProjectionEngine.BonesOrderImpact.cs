@@ -272,7 +272,10 @@ internal sealed partial class NeowEffectProjectionEngine
                     branch.Continuity.UnknownHook,
                     branch.Continuity.NestedObtain,
                     new[] { routeEvidence, continuation.EvidenceCode },
-                    ExtractNestedRelicKeys(branch.RelicScopedResults.SelectMany(result => result.EffectGroups)))));
+                    ExtractNestedRelicKeys(branch.RelicScopedResults.SelectMany(result => result.EffectGroups)),
+                    sharedStateExact: branch.Continuity.CanProjectFinalCurse,
+                    executedNestedObtainRelics: branch.RelicScopedResults.SelectMany(result =>
+                        ExecutedNestedObtainRelics(result.SourceRelicKey, result.EffectGroups)).Distinct().ToArray())));
         }
 
         return results;

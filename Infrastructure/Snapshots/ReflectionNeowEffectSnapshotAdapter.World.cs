@@ -49,7 +49,9 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         WorldGameMode predictionGameMode = WorldGameMode.Unknown,
         PredictionGameModeAuthority predictionGameModeAuthority = PredictionGameModeAuthority.Unknown,
         string gameVersion = "",
-        string act1OverrideRaw = "random")
+        string act1OverrideRaw = "random",
+        object? explicitUnlockState = null,
+        IReadOnlyList<ModelKey>? orderedCharacters = null)
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
         Assembly? assembly = AppDomain.CurrentDomain.GetAssemblies()
@@ -67,7 +69,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                 return MissingWorld(profile.ProfileId, "ModelDbNotFound");
             }
 
-            object? unlockState = TryCaptureCurrentUnlockState(assembly, out string unlockSource);
+            string unlockSource = "explicit-party-slot";
+            object? unlockState = explicitUnlockState ?? TryCaptureCurrentUnlockState(assembly, out unlockSource);
             bool unlockStateExact = unlockState is not null;
             ModelListCapture sharedEventsCapture = ReadStaticModelsWorld(modelDb,
                 "AllSharedEvents", "SharedEvents");
@@ -101,7 +104,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                     playerSlotIndex,
                     predictionGameMode,
                     predictionGameModeAuthority,
-                    act1OverrideRaw)
+                    act1OverrideRaw, orderedCharacters)
                 : null;
             IReadOnlyList<ModelKey> fallbackRelics = (effects?.SharedRelicPoolSource ?? Array.Empty<NeowEffectRelicSnapshot>())
                 .Concat(effects?.CharacterRelicPoolSource ?? Array.Empty<NeowEffectRelicSnapshot>())
@@ -264,7 +267,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                 captureDiagnostic,
                 beta109)
             {
-                EventAuthority = beta109?.EventAuthority ?? capturedEventAuthority
+                EventAuthority = beta109?.EventAuthority ?? capturedEventAuthority,
+                EncounterNumberOfRuns = unlockState is null ? null : ReadProperty(unlockState, "NumberOfRuns") as int?
             };
         }
         catch (Exception ex)

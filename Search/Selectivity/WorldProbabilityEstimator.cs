@@ -338,18 +338,16 @@ internal static class WorldProbabilityEstimator
             reason = $"BossOrdinalOutsideRuntimeShape:bossCount={bossCount}";
             return false;
         }
-        if (bossCount == 2 && pool.Length < 2)
-        {
-            probability = 0d;
-            reason = "DoubleBossPoolTooSmall";
-            return true;
-        }
+        // The shared party discovery override fixes the first boss only. Act 3's
+        // second boss still draws from the original pool excluding that first boss.
+        ModelKey[] firstPool = plan.Authority.WorldAuthority?.Beta109Generation?.PartyBossDiscoveryOverrides
+            .TryGetValue(variant.ActKey.Serialized, out var replacement) == true ? [replacement] : pool;
 
         long total = 0;
         long accepted = 0;
         if (bossCount == 1)
         {
-            foreach (ModelKey first in pool)
+            foreach (ModelKey first in firstPool)
             {
                 total++;
                 ModelKey[] outcome = { first };
@@ -358,7 +356,7 @@ internal static class WorldProbabilityEstimator
         }
         else
         {
-            foreach (ModelKey first in pool)
+            foreach (ModelKey first in firstPool)
             foreach (ModelKey second in pool)
             {
                 if (first == second) continue;
@@ -424,7 +422,7 @@ internal static class WorldProbabilityEstimator
 
         EventPoolSequenceProjector.Candidate[] staticallyEligible = raw
             .Where(candidate => !EventStaticEligibilityCatalog.Evaluate(
-                candidate.EventKey, variant.Act, generation.Profile, candidate.Source).ShouldReject)
+                candidate.EventKey, variant.Act, generation.Profile, candidate.Source, Eligibility()).ShouldReject)
             .ToArray();
         if (staticallyEligible.GroupBy(item => item.EventKey, ModelKeyComparer.Instance).Any(group => group.Count() > 1))
         {
@@ -443,7 +441,7 @@ internal static class WorldProbabilityEstimator
             EventPoolSequenceProjector.Candidate[] effectivePool = raw
                 .Where((candidate, index) => index != skippedIndex)
                 .Where(candidate => !EventStaticEligibilityCatalog.Evaluate(
-                    candidate.EventKey, variant.Act, generation.Profile, candidate.Source).ShouldReject)
+                    candidate.EventKey, variant.Act, generation.Profile, candidate.Source, Eligibility()).ShouldReject)
                 .ToArray();
             if (!TrySolveEventPool(effectivePool, conditions, out double branchP, out string branchReason))
             {
@@ -458,6 +456,10 @@ internal static class WorldProbabilityEstimator
         probability = Math.Clamp(total, 0d, 1d);
         reason = $"CleanedEventQueue;raw={raw.Length};staticEligible={staticallyEligible.Length};openingSkipMixture={raw.Length};sampleBranches={string.Join(',', branchNotes)}";
         return true;
+
+        EventImmutableEligibilityContext Eligibility() => new(generation.GameMode, generation.ModeFactsExact,
+            generation.PlayerCount, generation.ModeFactsExact && generation.IsMultiplayerExact,
+            generation.EventAuthority.CharacterCardPoolCount, generation.EventAuthority.CharacterCardPoolCountExact);
     }
 
     private static bool TrySolveEventPool(

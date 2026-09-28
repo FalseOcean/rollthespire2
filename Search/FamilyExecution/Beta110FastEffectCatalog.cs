@@ -91,6 +91,8 @@ internal sealed record Beta110FastEffectCatalog(
     bool CursePoolAuthorityExact,
     string Fingerprint)
 {
+    public Beta110FastCardPool MultiplayerRewardPool { get; init; } = new([], [], []);
+
     public bool TryGetDenseId(ModelKey key, out ushort id)
     {
         for (int index = 0; index < DenseKeys.Length; index++)
@@ -167,6 +169,8 @@ internal static class Beta110FastEffectCatalogCompiler
 
         Beta110FastCardPool characterPool = BuildCardPool(
             authority?.CharacterRewardPool ?? Array.Empty<NeowEffectCardSnapshot>(), dense);
+        var multiplayerPool = BuildCardPool((authority?.CharacterRewardPool ?? []).Concat(authority?.ColorlessRewardPool ?? [])
+            .Where(c => c.IsMultiplayerOnly).DistinctBy(c => c.CardKey).Select((c, i) => c with { PoolOrder = i }), dense);
         Beta110FastCardPool colorlessPool = BuildCardPool(
             authority?.ColorlessRewardPool ?? Array.Empty<NeowEffectCardSnapshot>(), dense);
         Beta110FastCardPool[] otherPools = (authority?.OtherCharacterPools ?? Array.Empty<CharacterCardPoolSnapshot>())
@@ -294,6 +298,7 @@ internal static class Beta110FastEffectCatalogCompiler
             "capsule-circlet=" + capsuleCircletId.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "combat-reward-card=" + CardPoolDescriptor(combatRewardCardPool),
             "combat-reward-power=" + CardPoolDescriptor(combatRewardPowerPool),
+            "multiplayer-reward=" + CardPoolDescriptor(multiplayerPool),
             "combat-reward-potion=" + PotionPoolDescriptor(combatRewardPotionPool),
             "combat-reward-top-impact=" + string.Join(';', topLevelRewardCapabilities.Select((value, index) =>
                 $"{index}:{value.ContinuationSupported}:{value.InfluenceSupported}:{value.InfluenceFlags}:{value.AdditionalCardRewardCount}:{value.FixedGoldAmount}"))
@@ -332,7 +337,7 @@ internal static class Beta110FastEffectCatalogCompiler
             combatRewardCardExact,
             combatRewardPotionExact,
             curseExact,
-            fingerprint);
+            fingerprint) { MultiplayerRewardPool = multiplayerPool };
     }
 
     private static (ushort[] LeafyStrike, ushort[] LeafyDefend, ushort[] NewLeaf, bool LeafyExact, bool NewLeafExact)

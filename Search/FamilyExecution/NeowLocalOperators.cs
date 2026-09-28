@@ -65,6 +65,15 @@ internal static class NeowLocalOperators
             return true;
         }
 
+        if (relicId == Beta110FastRelicCatalog.MassiveScroll)
+        {
+            if (!needsRewards) return true;
+            Span<ushort> offer = stackalloc ushort[3];
+            if (!GenerateNormalCardOffer(catalog.MultiplayerRewardPool, plan.Authority.Ascension, ref rewards, offer)) return false;
+            MatchOfferConditions(relicId, Beta110FastStructuredConditionKind.MassiveScrollOffer, plan.StructuredConditions, offer, matched);
+            return true;
+        }
+
         if (relicId == Beta110FastRelicCatalog.HeftyTablet)
         {
             if (!needsRewards) return true;
@@ -161,8 +170,7 @@ internal static class NeowLocalOperators
             if (!catalog.LeafyTransformAuthorityExact ||
                 catalog.LeafyStrikeTransformPool.Length == 0 || catalog.LeafyDefendTransformPool.Length == 0) return false;
             Span<ushort> transforms = stackalloc ushort[2];
-            transforms[0] = catalog.LeafyStrikeTransformPool[transformations.NextInt(catalog.LeafyStrikeTransformPool.Length)];
-            transforms[1] = catalog.LeafyDefendTransformPool[transformations.NextInt(catalog.LeafyDefendTransformPool.Length)];
+            DrawLeafyTransforms(catalog, ref transformations, transforms);
             MatchOfferConditions(relicId, Beta110FastStructuredConditionKind.LeafyPoulticeTransforms,
                 plan.StructuredConditions, transforms, matched);
             return true;
@@ -172,7 +180,7 @@ internal static class NeowLocalOperators
         {
             if (!needsNiche) return true;
             if (!catalog.NewLeafTransformAuthorityExact || catalog.NewLeafTransformPool.Length == 0) return false;
-            ushort replacement = catalog.NewLeafTransformPool[niche.NextInt(catalog.NewLeafTransformPool.Length)];
+            ushort replacement = DrawNewLeafTransform(catalog, ref niche);
             if ((plan.EnabledDomains & Beta110FastDomain.NewLeafTransform) != 0)
             {
                 MatchSingleOfferCondition(relicId, Beta110FastStructuredConditionKind.NewLeafTransform,
@@ -185,6 +193,15 @@ internal static class NeowLocalOperators
         // effects are deliberate continuation no-ops in the Fast RNG surface.
         return true;
     }
+
+    // Shared bounded numerical donors; pool authority remains compiled by N.
+    internal static void DrawLeafyTransforms(Beta110FastEffectCatalog catalog, ref Beta110FastRng rng, Span<ushort> output)
+    {
+        output[0] = catalog.LeafyStrikeTransformPool[rng.NextInt(catalog.LeafyStrikeTransformPool.Length)];
+        output[1] = catalog.LeafyDefendTransformPool[rng.NextInt(catalog.LeafyDefendTransformPool.Length)];
+    }
+    internal static ushort DrawNewLeafTransform(Beta110FastEffectCatalog catalog, ref Beta110FastRng rng) =>
+        catalog.NewLeafTransformPool[rng.NextInt(catalog.NewLeafTransformPool.Length)];
 
     internal static bool RequiredStructuredSourcesPresent(
         ReadOnlySpan<Beta110FastStructuredCondition> conditions,
@@ -418,7 +435,10 @@ internal static class NeowLocalOperators
             if (condition.SourceRelicId != Beta110FastRelicCatalog.Kaleidoscope ||
                 condition.Kind != Beta110FastStructuredConditionKind.KaleidoscopeIndependentOfferTargets)
                 continue;
-            bool match = condition.TargetCount == 1
+            bool match = condition.OrderedKaleidoscope
+                ? (condition.KaleidoscopeFirstTarget == Beta110FastDenseId.Invalid || Contains(first, condition.KaleidoscopeFirstTarget)) &&
+                  (condition.KaleidoscopeSecondTarget == Beta110FastDenseId.Invalid || Contains(second, condition.KaleidoscopeSecondTarget))
+                : condition.TargetCount == 1
                 ? Contains(first, condition.Target0) || Contains(second, condition.Target0)
                 : (Contains(first, condition.Target0) && Contains(second, condition.Target1)) ||
                   (Contains(first, condition.Target1) && Contains(second, condition.Target0));

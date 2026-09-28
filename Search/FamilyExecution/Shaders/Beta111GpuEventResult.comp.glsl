@@ -154,6 +154,45 @@ bool evaluate_event_results(uint64_t root) {
     for (uint index = 0u; index < condition_count; ++index) {
         uint kind = event_plan_buffer.values[9u + index * 2u];
         uint target = event_plan_buffer.values[10u + index * 2u];
+        if (kind == 7u || kind == 8u) {
+            rng_initialize(root + uint64_t(player_slot) + make_u64(event_plan_buffer.values[target], event_plan_buffer.values[target + 1u]));
+            uint value = event_plan_buffer.values[target + 2u];
+            if (kind == 7u) { if (next_int(3u) != value) return false; continue; }
+            uint types[3]; for (uint j = 0u; j < 3u; j++) types[j] = j;
+            for (uint j = 2u; j > 0u; j--) { uint k = next_int(j + 1u); uint tmp = types[j]; types[j] = types[k]; types[k] = tmp; }
+            if (types[0] != value / 4u && types[1] != value / 4u) return false;
+            if (value % 4u != 0u) {
+                uint riders[3]; for (uint j = 0u; j < 3u; j++) riders[j] = j;
+                for (uint j = 2u; j > 0u; j--) { uint k = next_int(j + 1u); uint tmp = riders[j]; riders[j] = riders[k]; riders[k] = tmp; }
+                if (riders[0] != value % 4u - 1u && riders[1] != value % 4u - 1u) return false;
+            }
+            continue;
+        }
+        if (kind == 4u || kind == 5u || kind == 6u) {
+            uint64_t event_hash = make_u64(event_plan_buffer.values[target], event_plan_buffer.values[target + 1u]);
+            uint count = event_plan_buffer.values[target + 2u];
+            rng_initialize(root + event_hash);
+            uint prefix = event_plan_buffer.values[target + 3u];
+            if (prefix == 1u) next_int(19u);
+            if (prefix == 2u && next_int(3u) != 2u) return false;
+            uint first = next_int(count);
+            if (kind == 6u) { if (event_plan_buffer.values[target + 4u + first] == 0u) return false; continue; }
+            if (kind == 5u) {
+                uint a = event_plan_buffer.values[target + 4u + first];
+                if (a == 0u) return false;
+                uint second = next_int(count);
+                uint b = event_plan_buffer.values[target + 4u + second];
+                if (!(((a & 1u) != 0u && (b & 2u) != 0u) || ((a & 2u) != 0u && (b & 1u) != 0u))) return false;
+                continue;
+            }
+            bool found = event_plan_buffer.values[target + 4u + first] != 0u;
+            if (!found) {
+                uint second = next_int(count);
+                found = event_plan_buffer.values[target + 4u + second] != 0u;
+            }
+            if (!found) return false;
+            continue;
+        }
         if (target == INVALID_ID) return false;
         if (kind == 0u && uint(grab) != target) return false;
         if (kind == 1u && uint(dive) != target) return false;

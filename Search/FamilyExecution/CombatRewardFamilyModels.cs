@@ -21,7 +21,8 @@ internal sealed class CombatRewardFamilyModels
             plan.ExplicitContext.InfluenceFlags == Beta110CombatRewardInfluenceFlags.None ||
             CombatRewardProbabilityEstimator.FixedAuthoredPrefixDrawCount(request, plan).HasValue;
         var estimate = CombatRewardProbabilityEstimator.EstimateFamilySieve(request, plan);
-        Survival = estimate.PricingClass == SearchSelectivityPricingClass.ExactPriced && estimate.Probability is double p
+        Survival = replay.ConservativelyKeeps ? FamilySurvivalProjection.Unresolved(Id, replay.ConservativeOpeningReason) :
+            estimate.PricingClass == SearchSelectivityPricingClass.ExactPriced && estimate.Probability is double p
             ? FamilySurvivalProjection.Resolved(Id, p, "C.FamilySieve;" + estimate.EvidenceCode)
             : FamilySurvivalProjection.Unresolved(Id, estimate.EvidenceCode + ";" + estimate.Notes);
 

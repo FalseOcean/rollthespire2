@@ -62,6 +62,12 @@ internal sealed record Beta110CombatRewardFastPlan(
     bool PotionPoolAuthorityExact,
     string Fingerprint)
 {
+    public byte CardAssignmentWindow { get; init; }
+    public ushort[] CardAssignmentTargets { get; init; } = [];
+    public byte PotionAssignmentWindow { get; init; }
+    public byte[] PotionAssignmentRequirements { get; init; } = [];
+    public ushort[] PotionAssignmentTargets { get; init; } = [];
+    public bool HasDistinctBattleAssignments => CardAssignmentTargets.Length > 0 || PotionAssignmentTargets.Length > 0;
     public int PredicateCount => Predicates.Length;
     public bool UsesSyntheticUnperturbedContinuation =>
         RoutePolicy == CombatRewardFastRoutePolicy.UnpinnedAssumeUnperturbed;

@@ -10,6 +10,7 @@ namespace RolltheSpire2.Ui.Pages.Search.Neow;
 internal enum NeowCandidatePoolKind
 {
     CharacterCards,
+    MultiplayerCards,
     RareCharacterCards,
     CommonCharacterCards,
     UncommonCharacterCards,
@@ -23,7 +24,7 @@ internal enum NeowCandidatePoolKind
     Curses
 }
 
-internal sealed record NeowSearchUiCatalog(
+internal sealed partial record NeowSearchUiCatalog(
     RuntimeProfileId ProfileId,
     ModelKey CharacterKey,
     IReadOnlyList<ModelKey> RouteRelics,
@@ -47,6 +48,9 @@ internal sealed record NeowSearchUiCatalog(
 {
     public IReadOnlyDictionary<ModelKey, CardPickerCandidateMetadata> CardPickerMetadata { get; init; } =
         new Dictionary<ModelKey, CardPickerCandidateMetadata>(ModelKeyComparer.Instance);
+    public IReadOnlyList<ModelKey> InitialBasicTransformCards { get; init; } = Array.Empty<ModelKey>();
+    public IReadOnlySet<ModelKey> MultiplayerOnlyCards { get; init; } = new HashSet<ModelKey>();
+    public IReadOnlyList<ModelKey> MassiveScrollCards { get; init; } = Array.Empty<ModelKey>();
 
     public CardPickerContext CreateCardPickerContext(
         IReadOnlyList<ModelKey> allowed,
@@ -136,6 +140,13 @@ internal sealed record NeowSearchUiCatalog(
                 .BuildTransformCandidates(authority.TransformPool, newLeafSource)
                 .Select(card => card.CardKey))
             : Array.Empty<ModelKey>();
+        ModelKey[] initialBasicTransforms = Keys(
+            (authority.OrderedDeck ?? Array.Empty<NeowEffectCardSnapshot>())
+                .Where(card => card.IsBasic && (card.IsStrike || card.IsDefend))
+                .SelectMany(source => (authority.TransformPool ?? Array.Empty<NeowEffectCardSnapshot>())
+                    .Where(candidate => candidate.PoolId == source.PoolId && candidate.CardKey != source.CardKey &&
+                        candidate.Rarity is not EffectCardRarity.Basic and not EffectCardRarity.Ancient)
+                    .Select(candidate => candidate.CardKey)));
         IReadOnlyList<NeowEffectRelicSnapshot> ordinaryRelicSnapshots =
             (authority.OrderedRelicBag ?? Array.Empty<NeowEffectRelicSnapshot>())
                 .Where(relic => relic.Rarity != EffectRelicRarity.Shop)
@@ -180,7 +191,13 @@ internal sealed record NeowSearchUiCatalog(
             authority.HasExactFoundation,
             authority.SnapshotFingerprint)
         {
-            CardPickerMetadata = BuildCardPickerMetadata(authority, characterKey)
+            CardPickerMetadata = BuildCardPickerMetadata(authority, characterKey),
+            InitialBasicTransformCards = initialBasicTransforms,
+            MultiplayerOnlyCards = (authority.CharacterRewardPool ?? []).Concat(authority.ColorlessRewardPool ?? [])
+                .Concat(authority.TransformPool ?? []).Concat((authority.OtherCharacterPools ?? []).SelectMany(p => p.Cards))
+                .Where(c => c.IsMultiplayerOnly).Select(c => c.CardKey).ToHashSet(ModelKeyComparer.Instance),
+            MassiveScrollCards = Keys(characterRewardCandidates.Concat(colorlessRewardCandidates)
+                .Where(c => c.IsMultiplayerOnly).Select(c => c.CardKey))
         };
     }
 
@@ -197,6 +214,7 @@ internal sealed record NeowSearchUiCatalog(
     public IReadOnlyList<ModelKey> Candidates(NeowCandidatePoolKind kind) => kind switch
     {
         NeowCandidatePoolKind.CharacterCards => CharacterCards,
+        NeowCandidatePoolKind.MultiplayerCards => MassiveScrollCards,
         NeowCandidatePoolKind.RareCharacterCards => RareCharacterCards,
         NeowCandidatePoolKind.CommonCharacterCards => CommonCharacterCards,
         NeowCandidatePoolKind.UncommonCharacterCards => UncommonCharacterCards,
@@ -221,6 +239,8 @@ internal sealed record NeowSearchUiCatalog(
         ModelKey currentCharacter)
     {
         var cards = new Dictionary<ModelKey, (NeowEffectCardSnapshot Card, HashSet<ModelKey> Characters)>(ModelKeyComparer.Instance);
+        HashSet<ModelKey> colorlessCards = (authority.ColorlessRewardPool ?? Array.Empty<NeowEffectCardSnapshot>())
+            .Select(card => card.CardKey).ToHashSet(ModelKeyComparer.Instance);
 
         static void Add(
             Dictionary<ModelKey, (NeowEffectCardSnapshot Card, HashSet<ModelKey> Characters)> output,
@@ -252,7 +272,10 @@ internal sealed record NeowSearchUiCatalog(
                 pair.Key,
                 pair.Value.Characters.OrderBy(key => key.Serialized, StringComparer.Ordinal).ToArray(),
                 pair.Value.Card.Rarity,
-                pair.Value.Card.CardType),
+                pair.Value.Card.CardType)
+            {
+                IsColorlessPoolMember = colorlessCards.Contains(pair.Key)
+            },
             ModelKeyComparer.Instance);
     }
 

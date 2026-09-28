@@ -101,8 +101,7 @@ public static class SearchAuthorityProjector
                 IReadOnlyList<NeowEffectRelicSnapshot> ordered = NeowRewardGenerator.BuildOrderedRelicBag(
                     profile,
                     rootHash,
-                    source.SharedRelicPoolSource!,
-                    source.CharacterRelicPoolSource!);
+                    projected);
                 string relicFingerprint = Fingerprint(ordered.Select(RelicDescriptor));
                 string snapshotFingerprint = Fingerprint(new[]
                 {

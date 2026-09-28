@@ -19,25 +19,28 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
         // Physical bounds of the retained donor, not Search admission gates.
         if (!RuntimeProfilePolicies.UsesBeta110SharedAlgorithms(request.ProfileId)) issue = "RootCodecOutsideDonor";
         else if (reward.PredicateCount > 64) issue = "PredicateMaskCapacity";
-        else if (reward.GoldPredicateCount != 0) issue = "GoldPredicateUsesCpuReference";
         else if (reward.OpeningConsumption.OrderedRelicIds.Contains(Beta110FastRelicCatalog.Kaleidoscope) &&
-            replay.Catalog.OtherCharacterPools.Length > 15) issue = "KaleidoscopePermutationCapacity";
+            !replay.KaleidoscopeCountOnly && replay.Catalog.OtherCharacterPools.Length > 15) issue = "KaleidoscopePermutationCapacity";
         if (issue.Length != 0) return null;
-        // C needs no bag/obtained-relic projection. Keep only existing numeric pool layout.
-        var catalog = replay.Catalog with { OrdinaryRelics = [], PlayerRelicBuckets = [], SharedRelicConsumeShuffleLengths = [] };
+        var catalog = replay.CapsuleHeldReplay ? replay.Catalog :
+            replay.Catalog with { OrdinaryRelics = [], PlayerRelicBuckets = [], SharedRelicConsumeShuffleLengths = [] };
         var policy = Beta110GpuCombatRewardRoutePolicy.UnpinnedAssumeUnperturbed;
         var hot = Beta110GpuCombatRewardHotLoopCompiler.Compile(request.Ascension, reward, catalog, policy);
+        if (reward.HasDistinctBattleAssignments) hot = Beta110GpuCombatRewardHotLoopPlan.Disabled("PartyDistinctBattleAssignmentUsesGenericStreaming");
         uint[] meta = CombatRewardGpuPacking.BuildPlanMeta(request.Authority.PlayerSlotIndex,
             request.Authority.PlayersCount, request.Ascension, request.Authority.AllCharacterCardPoolsUnlocked == true,
             request.Authority.IsScrollBoxesAllowed == true, request.CharacterKey == BaseGameModelKeys.Characters.Defect,
             request.Authority.EffectAuthority?.BonesEligibleRelics?.Count(k => k != BaseGameModelKeys.Relics.NeowsBones) ?? 0,
-            reward, 0x43463031, catalog, policy, 255, 255, 255, hot);
-        uint[] pools = CombatRewardGpuPacking.BuildPoolMeta(catalog, out uint[] ids);
+            reward, 0x43463031, catalog, policy, 255, 255, 255, hot, replay.PrecedingNicheDraws,
+            replay.CapsuleNicheAdvances, replay.KaleidoscopeCountOnly, replay.ConservativelyKeeps,
+            replay.ReplayActualBonesPair, replay.BonesPool, replay.DynamicCapsuleNicheUnknown, replay.CapsuleHeldReplay);
+        uint[] pools = CombatRewardGpuPacking.BuildPoolMeta(catalog, out uint[] ids, replay.ExplicitHeldIds);
         uint[] predicates = CombatRewardGpuPacking.BuildPredicates(reward, out uint[] targets);
         return new(meta, pools, ids, predicates, targets, hot, replay.RouteCount);
     }
 
     internal string ShaderSource(bool forceGeneric = false) => FamilyGpuComputeUtility.LoadEmbeddedShader("CombatRewardFamily.comp.glsl")
+        .Replace("/*__C_CAPSULE_DEFINES__*/", "#define RT2_C_CAPSULE_HELD " + (Meta[54] != 0 ? "1" : "0"), StringComparison.Ordinal)
         .Replace("/*__C_HOT_DEFINES__*/", Beta110GpuCombatRewardHotLoopCompiler.BuildShaderDefines(HotLoop,
             Beta110GpuCombatRewardRoutePolicy.UnpinnedAssumeUnperturbed, forceGeneric ? Beta110GpuCombatRewardHotLoopVariant.Disabled :
             Beta110GpuCombatRewardHotLoopVariant.OptimizedSingleRoute), StringComparison.Ordinal)

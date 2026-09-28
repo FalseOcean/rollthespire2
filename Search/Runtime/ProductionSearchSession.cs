@@ -52,6 +52,7 @@ public sealed class ProductionSearchSession : IProductionSearchSession
     private readonly object _safeCursorGate = new();
     private readonly Task _completion;
     private long _scanned;
+    private int _reservedMatches;
     private int _matches;
     private int _state = (int)SearchRunState.Running;
     private int _lastDisposition = (int)SearchDisposition.NoMatch;
@@ -95,6 +96,7 @@ public sealed class ProductionSearchSession : IProductionSearchSession
         RuntimeLog.Fault($"searchFault=true;phase={phase};plan={_executionPlan.PlanId};start={_plan.CanonicalStartSeed};safeCursor={_safeNextOrdinal};context={_plan.SnapshotFingerprint};familyRevisions={string.Join('|',_families.Select(f=>f.ConditionPerformance.PhysicalImplementationRevision))}", exception);
     }
     private readonly Func<ExactSearchExecutionRequest, TrustedRootHashInput, ProductionExactSearchResult> _exactEvaluator;
+    private readonly Func<int, CancellationToken, ValueTask>? _beforeCandidatePublish;
     private string _firstFailureCode = string.Empty;
     private string _firstFailureSeed = string.Empty;
     private ulong _safeNextOrdinal;
@@ -109,10 +111,12 @@ public sealed class ProductionSearchSession : IProductionSearchSession
         IRuntimePredictionDiagnosticSink? diagnosticSink,
         string traceSingleCandidateSeed,
         bool failOnPhysicalRecovery = false,
-        Func<ExactSearchExecutionRequest, TrustedRootHashInput, ProductionExactSearchResult>? exactEvaluator = null)
+        Func<ExactSearchExecutionRequest, TrustedRootHashInput, ProductionExactSearchResult>? exactEvaluator = null,
+        Func<int, CancellationToken, ValueTask>? beforeCandidatePublish = null)
     {
         _plan = plan ?? throw new ArgumentNullException(nameof(plan));
-        _exactEvaluator = exactEvaluator ?? ProductionExactSearchEvaluator.Evaluate;
+        _exactEvaluator = exactEvaluator ?? ((request, input) => ProductionExactSearchEvaluator.Evaluate(request, input, _lifetime.Token));
+        _beforeCandidatePublish = beforeCandidatePublish;
         _executionPlan = executionPlan ?? throw new ArgumentNullException(nameof(executionPlan));
         _etaProjection = etaProjection ?? throw new ArgumentNullException(nameof(etaProjection));
         _profile = RuntimeProfileRegistry.Select(plan.Detection);
@@ -321,12 +325,11 @@ public sealed class ProductionSearchSession : IProductionSearchSession
             double exactAggregateMs = ElapsedMilliseconds(Interlocked.Read(ref _exactAggregateStopwatchTicks));
             bool exactTimingSubmitted = false;
             // Empty queries return seeds but do not measure normal Exact work.
-            if (RolltheSpire2.Search.Selectivity.ProbabilitySemanticProjection.From(
-                    RolltheSpire2.Search.Selectivity.SearchSelectivityInput.From(_plan)).ActiveDomains().Any() &&
+            if (FamilyExactTimingDomains.HasQueryWork(_plan.CompiledSearch.NormalizedQuery) &&
                 !physicalRecoveryContaminated && exactAttempts > 0 && exactAggregateMs > 0d)
             {
                 SearchPredictabilityVerificationStore.SubmitExactTimingSample(
-                    FamilyExactTimingDomains.QueryDomains(_plan),
+                    FamilyExactTimingDomains.Resolve(_plan),
                     exactAttempts,
                     exactAggregateMs,
                     $"FamilyExecutionExactTiming;state={(SearchRunState)Volatile.Read(ref _state)};" +
@@ -638,6 +641,8 @@ public sealed class ProductionSearchSession : IProductionSearchSession
 
         int matchNumber = TryReserveMatch();
         if (matchNumber == 0) return;
+        if (_beforeCandidatePublish is not null)
+            await _beforeCandidatePublish(matchNumber, cancellationToken).ConfigureAwait(false);
         string snapshotFingerprint = string.Join("|", new[]
         {
             _plan.SnapshotFingerprint,
@@ -649,6 +654,9 @@ public sealed class ProductionSearchSession : IProductionSearchSession
             exact.Request!, exact.Document!, exact.Authority,
             evaluation.Evidence, evaluation.MatchedRouteIds, evaluation.Witnesses);
         await _candidates.Writer.WriteAsync(output, cancellationToken).ConfigureAwait(false);
+        // Reservations only bound admissions. A later reservation can publish first,
+        // so only successful writes count toward progress and automatic completion.
+        int publishedMatches = Interlocked.Increment(ref _matches);
         Interlocked.CompareExchange(ref _firstResult, output, null); Volatile.Write(ref _lastResult, output);
 
         if (!string.IsNullOrWhiteSpace(_traceSingleCandidateSeed) &&
@@ -660,7 +668,7 @@ public sealed class ProductionSearchSession : IProductionSearchSession
                 forceTrace: true, source: "FamilyExecutionExactTrace");
         }
 
-        if (matchNumber >= _plan.TargetMatchCount)
+        if (publishedMatches >= _plan.TargetMatchCount)
         {
             Interlocked.Exchange(ref _targetReached, 1);
             _lifetime.Cancel();
@@ -690,9 +698,9 @@ public sealed class ProductionSearchSession : IProductionSearchSession
     {
         while (true)
         {
-            int current = Volatile.Read(ref _matches);
+            int current = Volatile.Read(ref _reservedMatches);
             if (current >= _plan.TargetMatchCount) return 0;
-            if (Interlocked.CompareExchange(ref _matches, current + 1, current) == current) return current + 1;
+            if (Interlocked.CompareExchange(ref _reservedMatches, current + 1, current) == current) return current + 1;
         }
     }
 

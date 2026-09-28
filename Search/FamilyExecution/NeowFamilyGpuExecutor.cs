@@ -35,7 +35,9 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
     internal long ResidentBytes => WorkspaceBytes + (_stages.Count == 0 ? 0 :
         (long)NeowFamilyGpuPlan.CurseCapacity * 12 + (long)NeowFamilyGpuPlan.PairCapacity * 48);
     internal static string ShaderSource(int stage = 3, bool capsuleComposite = false, bool leafyPreGate = false,
-        bool bonesCapsuleComposite = false, bool bonesArcaneComposite = false, int directNestedMode = 0, int capsulePhysicalMode = 0, int bonesKMode = 0, bool authoredUpgrades = false) => FamilyGpuComputeUtility.LoadEmbeddedShader("NeowFamily.comp.glsl")
+        bool bonesCapsuleComposite = false, bool bonesArcaneComposite = false, int directNestedMode = 0, int capsulePhysicalMode = 0, int bonesKMode = 0, bool authoredUpgrades = false,
+        bool localResults = true) => FamilyGpuComputeUtility.LoadEmbeddedShader("NeowFamily.comp.glsl")
+        .Replace("__RT2_LOCAL_RESULTS__", localResults ? "1" : "0", StringComparison.Ordinal)
         .Replace("__RT2_AUTHORED_UPGRADES__", authoredUpgrades ? "1" : "0", StringComparison.Ordinal)
         .Replace("__RT2_BONES_K_MODE__", bonesKMode.ToString(), StringComparison.Ordinal)
         .Replace("/*__RT2_BONES_K__*/", bonesKMode == 0 ? "" : FamilyGpuComputeUtility.LoadEmbeddedShader("BonesKSameRoute.glsl")
@@ -57,8 +59,15 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
             .Replace("__RT2_UP_FRONT_LOW__", ((uint)hash).ToString("x8"), StringComparison.Ordinal)
             .Replace("__RT2_UP_FRONT_HIGH__", ((uint)(hash >> 32)).ToString("x8"), StringComparison.Ordinal);
     }
-    internal NeowFamilyGpuExecutor(RenderingDevice rd, NeowFamilyGpuPlan plan, uint tag, NeowCapsuleComposite? composite = null, PrivateOrdinalBuffer? privateInput = null, PrivateOrdinalBuffer? privateOutput = null, int capsulePhysicalMode = 0, int bonesKMode = 0, uint[]? bonesKMetadata = null)
+    internal NeowFamilyGpuExecutor(RenderingDevice rd, NeowFamilyGpuPlan plan, uint tag, NeowCapsuleComposite? composite = null, PrivateOrdinalBuffer? privateInput = null, PrivateOrdinalBuffer? privateOutput = null, int capsulePhysicalMode = 0, int bonesKMode = 0, uint[]? bonesKMetadata = null, NeowFamilyGpuPlan[]? partyPlans = null)
     {
+        string? partySource = null;
+        if (partyPlans is not null)
+        {
+            if (composite is not null || privateInput is not null || privateOutput is not null || bonesKMode != 0)
+                throw new InvalidOperationException("PartyN.FusedTransportScope");
+            (plan, partySource) = NeowPartyGpuPacking.Pack(partyPlans);
+        }
         if (capsulePhysicalMode != 0 && (capsulePhysicalMode is < 1 or > 6 || composite is null || composite.UsesBonesCheckpoint || plan.UsesStagedDense))
             throw new InvalidOperationException("DirectCapsule.PhysicalScope");
         if (bonesKMode is < 0 or > 2 || (bonesKMode != 0 && (composite is not null || bonesKMode == 1 && privateOutput is null || bonesKMode == 2 && bonesKMetadata is null)))
@@ -89,9 +98,10 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
                     Buffer(bonesKMetadata ?? composite!.Metadata)];
             }
             else if (composite is not null) buffers = [..buffers, Buffer(composite.Metadata)];
-            string source = ShaderSource(capsuleComposite: composite is not null,
+            string source = partySource ?? ShaderSource(capsuleComposite: composite is not null,
                 leafyPreGate: plan.UsesLeafyPreGate, bonesCapsuleComposite: bonesComposite, bonesArcaneComposite: _bonesArcane,
-                directNestedMode: composite is null ? plan.DirectNestedMode : 0, capsulePhysicalMode: capsulePhysicalMode, bonesKMode: bonesKMode, authoredUpgrades: plan.HasAuthoredUpgrades);
+                directNestedMode: composite is null ? plan.DirectNestedMode : 0, capsulePhysicalMode: capsulePhysicalMode, bonesKMode: bonesKMode, authoredUpgrades: plan.HasAuthoredUpgrades,
+                localResults: plan.HasLocalResults || composite is not null || bonesKMode != 0);
             if (_privateInput)
             {
                 const string ordinalRead = "uint ordinal=batch.values[4u]==0u ? first+lane : input_ordinals.values[first+lane];";
@@ -120,7 +130,8 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
                 {
                     Rid stageShader = Add(FamilyGpuComputeUtility.CompileShader(rd, ShaderSource(stage,
                         leafyPreGate: plan.UsesLeafyPreGate, bonesCapsuleComposite: bonesComposite, bonesArcaneComposite: _bonesArcane,
-                        directNestedMode: composite is null ? plan.DirectNestedMode : 0, bonesKMode: bonesKMode, authoredUpgrades: plan.HasAuthoredUpgrades), "NeowFamilyPreBones" + stage));
+                        directNestedMode: composite is null ? plan.DirectNestedMode : 0, bonesKMode: bonesKMode, authoredUpgrades: plan.HasAuthoredUpgrades,
+                        localResults: plan.HasLocalResults || composite is not null || bonesKMode != 0), "NeowFamilyPreBones" + stage));
                     Rid pipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(rd, stageShader));
                     if (!rd.ComputePipelineIsValid(pipeline)) throw new InvalidOperationException("NFamilyStagePipelineInvalid");
                     _stages.Add((pipeline, Add(FamilyGpuComputeUtility.CreateUniformSet(rd, stageShader, stagedBuffers))));

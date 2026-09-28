@@ -26,10 +26,15 @@ public static class RuntimeContextAuthorityCapture
         int playersCount = 1,
         int playerSlotIndex = 0,
         WorldGameMode predictionGameMode = WorldGameMode.Unknown,
-        PredictionGameModeAuthority predictionGameModeAuthority = PredictionGameModeAuthority.Unknown)
+        PredictionGameModeAuthority predictionGameModeAuthority = PredictionGameModeAuthority.Unknown,
+        object? explicitUnlockState = null,
+        IReadOnlyList<ModelKey>? orderedCharacters = null)
     {
         ArgumentNullException.ThrowIfNull(profile);
-        RuntimeEffectSnapshotCaptureResult captured = NeowEffectRuntimeSnapshotCapture.Capture(
+        RuntimeEffectSnapshotCaptureResult captured = explicitUnlockState is not null
+            ? ReflectionNeowEffectSnapshotAdapter.Capture(profile, rawSeed, character, ascension, playersCount,
+                playerSlotIndex, RuntimeProfileId.Beta111, gameVersion, new(true, true), explicitUnlockState)
+            : NeowEffectRuntimeSnapshotCapture.Capture(
             profile,
             rawSeed,
             character,
@@ -48,7 +53,7 @@ public static class RuntimeContextAuthorityCapture
             captured.EffectAuthority,
             predictionGameMode,
             predictionGameModeAuthority,
-            gameVersion);
+            gameVersion, explicitUnlockState: explicitUnlockState, orderedCharacters: orderedCharacters);
 
         bool vanilla = character.IsKnownVanilla;
         bool? runtimeNeowCatalogExact = ReflectionNeowEffectSnapshotAdapter.CaptureVanillaNeowCatalogExact(out string neowCatalogEvidence);

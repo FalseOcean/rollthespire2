@@ -13,7 +13,8 @@ bool cr_p10a_target_set(uint values[12],uint count,uint target_offset,uint targe
     for(uint i=0u;i<target_count;++i)if(cr_p10a_contains(values,count,predicate_targets.ids[target_offset+i]))return false;
     return true;
 }
-bool cr_p10a_match_predicate(uint cards[12],uint card_count,bool drop,uint potion,uint base){
+bool cr_p10a_match_predicate(uint cards[12],uint card_count,bool drop,uint potion,int gold,uint base){
+    if(gold<int(predicate_meta.values[base+14u]) || gold>int(predicate_meta.values[base+15u]))return false;
     if(!cr_p10a_target_set(cards,card_count,predicate_meta.values[base+2u],predicate_meta.values[base+3u],0u))return false;
     if(!cr_p10a_target_set(cards,card_count,predicate_meta.values[base+4u],predicate_meta.values[base+5u],1u))return false;
     if(!cr_p10a_target_set(cards,card_count,predicate_meta.values[base+6u],predicate_meta.values[base+7u],2u))return false;
@@ -28,17 +29,28 @@ bool cr_p10a_match_predicate(uint cards[12],uint card_count,bool drop,uint potio
     return true;
 }
 
+uint64_t cr_assignment_step(uint64_t states,uint matches,uint count){
+    uint64_t next=states;
+    for(uint subset=0u;subset<(1u<<count);++subset){
+        if((states&(uint64_t(1u)<<subset))==uint64_t(0u))continue;
+        for(uint target=0u;target<count;++target)
+            if((matches&(1u<<target))!=0u&&(subset&(1u<<target))==0u)next|=uint64_t(1u)<<(subset|(1u<<target));
+    }
+    return next;
+}
 bool cr_evaluate_rewards(inout RewardRouteState state){
 #ifndef RT2_CR_FAMILY
     if(!state.continuation_exact||!state.influence_exact||((state.influence_flags&(64u|128u))!=0u))return true;
 #endif
-    uint asc=plan_meta.values[4u],maxBattle=clamp(plan_meta.values[5u],1u,3u),predicate_count=plan_meta.values[11u];
+    uint asc=plan_meta.values[4u],maxBattle=clamp(plan_meta.values[5u],1u,6u),predicate_count=plan_meta.values[11u];
     uint64_t matched_mask=uint64_t(0u);
+    uint64_t card_states=uint64_t(1u),potion_states=uint64_t(1u);
     for(uint battle=0u;battle<maxBattle;++battle){
         bool drop;
         if((state.influence_flags&1u)!=0u)drop=true;
         else{drop=cr_next_float(state.rewards)<state.potion_odds;state.potion_odds+=drop?-0.1f:0.1f;}
-        uint minGold=asc>=3u?7u:10u,maxGold=asc>=3u?15u:20u;cr_next_int(state.rewards,maxGold-minGold+1u);
+        uint minGold=asc>=3u?7u:10u,maxGold=asc>=3u?15u:20u;
+        int gold=int(minGold+cr_next_int(state.rewards,maxGold-minGold+1u)+state.fixed_gold);
         uint potion=0xffffffffu;
         if(drop){
             float p=cr_next_float(state.rewards);uint rarity=p<=0.1f?3u:(p<=0.35f?2u:1u);
@@ -59,18 +71,35 @@ bool cr_evaluate_rewards(inout RewardRouteState state){
         if((state.influence_flags&4u)!=0u)state.lasting_candy_counter++;
 
         uint battle_ordinal=battle+1u;
+        if(battle_ordinal<=plan_meta.values[55]){
+            uint matches=0u;
+            for(uint target=0u;target<plan_meta.values[56];++target)
+                if(cr_p10a_contains(cards,count,plan_meta.values[plan_meta.values[57]+target]))matches|=1u<<target;
+            card_states=cr_assignment_step(card_states,matches,plan_meta.values[56]);
+        }
+        if(battle_ordinal<=plan_meta.values[58]){
+            uint matches=0u;
+            for(uint target=0u;target<plan_meta.values[59];++target){
+                uint at=plan_meta.values[60]+target*2u,req=plan_meta.values[at];
+                bool pass=req==0u?!drop:req==1u?drop:req==2u?(drop&&potion==plan_meta.values[at+1u]):true;
+                if(pass)matches|=1u<<target;
+            }
+            potion_states=cr_assignment_step(potion_states,matches,plan_meta.values[59]);
+        }
         for(uint pi=0u;pi<predicate_count;++pi){
-            uint base=pi*14u,predicate_battle=predicate_meta.values[base];uint64_t bit=uint64_t(1u)<<pi;
+            uint base=pi*16u,predicate_battle=predicate_meta.values[base];uint64_t bit=uint64_t(1u)<<pi;
             if(predicate_battle==0u){
-                if((matched_mask&bit)==uint64_t(0u)&&cr_p10a_match_predicate(cards,count,drop,potion,base))matched_mask|=bit;
+                if((matched_mask&bit)==uint64_t(0u)&&cr_p10a_match_predicate(cards,count,drop,potion,gold,base))matched_mask|=bit;
             }else if(predicate_battle==battle_ordinal){
-                if(!cr_p10a_match_predicate(cards,count,drop,potion,base))return false;
+                if(!cr_p10a_match_predicate(cards,count,drop,potion,gold,base))return false;
                 matched_mask|=bit;
             }
         }
     }
     uint64_t required_mask=predicate_count>=64u?~uint64_t(0u):((uint64_t(1u)<<predicate_count)-uint64_t(1u));
-    return (matched_mask&required_mask)==required_mask;
+    return (matched_mask&required_mask)==required_mask &&
+        (card_states&(uint64_t(1u)<<((1u<<plan_meta.values[56])-1u)))!=uint64_t(0u) &&
+        (potion_states&(uint64_t(1u)<<((1u<<plan_meta.values[59])-1u)))!=uint64_t(0u);
 }
 
 // P10 single-route hot-loop donor family. These paths are only entered for the
@@ -208,7 +237,7 @@ bool cr_evaluate_rewards_unpinned_hot(uint64_t root){
 #endif
 
 #if RT2_CR_HOT_RAW_BURN == 1
-        cr_next_u64(rewards); // gold result is unobserved; GPU plans with gold predicates are rejected
+        cr_next_u64(rewards); // Gold predicates use the generic evaluator.
 #else
         uint minGold=asc>=3u?7u:10u,maxGold=asc>=3u?15u:20u;cr_next_int(rewards,maxGold-minGold+1u);
 #endif
@@ -242,7 +271,7 @@ bool cr_evaluate_rewards_unpinned_hot(uint64_t root){
 
         uint battle_ordinal=battle+1u;
         for(uint pi=0u;pi<RT2_CR_HOT_PREDICATE_COUNT;++pi){
-            uint base=pi*14u,predicate_battle=predicate_meta.values[base];uint64_t bit=uint64_t(1u)<<pi;
+            uint base=pi*16u,predicate_battle=predicate_meta.values[base];uint64_t bit=uint64_t(1u)<<pi;
             if(predicate_battle==0u){
                 if((matched_mask&bit)==uint64_t(0u)&&cr_hot_match_predicate3(c0,c1,c2,drop,potion,base))matched_mask|=bit;
             }else if(predicate_battle==battle_ordinal){

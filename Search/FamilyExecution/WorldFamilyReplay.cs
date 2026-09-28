@@ -61,7 +61,8 @@ internal sealed class WorldFamilyReplay
             finalActs.Any(a => a.HasBossPredicate) ? "BossIdentity" : "EventEffectiveCandidate" };
         var generation = request.Authority.WorldAuthority!.Beta109Generation!;
         if (Plan.MaxRequiredAct > 0) ValidateRelicAuthority(request);
-        BucketLengths = Plan.MaxRequiredAct == 0 ? [] : generation.SharedRelicBuckets.Concat(generation.PlayerRelicBuckets)
+        BucketLengths = Plan.MaxRequiredAct == 0 ? [] : generation.SharedRelicBuckets.Concat(generation.IsMultiplayer
+                ? generation.PartyRelicBuckets.SelectMany(buckets => buckets) : generation.PlayerRelicBuckets)
             .Select(b => checked((uint)b.OrderedRelics.Count)).ToArray();
     }
 
@@ -71,7 +72,8 @@ internal sealed class WorldFamilyReplay
         if (!(generation.RelicInitializationExact && generation.SharedRelicPoolOrderExact &&
             generation.CharacterRelicPoolOrderExact && generation.RelicRarityAuthorityExact && generation.PlayerRelicPoolCompositionExact &&
             generation.SharedRelicBuckets.Count > 0 && generation.PlayerRelicBuckets.Count > 0 &&
-            generation.SharedRelicBuckets.Concat(generation.PlayerRelicBuckets).All(b => b.OrderExact)))
+            generation.SharedRelicBuckets.Concat(generation.PlayerRelicBuckets).All(b => b.OrderExact) &&
+            (!generation.IsMultiplayer || generation.HasExactFixedParty)))
             throw new InvalidOperationException("W.RootRelicInitializationAuthorityIncomplete");
     }
 

@@ -7,6 +7,7 @@ struct RewardRouteState {
     float card_offset;
     uint influence_flags;
     uint additional_card_rewards;
+    uint fixed_gold;
     uint lasting_candy_counter;
     bool continuation_exact;
     bool influence_exact;
@@ -169,13 +170,14 @@ bool cr_is_capsule(uint relic){return relic==3u||relic==28u;}
 RewardRouteState cr_initialize_route(uint64_t root_hash,bool captured,RngState captured_rewards){
     RewardRouteState state;state.rewards=captured?captured_rewards:cr_rng_initialize(root_hash+uint64_t(plan_meta.values[2u])+cr_plan_u64(14u));
     state.niche=cr_rng_initialize(root_hash+cr_plan_u64(16u));state.potion_odds=0.4f;state.card_offset=-0.05f;
-    state.influence_flags=0u;state.additional_card_rewards=0u;state.lasting_candy_counter=0u;
+    state.influence_flags=0u;state.additional_card_rewards=0u;state.fixed_gold=0u;state.lasting_candy_counter=0u;
     state.continuation_exact=true;state.influence_exact=true;return state;
 }
 
 void cr_apply_explicit_query_reward_context(inout RewardRouteState state){
     state.influence_flags|=plan_meta.values[37u]&0xffffu;
     state.additional_card_rewards+=plan_meta.values[38u];
+    state.fixed_gold+=plan_meta.values[39u];
 }
 
 uint cr_select_pool_excluding(uint meta,uint excluded[12],uint excluded_count,inout RngState rng);
@@ -187,6 +189,7 @@ bool cr_replay_query_literal_relic_consumption(uint relic,uint64_t root_hash,ino
     // behavior belongs to Exact unless explicitly represented by Reward context.
     if(relic==3u){cr_next_float(state.rewards);cr_next_float(state.rewards);return true;}
     if(relic==28u){cr_next_float(state.rewards);return true;}
+    if(relic==17u&&plan_meta.values[3u]>1u){uint base=pool_meta.values[47u];uint a=cr_roll_opening_card(base,asc,0xffffffffu,0xffffffffu,0xffffffffu,0u,state.rewards);uint b=cr_roll_opening_card(base,asc,a,0xffffffffu,0xffffffffu,1u,state.rewards);uint c=cr_roll_opening_card(base,asc,a,b,0xffffffffu,2u,state.rewards);return a!=0xffffffffu&&b!=0xffffffffu&&c!=0xffffffffu;}
     if(relic==10u){return cr_select_unused(4u,0xffffffffu,0xffffffffu,0xffffffffu,0u,state.rewards)!=0xffffffffu;}
     if(relic==2u){uint a=cr_select_unused(4u,0xffffffffu,0xffffffffu,0xffffffffu,0u,state.rewards);uint b=cr_select_unused(4u,a,0xffffffffu,0xffffffffu,1u,state.rewards);uint c=cr_select_unused(4u,a,b,0xffffffffu,2u,state.rewards);return a!=0xffffffffu&&b!=0xffffffffu&&c!=0xffffffffu;}
     if(relic==15u){uint a=cr_roll_opening_card(6u,asc,0xffffffffu,0xffffffffu,0xffffffffu,0u,state.rewards);uint b=cr_roll_opening_card(6u,asc,a,0xffffffffu,0xffffffffu,1u,state.rewards);return a!=0xffffffffu&&b!=0xffffffffu;}
@@ -225,26 +228,36 @@ bool cr_execute_non_capsule_relic(uint relic,uint64_t root_hash,inout RewardRout
 
 uint cr_combat_card_meta(uint rarity){return 20u+(rarity-1u)*2u;} uint cr_power_meta(uint rarity){return 26u+(rarity-1u)*2u;} uint cr_combat_potion_meta(uint rarity){return 32u+(rarity-1u)*2u;}
 uint cr_roll_combat_rarity(float value,uint asc,inout float offset){float baseRare=asc>=7u?0.0149f:0.03f,rareThreshold=baseRare+offset,uncommonThreshold=rareThreshold+0.37f;if(value<rareThreshold){offset=-0.05f;return 3u;}offset=min(0.4f,offset+(asc>=7u?0.005f:0.01f));return value<uncommonThreshold?2u:1u;}
-uint cr_generate_combat_card(bool power,uint asc,uint selected[12],uint selected_count,inout RewardRouteState state){uint requested=cr_roll_combat_rarity(cr_next_float(state.rewards),asc,state.card_offset);for(uint f=0u;f<3u;++f){uint rarity=requested==1u?(f==0u?1u:(f==1u?2u:3u)):requested==2u?(f==0u?2u:(f==1u?3u:1u)):(f==0u?3u:(f==1u?1u:2u));uint value=cr_select_pool_excluding(power?cr_power_meta(rarity):cr_combat_card_meta(rarity),selected,selected_count,state.rewards);if(value==0xffffffffu)continue;cr_next_float(state.rewards);return value;}return 0xffffffffu;}
+uint cr_generate_combat_card(bool power,uint asc,uint selected[12],uint selected_count,inout RewardRouteState state){uint exclusions=selected_count;
+if(power){
+    uint total=0u,available=0u;
+    for(uint r=1u;r<=3u;r++){uint m=cr_power_meta(r),off=pool_meta.values[m],len=pool_meta.values[m+1u];total+=len;
+        for(uint i=0u;i<len;i++){bool used=false;for(uint j=0u;j<selected_count;j++)used=used||selected[j]==dense_ids.ids[off+i];if(!used)available++;}}
+    if(total==0u)return 0xffffffffu;
+    if(available==0u)exclusions=0u;
+}
+float roll=cr_next_float(state.rewards),baseRare=asc>=7u?0.0149f:0.03f;
+uint requested=power?(roll<baseRare?3u:(roll<baseRare+0.37f?2u:1u)):cr_roll_combat_rarity(roll,asc,state.card_offset);
+for(uint f=0u;f<3u;++f){uint rarity=requested==1u?(f==0u?1u:(f==1u?2u:3u)):requested==2u?(f==0u?2u:(f==1u?3u:1u)):(f==0u?3u:(f==1u?1u:2u));uint value=cr_select_pool_excluding(power?cr_power_meta(rarity):cr_combat_card_meta(rarity),selected,exclusions,state.rewards);if(value==0xffffffffu)continue;cr_next_float(state.rewards);return value;}return 0xffffffffu;}
 
-bool cr_contains(uint values[36],uint offset,uint count,uint target){for(uint i=0u;i<count;++i)if(values[offset+i]==target)return true;return false;}
-bool cr_target_set(uint values[36],uint offset,uint count,uint target_offset,uint target_count,uint mode){if(target_count==0u)return true;if(mode==0u){for(uint i=0u;i<target_count;++i)if(cr_contains(values,offset,count,predicate_targets.ids[target_offset+i]))return true;return false;}if(mode==1u){for(uint i=0u;i<target_count;++i)if(!cr_contains(values,offset,count,predicate_targets.ids[target_offset+i]))return false;return true;}for(uint i=0u;i<target_count;++i)if(cr_contains(values,offset,count,predicate_targets.ids[target_offset+i]))return false;return true;}
+bool cr_contains(uint values[72],uint offset,uint count,uint target){for(uint i=0u;i<count;++i)if(values[offset+i]==target)return true;return false;}
+bool cr_target_set(uint values[72],uint offset,uint count,uint target_offset,uint target_count,uint mode){if(target_count==0u)return true;if(mode==0u){for(uint i=0u;i<target_count;++i)if(cr_contains(values,offset,count,predicate_targets.ids[target_offset+i]))return true;return false;}if(mode==1u){for(uint i=0u;i<target_count;++i)if(!cr_contains(values,offset,count,predicate_targets.ids[target_offset+i]))return false;return true;}for(uint i=0u;i<target_count;++i)if(cr_contains(values,offset,count,predicate_targets.ids[target_offset+i]))return false;return true;}
 
 bool cr_evaluate_rewards(inout RewardRouteState state){
     if(!state.continuation_exact||!state.influence_exact||((state.influence_flags&(64u|128u))!=0u))return true;
-    uint asc=plan_meta.values[4u],maxBattle=clamp(plan_meta.values[5u],1u,3u);
-    uint cards[36];uint counts[3];uint potions[3];uint drops[3];for(uint i=0u;i<36u;++i)cards[i]=0xffffffffu;for(uint i=0u;i<3u;++i){counts[i]=0u;potions[i]=0xffffffffu;drops[i]=0u;}
+    uint asc=plan_meta.values[4u],maxBattle=clamp(plan_meta.values[5u],1u,6u);
+    uint cards[72];uint counts[6];uint potions[6];uint drops[6];for(uint i=0u;i<72u;++i)cards[i]=0xffffffffu;for(uint i=0u;i<6u;++i){counts[i]=0u;potions[i]=0xffffffffu;drops[i]=0u;}
     for(uint battle=0u;battle<maxBattle;++battle){bool drop;if((state.influence_flags&1u)!=0u)drop=true;else{drop=cr_next_float(state.rewards)<state.potion_odds;state.potion_odds+=drop?-0.1f:0.1f;}drops[battle]=drop?1u:0u;
         uint minGold=asc>=3u?7u:10u,maxGold=asc>=3u?15u:20u;cr_next_int(state.rewards,maxGold-minGold+1u);
         if(drop){float p=cr_next_float(state.rewards);uint rarity=p<=0.1f?3u:(p<=0.35f?2u:1u);uint off=pool_meta.values[cr_combat_potion_meta(rarity)],len=pool_meta.values[cr_combat_potion_meta(rarity)+1u];if(len==0u)return true;potions[battle]=dense_ids.ids[off+cr_next_int(state.rewards,len)];}
         uint group_selected[12];for(uint i=0u;i<12u;++i)group_selected[i]=0xffffffffu;uint group_count=0u;
         for(uint i=0u;i<3u;++i){uint v=cr_generate_combat_card(false,asc,group_selected,group_count,state);if(v==0xffffffffu)return true;group_selected[group_count++]=v;cards[battle*12u+counts[battle]++]=v;}
-        if((state.influence_flags&4u)!=0u&&(state.lasting_candy_counter&1u)==1u){uint excluded[12];for(uint i=0u;i<12u;++i)excluded[i]=i<counts[battle]?cards[battle*12u+i]:0xffffffffu;uint v=cr_generate_combat_card(true,asc,excluded,counts[battle],state);if(v==0xffffffffu)return true;cards[battle*12u+counts[battle]++]=v;}
+        if((state.influence_flags&4u)!=0u&&(state.lasting_candy_counter&1u)==1u){uint excluded[12];for(uint i=0u;i<12u;++i)excluded[i]=i<counts[battle]?cards[battle*12u+i]:0xffffffffu;uint v=cr_generate_combat_card(true,asc,excluded,counts[battle],state);if(v!=0xffffffffu)cards[battle*12u+counts[battle]++]=v;}
         for(uint reward=0u;reward<state.additional_card_rewards;++reward){for(uint i=0u;i<12u;++i)group_selected[i]=0xffffffffu;group_count=0u;for(uint i=0u;i<3u;++i){uint v=cr_generate_combat_card(false,asc,group_selected,group_count,state);if(v==0xffffffffu||counts[battle]>=12u)return true;group_selected[group_count++]=v;cards[battle*12u+counts[battle]++]=v;}}
         if((state.influence_flags&4u)!=0u)state.lasting_candy_counter++;
     }
     uint predicate_count=plan_meta.values[11u];
-    for(uint pi=0u;pi<predicate_count;++pi){uint base=pi*14u,battleOrd=predicate_meta.values[base],first=battleOrd==0u?1u:battleOrd,last=battleOrd==0u?3u:battleOrd;bool matched=false;
+    for(uint pi=0u;pi<predicate_count;++pi){uint base=pi*16u,battleOrd=predicate_meta.values[base],first=battleOrd==0u?1u:battleOrd,last=battleOrd==0u?maxBattle:battleOrd;bool matched=false;
         for(uint bo=first;bo<=last&&bo<=maxBattle;++bo){uint bi=bo-1u,off=bi*12u,count=counts[bi];
             if(!cr_target_set(cards,off,count,predicate_meta.values[base+2u],predicate_meta.values[base+3u],0u))continue;
             if(!cr_target_set(cards,off,count,predicate_meta.values[base+4u],predicate_meta.values[base+5u],1u))continue;

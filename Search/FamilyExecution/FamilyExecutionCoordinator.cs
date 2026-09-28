@@ -15,12 +15,13 @@ namespace RolltheSpire2.Search.FamilyExecution;
 /// Registers applicable Filter Families, selects a complete physical allocation,
 /// and starts the Search runtime. Range/cursor/result lifecycle lives in ProductionSearchSession.
 /// </summary>
-public static class FamilyExecutionCoordinator
+public static partial class FamilyExecutionCoordinator
 {
     internal static FamilyExecutionPlan Plan(ExactSearchExecutionRequest plan, bool? gpuAvailable = null)
     {
         using var logScope = RuntimeLog.PlanningScope();
-        var registered = CreateRegisteredFamilies(plan);
+        var registered = CreateRegisteredFamilies(plan, gpuAvailable);
+        if (plan.CompiledSearch.Context.Party is not null) return PlanParty(plan, registered);
         bool gpu = gpuAvailable ?? FamilyDeviceProfileFoundation.GpuAvailable;
         RuntimeLog.TryBackgroundInfo($"searchPhysicalAvailability=true;gpuAvailable={gpu};explicitResourceConstraint={gpuAvailable.HasValue};cpuQuotes=ReferenceTimesIndependentLocalRatio;unpricedNotUnsupported=true");
         bool explicitSelection = false;
@@ -85,6 +86,8 @@ public static class FamilyExecutionCoordinator
 
     internal static int ResolveExecutionWindowSize(ExactSearchExecutionRequest plan, IReadOnlyList<IFamilyInvocation> families)
     {
+        if (plan.CompiledSearch.Context.Party is not null) return families.Any(f => f.ConditionPerformance.UsesGpu)
+            ? FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize : FamilyCpuExecution.Capacity;
         if (families.Count > 0 && families.All(f=>f is FamilyCpuExecution)) return 65536;
         MerchantShopColorlessFamily? shop = families.OfType<MerchantShopColorlessFamily>().SingleOrDefault();
         RelicFamily? relic = families.OfType<RelicFamily>().SingleOrDefault();
@@ -97,16 +100,21 @@ public static class FamilyExecutionCoordinator
         // CPU replay chunks its admitted ordinals privately. It must not shrink
         // the root batch of an upstream/downstream GPU in the same linear chain.
         if (!families.Any(family => family.ConditionPerformance.UsesGpu) &&
-            families.Any(family => family is NeowFamily or CapsuleRelicFamily or CombatRewardFamily or WorldFamily or AncientOptionFamily or EventResultFamily))
+            families.Any(family => family is StandardMapFamily or NeowFamily or CapsuleRelicFamily or CombatRewardFamily or WorldFamily or AncientOptionFamily or EventResultFamily or TransformationAggregateFamily))
             executionWindowSize = Math.Min(executionWindowSize, FamilyCpuExecution.Capacity);
         return executionWindowSize;
     }
 
-    private static IReadOnlyList<IFamilyInvocation> CreateRegisteredFamilies(ExactSearchExecutionRequest plan)
+    internal static IReadOnlyList<IFamilyInvocation> CreateRegisteredFamilies(ExactSearchExecutionRequest plan, bool? gpuAvailable = null)
     {
         long started=Stopwatch.GetTimestamp();
         ArgumentNullException.ThrowIfNull(plan);
         var families = new List<IFamilyInvocation>(4);
+        if (plan.CompiledSearch.Context.Party is not null)
+        {
+            return CreatePartyFamilies(plan, gpuAvailable ?? FamilyDeviceProfileFoundation.GpuAvailable);
+        }
+        if (plan.Evaluation.TransformationAggregate is not null) families.Add(new TransformationAggregateFamily(plan));
         if (NeowFamily.TryCreate(plan, out IFamilyInvocation? neow) && neow is not null) families.Add(neow);
         if (MerchantShopColorlessFamily.TryCreate(plan, out IFamilyInvocation? shopFamily) &&
             shopFamily is MerchantShopColorlessFamily createdShop)
@@ -130,6 +138,9 @@ public static class FamilyExecutionCoordinator
         if (WorldFamily.TryCreate(plan, out IFamilyInvocation? world) && world is not null) families.Add(world);
         if (AncientOptionFamily.TryCreate(plan, out IFamilyInvocation? ancient) && ancient is not null) families.Add(ancient);
         if (EventResultFamily.TryCreate(plan, out IFamilyInvocation? events) && events is not null) families.Add(events);
+        // Unpriced fallback order: bounded card/relic/world sieves precede full map replay.
+        // This is not a fabricated calibrated map cost or a change to map semantics.
+        if (plan.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0) families.Add(new StandardMapFamily(plan));
         RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=FamilyInvocationsConstructed;elapsedMs={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F4};families={string.Join(',',families.Select(f=>f.FamilyId))};gpuResourcesCreated=false");
         return families;
     }

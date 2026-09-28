@@ -184,8 +184,8 @@ internal sealed partial class ShopColorlessFilterPage : MarginContainer
         _helper = Ui1Theme.Label(string.Empty, Ui1TextRole.Muted, true); root.AddChild(_helper);
         _authorityNotice = Ui1Theme.Label(string.Empty, Ui1TextRole.Warning, true); _authorityNotice.Visible = false; root.AddChild(_authorityNotice);
         _relics = new SequenceCard(5, false, icons, _picker.Open, () => _relicCatalog.CatalogAvailable, HandleUserChanged);
-        _uncommon = new SequenceCard(5, true, icons, _picker.Open, () => _catalog.AuthorityExact, HandleUserChanged);
-        _rare = new SequenceCard(5, true, icons, _picker.Open, () => _catalog.AuthorityExact, HandleUserChanged);
+        _uncommon = new SequenceCard(5, true, icons, _picker.Open, () => _catalog.UncommonCandidates.Count > 0, HandleUserChanged);
+        _rare = new SequenceCard(5, true, icons, _picker.Open, () => _catalog.RareCandidates.Count > 0, HandleUserChanged);
         var scroll = new ScrollContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, SizeFlagsVertical = SizeFlags.ExpandFill, HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
         var cards = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         cards.AddThemeConstantOverride("separation", 8);
@@ -276,7 +276,7 @@ internal sealed partial class ShopColorlessFilterPage : MarginContainer
     {
         foreach (SearchHorizontalResultSlot slot in card.SlotControls) slot.Configure(string.Empty, candidates, GameContentKind.Card, IconVariant.CardPickerLarge, _names!, _text!.Get(Ui1TextKey.SearchShopNeutralSlot), _text.Get(Ui1TextKey.SearchShopCanonicalTooltip), _catalog.Categories, _text.Get(Ui1TextKey.SearchShopPickerTitle), _catalog.CreateCardPickerContext(candidates, "shop-colorless:" + source));
     }
-    private void RefreshVisuals() { if (_text is null) return; _authorityNotice.Text = _text.Get(Ui1TextKey.SearchShopColorlessAuthorityUnavailable); _authorityNotice.Visible = !_catalog.AuthorityExact || !_relicCatalog.CatalogAvailable; _clear.Disabled = _running || !(EnabledConditionCount > 0 || _relics.NeedsReset || _uncommon.NeedsReset || _rare.NeedsReset); _relics.RefreshState(); _uncommon.RefreshState(); _rare.RefreshState(); RefreshRelicCandidateExclusions(); }
+    private void RefreshVisuals() { if (_text is null) return; _authorityNotice.Text = _text.Get(Ui1TextKey.SearchShopColorlessAuthorityUnavailable); _authorityNotice.Visible = !_catalog.CatalogAvailable || !_relicCatalog.CatalogAvailable; _clear.Disabled = _running || !(EnabledConditionCount > 0 || _relics.NeedsReset || _uncommon.NeedsReset || _rare.NeedsReset); _relics.RefreshState(); _uncommon.RefreshState(); _rare.RefreshState(); RefreshRelicCandidateExclusions(); }
     private void RefreshRelicCandidateExclusions() { for (int i = 0; i < _relics.SlotControls.Count; i++) _relics.SlotControls[i].SetDisabledKeys(_relics.SlotControls.Where((_, index) => index != i).Select(slot => slot.SelectedKey).Where(key => key.HasValue).Select(key => key!.Value)); }
     private void HandleUserChanged() { if (_running) return; _legacyColorless = Array.Empty<MerchantColorlessSlotCondition>(); _legacyRelics = Array.Empty<RelicSequenceSearchCondition>(); RefreshVisuals(); Changed?.Invoke(); }
 }

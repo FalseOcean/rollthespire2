@@ -88,9 +88,17 @@ public static class SeedAnalysisPresentationBuilder
             warnings)
         {
             BossDomain = BuildBossDomain(document, uiText, contentNames, showInternalIds),
+            EncounterSequences = document.Sections.SelectMany(s => s.EncounterSequences).OrderBy(a => a.Act)
+                .Select(a => new ActEncounterSequenceViewModel(a.Act, a.ActKey,
+                    a.Normal.Select(e => new EncounterSequenceEntryViewModel(e.Ordinal,
+                        GameContentDisplayPresentationBuilder.Build(e.EncounterKey, GameContentKind.Encounter, contentNames, showInternalIds))).ToArray(),
+                    a.Elite.Select(e => new EncounterSequenceEntryViewModel(e.Ordinal,
+                        GameContentDisplayPresentationBuilder.Build(e.EncounterKey, GameContentKind.Encounter, contentNames, showInternalIds))).ToArray(),
+                    a.Precision, a.IssueCode)).ToArray(),
             AncientDomain = BuildAncientDomain(document, uiText, contentNames, showInternalIds),
             EventPoolSequenceDomain = BuildEventPoolSequenceDomain(document, uiText, contentNames, showInternalIds),
             RelicSequenceDomain = BuildRelicSequenceDomain(document, uiText, contentNames, showInternalIds),
+            TreasureRoomRelicSequenceDomain = BuildRelicSequenceDomain(document, uiText, contentNames, showInternalIds, treasureRoom: true),
             NormalCombatRewardDomain = BuildNormalCombatRewardDomain(document, uiText, contentNames, showInternalIds),
             OpeningWarnings = openingWarnings
         };
@@ -192,7 +200,7 @@ public static class SeedAnalysisPresentationBuilder
                 item.IdentityRngCallCount,
                 item.OptionRngStream,
                 item.OptionRngCallCount,
-                item.Options.OrderBy(option => option.Ordinal).Select(option =>
+                item.Options.Where(option => option.IsVisible).OrderBy(option => option.Ordinal).Select(option =>
                     BuildAncientOptionViewModel(option, uiText, contentNames, showInternalIds)).ToArray(),
                 item.IdentityEvidenceCode.ToString(),
                 item.OptionEvidenceCode.ToString()))
@@ -378,7 +386,8 @@ public static class SeedAnalysisPresentationBuilder
         SeedPredictionDocument document,
         IUiTextProvider uiText,
         IGameContentNameResolver contentNames,
-        bool showInternalIds)
+        bool showInternalIds,
+        bool treasureRoom = false)
     {
         PredictionSection? section = document.Sections.FirstOrDefault(item => item.Kind == PredictionSectionKind.RelicSequences);
         RelicSequencePredictionResult? prediction = section?.RelicSequencePrediction;
@@ -390,7 +399,7 @@ public static class SeedAnalysisPresentationBuilder
                 Array.Empty<RelicSequenceLaneViewModel>());
         }
 
-        RelicSequenceLaneViewModel[] lanes = prediction.Lanes
+        RelicSequenceLaneViewModel[] lanes = (treasureRoom ? prediction.TreasureRoomLanes : prediction.Lanes)
             .Select(lane => new RelicSequenceLaneViewModel(
                 lane.Kind,
                 lane.RarityCode,
@@ -422,7 +431,11 @@ public static class SeedAnalysisPresentationBuilder
                 lane.Completeness,
                 prediction.RngStream,
                 prediction.RngCallCount,
-                lane.EvidenceCode.ToString()))
+                lane.EvidenceCode.ToString())
+            {
+                FullEntries = lane.FullEntries.Select(entry => BuildRelicSequenceEntry(entry, lane.Kind,
+                    lane.PullDirection, contentNames, uiText, showInternalIds)).ToArray()
+            })
             .ToArray();
         return new SeedDomainViewModel<RelicSequenceLaneViewModel>(section.DomainStatus, section.IssueCode, lanes);
     }
@@ -709,7 +722,7 @@ public static class SeedAnalysisPresentationBuilder
             $"{item.Sequence}:{item.SourceStage}:{item.Operation}:{item.ConsumptionShape}:{item.CallCountAfter}"));
     }
 
-    private static NeowChoiceViewModel BuildChoice(
+    internal static NeowChoiceViewModel BuildChoice(
         NeowChoiceResult choice,
         IUiTextProvider uiText,
         IGameContentNameResolver contentNames,

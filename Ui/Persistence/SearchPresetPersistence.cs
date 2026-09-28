@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.Authority.Runtime;
@@ -8,6 +9,8 @@ using RolltheSpire2.Core.Diagnostics;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Presentation.Ui1;
 using RolltheSpire2.Ui.Pages.Search;
+using RolltheSpire2.Ui.Shell;
+using RolltheSpire2.Core.World.Snapshots;
 
 namespace RolltheSpire2.Ui.Persistence;
 
@@ -106,10 +109,9 @@ internal sealed record SearchPresetProvenance(
 }
 
 /// <summary>
-/// Preset asset. Search semantics remain Character + Ascension + SearchDraft. RawQueryJson
-/// is the narrow v2 preservation envelope: if a future SearchDraft cannot be fully
-/// materialized, the original persisted query remains intact for B-Compatibility rather
-/// than being silently rewritten or losing unknown references.
+/// Preset asset. v1/v2 carry the historical solo SearchDraft; v3 can instead carry
+/// the complete typed workbench intent. Raw payloads survive metadata edits even when
+/// their shape cannot be materialized by this version.
 /// </summary>
 internal sealed record SearchPresetDefinition(
     string Id,
@@ -127,17 +129,24 @@ internal sealed record SearchPresetDefinition(
     DateTimeOffset CreatedAtUtc)
 {
     public string Name => Title; // narrow v1/source compatibility alias
-    public bool QueryResolved => Draft is not null;
+    public WorkbenchSearchDraft? Workbench { get; init; }
+    public string RawWorkbenchJson { get; init; } = string.Empty;
+    public bool IsWorkbench => Workbench is not null || !string.IsNullOrWhiteSpace(RawWorkbenchJson);
+    public bool IsMultiplayer => Workbench?.Mode == WorldGameMode.Multiplayer;
+    public bool QueryResolved => IsWorkbench ? Workbench is not null : Draft is not null;
 }
 
 internal sealed record SearchPresetCapture(
     ModelKey CharacterKey,
     int Ascension,
-    SearchDraft Draft,
+    SearchDraft? Draft,
     int ConditionCount,
     SearchPresetProbabilitySnapshot SavedProbability,
     SearchPresetProvenance Provenance,
-    DateTimeOffset CapturedAtUtc);
+    DateTimeOffset CapturedAtUtc)
+{
+    public WorkbenchSearchDraft? Workbench { get; init; }
+}
 
 internal interface ISearchPresetProvider
 {
@@ -269,6 +278,7 @@ internal sealed class UserSearchPresetProvider : ISearchPresetProvider
         _store = store ?? throw new ArgumentNullException(nameof(store));
 
     public IReadOnlyList<SearchPresetDefinition> GetPresets() => _store.GetPresets();
+    public IReadOnlyList<string> LoadIssues => _store.LoadIssues;
 
     public SearchPresetDefinition Save(
         string title,
@@ -302,6 +312,7 @@ internal sealed class TemporarySearchPresetProvider : ISearchPresetProvider
         _store = store ?? throw new ArgumentNullException(nameof(store));
 
     public IReadOnlyList<SearchPresetDefinition> GetPresets() => _store.GetPresets();
+    public IReadOnlyList<string> LoadIssues => _store.LoadIssues;
 
     public SearchPresetDefinition Record(SearchPresetCapture capture) => _store.Record(capture);
 }
@@ -327,6 +338,8 @@ internal sealed class SearchPresetCatalog
             .ThenByDescending(preset => preset.Source == SearchPresetSource.Temporary ? preset.CreatedAtUtc : DateTimeOffset.MinValue)
             .ThenBy(preset => preset.Title, StringComparer.CurrentCultureIgnoreCase)
             .ToArray();
+
+    public IReadOnlyList<string> LoadIssues => _temporary.LoadIssues.Concat(_user.LoadIssues).ToArray();
 
     public SearchPresetDefinition SaveUserPreset(
         string title,
@@ -371,18 +384,20 @@ internal sealed class SearchPresetCatalog
 }
 
 /// <summary>
-/// Fail-soft user preset store. v2 keeps one file per user asset. v1 files are read
+/// Fail-soft user preset store. v3 keeps one file per user asset. v1/v2 files are read
 /// through a narrow compatibility projection and remain valid; no generic migration
 /// framework is introduced.
 /// </summary>
 internal sealed class SearchPresetStore
 {
-    internal const int SchemaVersion = 2;
+    internal const int SchemaVersion = 3;
     private const string DirectoryName = "search_presets";
 
     private readonly string _directory;
     private readonly JsonSerializerOptions _json;
     private readonly List<SearchPresetDefinition> _presets = new();
+    private readonly List<string> _loadIssues = new();
+    private readonly Dictionary<string, string> _paths = new(StringComparer.Ordinal);
 
     public SearchPresetStore(string stateDirectory)
     {
@@ -392,6 +407,7 @@ internal sealed class SearchPresetStore
     }
 
     public IReadOnlyList<SearchPresetDefinition> GetPresets() => _presets.ToArray();
+    public IReadOnlyList<string> LoadIssues => _loadIssues.ToArray();
 
     public SearchPresetDefinition Save(
         string title,
@@ -515,12 +531,15 @@ internal sealed class SearchPresetStore
             return false;
         }
         _presets.RemoveAt(index);
+        _paths.Remove(id);
         return true;
     }
 
     private void LoadFailSoft()
     {
         _presets.Clear();
+        _paths.Clear();
+        _loadIssues.Clear();
         if (!Directory.Exists(_directory))
             return;
 
@@ -535,6 +554,7 @@ internal sealed class SearchPresetStore
                 string jsonText = File.ReadAllText(path);
                 if (string.IsNullOrWhiteSpace(jsonText))
                 {
+                    _loadIssues.Add(LoadIssue(fileName, "EmptyFile"));
                     RuntimeLog.Warn($"searchPresetEntrySkipped=true;failSoft=true;reason=EmptyFile;file={fileName}");
                     continue;
                 }
@@ -543,6 +563,7 @@ internal sealed class SearchPresetStore
                     throw new InvalidDataException("PresetEntryNull");
                 if (persisted.SchemaVersion > SchemaVersion)
                 {
+                    _loadIssues.Add(LoadIssue(fileName, $"UnsupportedFutureSchema:{persisted.SchemaVersion};supported={SchemaVersion}"));
                     RuntimeLog.Warn(
                         $"searchPresetEntrySkipped=true;failSoft=true;reason=FutureSchema;file={fileName};schema={persisted.SchemaVersion};supported={SchemaVersion}");
                     continue;
@@ -550,18 +571,22 @@ internal sealed class SearchPresetStore
                 SearchPresetDefinition preset = Normalize(persisted, SearchPresetSource.User, _json);
                 if (!ids.Add(preset.Id))
                 {
+                    _loadIssues.Add(LoadIssue(fileName, "DuplicateId"));
                     RuntimeLog.Warn($"searchPresetEntrySkipped=true;failSoft=true;reason=DuplicateId;file={fileName};id={preset.Id}");
                     continue;
                 }
                 if (!names.Add(preset.Title))
                 {
+                    _loadIssues.Add(LoadIssue(fileName, "DuplicateName"));
                     RuntimeLog.Warn($"searchPresetEntrySkipped=true;failSoft=true;reason=DuplicateName;file={fileName};name={preset.Title}");
                     continue;
                 }
                 _presets.Add(preset);
+                _paths[preset.Id] = path;
             }
             catch (Exception ex)
             {
+                _loadIssues.Add(LoadIssue(fileName, LoadIssueReason(ex)));
                 RuntimeLog.Warn(
                     $"searchPresetEntrySkipped=true;failSoft=true;file={fileName};issue={ex.GetType().Name}:{Compact(ex.Message)}");
             }
@@ -570,28 +595,21 @@ internal sealed class SearchPresetStore
 
     private void WriteOne(SearchPresetDefinition preset)
     {
-        Directory.CreateDirectory(_directory);
         string path = PathForId(preset.Id);
-        string temp = path + ".tmp";
         PersistedSearchPreset persisted = ToPersisted(preset, _json);
-        string jsonText = JsonSerializer.Serialize(persisted, _json);
-        try
-        {
-            File.WriteAllText(temp, jsonText);
-            File.Move(temp, path, overwrite: true);
-        }
-        catch
-        {
-            try { if (File.Exists(temp)) File.Delete(temp); } catch { }
-            throw;
-        }
+        SearchPersistenceFile.WriteAtomic(path, JsonSerializer.SerializeToUtf8Bytes(persisted, _json));
+        _paths[preset.Id] = path;
     }
 
     private string PathForId(string id)
     {
+        // Imported files may have any file name. Identity is not a filesystem path.
+        if (_paths.TryGetValue(id, out string? loadedPath)) return loadedPath;
         string suffix = id.StartsWith("user:", StringComparison.Ordinal)
             ? id["user:".Length..]
             : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(id))).ToLowerInvariant();
+        if (suffix.Length == 0 || suffix.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || suffix is "." or "..")
+            throw new InvalidDataException("PresetIdInvalid");
         return Path.Combine(_directory, suffix + ".json");
     }
 
@@ -600,7 +618,10 @@ internal sealed class SearchPresetStore
         var json = new JsonSerializerOptions
         {
             WriteIndented = true,
-            PropertyNameCaseInsensitive = true
+            PropertyNameCaseInsensitive = true,
+            // A newer envelope may add context outside QuerySnapshot. Do not
+            // erase those fields when an older client edits the display metadata.
+            UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
         };
         json.Converters.Add(new SearchWorkspacePersistence.ModelKeyJsonConverter());
         return json;
@@ -615,7 +636,24 @@ internal sealed class SearchPresetStore
         SearchPresetCapture capture,
         JsonSerializerOptions json)
     {
-        string rawQueryJson = JsonSerializer.Serialize(capture.Draft, json);
+        WorkbenchSearchDraft? workbench = capture.Workbench;
+        string rawWorkbenchJson = string.Empty;
+        SearchDraft? legacy = capture.Draft;
+        if (workbench is not null)
+        {
+            if (legacy is not null || workbench.Character != capture.CharacterKey || workbench.Ascension != capture.Ascension)
+                throw new InvalidDataException("PresetCaptureContextMismatch");
+            SearchPresetCompatibilityResolver.ValidateWorkbenchShape(workbench);
+            rawWorkbenchJson = JsonSerializer.Serialize(workbench.WithoutCapturedAuthority(), json);
+            // Detach mutable unlock/editor lists from the live workbench before the
+            // asset enters the catalog. Templates retain player intent only.
+            workbench = JsonSerializer.Deserialize<WorkbenchSearchDraft>(rawWorkbenchJson, CreateWorkbenchJsonOptions(json))
+                ?? throw new InvalidDataException("PresetWorkbenchShapeUnresolved");
+            SearchPresetCompatibilityResolver.ValidateWorkbenchShape(workbench);
+        }
+        else if (legacy is null)
+            throw new InvalidDataException("PresetQuerySnapshotMissing");
+        string rawQueryJson = workbench is null ? JsonSerializer.Serialize(legacy, json) : string.Empty;
         return new SearchPresetDefinition(
             id,
             source,
@@ -623,20 +661,36 @@ internal sealed class SearchPresetStore
             description,
             capture.CharacterKey,
             Math.Clamp(capture.Ascension, SeedPredictionInputLimits.MinimumAscension, SeedPredictionInputLimits.MaximumAscension),
-            capture.Draft,
+            legacy,
             rawQueryJson,
             Math.Max(0, capture.ConditionCount),
             NormalizeVisualIcons(visualIcons),
             capture.SavedProbability,
             capture.Provenance,
-            capture.CapturedAtUtc);
+            capture.CapturedAtUtc)
+        {
+            Workbench = workbench,
+            RawWorkbenchJson = rawWorkbenchJson
+        };
     }
+
+    private static JsonSerializerOptions CreateWorkbenchJsonOptions(JsonSerializerOptions json) => new(json)
+    {
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+        RespectRequiredConstructorParameters = true,
+        RespectNullableAnnotations = true
+    };
 
     internal static SearchPresetDefinition Normalize(
         PersistedSearchPreset persisted,
         SearchPresetSource source,
         JsonSerializerOptions json)
     {
+        ArgumentNullException.ThrowIfNull(persisted);
+        if (persisted.SchemaVersion > SchemaVersion)
+            throw new InvalidDataException($"UnsupportedFutureSchema:{persisted.SchemaVersion}");
+        if (persisted.SchemaVersion is < 1)
+            throw new InvalidDataException($"UnsupportedPresetSchema:{persisted.SchemaVersion}");
         string id = persisted.Id?.Trim() ?? string.Empty;
         string expectedPrefix = source switch
         {
@@ -658,17 +712,62 @@ internal sealed class SearchPresetStore
         JsonElement queryElement = persisted.QuerySnapshot.ValueKind != JsonValueKind.Undefined && persisted.QuerySnapshot.ValueKind != JsonValueKind.Null
             ? persisted.QuerySnapshot
             : persisted.Draft;
-        if (queryElement.ValueKind == JsonValueKind.Undefined || queryElement.ValueKind == JsonValueKind.Null)
+        bool hasWorkbench = persisted.WorkbenchSnapshot.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null);
+        if (hasWorkbench && persisted.SchemaVersion < 3)
+            throw new InvalidDataException("PresetWorkbenchSchemaMismatch");
+        if (!hasWorkbench && queryElement.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
             throw new InvalidDataException("PresetQuerySnapshotMissing");
 
-        string rawQueryJson = queryElement.GetRawText();
+        string rawQueryJson = queryElement.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? string.Empty : queryElement.GetRawText();
+        string rawWorkbenchJson = hasWorkbench ? persisted.WorkbenchSnapshot.GetRawText() : string.Empty;
+        WorkbenchSearchDraft? workbench = null;
         SearchDraft? resolvedDraft = null;
         try
         {
-            resolvedDraft = JsonSerializer.Deserialize<SearchDraft>(rawQueryJson, json);
+            if (hasWorkbench)
+            {
+                // Ambiguous dual payloads are preserved, never silently prioritized.
+                if (!string.IsNullOrWhiteSpace(rawQueryJson))
+                    throw new InvalidDataException("PresetMultipleQueryPayloads");
+                workbench = JsonSerializer.Deserialize<WorkbenchSearchDraft>(rawWorkbenchJson, CreateWorkbenchJsonOptions(json))
+                    ?? throw new InvalidDataException("PresetWorkbenchShapeUnresolved");
+                SearchPresetCompatibilityResolver.ValidateWorkbenchShape(workbench);
+                if (workbench.Character != characterKey || workbench.Ascension != persisted.Ascension)
+                    throw new InvalidDataException("PresetWorkbenchContextMismatch");
+                workbench = workbench.WithoutCapturedAuthority();
+                rawWorkbenchJson = JsonSerializer.Serialize(workbench, json);
+            }
+            else
+            {
+                // Unknown query fields cannot be presented as a complete load. Keep the
+                // raw asset for metadata edits/export when its typed shape is unavailable.
+                var resolver = new DefaultJsonTypeInfoResolver();
+                resolver.Modifiers.Add(type =>
+                {
+                    if (type.Type != typeof(SearchDraft)) return;
+                    // These retired run controls have an explicit migration policy;
+                    // they never belonged to the semantic query and stay inert.
+                    foreach (string name in new[] { "StartSeed", "ScanCount", "TargetMatchCount", "WorkerCount" })
+                    {
+                        JsonPropertyInfo property = type.CreateJsonPropertyInfo(typeof(JsonElement), name);
+                        property.Set = (_, _) => { };
+                        type.Properties.Add(property);
+                    }
+                });
+                var queryJson = new JsonSerializerOptions(json)
+                {
+                    UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+                    TypeInfoResolver = resolver
+                };
+                SearchDraft? draft = JsonSerializer.Deserialize<SearchDraft>(rawQueryJson, queryJson);
+                if (draft is null || !SearchPresetCompatibilityResolver.HasCompleteShape(draft))
+                    throw new InvalidDataException("PresetQueryShapeUnresolved");
+                resolvedDraft = draft;
+            }
         }
         catch (Exception ex)
         {
+            workbench = null;
             // v2 keeps the raw query even when the current typed SearchDraft cannot
             // materialize it. B-Compatibility will own partial resolution.
             RuntimeLog.Warn(
@@ -734,18 +833,30 @@ internal sealed class SearchPresetStore
             NormalizeVisualIcons(visualIcons),
             probability,
             provenance,
-            createdAt);
+            createdAt)
+        {
+            Workbench = workbench,
+            RawWorkbenchJson = rawWorkbenchJson
+        };
     }
 
     internal static PersistedSearchPreset ToPersisted(SearchPresetDefinition preset, JsonSerializerOptions json)
     {
-        JsonElement querySnapshot;
-        using (JsonDocument document = JsonDocument.Parse(
-                   !string.IsNullOrWhiteSpace(preset.RawQueryJson)
-                       ? preset.RawQueryJson
-                       : JsonSerializer.Serialize(preset.Draft, json)))
+        JsonElement querySnapshot = default;
+        JsonElement workbenchSnapshot = default;
+        string rawQuery = !string.IsNullOrWhiteSpace(preset.RawQueryJson) ? preset.RawQueryJson :
+            preset.Draft is not null ? JsonSerializer.Serialize(preset.Draft, json) : string.Empty;
+        if (!string.IsNullOrWhiteSpace(rawQuery))
         {
+            using JsonDocument document = JsonDocument.Parse(rawQuery);
             querySnapshot = document.RootElement.Clone();
+        }
+        string rawWorkbench = !string.IsNullOrWhiteSpace(preset.RawWorkbenchJson) ? preset.RawWorkbenchJson :
+            preset.Workbench is not null ? JsonSerializer.Serialize(preset.Workbench.WithoutCapturedAuthority(), json) : string.Empty;
+        if (!string.IsNullOrWhiteSpace(rawWorkbench))
+        {
+            using JsonDocument document = JsonDocument.Parse(rawWorkbench);
+            workbenchSnapshot = document.RootElement.Clone();
         }
 
         return new PersistedSearchPreset
@@ -757,6 +868,7 @@ internal sealed class SearchPresetStore
             CharacterKey = preset.CharacterKey.Serialized,
             Ascension = preset.Ascension,
             QuerySnapshot = querySnapshot,
+            WorkbenchSnapshot = workbenchSnapshot,
             ConditionCount = preset.ConditionCount,
             VisualIcons = preset.VisualIcons.Take(3).Select(icon => new PersistedVisualIconRef
             {
@@ -826,6 +938,19 @@ internal sealed class SearchPresetStore
         return normalized.Length <= 180 ? normalized : normalized[..180];
     }
 
+    internal static string LoadIssue(string fileName, string reason) =>
+        Compact(Path.GetFileName(fileName)) + ": " + Compact(reason);
+
+    // Parser and I/O exception messages may quote file data or full paths. UI
+    // diagnostics expose only local file names and known validation reason codes.
+    internal static string LoadIssueReason(Exception exception) => exception switch
+    {
+        JsonException => "InvalidOrUnknownJson",
+        InvalidDataException => Compact(exception.Message),
+        UnauthorizedAccessException => "ReadAccessDenied",
+        _ => exception.GetType().Name
+    };
+
     internal sealed class PersistedSearchPreset
     {
         public int SchemaVersion { get; set; } = SearchPresetStore.SchemaVersion;
@@ -834,7 +959,11 @@ internal sealed class SearchPresetStore
         // v2
         public string Title { get; set; } = string.Empty;
         public string Description { get; set; } = string.Empty;
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public JsonElement QuerySnapshot { get; set; }
+        // v3: full typed solo/party intent; never a single-player projection.
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public JsonElement WorkbenchSnapshot { get; set; }
         public int ConditionCount { get; set; }
         public List<PersistedVisualIconRef> VisualIcons { get; set; } = new();
         public PersistedProbabilitySnapshot? SavedProbability { get; set; }
@@ -901,6 +1030,8 @@ internal sealed class TemporarySearchPresetStore
     private readonly string _path;
     private readonly JsonSerializerOptions _json;
     private readonly List<SearchPresetDefinition> _entries = new();
+    private readonly List<string> _loadIssues = new();
+    private bool _preserveUnreadableFile;
 
     public TemporarySearchPresetStore(string stateDirectory)
     {
@@ -911,6 +1042,7 @@ internal sealed class TemporarySearchPresetStore
 
     public IReadOnlyList<SearchPresetDefinition> GetPresets() =>
         _entries.OrderByDescending(entry => entry.CreatedAtUtc).ToArray();
+    public IReadOnlyList<string> LoadIssues => _loadIssues.ToArray();
 
     public SearchPresetDefinition Record(SearchPresetCapture capture)
     {
@@ -934,22 +1066,32 @@ internal sealed class TemporarySearchPresetStore
     private void LoadFailSoft()
     {
         _entries.Clear();
+        _loadIssues.Clear();
         if (!File.Exists(_path)) return;
         try
         {
             string jsonText = File.ReadAllText(_path);
-            if (string.IsNullOrWhiteSpace(jsonText)) return;
             List<SearchPresetStore.PersistedSearchPreset>? persisted =
                 JsonSerializer.Deserialize<List<SearchPresetStore.PersistedSearchPreset>>(jsonText, _json);
-            if (persisted is null) return;
-            foreach (SearchPresetStore.PersistedSearchPreset item in persisted.Take(Capacity))
+            if (persisted is null) throw new InvalidDataException("TemporaryPresetDocumentNull");
+            // Validate every persisted entry before limiting the visible history.
+            // An unreadable tail must not be overwritten by the next five-entry save.
+            foreach (SearchPresetStore.PersistedSearchPreset item in persisted)
             {
                 try
                 {
-                    _entries.Add(SearchPresetStore.Normalize(item, SearchPresetSource.Temporary, _json));
+                    SearchPresetDefinition entry = SearchPresetStore.Normalize(item, SearchPresetSource.Temporary, _json);
+                    if (!entry.QueryResolved)
+                    {
+                        _preserveUnreadableFile = true;
+                        _loadIssues.Add(SearchPresetStore.LoadIssue(FileName, "PresetQueryShapeUnresolved"));
+                    }
+                    if (_entries.Count < Capacity) _entries.Add(entry);
                 }
                 catch (Exception ex)
                 {
+                    _preserveUnreadableFile = true;
+                    _loadIssues.Add(SearchPresetStore.LoadIssue(FileName, SearchPresetStore.LoadIssueReason(ex)));
                     RuntimeLog.Warn(
                         $"temporarySearchPresetEntrySkipped=true;failSoft=true;issue={ex.GetType().Name}:{SearchPresetStore.Compact(ex.Message)}");
                 }
@@ -960,6 +1102,8 @@ internal sealed class TemporarySearchPresetStore
         }
         catch (Exception ex)
         {
+            _preserveUnreadableFile = true;
+            _loadIssues.Add(SearchPresetStore.LoadIssue(FileName, SearchPresetStore.LoadIssueReason(ex)));
             RuntimeLog.Warn(
                 $"temporarySearchPresetStoreLoadFailed=true;failSoft=true;issue={ex.GetType().Name}:{SearchPresetStore.Compact(ex.Message)}");
         }
@@ -967,17 +1111,19 @@ internal sealed class TemporarySearchPresetStore
 
     private void WriteAll()
     {
+        if (_preserveUnreadableFile)
+        {
+            RuntimeLog.Warn("temporarySearchPresetStoreWriteSkipped=true;reason=UnreadableHistoryPreserved;inMemoryContinues=true");
+            return;
+        }
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-            string temp = _path + ".tmp";
             var persisted = _entries
                 .OrderByDescending(entry => entry.CreatedAtUtc)
                 .Take(Capacity)
                 .Select(entry => SearchPresetStore.ToPersisted(entry, _json))
                 .ToList();
-            File.WriteAllText(temp, JsonSerializer.Serialize(persisted, _json));
-            File.Move(temp, _path, overwrite: true);
+            SearchPersistenceFile.WriteAtomic(_path, JsonSerializer.SerializeToUtf8Bytes(persisted, _json));
         }
         catch (Exception ex)
         {

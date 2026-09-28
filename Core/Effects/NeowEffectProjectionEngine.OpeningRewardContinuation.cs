@@ -59,7 +59,9 @@ internal sealed partial class NeowEffectProjectionEngine
             impact.UnknownHook,
             impact.NestedObtain,
             new[] { projection.EvidenceCode, Evidence(rootRelicKey, "opening-reward-continuation-direct") },
-            nestedRewardContextRelics);
+            nestedRewardContextRelics,
+            sharedStateExact: impact.NicheRng.IsExact && impact.UnknownHook.IsExact && impact.NestedObtain.IsExact,
+            executedNestedObtainRelics: ExecutedNestedObtainRelics(rootRelicKey, projection.EffectGroups));
         return projection with
         {
             OpeningRewardContinuations = new OpeningRewardContinuationAnalysis(
@@ -81,7 +83,9 @@ internal sealed partial class NeowEffectProjectionEngine
         BonesContinuationDomainState unknownHookContinuity,
         BonesContinuationDomainState nestedObtainContinuity,
         IReadOnlyList<EvidenceCode> additionalEvidence,
-        IReadOnlyList<ModelKey>? nestedRewardContextRelics = null)
+        IReadOnlyList<ModelKey>? nestedRewardContextRelics = null,
+        bool sharedStateExact = true,
+        IReadOnlyList<ModelKey>? executedNestedObtainRelics = null)
     {
         ModelKey[] nestedRelics = (nestedRewardContextRelics ?? Array.Empty<ModelKey>())
             .Where(key => key.IsValid)
@@ -97,7 +101,7 @@ internal sealed partial class NeowEffectProjectionEngine
             OpeningRewardSupport.EvaluateRoute(
                 _profileId,
                 obtainedRelics,
-                nestedRelics,
+                executedNestedObtainRelics ?? nestedRelics,
                 key => IsKnownModdedRelic(state, key));
         OpeningRewardSupportFlags capabilities = capabilityEvaluation.Capabilities;
         if (state.Rng.Rewards.CallCount > 0)
@@ -208,6 +212,8 @@ internal sealed partial class NeowEffectProjectionEngine
             evidence,
             unknownReasons.Distinct(StringComparer.Ordinal).ToArray())
         {
+            NicheState = sharedStateExact ? RewardsRngStateSnapshot.Capture(state.Rng.Niche) : null,
+            CombatPotionGenerationState = sharedStateExact ? RewardsRngStateSnapshot.Capture(state.Rng.CombatPotionGeneration) : null,
             ActiveRewardImpactSources = capabilityEvaluation.SupportedImpactSources,
             RewardImpactFingerprint = capabilityEvaluation.RewardImpactFingerprint
         };
@@ -240,6 +246,17 @@ internal sealed partial class NeowEffectProjectionEngine
         return null;
     }
 
+
+    // All drawn relics keep their held reward effects. Only the obtain hooks
+    // enabled by the party premise may invalidate the copied RNG continuation.
+    private ModelKey[] ExecutedNestedObtainRelics(ModelKey source, IEnumerable<PredictedEffectGroup> groups)
+    {
+        var keys = ExtractNestedRelicKeys(groups);
+        if (AuthoredCapsuleEffects is null || source != BaseGameModelKeys.Relics.SmallCapsule &&
+            source != BaseGameModelKeys.Relics.LargeCapsule) return keys;
+        return AuthoredCapsuleEffects.TryGetValue(source, out var enabled)
+            ? keys.Where(enabled.Contains).ToArray() : [];
+    }
 
     private static ModelKey[] ExtractNestedRelicKeys(
         IEnumerable<PredictedEffectGroup> groups) => groups

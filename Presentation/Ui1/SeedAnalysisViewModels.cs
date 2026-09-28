@@ -325,7 +325,10 @@ public sealed record RelicSequenceLaneViewModel(
     SnapshotCompleteness Completeness,
     string RngStream,
     int RngCallCount,
-    string EvidenceCode);
+    string EvidenceCode)
+{
+    public IReadOnlyList<RelicSequenceEntryViewModel> FullEntries { get; init; } = [];
+}
 
 public sealed record NormalCombatRewardCardViewModel(
     int Ordinal,
@@ -433,6 +436,11 @@ public sealed record SeedDomainViewModel<T>(
     string IssueCode,
     IReadOnlyList<T> Items);
 
+public sealed record EncounterSequenceEntryViewModel(int Ordinal, GameContentDisplayViewModel EncounterDisplay);
+public sealed record ActEncounterSequenceViewModel(int Act, ModelKey ActKey,
+    IReadOnlyList<EncounterSequenceEntryViewModel> Normal, IReadOnlyList<EncounterSequenceEntryViewModel> Elite,
+    PredictionPrecision Precision, string IssueCode);
+
 public sealed record SeedAnalysisViewModel(
     Ui1AnalysisState State,
     string CanonicalSeed,
@@ -450,6 +458,7 @@ public sealed record SeedAnalysisViewModel(
     IReadOnlyList<NeowChoiceViewModel> NeowChoices,
     IReadOnlyList<string> UserWarnings)
 {
+    public IReadOnlyList<ActEncounterSequenceViewModel> EncounterSequences { get; init; } = [];
     public IReadOnlyList<string> OpeningWarnings { get; init; } = Array.Empty<string>();
     public SeedDomainViewModel<BossPredictionViewModel> BossDomain { get; init; } =
         new(SeedDomainEvaluationStatus.Unknown, "BossSectionMissing", Array.Empty<BossPredictionViewModel>());
@@ -459,6 +468,8 @@ public sealed record SeedAnalysisViewModel(
         new(SeedDomainEvaluationStatus.Unknown, "EventPoolSequenceSectionMissing", Array.Empty<EventPoolActSequenceViewModel>());
     public SeedDomainViewModel<RelicSequenceLaneViewModel> RelicSequenceDomain { get; init; } =
         new(SeedDomainEvaluationStatus.Unknown, "RelicSequenceSectionMissing", Array.Empty<RelicSequenceLaneViewModel>());
+    public SeedDomainViewModel<RelicSequenceLaneViewModel> TreasureRoomRelicSequenceDomain { get; init; } =
+        new(SeedDomainEvaluationStatus.Unknown, "TreasureRoomRelicSequenceSectionMissing", Array.Empty<RelicSequenceLaneViewModel>());
     public SeedDomainViewModel<NormalCombatRewardRouteViewModel> NormalCombatRewardDomain { get; init; } =
         new(SeedDomainEvaluationStatus.Unknown, "NormalCombatRewardSectionMissing", Array.Empty<NormalCombatRewardRouteViewModel>());
 }

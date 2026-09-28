@@ -2,7 +2,7 @@
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_float64 : require
 layout(local_size_x=64) in;
-const uint INVALID_DENSE_ID=65535u,OPTION_PLAN_STRIDE=16u,OPTION_POOL_STRIDE=4u,BRANCH_STRIDE=8u,GATE_STRIDE=4u;
+const uint INVALID_DENSE_ID=65535u,OPTION_PLAN_STRIDE=16u,OPTION_POOL_STRIDE=4u,BRANCH_STRIDE=12u,GATE_STRIDE=4u;
 layout(set=0,binding=0,std430) readonly buffer Batch{uint v[];} batch;
 layout(set=0,binding=1,std430) readonly buffer Meta{uint values[];} plan_meta;
 layout(set=0,binding=2,std430) readonly buffer Gates{uint values[];} gate_meta;
@@ -17,10 +17,22 @@ layout(set=0,binding=10,std430) readonly buffer Input{uint v[];} input_ids;
 layout(set=0,binding=11,std430) buffer Header{uint v[];} header;
 layout(set=0,binding=12,std430) buffer Output{uint v[];} output_ids;
 /*__DONOR__*/
+bool set_match(inout uint at,uint o0,uint o1,uint o2,uint count){
+ bool ok=branch_predicate_ids.values[at]==0u;
+ uint na=branch_predicate_ids.values[at+1u],nl=branch_predicate_ids.values[at+2u],nb=branch_predicate_ids.values[at+3u];at+=4u;
+ bool any=na==0u;
+ for(uint j=0u;j<na;j++)any=options_contains(o0,o1,o2,count,branch_predicate_ids.values[at+j])||any;
+ at+=na;ok=ok&&any;
+ for(uint j=0u;j<nl;j++)ok=options_contains(o0,o1,o2,count,branch_predicate_ids.values[at+j])&&ok;
+ at+=nl;
+ for(uint j=0u;j<nb;j++)ok=!options_contains(o0,o1,o2,count,branch_predicate_ids.values[at+j])&&ok;
+ at+=nb;return ok;
+}
 bool row_match(uint i,uint64_t root,uint gate){
- uint gb=gate*4u,p=gate_meta.values[gb+2u],bb=gate_meta.values[gb+3u]*8u;
+ uint gb=gate*4u,p=gate_meta.values[gb+2u],bb=gate_meta.values[gb+3u]*BRANCH_STRIDE;
  bool has_option=branch_predicates.values[bb+6u]!=0u,has_sea=branch_predicates.values[bb+7u]!=0u;
- if(!has_option&&!has_sea)return true;
+ uint legacy_options=branch_predicates.values[bb+9u],legacy_sea=branch_predicates.values[bb+10u];
+ if(!has_option&&!has_sea&&legacy_options==0u&&legacy_sea==0u)return true;
  uint o0,o1,o2,count,target,flags;
  if(!project_options(i,root,p,o0,o1,o2,count,target,flags)){atomicOr(header.v[3],4u);return false;}
  uint f=branch_predicates.values[bb+5u];
@@ -33,6 +45,13 @@ bool row_match(uint i,uint64_t root,uint gate){
  if(has_sea){
   if((f&8u)!=0u||(flags&8u)==0u)return false;
   if(!branch_any_contains(branch_predicates.values[bb+3u],branch_predicates.values[bb+4u],target))return false;
+ }
+ uint at=branch_predicates.values[bb+8u];
+ for(uint j=0u;j<legacy_options;j++)if(!set_match(at,o0,o1,o2,count))return false;
+ // Legacy Sea Glass predicates are not applicable when Sea Glass is absent.
+ if(legacy_sea>0u&&(flags&2u)!=0u){
+  if((flags&8u)==0u){atomicOr(header.v[3],4u);return false;}
+  for(uint j=0u;j<legacy_sea;j++)if(!set_match(at,target,INVALID_DENSE_ID,INVALID_DENSE_ID,1u))return false;
  }
  return true;
 }

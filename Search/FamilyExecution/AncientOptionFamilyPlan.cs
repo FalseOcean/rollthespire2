@@ -48,26 +48,30 @@ internal sealed class AncientOptionFamilyPlan
             .Concat(e.AncientSeaGlassTargetFilters.Where(f => !f.IsEmpty).Select(f => f.Act)).Distinct().Order().ToArray();
         var compiled = new List<(int, ModelKey[], WorldFastActPlan, bool)>();
         var gates = new List<Beta110GpuAncientOptionPreGateGate>();
-        bool gpu = request.Authority.PlayerSlotIndex == 0;
+        bool gpu = request.Authority.PlayerSlotIndex >= 0 && request.Authority.PlayerSlotIndex < request.Authority.PlayersCount;
         foreach (int act in acts)
         {
             var branches = e.AncientBranchConditions.Where(b => b.Act == act).ToArray();
             bool legacy = e.AncientOptionFilters.Any(f => f.Act == act && !f.IsEmpty) || e.AncientSeaGlassTargetFilters.Any(f => f.Act == act && !f.IsEmpty);
             ModelKey[] possible = _generation.AncientEventContexts.Where(c => c.Act == act).Select(c => c.AncientKey).Distinct().ToArray();
-            ModelKey[] keys = branches.Length > 0 ? branches.Select(b => b.AncientKey).ToArray() : possible;
+            ModelKey[] keys = branches.Length > 0 ? branches.Select(b => b.AncientKey).Distinct().ToArray() : possible;
             foreach (var key in keys.Concat(possible)) Add(key);
-            var c = Beta110AncientOptionFastPlanCompiler.Compile(_generation, _filter, act, possible, Add, _ids);
+            var c = Beta110AncientOptionFastPlanCompiler.Compile(_generation, _filter, act, keys, Add, _ids, request.Authority.PlayerSlotIndex);
             var fast = new WorldFastActPlan(act, 0, 0, 0, 0, [], 0, [], [], [], [], [], [], [], [], [], [], [],
                 c.Plans, c.BranchPredicates, c.LegacyOptionPredicates, c.LegacySeaGlassPredicates, []);
-            bool exact = c.AncientOptionExactOnlyPredicateCount == 0 && c.SeaGlassExactOnlyPredicateCount == 0 && request.Authority.PlayerSlotIndex == 0;
+            bool exact = c.AncientOptionExactOnlyPredicateCount == 0 && c.SeaGlassExactOnlyPredicateCount == 0;
             // Legacy unscoped Any/All/Ban and absent SeaGlass use canonical CPU
             // semantics. The historical fast evaluator may conservatively skip them.
             compiled.Add((act, keys, fast, exact && !legacy));
-            gpu &= exact && !legacy && branches.Length > 0;
-            foreach (var branch in c.BranchPredicates)
+            gpu &= exact;
+            foreach (var key in keys)
             {
-                var plan = c.Plans.FirstOrDefault(p => p.AncientId == branch.AncientId);
-                gates.Add(new(act, branch.AncientId, fast, plan, branch, branch.HasOptionCondition, branch.HasSeaGlassCondition));
+                var rowPredicates = c.BranchPredicates.Where(b => b.AncientId == _ids[key]).ToArray();
+                if (rowPredicates.Length == 0) rowPredicates = [new(_ids[key], [], [], false, false, false, false)];
+                var plan = c.Plans.FirstOrDefault(p => p.AncientId == _ids[key]);
+                if (legacy && plan is null) gpu = false;
+                foreach (var branch in rowPredicates)
+                    gates.Add(new(act, branch.AncientId, fast, plan, branch, branch.HasOptionCondition, branch.HasSeaGlassCondition));
             }
         }
         _acts = compiled.ToArray();
@@ -105,8 +109,8 @@ internal sealed class AncientOptionFamilyPlan
     internal bool Reference(ulong root) => _acts.All(a => a.Keys.Any(k => ReferenceRow(root, a.Act, k)));
     private bool ReferenceRow(ulong root, int act, ModelKey key)
     {
-        var branch = _filter.AncientBranchConditions.FirstOrDefault(b => b.Act == act && b.AncientKey == key);
-        if (branch is { OptionAny.Count: 0, SeaGlassTargetAny.Count: 0 } &&
+        var branches = _filter.AncientBranchConditions.Where(b => b.Act == act && b.AncientKey == key).ToArray();
+        if (branches.Any(b => b is { OptionAny.Count: 0, SeaGlassTargetAny.Count: 0 }) &&
             !_filter.AncientOptionFilters.Any(f => f.Act == act && !f.IsEmpty) &&
             !_filter.AncientSeaGlassTargetFilters.Any(f => f.Act == act && !f.IsEmpty)) return true;
         var context = _generation.AncientEventContexts.FirstOrDefault(c => c.Act == act && c.AncientKey == key && c.PlayerSlot == _request.Authority.PlayerSlotIndex)
@@ -129,12 +133,10 @@ internal sealed class AncientOptionFamilyPlan
         var options = prediction.Options.Where(o => o.IsVisible).ToArray();
 
         var sea = options.FirstOrDefault(o => o.OptionKey.Entry == "SEA_GLASS");
-        if (branch is not null)
-        {
-            if (branch.OptionAny.Count > 0 && !options.Any(o => branch.OptionAny.Contains(o.OptionKey))) return false;
-            if (branch.SeaGlassTargetAny.Count > 0 && (sea?.CharacterTarget is not { Precision: PredictionPrecision.Exact, CharacterKey: { } target } ||
-                !branch.SeaGlassTargetAny.Contains(target))) return false;
-        }
+        if (branches.Length > 0 && !branches.Any(branch =>
+            (branch.OptionAny.Count == 0 || options.Any(o => branch.OptionAny.Contains(o.OptionKey))) &&
+            (branch.SeaGlassTargetAny.Count == 0 || sea?.CharacterTarget is { Precision: PredictionPrecision.Exact, CharacterKey: { } target } &&
+                branch.SeaGlassTargetAny.Contains(target)))) return false;
         static bool Set(IEnumerable<ModelKey> values, ModelKeySetFilter f)
         {
             var v = values.ToArray(); return

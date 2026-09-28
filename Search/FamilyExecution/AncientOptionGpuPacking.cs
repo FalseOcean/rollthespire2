@@ -16,7 +16,7 @@ internal static class Beta110GpuAncientOptionPreGateP3AConstants
     public const long MaximumScratchBytes = 192L * 1024L * 1024L;
     public const int OptionPlanStrideUInts = 16;
     public const int OptionPoolStrideUInts = 4;
-    public const int BranchPredicateStrideUInts = 8;
+    public const int BranchPredicateStrideUInts = 12;
     public const int GateStrideUInts = 4;
     public const int HeaderUIntCount = 10;
     public const uint HeaderMagic = 0x33415047u; // "GPA3"
@@ -77,6 +77,20 @@ internal static class AncientOptionGpuPacking
             branches.Add(b.AncientId); branches.Add(checked((uint)optionOffset)); branches.Add(checked((uint)b.OptionAny.Length));
             branches.Add(checked((uint)seaOffset)); branches.Add(checked((uint)b.SeaGlassTargetAny.Length)); branches.Add(flags);
             branches.Add(b.HasOptionCondition ? 1u : 0u); branches.Add(b.HasSeaGlassCondition ? 1u : 0u);
+            // Family-private predicates: conjunction of legacy sets over this same row.
+            // Candidate ABI1 remains unchanged.
+            branches.Add((uint)branchIds.Count);
+            branches.Add((uint)gate.ActPlan.AncientOptionPredicates.Length);
+            branches.Add((uint)gate.ActPlan.SeaGlassTargetPredicates.Length);
+            branches.Add(0u);
+            foreach (var set in gate.ActPlan.AncientOptionPredicates.Concat(gate.ActPlan.SeaGlassTargetPredicates))
+            {
+                branchIds.Add(set.AlwaysReject ? 1u : 0u);
+                branchIds.Add((uint)set.Any.Length); branchIds.Add((uint)set.All.Length); branchIds.Add((uint)set.Ban.Length);
+                branchIds.AddRange(set.Any.Select(x => (uint)x));
+                branchIds.AddRange(set.All.Select(x => (uint)x));
+                branchIds.AddRange(set.Ban.Select(x => (uint)x));
+            }
             gm.Add(checked((uint)gate.Act)); gm.Add(gate.AncientId); gm.Add(optionPlanIndex); gm.Add(branchIndex);
         }
         planMeta = new uint[8];

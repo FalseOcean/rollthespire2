@@ -12,7 +12,11 @@ internal sealed record CardPickerCandidateMetadata(
     ModelKey CardKey,
     IReadOnlyList<ModelKey> CharacterKeys,
     EffectCardRarity Rarity,
-    EffectCardType CardType);
+    EffectCardType CardType)
+{
+    // Missing character provenance does not establish colorless membership.
+    public bool IsColorlessPoolMember { get; init; }
+}
 
 internal sealed record CardPickerContext(
     IReadOnlyList<ModelKey> AllowedCardModelKeys,
@@ -46,6 +50,10 @@ internal sealed record CardPickerContext(
 
     public bool IsAllowed(ModelKey key) =>
         key.IsValid && AllowedCardModelKeys.Contains(key, ModelKeyComparer.Instance);
+
+    public bool IsColorlessPoolMember(ModelKey key) =>
+        TryGet(key, out CardPickerCandidateMetadata metadata) && metadata.IsColorlessPoolMember &&
+        metadata.Rarity is not (EffectCardRarity.Curse or EffectCardRarity.Ancient);
 
     public bool TryGet(ModelKey key, out CardPickerCandidateMetadata metadata)
     {

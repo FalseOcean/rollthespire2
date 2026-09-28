@@ -163,6 +163,7 @@ public static class Beta109WorldPredictionProvider
         var bosses = new List<BossPredictionResult>();
         var ancients = new List<AncientPredictionResult>();
         var eventSequences = new List<EventPoolActSequenceResult>();
+        var encounterSequences = new List<ActEncounterSequenceResult>();
         string eventSequenceIssue = runtimeAuthorityExact
             ? string.Empty
             : "MissingModernEventSourceAuthority";
@@ -249,14 +250,19 @@ public static class Beta109WorldPredictionProvider
                 upFront,
                 normalHistory,
                 $"act{act.Act}:regular");
+            var eliteHistory = new List<Beta109EncounterEntrySnapshot>();
             ConsumeEncounterQueue(
                 act.EliteEncounters,
                 act.EliteEncounterSlots,
                 upFront,
-                history: null,
+                eliteHistory,
                 $"act{act.Act}:elite");
 
+            encounterSequences.Add(Beta109EncounterSequenceProjection.Build(act, normalHistory, eliteHistory, snapshot, world));
+
             ModelKey boss = upFront.NextModelKey(act.Bosses, $"act{act.Act}:boss:first");
+            if (snapshot.IsMultiplayer && snapshot.PartyBossDiscoveryOverrides.TryGetValue(act.ActKey.Serialized, out var discoveryBoss))
+                boss = discoveryBoss;
             bool bossIdentityReplayable =
                 bossSearchReplayable &&
                 prefixExact &&
@@ -420,7 +426,8 @@ public static class Beta109WorldPredictionProvider
             bosses.Count > 0 ? bossIssue : "ModernBossPredictionUnavailable",
             ancients.Count > 0 ? ancientIssue : "ModernAncientPredictionUnavailable")
         {
-            EventPoolSequencePrediction = eventPrediction
+            EventPoolSequencePrediction = eventPrediction,
+            EncounterSequences = encounterSequences
         };
     }
 
@@ -466,7 +473,9 @@ public static class Beta109WorldPredictionProvider
             List<ModelKey> items = bucket.OrderedRelics.ToList();
             rng.UnstableShuffle(items, "initialize:shared-relic-bag:" + bucket.BucketId);
         }
-        foreach (Beta109RelicBucketSnapshot bucket in snapshot.PlayerRelicBuckets)
+        foreach (Beta109RelicBucketSnapshot bucket in snapshot.IsMultiplayer
+            ? snapshot.PartyRelicBuckets.SelectMany(buckets => buckets)
+            : snapshot.PlayerRelicBuckets)
         {
             List<ModelKey> items = bucket.OrderedRelics.ToList();
             rng.UnstableShuffle(items, "initialize:player-relic-bag:" + bucket.BucketId);
@@ -627,12 +636,9 @@ public static class Beta109WorldPredictionProvider
         if (!snapshot.TestModeFactExact) return "MissingTestMode";
         if (!snapshot.Act1OverrideExact) return "MissingAct1Override";
         if (!snapshot.ModeFactsExact) return "MissingModeFacts";
-        if (snapshot.GameMode != WorldGameMode.Singleplayer || snapshot.IsMultiplayer)
-            return snapshot.GameMode == WorldGameMode.Multiplayer || snapshot.IsMultiplayer
-                ? "UnsupportedMultiplayerWorldReplay"
-                : "UnsupportedMode";
-        if (snapshot.PlayerCount != 1) return "UnsupportedPlayerCount";
-        if (snapshot.LobbyPlayers.Count != 1 || snapshot.LobbyPlayers.Any(player => !player.Exact))
+        if (!(snapshot.GameMode == WorldGameMode.Singleplayer && !snapshot.IsMultiplayer && snapshot.PlayerCount == 1) &&
+            !snapshot.HasExactFixedParty) return "MissingOrderedPartyWorldAuthority";
+        if (snapshot.LobbyPlayers.Count != snapshot.PlayerCount || snapshot.LobbyPlayers.Any(player => !player.Exact))
             return "MissingLobbyPlayerAuthority";
         if (snapshot.LobbyPlayers.Any(player => player.IsRandomCharacter))
             return "UnsupportedRandomCharacterWorldReplay";

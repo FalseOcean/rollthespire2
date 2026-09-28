@@ -139,7 +139,8 @@ internal static class Beta110AncientOptionFastPlanCompiler
         int act,
         IReadOnlyList<ModelKey> possibleAncients,
         Func<ModelKey, ushort> add,
-        IReadOnlyDictionary<ModelKey, ushort> denseByKey)
+        IReadOnlyDictionary<ModelKey, ushort> denseByKey,
+        int playerSlot = 0)
     {
         AncientSearchBranchCondition[] branches = filter.AncientBranchConditions
             .Where(item => item.IsValid && item.Act == act)
@@ -172,7 +173,7 @@ internal static class Beta110AncientOptionFastPlanCompiler
         var exactByAncient = new Dictionary<ModelKey, WorldFastAncientOptionPlan>(ModelKeyComparer.Instance);
         foreach (ModelKey ancient in requestedAncients)
         {
-            WorldFastAncientOptionPlan? plan = TryCompilePlan(generation, filter, act, ancient, add);
+            WorldFastAncientOptionPlan? plan = TryCompilePlan(generation, filter, act, ancient, add, playerSlot);
             if (plan is null) continue;
             plans.Add(plan);
             exactByAncient[ancient] = plan;
@@ -250,7 +251,8 @@ internal static class Beta110AncientOptionFastPlanCompiler
         {
             WorldFastAncientOptionPlan? oro = plans.FirstOrDefault(item =>
                 item.Generator == WorldFastAncientOptionGeneratorKind.Orobas);
-            if (oro is not null && oro.SeaGlassTargetAuthorityExact)
+            if (oro is not null && oro.SeaGlassTargetAuthorityExact ||
+                !possibleAncients.Any(k => Normalize(k.Entry) == "OROBAS"))
             {
                 compiledLegacySeaGlass = legacySeaGlass.Select(item => CompileSet(item.Keys, denseByKey)).ToArray();
                 seaFastCount += compiledLegacySeaGlass.Length;
@@ -294,7 +296,8 @@ internal static class Beta110AncientOptionFastPlanCompiler
         NeowSearchFilter filter,
         int act,
         ModelKey ancient,
-        Func<ModelKey, ushort> add)
+        Func<ModelKey, ushort> add,
+        int playerSlot)
     {
         string normalized = Normalize(ancient.Entry);
         WorldFastAncientOptionGeneratorKind generator = normalized switch
@@ -312,11 +315,11 @@ internal static class Beta110AncientOptionFastPlanCompiler
         if (!generation.AllowsAncientOptionFastSearch(ancient.Entry)) return null;
 
         Beta109AncientEventContextSnapshot? context = generation.AncientEventContexts
-            .FirstOrDefault(item => item.Act == act && item.AncientKey == ancient && item.PlayerSlot == 0) ??
+            .FirstOrDefault(item => item.Act == act && item.AncientKey == ancient && item.PlayerSlot == playerSlot) ??
             generation.AncientEventContexts.FirstOrDefault(item =>
                 item.Act == act && item.AncientKey == ancient && item.IsShared);
         if (context is null ||
-            context.CharacterKey != generation.LobbyPlayers[0].CharacterKey ||
+            !generation.LobbyPlayers.Any(player => player.Slot == playerSlot && player.CharacterKey == context.CharacterKey) ||
             string.IsNullOrWhiteSpace(context.EventIdEntry) ||
             !context.EventContextExact ||
             !context.EventRngRootExact ||
@@ -594,14 +597,20 @@ internal static class Beta110AncientOptionFastStage
         ushort ancientId,
         WorldFastActPlan act)
     {
-        WorldFastAncientBranchOptionPredicate? branch = null;
+        WorldFastAncientOptionEvaluationResult? rejected = null;
         foreach (WorldFastAncientBranchOptionPredicate item in act.AncientBranchOptionPredicates)
         {
             if (item.AncientId != ancientId) continue;
-            branch = item;
-            break;
+            var row = EvaluateRow(rootHash, ancientId, act, item);
+            if (row.Evaluation != WorldFastAncientOptionEvaluation.Reject) return row;
+            rejected = row;
         }
+        return rejected ?? EvaluateRow(rootHash, ancientId, act, null);
+    }
 
+    private static WorldFastAncientOptionEvaluationResult EvaluateRow(ulong rootHash, ushort ancientId,
+        WorldFastActPlan act, WorldFastAncientBranchOptionPredicate? branch)
+    {
         bool optionRequested = branch is { HasOptionCondition: true } || act.AncientOptionPredicates.Length > 0;
         bool seaRequested = branch is { HasSeaGlassCondition: true } || act.SeaGlassTargetPredicates.Length > 0;
         if (!optionRequested && !seaRequested)
@@ -620,7 +629,7 @@ internal static class Beta110AncientOptionFastStage
         bool optionFastActive = optionRequested && plan is not null && branchOptionExact && legacyOptionExact;
         bool branchSeaExact = branch is not { HasSeaGlassCondition: true } || branch.Value.SeaGlassFastReject;
         bool legacySeaExact = act.SeaGlassTargetPredicates.Length == 0 ||
-            (plan is not null && plan.SeaGlassTargetAuthorityExact);
+            (plan is not null && (plan.Generator != WorldFastAncientOptionGeneratorKind.Orobas || plan.SeaGlassTargetAuthorityExact));
         bool seaFastActive = seaRequested && plan is not null && branchSeaExact && legacySeaExact;
         if (!optionFastActive && !seaFastActive)
         {
@@ -786,11 +795,11 @@ internal static class Beta110AncientOptionFastStage
                     int thirdCount = AppendTwoPools(plan, scratch,
                         WorldFastAncientOptionPoolRole.OrobasPool3Touch,
                         WorldFastAncientOptionPoolRole.OrobasPool3Tooth);
-                    if (firstPool.Length == 0 || secondPool.Length == 0 || thirdCount == 0) return false;
+                    if (firstPool.Length == 0 || secondPool.Length == 0) return false;
                     output[0] = firstPool[rng.NextInt(firstPool.Length)];
                     output[1] = secondPool[rng.NextInt(secondPool.Length)];
-                    output[2] = scratch[rng.NextInt(thirdCount)];
-                    outputCount = 3;
+                    if (thirdCount == 0) { rng.NextInt(1); outputCount = 2; }
+                    else { output[2] = scratch[rng.NextInt(thirdCount)]; outputCount = 3; }
                     break;
                 }
                 case WorldFastAncientOptionGeneratorKind.Pael:

@@ -1,6 +1,7 @@
 using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Search.Contracts;
+using RolltheSpire2.Search.Semantics;
 
 namespace RolltheSpire2.Search.Selectivity;
 
@@ -8,7 +9,7 @@ namespace RolltheSpire2.Search.Selectivity;
 /// Conditional Event Result v1 marginals only. This estimator deliberately owns no
 /// Event occurrence probability and registers no independence relation to World/Event.
 /// </summary>
-internal static class EventResultProbabilityEstimator
+internal static partial class EventResultProbabilityEstimator
 {
     public static SearchSelectivityEstimate? EstimateTrashHeapJoint(
         SearchSelectivityInput plan,
@@ -57,26 +58,46 @@ internal static class EventResultProbabilityEstimator
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(conditions);
         issue = string.Empty;
-        EventResultSearchCondition[] grabs = conditions
+        // Deduplicate scalar facts before coupling Grab/Dive or Trial case/results.
+        var normalized = new List<EventResultSearchCondition>();
+        foreach (var group in conditions.GroupBy(c => c.Kind))
+        {
+            if (group.Key is EventResultConditionKind.TrashHeapGrabCard or EventResultConditionKind.TrashHeapDiveRelic or EventResultConditionKind.TrialCase)
+            {
+                var first = group.First();
+                if (group.Any(c => c.TargetKey != first.TargetKey || c.TrialCase != first.TrialCase))
+                    return SearchSelectivityEstimate.Exact(0, SearchSelectivityMethod.AuthorityPoolMembership,
+                        SearchSelectivityCoverage.ExactRequestedConjunction, SearchSelectivityDependencyClass.StructuralDependence,
+                        "Probability.EventResult.ScalarConflict", "A single result cannot have two different identities.");
+                normalized.Add(first);
+            }
+            else normalized.AddRange(group);
+        }
+        conditions = normalized;
+        var grouped = conditions.GroupBy(c => c.Kind).Where(g => g.Count() > 1).ToArray();
+        var groupFactors = new List<SearchSelectivityEstimate>();
+        foreach (var group in grouped)
+        {
+            var joint = EstimateSameResult(plan, group.ToArray());
+            if (joint is null) { issue = "RepeatedEventResultLocalGroup:" + group.Key; return null; }
+            groupFactors.Add(joint);
+        }
+        var singles = conditions.Where(c => !grouped.Any(g => g.Key == c.Kind)).ToArray();
+        EventResultSearchCondition[] grabs = singles
             .Where(item => item.Kind == EventResultConditionKind.TrashHeapGrabCard)
             .ToArray();
-        EventResultSearchCondition[] dives = conditions
+        EventResultSearchCondition[] dives = singles
             .Where(item => item.Kind == EventResultConditionKind.TrashHeapDiveRelic)
             .ToArray();
-        EventResultSearchCondition[] fake = conditions
+        EventResultSearchCondition[] fake = singles
             .Where(item => item.Kind == EventResultConditionKind.FakeMerchantOfferedFakeRelic)
             .ToArray();
-        EventResultSearchCondition[] colorful = conditions
+        EventResultSearchCondition[] colorful = singles
             .Where(item => item.Kind == EventResultConditionKind.ColorfulPhilosophersOfferedColor)
             .ToArray();
-
-        if (grabs.Length > 1 || dives.Length > 1 || fake.Length > 1 || colorful.Length > 1)
-        {
-            issue = "RepeatedEventResultLocalGroup";
-            return null;
-        }
-
-        var factors = new List<SearchSelectivityEstimate>(3);
+        var morphic = singles.Where(item => item.Kind == EventResultConditionKind.MorphicGroveGroupInitialBasicsContains).ToArray();
+        var added = singles.Where(c => c.Kind > EventResultConditionKind.MorphicGroveGroupInitialBasicsContains).ToArray();
+        var factors = new List<SearchSelectivityEstimate>(groupFactors);
         if (grabs.Length == 1 && dives.Length == 1)
         {
             SearchSelectivityEstimate? trash = EstimateTrashHeapJoint(plan, grabs[0], dives[0]);
@@ -98,6 +119,19 @@ internal static class EventResultProbabilityEstimator
 
         if (fake.Length == 1) factors.Add(EstimateSingle(plan, fake[0]));
         if (colorful.Length == 1) factors.Add(EstimateSingle(plan, colorful[0]));
+        if (morphic.Length == 1) factors.Add(EstimateSingle(plan, morphic[0]));
+        foreach (var c in added)
+        {
+            // Trial's transform already includes the very same case draw.
+            if (c.Kind == EventResultConditionKind.TrialCase && conditions.Any(x => x.Kind == EventResultConditionKind.TrialNondescriptInitialBasicsContains))
+            {
+                if (c.TrialCase == TrialCaseTarget.Nondescript) continue;
+                factors.Add(SearchSelectivityEstimate.Exact(0, SearchSelectivityMethod.AuthorityPoolMembership,
+                    SearchSelectivityCoverage.ExactRequestedConjunction, SearchSelectivityDependencyClass.SharedContinuation,
+                    "Probability.EventResult.TrialCaseConflict", "One Trial cannot show two different cases.", []));
+            }
+            else factors.Add(EstimateSingle(plan, c));
+        }
         if (factors.Count == 0)
         {
             issue = "NoSupportedEventResultFactor";
@@ -129,6 +163,50 @@ internal static class EventResultProbabilityEstimator
                 .ToArray());
     }
 
+    private static SearchSelectivityEstimate? EstimateSameResult(SearchSelectivityInput plan, EventResultSearchCondition[] group)
+    {
+        var first = group[0]; double p;
+        bool transform = EventResultTransformSemantics.IsTransform(first.Kind);
+        if (transform)
+        {
+            return EstimateTransformJoint(group);
+        }
+        else if (first.Kind is EventResultConditionKind.FakeMerchantOfferedFakeRelic or EventResultConditionKind.ColorfulPhilosophersOfferedColor)
+        {
+            var authority = Beta111EventResultAuthority.From(plan.Authority);
+            ModelKey[] pool; int take;
+            if (first.Kind == EventResultConditionKind.FakeMerchantOfferedFakeRelic)
+            { pool = Beta111EventResultCatalog.FakeMerchantRelics.ToArray(); take = Math.Min(6,pool.Length); }
+            else
+            {
+                if (!authority.ColorfulPoolAuthorityExact) return null;
+                pool = Beta111EventResultCatalog.ColorfulCharacterOrder.Where(k => k != authority.OwnerCharacterKey && authority.UnlockedCharacterCardPoolKeys.Contains(k,ModelKeyComparer.Instance)).ToArray();
+                take = Math.Min(3,pool.Length);
+            }
+            var required = group.Select(c => c.TargetKey).Distinct().ToArray();
+            p = required.Length > take || required.Any(k => !pool.Contains(k)) ? 0 : 1;
+            for (int i=0; p>0 && i<required.Length; i++) p *= (double)(take-i)/(pool.Length-i);
+        }
+        else if (first.Kind is EventResultConditionKind.TrashHeapGrabCard or EventResultConditionKind.TrashHeapDiveRelic or EventResultConditionKind.TrialCase)
+            p = group.All(c => c.TargetKey == first.TargetKey && c.TrialCase == first.TrialCase)
+                ? EstimateSingle(plan,first).Probability ?? double.NaN : 0;
+        else if (first.Kind == EventResultConditionKind.TinkerTimeTypeAndRider)
+        {
+            int types = group.Select(c => c.TinkerCardType).Distinct().Count();
+            // Every rider query replays the same post-type shuffle; different
+            // card types relabel its three indices, not independent rider draws.
+            int riders = group.Where(c => c.TinkerRider.HasValue).Select(c => (int)c.TinkerRider!.Value % 3).Distinct().Count();
+            static double Contains(int required) => required switch { 0 => 1, 1 => 2d / 3, 2 => 1d / 3, _ => 0 };
+            p = Contains(types) * Contains(riders);
+        }
+        else return null;
+        if (double.IsNaN(p)) return null;
+        return SearchSelectivityEstimate.Exact(p, transform ? SearchSelectivityMethod.ConditionalChain : SearchSelectivityMethod.WithoutReplacement,
+            SearchSelectivityCoverage.ExactRequestedConjunction,SearchSelectivityDependencyClass.StructuralDependence,
+            "Probability.EventResult.SameResultJoint", "All predicates observe the same generated result; repeated facts paid once.",
+            ["EventOccurrenceNotProven=true","SameEventJoint=true"]);
+    }
+
     public static SearchSelectivityEstimate EstimateSingle(
         SearchSelectivityInput plan,
         EventResultSearchCondition condition)
@@ -142,6 +220,24 @@ internal static class EventResultProbabilityEstimator
         string notes;
         switch (condition.Kind)
         {
+            case EventResultConditionKind.SymbioteInitialBasicTransform:
+            case EventResultConditionKind.AromaOfChaosInitialBasicTransform:
+            case EventResultConditionKind.WhisperingHollowInitialBasicTransform:
+            case EventResultConditionKind.TrialNondescriptInitialBasicsContains:
+            case EventResultConditionKind.MorphicGroveGroupInitialBasicsContains:
+            {
+                return EstimateTransformJoint([condition]);
+            }
+            case EventResultConditionKind.TrialCase:
+                probability = 1d / 3;
+                evidence = "Probability.EventResult.TrialCase.Conditional";
+                notes = "Accept draws one of three cases; cosmetic Chaotic RNG is excluded.";
+                break;
+            case EventResultConditionKind.TinkerTimeTypeAndRider:
+                probability = condition.TinkerRider is null ? 2d / 3 : 4d / 9;
+                evidence = "Probability.EventResult.TinkerTypeRider.Conditional";
+                notes = "Two of three types, then two of three riders for the chosen type on the same local continuation.";
+                break;
             case EventResultConditionKind.TrashHeapGrabCard:
                 probability = Beta111EventResultCatalog.TrashHeapGrabCards.Contains(condition.TargetKey) ? 1d / 10d : 0d;
                 evidence = "Probability.EventResult.TrashHeapGrab.Conditional";

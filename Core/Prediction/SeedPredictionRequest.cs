@@ -1,4 +1,5 @@
 using RolltheSpire2.Core.Authority;
+using RolltheSpire2.Core.Neow;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Rewards;
@@ -33,6 +34,19 @@ public enum SeedPredictionRequestError
 
 public sealed class SeedPredictionRequest
 {
+    // Root-local party replay supplies the actual opening choices to the existing information pipeline.
+    internal IReadOnlyList<NeowChoiceResult>? PartyOpeningChoices { get; set; }
+    // Legacy result envelope metadata only. The party projector owns its observation;
+    // this does not invoke the single-player analysis pipeline or inherit its UI cap.
+    internal static SeedPredictionRequest ForPartyInitialInformation(TrustedRootHashInput input, OrderedPartyAuthority party, bool diagnostics)
+    {
+        var owner = party.Players[0];
+        if (owner.Ascension is < SeedPredictionInputLimits.MinimumAscension or > SeedPredictionInputLimits.MaximumAscension)
+            throw new ArgumentException("Party.InvalidAscension");
+        return new(PredictionRequestId.Create(), input.SeedIdentity, owner.Character, owner.Ascension,
+            party.Players.Count, 0, owner, AncientOptionConditionProfile.BroadDefault, SeedPredictionDomainSelection.None,
+            SeedPredictionInputLimits.DefaultRelicSequencePreviewCount, diagnostics, false, input, NormalCombatRewardProjectionRequest.RichAnalysis);
+    }
     private SeedPredictionRequest(
         PredictionRequestId requestId,
         string originalSeed,
@@ -94,9 +108,17 @@ public sealed class SeedPredictionRequest
         IncludeDiagnostics,
         enabled,
         TrustedRootHashInput,
-        CombatRewardProjectionRequest);
+        CombatRewardProjectionRequest) { PartyOpeningChoices = PartyOpeningChoices };
 
     public bool Includes(SeedPredictionDomainSelection domain) => (Domains & domain) == domain;
+
+    // Reuses immutable captured authority for a UI-only Ancient premise revision.
+    // It is a new request, while the independent opening/world observations remain reusable.
+    internal SeedPredictionRequest WithAncientOptionConditions(AncientOptionConditionProfile conditions) => new(
+        PredictionRequestId.Create(), OriginalSeed, Character, Ascension, PlayersCount, PlayerSlotIndex,
+        Authority, conditions, Domains, RelicSequencePreviewCount, IncludeDiagnostics,
+        EnableComplexBonesDeckInteractions, TrustedRootHashInput, CombatRewardProjectionRequest)
+        { PartyOpeningChoices = PartyOpeningChoices };
 
     public static bool TryCreate(
         string? originalSeed,

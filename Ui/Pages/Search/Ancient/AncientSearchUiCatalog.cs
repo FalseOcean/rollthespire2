@@ -21,8 +21,21 @@ internal sealed record AncientRowDefinition(
     int Act,
     ModelKey AncientKey,
     IReadOnlyList<AncientOptionCandidate> Options,
+    IReadOnlyDictionary<ModelKey, string> OfferExclusionGroups,
     bool IdentityAvailable,
-    string EvidenceCode);
+    string EvidenceCode)
+{
+    public bool CanOfferTogether(IEnumerable<ModelKey> targets)
+    {
+        ModelKey[] selected = targets.Distinct(ModelKeyComparer.Instance).ToArray();
+        if (selected.Length > 3 || selected.Any(key => !Options.Any(option => option.OptionKey == key))) return false;
+        return selected
+            .Select(key => OfferExclusionGroups.TryGetValue(key, out string? group) ? group : string.Empty)
+            .Where(group => !string.IsNullOrEmpty(group))
+            .GroupBy(group => group, StringComparer.Ordinal)
+            .All(group => group.Count() == 1);
+    }
+}
 
 internal sealed record AncientActSectionDefinition(
     int Act,
@@ -138,6 +151,7 @@ internal sealed record AncientSearchUiCatalog(
                 act,
                 ancientKey,
                 Array.Empty<AncientOptionCandidate>(),
+                new Dictionary<ModelKey, string>(ModelKeyComparer.Instance),
                 false,
                 "ancient-identity-runtime-binding-pending");
         }
@@ -152,6 +166,7 @@ internal sealed record AncientSearchUiCatalog(
                     act,
                     ancientKey,
                     Array.Empty<AncientOptionCandidate>(),
+                    new Dictionary<ModelKey, string>(ModelKeyComparer.Instance),
                     true,
                     profileId switch
                     {
@@ -177,16 +192,20 @@ internal sealed record AncientSearchUiCatalog(
                         _ => "beta109-historical-event-context-option-catalog"
                     }))
                 .ToArray();
+            IReadOnlyDictionary<ModelKey, string> groups = BuildOfferExclusionGroups(
+                ancientKey, context.Catalog.Pools);
             return new AncientRowDefinition(
                 act,
                 ancientKey,
                 options,
+                groups,
                 true,
                 context.Catalog.CatalogFingerprint);
         }
 
         string[] entries = LegacyOptionEntries(ancientKey.Entry, act);
         var legacyOptions = new List<AncientOptionCandidate>(entries.Length);
+        var legacyGroups = new Dictionary<ModelKey, string>(ModelKeyComparer.Instance);
         foreach (string entry in entries)
         {
             ModelKey key = BindRelic(
@@ -200,11 +219,14 @@ internal sealed record AncientSearchUiCatalog(
                 exact
                     ? "stable107-runtime-option-key-bound"
                     : "stable107-runtime-option-key-pending"));
+            string group = LegacyOfferExclusionGroup(ancientKey.Entry, entry, act);
+            if (!string.IsNullOrEmpty(group)) legacyGroups[key] = group;
         }
         return new AncientRowDefinition(
             act,
             ancientKey,
             legacyOptions.ToArray(),
+            legacyGroups,
             true,
             "stable107-direct-predictor-option-catalog");
     }
@@ -217,6 +239,64 @@ internal sealed record AncientSearchUiCatalog(
                 ? AncientAdditionalConditionKind.SeaGlassCharacterTarget
                 : AncientAdditionalConditionKind.None,
             evidence);
+
+    private static IReadOnlyDictionary<ModelKey, string> BuildOfferExclusionGroups(
+        ModelKey ancient,
+        IReadOnlyList<Beta109NamedOptionPoolSnapshot> pools)
+    {
+        string normalized = Normalize(ancient.Entry);
+        var groups = new Dictionary<ModelKey, string>(ModelKeyComparer.Instance);
+        foreach (Beta109NamedOptionPoolSnapshot pool in pools)
+        {
+            string group = ModernOfferExclusionGroup(normalized, pool.PoolId);
+            if (string.IsNullOrEmpty(group)) continue;
+            foreach (ModelKey option in pool.OrderedOptions)
+                groups[option] = group;
+        }
+        return groups;
+    }
+
+    private static string ModernOfferExclusionGroup(string ancient, string poolId) => ancient switch
+    {
+        "OROBAS" when poolId.StartsWith("orobas.pool1.", StringComparison.Ordinal) => "orobas.slot1",
+        "OROBAS" when poolId == "orobas.pool2" => "orobas.slot2",
+        "OROBAS" when poolId.StartsWith("orobas.pool3.", StringComparison.Ordinal) => "orobas.slot3",
+        "PAEL" when poolId == "pael.pool1" => "pael.slot1",
+        "PAEL" when poolId.StartsWith("pael.pool2.", StringComparison.Ordinal) => "pael.slot2",
+        "PAEL" when poolId.StartsWith("pael.pool3.", StringComparison.Ordinal) => "pael.slot3",
+        "TEZCATARA" when poolId.StartsWith("tezcatara.pool1.", StringComparison.Ordinal) => "tezcatara.slot1",
+        "TEZCATARA" when poolId == "tezcatara.pool2" => "tezcatara.slot2",
+        "TEZCATARA" when poolId == "tezcatara.pool3" => "tezcatara.slot3",
+        "VAKUU" when poolId == "vakuu.pool1" => "vakuu.slot1",
+        "VAKUU" when poolId == "vakuu.pool2" => "vakuu.slot2",
+        "VAKUU" when poolId == "vakuu.pool3" => "vakuu.slot3",
+        "DARV" when poolId.StartsWith("darv.valid.", StringComparison.Ordinal) => poolId,
+        _ => string.Empty
+    };
+
+    private static string LegacyOfferExclusionGroup(string ancient, string option, int act)
+    {
+        string normalizedAncient = Normalize(ancient);
+        string normalizedOption = Normalize(option);
+        return normalizedAncient switch
+        {
+            "OROBAS" when normalizedOption is "ELECTRICSHRYMP" or "GLASSEYE" or "SANDCASTLE" or "PRISMATICGEM" or "SEAGLASS" => "orobas.slot1",
+            "OROBAS" when normalizedOption is "ALCHEMICALCOFFER" or "DRIFTWOOD" or "RADIANTPEARL" => "orobas.slot2",
+            "OROBAS" when normalizedOption is "TOUCHOFOROBAS" or "ARCHAICTOOTH" => "orobas.slot3",
+            "PAEL" when normalizedOption is "PAELSFLESH" or "PAELSHORN" or "PAELSTEARS" => "pael.slot1",
+            "PAEL" when normalizedOption is "PAELSWING" or "PAELSCLAW" or "PAELSTOOTH" or "PAELSGROWTH" => "pael.slot2",
+            "PAEL" when normalizedOption is "PAELSEYE" or "PAELSBLOOD" or "PAELSLEGION" => "pael.slot3",
+            "TEZCATARA" when normalizedOption is "VERYHOTCOCOA" or "YUMMYCOOKIE" or "NUTRITIOUSSOUP" => "tezcatara.slot1",
+            "TEZCATARA" when normalizedOption is "BIIIGHUG" or "STORYBOOK" or "TOASTYMITTENS" => "tezcatara.slot2",
+            "TEZCATARA" when normalizedOption is "GOLDENCOMPASS" or "PUMPKINCANDLE" or "TOYBOX" or "SEALOFGOLD" => "tezcatara.slot3",
+            "VAKUU" when normalizedOption is "BLOODSOAKEDROSE" or "WHISPERINGEARRING" or "FIDDLE" => "vakuu.slot1",
+            "VAKUU" when normalizedOption is "PRESERVEDFOG" or "SERETALON" or "DISTINGUISHEDCAPE" => "vakuu.slot2",
+            "VAKUU" when normalizedOption is "CHOICESPARADOX" or "MUSICBOX" or "LORDSPARASOL" or "JEWELEDMASK" => "vakuu.slot3",
+            "DARV" when act == 2 && normalizedOption is "ECTOPLASM" or "SOZU" => "darv.act2.energy",
+            "DARV" when act == 3 && normalizedOption is "PHILOSOPHERSSTONE" or "VELVETCHOKER" => "darv.act3.energy",
+            _ => string.Empty
+        };
+    }
 
     private static IReadOnlyList<ModelKey> ResolveActAncients(
         RuntimeProfileId profileId,

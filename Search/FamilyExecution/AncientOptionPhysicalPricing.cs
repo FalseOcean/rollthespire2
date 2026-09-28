@@ -66,7 +66,9 @@ internal static class AncientOptionPhysicalPricing
     }
 
     private static bool MeasuredPools(WorldFastAncientOptionPlan p) => p.Generator switch {
-            WorldFastAncientOptionGeneratorKind.Tezcatara => p.Pools.Select(x => x.Values.Length).SequenceEqual(new[] { 2, 1, 3, 4 }),
+            WorldFastAncientOptionGeneratorKind.Tezcatara => p.Pools.Length == 4 &&
+                p.Pools.Select((pool, index) => pool.Values.Length is >= 1 &&
+                    pool.Values.Length <= new[] { 2, 1, 3, 4 }[index]).All(inside => inside),
             WorldFastAncientOptionGeneratorKind.Pael => p.Pools.Select(x => x.Values.Length).SequenceEqual(new[] { 3, 1, 1, 1, 1, 2, 1 }),
             WorldFastAncientOptionGeneratorKind.Orobas => p.Pools.Select(x => x.Values.Length).SequenceEqual(new[] { 3, 3, 4, 1, 1 }),
             WorldFastAncientOptionGeneratorKind.Darv => p.Pools.Length is 10 or 12 && p.Pools.All(x => x.Values.Length == 1),
@@ -82,13 +84,18 @@ internal static class AncientOptionPhysicalPricing
     private static FamilyPhysicalQuote? QuoteGeneratorEnvelope(ExactSearchExecutionRequest request,
         AncientOptionFamilyPlan plan, FamilyPhysicalQuoteRequest g, bool cpu)
     {
+        var allFilters = request.Evaluation.AncientOptionFilters.Where(f => !f.IsEmpty).ToArray();
         if (!plan.GpuSupported || !FamilyPhysicalQuote.AdmittedRequest(g) ||
             request.ProfileId != Compatibility.RuntimeProfileId.Beta111 || !request.Authority.CanUseCurrentModel ||
             request.Authority.PlayersCount != 1 || request.Authority.AllCharacterCardPoolsUnlocked != true ||
             plan.OptionPlans.Count is < 1 or > 4 || !plan.OptionPlans.All(MeasuredPools) ||
-            request.Evaluation.AncientBranchConditions.Any(r => r.SeaGlassTargetAny.Count != 0 || r.OptionAny.Count is < 1 or > 4)) return null;
+            request.Evaluation.AncientSeaGlassTargetFilters.Any(f => !f.IsEmpty) ||
+            allFilters.Any(f => f.Keys.Any.Count > 0 || f.Keys.Ban.Count > 0 || f.Keys.All.Count is < 1 or > 3 ||
+                request.Evaluation.AncientBranchConditions.Count(r => r.Act == f.Act) != 1) ||
+            request.Evaluation.AncientBranchConditions.Any(r => r.SeaGlassTargetAny.Count != 0 ||
+                r.OptionAny.Count > 4 || r.OptionAny.Count == 0 && !allFilters.Any(f => f.Act == r.Act))) return null;
         if (cpu ? g.CompactInput || g.PrivateInput || g.PrivateOutput || g.MeanInputPopulation < 4096 :
-            !FamilyPhysicalQuote.HasReferenceBackend() || g.MeanInputPopulation < 1048576) return null;
+            !FamilyPhysicalQuote.HasReferenceBackend()) return null;
         // Reuse measured generator envelopes without pretending to know branch
         // reach. Summation bounds both same-act OR and cross-act early rejection.
         double ns = plan.OptionPlans.Sum(p => cpu ? p.Generator switch {
@@ -98,12 +105,14 @@ internal static class AncientOptionPhysicalPricing
             WorldFastAncientOptionGeneratorKind.Darv => 1.8,
             WorldFastAncientOptionGeneratorKind.Nonupeipe or WorldFastAncientOptionGeneratorKind.Tanx => 1.35,
             _ => 1.02 });
-        ns += request.Evaluation.AncientBranchConditions.Sum(r => Math.Max(0, r.OptionAny.Count - 1)) * (cpu ? 5 : .03);
+        ns += (request.Evaluation.AncientBranchConditions.Sum(r => Math.Max(0, r.OptionAny.Count - 1)) +
+            allFilters.Sum(f => Math.Max(0, f.Keys.All.Count - 1))) * (cpu ? 5 : .03);
         return new("A.AncientOption", "A.GeneratorEnvelope.20260913.v1" + (cpu ? ".P1" : ".Gpu"), ns,
             cpu ? 65536 : plan.Capacity, cpu ? null : 160,
-            "PricingHoleSweep.20260913;Model=ConservativeCoarse;KnownGeneratorPoolSum;BranchCount1..4;NoAssumedBranchReach;" +
+            "PricingHoleSweep.20260923;Model=ConservativeCoarse;KnownGeneratorPoolSum;BranchCount1..4;ModernAllOffered1..3;NoAssumedBranchReach;" +
             (cpu ? "CpuCanonicalAbi1" : "NumericalDeviceEmission;HostEdgesExcluded"),
-            OutputElementBytes: cpu ? 8 : 4, OutputAlreadyOrdered: cpu, PublicTransportClass: cpu ? "CpuOrderedAbi1" : "Counted32");
+            OutputElementBytes: cpu ? 8 : 4, OutputAlreadyOrdered: cpu, PublicTransportClass: cpu ? "CpuOrderedAbi1" : "Counted32")
+        { FixedWindowMilliseconds = cpu ? 0 : 1 };
     }
 
     private static FamilyPhysicalQuote? QuoteCpuMeasured(ExactSearchExecutionRequest request,
@@ -137,15 +146,18 @@ internal static class AncientOptionPhysicalPricing
     internal static FamilySurvivalProjection ResolveSurvival(ExactSearchExecutionRequest request)
     {
         var e = request.Evaluation;
-        var rows = e.AncientBranchConditions.Where(r => r.OptionAny.Count > 0 || r.SeaGlassTargetAny.Count > 0).ToArray();
+        var rows = e.AncientBranchConditions.Where(r => r.OptionAny.Count > 0 || r.SeaGlassTargetAny.Count > 0 ||
+            e.AncientOptionFilters.Any(f => f.Act == r.Act && f.Keys.All.Count > 0)).ToArray();
         if (rows.Length == 0 || rows.Select(r => r.Act).Distinct().Count() != rows.Length ||
             rows.Select(r => r.AncientKey).Distinct().Count() != rows.Length ||
-            e.AncientOptionFilters.Any(f => !f.IsEmpty) || e.AncientSeaGlassTargetFilters.Any(f => !f.IsEmpty))
+            e.AncientOptionFilters.Any(f => !f.IsEmpty && (f.Keys.Any.Count > 0 || f.Keys.Ban.Count > 0 ||
+                e.AncientBranchConditions.Count(b => b.Act == f.Act) != 1)) || e.AncientSeaGlassTargetFilters.Any(f => !f.IsEmpty))
             return FamilySurvivalProjection.Unresolved("A.AncientOption", "A.JointGeneratorProjectionUnknown");
         double product = 1;
         foreach (var row in rows)
         {
-            var estimate = AncientOptionProbabilityEstimator.EstimateConditional(SearchSelectivityInput.From(request), row);
+            var estimate = AncientOptionProbabilityEstimator.EstimateConditionalAll(SearchSelectivityInput.From(request), row,
+                e.AncientOptionFilters.Where(f => f.Act == row.Act).SelectMany(f => f.Keys.All).Distinct().ToArray());
             if (estimate is not { IsPriced: true, Probability: { } p })
                 return FamilySurvivalProjection.Unresolved("A.AncientOption", "A.ConditionalProjectionUnknown");
             product *= p;

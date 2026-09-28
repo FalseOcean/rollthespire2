@@ -38,6 +38,7 @@ internal sealed partial class SearchPresetSaveTransactionOverlay : Control
         MouseFilter = MouseFilterEnum.Stop;
         FocusMode = FocusModeEnum.All;
         ZIndex = UiZLayers.TransactionModal;
+        SetProcessUnhandledKeyInput(true);
 
         var backdrop = new ColorRect
         {
@@ -220,6 +221,15 @@ internal sealed partial class SearchPresetSaveTransactionOverlay : Control
         if (!Visible) return;
         _tooltipHost.Dismiss();
         Visible = false;
+    }
+
+    public override void _UnhandledKeyInput(InputEvent @event)
+    {
+        if (IsVisibleInTree() && @event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Escape })
+        {
+            Cancel();
+            GetViewport().SetInputAsHandled();
+        }
     }
 
     public void ShowValidationError(string message)

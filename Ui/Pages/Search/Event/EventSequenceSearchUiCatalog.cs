@@ -19,6 +19,7 @@ internal sealed record EventSequenceSearchUiCatalog(
     bool CatalogAvailable,
     string EvidenceCode)
 {
+    public RolltheSpire2.Core.Prediction.MorphicGroveScenario? MorphicGroveScenario { get; init; }
     public static EventSequenceSearchUiCatalog Empty(RuntimeProfileId profileId, string evidenceCode) => new(
         profileId,
         new Dictionary<int, IReadOnlyList<EventSearchUiCandidate>>

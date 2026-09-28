@@ -16,7 +16,7 @@ namespace RolltheSpire2.Ui.Shell;
 /// </summary>
 internal sealed partial class Rt2TopLevelSubmenu : NSubmenu
 {
-    private AppShell? _shell;
+    private WorkspaceShell? _shell;
     private Button? _backPointer;
     private bool _initialized;
     private bool _closeRequested;
@@ -38,33 +38,14 @@ internal sealed partial class Rt2TopLevelSubmenu : NSubmenu
         MouseFilter = MouseFilterEnum.Ignore;
         SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
 
-        _shell = new AppShell
+        _shell = new WorkspaceShell
         {
             Visible = false
         };
         _shell.Initialize(snapshot);
         AddChild(_shell);
 
-        _backPointer = new Button
-        {
-            Name = "RolltheSpire2_TopLevelBack",
-            Text = "←",
-            TooltipText = "Back",
-            CustomMinimumSize = new Vector2(44f, 44f),
-            MouseFilter = MouseFilterEnum.Stop,
-            FocusMode = FocusModeEnum.All,
-            AnchorLeft = 0f,
-            AnchorTop = 1f,
-            AnchorRight = 0f,
-            AnchorBottom = 1f,
-            OffsetLeft = 8f,
-            OffsetTop = -52f,
-            OffsetRight = 52f,
-            OffsetBottom = -8f,
-            ZIndex = UiZLayers.ShellSurface + 1
-        };
-        Ui1Theme.ApplyButton(_backPointer, Ui1ButtonRole.Secondary);
-        AddChild(_backPointer);
+        _backPointer = _shell.CloseButton;
     }
 
     public override void _Ready()
@@ -77,7 +58,7 @@ internal sealed partial class Rt2TopLevelSubmenu : NSubmenu
         // Beta111 NSubmenu explicitly forbids base._Ready() for derived types.
         // Call the virtual signal contract directly instead.
         ConnectSignals();
-        RefreshBackPresentation();
+
     }
 
     protected override void ConnectSignals()
@@ -91,7 +72,7 @@ internal sealed partial class Rt2TopLevelSubmenu : NSubmenu
         // implementation requires an NBackButton named "BackButton" and wires
         // Released directly to _stack.Pop(), which has no duplicate/reentrancy
         // guard. Both pointer Back and Header X must converge on the RT2 guard.
-        _backPointer.Pressed += () => RequestTopLevelClose("back-pointer");
+
         _shell.TopLevelCloseRequested += () => RequestTopLevelClose("header-x");
         VisibilityChanged += HandleVisibilityChanged;
     }
@@ -104,7 +85,7 @@ internal sealed partial class Rt2TopLevelSubmenu : NSubmenu
             _backPointer.Disabled = false;
         }
 
-        RefreshBackPresentation();
+
         _shell?.Open();
         RuntimeLog.Info("rt2TopLevelOpened=true;closeAuthority=GuardedRequestTopLevelClose");
     }
@@ -183,18 +164,4 @@ internal sealed partial class Rt2TopLevelSubmenu : NSubmenu
         }
     }
 
-    private void RefreshBackPresentation()
-    {
-        if (_backPointer is null)
-        {
-            return;
-        }
-
-        string languageCode = TranslationServer.GetLocale().StartsWith("zh", StringComparison.OrdinalIgnoreCase)
-            ? "zh"
-            : "en";
-        string back = languageCode == "zh" ? "返回" : "Back";
-        _backPointer.Text = "←";
-        _backPointer.TooltipText = back;
-    }
 }

@@ -32,34 +32,21 @@ namespace RolltheSpire2.Ui.Pages.Search;
 internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiveAppPage, IPageSurfaceLifecycle
 {
     private const long UnlimitedScanCount = long.MaxValue;
-    // Runtime rollback only. Phase A2 uses the page-local Control transaction
-    // surface by default, but the previously accepted Window suspend/resume
-    // workaround remains intact until the replacement path is Owner runtime-proven.
-    private static readonly bool UseLegacyPresetWindowFallback = false;
     private readonly RuntimePredictionSettings _settings;
     private ModRuntimeSnapshot _runtime = ModRuntimeSnapshot.NotInitialized;
     private readonly SearchContextBar _contextBar;
     private readonly SearchPresetSaveTransactionOverlay _presetSaveSurface;
     private readonly SearchConfirmationTransactionOverlay _presetOverwriteSurface;
     private readonly SearchConfirmationTransactionOverlay _presetDeleteSurface;
-    private readonly ConfirmationDialog _presetSaveDialog;
-    private readonly LineEdit _presetNameInput;
-    private readonly Label _presetVisualMarkLabel;
-    private readonly RelicSequencePickerSlot _presetVisualIconSlot;
     private readonly RelicPickerPanel _presetVisualIconPicker;
-    private readonly ConfirmationDialog _presetOverwriteDialog;
-    private readonly ConfirmationDialog _presetDeleteDialog;
     private readonly SearchPresetLibraryOverlay _presetLibrary;
     private IReadOnlyList<SearchPresetDefinition> _knownPresets = Array.Empty<SearchPresetDefinition>();
     private IReadOnlyList<ModelKey> _presetVisualRelicCandidates = Array.Empty<ModelKey>();
     private string _pendingPresetDeleteId = string.Empty;
-    private string _pendingPresetSaveName = string.Empty; // legacy Window fallback only
-    private ModelKey? _pendingPresetSaveIcon; // legacy Window fallback only
     private SearchPresetSaveCommit? _pendingPresetSaveCommit;
     private SearchPresetSaveIntentKind _activePresetSaveKind = SearchPresetSaveIntentKind.CreateCurrentQuery;
     private string _activePresetSaveSourceId = string.Empty;
     private int _activePresetVisualIconSlot;
-    private bool _resumePresetSaveDialogAfterVisualPicker;
     private bool _suppressPresetChildReturn;
     private readonly SearchCategoryNavigationBar _categoryNavigation;
     private readonly SearchCategoryHost _categoryHost;
@@ -251,47 +238,6 @@ internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiv
                 _presetLibrary.GrabFocus();
         };
 
-        // Legacy Window fallback retained for rollback until the Control-only
-        // transaction -> picker path has Owner runtime evidence.
-        _presetSaveDialog = new ConfirmationDialog();
-        _presetNameInput = new LineEdit { CustomMinimumSize = new Vector2(320, 36) };
-        _presetVisualMarkLabel = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta);
-        _presetVisualIconSlot = new RelicSequencePickerSlot(icons, tooltipHost);
-        _presetVisualIconSlot.Pressed += () => OpenPresetVisualIconPicker(0);
-        var savePresetBody = new VBoxContainer();
-        savePresetBody.AddThemeConstantOverride("separation", 8);
-        savePresetBody.AddChild(_presetNameInput);
-        savePresetBody.AddChild(_presetVisualMarkLabel);
-        savePresetBody.AddChild(_presetVisualIconSlot);
-        _presetSaveDialog.AddChild(savePresetBody);
-        _presetSaveDialog.Confirmed += ConfirmPresetSave;
-        _presetNameInput.TextChanged += text => _presetSaveDialog.GetOkButton().Disabled = string.IsNullOrWhiteSpace(text);
-
-        _presetOverwriteDialog = new ConfirmationDialog();
-        _presetOverwriteDialog.Confirmed += () =>
-        {
-            if (!string.IsNullOrWhiteSpace(_pendingPresetSaveName))
-            {
-                var icons = _pendingPresetSaveIcon is { IsValid: true } icon
-                    ? new[] { SearchPresetVisualIconRef.FromRelic(icon) }
-                    : Array.Empty<SearchPresetVisualIconRef>();
-                PresetSaveConfirmed?.Invoke(new SearchPresetSaveCommit(
-                    SearchPresetSaveIntentKind.CreateCurrentQuery,
-                    string.Empty,
-                    new SearchPresetMetadataDraft(_pendingPresetSaveName, string.Empty, icons)));
-            }
-            _pendingPresetSaveName = string.Empty;
-            _pendingPresetSaveIcon = null;
-        };
-
-        _presetDeleteDialog = new ConfirmationDialog();
-        _presetDeleteDialog.Confirmed += () =>
-        {
-            if (!string.IsNullOrWhiteSpace(_pendingPresetDeleteId))
-                PresetDeleteRequested?.Invoke(_pendingPresetDeleteId);
-            _pendingPresetDeleteId = string.Empty;
-        };
-
         _presetLibrary.SaveAsUserRequested += id =>
             OpenPresetSaveTransaction(SearchPresetSaveIntentKind.CreateFromExistingSnapshot, id);
         _presetLibrary.EditMetadataRequested += id =>
@@ -304,11 +250,7 @@ internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiv
         _presetLibrary.DeleteRequested += id =>
         {
             _pendingPresetDeleteId = id;
-            if (UseLegacyPresetWindowFallback)
-            {
-                _presetDeleteDialog.PopupCentered(new Vector2I(420, 150));
-            }
-            else if (_uiText is not null)
+            if (_uiText is not null)
             {
                 _presetDeleteSurface.Open(
                     _uiText.Get(Ui1TextKey.SearchPresetDeleteTitle),
@@ -330,6 +272,7 @@ internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiv
         _categoryHost.RelicPage.Changed += OnQueryDraftChanged;
         _categoryHost.CombatRewardPage.Changed += OnQueryDraftChanged;
         _categoryHost.EventPage.Changed += OnQueryDraftChanged;
+        _categoryHost.TransformationPage.Changed += OnQueryDraftChanged;
         _categoryHost.ShopPage.Changed += OnQueryDraftChanged;
         _contextBar.DraftChanged += () => ContextDraftChanged?.Invoke();
         _categoryNavigation.ClearConditionsRequested += ClearAllFilters;
@@ -630,9 +573,6 @@ internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiv
         // Control GUI input order. Keep page content physically before every
         // page-local surface so pointer hit-testing follows the same bottom ->
         // workspace -> transaction -> picker -> confirmation order as rendering.
-        AddChild(_presetSaveDialog);
-        AddChild(_presetOverwriteDialog);
-        AddChild(_presetDeleteDialog);
         AddChild(_presetLibrary);
         _presetLibrary.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         AddChild(_presetSaveSurface);
@@ -703,7 +643,7 @@ internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiv
             IntegratedSearchDraft integrated = _integratedFilters.CurrentDraft;
             _categoryHost.NeowPage.TryBuildDraft(out NeowRouteFilterDraft routeDraft, out _, focusInvalid: false);
             AncientOptionConditionProfile optionConditions = _categoryHost.AncientPage.OptionConditions;
-            return new SearchDraft(
+            var draft = new SearchDraft(
                 _neowAny.Text,
                 _neowAll.Text,
                 _neowBan.Text,
@@ -752,6 +692,9 @@ internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiv
                 RelicShopSequenceDraft = _categoryHost.ShopPage.BuildRelicSearchConditions(),
                 EventSequenceDraft = _categoryHost.EventPage.BuildSearchConditions(),
                 EventResultDraft = _categoryHost.EventPage.BuildEventResultConditions(),
+                MorphicGroveContainsCard = _categoryHost.EventPage.MorphicGroveContainsCard,
+                MorphicGroveSecondCard = _categoryHost.EventPage.MorphicGroveSecondCard,
+                TransformationAggregate = _categoryHost.TransformationPage.BuildDraft(),
                 MerchantColorlessSequenceDraft = _categoryHost.ShopPage.BuildSearchConditions(),
                 MerchantColorlessDraft = _categoryHost.ShopPage.BuildLegacyColorlessConditions(),
                 RelicSequenceDraft = _categoryHost.RelicPage.BuildSearchConditions()
@@ -769,7 +712,15 @@ internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiv
                 OrobasTouchOfOrobasConditionMet = optionConditions.OrobasTouchOfOrobasConditionMet,
                 DarvAllowPandorasBoxRelicSet = optionConditions.DarvAllowPandorasBoxRelicSet
             };
+            return ActiveCompositeDraft(draft);
         }
+    }
+
+    private static SearchDraft ActiveCompositeDraft(SearchDraft draft)
+    {
+        if (draft.TransformationAggregate is not { } c) return draft;
+        if (c.MorphicGrove) draft = draft with { MorphicGroveContainsCard = null, MorphicGroveSecondCard = null };
+        return draft;
     }
 
     public SearchRunDraft CurrentRunDraft => new(
@@ -832,11 +783,19 @@ internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiv
                 draft.TezcataraHasBasicStrike, draft.NonupeipeSwiftEnchantableAtLeast4, draft.TanxInstinctEnchantableAtLeast3,
                 draft.PaelGoopyDefendCardsAtLeast3, draft.PaelAllowLegionNoEventPet, draft.PaelRemovableCardsAtLeast5,
                 draft.OrobasArchaicToothConditionMet, draft.OrobasTouchOfOrobasConditionMet, draft.DarvAllowPandorasBoxRelicSet);
-            _categoryHost.NeowPage.RestoreDraft(draft.NeowRouteDraft, notify: false);
+            // v1 persisted the opening only inside T. Restore that commitment into
+            // N once; modern drafts always retain their explicitly authored N state.
+            var neowDraft = draft.NeowRouteDraft ?? NeowRouteFilterDraft.Empty;
+            if (neowDraft.RouteRelicKey is null && draft.TransformationAggregate is { UsesNeow: true } oldTransform)
+                neowDraft = NeowRouteFilterDraft.FromTransformation(oldTransform.Opening, oldTransform.PickupOrder);
+            _categoryHost.NeowPage.RestoreDraft(neowDraft, notify: false);
             _categoryHost.AncientPage.RestoreDraft(draft.AncientMatrixDraft, optionProfile, notify: false);
             _categoryHost.BossMapPage.RestoreDraft(draft.BossMapDraft, notify: false);
             _categoryHost.RelicPage.RestoreDraft(draft.RelicSequenceDraft.Where(condition => condition.Lane != RelicSequenceKind.Shop).ToArray(), notify: false);
-            _categoryHost.EventPage.RestoreDraft(draft.EventSequenceDraft, draft.EventResultDraft, notify: false);
+            _categoryHost.EventPage.RestoreDraft(draft.EventSequenceDraft, draft.EventResultDraft, notify: false,
+                morphicGroveContainsCard: draft.MorphicGroveContainsCard, morphicGroveSecondCard: draft.MorphicGroveSecondCard);
+            _categoryHost.TransformationPage.Restore(draft.TransformationAggregate);
+            _categoryHost.UpdateCompositeOwnership();
             _categoryHost.ShopPage.RestoreDraft(draft.MerchantColorlessSequenceDraft, draft.RelicShopSequenceDraft, notify: false);
             if (draft.MerchantColorlessSequenceDraft.Count == 0 && draft.MerchantColorlessDraft.Count > 0)
                 _categoryHost.ShopPage.RestoreLegacyColorless(draft.MerchantColorlessDraft, notify: false);
@@ -873,21 +832,10 @@ internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiv
     public void ShowSavePresetDialog(IReadOnlyList<SearchPresetDefinition> presets)
     {
         CancelTransientSurfaces(preservePresetWorkspace: false, reason: "preset-save-open");
-        _resumePresetSaveDialogAfterVisualPicker = false;
         _knownPresets = presets ?? Array.Empty<SearchPresetDefinition>();
 
-        if (UseLegacyPresetWindowFallback)
-        {
-            _presetNameInput.Text = string.Empty;
-            _presetVisualIconSlot.SetSelection(null, notify: false);
-            _presetSaveDialog.GetOkButton().Disabled = true;
-            _presetSaveDialog.PopupCentered(new Vector2I(460, 240));
-            _presetNameInput.GrabFocus();
-            return;
-        }
-
         OpenPresetSaveTransaction(SearchPresetSaveIntentKind.CreateCurrentQuery, string.Empty);
-        RuntimeLog.Detail("presetSaveSurfaceOpened=true;surface=control;intent=CreateCurrentQuery;legacyWindowFallbackAvailable=true");
+        RuntimeLog.Detail("presetSaveSurfaceOpened=true;surface=control;intent=CreateCurrentQuery");
     }
 
     public void ShowPresetLibrary(IReadOnlyList<SearchPresetDefinition> presets)
@@ -955,12 +903,6 @@ internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiv
 
     private void ConfirmPresetSave()
     {
-        if (UseLegacyPresetWindowFallback)
-        {
-            ConfirmLegacyPresetSave();
-            return;
-        }
-
         string title = _presetSaveSurface.TitleText.Trim();
         if (title.Length == 0) return;
         var visualIcons = _presetSaveSurface.SelectedRelicIcons
@@ -1008,38 +950,9 @@ internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiv
         }
     }
 
-    private void ConfirmLegacyPresetSave()
-    {
-        string name = _presetNameInput.Text.Trim();
-        if (name.Length == 0) return;
-        ModelKey? icon = _presetVisualIconSlot.SelectedKey;
-        bool sameNameUser = _knownPresets.Any(preset => preset.Source == SearchPresetSource.User &&
-            string.Equals(preset.Title, name, StringComparison.CurrentCultureIgnoreCase));
-        if (!sameNameUser)
-        {
-            var icons = icon is { IsValid: true } selected
-                ? new[] { SearchPresetVisualIconRef.FromRelic(selected) }
-                : Array.Empty<SearchPresetVisualIconRef>();
-            PresetSaveConfirmed?.Invoke(new SearchPresetSaveCommit(
-                SearchPresetSaveIntentKind.CreateCurrentQuery,
-                string.Empty,
-                new SearchPresetMetadataDraft(name, string.Empty, icons)));
-            return;
-        }
-        _pendingPresetSaveName = name;
-        _pendingPresetSaveIcon = icon;
-        _presetOverwriteDialog.PopupCentered(new Vector2I(430, 150));
-    }
-
     private void OpenPresetVisualIconPicker(int slotIndex)
     {
         if (_uiText is null || _contentNames is null || _presetVisualRelicCandidates.Count == 0) return;
-
-        if (UseLegacyPresetWindowFallback)
-        {
-            OpenPresetVisualIconPickerLegacyWindowFallback();
-            return;
-        }
 
         _activePresetVisualIconSlot = Math.Clamp(slotIndex, 0, 2);
         var request = new RelicPickerRequest(
@@ -1062,54 +975,8 @@ internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiv
 
     private void HandlePresetVisualPickerClosed()
     {
-        if (UseLegacyPresetWindowFallback)
-        {
-            ResumePresetSaveDialogAfterVisualPicker();
-            return;
-        }
-
         if (!_suppressPresetChildReturn)
             _presetSaveSurface.FocusAfterChildPicker(_activePresetVisualIconSlot);
-    }
-
-    private void OpenPresetVisualIconPickerLegacyWindowFallback()
-    {
-        if (_uiText is null || _contentNames is null || _presetVisualRelicCandidates.Count == 0) return;
-
-        _resumePresetSaveDialogAfterVisualPicker = _presetSaveDialog.Visible;
-        if (_resumePresetSaveDialogAfterVisualPicker) _presetSaveDialog.Hide();
-
-        var request = new RelicPickerRequest(
-            _uiText.Get(Ui1TextKey.SearchPresetChooseIcon),
-            _presetVisualRelicCandidates,
-            _presetVisualIconSlot.SelectedKey,
-            Array.Empty<ModelKey>(),
-            new Dictionary<ModelKey, RelicPickerCategory>(ModelKeyComparer.Instance),
-            true,
-            GameContentKind.Relic,
-            IconVariant.Small,
-            key => _presetVisualIconSlot.SetSelection(key, notify: false));
-
-        Callable.From(() =>
-        {
-            if (!IsInsideTree()) return;
-            _presetVisualIconPicker.Open(request);
-            if (!_presetVisualIconPicker.IsOpen)
-                ResumePresetSaveDialogAfterVisualPicker();
-        }).CallDeferred();
-    }
-
-    private void ResumePresetSaveDialogAfterVisualPicker()
-    {
-        if (!_resumePresetSaveDialogAfterVisualPicker) return;
-        _resumePresetSaveDialogAfterVisualPicker = false;
-
-        Callable.From(() =>
-        {
-            if (!IsInsideTree() || _suppressPresetChildReturn) return;
-            _presetSaveDialog.PopupCentered(new Vector2I(460, 240));
-            _presetNameInput.GrabFocus();
-        }).CallDeferred();
     }
 
     public void RestorePersistedResults(IReadOnlyList<PersistedSearchResult>? results)
@@ -1146,6 +1013,8 @@ internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiv
         actions.AddThemeConstantOverride("separation", 6);
         var copy = new Button { CustomMinimumSize = new Vector2(70, 30), Text = _uiText?.Get(Ui1TextKey.SearchCopyResult) ?? "Copy" };
         var analyze = new Button { CustomMinimumSize = new Vector2(70, 30), Text = _uiText?.Get(Ui1TextKey.SearchAnalyzeResult) ?? "Analyze" };
+        analyze.Disabled = result.Party is not null;
+        if (analyze.Disabled) analyze.TooltipText = _uiText?.Get("integration.saved_party_unavailable") ?? "Copy the seed and configure its multiplayer context to analyze it.";
         Ui1Theme.ApplyButton(copy, Ui1ButtonRole.Ghost);
         Ui1Theme.ApplyButton(analyze, Ui1ButtonRole.Secondary);
         copy.Pressed += () => CandidateCopyRequested?.Invoke(result.Seed);
@@ -1177,18 +1046,9 @@ internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiv
         _pageTitle.Text = uiText.Get(Ui1TextKey.SearchTitle);
         RefreshRuntimeCompatibilityWarning();
         _contextBar.ApplyLocalization(uiText, contentNames, uiText.Get(Ui1TextKey.MissingIconTooltip));
-        _presetSaveDialog.Title = uiText.Get(Ui1TextKey.SearchPresetSaveTitle);
-        _presetSaveDialog.DialogText = uiText.Get(Ui1TextKey.SearchPresetNamePrompt);
-        _presetVisualMarkLabel.Text = uiText.Get(Ui1TextKey.SearchPresetVisualMark);
-        _presetVisualIconSlot.BindText(contentNames, uiText.Get(Ui1TextKey.SearchPresetChooseIcon));
-        _presetOverwriteDialog.Title = uiText.Get(Ui1TextKey.SearchPresetOverwriteTitle);
-        _presetOverwriteDialog.DialogText = uiText.Get(Ui1TextKey.SearchPresetOverwritePrompt);
-        _presetDeleteDialog.Title = uiText.Get(Ui1TextKey.SearchPresetDeleteTitle);
-        _presetDeleteDialog.DialogText = uiText.Get(Ui1TextKey.SearchPresetDeletePrompt);
         _presetLibrary.ApplyLocalization(uiText, contentNames);
         _presetSaveSurface.ApplyLocalization(uiText, contentNames);
         _presetVisualIconPicker.ApplyLocalization(uiText, contentNames);
-        _presetSaveDialog.OkButtonText = uiText.Get(Ui1TextKey.SearchPresetSaveConfirm);
         _savePresetAction.Text = uiText.Get(Ui1TextKey.SearchPresetSave);
         _loadPresetAction.Text = uiText.Get(Ui1TextKey.SearchPresetWorkspaceEntry);
         _categoryNavigation.ApplyLocalization(uiText);
@@ -1456,6 +1316,7 @@ internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiv
         _categoryHost.RelicPage.SetRunning(running);
         _categoryHost.CombatRewardPage.SetRunning(running);
         _categoryHost.EventPage.SetRunning(running);
+        _categoryHost.TransformationPage.SetRunning(running);
         _categoryHost.ShopPage.SetRunning(running);
         _categoryNavigation.SetRunning(running);
         foreach (CheckBox check in new[]
@@ -1598,8 +1459,11 @@ internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiv
 
     private string BuildCandidateTitle(SearchCandidate candidate) => candidate.Seed;
 
-    public void BindNeowUiCatalog(NeowSearchUiCatalog catalog) =>
+    public void BindNeowUiCatalog(NeowSearchUiCatalog catalog)
+    {
         _categoryHost.NeowPage.BindCatalog(catalog);
+        _categoryHost.TransformationPage.BindNeowPools(catalog.TransformCards, catalog.NewLeafTransformCards, catalog.CardPickerMetadata);
+    }
 
     public void BindAncientUiCatalog(AncientSearchUiCatalog catalog) =>
         _categoryHost.AncientPage.BindCatalog(catalog);
@@ -1616,15 +1480,20 @@ internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiv
     public void BindCombatRewardUiCatalog(CombatRewardSearchUiCatalog catalog) =>
         _categoryHost.CombatRewardPage.BindCatalog(catalog);
 
-    public void BindEventSequenceUiCatalog(EventSequenceSearchUiCatalog catalog) =>
+    public void BindEventSequenceUiCatalog(EventSequenceSearchUiCatalog catalog)
+    {
         _categoryHost.EventPage.BindCatalog(catalog);
+        _categoryHost.TransformationPage.BindPool(catalog.MorphicGroveScenario?.Targets.SelectMany(t => t.OrderedSourceCandidates ?? []) ?? []);
+    }
 
     public void BindShopColorlessUiCatalog(Shop.ShopColorlessSearchUiCatalog catalog) =>
         _categoryHost.ShopPage.BindCatalog(catalog);
 
     private void OnStartPressed()
     {
-        if (!_categoryHost.NeowPage.TryBuildDraft(out NeowRouteFilterDraft routeDraft, out string issue, focusInvalid: true))
+        NeowRouteFilterDraft routeDraft = NeowRouteFilterDraft.Empty;
+        string issue;
+        if (!_categoryHost.NeowPage.TryBuildDraft(out routeDraft, out issue, focusInvalid: true))
         {
             _categoryNavigation.Select(SearchCategoryKey.Neow, notify: true);
             _categoryHost.Select(SearchCategoryKey.Neow);
@@ -1691,6 +1560,8 @@ internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiv
             _categoryHost.RelicPage.ClearDraft();
             _categoryHost.CombatRewardPage.ClearDraft();
             _categoryHost.EventPage.ClearDraft();
+            _categoryHost.TransformationPage.Restore(null);
+            _categoryHost.UpdateCompositeOwnership();
             _categoryHost.ShopPage.ClearDraft();
         }
         finally
@@ -1719,6 +1590,7 @@ internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiv
         // actually compile into Search semantics. Hidden legacy draft storage must
         // never inflate the snapshot count persisted by Presets.
         return _categoryHost.NeowPage.EnabledConditionCount
+            + _categoryHost.TransformationPage.EnabledConditionCount
             + _categoryHost.BossMapPage.EnabledConditionCount
             + _categoryHost.AncientPage.EnabledConditionCount
             + _categoryHost.RelicPage.EnabledConditionCount
@@ -1757,11 +1629,6 @@ internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiv
             RuntimeLog.Detail("uiSurfaceEscapeConsumed=true;page=Search;layer=overwrite-transaction");
             return true;
         }
-        if (UseLegacyPresetWindowFallback && _presetOverwriteDialog.Visible)
-        {
-            _presetOverwriteDialog.Hide();
-            return true;
-        }
 
         if (_presetDeleteSurface.IsOpen)
         {
@@ -1769,23 +1636,11 @@ internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiv
             RuntimeLog.Detail("uiSurfaceEscapeConsumed=true;page=Search;layer=delete-transaction");
             return true;
         }
-        if (UseLegacyPresetWindowFallback && _presetDeleteDialog.Visible)
-        {
-            _presetDeleteDialog.Hide();
-            _pendingPresetDeleteId = string.Empty;
-            return true;
-        }
 
         if (_presetSaveSurface.IsOpen)
         {
             _presetSaveSurface.Cancel();
             RuntimeLog.Detail("uiSurfaceEscapeConsumed=true;page=Search;layer=save-transaction");
-            return true;
-        }
-        if (UseLegacyPresetWindowFallback && _presetSaveDialog.Visible)
-        {
-            _resumePresetSaveDialogAfterVisualPicker = false;
-            _presetSaveDialog.Hide();
             return true;
         }
 
@@ -1812,22 +1667,13 @@ internal sealed partial class SearchPage : MarginContainer, IAppPage, IResponsiv
         _suppressPresetChildReturn = true;
         try
         {
-            // Suppress the legacy deferred Window restore before closing the
-            // picker; otherwise a Page switch could reopen the hidden Save
-            // Window after the Search Page is already inactive.
-            _resumePresetSaveDialogAfterVisualPicker = false;
 
             if (_presetVisualIconPicker.IsOpen) _presetVisualIconPicker.Cancel();
             if (_presetOverwriteSurface.IsOpen) _presetOverwriteSurface.Cancel();
             if (_presetDeleteSurface.IsOpen) _presetDeleteSurface.Cancel();
             if (_presetSaveSurface.IsOpen) _presetSaveSurface.Cancel();
 
-            if (_presetOverwriteDialog.Visible) _presetOverwriteDialog.Hide();
-            if (_presetDeleteDialog.Visible) _presetDeleteDialog.Hide();
-            if (_presetSaveDialog.Visible) _presetSaveDialog.Hide();
 
-            _pendingPresetSaveName = string.Empty;
-            _pendingPresetSaveIcon = null;
             _pendingPresetSaveCommit = null;
             _activePresetSaveSourceId = string.Empty;
             _pendingPresetDeleteId = string.Empty;

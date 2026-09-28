@@ -66,6 +66,9 @@ public sealed record WorldAuthoritySnapshot(
     string CaptureDiagnosticCode,
     Beta109WorldGenerationSnapshot? Beta109Generation = null)
 {
+    // Optional immutable profile fact used only by the encounter overview. Older
+    // snapshots leave it unknown; no Search/Exact admission depends on it.
+    public int? EncounterNumberOfRuns { get; init; }
     public Beta109EventCatalogAuthoritySnapshot EventAuthority { get; init; } =
         Beta109EventCatalogAuthoritySnapshot.Missing("MissingEventAuthority");
     public bool HasCatalog =>

@@ -424,6 +424,16 @@ public sealed record Beta109WorldGenerationSnapshot(
     string CaptureDiagnosticCode)
 {
     public WorldGameMode RequestedGameMode { get; init; } = WorldGameMode.Unknown;
+    // Owner of personal projections; shared generation still visits the entire ordered party.
+    public int PersonalPlayerSlot { get; init; }
+    public IReadOnlyList<IReadOnlyList<Beta109RelicBucketSnapshot>> PartyRelicBuckets { get; init; } =
+        Array.Empty<IReadOnlyList<Beta109RelicBucketSnapshot>>();
+    public IReadOnlyDictionary<string, ModelKey> PartyBossDiscoveryOverrides { get; init; } = new Dictionary<string, ModelKey>();
+    public bool PartyBossDiscoveryExact { get; init; }
+    public bool HasExactFixedParty => GameMode == WorldGameMode.Multiplayer && IsMultiplayer &&
+        PlayerCount >= 2 && PartyBossDiscoveryExact && LobbyPlayers.Count == PlayerCount && PartyRelicBuckets.Count == PlayerCount &&
+        LobbyPlayers.Select((p, slot) => p.Exact && !p.IsRandomCharacter && p.Slot == slot).All(x => x) &&
+        PartyRelicBuckets.All(b => b.Count > 0 && b.All(r => r.OrderExact));
     public bool RequestedGameModeExact { get; init; }
     public string GameModeEvidenceCode { get; init; } = string.Empty;
     public Beta109EventCatalogAuthoritySnapshot EventAuthority { get; init; } =
@@ -478,7 +488,7 @@ public sealed record Beta109WorldGenerationSnapshot(
                 SharedRelicBuckets.Count > 0 &&
                 PlayerRelicBuckets.Count > 0 &&
                 SharedRelicBuckets.All(bucket => bucket.OrderExact) &&
-                PlayerRelicBuckets.All(bucket => bucket.OrderExact),
+                PlayerRelicBuckets.All(bucket => bucket.OrderExact) && (!IsMultiplayer || HasExactFixedParty),
             _ => false
         });
 
@@ -501,10 +511,8 @@ public sealed record Beta109WorldGenerationSnapshot(
         IsMultiplayerExact &&
         TestModeFactExact &&
         Act1OverrideExact &&
-        GameMode == WorldGameMode.Singleplayer &&
-        !IsMultiplayer &&
-        PlayerCount == 1 &&
-        LobbyPlayers.Count == 1 &&
+        ((GameMode == WorldGameMode.Singleplayer && !IsMultiplayer && PlayerCount == 1 && LobbyPlayers.Count == 1) ||
+            HasExactFixedParty) &&
         LobbyPlayers.All(player => player.Exact && !player.IsRandomCharacter) &&
         SharedEventCatalogExact &&
         EventAuthority.HasExactFilteringAuthority &&
@@ -554,10 +562,7 @@ public sealed record Beta109WorldGenerationSnapshot(
         IsMultiplayerExact &&
         TestModeFactExact &&
         Act1OverrideExact &&
-        GameMode == WorldGameMode.Singleplayer &&
-        !IsMultiplayer &&
-        PlayerCount == 1 &&
-        LobbyPlayers.Count == 1 &&
+        ((GameMode == WorldGameMode.Singleplayer && !IsMultiplayer && PlayerCount == 1 && LobbyPlayers.Count == 1) || HasExactFixedParty) &&
         LobbyPlayers.All(player => player.Exact && !player.IsRandomCharacter) &&
         SharedEventCatalogExact &&
         EventAuthority.HasExactFilteringAuthority &&
@@ -591,7 +596,7 @@ public sealed record Beta109WorldGenerationSnapshot(
     /// </summary>
     public bool CanReplayBossIdentityForSearch =>
         HasExactReplayInputs &&
-        !TutorialBossOverrideWillApply;
+        (!TutorialBossOverrideWillApply || IsMultiplayer && PartyBossDiscoveryExact);
 
     public bool HasVerifiedBossVersionFixture =>
         HasVerifiedFixturePrefix("boss:");

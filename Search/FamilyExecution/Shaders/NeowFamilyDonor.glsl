@@ -215,6 +215,9 @@ RouteRngState initialize_route_rng_state(uint64_t root_hash, RngState rewards_af
     state.niche = rng_initialize(root_hash + plan_u64(35u));
     state.transformations = rng_initialize(root_hash + uint64_t(plan_value(5u)) + plan_u64(37u));
     state.combat_potions = rng_initialize(root_hash + plan_u64(62u));
+    uint prefix = 85u + plan_value(84u);
+    for(uint i=0u;i<plan_value(prefix + (plan_value(prefix+2u)==0u ? 0u : 4u+2u*n_arrival));i++) next_u64(state.niche);
+    for(uint i=0u;i<plan_value(prefix + (plan_value(prefix+2u)==0u ? 1u : 5u+2u*n_arrival));i++) next_u64(state.combat_potions);
     return state;
 }
 
@@ -461,6 +464,21 @@ bool execute_kaleidoscope_route(
     if (!predicate_enabled) return true;
     if (target_count == 1u) return group0_target0 || group1_target0;
     return (group0_target0 && group1_target1) || (group0_target1 && group1_target0);
+}
+
+bool execute_kaleidoscope_ordered_route(uint first, uint second, inout RouteRngState state) {
+    bool pass = true;
+    for (uint group = 0u; group < 2u; ++group) {
+        uint target = group == 0u ? first : second;
+        bool found = target == 0xffffffffu;
+        uint64_t order = shuffled_pool_order(plan_value(9u), state.niche);
+        for (uint item = 0u; item < 3u; ++item) {
+            uint card = roll_card(permutation_value(order, item), plan_value(7u), state.rewards);
+            found = found || card == target;
+        }
+        pass = pass && found;
+    }
+    return pass;
 }
 
 #if N_DIRECT_NESTED == 2
@@ -831,4 +849,13 @@ bool execute_scroll_boxes_route(
         }
     }
     return !predicate_enabled || (card_pass && claw_pass);
+}
+
+// Massive Scroll uses the owner's character plus colorless MultiplayerOnly pool.
+bool execute_massive_scroll_route(uint target, bool predicate, inout RouteRngState state) {
+    uint base = 20u + plan_value(9u)*6u + 15u;
+    uint a=roll_card_from_meta(base,plan_value(7u),0xffffffffu,0xffffffffu,0xffffffffu,0u,state.rewards);
+    uint b=roll_card_from_meta(base,plan_value(7u),a,0xffffffffu,0xffffffffu,1u,state.rewards);
+    uint c=roll_card_from_meta(base,plan_value(7u),a,b,0xffffffffu,2u,state.rewards);
+    return !predicate || a==target || b==target || c==target;
 }

@@ -173,6 +173,14 @@ public sealed record LegacyNeowSemanticConstraints(
 /// VariantScopedBossBranch set. Compatibility sidecars preserve legacy facts
 /// without pretending that lost modern intent can be reconstructed.
 /// </summary>
+public sealed record PlayerOfferQuery(int Slot, ModelKeySetFilter Offers)
+{
+    public SearchQuery Conditions { get; init; } = SearchQuery.Empty;
+    public AncientOptionConditionProfile AncientPremises { get; init; } = AncientOptionConditionProfile.BroadDefault;
+    public Core.Effects.PartyNeowPlan? SelectedOption { get; init; }
+    public IReadOnlyList<NeowStructuredEffectSearchCondition> Results { get; init; } = [];
+}
+
 public sealed record SearchQuery(
     NeowRouteSearchCondition? OpeningRoute,
     OpeningRouteRelicRequirement? OpeningRouteRelicRequirement,
@@ -185,6 +193,7 @@ public sealed record SearchQuery(
     LegacyNeowSemanticConstraints LegacyNeow,
     LegacyWorldSemanticConstraints LegacyWorld)
 {
+    public IReadOnlyList<PlayerOfferQuery> Players { get; init; } = Array.Empty<PlayerOfferQuery>();
     public static SearchQuery Empty { get; } = new(
         null,
         null,
@@ -197,7 +206,10 @@ public sealed record SearchQuery(
         LegacyNeowSemanticConstraints.Empty,
         LegacyWorldSemanticConstraints.Empty);
 
+    public IReadOnlyList<StandardMapSearchCondition> StandardMaps { get; init; } = Array.Empty<StandardMapSearchCondition>();
+
     public CombatCardRewardSequenceSearchCondition? CombatCardRewards { get; init; }
+    public TransformationAggregateCondition? TransformationAggregate { get; init; }
     public CombatPotionRewardSequenceSearchCondition? CombatPotionRewards { get; init; }
     public IReadOnlyList<EventResultSearchCondition> EventResultConditions { get; init; } =
         Array.Empty<EventResultSearchCondition>();
@@ -235,6 +247,7 @@ public sealed record SearchContext(
     GameVersionDetection Detection,
     SearchEvaluationAssumptions EvaluationAssumptions)
 {
+    public OrderedPartyAuthority? Party { get; init; }
     public string UnlockSnapshotFingerprint => Authority.UnlockSnapshotFingerprint;
     public string CatalogFingerprint => Authority.CatalogFingerprint;
     public string EffectSnapshotFingerprint => Authority.EffectSnapshotFingerprint;
@@ -276,6 +289,8 @@ public sealed record CompiledSearch(
     bool RequiresComplexBonesDeckInteractionEvaluation,
     string SemanticFingerprint)
 {
+    internal IReadOnlyList<CompiledSearch> PlayerSearches { get; init; } = [];
+    internal bool UsesPartyFamilyProjection { get; init; }
     public SearchQuery NormalizedQuery => Normalization.NormalizedQuery;
     public IReadOnlyList<SemanticRelation> Relations => Normalization.Relations;
     public QueryNormalizationStatus Status => Normalization.Status;

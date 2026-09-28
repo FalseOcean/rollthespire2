@@ -20,6 +20,18 @@ internal sealed record NeowAuthoredUpgradeContinuation(int[] Advances)
         var e = request.Evaluation;
         var requirements = new Dictionary<byte, (bool W, bool WP)>();
         bool unbound = false;
+        foreach (var row in e.EffectOutputConditions.Where(c => !c.IsEmpty && NeowReplayPlan.IsCapsule(c.SourceRelicKey)))
+        {
+            bool w = row.OutputKeys.All.Contains(BaseGameModelKeys.OrdinaryRelics.Whetstone);
+            bool wp = row.OutputKeys.All.Contains(BaseGameModelKeys.OrdinaryRelics.WarPaint);
+            if (Beta110FastRelicCatalog.TryGetId(row.SourceRelicKey, out byte source) && (w || wp))
+            {
+                var old = requirements.GetValueOrDefault(source);
+                requirements[source] = (old.W || w, old.WP || wp);
+            }
+            if (row.OutputKeys.Any.Contains(BaseGameModelKeys.OrdinaryRelics.Whetstone) ||
+                row.OutputKeys.Any.Contains(BaseGameModelKeys.OrdinaryRelics.WarPaint)) unbound = true;
+        }
         foreach (var row in e.StructuredNeowEffects.Where(c => !c.IsEmpty && NeowReplayPlan.IsCapsule(c)))
         {
             bool w = row.OutputKeys.Contains(BaseGameModelKeys.OrdinaryRelics.Whetstone);
@@ -53,7 +65,7 @@ internal sealed record NeowAuthoredUpgradeContinuation(int[] Advances)
         if (unbound) { Array.Fill(result, -1); return new(result); }
         var authority = request.Authority.EffectAuthority;
         bool valid = request.Authority.CanUseCurrentModel && request.Authority.NoRunModifiers == true &&
-            request.Authority.IsAuditedBeta111SourceContext && request.Authority.PlayersCount == 1 &&
+            request.Authority.IsAuditedBeta111SourceContext &&
             authority?.HasExactDeck == true;
         foreach (var (source, required) in requirements)
         for (int prior = 0; prior < PriorCount; prior++)

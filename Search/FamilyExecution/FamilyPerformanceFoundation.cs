@@ -119,8 +119,16 @@ internal static class FamilyDeviceProfileFoundation
     private static int _familyComputeRuntimeObserved;
     private static int _gpuAvailable = 1; // unknown does not mean unavailable
     internal static bool GpuAvailable => Volatile.Read(ref _gpuAvailable) != 0;
-    internal static void CaptureAvailabilityOnMainThread() =>
-        Volatile.Write(ref _gpuAvailable, Godot.RenderingServer.GetRenderingDevice() is null ? 0 : 1);
+    internal static void CaptureAvailabilityOnMainThread()
+    {
+        Godot.RenderingDevice? device = Godot.RenderingServer.GetRenderingDevice();
+        Volatile.Write(ref _gpuAvailable, device is null ? 0 : 1);
+        if (device is not null)
+        {
+            var known = SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity();
+            SearchPerformanceProfileFoundation.ObserveGpuIdentity(device.GetDeviceName(), known.RenderingBackend);
+        }
+    }
 
     internal static FamilyDeviceProfile Capture()
     {

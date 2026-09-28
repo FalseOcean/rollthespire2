@@ -16,6 +16,15 @@ namespace RolltheSpire2.Search.Compilation;
 /// </summary>
 public static class ExactSearchExecutionRequestFactory
 {
+    internal static ExactSearchExecutionRequest ForPlayer(ExactSearchExecutionRequest parent, CompiledSearch player)
+    {
+        var projection = CompiledSearchEvaluationProjector.Project(player);
+        if (projection.Fidelity != ProjectionFidelity.Exact)
+            throw new InvalidOperationException("Party.PlayerProjection:" + string.Join(",", projection.Diagnostics));
+        return new(player, parent.RunOptions, parent.CanonicalStartSeed, parent.ResolvedScanCount,
+            projection.Evaluation, BuildCombatRewardRoutePolicy(player), player.SemanticFingerprint);
+    }
+
     public static ExactSearchExecutionCompileResult Compile(CompiledSearch compiled, SearchRunOptions runOptions)
     {
         ArgumentNullException.ThrowIfNull(compiled);
@@ -39,9 +48,21 @@ public static class ExactSearchExecutionRequestFactory
         string? contextIssue = ValidateContext(compiled);
         if (contextIssue is not null) return Reject(SearchDisposition.Unknown, contextIssue);
 
-        SearchFeasibilityResult feasibility = SearchFeasibilityAnalyzer.Analyze(compiled);
-        if (feasibility.IsImpossible)
-            return Reject(SearchDisposition.NoMatch, "SearchImpossible:" + feasibility.Proof!.ReasonCode + ":" + feasibility.Proof.Diagnostic);
+        if (context.Party is not null)
+        {
+            var verified = SearchCompiler.Compile(compiled.Query, context);
+            if (verified.SemanticFingerprint != compiled.SemanticFingerprint || verified.Status != compiled.Status ||
+                System.Text.Json.JsonSerializer.Serialize(verified.NormalizedQuery) != System.Text.Json.JsonSerializer.Serialize(compiled.NormalizedQuery))
+                return Reject(SearchDisposition.Unsupported, "Party.CompiledPredicateMismatch");
+            if (compiled.Status == QueryNormalizationStatus.Impossible)
+                return Reject(SearchDisposition.NoMatch, "Party.InitialConjunctionImpossible");
+        }
+        else
+        {
+            SearchFeasibilityResult feasibility = SearchFeasibilityAnalyzer.Analyze(compiled);
+            if (feasibility.IsImpossible)
+                return Reject(SearchDisposition.NoMatch, "SearchImpossible:" + feasibility.Proof!.ReasonCode + ":" + feasibility.Proof.Diagnostic);
+        }
 
         if (runOptions.ScanCount <= 0) return Reject(SearchDisposition.Unsupported, "ScanCountMustBePositive");
         if (runOptions.TargetMatchCount <= 0) return Reject(SearchDisposition.Unsupported, "TargetMatchCountMustBePositive");

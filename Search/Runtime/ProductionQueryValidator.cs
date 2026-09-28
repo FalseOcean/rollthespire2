@@ -197,7 +197,8 @@ public static class ProductionQueryValidator
 
             RewardRouteEvaluation rewardEvaluation = EvaluateRewardConditions(
                 plan.Evaluation,
-                routeGroup);
+                routeGroup,
+                plan.CompiledSearch.NormalizedQuery.LegacyCombatRewardConstraints);
             if (rewardEvaluation.Disposition == SearchDisposition.Unknown)
             {
                 encounteredUnknown = true;
@@ -580,6 +581,9 @@ public static class ProductionQueryValidator
         NeowEffectAuthoritySnapshot? effectAuthority)
     {
         var evidence = new List<SearchMatchEvidence>();
+        foreach (var source in filter.StructuredNeowEffects.Select(c => c.SourceRelicKey).Distinct())
+            if (!NeowChoiceCommitment.HasCompatibleRequirements(filter.StructuredNeowEffects, source))
+                return OpeningRouteEvaluation.NoMatch(route, "OptionalChoiceCommitmentConflict");
         foreach (var trace in route.BonesRoute?.PlayerChoiceSelections ?? Array.Empty<PlayerChoiceSelectionTrace>())
             if (!NeowChoiceCommitment.Matches(filter.StructuredNeowEffects, trace.ChoiceRelicKey,
                     trace.ChoicePolicy, trace.ChoiceEffects))
@@ -691,7 +695,8 @@ public static class ProductionQueryValidator
                 ConditionId: "capsule-output"));
         }
 
-        foreach ((NeowStructuredEffectSearchCondition condition, int index) in filter.StructuredNeowEffects.Select((item, index) => (item, index)))
+        foreach ((NeowStructuredEffectSearchCondition condition, int index) in filter.StructuredNeowEffects
+                     .Concat(NeowChoiceCommitment.CombinedConditions(filter.StructuredNeowEffects)).Select((item, index) => (item, index)))
         {
             StructuredNeowConditionEvaluation structured = EvaluateStructuredNeowCondition(
                 route, condition, effectAuthority);
@@ -917,7 +922,32 @@ public static class ProductionQueryValidator
                 return SearchQueryEvaluation.Unknown("AncientBranchIdentityNotExact:Act" + actBranches.Key);
             }
 
-            AncientSearchBranchCondition? branch = actBranches.FirstOrDefault(item => item.AncientKey == ancient.AncientKey);
+            var rows = actBranches.Where(item => item.AncientKey == ancient.AncientKey).ToArray();
+            // Rows are alternatives even when they bind the same Ancient. Keep
+            // each row's option/SeaGlass conjunction intact, and preserve Unknown
+            // when no row matches but at least one cannot yet be evaluated.
+            SearchDisposition RowDisposition(AncientSearchBranchCondition row)
+            {
+                if (row.OptionAny.Count > 0)
+                {
+                    if (!AncientOptionsEvaluated(ancient.OptionsEvaluationStatus) ||
+                        ancient.Options.Any(o => o.OptionPrecision != PredictionPrecision.Exact)) return SearchDisposition.Unknown;
+                    if (!ancient.Options.Any(o => o.IsVisible && row.OptionAny.Contains(o.OptionKey, ModelKeyComparer.Instance)))
+                        return SearchDisposition.NoMatch;
+                }
+                if (row.SeaGlassTargetAny.Count > 0)
+                {
+                    if (!AncientOptionsEvaluated(ancient.OptionsEvaluationStatus)) return SearchDisposition.Unknown;
+                    var sea = ancient.Options.FirstOrDefault(o => o.IsVisible && o.OptionKey == SeaGlassKey);
+                    if (sea is null) return SearchDisposition.NoMatch;
+                    if (sea.CharacterTarget is not { Precision: PredictionPrecision.Exact, CharacterKey: { } target })
+                        return SearchDisposition.Unknown;
+                    if (!row.SeaGlassTargetAny.Contains(target, ModelKeyComparer.Instance)) return SearchDisposition.NoMatch;
+                }
+                return SearchDisposition.Match;
+            }
+            AncientSearchBranchCondition? branch = rows.FirstOrDefault(row => RowDisposition(row) == SearchDisposition.Match) ??
+                rows.FirstOrDefault(row => RowDisposition(row) == SearchDisposition.Unknown) ?? rows.FirstOrDefault();
             if (branch is null)
             {
                 return SearchQueryEvaluation.NoMatch("AncientBranchIdentityRejected:Act" + actBranches.Key);
@@ -1006,6 +1036,19 @@ public static class ProductionQueryValidator
 
         foreach (ActModelKeySetFilter filter in plan.Evaluation.AncientOptionFilters)
         {
+            if (filter.Act == 1)
+            {
+                var neow = document.Sections.Where(s => s.Kind == PredictionSectionKind.NeowIdentity)
+                    .SelectMany(s => s.NeowChoices).ToArray();
+                if (neow.Length == 0 || neow.Any(c => c.IdentityPrecision != PredictionPrecision.Exact))
+                    return SearchQueryEvaluation.Unknown("Act1NeowOptionsNotExact");
+                var offered = neow.Select(c => c.RelicKey).ToArray();
+                if (!QueryKeySetPredicate.MatchesKeySet(offered, filter.Keys))
+                    return SearchQueryEvaluation.NoMatch("Act1NeowOptionFilterRejected");
+                evidence.Add(new SearchMatchEvidence("Act1NeowOptionsMatched", Act: 1,
+                    OrderedOptionKeys: offered, ConditionId: "ancient-options-act-1"));
+                continue;
+            }
             SearchQueryEvaluation status = ValidateSection(ancientSection, "Ancient");
             if (status.Disposition != SearchDisposition.Match) return status;
             AncientPredictionResult? ancient = ancientSection!.Ancients.FirstOrDefault(item => item.Act == filter.Act);
@@ -1025,6 +1068,14 @@ public static class ProductionQueryValidator
 
         foreach (ActModelKeySetFilter filter in plan.Evaluation.AncientSeaGlassTargetFilters)
         {
+            if (filter.Act == 1)
+            {
+                // Act 1 belongs to Neow, whose offer catalog cannot contain Sea
+                // Glass. A target-only refinement is vacuous when it is absent.
+                evidence.Add(new SearchMatchEvidence("SeaGlassTargetNotApplicable", Act: 1,
+                    ConditionId: "sea-glass-target-act-1"));
+                continue;
+            }
             SearchQueryEvaluation status = ValidateSection(ancientSection, "Ancient");
             if (status.Disposition != SearchDisposition.Match) return status;
             AncientPredictionResult? ancient = ancientSection!.Ancients.FirstOrDefault(item => item.Act == filter.Act);
@@ -1180,13 +1231,14 @@ public static class ProductionQueryValidator
 
     private static RewardRouteEvaluation EvaluateRewardConditions(
         ExactSearchEvaluationProjection filter,
-        NormalCombatRewardRoutePredictionResult route)
+        NormalCombatRewardRoutePredictionResult route,
+        IReadOnlyList<NormalCombatRewardSearchCondition> legacyConditions)
     {
         var matchedIds = new List<string>();
         var evidenceCodes = new List<EvidenceCode>();
         int? representativeBattle = null;
 
-        RewardRouteEvaluation legacy = EvaluateLegacyRewardConditions(filter.NormalCombatRewardConditions, route);
+        RewardRouteEvaluation legacy = EvaluateLegacyRewardConditions(legacyConditions, route);
         if (legacy.Disposition != SearchDisposition.Match)
             return legacy;
         matchedIds.AddRange(legacy.MatchedConditionIds);

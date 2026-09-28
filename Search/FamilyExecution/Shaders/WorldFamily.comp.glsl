@@ -29,10 +29,14 @@ bool fault(uint code){atomicOr(header.v[3],code);return false;}
 bool branch_match(uint x,uint first,uint second,bool both){
     uint count=extra.v[x+10u]; if(count==0u)return true;
     uint offset=extra.v[x+9u];
-    for(uint i=0u;i<count;++i)
-        if(evaluate_predicate(data.v[offset+i*2u],first,INVALID_ID,1u)&&
-            (!both||evaluate_predicate(data.v[offset+i*2u+1u],second,INVALID_ID,1u)))return true;
-    return false;
+    bool conjunction=act_meta_buffer.values[(x/12u)*24u+22u]!=0u;
+    for(uint i=0u;i<count;++i){
+        bool matched=evaluate_predicate(data.v[offset+i*2u],first,INVALID_ID,1u)&&
+            (!both||evaluate_predicate(data.v[offset+i*2u+1u],second,INVALID_ID,1u));
+        if(conjunction&&!matched)return false;
+        if(!conjunction&&matched)return true;
+    }
+    return conjunction;
 }
 bool event_contains(uint base,uint count,uint mode,uint limit,uint source,uint target){
     for(uint i=0u;i<count;++i){
@@ -100,7 +104,8 @@ bool world_match(uint invocation,uint64_t root){
         previous=false;source=0u;reference=0u;
         consume_encounter_queue(invocation,act_meta_buffer.values[b+9u],act_meta_buffer.values[b+10u],act_meta_buffer.values[b+11u],previous,source,reference);
         uint bossCount=act_meta_buffer.values[b+13u];if(bossCount==0u)return fault(8u);
-        uint first=boss_id_buffer.ids[act_meta_buffer.values[b+12u]+next_int(bossCount)];firstBoss[i]=first;
+        uint first=boss_id_buffer.ids[act_meta_buffer.values[b+12u]+next_int(bossCount)];
+        if(act_meta_buffer.values[b+21u]!=INVALID_ID)first=act_meta_buffer.values[b+21u];firstBoss[i]=first;
         if(!branch_match(x,first,INVALID_ID,false))return false;
         if(!evaluate_predicate_range(act_meta_buffer.values[b+16u],act_meta_buffer.values[b+17u],first,INVALID_ID,1u))return false;
         if(!(plan_meta_buffer.values[12u]>=10u&&act==3u)&&!evaluate_predicate_range(act_meta_buffer.values[b+14u],act_meta_buffer.values[b+15u],first,INVALID_ID,1u))return false;
@@ -110,8 +115,11 @@ bool world_match(uint invocation,uint64_t root){
         if(!evaluate_predicate_range(extra.v[x+7u],extra.v[x+8u],ancient,INVALID_ID,1u))return false;
     }
     if(second){uint i=groups-1u,a=selected[i],b=a*24u,x=a*12u,count=act_meta_buffer.values[b+13u],first=firstBoss[i];
-        if(count<2u||first==INVALID_ID)return fault(32u);
-        uint rank=next_int(count-1u),secondBoss=INVALID_ID;
+        if(first==INVALID_ID)return fault(32u);
+        uint secondCount=0u;
+        for(uint j=0u;j<count;++j)if(boss_id_buffer.ids[act_meta_buffer.values[b+12u]+j]!=first)secondCount++;
+        if(secondCount==0u)return fault(32u);
+        uint rank=next_int(secondCount),secondBoss=INVALID_ID;
         for(uint j=0u;j<count;++j){uint v=boss_id_buffer.ids[act_meta_buffer.values[b+12u]+j];if(v==first)continue;if(rank==0u){secondBoss=v;break;}rank--;}
         if(secondBoss==INVALID_ID)return fault(64u);
         if(!branch_match(x,first,secondBoss,true))return false;

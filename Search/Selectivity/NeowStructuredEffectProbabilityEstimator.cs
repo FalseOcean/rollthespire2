@@ -17,7 +17,7 @@ namespace RolltheSpire2.Search.Selectivity;
 /// Direct Capsule routes delegate to the shared initial RelicGrabBag probability
 /// authority. Scroll Boxes uses its audited two-bundle exact combinatorial model.
 /// </summary>
-internal static class NeowStructuredEffectProbabilityEstimator
+internal static partial class NeowStructuredEffectProbabilityEstimator
 {
     private readonly record struct CardState(
         int Common, int Uncommon, int Rare,
@@ -29,6 +29,18 @@ internal static class NeowStructuredEffectProbabilityEstimator
         int CommonOther, int UncommonOther, int RareOther,
         int RemainingTargetMask,
         int RemainingDraws);
+
+    internal static SearchSelectivityEstimate EstimateBonesQuery(SearchSelectivityInput plan)
+    {
+        if (plan.Authority.EffectAuthority is not { HasExactFoundation: true } authority)
+            return SearchSelectivityEstimate.Unpriced("Probability.NeowStructured.EffectAuthorityMissing", "Opening pools unavailable.");
+        var rows = ProbabilitySemanticProjection.From(plan).NumericalFilter.StructuredNeowEffects.Where(c => !c.IsEmpty).ToArray();
+        if (!TryConjoinOutputConditions(rows, out rows))
+            return SearchSelectivityEstimate.Exact(0, SearchSelectivityMethod.ConditionalChain,
+                SearchSelectivityCoverage.ExactRequestedConjunction, SearchSelectivityDependencyClass.StructuralDependence,
+                "Probability.NeowStructured.ContradictoryOutputCommitments", "No joint output commitment.");
+        return EstimateBonesNestedStructured(plan, authority, rows);
+    }
 
     public static SearchSelectivityEstimate Estimate(SearchSelectivityInput plan)
     {
@@ -63,6 +75,11 @@ internal static class NeowStructuredEffectProbabilityEstimator
                 SearchSelectivityCoverage.PartialRequestedConjunction,
                 SearchSelectivityDependencyClass.RouteDependent);
         }
+
+        if (!TryConjoinOutputConditions(conditions, out conditions))
+            return SearchSelectivityEstimate.Exact(0, SearchSelectivityMethod.ConditionalChain,
+                SearchSelectivityCoverage.ExactRequestedConjunction, SearchSelectivityDependencyClass.StructuralDependence,
+                "Probability.NeowStructured.ContradictoryOutputCommitments", "One source cannot satisfy all output/choice commitments together.");
 
         if (bonesRoute)
         {
@@ -160,6 +177,7 @@ internal static class NeowStructuredEffectProbabilityEstimator
         IReadOnlyList<NeowStructuredEffectSearchCondition> conditions,
         bool includeExplicitRelicSequence = false)
     {
+        var filter = ProbabilitySemanticProjection.From(plan).NumericalFilter;
         if (!ModernNeowIdentityPredictor.TryGetEligibleCursePool(plan.Authority, out IReadOnlyList<ModelKey> cursePool) ||
             !authority.HasExactBonesPools ||
             authority.BonesEligibleRelics is null)
@@ -193,6 +211,9 @@ internal static class NeowStructuredEffectProbabilityEstimator
             .Where(key => key.IsValid)
             .Concat(ProbabilitySemanticProjection.From(plan).NumericalFilter.RequiredBonesAcquisitionOrder.Where(key => key.IsValid))
             .Concat(nestedSources)
+            .Concat(conditions.Where(c => c.Scope == NeowStructuredEffectScope.BonesOfferedRelics).SelectMany(c => c.OutputKeys))
+            .Concat(filter.RequireSmallCapsule ? new[] { BaseGameModelKeys.Relics.SmallCapsule } : [])
+            .Concat(filter.RequireLargeCapsule ? new[] { BaseGameModelKeys.Relics.LargeCapsule } : [])
             .Concat(conditions.Any(NeowReplayPlan.IsGroupedCapsule) ? new[]{BaseGameModelKeys.Relics.SmallCapsule, BaseGameModelKeys.Relics.LargeCapsule} : Array.Empty<ModelKey>())
             .Distinct(ModelKeyComparer.Instance)
             .ToArray();
@@ -232,14 +253,18 @@ internal static class NeowStructuredEffectProbabilityEstimator
                 "Neow's Bones is absent from the runtime eligible curse pool.");
         }
 
-        double parentProbability = 1d / cursePool.Count;
+        if (!TryTopLevelRouteProbability(plan, BaseGameModelKeys.Relics.NeowsBones, out double parentProbability, out _))
+            return SearchSelectivityEstimate.Unpriced("Probability.NeowStructured.OfferJointUnavailable", "Complete opening offer authority missing.");
 
         var derivations = new List<string>();
         NeowStructuredEffectSearchCondition[] capsuleConditions = conditions
             .Where(NeowReplayPlan.IsCapsule)
             .ToArray();
+        bool capsulePredicates = capsuleConditions.Length != 0 || !filter.CapsuleContainedRelics.IsEmpty ||
+            filter.RequireWhetstone || filter.RequireWarPaint || includeExplicitRelicSequence;
         NeowStructuredEffectSearchCondition[] ordinaryConditions = conditions
-            .Where(condition => !NeowReplayPlan.IsCapsule(condition))
+            .Where(condition => !NeowReplayPlan.IsCapsule(condition) && condition.Scope is not
+                (NeowStructuredEffectScope.BonesOfferedRelics or NeowStructuredEffectScope.FinalCurse))
             .ToArray();
 
         // Keep Bones-owned route-invariant predicates (currently Final Curse)
@@ -249,6 +274,15 @@ internal static class NeowStructuredEffectProbabilityEstimator
         // changes the Niche continuation.
         double routeNestedChildProbability = 1d;
         double routeInvariantChildProbability = 1d;
+        var finalTargets = conditions.Where(c => c.Scope == NeowStructuredEffectScope.FinalCurse).SelectMany(c => c.OutputKeys)
+            .Concat(filter.RequiredFinalCurse is { } final ? new[] { final } : []).Distinct().ToArray();
+        if (finalTargets.Length > 0 || filter.BannedFinalCurses.Count > 0)
+        {
+            if (!authority.CursePoolExact || authority.GeneratedCursePool is not { Count: > 0 } finalPool)
+                return SearchSelectivityEstimate.Unpriced("Probability.NeowStructured.BonesFinalCursePoolMissing", "Generated curse pool is unavailable.");
+            routeInvariantChildProbability = finalTargets.Length > 1 ? 0 : (double)finalPool.Count(k =>
+                (finalTargets.Length == 0 || k == finalTargets[0]) && !filter.BannedFinalCurses.Contains(k)) / finalPool.Count;
+        }
         foreach (NeowStructuredEffectSearchCondition condition in ordinaryConditions)
         {
             if (!TryEstimateCondition(plan, authority, condition, out double p, out string detail, out string issue))
@@ -278,19 +312,19 @@ internal static class NeowStructuredEffectProbabilityEstimator
         double ordinaryChildProbability = routeNestedChildProbability * routeInvariantChildProbability;
 
         double grantAndCapsuleProbability;
-        double grantProbabilityForDiagnostics = requiredGrants.Length switch
-        {
-            0 => 1d,
-            1 => 2d / bonesPool.Length,
-            2 => 2d / (bonesPool.Length * (bonesPool.Length - 1d)),
-            _ => 0d
-        };
+        bool PairAccepted(ModelKey[] pair) => requiredGrants.All(target => pair.Contains(target, ModelKeyComparer.Instance)) &&
+            Semantics.PartyInitialQuery.Matches(filter.BonesRelics, pair);
+        int legalPairCount = 0;
+        for (int first = 0; first < bonesPool.Length - 1; first++)
+        for (int second = first + 1; second < bonesPool.Length; second++)
+            if (PairAccepted([bonesPool[first], bonesPool[second]])) legalPairCount++;
+        double grantProbabilityForDiagnostics = legalPairCount * 2d / (bonesPool.Length * (bonesPool.Length - 1d));
 
         if (ordinaryChildProbability == 0d)
         {
             grantAndCapsuleProbability = grantProbabilityForDiagnostics;
         }
-        else if (capsuleConditions.Length == 0)
+        else if (!capsulePredicates)
         {
             grantAndCapsuleProbability = grantProbabilityForDiagnostics;
         }
@@ -310,18 +344,19 @@ internal static class NeowStructuredEffectProbabilityEstimator
             for (int second = first + 1; second < bonesPool.Length; second++)
             {
                 ModelKey[] pair = { bonesPool[first], bonesPool[second] };
-                if (requiredGrants.Any(target => !pair.Contains(target, ModelKeyComparer.Instance)))
+                if (!PairAccepted(pair))
                     continue;
 
                 acceptedPairs++;
-                if (!CapsuleRelicProbabilityEstimator.TryEstimateBonesNestedCapsules(
-                        plan,
-                        capsuleConditions,
-                        includeExplicitRelicSequence,
-                        pair,
-                        out double capsuleP,
-                        out string capsuleDetail,
-                        out string capsuleIssue))
+                double capsuleP;
+                string capsuleDetail, capsuleIssue;
+                bool capsulePriced = plan.Authority.PlayersCount > 1
+                    ? CapsuleRelicProbabilityEstimator.TryEstimateOpeningCapsules(plan,
+                        pair.Where(k => k == BaseGameModelKeys.Relics.SmallCapsule || k == BaseGameModelKeys.Relics.LargeCapsule).ToArray(),
+                        includeExplicitRelicSequence, out capsuleP, out capsuleDetail, out capsuleIssue)
+                    : CapsuleRelicProbabilityEstimator.TryEstimateBonesNestedCapsules(plan, capsuleConditions,
+                        includeExplicitRelicSequence, pair, out capsuleP, out capsuleDetail, out capsuleIssue);
+                if (!capsulePriced)
                 {
                     return SearchSelectivityEstimate.Unpriced(
                         "Probability.NeowStructured.BonesNestedCapsule:" + capsuleIssue,
@@ -425,7 +460,10 @@ internal static class NeowStructuredEffectProbabilityEstimator
                 "Pinned Bones acquisition order changes route semantics but does not add a random 1/2 identity factor.",
                 "NestedSources=" + string.Join(',', nestedSources.Select(source => source.Serialized)),
                 "Children=" + string.Join(";", derivations)
-            });
+            }) with {
+                PricingClass = bonesRouteUnionApplied ? SearchSelectivityPricingClass.ModeledPriced : SearchSelectivityPricingClass.ExactPriced,
+                Confidence = bonesRouteUnionApplied ? SearchSelectivityConfidence.Medium : SearchSelectivityConfidence.High
+            };
     }
 
     [Flags]
@@ -529,7 +567,8 @@ internal static class NeowStructuredEffectProbabilityEstimator
             source == BaseGameModelKeys.Relics.ArcaneScroll ||
             source == BaseGameModelKeys.Relics.HeftyTablet ||
             source == BaseGameModelKeys.Relics.LeadPaperweight ||
-            source == BaseGameModelKeys.Relics.LostCoffer)
+            source == BaseGameModelKeys.Relics.LostCoffer ||
+            source == BaseGameModelKeys.Relics.MassiveScroll)
         {
             return BonesProbabilityRngStream.Rewards;
         }
@@ -564,7 +603,7 @@ internal static class NeowStructuredEffectProbabilityEstimator
         NeowStructuredEffectSearchCondition[] conditions = ProbabilitySemanticProjection.From(plan).NumericalFilter.StructuredNeowEffects
             .Where(condition => !condition.IsEmpty)
             .ToArray();
-        if (!conditions.Any(NeowReplayPlan.IsCapsule))
+        if (plan.Authority.PlayersCount <= 1 && !conditions.Any(NeowReplayPlan.IsCapsule))
             return SearchSelectivityEstimate.Unpriced(
                 "Probability.NeowRelicShared.NoNestedCapsule",
                 "Bones query has no nested Capsule structured predicate requiring RelicGrabBag normalization.");
@@ -704,6 +743,24 @@ internal static class NeowStructuredEffectProbabilityEstimator
         if (condition.SourceRelicKey == BaseGameModelKeys.Relics.ScrollBoxes)
         {
             return TryEstimateScrollBoxesCondition(plan, authority, condition, targets, out probability, out detail, out issue);
+        }
+
+        if (condition.SourceRelicKey == BaseGameModelKeys.Relics.MassiveScroll &&
+            condition.Kind == NeowStructuredConditionKind.ExactSingle && targets.Length == 1)
+        {
+            if (plan.Authority.PlayersCount <= 1)
+            {
+                detail = "Massive Scroll requires a multiplayer opening.";
+                return true;
+            }
+            if (!authority.HasExactCharacterRewardPool || !authority.HasExactColorlessRewardPool ||
+                authority.CharacterRewardPool is null || authority.ColorlessRewardPool is null)
+                return FailCondition("MassiveScrollMultiplayerPoolMissing", out detail, out issue);
+            var pool = authority.CharacterRewardPool.Concat(authority.ColorlessRewardPool)
+                .Where(card => card.IsMultiplayerOnly).DistinctBy(card => card.CardKey).ToArray();
+            probability = CardOfferContains(pool, plan, targets, 3, forcedRarity: null);
+            detail = $"Massive Scroll target in three no-repeat regular-rarity offers;capturedMultiplayerPool={pool.Length}.";
+            return true;
         }
 
         if (condition.SourceRelicKey == BaseGameModelKeys.Relics.ArcaneScroll &&
@@ -971,19 +1028,13 @@ internal static class NeowStructuredEffectProbabilityEstimator
         out double probability,
         out string evidence)
     {
-        probability = 0d;
-        evidence = string.Empty;
-        if (!ModernNeowIdentityPredictor.TryGetEligibleCursePool(plan.Authority, out IReadOnlyList<ModelKey> curses))
-            return false;
-        if (curses.Contains(source))
+        var offers = ProbabilitySemanticProjection.From(plan).NumericalFilter.NeowRelics;
+        return ModernNeowIdentityPredictor.TryEstimateOfferProbability(plan.Authority, (a,b,c) =>
         {
-            probability = 1d / curses.Count;
-            evidence = $"CursePool={curses.Count}";
-            return true;
-        }
-        if (!ModernNeowIdentityPredictor.TryEstimatePositiveOfferProbability(plan.Authority, source, out probability, out evidence))
-            return false;
-        return true;
+            bool Has(ModelKey key) => key == a || key == b || key == c;
+            return (!source.IsValid || Has(source)) && (offers.Any.Count == 0 || offers.Any.Any(Has)) &&
+                offers.All.All(Has) && !offers.Ban.Any(Has);
+        }, out probability, out evidence);
     }
 
     private static double CardOfferContains(

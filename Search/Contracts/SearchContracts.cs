@@ -245,15 +245,51 @@ public enum EventResultConditionKind
     TrashHeapGrabCard,
     TrashHeapDiveRelic,
     ColorfulPhilosophersOfferedColor,
-    FakeMerchantOfferedFakeRelic
+    FakeMerchantOfferedFakeRelic,
+    MorphicGroveGroupInitialBasicsContains,
+    SymbioteInitialBasicTransform,
+    AromaOfChaosInitialBasicTransform,
+    WhisperingHollowInitialBasicTransform,
+    TrialNondescriptInitialBasicsContains,
+    TrialCase,
+    TinkerTimeTypeAndRider
 }
+
+public enum TrialCaseTarget { Merchant, Noble, Nondescript }
+public enum TinkerCardTypeTarget { Attack, Skill, Power }
+public enum TinkerRiderTarget { Sapping, Violence, Choking, Energized, Wisdom, Chaos, Expertise, Curious, Improvement }
 
 public sealed record EventResultSearchCondition(
     EventResultConditionKind Kind,
     ModelKey TargetKey)
 {
-    public bool IsValid => Kind switch
+    // Authored/captured event-entry premise, never inferred from the starting deck.
+    // Contains observes raw transformation identities, not final hook-modified cards.
+    public RolltheSpire2.Core.Prediction.MorphicGroveScenario? MorphicGroveScenario { get; init; }
+    // Optional second required output. Equal identities mean two copies, not one hit.
+    public ModelKey? MorphicGroveSecondCard { get; init; }
+    public TrialCaseTarget? TrialCase { get; init; }
+    public TinkerCardTypeTarget? TinkerCardType { get; init; }
+    public TinkerRiderTarget? TinkerRider { get; init; }
+
+    public bool IsValid =>
+        (TrialCase is null || Kind == EventResultConditionKind.TrialCase) &&
+        (TinkerCardType is null && TinkerRider is null || Kind == EventResultConditionKind.TinkerTimeTypeAndRider) &&
+        (MorphicGroveSecondCard is null || Kind is EventResultConditionKind.MorphicGroveGroupInitialBasicsContains or EventResultConditionKind.TrialNondescriptInitialBasicsContains) && (Kind switch
     {
+        EventResultConditionKind.SymbioteInitialBasicTransform or EventResultConditionKind.AromaOfChaosInitialBasicTransform or
+        EventResultConditionKind.WhisperingHollowInitialBasicTransform or EventResultConditionKind.TrialNondescriptInitialBasicsContains =>
+            TargetKey.IsValid && TargetKey.Category == BaseGameModelKeys.Categories.Card &&
+            (MorphicGroveSecondCard is null || MorphicGroveSecondCard is { IsValid: true, Category: BaseGameModelKeys.Categories.Card }) &&
+            RolltheSpire2.Search.Semantics.EventResultTransformSemantics.IsInitialBasics(this),
+        EventResultConditionKind.TrialCase => TargetKey == new ModelKey("EVENT", "TRIAL") && TrialCase is { } trial && Enum.IsDefined(trial),
+        EventResultConditionKind.TinkerTimeTypeAndRider => TargetKey == new ModelKey("CARD", "MAD_SCIENCE") &&
+            TinkerCardType is { } type && Enum.IsDefined(type) &&
+            (TinkerRider is null || TinkerRider is { } rider && Enum.IsDefined(rider) && (int)rider / 3 == (int)type),
+        EventResultConditionKind.MorphicGroveGroupInitialBasicsContains =>
+            TargetKey.IsValid && TargetKey.Category == BaseGameModelKeys.Categories.Card &&
+            (MorphicGroveSecondCard is null || MorphicGroveSecondCard is { IsValid: true, Category: BaseGameModelKeys.Categories.Card }) &&
+            RolltheSpire2.Search.Semantics.MorphicGroveQuerySemantics.IsInitialBasics(MorphicGroveScenario),
         EventResultConditionKind.TrashHeapGrabCard =>
             TargetKey.IsValid && TargetKey.Category == BaseGameModelKeys.Categories.Card,
         EventResultConditionKind.TrashHeapDiveRelic or EventResultConditionKind.FakeMerchantOfferedFakeRelic =>
@@ -261,7 +297,7 @@ public sealed record EventResultSearchCondition(
         EventResultConditionKind.ColorfulPhilosophersOfferedColor =>
             TargetKey.IsValid && TargetKey.Category == BaseGameModelKeys.Categories.Character,
         _ => false
-    };
+    });
 }
 
 public enum MerchantColorlessSlot
@@ -534,7 +570,7 @@ public sealed record NeowSearchFilter(
             // catalog/effect authority is intentionally Partial. Do not let that local
             // Neow uncertainty block otherwise independent World or RelicSequence truth.
             SeedPredictionDomainSelection domains = SeedPredictionDomainSelection.None;
-            if (HasNeowConstraints || RequiresNormalCombatRewardDomain)
+            if (HasNeowConstraints || RequiresNormalCombatRewardDomain || AncientOptionFilters.Any(f => f.Act == 1 && !f.IsEmpty))
             {
                 domains |= SeedPredictionDomainSelection.Neow;
             }
@@ -570,6 +606,7 @@ public sealed record ExactSearchEvaluationProjection(
     IReadOnlyList<ModelKey> BannedFinalCurses,
     NeowSearchPreset Preset)
 {
+    public RolltheSpire2.Search.Semantics.TransformationAggregateCondition? TransformationAggregate { get; init; }
     public static ExactSearchEvaluationProjection Empty { get; } = new(
         ModelKeySetFilter.Empty, false, ModelKeySetFilter.Empty, Array.Empty<ModelKey>(),
         false, false, ModelKeySetFilter.Empty, false, false, null,
@@ -629,7 +666,7 @@ public sealed record ExactSearchEvaluationProjection(
     public bool RequiresMerchantColorlessDomain =>
         MerchantColorlessConditions.Any(condition => condition.IsValid) ||
         MerchantColorlessSequenceConditions.Any(condition => !condition.IsEmpty);
-    public bool RequiresCanonicalRootLocalDomain => RequiresEventResultDomain || RequiresMerchantColorlessDomain;
+    public bool RequiresCanonicalRootLocalDomain => RequiresEventResultDomain || RequiresMerchantColorlessDomain || TransformationAggregate is not null;
     public bool RequiresNormalCombatRewardDomain =>
         NormalCombatRewardConditions.Any(condition => !condition.IsEmpty) ||
         CombatCardRewardSequence is { IsEmpty: false } || CombatPotionRewardSequence is { IsEmpty: false };
@@ -647,7 +684,8 @@ public sealed record ExactSearchEvaluationProjection(
         get
         {
             SeedPredictionDomainSelection domains = SeedPredictionDomainSelection.None;
-            if (HasNeowConstraints || RequiresNormalCombatRewardDomain) domains |= SeedPredictionDomainSelection.Neow;
+            if (HasNeowConstraints || RequiresNormalCombatRewardDomain || AncientOptionFilters.Any(f => f.Act == 1 && !f.IsEmpty))
+                domains |= SeedPredictionDomainSelection.Neow;
             if (RequiresWorldDomain) domains |= SeedPredictionDomainSelection.World;
             if (RequiresRelicSequenceDomain) domains |= SeedPredictionDomainSelection.RelicSequence;
             return domains;
@@ -738,6 +776,7 @@ public sealed record ExactSearchExecutionRequest(
     CombatRewardRoutePolicyContract CombatRewardRoutePolicy,
     string SnapshotFingerprint)
 {
+    internal IReadOnlyList<RolltheSpire2.Core.Neow.NeowChoiceResult>? PartyOpeningChoices { get; init; }
     public RuntimeProfileId ProfileId => CompiledSearch.Context.ProfileId;
     public ModelKey CharacterKey => CompiledSearch.Context.CharacterKey;
     public int Ascension => CompiledSearch.Context.Ascension;

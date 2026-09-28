@@ -95,7 +95,7 @@ public sealed class Beta111PredictionProfile : ISeedPredictionProfile
                     ? PredictionPrecision.Exact
                     : PredictionPrecision.Partial;
 
-            choices = result.RelicKeys.Select((key, index) =>
+            choices = request.PartyOpeningChoices?.ToArray() ?? result.RelicKeys.Select((key, index) =>
                 SeedPredictionDocumentFactory.Choice(
                     index + 1,
                     key,

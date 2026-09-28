@@ -6,6 +6,12 @@ namespace RolltheSpire2.Compatibility;
 /// <summary>Runtime-version resolution and dispatch to the corresponding prediction profile.</summary>
 public static class RuntimeProfileRegistry
 {
+    /// <summary>Concrete-root Group continuation for an already occurring Morphic Grove, independent of Search/Filter.</summary>
+    public static MorphicGrovePrediction PredictMorphicGrove(GameVersionDetection detection,
+        SeedPredictionRequest request, MorphicGroveScenario scenario,
+        Core.Events.MorphicGroveCommitment? commitment) =>
+        MorphicGrovePredictor.Predict(detection, request, scenario, commitment);
+
     private static readonly RuntimeProfileId[] RegisteredProfileIds =
     {
         RuntimeProfileId.Beta110,

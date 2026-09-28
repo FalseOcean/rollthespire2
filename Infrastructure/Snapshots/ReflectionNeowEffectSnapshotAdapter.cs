@@ -39,7 +39,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         int playerSlotIndex,
         RuntimeProfileId expectedProfile,
         string capturedGameVersion,
-        ReflectionSnapshotProfileRules rules)
+        ReflectionSnapshotProfileRules rules,
+        object? explicitUnlockState = null)
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
         if (profile.ProfileId != expectedProfile)
@@ -68,7 +69,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         }
 
         var warnings = new List<PredictionWarningCode>();
-        object? unlockState = TryCaptureCurrentUnlockState(gameAssembly, out string unlockSource);
+        string unlockSource = "explicit-picker-seat";
+        object? unlockState = explicitUnlockState ?? TryCaptureCurrentUnlockState(gameAssembly, out unlockSource);
         if (unlockState is null)
         {
             return RuntimeEffectSnapshotCaptureResult.Missing(
@@ -244,7 +246,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         bool merchantInitialInventoryShapeExact =
             profile.ProfileId == RuntimeProfileId.Beta111 &&
             isAuditedVanilla &&
-            playersCount == 1 &&
+            playersCount >= 1 &&
             selectedCards.Exact && selectedCards.Cards is not null &&
             selectedCards.Cards.All(IsAuditedBaseGameCardSnapshot) &&
             selectedCards.Cards.Count(card => card.CardType == EffectCardType.Attack && !card.IsBasic) >= 2 &&

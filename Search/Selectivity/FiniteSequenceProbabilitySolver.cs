@@ -96,11 +96,8 @@ internal static class FiniteSequenceProbabilitySolver
             .Where(key => key.IsValid)
             .Distinct(ModelKeyComparer.Instance)
             .ToArray();
-        if (targetKeys.Length > 60)
-        {
-            issue = "TooManyRelevantSequenceTargets:" + targetKeys.Length;
-            return false;
-        }
+        if (targetKeys.Length > 12)
+            return TrySolveEquivalentClasses(pool, active, targetKeys.Length, out result, out issue);
 
         var bitByKey = new Dictionary<ModelKey, ulong>(ModelKeyComparer.Instance);
         for (int index = 0; index < targetKeys.Length; index++)
@@ -313,6 +310,100 @@ internal static class FiniteSequenceProbabilitySolver
             targetKeys.Length,
             evaluated,
             $"ExactFinitePermutation;pool={pool.Count};relevant={targetKeys.Length};maxPosition={maxPosition};states={evaluated}");
+        return true;
+    }
+
+    // Large Any/Ban sets distinguish membership, not each identity. Identities
+    // with the same membership in every constraint and the same partition are
+    // exchangeable. Track their remaining counts; All still requires every
+    // member of its class to have appeared, so no set/multiset fact is weakened.
+    private static bool TrySolveEquivalentClasses(IReadOnlyList<Item> pool, Constraint[] active,
+        int relevantCount, out Result result, out string issue)
+    {
+        issue = ""; result = default!;
+        var poolKeys = pool.Select(p => p.Key).ToHashSet();
+        var any = active.Select(c => c.Keys.Any.Where(k => k.IsValid).ToHashSet()).ToArray();
+        var all = active.Select(c => c.Keys.All.Where(k => k.IsValid).ToHashSet()).ToArray();
+        var ban = active.Select(c => c.Keys.Ban.Where(k => k.IsValid).ToHashSet()).ToArray();
+        var triggers = active.Select(c => c.RangeMode == SearchSequenceRangeMode.FirstN
+            ? Math.Min(c.RangeValue, pool.Count) : c.RangeValue).ToArray();
+        for (int row = 0; row < active.Length; row++)
+        {
+            if (active[row].Partition is < 0 or > 3)
+            { issue = "ConstraintPartitionOutsideSupportedRange0To3"; return false; }
+            if (all[row].Any(k => !poolKeys.Contains(k)) || any[row].Count > 0 && !any[row].Overlaps(poolKeys) ||
+                active[row].RangeMode == SearchSequenceRangeMode.ExactSlot &&
+                (triggers[row] > pool.Count || all[row].Count > 1))
+            { result = new(0, pool.Count, relevantCount, 0, "EquivalentClassesImpossibleConstraint"); return true; }
+        }
+        var classes = pool.GroupBy(item => item.Partition + ":" + string.Concat(Enumerable.Range(0, active.Length)
+            .Select(row => (char)('0' + (any[row].Contains(item.Key) ? 1 : 0) +
+                (all[row].Contains(item.Key) ? 2 : 0) + (ban[row].Contains(item.Key) ? 4 : 0)))))
+            .Select(g => g.ToArray()).ToArray();
+        int[] counts = classes.Select(g => g.Length).ToArray(), remaining = (int[])counts.Clone();
+        var flags = new byte[classes.Length, active.Length];
+        for (int category = 0; category < classes.Length; category++)
+        for (int row = 0; row < active.Length; row++)
+        {
+            ModelKey key = classes[category][0].Key;
+            flags[category, row] = (byte)((any[row].Contains(key) ? 1 : 0) |
+                (all[row].Contains(key) ? 2 : 0) | (ban[row].Contains(key) ? 4 : 0));
+        }
+        bool Accept(int position, int current)
+        {
+            for (int row = 0; row < active.Length; row++)
+            {
+                if (triggers[row] != position) continue;
+                Constraint constraint = active[row];
+                if (constraint.RangeMode == SearchSequenceRangeMode.ExactSlot)
+                {
+                    bool samePartition = current >= 0 && (!constraint.Partition.HasValue ||
+                        classes[current][0].Partition == constraint.Partition.Value);
+                    if (!samePartition && constraint.ExactSlotRequiresPartitionMatch) return false;
+                    byte observed = samePartition ? flags[current, row] : (byte)0;
+                    if (any[row].Count > 0 && (observed & 1) == 0 ||
+                        all[row].Count > 0 && (observed & 2) == 0 || (observed & 4) != 0) return false;
+                    continue;
+                }
+                bool anySeen = any[row].Count == 0;
+                for (int category = 0; category < classes.Length; category++)
+                {
+                    bool observedPartition = !constraint.Partition.HasValue ||
+                        classes[category][0].Partition == constraint.Partition.Value;
+                    int seen = observedPartition ? counts[category] - remaining[category] : 0;
+                    byte mask = flags[category, row];
+                    if ((mask & 1) != 0 && seen > 0) anySeen = true;
+                    if ((mask & 2) != 0 && seen < counts[category] || (mask & 4) != 0 && seen > 0) return false;
+                }
+                if (!anySeen) return false;
+            }
+            return true;
+        }
+        if (!Accept(0, -1))
+        { result = new(0, pool.Count, relevantCount, 1, "EquivalentClassesEmptyWindowReject"); return true; }
+        int maxPosition = triggers.Max(), evaluated = 0;
+        var memo = new Dictionary<string, double>(StringComparer.Ordinal);
+        double Solve(int position)
+        {
+            if (position >= maxPosition) return 1;
+            string key = string.Join(',', remaining);
+            if (memo.TryGetValue(key, out double cached)) return cached;
+            evaluated++;
+            int total = pool.Count - position;
+            if (total == 0) return 1;
+            double probability = 0;
+            for (int category = 0; category < classes.Length; category++)
+            {
+                int count = remaining[category];
+                if (count == 0) continue;
+                remaining[category]--;
+                if (Accept(position + 1, category)) probability += count / (double)total * Solve(position + 1);
+                remaining[category]++;
+            }
+            return memo[key] = Math.Clamp(probability, 0, 1);
+        }
+        result = new(Solve(0), pool.Count, relevantCount, evaluated,
+            $"ExactFinitePermutationEquivalentClasses;pool={pool.Count};classes={classes.Length};maxPosition={maxPosition}");
         return true;
     }
 }

@@ -16,7 +16,7 @@ internal sealed class RelicCpuPlan
     {
         if (_plan.AlwaysReject) return false;
         var rng = new Beta110FastRng(unchecked(root + UpFrontHash));
-        Span<int> positions = stackalloc int[RelicFamilyPlanCompiler.MaximumShaderLocalState];
+        Span<int> positions = stackalloc int[_plan.LocalStateCapacity];
         var pool = _plan.Pool;
         for (int bucket = 0; bucket <= _plan.LastRequiredBucket; bucket++)
         {

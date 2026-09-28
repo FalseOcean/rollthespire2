@@ -193,7 +193,7 @@ public static class NeowEffectCoverageRegistry
                     NeowEffectTraits.RandomOffer |
                     NeowEffectTraits.RelevantRngConsumer |
                     NeowEffectTraits.FinalCurseRelevant,
-                NeowEffectFamily.OrderedOffer =>
+                NeowEffectFamily.OrderedOffer or NeowEffectFamily.MultiplayerOnly =>
                     NeowEffectTraits.RandomOffer |
                     NeowEffectTraits.RelevantRngConsumer |
                     NeowEffectTraits.DeckMutation |
@@ -244,7 +244,8 @@ public static class NeowEffectCoverageRegistry
             if (key == BaseGameModelKeys.Relics.HeftyTablet ||
                 key == BaseGameModelKeys.Relics.LeadPaperweight ||
                 key == BaseGameModelKeys.Relics.LostCoffer ||
-                key == BaseGameModelKeys.Relics.Kaleidoscope)
+                key == BaseGameModelKeys.Relics.Kaleidoscope ||
+                key == BaseGameModelKeys.Relics.MassiveScroll)
             {
                 capabilities |= NeowEffectTraits.HasOptionalSkip;
             }

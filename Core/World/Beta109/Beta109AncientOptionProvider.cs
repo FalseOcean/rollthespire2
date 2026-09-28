@@ -29,6 +29,8 @@ public static class Beta109AncientOptionProvider
         IReadOnlyList<(ModelKey Key, string? Variant)> Options,
         IReadOnlyDictionary<int, AncientOptionCharacterTargetProjection> CharacterTargets)
     {
+        public IReadOnlySet<int> LockedOptionIndices { get; init; } = new HashSet<int>();
+
         public static OptionGenerationResult Plain(
             IReadOnlyList<(ModelKey Key, string? Variant)> options) =>
             new(options, new Dictionary<int, AncientOptionCharacterTargetProjection>());
@@ -114,10 +116,6 @@ public static class Beta109AncientOptionProvider
             string.IsNullOrWhiteSpace(context.EventIdEntry))
         {
             return Unknown(snapshot, "EventContextRequestMismatch");
-        }
-        if (snapshot.GameMode == WorldGameMode.Multiplayer && context.IsShared)
-        {
-            return Unsupported(snapshot, "MultiplayerSharedAncientSynchronizationUnsupported");
         }
         if (context.HookDecision == Beta109HookDecision.Unknown)
         {
@@ -255,9 +253,14 @@ public static class Beta109AncientOptionProvider
             {
                 RngTrace = rng.Trace.ToArray(),
                 AuthorityFingerprint = context.ContextFingerprint,
+                IsVisible = !generation.LockedOptionIndices.Contains(index),
+                IsSelectable = !generation.LockedOptionIndices.Contains(index),
+                IsLocked = generation.LockedOptionIndices.Contains(index),
                 AppearancePrecision = optionIdentityPrecision,
                 SelectabilityPrecision = optionIdentityPrecision,
-                StableTextKey = item.Key.Entry,
+                StableTextKey = generation.LockedOptionIndices.Contains(index)
+                    ? "OROBAS.pages.INITIAL.options.OPTION_POOL_3_LOCKED"
+                    : item.Key.Entry,
                 CharacterTarget = generation.CharacterTargets.TryGetValue(index, out AncientOptionCharacterTargetProjection? target)
                     ? target
                     : null
@@ -356,11 +359,16 @@ public static class Beta109AncientOptionProvider
         {
             pool3.AddRange(catalog.Pool("orobas.pool3.tooth"));
         }
-        if (pool3.Count == 0)
+        bool thirdLocked = pool3.Count == 0;
+        // Vanilla inserts a locked, non-relic EventOption when both setup predicates fail.
+        // NextItem still draws from that singleton, so retain the event-local RNG call.
+        ModelKey third;
+        if (thirdLocked)
         {
-            throw new InvalidOperationException("OrobasPool3NoEligiblePresetOption");
+            rng.NextInt(1, "orobas:pool3-locked");
+            third = default;
         }
-        ModelKey third = rng.NextModelKey(pool3, "orobas:pool3");
+        else third = rng.NextModelKey(pool3, "orobas:pool3");
         string? variant = selectedCharacter.HasValue && string.Equals(first.Entry, "SEA_GLASS", StringComparison.Ordinal)
                           && context.UnlockedCharacterSourceOrderExact
             ? "character=" + selectedCharacter.Value.Serialized
@@ -371,7 +379,10 @@ public static class Beta109AncientOptionProvider
             string.Equals(first.Entry, "SEA_GLASS", StringComparison.Ordinal)
                 ? new Dictionary<int, AncientOptionCharacterTargetProjection> { [0] = targetProjection }
                 : new Dictionary<int, AncientOptionCharacterTargetProjection>();
-        return new OptionGenerationResult(options, targets);
+        return new OptionGenerationResult(options, targets)
+        {
+            LockedOptionIndices = thirdLocked ? new HashSet<int> { 2 } : new HashSet<int>()
+        };
     }
 
 

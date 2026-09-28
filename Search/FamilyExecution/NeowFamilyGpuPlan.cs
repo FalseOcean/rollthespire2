@@ -8,6 +8,7 @@ internal sealed record NeowFamilyGpuPlan(uint[] Meta, uint[] PoolMeta, uint[] Ca
     uint[] Strike, uint[] Defend, uint[] Bones, uint[] Conditions)
 {
     internal bool HasAuthoredUpgrades { get; init; }
+    internal bool HasLocalResults => Meta[83] != 0 || Meta[84] != 0;
     internal const string DenseRevision = "N.Neow.Gpu.LocalDonor.DenseCarry8.CanonicalAbi1Ready.20260905.v2";
     internal const string CompactRevision = "N.Neow.Gpu.LocalDonor.CompactFullDecode.CanonicalAbi1Ready.20260905.v2";
     internal const string StagedDenseRevision = "N.Neow.Gpu.LocalDonor.DensePreBonesCarry8.CanonicalAbi1Ready.20260905.v2";
@@ -43,19 +44,29 @@ internal sealed record NeowFamilyGpuPlan(uint[] Meta, uint[] PoolMeta, uint[] Ca
         bool niche = rewards || plan.HasFinalCurseFastProjection || (plan.EnabledDomains & Beta110FastDomain.NewLeafTransform) != 0;
         bool transform = (plan.EnabledDomains & Beta110FastDomain.LeafyPoulticeTransforms) != 0;
         bool potion = (plan.EnabledDomains & Beta110FastDomain.PhialHolsterPotions) != 0;
-        // Unknown continuation authority must never turn into GPU rejection.
-        if ((rewards && (!c.CharacterRewardAuthorityExact || !c.ColorlessRewardAuthorityExact || !c.PotionAuthorityExact ||
-                !c.OtherCharacterCardAuthorityExact || c.CharacterRewardPool.Rare.Length < 3 || c.OtherCharacterPools.Length < 3)) ||
-            (niche && (!c.OtherCharacterCardAuthorityExact || c.OtherCharacterPools.Length < 3 || c.NewLeafTransformPool.Length == 0)) ||
-            (transform && (c.LeafyStrikeTransformPool.Length == 0 || c.LeafyDefendTransformPool.Length == 0)) ||
-            (potion && !c.PotionAuthorityExact))
-        { issue = "DonorContinuationAuthorityUnavailable"; return false; }
-        if ((rewards && (c.CharacterRewardPool.Common.Length < 4 || c.CharacterRewardPool.Uncommon.Length < 2 ||
-                c.ColorlessRewardPool.Common.Length + c.ColorlessRewardPool.Uncommon.Length + c.ColorlessRewardPool.Rare.Length < 2 ||
-                c.PotionPool.AllAllowed.Length == 0 ||
-                c.OtherCharacterPools.Any(pool => pool.Common.Length + pool.Uncommon.Length + pool.Rare.Length == 0))) ||
-            (potion && c.PotionPool.AllAllowed.Length < 2))
-        { issue = "DonorContinuationPoolTooSmall_CpuReference"; return false; }
+        // Require only pools read by a possible acquired source. Direct local
+        // predicates must not depend on unrelated card/transform/potion authority.
+        byte[] sources = !plan.Bones ? [plan.Selected] : plan.First != 255 && plan.Second != 255
+            ? [plan.First, plan.Second] : a.BonesEligibleRelicIds.Where(id => (plan.BonesBan & Beta110FastRelicCatalog.Bit(id)) == 0).ToArray();
+        foreach (byte source in sources)
+        {
+            bool ready = source switch
+            {
+                Beta110FastRelicCatalog.ArcaneScroll when rewards => c.CharacterRewardAuthorityExact && c.CharacterRewardPool.Rare.Length > 0,
+                Beta110FastRelicCatalog.MassiveScroll when rewards => c.CharacterRewardAuthorityExact && c.ColorlessRewardAuthorityExact && c.MultiplayerRewardPool.TotalCount >= 3,
+                Beta110FastRelicCatalog.HeftyTablet when rewards => c.CharacterRewardAuthorityExact && c.CharacterRewardPool.Rare.Length >= 3,
+                Beta110FastRelicCatalog.LeadPaperweight when rewards => c.ColorlessRewardAuthorityExact && c.ColorlessRewardPool.TotalCount >= 2,
+                Beta110FastRelicCatalog.LostCoffer when rewards => c.CharacterRewardAuthorityExact && c.CharacterRewardPool.TotalCount >= 3 && c.PotionAuthorityExact && c.PotionPool.HasAtLeastPerRarity(1),
+                Beta110FastRelicCatalog.ScrollBoxes when rewards => c.CharacterCardAuthorityExact && c.CharacterRewardPool.Common.Length >= 4 && c.CharacterRewardPool.Uncommon.Length >= 2,
+                Beta110FastRelicCatalog.Kaleidoscope when rewards || niche => c.OtherCharacterCardAuthorityExact && c.OtherCharacterPools.Length >= 3 &&
+                    (!rewards || c.OtherCharacterPools.All(pool => pool.TotalCount > 0)),
+                Beta110FastRelicCatalog.NewLeaf when niche => c.NewLeafTransformAuthorityExact && c.NewLeafTransformPool.Length > 0,
+                Beta110FastRelicCatalog.LeafyPoultice when transform => c.LeafyTransformAuthorityExact && c.LeafyStrikeTransformPool.Length > 0 && c.LeafyDefendTransformPool.Length > 0,
+                Beta110FastRelicCatalog.PhialHolster when potion => c.PotionAuthorityExact && c.PotionPool.HasAtLeastPerRarity(2),
+                _ => true
+            };
+            if (!ready) { issue = "DonorContinuationAuthorityUnavailable:Source" + source; return false; }
+        }
         var rows = new uint[32 * 5 + (plan.AuthoredUpgrades is null ? 0 : 66)];
         if (plan.AuthoredUpgrades is { } upgrades)
             for (int i = 0; i < upgrades.Advances.Length; i++) rows[160 + i] = unchecked((uint)upgrades.Advances[i]);
@@ -81,11 +92,25 @@ internal sealed record NeowFamilyGpuPlan(uint[] Meta, uint[] PoolMeta, uint[] Ca
                     if (rows[o] != 0) { issue = "DonorMultipleScrollTargets"; return false; }
                     rows[o] = condition.TargetCount; rows[o + 1] = condition.Target0;
                     rows[o + 2] = condition.Target1; rows[o + 3] = condition.Target2;
+                    if (condition.OrderedKaleidoscope)
+                    {
+                        rows[o + 4] |= 4;
+                        rows[o + 1] = condition.KaleidoscopeFirstTarget == Beta110FastDenseId.Invalid ? uint.MaxValue : condition.KaleidoscopeFirstTarget;
+                        rows[o + 2] = condition.KaleidoscopeSecondTarget == Beta110FastDenseId.Invalid ? uint.MaxValue : condition.KaleidoscopeSecondTarget;
+                    }
                     if (group.Key == Beta110FastRelicCatalog.ScrollBoxes) rows[o + 4] |= 1;
                 }
             }
         }
-        uint[] meta = new uint[85 + plan.StructuredConditions.Length];
+        int prefix = 85 + plan.StructuredConditions.Length;
+        uint[] meta = new uint[prefix + 4 + plan.SharedArrivals.Length * 2];
+        meta[prefix] = checked((uint)plan.SharedNicheDraws); meta[prefix + 1] = checked((uint)plan.SharedPotionDraws);
+        meta[prefix + 2] = checked((uint)plan.SharedArrivals.Length);
+        meta[prefix + 3] = unchecked((uint)plan.CapsuleUpgradeUpperBound);
+        for (int i = 0; i < plan.SharedArrivals.Length; i++) {
+            meta[prefix + 4 + 2 * i] = checked((uint)plan.SharedArrivals[i].Niche);
+            meta[prefix + 5 + 2 * i] = checked((uint)plan.SharedArrivals[i].Potions);
+        }
         meta[5] = (uint)a.PlayerSlotIndex; meta[6] = (uint)a.PlayersCount; meta[7] = (uint)a.Ascension;
         meta[8] = (uint)a.BonesEligibleRelicIds.Length; meta[9] = (uint)c.OtherCharacterPools.Length;
         meta[12] = plan.First; meta[13] = plan.Second;
@@ -158,7 +183,7 @@ internal sealed record NeowFamilyGpuPlan(uint[] Meta, uint[] PoolMeta, uint[] Ca
         }
         // Retain the donor card/potion/curse layout, omitting every Relic Bag field.
         int trailer = 20 + c.OtherCharacterPools.Length * 6;
-        uint[] poolMeta = new uint[trailer + 15]; var cards = new List<uint>();
+        uint[] poolMeta = new uint[trailer + 21]; var cards = new List<uint>();
         void Append(ushort[] ids, int index) { poolMeta[index] = (uint)cards.Count; poolMeta[index + 1] = (uint)ids.Length; cards.AddRange(ids.Select(x => (uint)x)); }
         void Pool(Beta110FastCardPool pool, int index) { Append(pool.Common, index); Append(pool.Uncommon, index + 2); Append(pool.Rare, index + 4); }
         Pool(c.CharacterRewardPool, 0); Pool(c.ColorlessRewardPool, 6);
@@ -166,6 +191,7 @@ internal sealed record NeowFamilyGpuPlan(uint[] Meta, uint[] PoolMeta, uint[] Ca
         for (int i = 0; i < c.OtherCharacterPools.Length; i++) Pool(c.OtherCharacterPools[i], 20 + i * 6);
         Append(plan.RequiredFinalCurseIds, trailer + 6); Append(plan.BannedFinalCurseIds, trailer + 8);
         Append(c.GeneratedCurseIds, trailer + 12);
+        Pool(c.MultiplayerRewardPool, trailer + 15);
         gpu = new(meta, poolMeta, cards.ToArray(), c.LeafyStrikeTransformPool.Select(x => (uint)x).ToArray(),
             c.LeafyDefendTransformPool.Concat(c.NewLeafTransformPool).Select(x => (uint)x).ToArray(),
             a.BonesEligibleRelicIds.Select(x => (uint)x).ToArray(), rows) { HasAuthoredUpgrades = plan.AuthoredUpgrades is not null };
@@ -179,7 +205,7 @@ internal sealed record NeowFamilyGpuPlan(uint[] Meta, uint[] PoolMeta, uint[] Ca
             "phial-first" => 40, "phial-local" => 41, "phial-direct" => 42,
             _ => throw new InvalidOperationException("UnknownNDirectExperiment:" + mode) };
         bool direct = plan.DirectNestedVanilla111 && !plan.Bones && !plan.RequireBones && !plan.HasFinalCurseFastProjection && a.PlayersCount == 1 &&
-            a.AllCharacterCardPoolsUnlocked && plan.ExactOnly.Length == 0;
+            a.AllCharacterCardPoolsUnlocked && plan.ExactOnly.Length == 0 && !plan.StructuredConditions.Any(c => c.OrderedKaleidoscope);
         if (direct &&
             plan.Selected == Beta110FastRelicCatalog.Kaleidoscope && plan.StructuredConditions.Length == 1 &&
             plan.StructuredConditions[0] is var k && k.Kind == Beta110FastStructuredConditionKind.KaleidoscopeIndependentOfferTargets &&
@@ -238,6 +264,7 @@ internal sealed record NeowFamilyGpuPlan(uint[] Meta, uint[] PoolMeta, uint[] Ca
         // a default. No stateful pickup, Capsule, Final Curse or identity-only tax.
         if ((bonesMode is "" or "early-accept" or "rare-local" or "pair-local") && plan.DirectNestedVanilla111 &&
             plan.Bones && a.PlayersCount == 1 && a.AllCharacterCardPoolsUnlocked &&
+            !plan.StructuredConditions.Any(c => c.OrderedKaleidoscope) &&
             plan.ExactOnly.Length == 0 && plan.StructuredConditions.Length > 0 && !plan.HasFinalCurseFastProjection && meta[67] == 1 &&
             tracked.Contains(Beta110FastRelicCatalog.Kaleidoscope) &&
             tracked.All(id => id is Beta110FastRelicCatalog.Kaleidoscope or Beta110FastRelicCatalog.PhialHolster or

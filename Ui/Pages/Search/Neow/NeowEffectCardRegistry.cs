@@ -51,6 +51,11 @@ internal static class NeowEffectCardRegistry
                     NeowStructuredOutputKind.Potion, NeowCandidatePoolKind.Potions)
             },
             "ProjectLostCoffer");
+        values[BaseGameModelKeys.Relics.MassiveScroll] = Generic(
+            BaseGameModelKeys.Relics.MassiveScroll,
+            One("chosen-card", "多人牌选择结果", NeowStructuredEffectScope.SelectableOfferGroups,
+                NeowStructuredOutputKind.Card, NeowCandidatePoolKind.MultiplayerCards),
+            "MassiveScroll.AfterObtained");
         values[BaseGameModelKeys.Relics.Kaleidoscope] = Generic(
             BaseGameModelKeys.Relics.Kaleidoscope,
             new[]

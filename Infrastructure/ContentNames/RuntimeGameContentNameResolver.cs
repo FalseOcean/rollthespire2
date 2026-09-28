@@ -282,6 +282,7 @@ internal sealed class RuntimeGameContentNameResolver : IGameContentNameResolver
             [GameContentKind.Relic] = "MegaCrit.Sts2.Core.Models.RelicModel",
             [GameContentKind.Potion] = "MegaCrit.Sts2.Core.Models.PotionModel",
             [GameContentKind.Event] = "MegaCrit.Sts2.Core.Models.EventModel",
+            [GameContentKind.Encounter] = "MegaCrit.Sts2.Core.Models.EncounterModel",
             [GameContentKind.Act] = "MegaCrit.Sts2.Core.Models.ActModel"
         };
         MethodInfo[] candidates = modelDb.GetMethods(BindingFlags.Public | BindingFlags.Static)
@@ -369,6 +370,7 @@ internal sealed class RuntimeGameContentNameResolver : IGameContentNameResolver
             GameContentKind.Potion => "Potion",
             GameContentKind.Card => "Card",
             GameContentKind.Event => "Event",
+            GameContentKind.Encounter => "Encounter",
             GameContentKind.Act => "Act",
             _ => string.Empty
         };

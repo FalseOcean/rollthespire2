@@ -15,6 +15,9 @@ public static class LegacySearchCriteriaAdapter
     public static LegacySearchCriteriaProjection Project(CompiledSearch compiled)
     {
         ExactSearchEvaluationProjectionResult projected = CompiledSearchEvaluationProjector.Project(compiled);
+        if (compiled.NormalizedQuery.TransformationAggregate is not null)
+            return new LegacySearchCriteriaProjection(projected.Evaluation.ToLegacyFilter(), ProjectionFidelity.Unsupported,
+                ["TransformationAggregateCannotLowerToLegacyLeafFilter"]);
         return new LegacySearchCriteriaProjection(
             projected.Evaluation.ToLegacyFilter(),
             projected.Fidelity,

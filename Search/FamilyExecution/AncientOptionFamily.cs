@@ -46,7 +46,7 @@ internal sealed partial class AncientOptionFamily : IFamilyInvocation
     public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId, Plan.Capacity, [], "EventLocalExpectedWorkUnavailable");
     public FamilyConditionPerformanceProjection ConditionPerformance => ResolveConditionPerformance(false);
     public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compact) => !Plan.GpuSupported ? _cpu.Condition(compact) :
-        new(FamilyId, $"A.AncientOption.Gpu.EventLocal.{(compact ? "CompactAbi1" : "Dense")}.CanonicalAbi1Ready.20260907.v1",
+        new(FamilyId, $"A.AncientOption.Gpu.EventLocal.{(compact ? "CompactAbi1" : "Dense")}.CanonicalAbi1Ready.20260922.v2",
             "A.AncientOption.Neutral.20260907.v1", 1, "NoAcceptedWithinPathCurve;CanonicalAbi1Ready", usesGpu: true);
     public FamilyPerformanceObservation CapturePerformanceObservation()
     {

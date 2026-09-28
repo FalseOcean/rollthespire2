@@ -33,6 +33,27 @@ internal static class EventResultNumericPredicate
         {
             switch (condition.Kind)
             {
+                case EventResultConditionKind.TrialCase:
+                {
+                    var rng = new Beta110FastRng(EventSeed(rootHash, playerSlot, false, XxHash64.HashUtf8("TRIAL", 0)));
+                    if (rng.NextInt(3) != (int)condition.TrialCase!) return true;
+                    break;
+                }
+                case EventResultConditionKind.TinkerTimeTypeAndRider:
+                {
+                    var rng = new Beta110FastRng(EventSeed(rootHash, playerSlot, false, XxHash64.HashUtf8("TINKER_TIME", 0)));
+                    Span<int> types = stackalloc int[] { 0, 1, 2 };
+                    rng.UnstableShuffle(types);
+                    int type = (int)condition.TinkerCardType!;
+                    if (types[0] != type && types[1] != type) return true;
+                    if (condition.TinkerRider is { } rider)
+                    {
+                        Span<int> riders = stackalloc int[] { type * 3, type * 3 + 1, type * 3 + 2 };
+                        rng.UnstableShuffle(riders);
+                        if (riders[0] != (int)rider && riders[1] != (int)rider) return true;
+                    }
+                    break;
+                }
                 case EventResultConditionKind.TrashHeapGrabCard: needsTrashGrab = true; break;
                 case EventResultConditionKind.TrashHeapDiveRelic: needsTrashDive = true; break;
                 case EventResultConditionKind.FakeMerchantOfferedFakeRelic: needsFake = true; break;

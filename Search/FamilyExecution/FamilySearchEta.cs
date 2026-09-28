@@ -1,8 +1,10 @@
 using System.Globalization;
+using System.Text.Json;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.Predictability;
 using RolltheSpire2.Search.Runtime;
 using RolltheSpire2.Search.Selectivity;
+using RolltheSpire2.Search.Semantics;
 
 namespace RolltheSpire2.Search.FamilyExecution;
 
@@ -73,7 +75,7 @@ internal sealed record FamilySearchEtaProjectionV1(
                $"targetProbabilityWithinScanRange={Maybe(TargetProbabilityWithinScanRange)};" +
                $"targetFamilyPipelineMs={Maybe(TargetFamilyPipelineMs)};targetExactTailMs={Maybe(TargetExactTailMs)};" +
                $"targetStages={stages};missingEvidence={(MissingEvidence.Count == 0 ? "none" : string.Join('|', MissingEvidence.Select(San)))};" +
-               "steadyStateComposition=max(FamilyPipeline,ExactTail);sameBatchFamiliesOrdered=true;" +
+               "steadyStateComposition=max(FamilyPipeline,ExactTail)+min(FamilyPipeline,ExactTail)/ExpectedWindowCount;sameBatchFamiliesOrdered=true;" +
                $"crossBatchFamilyExactOverlap=true;startupIncluded={Plan.EstimatedSetupMilliseconds.HasValue};" +
                $"completeQuote={San(Plan.CompleteQuoteEvidence)};runtimeSurvivalLearning=false;searchAdmissionAffected=false";
     }
@@ -97,6 +99,7 @@ internal static class FamilySearchEtaProjectorV1
 
     private sealed record HorizonProjection(
         double? TotalMs,
+        double? SearchMs,
         double? FamilyPipelineMs,
         double? ExactTailMs,
         IReadOnlyList<FamilyEtaStageProjection> Stages,
@@ -171,7 +174,10 @@ internal static class FamilySearchEtaProjectorV1
         missing.AddRange(firstP99.MissingEvidence);
         missing.AddRange(target.MissingEvidence);
         string[] distinctMissing = Distinct(missing);
-        FamilySearchEtaStatus status = SearchTime(target).HasValue && SearchTime(firstMean).HasValue && SearchTime(firstP99).HasValue
+        bool searchReady = SearchTime(target).HasValue && SearchTime(firstMean).HasValue && SearchTime(firstP99).HasValue;
+        bool startupReady = request.CompiledSearch.Context.Party is null ||
+            target.TotalMs.HasValue && firstMean.TotalMs.HasValue && firstP99.TotalMs.HasValue;
+        FamilySearchEtaStatus status = searchReady && startupReady
             ? FamilySearchEtaStatus.Ready
             : distinctMissing.Any(e => e.StartsWith("FamilyHardwarePerformanceUnavailable:",StringComparison.Ordinal) ||
                 e.StartsWith("CompleteAllocationQuoteUnavailable:",StringComparison.Ordinal) ||
@@ -192,9 +198,7 @@ internal static class FamilySearchEtaProjectorV1
         };
     }
 
-    private static double? SearchTime(HorizonProjection horizon) =>
-        horizon.FamilyPipelineMs is double family && horizon.ExactTailMs is double exact
-            ? Math.Max(family, exact) : null;
+    private static double? SearchTime(HorizonProjection horizon) => horizon.SearchMs;
 
     private static HorizonProjection ProjectHorizon(
         double roots,
@@ -272,17 +276,22 @@ internal static class FamilySearchEtaProjectorV1
         double? exactTailMs = null;
         if (familyComplete && double.IsFinite(population))
         {
+            double effectiveExactWorkers = Math.Min(Math.Max(1, request.WorkerCount), Math.Max(1, population));
             if (population <= 0d)
             {
                 exactTailMs = 0d;
             }
             else if (liveExactMsPerAttempt is > 0d && double.IsFinite(liveExactMsPerAttempt.Value))
             {
-                exactTailMs = population * liveExactMsPerAttempt.Value / Math.Max(1, request.WorkerCount);
+                exactTailMs = population * liveExactMsPerAttempt.Value / effectiveExactWorkers;
             }
             else if (exactTiming is { Usable: true })
             {
-                exactTailMs = population * exactTiming.AverageExactMsPerAttempt / Math.Max(1, request.WorkerCount);
+                exactTailMs = population * exactTiming.AverageExactMsPerAttempt / effectiveExactWorkers;
+            }
+            else if (StandardMapExactCost.MillisecondsPerAttempt(request) is double mapExactMs)
+            {
+                exactTailMs = population * mapExactMs / effectiveExactWorkers;
             }
             else
             {
@@ -293,11 +302,21 @@ internal static class FamilySearchEtaProjectorV1
         bool setupKnown = plan.EstimateCanonicalMilliseconds is null ||
             plan.EstimatedSetupMilliseconds is >= 0 && double.IsFinite(plan.EstimatedSetupMilliseconds.Value);
         if (!setupKnown) missing.Add("CompleteAllocationSetupUnavailable");
-        double? total = familyComplete && exactTailMs.HasValue && setupKnown
-            ? Math.Max(familyPipelineMs, exactTailMs.Value) + (plan.EstimatedSetupMilliseconds ?? 0d)
-            : null;
+        double? search = null;
+        if (familyComplete && exactTailMs.HasValue)
+        {
+            double windows = Math.Max(1, Math.Ceiling(roots /
+                FamilyExecutionCoordinator.ResolveExecutionWindowSize(request, plan.OrderedFamilies)));
+            // The single window must finish filtering before its Exact work can
+            // start. Later windows overlap the bounded producer and consumer.
+            search = Math.Max(familyPipelineMs, exactTailMs.Value) +
+                Math.Min(familyPipelineMs, exactTailMs.Value) / windows;
+        }
+        double? total = search.HasValue && setupKnown
+            ? search.Value + (plan.EstimatedSetupMilliseconds ?? 0d) : null;
         return new HorizonProjection(
             total,
+            search,
             familyComplete ? familyPipelineMs : null,
             exactTailMs,
             stages,
@@ -333,7 +352,9 @@ internal static class FamilySearchEtaProjectorV1
     private static bool TryCeil(double roots, out long value)
     {
         value = 0L;
-        if (!(roots > 0d) || !double.IsFinite(roots) || roots > long.MaxValue) return false;
+        // long.MaxValue rounds to 2^63 as a double; that value cannot be cast
+        // back to a positive long. Reject it instead of wrapping to a tiny ETA.
+        if (!(roots > 0d) || !double.IsFinite(roots) || roots >= 9223372036854775808d) return false;
         value = Math.Max(1L, (long)Math.Ceiling(roots));
         return true;
     }
@@ -343,7 +364,7 @@ internal static class FamilySearchEtaProjectorV1
         value = 0L;
         if (!(probability > 0d && probability <= 1d) || !(confidence > 0d && confidence < 1d)) return false;
         if (probability >= 1d) { value = 1L; return true; }
-        double roots = Math.Log(1d - confidence) / double.LogP1(-probability);
+        double roots = Math.Log(1d - confidence) / SearchPredictabilityMath.LogMissProbability(probability);
         return TryCeil(roots, out value);
     }
 
@@ -356,15 +377,53 @@ internal static class FamilySearchEtaProjectorV1
 
 internal static class FamilyExactTimingDomains
 {
-    internal static SearchVerificationFamily Resolve(ExactSearchExecutionRequest request) =>
-        SearchPredictabilityVerificationStore.ResolveFamily(QueryDomains(request));
+    internal static bool HasQueryWork(SearchQuery query)
+    {
+        // A seat and its eligibility premises alone do not measure normal Exact work.
+        // Inspect the complete query so personal and map-only predicates are retained.
+        return query.Players.Any(p => !p.Offers.IsEmpty || p.SelectedOption is not null ||
+                p.Results.Count > 0 || HasQueryWork(p.Conditions)) ||
+            JsonSerializer.Serialize(query with { Players = [] }) != JsonSerializer.Serialize(SearchQuery.Empty);
+    }
+
+    internal static SearchVerificationFamily Resolve(ExactSearchExecutionRequest request)
+    {
+        if (request.CompiledSearch.Context.Party is not { } party)
+        {
+            if (request.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0)
+                return StandardMapExactCost.MapOnly(request.CompiledSearch.NormalizedQuery)
+                    ? SearchVerificationFamily.MapOnly
+                    : request.Evaluation.RequiresNormalCombatRewardDomain
+                        ? SearchVerificationFamily.MapMixedWithReward
+                        : SearchVerificationFamily.MapMixedWithoutReward;
+            return SearchPredictabilityVerificationStore.ResolveFamily(QueryDomains(request));
+        }
+        bool map = request.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0;
+        bool reward = request.CompiledSearch.NormalizedQuery.Players.Any(p => p.Conditions.HasCombatRewardConstraints);
+        return (party.Players.Count, map, reward) switch
+        {
+            (2, false, false) => SearchVerificationFamily.Party2,
+            (3, false, false) => SearchVerificationFamily.Party3,
+            (4, false, false) => SearchVerificationFamily.Party4,
+            (2, true, false) => SearchVerificationFamily.Party2Map,
+            (3, true, false) => SearchVerificationFamily.Party3Map,
+            (4, true, false) => SearchVerificationFamily.Party4Map,
+            (2, false, true) => SearchVerificationFamily.Party2Reward,
+            (3, false, true) => SearchVerificationFamily.Party3Reward,
+            (4, false, true) => SearchVerificationFamily.Party4Reward,
+            (2, true, true) => SearchVerificationFamily.Party2MapReward,
+            (3, true, true) => SearchVerificationFamily.Party3MapReward,
+            (4, true, true) => SearchVerificationFamily.Party4MapReward,
+            _ => throw new InvalidOperationException("PartyExactTimingPlayerCount")
+        };
+    }
 
     internal static ExactTimingDomain[] QueryDomains(ExactSearchExecutionRequest request)
     {
         var domains = new List<ExactTimingDomain>(4);
-        if (request.Evaluation.HasNeowConstraints) domains.Add(ExactTimingDomain.Neow);
+        if (request.Evaluation.HasNeowConstraints || request.Evaluation.TransformationAggregate is { UsesNeow: true }) domains.Add(ExactTimingDomain.Neow);
         if (request.Evaluation.RequiresRelicSequenceDomain) domains.Add(ExactTimingDomain.Relic);
-        if (request.Evaluation.RequiresWorldDomain) domains.Add(ExactTimingDomain.WorldEvent);
+        if (request.Evaluation.RequiresWorldDomain || request.Evaluation.TransformationAggregate is { UsesEvents: true }) domains.Add(ExactTimingDomain.WorldEvent);
         if (request.Evaluation.RequiresNormalCombatRewardDomain) domains.Add(ExactTimingDomain.CombatReward);
         return domains.ToArray();
     }

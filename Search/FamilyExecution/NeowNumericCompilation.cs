@@ -117,6 +117,13 @@ internal static class NeowNumericCompilation
             domain = Beta110FastDomain.ArcaneScrollOffer;
             authorityExact = catalog.CharacterRewardAuthorityExact && catalog.CharacterRewardPool.Rare.Length > 0;
         }
+        else if (condition.SourceRelicKey == BaseGameModelKeys.Relics.MassiveScroll &&
+                 IsExactSingle(condition, NeowStructuredEffectScope.SelectableOfferGroups, NeowStructuredOutputKind.Card))
+        {
+            kind = Beta110FastStructuredConditionKind.MassiveScrollOffer;
+            domain = Beta110FastDomain.MassiveScrollOffer;
+            authorityExact = catalog.CharacterRewardAuthorityExact && catalog.ColorlessRewardAuthorityExact && catalog.MultiplayerRewardPool.TotalCount >= 3;
+        }
         else if (condition.SourceRelicKey == BaseGameModelKeys.Relics.HeftyTablet &&
                  IsExactSingle(condition, NeowStructuredEffectScope.SelectableOfferGroups, NeowStructuredOutputKind.Card))
         {
@@ -255,6 +262,15 @@ internal static class NeowNumericCompilation
             targets[2],
             checked((byte)condition.OutputKeys.Count),
             condition.AllowDuplicateOutputs);
+        if (kind == Beta110FastStructuredConditionKind.KaleidoscopeIndependentOfferTargets &&
+            condition.KaleidoscopeGroupOrder == KaleidoscopeGroupOrderMode.ExactOrder)
+        {
+            if (condition.KaleidoscopePositionalSlots.Count != 2) return false;
+            ushort first = Beta110FastDenseId.Invalid, second = Beta110FastDenseId.Invalid;
+            if (condition.KaleidoscopePositionalSlots[0] is { } a && !catalog.TryGetDenseId(a, out first) ||
+                condition.KaleidoscopePositionalSlots[1] is { } b && !catalog.TryGetDenseId(b, out second)) return false;
+            compiled = compiled with { OrderedKaleidoscope = true, KaleidoscopeFirstTarget = first, KaleidoscopeSecondTarget = second };
+        }
         return true;
     }
 

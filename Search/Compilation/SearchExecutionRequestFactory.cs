@@ -246,6 +246,7 @@ public static class SearchExecutionRequestFactory
             .ToArray(),
         EventResultConditions = filter.EventResultConditions
             .Where(condition => condition.IsValid)
+            .Select(MorphicGroveQuerySemantics.Normalize)
             .Distinct()
             .OrderBy(condition => condition.Kind)
             .ThenBy(condition => condition.TargetKey.Serialized, StringComparer.Ordinal)
@@ -426,13 +427,13 @@ public static class SearchExecutionRequestFactory
             }
         }
         if (filter.CombatCardRewardSequence is { IsEmpty: false } cardSequence &&
-            (cardSequence.Count is < 1 or > 3 || cardSequence.Slots.Count != cardSequence.Count ||
+            (cardSequence.Count is < 1 or > 6 || cardSequence.Slots.Count != cardSequence.Count ||
              cardSequence.Slots.Any(key => key.HasValue && (!key.Value.IsValid || key.Value.Category != BaseGameModelKeys.Categories.Card))))
         {
             return "CombatCardRewardSequenceInvalid";
         }
         if (filter.CombatPotionRewardSequence is { IsEmpty: false } potionSequence &&
-            (potionSequence.Count is < 1 or > 3 || potionSequence.Slots.Count != potionSequence.Count ||
+            (potionSequence.Count is < 1 or > 6 || potionSequence.Slots.Count != potionSequence.Count ||
              potionSequence.Slots.Any(slot => !slot.IsValid)))
         {
             return "CombatPotionRewardSequenceInvalid";
@@ -737,7 +738,11 @@ public static class SearchExecutionRequestFactory
             "relicShopSequence=" + string.Join(";", filter.RelicShopSequenceConditions.Select(item =>
                 $"{item.Count}:{item.OrderMode}:{string.Join(">", item.Slots.Select(key => key?.Serialized ?? "*"))}")),
             "eventSequence=" + string.Join(";", filter.EventSequenceConditions.Select(item => $"{item.Act}:{item.Source}:{item.RangeMode}:{item.RangeValue}:{Keys(item.Keys)}")),
-            "eventResult=" + string.Join(";", filter.EventResultConditions.Select(item => $"{item.Kind}:{item.TargetKey.Serialized}")),
+            "eventResult=" + string.Join(";", filter.EventResultConditions.Select(item => $"{item.Kind}:{item.TargetKey.Serialized}" +
+                (item.TrialCase is { } trial ? ":case=" + trial : "") +
+                (item.TinkerCardType is { } type ? ":type=" + type + ":rider=" + item.TinkerRider : "") +
+                (item.MorphicGroveSecondCard is { } second ? ":second=" + second.Serialized : "") +
+                (item.MorphicGroveScenario is null ? "" : ":scenario=" + item.MorphicGroveScenario.Fingerprint))),
             "merchantColorless=" + string.Join(";", filter.MerchantColorlessConditions.Select(item => $"{item.MerchantOrdinal}:{item.Slot}:{item.TargetCardKey.Serialized}")),
             "merchantColorlessSequence=" + string.Join(";", filter.MerchantColorlessSequenceConditions.Select(item =>
                 $"{item.Count}:{item.OrderMode}:{item.Slot}:{string.Join(">", item.Slots.Select(key => key?.Serialized ?? "*"))}")),

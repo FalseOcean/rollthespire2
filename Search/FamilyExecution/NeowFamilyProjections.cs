@@ -182,7 +182,8 @@ internal sealed class NeowFamilyProjections
     private static bool IsBones(NeowSearchFilter filter) => filter.NeowRoute?.RouteRelicKey == BaseGameModelKeys.Relics.NeowsBones ||
         filter.RequireNeowsBones || !filter.BonesRelics.IsEmpty || filter.RequiredBonesCombination.Count > 0 || filter.RequiredBonesAcquisitionOrder.Count > 0;
 
-    private double IdentityProbability(NeowSearchFilter filter)
+    private double IdentityProbability(NeowSearchFilter filter) => IdentityProbability(_plan, filter);
+    internal static double IdentityProbability(NeowReplayPlan plan, NeowSearchFilter filter)
     {
         ulong Mask(IEnumerable<ModelKey> keys)
         {
@@ -203,7 +204,7 @@ internal sealed class NeowFamilyProjections
         {
             ulong ba = Mask(filter.BonesRelics.Any), bb = Mask(filter.BonesRelics.Ban);
             ulong br = Mask(filter.BonesRelics.All.Concat(filter.RequiredBonesCombination).Concat(filter.RequiredBonesAcquisitionOrder)) | capsules;
-            byte[] pool = _plan.Authority.BonesEligibleRelicIds;
+            byte[] pool = plan.Authority.BonesEligibleRelicIds;
             int accepted = 0;
             for (int i = 0; i < pool.Length; i++)
             for (int j = i + 1; j < pool.Length; j++)
@@ -212,14 +213,14 @@ internal sealed class NeowFamilyProjections
         }
         if (boneMass == 0) return 0;
         double mass = 0;
-        foreach (byte curse in _plan.Authority.EligibleCurseRelicIds)
+        foreach (byte curse in plan.Authority.EligibleCurseRelicIds)
         {
             int variants = curse == Beta110FastRelicCatalog.LargeCapsule ? 4 : 8;
             for (int variant = 0; variant < variants; variant++)
             {
                 var positive = new List<byte>();
                 foreach (byte source in NeowFamilyReplay.Positives)
-                    if (NeowLocalOperators.IsPositiveAllowed(source, curse, _plan.Authority)) positive.Add(source);
+                    if (NeowLocalOperators.IsPositiveAllowed(source, curse, plan.Authority)) positive.Add(source);
                 positive.Add((variant & 1) == 0 ? Beta110FastRelicCatalog.NutritiousOyster : Beta110FastRelicCatalog.StoneHumidifier);
                 positive.Add((variant & 2) == 0 ? Beta110FastRelicCatalog.NeowsTalisman : Beta110FastRelicCatalog.Pomander);
                 if (variants == 8) positive.Add((variant & 4) == 0 ? Beta110FastRelicCatalog.LavaRock : Beta110FastRelicCatalog.SmallCapsule);
@@ -227,7 +228,7 @@ internal sealed class NeowFamilyProjections
                 for (int i = 0; i < positive.Count; i++)
                 for (int j = i + 1; j < positive.Count; j++)
                     if (Fits(Beta110FastRelicCatalog.Bit(curse) | Beta110FastRelicCatalog.Bit(positive[i]) | Beta110FastRelicCatalog.Bit(positive[j]), any, all, ban)) accepted++;
-                mass += accepted * 2d / (positive.Count * (positive.Count - 1) * variants * _plan.Authority.EligibleCurseRelicIds.Length);
+                mass += accepted * 2d / (positive.Count * (positive.Count - 1) * variants * plan.Authority.EligibleCurseRelicIds.Length);
             }
         }
         return Math.Clamp(mass * boneMass, 0, 1);

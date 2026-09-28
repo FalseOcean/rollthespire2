@@ -18,9 +18,10 @@ internal static partial class RelicPhysicalPricing
             plan.Predicates.Length is < 1 or > 5 || plan.Predicates.Any(p => p.Lane > 2) ||
             plan.TrackedInitialPositions.Length is < 1 or > 12 ||
             !plan.Pool.BucketLengths.SequenceEqual(new[] {30,25,35,25,1,2,32,26,38,26})) return null;
+        bool smallCompact = !cpu && geometry.CompactInput && geometry.MeanInputPopulation is >= 64 and < 262144;
         if (cpu ? geometry.PrivateInput || geometry.PrivateOutput || geometry.CompactInput ||
                   geometry.MeanInputPopulation < 4096
-                : !FamilyPhysicalQuote.HasReferenceBackend() || geometry.MeanInputPopulation < 262144)
+                : !FamilyPhysicalQuote.HasReferenceBackend() || geometry.MeanInputPopulation < 262144 && !smallCompact)
             return null;
 
         double shuffle = 0, tracked = 0, predicates = 0;
@@ -31,7 +32,7 @@ internal static partial class RelicPhysicalPricing
             if (segment.Operation == FamilyAnalyticalOperation.PredicateProbe) predicates += segment.ExpectedContribution;
         }
         // Bounded interpolation region, including a second-lane rejection and
-        // high-output Ban holdout. No arbitrary-target or tiny-input extrapolation.
+        // high-output Ban holdout. No arbitrary-target or sub-64 input extrapolation.
         if (shuffle is < 143 or > 205 || tracked is < 25 or > 400 || predicates > 16 ||
             expected.FinalSurvival is not >= 0 or > .7) return null;
         bool coarse = tracked > 150 || predicates > 5 || plan.TrackedInitialPositions.Length > 6 || plan.Predicates.Length > 2;
@@ -48,14 +49,21 @@ internal static partial class RelicPhysicalPricing
             geometry.CompactInput ? 1.55 + .00085 * shuffle + .01175 * tracked :
                 .98 + .00254 * shuffle + .0101 * tracked;
         if (coarse) ns += Math.Max(0, predicates - 5) * (cpu ? 3 : .02);
-        // GPU reference fit excludes the existing .2ms submit/control edge.
+        // D3D12 compact matrix: underfilled dispatches have a floor, not full-window
+        // throughput. Charge 0.25ms of device/underfill work per nonempty window;
+        // the existing planner separately adds 0.15ms submission plus transport.
+        // Mean is modeled before execution, never the observed survivor count.
+        if (smallCompact) ns = Math.Max(ns, 250000 / geometry.MeanInputPopulation);
+        // GPU reference fit excludes the existing .15ms submit/control edge.
         // CPU measurements already own hash/partition/ordered output; no second edge.
-        return new("R.Relic", "R.OrdinaryWork.20260913.v1." + (cpu ? "P1" : geometry.CompactInput ? "Compact" : "Dense"),
+        return new("R.Relic", "R.OrdinaryWork.20260913.v1." + (cpu ? "P1" : smallCompact ? "CompactSmall.20260919.v1" : geometry.CompactInput ? "Compact" : "Dense"),
             ns, cpu ? 65536 : RelicFamilyGpuExecutor.Capacity, cpu ? null : 390,
             "FamilyCostClosure.20260913;Model=BoundedCoarse;metric=ns/ActualStageInput;Work=ExpectedShuffle+TrackedUpdates;" +
             "MeasuredSpecializationFirst;Reference=CurrentMain;ObservedSurvivalUsed=false;" +
             (coarse ? "ConservativeCoarse;BoundedTrackedLoopExtension;" : "ValidatedWorkRegion;") +
-            (cpu ? "Boundary=CpuCanonicalAbi1;Workers=1;MinInput=4096" : "Boundary=NumericalDeviceEmission;MinInput=262144;SubmitAndHostTransportExcluded"),
+            (cpu ? "Boundary=CpuCanonicalAbi1;Workers=1;MinInput=4096" : smallCompact
+                ? "Boundary=NumericalDeviceEmission;CompactMatrix.20260919;MinInput=64;MaxInputExclusive=262144;UnderfillFloorMs=0.25;SubmitAndHostTransportExcluded"
+                : "Boundary=NumericalDeviceEmission;MinInput=262144;SubmitAndHostTransportExcluded"),
             OutputElementBytes: cpu ? 8 : 4, OutputAlreadyOrdered: cpu,
             PublicTransportClass: cpu ? "CpuOrderedAbi1" : "Counted32");
     }

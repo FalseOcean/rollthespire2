@@ -58,7 +58,7 @@ internal sealed partial class NeowFamily : IFamilyInvocation
         _physical = new(request, FamilyId, "N.Neow.Cpu.LocalReplay.20260905.v1");
         _conditional = NeowReplayPlan.HasCapsule(request);
         if (plan.AuthoredUpgrades is { } upgrades)
-            RuntimeLog.TryBackgroundInfo($"nAuthoredUpgradeContinuation=true;scope=AuthoredOnly;hiddenWwpReplay=false;constants={string.Join(',', upgrades.Advances)};unknownConstant=-1;unknownRoute=IdentityOnlyExactRemainder;choicePolicy=AuthoredTakeOtherwiseSkip");
+            RuntimeLog.TryBackgroundInfo($"nAuthoredUpgradeContinuation=true;scope=AuthoredOnly;hiddenWwpReplay=false;constants={string.Join(',', upgrades.Advances)};unknownConstant=-1;unknownRoute={(plan.CapsuleUpgradeUpperBound >= 0 ? "BoundedDrawUnion" : "IdentityOnlyExactRemainder")};choicePolicy=AuthoredTakeOtherwiseSkip");
         RuntimeLog.TryBackgroundInfo($"nFamilyReady=true;coverage={string.Join(',', Coverage)};physical={(_composite is not null ? "NrTargetRankComposite" : _gpuPlan is null ? "CpuLocalReplay" : "GpuLocalDonor")};physicalIssue={physicalIssue};capsuleBagScratch=false;capsuleSemanticOwner=R;boundedBonesNr={_composite?.UsesBonesCheckpoint == true};exactOnly={string.Join(',', plan.ExactOnly)}");
     }
     public string FamilyId => "N.Neow";
@@ -67,9 +67,13 @@ internal sealed partial class NeowFamily : IFamilyInvocation
         NeowFamilyGpuExecutor.Capacity, _models.Full.Terms.Concat(_composite.Projection.Full.Terms),
         "CompositeConservativeFullEnvelope_NPlusR;ExpectedTargetRankReachUnpriced");
     public FamilySurvivalProjection Survival => ResolveSurvival(Empty);
-    public bool HasConditionalProjections => _conditional;
+    public bool HasConditionalProjections => _conditional || Search.Semantics.TransformationAggregateCondition.HasSharedNeow(_request.Evaluation);
     public FamilySurvivalProjection ResolveSurvival(IReadOnlySet<string> passedCoverage)
     {
+        if (Search.Semantics.TransformationAggregateCondition.HasSharedNeow(_request.Evaluation) && passedCoverage.Contains(TransformationAggregateFamily.Id))
+            return Search.Semantics.TransformationAggregateCondition.SharedNeowIdentityOnly(_request.Evaluation)
+                ? FamilySurvivalProjection.Resolved(FamilyId, 1, "SharedNIdentityAlreadyPassedByT")
+                : FamilySurvivalProjection.Unresolved(FamilyId, "T+N.AdditionalPredicateJointUnknown");
         if (_composite is null) return _models.Survival(passedCoverage);
         double? n = _models.Survival(Empty).SurvivalProbability;
         double? r = _composite.Projection.Survival(new HashSet<string> { FamilyId }).SurvivalProbability;

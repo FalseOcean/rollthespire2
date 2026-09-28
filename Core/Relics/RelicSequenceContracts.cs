@@ -41,6 +41,8 @@ public sealed record RelicSequenceLaneResult(
     /// eligibility filtering (for example Shop IsAllowedInShops).
     /// </summary>
     public int TotalCount { get; init; }
+    // Complete already-generated pull order for read-only overview presentation.
+    public IReadOnlyList<RelicSequenceEntryResult> FullEntries { get; init; } = [];
 
     /// <summary>
     /// Presentation-ready preview from the physical back of the same shuffled
@@ -72,6 +74,13 @@ public sealed record RelicSequencePredictionResult(
     EvidenceCode EvidenceCode,
     IReadOnlyList<PredictionDiagnostic> Diagnostics)
 {
+    /// <summary>
+    /// Initial front-to-back order of the shared grab bag used by treasure rooms.
+    /// Other relic sources may drain this bag before a chest is opened; these lanes
+    /// are not a prediction of the relic awarded by each Act's chest.
+    /// </summary>
+    public IReadOnlyList<RelicSequenceLaneResult> TreasureRoomLanes { get; init; } = [];
+
     public static RelicSequencePredictionResult Unknown(
         RuntimeProfileId profileId,
         string issueCode,

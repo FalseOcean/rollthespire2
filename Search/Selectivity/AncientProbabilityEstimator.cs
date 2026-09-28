@@ -25,7 +25,8 @@ internal static class AncientProbabilityEstimator
     public static JointSelectivityResult? Estimate(SearchSelectivityInput plan)
     {
         ArgumentNullException.ThrowIfNull(plan);
-        AncientSearchBranchCondition[] rows = ProbabilitySemanticProjection.From(plan).NumericalFilter.AncientBranchConditions
+        var filter = ProbabilitySemanticProjection.From(plan).NumericalFilter;
+        AncientSearchBranchCondition[] rows = filter.AncientBranchConditions
             .Where(branch => branch.IsValid)
             .ToArray();
         bool hasLegacy = ProbabilitySemanticProjection.From(plan).NumericalFilter.AncientIdentityFilters.Any(item => !item.IsEmpty) ||
@@ -34,16 +35,22 @@ internal static class AncientProbabilityEstimator
         if (rows.Length == 0)
         {
             if (!hasLegacy) return null;
-            SearchSelectivityEstimate legacy = AncientIdentityProbabilityEstimator.Estimate(plan);
-            return FromLegacyIdentity(legacy);
+            if (!filter.AncientOptionFilters.Any(f => !f.IsEmpty) && !filter.AncientSeaGlassTargetFilters.Any(f => !f.IsEmpty))
+                return FromLegacyIdentity(AncientIdentityProbabilityEstimator.Estimate(plan));
         }
-        if (hasLegacy)
+        // Legacy unscoped sets apply to whichever identity appears in that Act.
+        // Enumerate the same parent alternatives, then conjoin their visible
+        // offer predicates; never price a global option marginal independently.
+        var legacyActs = filter.AncientIdentityFilters.Concat(filter.AncientOptionFilters).Concat(filter.AncientSeaGlassTargetFilters)
+            .Where(f => !f.IsEmpty).Select(f => f.Act).Distinct().Where(act => !rows.Any(r => r.Act == act)).ToArray();
+        if (legacyActs.Length > 0)
         {
-            return JointSelectivityResult.Unpriced(
-                "Probability.Ancient.MixedLegacyAndBranchContracts",
-                "The current Search UI uses row-scoped Ancient branches. A query mixing those branches with superseded global Ancient filters is retained for source compatibility but is not repriced by the consolidated authority.",
-                "Parent-scoped normalization is intentionally limited to one contract family.",
-                new[] { "AncientLegacyContract" });
+            var g = plan.Authority.WorldAuthority?.Beta109Generation;
+            if (g is null) return JointSelectivityResult.Unpriced("Probability.Ancient.AuthorityMissing",
+                "Legacy option sets require the captured parent Ancient catalog.", "No guessed parent pool.");
+            rows = rows.Concat(legacyActs.SelectMany(act => g.OrderedActCatalog.Where(a => a.Act == act)
+                .SelectMany(a => a.OrderedAncients).Concat(g.SharedAncients).Distinct()
+                .Select(key => new AncientSearchBranchCondition(act, key, [], [])))).ToArray();
         }
 
         ProbabilitySemanticView semantic = ProbabilitySemanticProjection.From(plan);
@@ -66,8 +73,8 @@ internal static class AncientProbabilityEstimator
             }
         }
 
-        bool act2Darv = rows.Any(row => row.Act == 2 && string.Equals(row.AncientKey.Entry, "DARV", StringComparison.Ordinal));
-        bool act3Darv = rows.Any(row => row.Act == 3 && string.Equals(row.AncientKey.Entry, "DARV", StringComparison.Ordinal));
+        bool act2Darv = filter.AncientBranchConditions.Any(row => row.Act == 2 && string.Equals(row.AncientKey.Entry, "DARV", StringComparison.Ordinal));
+        bool act3Darv = filter.AncientBranchConditions.Any(row => row.Act == 3 && string.Equals(row.AncientKey.Entry, "DARV", StringComparison.Ordinal));
         if (act2Darv && act3Darv && !semantic.HasRelation(SemanticRelationKind.SharedState, SemanticFactKind.AncientIdentity, SemanticFactKind.AncientIdentity))
         {
             return JointSelectivityResult.Unpriced(
@@ -104,19 +111,24 @@ internal static class AncientProbabilityEstimator
                 new[] { "RuntimeEligibleAncientCatalog", "SharedAncientAssignment" });
         }
 
-        var localByAct = new Dictionary<int, Beta109ActGenerationSnapshot>();
+        var localByAct = new Dictionary<int, (Beta109ActGenerationSnapshot Snapshot, double Weight)[]>();
         foreach (int act in acts)
         {
-            if (!SearchSelectivityEstimator.TryResolveActAuthorityForSelectivity(
-                    generation, act, out Beta109ActGenerationSnapshot? snapshot, out string resolution) || snapshot is null)
+            if (SearchSelectivityEstimator.TryResolveActAuthorityForSelectivity(generation, act, out var single, out _) && single is not null)
             {
-                return JointSelectivityResult.Unpriced(
-                    "Probability.Ancient.ActVariantUnresolved:" + act,
-                    "Ancient probability currently requires one exact Runtime Eligible Act Variant for each constrained Ancient Act.",
-                    "Act" + act + " resolution=" + resolution,
-                    new[] { "Act" + act + ":VariantAuthority" });
+                localByAct[act] = [(single, 1d)];
+                continue;
             }
-            localByAct[act] = snapshot;
+            var groups = generation.ActSelectionGroups.Where(g => g.Act == act).ToArray();
+            if (groups.Length != 1 || !groups[0].EligibilityAndOrderExact ||
+                groups[0].EligibleActsInSourceOrder.Count == 0 || groups[0].SelectionMode == Beta109ActSelectionMode.Unsupported)
+                return JointSelectivityResult.Unpriced("Probability.Ancient.ActVariantAuthorityMissing", "Act variant priors unavailable.", "No guessed variant weights.");
+            var keys = groups[0].SelectionMode == Beta109ActSelectionMode.DeterministicFirst
+                ? groups[0].EligibleActsInSourceOrder.Take(1).ToArray() : groups[0].EligibleActsInSourceOrder.ToArray();
+            var variants = keys.Select(key => generation.OrderedActCatalog.FirstOrDefault(a => a.ActKey == key)).ToArray();
+            if (variants.Any(v => v is null || !v.HasExactGenerationInputs))
+                return JointSelectivityResult.Unpriced("Probability.Ancient.ActVariantCatalogMissing", "An eligible variant lacks its pool.", "Missing branches are not renormalized away.");
+            localByAct[act] = variants.Select(v => (v!, 1d / variants.Length)).ToArray();
         }
 
         var policiesByAct = new Dictionary<int, Dictionary<ModelKey, BranchPolicy>>();
@@ -130,23 +142,22 @@ internal static class AncientProbabilityEstimator
                          .GroupBy(row => row.AncientKey, ModelKeyComparer.Instance))
             {
                 AncientSearchBranchCondition[] sameParent = identityRows.ToArray();
-                bool unrestricted = sameParent.Any(row => row.OptionAny.Count == 0 && row.SeaGlassTargetAny.Count == 0);
+                var options = filter.AncientOptionFilters.Where(f => f.Act == act && !f.IsEmpty).Select(f => f.Keys).ToArray();
+                var seaTargets = filter.AncientSeaGlassTargetFilters.Where(f => f.Act == act && !f.IsEmpty).Select(f => f.Keys).ToArray();
+                if (!filter.AncientIdentityFilters.Where(f => f.Act == act).All(f => PartyInitialQuery.Matches(f.Keys, [identityRows.Key])))
+                {
+                    policies[identityRows.Key] = new BranchPolicy(identityRows.Key, 0d, null, false);
+                    continue;
+                }
+                bool unrestricted = options.Length == 0 && seaTargets.Length == 0 && sameParent.Any(row => row.OptionAny.Count == 0 && row.SeaGlassTargetAny.Count == 0);
                 if (unrestricted)
                 {
                     policies[identityRows.Key] = new BranchPolicy(identityRows.Key, 1d, null, true);
                     continue;
                 }
 
-                ModelKey[] options = sameParent.SelectMany(row => row.OptionAny)
-                    .Where(key => key.IsValid)
-                    .Distinct(ModelKeyComparer.Instance)
-                    .ToArray();
-                ModelKey[] seaTargets = sameParent.SelectMany(row => row.SeaGlassTargetAny)
-                    .Where(key => key.IsValid)
-                    .Distinct(ModelKeyComparer.Instance)
-                    .ToArray();
-                var merged = new AncientSearchBranchCondition(act, identityRows.Key, options, seaTargets);
-                SearchSelectivityEstimate conditional = AncientOptionProbabilityEstimator.EstimateConditional(plan, merged);
+                SearchSelectivityEstimate conditional = AncientOptionProbabilityEstimator.EstimateConditionalConjunction(
+                    plan, act, identityRows.Key, sameParent, options, seaTargets);
                 if (!conditional.IsPriced || !conditional.Probability.HasValue)
                 {
                     unknown.Add($"Act{act}:{identityRows.Key.Serialized}:{conditional.EvidenceCode}");
@@ -285,24 +296,19 @@ internal static class AncientProbabilityEstimator
             double p = 1d;
             foreach (int act in acts)
             {
-                var pool = localByAct[act].OrderedAncients.Where(key => key.IsValid).ToList();
-                if (assignedByAct.TryGetValue(act, out ulong subset))
+                double actAcceptance = 0;
+                foreach (var (snapshot, weight) in localByAct[act])
                 {
-                    for (int index = 0; index < shared.Length; index++)
-                    {
-                        if ((subset & (1UL << index)) != 0UL) pool.Add(shared[index]);
-                    }
+                    var pool = snapshot.OrderedAncients.Where(key => key.IsValid).ToList();
+                    if (assignedByAct.TryGetValue(act, out ulong subset))
+                        for (int index = 0; index < shared.Length; index++)
+                            if ((subset & (1UL << index)) != 0UL) pool.Add(shared[index]);
+                    if (pool.Count == 0) continue;
+                    var policies = policiesByAct[act];
+                    actAcceptance += weight * pool.Sum(candidate => policies.TryGetValue(candidate, out var policy)
+                        ? policy.ConditionalAcceptance : 0d) / pool.Count;
                 }
-                if (pool.Count == 0) return 0d;
-
-                Dictionary<ModelKey, BranchPolicy> policies = policiesByAct[act];
-                double acceptedMass = 0d;
-                foreach (ModelKey candidate in pool)
-                {
-                    if (policies.TryGetValue(candidate, out BranchPolicy? policy) && policy is not null)
-                        acceptedMass += policy.ConditionalAcceptance;
-                }
-                p *= acceptedMass / pool.Count;
+                p *= actAcceptance;
                 if (p == 0d) return 0d;
             }
             return p;

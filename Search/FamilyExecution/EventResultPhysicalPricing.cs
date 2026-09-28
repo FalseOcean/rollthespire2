@@ -29,9 +29,40 @@ internal static class EventResultPhysicalPricing
             OutputAlreadyOrdered:true,PublicTransportClass:"CpuOrderedAbi1");
     }
 
-    internal static PrivateOrdinalAllocationPricing.Work LegacyEwWork => new(.85, 1, 1 << 20);
+    internal static PrivateOrdinalAllocationPricing.Work? LegacyEwWork(EventResultFamilyPlan plan) =>
+        plan.HasMorphic || plan.HasNewWhitelist ? null : new(.85, 1, 1 << 20);
     internal static FamilyPhysicalQuote? Quote(EventResultFamilyPlan plan, FamilyPhysicalQuoteRequest geometry)
-        => QuoteMeasured(plan, geometry) ?? QuoteModel(plan, geometry);
+        => QuoteMeasured(plan, geometry) ?? QuoteModel(plan, geometry) ?? QuoteNew(plan, geometry);
+
+    private static FamilyPhysicalQuote? QuoteNew(EventResultFamilyPlan plan, FamilyPhysicalQuoteRequest g)
+    {
+        if (!plan.GpuSupported || !FamilyPhysicalQuote.AdmittedRequest(g) ||
+            !(plan.HasMorphic || plan.HasNewWhitelist) || plan.Conditions.Length is < 1 or > 16) return null;
+        var device = Runtime.SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity();
+        if (device.RenderingBackend is not ("d3d12" or "vulkan") ||
+            !device.GpuIdentity.Contains("RTX 4060 Laptop GPU", StringComparison.OrdinalIgnoreCase)) return null;
+        int transforms = plan.Conditions.Count(c => c.Kind is
+            EventResultConditionKind.MorphicGroveGroupInitialBasicsContains or
+            EventResultConditionKind.SymbioteInitialBasicTransform or
+            EventResultConditionKind.AromaOfChaosInitialBasicTransform or
+            EventResultConditionKind.WhisperingHollowInitialBasicTransform or
+            EventResultConditionKind.TrialNondescriptInitialBasicsContains);
+        int comparisons = plan.Conditions.Length;
+        // The same event-local RNG/pool body serves the five closed transform
+        // forms. Trial/Tinker scalar additions pay bounded extra comparisons;
+        // public transport remains in the caller's existing quote composition.
+        double ns = 1 + .25 * transforms + .08 * comparisons;
+        double floor = device.RenderingBackend == "vulkan" ? 6.5 : 4.2;
+        double setup = device.RenderingBackend == "vulkan" ? 30 : 100;
+        return new("E.EventResult", "E.WhitelistClosed.20260923.v1.T" + transforms + ".P" + comparisons,
+            ns, plan.Capacity, setup,
+            "LocalMeasuredSingleStage;RTX4060Laptop;Backend=" + device.RenderingBackend +
+            ";PartySlot1SameShaderSource;FiveTransformForms262144Roots;" +
+            "TrialTinkerScalarComparisonEstimated;Model=BoundedCoarse;" +
+            "FixedSubmitSyncFloorSeparateFromNumericalAndPublicPayload",
+            OutputElementBytes: 4, PublicTransportClass: "Counted32")
+        { FixedWindowMilliseconds = floor, LocalCostSource = "LocalMeasurement" };
+    }
 
     private static FamilyPhysicalQuote? QuoteMeasured(EventResultFamilyPlan plan, FamilyPhysicalQuoteRequest geometry)
     {
@@ -56,6 +87,7 @@ internal static class EventResultPhysicalPricing
     }
 
     private static bool ModelSupported(EventResultFamilyPlan plan) => plan.GpuSupported &&
+        !plan.HasMorphic && !plan.HasNewWhitelist && // New operators cannot inherit old measured quotes.
         plan.PlayerSlot == 0 && plan.Conditions.Length is >= 1 and <= 8 &&
         plan.Authority.UnlockedCharacterCardPoolKeys.Count == 5;
 
@@ -75,6 +107,7 @@ internal static class EventResultPhysicalPricing
 
     internal static FamilyPhysicalQuote? QuoteCpu(ExactSearchExecutionRequest request, EventResultFamilyPlan plan, FamilyPhysicalQuoteRequest g)
     {
+        if (QuoteCpuNew(request, plan, g) is { } newQuote) return newQuote;
         if (!request.Authority.CanUseCurrentModel || request.Authority.PlayersCount != 1 ||
             !ModelSupported(plan) || !FamilyPhysicalQuote.AdmittedRequest(g) || g.CompactInput ||
             g.PrivateInput || g.PrivateOutput || g.MeanInputPopulation < 4096) return null;
@@ -90,5 +123,35 @@ internal static class EventResultPhysicalPricing
             "FamilyCostClosure.20260913;Model=BoundedCoarse;Workers=1;MinInput=4096;" +
             "CpuCanonicalAbi1;metric=ns/ActualStageInput;" + (plan.Conditions.Length > 2 ? "ConservativeCoarse" : "ValidatedOperatorRegion"), OutputElementBytes: 8,
             OutputAlreadyOrdered: true, PublicTransportClass: "CpuOrderedAbi1");
+    }
+
+    private static FamilyPhysicalQuote? QuoteCpuNew(ExactSearchExecutionRequest request,
+        EventResultFamilyPlan plan, FamilyPhysicalQuoteRequest g)
+    {
+        if (!(plan.HasMorphic || plan.HasNewWhitelist) || !plan.GpuSupported ||
+            request.Authority.PlayersCount != 1 || !request.Authority.CanUseCurrentModel ||
+            !FamilyPhysicalQuote.AdmittedRequest(g) || g.PrivateInput || g.PrivateOutput ||
+            plan.Conditions.Length is < 1 or > 16) return null;
+        double operators = plan.Conditions.Sum(c => c.Kind switch
+        {
+            EventResultConditionKind.MorphicGroveGroupInitialBasicsContains => 35,
+            EventResultConditionKind.SymbioteInitialBasicTransform or
+                EventResultConditionKind.AromaOfChaosInitialBasicTransform or
+                EventResultConditionKind.WhisperingHollowInitialBasicTransform or
+                EventResultConditionKind.TrialNondescriptInitialBasicsContains => 20,
+            EventResultConditionKind.FakeMerchantOfferedFakeRelic => 120,
+            EventResultConditionKind.ColorfulPhilosophersOfferedColor => 360,
+            _ => 20
+        });
+        double ns = 30 + operators + (g.CompactInput ? 17 : 0);
+        return new("E.EventResult", "E.WhitelistClosed.20260923.v1.P1", ns,
+            65536, 0,
+            "LocalMeasuredCpuSingleTransform;Beta111PartySlot1SameNumericalBody;" +
+            "8192RootCanonicalAbi1;Morphic60nsOthers50ns;" +
+            "MultiOperatorSumIsConservativeEnvelope;CompactOrdinalCost17ns;" +
+            "Workers1;NoObservedSurvivalFit",
+            OutputElementBytes: 8, OutputAlreadyOrdered: true,
+            PublicTransportClass: "CpuOrderedAbi1")
+        { FixedWindowMilliseconds = .002 };
     }
 }

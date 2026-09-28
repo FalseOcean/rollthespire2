@@ -10,6 +10,35 @@ internal sealed record GeneratedCard(NeowEffectCardSnapshot Card, bool Upgraded)
 
 internal static class NeowRewardGenerator
 {
+    internal static IReadOnlyList<NeowEffectRelicSnapshot> BuildOrderedRelicBag(
+        IRuntimeProfile profile, ulong rootHash, Core.Authority.RuntimeContextAuthoritySnapshot owner)
+    {
+        var effects = owner.EffectAuthority ?? throw new InvalidOperationException("RelicBag.EffectAuthorityMissing");
+        if (owner.PlayersCount == 1)
+            return BuildOrderedRelicBag(profile, rootHash, effects.SharedRelicPoolSource!, effects.CharacterRelicPoolSource!);
+        var party = owner.WorldAuthority?.Beta109Generation;
+        if (party is not { HasExactFixedParty: true } || party.PersonalPlayerSlot != owner.PlayerSlotIndex)
+            throw new InvalidOperationException("RelicBag.OrderedPartyAuthorityMissing");
+        var catalog = effects.SharedRelicPoolSource!.Concat(effects.CharacterRelicPoolSource!)
+            .DistinctBy(r => r.RelicKey).ToDictionary(r => r.RelicKey);
+        var rng = new Xoshiro256StarStar(profile.DeriveNamedStreamSeed(rootHash, "up_front"));
+        foreach (var bucket in party.SharedRelicBuckets)
+        {
+            var shared = bucket.OrderedRelics.ToList();
+            rng.UnstableShuffle(shared);
+        }
+        var result = new List<NeowEffectRelicSnapshot>();
+        for (int slot = 0; slot <= owner.PlayerSlotIndex; slot++)
+            foreach (var bucket in party.PartyRelicBuckets[slot])
+            {
+                var keys = bucket.OrderedRelics.ToList();
+                rng.UnstableShuffle(keys);
+                if (slot == owner.PlayerSlotIndex)
+                    foreach (var key in keys) result.Add(catalog[key] with { BagOrder = result.Count });
+            }
+        return result;
+    }
+
     // Root-specific RelicGrabBag replay belongs to prediction, not Search admission.
     internal static IReadOnlyList<NeowEffectRelicSnapshot> BuildOrderedRelicBag(
         IRuntimeProfile profile,

@@ -160,7 +160,11 @@ internal static class RelicPoolCompilation
         bool supportedSeedBranch =
             generation.RunSeedHashKind == Beta109RunSeedHashKind.ModernXxHash64 &&
             generation.OldSeedBranchStatus == Beta109OldSeedBranchStatus.NewSeedHashed;
-        if (!(sourceAuthorityUsable || authority.UsesBestEffortModel) || !singleplayerAuthority || !supportedSeedBranch ||
+        bool partyAuthority = generation.HasExactFixedParty && generation.ModeFactsExact && generation.IsMultiplayerExact &&
+            authority.PlayersCount == generation.PlayerCount && authority.PlayerSlotIndex == generation.PersonalPlayerSlot &&
+            generation.PersonalPlayerSlot >= 0 && generation.PersonalPlayerSlot < generation.PlayerCount &&
+            generation.PartyRelicBuckets.Take(generation.PersonalPlayerSlot).SelectMany(b => b).All(IsBucketExact);
+        if (!(sourceAuthorityUsable || authority.UsesBestEffortModel) || !(singleplayerAuthority || partyAuthority) || !supportedSeedBranch ||
             !generation.DirectSourceAudited || !generation.NoUnknownHooksOrModifiers && !authority.UsesBestEffortModel)
         {
             snapshot = Missing("UnsupportedRelicRuntimeAuthorityOrHooks");
@@ -185,10 +189,12 @@ internal static class RelicPoolCompilation
             return false;
         }
 
-        int bucketCount = generation.SharedRelicBuckets.Count + generation.PlayerRelicBuckets.Count;
-        int totalEntries = generation.SharedRelicBuckets.Sum(bucket => bucket.OrderedEntries.Count) +
+        var prefixBuckets = generation.SharedRelicBuckets.Concat(partyAuthority
+            ? generation.PartyRelicBuckets.Take(generation.PersonalPlayerSlot).SelectMany(b => b) : []).ToArray();
+        int bucketCount = prefixBuckets.Length + generation.PlayerRelicBuckets.Count;
+        int totalEntries = prefixBuckets.Sum(bucket => bucket.OrderedEntries.Count) +
                            generation.PlayerRelicBuckets.Sum(bucket => bucket.OrderedEntries.Count);
-        int maxBucketLength = generation.SharedRelicBuckets.Concat(generation.PlayerRelicBuckets)
+        int maxBucketLength = prefixBuckets.Concat(generation.PlayerRelicBuckets)
             .Max(bucket => bucket.OrderedEntries.Count);
         if (bucketCount > MaximumBucketCount ||
             totalEntries > MaximumTotalRelicEntries ||
@@ -199,7 +205,7 @@ internal static class RelicPoolCompilation
             return false;
         }
 
-        foreach (Beta109RelicBucketSnapshot bucket in generation.SharedRelicBuckets.Concat(generation.PlayerRelicBuckets))
+        foreach (Beta109RelicBucketSnapshot bucket in prefixBuckets.Concat(generation.PlayerRelicBuckets))
         {
             foreach (Beta109RelicBucketEntrySnapshot entry in bucket.OrderedEntries)
             {
@@ -226,7 +232,7 @@ internal static class RelicPoolCompilation
 
         int entryOffset = 0;
         int bucketIndex = 0;
-        foreach (Beta109RelicBucketSnapshot bucket in generation.SharedRelicBuckets)
+        foreach (Beta109RelicBucketSnapshot bucket in prefixBuckets)
         {
             WriteBucket(bucket, Beta110RelicBucketScope.Shared, bucketIndex, ref entryOffset,
                 denseByKey, denseEntries, entryFlags, offsets, lengths, scopes, kinds, directions,

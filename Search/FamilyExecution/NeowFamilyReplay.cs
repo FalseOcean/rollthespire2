@@ -91,13 +91,25 @@ internal static class NeowFamilyReplay
         if (!NeowLocalOperators.RequiredStructuredSourcesPresent(plan.StructuredConditions, first, second)) return false;
         int firstAdvance = plan.AuthoredUpgrades?.Advance(first, 255) ?? 0;
         int secondAdvance = plan.AuthoredUpgrades?.Advance(second, first) ?? 0;
-        // A statically unclosed mandatory delta cannot justify local rejection.
-        // Identity still filters; the complete committed route remains Exact-owned.
-        if (firstAdvance < 0 || secondAdvance < 0) return true;
-        var rewards = plan.Bones ? afterBones : new Beta110FastRng(unchecked(root + (ulong)plan.Authority.PlayerSlotIndex + RewardsHash));
+        if ((firstAdvance < 0 || secondAdvance < 0) && plan.CapsuleUpgradeUpperBound < 0) return true;
+        var arrivals = plan.SharedArrivals.Length == 0 ? [(plan.SharedNicheDraws, plan.SharedPotionDraws)] : plan.SharedArrivals;
+        foreach (var arrival in arrivals)
+        for (int da = firstAdvance < 0 ? 0 : firstAdvance; da <= (firstAdvance < 0 ? plan.CapsuleUpgradeUpperBound : firstAdvance); da++)
+        for (int db = secondAdvance < 0 ? 0 : secondAdvance; db <= (secondAdvance < 0 ? plan.CapsuleUpgradeUpperBound : secondAdvance); db++)
+            if (RouteAtArrival(root, plan, first, second, afterBones, arrival.Item1, arrival.Item2, da, db)) return true;
+        return false;
+    }
+
+    private static bool RouteAtArrival(ulong root, NeowReplayPlan plan, byte first, byte second,
+        Beta110FastRng afterBones, int nicheDraws, int potionDraws, int firstAdvance, int secondAdvance)
+    {
+        var rewards = plan.Bones ? afterBones
+            : new Beta110FastRng(unchecked(root + (ulong)plan.Authority.PlayerSlotIndex + RewardsHash));
         var niche = new Beta110FastRng(unchecked(root + NicheHash));
         var transformations = new Beta110FastRng(unchecked(root + (ulong)plan.Authority.PlayerSlotIndex + TransformationsHash));
         var potions = new Beta110FastRng(unchecked(root + PotionHash));
+        for (int i = 0; i < nicheDraws; i++) niche.NextInt(2);
+        for (int i = 0; i < potionDraws; i++) potions.NextInt(2);
         Span<byte> matched = stackalloc byte[plan.StructuredConditions.Length]; matched.Clear();
         bool rewardsNeeded = (plan.EnabledDomains & ~(Beta110FastDomain.FinalCurse | Beta110FastDomain.NewLeafTransform |
             Beta110FastDomain.LeafyPoulticeTransforms | Beta110FastDomain.PhialHolsterPotions)) != 0;

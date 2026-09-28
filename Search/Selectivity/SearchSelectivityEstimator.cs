@@ -146,6 +146,8 @@ internal static class SearchSelectivityEstimator
     private static SearchSelectivityEstimate EstimateNeow(SearchSelectivityInput plan)
     {
         NeowSearchFilter filter = ProbabilitySemanticProjection.From(plan).NumericalFilter;
+        if (plan.Authority.PlayersCount > 1)
+            return NeowStructuredEffectProbabilityEstimator.EstimatePartyOpening(plan);
         if (filter.StructuredNeowEffects.Any(condition => !condition.IsEmpty))
             return NeowStructuredEffectProbabilityEstimator.Estimate(plan);
 
@@ -196,49 +198,17 @@ internal static class SearchSelectivityEstimator
                 });
         }
 
-        if (IsSingleLooseNeowIdentity(filter) && filter.NeowRoute is { IsValid: true } route)
+        if (IsSingleLooseNeowIdentity(filter) || !filter.NeowRelics.IsEmpty &&
+            filter.NeowRoute is null && filter.StructuredNeowEffects.Count == 0 && filter.EffectOutputConditions.Count == 0 &&
+            !filter.RequireNeowsBones && !filter.RequireSmallCapsule && !filter.RequireLargeCapsule &&
+            !filter.RequireWhetstone && !filter.RequireWarPaint && filter.RequiredFinalCurse is null && filter.BannedFinalCurses.Count == 0)
         {
-            if (!ModernNeowIdentityPredictor.TryGetEligibleCursePool(plan.Authority, out IReadOnlyList<ModelKey> cursePool))
-            {
-                return SearchSelectivityEstimate.Unpriced(
-                    "P5.Neow.CursePool.AuthorityMissing",
-                    "Exact eligible Neow curse-pool membership is unavailable.");
-            }
-            if (!cursePool.Contains(route.RouteRelicKey))
-            {
-                if (!ModernNeowIdentityPredictor.TryEstimatePositiveOfferProbability(
-                        plan.Authority, route.RouteRelicKey, out double positiveProbability, out string positiveEvidence))
-                {
-                    return SearchSelectivityEstimate.Unpriced(
-                        "Probability.Neow.PositiveRoute.AuthorityMissing",
-                        "Positive Neow pricing requires the same exact eligibility facts used by the Production identity analyzer.",
-                        SearchSelectivityConfidence.Low,
-                        SearchSelectivityMethod.ConditionalChain,
-                        SearchSelectivityCoverage.ExactRequestedPredicate,
-                        SearchSelectivityDependencyClass.RouteDependent);
-                }
-                return SearchSelectivityEstimate.Exact(
-                    positiveProbability,
-                    SearchSelectivityMethod.ConditionalChain,
-                    SearchSelectivityCoverage.ExactRequestedPredicate,
-                    SearchSelectivityDependencyClass.AssumedIndependent,
-                    "Probability.Authority.NeowPositiveCurseMixture",
-                    $"Exact positive-offer marginal from curse-conditioned pool construction and binary-slot enumeration; {positiveEvidence}.",
-                    new[]
-                    {
-                        "PositivePool is conditioned on the selected Curse before the two visible positives are taken.",
-                        "CrossDomainRelation=AssumedIndependentUnlessStructuralDependencyRegistered"
-                    });
-            }
-
-            return SearchSelectivityEstimate.Exact(
-                1d / cursePool.Count,
-                SearchSelectivityMethod.AuthorityPoolMembership,
-                SearchSelectivityCoverage.ExactRequestedPredicate,
-                SearchSelectivityDependencyClass.AssumedIndependent,
-                "P5.Authority.NeowEligibleCursePool",
-                $"One requested Neow curse identity over {cursePool.Count} eligible curse identities.",
-                new[] { "CrossDomainRelation=AssumedIndependentUnlessStructuralDependencyRegistered" });
+            if (!NeowStructuredEffectProbabilityEstimator.TryTopLevelRouteProbability(plan, filter.NeowRoute?.RouteRelicKey ?? default,
+                out double probability, out string evidence))
+                return SearchSelectivityEstimate.Unpriced("Probability.Neow.OfferJointUnavailable", "Opening offer authority missing.");
+            return SearchSelectivityEstimate.Exact(probability, SearchSelectivityMethod.ConditionalChain,
+                SearchSelectivityCoverage.ExactRequestedConjunction, SearchSelectivityDependencyClass.StructuralDependence,
+                "Probability.Neow.CompleteOffer", evidence);
         }
 
         return SearchSelectivityEstimate.Unpriced(
@@ -305,7 +275,9 @@ internal static class SearchSelectivityEstimator
                 "Neow's Bones is absent from the exact eligible curse pool.");
         }
 
-        double routeProbability = 1d / cursePool.Count;
+        if (!NeowStructuredEffectProbabilityEstimator.TryTopLevelRouteProbability(plan, BaseGameModelKeys.Relics.NeowsBones,
+            out double routeProbability, out _))
+            return SearchSelectivityEstimate.Unpriced("Probability.Neow.Bones.OfferJointUnavailable", "Opening offer authority missing.");
         double grantProbability = distinctTargets.Length == 1
             ? 2d / pool.Length
             : WithoutReplacementUnorderedPairProbability(pool.Length, 2);
@@ -746,7 +718,8 @@ internal static class SearchSelectivityEstimator
     private static SearchSelectivityEstimate EstimateAncientOption(SearchSelectivityInput plan)
     {
         AncientSearchBranchCondition[] optionBranches = ProbabilitySemanticProjection.From(plan).NumericalFilter.AncientBranchConditions
-            .Where(item => item.IsValid && item.OptionAny.Count != 0)
+            .Where(item => item.IsValid && (item.OptionAny.Count != 0 || item.SeaGlassTargetAny.Count != 0 ||
+                ProbabilitySemanticProjection.From(plan).NumericalFilter.AncientOptionFilters.Any(f => f.Act == item.Act && f.Keys.All.Count > 0)))
             .ToArray();
         if (optionBranches.Length == 0)
             return SearchSelectivityEstimate.Unpriced("Probability.AncientOption.NoBranch", "No parent-scoped Ancient OptionAny predicate to price.");
@@ -762,7 +735,8 @@ internal static class SearchSelectivityEstimator
                 new[] { "UseQueryLevelAuthority=AncientProbabilityEstimator" });
         }
 
-        return AncientOptionProbabilityEstimator.EstimateConditional(plan, optionBranches[0]);
+        return AncientOptionProbabilityEstimator.EstimateConditionalAll(plan, optionBranches[0],
+            ProbabilitySemanticProjection.From(plan).NumericalFilter.AncientOptionFilters.Where(f => f.Act == optionBranches[0].Act).SelectMany(f => f.Keys.All).Distinct().ToArray());
     }
 
     private static SearchSelectivityEstimate EstimateWorld(SearchSelectivityInput plan)

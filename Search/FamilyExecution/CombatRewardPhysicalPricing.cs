@@ -12,8 +12,46 @@ internal static class CombatRewardPhysicalPricing
         plan.UsesHotLoop ? new(.8, 1.2, CombatRewardGpuExecutor.Capacity) : new(8, 8, CombatRewardGpuExecutor.Capacity);
     internal static FamilyPhysicalQuote? Quote(ExactSearchExecutionRequest request, CombatRewardReplay replay,
         CombatRewardGpuPlan? gpu, FamilyPhysicalQuoteRequest geometry) =>
-        QuoteMeasured(request,replay,gpu,geometry) ?? QuoteNeutralModel(request,replay,gpu,geometry,cpu:false) ??
+        QuoteSixBattleModel(request,replay,gpu,geometry,cpu:false) ?? QuoteMeasured(request,replay,gpu,geometry) ?? QuoteNeutralModel(request,replay,gpu,geometry,cpu:false) ??
         QuoteGenericCardModel(request,replay,gpu,geometry);
+
+    // Newly measured horizon, not an extrapolation of H3. CPU emits the entire
+    // horizon. The GPU quote is limited to the early-Common / late-Rare
+    // workload measured separately on Vulkan and local D3D12.
+    internal static FamilyPhysicalQuote? QuoteSixBattleModel(ExactSearchExecutionRequest request, CombatRewardReplay replay,
+        CombatRewardGpuPlan? gpu, FamilyPhysicalQuoteRequest geometry, bool cpu)
+    {
+        var p=replay.Plan; var pool=replay.Catalog.CombatRewardCardPool;
+        if(!FamilyPhysicalQuote.AdmittedRequest(geometry) || request.ProfileId!=Compatibility.RuntimeProfileId.Beta111 ||
+            request.Ascension!=10 || !request.Authority.CanUseCurrentModel || request.Authority.PlayersCount!=1 || replay.RouteCount!=1 ||
+            p.MaximumBattleOrdinal is <4 or >6 || p.OpeningConsumption.HasReplay ||
+            p.ExplicitContext.InfluenceFlags!=Beta110CombatRewardInfluenceFlags.None ||
+            pool.Common.Length!=20 || pool.Uncommon.Length!=35 || pool.Rare.Length!=25 ||
+            p.PredicateCount is <1 or >6 || p.Predicates.Any(row=>!row.HasCardPredicate || row.HasGoldPredicate ||
+                row.HasPotionDropPredicate || row.HasPotionIdentityPredicate || row.CardAny.Length+row.CardAll.Length+row.CardBan.Length>4)) return null;
+        var device = Runtime.SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity();
+        bool localD3d12 = !cpu && device.RenderingBackend == "d3d12" &&
+            device.GpuIdentity.Contains("RTX 4060 Laptop GPU", StringComparison.OrdinalIgnoreCase);
+        bool vulkan = device.RenderingBackend == "vulkan";
+        if(cpu ? geometry.PrivateInput || geometry.PrivateOutput || geometry.CompactInput || geometry.MeanInputPopulation<65536 :
+            !(localD3d12 || vulkan) || gpu is not {UsesHotLoop:true,Routes:1} ||
+            (!localD3d12 && (geometry.PrivateInput || geometry.PrivateOutput || geometry.CompactInput || geometry.MeanInputPopulation<262144)) ||
+            (localD3d12 && geometry.MeanInputPopulation<64) || p.PredicateCount!=2 ||
+            !p.Predicates.Any(row=>row.BattleOrdinal==1 && row.CardAny.Length==1 && pool.Common.Contains(row.CardAny[0])) ||
+            !p.Predicates.Any(row=>row.BattleOrdinal==p.MaximumBattleOrdinal && row.CardAny.Length==1 && pool.Rare.Contains(row.CardAny[0]))) return null;
+        double ns=cpu ? p.MaximumBattleOrdinal switch {4=>3400,5=>4250,_=>5100} :
+            localD3d12 ? p.MaximumBattleOrdinal switch {4=>1.5,5=>1.8,_=>2.0} : 3;
+        return new("C.CombatReward",$"C.Horizon4-6.20260919.H{p.MaximumBattleOrdinal}."+
+            (cpu ? "CpuP1" : localD3d12 ? "D3D12.CommonThenRare" : "Vulkan.CommonThenRare"),
+            ns,cpu?65536:CombatRewardGpuExecutor.Capacity,localD3d12 ? 350 : null,
+            "GameRuntimeCaptureCorpus;262144Roots;3WarmRounds;BoundedCoarse;NoOpeningOrInfluence;"+
+            (cpu?"CpuCanonicalAbi1;FullHorizonGeneration":localD3d12 ?
+                "LocalD3D12RTX4060Laptop;DenseCompactPublicPrivate;64To1048576Roots;ColdSetup218To232msBound350ms;EarlyCommonLateRareOnly;NoExact" :
+                "VulkanNumericalIncludingSync;NoHostTransportOrExact;EarlyCommonLateRareOnly"),
+            OutputElementBytes:cpu?8:4,OutputAlreadyOrdered:cpu,PublicTransportClass:cpu?"CpuOrderedAbi1":"Counted32")
+        { FixedWindowMilliseconds = localD3d12 ? .1 : 0,
+            LocalCostSource = localD3d12 ? "LocalMeasurement" : "ReferenceDefault" };
+    }
 
     private static FamilyPhysicalQuote? QuoteGenericCardModel(ExactSearchExecutionRequest request, CombatRewardReplay replay,
         CombatRewardGpuPlan? gpu, FamilyPhysicalQuoteRequest g)

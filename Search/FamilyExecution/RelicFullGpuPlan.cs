@@ -7,8 +7,9 @@ namespace RolltheSpire2.Search.FamilyExecution;
 
 // Rfull owns one initial World bag. Direct and fixed-Bones arrivals share the
 // rarity/target-rank matcher, but compile distinct Rewards checkpoints.
-internal sealed record RelicFullGpuPlan(RelicFamilyPlan SequencePlan, uint[] CapsuleMetadata, bool UsesBonesKBoundary = false)
+internal sealed partial record RelicFullGpuPlan(RelicFamilyPlan SequencePlan, uint[] CapsuleMetadata, bool UsesBonesKBoundary = false)
 {
+    internal bool GenericReplay { get; init; }
     internal const string AlgorithmRevision =
         "R.Relic.Gpu.Rfull.v4.TrackedSequence.CapsuleRarityTrackedRank.EmptySequenceElided.LastTargetBucket";
     internal const string DenseRevision =
@@ -21,7 +22,7 @@ internal sealed record RelicFullGpuPlan(RelicFamilyPlan SequencePlan, uint[] Cap
     internal const uint GroupedBonesArrival = 2;
     internal const uint SourceConstrainedBonesArrival = 3;
     internal bool SourceConstrainedCapsules => CapsuleMetadata[0] == SourceConstrainedBonesArrival;
-    internal string Revision(bool compact) => SourceConstrainedCapsules
+    internal string Revision(bool compact) => GenericReplay ? "R.Relic.Gpu.GenericCapsule.20260922." + (compact ? "Compact" : "Dense") : SourceConstrainedCapsules
         ? $"R.Relic.Rfull.SourceConstrainedSmallLarge.{(compact ? "Compact" : "Dense")}.CanonicalAbi1Ready.20260913.v2"
         : CapsuleMetadata[0] == FixedBonesArrival
         ? $"R.Relic.Rfull.FixedBones.{(compact ? "Compact" : "Dense")}.CanonicalAbi1Ready.20260913.v5"
@@ -37,7 +38,13 @@ internal sealed record RelicFullGpuPlan(RelicFamilyPlan SequencePlan, uint[] Cap
         NeowReplayPlan route,
         out RelicFullGpuPlan? plan,
         out string issue)
-        => TryCreateCore(request, route, false, out plan, out issue);
+    {
+        if (request.Authority.PlayersCount > 1 && RolltheSpire2.Search.Semantics.PartyInitialQuery.CapsuleEffectPremise(request.CompiledSearch.NormalizedQuery)
+            .Values.SelectMany(keys => keys).Any(k => !Core.Rewards.VanillaRelicRewardEffects.TryGet(request.ProfileId, k, out var e) ||
+                !e.NestedOnObtainPreservesRewardContinuation)) return TryCreateGeneric(request, route, out plan, out issue);
+        if (TryCreateCore(request, route, false, out plan, out issue)) return true;
+        return request.Authority.PlayersCount > 1 && TryCreateGeneric(request, route, out plan, out issue);
+    }
 
     // Only the bounded N physical supplies both actual Capsule arrivals. This
     // entry compiles immutable target metadata; standalone Rfull stays unchanged.

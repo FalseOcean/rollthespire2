@@ -140,9 +140,10 @@ internal static class PrivateOrdinalAllocationPricing
             var wp = new WorldFamilyGpuPlan(w.Replay);
             first = e; second = w; coverage = "EW";
             composite = new EwPrivateInvocation(request, e.Plan, wp, "private-ordinal");
-            firstWork = EventResultPhysicalPricing.LegacyEwWork;
+            var eventWork = EventResultPhysicalPricing.LegacyEwWork(e.Plan);
+            firstWork = eventWork.GetValueOrDefault();
             secondWork = WorldPhysicalPricing.LegacyEwWork(wp);
-            pricedShape = !wp.VariantOnly;
+            pricedShape = eventWork.HasValue && !wp.VariantOnly;
         }
         else return false;
 

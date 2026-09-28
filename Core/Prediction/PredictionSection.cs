@@ -13,7 +13,8 @@ public enum PredictionSectionKind
     AncientIdentityAndOptions,
     EventPoolSequences,
     RelicSequences,
-    NormalCombatRewardSequence
+    NormalCombatRewardSequence,
+    EncounterSequences
 }
 
 public enum PredictionDomain
@@ -23,7 +24,8 @@ public enum PredictionDomain
     Ancient,
     EventPoolSequence,
     RelicSequence,
-    NormalCombatRewardSequence
+    NormalCombatRewardSequence,
+    EncounterSequence
 }
 
 public enum PredictionScope
@@ -34,7 +36,8 @@ public enum PredictionScope
     AncientIdentityAndSeedDeterminedOptions,
     InitialEventCandidateQueues,
     InitialRelicGrabBagSequences,
-    OpeningNormalCombatRewardSequence
+    OpeningNormalCombatRewardSequence,
+    InitialEncounterQueues
 }
 
 public enum PredictionSourceState
@@ -51,6 +54,7 @@ public sealed record PredictionSection(
 {
     public IReadOnlyList<BossPredictionResult> Bosses { get; init; } = Array.Empty<BossPredictionResult>();
     public IReadOnlyList<AncientPredictionResult> Ancients { get; init; } = Array.Empty<AncientPredictionResult>();
+    public IReadOnlyList<ActEncounterSequenceResult> EncounterSequences { get; init; } = [];
     public EventPoolSequencePredictionResult? EventPoolSequencePrediction { get; init; }
     public RelicSequencePredictionResult? RelicSequencePrediction { get; init; }
     public NormalCombatRewardSequencePredictionResult? NormalCombatRewardSequencePrediction { get; init; }

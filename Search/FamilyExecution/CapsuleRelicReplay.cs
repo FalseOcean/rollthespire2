@@ -16,11 +16,16 @@ internal sealed class CapsuleRelicReplay
     private readonly ModelKey[] _keys;
     private readonly ExactSearchEvaluationProjection _evaluation;
     private readonly NeowReplayPlan _route;
+    private readonly HashSet<ModelKey> _unresolvedObtains;
     internal CapsuleRelicReplay(ExactSearchExecutionRequest request, NeowReplayPlan route)
     {
         if (!RelicFamilyPlanCompiler.TryCompilePool(request, out var pool, out var dense, out _, out string issue))
             throw new InvalidOperationException(issue);
         Pool = pool; _route = route; _evaluation = request.Evaluation;
+        _unresolvedObtains = request.Authority.PlayersCount == 1 ? [] : PartyInitialQuery.CapsuleEffectPremise(
+            request.CompiledSearch.NormalizedQuery).Values.SelectMany(keys => keys).Where(k =>
+                !Core.Rewards.VanillaRelicRewardEffects.TryGet(request.ProfileId, k, out var e) ||
+                !e.NestedOnObtainPreservesRewardContinuation).ToHashSet();
         _keys = new ModelKey[dense.Count];
         foreach (var pair in dense) _keys[pair.Value] = pair.Key;
     }
@@ -99,6 +104,7 @@ internal sealed class CapsuleRelicReplay
                     while (lane < 3 && consumed[lane] >= lanes[lane].Length) lane++;
                     pulled[i] = lane < 3 ? lanes[lane][consumed[lane]++] : _route.Authority.EffectCatalog.KeyOf(_route.Authority.EffectCatalog.CapsuleCircletId);
                 }
+                if (pulled.Any(_unresolvedObtains.Contains)) return true;
                 outputs.AddRange(pulled); bySource[relic] = pulled;
             }
             else

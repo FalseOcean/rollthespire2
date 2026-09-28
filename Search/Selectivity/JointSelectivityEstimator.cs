@@ -34,6 +34,10 @@ internal static class JointSelectivityEstimator
     public static JointSelectivityResult EstimateQuery(SearchSelectivityInput plan)
     {
         ArgumentNullException.ThrowIfNull(plan);
+        if (plan.CompiledSearch.Context.Party is not null)
+            return PartyQueryProbability.Estimate(plan.CompiledSearch);
+        if (plan.CompiledSearch.Query.TransformationAggregate is not null)
+            return TransformationAggregateQueryProbability.Compose(plan, EstimateQuery);
         ProbabilitySemanticView semantic = ProbabilitySemanticProjection.From(plan);
         JointSelectivityResult result = EstimateQueryCore(plan, semantic);
 
@@ -88,6 +92,12 @@ internal static class JointSelectivityEstimator
                 },
                 dependencyCoverage: "CompleteSemanticImpossibleProof");
         }
+
+        if (plan.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0)
+            return StandardMapProbabilityEstimator.Compose(plan, EstimateQuery);
+
+        if (WorldVariantQueryProbability.Needed(plan))
+            return WorldVariantQueryProbability.Compose(plan, EstimateQuery);
 
         if (!semantic.NumericalProjectionUsable)
         {
@@ -1609,7 +1619,7 @@ internal static class JointSelectivityEstimator
                         MapMethod(estimate.Method), estimate.DependencyClass, true, estimate.Probability.Value > 0d, string.Empty, estimate.Assumptions)
                 },
                 assumptions: estimate.Assumptions,
-                dependencyCoverage: "SingleDomainComplete");
+                dependencyCoverage: "SingleDomainComplete") with { Confidence = estimate.Confidence };
         }
         if (estimate.Probability.HasValue)
         {

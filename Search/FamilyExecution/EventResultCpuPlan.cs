@@ -12,7 +12,7 @@ internal sealed class EventResultCpuPlan(EventResultFamilyPlan plan, uint allowe
 
     internal static EventResultCpuPlan? TryCompile(ExactSearchExecutionRequest request, EventResultFamilyPlan plan)
     {
-        if (!request.Authority.CanUseCurrentModel || request.Authority.PlayersCount != 1 || !plan.GpuSupported ||
+        if (plan.HasMorphic || !request.Authority.CanUseCurrentModel || !plan.GpuSupported ||
             !plan.Authority.ColorfulPoolAuthorityExact ||
             !plan.Conditions.Any(c => c.Kind == EventResultConditionKind.ColorfulPhilosophersOfferedColor)) return null;
         var candidates = Beta111EventResultCatalog.ColorfulCharacterOrder.Where(c =>

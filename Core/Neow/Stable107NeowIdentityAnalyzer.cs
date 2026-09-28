@@ -35,6 +35,21 @@ internal static class Stable107NeowIdentityAnalyzer
         BaseGameModelKeys.Relics.WingedBoots
     };
 
+    internal static bool CanCoOffer(IEnumerable<ModelKey> targets)
+    {
+        ModelKey[] selected = targets.Distinct(ModelKeyComparer.Instance).ToArray();
+        if (selected.Length > 3) return false;
+        ModelKey[] curses = selected.Where(key => CursePool.Contains(key, ModelKeyComparer.Instance)).ToArray();
+        if (curses.Length > 1) return false;
+        ModelKey[] positives = selected.Where(key => !curses.Contains(key, ModelKeyComparer.Instance)).ToArray();
+        if (positives.Length > 2 || positives.Any(key => !IsPositiveCandidate(key))) return false;
+        if (ContainsBoth(positives, BaseGameModelKeys.Relics.LavaRock, BaseGameModelKeys.Relics.SmallCapsule) ||
+            ContainsBoth(positives, BaseGameModelKeys.Relics.NutritiousOyster, BaseGameModelKeys.Relics.StoneHumidifier) ||
+            ContainsBoth(positives, BaseGameModelKeys.Relics.NeowsTalisman, BaseGameModelKeys.Relics.Pomander))
+            return false;
+        return curses.Length == 0 || positives.All(positive => !Conflicts(curses[0], positive));
+    }
+
     public static IReadOnlyList<ModelKey> Analyze(string canonicalSeed, int playerSlotIndex, out int rngCalls)
     {
         Stable107Profile profile = Stable107Profile.Instance;
@@ -84,4 +99,24 @@ internal static class Stable107NeowIdentityAnalyzer
             positives.Remove(BaseGameModelKeys.Relics.PreciseScissors);
         }
     }
+
+    private static bool IsPositiveCandidate(ModelKey key) =>
+        PositivePool.Contains(key, ModelKeyComparer.Instance) ||
+        key == BaseGameModelKeys.Relics.LavaRock ||
+        key == BaseGameModelKeys.Relics.SmallCapsule ||
+        key == BaseGameModelKeys.Relics.NutritiousOyster ||
+        key == BaseGameModelKeys.Relics.StoneHumidifier ||
+        key == BaseGameModelKeys.Relics.NeowsTalisman ||
+        key == BaseGameModelKeys.Relics.Pomander;
+
+    private static bool ContainsBoth(IReadOnlyCollection<ModelKey> values, ModelKey first, ModelKey second) =>
+        values.Contains(first, ModelKeyComparer.Instance) && values.Contains(second, ModelKeyComparer.Instance);
+
+    private static bool Conflicts(ModelKey curse, ModelKey positive) =>
+        curse == BaseGameModelKeys.Relics.CursedPearl && positive == BaseGameModelKeys.Relics.GoldenPearl ||
+        curse == BaseGameModelKeys.Relics.HeftyTablet && positive == BaseGameModelKeys.Relics.ArcaneScroll ||
+        curse == BaseGameModelKeys.Relics.LargeCapsule &&
+            (positive == BaseGameModelKeys.Relics.LavaRock || positive == BaseGameModelKeys.Relics.SmallCapsule) ||
+        curse == BaseGameModelKeys.Relics.LeafyPoultice && positive == BaseGameModelKeys.Relics.NewLeaf ||
+        curse == BaseGameModelKeys.Relics.PrecariousShears && positive == BaseGameModelKeys.Relics.PreciseScissors;
 }

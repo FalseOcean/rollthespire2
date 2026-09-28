@@ -21,6 +21,7 @@ internal sealed partial class SearchConfirmationTransactionOverlay : Control
         MouseFilter = MouseFilterEnum.Stop;
         FocusMode = FocusModeEnum.All;
         ZIndex = UiZLayers.ConfirmationModal;
+        SetProcessUnhandledKeyInput(true);
 
         var backdrop = new ColorRect
         {
@@ -83,6 +84,10 @@ internal sealed partial class SearchConfirmationTransactionOverlay : Control
         footer.AddChild(_confirm);
         root.AddChild(footer);
         panel.AddChild(root);
+        _cancel.FocusNext = _cancel.FocusPrevious = _cancel.FocusNeighborLeft = _cancel.FocusNeighborRight =
+            _cancel.FocusNeighborTop = _cancel.FocusNeighborBottom = _cancel.GetPathTo(_confirm);
+        _confirm.FocusNext = _confirm.FocusPrevious = _confirm.FocusNeighborLeft = _confirm.FocusNeighborRight =
+            _confirm.FocusNeighborTop = _confirm.FocusNeighborBottom = _confirm.GetPathTo(_cancel);
     }
 
     public event Action? Confirmed;
@@ -107,5 +112,16 @@ internal sealed partial class SearchConfirmationTransactionOverlay : Control
         }
         Visible = false;
         Cancelled?.Invoke();
+    }
+
+    public override void _UnhandledKeyInput(InputEvent @event)
+    {
+        // This transaction is above the save editor/library. Consume Escape here
+        // before an underlying surface can close while its commit remains armed.
+        if (IsVisibleInTree() && @event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Escape })
+        {
+            Cancel();
+            GetViewport().SetInputAsHandled();
+        }
     }
 }

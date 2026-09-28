@@ -77,9 +77,14 @@ internal static class Beta110GpuCombatRewardHotLoopCompiler
         if (!reward.CardPoolAuthorityExact || !reward.PotionPoolAuthorityExact)
             return Beta110GpuCombatRewardHotLoopPlan.Disabled("CombatRewardPoolAuthorityIncomplete");
         if (reward.GoldPredicateCount != 0)
-            return Beta110GpuCombatRewardHotLoopPlan.Disabled("GoldPredicateCpuRemainderOnly");
+            return Beta110GpuCombatRewardHotLoopPlan.Disabled("GoldPredicateUsesGenericGpu");
+        // The specialized loop fails native parity for existential potion identities
+        // (six-battle source witness); generic streaming matches the CPU replay.
+        // Keep the query on GPU through that evaluator, without an authoring gate.
+        if (reward.Predicates.Any(p => p.IsAnyBattle && p.HasPotionIdentityPredicate))
+            return Beta110GpuCombatRewardHotLoopPlan.Disabled("UnorderedPotionIdentityUsesGenericGpu");
 
-        int maxBattle = Math.Clamp(reward.MaximumBattleOrdinal, 1, 3);
+        int maxBattle = Math.Clamp(reward.MaximumBattleOrdinal, 1, 6);
         bool directCard = HasSafeThreeCardOrdinalSelection(catalog.CombatRewardCardPool);
         bool potionPoolsComplete = catalog.CombatRewardPotionPool.HasEveryRarity;
         bool potionIdentityRequired = reward.PotionIdentityPredicateCount != 0;
@@ -105,7 +110,7 @@ internal static class Beta110GpuCombatRewardHotLoopCompiler
 
         // Exact float32 potion-odds states are path-dependent because the game
         // mutates a float by +/-0.1f. Pack the tiny complete binary decision tree
-        // for at most the first three battles, preserving those exact float bits.
+        // for at most the first six battles, preserving those exact float bits.
         int potionNodeCount = (1 << maxBattle) - 1;
         var potionCutoffs = new ulong[potionNodeCount];
         var potionOddsByNode = new float[potionNodeCount];

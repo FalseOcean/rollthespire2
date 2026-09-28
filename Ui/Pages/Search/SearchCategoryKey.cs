@@ -4,9 +4,11 @@ internal enum SearchCategoryKey
 {
     Neow,
     Ancient,
+    BossIdentity,
     BossAndMap,
     Relic,
     CombatReward,
     Event,
-    Shop
+    Shop,
+    Transformation
 }

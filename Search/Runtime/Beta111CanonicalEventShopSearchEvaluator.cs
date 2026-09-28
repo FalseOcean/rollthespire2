@@ -26,6 +26,10 @@ internal static class Beta111CanonicalEventShopSearchEvaluator
 
         var evidence = new List<SearchMatchEvidence>();
 
+        SearchQueryEvaluation aggregate = TransformationAggregateValidator.Evaluate(plan, rootHash, authority);
+        if (aggregate.Disposition != SearchDisposition.Match) return aggregate;
+        evidence.AddRange(aggregate.Evidence);
+
         SearchQueryEvaluation eventResult = EvaluateEventResult(plan, rootHash, authority);
         if (eventResult.Disposition != SearchDisposition.Match)
             return eventResult;
@@ -48,20 +52,68 @@ internal static class Beta111CanonicalEventShopSearchEvaluator
             return SearchQueryEvaluation.Match();
 
         Beta111EventResultAuthority eventAuthority = Beta111EventResultAuthority.From(authority);
-        Beta111EventResultProjection projection = Beta111EventResultProjector.Project(
-            rootHash,
-            authority.PlayerSlotIndex,
-            eventAuthority);
-        if (projection.TrashHeapPrecision == PredictionPrecision.Unsupported ||
-            projection.FakeMerchantPrecision == PredictionPrecision.Unsupported)
-        {
-            return SearchQueryEvaluation.Unsupported(projection.EvidenceCode);
-        }
+        Beta111EventResultProjection? projection = null;
 
         var evidence = new List<SearchMatchEvidence>();
         foreach ((EventResultSearchCondition condition, int index) in
                  plan.Evaluation.EventResultConditions.Select((condition, index) => (condition, index)))
         {
+            if (condition.Kind > EventResultConditionKind.MorphicGroveGroupInitialBasicsContains)
+            {
+                if (!condition.IsValid) return SearchQueryEvaluation.Unsupported("EventResult.InvalidWhitelistCondition");
+                if (!eventAuthority.IsBeta111) return SearchQueryEvaluation.Unsupported("EventResult.Beta111Required");
+                bool match;
+                if (EventResultTransformSemantics.IsTransform(condition.Kind))
+                {
+                    MorphicGrovePredictor.ValidateAuthority(plan.Detection, authority, condition.MorphicGroveScenario!);
+                    var result = EventResultTransformSemantics.Evaluate(rootHash, condition);
+                    if (result == MorphicGrovePredicateResult.Unknown) return SearchQueryEvaluation.Unknown("EventResult.InitialBasicPoolUnknown");
+                    match = result == MorphicGrovePredicateResult.Match;
+                }
+                else match = condition.Kind switch {
+                    EventResultConditionKind.TrialCase => Beta111TrialTinkerProjector.TrialCase(rootHash, authority.PlayerSlotIndex) == (int)condition.TrialCase!,
+                    EventResultConditionKind.TinkerTimeTypeAndRider => Beta111TrialTinkerProjector.TinkerContains(rootHash, authority.PlayerSlotIndex,
+                        (int)condition.TinkerCardType!, (int?)condition.TinkerRider),
+                    _ => throw new InvalidOperationException("EventResult.UnrecognizedWhitelistKind") };
+                if (!match) return SearchQueryEvaluation.NoMatch("EventResult.WhitelistRejected:" + condition.Kind);
+                evidence.Add(new SearchMatchEvidence("EventResultConditionMatched", condition.TargetKey,
+                    "event-result:" + condition.Kind + ":case=" + condition.TrialCase + ":type=" + condition.TinkerCardType + ":rider=" + condition.TinkerRider,
+                    ProfileId: authority.ProfileId, StreamDomain: "EventLocal", Authority: SourceAuthority.OfficialRuntimeExact,
+                    AuthorityFingerprint: condition.MorphicGroveScenario?.Fingerprint ?? eventAuthority.AuthorityFingerprint,
+                    ConditionId: "event-result-" + index));
+                continue;
+            }
+            if (condition.Kind == EventResultConditionKind.MorphicGroveGroupInitialBasicsContains)
+            {
+                if (!condition.IsValid) return SearchQueryEvaluation.Unsupported("MorphicGrove.InvalidInitialBasicsScenario");
+                var root = TrustedRootHashInput.RootOnly(rootHash);
+                if (!SeedPredictionRequest.TryCreateFromRootHash(root, authority.Character, plan.Ascension,
+                    authority.PlayersCount, authority.PlayerSlotIndex, authority, plan.Evaluation.AncientOptionConditions, SeedPredictionDomainSelection.None,
+                    SeedPredictionInputLimits.DefaultRelicSequencePreviewCount, plan.IncludeDiagnostics,
+                    out var request, out var error))
+                    return SearchQueryEvaluation.Unknown("MorphicGrove.RequestRejected:" + error);
+                var prediction = RuntimeProfileRegistry.PredictMorphicGrove(plan.Detection, request!,
+                    condition.MorphicGroveScenario!, MorphicGroveCommitment.InitialBasics);
+                if (prediction.Projection is null)
+                    return prediction.Precision == PredictionPrecision.Unsupported
+                        ? SearchQueryEvaluation.Unsupported(prediction.Evidence) : SearchQueryEvaluation.Unknown(prediction.Evidence);
+                var result = condition.MorphicGroveSecondCard is { } second
+                    ? Beta111MorphicGroveProjector.ContainsPair(prediction.Projection, condition.TargetKey, second, finalDeckCard: false)
+                    : Beta111MorphicGroveProjector.Contains(prediction.Projection, condition.TargetKey, finalDeckCard: false);
+                if (result == MorphicGrovePredicateResult.Unknown) return SearchQueryEvaluation.Unknown(prediction.Evidence);
+                if (result == MorphicGrovePredicateResult.NoMatch) return SearchQueryEvaluation.NoMatch("MorphicGrove.ContainsRejected");
+                evidence.Add(new SearchMatchEvidence("EventResultConditionMatched", condition.TargetKey,
+                    "event-result:morphic-grove:group:initial-basics:raw-contains" +
+                    (condition.MorphicGroveSecondCard is { } paired ? ":pair:" + paired.Serialized : ""),
+                    EvidenceCode: new EvidenceCode(prediction.Evidence), ProfileId: authority.ProfileId,
+                    StreamDomain: "EventLocal", Authority: SourceAuthority.OfficialRuntimeExact,
+                    AuthorityFingerprint: MorphicGroveQuerySemantics.Fingerprint(condition.MorphicGroveScenario),
+                    ConditionId: "event-result-" + index));
+                continue;
+            }
+            projection ??= Beta111EventResultProjector.Project(rootHash, authority.PlayerSlotIndex, eventAuthority);
+            if (projection.TrashHeapPrecision == PredictionPrecision.Unsupported || projection.FakeMerchantPrecision == PredictionPrecision.Unsupported)
+                return SearchQueryEvaluation.Unsupported(projection.EvidenceCode);
             bool matched;
             ModelKey? relatedKey = condition.TargetKey;
             PredictionPrecision precision;

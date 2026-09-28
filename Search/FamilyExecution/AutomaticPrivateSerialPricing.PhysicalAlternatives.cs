@@ -127,14 +127,22 @@ internal static partial class AutomaticPrivateSerialPricing
         double Wall(double ms,double rate) => exact is {Usable:true}
             ? Math.Max(ms,roots*rate*exact.AverageExactMsPerAttempt/Math.Max(1,request.WorkerCount)) : ms;
         bool Comparable(double rate) => exact is {Usable:true} || baseRate is double b && Math.Abs(b-rate)<=Math.Max(1e-15,b*1e-8);
-        var best = priced.Where(p=>Comparable(p.TerminalRate)).OrderBy(p=>Wall(p.CanonicalMs,p.TerminalRate)).ThenBy(p=>p.CanonicalMs).FirstOrDefault();
+        double? baselineSetup = baseline.EstimatedSetupMilliseconds ?? basePublic?.SetupMs;
+        double SetupDelta(PricedOrder p)
+        {
+            if (p.SetupMs is not double a || baselineSetup is not double b) return 0;
+            // These alternatives change at least one CPU/GPU realization. Avoiding
+            // its known module setup is a saving even if another Family keeps a GPU.
+            // The common owner cost cancels; unknown envelopes remain incomparable.
+            return a-b;
+        }
+        var best = priced.Where(p=>Comparable(p.TerminalRate)).OrderBy(p=>Wall(p.CanonicalMs,p.TerminalRate)+SetupDelta(p)).ThenBy(p=>p.CanonicalMs).FirstOrDefault();
         // Unknown is not infinity: a priced Direct Exact must never discard an
         // effective unpriced Filter merely because its quote is absent.
-        double DifferentialSetup(PricedOrder p) => p.SetupMs is double a && baseline.EstimatedSetupMilliseconds is double b ? Math.Max(0,a-b) : 0;
         bool coarseComparison = best is not null && best.Evidence.Concat(basePublic?.Evidence ?? [])
             .Any(e => e.Contains("ConservativeCoarse", StringComparison.Ordinal));
         bool select = best is not null && baselineMs.HasValue &&
-            Wall(best.CanonicalMs,best.TerminalRate)+DifferentialSetup(best)<Wall(baselineMs.Value,baseRate??best.TerminalRate)*(coarseComparison?.8:1);
+            Wall(best.CanonicalMs,best.TerminalRate)+SetupDelta(best)<Wall(baselineMs.Value,baseRate??best.TerminalRate)*(coarseComparison?.8:1);
         Bootstrap.RuntimeLog.TryBackgroundInfo("planningPhysicalAlternatives=true;gpuAvailable="+gpuAvailable+
             ";baselineCanonicalMs="+baselineMs+";selectedNew="+select+";alternativesJson="+
             Bootstrap.RuntimeLog.SafeJson(priced.Select(p=>new {revisions=p.Order.Select(f=>f.ConditionPerformance.PhysicalImplementationRevision),p.CanonicalMs,p.TerminalRate,wallMs=Wall(p.CanonicalMs,p.TerminalRate),p.Evidence})));

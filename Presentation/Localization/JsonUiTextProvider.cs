@@ -43,12 +43,32 @@ public sealed class JsonUiTextProvider : IUiTextProvider
             args);
 
     public static IUiTextProvider Create(string languageCode)
+        => Create(languageCode, "rt2_ui_legacy");
+
+    public static IUiTextProvider CreateUi13(string languageCode)
+        => Create(languageCode, "rt2_ui_v13");
+
+    // The migrated Predictor still uses the original presentation builders. Keep
+    // their keyed vocabulary; new shell keys and overrides belong to v1.3.
+    public static IUiTextProvider CreatePredictorUi13(string languageCode)
+    {
+        string language = languageCode == "zh" ? "zh" : "en";
+        Dictionary<string, string> Catalog(string locale)
+        {
+            var entries = new Dictionary<string, string>(JsonLocalizationCatalog.Load("rt2_ui_legacy", locale));
+            foreach (var pair in JsonLocalizationCatalog.Load("rt2_ui_v13", locale)) entries[pair.Key] = pair.Value;
+            return entries;
+        }
+        return new JsonUiTextProvider(language, Catalog(language), Catalog("en"));
+    }
+
+    private static IUiTextProvider Create(string languageCode, string group)
     {
         string normalized = string.Equals(languageCode, "zh", StringComparison.OrdinalIgnoreCase) ? "zh" : "en";
-        IReadOnlyDictionary<string, string> english = JsonLocalizationCatalog.Load("rt2_ui", "en");
+        IReadOnlyDictionary<string, string> english = JsonLocalizationCatalog.Load(group, "en");
         IReadOnlyDictionary<string, string> localized = normalized == "en"
             ? english
-            : JsonLocalizationCatalog.Load("rt2_ui", normalized);
+            : JsonLocalizationCatalog.Load(group, normalized);
         return new JsonUiTextProvider(normalized, localized, english);
     }
 }

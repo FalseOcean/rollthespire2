@@ -108,7 +108,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         int playerSlotIndex,
         WorldGameMode predictionGameMode,
         PredictionGameModeAuthority predictionGameModeAuthority,
-        string act1OverrideRaw)
+        string act1OverrideRaw,
+        IReadOnlyList<ModelKey>? orderedCharacters = null)
     {
         bool unlockStateExact = unlockState is not null;
         (bool runtimeIsMultiplayer, bool runtimeModeExact, string runtimeModeEvidence) = CaptureBeta109MultiplayerMode(assembly);
@@ -215,8 +216,13 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         }
 
         ModelListCapture allCharactersCapture = ReadStaticModelsWorld(modelDb, "AllCharacters", "Characters");
-        bool lobbyPlayersExact = playersCount == 1 && character.CharacterKey.IsValid;
-        IReadOnlyList<Beta109LobbyPlayerSnapshot> lobbyPlayers = lobbyPlayersExact
+        bool partyExact = orderedCharacters is not null && orderedCharacters.Count == playersCount &&
+            playerSlotIndex >= 0 && playerSlotIndex < playersCount && orderedCharacters[playerSlotIndex] == character.CharacterKey &&
+            orderedCharacters.All(k => k.IsValid);
+        bool lobbyPlayersExact = partyExact || playersCount == 1 && character.CharacterKey.IsValid;
+        IReadOnlyList<Beta109LobbyPlayerSnapshot> lobbyPlayers = partyExact
+            ? orderedCharacters!.Select((key, slot) => new Beta109LobbyPlayerSnapshot(slot, key, false, true)).ToArray()
+            : lobbyPlayersExact
             ? new[] { new Beta109LobbyPlayerSnapshot(0, character.CharacterKey, IsRandomCharacter: false, Exact: true) }
             : new[] { new Beta109LobbyPlayerSnapshot(0, character.CharacterKey, IsRandomCharacter: false, Exact: false) };
         bool randomCharacterAuthorityExact = lobbyPlayersExact ||

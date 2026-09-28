@@ -45,8 +45,15 @@ internal static class ProductionExactSearchEvaluator
 
     public static ProductionExactSearchResult Evaluate(
         ExactSearchExecutionRequest plan,
-        TrustedRootHashInput input)
+        TrustedRootHashInput input) => Evaluate(plan, input, CancellationToken.None);
+
+    internal static ProductionExactSearchResult Evaluate(
+        ExactSearchExecutionRequest plan,
+        TrustedRootHashInput input, CancellationToken cancellationToken)
     {
+        if (plan.CompiledSearch.Context.Party is not null) return EvaluatePartyInitial(plan, input, cancellationToken);
+        if ((plan.CompiledSearch.NormalizedQuery.TransformationAggregate is null) != (plan.Evaluation.TransformationAggregate is null))
+            throw new InvalidOperationException("TransformationAggregate.MissingExactObligation");
         RuntimeContextAuthoritySnapshot authority;
         if (plan.Evaluation.RequiresEffectColdPath || plan.Evaluation.RequiresWorldAuthority)
         {
@@ -89,6 +96,11 @@ internal static class ProductionExactSearchEvaluator
                 canonicalEvaluation.FailureCode);
         }
 
+        var mapEvaluation = StandardMapExactEvaluator.Evaluate(plan, input.SeedIdentity);
+        if (mapEvaluation.Disposition != SearchDisposition.Match)
+            return new(null,null,authority,mapEvaluation,mapEvaluation.FailureCode);
+        canonicalEvaluation = SearchQueryEvaluation.Match(canonicalEvaluation.Evidence.Concat(mapEvaluation.Evidence).ToArray());
+
         CharacterIdentity character = CharacterIdentity.FromKey(plan.CharacterKey);
         int relicSequencePreviewCount = plan.Evaluation.RelicSequenceConditions.Count == 0
             ? SeedPredictionInputLimits.DefaultRelicSequencePreviewCount
@@ -124,7 +136,7 @@ internal static class ProductionExactSearchEvaluator
         // unrelated Neow/World analysis here would let non-observable state or invariant
         // failures reacquire rejection authority. A minimal document is retained only
         // because SearchCandidate currently carries the shared analysis payload contract.
-        if (plan.Evaluation.RequiresCanonicalRootLocalDomain &&
+        if ((plan.Evaluation.RequiresCanonicalRootLocalDomain || plan.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0) &&
             plan.Evaluation.CheapPredictionDomains == SeedPredictionDomainSelection.None &&
             !plan.Evaluation.RequiresNormalCombatRewardDomain)
         {
@@ -145,6 +157,7 @@ internal static class ProductionExactSearchEvaluator
 
         cheapRequest = cheapRequest!.WithComplexBonesDeckInteractions(
             plan.CompiledSearch.RequiresComplexBonesDeckInteractionEvaluation);
+        cheapRequest.PartyOpeningChoices = plan.PartyOpeningChoices;
         SeedPredictionDocument cheapDocument = RuntimeProfileRegistry.PredictFromRootHash(plan.Detection, cheapRequest, input);
         ThrowIfPredictionFailed(cheapDocument);
         SearchQueryEvaluation cheapEvaluation = ProductionQueryValidator.EvaluateCheap(plan, cheapDocument, authority);
@@ -162,7 +175,8 @@ internal static class ProductionExactSearchEvaluator
         SeedPredictionDomainSelection rewardDomains =
             SeedPredictionDomainSelection.Neow |
             SeedPredictionDomainSelection.NormalCombatRewards;
-        NormalCombatRewardProjectionRequest rewardProjectionRequest = BuildRewardProjectionRequest(plan);
+        NormalCombatRewardProjectionRequest rewardProjectionRequest = BuildRewardProjectionRequest(plan) with
+        { BattleCount = Math.Max(3, Math.Max(plan.Evaluation.CombatCardRewardSequence?.Count ?? 0, plan.Evaluation.CombatPotionRewardSequence?.Count ?? 0)) };
         if (!SeedPredictionRequest.TryCreateFromRootHash(
                 input,
                 character,
@@ -189,6 +203,7 @@ internal static class ProductionExactSearchEvaluator
 
         rewardRequest = rewardRequest!.WithComplexBonesDeckInteractions(
             plan.CompiledSearch.RequiresComplexBonesDeckInteractionEvaluation);
+        rewardRequest.PartyOpeningChoices = plan.PartyOpeningChoices;
         SeedPredictionDocument rewardDocument = RuntimeProfileRegistry.PredictFromRootHash(plan.Detection, rewardRequest, input);
         ThrowIfPredictionFailed(rewardDocument);
         SearchQueryEvaluation evaluation = ProductionQueryValidator.EvaluateRewards(plan, rewardDocument, cheapEvaluation);
@@ -210,13 +225,148 @@ internal static class ProductionExactSearchEvaluator
         throw new InvalidOperationException($"ProductionExact.AnalysisFailed:{document.PredictorId}:{document.CanonicalSeed}:{evidence}");
     }
 
+    private static ProductionExactSearchResult EvaluatePartyInitial(ExactSearchExecutionRequest plan, TrustedRootHashInput input, CancellationToken cancellationToken)
+    {
+        if (plan.CompiledSearch.UsesPartyFamilyProjection)
+            return EvaluatePartyFamilies(plan, input, cancellationToken);
+        var party = plan.CompiledSearch.Context.Party!;
+        var initial = PartySeedInformation.Project(input.CanonicalSeed, party);
+        var observation = Semantics.PartyNeowQuery.Complete(initial, plan.CompiledSearch, cancellationToken);
+        if (observation is null) return new(null, null, plan.Authority, SearchQueryEvaluation.NoMatch("Party.N.NoJointWitness"), "Party.N.NoJointWitness");
+        if (observation.Root != input.RootHash) throw new InvalidOperationException("Party.WrongRoot");
+        var query = plan.CompiledSearch.NormalizedQuery;
+        if (!Semantics.PartyInitialQuery.MatchesWorld(query, observation) || !Semantics.PartyInitialQuery.MatchesOffers(query, observation))
+            return new(null, null, plan.Authority, SearchQueryEvaluation.NoMatch("Party.InitialPredicate"), "Party.InitialPredicate");
+        var request = SeedPredictionRequest.ForPartyInitialInformation(input, party, plan.IncludeDiagnostics);
+        var document = CreateCanonicalOnlyDocument(request, plan, input, observation);
+        var evidence = new List<SearchMatchEvidence>();
+        if (Semantics.PartyInitialQuery.HasWorld(query)) evidence.Add(new("W.World.Shared.Initial", AuthorityFingerprint: party.Fingerprint));
+        foreach (var p in query.Players.Where(p => !p.Offers.IsEmpty))
+            evidence.Add(new($"N.Neow.P{p.Slot + 1}.InitialOffers", AuthorityFingerprint: party.Fingerprint,
+                OrderedOptionKeys: observation.Players[p.Slot].Offers));
+        foreach (var transaction in observation.Transactions)
+            evidence.Add(new($"N.Neow.P{transaction.Slot + 1}.SelectedResult.{transaction.Intent}", AuthorityFingerprint: party.Fingerprint,
+                OrderedOptionKeys: [transaction.Option]));
+        return new(request, document, plan.Authority, SearchQueryEvaluation.Match(evidence), "");
+    }
+
+    private static ProductionExactSearchResult EvaluatePartyFamilies(ExactSearchExecutionRequest plan,
+        TrustedRootHashInput input, CancellationToken token)
+    {
+        var party = plan.CompiledSearch.Context.Party!;
+        var initial = PartySeedInformation.Project(input.CanonicalSeed, party) with { IncludesFamilyInformation = true };
+        if (!Semantics.PartyInitialQuery.MatchesOffers(plan.CompiledSearch.NormalizedQuery, initial))
+            return new(null, null, plan.Authority, SearchQueryEvaluation.NoMatch("Party.InitialOffers"), "Party.InitialOffers");
+        var shared = Compilation.ExactSearchExecutionRequestFactory.ForPlayer(plan, plan.CompiledSearch.PlayerSearches[^1]);
+        var sharedResult = Evaluate(shared, input, token);
+        if (!sharedResult.IsMatch) return sharedResult;
+        var streams = NeowEffectRngContext.CreateFromRootHash(Beta111Profile.Instance, input.RootHash, 0);
+        var evidence = new List<SearchMatchEvidence>(sharedResult.Evaluation.Evidence) { new(Semantics.PartyInitialQuery.OpeningPremiseId) };
+        var transactions = new List<PartyNeowResult>();
+        if (!plan.CompiledSearch.NormalizedQuery.Players.Any(p => p.Conditions.OpeningRoute is not null || p.Conditions.HasCombatRewardConstraints))
+        {
+            foreach (var personal in plan.CompiledSearch.PlayerSearches.Take(party.Players.Count))
+            {
+                var result = EvaluateUnselected(personal);
+                if (!result.IsMatch) return result;
+                evidence.AddRange(result.Evaluation.Evidence.Select(e => e with { Code = $"P{personal.Context.Authority.PlayerSlotIndex + 1}." + e.Code }));
+            }
+            var envelope = SeedPredictionRequest.ForPartyInitialInformation(input, party, plan.IncludeDiagnostics);
+            return new(envelope, CreateCanonicalOnlyDocument(envelope, plan, input, initial), plan.Authority,
+                SearchQueryEvaluation.Match(evidence), "");
+        }
+        ProductionExactSearchResult? unresolved = null;
+        var matched = Visit(0, streams.Niche, streams.CombatPotionGeneration, true);
+        return matched ?? unresolved ?? new(null, null, plan.Authority,
+            SearchQueryEvaluation.NoMatch("Party.NoJointOpeningWitness"), "Party.NoJointOpeningWitness");
+
+        ProductionExactSearchResult EvaluateUnselected(Semantics.CompiledSearch compiled)
+        {
+            var child = Compilation.ExactSearchExecutionRequestFactory.ForPlayer(plan, compiled);
+            if (!child.Evaluation.HasNeowConstraints) return Evaluate(child, input, token);
+            var owner = party.Players[compiled.Context.Authority.PlayerSlotIndex];
+            if (!SeedPredictionRequest.TryCreateFromRootHash(input, owner.Character, owner.Ascension,
+                owner.PlayersCount, owner.PlayerSlotIndex, owner, compiled.Context.EvaluationAssumptions.AncientEligibilityAssumptions,
+                SeedPredictionDomainSelection.Neow, 10, false, out var request, out var error))
+                throw new InvalidOperationException("Party.UnselectedPlayerRequest:" + error);
+            // Observation-only N starts at its initial shared cursor and uses the
+            // same explicit Capsule obtain-effect premise as selected openings.
+            var choices = PartyNeowProjection.ProjectChoices(request!, input.RootHash,
+                streams.Niche, streams.CombatPotionGeneration, true, Semantics.PartyInitialQuery.CapsuleEffectPremise(compiled.Query));
+            return Evaluate(child with { PartyOpeningChoices = choices }, input, token);
+        }
+
+        ProductionExactSearchResult? Visit(int slot, Core.Rng.Xoshiro256StarStar niche, Core.Rng.Xoshiro256StarStar potions, bool sharedRngKnown)
+        {
+            token.ThrowIfCancellationRequested();
+            if (slot == party.Players.Count)
+            {
+                var envelope = SeedPredictionRequest.ForPartyInitialInformation(input, party, plan.IncludeDiagnostics);
+                return new(envelope, CreateCanonicalOnlyDocument(envelope, plan, input, initial with { Transactions = transactions.ToArray() }), plan.Authority,
+                    SearchQueryEvaluation.Match(evidence.ToArray()), "");
+            }
+            var compiled = plan.CompiledSearch.PlayerSearches[slot];
+            if (compiled.Query.OpeningRoute is null && !compiled.Query.HasCombatRewardConstraints)
+            {
+                // Explicit product premise: an unselected predecessor consumes no shared RNG.
+                var independent = EvaluateUnselected(compiled);
+                if (!independent.IsMatch) return independent;
+                int count = evidence.Count;
+                evidence.AddRange(independent.Evaluation.Evidence.Select(e => e with { Code = $"P{slot + 1}." + e.Code }));
+                var found = Visit(slot + 1, niche, potions, sharedRngKnown);
+                evidence.RemoveRange(count, evidence.Count - count);
+                return found;
+            }
+
+            var owner = party.Players[slot];
+            if (!SeedPredictionRequest.TryCreateFromRootHash(input, owner.Character, owner.Ascension,
+                owner.PlayersCount, slot, owner, compiled.Context.EvaluationAssumptions.AncientEligibilityAssumptions,
+                SeedPredictionDomainSelection.All, 10, false, out var request, out var error))
+                throw new InvalidOperationException("Party.PlayerRequest:" + error);
+            var choices = PartyNeowProjection.ProjectChoices(request!, input.RootHash, niche, potions, sharedRngKnown,
+                Semantics.PartyInitialQuery.CapsuleEffectPremise(compiled.Query));
+            // Unselected N keeps the established neutral C policy. Do not pin an
+            // arbitrary perturbing offer merely because that route can satisfy C.
+            // Selected openings still share one concrete whole-table witness.
+            var selected = compiled.Query.OpeningRoute?.RouteRelicKey;
+            foreach (var choice in choices.Where(c => selected is null || c.RelicKey == selected).SelectMany(PartyNeowProjection.ConcreteRoutes))
+            {
+                var local = selected is not null
+                    ? compiled.Query with { OpeningRoute = new(choice.RelicKey) } : compiled.Query;
+                var pinned = local == compiled.Query ? compiled : Semantics.SearchCompiler.CompilePlayer(local, compiled.Context);
+                var child = Compilation.ExactSearchExecutionRequestFactory.ForPlayer(plan, pinned) with { PartyOpeningChoices = [choice] };
+                var result = Evaluate(child, input, token);
+                if (!result.IsMatch)
+                {
+                    if (result.Evaluation.Disposition != SearchDisposition.NoMatch) unresolved ??= result;
+                    continue;
+                }
+                var continuation = choice.OpeningRewardContinuations?.Routes.SingleOrDefault();
+                bool neutralPredecessor = selected is null;
+                bool nextSharedKnown = sharedRngKnown && (neutralPredecessor || continuation?.NicheState is not null && continuation.CombatPotionGenerationState is not null);
+                int before = evidence.Count;
+                evidence.AddRange(result.Evaluation.Evidence.Select(e => e with { Code = $"P{slot + 1}." + e.Code }));
+                transactions.Add(new(slot, choice.RelicKey, PartyNeowIntent.ResultTarget, [], choice.EffectGroups, choice.EffectGroups)
+                { OpeningRouteId = continuation?.Route.RouteId ?? "" });
+                // Unknown shared state taints only a later consumer; independent family facts remain usable.
+                var found = Visit(slot + 1, !neutralPredecessor && nextSharedKnown ? continuation!.NicheState!.Restore() : niche,
+                    !neutralPredecessor && nextSharedKnown ? continuation!.CombatPotionGenerationState!.Restore() : potions, nextSharedKnown);
+                transactions.RemoveAt(transactions.Count - 1);
+                evidence.RemoveRange(before, evidence.Count - before);
+                if (found is not null) return found;
+            }
+            return null;
+        }
+    }
+
     private static SeedPredictionDocument CreateCanonicalOnlyDocument(
         SeedPredictionRequest request,
         ExactSearchExecutionRequest plan,
-        TrustedRootHashInput input) => new()
+        TrustedRootHashInput input, PartySeedInformation? party = null) => new()
     {
+        Party = party,
         Context = SeedPredictionDocument.CreateContext(request, plan.Detection.DisplayVersion, plan.ProfileId),
-        PredictorId = "Beta111CanonicalEventShopSearchEvaluator",
+        PredictorId = party is null ? "Beta111CanonicalEventShopSearchEvaluator" : "Beta111PartyInitialInformation",
         OriginalSeed = request.OriginalSeed,
         CanonicalSeed = input.CanonicalSeed,
         Sections = Array.Empty<PredictionSection>(),
@@ -287,6 +437,20 @@ internal static class ProductionExactSearchEvaluator
             canonicalEvaluation.Evidence.Count == 0)
         {
             return documentEvaluation;
+        }
+
+        // An aggregate's Bones results are route facts, not global facts. Retain
+        // every matching route, then intersect with the N witness before C validates
+        // its copied Rewards continuation. Never combine two existential routes.
+        var aggregateRoutes=canonicalEvaluation.Evidence.Where(e=>e.Code=="TransformationAggregateMatched" && e.AcquisitionOrder is {Count:2}).ToArray();
+        if(aggregateRoutes.Length>0)
+        {
+            var compatible=documentEvaluation.Witnesses.Where(w=>aggregateRoutes.Any(e=>
+                w.AcquisitionOrder.SequenceEqual(e.AcquisitionOrder!) &&
+                e.RouteId is { } route && w.OpeningRouteId.EndsWith("."+route["transformation-aggregate:".Length..],StringComparison.Ordinal))).ToArray();
+            if(compatible.Length==0) return SearchQueryEvaluation.NoMatch("TransformationAggregate.NoSharedOpeningRoute");
+            documentEvaluation=SearchQueryEvaluation.Match(documentEvaluation.Evidence,
+                compatible.Select(w=>w.OpeningRouteId).Distinct(StringComparer.Ordinal).ToArray(),compatible);
         }
 
         SearchMatchEvidence[] evidence = documentEvaluation.Evidence

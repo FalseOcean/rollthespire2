@@ -47,6 +47,10 @@ internal sealed record RelicFamilyPlan(
     bool AlwaysReject)
 {
     public int PredicateCount => Predicates.Length + ShopPredicates.Length;
+    internal int LocalStateCapacity => Math.Max(64, Math.Max(TrackedCountsByLane.Max(),
+        Predicates.Any(p => p.Lane == 3) || ShopPredicates.Length > 0
+            ? Enumerable.Range(0, Pool.BucketCount).Where(i => Pool.BucketScopes[i] == 1 && Pool.BucketKinds[i] == 4)
+                .Select(i => Pool.BucketLengths[i]).DefaultIfEmpty(0).Max() : 0));
 }
 
 /// <summary>
@@ -57,7 +61,7 @@ internal sealed record RelicFamilyPlan(
 internal static class RelicFamilyPlanCompiler
 {
     private const int LaneCount = 4;
-    internal const int MaximumShaderLocalState = 64;
+    internal const int MaximumShaderLocalState = byte.MaxValue;
     private const int MaximumEntries = ushort.MaxValue - 1;
     private const int MaximumBuckets = 4096;
     private const int MaximumBucketLength = 4096;
@@ -247,12 +251,22 @@ internal static class RelicFamilyPlanCompiler
                            generation.SharedRelicBuckets.Count > 0 && generation.PlayerRelicBuckets.Count > 0 &&
                            generation.SharedRelicBuckets.All(IsBucketExact) &&
                            generation.PlayerRelicBuckets.All(IsBucketExact);
-        if (!(sourceUsable || request.Authority.UsesBestEffortModel) || !singleplayer || !seedBranch || !generation.DirectSourceAudited ||
+        bool party = generation.HasExactFixedParty && generation.PlayerCount <= 4 &&
+            generation.ModeFactsExact && generation.IsMultiplayerExact &&
+            request.Authority.PlayersCount == generation.PlayerCount &&
+            request.Authority.PlayerSlotIndex == generation.PersonalPlayerSlot && generation.PersonalPlayerSlot >= 0 &&
+            generation.PersonalPlayerSlot < generation.PlayerCount && generation.PartyRelicBuckets
+                .Take(generation.PersonalPlayerSlot).SelectMany(b => b).All(IsBucketExact);
+        if (!(sourceUsable || request.Authority.UsesBestEffortModel) || !(singleplayer || party) || !seedBranch || !generation.DirectSourceAudited ||
             !generation.NoUnknownHooksOrModifiers && !request.Authority.UsesBestEffortModel || !exactInputs)
             return Missing("UnsupportedOrIncompleteRelicRuntimeAuthority", out pool, out issue);
 
-        Beta109RelicBucketSnapshot[] buckets = generation.SharedRelicBuckets
-            .Concat(generation.PlayerRelicBuckets).ToArray();
+        // Shared and preceding personal bags consume the same UpFront stream.
+        // Only this owner's buckets are exposed as observable lanes.
+        var prefixBuckets = generation.SharedRelicBuckets.Concat(party
+            ? generation.PartyRelicBuckets.Take(generation.PersonalPlayerSlot).SelectMany(b => b)
+            : []).ToArray();
+        Beta109RelicBucketSnapshot[] buckets = prefixBuckets.Concat(generation.PlayerRelicBuckets).ToArray();
         int totalEntries = buckets.Sum(bucket => bucket.OrderedEntries.Count);
         int maxLength = buckets.Max(bucket => bucket.OrderedEntries.Count);
         if (buckets.Length > MaximumBuckets || totalEntries > MaximumEntries || maxLength > MaximumBucketLength)
@@ -274,7 +288,7 @@ internal static class RelicFamilyPlanCompiler
         for (int bucketIndex = 0; bucketIndex < buckets.Length; bucketIndex++)
         {
             Beta109RelicBucketSnapshot bucket = buckets[bucketIndex];
-            bool shared = bucketIndex < generation.SharedRelicBuckets.Count;
+            bool shared = bucketIndex < prefixBuckets.Length;
             byte kind = ParseBucketKind(bucket.BucketId);
             int lane = LaneIndex(kind);
             offsets[bucketIndex] = entryOffset;

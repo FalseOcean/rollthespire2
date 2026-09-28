@@ -4,6 +4,7 @@ using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Presentation.ContentNames;
 using RolltheSpire2.Presentation.Localization;
 using RolltheSpire2.Search.Contracts;
+using RolltheSpire2.Search.Semantics;
 using RolltheSpire2.Ui.Controls.Pickers;
 using RolltheSpire2.Ui.Icons;
 using RolltheSpire2.Ui.Theme;
@@ -230,6 +231,26 @@ internal sealed partial class NeowFilterPage : MarginContainer
         _detail.RestoreConditions(restored.EffectConditions, notify: false);
         _contextNotice.Visible = false;
         if (notify) Changed?.Invoke();
+    }
+
+    internal NeowRouteFilterDraft ReadOpeningSelection() => new(_master.ActiveRouteRelic,
+        _master.BonesRelics.ToArray(), _master.BonesOrderMode, []);
+
+    internal void SetTransformationOpening(TransformationOpening opening)
+    {
+        if (_running || opening == TransformationOpening.None) return;
+        if (!TryBuildDraft(out var current, out _, focusInvalid: false)) return;
+        var next = NeowRouteFilterDraft.FromTransformation(opening, TransformationPickupOrder.Any);
+        if (opening == TransformationOpening.BonesLeafyNewLeaf)
+        {
+            var pair = current.RequiredBonesRelics;
+            if (pair.Count == 2 && pair.Contains(BaseGameModelKeys.Relics.LeafyPoultice) && pair.Contains(BaseGameModelKeys.Relics.NewLeaf))
+                next = next with { RequiredBonesRelics = pair };
+            next = next with { BonesOrderMode = current.BonesOrderMode };
+        }
+        var sources = next.RequiredBonesRelics.Append(next.RouteRelicKey!.Value).ToHashSet();
+        next = next with { EffectConditions = current.EffectConditions.Where(c => sources.Contains(c.SourceRelicKey)).ToArray() };
+        RestoreDraft(next, notify: true);
     }
 
     public int EnabledConditionCount

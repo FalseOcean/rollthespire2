@@ -71,6 +71,11 @@ internal sealed record SearchDraft(
         Array.Empty<EventSequenceSearchCondition>();
     public IReadOnlyList<EventResultSearchCondition> EventResultDraft { get; init; } =
         Array.Empty<EventResultSearchCondition>();
+    // Player intent only; current entry-pool authority is bound when compiling.
+    public ModelKey? MorphicGroveContainsCard { get; init; }
+    public ModelKey? MorphicGroveSecondCard { get; init; }
+    // Authoring intent only. Capture current immutable entry pools at compilation.
+    public TransformationAggregateCondition? TransformationAggregate { get; init; }
     public IReadOnlyList<MerchantColorlessSlotCondition> MerchantColorlessDraft { get; init; } =
         Array.Empty<MerchantColorlessSlotCondition>();
     public IReadOnlyList<MerchantColorlessSequenceSearchCondition> MerchantColorlessSequenceDraft { get; init; } =
@@ -114,6 +119,14 @@ internal sealed record NeowRouteFilterDraft(
         Array.Empty<ModelKey>(),
         BonesRouteOrderMode.AnyOrder,
         Array.Empty<NeowStructuredEffectSearchCondition>());
+
+    internal static NeowRouteFilterDraft FromTransformation(TransformationOpening opening, TransformationPickupOrder order) => new(
+        opening switch { TransformationOpening.LeafyPoultice => BaseGameModelKeys.Relics.LeafyPoultice,
+            TransformationOpening.NewLeaf => BaseGameModelKeys.Relics.NewLeaf, _ => BaseGameModelKeys.Relics.NeowsBones },
+        opening == TransformationOpening.BonesLeafyNewLeaf ? (order == TransformationPickupOrder.NewLeafThenLeafy
+            ? [BaseGameModelKeys.Relics.NewLeaf, BaseGameModelKeys.Relics.LeafyPoultice]
+            : [BaseGameModelKeys.Relics.LeafyPoultice, BaseGameModelKeys.Relics.NewLeaf]) : [],
+        order == TransformationPickupOrder.Any ? BonesRouteOrderMode.AnyOrder : BonesRouteOrderMode.ExactOrder, []);
 }
 
 internal sealed record AncientSearchRowDraft(

@@ -52,7 +52,7 @@ internal sealed class SearchWorkspacePersistence
     private bool _writeWarningIssued;
     private readonly HashSet<string> _unreadableDocuments = new(StringComparer.OrdinalIgnoreCase);
 
-    public SearchWorkspacePersistence(string userDataDirectory, RuntimeProfileId profileId)
+    public SearchWorkspacePersistence(string userDataDirectory, RuntimeProfileId profileId, bool initializeSearchCursor = true)
     {
         _ = profileId; // Reserved for future schema migrations; environment identity is captured separately.
         _directory = Path.Combine(userDataDirectory, "RolltheSpire2", "state");
@@ -69,14 +69,96 @@ internal sealed class SearchWorkspacePersistence
         _cursor = Load<SearchCursorDocument>("search_cursor.json") ?? new SearchCursorDocument();
         _environment = Load<SearchEnvironmentSignature>("search_environment.json") ?? new SearchEnvironmentSignature();
         NormalizeDocuments();
-        EnsureCursorInitialized();
+        if (initializeSearchCursor)
+            EnsureCursorInitialized();
     }
 
     public UserPreferencesDocument Preferences => _preferences;
 
+    internal Shell.WorkbenchSearchDraft? LoadWorkbench()
+    {
+        const string file = "query_workbench.json";
+        bool existed = File.Exists(Path.Combine(_directory, file));
+        var strict = new JsonSerializerOptions(_json)
+        {
+            UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+            RespectRequiredConstructorParameters = true,
+            RespectNullableAnnotations = true
+        };
+        var draft = Load<Shell.WorkbenchSearchDraft>(file, strict);
+        if (existed && draft is null) throw new InvalidDataException("integration.load_shape");
+        if (draft is not null && draft.Version is not (1 or 2 or 3 or 4))
+        {
+            _unreadableDocuments.Add(file);
+            throw new InvalidDataException("integration.load_version");
+        }
+        return draft;
+    }
+
+    internal void SaveWorkbench(Shell.WorkbenchSearchDraft draft)
+    {
+        bool dirty = true;
+        double age = 0;
+        FlushDocument(ref dirty, ref age, "query_workbench.json", draft.WithoutCapturedAuthority());
+        if (dirty) throw new IOException("WorkbenchPersistenceWriteFailed");
+    }
+
+    internal void RecoverWorkbench(Shell.WorkbenchSearchDraft draft)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        if (draft.Version is not (1 or 2 or 3 or 4)) throw new InvalidDataException("integration.load_version");
+        const string file = "query_workbench.json";
+        string path = Path.Combine(_directory, file);
+        // Explicit recovery is the only operation allowed to replace protected
+        // intent. Keep protection until both preservation and commit succeed.
+        _unreadableDocuments.Add(file);
+        byte[] payload = JsonSerializer.SerializeToUtf8Bytes(draft.WithoutCapturedAuthority(), _json);
+        if (File.Exists(path))
+        {
+            string backup = path + ".recovery-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff") + "-" + Guid.NewGuid().ToString("N");
+            SearchPersistenceFile.WriteAtomic(backup, File.ReadAllBytes(path));
+        }
+        // Previously quarantined .corrupt files are deliberately left intact.
+        SearchPersistenceFile.WriteAtomic(path, payload);
+        _unreadableDocuments.Remove(file);
+    }
+
+    internal void SetWorkbenchSearchMode(string mode)
+    {
+        _preferences.SearchMode = mode == "CPU" ? "CPU" : "Auto";
+        MarkPreferencesDirty(); FlushPreferences();
+    }
+
+    internal void SaveWorkbenchPreferences(IReadOnlyDictionary<string, bool> flags, string page)
+    {
+        _preferences.WorkbenchFlags = new(flags);
+        _preferences.WorkbenchPage = page;
+        MarkPreferencesDirty();
+        FlushPreferences();
+    }
+
+    internal void InitializeWorkbenchCursor() => EnsureCursorInitialized();
+
     public void SetLanguageOverride(string language)
     {
         _preferences.LanguageOverride = language is "en" or "zh" ? language : string.Empty;
+        MarkPreferencesDirty();
+        FlushPreferences();
+    }
+
+    public void SetActInformationIdentityGuideExpanded(bool expanded)
+    {
+        if (_preferences.ActInformationIdentityGuideExpanded == expanded) return;
+        _preferences.ActInformationIdentityGuideExpanded = expanded;
+        MarkPreferencesDirty();
+        FlushPreferences();
+    }
+
+    public void SetActInformationMapGuideExpanded(bool expanded)
+    {
+        if (_preferences.ActInformationMapGuideExpanded == expanded) return;
+        _preferences.ActInformationMapGuideExpanded = expanded;
+        _preferences.ActInformationGuideExpanded = expanded;
         MarkPreferencesDirty();
         FlushPreferences();
     }
@@ -202,6 +284,14 @@ internal sealed class SearchWorkspacePersistence
         MarkWorkspaceDirty();
     }
 
+    internal void SavePredictorParty(SeedLibraryContext party, string seed, bool active)
+    {
+        _predictorContext.Party = party;
+        _predictorContext.PartySeed = seed;
+        _predictorContext.PartyActive = active;
+        MarkPredictorContextDirty();
+    }
+
     public void AppendResult(SearchCandidate candidate, string queryFingerprint)
     {
         ArgumentNullException.ThrowIfNull(candidate);
@@ -214,6 +304,7 @@ internal sealed class SearchWorkspacePersistence
             CharacterKey = candidate.CharacterKey.Serialized,
             Ascension = candidate.Ascension,
             QueryFingerprint = queryFingerprint ?? string.Empty,
+            Party = candidate.Document.Party,
             WitnessOpeningRouteId = routeWitness?.OpeningRouteId ?? string.Empty
         };
         if (_workspace.Results.Any(existing =>
@@ -426,7 +517,7 @@ internal sealed class SearchWorkspacePersistence
         if (!string.Equals(previous.UnlockFingerprint, current.UnlockFingerprint, StringComparison.Ordinal)) yield return "UnlockStateChanged";
     }
 
-    private T? Load<T>(string fileName) where T : class
+    private T? Load<T>(string fileName, JsonSerializerOptions? options = null) where T : class
     {
         string path = Path.Combine(_directory, fileName);
         if (!File.Exists(path)) return null;
@@ -439,7 +530,8 @@ internal sealed class SearchWorkspacePersistence
                         if (field.Name.Equals("SchemaVersion",StringComparison.OrdinalIgnoreCase) &&
                             field.Value.ValueKind == JsonValueKind.Number && field.Value.TryGetInt32(out int version) && version > SchemaVersion)
                             throw new InvalidDataException($"UnsupportedFutureSchema:{version}");
-            T? value = JsonSerializer.Deserialize<T>(json, _json);
+            T value = JsonSerializer.Deserialize<T>(json, options ?? _json)
+                ?? throw new InvalidDataException("PersistenceDocumentNull");
             int schema = value switch
             {
                 UserPreferencesDocument item => item.SchemaVersion,
@@ -491,16 +583,9 @@ internal sealed class SearchWorkspacePersistence
         if (_unreadableDocuments.Contains(fileName)) return false;
         try
         {
-            Directory.CreateDirectory(_directory);
             string path = Path.Combine(_directory, fileName);
-            string temp = path + ".tmp-" + Guid.NewGuid().ToString("N");
             byte[] payload = JsonSerializer.SerializeToUtf8Bytes(document, _json);
-            using (var stream = new FileStream(temp, FileMode.CreateNew, System.IO.FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
-            {
-                stream.Write(payload);
-                stream.Flush(flushToDisk: true);
-            }
-            File.Move(temp, path, overwrite: true);
+            SearchPersistenceFile.WriteAtomic(path, payload);
             return true;
         }
         catch (Exception ex)
@@ -525,17 +610,20 @@ internal sealed class SearchWorkspacePersistence
     }
 
     private void MarkPreferencesDirty() { _preferencesDirty = true; _preferencesDirtyAge = 0d; }
-    private void MarkWorkspaceDirty() { _workspaceDirty = true; _workspaceDirtyAge = 0d; }
+    private void MarkWorkspaceDirty() { if (!_workspaceDirty) _workspaceDirtyAge = 0d; _workspaceDirty = true; }
     private void MarkPredictorContextDirty() { _predictorContextDirty = true; _predictorContextDirtyAge = 0d; }
-    private void MarkCursorDirty() { _cursorDirty = true; _cursorDirtyAge = 0d; }
+    private void MarkCursorDirty() { if (!_cursorDirty) _cursorDirtyAge = 0d; _cursorDirty = true; }
 
     internal sealed class ModelKeyJsonConverter : JsonConverter<ModelKey>
     {
         public override ModelKey Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         {
             string value = reader.GetString() ?? string.Empty;
+            // ':' is the existing serialized empty ModelKey used by inactive UI
+            // rows. Other malformed identities must not silently become that value.
+            if (value == ":") return default;
             if (!ModelKey.TryParseExact(value, out ModelKey key))
-                return default;
+                throw new JsonException("PersistenceModelKeyInvalid");
             return key;
         }
 
@@ -546,6 +634,8 @@ internal sealed class SearchWorkspacePersistence
 
 internal sealed class UserPreferencesDocument
 {
+    public Dictionary<string, bool> WorkbenchFlags { get; set; } = new();
+    public string WorkbenchPage { get; set; } = "neow";
     public int SchemaVersion { get; set; } = SearchWorkspacePersistence.SchemaVersion;
     // Last observed Workshop UI language only. AppShell deliberately does not use this
     // as localization authority; live TranslationServer locale wins on startup and hot reload.
@@ -558,10 +648,16 @@ internal sealed class UserPreferencesDocument
     public int? SearchWorkerBudget { get; set; }
     public bool ShowOfficialPresets { get; set; } = true;
     public string LastPage { get; set; } = "Analysis";
+    public bool ActInformationGuideExpanded { get; set; }
+    public bool ActInformationIdentityGuideExpanded { get; set; }
+    public bool? ActInformationMapGuideExpanded { get; set; }
 }
 
 internal sealed class PredictorContextDocument
 {
+    public SeedLibraryContext? Party { get; set; }
+    public string PartySeed { get; set; } = "";
+    public bool PartyActive { get; set; }
     public int SchemaVersion { get; set; } = SearchWorkspacePersistence.SchemaVersion;
     public string Seed { get; set; } = string.Empty;
     public string CharacterKey { get; set; } = BaseGameModelKeys.Characters.Silent.Serialized;
@@ -608,6 +704,7 @@ internal sealed class SearchWorkspaceDocument
 
 internal sealed class PersistedSearchResult
 {
+    public PartySeedInformation? Party { get; set; }
     public string Seed { get; set; } = string.Empty;
     public string CharacterKey { get; set; } = string.Empty;
     public int Ascension { get; set; }

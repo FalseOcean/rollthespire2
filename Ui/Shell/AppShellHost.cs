@@ -5,15 +5,17 @@ using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Presentation.ContentNames;
+using RolltheSpire2.Presentation.Localization;
 using RolltheSpire2.Infrastructure.Snapshots;
 using RolltheSpire2.Ui.Icons;
+using RolltheSpire2.Ui.Persistence;
 using RolltheSpire2.Ui.Theme;
 
 namespace RolltheSpire2.Ui.Shell;
 
 internal static class AppShellHost
 {
-    private const string RootName = "RolltheSpire2_UI1A_Root";
+    private const string RootName = "RolltheSpire2_WorkspaceLauncherRoot";
 
     public static void EnsureAttached(NMainMenu mainMenu, ModRuntimeSnapshot snapshot)
     {
@@ -31,9 +33,7 @@ internal static class AppShellHost
         mainMenu.AddChild(host);
         host.BindMainMenu(mainMenu);
         SyncMainMenuSurfaceVisibility(mainMenu);
-        RuntimeLog.Info("minimalGodotPanelAttached=true");
-        RuntimeLog.Info("rewriteR1FoundationPanelAttached=true");
-        RuntimeLog.Info("ui1AppShellHostAttached=true;topLevelOwnership=NSubmenuStack");
+        RuntimeLog.Info("workspaceShellHostAttached=true;surface=QueryWorkbenchFrame;paletteCanonical=BlueInk;topLevelOwnership=NSubmenuStack");
     }
 
     public static void SyncMainMenuSurfaceVisibility(NMainMenu mainMenu)
@@ -45,8 +45,11 @@ internal static class AppShellHost
 
         bool submenuOpen = mainMenu.SubmenuStack.SubmenusOpen;
         bool patchNotesOpen = mainMenu.PatchNotesScreen.IsOpen;
-        bool mainMenuRootVisible = !submenuOpen && !patchNotesOpen;
-        string reason = submenuOpen
+        var lobbyScreen = mainMenu.SubmenuStack.Peek() as MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen;
+        if (lobbyScreen is not null && !LobbyUnlockReadout.IsConnectedLobby(lobbyScreen)) lobbyScreen = null;
+        host.SetLauncherParent(lobbyScreen);
+        bool mainMenuRootVisible = (!submenuOpen || lobbyScreen is not null) && !patchNotesOpen;
+        string reason = lobbyScreen is not null ? "multiplayer-lobby" : submenuOpen
             ? "submenu-open"
             : patchNotesOpen
                 ? "patch-notes-open"
@@ -67,6 +70,28 @@ internal sealed partial class AppShellHostRoot : Control
     private bool _mainMenuSurfaceVisible = true;
     private bool? _lastLoggedSurfaceVisible;
     private bool _patchNotesVisibilityHooked;
+    private NSubmenu? _entrySubmenu;
+    private double _lobbyEntryPoll;
+
+    public override void _Process(double delta)
+    {
+        // Lobby initialization/connect can finish after StackModified, so refresh availability as well.
+        _lobbyEntryPoll -= delta;
+        if (_lobbyEntryPoll > 0 || _mainMenu is null || !GodotObject.IsInstanceValid(_mainMenu)) return;
+        _lobbyEntryPoll = .25;
+        AppShellHost.SyncMainMenuSurfaceVisibility(_mainMenu);
+    }
+
+    public void SetLauncherParent(Control? lobby)
+    {
+        if (_launcher is null) return;
+        Node parent = lobby ?? this;
+        if (_launcher.GetParent() != parent)
+        {
+            _launcher.Reparent(parent, false);
+            _launcher.Position = new Vector2(28, 96);
+        }
+    }
 
     public void BindMainMenu(NMainMenu mainMenu)
     {
@@ -98,6 +123,11 @@ internal sealed partial class AppShellHostRoot : Control
     public void Initialize(ModRuntimeSnapshot snapshot)
     {
         _snapshot = snapshot;
+        var preferences = new SearchWorkspacePersistence(OS.GetUserDataDir(), snapshot.Profile.ProfileId, initializeSearchCursor: false).Preferences;
+        string language = preferences.LanguageOverride is "zh" or "en"
+            ? preferences.LanguageOverride
+            : TranslationServer.GetLocale().StartsWith("zh", StringComparison.OrdinalIgnoreCase) ? "zh" : "en";
+        IUiTextProvider text = JsonUiTextProvider.CreateUi13(language);
         MouseFilter = MouseFilterEnum.Ignore;
         // This node owns only the main-menu launcher. Stay in the menu's base
         // draw order so the game's later ModalContainer backstop covers it.
@@ -110,7 +140,7 @@ internal sealed partial class AppShellHostRoot : Control
             Position = new Vector2(28, 96),
             Size = new Vector2(56, 56),
             CustomMinimumSize = new Vector2(56, 56),
-            TooltipText = "Open RolltheSpire2",
+            TooltipText = text.Get("shell.open"),
             MouseFilter = MouseFilterEnum.Stop,
             FocusMode = FocusModeEnum.None,
             ClipContents = false,
@@ -367,7 +397,7 @@ internal sealed partial class AppShellHostRoot : Control
         }
 
         NMainMenuSubmenuStack stack = _mainMenu.SubmenuStack;
-        if (stack.SubmenusOpen)
+        if (stack.SubmenusOpen && !(stack.Peek() is MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen lobby && LobbyUnlockReadout.IsConnectedLobby(lobby)))
         {
             AppShellHost.SyncMainMenuSurfaceVisibility(_mainMenu);
             return;
@@ -380,6 +410,7 @@ internal sealed partial class AppShellHostRoot : Control
         }
 
         _pushScheduled = true;
+        _entrySubmenu = stack.Peek();
         if (_launcher is not null)
         {
             _launcher.Visible = false;
@@ -433,7 +464,7 @@ internal sealed partial class AppShellHostRoot : Control
             return;
         }
 
-        if (stack.SubmenusOpen)
+        if (!ReferenceEquals(stack.Peek(), _entrySubmenu))
         {
             RuntimeLog.Info("rt2TopLevelPushRejected=true;reason=another-submenu-became-active");
             AppShellHost.SyncMainMenuSurfaceVisibility(_mainMenu);

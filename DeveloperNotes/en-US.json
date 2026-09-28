@@ -1,179 +1,194 @@
 {
   "SchemaVersion": 1,
-  "ContentVersion": "1.2.0",
-  "TargetModVersion": "1.2.0",
-  "UpdatedAt": "2026-09-13",
+  "ContentVersion": "1.3.0",
+  "TargetModVersion": "1.3.0",
+  "UpdatedAt": "2026-09-27",
   "Chapters": [
     {
       "Id": "release",
-      "Title": "RolltheSpire2 1.2.0",
-      "Summary": "Version 1.2.0 primarily rewrites how RT2 executes searches, alongside performance improvements and usability updates.",
+      "Title": "RolltheSpire2 1.3.0",
+      "Summary": "Version 1.3.0 expands RT2's prediction and filtering capabilities and redesigns the interface. It adds multiplayer seed search and prediction, map features, an encyclopedia, and seed favorites, while also improving condition setup and the overall workflow.",
       "Blocks": [
         {
           "Type": "Heading",
-          "Text": "Search Architecture Rewrite",
+          "Text": "Redesigned Interface",
           "Items": null
         },
         {
           "Type": "Paragraph",
-          "Text": "Most search conditions are now organized into [b]Families[/b], with each Family responsible for its own filtering work.",
+          "Text": "Seed search and seed information prediction both have new interfaces.",
           "Items": null
         },
         {
           "Type": "Paragraph",
-          "Text": "All major Families now have GPU search capabilities. When multiple conditions are combined, RT2 optimizes the execution path to improve efficiency.",
+          "Text": "Search conditions are grouped by content, with clearer selection of cards, relics, and other objects. Condition counts, rarity, and search progress have also been reorganized.",
           "Items": null
         },
         {
           "Type": "Paragraph",
-          "Text": "As a result, some complex searches with multiple conditions can be noticeably faster than before.",
+          "Text": "Seed information is organized by opening, Act, and Shops & Relics, making it easier to inspect Neow results, combat rewards, encounters, maps, and the complete initial relic bags.",
           "Items": null
         },
         {
           "Type": "Heading",
-          "Text": "Expanded CPU Search Coverage",
+          "Text": "Multiplayer Seed Search and Prediction",
           "Items": null
         },
         {
           "Type": "Paragraph",
-          "Text": "CPU numerical filtering has also been reorganized and expanded.",
+          "Text": "You can now configure 2–4 players, choose each player's character and personal conditions, and apply shared conditions to the whole party.",
           "Items": null
         },
         {
           "Type": "Paragraph",
-          "Text": "More query types can now use CPU numerical filtering, substantially expanding CPU Only search coverage.",
+          "Text": "Multiplayer configuration assumes full unlocks for everyone by default. You can also explicitly read the actual lobby context, so entering a multiplayer lobby is not required every time.",
           "Items": null
         },
         {
           "Type": "Paragraph",
-          "Text": "For now, the CPU work has focused on coverage. Some queries may still be slower than the highly specialized CPU Fast implementations used previously. CPU performance will continue to improve in future versions.",
+          "Text": "Information prediction has its own multiplayer configuration. Each player can choose their Neow option, with pickups executed in [b]P1 → P2 → P3 → P4[/b] order. The options displayed by default also count as chosen. Modeled random consumption from earlier choices affects predictions for later players.",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "The main multiplayer conditions also support CPU/GPU fast filtering. Multiplayer transformation combinations are not currently included.",
           "Items": null
         },
         {
           "Type": "Heading",
-          "Text": "Clearer “Choice as Commitment”",
+          "Text": "Map Preview and Filtering",
           "Items": null
         },
         {
           "Type": "Paragraph",
-          "Text": "When you specify a player choice in a query, RT2 treats it as a choice you will actually make in the game and continues searching on that basis.",
+          "Text": "Seed information now includes map previews. You can draw routes and browse routes tied for the best value of a selected metric.",
           "Items": null
         },
         {
           "Type": "Paragraph",
-          "Text": "You can specify not only “what I want to see,” but also “what I will choose when I get there.”",
+          "Text": "Seed searches can require supported route metrics and map properties, such as Elites, Shops, Rest Sites, and certain node counts and distribution conditions.",
           "Items": null
         },
         {
           "Type": "Paragraph",
-          "Text": "This also provides a foundation for expanding the range of game content that can be predicted and searched in the future.",
+          "Text": "These features focus on map structure and existing prediction assumptions. Simulation of complete runs and later outcomes along a route remains under research. Map filtering does not currently have a GPU implementation.",
           "Items": null
         },
         {
           "Type": "Heading",
-          "Text": "Search Time Estimates",
+          "Text": "More Ways to Express Conditions",
           "Items": null
         },
         {
           "Type": "Paragraph",
-          "Text": "RT2 now provides an approximate search time based on the query conditions, rarity, execution method, and current device performance.",
+          "Text": "Ancient option requirements are more detailed. You can require several specified options to be offered together, or accept any one of several candidates.",
           "Items": null
         },
         {
           "Type": "Paragraph",
-          "Text": "During a search, estimates can also be updated using the actual scanning speed.",
+          "Text": "Combat reward conditions can cover cards and potions in the first [b]1–6 battles[/b]. Each can target a specific battle or match anywhere within the range, regardless of order.",
           "Items": null
         },
         {
           "Type": "Paragraph",
-          "Text": "ETA remains an approximation. Accuracy and coverage for complex queries still have room to improve, but the estimates should make it easier to judge roughly how long a search will take.",
+          "Text": "Event result coverage has expanded, with conditions placed directly under the corresponding event. Transformation combinations include more event sources and can combine results from multiple sources within the supported scope.",
           "Items": null
         },
         {
           "Type": "Heading",
-          "Text": "Compatibility Improvements",
+          "Text": "Encyclopedia, Presets, and Seed Favorites",
           "Items": null
         },
         {
           "Type": "Paragraph",
-          "Text": "RT2 now makes greater use of the character, card pools, unlock state, and runtime environment it actually reads for prediction and search, rather than rejecting an environment simply because it is not the default vanilla setup.",
+          "Text": "The new encyclopedia brings together filtering rules, prediction assumptions, and game mechanics documented during development, so you can consult them while using RT2.",
           "Items": null
         },
         {
           "Type": "Paragraph",
-          "Text": "This also improves searching in some partially unlocked and modded-character environments.",
-          "Items": null
-        },
-        {
-          "Type": "Paragraph",
-          "Text": "This does not mean RT2 fully supports all mods. Custom content that changes character mechanics, RNG, relics, events, rewards, or other game rules may still produce inaccurate predictions or remain unsupported.",
+          "Text": "Presets can save complete search configurations, including multiplayer conditions. The seed library stores favorite seeds, character context, and notes, allowing you to revisit predictions using the saved configuration.",
           "Items": null
         },
         {
           "Type": "Heading",
-          "Text": "Other Changes",
+          "Text": "Probability, Performance, and Other Improvements",
           "Items": null
         },
         {
           "Type": "Paragraph",
-          "Text": "This release also includes smaller fixes and cleanup for settings, language selection, status displays, runtime logs, and the UI.",
+          "Text": "This release adds probability models and fast filtering for new conditions and multiplayer queries, and adjusts how some searches with multiple conditions are executed.",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "Some combinations in multiplayer and modded environments have not yet been fully validated. Performance and ETA estimates for complex queries also need further improvement. Current support does not mean arbitrary mod changes can be predicted accurately.",
           "Items": null
         }
       ]
     },
     {
       "Id": "next",
-      "Title": "What's Next",
-      "Summary": "RolltheSpire2 1.2.0 primarily completes a round of consolidation of the existing search system, performance, and runtime foundations.",
+      "Title": "Future Plans",
+      "Summary": "Version 1.3.0 adds many new capabilities. Next, I would like to improve how they work in complex environments and continue improving search performance.",
       "Blocks": [
         {
-          "Type": "Paragraph",
-          "Text": "Next, I would like to refocus development on new prediction and filtering capabilities.",
+          "Type": "Heading",
+          "Text": "Search Cost Estimation and Optimization in Complex Environments",
           "Items": null
         },
         {
-          "Type": "Callout",
-          "Text": "These are simply development directions I am currently interested in, not a fixed update order or release schedule. The actual work may change as development and research progress.",
+          "Type": "Paragraph",
+          "Text": "In the near term, I will focus on [b]multiplayer, mods, and partial unlocks[/b], especially search performance when all three are combined.",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "These environments change card pools, available options, and query execution costs. I would like to collect more performance data, improve search cost estimates and execution choices, and bring speed and ETA estimates closer to actual behavior.",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "I will also check whether broader compatibility has added overhead to ordinary single-player searches, and optimize any performance regressions.",
           "Items": null
         },
         {
           "Type": "Heading",
-          "Text": "Near-Term Directions",
+          "Text": "Prediction Further Along a Route",
           "Items": null
         },
         {
-          "Type": "BulletList",
-          "Text": null,
-          "Items": [
-            "[b]More choices, prediction, and filtering capabilities[/b]\nContinue expanding the idea of “choice as commitment.” Players can tell RT2 not only what they want to see, but also what they will choose when they get there. I hope to let the predictor accept more of these player inputs and gradually bring the parts suitable for high-speed searching into the filter.",
-            "[b]Multiplayer prediction and filtering[/b]\nContinue researching and improving prediction and search in multiplayer. Alongside each player's individual state, multiplayer also involves shared game state and random processes. Some foundational research is already complete, and I hope to gradually bring these capabilities into official releases.",
-            "[b]Map prediction and filtering[/b]\nContinue researching map generation, routes, and node structure, and gradually integrate validated capabilities into regular searches. Future searches could use Elites, Shops, Rest Sites, route structure, and other map properties to find seeds.",
-            "[b]Game mechanics and knowledge documentation[/b]\nContinue organizing the game source knowledge, RNG mechanics, prediction rules, and validated findings accumulated during development. This material may gradually be published and expanded as developer documentation, game mechanics explanations, or in other forms."
-          ]
+          "Type": "Paragraph",
+          "Text": "In the longer term, I would like to continue researching route prediction.",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "Players could draw a route they want to follow, combine it with their choices and known state, and view possible outcomes further ahead in the seed predictor or during an actual run.",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "This requires further work on how events, rewards, shops, and player choices along the route affect one another, gradually extending the range of reliable prediction.",
+          "Items": null
         },
         {
           "Type": "Heading",
-          "Text": "Further Ahead",
+          "Text": "GPU Search for Map Nodes",
           "Items": null
         },
         {
           "Type": "Paragraph",
-          "Text": "As development shifts toward new prediction and filtering capabilities, 0.107.x is no longer among the versions RolltheSpire2 explicitly supports or plans to maintain for now.",
+          "Text": "Another direction I would like to explore is GPU search for map nodes and related conditions.",
           "Items": null
         },
         {
           "Type": "Paragraph",
-          "Text": "The 32-bit root hash space used by 0.107 is also substantially smaller than that of the current version. For increasingly complex and rare search conditions, this space itself limits the kinds of seeds that can be found, so there is now limited value in investing substantial development effort in adapting to the older version.",
+          "Text": "Map filtering currently relies mainly on the CPU. I would like to investigate which calculations are suitable for the GPU and whether moving them would produce a meaningful improvement in search speed.",
           "Items": null
         },
         {
           "Type": "Paragraph",
-          "Text": "Unless the game developers explicitly announce that 0.107.x will remain an official version for the long term or permanently, full prediction and filtering support for 0.107 will not be added to the current to-do list.",
-          "Items": null
-        },
-        {
-          "Type": "Paragraph",
-          "Text": "If the official version plans change in the future, I will reassess this decision.",
+          "Text": "These are the current development directions. Their order and scope will change with research findings and feedback; there is no fixed completion schedule.",
           "Items": null
         }
       ]

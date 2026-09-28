@@ -46,8 +46,35 @@ public static class SearchCompiler
         ArgumentNullException.ThrowIfNull(query);
         ArgumentNullException.ThrowIfNull(context);
 
+        if (context.Party is not null || query.Players.Count > 0) return PartyInitialQuery.Compile(query, context);
+        if (context.Authority.PlayersCount != 1) throw new ArgumentException("Party.WholeTableEnvelopeRequired");
+        return CompilePlayer(query, context, productPolicy);
+    }
+
+    internal static CompiledSearch CompilePlayer(SearchQuery query, SearchContext context, ProductSemanticPolicy? productPolicy = null)
+    {
+        if (query.Players.Count != 0 || context.Party is not null) throw new ArgumentException("Party.NestedEnvelope");
+
+        if (query.StandardMaps.Count > 0)
+        {
+            if (context.ProfileId != RuntimeProfileId.Beta111)
+                throw new ArgumentException("StandardMap.Beta111Required");
+            if (query.StandardMaps.Any(c => !c.IsValid)) throw new ArgumentException("StandardMap.InvalidCondition");
+        }
+        if (context.Authority.PlayersCount == 1) ValidateAncientModes(query);
+        TransformationAggregateCondition.ValidateExclusiveOwnership(query);
+        if (query.TransformationAggregate is not null && (context.ProfileId != RuntimeProfileId.Beta111 || context.Authority.PlayersCount != 1))
+            throw new ArgumentException("TransformationAggregate.SinglePlayerBeta111Required");
+        query = query with { TransformationAggregate = query.TransformationAggregate?.Normalize() };
+        if (query.TransformationAggregate?.EventScenario is { } scenario)
+            RolltheSpire2.Core.Prediction.MorphicGrovePredictor.ValidateAuthority(context.Detection, context.Authority, scenario);
+
         ProductSemanticPolicy policy = productPolicy ?? ProductSemanticPolicy.Current;
         QueryNormalizationResult normalized = SearchQueryNormalizer.Normalize(query);
+        foreach (var condition in normalized.NormalizedQuery.EventResultConditions.Where(c =>
+                     EventResultTransformSemantics.IsTransform(c.Kind)))
+            RolltheSpire2.Core.Prediction.MorphicGrovePredictor.ValidateAuthority(context.Detection,
+                context.Authority, condition.MorphicGroveScenario!);
         ResolvedRouteSemantics routeSemantics = ResolveRouteSemantics(normalized.NormalizedQuery, policy);
         bool requiresComplexBonesDeckInteractionEvaluation = RequiresComplexBonesDeckInteractionEvaluation(normalized.NormalizedQuery);
         string fingerprint = BuildSemanticFingerprint(
@@ -63,6 +90,21 @@ public static class SearchCompiler
             routeSemantics,
             requiresComplexBonesDeckInteractionEvaluation,
             fingerprint);
+    }
+
+    private static void ValidateAncientModes(SearchQuery query)
+    {
+        foreach (var act in query.AncientBranches.GroupBy(b => b.Act))
+        {
+            if (act.Select(b => b.AncientKey).Distinct().Count() > 4)
+                throw new ArgumentException("Ancient.MaximumFourAlternativeParents");
+            var filters = query.LegacyWorld.AncientOptionFilters.Where(f => f.Act == act.Key && !f.IsEmpty).ToArray();
+            if (!filters.Any(f => f.Keys.All.Count > 0)) continue;
+            if (act.Select(b => b.AncientKey).Distinct().Count() != 1 ||
+                filters.Any(f => f.Keys.Any.Count > 0 || f.Keys.Ban.Count > 0) ||
+                filters.SelectMany(f => f.Keys.All).Distinct().Count() > 3)
+                throw new ArgumentException("Ancient.AllRequiresOneParentAndAtMostThreeOptions");
+        }
     }
 
     private static ResolvedRouteSemantics ResolveRouteSemantics(
@@ -156,11 +198,15 @@ public static class SearchCompiler
             "event=" + Sorted(query.EventSequenceConstraints.Select(item =>
                 $"{item.Act}:{item.Source}:{item.RangeMode}:{item.RangeValue}:{Keys(item.Keys)}")),
             "eventResult=" + Sorted(query.EventResultConditions.Select(item =>
-                $"{item.Kind}:{item.TargetKey.Serialized}")),
+                $"{item.Kind}:{item.TargetKey.Serialized}" + (item.TrialCase is { } trial ? ":case=" + trial : "") +
+                (item.TinkerCardType is { } type ? ":type=" + type + ":rider=" + item.TinkerRider : "") +
+                (item.MorphicGroveSecondCard is { } second ? ":second=" + second.Serialized : "") + (item.MorphicGroveScenario is null ? "" :
+                    ":scenario=" + MorphicGroveQuerySemantics.Fingerprint(item.MorphicGroveScenario)))),
             "merchantColorless=" + Sorted(query.MerchantColorlessConditions.Select(item =>
                 $"{item.MerchantOrdinal}:{item.Slot}:{item.TargetCardKey.Serialized}")),
             "merchantColorlessSequence=" + Sorted(query.MerchantColorlessSequenceConditions.Select(item =>
                 $"{item.Count}:{item.OrderMode}:{item.Slot}:{string.Join(">", item.Slots.Select(key => key?.Serialized ?? "*"))}")),
+            "standardMaps=" + Sorted(query.StandardMaps.Select(c => $"{c.Scope}:{c.Metric}:{c.Comparison}:{c.Value}:{c.RouteObjective}")),
             "combatCards=" + (query.CombatCardRewards is { IsEmpty: false } cards
                 ? $"count={cards.Count}:order={cards.OrderMode}:slots={string.Join(">", cards.Slots.Select(key => key?.Serialized ?? "*"))}"
                 : string.Empty),
@@ -190,7 +236,9 @@ public static class SearchCompiler
             "legacySeaGlass=" + Sorted(query.LegacyWorld.AncientSeaGlassTargetFilters.Select(item => $"{item.Act}:{Keys(item.Keys)}"))
         };
 
-        return string.Join("|", parts);
+        string identity = string.Join("|", parts);
+        return query.TransformationAggregate is { } aggregate
+            ? identity + "|transformationAggregate=" + aggregate.SemanticIdentity : identity;
     }
 }
 
@@ -290,12 +338,18 @@ internal static class SearchQueryNormalizer
             .Where(item => item.SourceRelicKey.IsValid)
             .Select(item => NormalizeStructuredCondition(item))
             .Where(item => !item.IsEmpty)
-            .Distinct()
+            .DistinctBy(item => System.Text.Json.JsonSerializer.Serialize(item))
             .OrderBy(item => item.SourceRelicKey.Serialized, StringComparer.Ordinal)
             .ThenBy(item => item.Scope)
             .ThenBy(item => item.Kind)
             .ToArray();
 
+        foreach (var source in structured.Select(c => c.SourceRelicKey).Distinct())
+            if (!NeowChoiceCommitment.HasCompatibleRequirements(structured, source))
+            {
+                impossible = true;
+                diagnostics.Add("NeowChoiceCommitmentConflict:" + source.Serialized);
+            }
         foreach (NeowStructuredEffectSearchCondition item in structured)
         {
             if (item.SourceRelicKey == BaseGameModelKeys.Relics.Kaleidoscope &&
@@ -380,6 +434,7 @@ internal static class SearchQueryNormalizer
 
         EventResultSearchCondition[] eventResults = query.EventResultConditions
             .Where(item => item.IsValid)
+            .Select(MorphicGroveQuerySemantics.Normalize)
             .Distinct()
             .OrderBy(item => item.Kind)
             .ThenBy(item => item.TargetKey.Serialized, StringComparer.Ordinal)
@@ -452,6 +507,7 @@ internal static class SearchQueryNormalizer
             MerchantColorlessConditions = merchantColorless.ToArray(),
             MerchantColorlessSequenceConditions = merchantColorlessSequences,
             LegacyCombatRewardConstraints = legacyRewards,
+            StandardMaps = query.StandardMaps.Distinct().OrderBy(c=>c.Scope).ThenBy(c=>c.Metric).ThenBy(c=>c.Comparison).ThenBy(c=>c.Value).ThenBy(c=>c.RouteObjective).ToArray(),
             CombatCardRewards = combatCards,
             CombatPotionRewards = combatPotions
         };
@@ -589,7 +645,7 @@ internal static class SearchQueryNormalizer
     {
         if (input is null || input.IsEmpty) return null;
         ModelKey?[] slots = input.Slots.Take(Math.Max(0, input.Count)).ToArray();
-        if (input.Count is < 1 or > 3 || slots.Length != input.Count ||
+        if (input.Count is < 1 or > 6 || slots.Length != input.Count ||
             slots.Any(key => key.HasValue && (!key.Value.IsValid || key.Value.Category != BaseGameModelKeys.Categories.Card)))
         {
             impossible = true;
@@ -614,7 +670,7 @@ internal static class SearchQueryNormalizer
     {
         if (input is null || input.IsEmpty) return null;
         CombatPotionRewardSlotSearchCondition[] slots = input.Slots.Take(Math.Max(0, input.Count)).ToArray();
-        if (input.Count is < 1 or > 3 || slots.Length != input.Count || slots.Any(slot => !slot.IsValid))
+        if (input.Count is < 1 or > 6 || slots.Length != input.Count || slots.Any(slot => !slot.IsValid))
         {
             impossible = true;
             diagnostics.Add("CombatPotionSequenceInvalid");

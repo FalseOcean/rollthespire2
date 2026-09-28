@@ -35,7 +35,8 @@ internal enum Beta110FastDomain
     CombatReward = 1 << 23,
     EventResult = 1 << 24,
     MerchantColorless = 1 << 25,
-    ShopRelicSequence = 1 << 26
+    ShopRelicSequence = 1 << 26,
+    MassiveScrollOffer = 1 << 27
 }
 
 [Flags]
@@ -69,7 +70,8 @@ internal enum Beta110FastStructuredConditionKind : byte
     LostCofferPotion,
     PhialHolsterPotions,
     LeafyPoulticeTransforms,
-    NewLeafTransform
+    NewLeafTransform,
+    MassiveScrollOffer
 }
 
 internal readonly record struct Beta110FastStructuredCondition(
@@ -81,6 +83,9 @@ internal readonly record struct Beta110FastStructuredCondition(
     byte TargetCount,
     bool AllowDuplicateOutputs)
 {
+    internal bool OrderedKaleidoscope { get; init; }
+    internal ushort KaleidoscopeFirstTarget { get; init; } = Beta110FastDenseId.Invalid;
+    internal ushort KaleidoscopeSecondTarget { get; init; } = Beta110FastDenseId.Invalid;
     public ushort TargetAt(int index) => index switch
     {
         0 => Target0,

@@ -92,6 +92,8 @@ internal static class WorldFamilyGpuPacking
             actMeta[meta + 18] = checked((uint)bossTwoOffset);
             actMeta[meta + 19] = checked((uint)bossTwoCount);
             actMeta[meta + 20] = checked((uint)act.Ancients.Length);
+            actMeta[meta + 21] = act.FamilyFirstBossOverride == ushort.MaxValue ? uint.MaxValue : act.FamilyFirstBossOverride;
+            actMeta[meta + 22] = act.FamilyBossBranchesConjunctive ? 1u : 0u;
         }
         encounters = encounterList.ToArray();
         conflicts = conflictList.ToArray();

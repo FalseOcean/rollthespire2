@@ -18,6 +18,10 @@ internal sealed partial class NeowEffectProjectionEngine
     private readonly ulong? _trustedRootHash;
     private readonly RuntimeContextAuthoritySnapshot _analysisAuthority;
     private readonly bool _enableComplexBonesDeckInteractions;
+    // Null means concrete replay. A supplied map is the explicit multiplayer
+    // premise: unlisted Capsule obtains have no immediate side effects.
+    internal IReadOnlyDictionary<ModelKey, IReadOnlySet<ModelKey>>? AuthoredCapsuleEffects { get; init; }
+
 
     public NeowEffectProjectionEngine(
         IRuntimeProfile profile,
@@ -62,7 +66,9 @@ internal sealed partial class NeowEffectProjectionEngine
         _enableComplexBonesDeckInteractions = enableComplexBonesDeckInteractions;
     }
 
-    public NeowEffectProjection Project(ModelKey relicKey)
+    public NeowEffectProjection Project(ModelKey relicKey) => Project(relicKey, null);
+
+    internal NeowEffectProjection Project(ModelKey relicKey, NeowEffectRngContext? openingRng)
     {
         NeowEffectImplementationStatus implementation =
             NeowEffectCoverageRegistry.GetImplementation(_profileId, relicKey);
@@ -106,8 +112,7 @@ internal sealed partial class NeowEffectProjectionEngine
                 {
                     effectAuthority = effectAuthority with
                     {
-                        OrderedRelicBag = NeowRewardGenerator.BuildOrderedRelicBag(_profile, _trustedRootHash.Value,
-                            effectAuthority.SharedRelicPoolSource!, effectAuthority.CharacterRelicPoolSource!),
+                        OrderedRelicBag = NeowRewardGenerator.BuildOrderedRelicBag(_profile, _trustedRootHash.Value, _analysisAuthority),
                         RelicBagExact = true
                     };
                 }
@@ -125,7 +130,7 @@ internal sealed partial class NeowEffectProjectionEngine
                 effectAuthority.OrderedRelicBag is null
                     ? null
                     : effectAuthority.OrderedRelicBag.OrderBy(item => item.BagOrder).ToList(),
-                NeowEffectRngContext.CreateFromRootHash(
+                openingRng ?? NeowEffectRngContext.CreateFromRootHash(
                     _profile,
                     _trustedRootHash.Value,
                     _analysisAuthority.PlayerSlotIndex));
@@ -332,9 +337,24 @@ internal sealed partial class NeowEffectProjectionEngine
 
         if (relicKey == BaseGameModelKeys.Relics.MassiveScroll)
         {
-            return _analysisAuthority.PlayersCount <= 1
-                ? NeowEffectProjection.NotApplicable(relicKey, Evidence(relicKey, "single-player-not-applicable"))
-                : NeowEffectProjection.Unsupported(relicKey, Evidence(relicKey, "multiplayer-card-constraints-not-captured"));
+            if (_analysisAuthority.PlayersCount <= 1)
+                return NeowEffectProjection.NotApplicable(relicKey, Evidence(relicKey, "single-player-not-applicable"));
+            if (state?.Authority.HasExactCharacterRewardPool != true || !state.Authority.HasExactColorlessRewardPool)
+                return Unknown(relicKey, "multiplayer-card-pools-missing");
+            var pool = state.Authority.CharacterRewardPool!.Concat(state.Authority.ColorlessRewardPool!)
+                .Where(c => c.IsMultiplayerOnly).DistinctBy(c => c.CardKey)
+                .Select((c, index) => c with { PoolOrder = index }).ToArray();
+            var excluded = new HashSet<string>(StringComparer.Ordinal);
+            var effects = new List<PredictedEffect>();
+            for (int i = 0; i < 3; i++)
+            {
+                var card = NeowRewardGenerator.CreateCard(state.Rng.Rewards, pool, _analysisAuthority.Ascension,
+                    excluded, forcedRarity: null, consumeUpgradeRoll: true, baseOddsPolicy: _baseOddsPolicy);
+                if (card is null) return Unknown(relicKey, "multiplayer-card-offer-incomplete");
+                effects.AddRange(EffectsForGeneratedCard(card, $"massive-scroll.offer.{i}", effects.Count, relicKey));
+            }
+            return Exact(relicKey, [Group("massive-scroll-offer", 0, EffectSelectionPolicy.ChooseOneOrSkip,
+                EffectPredictionScope.ImmediateOptionEffect, "MassiveScroll card reward", effects)]);
         }
 
         if (relicKey == BaseGameModelKeys.Relics.SilkenTress)
@@ -1093,6 +1113,10 @@ internal sealed partial class NeowEffectProjectionEngine
                 Relation = PredictedEffectRelation.NestedRelic,
                 IsProductRelevant = true
             });
+
+            if (AuthoredCapsuleEffects is { } authored &&
+                (!authored.TryGetValue(relicKey, out var modeled) || !modeled.Contains(pulled.RelicKey)))
+                continue;
 
             // When an earlier player choice was deliberately not evaluated by
             // product policy, Capsule contents remain objective seed facts, but

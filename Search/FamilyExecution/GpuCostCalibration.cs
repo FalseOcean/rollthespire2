@@ -49,6 +49,7 @@ internal sealed class GpuCostSnapshot
     internal FamilyPhysicalQuote Local(IFamilyInvocation family, FamilyPhysicalQuote quote, FamilyPhysicalQuoteRequest geometry)
     {
         if (!family.ConditionPerformance.UsesGpu) return quote;
+        if (quote.LocalCostSource == "LocalMeasurement") return quote;
         string key = GpuReferenceCostAtlas.Key(family, quote, geometry);
         double referencePeak = GpuReferenceCostAtlas.Peak(key) ?? quote.ReferencePeakThroughput;
         double ratio = Ratio(key);
@@ -63,6 +64,11 @@ internal sealed class GpuCostSnapshot
             return new(condition.FamilyId,condition.PhysicalImplementationRevision,1,1e9/raw.NanosecondsPerInput,
                 raw.LocalCostSource=="Condition"?FamilyPerformanceEvidenceSource.Condition:
                     raw.LocalCostSource=="Global"?FamilyPerformanceEvidenceSource.Global:FamilyPerformanceEvidenceSource.Reference,"CPU","CPU",raw.Evidence);
+        if (condition.UsesGpu && raw is { NanosecondsPerInput: > 0, PublicTransportClass: "CompleteCanonicalAbi1" })
+            return new(condition.FamilyId, condition.PhysicalImplementationRevision, 1,
+                1e9 / raw.NanosecondsPerInput, FamilyPerformanceEvidenceSource.Condition,
+                SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity().GpuIdentity,
+                SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity().RenderingBackend, raw.Evidence);
         if (raw is null || !condition.UsesGpu) return GpuCostCalibration.ResolveReference(condition);
         var local = Local(family, raw, geometry);
         double? survival = family.ResolveSurvival(new HashSet<string>()).SurvivalProbability;
@@ -71,13 +77,13 @@ internal sealed class GpuCostSnapshot
         double input = PrivateOrdinalBuffer.Capacity, output = input * survival.Value;
         double windows = Math.Ceiling(input / local.WindowCapacity);
         bool large = local.PublicTransportClass == "LargeResidentAppend32";
-        double materialization = windows * .15 + windows * (1 - Math.Exp(-output / windows)) * (large ? 4 : .15) +
+        double materialization = windows * (.15 + local.FixedWindowMilliseconds) + windows * (1 - Math.Exp(-output / windows)) * (large ? 4 : .15) +
             output * (local.OutputAlreadyOrdered ? 6 : large ? 38 : 25) / 1e6;
         double ms = input * local.NanosecondsPerInput / 1e6 + (materialization + .6) * local.GpuCostRatio;
         double cps = input * 1000 / ms;
         return new(condition.FamilyId, condition.PhysicalImplementationRevision, 1, cps,
             _ratios.ContainsKey(GpuReferenceCostAtlas.Key(family, raw, geometry)) ? FamilyPerformanceEvidenceSource.Condition :
-                ConditionCount > 0 ? FamilyPerformanceEvidenceSource.Global : FamilyPerformanceEvidenceSource.Reference, "GPU", "d3d12", local.Evidence);
+                ConditionCount > 0 ? FamilyPerformanceEvidenceSource.Global : FamilyPerformanceEvidenceSource.Reference, "GPU", SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity().RenderingBackend, local.Evidence);
     }
 }
 

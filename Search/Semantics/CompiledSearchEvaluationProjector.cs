@@ -134,6 +134,7 @@ public static class CompiledSearchEvaluationProjector
             RelicShopSequenceConditions = query.RelicShopSequenceConditions,
             EventSequenceConditions = query.EventSequenceConstraints,
             EventResultConditions = query.EventResultConditions,
+            TransformationAggregate = query.TransformationAggregate,
             MerchantColorlessConditions = query.MerchantColorlessConditions,
             MerchantColorlessSequenceConditions = query.MerchantColorlessSequenceConditions,
             NormalCombatRewardConditions = query.LegacyCombatRewardConstraints

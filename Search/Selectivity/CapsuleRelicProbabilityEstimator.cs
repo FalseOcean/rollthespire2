@@ -25,10 +25,27 @@ internal static class CapsuleRelicProbabilityEstimator
     private readonly record struct DrawPosition(int Lane, int Ordinal);
     private readonly record struct RarityRoll(int PreferredLane, double Mass, string Label);
 
+    // Shared extraction fact only: the caller pays the selected Neow/Bones offer
+    // once and combines other opening predicates through its existing authority.
+    internal static bool TryEstimateOpeningCapsules(SearchSelectivityInput plan,
+        IReadOnlyList<ModelKey> actualCapsuleSources, bool includeExplicitRelicSequence,
+        out double conditionalProbability, out string detail, out string issue) =>
+        CombatRewardProbabilityEstimator.TryEstimateCapsuleBagConjunction(plan, actualCapsuleSources,
+            includeExplicitRelicSequence, out conditionalProbability, out detail, out issue);
+
     public static bool HasCapsuleRelicSharedConstraint(SearchSelectivityInput plan)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ProbabilitySemanticView semantic = ProbabilitySemanticProjection.From(plan);
+        if (plan.Authority.PlayersCount > 1 && HasOverlappingRelicSequenceConstraint(plan))
+        {
+            var filter = semantic.NumericalFilter;
+            var source = filter.NeowRoute?.RouteRelicKey;
+            if (source == BaseGameModelKeys.Relics.SmallCapsule || source == BaseGameModelKeys.Relics.LargeCapsule ||
+                source == BaseGameModelKeys.Relics.NeowsBones && (filter.RequireSmallCapsule || filter.RequireLargeCapsule ||
+                    filter.RequireWhetstone || filter.RequireWarPaint || !filter.CapsuleContainedRelics.IsEmpty ||
+                    filter.StructuredNeowEffects.Any(NeowReplayPlan.IsCapsule))) return true;
+        }
         return HasOverlappingRelicSequenceConstraint(plan) &&
                semantic.HasRelation(
                    SemanticRelationKind.SameFact,
@@ -84,30 +101,43 @@ internal static class CapsuleRelicProbabilityEstimator
                 "Capsule probability requires a direct selected Small/Large Capsule Neow route.");
         }
 
+        if (plan.Authority.PlayersCount > 1)
+        {
+            if (!TryEstimateOpeningCapsules(plan, [route.RouteRelicKey], includeExplicitRelicSequence,
+                    out double partyConditional, out string detail, out string issue))
+                return SearchSelectivityEstimate.Unpriced("Probability.Capsule.PartyBag:" + issue, detail);
+            if (!NeowStructuredEffectProbabilityEstimator.TryTopLevelRouteProbability(plan, route.RouteRelicKey,
+                    out double partyParent, out string partyParentEvidence))
+                return SearchSelectivityEstimate.Unpriced("Probability.Capsule.PartyParentUnavailable", partyParentEvidence);
+            return SearchSelectivityEstimate.Exact(partyParent * partyConditional, SearchSelectivityMethod.ConditionalChain,
+                SearchSelectivityCoverage.ExactRequestedConjunction, SearchSelectivityDependencyClass.StructuralDependence,
+                includeExplicitRelicSequence ? "Probability.Authority.CapsuleRelicSharedConstraint" : "Probability.Authority.CapsuleNestedRelic",
+                $"Parent={partyParent:G17};conditional={partyConditional:G17};{detail};{partyParentEvidence}",
+                ["CapsuleSourcesAndLegacySetsShareActualInitialBag", "ParentNeowOfferPaidOnce", "UnspecifiedObtainHooksSkipped"]);
+        }
+
         NeowStructuredEffectSearchCondition[] structured = ProbabilitySemanticProjection.From(plan).NumericalFilter.StructuredNeowEffects
             .Where(condition => !condition.IsEmpty && condition.SourceRelicKey == route.RouteRelicKey)
             .ToArray();
-        if (structured.Length != 1 ||
-            structured[0].Scope != NeowStructuredEffectScope.NestedRelics ||
-            structured[0].OutputKind != NeowStructuredOutputKind.Relic)
+        if (structured.Length == 0 || structured.Any(c =>
+            c.Scope != NeowStructuredEffectScope.NestedRelics ||
+            c.OutputKind != NeowStructuredOutputKind.Relic))
         {
             return SearchSelectivityEstimate.Unpriced(
                 "Probability.Capsule.StructuredShapeUnsupported",
-                "Direct Capsule pricing currently requires exactly one NestedRelics structured condition for the selected Capsule source.",
+                "Direct Capsule pricing requires NestedRelics structured conditions for the selected Capsule source.",
                 SearchSelectivityConfidence.High,
                 SearchSelectivityMethod.ConditionalChain,
                 SearchSelectivityCoverage.PartialRequestedConjunction,
                 SearchSelectivityDependencyClass.StructuralDependence);
         }
 
-        ModelKey[] targets = structured[0].OutputKeys
-            .Where(key => key.IsValid)
-            .Distinct(ModelKeyComparer.Instance)
-            .ToArray();
+        ModelKey[] targets = MergeTargetConjunction(structured);
         int drawCount = route.RouteRelicKey == BaseGameModelKeys.Relics.SmallCapsule ? 1 : 2;
-        if (targets.Length == 0 || targets.Length > drawCount ||
-            (drawCount == 1 && structured[0].Kind != NeowStructuredConditionKind.ExactSingle) ||
-            (drawCount == 2 && structured[0].Kind != NeowStructuredConditionKind.ExactUnorderedPair))
+        if (targets.Length == 0 || structured.Any(c =>
+            c.OutputKeys.Any(k => !k.IsValid) || c.OutputKeys.Count > drawCount ||
+            (drawCount == 1 && c.Kind != NeowStructuredConditionKind.ExactSingle) ||
+            (drawCount == 2 && c.Kind != NeowStructuredConditionKind.ExactUnorderedPair)))
         {
             return SearchSelectivityEstimate.Unpriced(
                 "Probability.Capsule.TargetShapeUnsupported",
@@ -117,6 +147,10 @@ internal static class CapsuleRelicProbabilityEstimator
                 SearchSelectivityCoverage.PartialRequestedConjunction,
                 SearchSelectivityDependencyClass.StructuralDependence);
         }
+        if (targets.Length > drawCount)
+            return SearchSelectivityEstimate.Exact(0d, SearchSelectivityMethod.WithoutReplacement,
+                SearchSelectivityCoverage.ExactRequestedConjunction, SearchSelectivityDependencyClass.StructuralDependence,
+                "Probability.Capsule.ConjunctionExceedsDrawCount", "The combined Capsule target multiset exceeds the source's output count.");
 
         RelicSequenceSearchCondition[] explicitRelicConditions = includeExplicitRelicSequence
             ? OverlappingRelicSequenceConditions(plan)
@@ -165,7 +199,7 @@ internal static class CapsuleRelicProbabilityEstimator
 
         foreach (ModelKey target in targets)
         {
-            if (!laneByKey.ContainsKey(target))
+            if (target != BaseGameModelKeys.OrdinaryRelics.Circlet && !laneByKey.ContainsKey(target))
             {
                 return SearchSelectivityEstimate.Exact(
                     0d,
@@ -231,12 +265,9 @@ internal static class CapsuleRelicProbabilityEstimator
                 continue;
             }
 
-            double bagMass = 0d;
-            foreach (IReadOnlyList<(DrawPosition Position, ModelKey Target)> scenario in scenarios)
+            if (!TrySolveScenarioUnion(lanes, explicitRelicConditions, DeduplicateScenarios(scenarios),
+                    out double bagMass, out string solveIssue))
             {
-                double scenarioMass = SolveSharedBagScenario(lanes, explicitRelicConditions, scenario, out string solveIssue);
-                if (double.IsNaN(scenarioMass))
-                {
                     return SearchSelectivityEstimate.Unpriced(
                         "Probability.CapsuleRelic.SequenceSolver:" + solveIssue,
                         "A Capsule/Relic shared sequence relation is outside the current exact finite-permutation solver.",
@@ -245,8 +276,6 @@ internal static class CapsuleRelicProbabilityEstimator
                         SearchSelectivityCoverage.PartialRequestedConjunction,
                         SearchSelectivityDependencyClass.StructuralDependence,
                         new[] { "SharedConstraint=Capsule×RelicQueue" });
-                }
-                bagMass += scenarioMass;
             }
             bagMass = Math.Clamp(bagMass, 0d, 1d);
             conditional += rollMass * bagMass;
@@ -300,44 +329,38 @@ internal static class CapsuleRelicProbabilityEstimator
             detail = "No nested Capsule structured predicate.";
             return true;
         }
-        if (active.GroupBy(condition => condition.SourceRelicKey, ModelKeyComparer.Instance).Any(group => group.Count() != 1) ||
-            active.Length > 2)
-        {
-            issue = "BonesCapsuleSourceMultiplicityUnsupported";
-            detail = "Bones can contain at most one Small Capsule and one Large Capsule identity; each source must contribute one structured NestedRelics predicate.";
-            return false;
-        }
-
         bool grouped = active.Any(NeowReplayPlan.IsGroupedCapsule);
-        if (grouped && (active.Length != 1 || active[0].OutputKeys.Count is < 1 or > 3))
-        { issue = "GroupedCapsuleMixedOrInvalidShape"; return false; }
+        var groupedRows = active.Where(NeowReplayPlan.IsGroupedCapsule).ToArray();
+        if (groupedRows.Any(c => c.OutputKeys.Count is < 1 or > 3 || c.OutputKeys.Any(k => !k.IsValid)))
+        { issue = "GroupedCapsuleInvalidShape"; return false; }
+        ModelKey[] groupedTargets = MergeTargetConjunction(groupedRows);
+        if (groupedTargets.Length > 3) { detail = "Grouped conjunction exceeds three outputs"; return true; }
         if (grouped && actualBonesPair is not null &&
             !actualBonesPair.ToHashSet().SetEquals([BaseGameModelKeys.Relics.SmallCapsule, BaseGameModelKeys.Relics.LargeCapsule]))
         { detail = "Grouped requires both Capsules"; return true; }
-        // Grouped is one three-draw observation, not the union of two source routes.
+        // Source rows observe their own output slice; grouped rows observe all
+        // three draws. Repeated rows conjoin by maximum required multiplicity.
         var requests = new List<(ModelKey Source, ModelKey[] Targets, int DrawCount)>();
-        foreach (NeowStructuredEffectSearchCondition condition in active)
+        foreach (var sourceRows in active.Where(c => !NeowReplayPlan.IsGroupedCapsule(c))
+                     .GroupBy(c => c.SourceRelicKey, ModelKeyComparer.Instance))
         {
-            int drawCount = grouped ? 3 : condition.SourceRelicKey == BaseGameModelKeys.Relics.SmallCapsule ? 1 : 2;
-            ModelKey[] targets = condition.OutputKeys
-                .Where(key => key.IsValid)
-                .Distinct(ModelKeyComparer.Instance)
-                .ToArray();
-            if (grouped) targets = condition.OutputKeys.ToArray(); // preserve multiset multiplicity
-            bool shapeOk = grouped || condition.Scope == NeowStructuredEffectScope.NestedRelics &&
+            int drawCount = sourceRows.Key == BaseGameModelKeys.Relics.SmallCapsule ? 1 : 2;
+            ModelKey[] targets = MergeTargetConjunction(sourceRows);
+            bool shapeOk = sourceRows.All(condition => condition.Scope == NeowStructuredEffectScope.NestedRelics &&
                            condition.OutputKind == NeowStructuredOutputKind.Relic &&
-                           targets.Length is >= 1 && targets.Length <= 2 &&
-                           targets.Length <= drawCount &&
+                           condition.OutputKeys.Count >= 1 && condition.OutputKeys.Count <= drawCount &&
+                           condition.OutputKeys.All(k => k.IsValid) &&
                            (drawCount == 1
                                ? condition.Kind == NeowStructuredConditionKind.ExactSingle
-                               : condition.Kind == NeowStructuredConditionKind.ExactUnorderedPair);
+                               : condition.Kind == NeowStructuredConditionKind.ExactUnorderedPair));
             if (!shapeOk)
             {
-                issue = "BonesCapsuleStructuredShapeUnsupported:" + condition.SourceRelicKey.Entry;
+                issue = "BonesCapsuleStructuredShapeUnsupported:" + sourceRows.Key.Entry;
                 detail = "Nested Capsule target shape does not match current Search structured-output semantics.";
                 return false;
             }
-            requests.Add((condition.SourceRelicKey, targets, drawCount));
+            if (targets.Length > drawCount) { detail = "Source conjunction exceeds output count"; return true; }
+            requests.Add((sourceRows.Key, targets, drawCount));
         }
 
         // The actual unordered Bones pair is the probability fact being conditioned on.
@@ -353,14 +376,14 @@ internal static class CapsuleRelicProbabilityEstimator
             .Distinct(ModelKeyComparer.Instance)
             .ToArray();
 
-        if (!grouped && actualBonesPair is not null &&
-            active.Any(condition => !actualBonesPair.Contains(condition.SourceRelicKey, ModelKeyComparer.Instance)))
+        if (actualBonesPair is not null &&
+            requests.Any(condition => !actualBonesPair.Contains(condition.Source, ModelKeyComparer.Instance)))
         {
             conditionalProbability = 0d;
             detail = "A structured Capsule source is absent from the conditioned Bones pair.";
             return true;
         }
-        foreach (ModelKey source in grouped ? Array.Empty<ModelKey>() : requiredCapsuleSources)
+        foreach (ModelKey source in grouped ? new[] { BaseGameModelKeys.Relics.SmallCapsule, BaseGameModelKeys.Relics.LargeCapsule } : requiredCapsuleSources)
         {
             if (requests.Any(request => request.Source == source)) continue;
             requests.Add((
@@ -405,9 +428,9 @@ internal static class CapsuleRelicProbabilityEstimator
                 laneByKey[key] = lane;
             }
         }
-        foreach (ModelKey target in requests.SelectMany(request => request.Targets))
+        foreach (ModelKey target in requests.SelectMany(request => request.Targets).Concat(groupedTargets))
         {
-            if (!laneByKey.ContainsKey(target))
+            if (target != BaseGameModelKeys.OrdinaryRelics.Circlet && !laneByKey.ContainsKey(target))
             {
                 conditionalProbability = 0d;
                 detail = "At least one requested Capsule nested Relic is absent from the runtime Common/Uncommon/Rare player grab bag.";
@@ -465,7 +488,14 @@ internal static class CapsuleRelicProbabilityEstimator
             {
                 IReadOnlyList<IReadOnlyList<(DrawPosition Position, ModelKey Target)>> routeScenarios =
                     BuildRouteScenarios(order, requests, positions, laneByKey);
-                allScenarios.AddRange(routeScenarios);
+                if (!grouped) allScenarios.AddRange(routeScenarios);
+                else
+                {
+                    var groupScenarios = BuildTargetScenarios(positions, groupedTargets, laneByKey);
+                    foreach (var sourceFacts in routeScenarios)
+                    foreach (var groupFacts in groupScenarios)
+                        allScenarios.Add(sourceFacts.Concat(groupFacts).ToArray());
+                }
             }
 
             IReadOnlyList<IReadOnlyList<(DrawPosition Position, ModelKey Target)>> uniqueScenarios =
@@ -494,6 +524,16 @@ internal static class CapsuleRelicProbabilityEstimator
         detail =
             $"Bones nested Capsule SharedConstraint;pair={pairLabel};capsules={requests.Count};filteredCapsules={active.Length};draws={totalDraws};routeAlternatives={routeOrders.Length};conditional={conditionalProbability:G17};branches={string.Join(',', branchNotes)}";
         return true;
+    }
+
+    private static ModelKey[] MergeTargetConjunction(IEnumerable<NeowStructuredEffectSearchCondition> rows)
+    {
+        var required = new Dictionary<ModelKey, int>(ModelKeyComparer.Instance);
+        foreach (var row in rows)
+        foreach (var group in row.OutputKeys.GroupBy(k => k, ModelKeyComparer.Instance))
+            required[group.Key] = Math.Max(required.GetValueOrDefault(group.Key), group.Count());
+        return required.OrderBy(p => p.Key.Serialized, StringComparer.Ordinal)
+            .SelectMany(p => Enumerable.Repeat(p.Key, p.Value)).ToArray();
     }
 
     private static IReadOnlyList<IReadOnlyList<(DrawPosition Position, ModelKey Target)>> BuildRouteScenarios(
@@ -532,12 +572,14 @@ internal static class CapsuleRelicProbabilityEstimator
         var output = new List<IReadOnlyList<(DrawPosition Position, ModelKey Target)>>();
         foreach (IReadOnlyList<(DrawPosition Position, ModelKey Target)> scenario in scenarios)
         {
-            string key = string.Join("|", scenario
+            var facts = scenario.Distinct().ToArray();
+            if (facts.GroupBy(f => f.Position).Any(g => g.Select(f => f.Target).Distinct().Count() > 1)) continue;
+            string key = string.Join("|", facts
                 .OrderBy(fact => fact.Position.Lane)
                 .ThenBy(fact => fact.Position.Ordinal)
                 .ThenBy(fact => fact.Target.Serialized, StringComparer.Ordinal)
                 .Select(fact => $"{fact.Position.Lane}:{fact.Position.Ordinal}:{fact.Target.Serialized}"));
-            if (seen.Add(key)) output.Add(scenario);
+            if (seen.Add(key)) output.Add(facts);
         }
         return output;
     }
@@ -660,18 +702,6 @@ internal static class CapsuleRelicProbabilityEstimator
             scenarios.Add(Array.Empty<(DrawPosition Position, ModelKey Target)>());
             return scenarios;
         }
-        if (targets.Count == 1)
-        {
-            for (int draw = 0; draw < positions.Count; draw++)
-            {
-                if (!positions[draw].HasValue) continue;
-                DrawPosition position = positions[draw]!.Value;
-                if (!laneByKey.TryGetValue(targets[0], out int lane) || lane != position.Lane) continue;
-                scenarios.Add(new[] { (position, targets[0]) });
-            }
-            return scenarios;
-        }
-
         // Bounded distinct draw assignment (at most 3!); the shared finite-bag
         // union below handles overlaps and repeated target multiplicity exactly.
         var used = new bool[positions.Count];
@@ -679,7 +709,12 @@ internal static class CapsuleRelicProbabilityEstimator
         void Assign(int target) {
             if (target == targets.Count) { scenarios.Add(facts.ToArray()); return; }
             for (int draw = 0; draw < positions.Count; draw++) {
-                if (used[draw] || positions[draw] is not { } position ||
+                if (used[draw]) continue;
+                // An exhausted permitted rarity chain produces Circlet without
+                // imposing a fact on any initial-bag position.
+                if (positions[draw] is null && targets[target] == BaseGameModelKeys.OrdinaryRelics.Circlet)
+                { used[draw] = true; Assign(target + 1); used[draw] = false; continue; }
+                if (positions[draw] is not { } position ||
                     !laneByKey.TryGetValue(targets[target],out int lane) || lane != position.Lane) continue;
                 used[draw]=true; facts.Add((position, targets[target])); Assign(target+1);
                 facts.RemoveAt(facts.Count-1); used[draw]=false;

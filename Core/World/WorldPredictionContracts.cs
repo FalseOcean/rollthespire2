@@ -138,6 +138,15 @@ public sealed record AncientPredictionResult(
     public string OptionIssueCode { get; init; } = string.Empty;
 }
 
+public sealed record EncounterSequenceEntryResult(int Ordinal, ModelKey EncounterKey);
+
+// Read-only initial queues, not map positions or Search predicates.
+public sealed record ActEncounterSequenceResult(
+    int Act, ModelKey ActKey,
+    IReadOnlyList<EncounterSequenceEntryResult> Normal,
+    IReadOnlyList<EncounterSequenceEntryResult> Elite,
+    PredictionPrecision Precision, string IssueCode);
+
 public sealed record WorldPredictionResult(
     SeedDomainEvaluationStatus BossStatus,
     SeedDomainEvaluationStatus AncientStatus,
@@ -148,6 +157,7 @@ public sealed record WorldPredictionResult(
     string AncientIssueCode = "")
 {
     public EventPoolSequencePredictionResult? EventPoolSequencePrediction { get; init; }
+    public IReadOnlyList<ActEncounterSequenceResult> EncounterSequences { get; init; } = [];
     public static WorldPredictionResult Unsupported(string bossIssue, string ancientIssue) => new(
         SeedDomainEvaluationStatus.Unsupported,
         SeedDomainEvaluationStatus.Unsupported,

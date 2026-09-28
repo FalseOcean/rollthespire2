@@ -81,6 +81,7 @@ internal sealed partial class AnchoredTooltipHost : Control
         _rulesMargin.AddThemeConstantOverride("margin_top", 6);
 
         _description = Ui1Theme.Label(string.Empty, Ui1TextRole.Body, true);
+        _description.AutowrapMode = TextServer.AutowrapMode.Arbitrary;
         _description.MouseFilter = MouseFilterEnum.Ignore;
         _description.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         _rulesMargin.AddChild(_description);
@@ -152,6 +153,24 @@ internal sealed partial class AnchoredTooltipHost : Control
         }
 
         ShowResolved(anchor, title, string.Empty, string.Empty);
+    }
+
+    public void ShowRelicWithCondition(Control anchor, ModelKey relicKey, string fallbackTitle,
+        string conditionTitle, string condition)
+    {
+        if (!IsUsableAnchor(anchor)) { Dismiss(); return; }
+        string title = string.IsNullOrWhiteSpace(fallbackTitle) ? relicKey.Entry : fallbackTitle;
+        string description = string.Empty;
+        try
+        {
+            RelicTooltipSnapshot snapshot = _relicResolver.Resolve(relicKey, title);
+            title = snapshot.Title;
+            if (snapshot.HasOfficialDescription) description = snapshot.Description;
+        }
+        catch { /* The premise remains visible if runtime relic text is unavailable. */ }
+        string premise = string.IsNullOrWhiteSpace(conditionTitle) ? condition : $"{conditionTitle}\n{condition}";
+        ShowResolved(anchor, title, string.Empty,
+            string.IsNullOrWhiteSpace(description) ? premise : $"{description}\n\n{premise}");
     }
 
     public void ShowCardFor(
@@ -308,7 +327,7 @@ internal sealed partial class AnchoredTooltipHost : Control
 
         Vector2 minimum = _panel.GetCombinedMinimumSize();
         _panel.Size = new Vector2(
-            Math.Max(_pendingPreferredWidth, minimum.X),
+            _customMargin.Visible ? Math.Max(_pendingPreferredWidth, minimum.X) : _pendingPreferredWidth,
             Math.Max(1f, minimum.Y));
         RepositionCurrent();
         _panel.Modulate = Colors.White;
@@ -391,6 +410,7 @@ internal sealed partial class AnchoredTooltipHost : Control
 
         Rect2 anchorRect = _anchor.GetGlobalRect();
         Rect2 viewportRect = GetViewport().GetVisibleRect();
+        Rect2 hostRect = GetGlobalRect();
         Vector2 tooltipSize = _panel.Size;
         if (tooltipSize.X <= 0f || tooltipSize.Y <= 0f)
         {
@@ -398,17 +418,23 @@ internal sealed partial class AnchoredTooltipHost : Control
             _panel.Size = tooltipSize;
         }
 
+        // The workspace shell clips its children even when the game viewport is
+        // wider. Keep the tooltip within this host, not merely within the viewport.
+        float visibleLeft = Math.Max(viewportRect.Position.X, hostRect.Position.X);
+        float visibleTop = Math.Max(viewportRect.Position.Y, hostRect.Position.Y);
+        float visibleRight = Math.Min(viewportRect.End.X, hostRect.End.X);
+        float visibleBottom = Math.Min(viewportRect.End.Y, hostRect.End.Y);
         float rightX = anchorRect.End.X + AnchorGap;
         float leftX = anchorRect.Position.X - AnchorGap - tooltipSize.X;
-        float x = rightX + tooltipSize.X <= viewportRect.End.X - ViewportMargin
+        float x = rightX + tooltipSize.X <= visibleRight - ViewportMargin
             ? rightX
             : leftX;
         float y = anchorRect.Position.Y + (anchorRect.Size.Y - tooltipSize.Y) * 0.5f;
 
-        float minX = viewportRect.Position.X + ViewportMargin;
-        float minY = viewportRect.Position.Y + ViewportMargin;
-        float maxX = Math.Max(minX, viewportRect.End.X - tooltipSize.X - ViewportMargin);
-        float maxY = Math.Max(minY, viewportRect.End.Y - tooltipSize.Y - ViewportMargin);
+        float minX = visibleLeft + ViewportMargin;
+        float minY = visibleTop + ViewportMargin;
+        float maxX = Math.Max(minX, visibleRight - tooltipSize.X - ViewportMargin);
+        float maxY = Math.Max(minY, visibleBottom - tooltipSize.Y - ViewportMargin);
         _panel.GlobalPosition = new Vector2(
             Math.Clamp(x, minX, maxX),
             Math.Clamp(y, minY, maxY));

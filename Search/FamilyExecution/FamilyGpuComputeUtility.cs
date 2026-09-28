@@ -9,8 +9,54 @@ internal static class FamilyGpuComputeUtility
     private const string VisibleSeedRootHashMarker = "/*__RT2_VISIBLE_SEED_ROOT_HASH__*/";
     private const string VisibleSeedRootHashCommonSuffix = "VisibleSeedRootHashCommon.glsl";
 
+    [ThreadStatic] private static ShaderReuse? _shaderReuse;
+    [ThreadStatic] private static Dictionary<(RenderingDevice, Rid), ShaderReuse>? _borrowedShaders;
+
+    // Owner-thread, search-local module reuse. Executors still own their pipelines
+    // and uniforms; dispose every borrower before disposing this module owner.
+    internal sealed class ShaderReuse(RenderingDevice rd) : IDisposable
+    {
+        private readonly Dictionary<string, Rid> _modules = new(StringComparer.Ordinal);
+        private readonly Dictionary<Rid, int> _borrowers = [];
+        internal IDisposable Activate()
+        {
+            var previous = _shaderReuse; _shaderReuse = this;
+            return new Scope(() => _shaderReuse = previous);
+        }
+        internal bool Applies(RenderingDevice device) => ReferenceEquals(rd, device);
+        internal bool TryBorrow(string source, out Rid shader)
+        {
+            if (!_modules.TryGetValue(source, out shader)) return false;
+            _borrowers[shader]++; return true;
+        }
+        internal void Add(string source, Rid shader)
+        {
+            _modules.Add(source, shader); _borrowers.Add(shader, 1);
+            (_borrowedShaders ??= []).Add((rd, shader), this);
+        }
+        internal void Release(Rid shader)
+        {
+            if (--_borrowers[shader] < 0) throw new InvalidOperationException("ShaderReuse.DoubleRelease");
+        }
+        public void Dispose()
+        {
+            if (_borrowers.Values.Any(count => count != 0)) throw new InvalidOperationException("ShaderReuse.LiveBorrower");
+            foreach (Rid shader in _modules.Values)
+            {
+                rd.FreeRid(shader); _borrowedShaders!.Remove((rd, shader));
+            }
+            _modules.Clear(); _borrowers.Clear();
+        }
+        private sealed class Scope(Action close) : IDisposable
+        {
+            public void Dispose() => close();
+        }
+    }
+
     public static Rid CompileShader(RenderingDevice rd, string sourceText, string name)
     {
+        var reuse = _shaderReuse is { } current && current.Applies(rd) ? current : null;
+        if (reuse is not null && reuse.TryBorrow(sourceText, out var cached)) return cached;
         long started=System.Diagnostics.Stopwatch.GetTimestamp();
         var source = new RDShaderSource { SourceCompute = sourceText };
         RDShaderSpirV spirV = rd.ShaderCompileSpirVFromSource(source, allowCache: true);
@@ -23,6 +69,7 @@ internal static class FamilyGpuComputeUtility
         started=System.Diagnostics.Stopwatch.GetTimestamp();
         Rid shader=rd.ShaderCreateFromSpirV(spirV, name);
         RolltheSpire2.Bootstrap.RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=ShaderModuleReady;name={name};ownerThreadId={System.Environment.CurrentManagedThreadId};sourceSha256={sourceHash};spirvSha256={spirvHash};compileSpirvMs={compileMs:F4};moduleMs={System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:F4};allowCache=true");
+        reuse?.Add(sourceText, shader);
         return shader;
     }
 
@@ -124,7 +171,11 @@ internal static class FamilyGpuComputeUtility
         List<Exception>? failures = null;
         for (int index = owned.Count - 1; index >= 0; index--)
         {
-            try { rd.FreeRid(owned[index]); }
+            try
+            {
+                if (_borrowedShaders is not null && _borrowedShaders.TryGetValue((rd, owned[index]), out var owner)) owner.Release(owned[index]);
+                else rd.FreeRid(owned[index]);
+            }
             catch (Exception ex) { if (failOnError) (failures ??= []).Add(ex); }
         }
         owned.Clear();

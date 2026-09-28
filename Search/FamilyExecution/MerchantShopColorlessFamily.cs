@@ -123,7 +123,7 @@ internal sealed partial class MerchantShopColorlessFamily : IFamilyInvocation
 
         IRuntimeProfile profile = RuntimeProfileRegistry.Select(plan.Detection);
         Beta111MerchantColorlessAuthority authority = Beta111MerchantColorlessAuthority.From(plan.Authority);
-        if (profile.ProfileId != RuntimeProfileId.Beta111 || !authority.HasExactV1Inputs)
+        if (profile.ProfileId != RuntimeProfileId.Beta111 || !authority.HasExactV1Inputs || authority.PlayersCount > 4)
             return false;
 
         int maxOrdinal = plan.Evaluation.MerchantColorlessConditions.Count == 0
