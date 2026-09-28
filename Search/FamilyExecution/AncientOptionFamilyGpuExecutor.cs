@@ -44,13 +44,17 @@ internal sealed class AncientOptionFamilyGpuExecutor : IDisposable
                 source = source.Replace(address, "input_ids.v[batch.v[6]+i]", StringComparison.Ordinal);
             }
             Rid shader = Add(FamilyGpuComputeUtility.CompileShader(rd, source, "AncientOptionFamily"));
-            _pipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(rd, shader));
+            _pipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(rd, shader, "A.AncientOption"));
             if (!rd.ComputePipelineIsValid(_pipeline)) throw new InvalidOperationException("A.AncientOption.PipelineInvalid");
-            _uniforms = Add(FamilyGpuComputeUtility.CreateUniformSet(rd, shader, buffers));
+            _uniforms = Add(FamilyGpuComputeUtility.CreateUniformSet(rd, shader, buffers, "A.AncientOption"));
             WorkspaceBytes = 64 + Capacity * 8L + plan.Buffers.Sum(b => Math.Max(4, b.Length * 4L)) + Math.Max(4, Capacity * plan.ScratchWords * 4L);
             Device = rd.GetDeviceName(); SetupMs = watch.Elapsed.TotalMilliseconds;
         }
-        catch { FamilyGpuComputeUtility.FreeAll(rd, _owned, _privateInput || _privateOutput); throw; }
+        catch (Exception failure)
+        {
+            FamilyGpuComputeUtility.CleanupAfterFailure(failure, () => FamilyGpuComputeUtility.FreeAll(rd, _owned), "A.AncientOption");
+            throw;
+        }
     }
     private static uint[] Header() => [0x414f4652u, 1, 0, 0, 0, 0x414f4652u, 0, 0];
     private void Check() { if (_owner != System.Environment.CurrentManagedThreadId) throw new InvalidOperationException("A.AncientOption.OwnerMismatch"); ObjectDisposedException.ThrowIf(_disposed, this); }
@@ -100,7 +104,7 @@ internal sealed class AncientOptionFamilyGpuExecutor : IDisposable
                 _rd.ComputeListDispatch(list, (uint)((count + 63) / 64), 1, 1);
             }
             finally { _rd.ComputeListEnd(); }
-            FamilyGpuExecutionOwner.ObserveFirstSubmit(); _rd.Submit(); _rd.Sync(); dispatches++;
+            FamilyGpuComputeUtility.SubmitAndSync(_rd, "A.AncientOption"); dispatches++;
             dispatchMs += watch.Elapsed.TotalMilliseconds - dispatchStart;
             token.ThrowIfCancellationRequested(); double start = watch.Elapsed.TotalMilliseconds;
             uint[] h = FamilyGpuComputeUtility.FromUInt32Bytes(_rd.BufferGetData(_header));
@@ -137,5 +141,5 @@ internal sealed class AncientOptionFamilyGpuExecutor : IDisposable
         if (_traceNwae) Bootstrap.RuntimeLog.TryBackgroundDetail($"nwaeStageTiming=true;stage=A;input={input.Count};output={result.Count};dispatches={dispatches};dispatchSyncMs={dispatchMs};readbackBytes={bytes};readbackMs={read};sortMs={sort};canonicalMs={metrics.CanonicalMs}");
         return result;
     }
-    public void Dispose() { if (_disposed) return; Check(); _disposed = true; FamilyGpuComputeUtility.FreeAll(_rd, _owned, _privateInput || _privateOutput); }
+    public void Dispose() { if (_disposed) return; Check(); _disposed = true; FamilyGpuComputeUtility.FreeAll(_rd, _owned); }
 }

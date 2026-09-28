@@ -284,7 +284,7 @@ internal sealed partial class NeowFamily
                     (p.Conditions.OpeningRoute is null || offers.Contains(p.Conditions.OpeningRoute.RouteRelicKey));
             });
         }
-        private bool Matches(ulong root) => MatchesInitialOffers(root) && _cpuPlans.All(plan => NeowFamilyReplay.Matches(root, plan));
+        private bool Matches(ulong root) => MatchesInitialOffers(root) && _cpuPlans.All(plan => NeowPartyReplay.Matches(root, plan));
         public string FamilyId => "N.Neow";
         public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId, FamilyCpuExecution.Capacity, [], "PartyInitialAnalyticalWorkUnavailable;PhysicalQuoteBounded");
         public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest geometry)
@@ -397,7 +397,7 @@ internal sealed partial class NeowFamily
                         ulong root = Beta111Profile.Instance.ComputeRootSeed(VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance, input.Batch.GlobalCandidate(ordinal)));
                         bool expected = _gpuStages.All(s => s.Family switch
                         {
-                            NeowFamily n => NeowFamilyReplay.Matches(root, n.PricingReplayPlan),
+                            NeowFamily n => NeowPartyReplay.Matches(root, n.PricingReplayPlan),
                             CapsuleRelicFamily r => r.MatchesReference(root),
                             _ => throw new InvalidOperationException("PartyN.PrivateReferenceMissing")
                         });

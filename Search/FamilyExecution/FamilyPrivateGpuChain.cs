@@ -39,7 +39,11 @@ internal sealed class FamilyPrivateGpuChain : IDisposable
                     i == 0 ? null : _buffers[(i - 1) % 2], i == families.Length - 1 ? null : _buffers[i % 2]);
             SetupMs = timer.Elapsed.TotalMilliseconds;
         }
-        catch { Dispose(); throw; }
+        catch (Exception failure)
+        {
+            FamilyGpuComputeUtility.CleanupAfterFailure(failure, Dispose, "FamilyParty.PrivateChain");
+            throw;
+        }
     }
 
     internal FamilyCandidateSet Execute(FamilyCandidateSet input, CancellationToken token)

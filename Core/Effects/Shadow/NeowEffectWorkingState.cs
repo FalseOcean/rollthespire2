@@ -21,9 +21,17 @@ internal sealed class NeowEffectWorkingState
     public List<NeowEffectRelicSnapshot>? RelicBag { get; }
     public NeowEffectRngContext Rng { get; }
 
+    // Only the opening-local Tress / Coffer / Kaleidoscope interaction is tracked.
+    public bool HasSilkenTress { get; set; }
+    public bool SilkenTressConsumed { get; set; }
+
     public NeowEffectWorkingState Clone() => new(
         Authority,
         Deck?.Clone(),
         RelicBag is null ? null : new List<NeowEffectRelicSnapshot>(RelicBag),
-        Rng.Clone());
+        Rng.Clone())
+    {
+        HasSilkenTress = HasSilkenTress,
+        SilkenTressConsumed = SilkenTressConsumed
+    };
 }

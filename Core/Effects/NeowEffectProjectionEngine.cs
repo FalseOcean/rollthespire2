@@ -359,6 +359,7 @@ internal sealed partial class NeowEffectProjectionEngine
 
         if (relicKey == BaseGameModelKeys.Relics.SilkenTress)
         {
+            if (state is not null) state.HasSilkenTress = true;
             PredictedEffectGroup immediate = Group(
                 "silken-tress-immediate", 0, EffectSelectionPolicy.NoPlayerChoice,
                 EffectPredictionScope.ImmediateOptionEffect, "SilkenTress.AfterObtained", new[]
@@ -540,7 +541,7 @@ internal sealed partial class NeowEffectProjectionEngine
         PredictedEffectGroup[] groups = new[]
         {
             Group("lost-coffer-cards", 0, EffectSelectionPolicy.ChooseOneOrSkip,
-                EffectPredictionScope.ImmediateOptionEffect, "LostCoffer card reward", cardEffects,
+                EffectPredictionScope.ImmediateOptionEffect, "LostCoffer card reward", ApplySilkenTressToOpeningReward(state, cardEffects),
                 bundleId: "lost-coffer.cards", bundleOrder: 0),
             Group("lost-coffer-potion", 1, EffectSelectionPolicy.OptionalClaim,
                 EffectPredictionScope.ImmediateOptionEffect, "LostCoffer potion reward", new[]
@@ -595,10 +596,23 @@ internal sealed partial class NeowEffectProjectionEngine
                 $"kaleidoscope-group-{groupIndex + 1}", groupIndex,
                 EffectSelectionPolicy.ChooseOneOrSkip,
                 EffectPredictionScope.ImmediateOptionEffect,
-                $"Kaleidoscope reward {groupIndex + 1}", effects,
+                $"Kaleidoscope reward {groupIndex + 1}", ApplySilkenTressToOpeningReward(state, effects),
                 bundleId: $"kaleidoscope.bundle.{groupIndex + 1}", bundleOrder: groupIndex));
         }
         return Exact(relicKey, groups);
+    }
+
+    private static IReadOnlyList<PredictedEffect> ApplySilkenTressToOpeningReward(
+        NeowEffectWorkingState state,
+        IReadOnlyList<PredictedEffect> effects)
+    {
+        if (!state.HasSilkenTress || state.SilkenTressConsumed) return effects;
+        // CardReward.Populate consumes Tress even if the player skips. These are
+        // fresh reward cards; no RNG or deck/resource mutation is involved.
+        state.SilkenTressConsumed = true;
+        return effects.Select(effect => effect.Kind == PredictedEffectKind.AddCard
+            ? effect with { HasGlam = true }
+            : effect).ToArray();
     }
 
     private NeowEffectProjection ProjectScrollBoxes(ModelKey relicKey, NeowEffectWorkingState? state)
@@ -1114,6 +1128,12 @@ internal sealed partial class NeowEffectProjectionEngine
                 IsProductRelevant = true
             });
 
+            // Search and seed information observe Capsule identities and only
+            // W/WP obtain effects. Arbitrary resource changes/other pickup hooks
+            // belong to played-path simulation, not this opening projection.
+            // Keep every drawn identity and its bag/RNG consumption above.
+            if (!TracksCapsuleObtain(pulled.RelicKey)) continue;
+
             if (AuthoredCapsuleEffects is { } authored &&
                 (!authored.TryGetValue(relicKey, out var modeled) || !modeled.Contains(pulled.RelicKey)))
                 continue;
@@ -1207,7 +1227,7 @@ internal sealed partial class NeowEffectProjectionEngine
                 nestedProductStatus = nested.ProductRelevantProjectionStatus;
             }
             capsuleImpact = capsuleImpact.Merge(
-                ResolveCapsuleNestedBonesDependencyImpact(pulled, nested));
+                ResolveProjectionDependencyImpact(pulled.RelicKey, nested));
         }
 
         bool smallCapsule = relicKey == BaseGameModelKeys.Relics.SmallCapsule;
@@ -2083,40 +2103,9 @@ internal sealed partial class NeowEffectProjectionEngine
         };
     }
 
-    private EffectDependencyImpact ResolveCapsuleNestedBonesDependencyImpact(
-        NeowEffectRelicSnapshot relic,
-        NeowEffectProjection projection)
-    {
-        EffectDependencyImpact projectedImpact =
-            ResolveProjectionDependencyImpact(relic.RelicKey, projection);
-
-        if (relic.RelicKey == BaseGameModelKeys.OrdinaryRelics.Whetstone ||
-            relic.RelicKey == BaseGameModelKeys.OrdinaryRelics.WarPaint)
-        {
-            // Whetstone / War Paint retain the existing deck-coupled path. Their
-            // automatic upgrade replay may consume Niche RNG and mutate the deck,
-            // so no observation-domain override is applied here.
-            return projectedImpact;
-        }
-
-        // Beta111 Owner-frozen execution policy for Capsule/Gashapon -> Bones Final
-        // Curse: every nested relic other than Whetstone / War Paint is exact NoImpact
-        // for the Final Curse dependency domain. Full obtain semantics may still be
-        // Partial/Unknown; only the unrelated blanket continuity downgrade is removed.
-        EvidenceCode finalCurseNoImpactEvidence = Evidence(
-            relic.RelicKey,
-            "capsule-final-curse-owner-policy-non-wwp-no-impact");
-        BonesContinuationDomainState exact =
-            BonesContinuationDomainState.Exact(finalCurseNoImpactEvidence);
-        return projectedImpact with
-        {
-            NicheRng = exact,
-            GeneratedCursePool = exact,
-            UnknownHook = exact,
-            NestedObtain = exact,
-            PlayerChoice = exact
-        };
-    }
+    private static bool TracksCapsuleObtain(ModelKey relic) =>
+        relic == BaseGameModelKeys.OrdinaryRelics.Whetstone ||
+        relic == BaseGameModelKeys.OrdinaryRelics.WarPaint;
 
     /// <summary>
     /// Audited vanilla opening invariant used only for the normal single-player

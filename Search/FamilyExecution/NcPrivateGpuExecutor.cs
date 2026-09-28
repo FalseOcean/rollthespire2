@@ -30,7 +30,11 @@ internal sealed class NcPrivateGpuExecutor : IDisposable
             }
             SetupMs=timer.Elapsed.TotalMilliseconds;
         }
-        catch {PrivateOrdinalBuffer.DisposeAll(_referenceN, _referenceC, _n, _c, _ordinals);throw;}
+        catch (Exception failure)
+        {
+            FamilyGpuComputeUtility.CleanupAfterFailure(failure, () => PrivateOrdinalBuffer.DisposeAll(_referenceN, _referenceC, _n, _c, _ordinals), "NC");
+            throw;
+        }
     }
     internal FamilyCandidateSet Execute(FamilyCandidateSet input,CancellationToken token,out double canonicalMs)
     {

@@ -46,7 +46,7 @@ internal sealed class RswPrivateGpuExecutor : IDisposable
                 _referenceW = new(rd, w);
             }
         }
-        catch { Release(); throw; }
+        catch (Exception failure) { FamilyGpuComputeUtility.CleanupAfterFailure(failure, Release, "RSW"); throw; }
     }
     internal FamilyCandidateSet Execute(FamilyCandidateSet input, CancellationToken token, out double canonicalMs)
     {

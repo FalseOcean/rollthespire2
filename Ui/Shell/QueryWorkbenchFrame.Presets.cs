@@ -303,7 +303,7 @@ internal sealed partial class QueryWorkbenchFrame
             var resolution = SearchPresetCompatibilityResolver.Resolve(preset, RuntimeAuthorityEnvironment.Current.Authority);
             if (!resolution.CanLoad || resolution.Kind == SearchPresetLoadResolutionKind.Partial)
                 throw new InvalidOperationException(resolution.Issue);
-            var compiled = Controllers.SearchPageController.CompileAuthoredDraft(resolution.Draft!, _runtime,
+            var compiled = WorkbenchQueryCompiler.CompileAuthoredDraft(resolution.Draft!, _runtime,
                 preset.CharacterKey, preset.Ascension, out _);
             draft = new(preset.CharacterKey, preset.Ascension, MigrateLegacyPresetQuery(compiled.Query), compiled.Context.EvaluationAssumptions.AncientEligibilityAssumptions);
         }

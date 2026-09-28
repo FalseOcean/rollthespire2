@@ -6,7 +6,7 @@ namespace RolltheSpire2.Ui.Components;
 /// <summary>
 /// Narrow Search-page confirmation transaction used by Phase A2 to keep
 /// pointer/focus ownership inside the same Control hierarchy as the Page and
-/// its pickers. Business meaning stays with SearchPage.
+/// its pickers. The owning workbench supplies the action.
 /// </summary>
 internal sealed partial class SearchConfirmationTransactionOverlay : Control
 {

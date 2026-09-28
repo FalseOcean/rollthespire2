@@ -58,7 +58,7 @@ internal sealed record WorkbenchSearchDraft(ModelKey Character, int Ascension, S
         if (Mode is not (WorldGameMode.Singleplayer or WorldGameMode.Multiplayer) || (Mode == WorldGameMode.Multiplayer) != (Players.Count > 0))
             throw new InvalidOperationException("Party.DraftModeMismatch");
         if (Players.Count == 0)
-            return Controllers.SearchPageController.CompileAuthoredQuery(Query, AncientPremises, runtime, Character, Ascension, out authority);
+            return WorkbenchQueryCompiler.CompileAuthoredQuery(Query, AncientPremises, runtime, Character, Ascension, out authority);
         if (Version < 2 || (Version < 3 && PartyNeowQuery.HasTransactions(Query)) || ObservationVersion != (PartyNeowQuery.HasTransactions(Query) ? Core.Effects.PartyNeowAdmission.ObservationVersion : OrderedPartyAuthority.ObservationVersion) ||
             Character != Players[0].Character ||
             Players.Where((p, i) => p.Slot != i || string.IsNullOrWhiteSpace(p.UnlockSource)).Any())

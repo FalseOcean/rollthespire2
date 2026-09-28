@@ -151,6 +151,7 @@ internal sealed partial class NeowEffectProjectionEngine
             state.Authority.SourceAuthority.ToString(),
             state.Authority.Completeness.ToString(),
             capabilityEvaluation.RewardImpactFingerprint,
+            $"silken-tress-consumed:{state.SilkenTressConsumed}",
             string.Join(",", capabilityEvaluation.SupportedImpactSources
                 .OrderBy(source => source.Serialized, StringComparer.Ordinal)
                 .Select(source => source.Serialized)),
@@ -214,6 +215,7 @@ internal sealed partial class NeowEffectProjectionEngine
         {
             NicheState = sharedStateExact ? RewardsRngStateSnapshot.Capture(state.Rng.Niche) : null,
             CombatPotionGenerationState = sharedStateExact ? RewardsRngStateSnapshot.Capture(state.Rng.CombatPotionGeneration) : null,
+            SilkenTressConsumedDuringOpening = state.SilkenTressConsumed,
             ActiveRewardImpactSources = capabilityEvaluation.SupportedImpactSources,
             RewardImpactFingerprint = capabilityEvaluation.RewardImpactFingerprint
         };
@@ -247,11 +249,11 @@ internal sealed partial class NeowEffectProjectionEngine
     }
 
 
-    // All drawn relics keep their held reward effects. Only the obtain hooks
-    // enabled by the party premise may invalidate the copied RNG continuation.
+    // All drawn relics keep their held reward effects. Only the W/WP obtain
+    // whitelist (further restricted by an authored premise) is replayed here.
     private ModelKey[] ExecutedNestedObtainRelics(ModelKey source, IEnumerable<PredictedEffectGroup> groups)
     {
-        var keys = ExtractNestedRelicKeys(groups);
+        var keys = ExtractNestedRelicKeys(groups).Where(TracksCapsuleObtain).ToArray();
         if (AuthoredCapsuleEffects is null || source != BaseGameModelKeys.Relics.SmallCapsule &&
             source != BaseGameModelKeys.Relics.LargeCapsule) return keys;
         return AuthoredCapsuleEffects.TryGetValue(source, out var enabled)

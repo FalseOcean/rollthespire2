@@ -58,11 +58,12 @@ internal sealed class FamilyGpuExecutionOwner : IAsyncDisposable
 {
     private readonly long _requestedAt = System.Diagnostics.Stopwatch.GetTimestamp();
     [ThreadStatic] private static bool _firstSubmitObserved;
-    internal static void ObserveFirstSubmit()
+    internal static bool ObserveFirstSubmit(string family = "Unknown")
     {
-        if (_firstSubmitObserved) return;
+        if (_firstSubmitObserved) return false;
         _firstSubmitObserved=true;
-        RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=FirstSubmit;ownerThreadId={System.Environment.CurrentManagedThreadId};processId={System.Environment.ProcessId}");
+        RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=FirstSubmit;family={Sanitize(family)};ownerThreadId={System.Environment.CurrentManagedThreadId};processId={System.Environment.ProcessId}");
+        return true;
     }
     private const int QueueCapacity = 1;
     private readonly BlockingCollection<IWorkItem> _queue =
@@ -132,8 +133,8 @@ internal sealed class FamilyGpuExecutionOwner : IAsyncDisposable
         }
 
         _queue.CompleteAdding();
-        await _stopped.Task.ConfigureAwait(false);
-        _queue.Dispose();
+        try { await _stopped.Task.ConfigureAwait(false); }
+        finally { _queue.Dispose(); }
     }
 
     private void ThreadMain()
@@ -148,6 +149,7 @@ internal sealed class FamilyGpuExecutionOwner : IAsyncDisposable
             device = _createDevice() ??
                      throw new InvalidOperationException("FamilyGpuRenderingDeviceUnavailable");
             RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=GpuOwnerReady;ownerThreadId={OwnerThreadId};requestedToReadyMs={System.Diagnostics.Stopwatch.GetElapsedTime(_requestedAt).TotalMilliseconds:F4};processId={System.Environment.ProcessId}");
+            LogDeviceFacts(device);
             FamilyDeviceProfileFoundation.ObserveFamilyComputeAvailable(
                 device.GetDeviceName()?.Trim() ?? string.Empty);
             foreach (IWorkItem item in _queue.GetConsumingEnumerable())
@@ -167,17 +169,51 @@ internal sealed class FamilyGpuExecutionOwner : IAsyncDisposable
         }
         finally
         {
+            Exception? releaseFailure = null;
             if (device is not null)
             {
                 // Work items finish their own Submit/Sync pairs. An extra Sync
                 // without an outstanding Submit is a Godot API error.
                 try { device.Free(); }
-                catch { try { device.Dispose(); } catch { } }
+                catch (Exception freeFailure)
+                {
+                    releaseFailure = freeFailure;
+                    try { device.Dispose(); }
+                    catch (Exception disposeFailure)
+                    {
+                        releaseFailure = new AggregateException("FamilyGpuOwner.DeviceReleaseFailed", freeFailure, disposeFailure);
+                    }
+                    Interlocked.Exchange(ref _faulted, 1);
+                    RuntimeLog.TryBackgroundWarning($"familyGpuDeviceReleaseFailed=true;ownerThreadId={OwnerThreadId};failure={Sanitize(releaseFailure.ToString())}");
+                }
             }
             RuntimeLog.TryBackgroundInfo(
-                $"familyGpuOwnerStopped=true;ownerThreadId={OwnerThreadId};deviceReleased=true");
-            _stopped.TrySetResult(true);
+                $"familyGpuOwnerStopped=true;ownerThreadId={OwnerThreadId};deviceCreated={device is not null};deviceReleased={device is not null && releaseFailure is null}");
+            if (releaseFailure is null) _stopped.TrySetResult(true);
+            else _stopped.TrySetException(releaseFailure);
         }
+    }
+
+    private void LogDeviceFacts(RenderingDevice device)
+    {
+        // Report the engine's actual limits. These are diagnostic facts, not a
+        // new admission policy or an automatic change to batch geometry.
+        using var version = Engine.GetVersionInfo();
+        RenderingDevice.Limit[] limits =
+        [
+            RenderingDevice.Limit.MaxStorageBuffersPerUniformSet,
+            RenderingDevice.Limit.MaxStorageBuffersPerShaderStage,
+            RenderingDevice.Limit.MaxComputeSharedMemorySize,
+            RenderingDevice.Limit.MaxComputeWorkgroupInvocations,
+            RenderingDevice.Limit.MaxComputeWorkgroupSizeX,
+            RenderingDevice.Limit.MaxComputeWorkgroupSizeY,
+            RenderingDevice.Limit.MaxComputeWorkgroupSizeZ,
+            RenderingDevice.Limit.MaxComputeWorkgroupCountX,
+            RenderingDevice.Limit.MaxComputeWorkgroupCountY,
+            RenderingDevice.Limit.MaxComputeWorkgroupCountZ
+        ];
+        string facts = string.Join(';', limits.Select(limit => $"{limit}={device.LimitGet(limit)}"));
+        RuntimeLog.TryBackgroundInfo($"familyGpuDeviceFacts=true;ownerThreadId={OwnerThreadId};godot={Sanitize(version["string"].AsString())};driver={Sanitize(RenderingServer.GetCurrentRenderingDriverName())};vendor={Sanitize(device.GetDeviceVendorName())};device={Sanitize(device.GetDeviceName())};pipelineCacheUuid={Sanitize(device.GetDevicePipelineCacheUuid())};{facts}");
     }
 
     private interface IWorkItem

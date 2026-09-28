@@ -33,7 +33,7 @@ internal sealed partial class EventEditorPrototype
         if (authority is null)
         {
             if (players != 1) return;
-            Controllers.SearchPageController.CompileAuthoredQuery(SearchQuery.Empty, AncientOptionConditionProfile.BroadDefault,
+            WorkbenchQueryCompiler.CompileAuthoredQuery(SearchQuery.Empty, AncientOptionConditionProfile.BroadDefault,
                 _runtime, character, ascension, out authority);
         }
         var scenario = Beta111MorphicGroveAuthorityCapture.CaptureAuthoredBasics(authority, 2, unlocks);

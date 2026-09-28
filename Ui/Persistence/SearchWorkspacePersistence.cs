@@ -637,7 +637,7 @@ internal sealed class UserPreferencesDocument
     public Dictionary<string, bool> WorkbenchFlags { get; set; } = new();
     public string WorkbenchPage { get; set; } = "neow";
     public int SchemaVersion { get; set; } = SearchWorkspacePersistence.SchemaVersion;
-    // Last observed Workshop UI language only. AppShell deliberately does not use this
+    // Last observed Workshop UI language only. The workspace deliberately does not use this
     // as localization authority; live TranslationServer locale wins on startup and hot reload.
     public string Language { get; set; } = string.Empty;
     // Explicit UI choice; missing/empty preserves existing follow-game behavior.

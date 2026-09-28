@@ -55,7 +55,7 @@ internal sealed class WorldFamilyGpuExecutor : IDisposable
                 source = source.Replace(bound, "if(p>=batch.v[7])", StringComparison.Ordinal);
             }
             Rid shader = Add(FamilyGpuComputeUtility.CompileShader(rd, source, "WorldFamily"));
-            _pipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(rd, shader));
+            _pipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(rd, shader, "W.World"));
             if (!rd.ComputePipelineIsValid(_pipeline)) throw new InvalidOperationException("W.GpuPipelineInvalid");
             for (int slot = 0; slot < GroupingK; slot++)
             {
@@ -63,13 +63,17 @@ internal sealed class WorldFamilyGpuExecutor : IDisposable
                 buffers[16] = _header[slot] = privateOutput is not null && slot > 0 ? _header[0] : Buffer(Header());
                 buffers[18] = _input[slot] = privateInput ?? Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, Capacity * 4));
                 buffers[17] = _output[slot] = privateOutput?.Buffer ?? Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, Capacity * 4));
-                _uniforms[slot] = Add(FamilyGpuComputeUtility.CreateUniformSet(rd, shader, buffers));
+                _uniforms[slot] = Add(FamilyGpuComputeUtility.CreateUniformSet(rd, shader, buffers, "W.World"));
             }
             // K1 retains its original direct header read and has no copy/bank.
             _headerBank = GroupingK == 1 || privateOutput is not null ? default : Buffer(new uint[GroupingK * 8]);
             Device = rd.GetDeviceName(); SetupMs = watch.Elapsed.TotalMilliseconds;
         }
-        catch { FamilyGpuComputeUtility.FreeAll(rd, _owned, _privateInput || _privateOutput is not null); throw; }
+        catch (Exception failure)
+        {
+            FamilyGpuComputeUtility.CleanupAfterFailure(failure, () => FamilyGpuComputeUtility.FreeAll(rd, _owned), "W.World");
+            throw;
+        }
     }
 
     private static uint[] Header() => [0x57464d52, 1, 0, 0, 0, 0x57463031, 0, 0];
@@ -156,9 +160,7 @@ internal sealed class WorldFamilyGpuExecutor : IDisposable
                     if (_rd.BufferCopy(_header[slot], _headerBank, 0, (uint)(slot * 32), 32) != Error.Ok)
                         throw new InvalidOperationException($"W.HeaderBankCopyFailure:batch={input.Batch.BatchBase};offset={offset + slot * Capacity}");
             }
-            FamilyGpuExecutionOwner.ObserveFirstSubmit(); _rd.Submit();
-            // No cancellation exception between Submit and Sync: drain the accepted GPU group first.
-            _rd.Sync(); dispatchSync += watch.Elapsed.TotalMilliseconds - start; groups++;
+            FamilyGpuComputeUtility.SubmitAndSync(_rd, "W.World"); dispatchSync += watch.Elapsed.TotalMilliseconds - start; groups++;
             token.ThrowIfCancellationRequested();
             start = watch.Elapsed.TotalMilliseconds;
             if (resident)
@@ -228,5 +230,5 @@ internal sealed class WorldFamilyGpuExecutor : IDisposable
             RolltheSpire2.Bootstrap.RuntimeLog.TryBackgroundDetail($"ewStageTiming=true;stage=W;input={inputCount};output={result.Count};dispatches={dispatches};groups={groups};dispatchSyncMs={dispatchSync};headerMs={headerRead};payloadMs={payloadRead};readbackBytes={headerBytes+payloadBytes};sortMs={sortMs};validationMs={validationMs};prepareOtherMs={metrics.CanonicalMs-dispatchSync-headerRead-payloadRead-sortMs-validationMs};canonicalMs={metrics.CanonicalMs}");
         return result;
     }
-    public void Dispose() { AssertOwner(); _disposed = true; FamilyGpuComputeUtility.FreeAll(_rd, _owned, _privateInput || _privateOutput is not null); }
+    public void Dispose() { AssertOwner(); _disposed = true; FamilyGpuComputeUtility.FreeAll(_rd, _owned); }
 }

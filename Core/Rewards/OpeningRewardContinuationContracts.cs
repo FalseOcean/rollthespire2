@@ -98,6 +98,8 @@ public sealed record OpeningRewardContinuation(
 
     public string RewardImpactFingerprint { get; init; } = string.Empty;
 
+    public bool SilkenTressConsumedDuringOpening { get; init; }
+
     public bool CanProjectRewards =>
         RewardsRngState is not null &&
         Precision is PredictionPrecision.Exact or PredictionPrecision.Partial or PredictionPrecision.DescriptionOnly &&

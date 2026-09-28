@@ -16,6 +16,7 @@ internal sealed partial class DesignReferenceSurfaces : Control
     public event Action<string?>? EncyclopediaRequested;
     internal WorkbenchSearchDraft? PartyInformationDraft => _workbench.PartyInformationDraft;
     internal bool HasActiveSearch => _workbench.HasActiveSearch;
+    internal WorkbenchSearchDraft CaptureFeedbackDraft() => _workbench.CaptureDraft().WithoutCapturedAuthority();
     internal void SyncSearchPreferences() => _workbench.SyncSearchPreferences();
     internal void ShowLibraryReceipt(string message) => _workbench.ShowLibraryReceipt(message);
     internal event Action<string, SeedLibraryContext>? FavoriteSeedRequested;

@@ -44,13 +44,17 @@ internal sealed class EventResultFamilyGpuExecutor : IDisposable
                 source = source.Replace(address, "input_ids.v[batch.v[6]+i]", StringComparison.Ordinal);
             }
             Rid shader = Add(FamilyGpuComputeUtility.CompileShader(rd, source, "EventResultFamily"));
-            _pipeline = Add(rd.ComputePipelineCreate(shader));
+            _pipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(rd, shader, "E.EventResult"));
             if (!rd.ComputePipelineIsValid(_pipeline)) throw new InvalidOperationException("E.EventResult.PipelineInvalid");
-            _uniforms = Add(FamilyGpuComputeUtility.CreateUniformSet(rd, shader, buffers));
+            _uniforms = Add(FamilyGpuComputeUtility.CreateUniformSet(rd, shader, buffers, "E.EventResult"));
             WorkspaceBytes = 64 + Capacity * 8L + plan.Buffers.Sum(b => Math.Max(4, b.Length * 4L)) + 0;
             Device = rd.GetDeviceName(); SetupMs = watch.Elapsed.TotalMilliseconds;
         }
-        catch { FamilyGpuComputeUtility.FreeAll(rd, _owned, _privateInput || _privateOutput); throw; }
+        catch (Exception failure)
+        {
+            FamilyGpuComputeUtility.CleanupAfterFailure(failure, () => FamilyGpuComputeUtility.FreeAll(rd, _owned), "E.EventResult");
+            throw;
+        }
     }
     private static uint[] Header() => [0x45524652u, 1, 0, 0, 0, 0x45524652u, 0, 0];
     private void Check() { if (_owner != System.Environment.CurrentManagedThreadId) throw new InvalidOperationException("E.EventResult.OwnerMismatch"); ObjectDisposedException.ThrowIf(_disposed, this); }
@@ -101,7 +105,7 @@ internal sealed class EventResultFamilyGpuExecutor : IDisposable
                 _rd.ComputeListDispatch(list, (uint)((count + 63) / 64), 1, 1);
             }
             finally { _rd.ComputeListEnd(); }
-            _rd.Submit(); _rd.Sync(); dispatches++;
+            FamilyGpuComputeUtility.SubmitAndSync(_rd, "E.EventResult"); dispatches++;
             submitSync += watch.Elapsed.TotalMilliseconds - dispatchStart;
             token.ThrowIfCancellationRequested(); double start = watch.Elapsed.TotalMilliseconds;
             uint[] h = FamilyGpuComputeUtility.FromUInt32Bytes(_rd.BufferGetData(_header));
@@ -143,5 +147,5 @@ internal sealed class EventResultFamilyGpuExecutor : IDisposable
             RolltheSpire2.Bootstrap.RuntimeLog.TryBackgroundDetail($"ewStageTiming=true;stage=E;input={input.Count};output={result.Count};dispatches={dispatches};dispatchSyncMs={submitSync};readbackBytes={bytes};readbackMs={read};widenMs={widen};sortMs={sort};validationMs={validation};prepareOtherMs={metrics.CanonicalMs-submitSync-read-widen-sort-validation};canonicalMs={metrics.CanonicalMs}");
         return result;
     }
-    public void Dispose() { if (_disposed) return; Check(); _disposed = true; FamilyGpuComputeUtility.FreeAll(_rd, _owned, _privateInput || _privateOutput); }
+    public void Dispose() { if (_disposed) return; Check(); _disposed = true; FamilyGpuComputeUtility.FreeAll(_rd, _owned); }
 }

@@ -192,7 +192,10 @@ internal sealed partial record RelicFullGpuPlan(RelicFamilyPlan SequencePlan, ui
                          targets.Distinct(ModelKeyComparer.Instance).Count() != targets.Length ||
                          condition.AllowDuplicateOutputs))
             return Unsupported("RfullCapsuleTargetShapeUnsupported", out issue);
-        if (grouped && (targets.Length is < 1 or > 3 || !condition.AllowDuplicateOutputs))
+        // Grouped truth is multiset containment in CPU replay / Exact. The editor's
+        // duplicate-selection flag does not change that predicate or its GPU metadata.
+        // Current UI emits false for distinct relic targets; legacy presets may emit true.
+        if (grouped && (targets.Length is < 1 or > 3))
             return Unsupported("RfullGroupedMultisetShapeUnsupported", out issue);
 
         if (!RelicFamilyPlanCompiler.TryCompilePool(

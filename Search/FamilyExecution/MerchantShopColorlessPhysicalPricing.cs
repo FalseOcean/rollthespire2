@@ -27,8 +27,10 @@ internal static class MerchantShopColorlessPhysicalPricing
         double ns = geometry.CompactInput ? slots.Length == 1 ? .60 : .68 :
             slots.Length == 1 ? .25 : slots.Length == 2 ? .31 : .33;
         if (singleRare) ns = geometry.CompactInput ? .53 : stable ? .24 : .22;
-        int capacity = geometry.CompactInput && !geometry.PrivateInput && !geometry.PrivateOutput
-            ? MerchantShopColorlessGpuExecutor.CompactInputCapacity : MerchantShopColorlessGpuExecutor.Capacity;
+        // Public execution also windows Dense input to bound worst-case survivors.
+        // Keep measured rates unchanged; quote the geometry actually executed.
+        int capacity = !geometry.PrivateInput && !geometry.PrivateOutput
+            ? MerchantShopColorlessGpuExecutor.SurvivorCapacity : MerchantShopColorlessGpuExecutor.Capacity;
         return new("S.MerchantShopColorless", $"S.OrderedSingle{(singleRare ? "Rare" : "Uncommon")}.H{slots.Length}." + (stable ? "StablePublic" : "Atomic"),
             ns, capacity, 100, "FamilyMatrix.20260910.S1-S3;NumericalDeviceEmission;PublicSortExcluded",
             OutputElementBytes: geometry.PrivateOutput ? 4 : 8, OutputAlreadyOrdered: stable);
@@ -59,7 +61,7 @@ internal static class MerchantShopColorlessPhysicalPricing
         if(stable && g.MeanInputPopulation<4194304) return null;
         int extraRows = Math.Max(0, e.MerchantColorlessSequenceConditions.Count + (e.MerchantColorlessConditions.Count > 0 ? 1 : 0) - 1);
         double ns=.1+.12*visits+(g.CompactInput?.3:0)+(stable?.06:0)+.04*extraRows;
-        int capacity=g.CompactInput&&!g.PrivateInput&&!g.PrivateOutput?MerchantShopColorlessGpuExecutor.CompactInputCapacity:MerchantShopColorlessGpuExecutor.Capacity;
+        int capacity=!g.PrivateInput&&!g.PrivateOutput?MerchantShopColorlessGpuExecutor.SurvivorCapacity:MerchantShopColorlessGpuExecutor.Capacity;
         return new("S.MerchantShopColorless","S.MerchantWork.20260913.v1."+(stable?"Stable":"Atomic"),ns,capacity,100,
             "FamilyCostClosure.20260913;Model=BoundedCoarse;ReferenceLaneReach32;ScalarSurvivalUnchanged;"+
             "SlotsAndSequences;SharedMerchantTraversal;Horizon1..5;Survival<=.15;NumericalDeviceEmission;HostPayloadExcluded;metric=ns/ActualStageInput;" +

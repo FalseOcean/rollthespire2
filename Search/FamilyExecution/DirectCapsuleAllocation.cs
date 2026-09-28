@@ -201,7 +201,10 @@ internal sealed class DirectCapsuleGpu : IDisposable
     private bool _disposed,_checked;
     private readonly GpuCostSamples _physicalEvidence = new();
     internal void LogEvidence() => _physicalEvidence.WriteSummary(calibration: false);
-    internal double SetupMs{get;}
+    private readonly double _setupBaseMs;
+    private double NeowSetupMs => (_gate?.SetupMs ?? 0) + _first.SetupMs + (_r?.SetupMs ?? 0) +
+        (_reference?.SetupMs ?? 0) + (_entry?.SetupMs ?? 0) + (_rarity?.SetupMs ?? 0) + (_gatedEntry?.SetupMs ?? 0);
+    internal double SetupMs=>_setupBaseMs+NeowSetupMs;
     internal string Device=>_first.Device;
     internal DirectCapsuleGpu(RenderingDevice rd,NeowFamilyGpuPlan plan,NeowReplayPlan replay,NeowCapsuleComposite composite,string mode,bool verify)
     {
@@ -223,13 +226,18 @@ internal sealed class DirectCapsuleGpu : IDisposable
                 _rarity=new(rd,plan,1,composite,capsulePhysicalMode:4);
                 _gatedEntry=new(rd,plan,1,composite,capsulePhysicalMode:2);
             }
-            SetupMs=timer.Elapsed.TotalMilliseconds;
-        }catch{PrivateOrdinalBuffer.DisposeAll(_gatedEntry,_rarity,_entry,_reference,_r,_first,_gate,_ordinals,_gateOrdinals);throw;}
+            _setupBaseMs=timer.Elapsed.TotalMilliseconds-NeowSetupMs;
+        }catch (Exception failure)
+        {
+            FamilyGpuComputeUtility.CleanupAfterFailure(failure, () => PrivateOrdinalBuffer.DisposeAll(_gatedEntry,_rarity,_entry,_reference,_r,_first,_gate,_ordinals,_gateOrdinals), "DirectCapsule");
+            throw;
+        }
     }
     internal FamilyCandidateSet Execute(FamilyCandidateSet input,CancellationToken token,out double ms)
     {
         ObjectDisposedException.ThrowIf(_disposed,this);
         if(!input.IsDense)throw new InvalidOperationException("DirectCapsule.DenseAdmissionRequired");
+        double setupBefore=NeowSetupMs;
         var timer=Stopwatch.StartNew();NeowFamilyGpuMetrics nm,rm=default,pgm=default;
         int rarityCount=-1;
         int intermediate=-1;FamilyCandidateSet output;
@@ -237,7 +245,7 @@ internal sealed class DirectCapsuleGpu : IDisposable
             if(_gate is not null){rarityCount=_gate.ExecutePrivateOutput(input,token,out pgm);_gateOrdinals!.CheckPopulation(input.Batch,rarityCount);intermediate=_first.ExecutePrivateStage(input.Batch,rarityCount,token,out nm);}
             else intermediate=_first.ExecutePrivateOutput(input,token,out nm);_ordinals!.CheckPopulation(input.Batch,intermediate);output=_r.ExecutePrivate(input.Batch,intermediate,token,out rm);}
         else output=_first.Execute(input,token,out nm);
-        ms=timer.Elapsed.TotalMilliseconds;
+        ms=Math.Max(0,timer.Elapsed.TotalMilliseconds-(NeowSetupMs-setupBefore));
         void Record(string stage,int count,int pass,NeowFamilyGpuMetrics m) => _physicalEvidence.Record("DirectCapsule."+_mode+"|"+stage+"|"+DirectCapsuleInvocation.PhysicalRevision(_mode),NeowFamilyGpuExecutor.Capacity,count,pass,m.DispatchSyncMs,m.CanonicalMs,m.ReadbackMs,m.ReadbackBytes);
         if(_gate is not null)Record("Rarity.PrivateOutput",input.Count,rarityCount,pgm);
         Record(_r is null?"Fused.PublicOutput":"N.PrivateOutput",_gate is null?input.Count:rarityCount,_r is null?output.Count:intermediate,nm);

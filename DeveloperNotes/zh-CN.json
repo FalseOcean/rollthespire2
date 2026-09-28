@@ -1,14 +1,104 @@
 {
   "SchemaVersion": 1,
-  "ContentVersion": "1.3.0",
-  "TargetModVersion": "1.3.0",
-  "UpdatedAt": "2026-09-27",
+  "ContentVersion": "1.3.1",
+  "TargetModVersion": "1.3.1",
+  "UpdatedAt": "2026-09-28",
   "Chapters": [
     {
       "Id": "release",
-      "Title": "RolltheSpire2 1.3.0",
-      "Summary": "1.3.0 主要扩展了 RT2 的预测与筛选能力，并重新设计了界面。这次加入了多人筛种与信息预测、地图相关功能，以及百科和种子收藏，也进一步整理了条件设置与使用流程。",
+      "Title": "更新说明",
+      "Summary": null,
       "Blocks": [
+        {
+          "Type": "Heading",
+          "Text": "RolltheSpire2 1.3.1",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "1.3.1 主要整理了搜索实现，改善部分查询的性能与稳定性，修复了涅奥组合相关的问题，并加入了独立的问题反馈入口。",
+          "Items": null
+        },
+        {
+          "Type": "Heading",
+          "Text": "搜索性能与稳定性",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "进一步分开单人与多人的关键搜索计算，减少多人支持给单人快筛带来的额外开销，并保留已有的涅奥专项优化。",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "修复部分扭蛋组合未能使用 GPU 快筛而导致搜索变慢的问题。调整了部分 GPU 筛选路径的容量处理、初始化与资源清理，并补充运行日志，方便定位设备兼容性问题。",
+          "Items": null
+        },
+        {
+          "Type": "Heading",
+          "Text": "涅奥组合与预测修复",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "修复部分扭蛋组合已经筛出候选，却在最终检查中被判为无法确认、导致搜不到结果的问题。",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "补齐华美发束与失物盒、万花筒在骨骰中的领取顺序联动。先领取发束时，失物盒的卡牌奖励或万花筒的第一组卡牌会获得华美附魔；反过来领取，附魔会保留给首次战斗卡牌奖励。",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "预测页可以切换这两种领取顺序，开局卡牌与后续战斗奖励的显示会同步变化。跳过开局选牌同样会消耗发束的这次效果。",
+          "Items": null
+        },
+        {
+          "Type": "Heading",
+          "Text": "清空筛选条件",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "筛种页面新增“清空全部”，可以清空当前模式的所有筛选条件，并在重新编辑前撤销。角色、进阶、多人配置及搜索设置会保留。",
+          "Items": null
+        },
+        {
+          "Type": "Heading",
+          "Text": "问题反馈",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "顶部新增独立的“问题反馈”入口，可以一键打包最近的 RT2 与游戏日志、环境信息和当前筛选配置，并自动打开压缩包所在文件夹。",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "支持按当前界面语言生成中文或英文反馈正文，并打开预填环境信息的 GitHub Issue 页面。请补充问题描述与复现步骤，手动附上 ZIP 后提交；也可以复制正文，通过邮件反馈。",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "仅凭现象描述通常很难定位问题。RT2 是兴趣维护的个人项目，无法保证每个问题都能及时回复或修复，感谢理解。",
+          "Items": null
+        },
+        {
+          "Type": "Callout",
+          "Text": "部分显卡上的历史 GPU 报错仍缺少受影响设备的复测，这次改进不代表已经验证所有设备。",
+          "Items": null
+        },
+        {
+          "Type": "Heading",
+          "Text": "RolltheSpire2 1.3.0",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "1.3.0 主要扩展了 RT2 的预测与筛选能力，并重新设计了界面。这次加入了多人筛种与信息预测、地图相关功能，以及百科和种子收藏，也进一步整理了条件设置与使用流程。",
+          "Items": null
+        },
         {
           "Type": "Heading",
           "Text": "界面重新设计",

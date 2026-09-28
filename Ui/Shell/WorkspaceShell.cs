@@ -34,7 +34,7 @@ internal sealed partial class WorkspaceShell : Control
     private RolltheSpire2.Ui.Controllers.AnalysisPageController? _predictorController;
 
 
-    private enum Workspace { Search, Analysis, Seeds, Encyclopedia, Status, Notes, Settings }
+    private enum Workspace { Search, Analysis, Seeds, Encyclopedia, Status, Notes, Settings, Feedback }
     private Workspace _workspace;
 
     public Button CloseButton => _close;
@@ -68,6 +68,7 @@ internal sealed partial class WorkspaceShell : Control
         header.AddChild(_status);
         header.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Ignore });
         header.AddChild(_notes);
+        header.AddChild(_feedback);
         header.AddChild(_settings);
         _close.CustomMinimumSize = new Vector2(48, 48);
         header.AddChild(_close);
@@ -79,7 +80,7 @@ internal sealed partial class WorkspaceShell : Control
         _references.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         _references.ModalChanged += open =>
         {
-            _search.Disabled = _analysis.Disabled = _seeds.Disabled = _encyclopedia.Disabled = _status.Disabled = _notes.Disabled = _settings.Disabled = _close.Disabled = open;
+            _search.Disabled = _analysis.Disabled = _seeds.Disabled = _encyclopedia.Disabled = _status.Disabled = _notes.Disabled = _feedback.Disabled = _settings.Disabled = _close.Disabled = open;
 
         };
 
@@ -91,9 +92,11 @@ internal sealed partial class WorkspaceShell : Control
         _encyclopedia.Pressed += () => SelectTask(Workspace.Encyclopedia);
         _status.Pressed += () => SelectTask(Workspace.Status);
         _notes.Pressed += () => SelectTask(Workspace.Notes);
+        _feedback.Pressed += () => SelectTask(Workspace.Feedback);
         _settings.Pressed += OpenSettings;
         _close.Pressed += () => TopLevelCloseRequested?.Invoke();
         BuildSettings();
+        BuildFeedback();
         _references.AttachOverlay(this);
         InitializeSeedLibrary(persistenceDirectory);
         RefreshLanguage();
@@ -158,6 +161,8 @@ internal sealed partial class WorkspaceShell : Control
         if (workspace == Workspace.Notes) OpenNotes();
         if (_notesPage is not null) _notesPage.Visible = workspace == Workspace.Notes;
         _settingsPage.Visible = workspace == Workspace.Settings;
+        _feedbackPage.Visible = workspace == Workspace.Feedback;
+        if (workspace == Workspace.Feedback) RefreshFeedback();
         if (workspace == Workspace.Settings) RefreshSettings(resetInput: true);
         if (_seedLibrary is not null)
         {
@@ -189,6 +194,7 @@ internal sealed partial class WorkspaceShell : Control
         _palette.SetActive(_status, _workspace == Workspace.Status);
         _palette.SetActive(_notes, _workspace == Workspace.Notes);
         _palette.SetActive(_settings, _workspace == Workspace.Settings);
+        _palette.SetActive(_feedback, _workspace == Workspace.Feedback);
     }
 
     private void RefreshLanguage()
@@ -208,7 +214,9 @@ internal sealed partial class WorkspaceShell : Control
         _notes.Text = text.Get("shell.about");
         _notes.TooltipText = text.Get("shell.about_hint");
         _settings.Text = text.Get("shell.settings");
+        _feedback.Text = text.Get("feedback.title");
         LocalizeSettings(text);
+        RefreshFeedback();
         ApplyPalette();
     }
 
@@ -216,7 +224,7 @@ internal sealed partial class WorkspaceShell : Control
     {
         _background!.Color = _palette.Color(_palette.Canvas);
         _title!.AddThemeColorOverride("font_color", _palette.Color(_palette.Text));
-        foreach (var b in new[] { _search, _analysis, _seeds, _encyclopedia, _status, _notes, _settings, _close })
+        foreach (var b in new[] { _search, _analysis, _seeds, _encyclopedia, _status, _notes, _feedback, _settings, _close })
         {
             var donor = _palette.Button(b.Text);
             foreach (string style in new[] { "normal", "hover", "pressed", "disabled", "focus" }) b.AddThemeStyleboxOverride(style, donor.GetThemeStylebox(style));
@@ -236,9 +244,9 @@ internal sealed partial class WorkspaceShell : Control
     public override void _Process(double delta)
     {
         RuntimeLog.PumpOnMainThread();
+        PollFeedbackExport();
         FlushSearchEvidenceOnMainThread();
         _persistence?.Tick(delta);
-        if (_closingRetainedTools && _retainedTools?.HasActiveSearch != true) FinishClosingRetainedTools();
         FitCanvas();
         _localePoll -= delta;
         if (_localePoll <= 0) { _localePoll = 0.25; RefreshLanguage(); if (_workspace == Workspace.Settings) RefreshSettings(); }
@@ -259,7 +267,6 @@ internal sealed partial class WorkspaceShell : Control
     }
     public void CleanupForTopLevelClose() {
         while (_seedLibrary?.CloseModal() == true) { }
-        CloseRetainedTools();
         _references?.CloseSearch(); _references?.CloseModal(); CloseSettings(); Hide(); }
     public override void _Input(InputEvent input)
     {
@@ -277,7 +284,6 @@ internal sealed partial class WorkspaceShell : Control
     public override void _UnhandledKeyInput(InputEvent input)
     {
         if (!IsVisibleInTree() || input is not InputEventKey { Pressed: true, Echo: false, Keycode: Key.Escape }) return;
-        if (_retainedToolsOverlay?.Visible == true) return;
         if (_workspace == Workspace.Settings) CloseSettings();
         else if (_seedLibrary?.CloseModal() == true) { }
         else if (_references?.CloseModal() == true) { }

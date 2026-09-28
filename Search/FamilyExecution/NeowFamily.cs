@@ -11,6 +11,7 @@ internal sealed partial class NeowFamily : IFamilyInvocation
     IEnumerable<GpuLocalPeak> IFamilyInvocation.CostPeaks => _costSamples.Peaks;
     void IFamilyInvocation.LogExecutionEvidence() => _costSamples.WriteSummary();
     private readonly NeowReplayPlan _plan;
+    private readonly Func<ulong, bool> _cpuMatcher;
     private readonly NeowFamilyProjections _models;
     private readonly FamilyCpuExecution _physical;
     private readonly bool _conditional;
@@ -49,7 +50,7 @@ internal sealed partial class NeowFamily : IFamilyInvocation
     private double _payloadReadbackMs;
     internal NeowFamily(ExactSearchExecutionRequest request, NeowReplayPlan plan, bool preferGpu = true, NeowCapsuleComposite? composite = null)
     {
-        _request = request; _plan = plan;
+        _request = request; _plan = plan; _cpuMatcher = NeowFamilyReplay.Bind(plan);
         string physicalIssue = "CpuReferenceSelected";
         if (preferGpu) NeowFamilyGpuPlan.TryCreate(plan, out _gpuPlan, out physicalIssue);
         if (composite is not null && _gpuPlan is null) throw new InvalidOperationException("NrRequiresGpuPhysical");
@@ -109,7 +110,7 @@ internal sealed partial class NeowFamily : IFamilyInvocation
         if (observationWindow.ExactRequest.SnapshotFingerprint != _request.SnapshotFingerprint)
             throw new InvalidOperationException("NFamilyObservationContextMismatch");
         cancellationToken.ThrowIfCancellationRequested();
-        if (_gpuPlan is null) return _physical.Execute(observationWindow, input, cancellationToken, root => NeowFamilyReplay.Matches(root, _plan));
+        if (_gpuPlan is null) return _physical.Execute(observationWindow, input, cancellationToken, _cpuMatcher);
         if (_disabled && _composite?.UsesBonesCheckpoint == true)
             throw new InvalidOperationException("NrBonesPhysicalFaulted");
         if (_disabled) throw new InvalidOperationException("N.SelectedInvocationFaulted");
@@ -129,7 +130,7 @@ internal sealed partial class NeowFamily : IFamilyInvocation
                 foreach (ulong ordinal in input.EnumerateLogicalOrdinals().Take(256))
                 {
                     ulong root = profile.ComputeRootSeed(VisibleSeedCandidateCodec.FormatOrdinal(profile, input.Batch.GlobalCandidate(ordinal)));
-                    if ((NeowFamilyReplay.Matches(root, _plan) && (_composite?.Reference.Matches(root) ?? true)) != (Array.BinarySearch(survivors, ordinal) >= 0))
+                    if ((_cpuMatcher(root) && (_composite?.Reference.Matches(root) ?? true)) != (Array.BinarySearch(survivors, ordinal) >= 0))
                         throw new InvalidDataException("NFamilyCpuReferenceParityMismatch");
                 }
                 _parity = true;

@@ -31,6 +31,13 @@ internal sealed record NeowReplayPlan(
     internal NeowAuthoredUpgradeContinuation? AuthoredUpgrades { get; init; }
     internal bool HasFinalCurseFastProjection => (EnabledDomains & Beta110FastDomain.FinalCurse) != 0;
 
+    internal void ValidateExecutionScope()
+    {
+        if (Authority.PlayersCount == 1 && (Authority.PlayerSlotIndex != 0 || SharedNicheDraws != 0 ||
+            SharedPotionDraws != 0 || SharedArrivals.Length != 0 || CapsuleUpgradeUpperBound >= 0))
+            throw new InvalidOperationException("N.SingleplayerContainsPartyContinuation");
+    }
+
     internal static bool IsCapsule(ModelKey key) => key == BaseGameModelKeys.Relics.SmallCapsule || key == BaseGameModelKeys.Relics.LargeCapsule;
     internal static bool IsCapsule(NeowStructuredEffectSearchCondition condition) =>
         condition.Scope == NeowStructuredEffectScope.NestedRelics &&

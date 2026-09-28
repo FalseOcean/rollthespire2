@@ -26,7 +26,8 @@ internal sealed partial class QueryWorkbenchFrame : Control
     private float DomainTop => CharacterTop + 104;
     private const float SelectorColumnStride = 116, SelectorWidth = 100;
     private const float CenterTop = 0;
-    private const float BodyTop = AuthoringHeaderHeight + HeaderGap;
+    private const float ConditionActionsTop = AuthoringHeaderHeight + 8, ConditionActionsHeight = AuthoringHeaderHeight;
+    private const float BodyTop = ConditionActionsTop + ConditionActionsHeight + HeaderGap;
     private const float DockTop = CanvasHeight - DockHeight;
     private const float BodyHeight = CanvasHeight - BodyTop;
     private const float CenterLeft = LeftRailWidth + RailGap;
@@ -215,6 +216,7 @@ internal sealed partial class QueryWorkbenchFrame : Control
         SelectDomain(_selectedDomain);
         UpdateDomainCounts();
 
+        BuildConditionActions();
         BuildProductionDock();
     }
 
@@ -468,7 +470,7 @@ internal sealed partial class QueryWorkbenchFrame : Control
     public override void _Process(double delta)
     {
         PollProduction(delta);
-        if (Visible) UpdateDomainCounts();
+        if (Visible) { UpdateDomainCounts(); UpdateConditionActions(); }
         if (!Visible || _readLobby is null) return;
         _rosterPoll -= delta;
         if (_rosterPoll > 0) return;

@@ -1104,7 +1104,8 @@ public static class NormalCombatRewardSequencePredictor
                             operation.RequiresIsFromCombat));
                         break;
                     case OpeningCombatRewardImpactOperationKind.EnchantFirstCardRewardWithGlam:
-                        firstRewardGlamSources.Add(source);
+                        if (!continuation.SilkenTressConsumedDuringOpening)
+                            firstRewardGlamSources.Add(source);
                         break;
                     case OpeningCombatRewardImpactOperationKind.UpgradeNextCardRewards:
                         limitedUpgradeImpacts.Add(new LimitedCardRewardUpgradeImpact(

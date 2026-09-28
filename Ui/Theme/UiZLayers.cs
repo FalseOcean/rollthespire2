@@ -1,7 +1,7 @@
 namespace RolltheSpire2.Ui.Theme;
 
 /// <summary>
-/// Small relative Z-index bands for the single AppShell CanvasItem hierarchy.
+/// Small relative Z-index bands for the workspace CanvasItem hierarchy.
 /// Values intentionally stay far below Godot's CanvasItem limit; parent/child
 /// structure, not large magic numbers, establishes the visual ordering.
 /// </summary>

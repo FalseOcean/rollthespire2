@@ -54,28 +54,45 @@ uint c_pull_relic(inout RewardRouteState state,inout uint bag[512],uint count){
 bool c_route(uint64_t root,uint route){
     RngState unused=cr_rng_initialize(uint64_t(0));
     RewardRouteState state=cr_initialize_route(root,false,unused);
+#if RT2_C_MULTIPLAYER
     bool niche_known=plan_meta.values[44]!=0xffffffffu;
     if(niche_known)for(uint draw=0u;draw<plan_meta.values[44];++draw)cr_next_double(state.niche);
     uint bones_pool[32];
+#else
+    bool niche_known=true;
+#endif
 #if RT2_C_CAPSULE_HELD == 1
     uint bag[512],bag_count=0xffffffffu;
 #endif
+#if RT2_C_MULTIPLAYER
     bool actual_bones=plan_meta.values[51]!=0u;
+#endif
     if(plan_meta.values[40]!=0u){
         uint count=plan_meta.values[7];
         if(count<2u)return cr_family_numeric_failure();
+#if RT2_C_MULTIPLAYER
         if(actual_bones){
             if(count>32u)return cr_family_numeric_failure();
             for(uint i=0u;i<count;++i)bones_pool[i]=plan_meta.values[plan_meta.values[52]+i];
             for(uint n=count;n>1u;--n){uint at=cr_next_int(state.rewards,n),last=n-1u;
                 uint v=bones_pool[at];bones_pool[at]=bones_pool[last];bones_pool[last]=v;}
-        }else for(uint n=count;n>1u;--n)cr_next_int(state.rewards,n);
+        }else
+#endif
+        for(uint n=count;n>1u;--n)cr_next_int(state.rewards,n);
     }
+#if RT2_C_MULTIPLAYER
     uint count=actual_bones?2u:plan_meta.values[41];
+#else
+    uint count=plan_meta.values[41];
+#endif
     if(count>2u)return cr_family_numeric_failure();
     for(uint i=0u;i<count;++i){
         uint at=route==0u?i:count-1u-i;
+#if RT2_C_MULTIPLAYER
         uint relic=actual_bones?bones_pool[at]:plan_meta.values[42u+at];
+#else
+        uint relic=plan_meta.values[42u+at];
+#endif
 #if RT2_C_CAPSULE_HELD == 1
         if(relic==3u||relic==28u){
             if(bag_count==0xffffffffu){bag_count=c_initialize_bag(root,bag);if(bag_count==0xffffffffu)return true;}
@@ -103,7 +120,11 @@ bool c_route(uint64_t root,uint route){
             if(!cr_replay_query_literal_relic_consumption(relic,root,state))return cr_family_numeric_failure();
             if(relic==19u&&niche_known)cr_next_double(state.niche);
         }
+#if RT2_C_MULTIPLAYER
         uint advance=actual_bones?(plan_meta.values[53]!=0u&&(relic==3u||relic==28u)?0xffffffffu:0u):plan_meta.values[45u+route*2u+i];
+#else
+        uint advance=plan_meta.values[45u+route*2u+i];
+#endif
         if(advance==0xffffffffu)niche_known=false;
         else if(niche_known)for(uint draw=0u;draw<advance;++draw)cr_next_double(state.niche);
     }

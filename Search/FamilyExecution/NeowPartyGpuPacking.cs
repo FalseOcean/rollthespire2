@@ -7,8 +7,9 @@ internal static class NeowPartyGpuPacking
     internal static (NeowFamilyGpuPlan Plan, string Source) Pack(NeowFamilyGpuPlan[] plans)
     {
         if (plans.Length < 2) throw new ArgumentException("PartyN.FusedPlanCount");
+        if (plans.Any(p => !p.IsMultiplayer)) throw new ArgumentException("PartyN.SingleplayerPlan");
         string source = NeowFamilyGpuExecutor.ShaderSource(leafyPreGate: plans.Any(p => p.UsesLeafyPreGate),
-            authoredUpgrades: plans.Any(p => p.HasAuthoredUpgrades), localResults: plans.Any(p => p.HasLocalResults));
+            authoredUpgrades: plans.Any(p => p.HasAuthoredUpgrades), localResults: plans.Any(p => p.HasLocalResults), multiplayer: true);
         source = source.Replace("uint plan_value(uint i)", "uint party_plan = 0u;\nuint plan_value(uint i)", StringComparison.Ordinal);
         uint[] Join(Func<NeowFamilyGpuPlan, uint[]> select, string access, int minimum = 1)
         {

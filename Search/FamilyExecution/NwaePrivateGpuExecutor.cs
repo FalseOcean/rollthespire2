@@ -53,7 +53,7 @@ internal sealed class NwaePrivateGpuExecutor : IDisposable
             }
             Device=rd.GetDeviceName(); SetupMs=timer.Elapsed.TotalMilliseconds;
         }
-        catch { Release(); throw; }
+        catch (Exception failure) { FamilyGpuComputeUtility.CleanupAfterFailure(failure, Release, "NWAE"); throw; }
     }
     internal FamilyCandidateSet Execute(FamilyCandidateSet input, CancellationToken token, out double canonicalMs)
     {

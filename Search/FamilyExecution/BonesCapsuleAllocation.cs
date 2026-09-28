@@ -140,7 +140,9 @@ internal sealed class BonesCapsuleBoundaryGpu : IDisposable
     private long _aOnly, _bOnly, _both, _evalA, _evalB, _heavyA, _heavyB, _removed;
     private long _validA, _validB, _validBoth, _sameFailure, _unsafe;
     private double _nDispatch, _nReadback, _nCanonical, _rDispatch, _rReadback, _rCanonical, _canonical;
-    internal double SetupMs { get; }
+    private readonly double _setupBaseMs;
+    private double NeowSetupMs => _n.SetupMs + (_recompute?.SetupMs ?? 0) + (_referenceN?.SetupMs ?? 0);
+    internal double SetupMs => _setupBaseMs + NeowSetupMs;
     internal string Device => _n.Device;
     internal BonesCapsuleBoundaryGpu(RenderingDevice rd, ExactSearchExecutionRequest request, NeowFamilyGpuPlan np, RelicFullGpuPlan rp, string mode)
     {
@@ -166,13 +168,18 @@ internal sealed class BonesCapsuleBoundaryGpu : IDisposable
                     _lateCpu=new(request,r with {First=Beta110FastRelicCatalog.Kaleidoscope,Second=Beta110FastRelicCatalog.LargeCapsule});
                 }
             }
-            SetupMs=timer.Elapsed.TotalMilliseconds;
-        } catch { PrivateOrdinalBuffer.DisposeAll(_referenceR,_referenceN,_recompute,_r,_n,_ordinals); throw; }
+            _setupBaseMs=timer.Elapsed.TotalMilliseconds-NeowSetupMs;
+        } catch (Exception failure)
+        {
+            FamilyGpuComputeUtility.CleanupAfterFailure(failure, () => PrivateOrdinalBuffer.DisposeAll(_referenceR,_referenceN,_recompute,_r,_n,_ordinals), "BonesCapsule");
+            throw;
+        }
     }
     internal FamilyCandidateSet Execute(FamilyCandidateSet input, CancellationToken token, out double ms)
     {
         ObjectDisposedException.ThrowIf(_disposed,this);
         if(!input.IsDense) throw new InvalidOperationException("BonesBoundary.DenseRequired");
+        double setupBefore=NeowSetupMs;
         var timer=Stopwatch.StartNew();
         FamilyCandidateSet output;
         NeowFamilyGpuMetrics nm;
@@ -197,7 +204,7 @@ internal sealed class BonesCapsuleBoundaryGpu : IDisposable
                 if(_mode=="mask") counts=_n.BonesKCounts;
             }
         }
-        ms=timer.Elapsed.TotalMilliseconds;
+        ms=Math.Max(0,timer.Elapsed.TotalMilliseconds-(NeowSetupMs-setupBefore));
         if(counts is not null) {
             _aOnly+=counts[0]; _bOnly+=counts[1]; _both+=counts[2];
             if(_mode!="mask") { _evalA+=counts[3]; _evalB+=counts[4]; _heavyA+=counts[5]; _heavyB+=counts[6]; }

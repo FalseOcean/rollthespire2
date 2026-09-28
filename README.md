@@ -6,7 +6,7 @@ English | [简体中文](README.zh-CN.md)
 
 RolltheSpire2 (RT2) is an in-game seed search and analysis mod for **Slay the Spire 2**. Combine your desired conditions, search for matching seeds, and inspect their predicted openings, rewards, maps and more.
 
-This source tree is version **1.3.0**. The primary tested environment is **Windows, game version 0.111.0**.
+This source tree is version **1.3.1**. The primary tested environment is **Windows, game version 0.111.0**.
 
 ## What you can do
 
@@ -20,7 +20,7 @@ This source tree is version **1.3.0**. The primary tested environment is **Windo
 
 [Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3755166888)
 
-Download `RolltheSpire2-1.3.0.zip` from the matching GitHub Release. The manual package contains the DLL and manifest; no PCK is required. Avoid loading duplicate Workshop and manual copies. Older versions will be kept as frozen downloads, without ongoing maintenance.
+Manual packages and matching source snapshots are available from [GitHub Releases](https://github.com/FalseOcean/rollthespire2/releases). Older versions will be kept as frozen downloads, without ongoing maintenance.
 
 For a manual installation package, place its `RolltheSpire2` folder inside the game's `mods` folder. Source archives need to be built first.
 
@@ -40,7 +40,9 @@ Game updates and mods that change game rules can affect prediction accuracy. Van
 
 ## Feedback
 
-Report problems in the Workshop comments or email **rollthespire2@outlook.com**. A seed, the selected conditions, game/mod versions and a relevant log make bugs much easier to investigate. You can open the RT2 log folder from Settings.
+Open **Feedback** in RT2 to export a diagnostic ZIP and open a prefilled [GitHub Issue](https://github.com/FalseOcean/rollthespire2/issues/new). Add a description and reproduction steps, attach the ZIP, then submit. You can also copy the report and email **rollthespire2@outlook.com**.
+
+Workshop and Bilibili comments are better suited to discussion and simple questions. RT2 is a personal hobby project; a timely reply or fix cannot be guaranteed for every report.
 
 ## Build from source
 

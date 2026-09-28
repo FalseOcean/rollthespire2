@@ -1,0 +1,175 @@
+using RolltheSpire2.Core.Seed;
+namespace RolltheSpire2.Search.FamilyExecution;
+
+// Party GPU admission and immutable parameter packing.
+internal static class NeowPartyGpuPlan
+{
+    internal static bool TryCreate(NeowReplayPlan plan, out NeowFamilyGpuPlan? gpu, out string issue)
+    {
+        gpu = null; issue = "";
+        var a = plan.Authority; var c = a.EffectCatalog;
+        if (a.PlayersCount <= 1) throw new InvalidOperationException("N.PartyGpuScope");
+        if (a.EligibleCurseRelicIds.Length > 10 || a.BonesEligibleRelicIds.Length > 64 || c.OtherCharacterPools.Length > 16)
+        { issue = "DonorLocalArrayCapacity"; return false; }
+        bool rewards = (plan.EnabledDomains & ~(Beta110FastDomain.FinalCurse | Beta110FastDomain.NewLeafTransform |
+            Beta110FastDomain.LeafyPoulticeTransforms | Beta110FastDomain.PhialHolsterPotions)) != 0;
+        bool niche = rewards || plan.HasFinalCurseFastProjection || (plan.EnabledDomains & Beta110FastDomain.NewLeafTransform) != 0;
+        bool transform = (plan.EnabledDomains & Beta110FastDomain.LeafyPoulticeTransforms) != 0;
+        bool potion = (plan.EnabledDomains & Beta110FastDomain.PhialHolsterPotions) != 0;
+        // Require only pools read by a possible acquired source. Direct local
+        // predicates must not depend on unrelated card/transform/potion authority.
+        byte[] sources = !plan.Bones ? [plan.Selected] : plan.First != 255 && plan.Second != 255
+            ? [plan.First, plan.Second] : a.BonesEligibleRelicIds.Where(id =>
+                (plan.BonesBan & Beta110FastRelicCatalog.Bit(id)) == 0 &&
+                (System.Numerics.BitOperations.PopCount(plan.BonesAll) != 2 ||
+                    (plan.BonesAll & Beta110FastRelicCatalog.Bit(id)) != 0)).ToArray();
+        foreach (byte source in sources)
+        {
+            bool ready = source switch
+            {
+                Beta110FastRelicCatalog.ArcaneScroll when rewards => c.CharacterRewardAuthorityExact && c.CharacterRewardPool.Rare.Length > 0,
+                Beta110FastRelicCatalog.MassiveScroll when rewards => c.CharacterRewardAuthorityExact && c.ColorlessRewardAuthorityExact && c.MultiplayerRewardPool.TotalCount >= 3,
+                Beta110FastRelicCatalog.HeftyTablet when rewards => c.CharacterRewardAuthorityExact && c.CharacterRewardPool.Rare.Length >= 3,
+                Beta110FastRelicCatalog.LeadPaperweight when rewards => c.ColorlessRewardAuthorityExact && c.ColorlessRewardPool.TotalCount >= 2,
+                Beta110FastRelicCatalog.LostCoffer when rewards => c.CharacterRewardAuthorityExact && c.CharacterRewardPool.TotalCount >= 3 && c.PotionAuthorityExact && c.PotionPool.HasAtLeastPerRarity(1),
+                Beta110FastRelicCatalog.ScrollBoxes when rewards => c.CharacterCardAuthorityExact && c.CharacterRewardPool.Common.Length >= 4 && c.CharacterRewardPool.Uncommon.Length >= 2,
+                Beta110FastRelicCatalog.Kaleidoscope when rewards || niche => c.OtherCharacterCardAuthorityExact && c.OtherCharacterPools.Length >= 3 &&
+                    (!rewards || c.OtherCharacterPools.All(pool => pool.TotalCount > 0)),
+                Beta110FastRelicCatalog.NewLeaf when niche => c.NewLeafTransformAuthorityExact && c.NewLeafTransformPool.Length > 0,
+                Beta110FastRelicCatalog.LeafyPoultice when transform => c.LeafyTransformAuthorityExact && c.LeafyStrikeTransformPool.Length > 0 && c.LeafyDefendTransformPool.Length > 0,
+                Beta110FastRelicCatalog.PhialHolster when potion => c.PotionAuthorityExact && c.PotionPool.HasAtLeastPerRarity(2),
+                _ => true
+            };
+            if (!ready) { issue = "DonorContinuationAuthorityUnavailable:Source" + source; return false; }
+        }
+        var rows = new uint[32 * 5 + (plan.AuthoredUpgrades is null ? 0 : 66)];
+        if (plan.AuthoredUpgrades is { } upgrades)
+            for (int i = 0; i < upgrades.Advances.Length; i++) rows[160 + i] = unchecked((uint)upgrades.Advances[i]);
+        for (int i = 0; i < 32; i++) { rows[i * 5 + 1] = rows[i * 5 + 2] = rows[i * 5 + 3] = uint.MaxValue; }
+        foreach (var group in plan.StructuredConditions.GroupBy(x => x.SourceRelicId))
+        {
+            int o = group.Key * 5; var conditions = group.ToArray();
+            if (conditions.Length > 1 && group.Key is not Beta110FastRelicCatalog.LostCoffer and not Beta110FastRelicCatalog.ScrollBoxes)
+            { issue = "DonorMultipleLocalPredicates"; return false; }
+            rows[o + 4] = 0x80000000;
+            foreach (var condition in conditions)
+            {
+                if (group.Key == Beta110FastRelicCatalog.LostCoffer)
+                {
+                    bool card = condition.Kind == Beta110FastStructuredConditionKind.LostCofferCardOffer;
+                    int slot = o + (card ? 1 : 2);
+                    if (rows[slot] != uint.MaxValue) { issue = "DonorMultipleLostCofferTargets"; return false; }
+                    rows[slot] = condition.Target0; rows[o] |= card ? 1u : 2u;
+                }
+                else if (condition.Kind == Beta110FastStructuredConditionKind.ScrollBoxesTripleClaw) rows[o + 4] |= 2;
+                else
+                {
+                    if (rows[o] != 0) { issue = "DonorMultipleScrollTargets"; return false; }
+                    rows[o] = condition.TargetCount; rows[o + 1] = condition.Target0;
+                    rows[o + 2] = condition.Target1; rows[o + 3] = condition.Target2;
+                    if (condition.OrderedKaleidoscope)
+                    {
+                        rows[o + 4] |= 4;
+                        rows[o + 1] = condition.KaleidoscopeFirstTarget == Beta110FastDenseId.Invalid ? uint.MaxValue : condition.KaleidoscopeFirstTarget;
+                        rows[o + 2] = condition.KaleidoscopeSecondTarget == Beta110FastDenseId.Invalid ? uint.MaxValue : condition.KaleidoscopeSecondTarget;
+                    }
+                    if (group.Key == Beta110FastRelicCatalog.ScrollBoxes) rows[o + 4] |= 1;
+                }
+            }
+        }
+        int prefix = 85 + plan.StructuredConditions.Length;
+        uint[] meta = new uint[prefix + 4 + plan.SharedArrivals.Length * 2];
+        meta[prefix] = checked((uint)plan.SharedNicheDraws); meta[prefix + 1] = checked((uint)plan.SharedPotionDraws);
+        meta[prefix + 2] = checked((uint)plan.SharedArrivals.Length);
+        meta[prefix + 3] = unchecked((uint)plan.CapsuleUpgradeUpperBound);
+        for (int i = 0; i < plan.SharedArrivals.Length; i++) {
+            meta[prefix + 4 + 2 * i] = checked((uint)plan.SharedArrivals[i].Niche);
+            meta[prefix + 5 + 2 * i] = checked((uint)plan.SharedArrivals[i].Potions);
+        }
+        meta[5] = (uint)a.PlayerSlotIndex; meta[6] = (uint)a.PlayersCount; meta[7] = (uint)a.Ascension;
+        meta[8] = (uint)a.BonesEligibleRelicIds.Length; meta[9] = (uint)c.OtherCharacterPools.Length;
+        meta[12] = plan.First; meta[13] = plan.Second;
+        // Adopt P9's immutable first-draw proof. A top-only acceptance skips
+        // positives, never the independent Bones/local continuation below it.
+        var topGate = NeowNumericCompilation.BuildCurseFirstDrawGateP9(a,
+            plan.TopAny, plan.TopAll, plan.TopBan, plan.Selected == 255 ? 0 : Beta110FastRelicCatalog.Bit(plan.Selected),
+            plan.RequireBones || plan.Bones, false, false);
+        meta[68] = topGate.AcceptedCurseOrdinalMask; meta[69] = topGate.RejectedCurseOrdinalMask;
+        // P2 tracks the two required identities instead of a complete Bones array.
+        // A proved pair also supplies both local continuation sources.
+        ulong requiredPair = plan.BonesAll;
+        if (plan.First != 255 && plan.Second != 255)
+            requiredPair |= Beta110FastRelicCatalog.Bit(plan.First) | Beta110FastRelicCatalog.Bit(plan.Second);
+        byte[] tracked = a.BonesEligibleRelicIds.Where(id => (requiredPair & Beta110FastRelicCatalog.Bit(id)) != 0).ToArray();
+        if (plan.Bones && System.Numerics.BitOperations.PopCount(requiredPair) == 2 && tracked.Length == 2)
+        {
+            meta[67] = 1;
+            meta[25] = (uint)Array.IndexOf(a.BonesEligibleRelicIds, tracked[0]);
+            meta[26] = (uint)Array.IndexOf(a.BonesEligibleRelicIds, tracked[1]);
+            meta[27] = tracked[0]; meta[28] = tracked[1];
+            int bonesOrdinal = Array.IndexOf(a.EligibleCurseRelicIds, Beta110FastRelicCatalog.NeowsBones);
+            // Tiny synthetic/unusual pools are dense at the pair checkpoint;
+            // use the full-capacity fused physical instead of predictable overflow.
+            if (a.BonesEligibleRelicIds.Length >= 16 && bonesOrdinal >= 0 && topGate.AcceptedCurseOrdinalMask == (1u << bonesOrdinal) &&
+                (topGate.AcceptedCurseOrdinalMask | topGate.RejectedCurseOrdinalMask) == (1u << a.EligibleCurseRelicIds.Length) - 1u)
+                meta[66] = 1;
+        }
+        void U64(int at, ulong value) { meta[at] = (uint)value; meta[at + 1] = (uint)(value >> 32); }
+        U64(31, XxHash64.Hash("NEOW"u8, 0)); U64(33, NeowPartyReplay.RewardsHash);
+        U64(35, XxHash64.Hash("niche"u8, 0)); U64(37, XxHash64.Hash("transformations"u8, 0));
+        U64(62, XxHash64.Hash("combat_potion_generation"u8, 0));
+        meta[39] = (uint)a.EligibleCurseRelicIds.Length;
+        U64(40, plan.TopAny); U64(42, plan.TopAll); U64(44, plan.TopBan);
+        U64(46, plan.Selected == 255 ? 0 : Beta110FastRelicCatalog.Bit(plan.Selected));
+        U64(48, plan.BonesAny); U64(50, plan.BonesAll); U64(52, plan.BonesBan);
+        meta[56] = (plan.RequireBones ? 1u : 0) | (plan.Bones ? 2u : 0) | (a.AllCharacterCardPoolsUnlocked ? 4u : 0) |
+            (a.ScrollBoxesAllowed ? 8u : 0) | (a.UsesDefectScrollBoxesRule ? 32u : 0);
+        meta[58] = (uint)c.LeafyStrikeTransformPool.Length; meta[59] = meta[60] = (uint)c.LeafyDefendTransformPool.Length;
+        meta[61] = (uint)c.NewLeafTransformPool.Length;
+        for (int i = 0; i < a.EligibleCurseRelicIds.Length; i++) meta[71 + i] = a.EligibleCurseRelicIds[i];
+        meta[81] = plan.Selected; meta[82] = (rewards ? 1u : 0) | (niche ? 2u : 0) | (transform ? 4u : 0) | (potion ? 8u : 0);
+        meta[83] = plan.HasFinalCurseFastProjection ? 1u : 0; meta[84] = (uint)plan.StructuredConditions.Length;
+        for (int i = 0; i < plan.StructuredConditions.Length; i++) meta[85 + i] = plan.StructuredConditions[i].SourceRelicId;
+        Beta110FastStructuredCondition[] leafy = plan.StructuredConditions.Where(x =>
+            x.SourceRelicId == Beta110FastRelicCatalog.LeafyPoultice &&
+            x.Kind == Beta110FastStructuredConditionKind.LeafyPoulticeTransforms).ToArray();
+        bool fixedLeafyFirst = plan.Bones && plan.First == Beta110FastRelicCatalog.LeafyPoultice &&
+            plan.Second != Beta110FastRelicCatalog.InvalidId && plan.Second != plan.First;
+        ulong leafyGolden = Beta110FastRelicCatalog.Bit(Beta110FastRelicCatalog.LeafyPoultice) |
+            Beta110FastRelicCatalog.Bit(Beta110FastRelicCatalog.GoldenPearl);
+        bool exactLeafyGoldenPair = plan.Bones && requiredPair == leafyGolden;
+        bool routeSafe = !plan.Bones
+            ? plan.Selected == Beta110FastRelicCatalog.LeafyPoultice
+            : plan.LeafyBonesInitialTransformInvariant || fixedLeafyFirst || exactLeafyGoldenPair;
+        // Transformations is root-derived, but Exact transforms the current first
+        // basic Strike/Defend. Bones can hoist only when the captured same-source
+        // starter multiplicity survives every mapped vanilla companion, or for
+        // a direct Leafy-first / proven deck-neutral GoldenPearl route.
+        // 1/1024 is a private physical heuristic, not semantic probability authority.
+        if (c.LeafyTransformAuthorityExact && leafy.Length == 1 && leafy[0].TargetCount == 2 && routeSafe)
+        {
+            long matching = 0;
+            foreach (ushort strike in c.LeafyStrikeTransformPool)
+            foreach (ushort defend in c.LeafyDefendTransformPool)
+                if ((strike == leafy[0].Target0 && defend == leafy[0].Target1) ||
+                    (strike == leafy[0].Target1 && defend == leafy[0].Target0)) matching++;
+            long outcomes = (long)c.LeafyStrikeTransformPool.Length * c.LeafyDefendTransformPool.Length;
+            if (matching > 0 && matching * 1024 <= outcomes) meta[70] = 1;
+        }
+        // Retain the donor card/potion/curse layout, omitting every Relic Bag field.
+        int trailer = 20 + c.OtherCharacterPools.Length * 6;
+        uint[] poolMeta = new uint[trailer + 21]; var cards = new List<uint>();
+        void Append(ushort[] ids, int index) { poolMeta[index] = (uint)cards.Count; poolMeta[index + 1] = (uint)ids.Length; cards.AddRange(ids.Select(x => (uint)x)); }
+        void Pool(Beta110FastCardPool pool, int index) { Append(pool.Common, index); Append(pool.Uncommon, index + 2); Append(pool.Rare, index + 4); }
+        Pool(c.CharacterRewardPool, 0); Pool(c.ColorlessRewardPool, 6);
+        Append(c.PotionPool.Common, 12); Append(c.PotionPool.Uncommon, 14); Append(c.PotionPool.Rare, 16); Append(c.PotionPool.AllAllowed, 18);
+        for (int i = 0; i < c.OtherCharacterPools.Length; i++) Pool(c.OtherCharacterPools[i], 20 + i * 6);
+        Append(plan.RequiredFinalCurseIds, trailer + 6); Append(plan.BannedFinalCurseIds, trailer + 8);
+        Append(c.GeneratedCurseIds, trailer + 12);
+        Pool(c.MultiplayerRewardPool, trailer + 15);
+        gpu = new(meta, poolMeta, cards.ToArray(), c.LeafyStrikeTransformPool.Select(x => (uint)x).ToArray(),
+            c.LeafyDefendTransformPool.Concat(c.NewLeafTransformPool).Select(x => (uint)x).ToArray(),
+            a.BonesEligibleRelicIds.Select(x => (uint)x).ToArray(), rows) { HasAuthoredUpgrades = plan.AuthoredUpgrades is not null };
+        return true;
+    }
+}

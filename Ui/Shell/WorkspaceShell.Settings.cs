@@ -21,7 +21,7 @@ internal sealed partial class WorkspaceShell
     private IUiTextProvider? _settingsText;
     private string _originReceiptKey = "", _logReceiptKey = "";
     private bool _bindingSettings;
-    private bool SettingsSearchBusy => _references?.HasActiveSearch == true || _retainedTools?.HasActiveSearch == true;
+    private bool SettingsSearchBusy => _references?.HasActiveSearch == true;
 
     private void BuildSettings()
     {

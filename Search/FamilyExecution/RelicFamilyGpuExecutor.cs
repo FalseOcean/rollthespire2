@@ -36,7 +36,7 @@ internal readonly record struct RelicFamilyGpuBatchMetrics(
 /// Family-local R physical implementation. Resources are prepared once and reused;
 /// every method is invoked synchronously by the session GPU owner.
 /// </summary>
-internal sealed class RelicFamilyGpuExecutor : IDisposable
+internal sealed partial class RelicFamilyGpuExecutor : IDisposable
 {
     internal const int WorkgroupSize = 64;
     internal const int SeedsPerInvocation = 8;
@@ -210,7 +210,7 @@ internal sealed class RelicFamilyGpuExecutor : IDisposable
                     .Replace(bounds, "if (logical >= batch_meta.values[2u]) { atomicExchange(output_header.values[3u],2u); return; } " + reject, StringComparison.Ordinal);
             }
             Rid shader = Add(FamilyGpuComputeUtility.CompileShader(rd, source, fullPlan is null ? "RelicFamilyR" : "RelicFamilyRfull"));
-            Rid pipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(rd, shader));
+            Rid pipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(rd, shader, fullPlan is null ? "R.Relic" : "R.RelicFull"));
             if (!rd.ComputePipelineIsValid(pipeline)) throw new InvalidOperationException("RFamilyGpuPipelineInvalid");
             Rid uniformSet = Add(FamilyGpuComputeUtility.CreateUniformSet(rd, shader, buffers));
 
@@ -225,9 +225,10 @@ internal sealed class RelicFamilyGpuExecutor : IDisposable
             owned.Clear();
             return result;
         }
-        catch
+        catch (Exception ex)
         {
-            FamilyGpuComputeUtility.FreeAll(rd, owned);
+            FamilyGpuComputeUtility.CleanupAfterFailure(ex,
+                () => FamilyGpuComputeUtility.FreeAll(rd, owned), "R.Initialize");
             throw;
         }
     }
@@ -282,6 +283,8 @@ internal sealed class RelicFamilyGpuExecutor : IDisposable
         out RelicFamilyGpuBatchMetrics metrics)
     {
         if (_privateInput is not null || _privateOutput is not null) throw new InvalidOperationException("R.PrivateTransportRequiresPrivateEntry");
+        if (!input.IsDense && input.Count > CompactInputCapacity && input.Count <= Capacity)
+            return ExecutePublicCompactWindows(input, cancellationToken, out metrics);
         return ExecuteCore(input, input.Count, cancellationToken, out metrics)!;
     }
 
@@ -379,14 +382,7 @@ internal sealed class RelicFamilyGpuExecutor : IDisposable
         finally { _rd.ComputeListEnd(); }
         timer.Stop();
         double commandMs = timer.Elapsed.TotalMilliseconds;
-        timer.Restart();
-        FamilyGpuExecutionOwner.ObserveFirstSubmit(); _rd.Submit();
-        timer.Stop();
-        double submitMs = timer.Elapsed.TotalMilliseconds;
-        timer.Restart();
-        _rd.Sync();
-        timer.Stop();
-        double syncMs = timer.Elapsed.TotalMilliseconds;
+        (double submitMs, double syncMs) = FamilyGpuComputeUtility.SubmitAndSync(_rd, "R.Relic");
         cancellationToken.ThrowIfCancellationRequested();
 
         timer.Restart();
@@ -428,7 +424,7 @@ internal sealed class RelicFamilyGpuExecutor : IDisposable
         if (_disposed) return;
         _disposed = true;
         // Execute completes each Submit/Sync pair before returning.
-        FamilyGpuComputeUtility.FreeAll(_rd, _owned, _privateInput is not null || _privateOutput is not null);
+        FamilyGpuComputeUtility.FreeAll(_rd, _owned);
     }
 
     private void AssertOwnerThread()

@@ -45,12 +45,16 @@ internal sealed class CombatRewardGpuExecutor : IDisposable
                 source=source.Replace(read,"input_ordinals.values[batch_meta.values[6]+index]",StringComparison.Ordinal);
             }
             Rid shader=Add(FamilyGpuComputeUtility.CompileShader(rd,source,"CombatRewardFamily"));
-            _pipeline=Add(FamilyGpuComputeUtility.CreateComputePipeline(rd, shader));
+            _pipeline=Add(FamilyGpuComputeUtility.CreateComputePipeline(rd, shader, "C.CombatReward"));
             if(!rd.ComputePipelineIsValid(_pipeline))throw new InvalidOperationException("C.GpuPipelineInvalid");
-            _uniforms=Add(FamilyGpuComputeUtility.CreateUniformSet(rd,shader,buffers));
+            _uniforms=Add(FamilyGpuComputeUtility.CreateUniformSet(rd, shader, buffers, "C.CombatReward"));
             Device=rd.GetDeviceName(); SetupMs=watch.Elapsed.TotalMilliseconds;
         }
-        catch { FamilyGpuComputeUtility.FreeAll(rd,_owned, _privateInput || _privateOutput is not null); throw; }
+        catch (Exception failure)
+        {
+            FamilyGpuComputeUtility.CleanupAfterFailure(failure, () => FamilyGpuComputeUtility.FreeAll(rd, _owned), "C.CombatReward");
+            throw;
+        }
     }
     private static uint[] Header() => [0x43464d52,1,0,0,0,0x43463031,0,0];
     private void AssertOwner()
@@ -119,7 +123,7 @@ internal sealed class CombatRewardGpuExecutor : IDisposable
                 _rd.ComputeListBindComputePipeline(list,_pipeline);_rd.ComputeListBindUniformSet(list,_uniforms,0);
                 _rd.ComputeListDispatch(list,(uint)((count+63)/64),1,1);
             } finally { _rd.ComputeListEnd(); }
-            FamilyGpuExecutionOwner.ObserveFirstSubmit(); _rd.Submit();_rd.Sync();dispatches++;
+            FamilyGpuComputeUtility.SubmitAndSync(_rd, "C.CombatReward");dispatches++;
             sync+=watch.Elapsed.TotalMilliseconds-start;
             if (resident && offset + count < inputCount) continue;
             token.ThrowIfCancellationRequested();start=watch.Elapsed.TotalMilliseconds;
@@ -160,5 +164,5 @@ internal sealed class CombatRewardGpuExecutor : IDisposable
             Bootstrap.RuntimeLog.TryBackgroundDetail($"ncStageTiming=true;stage=C;input={inputCount};output={result.Count};dispatches={dispatches};uploadMs={upload};dispatchSyncMs={sync};readbackMs={read};readbackBytes={bytes};widenMs={widen};sortMs={sort};validationMs={watch.Elapsed.TotalMilliseconds-validationStart};canonicalMs={metrics.CanonicalMs}");
         return result;
     }
-    public void Dispose(){AssertOwner();_disposed=true;FamilyGpuComputeUtility.FreeAll(_rd,_owned, _privateInput || _privateOutput is not null);}
+    public void Dispose(){AssertOwner();_disposed=true;FamilyGpuComputeUtility.FreeAll(_rd, _owned);}
 }

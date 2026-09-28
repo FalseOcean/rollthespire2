@@ -6,7 +6,7 @@
 
 RolltheSpire2（RT2）是一个面向《杀戮尖塔 2》的游戏内筛种与种子分析 Mod。你可以组合自己想要的条件，寻找符合要求的种子，并查看开局、奖励、地图等预测结果。
 
-当前源码版本为 **1.3.0**，主要测试环境为 **Windows、游戏版本 0.111.0**。
+当前源码版本为 **1.3.1**，主要测试环境为 **Windows、游戏版本 0.111.0**。
 
 ## 可以做什么
 
@@ -20,7 +20,7 @@ RolltheSpire2（RT2）是一个面向《杀戮尖塔 2》的游戏内筛种与�
 
 [Steam 创意工坊页面](https://steamcommunity.com/sharedfiles/filedetails/?id=3755166888)
 
-从对应 GitHub Release 下载 `RolltheSpire2-1.3.0.zip`。手动安装包包含 DLL 和 manifest，不需要 PCK；避免同时加载工坊版与手动安装的重复副本。旧版本将作为历史安装包保留，不再持续维护。
+手动安装包与对应源码见 [GitHub Releases](https://github.com/FalseOcean/rollthespire2/releases)。旧版本将作为历史安装包保留，不再持续维护。
 
 使用手动安装包时，将其中的 `RolltheSpire2` 文件夹放入游戏目录的 `mods` 文件夹。源码压缩包需要先编译才能使用。
 
@@ -40,7 +40,9 @@ RolltheSpire2（RT2）是一个面向《杀戮尖塔 2》的游戏内筛种与�
 
 ## 问题反馈
 
-可以在工坊留言，或发送邮件到 **rollthespire2@outlook.com**。尽量附上种子、筛选条件、游戏与 Mod 版本及相关日志，方便定位问题。RT2 日志文件夹可以从设置页打开。
+在 RT2 顶部打开**问题反馈**，导出诊断 ZIP，并前往预填环境信息的 [GitHub Issue](https://github.com/FalseOcean/rollthespire2/issues/new) 页面。请补充问题描述与复现步骤，手动附上 ZIP 后提交；也可以复制反馈正文，发送邮件到 **rollthespire2@outlook.com**。
+
+B站／创意工坊评论区更适合交流和简单问题，我不一定能在那里逐一深入排查 Bug。RT2 是兴趣维护的个人项目，无法保证每个问题都能及时回复或修复，感谢理解。
 
 ## 从源码构建
 

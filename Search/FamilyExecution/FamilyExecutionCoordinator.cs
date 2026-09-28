@@ -107,13 +107,20 @@ public static partial class FamilyExecutionCoordinator
 
     internal static IReadOnlyList<IFamilyInvocation> CreateRegisteredFamilies(ExactSearchExecutionRequest plan, bool? gpuAvailable = null)
     {
-        long started=Stopwatch.GetTimestamp();
         ArgumentNullException.ThrowIfNull(plan);
+        return plan.CompiledSearch.Context.Party is not null
+            ? CreatePartyFamilies(plan, gpuAvailable ?? FamilyDeviceProfileFoundation.GpuAvailable)
+            : CreateSingleplayerFamilies(plan);
+    }
+
+    // Whole-query entry only. Party child requests go through the party registrar,
+    // which owns shared predicates, slot conjunction and opening continuation.
+    private static IReadOnlyList<IFamilyInvocation> CreateSingleplayerFamilies(ExactSearchExecutionRequest plan)
+    {
+        if (plan.Authority.PlayersCount != 1 || plan.Authority.PlayerSlotIndex != 0)
+            throw new InvalidOperationException("SingleplayerFamilyRegistrationRequiresSoloContext");
+        long started = Stopwatch.GetTimestamp();
         var families = new List<IFamilyInvocation>(4);
-        if (plan.CompiledSearch.Context.Party is not null)
-        {
-            return CreatePartyFamilies(plan, gpuAvailable ?? FamilyDeviceProfileFoundation.GpuAvailable);
-        }
         if (plan.Evaluation.TransformationAggregate is not null) families.Add(new TransformationAggregateFamily(plan));
         if (NeowFamily.TryCreate(plan, out IFamilyInvocation? neow) && neow is not null) families.Add(neow);
         if (MerchantShopColorlessFamily.TryCreate(plan, out IFamilyInvocation? shopFamily) &&

@@ -40,9 +40,9 @@ internal sealed class EwPrivateGpuExecutor : IDisposable
             buffers[5] = _output = _ordinals.Buffer;
             string shaderSource = e.ShaderSource();
             Rid shader = Add(FamilyGpuComputeUtility.CompileShader(rd, shaderSource, "E.Y1Private"));
-            _pipeline = Add(rd.ComputePipelineCreate(shader));
+            _pipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(rd, shader, "EW.EventResult"));
             if (!rd.ComputePipelineIsValid(_pipeline)) throw new InvalidOperationException("E.Y1PipelineInvalid");
-            _uniforms = Add(FamilyGpuComputeUtility.CreateUniformSet(rd, shader, buffers));
+            _uniforms = Add(FamilyGpuComputeUtility.CreateUniformSet(rd, shader, buffers, "EW.EventResult"));
             _world = new WorldFamilyGpuExecutor(rd, w, _output);
             if (verify)
             {
@@ -51,9 +51,9 @@ internal sealed class EwPrivateGpuExecutor : IDisposable
             }
             Device = rd.GetDeviceName(); SetupMs = timer.Elapsed.TotalMilliseconds;
         }
-        catch
+        catch (Exception failure)
         {
-            Release();
+            FamilyGpuComputeUtility.CleanupAfterFailure(failure, Release, "EW");
             throw;
         }
     }
@@ -81,7 +81,7 @@ internal sealed class EwPrivateGpuExecutor : IDisposable
                 _rd.ComputeListDispatch(list, (uint)((count+63)/64), 1, 1);
             }
             finally { _rd.ComputeListEnd(); }
-            _rd.Submit(); _rd.Sync(); dispatches++;
+            FamilyGpuComputeUtility.SubmitAndSync(_rd, "EW.EventResult"); dispatches++;
             dispatchMs += timer.Elapsed.TotalMilliseconds-start;
         }
         token.ThrowIfCancellationRequested();
@@ -119,11 +119,13 @@ internal sealed class EwPrivateGpuExecutor : IDisposable
     }
     private void Release()
     {
+        List<Exception> failures = [];
         try { PrivateOrdinalBuffer.DisposeAll(_referenceW, _referenceE, _world); }
-        finally
-        {
-            try { FamilyGpuComputeUtility.FreeAll(_rd, _owned, failOnError: true); }
-            finally { _ordinals?.Dispose(); }
-        }
+        catch (Exception failure) { failures.Add(failure); }
+        try { FamilyGpuComputeUtility.FreeAll(_rd, _owned); }
+        catch (Exception failure) { failures.Add(failure); }
+        try { _ordinals?.Dispose(); }
+        catch (Exception failure) { failures.Add(failure); }
+        if (failures.Count != 0) throw new AggregateException("EW.CleanupFailed", failures);
     }
 }

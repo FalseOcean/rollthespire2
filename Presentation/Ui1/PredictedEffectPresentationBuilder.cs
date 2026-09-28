@@ -137,11 +137,15 @@ internal static class PredictedEffectPresentationBuilder
             displayText = sourceName + " → " + displayText;
         }
 
+        string glamSuffix = effect.HasGlam
+            ? uiText.Get(Ui1TextKey.NormalCombatRewardCardGlamSuffix)
+            : string.Empty;
+        displayText += glamSuffix;
         string compact = targetName is null
             ? displayText
             : effect.Kind == PredictedEffectKind.TransformCard && !string.IsNullOrWhiteSpace(sourceName)
                 ? $"{sourceName} → {targetName}{multiplicity}"
-                : targetName + multiplicity;
+                : targetName + multiplicity + glamSuffix;
         GameContentDisplayViewModel? targetContent = effect.TargetKey.HasValue && contentKind.HasValue
             ? GameContentDisplayPresentationBuilder.Build(
                 effect.TargetKey.Value,

@@ -1,14 +1,104 @@
 {
   "SchemaVersion": 1,
-  "ContentVersion": "1.3.0",
-  "TargetModVersion": "1.3.0",
-  "UpdatedAt": "2026-09-27",
+  "ContentVersion": "1.3.1",
+  "TargetModVersion": "1.3.1",
+  "UpdatedAt": "2026-09-28",
   "Chapters": [
     {
       "Id": "release",
-      "Title": "RolltheSpire2 1.3.0",
-      "Summary": "Version 1.3.0 expands RT2's prediction and filtering capabilities and redesigns the interface. It adds multiplayer seed search and prediction, map features, an encyclopedia, and seed favorites, while also improving condition setup and the overall workflow.",
+      "Title": "Release Notes",
+      "Summary": null,
       "Blocks": [
+        {
+          "Type": "Heading",
+          "Text": "RolltheSpire2 1.3.1",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "1.3.1 improves search performance and stability for some queries, fixes several Neow combinations, and adds a dedicated feedback page.",
+          "Items": null
+        },
+        {
+          "Type": "Heading",
+          "Text": "Search Performance and Stability",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "Further separated key single-player and multiplayer search calculations to reduce the extra work imposed on single-player filtering, while retaining existing Neow-specific optimizations.",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "Fixed some Capsule combinations missing the GPU filtering path and searching more slowly as a result. Improved capacity handling, initialization, and resource cleanup in several GPU paths, and added diagnostic logs to help investigate device compatibility issues.",
+          "Items": null
+        },
+        {
+          "Type": "Heading",
+          "Text": "Neow Combinations and Prediction Fixes",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "Fixed some Capsule combinations producing candidates that the final check could not confirm, preventing matching seeds from being returned.",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "Added pickup-order handling for Silken Tress paired with Lost Coffer or Kaleidoscope inside Neow’s Bones. Picking up Tress first enchants the Coffer card reward or the first Kaleidoscope reward with Glam. Picking it up afterward saves the effect for the first combat card reward.",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "You can switch between these pickup orders in Seed Analysis. Opening card results and subsequent combat rewards update together. Skipping the opening card reward still consumes Tress’s effect.",
+          "Items": null
+        },
+        {
+          "Type": "Heading",
+          "Text": "Clear Search Conditions",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "Search now has a Clear all action with Undo until you start editing again. It clears the current mode’s conditions while preserving characters, ascension, multiplayer configuration, and search settings.",
+          "Items": null
+        },
+        {
+          "Type": "Heading",
+          "Text": "Bug Reports",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "A new top-level Feedback page can package recent RT2 and game logs, environment information, and the current search configuration into a ZIP, then open its folder automatically.",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "The current interface language selects a Chinese or English report and a GitHub Issue page prefilled with environment details. Add a problem description and reproduction steps, attach the ZIP manually, and submit. You can also copy the report and send it by email.",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "A description alone is often not enough to diagnose a problem. RT2 is a personal hobby project, so a timely reply or fix cannot be guaranteed for every report. Thank you for understanding.",
+          "Items": null
+        },
+        {
+          "Type": "Callout",
+          "Text": "Some previously reported GPU errors have not been retested on the affected devices. These improvements do not mean that every device has been verified.",
+          "Items": null
+        },
+        {
+          "Type": "Heading",
+          "Text": "RolltheSpire2 1.3.0",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "Version 1.3.0 expands RT2's prediction and filtering capabilities and redesigns the interface. It adds multiplayer seed search and prediction, map features, an encyclopedia, and seed favorites, while also improving condition setup and the overall workflow.",
+          "Items": null
+        },
         {
           "Type": "Heading",
           "Text": "Redesigned Interface",

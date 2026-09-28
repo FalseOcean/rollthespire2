@@ -38,7 +38,8 @@ internal readonly record struct MerchantShopColorlessGpuBatchMetrics(
     double StableScatterSubmitMs,
     double StableScatterSyncMs,
     long StableCountsReadbackBytes,
-    double CanonicalAbi1ReadyMs)
+    double CanonicalAbi1ReadyMs,
+    int Dispatches = 0)
 {
     public double ReadbackMs => HeaderReadbackMs + PayloadReadbackMs + StableCountsReadbackMs;
     public double HostMaterializeMs => TypedAllocationMs + DecodePayloadMs + SortMs + ValidationCandidateSetMs;
@@ -52,7 +53,7 @@ internal readonly record struct MerchantShopColorlessGpuBatchMetrics(
 /// FamilyExecutionContext guarantees that every method is called on its single
 /// session GPU owner thread; this class creates no thread, Task, or queue.
 /// </summary>
-internal sealed class MerchantShopColorlessGpuExecutor : IDisposable
+internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
 {
     internal const int WorkgroupSize = 64;
     internal const int SeedsPerInvocation = 8;
@@ -196,7 +197,7 @@ internal sealed class MerchantShopColorlessGpuExecutor : IDisposable
                 source = source.Replace(low, "compact_output.values[slot] = uint(logical_ordinal);", StringComparison.Ordinal).Replace(high, "", StringComparison.Ordinal);
             }
             Rid shader = Add(FamilyGpuComputeUtility.CompileShader(rd, source, "MerchantShopColorlessFamilyS"));
-            Rid pipeline = Add(rd.ComputePipelineCreate(shader));
+            Rid pipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(rd, shader, "S.MerchantShopColorless"));
             if (!rd.ComputePipelineIsValid(pipeline))
                 throw new InvalidOperationException("SFamilyGpuPipelineInvalid");
             Rid uniformSet = Add(FamilyGpuComputeUtility.CreateUniformSet(rd, shader, new[]
@@ -220,7 +221,7 @@ internal sealed class MerchantShopColorlessGpuExecutor : IDisposable
                 string stablePhase1Source = EnableStableOrderedCompaction(source);
                 Rid stablePhase1Shader = Add(FamilyGpuComputeUtility.CompileShader(
                     rd, stablePhase1Source, "MerchantShopColorlessFamilySStablePhase1"));
-                stablePhase1Pipeline = Add(rd.ComputePipelineCreate(stablePhase1Shader));
+                stablePhase1Pipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(rd, stablePhase1Shader, "S.StablePhase1"));
                 if (!rd.ComputePipelineIsValid(stablePhase1Pipeline))
                     throw new InvalidOperationException("SFamilyStablePhase1PipelineInvalid");
                 stablePhase1UniformSet = Add(FamilyGpuComputeUtility.CreateUniformSet(rd, stablePhase1Shader, new[]
@@ -232,7 +233,7 @@ internal sealed class MerchantShopColorlessGpuExecutor : IDisposable
                 string scatterSource = FamilyGpuComputeUtility.LoadEmbeddedShader(StableScatterShaderSuffix);
                 Rid scatterShader = Add(FamilyGpuComputeUtility.CompileShader(
                     rd, scatterSource, "MerchantShopColorlessFamilySStableScatter"));
-                stableScatterPipeline = Add(rd.ComputePipelineCreate(scatterShader));
+                stableScatterPipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(rd, scatterShader, "S.StableScatter"));
                 if (!rd.ComputePipelineIsValid(stableScatterPipeline))
                     throw new InvalidOperationException("SFamilyStableScatterPipelineInvalid");
                 stableScatterUniformSet = Add(FamilyGpuComputeUtility.CreateUniformSet(rd, scatterShader, new[]
@@ -253,9 +254,10 @@ internal sealed class MerchantShopColorlessGpuExecutor : IDisposable
             owned.Clear();
             return result;
         }
-        catch
+        catch (Exception ex)
         {
-            FamilyGpuComputeUtility.FreeAll(rd, owned);
+            FamilyGpuComputeUtility.CleanupAfterFailure(ex,
+                () => FamilyGpuComputeUtility.FreeAll(rd, owned), "S.Initialize");
             throw;
         }
     }
@@ -263,6 +265,10 @@ internal sealed class MerchantShopColorlessGpuExecutor : IDisposable
     public FamilyCandidateSet Execute(FamilyCandidateSet input, CancellationToken token, out MerchantShopColorlessGpuBatchMetrics metrics)
     {
         if (_privateInput is not null || _privateOutput is not null) throw new InvalidOperationException("S.PrivateEntryRequired");
+        // Public output has the same bounded capacity as compact upload. Dense
+        // inputs also need windows: legal small/modded pools can pass every root.
+        if (input.Count > SurvivorCapacity && input.Count <= Capacity)
+            return ExecutePublicWindows(input, token, out metrics);
         return ExecuteCore(input, input.Count, token, out metrics)!;
     }
     internal FamilyCandidateSet ExecutePrivate(SearchBatch batch, int count, CancellationToken token, out MerchantShopColorlessGpuBatchMetrics metrics)
@@ -334,14 +340,7 @@ internal sealed class MerchantShopColorlessGpuExecutor : IDisposable
         timer.Stop();
         double commandMs = timer.Elapsed.TotalMilliseconds;
 
-        timer.Restart();
-        _rd.Submit();
-        timer.Stop();
-        double submitMs = timer.Elapsed.TotalMilliseconds;
-        timer.Restart();
-        _rd.Sync();
-        timer.Stop();
-        double syncMs = timer.Elapsed.TotalMilliseconds;
+        (double submitMs, double syncMs) = FamilyGpuComputeUtility.SubmitAndSync(_rd, "S.MerchantShopColorless");
         cancellationToken.ThrowIfCancellationRequested();
 
         timer.Restart();
@@ -357,7 +356,7 @@ internal sealed class MerchantShopColorlessGpuExecutor : IDisposable
             metrics = new MerchantShopColorlessGpuBatchMetrics
             {
                 CompactionPath = MerchantShopColorlessCompactionPath.AtomicAppendHostSort,
-                InputCandidates = inputCount, ProcessedCandidates = processedCount, Survivors = survivorCount,
+                InputCandidates = inputCount, ProcessedCandidates = processedCount, Survivors = survivorCount, Dispatches = 1,
                 UploadMs = uploadMs, CommandMs = commandMs, SubmitMs = submitMs, SyncMs = syncMs,
                 HeaderReadbackMs = headerReadbackMs, HeaderReadbackBytes = rawHeader.LongLength,
                 CanonicalAbi1ReadyMs = canonicalTimer.Elapsed.TotalMilliseconds
@@ -405,7 +404,7 @@ internal sealed class MerchantShopColorlessGpuExecutor : IDisposable
             payloadReadbackAllocatedBytes, hostAllocatedBytes,
             rawHeader.LongLength, rawOrdinals.LongLength,
             0d, 0d, 0d, 0d, 0d, 0d, 0d, 0d, 0d, 0L,
-            canonicalTimer.Elapsed.TotalMilliseconds);
+            canonicalTimer.Elapsed.TotalMilliseconds, 1);
         return result;
     }
 
@@ -443,14 +442,7 @@ internal sealed class MerchantShopColorlessGpuExecutor : IDisposable
         timer.Stop();
         double phase1CommandMs = timer.Elapsed.TotalMilliseconds;
 
-        timer.Restart();
-        _rd.Submit();
-        timer.Stop();
-        double phase1SubmitMs = timer.Elapsed.TotalMilliseconds;
-        timer.Restart();
-        _rd.Sync();
-        timer.Stop();
-        double phase1SyncMs = timer.Elapsed.TotalMilliseconds;
+        (double phase1SubmitMs, double phase1SyncMs) = FamilyGpuComputeUtility.SubmitAndSync(_rd, "S.StablePhase1");
         cancellationToken.ThrowIfCancellationRequested();
 
         timer.Restart();
@@ -500,14 +492,7 @@ internal sealed class MerchantShopColorlessGpuExecutor : IDisposable
         timer.Stop();
         double scatterCommandMs = timer.Elapsed.TotalMilliseconds;
 
-        timer.Restart();
-        _rd.Submit();
-        timer.Stop();
-        double scatterSubmitMs = timer.Elapsed.TotalMilliseconds;
-        timer.Restart();
-        _rd.Sync();
-        timer.Stop();
-        double scatterSyncMs = timer.Elapsed.TotalMilliseconds;
+        (double scatterSubmitMs, double scatterSyncMs) = FamilyGpuComputeUtility.SubmitAndSync(_rd, "S.StableScatter");
         cancellationToken.ThrowIfCancellationRequested();
 
         timer.Restart();
@@ -576,7 +561,7 @@ internal sealed class MerchantShopColorlessGpuExecutor : IDisposable
             scatterSubmitMs,
             scatterSyncMs,
             rawCounts.LongLength,
-            canonicalTimer.Elapsed.TotalMilliseconds);
+            canonicalTimer.Elapsed.TotalMilliseconds, 2);
         return result;
     }
 
@@ -586,7 +571,7 @@ internal sealed class MerchantShopColorlessGpuExecutor : IDisposable
         if (_disposed) return;
         _disposed = true;
         // Execute completes each Submit/Sync pair before returning.
-        FamilyGpuComputeUtility.FreeAll(_rd, _owned, _privateInput is not null || _privateOutput is not null);
+        FamilyGpuComputeUtility.FreeAll(_rd, _owned);
     }
 
     private void AssertOwnerThread()

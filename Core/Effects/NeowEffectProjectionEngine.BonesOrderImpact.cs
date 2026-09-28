@@ -1243,6 +1243,7 @@ internal sealed partial class NeowEffectProjectionEngine
                     item.SourceKey?.Serialized ?? "-",
                     item.Amount?.ToString() ?? "-",
                     item.Multiplicity,
+                    item.HasGlam,
                     NormalizeOpaqueId(item.OfferItemId, offerIds, "offer"),
                     item.Precision,
                     item.Phase,
@@ -1274,6 +1275,7 @@ internal sealed partial class NeowEffectProjectionEngine
                         item.SourceKey?.Serialized ?? "-",
                         item.Amount?.ToString() ?? "-",
                         item.Multiplicity,
+                        item.HasGlam,
                         item.Relation,
                         item.Precision))));
 
@@ -1324,6 +1326,7 @@ internal sealed partial class NeowEffectProjectionEngine
             "bones-working-observable-v1",
             new[]
             {
+                $"silken-tress:{state.HasSilkenTress}:{state.SilkenTressConsumed}",
                 state.Deck is null ? "deck:missing" : BuildObservableDeckFingerprint(state.Deck.Cards),
                 state.RelicBag is null
                     ? "bag:missing"

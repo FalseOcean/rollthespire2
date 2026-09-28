@@ -18,7 +18,14 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
     // becoming an accidental Exact-only gate. Both workspaces remain bounded.
     private readonly RenderingDevice _rd;
     private readonly List<Rid> _owned = new();
-    private readonly Rid _meta, _header, _input, _output, _pipeline, _uniforms;
+    private readonly Rid _meta, _header, _input, _output, _projectionMetadata;
+    private Rid _pipeline, _uniforms;
+    private readonly Rid[] _buffers;
+    private Rid[]? _stagedBuffers;
+    private readonly NeowFamilyGpuPlan _plan;
+    private readonly NeowCapsuleComposite? _composite;
+    private readonly string? _partySource;
+    private readonly int _capsulePhysicalMode;
     private readonly List<(Rid Pipeline, Rid Uniforms)> _stages = new();
     private readonly int _owner = System.Environment.CurrentManagedThreadId;
     private readonly uint _tag;
@@ -27,16 +34,16 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
     internal uint[] BonesKCounts { get; private set; } = [];
     private readonly bool _privateInput;
     private readonly bool _privateOutput;
-    private bool _disposed;
+    private bool _disposed, _initializationFaulted;
     private readonly bool _tracePrivate = NcPhysicalExperiment.Mode.Length != 0 || PrivateOrdinalSelection.IsRequested || NwaePhysicalExperiment.Mode.Length != 0;
-    internal double SetupMs { get; }
+    internal double SetupMs { get; private set; }
     internal string Device { get; }
     internal const long WorkspaceBytes = (long)Capacity * sizeof(uint) * 2;
-    internal long ResidentBytes => WorkspaceBytes + (_stages.Count == 0 ? 0 :
+    internal long ResidentBytes => WorkspaceBytes + (_stagedBuffers is null ? 0 :
         (long)NeowFamilyGpuPlan.CurseCapacity * 12 + (long)NeowFamilyGpuPlan.PairCapacity * 48);
     internal static string ShaderSource(int stage = 3, bool capsuleComposite = false, bool leafyPreGate = false,
         bool bonesCapsuleComposite = false, bool bonesArcaneComposite = false, int directNestedMode = 0, int capsulePhysicalMode = 0, int bonesKMode = 0, bool authoredUpgrades = false,
-        bool localResults = true) => FamilyGpuComputeUtility.LoadEmbeddedShader("NeowFamily.comp.glsl")
+        bool localResults = true, bool multiplayer = false) => FamilyGpuComputeUtility.LoadEmbeddedShader(multiplayer ? "NeowParty.comp.glsl" : "NeowSingleplayer.comp.glsl")
         .Replace("__RT2_LOCAL_RESULTS__", localResults ? "1" : "0", StringComparison.Ordinal)
         .Replace("__RT2_AUTHORED_UPGRADES__", authoredUpgrades ? "1" : "0", StringComparison.Ordinal)
         .Replace("__RT2_BONES_K_MODE__", bonesKMode.ToString(), StringComparison.Ordinal)
@@ -48,7 +55,8 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
         .Replace("__RT2_N_LEAFY_PRE_GATE__", leafyPreGate ? "1" : "0", StringComparison.Ordinal)
         .Replace("/*__RT2_CAPSULE_COMPOSITE__*/", bonesArcaneComposite ? BonesCapsuleShader(true) : bonesCapsuleComposite ? BonesCapsuleShader() : capsuleComposite ? CapsuleShader() : "", StringComparison.Ordinal)
         .Replace("__RT2_N_STAGE__", stage.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
-        .Replace("/*__RT2_NEOW_LOCAL_DONOR__*/", FamilyGpuComputeUtility.LoadEmbeddedShader("NeowFamilyDonor.glsl"), StringComparison.Ordinal);
+        .Replace("/*__RT2_NEOW_LOCAL_DONOR__*/", FamilyGpuComputeUtility.LoadEmbeddedShader(
+            multiplayer ? "NeowPartyDonor.glsl" : "NeowSingleplayerDonor.glsl"), StringComparison.Ordinal);
     private static string BonesCapsuleShader(bool arcane = false) => FamilyGpuComputeUtility.LoadEmbeddedShader(
         arcane ? "NeowBonesArcaneCapsuleComposite.glsl" : "NeowBonesCapsuleComposite.glsl")
         .Replace("/*__RT2_RFULL_CHECKPOINT_MATCHER__*/", FamilyGpuComputeUtility.LoadEmbeddedShader("RelicFullCapsule.glsl"), StringComparison.Ordinal);
@@ -75,71 +83,100 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
         _bonesKMode = bonesKMode;
         _rd = rd; _tag = tag; _bonesArcane = composite?.UsesBonesArcane == true; _privateInput = privateInput is not null;
         _privateOutput = privateOutput is not null;
+        _plan = plan; _composite = composite; _partySource = partySource; _capsulePhysicalMode = capsulePhysicalMode;
         if (_privateInput && ReferenceEquals(privateInput, privateOutput)) throw new ArgumentException("N.PrivateBuffersAlias");
         var timer = Stopwatch.StartNew();
-        Rid Add(Rid rid) { _owned.Add(rid); return rid; }
-        Rid Buffer(uint[] values) => Add(FamilyGpuComputeUtility.CreateStorageBuffer(rd, FamilyGpuComputeUtility.ToBytesNonEmpty(values)));
+        Rid Buffer(uint[] values, string name) => Add(FamilyGpuComputeUtility.CreateStorageBuffer(rd, FamilyGpuComputeUtility.ToBytesNonEmpty(values), name));
         try
         {
-            _meta = Buffer(new uint[8]); _header = Buffer(Header());
-            _input = privateInput?.Buffer ?? Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, Capacity * sizeof(uint)));
-            _output = privateOutput?.Buffer ?? Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, Capacity * sizeof(uint)));
-            Rid[] buffers = [_meta, Buffer(plan.Meta), Buffer(plan.PoolMeta), Buffer(plan.Cards), Buffer(plan.Strike),
-                Buffer(plan.Defend), _header, _output, Buffer(plan.Bones), Buffer(plan.Conditions), _input];
-            bool bonesComposite = composite?.UsesBonesCheckpoint == true;
-            bool checkpointMetadata = bonesComposite || bonesKMode == 2;
-            if (checkpointMetadata)
+            _meta = Buffer(new uint[8], "N.Batch"); _header = Buffer(Header(), "N.Header");
+            _input = privateInput?.Buffer ?? Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, Capacity * sizeof(uint), "N.Input"));
+            _output = privateOutput?.Buffer ?? Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, Capacity * sizeof(uint), "N.Output"));
+            _buffers = [_meta, Buffer(plan.Meta, "N.Plan"), Buffer(plan.PoolMeta, "N.Pools"), Buffer(plan.Cards, "N.Cards"), Buffer(plan.Strike, "N.Strike"),
+                Buffer(plan.Defend, "N.Defend"), _header, _output, Buffer(plan.Bones, "N.Bones"), Buffer(plan.Conditions, "N.Conditions"), _input];
+            if (bonesKMode == 2 || composite is not null)
+                _projectionMetadata = Buffer(bonesKMetadata ?? composite!.Metadata, "N.CapsuleProjection");
+            Device = rd.GetDeviceName();
+            // Private bindings have a fixed role. Build only that role while the
+            // chain's shader-reuse scope is active. Public input is known at Execute.
+            if (_privateInput || _privateOutput)
+                EnsureModules(plan.UsesStagedDense && !_privateInput);
+            SetupMs = timer.Elapsed.TotalMilliseconds;
+        }
+        catch (Exception ex)
+        {
+            FamilyGpuComputeUtility.CleanupAfterFailure(ex, () => FamilyGpuComputeUtility.FreeAll(rd, _owned), "N.Constructor");
+            throw;
+        }
+    }
+    private Rid Add(Rid rid) { _owned.Add(rid); return rid; }
+
+    private string ModuleSource(int stage)
+    {
+        string source = stage == 3 && _partySource is not null ? _partySource : ShaderSource(stage,
+            capsuleComposite: stage == 3 && _composite is not null,
+            leafyPreGate: _plan.UsesLeafyPreGate, bonesCapsuleComposite: _composite?.UsesBonesCheckpoint == true,
+            bonesArcaneComposite: _bonesArcane, directNestedMode: _composite is null ? _plan.DirectNestedMode : 0,
+            capsulePhysicalMode: stage == 3 ? _capsulePhysicalMode : 0, bonesKMode: _bonesKMode,
+            authoredUpgrades: _plan.HasAuthoredUpgrades,
+            localResults: _plan.HasLocalResults || _composite is not null || _bonesKMode != 0, multiplayer: _plan.IsMultiplayer);
+        if (_privateInput)
+        {
+            const string ordinalRead = "uint ordinal=batch.values[4u]==0u ? first+lane : input_ordinals.values[first+lane];";
+            if (!source.Contains(ordinalRead, StringComparison.Ordinal)) throw new InvalidOperationException("N.PrivateInputSeamChanged");
+            source = source.Replace(ordinalRead, ordinalRead + "\nif(ordinal>=batch.values[2u]) { atomicExchange(header.values[3u],1u); continue; }", StringComparison.Ordinal);
+        }
+        return source;
+    }
+
+    private void EnsureModules(bool staged)
+    {
+        if (_initializationFaulted) throw new InvalidOperationException("NFamilyGpuInitializationFaulted");
+        if (staged ? _stages.Count == 3 : _pipeline.IsValid) return;
+        var timer = Stopwatch.StartNew();
+        string name = staged ? "NeowFamilyPreBones0" : "NeowFamilyLocalDonor";
+        bool checkpointMetadata = _composite?.UsesBonesCheckpoint == true || _bonesKMode == 2;
+        try
+        {
+            if (staged)
             {
-                // 11/12 retain N's checkpoint meanings; R metadata is binding 13.
-                // Tiny-pool fused paths need only placeholders for the two gaps.
-                buffers = [..buffers,
-                    Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, plan.UsesStagedDense ? NeowFamilyGpuPlan.CurseCapacity * 12 : 4)),
-                    Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, plan.UsesStagedDense ? NeowFamilyGpuPlan.PairCapacity * 48 : 4)),
-                    Buffer(bonesKMetadata ?? composite!.Metadata)];
-            }
-            else if (composite is not null) buffers = [..buffers, Buffer(composite.Metadata)];
-            string source = partySource ?? ShaderSource(capsuleComposite: composite is not null,
-                leafyPreGate: plan.UsesLeafyPreGate, bonesCapsuleComposite: bonesComposite, bonesArcaneComposite: _bonesArcane,
-                directNestedMode: composite is null ? plan.DirectNestedMode : 0, capsulePhysicalMode: capsulePhysicalMode, bonesKMode: bonesKMode, authoredUpgrades: plan.HasAuthoredUpgrades,
-                localResults: plan.HasLocalResults || composite is not null || bonesKMode != 0);
-            if (_privateInput)
-            {
-                const string ordinalRead = "uint ordinal=batch.values[4u]==0u ? first+lane : input_ordinals.values[first+lane];";
-                if (!source.Contains(ordinalRead, StringComparison.Ordinal)) throw new InvalidOperationException("N.PrivateInputSeamChanged");
-                source = source.Replace(ordinalRead, ordinalRead + "\nif(ordinal>=batch.values[2u]) { atomicExchange(header.values[3u],1u); continue; }", StringComparison.Ordinal);
-            }
-            // A private producer accepts Dense only; a private consumer is
-            // Compact only. Do not build modules these bound roles cannot use.
-            // Public transport retains both modes and its original modules.
-            bool stagedDenseOnly = plan.UsesStagedDense && !_privateInput && _privateOutput;
-            if (!stagedDenseOnly)
-            {
-                Rid shader = Add(FamilyGpuComputeUtility.CompileShader(rd, source, "NeowFamilyLocalDonor"));
-                _pipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(rd, shader));
-                if (!rd.ComputePipelineIsValid(_pipeline)) throw new InvalidOperationException("NFamilyGpuPipelineInvalid");
-                _uniforms = Add(FamilyGpuComputeUtility.CreateUniformSet(rd, shader, buffers));
-            }
-            else Bootstrap.RuntimeLog.TryBackgroundInfo("searchStartup=true;phase=ModuleNotRequired;name=NeowFamilyLocalDonor;binding=PrivateStagedDense;reason=NoCompactEntry;sourceSha256=" +
-                Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(source))));
-            if (plan.UsesStagedDense && !_privateInput)
-            {
-                Rid[] stagedBuffers = checkpointMetadata ? buffers : [..buffers,
-                    Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, NeowFamilyGpuPlan.CurseCapacity * 12)),
-                    Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, NeowFamilyGpuPlan.PairCapacity * 48))];
+                // Allocate checkpoints only when this executor actually receives Dense.
+                _stagedBuffers = [.._buffers,
+                    Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(_rd, NeowFamilyGpuPlan.CurseCapacity * 12, "N.CurseSurvivors")),
+                    Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(_rd, NeowFamilyGpuPlan.PairCapacity * 48, "N.PairSurvivors"))];
+                if (checkpointMetadata) _stagedBuffers = [.._stagedBuffers, _projectionMetadata];
                 for (int stage = 0; stage < 3; stage++)
                 {
-                    Rid stageShader = Add(FamilyGpuComputeUtility.CompileShader(rd, ShaderSource(stage,
-                        leafyPreGate: plan.UsesLeafyPreGate, bonesCapsuleComposite: bonesComposite, bonesArcaneComposite: _bonesArcane,
-                        directNestedMode: composite is null ? plan.DirectNestedMode : 0, bonesKMode: bonesKMode, authoredUpgrades: plan.HasAuthoredUpgrades,
-                        localResults: plan.HasLocalResults || composite is not null || bonesKMode != 0), "NeowFamilyPreBones" + stage));
-                    Rid pipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(rd, stageShader));
-                    if (!rd.ComputePipelineIsValid(pipeline)) throw new InvalidOperationException("NFamilyStagePipelineInvalid");
-                    _stages.Add((pipeline, Add(FamilyGpuComputeUtility.CreateUniformSet(rd, stageShader, stagedBuffers))));
+                    name = "NeowFamilyPreBones" + stage;
+                    Rid shader = Add(FamilyGpuComputeUtility.CompileShader(_rd, ModuleSource(stage), name));
+                    Rid pipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(_rd, shader, name));
+                    if (!_rd.ComputePipelineIsValid(pipeline)) throw new InvalidOperationException("NFamilyStagePipelineInvalid:" + name);
+                    _stages.Add((pipeline, Add(FamilyGpuComputeUtility.CreateUniformSet(_rd, shader, _stagedBuffers, name))));
                 }
             }
-            Device = rd.GetDeviceName(); SetupMs = timer.Elapsed.TotalMilliseconds;
+            else
+            {
+                Rid[] buffers = _buffers;
+                if (checkpointMetadata)
+                    buffers = _stagedBuffers ?? [..buffers,
+                        Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(_rd, 4, "N.UnusedCurseBinding")),
+                        Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(_rd, 4, "N.UnusedPairBinding")), _projectionMetadata];
+                else if (_composite is not null) buffers = [..buffers, _projectionMetadata];
+                Rid shader = Add(FamilyGpuComputeUtility.CompileShader(_rd, ModuleSource(3), name));
+                Rid pipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(_rd, shader, name));
+                if (!_rd.ComputePipelineIsValid(pipeline)) throw new InvalidOperationException("NFamilyGpuPipelineInvalid:" + name);
+                Rid uniforms = Add(FamilyGpuComputeUtility.CreateUniformSet(_rd, shader, buffers, name));
+                _pipeline = pipeline; _uniforms = uniforms;
+            }
         }
-        catch { FamilyGpuComputeUtility.FreeAll(rd, _owned, _privateInput || _privateOutput); throw; }
+        catch (Exception ex)
+        {
+            _initializationFaulted = true;
+            var failure = new InvalidOperationException("NFamilyGpuModuleInitializationFailed:" + name + ":" + ex.Message, ex);
+            FamilyGpuComputeUtility.CleanupAfterFailure(failure, () => FamilyGpuComputeUtility.FreeAll(_rd, _owned), "N.Module:" + name);
+            throw failure;
+        }
+        finally { SetupMs += timer.Elapsed.TotalMilliseconds; }
     }
     private uint[] Header() => _bonesKMode != 0 ? [0x4e464d52, 1, 0, 0, 0, _tag, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] : _bonesArcane ? [0x4e464d52, 1, 0, 0, 0, _tag, 0, 0, 0, 0, 0, 0]
         : [0x4e464d52, 1, 0, 0, 0, _tag, 0, 0];
@@ -177,6 +214,11 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
         AssertOwner(); token.ThrowIfCancellationRequested();
         if (inputCount > Capacity) throw new InvalidOperationException("NFamilyGpuCapacityExceeded");
         bool dense = input.IsDense && !_privateInput;
+        bool staged = dense && _plan.UsesStagedDense;
+        if (_initializationFaulted) throw new InvalidOperationException("NFamilyGpuInitializationFaulted");
+        // Setup is reported separately from batch upload/dispatch costs, including
+        // a later transition between public Compact and Dense input.
+        if (inputCount > 0) EnsureModules(staged);
         var timer = Stopwatch.StartNew();
         FamilyGpuComputeUtility.Update(_rd, _meta, [(uint)input.Batch.BatchBase, (uint)(input.Batch.BatchBase >> 32),
             (uint)input.Batch.BatchCandidateCount, (uint)inputCount, dense ? 0u : 1u, Capacity,
@@ -186,7 +228,6 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
             input.ExportAbi1().ToArray().Select(x => checked((uint)x)).ToArray(), "NFamilyCompact");
         double uploadedMs = timer.Elapsed.TotalMilliseconds;
         uint groups = (uint)((inputCount + 511) / 512);
-        bool staged = dense && _stages.Count == 3;
         if (groups > 0)
         {
             if (!staged && !_pipeline.IsValid) throw new InvalidOperationException("N.UnboundCompactModule");
@@ -206,7 +247,8 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
                 _rd.ComputeListBindComputePipeline(list, _pipeline); _rd.ComputeListBindUniformSet(list, _uniforms, 0);
                 _rd.ComputeListDispatch(list, groups, 1, 1);
             }
-            _rd.ComputeListEnd(); FamilyGpuExecutionOwner.ObserveFirstSubmit(); _rd.Submit(); _rd.Sync();
+            _rd.ComputeListEnd();
+            FamilyGpuComputeUtility.SubmitAndSync(_rd, "N.Neow");
         }
         token.ThrowIfCancellationRequested();
         double syncedMs = timer.Elapsed.TotalMilliseconds;
@@ -229,7 +271,7 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
         {
             double readyMs=timer.Elapsed.TotalMilliseconds;
             metrics=new(inputCount,checked((int)count),groups,header.Length*4,readyMs,uploadedMs,syncedMs-uploadedMs,
-                readyMs-syncedMs,0,staged?3:1,header[6],header[7],0,0,0,0,0);
+                readyMs-syncedMs,0,groups==0?0:staged?3:1,header[6],header[7],0,0,0,0,0);
             return null;
         }
         if (_bonesArcane && (header[8] > input.Count || header[9] > header[8] || header[10] > header[9] ||
@@ -246,7 +288,7 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
         double canonicalMs = timer.Elapsed.TotalMilliseconds;
         metrics = new((int)header[4], ordinals.Length, groups, header.Length * sizeof(uint) + count * sizeof(uint), canonicalMs,
             uploadedMs, syncedMs - uploadedMs, readMs - syncedMs, canonicalMs - readMs,
-            staged ? 3 : 1, header[6], header[7], _bonesArcane ? header[8] : 0, _bonesArcane ? header[9] : 0,
+            groups == 0 ? 0 : staged ? 3 : 1, header[6], header[7], _bonesArcane ? header[8] : 0, _bonesArcane ? header[9] : 0,
             _bonesArcane ? header[10] : 0, _bonesArcane ? header[11] : 0, _bonesArcane && count > 0 ? readMs - payloadStartMs : 0);
         if (_tracePrivate)
             Bootstrap.RuntimeLog.TryBackgroundDetail($"ncStageTiming=true;stage=N;input={inputCount};output={result.Count};dispatches={metrics.Dispatches};uploadMs={uploadedMs};dispatchSyncMs={metrics.DispatchSyncMs};readbackMs={metrics.ReadbackMs};readbackBytes={metrics.ReadbackBytes};widenMs={widenEnd-readMs};sortMs={sortEnd-widenEnd};validationMs={canonicalMs-sortEnd};canonicalMs={canonicalMs}");
@@ -255,6 +297,6 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
     public void Dispose()
     {
         AssertOwner(); _disposed = true;
-        FamilyGpuComputeUtility.FreeAll(_rd, _owned, _privateInput || _privateOutput);
+        FamilyGpuComputeUtility.FreeAll(_rd, _owned);
     }
 }

@@ -69,7 +69,7 @@ internal sealed class TransformationAggregateGpuPlan
         if (FullTarget)
         {
             // Reuse the mature N dense Carry8 codec, without N semantic predicates.
-            string donor = FamilyGpuComputeUtility.LoadEmbeddedShader("NeowFamilyDonor.glsl");
+            string donor = FamilyGpuComputeUtility.LoadEmbeddedShader("NeowSingleplayerDonor.glsl");
             rng = "#define T_FULL_TARGET\n" + rng[..rng.IndexOf("uint64_t prime1()",StringComparison.Ordinal)] +
                 donor[donor.IndexOf("uint alphabet_byte(",StringComparison.Ordinal)..donor.IndexOf("uint64_t identity_permutation(",StringComparison.Ordinal)];
         }

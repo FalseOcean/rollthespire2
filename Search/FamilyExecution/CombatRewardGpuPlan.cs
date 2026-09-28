@@ -40,7 +40,8 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
     }
 
     internal string ShaderSource(bool forceGeneric = false) => FamilyGpuComputeUtility.LoadEmbeddedShader("CombatRewardFamily.comp.glsl")
-        .Replace("/*__C_CAPSULE_DEFINES__*/", "#define RT2_C_CAPSULE_HELD " + (Meta[54] != 0 ? "1" : "0"), StringComparison.Ordinal)
+        .Replace("/*__C_CAPSULE_DEFINES__*/", "#define RT2_C_MULTIPLAYER " + (Meta[3] > 1 ? "1" : "0") +
+            "\n#define RT2_C_CAPSULE_HELD " + (Meta[54] != 0 ? "1" : "0"), StringComparison.Ordinal)
         .Replace("/*__C_HOT_DEFINES__*/", Beta110GpuCombatRewardHotLoopCompiler.BuildShaderDefines(HotLoop,
             Beta110GpuCombatRewardRoutePolicy.UnpinnedAssumeUnperturbed, forceGeneric ? Beta110GpuCombatRewardHotLoopVariant.Disabled :
             Beta110GpuCombatRewardHotLoopVariant.OptimizedSingleRoute), StringComparison.Ordinal)

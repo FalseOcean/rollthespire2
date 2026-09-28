@@ -13,7 +13,7 @@ internal sealed partial class NeowFamily
             if (_composite is not null || _request.ProfileId != Compatibility.RuntimeProfileId.Beta111) yield break;
             var plan = NeowIdentityCpuPlan.TryCompile(_plan);
             var gate = plan is null ? NeowCpuPreGate.TryCompile(_plan) : null;
-            Func<ulong,bool> matcher = plan is not null ? plan.Matches : gate is not null ? gate.Matches : root => NeowFamilyReplay.Matches(root, _plan);
+            Func<ulong,bool> matcher = plan is not null ? plan.Matches : gate is not null ? gate.Matches : _cpuMatcher;
             bool boundedPair = plan is not null && _plan.Authority.BonesEligibleRelicIds.Length == 28 &&
                 _plan.Authority.EligibleCurseRelicIds.Length == 10;
             bool boundedLeafy = gate?.BoundedLeafyWorkers == true;

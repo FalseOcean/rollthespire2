@@ -113,7 +113,10 @@ public sealed record PredictedEffect(
     EffectPresentationDetailLevel NormalViewDetailLevel = EffectPresentationDetailLevel.Detailed,
     EffectPresentationDetailLevel AdvancedViewDetailLevel = EffectPresentationDetailLevel.Detailed,
     EffectPresentationDetailLevel DiagnosticViewDetailLevel = EffectPresentationDetailLevel.Detailed,
-    EffectCompactSummaryKind CompactSummaryKind = EffectCompactSummaryKind.None);
+    EffectCompactSummaryKind CompactSummaryKind = EffectCompactSummaryKind.None)
+{
+    public bool HasGlam { get; init; }
+}
 
 /// <summary>
 /// Ordered effect group with an explicit player-selection contract.

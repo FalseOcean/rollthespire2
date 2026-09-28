@@ -29,6 +29,10 @@ bool cr_p10a_match_predicate(uint cards[12],uint card_count,bool drop,uint potio
     return true;
 }
 
+#ifndef RT2_C_MULTIPLAYER
+#define RT2_C_MULTIPLAYER 1
+#endif
+#if RT2_C_MULTIPLAYER
 uint64_t cr_assignment_step(uint64_t states,uint matches,uint count){
     uint64_t next=states;
     for(uint subset=0u;subset<(1u<<count);++subset){
@@ -38,13 +42,16 @@ uint64_t cr_assignment_step(uint64_t states,uint matches,uint count){
     }
     return next;
 }
+#endif
 bool cr_evaluate_rewards(inout RewardRouteState state){
 #ifndef RT2_CR_FAMILY
     if(!state.continuation_exact||!state.influence_exact||((state.influence_flags&(64u|128u))!=0u))return true;
 #endif
     uint asc=plan_meta.values[4u],maxBattle=clamp(plan_meta.values[5u],1u,6u),predicate_count=plan_meta.values[11u];
     uint64_t matched_mask=uint64_t(0u);
+#if RT2_C_MULTIPLAYER
     uint64_t card_states=uint64_t(1u),potion_states=uint64_t(1u);
+#endif
     for(uint battle=0u;battle<maxBattle;++battle){
         bool drop;
         if((state.influence_flags&1u)!=0u)drop=true;
@@ -71,6 +78,7 @@ bool cr_evaluate_rewards(inout RewardRouteState state){
         if((state.influence_flags&4u)!=0u)state.lasting_candy_counter++;
 
         uint battle_ordinal=battle+1u;
+#if RT2_C_MULTIPLAYER
         if(battle_ordinal<=plan_meta.values[55]){
             uint matches=0u;
             for(uint target=0u;target<plan_meta.values[56];++target)
@@ -86,6 +94,7 @@ bool cr_evaluate_rewards(inout RewardRouteState state){
             }
             potion_states=cr_assignment_step(potion_states,matches,plan_meta.values[59]);
         }
+#endif
         for(uint pi=0u;pi<predicate_count;++pi){
             uint base=pi*16u,predicate_battle=predicate_meta.values[base];uint64_t bit=uint64_t(1u)<<pi;
             if(predicate_battle==0u){
@@ -97,9 +106,13 @@ bool cr_evaluate_rewards(inout RewardRouteState state){
         }
     }
     uint64_t required_mask=predicate_count>=64u?~uint64_t(0u):((uint64_t(1u)<<predicate_count)-uint64_t(1u));
-    return (matched_mask&required_mask)==required_mask &&
+    return (matched_mask&required_mask)==required_mask
+#if RT2_C_MULTIPLAYER
+        &&
         (card_states&(uint64_t(1u)<<((1u<<plan_meta.values[56])-1u)))!=uint64_t(0u) &&
-        (potion_states&(uint64_t(1u)<<((1u<<plan_meta.values[59])-1u)))!=uint64_t(0u);
+        (potion_states&(uint64_t(1u)<<((1u<<plan_meta.values[59])-1u)))!=uint64_t(0u)
+#endif
+        ;
 }
 
 // P10 single-route hot-loop donor family. These paths are only entered for the

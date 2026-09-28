@@ -101,7 +101,7 @@ internal sealed partial class MerchantShopColorlessFamily : IFamilyInvocation
             else result = input is null ? gpu.Execute(FamilyCandidateSet.Dense(batch), token, out m) : gpu.ExecutePrivate(batch, count, token, out m);
             return new(m.Survivors, result, m.CommandMs + m.SubmitMs + m.SyncMs,
                 m.ReadbackMs, m.ReadbackBytes, m.CanonicalAbi1ReadyMs,
-                count == 0 ? 0 : path == MerchantShopColorlessCompactionPath.StableOrderedCompaction ? 2 : 1);
+                m.Dispatches);
         });
     }
     public FamilyAnalyticalCostProjection AnalyticalCost => _analyticalCost;
