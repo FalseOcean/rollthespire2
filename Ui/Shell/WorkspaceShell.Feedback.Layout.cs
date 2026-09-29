@@ -13,7 +13,7 @@ internal sealed partial class WorkspaceShell
         margins.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         margins.AddThemeConstantOverride("margin_left", 64); margins.AddThemeConstantOverride("margin_right", 64);
         margins.AddThemeConstantOverride("margin_top", 12);
-        var page = new VBoxContainer(); page.AddThemeConstantOverride("separation", 22); margins.AddChild(page);
+        var page = new VBoxContainer(); page.AddThemeConstantOverride("separation", 16); margins.AddChild(page);
         Label Text(string key, int size = 18, bool muted = false)
         {
             var label = _palette.Label("", size, muted); label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
@@ -47,18 +47,18 @@ internal sealed partial class WorkspaceShell
         tag.VerticalAlignment = VerticalAlignment.Center; titleRow.AddChild(tag);
         heading.AddChild(Text("feedback.intro", 18, true));
 
-        // The heading stays in place; only details scroll on small windows / longer locales.
+        // Keep the normal page compact; retain scrolling for expanded details and smaller windows.
         var scroll = new ScrollContainer { HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
             SizeFlagsVertical = SizeFlags.ExpandFill };
         page.AddChild(scroll);
         var body = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        body.AddThemeConstantOverride("separation", 18); scroll.AddChild(body);
+        body.AddThemeConstantOverride("separation", 14); scroll.AddChild(body);
         var cards = new HBoxContainer(); cards.AddThemeConstantOverride("separation", 20); body.AddChild(cards);
         VBoxContainer Card(string step, string titleKey)
         {
-            var panel = Panel(_palette.Surface, 28); panel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            var panel = Panel(_palette.Surface, 20); panel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
             panel.SizeFlagsStretchRatio = 1; cards.AddChild(panel);
-            var column = new VBoxContainer(); column.AddThemeConstantOverride("separation", 14); panel.AddChild(column);
+            var column = new VBoxContainer(); column.AddThemeConstantOverride("separation", 10); panel.AddChild(column);
             var row = new HBoxContainer(); row.AddThemeConstantOverride("separation", 14); column.AddChild(row);
             var number = _palette.Label(step, 17); number.AddThemeColorOverride("font_color", _palette.Color(_palette.Active));
             number.VerticalAlignment = VerticalAlignment.Center; row.AddChild(number);
@@ -114,17 +114,31 @@ internal sealed partial class WorkspaceShell
         _feedbackNotice = Panel("182433", 16); body.AddChild(_feedbackNotice);
         _feedbackReceipt = _palette.Label("", 17); _feedbackReceipt.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         _feedbackNotice.AddChild(_feedbackReceipt);
+        var rule = new ColorRect { Color = _palette.Color(_palette.Line), CustomMinimumSize = new(0, 1), MouseFilter = MouseFilterEnum.Ignore };
+        body.AddChild(rule);
+        var footer = new HBoxContainer(); footer.AddThemeConstantOverride("separation", 32); body.AddChild(footer);
+        var support = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        support.AddThemeConstantOverride("separation", 10); footer.AddChild(support);
+        support.AddChild(Text("feedback.boundary", 16, true));
         _feedbackDetailsToggle = Action("feedback.details", () =>
         { _feedbackDetails.Visible = !_feedbackDetails.Visible; RefreshFeedback(); });
-        _feedbackDetailsToggle.AddThemeStyleboxOverride("normal", new StyleBoxEmpty()); body.AddChild(_feedbackDetailsToggle);
+        _feedbackDetailsToggle.AddThemeStyleboxOverride("normal", new StyleBoxEmpty()); support.AddChild(_feedbackDetailsToggle);
         _feedbackDetails = new VBoxContainer { Visible = false }; ((VBoxContainer)_feedbackDetails).AddThemeConstantOverride("separation", 12);
         body.AddChild(_feedbackDetails);
         _feedbackDetails.AddChild(Text("feedback.privacy", 16, true));
         _feedbackDetails.AddChild(Text("feedback.details.help", 16, true));
         _feedbackPath = new LineEdit { Editable = false, ExpandToTextLength = false, CustomMinimumSize = new(0, 38) };
         StyleSettingsInput(_feedbackPath); _feedbackPath.AddThemeFontSizeOverride("font_size", 15); _feedbackDetails.AddChild(_feedbackPath);
-        var rule = new ColorRect { Color = _palette.Color(_palette.Line), CustomMinimumSize = new(0, 1), MouseFilter = MouseFilterEnum.Ignore };
-        body.AddChild(rule); body.AddChild(Text("feedback.boundary", 16, true));
+        var versions = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        versions.AddThemeConstantOverride("separation", 8); footer.AddChild(versions);
+        versions.AddChild(Text("feedback.versions.title", 20));
+        versions.AddChild(Text("feedback.versions.help", 16, true));
+        versions.AddChild(Action("feedback.versions.open", () =>
+        {
+            _feedbackMessage = TryOpenFeedbackUrl("https://github.com/FalseOcean/rollthespire2/releases")
+                ? "" : "feedback.versions.open_failed";
+            RefreshFeedback();
+        }));
     }
 
     private void RefreshFeedback()

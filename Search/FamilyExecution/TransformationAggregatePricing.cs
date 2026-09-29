@@ -17,10 +17,10 @@ internal static class TransformationAggregatePricing
             opening += 3 * plan.Neow!.Authority.BonesEligibleRelicIds.Length;
         double reached = probability.IdentityProbability;
         double ns = 25 + opening + (c.TrialNondescript ? 20 : 0) + reached * (4 * c.OpportunityCount + 4 * plan.DrawGroups.Length +
-            (c.Predicate == TransformationAggregatePredicate.ContainsMultiset ? 2 * c.TargetMultiset.Count : 0));
+            (c.Predicate != TransformationAggregatePredicate.RareCountAtLeast ? 2 * c.TargetMultiset.Count : 0));
         if (g.CompactInput) ns += 17; // canonical compact hash / index traversal
         return new(TransformationAggregateFamily.Id, Shape(plan, "Cpu"), ns, 65536, 0,
-            Evidence + ";ClosedNewSources=SymbioteTrialBonesLeafyCompanion;TrialCaseDrawChargedOnce;CpuCanonicalIncludesHashOrderedAbi1;AdditionalExecutorSetup=0;GlobalCpuCalibrationEligible",
+            Evidence + MixedEvidence(c) + ";ClosedNewSources=SymbioteTrialBonesLeafyCompanion;TrialCaseDrawChargedOnce;CpuCanonicalIncludesHashOrderedAbi1;AdditionalExecutorSetup=0;GlobalCpuCalibrationEligible",
             OutputElementBytes: 8, OutputAlreadyOrdered: true, PublicTransportClass: "CpuOrderedAbi1") { FixedWindowMilliseconds = .002 };
     }
 
@@ -51,9 +51,12 @@ internal static class TransformationAggregatePricing
         double ns = .30 + opening + (c.TrialNondescript ? .05 : 0) + .22 * activeWarp * probability.ExpectedGpuDraws +
             .015 * c.TargetMultiset.Count + .25 * (probability.StageSurvival ?? 0);
         return new(TransformationAggregateFamily.Id, Shape(plan, "Gpu"), ns, TransformationAggregateGpuPlan.WindowCapacity, 200,
-            Evidence + ";ClosedNewSources=SymbioteTrialBonesLeafyCompanion;TrialCaseDrawChargedOnce;GPU=DispatchNumericalIncludingEmission;SubmitHeaderReadbackQuotedOutside;ModuleSetupBounded=200ms;ExpectedEarlyRejectDraws=" +
+            Evidence + MixedEvidence(c) + ";ClosedNewSources=SymbioteTrialBonesLeafyCompanion;TrialCaseDrawChargedOnce;GPU=DispatchNumericalIncludingEmission;SubmitHeaderReadbackQuotedOutside;ModuleSetupBounded=200ms;ExpectedEarlyRejectDraws=" +
             probability.ExpectedGpuDraws.ToString("G17", System.Globalization.CultureInfo.InvariantCulture));
     }
+
+    private static string MixedEvidence(TransformationAggregateCondition c) => c.RequiresRareRemainder
+        ? ";RemainingRareQuote=ExistingWorkModelExtrapolation;NotSeparatelyCalibrated" : "";
 
     private static string Shape(TransformationAggregateNumericalPlan plan, string device) =>
         $"T.{device}.InitialBasicsAggregate.{plan.Condition.Opening}.O{plan.Condition.OpportunityCount}.G{plan.DrawGroups.Length}.{plan.Condition.Predicate}.K{plan.Condition.MinimumRareCount}.M{plan.Condition.TargetMultiset.Count}.v1";

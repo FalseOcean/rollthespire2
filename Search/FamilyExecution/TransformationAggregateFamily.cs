@@ -133,6 +133,10 @@ internal sealed partial class TransformationAggregateNumericalPlan
             for (int i = 0; i < count; i++) if (!used[i] && outputs[i] == target) { found = i; break; }
             if (found < 0) missing++; else used[found] = true;
         }
-        return missing <= unknown;
+        if (missing > unknown) return false;
+        if (_condition.RequiresRareRemainder)
+            for (int i = 0; i < count; i++)
+                if (!used[i] && outputs[i] >= 0 && !_rare[outputs[i]]) return false;
+        return true;
     }
 }

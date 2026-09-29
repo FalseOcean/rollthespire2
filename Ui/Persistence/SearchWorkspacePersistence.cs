@@ -75,6 +75,14 @@ internal sealed class SearchWorkspacePersistence
 
     public UserPreferencesDocument Preferences => _preferences;
 
+    public void SetShowInRunPredictionEntry(bool enabled)
+    {
+        if (_preferences.ShowInRunPredictionEntry == enabled) return;
+        _preferences.ShowInRunPredictionEntry = enabled;
+        MarkPreferencesDirty();
+        FlushPreferences();
+    }
+
     internal Shell.WorkbenchSearchDraft? LoadWorkbench()
     {
         const string file = "query_workbench.json";
@@ -647,6 +655,8 @@ internal sealed class UserPreferencesDocument
     public string SearchMode { get; set; } = "Auto";
     public int? SearchWorkerBudget { get; set; }
     public bool ShowOfficialPresets { get; set; } = true;
+    // Opt-in, including preferences saved before the in-run entry was introduced.
+    public bool ShowInRunPredictionEntry { get; set; }
     public string LastPage { get; set; } = "Analysis";
     public bool ActInformationGuideExpanded { get; set; }
     public bool ActInformationIdentityGuideExpanded { get; set; }

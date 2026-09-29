@@ -135,26 +135,30 @@ internal sealed partial class TransformationEditorPrototype : Control
             y += 76;
             Text(content, _text.Get("query.transform.target_cards"), 0, y, width, 16, true);
             y += 30;
-            int shown = _draft.Objective == 2 ? Math.Min(1, _draft.Cards.Count) : _draft.Cards.Count;
+            int shown = _draft.Cards.Count;
+            int columns = Math.Max(1, (int)(width / (WorkspaceResultTile.TileWidth + 12)));
+            Vector2 TilePosition(int index) => new(index % columns * (WorkspaceResultTile.TileWidth + 12),
+                y + index / columns * (WorkspaceResultTile.TileHeight + 14));
             for (int index = 0; index < shown; index++)
             {
                 int slot = index;
                 content.AddChild(new WorkspaceResultTile(_p, _icons, _names, _text, _draft.Cards[index],
                     GameContentKind.Card, () => PickCard(slot),
                     () => { _draft.Cards.RemoveAt(slot); Render(); })
-                { Position = new(index * (WorkspaceResultTile.TileWidth + 12), y) });
+                { Position = TilePosition(index) });
             }
-            if (shown < (_draft.Objective == 2 ? 1 : _draft.ResultCount))
+            bool addTarget = shown < _draft.ResultCount;
+            if (addTarget)
             {
                 int slot = shown;
                 content.AddChild(new WorkspaceResultTile(_p, _icons, _names, _text, null,
                     GameContentKind.Card, () => PickCard(slot), () => { })
-                { Position = new(shown * (WorkspaceResultTile.TileWidth + 12), y) });
+                { Position = TilePosition(shown) });
             }
-            y += WorkspaceResultTile.TileHeight + 14;
+            y += Math.Max(1, (shown + (addTarget ? 1 : 0) + columns - 1) / columns) * (WorkspaceResultTile.TileHeight + 14);
             if (_draft.Objective == 2)
             {
-                Text(content, _text.Format("query.transform.remaining_rare", _draft.ResultCount - 1), 0, y, width, 16, true);
+                Text(content, _text.Format("query.transform.remaining_rare", Math.Max(0, _draft.ResultCount - Math.Max(1, shown))), 0, y, width, 16, true);
                 y += 38;
             }
         }

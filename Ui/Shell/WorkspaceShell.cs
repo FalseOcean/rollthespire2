@@ -284,11 +284,15 @@ internal sealed partial class WorkspaceShell : Control
     public override void _UnhandledKeyInput(InputEvent input)
     {
         if (!IsVisibleInTree() || input is not InputEventKey { Pressed: true, Echo: false, Keycode: Key.Escape }) return;
+        HandleBack();
+        GetViewport().SetInputAsHandled();
+    }
+    internal void HandleBack()
+    {
         if (_workspace == Workspace.Settings) CloseSettings();
         else if (_seedLibrary?.CloseModal() == true) { }
         else if (_references?.CloseModal() == true) { }
         else TopLevelCloseRequested?.Invoke();
-        GetViewport().SetInputAsHandled();
     }
 
     private static StyleBoxFlat ButtonStyle(bool active) => new()

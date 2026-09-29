@@ -1165,23 +1165,11 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             .Where(key => key != BaseGameModelKeys.Relics.NeowsBones);
         if (RuntimeProfilePolicies.IsModernCore(profileId))
         {
-            values = values.Where(key => key != BaseGameModelKeys.Relics.MassiveScroll || playersCount > 1);
-            if (!allCharacterPoolsUnlocked.HasValue)
-            {
-                exact = false;
-            }
-            else if (!allCharacterPoolsUnlocked.Value)
-            {
-                values = values.Where(key => key != BaseGameModelKeys.Relics.Kaleidoscope);
-            }
-            if (!unlockedCommonCards.HasValue || !unlockedUncommonCards.HasValue)
-            {
-                exact = false;
-            }
-            else if (unlockedCommonCards.Value < 4 || unlockedUncommonCards.Value < 2)
-            {
-                values = values.Where(key => key != BaseGameModelKeys.Relics.ScrollBoxes);
-            }
+            bool? scrollBoxesAllowed = unlockedCommonCards.HasValue && unlockedUncommonCards.HasValue
+                ? unlockedCommonCards.Value >= 4 && unlockedUncommonCards.Value >= 2 : null;
+            exact &= allCharacterPoolsUnlocked.HasValue && scrollBoxesAllowed.HasValue;
+            values = values.Where(key => Core.Neow.ModernNeowIdentityPredictor.IsAllowed(
+                key, playersCount, allCharacterPoolsUnlocked, scrollBoxesAllowed) != false);
         }
         return values.ToArray();
     }

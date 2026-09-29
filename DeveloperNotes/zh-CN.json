@@ -1,14 +1,64 @@
 {
   "SchemaVersion": 1,
-  "ContentVersion": "1.3.1",
-  "TargetModVersion": "1.3.1",
-  "UpdatedAt": "2026-09-28",
+  "ContentVersion": "1.3.2",
+  "TargetModVersion": "1.3.2",
+  "UpdatedAt": "2026-09-29",
   "Chapters": [
     {
       "Id": "release",
       "Title": "更新说明",
       "Summary": null,
       "Blocks": [
+        {
+          "Type": "Heading",
+          "Text": "RolltheSpire2 1.3.2",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "1.3.2 主要修复多人涅奥筛选与预测的问题，并加入可选的局内预测入口。",
+          "Items": null
+        },
+        {
+          "Type": "Heading",
+          "Text": "多人涅奥修复",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "修复多人骨骰内含遗物池与实际游戏不一致的问题，相关筛选、预测与概率计算同步使用修正后的遗物池。",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "修复多人骨骰内含扭蛋的部分查询无法启动搜索的问题，以及巨大卷轴指定卡牌未计入筛选条件与稀有度的问题。",
+          "Items": null
+        },
+        {
+          "Type": "Heading",
+          "Text": "变牌组合",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "补齐“指定牌＋其余稀有牌”目标：指定牌各占一个结果位置，其余变牌必须全部为稀有牌，可用于共生体、审判等已接管来源。筛选、概率计算与条件保存同步生效。",
+          "Items": null
+        },
+        {
+          "Type": "Heading",
+          "Text": "局内预测入口",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "设置页新增“显示局内预测入口”开关，默认关闭。开启后，所有对局右上角的信息下方都会显示骨骰图标，点击可查看当前种子的开局预测，并读取本局角色、进阶及解锁上下文。领取选项与顺序仍需与实机保持一致；此入口不提供当前局面或路径预测。",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "多人大厅的 RT2 入口仅在多人自定义模式中显示。",
+          "Items": null
+        },
         {
           "Type": "Heading",
           "Text": "RolltheSpire2 1.3.1",

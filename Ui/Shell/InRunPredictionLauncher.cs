@@ -1,0 +1,176 @@
+using Godot;
+using MegaCrit.Sts2.Core.ControllerInput;
+using MegaCrit.Sts2.Core.Entities.Multiplayer;
+using MegaCrit.Sts2.Core.Nodes.CommonUi;
+using MegaCrit.Sts2.Core.Nodes.Screens.Capstones;
+using MegaCrit.Sts2.Core.Nodes.Screens.Map;
+using MegaCrit.Sts2.Core.Nodes.Screens.Overlays;
+using MegaCrit.Sts2.Core.Nodes.Screens.ScreenContext;
+using MegaCrit.Sts2.Core.Runs;
+using RolltheSpire2.Bootstrap;
+using RolltheSpire2.Infrastructure.Snapshots;
+using RolltheSpire2.Presentation.Localization;
+using RolltheSpire2.Ui.Persistence;
+
+namespace RolltheSpire2.Ui.Shell;
+
+internal sealed partial class InRunPredictionLauncher : Button
+{
+    private const string EntryGroup = "rt2_run_prediction_entry";
+    private IRunState _run = null!;
+    private ModRuntimeSnapshot _runtime = null!;
+    private double _poll;
+    private bool _opening;
+    private bool _enabledByPreference;
+    private RunPredictionOverlay? _surface;
+    private Control? _debugInfo;
+
+    internal static void EnsureAttached(NTopBar topBar, IRunState run, ModRuntimeSnapshot runtime)
+    {
+        const string name = "RolltheSpire2_RunPrediction";
+        var globalUi = topBar.GetParent() as NGlobalUi;
+        Control parent = globalUi is null ? topBar : globalUi;
+        if (parent.GetNodeOrNull<Node>(name) is not null) return;
+        RuntimeSnapshotThreadGuard.BindCurrentThread();
+        var preferences = new SearchWorkspacePersistence(OS.GetUserDataDir(), runtime.Profile.ProfileId, false).Preferences;
+        string language = preferences.LanguageOverride is "zh" or "en" ? preferences.LanguageOverride
+            : TranslationServer.GetLocale().StartsWith("zh", StringComparison.OrdinalIgnoreCase) ? "zh" : "en";
+        var entry = new InRunPredictionLauncher { Name = name, Text = "", _run = run, _runtime = runtime,
+            _enabledByPreference = preferences.ShowInRunPredictionEntry, Visible = preferences.ShowInRunPredictionEntry,
+            _debugInfo = globalUi?.DebugInfo,
+            TooltipText = JsonUiTextProvider.CreateUi13(language).Get("shell.open_run_prediction"),
+            CustomMinimumSize = new Vector2(56, 56), Size = new Vector2(56, 56), FocusMode = FocusModeEnum.None };
+        entry.AccessibilityName = entry.TooltipText;
+        AppShellHostRoot.StyleNeowsBonesLauncher(entry, runtime);
+        parent.AddChild(entry);
+        entry.AddToGroup(EntryGroup);
+        entry.SetProcess(entry._enabledByPreference);
+        entry.AlignBelowRunInformation();
+        entry.Pressed += entry.OpenPrediction;
+        RuntimeLog.Info($"runPredictionLauncherAttached=true;enabled={entry._enabledByPreference};allRunModes=true;placement=BelowDebugInfo;icon=NeowsBones");
+    }
+
+    internal static void ApplyPreference(SceneTree tree, bool enabled)
+    {
+        foreach (var node in tree.GetNodesInGroup(EntryGroup))
+        {
+            if (node is not InRunPredictionLauncher entry) continue;
+            entry._enabledByPreference = enabled;
+            entry.SetProcess(enabled);
+            entry._poll = 0;
+            entry._Process(0);
+        }
+    }
+
+    private void AlignBelowRunInformation()
+    {
+        if (GetParent() is not Control parent) return;
+        // Follow the actual info block, including extra multiplayer/hash lines and scaling.
+        // Remain its sibling so the text block's dimming does not dim the icon.
+        Position = _debugInfo is not null && IsInstanceValid(_debugInfo)
+            ? parent.GetGlobalTransform().AffineInverse() * _debugInfo.GetGlobalRect().End + new Vector2(-Size.X, 10)
+            : new Vector2(Math.Max(0, parent.Size.X - Size.X - 16), 190);
+    }
+
+    public override void _Process(double delta)
+    {
+        if (!_enabledByPreference) { Hide(); return; }
+        _poll -= delta;
+        if (_poll > 0) return;
+        _poll = .2;
+        AlignBelowRunInformation();
+        bool predictionOpen = _surface is not null && IsInstanceValid(_surface);
+        Visible = !predictionOpen;
+        Disabled = _opening || predictionOpen ||
+            NOverlayStack.Instance is null || NMapScreen.Instance?.IsOpen == true ||
+            NCapstoneContainer.Instance?.InUse == true || NModalContainer.Instance?.OpenModal is not null;
+    }
+
+    private void OpenPrediction()
+    {
+        if (!_enabledByPreference || Disabled || _opening || NOverlayStack.Instance is not { } stack) return;
+        _opening = true;
+        RunPredictionOverlay? surface = null;
+        try
+        {
+            try { RuntimeAuthorityEnvironment.CaptureOnMainThread(_runtime); }
+            catch (Exception ex) { RuntimeLog.WarnException("runPredictionAuthorityRefreshFailed=true;failSoft=true", ex); }
+            surface = new RunPredictionOverlay();
+            surface.Initialize(_runtime, _run, stack);
+            _surface = surface;
+            stack.Push(surface);
+        }
+        catch (Exception ex)
+        {
+            if (surface is not null && IsInstanceValid(surface))
+            {
+                if (ReferenceEquals(stack.Peek(), surface)) stack.Remove(surface);
+                else surface.QueueFree();
+            }
+            RuntimeLog.WarnException("runPredictionOpenFailed=true", ex);
+        }
+        finally { _opening = false; }
+    }
+}
+
+// Use the game's normal overlay ownership so rewards underneath are restored on close.
+internal sealed partial class RunPredictionOverlay : Control, IOverlayScreen
+{
+    private WorkspaceShell _shell = null!;
+    private IRunState _run = null!;
+    private NOverlayStack _stack = null!;
+    private bool _closed;
+    private bool _hotkeysBlocked, _backPressed;
+    public NetScreenType ScreenType => NetScreenType.None;
+    public bool UseSharedBackstop => true;
+    public Control? DefaultFocusedControl => _shell?.CloseButton;
+
+    internal void Initialize(ModRuntimeSnapshot runtime, IRunState run, NOverlayStack stack)
+    {
+        Name = "RolltheSpire2_RunPredictionOverlay";
+        _run = run; _stack = stack;
+        SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        MouseFilter = MouseFilterEnum.Stop;
+        _shell = new WorkspaceShell(); _shell.Initialize(runtime); AddChild(_shell);
+        _shell.TopLevelCloseRequested += Close;
+    }
+    public void AfterOverlayOpened()
+    {
+        _shell.Open();
+        try { _shell.OpenRunPrediction(_run); }
+        catch (Exception ex) { RuntimeLog.WarnException("runPredictionContextFailed=true", ex); Callable.From(Close).CallDeferred(); }
+    }
+    public void AfterOverlayClosed()
+    {
+        if (_closed) return;
+        _closed = true; ReleaseHotkeys(); _shell.CleanupForTopLevelClose(); QueueFree();
+    }
+    public void AfterOverlayShown()
+    {
+        if (_closed) return;
+        Show();
+        if (!_hotkeysBlocked && NHotkeyManager.Instance is { } hotkeys)
+        { hotkeys.AddBlockingScreen(this); _hotkeysBlocked = true; }
+    }
+    public void AfterOverlayHidden() { ReleaseHotkeys(); Hide(); }
+    public override void _ExitTree() => ReleaseHotkeys();
+    private void ReleaseHotkeys()
+    {
+        _backPressed = false;
+        if (_hotkeysBlocked) NHotkeyManager.Instance?.RemoveBlockingScreen(this);
+        _hotkeysBlocked = false;
+    }
+    public override void _Input(InputEvent input)
+    {
+        if (_closed || !IsVisibleInTree() || !ActiveScreenContext.Instance.IsCurrent(this)) return;
+        if (input is not InputEventKey { Keycode: Key.Escape } && !input.IsAction(MegaInput.pauseAndBack)) return;
+        GetViewport().SetInputAsHandled();
+        if (input.IsEcho()) return;
+        if (input.IsPressed()) _backPressed = true;
+        else if (_backPressed) { _backPressed = false; _shell.HandleBack(); }
+    }
+    private void Close()
+    {
+        if (!_closed && ReferenceEquals(_stack.Peek(), this)) _stack.Remove(this);
+    }
+}

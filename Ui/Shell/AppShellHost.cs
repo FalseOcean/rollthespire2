@@ -45,11 +45,11 @@ internal static class AppShellHost
 
         bool submenuOpen = mainMenu.SubmenuStack.SubmenusOpen;
         bool patchNotesOpen = mainMenu.PatchNotesScreen.IsOpen;
-        var lobbyScreen = mainMenu.SubmenuStack.Peek() as MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen;
-        if (lobbyScreen is not null && !LobbyUnlockReadout.IsConnectedLobby(lobbyScreen)) lobbyScreen = null;
+        var lobbyScreen = mainMenu.SubmenuStack.Peek();
+        if (lobbyScreen is not null && !LobbyUnlockReadout.IsCustomMultiplayerLobby(lobbyScreen)) lobbyScreen = null;
         host.SetLauncherParent(lobbyScreen);
         bool mainMenuRootVisible = (!submenuOpen || lobbyScreen is not null) && !patchNotesOpen;
-        string reason = lobbyScreen is not null ? "multiplayer-lobby" : submenuOpen
+        string reason = lobbyScreen is not null ? "custom-multiplayer-lobby" : submenuOpen
             ? "submenu-open"
             : patchNotesOpen
                 ? "patch-notes-open"
@@ -133,7 +133,6 @@ internal sealed partial class AppShellHostRoot : Control
         // draw order so the game's later ModalContainer backstop covers it.
         // The actual RT2 surface is separately parented to SubmenuStack.
         ZIndex = 0;
-        Texture2D? launcherIcon = ResolveStable107NeowsBonesLauncherIcon(snapshot);
         _launcher = new Button
         {
             Text = string.Empty,
@@ -146,8 +145,7 @@ internal sealed partial class AppShellHostRoot : Control
             ClipContents = false,
             ZIndex = 0
         };
-        ApplyStable107EntryButtonStyle(_launcher);
-        AddStable107LauncherContents(_launcher, launcherIcon);
+        StyleNeowsBonesLauncher(_launcher, snapshot);
         var versionLabel = new Label
         {
             Name = "RolltheSpire2_LauncherVersion",
@@ -165,6 +163,12 @@ internal sealed partial class AppShellHostRoot : Control
         _launcher.Pressed += ShowShell;
         AddChild(_launcher);
         RuntimeLog.Info("ui1AppShellAutoOpenSuppressed=true");
+    }
+
+    internal static void StyleNeowsBonesLauncher(Button button, ModRuntimeSnapshot snapshot)
+    {
+        ApplyStable107EntryButtonStyle(button);
+        AddStable107LauncherContents(button, ResolveStable107NeowsBonesLauncherIcon(snapshot));
     }
 
     private static Texture2D? ResolveStable107NeowsBonesLauncherIcon(ModRuntimeSnapshot snapshot)
@@ -397,7 +401,7 @@ internal sealed partial class AppShellHostRoot : Control
         }
 
         NMainMenuSubmenuStack stack = _mainMenu.SubmenuStack;
-        if (stack.SubmenusOpen && !(stack.Peek() is MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen lobby && LobbyUnlockReadout.IsConnectedLobby(lobby)))
+        if (stack.SubmenusOpen && !(stack.Peek() is { } lobby && LobbyUnlockReadout.IsCustomMultiplayerLobby(lobby)))
         {
             AppShellHost.SyncMainMenuSurfaceVisibility(_mainMenu);
             return;

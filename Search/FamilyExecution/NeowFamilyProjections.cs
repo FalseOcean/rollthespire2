@@ -134,7 +134,9 @@ internal sealed class NeowFamilyProjections
         : FamilySurvivalProjection.Unresolved(_id, evidence + ":DonorProbabilityUnresolved");
     private double? Probability(NeowSearchFilter filter)
     {
-        CompiledSearch compiled = SearchCompiler.Compile(LegacySearchQueryAdapter.FromFilter(filter), _request.CompiledSearch.Context);
+        // Family projections belong to one owner, including multiplayer slots.
+        // Keep that context; only the outer Search compiler accepts a whole table.
+        CompiledSearch compiled = SearchCompiler.CompilePlayer(LegacySearchQueryAdapter.FromFilter(filter), _request.CompiledSearch.Context);
         lock (_probabilities)
         {
             if (_probabilities.TryGetValue(compiled.SemanticFingerprint, out double? cached)) return cached;
@@ -172,7 +174,7 @@ internal sealed class NeowFamilyProjections
         else donor = NeowSearchFilter.Empty with { RelicSequenceConditions = filter.RelicSequenceConditions,
             RelicShopSequenceConditions = filter.RelicShopSequenceConditions };
         if (parent == 0) return null;
-        var compiled = SearchCompiler.Compile(LegacySearchQueryAdapter.FromFilter(donor), _request.CompiledSearch.Context);
+        var compiled = SearchCompiler.CompilePlayer(LegacySearchQueryAdapter.FromFilter(donor), _request.CompiledSearch.Context);
         var estimate = JointSelectivityEstimator.EstimateQuery(SearchSelectivityInput.From(compiled));
         if (!estimate.JointlyPriced || !estimate.Probability.HasValue) return null;
         double conditional = estimate.Probability.Value / parent;

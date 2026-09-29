@@ -71,11 +71,17 @@ internal sealed partial class AnalysisPageController
     internal void OpenSeedLibraryEntry(SeedLibraryEntry entry)
     {
         if (!entry.CanOpen || entry.Context is not { } context) throw new InvalidOperationException(entry.Issue);
+        OpenPredictionContext(entry.Seed, context);
+    }
+
+    // Seed favorites and the in-run shortcut share the existing detached-context import.
+    internal void OpenPredictionContext(string rawSeed, SeedLibraryContext context)
+    {
         SeedLibraryStore.ValidateContext(context);
         SeedLibraryStore.ValidateRuntimeReferences(context, Bootstrap.RuntimeAuthorityEnvironment.Current.Authority);
         if (context.GameVersion != _runtime.Detection.NormalizedVersion || context.Profile != _runtime.Profile.ProfileId)
             throw new InvalidOperationException("SeedLibrary.StaleContext: " + context.GameVersion);
-        if (!_runtime.Profile.TryCanonicalizeSeed(entry.Seed, out var seed, out var issue)) throw new InvalidOperationException(issue);
+        if (!_runtime.Profile.TryCanonicalizeSeed(rawSeed, out var seed, out var issue)) throw new InvalidOperationException(issue);
         var characters = RuntimeCharacterCatalogCapture.Capture().EffectiveCharacters;
         if (context.Players.Any(p => !characters.Contains(p.Character))) throw new InvalidOperationException("SeedLibrary.CharacterUnavailable");
         // Rebuild authority now. Persisted query data contains only N premises and

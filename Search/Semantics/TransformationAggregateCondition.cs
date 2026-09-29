@@ -6,7 +6,7 @@ namespace RolltheSpire2.Search.Semantics;
 
 public enum TransformationOpening { None, LeafyPoultice, NewLeaf, BonesLeafyNewLeaf, BonesLeafyOther }
 public enum TransformationPickupOrder { Any, LeafyThenNewLeaf, NewLeafThenLeafy, LeafyThenCompanion, CompanionThenLeafy }
-public enum TransformationAggregatePredicate { RareCountAtLeast, ContainsMultiset }
+public enum TransformationAggregatePredicate { RareCountAtLeast, ContainsMultiset, ContainsMultisetAndRemainingRare }
 
 /// <summary>One indivisible Query obligation. Event inputs are captured conditional
 /// initial-Basic premises, never an assertion that an event occurs on a route.</summary>
@@ -26,6 +26,7 @@ public sealed record TransformationAggregateCondition(
     public bool Symbiote { get; init; }
     public bool TrialNondescript { get; init; }
     public ModelKey? CompanionRelic { get; init; }
+    internal bool RequiresRareRemainder => Predicate == TransformationAggregatePredicate.ContainsMultisetAndRemainingRare;
     internal bool IsBones => Opening is TransformationOpening.BonesLeafyNewLeaf or TransformationOpening.BonesLeafyOther;
     internal ModelKey BonesCompanion => Opening == TransformationOpening.BonesLeafyOther ? CompanionRelic!.Value : BaseGameModelKeys.Relics.NewLeaf;
     internal bool LeafyFirst => PickupOrder is TransformationPickupOrder.LeafyThenNewLeaf or TransformationPickupOrder.LeafyThenCompanion;
@@ -111,7 +112,7 @@ public sealed record TransformationAggregateCondition(
 
     internal static bool HasFixedBonesRewardContinuation(SearchQuery query) =>
         query.TransformationAggregate is { Opening: TransformationOpening.BonesLeafyNewLeaf, UsesEvents: false,
-            Predicate: TransformationAggregatePredicate.ContainsMultiset } &&
+            Predicate: TransformationAggregatePredicate.ContainsMultiset or TransformationAggregatePredicate.ContainsMultisetAndRemainingRare } &&
         query.OpeningRoute?.RouteRelicKey == BaseGameModelKeys.Relics.NeowsBones &&
         query.OpeningRouteRelicRequirement is { RequiredRelicKeys.Count: 2 } pair &&
         pair.RequiredRelicKeys.Contains(BaseGameModelKeys.Relics.LeafyPoultice) &&

@@ -134,8 +134,6 @@ internal sealed partial class TransformationEditorPrototype
             if (_draft.Cards.Count > 0) throw new InvalidOperationException("integration.transform.source_required");
             return q.TransformationAggregate;
         }
-        if (_draft.Objective == 2)
-            throw new InvalidOperationException("integration.prototype.t");
         var opening = _draft.TakenOver.Contains("N.LeafyPoultice") ? TransformationOpening.LeafyPoultice :
             _draft.TakenOver.Contains("N.NewLeaf") ? TransformationOpening.NewLeaf :
             _draft.TakenOver.Contains("N.BonesLeafyNewLeaf") ? TransformationOpening.BonesLeafyNewLeaf :
@@ -146,7 +144,8 @@ internal sealed partial class TransformationEditorPrototype
                 (opening==TransformationOpening.BonesLeafyOther ? TransformationPickupOrder.CompanionThenLeafy : TransformationPickupOrder.NewLeafThenLeafy);
         var result = new TransformationAggregateCondition(opening, order, _draft.TakenOver.Contains("E.MORPHIC_GROVE"),
             _draft.TakenOver.Contains("E.AROMA_OF_CHAOS"), _draft.TakenOver.Contains("E.WHISPERING_HOLLOW"),
-            _draft.Objective == 0 ? TransformationAggregatePredicate.RareCountAtLeast : TransformationAggregatePredicate.ContainsMultiset,
+            _draft.Objective switch { 0 => TransformationAggregatePredicate.RareCountAtLeast,
+                2 => TransformationAggregatePredicate.ContainsMultisetAndRemainingRare, _ => TransformationAggregatePredicate.ContainsMultiset },
             _draft.Objective == 0 ? _draft.RareCount : 0, _draft.Objective == 0 ? [] : _draft.Cards.ToArray()) { CompanionRelic=opening==TransformationOpening.BonesLeafyOther ? q.OpeningRouteRelicRequirement?.RequiredRelicKeys.FirstOrDefault(k=>k!=BaseGameModelKeys.Relics.LeafyPoultice) : null, Symbiote = _draft.TakenOver.Contains("E.SYMBIOTE"), TrialNondescript = _draft.TakenOver.Contains("E.TRIAL") };
         // ResultCount is display capacity, never a user-created RNG opportunity.
         if ((_draft.Objective == 0 ? result.MinimumRareCount : result.TargetMultiset.Count) is < 1 ||
@@ -167,7 +166,8 @@ internal sealed partial class TransformationEditorPrototype
         if(t.WhisperingHollow) _draft.TakenOver.Add("E.WHISPERING_HOLLOW");
         if(t.Symbiote) _draft.TakenOver.Add("E.SYMBIOTE");
         if(t.TrialNondescript) _draft.TakenOver.Add("E.TRIAL");
-        _draft.Objective=t.Predicate==TransformationAggregatePredicate.ContainsMultiset?1:0;
+        _draft.Objective=t.Predicate switch { TransformationAggregatePredicate.ContainsMultiset=>1,
+            TransformationAggregatePredicate.ContainsMultisetAndRemainingRare=>2, _=>0 };
         _draft.Cards.AddRange(t.TargetMultiset); _draft.RareCount=t.MinimumRareCount;
         _draft.ResultCount=t.OpportunityCount;
     }

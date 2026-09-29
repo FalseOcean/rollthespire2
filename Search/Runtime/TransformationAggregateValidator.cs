@@ -111,9 +111,41 @@ internal static class TransformationAggregateValidator
             return rare >= c.MinimumRareCount ? SearchDisposition.Match : rare + unknown < c.MinimumRareCount
                 ? SearchDisposition.NoMatch : SearchDisposition.Unknown;
         }
+        if (c.RequiresRareRemainder) return EvaluateRareRemainder(c, outputs);
         int missing = c.TargetMultiset.GroupBy(k => k).Sum(g => Math.Max(0, g.Count() - outputs.Count(o => o.Card == g.Key)));
         return missing == 0 ? SearchDisposition.Match : missing > outputs.Count(o => o.Card is null)
             ? SearchDisposition.NoMatch : SearchDisposition.Unknown;
+    }
+
+    private static SearchDisposition EvaluateRareRemainder(TransformationAggregateCondition c, IReadOnlyList<Output> outputs)
+    {
+        // Assign distinct output instances to the requested multiset. Unassigned
+        // instances must be Rare. Keep possible/proven assignments separate so
+        // partial authority never becomes an Exact match or a false rejection.
+        int size = 1 << c.TargetMultiset.Count;
+        Span<byte> states = stackalloc byte[size], next = stackalloc byte[size];
+        states.Clear(); states[0] = 3; // 1 = possible, 2 = proven
+        foreach (var output in outputs)
+        {
+            next.Clear();
+            for (int mask = 0; mask < size; mask++)
+            {
+                byte state = states[mask];
+                if (state == 0) continue;
+                if (output.Rare != false)
+                    next[mask] |= output.Rare == true ? state : (byte)(state & 1);
+                for (int i = 0; i < c.TargetMultiset.Count; i++)
+                {
+                    int bit = 1 << i;
+                    if ((mask & bit) != 0) continue;
+                    if (output.Card == c.TargetMultiset[i]) next[mask | bit] |= state;
+                    else if (output.Card is null) next[mask | bit] |= (byte)(state & 1);
+                }
+            }
+            var swap = states; states = next; next = swap;
+        }
+        byte result = states[size - 1];
+        return (result & 2) != 0 ? SearchDisposition.Match : (result & 1) != 0 ? SearchDisposition.Unknown : SearchDisposition.NoMatch;
     }
 
     private static SearchQueryEvaluation Result(SearchDisposition disposition, IReadOnlyList<Output> outputs, string route,

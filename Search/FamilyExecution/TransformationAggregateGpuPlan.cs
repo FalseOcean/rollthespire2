@@ -53,8 +53,9 @@ internal sealed class TransformationAggregateGpuPlan
             meta.Add((uint)group.Hash);meta.Add((uint)(group.Hash>>32));meta.Add((uint)group.Prefix);meta.Add((uint)group.Pools.Length);
             foreach(var pool in group.Pools)
             {
+                // Low bits identify target instances; bit 31 marks a legal Rare remainder.
                 meta.Add(Add(pool.Select(id=>p.Condition.Predicate==TransformationAggregatePredicate.RareCountAtLeast
-                    ? (p.IsRare(id)?1u:0u) : p.TargetBits(id))));meta.Add((uint)pool.Length);
+                    ? (p.IsRare(id)?1u:0u) : p.TargetBits(id) | (p.Condition.RequiresRareRemainder && p.IsRare(id) ? 0x80000000u : 0u))));meta.Add((uint)pool.Length);
             }
             for(int i=group.Pools.Length;i<2;i++){meta.Add(0);meta.Add(0);}
         }

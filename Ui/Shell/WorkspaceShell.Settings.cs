@@ -10,6 +10,8 @@ internal sealed partial class WorkspaceShell
     private Control _settingsPage = null!;
     private Workspace _settingsReturn = Workspace.Search;
     private readonly OptionButton _language = new() { Name = "SettingsLanguage", CustomMinimumSize = new(360, 44), FitToLongestItem = false };
+    private readonly CheckButton _runPredictionEntry = new() { Name = "SettingsRunPredictionEntry", CustomMinimumSize = new(360, 44),
+        SizeFlagsHorizontal = SizeFlags.ShrinkBegin };
     private readonly LineEdit _originInput = new() { Name = "SettingsOrigin", MaxLength = Beta110Profile.Instance.SeedLength,
         CustomMinimumSize = new(340, 44), PlaceholderText = "000000000000" };
     private readonly LineEdit _logPath = new() { Name = "SettingsLogPath", Editable = false,
@@ -64,6 +66,16 @@ internal sealed partial class WorkspaceShell
             _persistence!.SetLanguageOverride(index == 1 ? "zh" : index == 2 ? "en" : "");
             _persistence.FlushPreferences();
             _languageCode = ""; RefreshLanguage();
+        };
+
+        var prediction = Section("settings.run_prediction.title", "settings.run_prediction.help");
+        _runPredictionEntry.AddThemeFontSizeOverride("font_size", 20);
+        _runPredictionEntry.AddThemeColorOverride("font_color", _palette.Color(_palette.Text));
+        prediction.AddChild(_runPredictionEntry);
+        _runPredictionEntry.Toggled += enabled =>
+        {
+            _persistence!.SetShowInRunPredictionEntry(enabled);
+            InRunPredictionLauncher.ApplyPreference(GetTree(), enabled);
         };
 
         var origin = Section("settings.origin.title", "settings.origin.help");
@@ -136,12 +148,14 @@ internal sealed partial class WorkspaceShell
         _language.SetItemText(0, text.Get("settings.language.follow_game"));
         _language.SetItemText(1, text.Get("settings.language.zh")); _language.SetItemText(2, text.Get("settings.language.en"));
         _language.Select(_persistence!.Preferences.LanguageOverride switch { "zh" => 1, "en" => 2, _ => 0 });
+        _runPredictionEntry.Text = text.Get("settings.run_prediction.show");
         RefreshSettings();
     }
 
     private void RefreshSettings(bool resetInput = false)
     {
         if (_settingsText is not { } text || _persistence is not { } persistence) return;
+        _runPredictionEntry.SetPressedNoSignal(persistence.Preferences.ShowInRunPredictionEntry);
         if (resetInput)
         {
             _bindingSettings = true;

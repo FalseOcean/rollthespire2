@@ -1,14 +1,64 @@
 {
   "SchemaVersion": 1,
-  "ContentVersion": "1.3.1",
-  "TargetModVersion": "1.3.1",
-  "UpdatedAt": "2026-09-28",
+  "ContentVersion": "1.3.2",
+  "TargetModVersion": "1.3.2",
+  "UpdatedAt": "2026-09-29",
   "Chapters": [
     {
       "Id": "release",
       "Title": "Release Notes",
       "Summary": null,
       "Blocks": [
+        {
+          "Type": "Heading",
+          "Text": "RolltheSpire2 1.3.2",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "1.3.2 fixes multiplayer Neow filtering and prediction issues, and adds an optional in-run prediction shortcut.",
+          "Items": null
+        },
+        {
+          "Type": "Heading",
+          "Text": "Multiplayer Neow Fixes",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "Fixed the multiplayer Neow’s Bones relic pool differing from the game. Filtering, prediction and probability estimates now use the corrected pool.",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "Fixed some multiplayer Bones queries containing Capsules failing to start searching, and Massive Scroll card targets being omitted from filtering and rarity estimates.",
+          "Items": null
+        },
+        {
+          "Type": "Heading",
+          "Text": "Combined Transformations",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "Added the specified-cards + remaining-Rare objective. Each specified card occupies one result slot, and every remaining result must be Rare. It works across managed sources, including Symbiote and Trial, with filtering, probability estimates and saved conditions using the same requirement.",
+          "Items": null
+        },
+        {
+          "Type": "Heading",
+          "Text": "In-run Prediction Shortcut",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "Settings now includes “Show in-run prediction shortcut”, off by default. When enabled, a Bones icon appears below the run information at the top right in all runs. It opens the current seed’s opening prediction using the run’s characters, ascension and unlock context. Choices and pickup order must still match actual play; this does not predict the current game state or a played path.",
+          "Items": null
+        },
+        {
+          "Type": "Paragraph",
+          "Text": "The RT2 entry in multiplayer lobbies is now shown only in Custom mode.",
+          "Items": null
+        },
         {
           "Type": "Heading",
           "Text": "RolltheSpire2 1.3.1",

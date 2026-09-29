@@ -65,7 +65,8 @@ bool aggregate(uint64_t root){
   for(uint j=0u;j<plan.v[at+3u];j++){
    uint pi=at+4u+j*2u;uint value=pools.v[plan.v[pi]+next_int(plan.v[pi+1u])];consumed++;
    if(plan.v[1]==0u){rare+=value;if(rare+total-consumed<plan.v[2])return false;}
-   else{uint available=value&~matched;if(available!=0u)matched|=1u<<uint(findLSB(available));
+   else{uint available=(value&0x7fffffffu)&~matched;if(available!=0u)matched|=1u<<uint(findLSB(available));
+        else if(plan.v[1]==2u && (value&0x80000000u)==0u)return false;
         if(uint(bitCount(matched))+total-consumed<plan.v[4])return false;}
   }
  }

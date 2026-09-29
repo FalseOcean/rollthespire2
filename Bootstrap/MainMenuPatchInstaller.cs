@@ -18,6 +18,8 @@ internal static class MainMenuPatchInstaller
 
     public static void Install(Harmony harmony)
     {
+        harmony.Patch(AccessTools.Method(typeof(MegaCrit.Sts2.Core.Nodes.CommonUi.NTopBar), "Initialize"),
+            postfix: new HarmonyMethod(typeof(MainMenuPatchInstaller), nameof(RunTopBarPostfix)));
         MethodInfo? readyPostfix = AccessTools.Method(typeof(MainMenuPatchInstaller), nameof(Postfix));
         MethodInfo? submenuPostfix = AccessTools.Method(typeof(MainMenuPatchInstaller), nameof(SubmenuStackChangedPostfix));
         if (readyPostfix is null || submenuPostfix is null)
@@ -92,5 +94,12 @@ internal static class MainMenuPatchInstaller
         {
             AppShellHost.SyncMainMenuSurfaceVisibility(mainMenu);
         }
+    }
+
+    private static void RunTopBarPostfix(MegaCrit.Sts2.Core.Nodes.CommonUi.NTopBar __instance,
+        MegaCrit.Sts2.Core.Runs.IRunState runState)
+    {
+        try { InRunPredictionLauncher.EnsureAttached(__instance, runState, ModRuntime.Snapshot); }
+        catch (Exception ex) { RuntimeLog.WarnException("runPredictionLauncherAttachFailed=true", ex); }
     }
 }

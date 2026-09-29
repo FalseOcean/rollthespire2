@@ -33,11 +33,13 @@ internal sealed record TransformationAggregateProbability(double? QueryHitProbab
             }
             else
             {
-                var masses = pool.GroupBy(plan.TargetBits).Select(g => (Bits:g.Key, Mass:g.Count()/(double)pool.Length)).ToArray();
+                var masses = pool.GroupBy(id => (Bits: plan.TargetBits(id), CanRemain: !c.RequiresRareRemainder || plan.IsRare(id)))
+                    .Select(g => (g.Key.Bits, g.Key.CanRemain, Mass:g.Count()/(double)pool.Length)).ToArray();
                 for (int s = 0; s < states.Length; s++) if (states[s] != 0)
                     foreach (var m in masses)
                     {
                         uint available = m.Bits & ~(uint)s;
+                        if (available == 0 && !m.CanRemain) continue;
                         int target = available == 0 ? s : s | (1 << System.Numerics.BitOperations.TrailingZeroCount(available));
                         next[target] += states[s] * m.Mass;
                     }
@@ -46,7 +48,9 @@ internal sealed record TransformationAggregateProbability(double? QueryHitProbab
         }
         double conditional = states.Select((p,s) => Score(s) >= Goal() ? p : 0).Sum();
         double probability = Math.Clamp(identity * plan.EventGateProbability * conditional, 0, 1);
-        return new(probability, probability, identity, expectedDraws, local, policy + (c.TrialNondescript ? ";TrialNondescriptCaseMass=1/3;CaseDrawPrecedesTransforms" : ""));
+        return new(probability, probability, identity, expectedDraws, local, policy +
+            (c.RequiresRareRemainder ? ";TargetMultisetAndRemainingRare=SameDrawJoint" : "") +
+            (c.TrialNondescript ? ";TrialNondescriptCaseMass=1/3;CaseDrawPrecedesTransforms" : ""));
         int Score(int state) => c.Predicate == TransformationAggregatePredicate.RareCountAtLeast ? state : System.Numerics.BitOperations.PopCount((uint)state);
         int Goal() => c.Predicate == TransformationAggregatePredicate.RareCountAtLeast ? c.MinimumRareCount : c.TargetMultiset.Count;
     }
@@ -88,8 +92,10 @@ internal sealed record TransformationAggregateProbability(double? QueryHitProbab
                     {
                         if(c.Predicate==TransformationAggregatePredicate.RareCountAtLeast) target += plan.IsRare(id)?1:0;
                         else { uint available=plan.TargetBits(id)&~(uint)target;
+                            if(available==0 && c.RequiresRareRemainder && !plan.IsRare(id)) { target=-1; break; }
                             if(available!=0) target |= 1<<System.Numerics.BitOperations.TrailingZeroCount(available); }
                     }
+                    if(target<0) continue;
                     next[target]=next.GetValueOrDefault(target)+weight*mass;
                 }
             }

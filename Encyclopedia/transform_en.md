@@ -16,7 +16,7 @@ Instead, you may want **at least four Rare results among the six**, or **several
 
 Separate conditions for every transformation make that goal awkward. RT2 combines the opportunities and checks the final collection.
 
-# Two Main Goals
+# Three Main Goals
 
 ### A Rare-Card Count
 
@@ -29,6 +29,12 @@ The individual positions do not matter. Only the total Rare count matters.
 > **All transformation results together must contain the specified cards.**
 
 For A + B + C, the combined results need only contain those three cards. This is an **unordered target collection**, not fixed requirements for the first, second, and third transformations.
+
+### Specified Cards + All Remaining Cards Rare
+
+For three transformations, request A and require both remaining cards to be Rare. A itself may be Common, Uncommon or Rare. You can specify multiple targets; each consumes a distinct result slot, and every remaining slot must be Rare. Requesting A twice requires two copies.
+
+This condition uses the same combined results from all managed sources, without assigning a target to a particular event.
 
 # Which Sources Can Be Combined?
 

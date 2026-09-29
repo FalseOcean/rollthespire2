@@ -201,6 +201,8 @@ internal sealed partial class QueryWorkbenchFrame
                 SearchProbabilityRowKind.TransformationAggregate => (_text.Get("query.summary.transform_aggregate"),Keys(q.TransformationAggregate!.TargetMultiset),Cost("T.TransformationAggregate")),
                 _ => (_text.Get("coverage.shop"),Keys(q.MerchantColorlessSequenceConditions.SelectMany(c=>c.Slots).Where(k=>k.HasValue).Select(k=>k!.Value)),Cost("S.MerchantShopColorless"))
             };
+            if(row.Kind==SearchProbabilityRowKind.TransformationAggregate && q.TransformationAggregate is { RequiresRareRemainder: true } mixed)
+                detail += "\n" + _text.Format("query.transform.remaining_rare", mixed.OpportunityCount - mixed.TargetMultiset.Count);
             if(row.Kind==SearchProbabilityRowKind.TransformationAggregate && row.Probability is null)
                 detail += (detail.Length>0 ? "\n" : "") + (_language=="zh"
                     ? "概率未知：这组来源或开局副作用的联合模型尚未闭合；不会用独立相乘代替。"

@@ -249,7 +249,6 @@ internal sealed partial class NeowEditorPrototype : Control
         var validSlots = new Dictionary<string, IReadOnlyList<ModelKey>>();
         foreach (var key in _catalog!.RouteRelics)
         {
-            if (key == BaseGameModelKeys.Relics.MassiveScroll) validSlots[$"{key}/multiplayer/0"] = _catalog.MassiveScrollCards;
             if (key == BaseGameModelKeys.Relics.ScrollBoxes)
                 for (int i = 0; i < 3; i++) validSlots[$"{key}/bundle/{i}"] = ScrollBundlePool;
             foreach (var component in NeowEffectCardRegistry.Get(key).Components)
@@ -544,11 +543,6 @@ internal sealed partial class NeowEditorPrototype : Control
             return y + 78;
         }
         int columns = Math.Max(1, (int)((width + 12) / (ResultObjectWidth + 12)));
-        if (source == BaseGameModelKeys.Relics.MassiveScroll)
-        {
-            Text(parent, _text.Get("object.cards"), x, y, width, 18, true);
-            return OutputSlot(parent, source, "multiplayer", 0, _catalog!.MassiveScrollCards, x, y + 32 + siblingCaptionHeight, width);
-        }
         if (source == BaseGameModelKeys.Relics.ScrollBoxes)
         {
             if (_catalog!.CharacterKey == BaseGameModelKeys.Characters.Defect)

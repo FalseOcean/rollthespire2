@@ -687,10 +687,12 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
         if (draft.TransformationAggregate is { } aggregate)
             Add(_text.LanguageCode.StartsWith("zh") ? "变牌组合" : "Transformation aggregate", new[] {
                 aggregate.Opening + " · " + aggregate.PickupOrder + " · " +
-                string.Join(" + ", new[] { aggregate.MorphicGrove ? "Morphic ×2" : null, aggregate.AromaOfChaos ? "Aroma ×1" : null, aggregate.WhisperingHollow ? "Whisper ×1" : null }.Where(x => x is not null)),
+                string.Join(" + ", new[] { aggregate.MorphicGrove ? "Morphic ×2" : null, aggregate.AromaOfChaos ? "Aroma ×1" : null, aggregate.WhisperingHollow ? "Whisper ×1" : null, aggregate.Symbiote ? "Symbiote ×1" : null, aggregate.TrialNondescript ? "Trial ×2" : null }.Where(x => x is not null)),
                 aggregate.Predicate == RolltheSpire2.Search.Semantics.TransformationAggregatePredicate.RareCountAtLeast
                     ? (_text.LanguageCode.StartsWith("zh") ? "稀有牌至少 " : "Rare cards ≥ ") + aggregate.MinimumRareCount
-                    : string.Join(" + ", aggregate.TargetMultiset.Select(k => _names.Resolve(k, GameContentKind.Card))) });
+                    : string.Join(" + ", aggregate.TargetMultiset.Select(k => _names.Resolve(k, GameContentKind.Card))) +
+                      (aggregate.RequiresRareRemainder ? (_text.LanguageCode.StartsWith("zh") ? "；其余稀有牌 ×" : "; remaining Rare ×") +
+                          (aggregate.OpportunityCount - aggregate.TargetMultiset.Count) : "") });
 
         Add(_text.Get(Ui1TextKey.SearchCategoryEvents), draft.EventResultDraft.Where(c => c.IsValid).Select(c => {
             var (key, kind) = c.Kind switch {
@@ -810,7 +812,9 @@ internal sealed partial class SearchPresetLibraryOverlay : Control
         if (query.TransformationAggregate is { } transform)
             lines.Add("T · " + (transform.Predicate == TransformationAggregatePredicate.RareCountAtLeast
                 ? Local("稀有牌至少 ", "Rare cards ≥ ") + transform.MinimumRareCount
-                : string.Join(" + ", transform.TargetMultiset.Select(k => _names!.Resolve(k, GameContentKind.Card)))));
+                : string.Join(" + ", transform.TargetMultiset.Select(k => _names!.Resolve(k, GameContentKind.Card))) +
+                  (transform.RequiresRareRemainder ? Local("；其余稀有牌 ×", "; remaining Rare ×") +
+                      (transform.OpportunityCount - transform.TargetMultiset.Count) : "")));
         AddSummaryCard(title, lines.Count > 0 ? lines : [_text!.Get(Ui1TextKey.SearchPresetSummaryEmpty)]);
     }
 

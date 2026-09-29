@@ -207,24 +207,30 @@ internal static class ModernNeowIdentityPredictor
         return true;
     }
 
-    private static bool? IsAllowed(ModelKey key, RuntimeContextAuthoritySnapshot authority)
+    private static bool? IsAllowed(ModelKey key, RuntimeContextAuthoritySnapshot authority) =>
+        IsAllowed(key, authority.PlayersCount, authority.AllCharacterCardPoolsUnlocked, authority.IsScrollBoxesAllowed);
+
+    // Top-level offers and the Bones pool must apply the same eligibility rules.
+    // Null preserves unknown unlock eligibility; callers retain their precision policy.
+    internal static bool? IsAllowed(ModelKey key, int playersCount,
+        bool? allCharacterCardPoolsUnlocked, bool? scrollBoxesAllowed)
     {
         if (key == BaseGameModelKeys.Relics.MassiveScroll)
         {
-            return authority.PlayersCount > 1;
+            return playersCount > 1;
         }
         if (key == BaseGameModelKeys.Relics.Kaleidoscope)
         {
-            return authority.AllCharacterCardPoolsUnlocked;
+            return allCharacterCardPoolsUnlocked;
         }
         if (key == BaseGameModelKeys.Relics.ScrollBoxes)
         {
-            return authority.IsScrollBoxesAllowed;
+            return scrollBoxesAllowed;
         }
         if (key == BaseGameModelKeys.Relics.WingedBoots ||
             key == BaseGameModelKeys.Relics.SilverCrucible)
         {
-            return authority.PlayersCount == 1;
+            return playersCount == 1;
         }
         return true;
     }
