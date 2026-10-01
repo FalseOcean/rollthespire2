@@ -23,7 +23,8 @@ internal sealed partial class WorkspaceShell
     private IUiTextProvider? _settingsText;
     private string _originReceiptKey = "", _logReceiptKey = "";
     private bool _bindingSettings;
-    private bool SettingsSearchBusy => _references?.HasActiveSearch == true;
+    private readonly CheckButton _skipExact = new() { Name = "SettingsSkipExact", CustomMinimumSize = new(360, 44), SizeFlagsHorizontal = SizeFlags.ShrinkBegin };
+    private bool SettingsSearchBusy => _references?.HasActiveSearch == true || _persistence?.HasSearchInFlight == true;
 
     private void BuildSettings()
     {
@@ -76,6 +77,15 @@ internal sealed partial class WorkspaceShell
         {
             _persistence!.SetShowInRunPredictionEntry(enabled);
             InRunPredictionLauncher.ApplyPreference(GetTree(), enabled);
+        };
+
+        var experimental = Section("settings.candidates.title", "settings.candidates.help");
+        _skipExact.AddThemeFontSizeOverride("font_size", 20); experimental.AddChild(_skipExact);
+        _skipExact.Toggled += enabled =>
+        {
+            if (SettingsSearchBusy) { RefreshSettings(); return; }
+            _persistence!.SetSkipExactValidation(enabled);
+            _references?.SyncSearchPreferences();
         };
 
         var origin = Section("settings.origin.title", "settings.origin.help");
@@ -149,6 +159,7 @@ internal sealed partial class WorkspaceShell
         _language.SetItemText(1, text.Get("settings.language.zh")); _language.SetItemText(2, text.Get("settings.language.en"));
         _language.Select(_persistence!.Preferences.LanguageOverride switch { "zh" => 1, "en" => 2, _ => 0 });
         _runPredictionEntry.Text = text.Get("settings.run_prediction.show");
+        _skipExact.Text = text.Get("settings.candidates.enable");
         RefreshSettings();
     }
 
@@ -156,6 +167,8 @@ internal sealed partial class WorkspaceShell
     {
         if (_settingsText is not { } text || _persistence is not { } persistence) return;
         _runPredictionEntry.SetPressedNoSignal(persistence.Preferences.ShowInRunPredictionEntry);
+        _skipExact.SetPressedNoSignal(persistence.Preferences.SkipExactValidation);
+        _skipExact.Disabled = SettingsSearchBusy;
         if (resetInput)
         {
             _bindingSettings = true;

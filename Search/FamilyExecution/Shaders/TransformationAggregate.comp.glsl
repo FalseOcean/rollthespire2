@@ -10,12 +10,33 @@ layout(set=0,binding=3,std430) readonly buffer Input {uint v[];} input_ids;
 layout(set=0,binding=4,std430) buffer Header {uint v[];} header;
 layout(set=0,binding=5,std430) buffer Output {uint v[];} output_ids;
 /*__RNG__*/
+#ifdef T_BONES_TRACKED
+bool tracked_bones_pair(uint64_t root) {
+ rng_initialize(root+make_u64(plan.v[15],plan.v[16]));
+ uint count=plan.v[9],p=32u,q=32u;
+ for(uint i=0u;i<count;i++){
+  uint id=pools.v[plan.v[10]+i];
+  if(id==plan.v[18])p=i;if(id==plan.v[20])q=i;
+ }
+ if(p==32u||q==32u)return false;
+ for(uint n=count;n>1u;n--){
+  uint j=next_int(n);
+  if(p==n-1u)p=j;else if(p==j)p=n-1u;
+  if(q==n-1u)q=j;else if(q==j)q=n-1u;
+  if(n>2u&&(p==n-1u||q==n-1u))return false;
+ }
+ return (p==0u&&q==1u)||(p==1u&&q==0u);
+}
+#endif
 // N-owned offer/pair replay. Only the bounded identity obligation is used here.
 // The accepted transform streams start independently; no state crosses ABI1.
 bool opening(uint64_t root){
  uint mode=plan.v[0];if(mode==0u)return true;
  rng_initialize(root+make_u64(plan.v[13],plan.v[14]));
  uint ci=next_int(plan.v[7]),curse=pools.v[plan.v[8]+ci];
+#ifdef T_BONES_TRACKED
+ if(mode==3u)return curse==plan.v[19]&&tracked_bones_pair(root);
+#endif
 #ifdef T_FULL_TARGET
  return curse==plan.v[18];
 #else
@@ -48,9 +69,14 @@ bool aggregate(uint64_t root){
   if(plan.v[at+2u]==2u && next_int(3u)!=2u)return false;
   for(uint j=0u;j<plan.v[at+3u];j++){
    uint pi=at+4u+j*2u;
-   uint available=pools.v[plan.v[pi]+next_int(plan.v[pi+1u])]&~matched;
+   uint value=pools.v[plan.v[pi]+next_int(plan.v[pi+1u])];
+#ifdef T_ALL_RARE
+   if(value==0u)return false;
+#else
+   uint available=(value&0x7fffffffu)&~matched;
    if(available==0u)return false;
    matched|=1u<<uint(findLSB(available));
+#endif
   }
   if(g==0u && !opening(root))return false;
  }

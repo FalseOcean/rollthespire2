@@ -24,11 +24,13 @@ internal static class TransformationAggregatePricing
             OutputElementBytes: 8, OutputAlreadyOrdered: true, PublicTransportClass: "CpuOrderedAbi1") { FixedWindowMilliseconds = .002 };
     }
 
-    internal static FamilyPhysicalQuote? Gpu(TransformationAggregateNumericalPlan plan, TransformationAggregateProbability probability, FamilyPhysicalQuoteRequest g)
+    internal static FamilyPhysicalQuote? Gpu(TransformationAggregateNumericalPlan plan, TransformationAggregateProbability probability,
+        TransformationAggregateGpuPlan physical, FamilyPhysicalQuoteRequest g)
     {
         if (!plan.Closed || !FamilyPhysicalQuote.AdmittedRequest(g) || !FamilyPhysicalQuote.HasReferenceBackend()) return null;
         var c = plan.Condition;
-        if (TransformationAggregateGpuPlan.UsesFullTarget(plan))
+        if (physical.BonesOptimized) return NeowTransformationPricing.Transform(plan, probability, physical, g);
+        if (physical.FullTarget)
         {
             // Bounded full-slot donor: dense Carry8 hashing; every unused-target
             // miss rejects. Compact still decodes each incoming ordinal. No hit

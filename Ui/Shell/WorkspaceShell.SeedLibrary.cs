@@ -22,7 +22,7 @@ internal sealed partial class WorkspaceShell
                 // The overlay owns pointer input and a closed keyboard-focus loop.
                 // Search may finish behind it, so do not snapshot/restore mutable
                 // content-button states over the session's newer state.
-                foreach (var button in new[] { _search, _analysis, _seeds, _encyclopedia, _status, _notes, _settings, _close })
+                foreach (var button in new[] { _search, _analysis, _currentPrediction, _seeds, _encyclopedia, _status, _notes, _settings, _close })
                 { _seedModalBlocked.TryAdd(button, button.Disabled); button.Disabled = true; }
             }
             else
@@ -47,7 +47,7 @@ internal sealed partial class WorkspaceShell
             catch (Exception ex) { _seedLibrary.ShowIssue(SeedLibraryIssue(ex)); }
         };
         _seeds.Pressed += () => SelectTask(Workspace.Seeds);
-        _references!.FavoriteSeedRequested += FavoriteSeed;
+        if(_references!=null) _references.FavoriteSeedRequested += FavoriteSeed;
     }
 
     private void FavoriteSeed(string seed, SeedLibraryContext context)

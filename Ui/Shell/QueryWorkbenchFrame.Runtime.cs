@@ -18,7 +18,7 @@ internal sealed partial class QueryWorkbenchFrame
     private void BeginRuntimeProgress(FamilySearchEtaProjectionV1 eta, SearchProgressSnapshot progress)
     {
         _runEta = eta;
-        _predictedRunEta = SearchEtaPresentationBuilder.Build(eta);
+        _predictedRunEta = _resultPlan?.RunOptions.SkipExactValidation == true ? null : SearchEtaPresentationBuilder.Build(eta);
         _scanningSpeed.Reset();
         ObserveRuntimeProgress(progress);
     }

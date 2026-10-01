@@ -7,6 +7,7 @@
 #define N_LEAFY_PRE_GATE __RT2_N_LEAFY_PRE_GATE__
 #define N_AUTHORED_UPGRADES __RT2_AUTHORED_UPGRADES__
 #define N_LOCAL_RESULTS __RT2_LOCAL_RESULTS__
+#define N_TRANSFORM_META_OFFSET __RT2_N_TRANSFORM_META_OFFSET__
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_float64 : require
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
@@ -29,6 +30,7 @@ uint plan_value(uint i) { return plan_meta.values[i]; }
 uint64_t plan_u64(uint i) { return uint64_t(plan_value(i)) | (uint64_t(plan_value(i+1u)) << 32u); }
 
 /*__RT2_NEOW_LOCAL_DONOR__*/
+/*__RT2_N_JOINT_TRANSFORMS__*/
 /*__RT2_CAPSULE_COMPOSITE__*/
 
 #if N_DIRECT_NESTED == 101
@@ -78,12 +80,19 @@ bool local_operator(uint source, inout RouteRngState state) {
     if (source == 22u) return execute_scroll_boxes_route(count,t0,t1,t2,flags & 0x7fffffffu,predicate,state);
     return true;
 }
-#if N_LEAFY_PRE_GATE
+#if N_LEAFY_PRE_GATE || N_TRANSFORM_META_OFFSET >= 0
 bool leafy_pre_gate(uint64_t root) {
+#if N_TRANSFORM_META_OFFSET >= 0
+    if(!joint_transform_pre_gate(root))return false;
+#endif
+#if N_LEAFY_PRE_GATE
     uint o = 4u * 5u;
     RouteRngState state;
     state.transformations = rng_initialize(root + plan_u64(37u));
     return execute_leafy_route(conditions.values[o],conditions.values[o+1u],conditions.values[o+2u],true,state);
+#else
+    return true;
+#endif
 }
 #endif
 #if N_AUTHORED_UPGRADES
@@ -241,7 +250,7 @@ bool matches(uint64_t root) {
     if (!kaleidoscope_rare_prefix(prefix_rewards,prefix_slot)) return false;
 #endif
 #endif
-#if N_LEAFY_PRE_GATE
+#if N_LEAFY_PRE_GATE || N_TRANSFORM_META_OFFSET >= 0
     if (!leafy_pre_gate(root)) return false;
 #endif
     uint route_mask, curse, curse_ordinal;
@@ -371,7 +380,7 @@ void main() {
         uint64_t root=batch.values[4u]==0u ? xxhash64_seed12_packed(seed_first8,tail) : root_hash_for_ordinal(base+uint64_t(ordinal));
 #if N_STAGE == 0
         RngState event_rng; uint curse_ordinal,curse;
-#if N_LEAFY_PRE_GATE
+#if N_LEAFY_PRE_GATE || N_TRANSFORM_META_OFFSET >= 0
         if (leafy_pre_gate(root) && draw_neow_curse(root,event_rng,curse_ordinal,curse) && (plan_value(69u)&(1u<<curse_ordinal))==0u) {
 #else
         if (draw_neow_curse(root,event_rng,curse_ordinal,curse) && (plan_value(69u)&(1u<<curse_ordinal))==0u) {

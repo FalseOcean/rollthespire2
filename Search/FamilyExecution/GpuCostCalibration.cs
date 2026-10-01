@@ -96,19 +96,37 @@ internal sealed class GpuCostSamples
     private readonly Dictionary<(IFamilyInvocation, bool, bool, bool), FamilyPhysicalQuote?> _quotes = new();
     private readonly Dictionary<string, GpuLocalPeak> _peaks = new();
     // Log-only totals never participate in Peaks, ratios or any quote.
-    private sealed class Totals { internal long Inputs, Outputs, Batches, Zero, Underfilled, Full, Bytes; internal double Dispatch, Canonical, Readback; internal bool DispatchKnown=true, ReadbackKnown=true, BytesKnown=true; }
+    private sealed class Totals {
+        internal long Inputs, Outputs, Batches, Zero, Underfilled, Full, Bytes;
+        internal double Dispatch, Canonical, Readback;
+        internal bool DispatchKnown=true, ReadbackKnown=true, BytesKnown=true;
+        // Log-only complete window totals after this physical key's first call.
+        // These never participate in peak selection or calibration/pricing.
+        internal long SteadyInputs, SteadyOutputs, SteadyBatches, SteadyFull, SteadyUnderfilled;
+        internal double SteadyDispatch, SteadyCanonical, SteadyReadback;
+        internal bool SteadyDispatchKnown=true, SteadyReadbackKnown=true;
+    }
     private readonly Dictionary<string, Totals> _totals = new();
     internal void Record(string key, int capacity, int inputs, int outputs, double dispatch, double canonical, double readback, long bytes)
     {
         if (!_totals.TryGetValue(key, out var t)) _totals[key] = t = new();
+        bool full=inputs>0 && (inputs >= capacity && inputs%capacity==0 || inputs==PrivateOrdinalBuffer.Capacity);
+        if(t.Batches>0) {
+            t.SteadyBatches++; t.SteadyInputs+=inputs; t.SteadyOutputs+=outputs;
+            t.SteadyDispatchKnown &= dispatch>=0; t.SteadyReadbackKnown &= readback>=0;
+            t.SteadyDispatch+=Math.Max(0,dispatch); t.SteadyCanonical+=canonical; t.SteadyReadback+=Math.Max(0,readback);
+            if(full)t.SteadyFull++; else if(inputs>0)t.SteadyUnderfilled++;
+        }
         t.Batches++; t.Inputs += inputs; t.Outputs += outputs; t.DispatchKnown &= dispatch>=0; t.ReadbackKnown &= readback>=0; t.BytesKnown &= bytes>=0; t.Dispatch += Math.Max(0,dispatch); t.Canonical += canonical; t.Readback += Math.Max(0,readback); t.Bytes += Math.Max(0,bytes);
         if(inputs==0)t.Zero++; else if(inputs >= capacity && inputs%capacity==0 || inputs==PrivateOrdinalBuffer.Capacity)t.Full++; else t.Underfilled++;
     }
     private static string Metric(double value, bool known) => known ? value.ToString("G17",System.Globalization.CultureInfo.InvariantCulture) : "unavailable";
     internal void WriteSummary(bool calibration = true)
     {
-        foreach(var (key,t) in _totals)
+        foreach(var (key,t) in _totals) {
             RuntimeLog.TryBackgroundInfo($"physicalExecutionSummary=true;key={key};device={GpuCostCalibration.DeviceKey()};batches={t.Batches};inputs={t.Inputs};outputs={t.Outputs};zeroWindows={t.Zero};fullWindows={t.Full};underfilledWindows={t.Underfilled};dispatchSyncMs={Metric(t.Dispatch,t.DispatchKnown)};canonicalMs={t.Canonical:G17};readbackMs={Metric(t.Readback,t.ReadbackKnown)};readbackBytes={Metric(t.Bytes,t.BytesKnown)};reportedReadbackScope=ExecutorMetric;unattributedCanonicalMs={Metric(Math.Max(0,t.Canonical-t.Dispatch-t.Readback),t.DispatchKnown&&t.ReadbackKnown)};observedDispatchRate={Metric(t.Dispatch>0?t.Inputs*1000/t.Dispatch:0,t.DispatchKnown)};observedCanonicalRate={(t.Canonical>0?t.Inputs*1000/t.Canonical:0):G17};timings=CompletedWorkOnly");
+            RuntimeLog.TryBackgroundInfo($"physicalSteadyExecutionSummary=true;key={key};batches={t.SteadyBatches};inputs={t.SteadyInputs};outputs={t.SteadyOutputs};fullWindows={t.SteadyFull};underfilledWindows={t.SteadyUnderfilled};dispatchSyncMs={Metric(t.SteadyDispatch,t.SteadyBatches>0&&t.SteadyDispatchKnown)};canonicalMs={Metric(t.SteadyCanonical,t.SteadyBatches>0)};readbackMs={Metric(t.SteadyReadback,t.SteadyBatches>0&&t.SteadyReadbackKnown)};observedCanonicalRate={Metric(t.SteadyCanonical>0?t.SteadyInputs*1000/t.SteadyCanonical:0,t.SteadyBatches>0&&t.SteadyCanonical>0)};window=AllCompletedCallsAfterFirstForThisPhysicalKey;peakSelection=false;calibrationAuthority=false;kernelTimestamp=false");
+        }
         if(!calibration) return;
         foreach(var key in _windows.Keys.Concat(_totals.Keys).Distinct())
         {

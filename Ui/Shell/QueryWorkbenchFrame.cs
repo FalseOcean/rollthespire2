@@ -280,6 +280,8 @@ internal sealed partial class QueryWorkbenchFrame : Control
 
     private void RefreshEditorContexts(bool render = true)
     {
+        // Never substitute a solo/partial capture after a failed party capture.
+        if (!TryEditorParty(out var party)) return;
         if (_multiplayer)
         {
             for (int seat = 0; seat < _playerCount; seat++)
@@ -290,7 +292,7 @@ internal sealed partial class QueryWorkbenchFrame : Control
             var union = _lobbyUnlocks.Take(_playerCount).All(u => u is not null)
                 ? new MegaCrit.Sts2.Core.Unlocks.UnlockState(_lobbyUnlocks.Take(_playerCount).Select(u => MegaCrit.Sts2.Core.Unlocks.UnlockState.FromSerializable(u!))).ToSerializable() : null;
             _actInformationEditor.Refresh(_language, _text, _seatCharacters[0], _partyAscension, _playerCount, 0, union, render: render,
-                partyWorld: EditorParty()?.World);
+                partyWorld: party?.World);
             RefreshCombatContext(render);
             RefreshShopContext(render);
             RefreshRelicContext(render);
@@ -333,18 +335,20 @@ internal sealed partial class QueryWorkbenchFrame : Control
 
     private void RefreshAncientContext(bool render = true)
     {
+        if (!TryEditorParty(out var party)) return;
         _ancientEditor.Refresh(_language, _text, _multiplayer ? _seatCharacters[_seat] : _soloCharacter,
             _multiplayer ? _partyAscension : _soloAscension, _multiplayer ? _playerCount : 1,
             _multiplayer ? _seat : 0, _multiplayer ? _lobbyUnlocks[_seat] : null, render: render,
-                partyAuthority: EditorParty()?.Players[_seat]);
+                partyAuthority: party?.Players[_seat]);
     }
 
     private void RefreshEventContext(bool render = true)
     {
+        if (!TryEditorParty(out var party)) return;
         _eventEditor.Refresh(_language, _text, _multiplayer ? _seatCharacters[_seat] : _soloCharacter,
             _multiplayer ? _partyAscension : _soloAscension, _multiplayer ? _playerCount : 1,
             _multiplayer ? _seat : 0, _multiplayer ? _lobbyUnlocks[_seat] : null, render: render,
-                partyAuthority: EditorParty()?.Players[_seat]);
+                partyAuthority: party?.Players[_seat]);
     }
 
     private void RefreshActInformationContext(bool render = true)
@@ -664,5 +668,14 @@ internal sealed partial class QueryWorkbenchFrame : Control
         AddChild(control); control.Position = new Vector2(x, y);
         if (width > 0 || height > 0) control.Size = new Vector2(width, height);
     }
-    public override void _ExitTree() { CloseSearch(); if (_session is { } session) { _session = null; _ = session.DisposeAsync(); } _characterIcons.Dispose(); }
+    public override void _ExitTree()
+    {
+        CloseSearch();
+        if (_session is { } session)
+        {
+            _session = null;
+            _persistence.FinishDetachedSearch(session, _activeFingerprint, GetTree());
+        }
+        _characterIcons.Dispose();
+    }
 }

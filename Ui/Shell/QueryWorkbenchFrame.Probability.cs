@@ -8,6 +8,7 @@ using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.FamilyExecution;
 using RolltheSpire2.Search.Selectivity;
 using RolltheSpire2.Search.Semantics;
+using RolltheSpire2.Ui.Persistence;
 
 namespace RolltheSpire2.Ui.Shell;
 
@@ -36,7 +37,8 @@ internal sealed partial class QueryWorkbenchFrame
             seconds<86400 ? _text.Format("workflow.hours",(seconds/3600).ToString("0.#",CultureInfo.InvariantCulture)) :
             _text.Format("workflow.days",CompactNumber(seconds/86400));
     }
-    private int SearchWorkers => _persistence.Preferences.SearchWorkerBudget??Math.Max(1,System.Environment.ProcessorCount/2);
+    private int SearchWorkers => SearchWorkspacePersistence.ResolveSearchWorkers(
+        _persistence.Preferences.SearchWorkerBudget, System.Environment.ProcessorCount);
     private string AnalysisKey(string query) => query+_language+":"+_target+":"+_persistence.Preferences.SearchMode+":"+SearchWorkers;
     private string _draftCompileIssue="";
     private bool UpdateProbabilityPanel(WorkbenchSearchDraft draft,string serialized)

@@ -172,17 +172,25 @@ public static class ProductionQueryValidator
 
         var matchedEvidence = new List<SearchMatchEvidence>(cheapEvaluation.Evidence);
         var matchedWitnesses = new List<SearchMatchWitness>();
+        var rewardRejections = new List<SearchRouteRejection>();
+        void RejectRewardRoute(NormalCombatRewardRoutePredictionResult route, SearchDisposition disposition, string reason)
+        {
+            if (rewardRejections.Count >= 8) return;
+            rewardRejections.Add(new(route.RouteGroupId, Array.Empty<ModelKey>(), disposition, reason));
+        }
         bool encounteredUnknown = false;
         foreach (NormalCombatRewardRoutePredictionResult routeGroup in sequence.Routes)
         {
             if (routeGroup.Status == SeedDomainEvaluationStatus.Unsupported)
             {
+                RejectRewardRoute(routeGroup, SearchDisposition.Unsupported, "RewardRouteUnsupported:" + routeGroup.IssueCode);
                 continue;
             }
             if (routeGroup.Status != SeedDomainEvaluationStatus.Evaluated ||
                 routeGroup.Precision is PredictionPrecision.Unknown or PredictionPrecision.Unsupported)
             {
                 encounteredUnknown = true;
+                RejectRewardRoute(routeGroup, SearchDisposition.Unknown, "RewardRouteNotReliable:" + routeGroup.IssueCode);
                 continue;
             }
 
@@ -192,6 +200,7 @@ public static class ProductionQueryValidator
                 .ToArray();
             if (eligibleDescriptors.Length == 0)
             {
+                RejectRewardRoute(routeGroup, SearchDisposition.NoMatch, "RewardRouteNotEligibleForOpening");
                 continue;
             }
 
@@ -202,10 +211,12 @@ public static class ProductionQueryValidator
             if (rewardEvaluation.Disposition == SearchDisposition.Unknown)
             {
                 encounteredUnknown = true;
+                RejectRewardRoute(routeGroup, rewardEvaluation.Disposition, rewardEvaluation.FailureCode);
                 continue;
             }
             if (rewardEvaluation.Disposition != SearchDisposition.Match)
             {
+                RejectRewardRoute(routeGroup, rewardEvaluation.Disposition, rewardEvaluation.FailureCode);
                 continue;
             }
 
@@ -259,9 +270,9 @@ public static class ProductionQueryValidator
 
         if (matchedWitnesses.Count == 0)
         {
-            return encounteredUnknown
+            return (encounteredUnknown
                 ? SearchQueryEvaluation.Unknown("NoReliableNormalCombatRewardRouteMatched")
-                : SearchQueryEvaluation.NoMatch("NoNormalCombatRewardRouteMatched");
+                : SearchQueryEvaluation.NoMatch("NoNormalCombatRewardRouteMatched")) with { RouteRejections = rewardRejections.ToArray() };
         }
 
         return SearchQueryEvaluation.Match(
@@ -428,6 +439,7 @@ public static class ProductionQueryValidator
 
         bool requiresBones = RequiresBonesRoute(plan.Evaluation);
         var routeMatches = new List<OpeningRouteEvaluation>();
+        var routeRejections = new List<SearchRouteRejection>();
         bool unknownSeen = incompleteBones is not null;
         bool notEvaluatedSeen = false;
         foreach (OpeningRouteContext route in routeContexts)
@@ -440,6 +452,8 @@ public static class ProductionQueryValidator
                 plan.Evaluation,
                 route,
                 evaluatedAuthority.EffectAuthority);
+            if (evaluation.Disposition != SearchDisposition.Match && routeRejections.Count < 8)
+                routeRejections.Add(new(route.RouteId, route.AcquisitionOrder, evaluation.Disposition, evaluation.FailureCode));
             if (evaluation.Disposition == SearchDisposition.Match)
             {
                 routeMatches.Add(evaluation);
@@ -463,11 +477,11 @@ public static class ProductionQueryValidator
             }
             if (notEvaluatedSeen)
             {
-                return SearchQueryEvaluation.NotEvaluatedByPolicy("ComplexResultNotEvaluatedByPolicy");
+                return SearchQueryEvaluation.NotEvaluatedByPolicy("ComplexResultNotEvaluatedByPolicy") with { RouteRejections = routeRejections };
             }
-            return unknownSeen
+            return (unknownSeen
                 ? SearchQueryEvaluation.Unknown("NoReliableOpeningRouteMatched")
-                : SearchQueryEvaluation.NoMatch("NoOpeningRouteMatched");
+                : SearchQueryEvaluation.NoMatch("NoOpeningRouteMatched")) with { RouteRejections = routeRejections };
         }
 
         var witnesses = routeMatches.Select(match => new SearchMatchWitness(
@@ -1709,16 +1723,24 @@ public static class ProductionQueryValidator
             if (small.Status == ProductRelevantProjectionStatus.NotEvaluatedByPolicy ||
                 large.Status == ProductRelevantProjectionStatus.NotEvaluatedByPolicy)
                 return StructuredNeowConditionEvaluation.NotEvaluated("GroupedCapsuleNotEvaluatedByPolicy");
-            if (small.Precision != PredictionPrecision.Exact || large.Precision != PredictionPrecision.Exact)
+            // This predicate owns the three obtained relic identities, not every
+            // effect of their sources (e.g. Large Capsule's fixed starter cards).
+            // As with source-separated identity predicates, Partial is usable
+            // only when the requested observations themselves are complete/Exact.
+            if (small.Status != ProductRelevantProjectionStatus.Evaluated || large.Status != ProductRelevantProjectionStatus.Evaluated ||
+                small.Precision is not (PredictionPrecision.Exact or PredictionPrecision.Partial) ||
+                large.Precision is not (PredictionPrecision.Exact or PredictionPrecision.Partial))
                 return StructuredNeowConditionEvaluation.Unknown("GroupedCapsuleOutputNotExact");
-            PredictedEffect[] effects = RelevantEffects(small.Groups.Concat(large.Groups), condition).ToArray();
-            if (effects.Any(effect => effect.Precision != PredictionPrecision.Exact || !effect.TargetKey.HasValue))
+            PredictedEffect[] smallEffects = RelevantEffects(small.Groups, condition).ToArray();
+            PredictedEffect[] largeEffects = RelevantEffects(large.Groups, condition).ToArray();
+            PredictedEffect[] effects = smallEffects.Concat(largeEffects).ToArray();
+            if (effects.Any(effect => effect.Precision != PredictionPrecision.Exact || !effect.TargetKey.HasValue || effect.Multiplicity <= 0))
                 return StructuredNeowConditionEvaluation.Unknown("GroupedCapsuleOutputNotExact");
-            ModelKey[] actual = effects
-                .SelectMany(effect => Enumerable.Repeat(effect.TargetKey!.Value, Math.Max(1, effect.Multiplicity)))
-                .ToArray();
-            if (actual.Length != 3)
+            if (smallEffects.Sum(effect => (long)effect.Multiplicity) != 1 || largeEffects.Sum(effect => (long)effect.Multiplicity) != 2)
                 return StructuredNeowConditionEvaluation.Unknown("GroupedCapsuleOutputCountNotExact");
+            ModelKey[] actual = effects
+                .SelectMany(effect => Enumerable.Repeat(effect.TargetKey!.Value, effect.Multiplicity))
+                .ToArray();
             return UnorderedKeysContain(actual, condition.OutputKeys)
                 ? StructuredNeowConditionEvaluation.Match(effects.FirstOrDefault()?.EvidenceCode ?? default)
                 : StructuredNeowConditionEvaluation.NoMatch("GroupedCapsuleMultisetMismatch");

@@ -1,0 +1,33 @@
+{
+  "SchemaVersion": 2,
+  "ContentVersion": "1.3.3",
+  "TargetModVersion": "1.3.3",
+  "UpdatedAt": "2026-10-01",
+  "Chapters": [
+    {
+      "Id": "release",
+      "AcknowledgementVersion": "1.3.3",
+      "RequiresAcknowledgement": true
+    },
+    {
+      "Id": "next",
+      "AcknowledgementVersion": "1",
+      "RequiresAcknowledgement": false
+    },
+    {
+      "Id": "positioning",
+      "AcknowledgementVersion": "1",
+      "RequiresAcknowledgement": true
+    },
+    {
+      "Id": "devlog",
+      "AcknowledgementVersion": "1",
+      "RequiresAcknowledgement": false
+    },
+    {
+      "Id": "faq",
+      "AcknowledgementVersion": "1",
+      "RequiresAcknowledgement": false
+    }
+  ]
+}

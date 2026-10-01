@@ -30,6 +30,23 @@ internal sealed partial class AnalysisPage
     private bool _shopFullQueue;
     private bool _wbHasResult;
     private string _wbStatusKey = "predictor.empty";
+    private Label? _searchOriginNotice;
+    private string _unverifiedSearchSeed = "";
+    private bool _searchOpeningUnavailable;
+    internal void SetSearchOrigin(string seed, bool unverified, bool openingUnavailable = false)
+    {
+        _unverifiedSearchSeed = unverified ? seed : "";
+        _searchOpeningUnavailable = openingUnavailable;
+        RefreshSearchOrigin();
+    }
+    private void RefreshSearchOrigin()
+    {
+        if (_searchOriginNotice is null || _uiText is null) return;
+        _searchOriginNotice.Visible = _unverifiedSearchSeed.Length > 0 &&
+            string.Equals(CurrentDraft.RawSeed.Trim(), _unverifiedSearchSeed, StringComparison.OrdinalIgnoreCase);
+        _searchOriginNotice.Text = Text(_searchOpeningUnavailable
+            ? "workflow.predictor_unverified_opening_unavailable" : "workflow.predictor_unverified");
+    }
     private readonly WorkspacePalette _palette = WorkspacePalette.Canonical;
     private static readonly string[] PageKeys = ["predictor.act1", "predictor.act2", "predictor.act3", "predictor.shops"];
 
@@ -68,6 +85,10 @@ internal sealed partial class AnalysisPage
             tabs.AddChild(button); _wbTabs.Add(button);
         }
         var body = new HBoxContainer { SizeFlagsVertical = SizeFlags.ExpandFill };
+        _searchOriginNotice = WLabel("");
+        _searchOriginNotice.Name = "UnverifiedSearchOrigin";
+        _searchOriginNotice.Visible = false;
+        workspace.AddChild(_searchOriginNotice);
         body.AddThemeConstantOverride("separation", 16); workspace.AddChild(body);
         var centerScroll = WScroll(); centerScroll.Name = "PredictorMainScroll";
         body.AddChild(centerScroll); _wbCenter = WColumn(); _wbCenter.AddThemeConstantOverride("separation", 14); centerScroll.AddChild(_wbCenter);
@@ -121,6 +142,7 @@ internal sealed partial class AnalysisPage
     }
     private void RefreshWorkbenchLabels()
     {
+        RefreshSearchOrigin();
         RefreshFavoriteSeed();
         for (int i = 0; i < _wbTabs.Count; i++)
         { RenderActTab(i); _palette.SetActive(_wbTabs[i], _wbPage == i); }

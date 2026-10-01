@@ -43,7 +43,9 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
         (long)NeowFamilyGpuPlan.CurseCapacity * 12 + (long)NeowFamilyGpuPlan.PairCapacity * 48);
     internal static string ShaderSource(int stage = 3, bool capsuleComposite = false, bool leafyPreGate = false,
         bool bonesCapsuleComposite = false, bool bonesArcaneComposite = false, int directNestedMode = 0, int capsulePhysicalMode = 0, int bonesKMode = 0, bool authoredUpgrades = false,
-        bool localResults = true, bool multiplayer = false) => FamilyGpuComputeUtility.LoadEmbeddedShader(multiplayer ? "NeowParty.comp.glsl" : "NeowSingleplayer.comp.glsl")
+        bool localResults = true, bool multiplayer = false, int jointTransformMetaOffset = -1) => FamilyGpuComputeUtility.LoadEmbeddedShader(multiplayer ? "NeowParty.comp.glsl" : "NeowSingleplayer.comp.glsl")
+        .Replace("__RT2_N_TRANSFORM_META_OFFSET__", jointTransformMetaOffset.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
+        .Replace("/*__RT2_N_JOINT_TRANSFORMS__*/", jointTransformMetaOffset < 0 ? "" : FamilyGpuComputeUtility.LoadEmbeddedShader("NeowJointTransforms.glsl"), StringComparison.Ordinal)
         .Replace("__RT2_LOCAL_RESULTS__", localResults ? "1" : "0", StringComparison.Ordinal)
         .Replace("__RT2_AUTHORED_UPGRADES__", authoredUpgrades ? "1" : "0", StringComparison.Ordinal)
         .Replace("__RT2_BONES_K_MODE__", bonesKMode.ToString(), StringComparison.Ordinal)
@@ -119,7 +121,8 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
             bonesArcaneComposite: _bonesArcane, directNestedMode: _composite is null ? _plan.DirectNestedMode : 0,
             capsulePhysicalMode: stage == 3 ? _capsulePhysicalMode : 0, bonesKMode: _bonesKMode,
             authoredUpgrades: _plan.HasAuthoredUpgrades,
-            localResults: _plan.HasLocalResults || _composite is not null || _bonesKMode != 0, multiplayer: _plan.IsMultiplayer);
+            localResults: _plan.HasLocalResults || _composite is not null || _bonesKMode != 0, multiplayer: _plan.IsMultiplayer,
+            jointTransformMetaOffset: _plan.JointTransformMetaOffset);
         if (_privateInput)
         {
             const string ordinalRead = "uint ordinal=batch.values[4u]==0u ? first+lane : input_ordinals.values[first+lane];";
@@ -280,10 +283,30 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
         double payloadStartMs = _bonesArcane ? timer.Elapsed.TotalMilliseconds : 0;
         uint[] packed = count == 0 ? [] : FamilyGpuComputeUtility.FromUInt32Bytes(_rd.BufferGetData(_output, 0, count * sizeof(uint)));
         double readMs = timer.Elapsed.TotalMilliseconds;
-        ulong[] ordinals = packed.Select(x => (ulong)x).ToArray();
-        double widenEnd = timer.Elapsed.TotalMilliseconds;
-        if (ordinals.Length > 1) Array.Sort(ordinals);
-        double sortEnd = timer.Elapsed.TotalMilliseconds;
+        // Solo high-output public boundaries spend far more time comparison-sorting
+        // widened ordinals than dispatching. Sort the complete packed permutation
+        // first; the usual ABI1 validator still owns bounds and duplicate checks.
+        // Party transport and small outputs retain their existing materialization.
+        bool packedRadix = !_plan.IsMultiplayer && _partySource is null && packed.Length >= 65536;
+        double sortMs = 0;
+        if (packedRadix)
+        {
+            SortLargePackedOrdinals(packed);
+            sortMs = timer.Elapsed.TotalMilliseconds - readMs;
+        }
+        double widenStart = timer.Elapsed.TotalMilliseconds;
+        ulong[] ordinals;
+        if (packedRadix)
+        {
+            ordinals = new ulong[packed.Length];
+            for (int i = 0; i < packed.Length; i++) ordinals[i] = packed[i];
+        }
+        else ordinals = packed.Select(x => (ulong)x).ToArray();
+        double widenMs = timer.Elapsed.TotalMilliseconds - widenStart;
+        double sortStart = timer.Elapsed.TotalMilliseconds;
+        if (!packedRadix && ordinals.Length > 1) Array.Sort(ordinals);
+        sortMs += timer.Elapsed.TotalMilliseconds - sortStart;
+        double validationStart = timer.Elapsed.TotalMilliseconds;
         var result = FamilyCandidateSet.FromSortedAbi1(input.Batch, ordinals);
         double canonicalMs = timer.Elapsed.TotalMilliseconds;
         metrics = new((int)header[4], ordinals.Length, groups, header.Length * sizeof(uint) + count * sizeof(uint), canonicalMs,
@@ -291,8 +314,29 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
             groups == 0 ? 0 : staged ? 3 : 1, header[6], header[7], _bonesArcane ? header[8] : 0, _bonesArcane ? header[9] : 0,
             _bonesArcane ? header[10] : 0, _bonesArcane ? header[11] : 0, _bonesArcane && count > 0 ? readMs - payloadStartMs : 0);
         if (_tracePrivate)
-            Bootstrap.RuntimeLog.TryBackgroundDetail($"ncStageTiming=true;stage=N;input={inputCount};output={result.Count};dispatches={metrics.Dispatches};uploadMs={uploadedMs};dispatchSyncMs={metrics.DispatchSyncMs};readbackMs={metrics.ReadbackMs};readbackBytes={metrics.ReadbackBytes};widenMs={widenEnd-readMs};sortMs={sortEnd-widenEnd};validationMs={canonicalMs-sortEnd};canonicalMs={canonicalMs}");
+            Bootstrap.RuntimeLog.TryBackgroundDetail($"ncStageTiming=true;stage=N;input={inputCount};output={result.Count};dispatches={metrics.Dispatches};uploadMs={uploadedMs};dispatchSyncMs={metrics.DispatchSyncMs};readbackMs={metrics.ReadbackMs};readbackBytes={metrics.ReadbackBytes};widenMs={widenMs};sortMs={sortMs};validationMs={canonicalMs-validationStart};canonicalMs={canonicalMs};packedRadix={packedRadix}");
         return result;
+    }
+
+    // Four stable byte passes preserve every uint, including malformed values;
+    // no masking to the current root-window width, filtering, or deduplication.
+    internal static void SortLargePackedOrdinals(uint[] packed)
+    {
+        var scratch = new uint[packed.Length];
+        uint[] source = packed, destination = scratch;
+        Span<int> offsets = stackalloc int[256];
+        for (int shift = 0; shift < 32; shift += 8)
+        {
+            offsets.Clear();
+            foreach (uint value in source) offsets[(int)((value >> shift) & 255)]++;
+            int next = 0;
+            for (int bucket = 0; bucket < offsets.Length; bucket++)
+            {
+                int length = offsets[bucket]; offsets[bucket] = next; next += length;
+            }
+            foreach (uint value in source) destination[offsets[(int)((value >> shift) & 255)]++] = value;
+            (source, destination) = (destination, source);
+        }
     }
     public void Dispose()
     {

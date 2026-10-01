@@ -1,0 +1,803 @@
+{
+  "Id": "devlog",
+  "Title": "开发随笔",
+  "Summary": "从一个骨骰种子开始，记录 RolltheSpire2 在 1.0.0 发布之前一路走来的故事。",
+  "Blocks": [
+    {
+      "Type": "Heading",
+      "Text": "RolltheSpire2 1.0.0 开发随笔"
+    },
+    {
+      "Type": "Heading",
+      "Text": "从一个骨骰种子开始"
+    },
+    {
+      "Type": "Callout",
+      "Text": "这不是一份完整的技术日志，也不是更新说明。只是想趁着 1.0.0，把 RolltheSpire2 在这次发布之前一路走来的故事记下来。"
+    },
+    {
+      "Type": "Heading",
+      "Text": "第一章：起源"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "故事大概起源于 [b]6 月 8 日的晚上[/b]。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "那天我又回去玩了《杀戮尖塔 1》，然后突然发现，学习农神 RO 种居然是一件很美妙的事情。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "于是我开始手动 Roll 种。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "然后 Roll 了一晚上。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "我当时想找一个带着[b]愧疚[/b]的骨骰种子。这个过程基本就是不断开局、看结果、退出、再来一次。到了最后，我真的感觉自己的手都快断了，才终于把那个种子 Roll 出来。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "很遗憾，它最后其实还是个毒种（笑）。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "但现在回头看，这个晚上大概才是 RolltheSpire2 真正的起点。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "因为那时候我脑子里第一次很自然地冒出了一个问题："
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]既然这些结果本来就是由种子决定的，那为什么我要坐在这里一个一个手动 Roll？[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "于是我开始上网找有没有已经能用的工具。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "我很快找到了 [b]SeedRoller[/b]，作者是 BenChao1998。我下载下来试了一下，但当时它最后一次更新停在了 4 月 13 日，对那时 `0.107.0` 版本里骨骰的具体结果预测也还不算完整。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "另外还有清野的网页 Roll 种器，不过需要私聊获取，对我来说多少有点麻烦。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "于是一个非常危险的念头出现了："
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]要不，我自己做一个吧？[/b]"
+    },
+    {
+      "Type": "Heading",
+      "Text": "第二章：一个很简单的筛种器"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "是的，当时《杀戮尖塔 2》还没有开放创意工坊，所以做 Mod 暂时并不在我的考虑范围里。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "我最开始做的，其实只是一个很简单的外部工具：手动输入一个种子，然后让程序把我关心的结果预测出来。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "而当种子已经可以自动输入、结果也可以自动输出的时候，下一步其实就变得非常自然了："
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]那就让它自己不断换种子，直到找到符合条件的结果。[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "于是，一个很简单的筛种器就这样完成了。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "一开始，我其实只是想找带骨骰的种子。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "但继续研究以后，我才发现：原来这个游戏里能被种子提前确定的东西，比我一开始想象得多得多。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "事件可以预测，商店里的遗物顺序可以预测，先古之民也可以预测。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "甚至像那个很经典的——[b]用佩尔的克隆组织去克隆一张完美打击[/b]——也是可以提前找到的。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "我最开始的问题只是："
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]“能不能帮我找一个带骨骰的种子？”[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "但很快，它开始变成："
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]“一个种子，到底还能告诉我多少东西？”[/b]"
+    },
+    {
+      "Type": "Heading",
+      "Text": "第三章：从工具到 Mod"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "在经过一段漫长的开发之后，我们来到了《杀戮尖塔 2》的 `0.107.1`。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "这是一个对我来说非常重要的版本。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "一方面，游戏的 RNG 工作方式发生了更新。开局骨骰的诅咒终于变得更加随机，而不是天天给我发债务。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "另一方面，创意工坊也终于得到了支持。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "到了这个时候，我手里的外部筛种器其实已经能找到很多挺有意思的种子了。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "比如[b]三张大爆炸开局[/b]，或者[b]三张吊杀开局[/b]。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "如果只是为了我自己玩，到这里其实已经够用了。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "但我慢慢开始不满足于这一点。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "因为外部工具终究还是一个外部工具。你需要知道它是什么，下载它，理解怎么使用它，再把找到的种子带回游戏。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "而我真正开始想的是："
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]能不能让每个人都直接在游戏里，快速找到自己想要的种子？[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "既然创意工坊已经开放了，那这件事突然有了一个非常直接的答案。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "于是，我们开始了 RolltheSpire2 Mod 的开发。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "从外部工具迁移到 Mod 的时候，我们其实没有考虑太多。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "开发推进得也很快。大概两周之后，第一个 RolltheSpire2 创意工坊版本就发布了。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "那个时候的 Mod 还很简单，但核心功能已经能够正常工作：选择自己想要的条件，然后直接在游戏里搜索对应的种子。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "在这之后的一段时间里，更新也基本比较平静。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "补一些功能，修一些问题，再顺手做一点 UI 优化。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "至少在当时，我觉得事情大概就会这样继续下去。"
+    },
+    {
+      "Type": "Heading",
+      "Text": "第四章：第一次看到另一个数量级"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "当时，我的 Roll 种器在自己电脑上的速度，大概是 [b]300K/s[/b]。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "完全依靠 CPU。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "说实话，那时候我其实没有特别认真地考虑过“搜索空间”这件事。工具能找到种子，速度看起来也还能接受，我也就没有继续深究。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "直到后来，我在 Reddit 上看到了一篇帖子。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "作者介绍了自己的网页筛种器——[b]Search the Spire[/b]。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "我点进去看了一下，然后看到了它的搜索速度。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[b]100M/s 以上。[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "我当时真的被惊到了。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "因为我的工具还停留在大约 `300K/s`。这已经不是“他的代码比我优化得好一点”的差距了，而是完全不同的数量级。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "于是我开始研究它为什么能这么快。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "我让 AI 帮我分析过它的实现思路。当时得到的一个推测是：它可能并不是像我的程序一样，从每一个正常种子出发，完整走一遍相同的计算过程；而是更加直接地在种子的根 Hash 空间里进行计算，先寻找满足条件的 Hash，再反推出对应的种子。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "这是不是它完整、准确的实现方式，当时的我其实也不能完全确认。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "但这件事本身给了我很大的启发。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "我第一次真正意识到："
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]筛种的速度，并不只取决于“把现在的代码写得更快”。[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "同一个问题，可以换一种表示方式，可以少算很多根本不需要知道的东西，也可以从完全不同的方向去寻找答案。"
+    },
+    {
+      "Type": "Heading",
+      "Text": "第五章：原来整个空间这么小"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "而且回头看，当时我的计算方式也确实非常原始。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "我几乎没有认真考虑过很多性能优化的问题。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "比如一个种子最终会不会被筛掉，我可能会先算出一大堆东西，再去判断它是否符合条件。但实际上，对于大量明显不符合要求的种子，可能只需要几次非常简单的位运算，就已经可以直接把它拒绝掉了。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "换句话说，我当时做的是："
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]先把很多东西算出来，再问它是不是我要的。[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "而真正高效的筛种，更应该是："
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]能多早知道它不是，就多早把它扔掉。[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "继续研究之后，我们又发现了一件更让我意外的事情。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "在当时的 `0.107` 版本里，虽然游戏里的种子看起来有 10 位，但它们最终转换出来的根 Hash 实际上只有 [b]32 位[/b]。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "也就是说，真正需要搜索的空间其实只有："
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[b]2³²。[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "如果一个筛种器能够达到大约 `100M/s` 的速度，那么遍历整个空间也只需要四十多秒。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "换句话说，你甚至可以在不到一分钟的时间里，把整个可能空间扫完，然后非常确定地告诉自己："
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]这个条件的种子到底存不存在。[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "这对我当时的冲击其实很大。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "因为在这之前，我把筛种理解成一种“不断随机尝试，直到碰到答案”的过程。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "但到了这里，我第一次开始把它看成一个有限的搜索问题。"
+    },
+    {
+      "Type": "Heading",
+      "Text": "第六章：FastSearch"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "有了前面的思路之后，优化其实推进得很快。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "到了 [b]7 月 15 日[/b]，我已经完成了第一版 `FastSearch`。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "它的性能放到今天看当然谈不上有多快，但在当时已经足够让我在大约一分钟内把 `0.107` 的整个搜索空间遍历一遍。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "这件事带来的感觉和以前完全不一样。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "以前筛种更像是在问："
+    },
+    {
+      "Type": "Callout",
+      "Text": "“我能不能碰巧找到一个满足条件的种子？”"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "而现在，我第一次可以直接去问："
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]“这个条件在整个种子空间里，到底存不存在？”[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "也就是在那个时候，我找到了 `0.107` 版本里唯一能够[b]三蛋开[/b]的 Hash。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "对应我当时记录下来的种子是："
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "`A0P0005H83`"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "当然，严格来说“种子唯一”并不准确。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "不同的种子字符串可能映射到同一个 Hash，真正唯一的是那个 [b]32 位根 Hash[/b]。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "但对当时的我来说，这并不重要。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "重要的是，我第一次真的把整个空间扫完，然后从里面捞出了一个此前只能靠运气去想象的极端结果。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "FastSearch 对我意义最大的一点，也不只是让筛种“快了一点”。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "它开始让一些原本很难回答的问题变成："
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]算一遍，就知道答案。[/b]"
+    },
+    {
+      "Type": "Heading",
+      "Text": "第七章：回来以后，世界变了"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "不过做到这里以后，项目反而暂时搁置了一段时间。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "原因倒不是什么技术瓶颈。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "只是因为我发现——[b]集成战略真的很好玩。[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "所以我跑去玩黑流树海了。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "等我玩爽了，再回来看看《杀戮尖塔 2》的时候，游戏已经来到了 `0.109`。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "然后我发现，事情好像有点不对。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "`0.109` 对 RNG 做了一次非常彻底的更新。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "原本 `0.107` 里只有 [b]32 位[/b]的种子根 Hash，变成了 [b]64 位[/b]。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "也就是说，我刚刚才建立起来的那套认知："
+    },
+    {
+      "Type": "Callout",
+      "Text": "“整个空间也就 `2^32`，跑快一点，一分钟左右就能全部扫完。”"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "突然失效了。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "因为现在摆在面前的，已经不再是 `2^32`。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "而是："
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[b]2⁶⁴。[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "从四十多亿，一下变成了一千八百多亿亿。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "我出去玩了几天游戏。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "回来以后，搜索空间膨胀了 [b]2³² 倍[/b]。"
+    },
+    {
+      "Type": "Heading",
+      "Text": "第八章：性能开始决定能不能找到"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "从那之后，[b]性能第一次真正变成了 RolltheSpire2 的核心指标之一。[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "在 `0.107` 的时代，只要整个搜索空间足够小，我们总有机会把它全部扫完。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "那时候最重要的问题还是："
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]这个种子到底存不存在？[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "但到了 `0.109`，64 位 Hash 让搜索空间大到不可能完整遍历。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "于是问题发生了变化。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "决定我们能不能找到一个种子的，往往已经不再只是："
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]“它是否存在？”[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "而是："
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]“在我愿意等待的时间里，我能不能搜到它？”[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "一个稀有度极低的种子当然可能存在。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "但如果筛种器每秒只能检查几十万个种子，那么它和“不存在”在实际使用体验上可能没有太大区别。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "反过来，如果每秒能够搜索几亿、几十亿个种子，那么原本几乎没有实际寻找价值的条件，也可能突然变得可用。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "从这个版本开始，我对“筛种器”的理解也慢慢发生了变化。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[b]概率、搜索空间和性能一起，决定了一个筛种需求究竟有没有实际意义。[/b]"
+    },
+    {
+      "Type": "Heading",
+      "Text": "第九章：既然他可以，那我们也可以"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "不过到了这里，[b]Search the Spire 又一次给了我很大的启发。[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "它使用了 GPU 来加速筛种。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "既然它可以，那我们当然也可以试试。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "于是我们开始给 RolltheSpire2 加入 GPU 搜索适配。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "最开始的实现当然还远远谈不上完善，支持的条件也有限，但第一次真正跑起来的时候，速度已经让我非常满意："
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]1B/s 以上。[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "也就是每秒十亿级的种子搜索速度。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "从以前 CPU 上大约 `300K/s`，到后来 FastSearch 能在一分钟左右扫完整个 `0.107` 空间，再到 `0.109` 时代第一次看到 `1B/s` 以上的 GPU 搜索，这种变化其实非常直观。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "但更重要的是，GPU 不只是把原来的程序“加速很多倍”。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "它重新改变了我对什么条件值得做成筛种功能的判断。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "以前一个极其稀有的组合，我可能会觉得："
+    },
+    {
+      "Type": "Callout",
+      "Text": "“理论上能预测，但是实际根本找不到，做了也没什么意义。”"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "而当搜索速度进入十亿级之后，一部分这样的条件突然开始变得现实。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "所以从这里开始，我越来越习惯同时考虑三件事："
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]这个结果能不能预测？[/b]"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]它有多稀有？[/b]"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]我们的搜索速度够不够快？[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "只有这三件事放在一起，才能真正回答："
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]这个条件适不适合成为一个好用的筛种条件？[/b]"
+    },
+    {
+      "Type": "Heading",
+      "Text": "第十章：越来越强，也越来越难用"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "也是从那个阶段开始，我慢慢发现，RolltheSpire2 已经不再是一个“打开就知道该怎么用”的简单工具了。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "它开始变得复杂。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "一方面，是 UI 本身不够直观。筛选条件越来越多，很多东西如果只是堆在界面上，玩家很难一眼理解它们之间到底是什么关系。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "另一方面，还有一个更难解决的问题："
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]玩家其实很难凭感觉判断一个种子到底有多稀有。[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "一个条件看起来可能只是“多选了两个东西”，但实际概率可能已经低了几个数量级。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "而这种判断以前基本只能靠经验。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "所以我开始尝试做各种 UI 优化，希望至少让筛选条件本身更容易理解。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "不过这显然不是我的强项。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "我最开始其实完全没打算认真设计一个多好看的 UI，我只是想做个筛种器。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "但做都做了……"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]不如全包了。[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "于是后来连 UI 也开始一点一点重做。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "与此同时，我还加入了一套概率模型。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "它会根据当前筛选条件去估计目标结果的稀有度，让玩家不再只能靠经验猜："
+    },
+    {
+      "Type": "Callout",
+      "Text": "“这个条件到底是 1/100 万，还是 1/100 亿？”"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "到了这里，RolltheSpire2 开始不只是帮玩家“找种子”。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "它还开始尝试回答："
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]你现在想找的这个东西，到底有多难找？[/b]"
+    },
+    {
+      "Type": "Heading",
+      "Text": "第十一章：玩家开始帮我测试"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "随着更新不断发布，反馈也开始越来越多。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "有些是功能建议，有些是 UI 问题，也有些是非常具体、只有真实玩家真的去筛某种奇怪组合时才会撞出来的 Bug。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "所以后来的开发逐渐变成了一种循环："
+    },
+    {
+      "Type": "Callout",
+      "Text": "加新功能"
+    },
+    {
+      "Type": "Callout",
+      "Text": "→ 玩家开始使用"
+    },
+    {
+      "Type": "Callout",
+      "Text": "→ 暴露出新的边界问题"
+    },
+    {
+      "Type": "Callout",
+      "Text": "→ 回头修复"
+    },
+    {
+      "Type": "Callout",
+      "Text": "→ 再继续往前做"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "这其实是一件很健康的事情。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "因为无论我自己做多少测试，都不可能靠一个人覆盖现在这么大的功能组合空间。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "尤其 RolltheSpire2 后来已经同时涉及开局效果、遗物、事件、战斗奖励、先古、商店、概率、CPU/GPU 路径、不同角色、不同版本，甚至 Mod 内容。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "很多问题并不是“这个功能完全坏了”，而是："
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]某个非常具体的组合，在某条很少走到的路径上出问题了。[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "这种东西靠我自己很难全部提前想到。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "反而是越来越多玩家真的拿它去找自己想要的种子之后，这些边界才会一个个浮出来。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "所以现在回头看，很多后来的修复和完善，其实都不是我一个人“规划出来”的。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "它们是这个工具真正被使用之后，慢慢长出来的。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[i]到这里，基本就是这次 1.0.0 更新之前，RolltheSpire2 一路走来的故事。[/i]"
+    }
+  ]
+}

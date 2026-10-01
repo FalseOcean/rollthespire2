@@ -85,6 +85,7 @@ public sealed class ProductionSearchSession : IProductionSearchSession
     private int _loggedFault;
     private readonly HashSet<Exception> _loggedExceptions = new(ReferenceEqualityComparer.Instance);
     private SearchCandidate? _firstResult, _lastResult;
+    private long _rejectionSampleCount;
     private void LogFault(Exception exception, string phase)
     {
         if(!_loggedExceptions.Add(exception.GetBaseException())) { RuntimeLog.TryBackgroundWarning($"searchFaultTransition=true;phase={phase};canonicalFaultAlreadyRecorded=true"); return; }
@@ -97,8 +98,8 @@ public sealed class ProductionSearchSession : IProductionSearchSession
     }
     private readonly Func<ExactSearchExecutionRequest, TrustedRootHashInput, ProductionExactSearchResult> _exactEvaluator;
     private readonly Func<int, CancellationToken, ValueTask>? _beforeCandidatePublish;
-    private string _firstFailureCode = string.Empty;
-    private string _firstFailureSeed = string.Empty;
+    private sealed record FirstFailure(string Code, string Seed);
+    private FirstFailure? _firstFailure;
     private ulong _safeNextOrdinal;
     private bool _safeCursorInitialized;
 
@@ -176,22 +177,26 @@ public sealed class ProductionSearchSession : IProductionSearchSession
         double elapsed = _clock.Elapsed.TotalSeconds;
         long scanned = Interlocked.Read(ref _scanned);
         return new SearchProgressSnapshot(
-            (SearchRunState)Volatile.Read(ref _state), scanned, Volatile.Read(ref _matches),
+            (SearchRunState)Volatile.Read(ref _state), scanned, _plan.RunOptions.SkipExactValidation ? 0 : Volatile.Read(ref _matches),
             _plan.ScanCount, _plan.TargetMatchCount, elapsed, elapsed <= 0d ? 0d : scanned / elapsed,
             (SearchDisposition)Volatile.Read(ref _lastDisposition), Volatile.Read(ref _failureCode) ?? string.Empty,
             Volatile.Read(ref _userCancellationRequested) != 0)
         {
+            UnverifiedCandidateCount = _plan.RunOptions.SkipExactValidation ? Volatile.Read(ref _matches) : 0,
             ObservedScanningSeconds = ElapsedMilliseconds(Math.Max(0,Interlocked.Read(ref _scanLastCompletedTimestamp)-Interlocked.Read(ref _scanFirstCompletedTimestamp)))/1000,
             ObservedScanningRoots = Interlocked.Read(ref _scanAfterFirstRoots)
         };
     }
 
-    public SearchDiagnosticSummarySnapshot GetDiagnosticSummary() => new(
-        new Dictionary<string, long>(_dispositions, StringComparer.Ordinal),
-        new Dictionary<string, long>(_failures, StringComparer.Ordinal),
-        new Dictionary<string, string>(_representativeSeeds, StringComparer.Ordinal),
-        Volatile.Read(ref _firstFailureCode) ?? string.Empty,
-        Volatile.Read(ref _firstFailureSeed) ?? string.Empty);
+    public SearchDiagnosticSummarySnapshot GetDiagnosticSummary()
+    {
+        var first = Volatile.Read(ref _firstFailure);
+        return new(
+            new Dictionary<string, long>(_dispositions, StringComparer.Ordinal),
+            new Dictionary<string, long>(_failures, StringComparer.Ordinal),
+            new Dictionary<string, string>(_representativeSeeds, StringComparer.Ordinal),
+            first?.Code ?? string.Empty, first?.Seed ?? string.Empty);
+    }
 
     public ulong GetSafeNextOrdinal()
     {
@@ -227,7 +232,7 @@ public sealed class ProductionSearchSession : IProductionSearchSession
                 $"familyExecutionStarted=true;spine=FamilyExecution;families={_families.Count};" +
                 $"familyIds={string.Join(",", _families.Select(family => family.FamilyId))};abi=ABI1-BatchLocalLogicalOrdinal;" +
                 $"start={_plan.CanonicalStartSeed};count={_plan.ScanCount};workers={_plan.WorkerCount};" +
-                $"executionWindowSize={_executionWindowSize}");
+                $"executionWindowSize={_executionWindowSize};skipExactValidation={_plan.RunOptions.SkipExactValidation}");
             RuntimeLog.TryBackgroundInfo("familyPlannerDecision=true;" + _executionPlan.FormatSummary());
             RuntimeLog.TryBackgroundInfo(_etaProjection.FormatSummary() + ";phase=SelectedProductionPlan");
             var passedCoverage = new HashSet<string>(StringComparer.Ordinal);
@@ -353,8 +358,9 @@ public sealed class ProductionSearchSession : IProductionSearchSession
             }
             foreach(var family in _families)
                 try { family.LogExecutionEvidence(); } catch(Exception ex) { RuntimeLog.TryBackgroundWarning("executionEvidenceFailed=" + ex.GetType().Name); }
-            RuntimeLog.TryBackgroundInfo($"searchExactOutcome=true;attempts={exactAttempts};evaluatedMatch={_dispositions.GetValueOrDefault(nameof(SearchDisposition.Match))};evaluatedReject={_dispositions.GetValueOrDefault(nameof(SearchDisposition.NoMatch))};evaluatedUnknown={_dispositions.GetValueOrDefault(nameof(SearchDisposition.Unknown))};publishedMatches={_matches};firstResult={_firstResult?.Seed};lastResult={_lastResult?.Seed};canonicalFaultRecorded={_loggedFault!=0}");
-            object? ResultEvidence(SearchCandidate? candidate) => candidate is null ? null : new { candidate.Seed, candidate.MatchedRouteIds, candidate.Witnesses };
+            RuntimeLog.TryBackgroundInfo($"searchExactOutcome=true;attempts={exactAttempts};evaluatedMatch={_dispositions.GetValueOrDefault(nameof(SearchDisposition.Match))};evaluatedReject={_dispositions.GetValueOrDefault(nameof(SearchDisposition.NoMatch))};evaluatedUnknown={_dispositions.GetValueOrDefault(nameof(SearchDisposition.Unknown))};publishedMatches={(_plan.RunOptions.SkipExactValidation ? 0 : _matches)};publishedUnverified={(_plan.RunOptions.SkipExactValidation ? _matches : 0)};firstResult={_firstResult?.Seed};lastResult={_lastResult?.Seed};canonicalFaultRecorded={_loggedFault!=0}");
+            RuntimeLog.TryBackgroundInfo("searchExactDiagnostics=true;summaryJson=" + RuntimeLog.SafeJson(GetDiagnosticSummary()));
+            object? ResultEvidence(SearchCandidate? candidate) => candidate is null ? null : new { candidate.Seed, candidate.IsUnverified, candidate.MatchedRouteIds, candidate.Witnesses };
             RuntimeLog.TryBackgroundInfo("searchResultSamples=true;scope=BoundedFirstLastPublished;resultJson=" + RuntimeLog.SafeJson(new { first=ResultEvidence(_firstResult),last=ReferenceEquals(_firstResult,_lastResult)?null:ResultEvidence(_lastResult) }));
             if (!physicalRecoveryContaminated && (SearchRunState)Volatile.Read(ref _state) != SearchRunState.Faulted)
             {
@@ -604,6 +610,23 @@ public sealed class ProductionSearchSession : IProductionSearchSession
         ulong globalCandidate = batch.GlobalCandidate(logicalOrdinal);
         string seed = VisibleSeedCandidateCodec.FormatOrdinal(_profile, globalCandidate);
         ulong rootHash = _profile.ComputeRootSeed(seed);
+        if (_plan.RunOptions.SkipExactValidation)
+        {
+            if (!TrustedRootHashInput.TryBindCanonicalSeed(_profile, rootHash, seed, out var unverifiedInput, out var issue))
+                throw new InvalidOperationException("CandidateSeedBindingRejected:" + issue);
+            if (!SeedPredictionRequest.TryCreateFromRootHash(unverifiedInput,
+                    RolltheSpire2.Core.Identity.CharacterIdentity.FromKey(_plan.CharacterKey), _plan.Ascension,
+                    _plan.Authority.PlayersCount, _plan.Authority.PlayerSlotIndex, _plan.Authority,
+                    _plan.Evaluation.AncientOptionConditions, SeedPredictionDomainSelection.None,
+                    SeedPredictionInputLimits.DefaultRelicSequencePreviewCount, false, out var request, out var error))
+                throw new InvalidOperationException("CandidateContextRejected:" + error);
+            Interlocked.Increment(ref _scanned);
+            Volatile.Write(ref _lastDisposition, (int)SearchDisposition.NotEvaluatedByPolicy);
+            RecordOutcome(seed, SearchDisposition.NotEvaluatedByPolicy, string.Empty);
+            await PublishCandidateAsync(new SearchCandidate(seed, _plan.ProfileId, _plan.CharacterKey, _plan.Ascension,
+                _plan.SnapshotFingerprint, request!, null, _plan.Authority, [], [], []) { IsUnverified = true }, cancellationToken).ConfigureAwait(false);
+            return;
+        }
         SearchQueryEvaluation evaluation;
         ProductionExactSearchResult exact;
         if (!TrustedRootHashInput.TryBindCanonicalSeed(
@@ -637,12 +660,16 @@ public sealed class ProductionSearchSession : IProductionSearchSession
         Interlocked.Increment(ref _scanned);
         Volatile.Write(ref _lastDisposition, (int)evaluation.Disposition);
         RecordOutcome(seed, evaluation.Disposition, evaluation.FailureCode);
-        if (!exact.IsMatch) return;
+        if (!exact.IsMatch)
+        {
+            // Bounded evidence is emitted immediately, so an ongoing search/feedback export retains it.
+            long rejected = Interlocked.Increment(ref _rejectionSampleCount);
+            if (rejected <= 6) ExactRejectionDiagnostics.Log(_plan, seed, exact);
+            if ((rejected & (rejected - 1)) == 0)
+                RuntimeLog.TryBackgroundInfo("searchExactDiagnostics=true;phase=Progress;summaryJson=" + RuntimeLog.SafeJson(GetDiagnosticSummary()));
+            return;
+        }
 
-        int matchNumber = TryReserveMatch();
-        if (matchNumber == 0) return;
-        if (_beforeCandidatePublish is not null)
-            await _beforeCandidatePublish(matchNumber, cancellationToken).ConfigureAwait(false);
         string snapshotFingerprint = string.Join("|", new[]
         {
             _plan.SnapshotFingerprint,
@@ -653,11 +680,7 @@ public sealed class ProductionSearchSession : IProductionSearchSession
             seed, _plan.ProfileId, _plan.CharacterKey, _plan.Ascension, snapshotFingerprint,
             exact.Request!, exact.Document!, exact.Authority,
             evaluation.Evidence, evaluation.MatchedRouteIds, evaluation.Witnesses);
-        await _candidates.Writer.WriteAsync(output, cancellationToken).ConfigureAwait(false);
-        // Reservations only bound admissions. A later reservation can publish first,
-        // so only successful writes count toward progress and automatic completion.
-        int publishedMatches = Interlocked.Increment(ref _matches);
-        Interlocked.CompareExchange(ref _firstResult, output, null); Volatile.Write(ref _lastResult, output);
+        await PublishCandidateAsync(output, cancellationToken).ConfigureAwait(false);
 
         if (!string.IsNullOrWhiteSpace(_traceSingleCandidateSeed) &&
             string.Equals(seed, _traceSingleCandidateSeed, StringComparison.OrdinalIgnoreCase) &&
@@ -668,7 +691,19 @@ public sealed class ProductionSearchSession : IProductionSearchSession
                 forceTrace: true, source: "FamilyExecutionExactTrace");
         }
 
-        if (publishedMatches >= _plan.TargetMatchCount)
+    }
+
+    private async ValueTask PublishCandidateAsync(SearchCandidate output, CancellationToken cancellationToken)
+    {
+        int matchNumber = TryReserveMatch();
+        if (matchNumber == 0) return;
+        if (_beforeCandidatePublish is not null)
+            await _beforeCandidatePublish(matchNumber, cancellationToken).ConfigureAwait(false);
+        await _candidates.Writer.WriteAsync(output, cancellationToken).ConfigureAwait(false);
+        // Count only successfully published outputs, including in diagnostic candidate mode.
+        int published = Interlocked.Increment(ref _matches);
+        Interlocked.CompareExchange(ref _firstResult, output, null); Volatile.Write(ref _lastResult, output);
+        if (published >= _plan.TargetMatchCount)
         {
             Interlocked.Exchange(ref _targetReached, 1);
             _lifetime.Cancel();
@@ -710,11 +745,8 @@ public sealed class ProductionSearchSession : IProductionSearchSession
         if (string.IsNullOrWhiteSpace(failureCode)) return;
         _failures.AddOrUpdate(failureCode, 1, (_, count) => count + 1);
         _representativeSeeds.TryAdd(failureCode, seed);
-        if (string.IsNullOrWhiteSpace(Volatile.Read(ref _firstFailureCode)))
-        {
-            Interlocked.CompareExchange(ref _firstFailureCode, failureCode, string.Empty);
-            Interlocked.CompareExchange(ref _firstFailureSeed, seed, string.Empty);
-        }
+        if (Volatile.Read(ref _firstFailure) is null)
+            Interlocked.CompareExchange(ref _firstFailure, new(failureCode, seed), null);
     }
 
     private void SetSafeCursor(ulong nextOrdinal)

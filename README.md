@@ -6,7 +6,7 @@ English | [简体中文](README.zh-CN.md)
 
 RolltheSpire2 (RT2) is an in-game seed search and analysis mod for **Slay the Spire 2**. Combine your desired conditions, search for matching seeds, and inspect their predicted openings, rewards, maps and more.
 
-This source tree is version **1.3.2**. The primary tested environment is **Windows, game version 0.111.0**.
+This source tree is version **1.3.3**. The primary tested environment is **Windows, game version 0.111.0**.
 
 ## What you can do
 
@@ -15,6 +15,7 @@ This source tree is version **1.3.2**. The primary tested environment is **Windo
 - Inspect a seed's predicted results, preview maps, draw routes and browse routes tied for the best value of a selected metric.
 - See condition rarity, search speed and the estimated time for **one result**, with CPU/GPU search selected automatically where supported.
 - Save search presets and favorite seeds with their context and notes. Read the in-game encyclopedia in English or Chinese.
+- At Crystal Sphere, use the optional in-run shortcut to read the current event state, explore compatible rewards and get reveal guidance, with card upgrades distinguished.
 
 ## Download and get started
 
@@ -28,6 +29,8 @@ For a manual installation package, place its `RolltheSpire2` folder inside the g
 2. Choose single-player or multiplayer, set your characters and ascension, and add the conditions you want.
 3. Start searching. Open a result in **Seed Analysis**, or enter a seed there directly.
 
+Enable the in-run prediction shortcut in Settings to use Crystal Sphere prediction. It supports three, six or remaining reveals; the optional translucent mask is off by default. This is a specific live-event feature, not general prediction of the current run or a played route.
+
 The in-game encyclopedia explains individual conditions and prediction assumptions. Settings lets you change the language, open the log folder and adjust the search starting point.
 
 ## Multiplayer and compatibility
@@ -37,6 +40,8 @@ Multiplayer assumes full unlocks by default; you can explicitly read the actual 
 Multiplayer transformation combinations are not included. Map filtering currently uses the CPU; drawing a route does not simulate every action in a complete run.
 
 Game updates and mods that change game rules can affect prediction accuracy. Vanilla single-player has the most testing; combinations of multiplayer, mods and partial unlocks still need broader coverage. Rarity and ETA are estimates, and complex queries may have incomplete estimates.
+
+Unverified-candidate output is a separate option, off by default. These candidates bypass final Exact validation and are explicitly marked; they may not satisfy every condition and can be validated individually after the search.
 
 ## Feedback
 

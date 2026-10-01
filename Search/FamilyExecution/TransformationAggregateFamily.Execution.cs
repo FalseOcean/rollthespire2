@@ -12,6 +12,7 @@ internal sealed class TransformationAggregateFamily : IFamilyInvocation
     internal TransformationAggregateNumericalPlan Plan { get; }
     internal TransformationAggregateGpuPlan GpuPlan { get; }
     internal TransformationAggregateProbability Probability { get; }
+    private readonly double? _givenNeow;
     private readonly FamilyCpuExecution _cpu;
     private TransformationAggregateGpuExecutor? _gpu;
     private bool _parity,_faulted,_compact;
@@ -21,6 +22,10 @@ internal sealed class TransformationAggregateFamily : IFamilyInvocation
     internal TransformationAggregateFamily(ExactSearchExecutionRequest request)
     {
         _request=request;Plan=new(request);GpuPlan=new(Plan);Probability=TransformationAggregateProbability.Build(Plan);
+        if (Plan.Neow is not null && HasConditionalProjections)
+            _givenNeow = TransformationAggregateProbability.Conditional(
+                TransformationAggregateProbability.SharedNeowJoint(request, Plan),
+                new NeowFamilyProjections(request, NeowReplayPlan.Compile(request, false), false, null).Survival(new HashSet<string>()).SurvivalProbability);
         _cpu=new(request,this,CpuRevision,Plan.Matches,1,g=>TransformationAggregatePricing.Cpu(Plan,Probability,g));
     }
     public string FamilyId=>Id;
@@ -30,13 +35,15 @@ internal sealed class TransformationAggregateFamily : IFamilyInvocation
     public FamilySurvivalProjection ResolveSurvival(IReadOnlySet<string> passed) => !HasConditionalProjections || !passed.Contains("N.Neow") ? Survival :
         Search.Semantics.TransformationAggregateCondition.SharedNeowIdentityOnly(_request.Evaluation) && Probability.StageSurvival is { } p
             ? FamilySurvivalProjection.Resolved(Id, Probability.IdentityProbability > 0 ? p / Probability.IdentityProbability : 0, "T.GivenSharedNIdentity;CountOpeningOnce")
+            : _givenNeow is { } joint ? FamilySurvivalProjection.Resolved(Id, joint, "T.GivenN;ExistingSameDrawJointOverNMarginal")
             : FamilySurvivalProjection.Unresolved(Id, "T+N.AdditionalPredicateJointUnknown");
     public FamilyAnalyticalCostProjection AnalyticalCost=>new(Id,GpuPlan.Capacity,[],"T.OwnedNumericalWork");
     public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest g)=>GpuPlan.Supported
-        ? TransformationAggregatePricing.Gpu(Plan,Probability,g):TransformationAggregatePricing.Cpu(Plan,Probability,g);
+        ? TransformationAggregatePricing.Gpu(Plan,Probability,GpuPlan,g):TransformationAggregatePricing.Cpu(Plan,Probability,g);
     public FamilyConditionPerformanceProjection ConditionPerformance=>ResolveConditionPerformance(false);
     public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compact)=>!GpuPlan.Supported?_cpu.Condition(compact):
-        new(Id,(GpuPlan.FullTarget?TransformationAggregateGpuPlan.FullTargetRevision:"T.Gpu.InitialBasicsAggregate.20260922.v2")+"."+(compact?"CompactAbi1":"Dense")+".CanonicalAbi1Ready",
+        new(Id,(GpuPlan.BonesOptimized ? "T.Gpu.BonesTracked."+(GpuPlan.FullTarget?"TransformFirst.Carry8.AllRequired":"OpeningFirst.Generic")+".20261001.v1" :
+            GpuPlan.FullTarget?TransformationAggregateGpuPlan.FullTargetRevision:TransformationAggregateGpuPlan.GenericRevision)+"."+(compact?"CompactAbi1":"Dense")+".CanonicalAbi1Ready",
             "T.Gpu.Neutral.20260914.v1",1,"FamilyOwned;LocalAggregate;NoLeafPredicate",usesGpu:true);
     IEnumerable<IFamilyInvocation> IFamilyInvocation.CpuRealizations=>[_cpu];
     IEnumerable<GpuLocalPeak> IFamilyInvocation.CostPeaks=>_costSamples.Peaks;

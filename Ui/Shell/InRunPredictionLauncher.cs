@@ -38,9 +38,9 @@ internal sealed partial class InRunPredictionLauncher : Button
         var entry = new InRunPredictionLauncher { Name = name, Text = "", _run = run, _runtime = runtime,
             _enabledByPreference = preferences.ShowInRunPredictionEntry, Visible = preferences.ShowInRunPredictionEntry,
             _debugInfo = globalUi?.DebugInfo,
-            TooltipText = JsonUiTextProvider.CreateUi13(language).Get("shell.open_run_prediction"),
+            TooltipText = "",
             CustomMinimumSize = new Vector2(56, 56), Size = new Vector2(56, 56), FocusMode = FocusModeEnum.None };
-        entry.AccessibilityName = entry.TooltipText;
+        entry.AccessibilityName = JsonUiTextProvider.CreatePredictorUi13(language).Get("predictor.crystal.hover");
         AppShellHostRoot.StyleNeowsBonesLauncher(entry, runtime);
         parent.AddChild(entry);
         entry.AddToGroup(EntryGroup);
@@ -93,10 +93,16 @@ internal sealed partial class InRunPredictionLauncher : Button
         RunPredictionOverlay? surface = null;
         try
         {
-            try { RuntimeAuthorityEnvironment.CaptureOnMainThread(_runtime); }
-            catch (Exception ex) { RuntimeLog.WarnException("runPredictionAuthorityRefreshFailed=true;failSoft=true", ex); }
             surface = new RunPredictionOverlay();
             surface.Initialize(_runtime, _run, stack);
+            surface.GuideRequested += (snapshot, mode, solution) =>
+            {
+                var parent = (Control)GetParent();
+                if (parent.GetNodeOrNull<Node>("CrystalGuidance") is { } oldGuide) { parent.RemoveChild(oldGuide); oldGuide.QueueFree(); }
+                var guide = new CrystalSphereGuidance();
+                guide.Initialize(_run, _runtime, snapshot, mode, solution);
+                parent.AddChild(guide); guide.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+            };
             _surface = surface;
             stack.Push(surface);
         }
@@ -116,8 +122,9 @@ internal sealed partial class InRunPredictionLauncher : Button
 // Use the game's normal overlay ownership so rewards underneath are restored on close.
 internal sealed partial class RunPredictionOverlay : Control, IOverlayScreen
 {
+    internal event Action<CrystalSphereLiveSnapshot, string, RolltheSpire2.Core.PredictorRuntime.PredictorCrystalSolution>? GuideRequested;
+    private CrystalSphereAssistantPanel _panel = null!;
     private WorkspaceShell _shell = null!;
-    private IRunState _run = null!;
     private NOverlayStack _stack = null!;
     private bool _closed;
     private bool _hotkeysBlocked, _backPressed;
@@ -128,17 +135,22 @@ internal sealed partial class RunPredictionOverlay : Control, IOverlayScreen
     internal void Initialize(ModRuntimeSnapshot runtime, IRunState run, NOverlayStack stack)
     {
         Name = "RolltheSpire2_RunPredictionOverlay";
-        _run = run; _stack = stack;
+        _stack = stack;
         SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         MouseFilter = MouseFilterEnum.Stop;
-        _shell = new WorkspaceShell(); _shell.Initialize(runtime); AddChild(_shell);
+        var shade = new ColorRect { Color = new Color(0, 0, 0, .65f), MouseFilter = MouseFilterEnum.Stop };
+        AddChild(shade); shade.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        _panel = new CrystalSphereAssistantPanel();
+        _panel.Initialize(run, runtime);
+        _shell = new WorkspaceShell(); _shell.InitializeCrystalScene(runtime, _panel,run); AddChild(_shell);
         _shell.TopLevelCloseRequested += Close;
+        _panel.GuideRequested += (snapshot, mode, solution) => { GuideRequested?.Invoke(snapshot, mode, solution); Close(); };
     }
+    public override void _Ready() => SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
     public void AfterOverlayOpened()
     {
         _shell.Open();
-        try { _shell.OpenRunPrediction(_run); }
-        catch (Exception ex) { RuntimeLog.WarnException("runPredictionContextFailed=true", ex); Callable.From(Close).CallDeferred(); }
+        _panel.Refresh();
     }
     public void AfterOverlayClosed()
     {

@@ -1,4 +1,5 @@
 using Godot;
+using MegaCrit.Sts2.Core.Rooms;
 using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Presentation.Localization;
 using RolltheSpire2.Ui.Persistence;
@@ -15,6 +16,9 @@ internal sealed partial class WorkspaceShell : Control
     private static readonly Vector2 CanvasSize = new(1600, 900);
     private readonly Button _search = MakeButton();
     private readonly Button _analysis = MakeButton();
+    private readonly Button _currentPrediction = MakeButton();
+    private MegaCrit.Sts2.Core.Runs.IRunState? _liveRun;
+    private bool _runPredictionLoaded;
     private readonly Button _encyclopedia = MakeButton();
     private readonly Button _status = MakeButton();
     private readonly Button _notes = MakeButton();
@@ -34,24 +38,31 @@ internal sealed partial class WorkspaceShell : Control
     private RolltheSpire2.Ui.Controllers.AnalysisPageController? _predictorController;
 
 
-    private enum Workspace { Search, Analysis, Seeds, Encyclopedia, Status, Notes, Settings, Feedback }
+    private enum Workspace { Search, Analysis, Seeds, Encyclopedia, Status, Notes, Settings, Feedback, CurrentPrediction }
     private Workspace _workspace;
 
     public Button CloseButton => _close;
     public event Action? TopLevelCloseRequested;
+
+    private CrystalSphereAssistantPanel? _crystalScene;
+    internal void InitializeCrystalScene(ModRuntimeSnapshot snapshot, CrystalSphereAssistantPanel panel, MegaCrit.Sts2.Core.Runs.IRunState run)
+    {
+        _crystalScene = panel;_liveRun=run;
+        Initialize(snapshot);
+    }
 
     public void Initialize(ModRuntimeSnapshot snapshot) => InitializeWithPersistence(snapshot, OS.GetUserDataDir());
 
     internal void InitializeWithPersistence(ModRuntimeSnapshot snapshot, string persistenceDirectory)
     {
         _runtime = snapshot;
-        InitializeSearchEvidenceOnMainThread();
+        if (_crystalScene == null) InitializeSearchEvidenceOnMainThread();
         Name = "RolltheSpire2_WorkspaceShell";
         Size = CanvasSize;
         MouseFilter = MouseFilterEnum.Stop;
         ClipContents = true;
         // Read existing preferences without creating a Search cursor for an empty UI.
-        _persistence = new SearchWorkspacePersistence(persistenceDirectory, snapshot.Profile.ProfileId, initializeSearchCursor: false);
+        _persistence = SearchWorkspacePersistence.Open(persistenceDirectory, snapshot.Profile.ProfileId);
         var background = _background = new ColorRect { Color = _palette.Color(_palette.Canvas), MouseFilter = MouseFilterEnum.Ignore };
         AddChild(background);
         background.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
@@ -63,6 +74,7 @@ internal sealed partial class WorkspaceShell : Control
         header.AddChild(title);
         header.AddChild(_search);
         header.AddChild(_analysis);
+        header.AddChild(_currentPrediction);_currentPrediction.Visible=_liveRun!=null;
         header.AddChild(_seeds);
         header.AddChild(_encyclopedia);
         header.AddChild(_status);
@@ -75,6 +87,23 @@ internal sealed partial class WorkspaceShell : Control
         _content.Position = new Vector2(32, 96);
         _content.Size = new Vector2(1536, 772);
         AddChild(_content);
+        if (_crystalScene != null)
+        {
+            foreach (var navigation in new[] { _search, _seeds, _status })
+                navigation.Hide();
+            _content.AddChild(_crystalScene);
+            _crystalScene.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+            _close.Pressed += () => TopLevelCloseRequested?.Invoke();
+            _analysis.Pressed += ShowLiveSeedPrediction;
+            _currentPrediction.Pressed += () => SelectTask(Workspace.CurrentPrediction);
+            _encyclopedia.Pressed += () => SelectTask(Workspace.Encyclopedia);
+            _notes.Pressed += () => SelectTask(Workspace.Notes);
+            _feedback.Pressed += () => SelectTask(Workspace.Feedback);
+            _settings.Pressed += OpenSettings;
+            BuildSettings();BuildFeedback();InitializeSeedLibrary(persistenceDirectory);
+            RefreshLanguage();SelectTask(Workspace.CurrentPrediction);
+            return;
+        }
         _references = new DesignReferenceSurfaces(snapshot, _persistence);
         _content.AddChild(_references);
         _references.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
@@ -125,11 +154,13 @@ internal sealed partial class WorkspaceShell : Control
         GpuCostCalibration.TryFlushPendingOnMainThread();
         CpuCostCalibration.TryFlushPendingOnMainThread();
     }
-    public override void _ExitTree() => FlushSearchEvidenceOnMainThread();
+    public override void _ExitTree() { if (_crystalScene == null) FlushSearchEvidenceOnMainThread(); }
 
     private void SelectTask(Workspace workspace, string? encyclopediaTopic = null,
         string? predictorSeed = null)
     {
+        if(_liveRun!=null && workspace==Workspace.Search) workspace=Workspace.Analysis;
+        if(_crystalScene!=null) _crystalScene.Visible=workspace==Workspace.CurrentPrediction;
         _references?.CloseModal();
         _workspace = workspace;
         if (workspace == Workspace.Search) { _partyExpected = null; _partyResultDraft = null; }
@@ -152,14 +183,15 @@ internal sealed partial class WorkspaceShell : Control
         if (workspace == Workspace.Analysis && _predictor is null) CreatePredictor(predictorSeed);
         if (workspace == Workspace.Analysis && _partyResultDraft is not null)
         {
-            _predictorController?.SetPartyDraft(_partyResultDraft, _partyExpected?.Seed, _partyExpected?.Document.Party);
+            _predictorController?.SetPartyDraft(_partyResultDraft, _partyExpected?.Seed, _partyExpected?.Document?.Party);
+            _predictor?.SetSearchOrigin(_partyExpected?.Seed ?? "", _partyExpected?.IsUnverified == true);
             _partyResultDraft = null; _partyExpected = null;
         }
         if (_predictor is not null) _predictor.Visible = workspace == Workspace.Analysis;
         if (workspace == Workspace.Status) OpenStatus();
         if (_statusPage is not null) _statusPage.Visible = workspace == Workspace.Status;
         if (workspace == Workspace.Notes) OpenNotes();
-        if (_notesPage is not null) _notesPage.Visible = workspace == Workspace.Notes;
+        if (_notesHost is not null) _notesHost.Visible = workspace == Workspace.Notes;
         _settingsPage.Visible = workspace == Workspace.Settings;
         _feedbackPage.Visible = workspace == Workspace.Feedback;
         if (workspace == Workspace.Feedback) RefreshFeedback();
@@ -189,12 +221,14 @@ internal sealed partial class WorkspaceShell : Control
     {
         _palette.SetActive(_search, _workspace == Workspace.Search);
         _palette.SetActive(_analysis, _workspace == Workspace.Analysis);
+        _palette.SetActive(_currentPrediction, _workspace == Workspace.CurrentPrediction);
         _palette.SetActive(_seeds, _workspace == Workspace.Seeds);
         _palette.SetActive(_encyclopedia, _workspace == Workspace.Encyclopedia);
         _palette.SetActive(_status, _workspace == Workspace.Status);
         _palette.SetActive(_notes, _workspace == Workspace.Notes);
         _palette.SetActive(_settings, _workspace == Workspace.Settings);
         _palette.SetActive(_feedback, _workspace == Workspace.Feedback);
+        ApplyNotesReminderColor();
     }
 
     private void RefreshLanguage()
@@ -207,6 +241,8 @@ internal sealed partial class WorkspaceShell : Control
         IUiTextProvider text = JsonUiTextProvider.CreateUi13(language);
         _search.Text = text.Get("shell.search");
         _analysis.Text = text.Get("shell.analysis");
+        _currentPrediction.Text=JsonUiTextProvider.CreatePredictorUi13(language).Get("predictor.crystal.current_page");
+        _crystalScene?.ApplyLanguage(language);
         _seeds.Text = language == "zh" ? "种子库" : "Seed library";
         _seedLibrary?.Refresh(language);
         _encyclopedia.Text = text.Get("shell.encyclopedia");
@@ -224,7 +260,7 @@ internal sealed partial class WorkspaceShell : Control
     {
         _background!.Color = _palette.Color(_palette.Canvas);
         _title!.AddThemeColorOverride("font_color", _palette.Color(_palette.Text));
-        foreach (var b in new[] { _search, _analysis, _seeds, _encyclopedia, _status, _notes, _feedback, _settings, _close })
+        foreach (var b in new[] { _search, _analysis, _currentPrediction, _seeds, _encyclopedia, _status, _notes, _feedback, _settings, _close })
         {
             var donor = _palette.Button(b.Text);
             foreach (string style in new[] { "normal", "hover", "pressed", "disabled", "focus" }) b.AddThemeStyleboxOverride(style, donor.GetThemeStylebox(style));
@@ -245,7 +281,8 @@ internal sealed partial class WorkspaceShell : Control
     {
         RuntimeLog.PumpOnMainThread();
         PollFeedbackExport();
-        FlushSearchEvidenceOnMainThread();
+        TickNotesReminder(delta);
+        if(_liveRun==null) FlushSearchEvidenceOnMainThread();
         _persistence?.Tick(delta);
         FitCanvas();
         _localePoll -= delta;
@@ -255,15 +292,33 @@ internal sealed partial class WorkspaceShell : Control
     private void FitCanvas()
     {
         Vector2 host = GetParent<Control>().Size;
-        float scale = Math.Min(1f, Math.Min(host.X / CanvasSize.X, host.Y / CanvasSize.Y));
+        float scale = Math.Max(.1f, Math.Min(1f, Math.Min(host.X / CanvasSize.X, host.Y / CanvasSize.Y)));
         Scale = Vector2.One * scale;
-        Position = (host - CanvasSize * scale) * 0.5f;
+        float spareY=Math.Max(0,host.Y-CanvasSize.Y*scale);
+        Position = new Vector2((host.X - CanvasSize.X * scale) * .5f,
+            _liveRun==null?spareY*.5f:Math.Min(spareY,Math.Max(spareY*.5f,112)));
     }
 
     public void Open() {
         WorkspacePalette.SetKeyboardFocusVisible(false);
         if (_workspace == Workspace.Status) RefreshStatus();
         Show(); FitCanvas();
+        BeginNotesReminder();
+        if (_liveRun == null) return;
+        if (_liveRun.CurrentRoom is EventRoom room && room.CanonicalEvent.Id.Entry == "CRYSTAL_SPHERE")
+            SelectTask(Workspace.CurrentPrediction);
+        else ShowLiveSeedPrediction();
+    }
+    private void ShowLiveSeedPrediction()
+    {
+        if (_runPredictionLoaded) { SelectTask(Workspace.Analysis); return; }
+        try { OpenRunPrediction(_liveRun!); _runPredictionLoaded = true; }
+        catch (Exception ex)
+        {
+            RuntimeLog.WarnException("inRunSeedPredictionUnavailable=true", ex);
+            SelectTask(Workspace.Analysis);
+            _predictor?.ShowLibraryReceipt(JsonUiTextProvider.CreatePredictorUi13(_languageCode).Get("predictor.crystal.context_failed") + "\n" + ex.Message);
+        }
     }
     public void CleanupForTopLevelClose() {
         while (_seedLibrary?.CloseModal() == true) { }

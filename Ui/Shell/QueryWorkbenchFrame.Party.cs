@@ -25,6 +25,28 @@ internal sealed partial class QueryWorkbenchFrame
     private WorkbenchSearchDraft? _runningPartyDraft;
     private OrderedPartyAuthority? _editorParty;
     private string _editorPartyKey = "";
+    private string _editorContextIssue = "";
+    private bool TryEditorParty(out OrderedPartyAuthority? party)
+    {
+        try
+        {
+            party = EditorParty();
+            _editorContextIssue = "";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            party = null;
+            if (_editorContextIssue != ex.Message)
+                Bootstrap.RuntimeLog.Fault("partyEditorContextFailed=true", ex);
+            _editorContextIssue = ex.Message;
+            _editorParty = null; _editorPartyKey = "";
+            _probabilityPreview.Invalidate(); _probabilityPending = false; _analysisKey = "";
+            if (_start is not null) _start.Disabled = true;
+            if (_status is not null) _status.Text = Explain(ex);
+            return false;
+        }
+    }
     private OrderedPartyAuthority? EditorParty()
     {
         if (!_multiplayer || _lobbyUnlocks.Take(_playerCount).Any(u => u is null)) return null;

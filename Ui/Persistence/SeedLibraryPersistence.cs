@@ -115,7 +115,19 @@ internal sealed class SeedLibraryStore
     {
         if (!Directory.Exists(_directory)) return;
         var identities = new HashSet<string>(StringComparer.Ordinal);
-        foreach (string path in Directory.EnumerateFiles(_directory, "*.json").OrderBy(p => p, StringComparer.Ordinal))
+        string[] paths;
+        try
+        {
+            paths = Directory.EnumerateFiles(_directory, "*.json").OrderBy(p => p, StringComparer.Ordinal).ToArray();
+        }
+        catch (Exception ex)
+        {
+            string issue = "seed_library: " + SearchPresetStore.Compact(ex.Message);
+            _issues.Add(issue);
+            RuntimeLog.Warn("seedLibraryDirectoryReadFailed=true;preservedOriginal=true;issue=" + issue);
+            return;
+        }
+        foreach (string path in paths)
         {
             try
             {

@@ -765,7 +765,8 @@ public sealed record SearchRunOptions(
     long ScanCount,
     int TargetMatchCount,
     int WorkerCount,
-    bool IncludeDiagnostics = true);
+    bool IncludeDiagnostics = true,
+    bool SkipExactValidation = false);
 
 public sealed record ExactSearchExecutionRequest(
     CompiledSearch CompiledSearch,
@@ -873,6 +874,8 @@ public sealed record SearchQueryEvaluation(
     IReadOnlyList<SearchMatchWitness> Witnesses,
     string FailureCode = "")
 {
+    // Diagnostic only: preserve the first failed predicate for each attempted opening.
+    public IReadOnlyList<SearchRouteRejection> RouteRejections { get; init; } = Array.Empty<SearchRouteRejection>();
     public static SearchQueryEvaluation Match(
         IReadOnlyList<SearchMatchEvidence>? evidence = null,
         IReadOnlyList<string>? routeIds = null,
@@ -896,6 +899,9 @@ public sealed record SearchQueryEvaluation(
         new(SearchDisposition.Unsupported, Array.Empty<SearchMatchEvidence>(), Array.Empty<string>(), Array.Empty<SearchMatchWitness>(), code);
 }
 
+public sealed record SearchRouteRejection(string RouteId, IReadOnlyList<ModelKey> AcquisitionOrder,
+    SearchDisposition Disposition, string Reason);
+
 public sealed record SearchCandidate(
     string Seed,
     RuntimeProfileId ProfileId,
@@ -903,12 +909,14 @@ public sealed record SearchCandidate(
     int Ascension,
     string SnapshotFingerprint,
     [property: System.Text.Json.Serialization.JsonPropertyName("AnalysisRequest")] SeedPredictionRequest PredictionRequest,
-    SeedPredictionDocument Document,
+    SeedPredictionDocument? Document,
     RuntimeContextAuthoritySnapshot Authority,
     IReadOnlyList<SearchMatchEvidence> MatchEvidence,
     IReadOnlyList<string> MatchedRouteIds,
     IReadOnlyList<SearchMatchWitness> Witnesses)
 {
+    // An unverified candidate has no document, match evidence or witness. Fast is not truth.
+    public bool IsUnverified { get; init; }
     public SearchMatchWitness? PrimaryWitness => Witnesses.FirstOrDefault();
 }
 
@@ -924,6 +932,7 @@ public sealed record SearchProgressSnapshot(
     string FailureCode,
     bool CancellationRequested)
 {
+    public int UnverifiedCandidateCount { get; init; }
     // UI observation only; never a pricing/calibration denominator.
     public double ObservedScanningSeconds { get; init; }
     public long ObservedScanningRoots { get; init; }

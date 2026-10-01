@@ -62,10 +62,11 @@ internal static class NeowSingleplayerReplay
         NeowReplayObservation observation = Observe(root, plan);
         if (!observation.IdentityPass) return false;
         if (plan.StructuredConditions.Length == 0 && !plan.HasFinalCurseFastProjection) return true;
-        bool keep = false;
+        // Routes replay into independent local state. One surviving route proves
+        // this Fast OR; unused alternatives cannot invalidate that survivor.
         foreach (var route in Routes(plan, observation))
-            keep |= Route(root, plan, route.First, route.Second, observation.RewardsAfterBones);
-        return keep;
+            if (Route(root, plan, route.First, route.Second, observation.RewardsAfterBones)) return true;
+        return false;
     }
 
     internal static IEnumerable<(byte First, byte Second)> Routes(NeowReplayPlan plan, NeowReplayObservation observation)

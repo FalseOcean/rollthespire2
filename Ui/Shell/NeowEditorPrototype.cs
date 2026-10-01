@@ -135,6 +135,9 @@ internal sealed partial class NeowEditorPrototype : Control
     public void AttachOverlay(Control shell)
     { _overlay.Reparent(shell); _overlay.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect); }
 
+    internal void ConfigureExternalCardPicker(string language)
+    { _language = language; _text = JsonUiTextProvider.CreateUi13(language); _names = RuntimeGameContentNameResolver.Create(language); }
+
     public void Refresh(string language, ModelKey character, int ascension, int players, int seat,
         MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState? unlocks = null, bool render = true)
     {
@@ -855,7 +858,7 @@ internal sealed partial class NeowEditorPrototype : Control
         var filters = new CardPickerFilterState();
         var colorlessCards = pool.Where(key => cardContext?.IsColorlessPoolMember(key) == true)
             .ToHashSet(ModelKeyComparer.Instance);
-        var curseCards = pool.Where(key => _catalog!.Curses.Contains(key, ModelKeyComparer.Instance) ||
+        var curseCards = pool.Where(key => _catalog?.Curses.Contains(key, ModelKeyComparer.Instance) == true ||
             cardContext is not null && cardContext.TryGet(key, out CardPickerCandidateMetadata metadata) && metadata.Rarity == EffectCardRarity.Curse)
             .ToHashSet(ModelKeyComparer.Instance);
         var ancientCards = pool.Where(key => cardContext is not null && cardContext.TryGet(key, out CardPickerCandidateMetadata metadata) &&

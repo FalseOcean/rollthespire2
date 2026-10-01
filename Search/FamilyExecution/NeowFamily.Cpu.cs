@@ -10,7 +10,7 @@ internal sealed partial class NeowFamily
     {
         get
         {
-            if (_composite is not null || _request.ProfileId != Compatibility.RuntimeProfileId.Beta111) yield break;
+            if (_composite is not null || _transformations is not null || _request.ProfileId != Compatibility.RuntimeProfileId.Beta111) yield break;
             var plan = NeowIdentityCpuPlan.TryCompile(_plan);
             var gate = plan is null ? NeowCpuPreGate.TryCompile(_plan) : null;
             Func<ulong,bool> matcher = plan is not null ? plan.Matches : gate is not null ? gate.Matches : _cpuMatcher;

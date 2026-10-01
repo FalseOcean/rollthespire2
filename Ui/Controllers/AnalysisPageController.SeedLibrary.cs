@@ -28,6 +28,8 @@ internal sealed partial class AnalysisPageController
         _librarySoloPremise = SearchQuery.Empty;
         _soloExplicitOpening = false;
         _librarySoloUnlockSource = "CapturedLocalProfile"; _strictLibrarySeed = "";
+        _searchOpeningPending = false; _searchOpeningQuery = SearchQuery.Empty;
+        _page.SetSearchOrigin("", false);
     }
 
     private UnlockState? CapturePredictionUnlocks()

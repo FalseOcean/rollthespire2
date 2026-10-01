@@ -9,6 +9,31 @@ internal sealed record TransformationAggregateProbability(double? QueryHitProbab
     double? StageSurvival, double IdentityProbability, double ExpectedGpuDraws,
     IReadOnlyList<double[]> LocalRareDistributions, string Evidence)
 {
+    // Reuse the query model's SAME-DRAW intersection, including authored transform
+    // targets and the final curse. Do not multiply two overlapping marginals.
+    // Strip unrelated families so this is an N/T intersection, not full-query mass.
+    internal static double? SharedNeowJoint(RolltheSpire2.Search.Contracts.ExactSearchExecutionRequest request,
+        TransformationAggregateNumericalPlan numerical)
+    {
+        if (!TransformationAggregateCondition.HasSharedNeow(request.Evaluation) || !numerical.Closed ||
+            numerical.Neow is null || NeowReplayPlan.Compile(request, false).ExactOnly.Length != 0 ||
+            request.Evaluation.EffectOutputConditions.Count != 0) return null;
+        var source = request.CompiledSearch.NormalizedQuery;
+        var query = LegacySearchQueryAdapter.FromFilter(NeowReplayPlan.NeowFilter(request, false)) with {
+            OpeningRoute = source.OpeningRoute,
+            OpeningRouteRelicRequirement = source.OpeningRouteRelicRequirement,
+            TransformationAggregate = source.TransformationAggregate
+        };
+        var compiled = SearchCompiler.CompilePlayer(query, request.CompiledSearch.Context);
+        var joint = RolltheSpire2.Search.Selectivity.JointSelectivityEstimator.EstimateQuery(
+            RolltheSpire2.Search.Selectivity.SearchSelectivityInput.From(compiled));
+        return joint.JointlyPriced ? joint.Probability : null;
+    }
+
+    internal static double? Conditional(double? joint, double? parent) =>
+        joint is >= 0 and <= 1 && parent is >= 0 and <= 1 && joint <= parent + 1e-12
+            ? parent == 0 ? 0 : Math.Clamp(joint.Value / parent.Value, 0, 1) : null;
+
     internal static TransformationAggregateProbability Build(TransformationAggregateNumericalPlan plan)
     {
         const string policy = "T.LocalWithReplacementDistributions;NFiniteOfferAndUnorderedPair;NamedStreamsModeledIndependent;NoEmpiricalFit;BonesRoutesSameClosedOutputs_NotDoubleMass";

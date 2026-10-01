@@ -1,0 +1,34 @@
+{
+  "Id": "positioning",
+  "Title": "Project Philosophy",
+  "Blocks": [
+    {
+      "Type": "Heading",
+      "Text": "Project purpose and usage"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "RT2 is a Spire seed toolbox made primarily for the author’s own use and shared with players who enjoy the same things. Its direction follows the author’s playing needs and research interests."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Some prediction and solving features may reveal more than ordinary save-and-reload play, including outcomes much further ahead. This changes the game’s information limits and the challenge created by randomness and uncertainty. These features explore the boundaries of Spire mechanics and what tools can do."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Frequent use of prediction tools in multiplayer can reduce surprises and create unfair differences in what players know. Discuss their use with the other players beforehand. Whether and how to use them is a matter of personal judgment and mutual agreement."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "RT2 is developed mainly on the author’s own equipment and for the author’s playing environment. Feedback from actual users helps reveal issues on other devices, with different mod combinations, and in unusual situations. Reproduction steps, seeds, search conditions, and logs reduce investigation costs and can motivate further research, optimization, and new features."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Complete feedback improves the chances of effective investigation. Further work still depends on the author’s time, interest, and the impact of the issue. A report does not guarantee an immediate reply, fix, or new feature; some known issues may remain unresolved."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Use these tools according to your own preferences. You can turn features off, disable the mod, or download an older version from the public GitHub Releases page. Only the latest version is maintained; fixes and future compatibility for older versions are not guaranteed."
+    }
+  ]
+}

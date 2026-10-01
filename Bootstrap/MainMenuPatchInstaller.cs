@@ -18,6 +18,8 @@ internal static class MainMenuPatchInstaller
 
     public static void Install(Harmony harmony)
     {
+        RolltheSpire2.Infrastructure.Snapshots.CrystalSphereLiveCapture.Install(harmony);
+        CrystalSphereMaskAppearance.Install(harmony);
         harmony.Patch(AccessTools.Method(typeof(MegaCrit.Sts2.Core.Nodes.CommonUi.NTopBar), "Initialize"),
             postfix: new HarmonyMethod(typeof(MainMenuPatchInstaller), nameof(RunTopBarPostfix)));
         MethodInfo? readyPostfix = AccessTools.Method(typeof(MainMenuPatchInstaller), nameof(Postfix));

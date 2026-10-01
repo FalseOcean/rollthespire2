@@ -27,7 +27,8 @@ public static partial class FamilyExecutionCoordinator
         bool explicitSelection = false;
         var baseline = gpu ? PlanRegistered(plan, registered, out explicitSelection) : FamilyPlanner.Plan(registered.SelectMany(f=>f.CpuRealizations.Take(1)).ToArray());
         if (explicitSelection) return baseline;
-        return AutomaticPrivateSerialPricing.SelectPhysicalAlternatives(plan, registered, baseline, gpu);
+        var selected = AutomaticPrivateSerialPricing.SelectPhysicalAlternatives(plan, registered, baseline, gpu);
+        return gpu ? NeowTransformationComposite.SelectPriced(plan, registered, selected) : selected;
     }
     private static FamilyExecutionPlan PlanRegistered(ExactSearchExecutionRequest plan, IReadOnlyList<IFamilyInvocation> registered, out bool explicitSelection)
     {

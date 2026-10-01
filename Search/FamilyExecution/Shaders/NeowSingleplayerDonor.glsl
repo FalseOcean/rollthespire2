@@ -453,9 +453,7 @@ bool execute_kaleidoscope_route(
                 group1_target1 = group1_target1 || is1;
             }
         }
-#if N_DIRECT_NESTED == 4
         if(group==0u && predicate_enabled && target_count==2u && !group0_target0 && !group0_target1) return false;
-#endif
     }
     if (!predicate_enabled) return true;
     if (target_count == 1u) return group0_target0 || group1_target0;
@@ -463,7 +461,6 @@ bool execute_kaleidoscope_route(
 }
 
 bool execute_kaleidoscope_ordered_route(uint first, uint second, inout RouteRngState state) {
-    bool pass = true;
     for (uint group = 0u; group < 2u; ++group) {
         uint target = group == 0u ? first : second;
         bool found = target == 0xffffffffu;
@@ -472,9 +469,9 @@ bool execute_kaleidoscope_ordered_route(uint first, uint second, inout RouteRngS
             uint card = roll_card(permutation_value(order, item), plan_value(7u), state.rewards);
             found = found || card == target;
         }
-        pass = pass && found;
+        if (!found) return false;
     }
-    return pass;
+    return true;
 }
 
 #if N_DIRECT_NESTED == 2
@@ -517,9 +514,7 @@ uint select_unused_meta(
 {
     uint offset = other_pool_meta.values[meta_index];
     uint length = other_pool_meta.values[meta_index + 1u];
-#if N_DIRECT_NESTED == 31 || N_DIRECT_NESTED == 33
     if (used_count == 0u) return length == 0u ? 0xffffffffu : other_card_ids.ids[offset + next_int(rng,length)];
-#endif
     uint available = 0u;
     for (uint index = 0u; index < length; ++index) {
         uint candidate = other_card_ids.ids[offset + index];

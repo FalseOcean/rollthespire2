@@ -17,12 +17,18 @@ internal sealed partial class QueryWorkbenchFrame
     private ModRuntimeSnapshot _runtime = null!;
     private SearchWorkspacePersistence _persistence = null!;
     private IProductionSearchSession? _session;
-    internal bool HasActiveSearch => _session is not null;
+    private ExactSearchExecutionRequest? _resultPlan;
+    private Task<ProductionExactSearchResult>? _manualValidation;
+    private SearchCandidate? _validatingCandidate;
+    private RolltheSpire2.Core.Diagnostics.SearchDiagnosticSummarySnapshot? _lastDiagnostics;
+    internal object? CaptureSearchDiagnostics() => _session?.GetDiagnosticSummary() ?? _lastDiagnostics;
+    internal bool HasActiveSearch => _session is not null || _persistence.HasSearchInFlight;
     internal void SyncSearchPreferences()
     {
         _planSelector?.Select(_persistence.Preferences.SearchMode == "CPU" ? 1 : 0);
         _analysisKey = "";
         UpdateDraftStatus();
+        if (_session is null) Refresh(_language, _text);
     }
     private readonly List<SearchCandidate> _results = [];
     private Button? _start;
@@ -220,7 +226,8 @@ internal sealed partial class QueryWorkbenchFrame
         try
         {
             var d=CaptureDraft().WithoutCapturedAuthority(); var q=d.Query;
-            if(_start is not null) _start.Disabled=_loadFailed || _presetBlocked.Count > 0;
+            if (_editorContextIssue.Length > 0) throw new InvalidOperationException(_editorContextIssue);
+            if(_start is not null) _start.Disabled=_loadFailed || _presetBlocked.Count > 0 || _persistence.HasSearchInFlight;
             string serialized=JsonSerializer.Serialize(d);
             if(!UpdateProbabilityPanel(d,serialized)) {
                 if(_start is not null)_start.Disabled=true;
@@ -250,29 +257,31 @@ internal sealed partial class QueryWorkbenchFrame
 
     private void StartSearch()
     {
-        if (_presetBlocked.Count > 0) return;
+        if (_presetBlocked.Count > 0 || _manualValidation is not null || _persistence.HasSearchInFlight) return;
         try
         {
             if (_loadFailed) throw new InvalidOperationException("integration.load_shape");
+            if (_editorContextIssue.Length > 0) throw new InvalidOperationException(_editorContextIssue);
             var draft=CaptureDraft();
             var compiled=draft.Compile(_runtime,out _);
             if(compiled.Status==QueryNormalizationStatus.Impossible || SearchFeasibilityAnalyzer.Analyze(compiled).IsImpossible) throw new InvalidOperationException("integration.impossible");
             UpdateProbabilityPanel(draft,JsonSerializer.Serialize(draft.WithoutCapturedAuthority()));
             _persistence.InitializeWorkbenchCursor();
             var execution=ExactSearchExecutionRequestFactory.Compile(compiled,new SearchRunOptions(_persistence.CurrentNextCursorSeed,
-                long.MaxValue,_target,SearchWorkers));
+                long.MaxValue,_target,SearchWorkers, SkipExactValidation: _persistence.Preferences.SkipExactValidation));
             if(!execution.Success || execution.Plan is null) throw new InvalidOperationException(execution.Issue);
             _persistence.SaveWorkbench(draft);
             var session=FamilyExecutionCoordinator.Start(execution.Plan,queueCapacity:64,
                 gpuAvailable:_persistence.Preferences.SearchMode=="CPU"?false:null);
-            _session=session; _activeFingerprint=compiled.SemanticFingerprint;
+            _session=session; _lastDiagnostics=null; _activeFingerprint=compiled.SemanticFingerprint; _resultPlan=execution.Plan;
+            _persistence.TrackSearch(session);
             _probabilityPreview.Invalidate();
             _probabilityPending = false;
             RecordTemporaryPreset(draft);
             BeginRuntimeProgress(session.EtaProjection, session.GetProgress());
             _results.Clear(); InstallResultContext(draft); _persistence.ResetWorkspaceForSuccessfulStart(_activeFingerprint); _showResults=true;
             RenderResults(); LockForRun(true);
-            RuntimeLog.Info("workbenchProductionStart=true;terminal=ProductionExact;fingerprint="+_activeFingerprint);
+            RuntimeLog.Info("workbenchProductionStart=true;terminal="+(execution.Plan.RunOptions.SkipExactValidation?"UnverifiedCandidates":"ProductionExact")+";fingerprint="+_activeFingerprint);
         }
         catch(Exception ex) { if(_status is not null) _status.Text=Explain(ex); }
     }
@@ -300,10 +309,12 @@ internal sealed partial class QueryWorkbenchFrame
     private void RenderResults()
     {
         if(_resultRows is null) return;
+        if (_start is not null && _session is null) _start.Disabled = _manualValidation is not null;
         foreach(var child in _resultRows.GetChildren()) { _resultRows.RemoveChild(child); child.QueueFree(); }
         var header = new HBoxContainer();
         header.AddThemeConstantOverride("separation", 12);
-        var title = _p.Label(_text.Format("workflow.results_count", _results.Count), 22);
+        bool unverifiedMode = _resultPlan?.RunOptions.SkipExactValidation == true;
+        var title = _p.Label(unverifiedMode ? _text.Format("workflow.candidates_count", _results.Count) : _text.Format("workflow.results_count", _results.Count), 22);
         title.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         header.AddChild(title);
         if(_session is null)
@@ -315,6 +326,11 @@ internal sealed partial class QueryWorkbenchFrame
             header.AddChild(back);
         }
         _resultRows.AddChild(header);
+        if (unverifiedMode)
+        {
+            var warning = _p.Label(_text.Get("workflow.candidates_warning"), 16, true);
+            warning.AutowrapMode = TextServer.AutowrapMode.WordSmart; _resultRows.AddChild(warning);
+        }
         if (_results.Count == 0)
         {
             var empty = _p.Label(_text.Get(_session is null ? "workflow.results.empty" : "workflow.results.waiting"), 17, true);
@@ -332,7 +348,7 @@ internal sealed partial class QueryWorkbenchFrame
             panel.AddThemeStyleboxOverride("panel", panelStyle);
             var row = new HBoxContainer();
             row.AddThemeConstantOverride("separation", 8);
-            var seedLabel = _p.Label(seed, 17);
+            var seedLabel = _p.Label(seed + (unverifiedMode ? " · " + _text.Get(result.IsUnverified ? "workflow.unverified" : "workflow.verified") : ""), 17);
             seedLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
             seedLabel.VerticalAlignment = VerticalAlignment.Center;
             row.AddChild(seedLabel);
@@ -347,11 +363,18 @@ internal sealed partial class QueryWorkbenchFrame
             analyze.AddThemeFontSizeOverride("font_size", 14);
             analyze.Pressed += () =>
             {
-                if (result.Document.Party is not null && resultPartyDraft is { } partyDraft)
+                if (resultPartyDraft is { } partyDraft)
                     OpenPartyInformation?.Invoke(result, partyDraft);
                 else OpenSeedInformation?.Invoke(result);
             };
             row.AddChild(analyze);
+            if (result.IsUnverified)
+            {
+                var validate = _p.Button(_text.Get("workflow.validate"));
+                validate.CustomMinimumSize = new(72, 32); validate.AddThemeFontSizeOverride("font_size", 14);
+                validate.Disabled = _session is not null || _manualValidation is not null;
+                validate.Pressed += () => ValidateCandidate(result); row.AddChild(validate);
+            }
             panel.AddChild(row);
             _resultRows.AddChild(panel);
         }
@@ -360,6 +383,7 @@ internal sealed partial class QueryWorkbenchFrame
     }
     private void PollProduction(double delta)
     {
+        PollCandidateValidation();
         if (_receiptRemaining>0 && _session is null)
         { _receiptRemaining-=delta; if(_receiptRemaining<=0 && _status is not null && string.IsNullOrEmpty(_lastIssue)) _status.Text=""; }
         if(_session is { } session)
@@ -384,6 +408,8 @@ internal sealed partial class QueryWorkbenchFrame
                     _persistence.ObserveSafeNextCursor(finalNext);
                 if (session.TryGetSafeNextOrdinal(out var end) && end == Beta110SeedCodec.SpaceSize)
                     _persistence.CommitEndOfSpaceWrap();
+                _lastDiagnostics=session.GetDiagnosticSummary();
+                _persistence.ReleaseSearch(session);
                 _session=null; _persistence.FlushAll(); _=session.DisposeAsync();
                 if(_status is not null) _status.Text=_text.Get(progress.State==SearchRunState.Faulted?"integration.failed":progress.State==SearchRunState.Cancelled?"integration.stopped":"integration.completed")+
                     (string.IsNullOrEmpty(progress.FailureCode)?"":"\n"+progress.FailureCode);

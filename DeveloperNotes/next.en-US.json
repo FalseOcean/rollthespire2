@@ -1,0 +1,55 @@
+{
+  "Id": "next",
+  "Title": "Future Plans",
+  "Summary": "Version 1.3.0 adds many new capabilities. Next, I would like to improve how they work in complex environments and continue improving search performance.",
+  "Blocks": [
+    {
+      "Type": "Heading",
+      "Text": "Search Cost Estimation and Optimization in Complex Environments"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "In the near term, I will focus on [b]multiplayer, mods, and partial unlocks[/b], especially search performance when all three are combined."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "These environments change card pools, available options, and query execution costs. I would like to collect more performance data, improve search cost estimates and execution choices, and bring speed and ETA estimates closer to actual behavior."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "I will also check whether broader compatibility has added overhead to ordinary single-player searches, and optimize any performance regressions."
+    },
+    {
+      "Type": "Heading",
+      "Text": "Prediction Further Along a Route"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "In the longer term, I would like to continue researching route prediction."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Players could draw a route they want to follow, combine it with their choices and known state, and view possible outcomes further ahead in the seed predictor or during an actual run."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "This requires further work on how events, rewards, shops, and player choices along the route affect one another, gradually extending the range of reliable prediction."
+    },
+    {
+      "Type": "Heading",
+      "Text": "GPU Search for Map Nodes"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Another direction I would like to explore is GPU search for map nodes and related conditions."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Map filtering currently relies mainly on the CPU. I would like to investigate which calculations are suitable for the GPU and whether moving them would produce a meaningful improvement in search speed."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "These are the current development directions. Their order and scope will change with research findings and feedback; there is no fixed completion schedule."
+    }
+  ]
+}

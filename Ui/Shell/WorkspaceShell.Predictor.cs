@@ -36,10 +36,10 @@ internal sealed partial class WorkspaceShell
             saved.PreferredRewardRouteGroupId, notify: false);
         _predictor.SetSeedText(initialSeed ?? saved.Seed ?? "", commit: true);
         _predictor.ApplyLocalization(JsonUiTextProvider.CreatePredictorUi13(_languageCode), RuntimeGameContentNameResolver.Create(_languageCode));
-        _predictorController.RestorePartyConfiguration(saved, initialSeed is null);
+        if(_liveRun==null) _predictorController.RestorePartyConfiguration(saved, initialSeed is null);
         // Restore a valid saved seed directly into the existing reactive prediction path.
         if (initialSeed is not null ||
-            _runtime.Profile.TryCanonicalizeSeed(_predictor.CurrentDraft.RawSeed, out _, out _))
+            (_liveRun==null && _runtime.Profile.TryCanonicalizeSeed(_predictor.CurrentDraft.RawSeed, out _, out _)))
             _predictorController.AnalyzeCurrentDraft();
     }
 }

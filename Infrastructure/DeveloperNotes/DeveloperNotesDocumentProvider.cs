@@ -18,7 +18,7 @@ public sealed class DeveloperNotesDocumentProvider
 {
     private readonly Func<string, Stream?> _documentStreamFactory;
 
-    public const int SupportedSchemaVersion = 1;
+    public const int SupportedSchemaVersion = 2;
     public const string EnglishLocale = "en-US";
     public const string ChineseLocale = "zh-CN";
 
@@ -94,19 +94,36 @@ public sealed class DeveloperNotesDocumentProvider
 
         try
         {
-            using Stream? stream = _documentStreamFactory(locale);
+            using Stream? stream = _documentStreamFactory("index");
             if (stream is null)
             {
-                issue = $"MissingBundledDocument:{locale}";
+                issue = "MissingBundledIndex";
                 return false;
             }
 
-            DeveloperNotesDocument? parsed = JsonSerializer.Deserialize<DeveloperNotesDocument>(stream, JsonOptions);
-            if (parsed is null)
+            var index = JsonSerializer.Deserialize<DeveloperNotesIndex>(stream, JsonOptions);
+            if (index is null || index.Chapters is null)
             {
-                issue = $"EmptyDocument:{locale}";
+                issue = "EmptyIndex";
                 return false;
             }
+
+            var chapters = new List<DeveloperNotesChapter>();
+            foreach (var entry in index.Chapters)
+            {
+                if (entry is null || !DeveloperNotesChapterIds.All.Contains(entry.Id) ||
+                    string.IsNullOrWhiteSpace(entry.AcknowledgementVersion))
+                { issue = "InvalidChapterEntry"; return false; }
+                using Stream? article = _documentStreamFactory($"{entry.Id}.{locale}");
+                if (article is null) { issue = $"MissingChapter:{entry.Id}:{locale}"; return false; }
+                var chapter = JsonSerializer.Deserialize<DeveloperNotesChapter>(article, JsonOptions);
+                if (chapter is null || chapter.Id != entry.Id)
+                { issue = $"InvalidChapterIdentity:{entry.Id}:{locale}"; return false; }
+                chapters.Add(chapter with { AcknowledgementVersion = entry.AcknowledgementVersion,
+                    RequiresAcknowledgement = entry.RequiresAcknowledgement });
+            }
+            var parsed = new DeveloperNotesDocument(index.SchemaVersion, index.ContentVersion,
+                index.TargetModVersion, index.UpdatedAt, chapters);
 
             if (!TryValidate(parsed, out issue))
             {
@@ -187,11 +204,6 @@ public sealed class DeveloperNotesDocumentProvider
             if (!seen.Add(chapter.Id))
             {
                 issue = $"DuplicateChapter:{chapter.Id}";
-                return false;
-            }
-            if (!string.Equals(chapter.Id, DeveloperNotesChapterIds.All[chapterIndex], StringComparison.Ordinal))
-            {
-                issue = $"ChapterOrderMismatch:{chapter.Id}";
                 return false;
             }
             if (string.IsNullOrWhiteSpace(chapter.Title) || chapter.Blocks is null)

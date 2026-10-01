@@ -34,7 +34,7 @@ internal static class ModRuntime
                 compatibility,
                 vectors,
                 assemblyEvidence,
-                "RolltheSpire2 1.3.2: Query -> Filter -> Predictor -> Query validation -> Result. Runtime version and authority identities remain separate.");
+                "RolltheSpire2 1.3.3: Query -> Filter -> Predictor -> Query validation -> Result. Runtime version and authority identities remain separate.");
 
             RuntimeLog.Info(
                 $"Runtime initialized: game={detection.DisplayVersion}; profile={profile.ProfileId}; " +

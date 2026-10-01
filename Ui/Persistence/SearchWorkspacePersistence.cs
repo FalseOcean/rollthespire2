@@ -25,7 +25,7 @@ namespace RolltheSpire2.Ui.Persistence;
 /// draft/result DTOs, Predictor UI context, cursor state, and environment identity.
 /// Predictor result/authority, Fast/GPU/Exact/Witness objects are never serialized here.
 /// </summary>
-internal sealed class SearchWorkspacePersistence
+internal sealed partial class SearchWorkspacePersistence
 {
     internal const int SchemaVersion = 1;
     private const double PreferenceDebounceSeconds = 0.60;
@@ -74,6 +74,26 @@ internal sealed class SearchWorkspacePersistence
     }
 
     public UserPreferencesDocument Preferences => _preferences;
+
+    internal static int ResolveSearchWorkers(int? savedBudget, int logicalProcessors) =>
+        Math.Clamp(savedBudget ?? Math.Max(1, logicalProcessors / 2), 1, 64);
+
+    public void SetSkipExactValidation(bool enabled)
+    {
+        _preferences.SkipExactValidation = enabled;
+        MarkPreferencesDirty(); FlushPreferences();
+    }
+
+    public bool NeedsNotesAcknowledgement(RolltheSpire2.Presentation.DeveloperNotes.DeveloperNotesChapter chapter) =>
+        chapter.RequiresAcknowledgement &&
+        _preferences.ReadNotesVersions.GetValueOrDefault(chapter.Id) != chapter.AcknowledgementVersion;
+
+    public void AcknowledgeNotesChapter(RolltheSpire2.Presentation.DeveloperNotes.DeveloperNotesChapter chapter)
+    {
+        if (!chapter.RequiresAcknowledgement || string.IsNullOrWhiteSpace(chapter.AcknowledgementVersion)) return;
+        _preferences.ReadNotesVersions[chapter.Id] = chapter.AcknowledgementVersion;
+        MarkPreferencesDirty(); FlushPreferences();
+    }
 
     public void SetShowInRunPredictionEntry(bool enabled)
     {
@@ -312,13 +332,17 @@ internal sealed class SearchWorkspacePersistence
             CharacterKey = candidate.CharacterKey.Serialized,
             Ascension = candidate.Ascension,
             QueryFingerprint = queryFingerprint ?? string.Empty,
-            Party = candidate.Document.Party,
+            Party = candidate.Document?.Party,
+            IsUnverified = candidate.IsUnverified,
             WitnessOpeningRouteId = routeWitness?.OpeningRouteId ?? string.Empty
         };
-        if (_workspace.Results.Any(existing =>
+        var previous = _workspace.Results.FirstOrDefault(existing =>
                 string.Equals(existing.Seed, result.Seed, StringComparison.Ordinal) &&
-                string.Equals(existing.QueryFingerprint, result.QueryFingerprint, StringComparison.Ordinal)))
+                string.Equals(existing.QueryFingerprint, result.QueryFingerprint, StringComparison.Ordinal));
+        if (previous is not null)
         {
+            if (previous.IsUnverified && !result.IsUnverified)
+            { _workspace.Results[_workspace.Results.IndexOf(previous)] = result; MarkWorkspaceDirty(); }
             return;
         }
         _workspace.Results.Add(result);
@@ -479,6 +503,13 @@ internal sealed class SearchWorkspacePersistence
         _preferences.Language = string.Equals(_preferences.Language, "zh", StringComparison.OrdinalIgnoreCase) ? "zh" :
             string.Equals(_preferences.Language, "en", StringComparison.OrdinalIgnoreCase) ? "en" : string.Empty;
         _preferences.SearchMode = string.Equals(_preferences.SearchMode, "CPU", StringComparison.OrdinalIgnoreCase) ? "CPU" : "Auto";
+        _preferences.WorkbenchFlags ??= new();
+        _preferences.ReadNotesVersions ??= new();
+        // The old global button only acknowledged release notes, not positioning.
+        if (!string.IsNullOrWhiteSpace(_preferences.ReadReleaseNotesVersion))
+            _preferences.ReadNotesVersions.TryAdd("release", _preferences.ReadReleaseNotesVersion);
+        if (_preferences.SearchWorkerBudget is { } budget)
+            _preferences.SearchWorkerBudget = ResolveSearchWorkers(budget, System.Environment.ProcessorCount);
         _preferences.LastPage = string.IsNullOrWhiteSpace(_preferences.LastPage)
             ? "Analysis"
             : _preferences.LastPage.Trim();
@@ -657,6 +688,9 @@ internal sealed class UserPreferencesDocument
     public bool ShowOfficialPresets { get; set; } = true;
     // Opt-in, including preferences saved before the in-run entry was introduced.
     public bool ShowInRunPredictionEntry { get; set; }
+    public bool SkipExactValidation { get; set; }
+    public string ReadReleaseNotesVersion { get; set; } = string.Empty;
+    public Dictionary<string, string> ReadNotesVersions { get; set; } = new();
     public string LastPage { get; set; } = "Analysis";
     public bool ActInformationGuideExpanded { get; set; }
     public bool ActInformationIdentityGuideExpanded { get; set; }
@@ -714,6 +748,7 @@ internal sealed class SearchWorkspaceDocument
 
 internal sealed class PersistedSearchResult
 {
+    public bool IsUnverified { get; set; }
     public PartySeedInformation? Party { get; set; }
     public string Seed { get; set; } = string.Empty;
     public string CharacterKey { get; set; } = string.Empty;

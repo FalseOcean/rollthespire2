@@ -58,6 +58,7 @@ internal sealed partial class WorkspaceShell
         Capture("Godot", () => Engine.GetVersionInfo()["string"].AsString());
         Capture("RenderingDriver", () => RenderingServer.GetCurrentRenderingDriverName());
         Capture("GPU", () => RenderingServer.GetVideoAdapterName());
+        Capture("SearchDiagnostics", () => _references?.CaptureSearchDiagnostics());
         Capture("Mods", () => MegaCrit.Sts2.Core.Modding.ModManager.Mods.Select(m => new {
             Id = m.manifest?.id, Name = m.manifest?.name, Version = m.manifest?.version,
             State = m.state.ToString(), Source = m.modSource.ToString() }).ToArray());

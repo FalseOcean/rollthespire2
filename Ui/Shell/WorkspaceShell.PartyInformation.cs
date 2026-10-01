@@ -14,6 +14,7 @@ internal sealed partial class WorkspaceShell
         if (_predictor is null || _predictorController is null) return;
         _predictorController.SetPartyDraft(null);
         _predictorController.ClearSeedLibraryOverrides();
+        _predictorController.ImportSearchOpening(candidate, _references?.ResultDraft, _references?.ResultSeedContext);
 
         string route = candidate.Witnesses.FirstOrDefault(w => !string.IsNullOrWhiteSpace(w.OpeningRouteId))
             ?.OpeningRouteId ?? string.Empty;

@@ -54,7 +54,8 @@ internal sealed partial class WorldFamily : IFamilyInvocation
         _request = request;
         Replay = replay;
         _survival = WorldPhysicalPricing.ResolveSurvival(request);
-        _gpuPlan = WorldFamilyGpuPlan.Supports(Replay) ? new WorldFamilyGpuPlan(Replay) : null;
+        _gpuPlan = WorldFamilyGpuPlan.Supports(Replay) ? new WorldFamilyGpuPlan(Replay,
+            request.Authority.PlayersCount == 1 && request.Authority.WorldAuthority?.Beta109Generation is { IsMultiplayer: false }) : null;
         _cpu = new(request, FamilyId, "W.World.Cpu.Progression.20260907.v1");
         RuntimeLog.TryBackgroundInfo($"worldFamilyReady=true;family={FamilyId};physicalRevision={ConditionPerformance.PhysicalImplementationRevision};" +
             $"actHorizon={Replay.Plan.MaxRequiredAct};finalHorizon={Replay.Plan.RequiredFarthestStage};" +

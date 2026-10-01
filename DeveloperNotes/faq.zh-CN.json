@@ -1,0 +1,19 @@
+{
+  "Id": "faq",
+  "Title": "常见问题",
+  "Summary": "当前版本下玩家经常询问的问题。",
+  "Blocks": [
+    {
+      "Type": "Heading",
+      "Text": "Developer Notes 是什么？"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "这是随当前 Mod 版本一起发布的开发者手记。"
+    },
+    {
+      "Type": "Callout",
+      "Text": "完整历史仍由 Steam Release Notes 与项目 CHANGELOG 等渠道承担；这里不是历史数据库。"
+    }
+  ]
+}

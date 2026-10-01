@@ -8,11 +8,29 @@ internal sealed class TransformationAggregateGpuPlan
     internal const int WindowCapacity=1<<20;
     internal const int FullTargetCapacity=1<<24;
     internal const string FullTargetRevision="T.Gpu.FullTarget.LeafyFirst.Carry8.20260922.v2";
+    internal const string GenericRevision="T.Gpu.InitialBasicsAggregate.PackedSeed12.OpeningConstant.20260929.v4";
     internal static string Experiment => Environment.GetEnvironmentVariable("RT2_T_FULL_TARGET_EXPERIMENT") ?? "";
+    internal static string BonesControl
+    {
+        get
+        {
+            string mode = Environment.GetEnvironmentVariable("RT2_T_BONES_EXPERIMENT") ?? "";
+            return mode is "" or "baseline" or "optimized" ? mode : throw new InvalidOperationException("UnknownTBonesControl:" + mode);
+        }
+    }
+    // Baseline is retained for controlled comparisons; production uses the admitted
+    // numerical implementation without imposing an allocation/order on the planner.
+    internal static bool UsesBonesOptimization(TransformationAggregateNumericalPlan p) => BonesControl != "baseline" && p.Closed &&
+        p.Condition.Opening == TransformationOpening.BonesLeafyNewLeaf && p.Neow is { } n &&
+        n.Authority.BonesEligibleRelicIds.Distinct().Count() == n.Authority.BonesEligibleRelicIds.Length;
+    private static bool AllDrawsRequired(TransformationAggregateNumericalPlan p) => p.Condition.Predicate == TransformationAggregatePredicate.RareCountAtLeast
+        ? p.Condition.MinimumRareCount == p.Condition.OpportunityCount
+        : p.Condition.TargetMultiset.Count == p.Condition.OpportunityCount;
     internal static bool UsesFullTarget(TransformationAggregateNumericalPlan p) => Experiment != "baseline" && p.Closed &&
-        p.Condition.Opening == TransformationOpening.LeafyPoultice &&
-        p.Condition.Predicate == TransformationAggregatePredicate.ContainsMultiset &&
-        p.Condition.TargetMultiset.Count == p.Condition.OpportunityCount;
+        (p.Condition.Opening == TransformationOpening.LeafyPoultice &&
+         p.Condition.Predicate == TransformationAggregatePredicate.ContainsMultiset &&
+         p.Condition.TargetMultiset.Count == p.Condition.OpportunityCount || UsesBonesOptimization(p) && AllDrawsRequired(p));
+    internal bool BonesOptimized { get; }
     internal bool FullTarget { get; }
     internal int SeedsPerInvocation => FullTarget ? 8 : 1;
     internal int Capacity => FullTarget && Experiment != "full1m" ? FullTargetCapacity : WindowCapacity;
@@ -21,6 +39,7 @@ internal sealed class TransformationAggregateGpuPlan
     internal TransformationAggregateGpuPlan(TransformationAggregateNumericalPlan p)
     {
         var n=p.Neow; var groups=p.DrawGroups;
+        BonesOptimized = UsesBonesOptimization(p);
         FullTarget = UsesFullTarget(p);
         Supported=p.Closed && (n is null || n.Authority.PlayerSlotIndex == 0 && n.Authority.EligibleCurseRelicIds.Length is >0 and <=32 &&
             (!p.Condition.IsBones || n.Authority.BonesEligibleRelicIds.Length is >=2 and <=32)) && groups.Length<=7 && groups.All(g=>g.Pools.Length<=2);
@@ -74,6 +93,25 @@ internal sealed class TransformationAggregateGpuPlan
             rng = "#define T_FULL_TARGET\n" + rng[..rng.IndexOf("uint64_t prime1()",StringComparison.Ordinal)] +
                 donor[donor.IndexOf("uint alphabet_byte(",StringComparison.Ordinal)..donor.IndexOf("uint64_t identity_permutation(",StringComparison.Ordinal)];
         }
-        return FamilyGpuComputeUtility.LoadEmbeddedShader("TransformationAggregate.comp.glsl").Replace("/*__RNG__*/",rng,StringComparison.Ordinal);
+        else
+        {
+            // Keep the existing RNG body, using the shared canonical packed
+            // visible-seed codec/xxHash instead of the loop-and-array codec.
+            rng = rng[..rng.IndexOf("uint64_t prime1()",StringComparison.Ordinal)] +
+                FamilyGpuComputeUtility.LoadEmbeddedShader("VisibleSeedRootHashCommon.glsl");
+        }
+        string body=FamilyGpuComputeUtility.LoadEmbeddedShader("TransformationAggregate.comp.glsl");
+        if (!FullTarget)
+        {
+            // The opening mode is immutable for this packed plan. Let the shader
+            // compiler remove other opening bodies; pool/target values stay data.
+            const string seam="uint mode=plan.v[0];";
+            if (!body.Contains(seam,StringComparison.Ordinal)) throw new InvalidOperationException("T.OpeningShaderSeam");
+            body=body.Replace(seam,"uint mode="+Buffers[0][0].ToString(System.Globalization.CultureInfo.InvariantCulture)+"u;",StringComparison.Ordinal);
+        }
+        string defines = BonesOptimized ? "\n#define T_BONES_TRACKED" : "";
+        if (BonesOptimized && FullTarget && Buffers[0][1] == 0) defines += "\n#define T_ALL_RARE";
+        body = body.Replace("#version 450", "#version 450" + defines, StringComparison.Ordinal);
+        return body.Replace("/*__RNG__*/",rng,StringComparison.Ordinal);
     }
 }

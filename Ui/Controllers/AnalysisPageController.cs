@@ -164,8 +164,10 @@ internal sealed partial class AnalysisPageController
                 return;
             }
 
-            request = request!.WithComplexBonesDeckInteractions(_predictionSettings.EnableComplexBonesDeckInteractions);
+            request = request!.WithComplexBonesDeckInteractions(_predictionSettings.EnableComplexBonesDeckInteractions ||
+                _searchOpeningSeed == draft.RawSeed && _searchOpeningQuery.StructuredOpeningEffects.Count > 0);
             SeedPredictionDocument document = RuntimeProfileRegistry.Predict(_runtime.Detection, request!);
+            ApplySearchOpening(request, document);
             if (_strictLibrarySeed == document.CanonicalSeed && _librarySoloSelection is { } savedSelection)
                 ValidateLibrarySelection(document.Sections.SelectMany(s => s.NeowChoices).ToArray(), savedSelection.ChoiceSlot, savedSelection.Route);
             var predictionFailures = document.Diagnostics.Where(d => d.Code == PredictionDiagnosticCodes.Exception).Select(d => d.Value).ToArray();

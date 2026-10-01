@@ -14,7 +14,7 @@ internal sealed partial class WorkspaceResultTile : Control
 
     public WorkspaceResultTile(WorkspacePalette palette, IGameIconResolver icons,
         IGameContentNameResolver names, IUiTextProvider text, ModelKey? key,
-        GameContentKind kind, Action choose, Action clear)
+        GameContentKind kind, Action choose, Action clear, bool allowClear = true, string? displayNameOverride = null)
     {
         Size = new(TileWidth, TileHeight);
         CustomMinimumSize = Size;
@@ -23,7 +23,7 @@ internal sealed partial class WorkspaceResultTile : Control
         var tile = palette.Button(key.HasValue ? string.Empty : "+");
         tile.Size = Size;
         tile.CustomMinimumSize = Size;
-        tile.AccessibilityName = key is { } named ? names.Resolve(named, kind) : text.Get("picker.any_choose_result");
+        tile.AccessibilityName = displayNameOverride ?? (key is { } named ? names.Resolve(named, kind) : text.Get("picker.any_choose_result"));
         tile.Pressed += choose;
         AddChild(tile);
 
@@ -33,7 +33,7 @@ internal sealed partial class WorkspaceResultTile : Control
             return;
         }
 
-        string displayName = names.Resolve(value, kind);
+        string displayName = displayNameOverride ?? names.Resolve(value, kind);
         tile.TooltipText = displayName;
         var name = palette.Label(displayName, 16);
         name.Position = new(6, 5);
@@ -55,6 +55,7 @@ internal sealed partial class WorkspaceResultTile : Control
         };
         tile.AddChild(artwork);
 
+        if (!allowClear) return;
         var removeHost = new Control
         {
             Position = new(TileWidth - 22, 2),

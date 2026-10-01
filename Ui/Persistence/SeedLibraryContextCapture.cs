@@ -34,7 +34,7 @@ internal static class SeedLibraryContextCapture
     {
         if (context.Mode == WorldGameMode.Multiplayer)
         {
-            var party = candidate.Document.Party ?? throw new InvalidOperationException("SeedLibrary.PartyWitnessMissing");
+            var party = candidate.Document?.Party ?? throw new InvalidOperationException("SeedLibrary.PartyWitnessMissing");
             if (party.Players.Count != context.Players.Count || party.Ascension != context.Ascension || party.Version != context.GameVersion ||
                 party.Players.Where((p, i) => p.Slot != context.Players[i].Slot || p.Character != context.Players[i].Character ||
                     p.UnlockSource != context.Players[i].UnlockSource).Any())

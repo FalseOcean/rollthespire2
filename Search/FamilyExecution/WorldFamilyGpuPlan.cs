@@ -14,16 +14,19 @@ internal sealed class WorldFamilyGpuPlan
     internal int GroupingK { get; } = 4;
     internal long GroupingWorkspaceBytes => (GroupingK - 1) * (Capacity * 8L + 64) + (GroupingK > 1 ? GroupingK * 32 : 0);
     internal int ScratchWords { get; }
+    private readonly bool _soloConstants;
     internal long ScratchBytes => Math.Max(4, Capacity * ScratchWords * 4L);
     internal long WorkspaceBytes => Capacity * 8L + ScratchBytes + 64 + GroupingWorkspaceBytes +
         Buffers.Where((_, i) => i is not (0 or 12 or 16 or 17 or 18)).Sum(b => Math.Max(4, b.Length * 4L));
     internal string Revision(bool compact) => "W.World.Gpu." + (VariantOnly ? "Variant" : "Progression") +
-        (compact ? ".CompactAbi1" : ".Dense") +  $".K{GroupingK}.CanonicalAbi1Ready.20260907.v2";
+        (compact ? ".CompactAbi1" : ".Dense") + $".K{GroupingK}." +
+        (_soloConstants ? "SoloConstants.CanonicalAbi1Ready.20260929.v3" : "CanonicalAbi1Ready.20260907.v2");
     internal bool VariantOnly { get; }
-    internal WorldFamilyGpuPlan(WorldFamilyReplay replay)
+    internal WorldFamilyGpuPlan(WorldFamilyReplay replay, bool specializeSolo = false)
     {
         var w = replay.Plan;
         VariantOnly = w.MaxRequiredAct == 0;
+        _soloConstants = specializeSolo && !VariantOnly;
         WorldFamilyGpuPacking.PackWorldPlan(w, out var sm, out var si, out var map,
             out var acts, out var encounters, out var conflicts, out var bosses, out var predicates, out var targets);
         var ps = predicates.ToList(); var ids = targets.ToList();
@@ -72,9 +75,22 @@ internal sealed class WorldFamilyGpuPlan
         // Retain the actual donor numerical implementation, not a second copy.
         string rng = donor[donor.IndexOf("uint64_t s0;",StringComparison.Ordinal)..donor.IndexOf("void write_shared_state",StringComparison.Ordinal)];
         string numerical = donor[donor.IndexOf("bool encounter_eligible",StringComparison.Ordinal)..donor.IndexOf("void main()",StringComparison.Ordinal)];
-        return FamilyGpuComputeUtility.LoadFamilyShaderWithVisibleSeedRootHash("WorldFamily.comp.glsl")
+        string body=FamilyGpuComputeUtility.LoadFamilyShaderWithVisibleSeedRootHash("WorldFamily.comp.glsl")
             .Replace("/*__W_DONOR__*/",rng+numerical,StringComparison.Ordinal)
             .Replace("uint sharedIds[512]",$"uint sharedIds[{Math.Max(1,Buffers[2][5])}]",StringComparison.Ordinal)
             .Replace("uint maxAct=plan_meta_buffer.values[6u];", VariantOnly ? "return true; uint maxAct=0u;" : "uint maxAct=plan_meta_buffer.values[6u];",StringComparison.Ordinal);
+        if (_soloConstants)
+        {
+            // These packed values cannot change during an executor's lifetime.
+            // No target identity or pool member becomes a shader constant.
+            const string horizon="uint maxAct=plan_meta_buffer.values[6u];", second="bool second=plan_meta_buffer.values[7u]!=0u;";
+            if (!body.Contains(horizon,StringComparison.Ordinal) || !body.Contains(second,StringComparison.Ordinal))
+                throw new InvalidOperationException("W.SoloConstantsShaderSeam");
+            body=body.Replace(horizon,
+                "uint maxAct="+Buffers[2][6].ToString(System.Globalization.CultureInfo.InvariantCulture)+"u;",StringComparison.Ordinal)
+                .Replace(second,
+                    "bool second="+(Buffers[2][7]!=0 ? "true" : "false")+";",StringComparison.Ordinal);
+        }
+        return body;
     }
 }

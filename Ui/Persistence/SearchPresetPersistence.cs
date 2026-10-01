@@ -545,8 +545,19 @@ internal sealed class SearchPresetStore
 
         var ids = new HashSet<string>(StringComparer.Ordinal);
         var names = new HashSet<string>(StringComparer.CurrentCultureIgnoreCase);
-        foreach (string path in Directory.EnumerateFiles(_directory, "*.json", SearchOption.TopDirectoryOnly)
-                     .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+        string[] paths;
+        try
+        {
+            paths = Directory.EnumerateFiles(_directory, "*.json", SearchOption.TopDirectoryOnly)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray();
+        }
+        catch (Exception ex)
+        {
+            _loadIssues.Add(LoadIssue("search_presets", LoadIssueReason(ex)));
+            RuntimeLog.Warn($"searchPresetDirectoryReadFailed=true;failSoft=true;issue={ex.GetType().Name}:{Compact(ex.Message)}");
+            return;
+        }
+        foreach (string path in paths)
         {
             string fileName = Path.GetFileName(path);
             try

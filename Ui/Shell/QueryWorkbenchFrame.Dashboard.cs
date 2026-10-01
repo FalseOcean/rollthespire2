@@ -26,7 +26,7 @@ internal sealed partial class QueryWorkbenchFrame
             column.AddThemeConstantOverride("separation", 6); controls.AddChild(column);
             column.AddChild(_p.Label(title, 15, true)); return column;
         }
-        var target = Field(_language == "zh" ? "结果数量" : "Results");
+        var target = Field(_persistence.Preferences.SkipExactValidation ? _text.Get("workflow.candidate_target") : (_language == "zh" ? "结果数量" : "Results"));
         _targetCount = new SpinBox { MinValue = 1, MaxValue = 1000, Value = _target,
             SizeFlagsHorizontal = SizeFlags.ExpandFill, CustomMinimumSize = new(0, 38) };
         _targetCount.AddThemeFontSizeOverride("font_size", 17);
@@ -39,6 +39,11 @@ internal sealed partial class QueryWorkbenchFrame
         _planSelector.ItemSelected += index => { _persistence.SetWorkbenchSearchMode(index == 1 ? "CPU" : "Auto"); _analysisKey = ""; };
         _start = _p.Button(_text.Get("query.action.start"), primary: true); _start.CustomMinimumSize = new(0, 46);
         _start.Pressed += () => { if (_session is not null) _session.Cancel(); else StartSearch(); }; sidebar.AddChild(_start);
+        if (_persistence.Preferences.SkipExactValidation)
+        {
+            var notice = _p.Label(_text.Get("workflow.candidate_mode"), 15, true);
+            notice.AutowrapMode = TextServer.AutowrapMode.WordSmart; sidebar.AddChild(notice);
+        }
 
         var scroll = new ScrollContainer { Name = "SearchInformationScroll", SizeFlagsVertical = SizeFlags.ExpandFill,
             HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
@@ -72,6 +77,8 @@ internal sealed partial class QueryWorkbenchFrame
 
     private void PresentExpectations(double? time, double? probability, double? rate)
     {
+        if (_showResults ? _resultPlan?.RunOptions.SkipExactValidation == true : _persistence.Preferences.SkipExactValidation)
+        { time = null; rate = null; }
         string[] values = [probability is null ? (_language == "zh" ? "未知" : "Unknown") : Rarity(probability), Rate(rate), Duration(time)];
         for (int i = 0; i < values.Length; i++)
             if (_expectationValues[i] is { } label) { label.Text = values[i]; label.TooltipText = values[i]; }

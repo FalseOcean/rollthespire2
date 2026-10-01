@@ -16,16 +16,19 @@ internal sealed partial class NeowFamily : IFamilyInvocation
     private readonly FamilyCpuExecution _physical;
     private readonly bool _conditional;
     private readonly ExactSearchExecutionRequest _request;
+    private readonly NeowTransformationComposite? _transformations;
+    private readonly double? _transformationJoint, _givenTransformations;
     private readonly NeowFamilyGpuPlan? _gpuPlan;
-    internal NeowFamilyGpuPlan? GpuPlan => _composite is null ? _gpuPlan : null;
+    internal NeowFamilyGpuPlan? GpuPlan => _composite is null && _transformations is null ? _gpuPlan : null;
     internal NeowReplayPlan PricingReplayPlan => _plan;
     internal NeowCapsuleComposite? PricingComposite => _composite;
-    public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest request) => NeowPhysicalPricing.Quote(this, request);
-    bool IFamilyInvocation.CanBindPrivateSerial => _gpuPlan is not null && _composite is null;
+    public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest request) => _transformations is null
+        ? NeowPhysicalPricing.Quote(this, request) : NeowTransformationPricing.Joint(_transformations, request);
+    bool IFamilyInvocation.CanBindPrivateSerial => _gpuPlan is not null && _composite is null && _transformations is null;
     FamilyPrivateGpuExecution IFamilyInvocation.BindPrivateSerial(Godot.RenderingDevice rd,
         PrivateOrdinalBuffer? input, PrivateOrdinalBuffer? output)
     {
-        if (_gpuPlan is null || _composite is not null) throw new InvalidOperationException("N.PrivateSerialNotAdmitted");
+        if (_gpuPlan is null || _composite is not null || _transformations is not null) throw new InvalidOperationException("N.PrivateSerialNotAdmitted");
         var gpu = new NeowFamilyGpuExecutor(rd, _gpuPlan, 42, privateInput: input, privateOutput: output);
         return new(gpu, gpu.Device, gpu.SetupMs, input, output, (batch, count, token) =>
         {
@@ -48,14 +51,29 @@ internal sealed partial class NeowFamily : IFamilyInvocation
     private long _nrPairPass, _arcanePass, _rarityPass, _heavyEntered;
     private int _zeroSurvivorBatches, _payloadReadbackCount;
     private double _payloadReadbackMs;
-    internal NeowFamily(ExactSearchExecutionRequest request, NeowReplayPlan plan, bool preferGpu = true, NeowCapsuleComposite? composite = null)
+    internal NeowFamily(ExactSearchExecutionRequest request, NeowReplayPlan plan, bool preferGpu = true, NeowCapsuleComposite? composite = null,
+        NeowTransformationComposite? transformations = null)
     {
-        _request = request; _plan = plan; _cpuMatcher = NeowFamilyReplay.Bind(plan);
+        _request = request; _plan = plan; _transformations = transformations;
+        var neowMatcher = NeowFamilyReplay.Bind(plan);
+        _cpuMatcher = transformations is null ? neowMatcher : root => neowMatcher(root) && transformations.Numerical.Matches(root);
         string physicalIssue = "CpuReferenceSelected";
         if (preferGpu) NeowFamilyGpuPlan.TryCreate(plan, out _gpuPlan, out physicalIssue);
+        if (transformations is not null)
+        {
+            if (!preferGpu || composite is not null) throw new InvalidOperationException("NJointTransformPhysicalConflict");
+            _gpuPlan = transformations.Gpu;
+        }
         if (composite is not null && _gpuPlan is null) throw new InvalidOperationException("NrRequiresGpuPhysical");
         _composite = composite;
         _models = new(request, plan, false, null, _gpuPlan is null ? FamilyCpuExecution.Capacity : NeowFamilyGpuExecutor.Capacity);
+        if (Search.Semantics.TransformationAggregateCondition.HasSharedNeow(request.Evaluation))
+        {
+            var numerical = transformations?.Numerical ?? new TransformationAggregateNumericalPlan(request);
+            _transformationJoint = plan.ExactOnly.Length == 0 ? TransformationAggregateProbability.SharedNeowJoint(request, numerical) : null;
+            _givenTransformations = TransformationAggregateProbability.Conditional(_transformationJoint,
+                TransformationAggregateProbability.Build(numerical).StageSurvival);
+        }
         _physical = new(request, FamilyId, "N.Neow.Cpu.LocalReplay.20260905.v1");
         _conditional = NeowReplayPlan.HasCapsule(request);
         if (plan.AuthoredUpgrades is { } upgrades)
@@ -63,7 +81,8 @@ internal sealed partial class NeowFamily : IFamilyInvocation
         RuntimeLog.TryBackgroundInfo($"nFamilyReady=true;coverage={string.Join(',', Coverage)};physical={(_composite is not null ? "NrTargetRankComposite" : _gpuPlan is null ? "CpuLocalReplay" : "GpuLocalDonor")};physicalIssue={physicalIssue};capsuleBagScratch=false;capsuleSemanticOwner=R;boundedBonesNr={_composite?.UsesBonesCheckpoint == true};exactOnly={string.Join(',', plan.ExactOnly)}");
     }
     public string FamilyId => "N.Neow";
-    public IReadOnlyList<string> Coverage => _composite is null ? [FamilyId] : [FamilyId, "R.Relic"];
+    public IReadOnlyList<string> Coverage => _transformations is not null ? [FamilyId, TransformationAggregateFamily.Id] :
+        _composite is null ? [FamilyId] : [FamilyId, "R.Relic"];
     public FamilyAnalyticalCostProjection AnalyticalCost => _composite is null ? _models.Full : new(FamilyId,
         NeowFamilyGpuExecutor.Capacity, _models.Full.Terms.Concat(_composite.Projection.Full.Terms),
         "CompositeConservativeFullEnvelope_NPlusR;ExpectedTargetRankReachUnpriced");
@@ -71,10 +90,15 @@ internal sealed partial class NeowFamily : IFamilyInvocation
     public bool HasConditionalProjections => _conditional || Search.Semantics.TransformationAggregateCondition.HasSharedNeow(_request.Evaluation);
     public FamilySurvivalProjection ResolveSurvival(IReadOnlySet<string> passedCoverage)
     {
+        if (_transformations is not null) return _transformationJoint is { } joint
+            ? FamilySurvivalProjection.Resolved(FamilyId, joint, "NJointAggregate;ExistingSameDrawNAndTModel;IdentityOnce")
+            : FamilySurvivalProjection.Unresolved(FamilyId, "NJointAggregate.JointModelUnavailable");
         if (Search.Semantics.TransformationAggregateCondition.HasSharedNeow(_request.Evaluation) && passedCoverage.Contains(TransformationAggregateFamily.Id))
             return Search.Semantics.TransformationAggregateCondition.SharedNeowIdentityOnly(_request.Evaluation)
                 ? FamilySurvivalProjection.Resolved(FamilyId, 1, "SharedNIdentityAlreadyPassedByT")
-                : FamilySurvivalProjection.Unresolved(FamilyId, "T+N.AdditionalPredicateJointUnknown");
+                : _givenTransformations is { } conditional
+                    ? FamilySurvivalProjection.Resolved(FamilyId, conditional, "N.GivenT;ExistingSameDrawJointOverTMarginal")
+                    : FamilySurvivalProjection.Unresolved(FamilyId, "T+N.AdditionalPredicateJointUnknown");
         if (_composite is null) return _models.Survival(passedCoverage);
         double? n = _models.Survival(Empty).SurvivalProbability;
         double? r = _composite.Projection.Survival(new HashSet<string> { FamilyId }).SurvivalProbability;
@@ -82,21 +106,32 @@ internal sealed partial class NeowFamily : IFamilyInvocation
             : FamilySurvivalProjection.Unresolved(FamilyId, "CompositeJointSurvivalUnavailable");
     }
     public FamilyExpectedFilteringCostProjection ExpectedFilteringCost => ResolveExpectedFilteringCost(Empty);
-    public FamilyExpectedFilteringCostProjection ResolveExpectedFilteringCost(IReadOnlySet<string> passedCoverage) => _composite is null
+    public FamilyExpectedFilteringCostProjection ResolveExpectedFilteringCost(IReadOnlySet<string> passedCoverage) => _transformations is not null
+        ? new(FamilyId, _models.Full.WorkUnitsPerInput, null, _transformationJoint, 1, [], "NJointAggregate.NoPrimitiveLedger;UseOwnedPhysicalQuote") : _composite is null
         ? _models.Expected(passedCoverage) : new(FamilyId, _models.Full.WorkUnitsPerInput + _composite.Projection.Full.WorkUnitsPerInput,
             null, ResolveSurvival(passedCoverage).SurvivalProbability, 1, [], "CompositeTargetRankReachLedgerNotYetPriced");
     internal int PreferredExecutionWindowSize => _gpuPlan is null ? FamilyCpuExecution.Capacity : NeowFamilyGpuExecutor.Capacity;
     public FamilyConditionPerformanceProjection ConditionPerformance => ResolveConditionPerformance(false);
-    public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compactAbi1Input) => _gpuPlan is null
-        ? _physical.Condition(compactAbi1Input) : new(FamilyId, _composite is not null
+    public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compactAbi1Input)
+    {
+        if (_gpuPlan is null) return _physical.Condition(compactAbi1Input);
+        string revision = _transformations is not null
+            ? NeowTransformationComposite.Revision + (compactAbi1Input ? ".Compact" : _gpuPlan.UsesStagedDense ? ".StagedDense" : ".Dense")
+            : _composite is not null
             ? _composite.Revision(compactAbi1Input, _gpuPlan.UsesStagedDense)
             : _gpuPlan.DirectNestedMode != 0 ? _gpuPlan.DirectNestedRevision(compactAbi1Input)
             : _gpuPlan.UsesLeafyPreGate
                 ? compactAbi1Input ? NeowFamilyGpuPlan.LeafyCompactRevision :
                     _gpuPlan.UsesStagedDense ? NeowFamilyGpuPlan.LeafyStagedDenseRevision : NeowFamilyGpuPlan.LeafyDenseRevision
                 : compactAbi1Input ? NeowFamilyGpuPlan.CompactRevision :
-                    _gpuPlan.UsesStagedDense ? NeowFamilyGpuPlan.StagedDenseRevision : NeowFamilyGpuPlan.DenseRevision,
-            "N.Neutral.20260905.v1", 1, "NoAcceptedWithinPathCurve");
+                    _gpuPlan.UsesStagedDense ? NeowFamilyGpuPlan.StagedDenseRevision : NeowFamilyGpuPlan.DenseRevision;
+        if (!_gpuPlan.IsMultiplayer) revision += ".PackedPublicOrdinals.20260930.v1";
+        if (!_gpuPlan.IsMultiplayer && (_gpuPlan.Meta[82] & 9u) != 0)
+            revision += ".ZeroUsedDirectIndex.20260930.v1";
+        if (!_gpuPlan.IsMultiplayer && _plan.StructuredConditions.Any(c => c.SourceRelicId == Beta110FastRelicCatalog.Kaleidoscope))
+            revision += ".KaleidoscopeFirstGroupReject.20260930.v1";
+        return new(FamilyId, revision, "N.Neutral.20260905.v1", 1, "NoAcceptedWithinPathCurve");
+    }
     public FamilyPerformanceObservation CapturePerformanceObservation() => _gpuPlan is null ? _physical.Observation() :
         new(ResolveConditionPerformance(_compact), _gpu?.Device ?? "not-created", _gpu?.SetupMs ?? 0, _peak, _peak,
             _batches, _steady, _inputs, _outputs, _ms, !_disabled && _parity && _steady > 0,

@@ -16,8 +16,11 @@ internal sealed partial class DesignReferenceSurfaces : Control
     public event Action<string?>? EncyclopediaRequested;
     internal WorkbenchSearchDraft? PartyInformationDraft => _workbench.PartyInformationDraft;
     internal bool HasActiveSearch => _workbench.HasActiveSearch;
+    internal WorkbenchSearchDraft? ResultDraft => _workbench.ResultDraft;
+    internal SeedLibraryContext? ResultSeedContext => _workbench.ResultSeedContext;
     internal WorkbenchSearchDraft CaptureFeedbackDraft() => _workbench.CaptureDraft().WithoutCapturedAuthority();
     internal void SyncSearchPreferences() => _workbench.SyncSearchPreferences();
+    internal object? CaptureSearchDiagnostics() => _workbench.CaptureSearchDiagnostics();
     internal void ShowLibraryReceipt(string message) => _workbench.ShowLibraryReceipt(message);
     internal event Action<string, SeedLibraryContext>? FavoriteSeedRequested;
     public event Action<RolltheSpire2.Search.Contracts.SearchCandidate, WorkbenchSearchDraft>? OpenPartyInformation;

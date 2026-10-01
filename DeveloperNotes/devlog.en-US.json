@@ -1,0 +1,803 @@
+{
+  "Id": "devlog",
+  "Title": "Dev Log",
+  "Summary": "Starting with a Bones seed: the story of how RolltheSpire2 reached the 1.0.0 release.",
+  "Blocks": [
+    {
+      "Type": "Heading",
+      "Text": "RolltheSpire2 1.0.0 Dev Log"
+    },
+    {
+      "Type": "Heading",
+      "Text": "Starting with a Bones Seed"
+    },
+    {
+      "Type": "Callout",
+      "Text": "This is not a complete technical log, nor is it a set of update notes. I simply wanted to use the 1.0.0 release as an opportunity to write down the story of how RolltheSpire2 got here."
+    },
+    {
+      "Type": "Heading",
+      "Text": "Chapter 1: The Beginning"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "The story probably begins on the evening of [b]June 8[/b]."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "That night I went back to play [i]Slay the Spire 1[/i], and suddenly discovered that learning how to farm a particular seed was actually a wonderful thing."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "So I started manually rolling seeds."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "And then I rolled seeds for the entire night."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "At the time, I wanted a Bones seed with [b]Guilty[/b]. The process was basically: start a run, check the result, quit, and do it again. By the end, I genuinely felt like my hand was about to fall off before I finally rolled the seed I wanted."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Unfortunately, it still turned out to be a terrible seed in the end. (laughs)"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Looking back now, though, that night was probably the real beginning of RolltheSpire2."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Because that was when a very natural question first appeared in my head:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]If all of these results are already determined by the seed, why am I sitting here rolling them one by one by hand?[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "So I started searching online for tools that could already do this."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "I quickly found [b]SeedRoller[/b], made by BenChao1998. I downloaded it and tried it, but its latest update at the time was from April 13, and prediction of the exact Bones results in version `0.107.0` was not yet complete."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "There was also Qingye's web-based seed roller, but it required contacting the creator privately to get access, which was a little inconvenient for me."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Then a very dangerous thought appeared:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]What if I just make one myself?[/b]"
+    },
+    {
+      "Type": "Heading",
+      "Text": "Chapter 2: A Very Simple Seed Searcher"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Yes, at that point [i]Slay the Spire 2[/i] did not yet support the Workshop, so making a Mod was not something I was considering."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "What I made first was simply a very basic external tool: manually enter a seed, then let the program predict the results I cared about."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Once the seed could be entered automatically and the results could be produced automatically, the next step became very natural:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]Then just let it keep changing seeds until it finds one that matches the conditions.[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "And that was how a very simple seed searcher was born."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "At first, all I really wanted was to find seeds with Bones."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "But as I kept researching, I realized that far more things in the game were determined by the seed in advance than I had initially imagined."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Events could be predicted. The relic order in Shops could be predicted. Ancients could be predicted too."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Even the classic example—[b]using Perel's Clone Tissue to clone a Perfected Strike[/b]—could be found in advance."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "My original question was simply:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]\"Can you help me find a seed with Bones?\"[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "But very quickly, it became:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]\"How much can a seed actually tell me?\"[/b]"
+    },
+    {
+      "Type": "Heading",
+      "Text": "Chapter 3: From Tool to Mod"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "After a long period of development, we arrived at [i]Slay the Spire 2[/i] version `0.107.1`."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "This was a very important version for me."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "For one thing, the game's RNG behavior changed. The curse from opening Bones finally became more random instead of handing me Debt every day."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "For another, Workshop support finally arrived."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "By that point, my external seed searcher could already find quite a few interesting seeds."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "For example, starts with [b]three Big Bangs[/b], or [b]three Hangings[/b]."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "If I had only been making it for myself, that would honestly have been enough."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "But gradually, I stopped being satisfied with that."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "An external tool is still an external tool. You need to know it exists, download it, learn how to use it, and then bring the seed you found back into the game."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "What I really started wondering was:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]Could everyone just find the seed they want quickly, directly inside the game?[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Once the Workshop existed, that question suddenly had a very direct answer."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "And so development of the RolltheSpire2 Mod began."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "When we moved from the external tool to the Mod, we honestly did not overthink it."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Development moved quickly. Roughly two weeks later, the first Workshop version of RolltheSpire2 was released."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "The Mod was still simple at that point, but the core loop already worked: choose the conditions you want, then search for matching seeds directly in the game."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "For a while after that, updates were fairly calm."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Add a few features, fix a few problems, and do a little UI cleanup along the way."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "At the time, I thought things would probably just continue like that."
+    },
+    {
+      "Type": "Heading",
+      "Text": "Chapter 4: Seeing Another Order of Magnitude for the First Time"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Back then, my seed roller ran at roughly [b]300K/s[/b] on my own computer."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Entirely on the CPU."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "To be honest, I had not seriously thought about the size of the search space. The tool could find seeds, the speed seemed acceptable, and I did not dig much deeper."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Then I saw a post on Reddit."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "The author introduced a web-based seed searcher called [b]Search the Spire[/b]."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "I opened it and looked at the search speed."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[b]Over 100M/s.[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "I was genuinely shocked."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "My own tool was still around `300K/s`. This was no longer a matter of \"their code is optimized a bit better than mine.\" It was a completely different order of magnitude."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "So I started investigating why it could be so fast."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "I asked AI to help analyze its implementation. One hypothesis we arrived at was that it might not start from every ordinary seed and run the same full calculation that my program did. Instead, it might work more directly in the seed's root-hash space, find hashes that satisfy the conditions, and then derive corresponding seeds from those hashes."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "At the time, I could not fully confirm whether that was its complete and exact implementation."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "But the idea itself taught me something important."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "For the first time, I really understood:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]Seed-search speed is not determined only by \"making the code I already have run faster.\"[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "The same problem can be represented differently. You can avoid calculating things you never needed to know in the first place. You can even approach the answer from an entirely different direction."
+    },
+    {
+      "Type": "Heading",
+      "Text": "Chapter 5: The Entire Space Was Actually This Small"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Looking back, my calculation strategy at the time really was extremely primitive."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "I had barely considered many performance optimizations."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "For example, I might calculate a large amount of information for a seed first, and only afterward ask whether the seed matched the conditions. But for huge numbers of obviously invalid seeds, a few very simple bit operations might already be enough to reject them."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "In other words, what I was doing was:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]Calculate a lot of things first, then ask whether this is what I want.[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "A truly efficient searcher should instead work like this:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]The moment you know it cannot match, throw it away.[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "As we continued investigating, we found something else that surprised me even more."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "In version `0.107`, even though the in-game seeds looked like 10-character strings, the root hash they ultimately converted into was only [b]32 bits[/b]."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "That meant the actual space we needed to search was only:"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[b]2³².[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "At roughly `100M/s`, the entire space could be traversed in a little over forty seconds."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "In other words, in under a minute you could scan every possibility and say with certainty:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]Does a seed matching this condition exist at all?[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "That realization had a big impact on me."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Before then, I thought of seed searching as \"keep trying random things until you happen to hit the answer.\""
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "At this point, I started seeing it as a finite search problem."
+    },
+    {
+      "Type": "Heading",
+      "Text": "Chapter 6: FastSearch"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Once I had that model in mind, optimization progressed quickly."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "By [b]July 15[/b], I had finished the first version of `FastSearch`."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "By today's standards its performance was nothing extraordinary, but at the time it was already enough to traverse the entire `0.107` search space in roughly a minute."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "That felt completely different from before."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Previously, seed searching was more like asking:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "\"Can I happen to find a seed that matches these conditions?\""
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Now, for the first time, I could directly ask:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]\"Does this condition exist anywhere in the entire seed space?\"[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Around that time, I found the only root Hash in `0.107` that could produce a [b]triple-Egg start[/b]."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "The seed I recorded for it was:"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "`A0P0005H83`"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Strictly speaking, saying \"the seed was unique\" is not quite correct."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Different seed strings can map to the same Hash. What was truly unique was that [b]32-bit root Hash[/b]."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "But that distinction did not matter much to me at the time."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "What mattered was that I had scanned the entire space and pulled out an extreme result that previously could only have been imagined as a matter of luck."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "The most important thing FastSearch gave me was not simply that searching became \"a bit faster.\""
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "It turned some questions that had previously been difficult to answer into:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]Run the calculation once, and you know.[/b]"
+    },
+    {
+      "Type": "Heading",
+      "Text": "Chapter 7: I Came Back, and the World Had Changed"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "After reaching that point, the project actually sat untouched for a while."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Not because of a technical bottleneck."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "I simply discovered that [b]Integrated Strategy is really fun.[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "So I went off to play Black Flow Tree Sea."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "When I had finally had my fill and came back to look at [i]Slay the Spire 2[/i], the game had reached `0.109`."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "And something seemed wrong."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "`0.109` made a very thorough change to the RNG system."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "The seed root Hash, which had only been [b]32 bits[/b] in `0.107`, became [b]64 bits[/b]."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "In other words, the model I had only just established—"
+    },
+    {
+      "Type": "Callout",
+      "Text": "\"The whole space is only `2^32`; make it fast enough and you can scan everything in about a minute.\""
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "—suddenly stopped being true."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Because the space in front of us was no longer `2^32`."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "It was:"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[b]2⁶⁴.[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "From a little over four billion possibilities to more than eighteen quintillion."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "I went away to play games for a few days."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "When I came back, the search space had grown by [b]2³² times[/b]."
+    },
+    {
+      "Type": "Heading",
+      "Text": "Chapter 8: Performance Started Deciding Whether Something Could Be Found"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "From that point onward, [b]performance became one of RolltheSpire2's core metrics for the first time.[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "In the `0.107` era, as long as the entire search space was small enough, we always had the option of scanning all of it."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "The most important question then was still:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]Does this seed exist?[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "But in `0.109`, a 64-bit Hash made the full space impossible to exhaustively traverse."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "So the question changed."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "What determined whether we could find a seed was often no longer just:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]\"Does it exist?\"[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "It became:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]\"Can I find it within the amount of time I am willing to wait?\"[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "An extremely rare seed may certainly exist."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "But if the searcher can inspect only a few hundred thousand seeds per second, then in practical use it may not feel very different from a seed that does not exist at all."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "On the other hand, if the searcher can inspect hundreds of millions or billions of seeds per second, conditions that previously had almost no practical search value can suddenly become usable."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "From this version onward, my understanding of what a \"seed searcher\" is gradually changed."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[b]Probability, search space, and performance together determine whether a search request has practical meaning.[/b]"
+    },
+    {
+      "Type": "Heading",
+      "Text": "Chapter 9: If They Can Do It, So Can We"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "At this point, [b]Search the Spire gave me another major hint.[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "It used the GPU to accelerate seed searching."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "If it could do that, then of course we could try too."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "So we started adding GPU search support to RolltheSpire2."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "The earliest implementation was far from complete and supported only a limited set of conditions, but the first time it really ran, the speed already made me very happy:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]Over 1B/s.[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "That is more than a billion seeds per second."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "From roughly `300K/s` on the CPU, to FastSearch scanning the entire `0.107` space in about a minute, and then to seeing more than `1B/s` on the GPU in the `0.109` era—the change was extremely tangible."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "But more importantly, the GPU did not merely make the old program \"many times faster.\""
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "It changed how I judged which conditions were worth turning into search features."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Previously, when looking at an extremely rare combination, I might think:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "\"It can be predicted in theory, but in practice you will never find it, so there is not much point implementing it.\""
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Once search speeds reached the billion-per-second range, some of those conditions suddenly became realistic."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "From then on, I increasingly got used to considering three things at the same time:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]Can this result be predicted?[/b]"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]How rare is it?[/b]"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]Is our search speed fast enough?[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Only by considering all three can we really answer:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]Would this make a useful search condition?[/b]"
+    },
+    {
+      "Type": "Heading",
+      "Text": "Chapter 10: More Powerful, and Harder to Use"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Around the same time, I gradually realized that RolltheSpire2 was no longer a simple tool where you could open it and immediately know what to do."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "It was becoming complicated."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Part of the problem was the UI itself. As more and more search conditions were added, simply piling them into the interface made it difficult for players to understand how everything related to everything else."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "But there was another problem that was even harder to solve:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]Players cannot easily judge by intuition how rare a seed actually is.[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "A condition might look like you merely selected \"two more things,\" while its actual probability may already have dropped by several orders of magnitude."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Previously, judging that was mostly a matter of experience."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "So I started trying various UI improvements, hoping at least to make the search conditions themselves easier to understand."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "This is obviously not my strongest area."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Originally, I had absolutely no intention of seriously designing a nice-looking UI. I just wanted to make a seed searcher."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "But since I had already come this far..."
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]Might as well do all of it.[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "So eventually the UI started being rebuilt piece by piece as well."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "At the same time, I added a probability model."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "It estimates the rarity of the target outcome from the current search conditions, so players no longer have to rely entirely on intuition to guess:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "\"Is this condition one in a million, or one in ten billion?\""
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "At this point, RolltheSpire2 was no longer only helping players \"find seeds.\""
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "It was also starting to answer:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]How hard is the thing you are trying to find?[/b]"
+    },
+    {
+      "Type": "Heading",
+      "Text": "Chapter 11: Players Started Helping Me Test It"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "As more updates were released, more feedback started coming in."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Some of it was feature suggestions, some was about UI problems, and some was about extremely specific Bugs that only appeared when real players actually searched for some strange combination."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "So development gradually became a loop:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "Add a new feature"
+    },
+    {
+      "Type": "Callout",
+      "Text": "→ Players start using it"
+    },
+    {
+      "Type": "Callout",
+      "Text": "→ New edge cases appear"
+    },
+    {
+      "Type": "Callout",
+      "Text": "→ Go back and fix them"
+    },
+    {
+      "Type": "Callout",
+      "Text": "→ Keep moving forward"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "This is actually a very healthy process."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "No matter how much testing I do myself, one person cannot cover the enormous combination space the project has now accumulated."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "RolltheSpire2 eventually came to involve opening effects, relics, events, Combat Rewards, Ancients, Shops, probability, CPU/GPU paths, different characters, different versions, and even Mod content."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Many problems are not \"this feature is completely broken.\" They are more like:"
+    },
+    {
+      "Type": "Callout",
+      "Text": "[b]One very specific combination fails on one rarely used path.[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "It is extremely difficult for me to anticipate all of those cases alone."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Instead, as more players actually use the tool to find the seeds they want, those boundaries gradually reveal themselves one by one."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "So looking back, many of the later fixes and improvements were not things I \"planned out\" alone."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "They grew naturally as the tool was actually used."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[i]And that is basically the story of how RolltheSpire2 got here, up to the 1.0.0 release.[/i]"
+    }
+  ]
+}
