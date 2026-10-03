@@ -10,7 +10,6 @@ internal sealed partial class PredictorCrystalReachability
         internal readonly CrystalRewardOption Target=target;
         internal readonly PredictorCrystalExplorer Explorer=explorer;
         internal TimeSpan TurnTime;
-        internal long Used;
     }
 
     // After selection, ask S+X independently. Every job can rearrange the whole
@@ -20,6 +19,7 @@ internal sealed partial class PredictorCrystalReachability
     {
         var resolved=PeekKnown(selected).Available.Keys.Concat(query.Lanes.SelectMany(l=>l.Explorer.QueryProjection.Available.Keys))
             .Concat(query.Lanes.SelectMany(l=>l.Explorer.ExcludedCandidates)).Concat(query.ExhaustedProbes).ToHashSet();
+        foreach(var target in query.Probes.Keys.Where(resolved.Contains).ToArray()) query.Probes.Remove(target);
         foreach(var job in query.ActiveCandidates.ToArray())
         {
             if(resolved.Contains(job.Target)) { query.ActiveCandidates.Remove(job);query.Probes.Remove(job.Target); }
@@ -31,14 +31,16 @@ internal sealed partial class PredictorCrystalReachability
             if(resolved.Contains(target) || query.ActiveCandidates.Any(p=>p.Target==target)) continue;
             if(!query.Probes.TryGetValue(target,out var job))
             {
-                if(query.Probes.Count>=2*workers)
-                    query.Probes.Remove(query.Probes.Where(p=>!query.ActiveCandidates.Contains(p.Value)).MinBy(p=>p.Value.Used).Key);
+                // Rotate resident frontiers without throwing away unfinished
+                // proof work. Broad discovery still covers nonresident targets;
+                // an explicit focus can prioritize any of them immediately.
+                if(query.Probes.Count>=2*workers) continue;
                 job=new(target,new(source,avoidCurse,reachability:_table,selected:selected.Add(target),
                     potionScenarioBound:true,potionScenarioLimit:potionScenarioLimit,targetDirected:true,
                     verifySelection:VerifyCached,stopAfterPlan:true,offsetBound:_offsetBound));
                 query.Probes.Add(target,job);
             }
-            job.Used=++_useClock;job.TurnTime=TimeSpan.Zero;query.ActiveCandidates.Add(job);
+            job.TurnTime=TimeSpan.Zero;query.ActiveCandidates.Add(job);
         }
         var jobs=query.ActiveCandidates.ToArray();
         var batches=new ImmutableArray<CrystalRewardRoute>[jobs.Length];
@@ -81,14 +83,15 @@ internal sealed partial class PredictorCrystalReachability
     }
 
     // A bounded positive-discovery pass. Each target retains a cursor across
-    // slices; up to four dormant cursors survive rotation. Eviction only loses
-    // search progress, never turns a timed-out candidate into a negative proof.
+    // slices; at most four resident cursors rotate without losing progress.
     // The original lanes alone retain candidate-completeness authority.
     private void AdvanceProbe(Query query,ImmutableArray<CrystalRewardOption> selected,TimeSpan budget,CancellationToken token)
     {
         var known=PeekKnown(selected).Available.Keys.Concat(query.Lanes.SelectMany(l=>l.Explorer.QueryProjection.Available.Keys)).ToHashSet();
         known.UnionWith(query.Lanes.SelectMany(l=>l.Explorer.ExcludedCandidates));
+        known.UnionWith(query.ExhaustedProbes);
         bool Resolved(CrystalRewardOption option)=>known.Contains(option);
+        foreach(var target in query.Probes.Keys.Where(Resolved).ToArray()) query.Probes.Remove(target);
         if(query.ActiveProbe is {} active && (Resolved(active.Target) || active.Explorer.Complete || active.Explorer.QueryProjection.SelectedPlan!=null))
         {
             query.Probes.Remove(active.Target);query.ActiveProbe=null;
@@ -102,13 +105,13 @@ internal sealed partial class PredictorCrystalReachability
                 if(Resolved(target) || query.ExhaustedProbes.Contains(target)) continue;
                 if(!query.Probes.TryGetValue(target,out var probe))
                 {
-                    if(query.Probes.Count>=4) query.Probes.Remove(query.Probes.MinBy(p=>p.Value.Used).Key);
+                    if(query.Probes.Count>=4) continue;
                     probe=new(target,new(source,avoidCurse,reachability:_table,selected:selected.Add(target),
                         potionScenarioBound:true,potionScenarioLimit:potionScenarioLimit,targetDirected:true,
                         verifySelection:VerifyCached,stopAfterPlan:true,offsetBound:_offsetBound));
                     query.Probes.Add(target,probe);
                 }
-                probe.Used=++_useClock;probe.TurnTime=TimeSpan.Zero;query.ActiveProbe=probe;break;
+                probe.TurnTime=TimeSpan.Zero;query.ActiveProbe=probe;break;
             }
         }
         if(query.ActiveProbe is not {} job || token.IsCancellationRequested) return;

@@ -17,15 +17,19 @@ namespace RolltheSpire2.Ui.Shell;
 internal sealed partial class EncyclopediaCanvas : Control
 {
     private const string IntroductionId = "why-predictable";
+    private const string ReadingGuideId = "reading-guide";
+    private const string SeedHistoryId = "seed-history";
+    private const string FaqId = "faq";
+    private const string CrystalSphereId = "crystal-sphere";
     private const string IntroductionTitle = "为什么未来可以被预测？";
     private const string NeowOfferId = "neow-offer";
     private const string NeowOfferTitle = "涅奥候选是怎样产生的？";
     private const string NeowKaleidoscopeId = "neow-kaleidoscope";
     private const string NeowKaleidoscopeTitle = "万花筒：跨角色的开局卡牌";
     private const string NeowSilkenTressId = "neow-silken-tress";
-    private const string NeowSilkenTressTitle = "丝绸发束：下一组卡牌奖励";
+    private const string NeowSilkenTressTitle = "华美发束：下一组卡牌奖励";
     private const string NeowCapsuleId = "neow-capsule";
-    private const string NeowCapsuleTitle = "扭蛋：从 Neow 进入遗物袋";
+    private const string NeowCapsuleTitle = "扭蛋：从涅奥进入遗物袋";
     private const string NeowTransformId = "neow-transform";
     private const string NeowTransformTitle = "树叶药膏：为什么变牌结果可以提前检查";
     private const string NeowBonesCurseId = "neow-bones-curse";
@@ -33,7 +37,7 @@ internal sealed partial class EncyclopediaCanvas : Control
     private const string AncientDarvId = "ancient-darv";
     private const string AncientDarvTitle = "达弗：共享池先古与先古遗物";
     private const string AncientPaelId = "ancient-pael";
-    private const string AncientPaelTitle = "Pael：三个候选池与不均匀权重";
+    private const string AncientPaelTitle = "佩尔：三个候选池与不均匀权重";
     private const string AncientTezcataraId = "ancient-tezcatara";
     private const string AncientTezcataraTitle = "特兹卡塔拉：三个独立的遗物位置";
     private const string AncientOrobasId = "ancient-orobas";
@@ -54,10 +58,11 @@ internal sealed partial class EncyclopediaCanvas : Control
     private const string StableEventResultsTitle = "稳定事件结果：色彩哲学家、假商人与垃圾堆";
     private const string TransformEventResultsId = "event-transform-results";
     private const string TransformEventResultsTitle = "变牌事件：默认变化初始牌";
+    private const string MultiplayerSharedId = "multiplayer-shared";
     private const string MapRoutesId = "map-routes";
     private const string MapRoutesTitle = "地图路线：最好与最坏能到什么程度？";
     private const string MapGenerationId = "map-generation";
-    private const string MapGenerationTitle = "地图生成：Prune 与 Repair";
+    private const string MapGenerationTitle = "地图生成：剪枝与修补";
     private const string ChestRelicsId = "relic-chests";
     private const string ChestRelicsTitle = "宝箱房的遗物";
     private const string ShopRelicConsumptionId = "relic-shop-consumption";
@@ -76,76 +81,86 @@ internal sealed partial class EncyclopediaCanvas : Control
     private const string EncyclopediaGameVersion = "0.111.0";
     private static readonly ArticleDefinition[] Articles =
     [
+        new(ReadingGuideId, "reading_guide", "阅读与适用说明", "Reading & scope", null, SeedHistoryId,
+            [SeedHistoryId, FaqId, "multiplayer", "mods"], false),
+        new(SeedHistoryId, "seed_history", "种子：我们到底在搜索什么？", "Seeds: What Are We Searching?", null, IntroductionId,
+            [ReadingGuideId, IntroductionId, FaqId], false),
+        new(FaqId, "faq", "常见问题与结果排查", "FAQ & result checks", null, null,
+            [ReadingGuideId, IntroductionId, "events", "shop", "combat", "multiplayer"], false),
         new(IntroductionId, "why_future_can_be_predicted", "为什么未来可以被预测？",
-            "Why can the future be predicted?", null, "neow", ["neow", "ancient"], false),
-        new("neow", "neow", "涅奥", "Neow", null, NeowOfferId,
+            "Why can the future be predicted?", null, "neow", [SeedHistoryId, ReadingGuideId, FaqId, "neow", "ancient"], false),
+        new("neow", "neow", "涅奥", "Neow", null, "ancient",
             [NeowOfferId, NeowKaleidoscopeId, "ancient"]),
         new(NeowOfferId, "neow_offer", "涅奥候选与骨骰", "Offer & Bones", "neow",
-            NeowKaleidoscopeId, [NeowBonesCurseId]),
+            null, [NeowBonesCurseId]),
         new(NeowKaleidoscopeId, "neow_kaleidoscope", "万花筒", "Kaleidoscope", "neow",
-            NeowSilkenTressId, [NeowSilkenTressId, NeowCapsuleId]),
+            null, [NeowSilkenTressId, NeowCapsuleId]),
         new(NeowSilkenTressId, "neow_silken_tress", "华美发束", "Silken Tress", "neow",
-            NeowCapsuleId, [NeowKaleidoscopeId, NeowBonesCurseId]),
+            null, [NeowKaleidoscopeId, NeowBonesCurseId]),
         new(NeowCapsuleId, "neow_capsule", "扭蛋", "Capsules", "neow",
-            NeowTransformId, [NeowKaleidoscopeId, NeowBonesCurseId]),
+            null, [NeowKaleidoscopeId, NeowBonesCurseId]),
         new(NeowTransformId, "neow_transform", "树叶药膏与新叶", "Leafy Poultice & New Leaf",
-            "neow", NeowBonesCurseId, [NeowOfferId, "transform"]),
+            "neow", null, [NeowOfferId, "transform"]),
         new(NeowBonesCurseId, "neow_bones_curse", "骨骰最终诅咒", "Bones' Final Curse",
-            "neow", "ancient", [NeowOfferId, NeowCapsuleId]),
-        new("ancient", "ancient", "先古之民", "Ancients", null, AncientDarvId,
+            "neow", null, [NeowOfferId, NeowCapsuleId]),
+        new("ancient", "ancient", "先古之民", "Ancients", null, "combat",
             [AncientDarvId, AncientPaelId, AncientTezcataraId, AncientOrobasId, AncientAct3Id,
                 "neow", NeowOfferId]),
-        new(AncientDarvId, "ancient_darv", "达弗", "Darv", "ancient", AncientPaelId,
+        new(AncientDarvId, "ancient_darv", "达弗", "Darv", "ancient", null,
             ["ancient", AncientPaelId]),
-        new(AncientPaelId, "ancient_pael", "佩尔", "Pael", "ancient", AncientTezcataraId,
+        new(AncientPaelId, "ancient_pael", "佩尔", "Pael", "ancient", null,
             ["ancient", AncientDarvId, AncientTezcataraId]),
         new(AncientTezcataraId, "ancient_tezcatara", "特兹卡塔拉", "Tezcatara", "ancient",
-            AncientOrobasId, ["ancient", AncientPaelId, AncientOrobasId]),
+            null, ["ancient", AncientPaelId, AncientOrobasId]),
         new(AncientOrobasId, "ancient_orobas", "欧洛巴斯", "Orobas", "ancient",
-            AncientAct3Id, ["ancient", AncientTezcataraId, AncientAct3Id]),
-        new(AncientAct3Id, "ancient_act3", "第三幕先古", "Act 3 Ancients", "ancient", "shop",
+            null, ["ancient", AncientTezcataraId, AncientAct3Id]),
+        new(AncientAct3Id, "ancient_act3", "第三幕先古", "Act 3 Ancients", "ancient", null,
             ["ancient", AncientOrobasId]),
-        new("shop", "shop", "商店", "Shop", null, ShopStabilityId,
+        new("shop", "shop", "商店", "Shop", null, "events",
             [ShopStabilityId, ShopRelicConsumptionId, IntroductionId]),
         new(ShopStabilityId, "shop_stability", "稳定与不稳定", "Stable & unstable",
-            "shop", "combat", ["shop", "combat"]),
-        new("combat", "combat", "战斗奖励", "Combat rewards", null, CombatNeowId,
+            "shop", null, ["shop", "combat"]),
+        new("combat", "combat", "战斗奖励", "Combat rewards", null, "relics",
             [CombatNeowId, CombatRarityRelicsId, IntroductionId, ShopStabilityId]),
         new(CombatNeowId, "combat_neow", "涅奥与战斗奖励", "Neow & combat rewards",
-            "combat", CombatRarityRelicsId, ["combat", CombatRarityRelicsId, "neow"]),
+            "combat", null, ["combat", CombatRarityRelicsId, "neow"]),
         new(CombatRarityRelicsId, "combat_rarity_relics", "稀有牌与遗物",
-            "Rare cards & relics", "combat", "events", ["combat", CombatNeowId, "events"]),
-        new("events", "events", "事件", "Events", null, EventAppearanceId,
+            "Rare cards & relics", "combat", null, ["combat", CombatNeowId, "events"]),
+        new("events", "events", "事件", "Events", null, "boss",
             [EventAppearanceId, EventResultsId, StableEventResultsId,
-                TransformEventResultsId, IntroductionId, "combat"]),
+                TransformEventResultsId, CrystalSphereId, IntroductionId, "combat"]),
         new(EventAppearanceId, "event_appearance", "事件出现性", "Event appearance",
-            "events", EventResultsId, ["events", EventResultsId, "map"]),
+            "events", null, ["events", EventResultsId, "map"]),
         new(EventResultsId, "event_results", "事件结果", "Event results",
-            "events", StableEventResultsId,
+            "events", null,
             [StableEventResultsId, TransformEventResultsId, "events", EventAppearanceId]),
         new(StableEventResultsId, "event_stable_results", "稳定事件结果", "Stable event results",
-            EventResultsId, TransformEventResultsId,
+            EventResultsId, null,
             [EventResultsId, TransformEventResultsId, EventAppearanceId]),
         new(TransformEventResultsId, "event_transform_results", "变牌事件", "Transform events",
-            EventResultsId, "boss", [EventResultsId, StableEventResultsId, "transform"]),
+            EventResultsId, null, [EventResultsId, StableEventResultsId, "transform", MultiplayerSharedId]),
+        new(CrystalSphereId, "crystal_sphere", "水晶球", "Crystal Sphere", "events", null,
+            ["events", FaqId, ReadingGuideId], false),
         new("boss", "boss", "首领 / 变体", "Bosses & Act variants", null, "map",
             ["map", IntroductionId, "ancient", "events"]),
-        new("map", "map", "地图", "Map", null, MapRoutesId,
+        new("map", "map", "地图", "Map", null, "transform",
             [MapRoutesId, MapGenerationId, "boss", "events", EventAppearanceId]),
-        new(MapRoutesId, "map_routes", "地图路线", "Map routes", "map", MapGenerationId,
+        new(MapRoutesId, "map_routes", "地图路线", "Map routes", "map", null,
             ["map", MapGenerationId, EventAppearanceId]),
-        new(MapGenerationId, "map_generation", "地图生成", "Map generation", "map", "relics",
+        new(MapGenerationId, "map_generation", "地图生成", "Map generation", "map", null,
             ["map", MapRoutesId]),
-        new("relics", "relics", "遗物", "Relics", null, ChestRelicsId,
+        new("relics", "relics", "遗物", "Relics", null, "shop",
             [ChestRelicsId, ShopRelicConsumptionId, "shop", "neow", IntroductionId]),
         new(ChestRelicsId, "relic_chests", "宝箱房", "Treasure chests",
-            "relics", ShopRelicConsumptionId, ["relics", ShopRelicConsumptionId]),
+            "relics", null, ["relics", ShopRelicConsumptionId]),
         new(ShopRelicConsumptionId, "relic_shop_consumption", "商店与遗物队列",
-            "Shops & relic bags", "relics", "transform", ["relics", "shop", ShopStabilityId]),
-        new("transform", "transform", "变牌组合", "Combined transformations", null, null,
+            "Shops & relic bags", "relics", null, ["relics", "shop", ShopStabilityId]),
+        new("transform", "transform", "变牌组合", "Combined transformations", null, "multiplayer",
             [NeowTransformId, TransformEventResultsId, IntroductionId]),
         new("multiplayer", "multiplayer", "多人", "Multiplayer", null, "mods",
-            ["mods", "ancient", "map", "neow"], ReturnToSearch: false),
+            [MultiplayerSharedId, "mods", "ancient", "map", "neow"], ReturnToSearch: false),
+        new(MultiplayerSharedId, "multiplayer_shared", "多人共享条件", "Shared party conditions", "multiplayer", null,
+            ["multiplayer", EventAppearanceId, TransformEventResultsId, StableEventResultsId], ReturnToSearch: false),
         new("mods", "mods", "模组", "Mods", null, null,
             ["multiplayer", IntroductionId], ReturnToSearch: false)
     ];
@@ -226,7 +241,9 @@ internal sealed partial class EncyclopediaCanvas : Control
             [], Indent: 2),
         new(TransformEventResultsId, "变牌事件", "Transform events", TransformEventResultsTitle,
             "事件结果 变牌 初始牌 Strike Defend Transformation Group",
-            [], Indent: 2)
+            [], Indent: 2),
+        new(CrystalSphereId, "水晶球", "Crystal Sphere", "水晶球：当前事件的奖励与点击路线",
+            "水晶球 Crystal Sphere 局内 预测 奖励 点击 翻牌 金币", [])
     ];
 
     private static readonly ArticleChild[] MapChildren =
@@ -258,10 +275,22 @@ internal sealed partial class EncyclopediaCanvas : Control
         new("transform", "query.domain.transform", SearchCategoryKey.Transformation)
     ];
 
+    private static readonly AdditionalTopic[] GuideTopics =
+    [
+        new(ReadingGuideId, "阅读与适用说明", "Reading & scope",
+            "开始使用 适用 前提 解锁 版本 原版 单人 reading scope unlocks version baseline"),
+        new(SeedHistoryId, "种子与搜索", "Seeds & search",
+            "种子 Seed Hash 哈希 搜索 筛选 预测 字符 空间 碰撞 历史 版本 107 109 111 GPU filtering prediction history collision"),
+        new(FaqId, "常见问题与结果排查", "FAQ & result checks",
+            "常见问题 FAQ 结果不同 偏移 错误 反馈 bug feedback mismatch troubleshooting Developer Notes 开发者笔记")
+    ];
+
     private static readonly AdditionalTopic[] AdditionalTopics =
     [
         new("multiplayer", "多人", "Multiplayer",
             "多人 玩家 Slot P1 P2 P3 P4 共享状态 世界 随机 Multiplayer"),
+        new(MultiplayerSharedId, "多人共享条件", "Shared party conditions",
+            "多人 共享 条件 事件 变形灵林谷 变牌 同角色 双铁甲 黑拥 无惧 Morphic Grove shared events transforms party"),
         new("mods", "模组", "Mods",
             "Mod 模组 兼容 运行时 候选池 随机机制 第三方")
     ];

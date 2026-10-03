@@ -1,75 +1,33 @@
-# Orobas: Branching Candidates, {{relic:SEA_GLASS}}, and Conditional Options
+# Orobas: Branches, {{relic:SEA_GLASS}}, and Conditional Options
 
-> Applies to: **Slay the Spire 2 Beta 0.111.0**
+Orobas has three relic positions: the first pool branches to choose a special candidate, the second is fixed, and the third depends on retained starting relics and cards. These odds use fully unlocked base-game 0.111.0; see [[reading-guide]].
 
-## What You Want
+## First Position: Choose a Special Candidate, Then Draw One of Three
 
-Orobas offers three Ancient relic positions with separate rules:
+{{relic:ELECTRIC_SHRYMP}} and {{relic:GLASS_EYE}} always participate. The third candidate is {{relic:PRISMATIC_GEM}} with probability **1/3**, or {{relic:SEA_GLASS}} with probability **2/3**. The offer then selects uniformly among the three candidates.
 
-- **First:** {{relic:ELECTRIC_SHRYMP}}, {{relic:GLASS_EYE}}, and one of {{relic:SEA_GLASS}} / {{relic:PRISMATIC_GEM}}.
-- **Second:** a fixed choice of four.
-- **Third:** {{relic:TOUCH_OF_OROBAS}} and {{relic:ARCHAIC_TOOTH}}, subject to the player's current state.
-
-The first and third are not simple fixed pools.
-
-# First Position: {{relic:SEA_GLASS}} and {{relic:PRISMATIC_GEM}}
-
-Two base candidates always exist:
-
-- {{relic:ELECTRIC_SHRYMP}}
-- {{relic:GLASS_EYE}}
-
-The game first chooses the special third candidate:
-
-> **1/3: {{relic:PRISMATIC_GEM}}**
-> **2/3: {{relic:SEA_GLASS}}**
-
-Then it selects the first offer from those three candidates. Four relics are possible overall, but this is not a uniform choice of four.
-
-| Relic | Appearance probability |
+| Relic | Final offer probability |
 | --- | --- |
-| {{relic:ELECTRIC_SHRYMP}} | **1/3 ≈ 33.33%** |
-| {{relic:GLASS_EYE}} | **1/3 ≈ 33.33%** |
-| {{relic:SEA_GLASS}} | **2/9 ≈ 22.22%** |
-| {{relic:PRISMATIC_GEM}} | **1/9 ≈ 11.11%** |
+| {{relic:ELECTRIC_SHRYMP}} | 1/3, about 33.33% |
+| {{relic:GLASS_EYE}} | 1/3, about 33.33% |
+| {{relic:SEA_GLASS}} | 2/9, about 22.22% |
+| {{relic:PRISMATIC_GEM}} | 1/9, about 11.11% |
 
-{{relic:SEA_GLASS}} is exactly twice as common as {{relic:PRISMATIC_GEM}}.
+Four relics are possible overall, but they are not a uniform choice of four. Sea Glass is twice as common as Prismatic Gem.
 
-## {{relic:SEA_GLASS}} Also Has a Character Target
+### Sea Glass Also Chooses a Character
 
-Orobas randomly selects a target from the player's unlocked **other characters**. If {{relic:SEA_GLASS}} becomes the first option, it uses that selected character.
+The game first draws an unlocked other character. If Sea Glass becomes the first option, it uses that target. With all five base-game characters unlocked, excluding the current character leaves four targets. **Sea Glass with a specified target** has probability **2/9 × 1/4 = 1/18, about 5.56%**.
 
-In the default fully unlocked base game, there are five characters. Excluding the current character leaves **four targets**.
+RT2 supports a specified Sea Glass character target. A different unlock set changes the candidates and odds. Offer identity, character target, and effects after pickup are separate layers.
 
-The probability of {{relic:SEA_GLASS}} targeting one specified character is:
+## Second Position: A Fixed Choice of Four
 
-> **2/9 × 1/4 = 1/18 ≈ 5.56%**
+{{relic:ALCHEMICAL_COFFER}}, {{relic:DRIFTWOOD}}, {{relic:RADIANT_PEARL}}, and {{relic:SAND_CASTLE}} each have **25%** probability, with no additional eligibility requirement.
 
-Wanting {{relic:SEA_GLASS}} and wanting it to target a specified character are therefore different conditions. Its later effects can be covered separately.
+## Third Position: Retained Starting Relics and Signature Cards
 
-# Second Position: A Fixed Choice of Four
-
-The candidates are always:
-
-- {{relic:ALCHEMICAL_COFFER}}
-- {{relic:DRIFTWOOD}}
-- {{relic:RADIANT_PEARL}}
-- {{relic:SAND_CASTLE}}
-
-Each has **25%** probability, with no additional eligibility conditions.
-
-# Third Position: What Do You Still Own?
-
-Only two Ancient relics are possible:
-
-- {{relic:TOUCH_OF_OROBAS}}
-- {{relic:ARCHAIC_TOOTH}}
-
-Neither is always eligible. The game checks for legal targets in the player's actual state upon reaching Orobas.
-
-## {{relic:TOUCH_OF_OROBAS}}
-
-{{relic:TOUCH_OF_OROBAS}} improves the character's starting relic. In base-game 0.111.0:
+{{relic:TOUCH_OF_OROBAS}} requires a retained starting relic it can improve. Base-game pairs are:
 
 | Starting relic | Improved relic |
 | --- | --- |
@@ -79,15 +37,9 @@ Neither is always eligible. The game checks for legal targets in the player's ac
 | {{relic:BOUND_PHYLACTERY}} | {{relic:PHYLACTERY_UNBOUND}} |
 | {{relic:CRACKED_CORE}} | {{relic:INFUSED_CORE}} |
 
-Keeping the corresponding starting relic makes {{relic:TOUCH_OF_OROBAS}} eligible. Losing it earlier removes that option from the pool.
+{{relic:ARCHAIC_TOOTH}} requires the corresponding signature starting card still in the deck:
 
-The question is not merely which character you are, but **whether you still own a starting relic that can be improved**.
-
-## {{relic:ARCHAIC_TOOTH}}
-
-{{relic:ARCHAIC_TOOTH}} checks for a signature starting card:
-
-| Starting card | Result |
+| Starting card | Replacement |
 | --- | --- |
 | {{card:BASH}} | {{card:BREAK}} |
 | {{card:NEUTRALIZE}} | {{card:SUPPRESS}} |
@@ -95,30 +47,6 @@ The question is not merely which character you are, but **whether you still own 
 | {{card:FALLING_STAR}} | {{card:METEOR_SHOWER}} |
 | {{card:DUALCAST}} | {{card:QUADCAST}} |
 
-If the card remains in your deck, {{relic:ARCHAIC_TOOTH}} is eligible. If removed or transformed, it has no target and cannot enter the pool.
+Losing the relevant relic, or removing or transforming the relevant card, removes that option's legal target. When both are eligible, each has **50%** probability. With one eligible, it is guaranteed. With neither eligible, position three is locked instead of receiving another relic.
 
-Again, the relevant input is **the actual deck upon reaching Orobas**, not what it contained at the start.
-
-# What Happens to the Third Position?
-
-If both {{relic:TOUCH_OF_OROBAS}} and {{relic:ARCHAIC_TOOTH}} are eligible, each has **50%** probability.
-
-If only one is eligible, it is the sole Ancient relic in that position.
-
-If neither is eligible, the third position displays a locked option instead of substituting another relic.
-
-The randomness is simple. The essential step is establishing which relics the current state permits.
-
-# How Does RT2 Treat Orobas?
-
-First specify whether {{relic:TOUCH_OF_OROBAS}} and {{relic:ARCHAIC_TOOTH}} still have legal targets. RT2 uses this to reconstruct the third pool.
-
-Then choose the Ancient relics you actually want. For {{relic:SEA_GLASS}}, you can also require **a particular character target**.
-
-Remember these three features:
-
-> **Sea Glass and Prismatic Gem first compete for the special candidate position.**
-> **Sea Glass has a random other-character target.**
-> **The third position depends on retaining the corresponding starting relic and card.**
-
-Orobas depends more on current player state than a fixed-pool Ancient, but the rules remain clear.
+RT2 rebuilds this pool using the two eligibility premises upon reaching Orobas. Character identity cannot substitute for current ownership, and position three cannot offer both relics together. See [[ancient]] for premises and [[why-predictable]] for the shared random principle.

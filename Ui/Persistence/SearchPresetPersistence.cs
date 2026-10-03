@@ -129,6 +129,7 @@ internal sealed record SearchPresetDefinition(
     DateTimeOffset CreatedAtUtc)
 {
     public string Name => Title; // narrow v1/source compatibility alias
+    public string EnvironmentFingerprint { get; init; } = "";
     public WorkbenchSearchDraft? Workbench { get; init; }
     public string RawWorkbenchJson { get; init; } = string.Empty;
     public bool IsWorkbench => Workbench is not null || !string.IsNullOrWhiteSpace(RawWorkbenchJson);
@@ -302,6 +303,7 @@ internal sealed class UserSearchPresetProvider : ISearchPresetProvider
         _store.UpdateMetadata(id, title, description, visualIcons);
 
     public bool Delete(string id) => _store.Delete(id);
+    public SearchPresetDefinition UpdateEnvironment(string id, string fingerprint) => _store.UpdateEnvironment(id, fingerprint);
 }
 
 internal sealed class TemporarySearchPresetProvider : ISearchPresetProvider
@@ -366,6 +368,7 @@ internal sealed class SearchPresetCatalog
         _temporary.Record(capture);
 
     public bool DeleteUserPreset(string id) => _user.Delete(id);
+    public SearchPresetDefinition UpdateUserEnvironment(string id, string fingerprint) => _user.UpdateEnvironment(id, fingerprint);
 
     public bool TryGetUserByName(string name, out SearchPresetDefinition preset)
     {
@@ -513,6 +516,17 @@ internal sealed class SearchPresetStore
         return updated;
     }
 
+    public SearchPresetDefinition UpdateEnvironment(string id, string fingerprint)
+    {
+        int index = _presets.FindIndex(p => p.Id == id);
+        if (index < 0) throw new KeyNotFoundException("SearchPresetMissing");
+        if (string.IsNullOrWhiteSpace(fingerprint)) throw new InvalidOperationException("CurrentEnvironmentUnavailable");
+        var updated = _presets[index] with { EnvironmentFingerprint = fingerprint };
+        WriteOne(updated);
+        _presets[index] = updated;
+        return updated;
+    }
+
     public bool Delete(string id)
     {
         int index = _presets.FindIndex(candidate =>
@@ -655,7 +669,7 @@ internal sealed class SearchPresetStore
             if (legacy is not null || workbench.Character != capture.CharacterKey || workbench.Ascension != capture.Ascension)
                 throw new InvalidDataException("PresetCaptureContextMismatch");
             SearchPresetCompatibilityResolver.ValidateWorkbenchShape(workbench);
-            rawWorkbenchJson = JsonSerializer.Serialize(workbench.WithoutCapturedAuthority(), json);
+            rawWorkbenchJson = JsonSerializer.Serialize(workbench.ToPresetIntent(), json);
             // Detach mutable unlock/editor lists from the live workbench before the
             // asset enters the catalog. Templates retain player intent only.
             workbench = JsonSerializer.Deserialize<WorkbenchSearchDraft>(rawWorkbenchJson, CreateWorkbenchJsonOptions(json))
@@ -847,7 +861,8 @@ internal sealed class SearchPresetStore
             createdAt)
         {
             Workbench = workbench,
-            RawWorkbenchJson = rawWorkbenchJson
+            RawWorkbenchJson = rawWorkbenchJson,
+            EnvironmentFingerprint = persisted.EnvironmentFingerprint ?? ""
         };
     }
 
@@ -862,8 +877,8 @@ internal sealed class SearchPresetStore
             using JsonDocument document = JsonDocument.Parse(rawQuery);
             querySnapshot = document.RootElement.Clone();
         }
-        string rawWorkbench = !string.IsNullOrWhiteSpace(preset.RawWorkbenchJson) ? preset.RawWorkbenchJson :
-            preset.Workbench is not null ? JsonSerializer.Serialize(preset.Workbench.WithoutCapturedAuthority(), json) : string.Empty;
+        string rawWorkbench = preset.Workbench is not null ? JsonSerializer.Serialize(preset.Workbench.ToPresetIntent(), json) :
+            !string.IsNullOrWhiteSpace(preset.RawWorkbenchJson) ? preset.RawWorkbenchJson : string.Empty;
         if (!string.IsNullOrWhiteSpace(rawWorkbench))
         {
             using JsonDocument document = JsonDocument.Parse(rawWorkbench);
@@ -874,6 +889,7 @@ internal sealed class SearchPresetStore
         {
             SchemaVersion = SchemaVersion,
             Id = preset.Id,
+            EnvironmentFingerprint = preset.EnvironmentFingerprint,
             Title = preset.Title,
             Description = preset.Description,
             CharacterKey = preset.CharacterKey.Serialized,
@@ -964,6 +980,7 @@ internal sealed class SearchPresetStore
 
     internal sealed class PersistedSearchPreset
     {
+        public string EnvironmentFingerprint { get; set; } = "";
         public int SchemaVersion { get; set; } = SearchPresetStore.SchemaVersion;
         public string Id { get; set; } = string.Empty;
 

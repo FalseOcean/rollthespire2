@@ -9,9 +9,11 @@ using RolltheSpire2.Search.Semantics;
 namespace RolltheSpire2.Ui.Shell;
 
 internal sealed record WorkbenchPlayerDraft(int Slot, ModelKey Character,
-    MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState Unlocks, string UnlockSource)
+    MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState? Unlocks, string UnlockSource)
 {
     public AncientEditorStateSnapshot? AncientEditor { get; init; }
+    internal MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState RequireUnlocks() => Unlocks ??
+        throw new InvalidOperationException($"Party.UnlocksUnread:P{Slot + 1}");
 }
 
 internal sealed record AncientEditorRowSnapshot(int Act, ModelKey Ancient,
@@ -40,6 +42,28 @@ internal sealed record WorkbenchSearchDraft(ModelKey Character, int Ascension, S
     public string GameVersion { get; init; } = "";
     public RuntimeProfileId? Profile { get; init; }
     public string ObservationVersion { get; init; } = OrderedPartyAuthority.ObservationVersion;
+    // Version 5 is an unbound preset template. It must be rebound before compilation;
+    // editor/runtime/history drafts retain their observed per-player unlock data.
+    internal WorkbenchSearchDraft ToPresetIntent() => WithoutCapturedAuthority() with
+    {
+        Version = 5, GameVersion = "", Profile = null,
+        Players = Players.Select(p => p with { Unlocks = null,
+            UnlockSource = p.UnlockSource == "AssumedFullyUnlocked" ? "AssumedFullyUnlocked" : "CurrentContext" }).ToArray()
+    };
+
+    internal WorkbenchSearchDraft BindPresetIntent(ModRuntimeSnapshot runtime,
+        Func<int, MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState> readCurrentUnlocks)
+    {
+        var intent = ToPresetIntent();
+        return intent with
+        {
+            Version = intent.Players.Count > 0 ? 4 : 3,
+            GameVersion = runtime.Detection.NormalizedVersion, Profile = runtime.Profile.ProfileId,
+            Players = intent.Players.Select(p => p with { Unlocks = p.UnlockSource == "AssumedFullyUnlocked"
+                ? MegaCrit.Sts2.Core.Unlocks.UnlockState.all.ToSerializable()
+                : LobbyUnlockReadout.Copy(readCurrentUnlocks(p.Slot)) }).ToArray()
+        };
+    }
     internal WorkbenchSearchDraft WithoutCapturedAuthority() => this with
     {
         Version = Math.Max(Version, Players.Count > 0 ? 4 : 3),
@@ -54,6 +78,7 @@ internal sealed record WorkbenchSearchDraft(ModelKey Character, int Ascension, S
 
     internal CompiledSearch Compile(ModRuntimeSnapshot runtime, out RuntimeContextAuthoritySnapshot authority)
     {
+        if (Version == 5) throw new InvalidOperationException("Preset.CurrentEnvironmentRequired");
         if (Version is not (1 or 2 or 3 or 4)) throw new InvalidOperationException("integration.load_version");
         if (Mode is not (WorldGameMode.Singleplayer or WorldGameMode.Multiplayer) || (Mode == WorldGameMode.Multiplayer) != (Players.Count > 0))
             throw new InvalidOperationException("Party.DraftModeMismatch");
@@ -66,7 +91,7 @@ internal sealed record WorkbenchSearchDraft(ModelKey Character, int Ascension, S
         if (GameVersion != runtime.Detection.NormalizedVersion || Profile != runtime.Profile.ProfileId)
             throw new InvalidOperationException("Party.StaleDraftVersion");
         var party = Infrastructure.Snapshots.PartyRuntimeAuthorityCapture.Capture(runtime.Profile, "000000000000",
-            Players.Select(p => p.Character).ToArray(), Players.Select(p => p.Unlocks).ToArray(), Ascension, runtime.Detection.NormalizedVersion, Players.Select(p => p.UnlockSource).ToArray());
+            Players.Select(p => p.Character).ToArray(), Players.Select(p => p.Unlocks ?? throw new InvalidOperationException("Party.UnlocksUnread")).ToArray(), Ascension, runtime.Detection.NormalizedVersion, Players.Select(p => p.UnlockSource).ToArray());
         authority = party.Players[0];
         var context = SearchContextFactory.From(runtime.Profile.ProfileId, authority.Character.CharacterKey, Ascension,
             authority, runtime.Detection, AncientPremises) with { Party = party };
@@ -75,7 +100,7 @@ internal sealed record WorkbenchSearchDraft(ModelKey Character, int Ascension, S
             Conditions = p.Conditions with { EventResultConditions = p.Conditions.EventResultConditions.Select(c =>
                 EventResultTransformSemantics.IsTransform(c.Kind)
                     ? c with { MorphicGroveScenario = Infrastructure.Snapshots.Beta111MorphicGroveAuthorityCapture.CaptureAuthoredEventResult(
-                        party.Players[p.Slot], c.Kind, MegaCrit.Sts2.Core.Unlocks.UnlockState.FromSerializable(Players[p.Slot].Unlocks)) }
+                        party.Players[p.Slot], c.Kind, MegaCrit.Sts2.Core.Unlocks.UnlockState.FromSerializable(Players[p.Slot].Unlocks!)) }
                     : c).ToArray() }
         }).ToArray() };
         return SearchCompiler.Compile(query, context);

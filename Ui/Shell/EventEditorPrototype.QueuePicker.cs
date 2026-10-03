@@ -24,6 +24,7 @@ internal sealed partial class EventEditorPrototype
     private ModelKey? _queuePickerVariant;
     private bool _queuePickerShared;
     private int _queuePickerConditionMode;
+    private int _queuePickerResultMode;
     private int _queuePickerPlayers = 1;
     private IUiTextProvider _queuePickerTooltipText = JsonUiTextProvider.CreatePredictorUi13("zh");
 
@@ -45,6 +46,7 @@ internal sealed partial class EventEditorPrototype
         _queuePickerVariant = null;
         _queuePickerShared = false;
         _queuePickerConditionMode = 0;
+        _queuePickerResultMode = 0;
         _queuePickerBlocked.Clear();
         foreach (Node node in parent.FindChildren("*", "BaseButton", true, false))
             if (node is BaseButton button && !_queuePickerOverlay.IsAncestorOf(button))
@@ -75,6 +77,7 @@ internal sealed partial class EventEditorPrototype
 
         var filterScroll = new ScrollContainer
         {
+            Name = "EventPickerFilterScroll",
             Position = new Vector2(24, 76), Size = new Vector2(220, 600),
             HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled
         };
@@ -136,6 +139,14 @@ internal sealed partial class EventEditorPrototype
                 () => { _queuePickerShared = false; _queuePickerVariant = selectedVariant; });
         }
         _queuePickerFilters.AddChild(new Control { CustomMinimumSize = new Vector2(0, 12) });
+        _queuePickerFilters.AddChild(_p.Label(_text.Get("query.event.picker.results"), 18, true));
+        QueuePickerFilter(_text.Get("query.event.picker.all"), _queuePickerResultMode == 0,
+            () => _queuePickerResultMode = 0);
+        QueuePickerFilter(_text.Get("query.event.picker.results_supported"), _queuePickerResultMode == 1,
+            () => _queuePickerResultMode = 1);
+        QueuePickerFilter(_text.Get("query.event.picker.appearance_only"), _queuePickerResultMode == 2,
+            () => _queuePickerResultMode = 2);
+        _queuePickerFilters.AddChild(new Control { CustomMinimumSize = new Vector2(0, 12) });
         _queuePickerFilters.AddChild(_p.Label(_text.Get("query.event.picker.conditions"), 18, true));
         QueuePickerFilter(_text.Get("query.event.picker.all"), _queuePickerConditionMode == 0,
             () => _queuePickerConditionMode = 0);
@@ -181,6 +192,8 @@ internal sealed partial class EventEditorPrototype
                 candidate.VariantActKeys.Contains(_queuePickerVariant.Value, ModelKeyComparer.Instance))
             .Where(candidate => _queuePickerConditionMode == 0 ||
                 QueuePickerHasCondition(candidate) == (_queuePickerConditionMode == 1))
+            .Where(candidate => _queuePickerResultMode == 0 ||
+                (EventResultPrototypeWhitelist.Find(candidate.EventKey) is not null) == (_queuePickerResultMode == 1))
             .Where(candidate => search.Length == 0 || _names.Resolve(candidate.EventKey, GameContentKind.Event)
                 .Contains(search, StringComparison.CurrentCultureIgnoreCase))
             .ToArray();

@@ -175,7 +175,7 @@ internal sealed partial class PredictorRun
         if (item.Kind == "CURSE")
         {
             var key = new ModelKey("CARD", "DOUBT");
-            PredictorSettlementEffects.RequireImplementedCard(PredictorCardChanges.Definition(Context, key).Prototype);
+            PredictorSettlementEffects.RequireImplementedCard(PredictorCardChanges.Definition(Context, key).Prototype, Context.Crystal != null);
             Working = PredictorObtainSources.AddCard(Context, Working, key);
             Accept(new("CrystalDoubtRevealed", Working.Deck[^1], [], null, null));
         }

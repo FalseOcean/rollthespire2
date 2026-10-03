@@ -24,6 +24,7 @@ internal sealed partial class WorkspaceShell
     private string _originReceiptKey = "", _logReceiptKey = "";
     private bool _bindingSettings;
     private readonly CheckButton _skipExact = new() { Name = "SettingsSkipExact", CustomMinimumSize = new(360, 44), SizeFlagsHorizontal = SizeFlags.ShrinkBegin };
+    private readonly SpinBox _queryHistoryLimit = new() { Name = "SettingsQueryHistoryLimit", MinValue = 1, MaxValue = 300, Step = 1, CustomMinimumSize = new(180, 42) };
     private bool SettingsSearchBusy => _references?.HasActiveSearch == true || _persistence?.HasSearchInFlight == true;
 
     private void BuildSettings()
@@ -69,6 +70,8 @@ internal sealed partial class WorkspaceShell
             _languageCode = ""; RefreshLanguage();
         };
 
+        BuildAppearanceSettings(Section("settings.appearance.title", "settings.appearance.help"));
+
         var prediction = Section("settings.run_prediction.title", "settings.run_prediction.help");
         _runPredictionEntry.AddThemeFontSizeOverride("font_size", 20);
         _runPredictionEntry.AddThemeColorOverride("font_color", _palette.Color(_palette.Text));
@@ -88,6 +91,13 @@ internal sealed partial class WorkspaceShell
             _references?.SyncSearchPreferences();
         };
 
+        var history = Section("settings.history.title", "settings.history.help");
+        history.AddChild(_queryHistoryLimit);
+        _queryHistoryLimit.ValueChanged += value =>
+        {
+            if (_bindingSettings) return;
+            _persistence!.SetQueryHistoryLimit((int)value);
+        };
         var origin = Section("settings.origin.title", "settings.origin.help");
         var originActions = new HFlowContainer(); originActions.AddThemeConstantOverride("h_separation", 12);
         originActions.AddThemeConstantOverride("v_separation", 8); origin.AddChild(originActions);
@@ -153,6 +163,7 @@ internal sealed partial class WorkspaceShell
     private void LocalizeSettings(IUiTextProvider text)
     {
         _settingsText = text;
+        RefreshAppearanceSettings();
         foreach (var (label, key) in _settingsLabels) label.Text = text.Get(key);
         foreach (var (button, key) in _settingsButtons) button.Text = text.Get(key);
         _language.SetItemText(0, text.Get("settings.language.follow_game"));
@@ -169,6 +180,7 @@ internal sealed partial class WorkspaceShell
         _runPredictionEntry.SetPressedNoSignal(persistence.Preferences.ShowInRunPredictionEntry);
         _skipExact.SetPressedNoSignal(persistence.Preferences.SkipExactValidation);
         _skipExact.Disabled = SettingsSearchBusy;
+        _queryHistoryLimit.SetValueNoSignal(persistence.Preferences.QueryHistoryLimit);
         if (resetInput)
         {
             _bindingSettings = true;

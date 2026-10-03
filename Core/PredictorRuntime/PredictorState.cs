@@ -23,6 +23,8 @@ internal sealed record PredictorContext(
     public RolltheSpire2.Core.World.Snapshots.Beta109WorldGenerationSnapshot? AncientAuthority { get; init; }
     public ImmutableArray<PredictorRunModifier> Modifiers { get; init; } = [];
     public int? AccountWongoPoints { get; init; }
+    // Crystal-only live snapshot policy; never inferred for route/seed callers.
+    public PredictorCrystalContext? Crystal { get; init; }
     internal bool HasRunModifier(string entry) => Modifiers.Any(m => m.Key.Entry == entry);
 }
 
@@ -210,16 +212,17 @@ internal static class PredictorSeedState
             context.GameVersion != "0.111.0" || !context.Character.IsValid || context.Ascension is < 0 or > 10 ||
             string.IsNullOrWhiteSpace(context.CatalogFingerprint) || string.IsNullOrWhiteSpace(context.UnlockFingerprint) ||
             context.RevealedEpochs.IsDefault || context.SeenEncounters.IsDefault || context.DiscoveredActs.IsDefault || context.Modifiers.IsDefault ||
-            context.AccountWongoPoints < 0 || context.Modifiers.Any(m => m == null || !m.Key.IsValid || m.Key.Category != "MODIFIER" || !KnownModifier(m.Key.Entry) ||
+            context.AccountWongoPoints < 0 || context.Modifiers.Any(m => m == null || !m.Key.IsValid || m.Key.Category != "MODIFIER" || (context.Crystal == null && !KnownModifier(m.Key.Entry)) ||
                 m.Key.Entry == "CHARACTER_CARDS" && (m.Character == null || !m.Character.Value.IsValid)) ||
             context.PotionPool.IsDefault || context.PotionPool.Any(p => p == null || p.Key.Category != "POTION" || !p.Key.IsValid || !Enum.IsDefined(p.Rarity)) ||
-            context.NumberOfRuns < 0 || context.SealOfGoldFixedDeduction < 0)
+            context.NumberOfRuns < 0 || context.SealOfGoldFixedDeduction < 0 ||
+            context.Crystal is { } crystal && (crystal.PlayerCount < 1 || crystal.PlayerSlot < 0 || crystal.PlayerSlot >= crystal.PlayerCount || crystal.EligibleRelics == null))
             throw new InvalidDataException("PredictorContextInvalid");
     }
 
     // Validate a frozen vanilla identity, not combinations of modifiers. Unknown
     // caller keys must not silently act as modifiers with no effects.
-    private static bool KnownModifier(string entry) => entry is
+    internal static bool KnownModifier(string entry) => entry is
         "ALL_STAR" or "BIG_GAME_HUNTER" or "CHARACTER_CARDS" or "CURSED_RUN" or
         "DEADLY_EVENTS" or "DRAFT" or "FLIGHT" or "HOARDER" or "INSANITY" or "MIDAS" or
         "MURDEROUS" or "NIGHT_TERRORS" or "SEALED_DECK" or "SPECIALIZED" or "TERMINAL" or "VINTAGE";

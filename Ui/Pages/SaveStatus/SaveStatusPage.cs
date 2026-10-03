@@ -12,7 +12,7 @@ using RolltheSpire2.Ui.Theme;
 namespace RolltheSpire2.Ui.Pages.SaveStatus;
 
 /// <summary>
-/// Read-only current game/save/environment inspector. It consumes only the RT2-owned
+/// Current game/save/environment inspector with an explicit compute-device probe. It consumes the RT2-owned
 /// immutable RuntimeAuthorityEnvironment snapshot captured on the Godot main thread.
 /// Fingerprint/baseline state is diagnostic/provenance evidence and never a Search gate.
 /// </summary>
@@ -96,6 +96,7 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
 
     public AppPageKey PageKey { get; }
     public Control View => this;
+    internal Func<bool> SearchBusy { get; set; } = () => false;
 
     public void ApplyLocalization(IUiTextProvider uiText, IGameContentNameResolver contentNames)
     {
@@ -122,7 +123,6 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
     {
         ClearRows(_deviceRows);
         var identity = SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity();
-        var device = FamilyDeviceProfileFoundation.Capture();
         AddKeyValue(_deviceRows, "CPU", identity.CpuIdentity);
         AddKeyValue(_deviceRows, text.Get("ui1.devices.cpu_usage"), text.Get("ui1.devices.cpu_available"));
         var cpu = CpuCostCalibration.DisplaySummary();
@@ -132,9 +132,7 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
             AddKeyValue(_deviceRows, text.Format("ui1.devices.cpu_workers", row.Workers),
                 text.Format("ui1.devices.factor", 1 / row.Ratio, row.Samples));
         AddKeyValue(_deviceRows, "GPU", identity.HasKnownGpu ? identity.GpuIdentity : text.Get("ui1.devices.unidentified"));
-        string state = !FamilyDeviceProfileFoundation.GpuAvailable ? "ui1.devices.unavailable" :
-            device.FamilyComputeRuntimeObserved ? "ui1.devices.observed" : "ui1.devices.unverified";
-        AddKeyValue(_deviceRows, text.Get("ui1.devices.gpu_usage"), text.Get(state));
+        _deviceRows.AddChild(new RolltheSpire2.Ui.Components.GpuInitializationPanel(text.LanguageCode, () => SearchBusy()));
         var gpu = GpuCostCalibration.DisplaySummary();
         AddKeyValue(_deviceRows, text.Get("ui1.devices.relative"), gpu.Comparable > 0
             ? text.Format("ui1.devices.factor", 1 / gpu.Ratio, gpu.Comparable)

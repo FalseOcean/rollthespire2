@@ -1,45 +1,29 @@
-# Event Results: Which Outcomes Are Worth Predicting?
+# Event Outcomes: What Can RT2 Filter?
 
-> Applies to: **Slay the Spire 2 Beta 0.111.0**
+Outcome conditions assume the event occurs. If you also want it among the first few candidates, add a separate event candidate condition. See [[events|Event candidates and outcomes]].
 
-## What You Want
+## Outcomes determined within the event
 
-Beyond encountering an event, you may require **a specified result from it**. Outcomes vary greatly in how much prior state they need. RT2 roughly distinguishes three useful categories.
+These use the event's own random state and do not require reconstructing earlier normal combat rewards or shop history:
 
-# Stable Results
+| Event | Current filter |
+| --- | --- |
+| Colorful Philosophers | Whether the initial color offers include a target character |
+| Fake Merchant | Whether the six-item inventory includes a target fake relic, in any position |
+| Trash Heap | The card or relic obtained from the chosen branch |
+| Trial | The case drawn after accepting the trial |
+| Tinker Time | Offered card types and the rider effects available after choosing a type |
 
-These require only **the seed, event identity, and a little fixed information**.
+See [[event-stable-results|Stable event outcomes]] for the first three events' fixed pools and probabilities. Trial's cosmetic entrant number is outside the case prediction. Tinker Time's types are alternative branches; one branch's random consumption must not be carried into another.
 
-For example, **Junk Heap** selects results from fixed candidates after the event occurs. Earlier normal combats, shops, and route state generally do not change that draw.
+## Transforms requiring starter cards
 
-Such results are particularly suitable for direct filtering.
+Current filters cover one starter-card transform in Symbiote, Aroma of Chaos and Whispering Hollow, and two in Morphic Grove and Trial. Trial also requires the relevant case and transformation branch.
 
-# Results That Are Stable Under a Simple Premise
+You must arrive with legal starter targets, choose the agreed branch and preserve the transformation pool used by the prediction and relevant rules. Prediction does not guarantee that the targets survive your route. See [[event-transform-results|Starter-card transforms]] for the practical premises.
 
-These can be predicted accurately once the player supplies a straightforward premise. **Transformation events** are a typical example.
+## Outcomes not currently offered
 
-If the player commits to transforming a specified starting card at the event, preserving that target is usually easy and the premise is simple. RT2 can then determine what it becomes.
+Endless Conveyor and some other outcomes are not formal event filters. Other rewards require your current deck, relic bags, reward random progress or a longer action history. Their coverage needs checking individually; this does not make them inherently unpredictable. Published Crystal Sphere features are described separately in [[crystal-sphere|Crystal Sphere]].
 
-The result is not inherently unstable: **it is stable as long as the player maintains the premise**.
-
-# Results Useful Only Under Exceptional Conditions
-
-Some event results have theoretical predictive value but are worth filtering only with unusual prior states or play constraints. **Endless Conveyor** is an example.
-
-Its results are not completely beyond analysis, but making the prediction useful requires more specialized conditions. This category is not currently offered as a formal filtering capability.
-
-# Other Results
-
-Many remaining outcomes strongly depend on the deck, relics, potions, earlier choices, persistent random states, or a longer route history.
-
-They are still governed by the seed, but reliable prediction may require reconstructing too much prior gameplay. RT2 does not currently build a full run simulation simply to cover every event outcome.
-
-In practical terms:
-
-> **Stable: predict directly.**
-> **Stable under simple conditions: predict after the player supplies those premises.**
-> **Useful only under extreme conditions: not currently offered.**
-
-Other highly history-dependent outcomes are outside current event filtering. In every category:
-
-> **Predicting an event's result does not prove the event will occur.**
+If an outcome differs from prediction, first check the actual option and that result's premises. See [[faq|FAQ]] for common symptoms and short troubleshooting steps.

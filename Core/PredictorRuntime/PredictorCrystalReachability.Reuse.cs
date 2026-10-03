@@ -9,7 +9,7 @@ internal sealed partial class PredictorCrystalReachability
     // All entries belong to this frozen board/budget/curse policy. Take order is
     // part of the key: a proof for one ordered selection is not another's proof.
     private static string SelectionKey(ImmutableArray<CrystalRewardOption> selected) =>
-        string.Join('|',selected.Select(s=>$"{s.Kind}:{s.Key.Category}:{s.Key.Entry}:{s.UpgradeLevel?.ToString()??"*"}"));
+        string.Join('|',selected.Select(s=>s.CacheKey));
     private readonly object _reuseSync=new();
     private readonly ConcurrentDictionary<string,CrystalOptionProjection> _published=new();
     private readonly ConcurrentDictionary<string,int> _projectedRows=new();
@@ -26,7 +26,10 @@ internal sealed partial class PredictorCrystalReachability
 
     private CrystalOptionProjection PublishKnown(string key,CrystalOptionProjection incoming,ImmutableArray<CrystalRewardOption> selected,bool reshape=false)
     {
-        if(!selected.IsEmpty && incoming.SelectedPlan is { } plan)
+        // Publish conditional positives first. Expanded suffix validation may be
+        // expensive; its optional currency refinement belongs to Advance, not
+        // the immediate cached response after selecting another reward.
+        if((!includeRerolls || reshape) && !selected.IsEmpty && incoming.SelectedPlan is { } plan)
         {
             var finishKey=(string.Join(';',plan.Steps.Select(s=>$"{s.X},{s.Y},{s.Tool}")),key,reshape);
             if(!_goldFinishes.TryGetValue(finishKey,out var finish))
@@ -36,7 +39,7 @@ internal sealed partial class PredictorCrystalReachability
                 var input=new CrystalOptionProjection(ImmutableDictionary<CrystalRewardOption,PredictorCrystalSolution>.Empty,plan,incoming.Gold);
                 // Immediate retarget projection keeps the original cheap tail
                 // work. Whole-board currency reshaping runs on search updates.
-                finish=new(()=>PredictorCrystalGoldFinish.Improve(source,input,selected,avoidCurse,reshape));
+                finish=new(()=>PredictorCrystalGoldFinish.Improve(source,input,selected,avoidCurse,reshape,includeRerolls:includeRerolls));
                 if(_goldFinishes.Count<2048) finish=_goldFinishes.GetOrAdd(finishKey,finish);
             }
             incoming=incoming with { SelectedPlan=finish.Value.SelectedPlan,Gold=finish.Value.Gold };
@@ -51,6 +54,10 @@ internal sealed partial class PredictorCrystalReachability
         string path=_pathKeys.GetValue(row,r=>string.Join(';',r.Steps.Select(s=>$"{s.X},{s.Y},{s.Tool}")));
         var key=(path,SelectionKey(selected));
         if(_takeProofs.TryGetValue(key,out var existing)) { Interlocked.Increment(ref _proofHits);return existing.Value; }
+        // Root slot contradictions cover every path and take order. Reprojection
+        // must not redo skipped take checks for these now-retired candidates.
+        // Do not broaden ordered replay failures into this all-path shortcut.
+        if(rootCardSlots && IsRootCardConflict(selected)) return null;
         PredictorCrystalSolution? Verify()
         {
             Interlocked.Increment(ref _proofReplays);

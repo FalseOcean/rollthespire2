@@ -33,6 +33,7 @@ internal abstract record PredictorInput;
 internal sealed record TakeReward(long RewardId, long? CardId = null) : PredictorInput;
 internal sealed record EnterCardSelection(long RewardId) : PredictorInput;
 internal sealed record ExitCardSelection : PredictorInput;
+internal sealed record RerollCardReward(long RewardId) : PredictorInput;
 internal sealed record SkipCardReward : PredictorInput;
 internal sealed record LeaveRewards : PredictorInput;
 internal sealed record SelectRemovalCards(ImmutableArray<long> CardIds) : PredictorInput;
@@ -79,6 +80,17 @@ internal sealed partial class PredictorRun
         if (request == null || Phase == PredictorPhase.Complete || Request != request) return PredictorInputResult.Stale;
         if (TrySubmitCrystal(input, cancellationToken) is { } result) return result;
         if (Phase != PredictorPhase.Rewards) return PredictorInputResult.Invalid;
+        if (input is ExitCardSelection)
+        {
+            if (_cardSelection is not { } current) return PredictorInputResult.Invalid;
+            int i = OpenReward(current);
+            if (i < 0) return PredictorInputResult.Invalid;
+            Rewards = Rewards.SetItem(i, Rewards[i] with { CardSelectionEntered = false, RelicSubscriptionActive = false });
+            _cardSelection = null;
+            Accept(new("ExitCardSelection", current, [], null, null));
+            return PredictorInputResult.Accepted;
+        }
+        if (input is RerollCardReward reroll) return SubmitCrystalReroll(reroll);
         if (input is EnterCardSelection enter)
         {
             int i = OpenReward(enter.RewardId);
@@ -123,9 +135,9 @@ internal sealed partial class PredictorRun
         cancellationToken.ThrowIfCancellationRequested();
         if (Phase is not (PredictorPhase.Complete or PredictorPhase.OpeningChoice)) throw new InvalidOperationException("PredictorNodeStillOpen");
         if (string.IsNullOrWhiteSpace(position.NodeId) || position.Act < 0 || position.Floor < 0 || rewards.IsDefault) throw new ArgumentException("PredictorNodeInvalid");
-        // These are implementation preconditions, not a production capability gate.
-        // Never silently execute unaudited hooks as no-ops while adding content.
-        PredictorSettlementEffects.RequireImplementedInventory(preparedState);
+        // Crystal capture explicitly records its best-effort mod policy. Other
+        // callers retain the donor's strict contract.
+        PredictorSettlementEffects.RequireImplementedInventory(preparedState, Context.Crystal != null);
         var working = preparedState with { Position = position };
         var built = ImmutableArray.CreateBuilder<PredictorReward>();
         foreach (var prototype in rewards)
@@ -150,7 +162,7 @@ internal sealed partial class PredictorRun
             var cards = ImmutableArray.CreateBuilder<PredictorCard>();
             foreach (var card in prototype.Cards)
             {
-                PredictorSettlementEffects.RequireImplementedCard(card);
+                PredictorSettlementEffects.RequireImplementedCard(card, Context.Crystal != null);
                 if (card.UpgradeLevel < 0 || card.MaxUpgradeLevel < card.UpgradeLevel || !Enum.IsDefined(card.Type))
                     throw new ArgumentException("PredictorCardInvalid");
                 if (prototype.PreserveCardInstance)

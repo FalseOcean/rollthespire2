@@ -7,6 +7,8 @@ using MegaCrit.Sts2.Core.Nodes.Screens.Map;
 using MegaCrit.Sts2.Core.Nodes.Screens.Overlays;
 using MegaCrit.Sts2.Core.Nodes.Screens.ScreenContext;
 using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Rooms;
 using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Infrastructure.Snapshots;
 using RolltheSpire2.Presentation.Localization;
@@ -23,6 +25,13 @@ internal sealed partial class InRunPredictionLauncher : Button
     private bool _opening;
     private bool _enabledByPreference;
     private RunPredictionOverlay? _surface;
+    private EventModel? _sessionEvent;
+    private CrystalSphereAssistantPanel.Session? _session;
+    private void CheckSessionEvent()
+    {
+        var current=(_run.CurrentRoom as EventRoom)?.LocalMutableEvent;
+        if(!ReferenceEquals(current,_sessionEvent)) { _session=null;_sessionEvent=current; }
+    }
     private Control? _debugInfo;
 
     internal static void EnsureAttached(NTopBar topBar, IRunState run, ModRuntimeSnapshot runtime)
@@ -78,6 +87,7 @@ internal sealed partial class InRunPredictionLauncher : Button
         _poll -= delta;
         if (_poll > 0) return;
         _poll = .2;
+        CheckSessionEvent();
         AlignBelowRunInformation();
         bool predictionOpen = _surface is not null && IsInstanceValid(_surface);
         Visible = !predictionOpen;
@@ -93,8 +103,16 @@ internal sealed partial class InRunPredictionLauncher : Button
         RunPredictionOverlay? surface = null;
         try
         {
+            CheckSessionEvent();
             surface = new RunPredictionOverlay();
-            surface.Initialize(_runtime, _run, stack);
+            surface.Initialize(_runtime, _run, stack,_session);
+            var openedEvent=_sessionEvent;
+            surface.SessionClosed += session=>
+            {
+                CheckSessionEvent();
+                _session=_sessionEvent!=null && ReferenceEquals(_sessionEvent,openedEvent)?session:null;
+                _surface=null;
+            };
             surface.GuideRequested += (snapshot, mode, solution) =>
             {
                 var parent = (Control)GetParent();
@@ -123,6 +141,7 @@ internal sealed partial class InRunPredictionLauncher : Button
 internal sealed partial class RunPredictionOverlay : Control, IOverlayScreen
 {
     internal event Action<CrystalSphereLiveSnapshot, string, RolltheSpire2.Core.PredictorRuntime.PredictorCrystalSolution>? GuideRequested;
+    internal event Action<CrystalSphereAssistantPanel.Session?>? SessionClosed;
     private CrystalSphereAssistantPanel _panel = null!;
     private WorkspaceShell _shell = null!;
     private NOverlayStack _stack = null!;
@@ -132,7 +151,7 @@ internal sealed partial class RunPredictionOverlay : Control, IOverlayScreen
     public bool UseSharedBackstop => true;
     public Control? DefaultFocusedControl => _shell?.CloseButton;
 
-    internal void Initialize(ModRuntimeSnapshot runtime, IRunState run, NOverlayStack stack)
+    internal void Initialize(ModRuntimeSnapshot runtime, IRunState run, NOverlayStack stack,CrystalSphereAssistantPanel.Session? session=null)
     {
         Name = "RolltheSpire2_RunPredictionOverlay";
         _stack = stack;
@@ -142,6 +161,7 @@ internal sealed partial class RunPredictionOverlay : Control, IOverlayScreen
         AddChild(shade); shade.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         _panel = new CrystalSphereAssistantPanel();
         _panel.Initialize(run, runtime);
+        if(session!=null) _panel.RestoreSession(session);
         _shell = new WorkspaceShell(); _shell.InitializeCrystalScene(runtime, _panel,run); AddChild(_shell);
         _shell.TopLevelCloseRequested += Close;
         _panel.GuideRequested += (snapshot, mode, solution) => { GuideRequested?.Invoke(snapshot, mode, solution); Close(); };
@@ -150,12 +170,12 @@ internal sealed partial class RunPredictionOverlay : Control, IOverlayScreen
     public void AfterOverlayOpened()
     {
         _shell.Open();
-        _panel.Refresh();
+        _panel.OpenSession();
     }
     public void AfterOverlayClosed()
     {
         if (_closed) return;
-        _closed = true; ReleaseHotkeys(); _shell.CleanupForTopLevelClose(); QueueFree();
+        _closed = true; ReleaseHotkeys();SessionClosed?.Invoke(_panel.SuspendSession()); _shell.CleanupForTopLevelClose(); QueueFree();
     }
     public void AfterOverlayShown()
     {

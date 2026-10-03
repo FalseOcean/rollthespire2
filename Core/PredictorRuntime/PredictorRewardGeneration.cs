@@ -218,6 +218,7 @@ internal static class PredictorRewardGeneration
 
     internal static bool RelicAllowed(PredictorContext context, PredictorState state, ModelKey key)
     {
+        if (context.Crystal is { } crystal) return crystal.EligibleRelics.Contains(key);
         if (key.Entry == "MASSIVE_SCROLL") return false;
         if (key.Entry == "LASTING_CANDY" && context.Character.Entry == "IRONCLAD" && context.NumberOfRuns == 0) return false;
         return key.Entry is not ("AMETHYST_AUBERGINE" or "BOOK_OF_FIVE_RINGS" or "BOWLER_HAT" or "DRAGON_FRUIT" or
@@ -265,7 +266,7 @@ internal static class PredictorRewardGeneration
                 }
             }
         var rarity = plan.Rarity;
-        pool = pool.Where(c => !c.IsMultiplayerOnly && c.IsUnlockedInCapturedPool &&
+        pool = pool.Where(c => (context.Crystal?.PlayerCount > 1 || !c.IsMultiplayerOnly) && c.IsUnlockedInCapturedPool &&
             (rarity == null || c.Rarity == rarity)).ToImmutableArray();
         return pool;
     }

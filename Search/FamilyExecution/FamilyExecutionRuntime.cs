@@ -72,25 +72,41 @@ internal sealed class FamilyGpuExecutionOwner : IAsyncDisposable
     private readonly TaskCompletionSource<bool> _stopped =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Func<RenderingDevice?> _createDevice;
+    private readonly FamilyGpuInitialization? _initialization;
+    private readonly long _initializationAttempt;
     private int _disposed;
     private int _faulted;
     private Exception? _ownerFault;
 
-    public FamilyGpuExecutionOwner() : this(() => RenderingServer.CreateLocalRenderingDevice())
+    public FamilyGpuExecutionOwner() : this(() => RenderingServer.CreateLocalRenderingDevice(),
+        FamilyDeviceProfileFoundation.Initialization)
     {
     }
 
-    internal FamilyGpuExecutionOwner(Func<RenderingDevice?> createDevice)
+    internal FamilyGpuExecutionOwner(Func<RenderingDevice?> createDevice,
+        FamilyGpuInitialization? initialization = null, bool explicitRetry = false)
     {
         ArgumentNullException.ThrowIfNull(createDevice);
         _createDevice = createDevice;
-        RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=GpuOwnerRequested;processId={System.Environment.ProcessId};lifetime=PerSearch");
+        _initialization = initialization;
+        var previousState = initialization?.Capture().State ?? FamilyGpuInitializationState.Unverified;
+        try { _initializationAttempt = initialization?.BeginCreation(explicitRetry) ?? 0; }
+        catch { _queue.Dispose(); throw; }
+        RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=GpuOwnerRequested;processId={System.Environment.ProcessId};lifetime={(explicitRetry ? "InitializationProbe" : "PerSearch")}");
         _thread = new Thread(ThreadMain)
         {
             IsBackground = true,
             Name = "RolltheSpire2.FamilyExecution.GpuOwner"
         };
-        _thread.Start();
+        try { _thread.Start(); }
+        catch
+        {
+            // Thread startup is not a Local RenderingDevice creation failure.
+            _initialization?.CreationAborted(_initializationAttempt, previousState);
+            _initialization?.OwnerStopped();
+            _queue.Dispose();
+            throw;
+        }
     }
 
     public int OwnerThreadId { get; private set; }
@@ -146,12 +162,25 @@ internal sealed class FamilyGpuExecutionOwner : IAsyncDisposable
             "renderingDeviceExecution=Synchronous");
         try
         {
-            device = _createDevice() ??
-                     throw new InvalidOperationException("FamilyGpuRenderingDeviceUnavailable");
+            try
+            {
+                device = _createDevice() ??
+                         throw new InvalidOperationException("FamilyGpuRenderingDeviceUnavailable: CreateLocalRenderingDevice returned null; see Godot log for native driver details.");
+            }
+            catch (Exception creationFailure)
+            {
+                _initialization?.CreationFailed(_initializationAttempt, creationFailure);
+                throw;
+            }
+            _initialization?.CreationSucceeded(_initializationAttempt);
             RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=GpuOwnerReady;ownerThreadId={OwnerThreadId};requestedToReadyMs={System.Diagnostics.Stopwatch.GetElapsedTime(_requestedAt).TotalMilliseconds:F4};processId={System.Environment.ProcessId}");
-            LogDeviceFacts(device);
-            FamilyDeviceProfileFoundation.ObserveFamilyComputeAvailable(
-                device.GetDeviceName()?.Trim() ?? string.Empty);
+            try
+            {
+                LogDeviceFacts(device);
+                FamilyDeviceProfileFoundation.ObserveFamilyComputeAvailable(device.GetDeviceName()?.Trim() ?? string.Empty);
+            }
+            catch (Exception diagnosticsFailure)
+            { RuntimeLog.TryBackgroundWarning("familyGpuDeviceDiagnosticsFailed=true;failure=" + diagnosticsFailure); }
             foreach (IWorkItem item in _queue.GetConsumingEnumerable())
                 item.Execute(device);
         }
@@ -189,6 +218,7 @@ internal sealed class FamilyGpuExecutionOwner : IAsyncDisposable
             }
             RuntimeLog.TryBackgroundInfo(
                 $"familyGpuOwnerStopped=true;ownerThreadId={OwnerThreadId};deviceCreated={device is not null};deviceReleased={device is not null && releaseFailure is null}");
+            _initialization?.OwnerStopped();
             if (releaseFailure is null) _stopped.TrySetResult(true);
             else _stopped.TrySetException(releaseFailure);
         }

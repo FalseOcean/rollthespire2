@@ -1,20 +1,8 @@
-# Act 3 Ancients: Shared Candidate Lists and Fixed Positions
+# Act 3 Ancients: Candidate Lists and Fixed Positions
 
-> Applies to: **Slay the Spire 2 Beta 0.111.0**
+Act 3's local Ancients {{event:NONUPEIPE}}, {{event:TANX}}, and {{event:VAKUU}} use two structures: the first two shuffle one list and take three relics; Vakuu takes one from each of three fixed pools. These candidates and odds describe base-game 0.111.0; see [[reading-guide]] for the shared environment.
 
-Act 3's three local Ancients are:
-
-- {{event:NONUPEIPE}}
-- {{event:TANX}}
-- {{event:VAKUU}}
-
-Their relic generation is simpler than Act 2's. {{event:NONUPEIPE}} and {{event:TANX}} **build one candidate list, shuffle it, and take the first three**. {{event:VAKUU}} **takes one from each of three fixed pools**.
-
-The main special cases are two conditional relics that change pool membership.
-
-# {{event:NONUPEIPE}}
-
-{{event:NONUPEIPE}} has nine base candidates:
+## {{event:NONUPEIPE}}: Nine Base Candidates
 
 - {{relic:BLESSED_ANTLER}}
 - {{relic:BRILLIANT_SCARF}}
@@ -26,19 +14,13 @@ The main special cases are two conditional relics that change pool membership.
 - {{relic:LOOMING_FRUIT}}
 - {{relic:SIGNET_RING}}
 
-The game shuffles them and offers the first three. Without an additional condition, each has probability **3 / 9 = 1/3**, or about **33.33%**.
+The game shuffles the pool and offers the first three. Each relic appears with probability **3/9 = 1/3, about 33.33%**.
 
-## {{relic:BEAUTIFUL_BRACELET}}
+At least **4 Swift-enchantable cards** in the current deck add {{relic:BEAUTIFUL_BRACELET}}. Ten candidates still yield only three options, so every candidate, including the new relic, has probability **3/10 = 30%**. Eligibility changes the entire pool's odds without adding a fourth option.
 
-{{relic:BEAUTIFUL_BRACELET}} is an additional candidate when the deck contains at least **4 cards that can receive Swift**.
+## {{event:TANX}}: Shuffle and Take Three
 
-The pool grows from nine to ten, still taking three after shuffling. {{relic:BEAUTIFUL_BRACELET}} then has probability **3/10 = 30%**. Each original candidate also changes from **1/3** to **3/10**.
-
-The condition affects the entire {{event:NONUPEIPE}} pool, not just the added relic.
-
-# {{event:TANX}}
-
-{{event:TANX}} uses almost the same structure, with nine base relics:
+Its nine base candidates are:
 
 - {{relic:CLAWS}}
 - {{relic:CROSSBOW}}
@@ -50,57 +32,24 @@ The condition affects the entire {{event:NONUPEIPE}} pool, not just the added re
 - {{relic:THROWING_AXE}}
 - {{relic:WAR_HAMMER}}
 
-Shuffle the whole pool and take three. Each base relic normally has **1/3** probability.
+Each appears with probability **1/3**. At least **3 Instinct-enchantable cards** in the current deck add {{relic:TRI_BOOMERANG}}. Three of ten candidates are still taken, changing every candidate's odds to **3/10 = 30%**.
 
-## {{relic:TRI_BOOMERANG}}
+## {{event:VAKUU}}: Three Fixed Positions
 
-{{relic:TRI_BOOMERANG}} joins {{event:TANX}}'s pool when the deck has at least **3 cards that can receive Instinct**.
-
-Nine base relics plus {{relic:TRI_BOOMERANG}} make ten candidates, of which three are still taken. Each then has probability **3/10 = 30%**.
-
-Like {{event:NONUPEIPE}}'s {{relic:BEAUTIFUL_BRACELET}}, **the condition adds a candidate to the pool, not a fourth offered option**.
-
-# {{event:VAKUU}}
-
-{{event:VAKUU}} has three fixed positions rather than one large pool.
-
-## First Position
-
-- {{relic:BLOOD_SOAKED_ROSE}}
-- {{relic:WHISPERING_EARRING}}
-- {{relic:FIDDLE}}
-
-Each has probability **1/3**.
-
-## Second Position
-
-- {{relic:PRESERVED_FOG}}
-- {{relic:SERE_TALON}}
-- {{relic:DISTINGUISHED_CAPE}}
-
-Each has probability **1/3**.
-
-## Third Position
-
-- {{relic:CHOICES_PARADOX}}
-- {{relic:MUSIC_BOX}}
-- {{relic:LORDS_PARASOL}}
-- {{relic:JEWELED_MASK}}
-
-Each has probability **1/4**.
-
-{{event:VAKUU}} has no additional eligibility conditions in base-game 0.111.0. Once its identity is known, all three positions are straightforward to predict.
-
-# Comparing the Three Ancients
-
-| Ancient | Generation | Special condition |
+| Position | Candidates | Probability each |
 | --- | --- | --- |
-| {{event:NONUPEIPE}} | Shuffle 9 base candidates, take 3 | Add {{relic:BEAUTIFUL_BRACELET}} with ≥4 Swift-eligible cards |
-| {{event:TANX}} | Shuffle 9 base candidates, take 3 | Add {{relic:TRI_BOOMERANG}} with ≥3 Instinct-eligible cards |
+| First | {{relic:BLOOD_SOAKED_ROSE}}, {{relic:WHISPERING_EARRING}}, {{relic:FIDDLE}} | 1/3 |
+| Second | {{relic:PRESERVED_FOG}}, {{relic:SERE_TALON}}, {{relic:DISTINGUISHED_CAPE}} | 1/3 |
+| Third | {{relic:CHOICES_PARADOX}}, {{relic:MUSIC_BOX}}, {{relic:LORDS_PARASOL}}, {{relic:JEWELED_MASK}} | 1/4 |
+
+Vakuu has no additional eligibility conditions. It shuffles each small pool and takes its first relic. This has the same odds as a direct draw, but different random consumption for a particular seed. RT2 replays the actual shuffle order.
+
+## Filter Premises
+
+| Ancient | Generation | Extra eligibility |
+| --- | --- | --- |
+| {{event:NONUPEIPE}} | Shuffle 9 or 10 candidates, take 3 | Add {{relic:BEAUTIFUL_BRACELET}} with ≥4 Swift-eligible cards |
+| {{event:TANX}} | Shuffle 9 or 10 candidates, take 3 | Add {{relic:TRI_BOOMERANG}} with ≥3 Instinct-eligible cards |
 | {{event:VAKUU}} | Take 1 each from pools of 3 / 3 / 4 | None |
 
-For {{event:NONUPEIPE}} and {{event:TANX}}, the player only needs to supply whether the corresponding enchantment condition currently holds. {{event:VAKUU}} does not even need that.
-
-For filtering, all three follow a simple principle:
-
-> **Establish the correct candidate pools, then replay the offer from the seed.**
+For the first two Ancients, RT2 needs enchantment eligibility upon reaching the encounter. Count cards that can actually be enchanted, rather than relying only on card type or name. Vakuu co-offer targets cannot require multiple relics from the same position. See [[ancient]] for targets and premises and [[why-predictable]] for the shared random principle.

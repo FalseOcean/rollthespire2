@@ -20,7 +20,6 @@ namespace RolltheSpire2.Ui.Shell;
 internal sealed partial class QueryWorkbenchFrame
 {
     private Control? _presetRoot;
-    private SearchPresetLibraryOverlay? _presetLibrary;
     private SearchPresetSaveTransactionOverlay? _presetSave;
     private SearchConfirmationTransactionOverlay? _presetConfirm;
     private RelicPickerPanel? _presetIconPicker;
@@ -31,6 +30,39 @@ internal sealed partial class QueryWorkbenchFrame
     private Action? _presetCommit;
     private Button? _presetReturnFocus;
     private bool _closingPresets;
+    private SearchPresetDefinition? _historyPreset;
+    internal event Action? PresetsRequested;
+    internal event Action? PresetsChanged;
+    internal event Action<string>? PresetIssueReported;
+    private bool TryResolvePreset(string id, out SearchPresetDefinition preset)
+    {
+        if (_historyPreset is { } h && h.Id == id) { preset = h; return true; }
+        return _persistence.Presets.TryGet(id, out preset);
+    }
+    internal void EditLibraryPreset(SearchPresetDefinition? preset, bool metadata)
+    {
+        if (HasActiveSearch) throw new InvalidOperationException(_language == "zh" ? "请先停止当前搜索。" : "Stop the current search first.");
+        _historyPreset = preset;
+        OpenPresetSave(preset is null ? SearchPresetSaveIntentKind.CreateCurrentQuery : metadata
+            ? SearchPresetSaveIntentKind.EditMetadata : SearchPresetSaveIntentKind.CreateFromExistingSnapshot, preset?.Id ?? "");
+    }
+    internal void RefreshPresetEnvironment(SearchPresetDefinition preset)
+    {
+        if (HasActiveSearch) throw new InvalidOperationException("Stop the current search first.");
+        _persistence.EnsureEnvironment(SearchEnvironmentSignatureBuilder.Capture(_runtime));
+        if (_persistence.CurrentEnvironmentFingerprint.Length == 0)
+            throw new InvalidOperationException(_language == "zh" ? "当前无法读取运行环境，原预设已保留。" : "The current environment could not be read. The original preset is preserved.");
+        _persistence.Presets.UpdateUserEnvironment(preset.Id, _persistence.CurrentEnvironmentFingerprint);
+        PresetsChanged?.Invoke();
+    }
+    internal void LoadQueryHistory(QueryHistoryEntry record, string title) => ApplyPreset(record.AsPreset(title));
+    internal SearchPresetDefinition PreparePresetHistory(SearchPresetDefinition preset)
+    {
+        if (preset.Workbench is not null || _persistence.QueryKeyForPreset(preset).Length > 0) return preset;
+        var draft = ResolvePresetDraft(preset);
+        _persistence.BindLegacyPresetQuery(preset, draft);
+        return preset with { Workbench = draft.ToPresetIntent() };
+    }
 
     internal void SetSearchMode(bool multiplayer, bool render = true)
     {
@@ -45,45 +77,18 @@ internal sealed partial class QueryWorkbenchFrame
         _presetRoot = new Control { Name = "WorkbenchPresets", MouseFilter = MouseFilterEnum.Ignore };
         shell.AddChild(_presetRoot); _presetRoot.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         var tooltip = new AnchoredTooltipHost(new RuntimeRelicTooltipResolver(), new RuntimePotionTooltipResolver(), new RuntimeCardTooltipResolver());
-        _presetLibrary = new(_icons, tooltip) { WorkbenchMode = true };
         _presetSave = new(_icons, tooltip);
         _presetConfirm = new();
         _presetIconPicker = new(_icons, tooltip);
-        foreach (var child in new Control[] { _presetLibrary, _presetSave, _presetConfirm, _presetIconPicker, tooltip })
+        foreach (var child in new Control[] { _presetSave, _presetConfirm, _presetIconPicker, tooltip })
         { _presetRoot.AddChild(child); child.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect); }
-        _presetLibrary.Cancelled += FinishPresetModal;
-        _presetLibrary.CreateCurrentRequested += () => OpenPresetSave(SearchPresetSaveIntentKind.CreateCurrentQuery, "");
-        _presetLibrary.UpdateCurrentRequested += id => OpenPresetSave(SearchPresetSaveIntentKind.CreateCurrentQuery, id);
-        _presetLibrary.SaveAsUserRequested += id => OpenPresetSave(SearchPresetSaveIntentKind.CreateFromExistingSnapshot, id);
-        _presetLibrary.EditMetadataRequested += id => OpenPresetSave(SearchPresetSaveIntentKind.EditMetadata, id);
-        _presetLibrary.LoadRequested += id =>
-        {
-            if (!_persistence.Presets.TryGet(id, out var preset)) return;
-            try
-            {
-                ApplyPreset(preset, render: false);
-                CloseAllPresetModals();
-                Refresh(_language, _text);
-                ReceiptText(_language == "zh" ? $"已应用预设：{preset.Title}。可继续编辑。" : $"Applied preset: {preset.Title}. Ready to edit.");
-            }
-            catch (Exception ex) { _presetLibrary.ShowIssue(PresetIssue(ex)); }
-        };
-        _presetLibrary.DeleteRequested += id =>
-        {
-            if (!_persistence.Presets.TryGet(id, out var preset) || preset.Source != SearchPresetSource.User) return;
-            ConfirmPreset(_language == "zh" ? "移除预设" : "Delete preset", preset.Title, () =>
-            {
-                if (!_persistence.Presets.DeleteUserPreset(id)) throw new IOException("Preset could not be deleted.");
-                _presetLibrary.RefreshEntries(_persistence.Presets.GetAll());
-            });
-        };
         _presetSave.SaveRequested += CommitPresetSave;
         _presetSave.Cancelled += FinishPresetModal;
         _presetConfirm.Confirmed += () =>
         {
             var commit = _presetCommit; _presetCommit = null;
             try { commit?.Invoke(); }
-            catch (Exception ex) { if (_presetSave.IsOpen) _presetSave.ShowValidationError(PresetIssue(ex)); else _presetLibrary.ShowIssue(PresetIssue(ex)); }
+            catch (Exception ex) { if (_presetSave.IsOpen) _presetSave.ShowValidationError(PresetIssue(ex)); else PresetIssueReported?.Invoke(PresetIssue(ex)); }
             FinishPresetModal();
         };
         _presetConfirm.Cancelled += () => { _presetCommit = null; FinishPresetModal(); };
@@ -101,7 +106,7 @@ internal sealed partial class QueryWorkbenchFrame
     {
         var text = JsonUiTextProvider.CreatePredictorUi13(_language);
         var names = RuntimeGameContentNameResolver.Create(_language);
-        _presetLibrary!.ApplyLocalization(text, names); _presetSave!.ApplyLocalization(text, names);
+        _presetSave!.ApplyLocalization(text, names);
         _presetIconPicker!.ApplyLocalization(text, names);
     }
 
@@ -118,7 +123,7 @@ internal sealed partial class QueryWorkbenchFrame
 
     private void FinishPresetModal()
     {
-        if (_closingPresets || _presetLibrary?.IsOpen == true || _presetSave?.IsOpen == true || _presetConfirm?.IsOpen == true) return;
+        if (_closingPresets || _presetSave?.IsOpen == true || _presetConfirm?.IsOpen == true) return;
         foreach (var (button, disabled) in _presetBlocked)
             if (GodotObject.IsInstanceValid(button)) button.Disabled = disabled;
         _presetBlocked.Clear(); ModalChanged?.Invoke(false);
@@ -127,13 +132,7 @@ internal sealed partial class QueryWorkbenchFrame
 
     private void OpenPresets()
     {
-        if (_session is not null || _presetLibrary is null) return;
-        LocalizePresets(); BeginPresetModal(); _presetLibrary.Open(_persistence.Presets.GetAll());
-        if (_persistence.Presets.LoadIssues.Count > 0)
-            _presetLibrary.ShowIssue((_language == "zh"
-                ? "部分预设无法读取，原文件已保留。请使用兼容版本后重试。\n"
-                : "Some presets could not be read. Original files are preserved; retry with a compatible version.\n") +
-                string.Join("\n", _persistence.Presets.LoadIssues));
+        PresetsRequested?.Invoke();
     }
 
     private void OpenPresetSave(SearchPresetSaveIntentKind intent, string sourceId)
@@ -142,15 +141,15 @@ internal sealed partial class QueryWorkbenchFrame
         try
         {
             _presetIntent = intent;
-            _presetSource = _persistence.Presets.TryGet(sourceId, out var source) ? source : null;
+            _presetSource = TryResolvePreset(sourceId, out var source) ? source : null;
             _presetCapture = intent == SearchPresetSaveIntentKind.CreateCurrentQuery ? CapturePreset() : null;
             LocalizePresets(); BeginPresetModal();
             _presetSave.OpenCreate(_language == "zh" ? "保存预设" : "Save preset",
-                intent == SearchPresetSaveIntentKind.CreateFromExistingSnapshot ? "" : _presetSource?.Title ?? "",
+                _presetSource?.Title ?? "",
                 _presetSource?.Description ?? "", _presetSource?.VisualIcons.Where(i => i.TryGetModelKey(out _))
                     .Select(i => { i.TryGetModelKey(out var key); return key; }).ToArray());
         }
-        catch (Exception ex) { if (_presetLibrary?.IsOpen == true) _presetLibrary.ShowIssue(PresetIssue(ex)); else ReceiptText(PresetIssue(ex)); }
+        catch (Exception ex) { ReceiptText(PresetIssue(ex)); PresetIssueReported?.Invoke(PresetIssue(ex)); }
     }
 
     private void CommitPresetSave()
@@ -170,7 +169,11 @@ internal sealed partial class QueryWorkbenchFrame
                 SearchPresetSaveIntentKind.CreateFromExistingSnapshot => catalog.SaveUserPresetFromExisting(title, description, icons, _presetSource!),
                 _ => catalog.SaveUserPreset(title, description, icons, _presetCapture!)
             };
-            _presetSave.CloseCommitted(); _presetLibrary!.RefreshEntries(catalog.GetAll()); FinishPresetModal();
+            if (saved.Workbench is null) _persistence.BindLegacyPresetQuery(saved, ResolvePresetDraft(saved));
+            else _persistence.PreservePresetQuery(saved);
+            if (_presetIntent == SearchPresetSaveIntentKind.CreateCurrentQuery && _persistence.CurrentEnvironmentFingerprint.Length > 0)
+                catalog.UpdateUserEnvironment(saved.Id, _persistence.CurrentEnvironmentFingerprint);
+            _presetSave.CloseCommitted(); FinishPresetModal(); PresetsChanged?.Invoke();
             ReceiptText((_language == "zh" ? "已保存预设：" : "Saved preset: ") + saved.Title);
         }
         if (duplicate && _presetIntent != SearchPresetSaveIntentKind.EditMetadata)
@@ -189,7 +192,6 @@ internal sealed partial class QueryWorkbenchFrame
         if (_presetIconPicker?.IsOpen == true) { _presetIconPicker.Cancel(); return true; }
         if (_presetConfirm?.IsOpen == true) { _presetConfirm.Cancel(); return true; }
         if (_presetSave?.IsOpen == true) { _presetSave.Cancel(); return true; }
-        if (_presetLibrary?.IsOpen == true) { _presetLibrary.Cancel(); return true; }
         return false;
     }
 
@@ -207,8 +209,8 @@ internal sealed partial class QueryWorkbenchFrame
     }
 
     private string PresetIssue(Exception ex) => (_language == "zh"
-        ? "未更改预设原文件。无法完整应用时，请在“设置 → 更多工具”查看旧版条件，或使用兼容版本。\n"
-        : "The original preset is unchanged. For unsupported legacy conditions, use Settings → More tools or a compatible version.\n") + Explain(ex);
+        ? "原预设已保留。请检查所需模组与角色是否已加载；不会自动替换角色或删除条件。\n"
+        : "The original preset is preserved. Check that its required mods and characters are loaded. Characters and conditions are not replaced automatically.\n") + Explain(ex);
 
     internal SearchPresetCapture CapturePreset(WorkbenchSearchDraft? authored = null)
     {
@@ -270,7 +272,7 @@ internal sealed partial class QueryWorkbenchFrame
         }
         return new(draft.Character, draft.Ascension, null, CountPresetConditions(draft.Query),
             probability, provenance, time)
-            { Workbench = draft };
+            { Workbench = draft.ToPresetIntent() };
     }
 
     private void RecordTemporaryPreset(WorkbenchSearchDraft draft)
@@ -279,7 +281,7 @@ internal sealed partial class QueryWorkbenchFrame
         catch (Exception ex) { RuntimeLog.Warn("workbenchTemporaryPreset=" + ex.Message); }
     }
 
-    private static int CountPresetConditions(SearchQuery q) =>
+    internal static int CountPresetConditions(SearchQuery q) =>
         (q.OpeningRoute is null ? 0 : 1) + (q.OpeningRouteRelicRequirement is null ? 0 : 1) + q.StructuredOpeningEffects.Count +
         q.RelicSequenceConstraints.Count + (q.CombatCardRewards is null ? 0 : 1) + (q.CombatPotionRewards is null ? 0 : 1) +
         q.AncientBranches.Count + q.LegacyNeow.NeowRelics.Any.Count + q.LegacyNeow.NeowRelics.All.Count +
@@ -288,15 +290,14 @@ internal sealed partial class QueryWorkbenchFrame
         q.RelicShopSequenceConditions.Count + (q.TransformationAggregate is null ? 0 : 1) +
         q.Players.Sum(p => CountPresetConditions(p.Conditions) + (p.Offers.IsEmpty ? 0 : 1));
 
-    internal void ApplyPreset(SearchPresetDefinition preset, bool render = true)
+    private WorkbenchSearchDraft ResolvePresetDraft(SearchPresetDefinition preset)
     {
-        if (_session is not null) throw new InvalidOperationException("Stop the current search before applying a preset.");
-        if (_loadFailed) throw new InvalidOperationException("integration.load_shape");
         WorkbenchSearchDraft draft;
         if (preset.Workbench is not null || !string.IsNullOrWhiteSpace(preset.RawWorkbenchJson))
         {
             var resolution = SearchPresetCompatibilityResolver.ResolveWorkbench(preset, RuntimeAuthorityEnvironment.Current.Authority);
-            draft = resolution.CanLoad ? resolution.Draft! : throw new InvalidOperationException(resolution.Issue);
+            draft = resolution.CanLoad ? resolution.Draft! : throw new InvalidOperationException(resolution.Issue +
+                "\n" + string.Join("\n", resolution.Unresolved.Select(r => $"{r.Path}: {r.StableIdentity}")));
         }
         else
         {
@@ -307,7 +308,27 @@ internal sealed partial class QueryWorkbenchFrame
                 preset.CharacterKey, preset.Ascension, out _);
             draft = new(preset.CharacterKey, preset.Ascension, MigrateLegacyPresetQuery(compiled.Query), compiled.Context.EvaluationAssumptions.AncientEligibilityAssumptions);
         }
-        draft = draft.WithoutCapturedAuthority();
+        return BindPresetEnvironment(draft);
+    }
+
+    private WorkbenchSearchDraft BindPresetEnvironment(WorkbenchSearchDraft draft)
+    {
+        var lobby = IsInsideTree() ? LobbyUnlockReadout.Find(GetTree().Root) : null;
+        return draft.BindPresetIntent(_runtime, slot =>
+        {
+            if (lobby is null || lobby.Players.Count != draft.Players.Count)
+                throw new InvalidOperationException(_language == "zh"
+                    ? "此预设需要当前多人解锁信息。请进入对应人数的大厅后重试；原预设已保留。"
+                    : "This preset needs current party unlock data. Open a lobby with the matching player count and retry. The original preset is preserved.");
+            return lobby.Players.Single(p => p.slotId == slot).unlockState;
+        });
+    }
+
+    internal void ApplyPreset(SearchPresetDefinition preset, bool render = true)
+    {
+        if (_session is not null) throw new InvalidOperationException("Stop the current search before applying a preset.");
+        if (_loadFailed) throw new InvalidOperationException("integration.load_shape");
+        var draft = ResolvePresetDraft(preset);
         var expected = draft.Compile(_runtime, out _);
         // A disposable editor transaction proves the entire roster and grammar can
         // survive current editor legality checks before touching the user's drafts.
@@ -324,7 +345,13 @@ internal sealed partial class QueryWorkbenchFrame
         }
         finally { probe._characterIcons.Dispose(); probe.Free(); }
         _persistence.SaveWorkbench(draft); _lastSaved = JsonSerializer.Serialize(draft);
+        _persistence.BindLegacyPresetQuery(preset, draft);
         RestoreDraft(draft, render: false);
+        if (draft.Players.Any(p => p.UnlockSource == "CurrentContext"))
+        {
+            _readLobby = LobbyUnlockReadout.Find(GetTree().Root);
+            _readRoster = _readLobby is null ? "" : LobbyUnlockReadout.Roster(_readLobby);
+        }
         _showResults = false; _analysisKey = "";
         if (render) Refresh(_language, _text);
     }

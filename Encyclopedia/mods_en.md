@@ -1,53 +1,21 @@
-# Mods: How Much Can RT2 Support?
+# Mods: Compatibility Depends on the Specific Changes
 
-> Prediction currently relies primarily on the base-game mechanics of **Slay the Spire 2 Beta 0.111.0**.
+Ordinary mechanics in this encyclopedia use vanilla 0.111.0, full unlocks and single-player as the explanatory baseline. RT2 is not limited to that environment. Multiplayer and mods need the inputs and premises of each prediction checked; see [[reading-guide|Reading and scope guide]].
 
-RT2's default environment is **the base game, single-player, with everything unlocked**.
+## Adding candidates
 
-Installing a mod does not automatically make it unusable. The important distinction is **whether the mod changes content or changes rules**.
+New cards, relics or character pools are generally easier to include when they retain the vanilla candidate order, rarity, draw method and random rules. Relevant RT2 features read runtime card pools, relic pools, characters and other content. A non-vanilla object does not automatically make the whole search unusable.
 
-# Added Content Is Often Easier to Accommodate
+However, capturing an object only establishes that it entered the candidate data. It does not establish that its acquisition effects or special character flow are modeled. Some outcomes use fixed catalogs or cover only known rules, so runtime capture cannot guarantee every added item is predictable.
 
-A mod may add cards, relics, or a character's ordinary card and relic pools while retaining the base game's rarity, pool, draw, and RNG rules.
+## Changing rules or state
 
-For many predictions, RT2 need not understand every relic's effect. It needs to know **that the object exists in the actual runtime candidate pool**.
+Mods that alter reward generation, Neow flow, event eligibility, map generation, custom state or acquisition effects require inspection of those specific changes.
 
-RT2 therefore tries to read current card pools, relic pools, characters, and other runtime content rather than rejecting an entire search merely because it encounters a non-base-game object.
+Assess the affected process specifically. Extra draws from a player's `Shops` randomness can change later shops using that stream. Reordering transformation candidates can change the selected card even with the same number of draws. Removing a relic from a shared bag can change another player's later candidates. None of these automatically changes every independent event stream or every world result.
 
-# Changed Mechanics Are Harder
+## What has been verified?
 
-A mod may alter randomness itself by:
+Complete runtime pools and modeled rules do not establish that every mod combination has been tested. Distinguish what the prediction page can display, its explicit premises and the existing validation scope.
 
-> Consuming additional RNG;
-> changing card or relic generation;
-> changing Neow pickup order or flow;
-> modifying event eligibility;
-> replacing map generation;
-> adding special on-obtain side effects;
-> using custom state to determine later results.
-
-This is more than an extra candidate in a pool. **The rules underlying prediction have changed.** Correct prediction then requires understanding that mod's implementation.
-
-# Why Not Assume Base-Game Behavior?
-
-Seed prediction depends on **how many times random state advances**, not just the visible result.
-
-Even a simple mod relic can change every later dependent result by making one extra relevant RNG call on pickup.
-
-Likewise, a custom character that reimplements opening, reward, relic, pool, or random logic cannot safely inherit base-game assumptions merely because it looks similar.
-
-# RT2's Approach
-
-RT2 aims to **accommodate mods where possible without inventing compatibility**.
-
-When runtime supplies the real pool and generation still follows understood base-game mechanisms, added objects can participate as ordinary candidates.
-
-If correctness requires understanding third-party relic effects, character mechanics, opening flow, RNG consumption, or hidden state, **that part is outside the currently guaranteed prediction scope**.
-
-RT2 does not silently treat unknown behavior as base-game behavior or substitute a different result just to keep running.
-
-The distinction is:
-
-> **Added content can often be accommodated; changed random rules need specific understanding.**
-
-The goal is not to claim support for every mod. It is **to keep predicting where the real mechanics are established, while retaining clear boundaries where third-party behavior needs to be understood**.
+An outcome requiring third-party rules cannot be guaranteed merely because it resembles vanilla behavior. This is an unverified or unmodeled boundary, rather than proof that the entire mod is unsupported. For discrepancies, retain the game version, mod list, configuration and actual actions, then check the specific prediction using [[faq|FAQ]].

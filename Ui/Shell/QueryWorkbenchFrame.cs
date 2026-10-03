@@ -155,6 +155,7 @@ internal sealed partial class QueryWorkbenchFrame : Control
             try { if (_persistence.LoadWorkbench() is { } saved) RestoreDraft(saved, render: false); }
             catch (Exception ex) { _loadFailed = true; _lastIssue = ex.Message; RolltheSpire2.Bootstrap.RuntimeLog.Warn("workbenchRestore=" + ex); }
         }
+        SyncSavedResults();
         foreach (var child in GetChildren())
         { if (child != _configOverlay && child != _neowEditor && child != _combatEditor && child != _shopEditor && child != _relicEditor && child != _ancientEditor && child != _eventEditor && child != _actInformationEditor && child != _transformationEditor) { RemoveChild(child); child.QueueFree(); } }
         _domainButtons.Clear();
@@ -195,9 +196,13 @@ internal sealed partial class QueryWorkbenchFrame : Control
         if (firstRefresh) RestoreUiPreferences();
 
         _currentDomain = Text(string.Empty, 14, CenterLeft + 8, CenterTop, true);
-        _currentDomain.Size = new Vector2(CenterWidth - 16, 24);
-        _neowEditor.Position = new(CenterLeft + 8, CenterTop + 30);
-        _neowEditor.Size = new(CenterWidth - 16, DockTop - CenterTop - 38);
+        _currentDomain.Size = new Vector2(CenterWidth - 200, 24);
+        _clearCategory = new ClearConditionsButton(_text.Get("workflow.conditions.clear_category"));
+        _clearCategory.Name = "ClearCategoryConditions";
+        _clearCategory.Pressed += ClearCategoryConditions;
+        Place(_clearCategory, CenterLeft + CenterWidth - 184, CenterTop, 176, 36);
+        _neowEditor.Position = new(CenterLeft + 8, CenterTop + 44);
+        _neowEditor.Size = new(CenterWidth - 16, DockTop - CenterTop - 52);
         _combatEditor.Position = _neowEditor.Position;
         _combatEditor.Size = _neowEditor.Size;
         _shopEditor.Position = _neowEditor.Position;
@@ -597,7 +602,7 @@ internal sealed partial class QueryWorkbenchFrame : Control
         }
         button.Disabled = _multiplayer && id == "transform";
         if (button.Disabled) button.TooltipText = _language == "zh" ? "多人不启用 T 复合变牌筛选" : "T aggregate filtering is outside multiplayer scope";
-        button.Pressed += () => { _showResults = false; _runtimeSurface?.Hide(); SelectDomain(id); };
+        button.Pressed += () => { _showResults = false; _runtimeSurface?.Hide(); SelectDomain(id); UpdateResultNavigation(); };
         _domainButtons.Add(id, button);
     }
 
@@ -640,7 +645,7 @@ internal sealed partial class QueryWorkbenchFrame : Control
             {
                 "boss" or "map" => _language == "zh" ? "全队共用条件" : "Shared party conditions",
                 "ancient" => _language == "zh" ? $"身份全队共用 · P{_seat + 1} 的选项" : $"Shared identities · P{_seat + 1}'s options",
-                "events" => _language == "zh" ? $"P{_seat + 1} · 事件队列与个人结果" : $"P{_seat + 1} · Event queue and personal results",
+                "events" => _language == "zh" ? $"出现条件全队共用 · P{_seat + 1} 的结果" : $"Shared event queue · P{_seat + 1}’s results",
                 _ => _language == "zh" ? $"正在编辑 P{_seat + 1} 的条件" : $"Editing P{_seat + 1}'s conditions"
             };
             _currentDomain.Visible = !_showResults;

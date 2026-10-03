@@ -78,7 +78,7 @@ internal sealed partial class RelicSequenceEditorPrototype
 
 internal sealed partial class EventEditorPrototype
 {
-    internal int AuthoredConditionCount() => _draft.QueueConditions.Count + AuthoredResultEvents().Count;
+    internal int AuthoredConditionCount() => QueueConditions.Count + AuthoredResultEvents().Count;
 
     private HashSet<string> AuthoredResultEvents()
     {

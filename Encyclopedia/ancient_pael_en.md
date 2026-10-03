@@ -1,137 +1,35 @@
-# Pael: Three Pools with Unequal Weights
+# Pael: Three Pools and Unequal Weights
 
-> Applies to: **Slay the Spire 2 Beta 0.111.0**
+Pael offers one relic from each of three positions. The first uses a fixed pool, the second depends on the deck and uses weights, and the third depends on Event Pet ownership. These pools and odds describe base-game 0.111.0; see [[reading-guide]] for the environment.
 
-## What You Want
+## First Position: A Fixed Choice of Three
 
-Pael offers three Ancient relics, each drawn from its own pool:
+{{relic:PAELS_FLESH}}, {{relic:PAELS_HORN}}, and {{relic:PAELS_TEARS}} always participate, each at **1/3**.
 
-> **First position: a fixed choice of three.**
-> **Second position: deck-dependent candidates with special weights.**
-> **Third position: depends on whether the player already has an Event Pet.**
+## Second Position: Eligibility and Weights
 
-The main question is **what the second and third pools actually contain in this run**.
+{{relic:PAELS_WING}} and {{relic:PAELS_GROWTH}} always participate. The other two require:
 
-# First Position: A Fixed Choice of Three
+- {{relic:PAELS_CLAW}}: at least **3 Defend cards legally enchantable with Goopy** in the current deck. A Defend tag alone is insufficient; enchantment rules also apply.
+- {{relic:PAELS_TOOTH}}: at least **5 normally removable cards** in the current deck.
 
-The candidates are always:
+{{relic:PAELS_WING}} and eligible {{relic:PAELS_CLAW}} and {{relic:PAELS_TOOTH}} each have **2 units of weight**; {{relic:PAELS_GROWTH}} has **1**. This is not a uniform draw of four:
 
-- {{relic:PAELS_FLESH}}
-- {{relic:PAELS_HORN}}
-- {{relic:PAELS_TEARS}}
+| Conditional relic eligibility | {{relic:PAELS_WING}} | {{relic:PAELS_CLAW}} | {{relic:PAELS_TOOTH}} | {{relic:PAELS_GROWTH}} |
+| --- | --- | --- | --- | --- |
+| Neither | 2/3 | 0 | 0 | 1/3 |
+| {{relic:PAELS_CLAW}} only | 2/5 | 2/5 | 0 | 1/5 |
+| {{relic:PAELS_TOOTH}} only | 2/5 | 0 | 2/5 | 1/5 |
+| Both | 2/7 | 2/7 | 2/7 | 1/7 |
 
-There are no additional eligibility requirements. Each has probability **1/3**, making this the simplest position.
+Even a {{relic:PAELS_WING}}-only target requires accurate premises for the other two relics: their participation changes its odds from **2/3** to **2/7**.
 
-# Second Position: A Weighted Pool
+## Third Position: Event Pets
 
-Four relics are possible:
+Without an Event Pet, {{relic:PAELS_EYE}}, {{relic:PAELS_BLOOD}}, and {{relic:PAELS_LEGION}} each have **1/3** probability. With an Event Pet, {{relic:PAELS_LEGION}} is excluded and {{relic:PAELS_EYE}} and {{relic:PAELS_BLOOD}} each have **1/2**.
 
-- {{relic:PAELS_WING}}
-- {{relic:PAELS_CLAW}}
-- {{relic:PAELS_TOOTH}}
-- {{relic:PAELS_GROWTH}}
+Act 1's {{event:BYRDONIS_NEST}} in Overgrowth can give {{card:BYRDONIS_EGG}}. **The egg already counts as an Event Pet while in the deck, before hatching**, excluding {{relic:PAELS_LEGION}} upon reaching Pael. Hatching at a Rest Site gives {{relic:BYRDPIP}}, which also counts, preserving that state.
 
-It is not a uniform choice of four. **{{relic:PAELS_WING}} is always present.** Two other candidates require deck conditions.
+## Premises Describe the Current State
 
-### {{relic:PAELS_CLAW}}
-
-The deck must contain at least **3 Defend cards that can legally receive Goopy**. Only then does {{relic:PAELS_CLAW}} enter the pool.
-
-### {{relic:PAELS_TOOTH}}
-
-The deck must contain at least **5 normally removable cards**. Only then does {{relic:PAELS_TOOTH}} enter the pool.
-
-## Why Is {{relic:PAELS_GROWTH}} Less Likely?
-
-{{relic:PAELS_WING}} and any eligible {{relic:PAELS_CLAW}} / {{relic:PAELS_TOOTH}} each receive **2 units of weight**. **{{relic:PAELS_GROWTH}} always receives 1**.
-
-The pool is therefore:
-
-> **Each eligible regular candidate ×2 + {{relic:PAELS_GROWTH}} ×1**
-
-| Eligibility | Probabilities in the second position |
-| --- | --- |
-| Neither Claw nor Tooth | {{relic:PAELS_WING}} **2/3** · {{relic:PAELS_CLAW}} 0 · {{relic:PAELS_TOOTH}} 0 · {{relic:PAELS_GROWTH}} **1/3** |
-| Only Claw | {{relic:PAELS_WING}} **2/5** · {{relic:PAELS_CLAW}} **2/5** · {{relic:PAELS_TOOTH}} 0 · {{relic:PAELS_GROWTH}} **1/5** |
-| Only Tooth | {{relic:PAELS_WING}} **2/5** · {{relic:PAELS_CLAW}} 0 · {{relic:PAELS_TOOTH}} **2/5** · {{relic:PAELS_GROWTH}} **1/5** |
-| Both Claw and Tooth | {{relic:PAELS_WING}} **2/7** · {{relic:PAELS_CLAW}} **2/7** · {{relic:PAELS_TOOTH}} **2/7** · {{relic:PAELS_GROWTH}} **1/7** |
-
-{{relic:PAELS_GROWTH}} has no special rarity classification here; its weight is simply **half that of each other eligible option**.
-
-# Third Position: Event Pets
-
-The base candidates are:
-
-- {{relic:PAELS_EYE}}
-- {{relic:PAELS_BLOOD}}
-
-If the player **does not currently have an Event Pet**, the game also adds:
-
-- {{relic:PAELS_LEGION}}
-
-### Without an Event Pet
-
-> {{relic:PAELS_EYE}}: **1/3**
-> {{relic:PAELS_BLOOD}}: **1/3**
-> {{relic:PAELS_LEGION}}: **1/3**
-
-### With an Event Pet
-
-{{relic:PAELS_LEGION}} is excluded:
-
-> {{relic:PAELS_EYE}}: **1/2**
-> {{relic:PAELS_BLOOD}}: **1/2**
-
-Event Pet ownership directly changes the third pool.
-
-## You Can Already Have an Event Pet in Act 1
-
-“Event Pet” does not only mean a companion already following you.
-
-In Act 1's **Overgrowth**, **{{event:BYRDONIS_NEST}}** lets you take **{{card:BYRDONIS_EGG}}** into your deck.
-
-**As long as {{card:BYRDONIS_EGG}} remains in the deck, the game already treats you as having an Event Pet**, even before it hatches:
-
-> Take the egg in Overgrowth
-> → Meet Pael in Act 2
-> → {{relic:PAELS_LEGION}} cannot enter the third pool
-
-Only {{relic:PAELS_EYE}} and {{relic:PAELS_BLOOD}} remain, each at **1/2**.
-
-## It Still Counts After Hatching
-
-{{card:BYRDONIS_EGG}} provides a hatching option at a Rest Site. Hatching gives you **{{relic:BYRDPIP}}**, which is itself an Event Pet.
-
-> **Egg still in the deck: counts as an Event Pet.**
-> **Egg hatched into {{relic:BYRDPIP}}: still counts.**
-
-Pael cares whether the player currently has any Event Pet source, not whether the pet has hatched. The egg is a base-game example that can establish this state as early as Act 1.
-
-# Why Should These Conditions Be Accurate?
-
-**An option's eligibility can affect your target even when that option is not itself a target.**
-
-Suppose you only want {{relic:PAELS_WING}}. With neither {{relic:PAELS_CLAW}} nor {{relic:PAELS_TOOTH}}, its probability is **2/3**; with both eligible, it becomes **2/7**.
-
-Likewise, even if you do not care about {{relic:PAELS_LEGION}}, taking {{card:BYRDONIS_EGG}} in Act 1 changes the third pool from {{relic:PAELS_EYE}} / {{relic:PAELS_BLOOD}} / {{relic:PAELS_LEGION}} to {{relic:PAELS_EYE}} / {{relic:PAELS_BLOOD}}.
-
-Eligibility describes the **actual candidate pool**, not just which relics you want to filter.
-
-# How Does RT2 Treat Pael?
-
-RT2 separates two kinds of information:
-
-**Targets:** which relics you want Pael to offer.
-
-**Premises:** whether {{relic:PAELS_CLAW}}, {{relic:PAELS_TOOTH}}, and {{relic:PAELS_LEGION}} are currently eligible.
-
-The premises do not require the seed to offer those relics. They tell RT2 **which candidates participate in the random draw**.
-
-If you already took {{card:BYRDONIS_EGG}} or have another Event Pet source, treat {{relic:PAELS_LEGION}} as unavailable.
-
-Once the pools are known, all three draws are straightforward. Remember:
-
-> **The second pool is weighted: Wing, Claw, and Tooth have 2 units each; Growth has 1.**
-> **Legion's eligibility depends on Event Pet ownership, and an Act 1 Byrdonis Egg already counts.**
-
-Pael's complexity comes from **prior player history changing the pool before randomness happens**, rather than from a long random process.
+RT2 targets say which relics you want offered; {{relic:PAELS_CLAW}}, {{relic:PAELS_TOOTH}}, and {{relic:PAELS_LEGION}} eligibility describes the state upon reaching Pael. An eligibility premise does not require that relic to be drawn; it determines the actual pool. The egg matters even if {{relic:PAELS_LEGION}} is not a target. See [[ancient]] for targets versus premises and [[why-predictable]] for the shared random principle.

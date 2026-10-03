@@ -260,7 +260,8 @@ internal sealed partial class AnalysisPage
         grid.AddThemeConstantOverride("h_separation", 6); grid.AddThemeConstantOverride("v_separation", 8); section.AddChild(grid);
         var details = WColumn(); details.Name = "EventDetails"; section.AddChild(details);
         var tooltipSource = _actCards[act - 1];
-        tooltipSource.BindEventTooltipContext(_viewModel!.ProfileId, _viewModel.PlayersCount, BuildEventResultProjection(), _uiText!);
+        tooltipSource.BindEventTooltipContext(_viewModel!.ProfileId, _viewModel.PlayersCount,
+            BuildEventResultProjection(), _uiText!, ConditionalEventResultTooltipText);
         var buttons = new List<(ModelKey Key, Button Button)>();
         void ShowDetails()
         {
@@ -320,7 +321,9 @@ internal sealed partial class AnalysisPage
                 foreach (var key in results.ColorfulOfferedColors) Add(key, GameContentKind.Character);
         }
         resultItems.Visible = shown;
-        if (!shown) detail.AddChild(WNote(Text("predictor.design.event_result_unavailable")));
+        if (shown) detail.AddChild(WNote(Text("predictor.design.event_result_scope")));
+        else if (!RenderConditionalEventResults(detail, entry.EventDisplay.ModelKey.Entry))
+            detail.AddChild(WNote(Text("predictor.design.event_result_unavailable")));
     }
 
     private void RenderRelicInspector()

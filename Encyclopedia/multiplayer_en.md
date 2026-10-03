@@ -1,45 +1,23 @@
-# Multiplayer: What Changes from Single-Player?
+# Multiplayer: One Seed for the Whole Party
 
-> Applies to: **Slay the Spire 2 Beta 0.111.0**
+A multiplayer search requires **one seed and one run to satisfy every player's conditions**. Act variants, bosses, the standard map and event queues belong to the common world. Neow offers, rewards, shops and ordinary event outcomes usually also depend on each player's slot, character and state.
 
-Multiplayer prediction is more than repeating single-player calculations. **Each player has personal random results, but everyone belongs to the same run.**
+## Why slots matter
 
-Neow, combat rewards, and shops are often tied to the player's **slot**, so P1 and P2 can see different results on the same seed.
+The player position used in random initialization is P1 / P2 / P3 / P4, rather than an account or character name. Moving the same character to another slot can change personal results. RT2 predicts the configured slots and does not automatically swap players to find more seeds.
 
-RT2 records each player's slot, character, and conditions, requiring **one seed to satisfy all players simultaneously**.
+Set common conditions once and personal conditions separately. See [[multiplayer-shared|Shared party conditions]] for how common world facts relate to event outcomes.
 
-Other content is shared by the party: Act variants, Bosses, maps, and other world information. These exist once per run, not four times for four players.
+## Opening pickup order
 
-Some mechanisms also use shared random state. **An earlier player's actions can change the state a later player uses.** Independent calculations cannot always simply be combined afterward.
+RT2 processes configured opening actions in **P1 → P2 → P3 → P4** order, completing one player's agreed actions before the next. Players without configured actions are skipped.
 
-# How Is Player Order Handled?
+When pickups use shared relic bags, earlier players remove candidates available to later players. When a process uses persistent randomness, later results must continue from its actual advanced state. Follow the player order and internal Bones pickup order shown by the prediction.
 
-RT2 uses an explicit multiplayer opening order:
+This is not a universal rule for every multiplayer event. For example, the tested Morphic Grove seed does not require a particular pickup order between players; see the shared conditions article.
 
-> **P1 → P2 → P3 → P4**
+## Current boundaries
 
-Each player's specified opening actions finish before the next player's begin. Shared-state changes therefore carry into later players' calculations.
+RT2 can combine personal conditions with common world conditions. However, a player's transform result within one event differs from the cross-source Transform Combination editor: **multiplayer transform combinations are not currently offered as a formal capability.** One event's shared result does not establish a complete chain of transforms across the run.
 
-Players without specified opening actions are skipped.
-
-The search seeks **one multiplayer opening history satisfying the whole party**, rather than several independent good single-player results.
-
-# Why Do Slots Matter?
-
-Multiplayer randomness is tied to **P1 / P2 / P3 / P4**, not the character's name or the player's account.
-
-The same character in P1 can receive different results from that character in P2. RT2 uses actual player slots and does not automatically swap seats to find more qualifying seeds.
-
-# Current Boundaries
-
-Many single-player filters can already be applied to multiplayer, combining personal conditions with shared world conditions.
-
-This does not mean every single-player feature has automatically become a multiplayer feature. **Combined transformation filtering is not currently offered for multiplayer.**
-
-Map prediction currently concerns the shared standard map itself. It does not simulate the party's later route, room visits, and every action throughout the run.
-
-The basic model is:
-
-> **Calculate personal randomness per player; keep one copy of shared facts; follow the specified player order when shared state links their actions.**
-
-Every condition must hold **on the same seed, in the same run**.
+Map prediction describes the common standard map. Ordinary question-mark route categories have explicit premises including single-player; see [[event-appearance|Event appearance]]. This does not mean RT2 simulates every later party action, deck change and route history.

@@ -42,9 +42,13 @@ internal sealed partial class NeowEditorPrototype : Control
         public readonly Dictionary<string, ModelKey?> Slots = [];
         public readonly List<Target> Targets = [];
         public readonly HashSet<ModelKey> Bans = [];
-        public int Count => (Source.HasValue ? 1 : 0) + Bones.Count + Slots.Count + Targets.Count + (Curse.HasValue ? 1 : 0)
+        public int Count => (Source.HasValue ? 1 : 0) + Bones.Count + Slots.Count(s =>
+                (!JointTransforms || !IsTransformSlot(s.Key)) && (!JointCapsules ||
+                !(s.Key.StartsWith(BaseGameModelKeys.Relics.SmallCapsule + "/", StringComparison.Ordinal) ||
+                  s.Key.StartsWith(BaseGameModelKeys.Relics.LargeCapsule + "/", StringComparison.Ordinal)))) + Targets.Count + (Curse.HasValue ? 1 : 0)
             + (ScrollOffer == NeowSpecialOfferKind.ScrollBoxesTripleClaw ? 1 : 0)
-            + TransformTargets.Count(k => k.HasValue) + CapsuleTargets.Count(k => k.HasValue);
+            + (JointTransforms ? TransformTargets.Count(k => k.HasValue) : 0)
+            + (JointCapsules ? CapsuleTargets.Count(k => k.HasValue) : 0);
     }
     private readonly Dictionary<int, SeatDraft> _drafts = [];
     private readonly Dictionary<int, SeatDraft> _partyCatalogDrafts = [];
@@ -194,10 +198,7 @@ internal sealed partial class NeowEditorPrototype : Control
     private void SetTransformAllocation(bool joint)
     {
         if (!HasTransformPair || joint == _draft.JointTransforms || (joint && _players != 1)) return;
-        foreach (string id in _slots.Keys.Where(id => id.StartsWith($"{BaseGameModelKeys.Relics.LeafyPoultice}/", StringComparison.Ordinal)
-            || id.StartsWith($"{BaseGameModelKeys.Relics.NewLeaf}/", StringComparison.Ordinal)).ToArray()) _slots.Remove(id);
-        Array.Clear(_draft.TransformTargets);
-        _draft.JointTransforms = joint;
+        if (TransferAllocation(joint, transforms: true)) _draft.JointTransforms = joint;
     }
 
     // UI-to-existing-semantic seam only; the workbench Search action remains disconnected.
@@ -273,7 +274,7 @@ internal sealed partial class NeowEditorPrototype : Control
     {
         if (_noticeSeconds <= 0) return;
         _noticeSeconds -= delta;
-        if (_noticeSeconds <= 0) { _removed = 0; if (GodotObject.IsInstanceValid(_notice)) _notice!.Hide(); }
+        if (_noticeSeconds <= 0) { _removed = 0; _allocationNotice = ""; if (GodotObject.IsInstanceValid(_notice)) _notice!.Hide(); }
     }
     private static void Clear(Node node)
     { foreach (var c in node.GetChildren()) { node.RemoveChild(c); c.QueueFree(); } }
@@ -282,9 +283,10 @@ internal sealed partial class NeowEditorPrototype : Control
         NormalizeCapsuleTargets();
         OpeningChanged?.Invoke();
         Clear(_body); _body.Size = Size;
-        if (_removed > 0)
+        if (_removed > 0 || _allocationNotice.Length > 0)
         {
-            _notice = Text(_body, _text.Format("query.neow.notice.removed_invalid", _removed), 4, Size.Y - 32, Size.X - 8, 17);
+            _notice = Text(_body, _allocationNotice.Length > 0 ? _text.Get(_allocationNotice) :
+                _text.Format("query.neow.notice.removed_invalid", _removed), 4, Size.Y - 32, Size.X - 8, 17);
             _notice.ZIndex = 10;
         }
         var guide = FamilyGuide(_body, Size.X - 20);
@@ -439,7 +441,7 @@ internal sealed partial class NeowEditorPrototype : Control
                 void SelectAllocation(bool value)
                 {
                     if (HasTransformPair) SetTransformAllocation(value);
-                    else _draft.JointCapsules = value; // Existing capsule donor retains separate/combined history.
+                    else SetCapsuleAllocation(value);
                     RenderEditor();
                 }
                 Button(results, _text.Get("query.neow.results.separate"), 104, childTop + 40, modeWidth, () => SelectAllocation(false), !joint);

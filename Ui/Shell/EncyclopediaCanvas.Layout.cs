@@ -31,7 +31,7 @@ internal sealed partial class EncyclopediaCanvas
         if (_articleId is { } id) _expandedTopics.Add(RootTopic(id));
 
         Label(this, T("百科", "Encyclopedia"), 28, 8, 5);
-        Label(this, T("读懂种子，找到你想要的未来。", "A field guide to seeds and their possibilities."), 17, 270, 17, true);
+        Label(this, T("查清前提，理解结果。", "Understand your results and their premises."), 17, 270, 17, true);
         Label(this, "BETA " + EncyclopediaGameVersion, 14, 850, 19, true);
         _search = new LineEdit
         {
@@ -48,6 +48,7 @@ internal sealed partial class EncyclopediaCanvas
         _search.TextChanged += query => { _query = query; _articleId = null; RenderRail(); RenderMain(); };
         _search.TextSubmitted += _ =>
         {
+            if (GuideTopics.FirstOrDefault(AdditionalMatches) is { } guide) { ShowArticle(guide.Id); return; }
             if (IntroductionMatches()) { ShowArticle(IntroductionId); return; }
             if (FilterTopics.FirstOrDefault(Matches) is { } topic) ShowArticle(topic.Id);
             else if (FilterTopics.SelectMany(t => ChildrenFor(t.Id)).FirstOrDefault(ChildMatches) is { } child) ShowArticle(child.Id);
@@ -63,20 +64,28 @@ internal sealed partial class EncyclopediaCanvas
         int position = GodotObject.IsInstanceValid(_railScroll) ? _railScroll!.ScrollVertical : 0;
         Clear(_rail);
         var scroll = NewScroll(_rail, 0, 0, 268, 700);
+        scroll.FollowFocus = false;
         _railScroll = scroll;
         var content = new Control { CustomMinimumSize = new Vector2(250, 0) };
         scroll.AddChild(content);
         Control? selected = null;
         float y = 0;
-        var home = RailItem(content, T("手册首页", "All topics"), y, _articleId is null, 18, 18,
+        var home = RailItem(content, T("百科首页", "Encyclopedia home"), y, _articleId is null, 18, 18,
             () => { _articleId = null; _query = string.Empty; Render(); });
         if (_articleId is null) selected = home;
         y += 46;
+        foreach (AdditionalTopic topic in GuideTopics)
+        {
+            var item = RailItem(content, T(topic.ZhName, topic.EnName), y, _articleId == topic.Id, 17, 18,
+                () => ShowArticle(topic.Id));
+            if (_articleId == topic.Id) selected = item;
+            y += 46;
+        }
         var intro = RailItem(content, T("预测为何可行", "Why prediction works"), y, _articleId == IntroductionId, 18, 18,
             () => ShowArticle(IntroductionId));
         if (_articleId == IntroductionId) selected = intro;
         y += 66;
-        Label(content, T("筛选与预测", "FILTERS & PREDICTION"), 14, 18, y, true);
+        Label(content, T("游戏机制", "GAME MECHANICS"), 14, 18, y, true);
         y += 34;
         foreach (Topic topic in FilterTopics)
         {
@@ -109,6 +118,7 @@ internal sealed partial class EncyclopediaCanvas
                     RenderRail();
                 };
                 content.AddChild(toggle);
+                toggle.FocusEntered += () => RevealRailItem(toggle);
                 toggle.TooltipText = T(expanded ? "收起目录" : "展开目录", expanded ? "Collapse topics" : "Expand topics");
             }
             y += 46;
@@ -140,7 +150,7 @@ internal sealed partial class EncyclopediaCanvas
         }
         y += 20;
         Rule(content, 18, y, 218); y += 20;
-        Label(content, T("一起探索", "MORE TO EXPLORE"), 14, 18, y, true); y += 32;
+        Label(content, T("多人和模组", "PARTY & MODS"), 14, 18, y, true); y += 32;
         foreach (AdditionalTopic topic in AdditionalTopics)
         {
             var item = RailItem(content, T(topic.ZhName, topic.EnName), y, _articleId == topic.Id, 18, 18,
@@ -152,9 +162,9 @@ internal sealed partial class EncyclopediaCanvas
         bool reveal = _revealArticle; _revealArticle = false;
         Callable.From(() =>
         {
-            if (!GodotObject.IsInstanceValid(scroll) || !scroll.IsInsideTree()) return;
+            if (!GodotObject.IsInstanceValid(scroll) || !scroll.IsInsideTree() || scroll != _railScroll) return;
             scroll.ScrollVertical = position;
-            if (reveal && GodotObject.IsInstanceValid(selected)) scroll.EnsureControlVisible(selected!);
+            if (reveal && GodotObject.IsInstanceValid(selected)) RevealRailItem(selected!);
         }).CallDeferred();
     }
 
@@ -167,7 +177,18 @@ internal sealed partial class EncyclopediaCanvas
         StyleQuietButton(button, selected, textOffset);
         button.AddThemeFontSizeOverride("font_size", size);
         button.Size = new Vector2(246 - indent, 40);
+        button.FocusEntered += () => RevealRailItem(button);
         return button;
+    }
+
+    private void RevealRailItem(Control item)
+    {
+        if (!GodotObject.IsInstanceValid(_railScroll) || !item.IsInsideTree() || !_railScroll!.IsAncestorOf(item)) return;
+        float top = item.Position.Y, bottom = top + item.Size.Y;
+        float position = _railScroll.ScrollVertical, height = _railScroll.Size.Y;
+        // Keep visible entries in place. Only move the rail when the destination is outside it.
+        if (top < position || bottom > position + height)
+            _railScroll.ScrollVertical = (int)Math.Max(0, (top + bottom - height) / 2);
     }
 
     private void StyleQuietButton(Button button, bool selected, int inset = 12)
@@ -220,6 +241,10 @@ internal sealed partial class EncyclopediaCanvas
 
     private string TopicDescription(string id) => id switch
     {
+        ReadingGuideId => T("说明基准、查询环境与阅读方式", "Scope, query context and where to start"),
+        SeedHistoryId => T("种子、Hash、筛选与预测，以及版本历史", "Seeds, hashes, filtering, prediction and version history"),
+        FaqId => T("复现前提、常见偏移与问题反馈", "Reproduction, mismatches and feedback"),
+        IntroductionId => T("Seed、随机状态与玩家选择", "Seeds, random states and choices"),
         "neow" => T("开局选项、骨骰与遗物的随机结果", "Opening offers, Bones and relic outcomes"),
         "ancient" => T("先古身份、候选池与可选遗物", "Ancient identities, pools and offered relics"),
         "shop" => T("商品如何产生，哪些结果能够预测", "How shop inventories are generated"),
@@ -230,6 +255,7 @@ internal sealed partial class EncyclopediaCanvas
         "relics" => T("遗物袋、宝箱与商店的取用顺序", "Relic bags, chests and shop consumption"),
         "transform" => T("多个来源，一起寻找想要的变牌", "Combine transformation sources and targets"),
         "multiplayer" => T("个人条件、共享事实与领取顺序", "Personal conditions and shared facts"),
+        MultiplayerSharedId => T("共同世界、个人事件与变形灵林谷特例", "Shared worlds, personal events and Morphic Grove"),
         "mods" => T("模组环境下的候选池与适用范围", "Content pools and compatibility with mods"),
         _ => T("了解规则、前提与具体例子", "Rules, premises and practical examples")
     };
@@ -242,21 +268,42 @@ internal sealed partial class EncyclopediaCanvas
         bool searching = !string.IsNullOrWhiteSpace(_query);
         Label(content, searching ? T("寻找一个答案", "Find an answer") : T("从一个问题开始", "Start with a question"), 30, 12, 2);
         Label(content, searching ? T($"与「{_query.Trim()}」相关的条目", $"Topics matching “{_query.Trim()}”") :
-            T("先看规则，再看例子。每一篇都能成为你下一次筛选的起点。", "Understand the rules, explore an example, then try your next search."), 18, 12, 49, true);
+            T("按当前需要选择入口，也可以直接查下面的游戏主题。", "Choose an entry for your question, or browse the game topics below."), 18, 12, 49, true);
         float y = 94;
-        if (IntroductionMatches())
+        if (!searching)
         {
-            var hero = Button(content, string.Empty, 12, y, 1190, 124, () => ShowArticle(IntroductionId));
-            hero.AddThemeStyleboxOverride("normal", _palette.Box("233446", "50616B", 1));
-            Label(hero, T("入门 · 从这里开始", "START HERE"), 14, 24, 16, true).AddThemeColorOverride("font_color", new Color(Gold));
-            Label(hero, T(IntroductionTitle, "Why can the future be predicted?"), 26, 24, 44);
-            Label(hero, T("Seed、随机数与玩家选择，串起预测背后的共同规则。", "Seeds, random streams and choices: the rules behind every prediction."), 17, 24, 87, true);
-            Label(hero, "→", 30, 1128, 40).AddThemeColorOverride("font_color", new Color(Gold));
-            y += 152;
+            float topicsTop = y + 252;
+            var entries = new (string Title, string Description, Action Open)[]
+            {
+                (T("开始使用", "Getting started"), T("先了解说明范围与复现前提", "Reading scope and reproduction premises"), () => ShowArticle(ReadingGuideId)),
+                (T("结果与预测不同", "Results do not match"), T("查常见原因，找到反馈入口", "Common causes and when to send feedback"), () => ShowArticle(FaqId)),
+                (T("种子：我们在搜索什么？", "Seeds: What are we searching?"), T("理解种子、Hash，以及筛选与预测的区别", "Seeds, hashes, filtering and prediction"), () => ShowArticle(SeedHistoryId)),
+                (T("深入了解预测原理", "How prediction works"), T("理解 Seed、随机状态与选择的关系", "How seeds, random states and choices relate"), () => ShowArticle(IntroductionId))
+            };
+            for (int i = 0; i < entries.Length; i++)
+            {
+                var entry = entries[i];
+                var card = Button(content, string.Empty, 12 + i % 2 * 604, y + i / 2 * 120, 586, 104, entry.Open);
+                card.AddThemeStyleboxOverride("normal", _palette.Box("233446", "50616B", 1));
+                var title = Label(card, entry.Title, 23, 22, 19);
+                title.Size = new Vector2(528, 32);
+                title.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+                var description = Label(card, entry.Description, 17, 22, 61, true);
+                description.Size = new Vector2(538, 28);
+                description.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+            }
+            y = topicsTop;
         }
-        Label(content, searching ? T("匹配条目", "MATCHING TOPICS") : T("筛选与预测", "FILTERS & PREDICTION"), 16, 12, y, true);
+        Label(content, searching ? T("匹配条目", "MATCHING TOPICS") : T("按游戏主题查找", "BROWSE GAME TOPICS"), 16, 12, y, true);
         y += 36;
         var cards = new List<(string Id, string Name, string Description, Texture2D?[] Icons)>();
+        if (searching)
+        {
+            foreach (AdditionalTopic topic in GuideTopics.Where(AdditionalMatches))
+                cards.Add((topic.Id, T(topic.ZhName, topic.EnName), TopicDescription(topic.Id), []));
+            if (IntroductionMatches())
+                cards.Add((IntroductionId, T(IntroductionTitle, "Why can the future be predicted?"), TopicDescription(IntroductionId), []));
+        }
         foreach (Topic topic in FilterTopics.Where(Matches))
             cards.Add((topic.Id, NameOf(topic), TopicDescription(topic.Id), [_icons.Resolve(topic.Icon).Texture]));
         foreach (ArticleChild child in FilterTopics.SelectMany(t => ChildrenFor(t.Id)).Where(ChildMatches))

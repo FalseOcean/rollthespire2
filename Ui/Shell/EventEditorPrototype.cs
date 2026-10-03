@@ -26,6 +26,8 @@ internal sealed partial class EventEditorPrototype : Control
     private ScrollContainer? _editorScroll;
     private readonly Dictionary<int, SeatDraft> _drafts = [];
     private readonly Dictionary<int, SeatDraft> _partyDrafts = [];
+    private readonly List<QueueCondition> _partyQueue = [];
+    private List<QueueCondition> QueueConditions => _queuePickerPlayers > 1 ? _partyQueue : _draft.QueueConditions;
     private SeatDraft _draft = new();
     private IUiTextProvider _text = JsonUiTextProvider.CreateUi13("zh");
     private IGameContentNameResolver _names = RuntimeGameContentNameResolver.Create("zh");
@@ -146,7 +148,7 @@ internal sealed partial class EventEditorPrototype : Control
 
     private void Revalidate()
     {
-        _draft.QueueConditions.RemoveAll(condition =>
+        QueueConditions.RemoveAll(condition =>
             !_draft.Catalog.CandidatesForAct(condition.Act).Any(candidate => candidate.EventKey == condition.Event));
         if (_draft.SelectedEvent is { } selected && EventResultPrototypeWhitelist.Find(selected) is null)
             _draft.SelectedEvent = null;

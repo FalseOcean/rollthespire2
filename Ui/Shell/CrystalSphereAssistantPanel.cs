@@ -34,6 +34,9 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
     private long _generation, _selectionRevision;
     private double _poll, _projectionDelay;
     private bool _exited, _running, _complete, _dirty, _projecting, _switching;
+    private bool _stale, _resumeOnOpen;
+    private CrystalRewardOption? _focusTarget;
+    private CrystalFocusVerdict _focusVerdict;
     private string? _error;
     internal enum DiscoveryStop { TimeLimit, UserPaused, Exhausted, Failed }
     private DiscoveryStop? _stopReason;
@@ -50,13 +53,55 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
     private readonly Dictionary<string,(Label Count,HFlowContainer Flow)> _groups=[];
     private readonly OptionButton _branch = new();
     private readonly CheckButton _avoidCurse = new() { ButtonPressed = true };
-    private readonly CheckButton _showGuidance = new();
+    private readonly CheckButton _includeDriftwood = new() { ButtonPressed = true };
+    private readonly CheckButton _includeEnchantments = new();
     private readonly CheckButton _transparentMask = new();
-    private Button _continue = null!, _stop = null!, _use = null!;
+    private Button _continue = null!, _stop = null!, _use = null!, _allCandidates = null!;
     internal sealed record Update(ImmutableArray<CrystalRewardRoute> Rows, DiscoveryStop? Stop=null,
         CrystalDiscoveryPhase Phase=CrystalDiscoveryPhase.FindingPlans, Exception? Error=null, CrystalDiscoveryProgress? Progress=null,
-        CrystalOptionProjection? Projection=null,ImmutableArray<CrystalRewardOption> ExcludedCandidates=default);
+        CrystalOptionProjection? Projection=null,ImmutableArray<CrystalRewardOption> ExcludedCandidates=default,CrystalFocusUpdate? Focus=null);
     private ConcurrentQueue<Update> _updates = new();
+    // Owned by the run launcher for this event only. No Godot controls survive
+    // closing; the frozen search, selected goals and pending pure worker do.
+    internal sealed record Session(CrystalSphereLiveSnapshot Snapshot,int Branch,bool AvoidCurse,bool IncludeDriftwood,bool IncludeEnchantments,
+        PredictorCrystalReachability? Reachability,ImmutableArray<CrystalRewardRoute> Rows,
+        ImmutableArray<CrystalRewardOption> Selected,CrystalOptionProjection Projection,
+        ImmutableArray<CrystalRewardOption> Pending,CrystalDiscoveryPhase Phase,CrystalDiscoveryProgress Progress,
+        bool Complete,bool Stale,bool Resume,bool Switching,DiscoveryStop? StopReason,string? Error,Task? Worker,ConcurrentQueue<Update> Updates,
+        CrystalRewardOption? FocusTarget,CrystalFocusVerdict FocusVerdict);
+    internal Session? SuspendSession()
+    {
+        if(_snapshot==null) return null;
+        bool resume=_running && !_complete && !_stale && _cancel?.IsCancellationRequested!=true;
+        _cancel?.Cancel();_projectCancel?.Cancel();
+        while(_updates.TryDequeue(out var update)) ApplyUpdate(update,false);
+        return new(_snapshot,_branch.Selected,_avoidCurse.ButtonPressed,_includeDriftwood.ButtonPressed,_includeEnchantments.ButtonPressed,_reachability,_rows.ToImmutableArray(),
+            _selected,_projection,_pendingOptions.ToImmutableArray(),_phase,_progress,_complete,_stale,
+            resume && !_complete && _error==null && (_focusTarget==null || _focusVerdict==CrystalFocusVerdict.Checking),
+            _switching,_stopReason,_error,_worker,_updates,_focusTarget,_focusVerdict);
+    }
+    internal void RestoreSession(Session session)
+    {
+        ResetWork();_snapshot=session.Snapshot;
+        _branch.Clear();foreach(var branch in _snapshot.Branches)
+            _branch.AddItem(T(branch.Mode)+(branch.Mode=="Remaining"?" · "+string.Format(T("remaining"),branch.Snapshot.Remaining):""));
+        _branch.Select(session.Branch);_avoidCurse.SetPressedNoSignal(session.AvoidCurse);
+        _includeDriftwood.SetPressedNoSignal(session.IncludeDriftwood);
+        _includeEnchantments.SetPressedNoSignal(session.IncludeEnchantments);
+        _reachability=session.Reachability;_rows.AddRange(session.Rows);_selected=session.Selected;_projection=session.Projection;
+        _pendingOptions.UnionWith(session.Pending);_phase=session.Phase;_progress=session.Progress;
+        _complete=session.Complete;_stale=session.Stale;_resumeOnOpen=session.Resume;_switching=session.Switching;
+        _stopReason=session.StopReason;_error=session.Error;
+        _focusTarget=session.FocusTarget;_focusVerdict=session.FocusVerdict;
+        _worker=session.Worker;_updates=session.Updates;_running=_worker is { IsCompleted:false };
+        Render();
+    }
+    internal void OpenSession()
+    {
+        if(_snapshot==null) { Refresh();return; }
+        EnsureCurrentScene();
+        Render();
+    }
     internal event Action<CrystalSphereLiveSnapshot,string,PredictorCrystalSolution>? GuideRequested;
     private string T(string key) => _text.Get("predictor.crystal."+key);
     private PredictorCrystalSnapshot Source => _snapshot!.Branches[_branch.Selected].Snapshot;
@@ -69,7 +114,8 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
         foreach(var (control,key) in _labels) control.Text=T(key);
         foreach(var (control,key) in _buttons) control.Text=T(key);
         _avoidCurse.Text=T("avoid_curse");_avoidCurse.TooltipText=T("avoid_curse_hint");
-        _showGuidance.Text=T("show_guidance");
+        _includeDriftwood.Text=T("include_driftwood");_includeDriftwood.TooltipText=T("include_driftwood_hint");
+        _includeEnchantments.Text=T("include_enchantments");_includeEnchantments.TooltipText=T("include_enchantments_hint");
         _transparentMask.Text=T("transparent_mask");
         if(_snapshot!=null) for(int i=0;i<_snapshot.Branches.Length;i++)
         {
@@ -113,8 +159,10 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
         _branch.ItemSelected += _=> BeginBranch();
         _avoidCurse.Text=T("avoid_curse");_avoidCurse.TooltipText=T("avoid_curse_hint");left.AddChild(_avoidCurse);
         _avoidCurse.Toggled += _=>{ if(_snapshot!=null) BeginBranch(); };
-        _showGuidance.Text=T("show_guidance");_showGuidance.ButtonPressed=CrystalSphereGuidance.DisplayEnabled;
-        _showGuidance.Toggled += enabled=>CrystalSphereGuidance.DisplayEnabled=enabled;left.AddChild(_showGuidance);
+        _includeDriftwood.Text=T("include_driftwood");_includeDriftwood.TooltipText=T("include_driftwood_hint");left.AddChild(_includeDriftwood);
+        _includeDriftwood.Toggled += _=>{ if(_snapshot!=null) BeginBranch(); };
+        _includeEnchantments.Text=T("include_enchantments");_includeEnchantments.TooltipText=T("include_enchantments_hint");left.AddChild(_includeEnchantments);
+        _includeEnchantments.Toggled += _=>{ if(_snapshot!=null) BeginBranch(); };
         _transparentMask.Text=T("transparent_mask");_transparentMask.ButtonPressed=CrystalSphereMaskAppearance.Enabled;
         _transparentMask.Toggled += CrystalSphereMaskAppearance.SetEnabled;left.AddChild(_transparentMask);
         Action(left,"refresh",Refresh);
@@ -128,6 +176,7 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
         var heading=new HBoxContainer();center.AddChild(heading);
         var headingText=Text(heading,"available_rewards",24);headingText.SizeFlagsHorizontal=SizeFlags.ExpandFill;
         Text(center,"choose_hint",17);
+        Text(center,"snapshot_premise",15);
         var scroll=new ScrollContainer { SizeFlagsVertical=SizeFlags.ExpandFill,SizeFlagsHorizontal=SizeFlags.ExpandFill,
             HorizontalScrollMode=ScrollContainer.ScrollMode.Disabled };center.AddChild(scroll);
         _results=new VBoxContainer { SizeFlagsHorizontal=SizeFlags.ExpandFill };_results.AddThemeConstantOverride("separation",18);scroll.AddChild(_results);
@@ -150,6 +199,8 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
         Text(right,"search_hint",17);
         _continue=Action(right,"continue_discovery",StartDiscovery);
         _stop=Action(right,"pause_discovery",()=>_cancel?.Cancel());
+        _allCandidates=Action(right,"focus_back",()=>{ SwitchSearchQueue();_focusTarget=null;Render();StartDiscovery(); });
+        _allCandidates.Visible=false;
         Render();
     }
     private static Button Button(Node parent,string text,Action clicked)
@@ -173,17 +224,19 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
         _worker=null;_updates=new();_rows.Clear();_selected=[];_pendingOptions.Clear();
         _projection=new(ImmutableDictionary<CrystalRewardOption,PredictorCrystalSolution>.Empty,null,0);
         _reachability=null;_running=_complete=_dirty=_projecting=_switching=false;_error=null;_stopReason=null;_phase=CrystalDiscoveryPhase.FindingPlans;_progress=default;
+        _stale=_resumeOnOpen=false;
+        _focusTarget=null;_focusVerdict=CrystalFocusVerdict.Checking;
     }
     internal void Refresh()
     {
-        ResetWork();_snapshot=null;
         try { ShowSnapshot(CrystalSphereLiveCapture.Capture(_run,GetTree().Root,_runtime.Detection.DisplayVersion)); }
         catch(InvalidOperationException ex)
         {
-            bool expected=ex.Message is "CrystalSoloOnly" or "CrystalNotCurrentScene" or "CrystalSceneBusy" or "CrystalSceneFinished" or "CrystalSnapshotChanged";
-            _status.Text=T(expected?ex.Message:"unavailable");if(!expected) RuntimeLog.WarnException("crystalCaptureUnavailable=true",ex);Render();
+            bool expected=ex.Message is "CrystalLocalPlayerMissing" or "CrystalPlayerMismatch" or "CrystalNotCurrentScene" or "CrystalSceneBusy" or "CrystalSceneFinished" or "CrystalSnapshotChanged";
+            _status.Text=T(expected?ex.Message:"unavailable");if(_snapshot!=null) Invalidate();
+            if(!expected) RuntimeLog.WarnException("crystalCaptureUnavailable=true",ex);Render();
         }
-        catch(Exception ex) { _status.Text=T("unavailable");RuntimeLog.WarnException("crystalCaptureFailed=true",ex);Render(); }
+        catch(Exception ex) { _status.Text=T("unavailable");if(_snapshot!=null) Invalidate();RuntimeLog.WarnException("crystalCaptureFailed=true",ex);Render(); }
     }
     internal void ShowSnapshot(CrystalSphereLiveSnapshot snapshot, bool startDiscovery=true)
     {
@@ -197,16 +250,33 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
         ResetWork();if(_snapshot==null) return;
         _reachability=new(Source,_avoidCurse.ButtonPressed,potionScenarioBound:true,
             workers:Source.Remaining>3?Math.Clamp(System.Environment.ProcessorCount-1,1,4):1,
-            targetDirected:Source.Remaining>3);Render();if(start) StartDiscovery();
+            targetDirected:Source.Remaining>3,includeRerolls:_includeDriftwood.ButtonPressed,goalLanguageProof:true,
+            includeEnchantments:_includeEnchantments.ButtonPressed);Render();if(start) StartDiscovery();
     }
     private void StartDiscovery()
     {
-        if(_reachability==null || _snapshot==null || _complete || _worker is { IsCompleted:false }) return;
+        // Consume a finished worker's terminal update before reusing its queue.
+        if(_worker is not { IsCompleted:false })
+            while(_updates.TryDequeue(out var pending)) ApplyUpdate(pending,false);
+        if(_reachability==null || _snapshot==null || _stale || _complete || _worker is { IsCompleted:false }) return;
+        if(_focusTarget!=null && _focusVerdict!=CrystalFocusVerdict.Checking) _focusTarget=null;
+        var focusTarget=_focusTarget;
         var reachability=_reachability;var selected=_selected;var queue=_updates;bool reproject=_switching;
         _cancel?.Dispose();_cancel=new();var token=_cancel.Token;_running=true;_error=null;_stopReason=null;Render();
         _worker=Task.Run(()=>{
             try
             {
+                if(focusTarget!=null)
+                {
+                    CrystalFocusUpdate focus;
+                    do
+                    {
+                        focus=reachability.AdvanceFocused(selected,focusTarget,TimeSpan.FromMilliseconds(150),token);
+                        queue.Enqueue(new([],Progress:focus.Progress,Projection:focus.Projection,Focus:focus));
+                    } while(!token.IsCancellationRequested && focus.Verdict==CrystalFocusVerdict.Checking);
+                    queue.Enqueue(new([],DiscoveryStop.UserPaused,Focus:focus));
+                    return;
+                }
                 if(reproject)
                 {
                     reachability.ProjectKnown(selected,token,known=>queue.Enqueue(new([],Projection:known)));
@@ -215,7 +285,8 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
                 CrystalReachabilityUpdate? update=null;
                 while(!token.IsCancellationRequested && update?.Complete!=true)
                 {
-                    update=reachability.Advance(selected,TimeSpan.FromMilliseconds(150),token);
+                    update=reachability.Advance(selected,TimeSpan.FromMilliseconds(150),token,
+                        excluded=>queue.Enqueue(new([],ExcludedCandidates:excluded)));
                     queue.Enqueue(new([],Phase:update.Phase,Progress:update.Progress,Projection:update.Projection,ExcludedCandidates:update.ExcludedCandidates));
                 }
                 queue.Enqueue(new([],update?.Complete==true?DiscoveryStop.Exhausted:DiscoveryStop.UserPaused,update?.Phase??CrystalDiscoveryPhase.FindingPlans,
@@ -231,11 +302,11 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
     {
         if(_snapshot==null || _projecting) return;
         long generation=_generation,revision=_selectionRevision;
-        var source=Source;var rows=_rows.ToImmutableArray();var selected=_selected;
+        var source=Source;var rows=_rows.ToImmutableArray();var selected=_selected;bool includeEnchantments=_includeEnchantments.ButtonPressed;
         _projectCancel?.Dispose();_projectCancel=new();var token=_projectCancel.Token;_projecting=true;_dirty=false;Render();
         try
         {
-            var result=await Task.Run(()=>PredictorCrystalExplorer.Project(source,rows,selected,token),token);
+            var result=await Task.Run(()=>PredictorCrystalExplorer.Project(source,rows,selected,token,includeEnchantments:includeEnchantments),token);
             if(_exited || generation!=_generation || revision!=_selectionRevision || token.IsCancellationRequested) return;
             _switching=false;_projection=result;
         }
@@ -249,10 +320,12 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
     }
     internal void SelectOption(CrystalRewardOption option)
     {
+        if(_stale) return;
         PredictorCrystalSolution? selectedProof=null;
         if(_selected.Contains(option)) _selected=_selected.Remove(option);
         else if(_projection.Available.TryGetValue(option,out selectedProof)) _selected=_selected.Add(option);
-        else return;
+        else { if(_pendingOptions.Contains(option)) FocusOption(option);return; }
+        _focusTarget=null;
         // Old workers keep their old queue. Each selection owns an independent
         // frontier, while the frozen-board session reuses tables and witnesses.
         _cancel?.Cancel();_worker=null;_updates=new();_running=_complete=false;
@@ -262,6 +335,7 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
         // It remains usable while compatible additions are reprojected off-thread.
         _switching=true;
         _pendingOptions.Clear();_pendingOptions.UnionWith(_optionTiles.Keys.Where(o=>!_selected.Contains(o)));
+        if(_reachability!=null) _pendingOptions.RemoveWhere(o=>_reachability.IsCertifiedConflict(_selected.Add(o)));
         var cached=_reachability?.PeekKnown(_selected);
         _projection=cached==null?new(ImmutableDictionary<CrystalRewardOption,PredictorCrystalSolution>.Empty,selectedProof,0)
             :cached with { SelectedPlan=cached.SelectedPlan??selectedProof };
@@ -269,21 +343,78 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
         if(_dirty) _=RebuildProjection();
         StartDiscovery();
     }
+    private void SwitchSearchQueue()
+    {
+        _cancel?.Cancel();_worker=null;_updates=new();_running=_complete=false;
+        _stopReason=null;_error=null;_progress=default;
+        _selectionRevision++;_projectCancel?.Cancel();_projecting=_dirty=_switching=false;
+    }
+    private void FocusOption(CrystalRewardOption option)
+    {
+        SwitchSearchQueue();_focusTarget=option;_focusVerdict=CrystalFocusVerdict.Checking;
+        RuntimeLog.Info($"crystalFocus=start;seed={Source.Context.Seed};remaining={Source.Remaining};avoidCurse={_avoidCurse.ButtonPressed};driftwood={_includeDriftwood.ButtonPressed};selected={string.Join(',',_selected)};target={option}");
+        Render();StartDiscovery();
+    }
     private void UsePlan()
     {
         if(_snapshot==null || _projection.SelectedPlan is not { } plan || _selected.IsEmpty) return;
         try
         {
-            if(CrystalSphereLiveCapture.Fingerprint(_run,GetTree().Root)!=_snapshot.Fingerprint) { Invalidate();return; }
+            if(!EnsureCurrentScene()) return;
             GuideRequested?.Invoke(_snapshot,Mode,plan);
         }
         catch(Exception ex) { RuntimeLog.WarnException("crystalGuideStartFailed=true",ex);Invalidate(); }
     }
-    private void Invalidate() { ResetWork();_snapshot=null;_status.Text=T("discovery_stale");Render(); }
+    // Entering the previewed payment branch is an expected transition. Keep
+    // its exact frozen solver/cache, while removing the no-longer-legal branch.
+    internal bool AcceptEnteredBoard(CrystalSphereLiveSnapshot current)
+    {
+        if(_snapshot==null || Mode is not ("Three" or "Six") || current.Seed!=_snapshot.Seed ||
+            current.Branches.Length!=1 || current.Branches[0].Mode!="Remaining") return false;
+        var expected=Source;var actual=current.Branches[0].Snapshot;
+        if(expected.Context.Character!=actual.Context.Character || expected.State.Position!=actual.State.Position ||
+            expected.Context.Crystal?.PlayerNetId!=actual.Context.Crystal?.PlayerNetId ||
+            !CrystalSphereGuidance.Matches(expected,actual,false,RequiresNiche())) return false;
+        _snapshot=_snapshot with { Fingerprint=current.Fingerprint,Branches=[("Remaining",expected)] };
+        _branch.Clear();_branch.AddItem(T("Remaining")+" · "+string.Format(T("remaining"),expected.Remaining));_branch.Select(0);
+        Render();return true;
+    }
+    private bool EnsureCurrentScene()
+    {
+        if(_snapshot==null) return false;
+        try
+        {
+            if(CrystalSphereLiveCapture.Fingerprint(_run,GetTree().Root)==_snapshot.Fingerprint)
+            {
+                // Ordinary identity/upgrade queries retain their local snapshot
+                // policy. Exact enchantment plans also depend on captured Niche.
+                if(!RequiresNiche() || Source.State.Streams.Single(s=>s.Stream==PredictorStream.Niche)==
+                    CrystalSphereLiveCapture.RngState(PredictorStream.Niche,_run.Rng.Niche)) return true;
+                Invalidate();return false;
+            }
+            if(AcceptEnteredBoard(CrystalSphereLiveCapture.Capture(_run,GetTree().Root,_runtime.Detection.DisplayVersion))) return true;
+        }
+        // Native payment/reveal animations may temporarily lack a capturable
+        // board. Wait for the stable state instead of retiring the plan.
+        catch(InvalidOperationException ex) when(ex.Message=="CrystalSceneBusy") { return false; }
+        catch { }
+        Invalidate();return false;
+    }
+    private void Invalidate()
+    {
+        // Keep the previous plan readable after its board has advanced. Explicit
+        // Refresh captures a new problem; old positives are never re-certified.
+        _stale=true;_resumeOnOpen=false;_cancel?.Cancel();_projectCancel?.Cancel();Render();
+    }
+    private bool RequiresNiche()=>_selected.Any(g=>g.Enchantment!=null) && CrystalRewardOption.UsesNicheEnchantments(Source.State);
     private static GameContentKind ContentKind(CrystalRewardOption o)=>o.Kind switch {
         PredictorRewardKind.Card=>GameContentKind.Card,PredictorRewardKind.Potion=>GameContentKind.Potion,_=>GameContentKind.Relic };
     private string NameOf(CrystalRewardOption option)=>(option.Key.IsValid?_names.Resolve(option.Key,ContentKind(option)):T("any_relic"))+
-        (option.Kind==PredictorRewardKind.Card && option.UpgradeLevel is >0?"+"+(option.UpgradeLevel>1?option.UpgradeLevel.ToString():""):"");
+        (option.Kind==PredictorRewardKind.Card && option.UpgradeLevel is >0?"+"+(option.UpgradeLevel>1?option.UpgradeLevel.ToString():""):"")+
+        (option.Enchantment is {} enchantment?" · "+EnchantmentName(enchantment):"");
+    private string EnchantmentName(CrystalCardEnchantment enchantment)=>enchantment.Key is {} key
+        ?ModelDb.GetById<EnchantmentModel>(new ModelId(key.Category,key.Entry)).Title.GetFormattedText()+" "+enchantment.Amount
+        :T("unenchanted");
     private Control Tile(CrystalRewardOption option,bool selected)
     {
         if(selected || !option.Key.IsValid)
@@ -294,6 +425,14 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
         }
         var tile=new WorkspaceResultTile(WorkspacePalette.Canonical,_icons,_names,JsonUiTextProvider.CreateUi13(_language),
             option.Key,ContentKind(option),()=>SelectOption(option),()=>SelectOption(option),selected,NameOf(option));
+        if(option.Enchantment is {} enchantment)
+        {
+            var badge=new Label { Text=EnchantmentName(enchantment),Position=new(5,WorkspaceResultTile.TileHeight-25),
+                Size=new(WorkspaceResultTile.TileWidth-43,22),TextOverrunBehavior=TextServer.OverrunBehavior.TrimEllipsis,
+                MouseFilter=MouseFilterEnum.Ignore };
+            badge.AddThemeFontSizeOverride("font_size",15);badge.AddThemeColorOverride("font_color",new Color("95e9ff"));
+            badge.AddThemeColorOverride("font_outline_color",Colors.Black);badge.AddThemeConstantOverride("outline_size",5);tile.AddChild(badge);
+        }
         if(option.Kind==PredictorRewardKind.Card && option.UpgradeLevel is >0)
         {
             // Keep the variant visible even when a long localized name truncates.
@@ -310,10 +449,12 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
     private void Render()
     {
         if(_results==null) return;
-        _branch.Disabled=_snapshot==null;
-        _continue.Disabled=_snapshot==null || _running || _complete;
+        _branch.Disabled=_snapshot==null || _stale;_avoidCurse.Disabled=_stale;
+        _includeDriftwood.Disabled=_stale || _snapshot==null || !PredictorSettlementEffects.Has(Source.State,"DRIFTWOOD");
+        _includeEnchantments.Disabled=_stale || _snapshot==null;
+        _continue.Disabled=_snapshot==null || _stale || _running || _complete;
         _stop.Disabled=!_running;
-        _use.Disabled=_selected.IsEmpty || _projection.SelectedPlan==null;
+        _use.Disabled=_stale || _selected.IsEmpty || _projection.SelectedPlan==null;
         // Progress updates must not destroy a button between mouse-down and
         // mouse-up. Existing options retain both identity and visual order.
         if(_renderedTargets.IsDefault || !_renderedTargets.SequenceEqual(_selected))
@@ -322,6 +463,7 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
             if(_selected.IsEmpty) _targetRow.AddChild(new Label { Text=T("none_selected") });
             else foreach(var option in _selected) _targetRow.AddChild(Tile(option,true));
         }
+        foreach(var button in _targetRow.GetChildren().OfType<Button>()) button.Disabled=_stale;
         _pendingOptions.ExceptWith(_projection.Available.Keys);
         _pendingOptions.ExceptWith(_selected);
         if(_complete || _snapshot==null) _pendingOptions.Clear();
@@ -331,7 +473,7 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
         }
         string GroupOf(CrystalRewardOption o)=>o.Kind==PredictorRewardKind.Card
             ?ModelDb.GetById<CardModel>(new ModelId(o.Key.Category,o.Key.Entry)).Rarity.ToString():o.Kind.ToString();
-        foreach(var option in _projection.Available.Keys.Where(o=>o!=CrystalRewardOption.AnyRelic && !_optionTiles.ContainsKey(o)).OrderBy(NameOf,StringComparer.CurrentCulture))
+        foreach(var option in _projection.Available.Keys.Concat(_pendingOptions).Distinct().Where(o=>o!=CrystalRewardOption.AnyRelic && !_optionTiles.ContainsKey(o)).OrderBy(NameOf,StringComparer.CurrentCulture))
         {
             var tile=Tile(option,false);_groups[GroupOf(option)].Flow.AddChild(tile);_optionTiles.Add(option,tile);
         }
@@ -340,7 +482,7 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
             bool pending=_pendingOptions.Contains(option);
             tile.Modulate=pending?new Color(1,1,1,.45f):Colors.White;
             var button=tile as Button??tile.GetChildren().OfType<Button>().FirstOrDefault();
-            if(button!=null) { button.Disabled=pending;button.TooltipText=NameOf(option)+(pending?"\n"+T("candidate_pending"):""); }
+            if(button!=null) { button.Disabled=_stale;button.TooltipText=NameOf(option)+(pending?"\n"+T("focus_hint"):""); }
         }
         foreach(var (group,controls) in _groups)
         {
@@ -352,12 +494,19 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
         }
         _summary.Text=_selected.IsEmpty?"":_projection.SelectedPlan==null?T("checking_joint"):_switching?T("selection_ready"):
             string.Format(T("joint_ready"),_selected.Length,_projection.Gold);
+        if(_projection.SelectedPlan is { RerollRewardIndices.Length: >0 } suffixPlan)
+            _summary.Text+=string.Format(T("reroll_count"),suffixPlan.RerollRewardIndices.Length);
         _summary.TooltipText=T("plan_scope");
         if(_snapshot==null) return;
-        _status.Text=_error??T(_complete ? (_projecting || _dirty ? "discovery_finalizing" : "discovery_exhausted") :
+        _allCandidates.Visible=_focusTarget!=null;_allCandidates.Disabled=_stale;
+        _status.Text=_stale?T("retained_plan"):_error??T(_complete ? (_projecting || _dirty ? "discovery_finalizing" : "discovery_exhausted") :
             _running ? (_phase==CrystalDiscoveryPhase.Exhaustive ? "discovery_exhausting" : "discovery_finding") :
             _stopReason switch { DiscoveryStop.TimeLimit=>"discovery_time_limit", DiscoveryStop.UserPaused=>"discovery_user_paused",
                 DiscoveryStop.Failed=>"discovery_failed", _=>"discovery_ready" });
+        if(!_stale && _error==null && _focusTarget is { } target)
+            _status.Text=string.Format(T(_focusVerdict switch {
+                CrystalFocusVerdict.Reachable=>"focus_reachable",CrystalFocusVerdict.Unreachable=>"focus_unreachable",
+                _=>_running?"focus_checking":"focus_paused" }),NameOf(target));
         _speed.Text=_progress.Seconds>0?string.Format(T("speed_value"),_progress.Examined/_progress.Seconds):"—";
         _elapsed.Text=string.Format(T("elapsed_value"),_progress.Seconds);
         _status.TooltipText=T("discovery_scope")+(_progress.Examined>0?"\n"+string.Format(T("discovery_progress"),_progress.Examined,
@@ -366,6 +515,14 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
 
     internal void ApplyUpdate(Update update, bool render=true)
     {
+        if(update.Focus is { } focus)
+        {
+            if(focus.Target!=_focusTarget) return;
+            if(focus.Verdict!=_focusVerdict && focus.Verdict!=CrystalFocusVerdict.Checking)
+                RuntimeLog.Info($"crystalFocus={focus.Verdict};target={focus.Target};seconds={focus.Progress.Seconds:F3};examined={focus.Progress.Examined};rootProof={focus.RootProof};proofSource={focus.ProofSource}");
+            _focusVerdict=focus.Verdict;
+            if(focus.Verdict==CrystalFocusVerdict.Unreachable) _pendingOptions.Remove(focus.Target);
+        }
         // Each selection owns a fresh queue. Only explicit same-query negative
         // proofs remove grey candidates; timeout/absence alone removes nothing.
         if(!update.ExcludedCandidates.IsDefaultOrEmpty) _pendingOptions.ExceptWith(update.ExcludedCandidates);
@@ -388,20 +545,26 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
     {
         bool changed=false;
         while(_updates.TryDequeue(out var update)) { ApplyUpdate(update,false);changed=true; }
+        if(_resumeOnOpen && _worker is not { IsCompleted:false })
+        {
+            _resumeOnOpen=false;
+            // The canceled worker may have finished the focused proof after
+            // SuspendSession captured Checking. Keep that delivered verdict.
+            if(_focusTarget==null || _focusVerdict==CrystalFocusVerdict.Checking) StartDiscovery();
+        }
         _projectionDelay-=delta;
-        if(_dirty && !_projecting && _projectionDelay<=0) { _projectionDelay=.5;_=RebuildProjection(); }
+        if(!_stale && _dirty && !_projecting && _projectionDelay<=0) { _projectionDelay=.5;_=RebuildProjection(); }
         else if(changed) Render();
-        if(_snapshot==null) return;
+        if(_snapshot==null || _stale) return;
         _poll-=delta;if(_poll>0)return;_poll=.4;
-        try { if(CrystalSphereLiveCapture.Fingerprint(_run,GetTree().Root)!=_snapshot.Fingerprint) Invalidate(); }
-        catch { Invalidate(); }
+        EnsureCurrentScene();
     }
     public override void _ExitTree()
     {
         _exited=true;_generation++;_selectionRevision++;_cancel?.Cancel();_cancel?.Dispose();
         _projectCancel?.Cancel();_projectCancel?.Dispose();
-        // The launcher may retain the freed overlay wrapper until reopened.
-        // Release the potentially large discovery index immediately on close.
+        // Only the launcher-owned event session may retain the detached index.
+        // The freed Godot panel must release its own references and queues.
         _rows.Clear();_snapshot=null;_reachability=null;_worker=null;_updates=new();_selected=[];
         _projection=new(ImmutableDictionary<CrystalRewardOption,PredictorCrystalSolution>.Empty,null,0);
     }

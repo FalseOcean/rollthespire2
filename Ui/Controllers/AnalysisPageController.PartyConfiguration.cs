@@ -48,7 +48,7 @@ internal sealed partial class AnalysisPageController
         draft.Ascension, draft.Players.Select(p =>
         {
             var selection = _partySelections.GetValueOrDefault(p.Slot);
-            return new SeedLibraryPlayer(p.Slot, p.Character, LobbyUnlockReadout.Copy(p.Unlocks), p.UnlockSource,
+            return new SeedLibraryPlayer(p.Slot, p.Character, LobbyUnlockReadout.Copy(p.RequireUnlocks()), p.UnlockSource,
                 draft.Query.Players[p.Slot].AncientPremises,
                 SeedLibraryContextCapture.OpeningPremise(draft.Query.Players[p.Slot].Conditions),
                 selection.Choice.HasValue || !string.IsNullOrWhiteSpace(selection.Route)

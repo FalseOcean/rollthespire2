@@ -1,53 +1,13 @@
-# {{relic:SILKEN_TRESS}}：下一组卡牌奖励
+# {{relic:SILKEN_TRESS}}：“华彩”会落在哪组奖励上
 
-## 需求
+{{relic-icon:SILKEN_TRESS}}获得时会失去当前所有金币，并让**获得之后生成的下一组卡牌奖励**中的可附魔卡牌获得“华彩”附魔。通常这组奖励来自第一场普通战斗，但它并不绑定第一场战斗。
 
-{{relic-icon:SILKEN_TRESS}}是涅奥的诅咒选项之一。获得它以后，玩家通常会在第一场普通战斗的第一组卡牌奖励上看到 **华彩**。
+## 骨骰可以让效果在开局消耗
 
-因此最直观的需求是：
+{{relic:KALEIDOSCOPE}}和{{relic:LOST_COFFER}}等遗物在开局就会生成卡牌奖励。如果{{relic:NEOWS_BONES}}先给予{{relic:SILKEN_TRESS}}，再给予这些遗物，“华彩”可以直接作用于开局奖励。{{relic:KALEIDOSCOPE}}有两组奖励，下一组的效果只覆盖其中先生成的一组。
 
-> 我希望第一场战斗出现一张指定的华彩卡牌。
+例如 **{{relic:SILKEN_TRESS}} → {{relic:KALEIDOSCOPE}}** 与 **{{relic:KALEIDOSCOPE}} → {{relic:SILKEN_TRESS}}** 是两条不同历史。效果跟随奖励的生成：跳过已经生成的奖励，不会把“华彩”留给之后的战斗。
 
-但“第一场战斗”其实并不是{{relic:SILKEN_TRESS}}真正绑定的对象。
+## RT2 怎样处理
 
----
-
-## 为什么可以预测
-
-{{relic:SILKEN_TRESS}}的效果作用于：
-
-> **获得它之后出现的下一组卡牌奖励。**
-
-通常情况下，开局之后最先出现的卡牌奖励就是第一场普通战斗，因此效果自然落在那里。
-
-但部分涅奥遗物本身也会立即生成卡牌奖励。
-
-例如 **{{relic:KALEIDOSCOPE}}**和**{{relic:LOST_COFFER}}**。
-
-如果通过{{relic:NEOWS_BONES}}等方式先获得{{relic:SILKEN_TRESS}}，再获得这些会生成卡牌奖励的遗物，那么它们产生的开局卡牌奖励就可能先吃到{{relic:SILKEN_TRESS}}的效果。
-
-因此：
-
-> {{relic:SILKEN_TRESS}} → {{relic:KALEIDOSCOPE}}
-
-和：
-
-> {{relic:KALEIDOSCOPE}} → {{relic:SILKEN_TRESS}}
-
-并不是完全相同的开局历史。
-
-这里真正重要的是**哪一组卡牌奖励最先发生**。
-
----
-
-## RT2 目前能做到什么
-
-RT2 会按照实际的开局领取顺序重放这些效果，而不是简单假定{{relic:SILKEN_TRESS}}永远作用于第一场小怪。
-
-因此在原版环境下，**开局直接获得指定的华彩卡牌并非不可达**。
-
-例如通过合适的{{relic:NEOWS_BONES}}组合和拾取顺序，可以让{{relic:SILKEN_TRESS}}先于{{relic:KALEIDOSCOPE}}或{{relic:LOST_COFFER}}生效，再让它们产生的卡牌奖励获得华彩。
-
-这也是{{relic:NEOWS_BONES}}拾取顺序有时真正重要的原因之一：
-
-> **顺序改变的不只是“先拿哪个遗物”，还可能改变哪个后续结果接住一个尚未消耗的效果。**
+RT2 按开局领取顺序重放这项效果。因此既可以筛选第一场战斗中的指定“华彩”卡牌，也可以结合相应骨骰组合和开局卡牌条件寻找带“华彩”卡牌的开局，前提是效果尚未被更早的奖励消耗。生成奖励和领取卡牌是两个步骤；指定选牌时还需遵循各奖励的领取限制。共同随机原理见 [[why-predictable]]，骨骰顺序见 [[neow-offer]]。

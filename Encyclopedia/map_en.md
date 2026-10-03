@@ -1,120 +1,39 @@
-# Maps: How Does a Seed Determine the Whole Route Map?
+# Maps: How Does the Seed Determine Routes?
 
-> Applies to: **Slay the Spire 2 Beta 0.111.0**
+> Mechanic reference: Slay the Spire 2 Beta 0.111.0
 
-## What You Want
+RT2 can show whether an Act offers a desired route, such as one with more Elites, Rest Sites, or question marks, and how many rooms no route can avoid.
 
-Map filtering usually asks about a route rather than an isolated node:
+## Why Can the Map Be Known in Advance?
 
-> **Does this Act contain a route I want to take?**
+Standard maps are generated as a whole. Each Act has a dedicated RNG stream—`act_1_map`, `act_2_map`, or `act_3_map`—derived from the seed. With the Act and required run conditions established, nodes, room types, and connections are determined. Following a route in an earlier Act does not advance the next Act's standard-map RNG.
 
-You may want more Elites, Rest Sites, or question-mark rooms. Alternatively:
+## Room Placement Rules
 
-> **How many rooms are unavoidable, whichever way I go?**
+The game generates branching and merging paths, then assigns room types. The first floor is a normal combat, the last pre-Boss floor is a Rest Site, and there is a fixed treasure floor.
 
-These properties can be determined at the start of the run.
+Other Rest Sites, shops, Elites, and question marks follow the Act's required counts and placement restrictions. Some cannot be placed too early or late, consecutively, or alongside the same type on adjacent branches. Generation then removes duplicate route segments and restores room types lost during that pruning.
 
-# Why Can the Entire Map Be Known in Advance?
+## Act and Mode Differences
 
-A standard STS2 map is not generated one floor at a time as you enter it. Each Act has a dedicated random state derived directly from the seed:
+Under default single-player rules, Act 1 is longest, Act 2 shorter, and Act 3 shorter again. Ascension and multiplayer can alter generation parameters: Swarming Elites adds Elites, while multiplayer removes one floor.
 
-> `act_1_map`
-> `act_2_map`
-> `act_3_map`
+In 0.111.0, {{act:OVERGROWTH}} and {{act:UNDERDOCKS}} use the same standard-map length and room-count rules, despite different Bosses, events, and enemies.
 
-Once seed, Act, and necessary run conditions are known, **the nodes, room types, and connections of the entire map are determined**.
+## Route Counts
 
-The route taken in an earlier Act does not advance the next Act's standard map RNG.
+**Reachable Max** is the most of a node type visited on any complete route. An Elite maximum of four establishes a route visiting four Elites. RT2 supports these conditions for Elites, Rest Sites, and question marks.
 
-# Rooms Are Not Scattered Independently
+**Guaranteed** is the minimum across complete routes. A Guaranteed Elite count of two means every complete route visits at least two. Normal combats, Elites, Rest Sites, and question marks have corresponding guaranteed counts.
 
-Standard generation follows a complete rule set. The game creates multiple paths from the start to the Boss, then assigns room types.
+Different maxima can come from different routes. Four reachable Elites and five reachable question marks do not prove that one route contains both. See [[map-routes]] for comparison directions.
 
-Some positions have fixed rules:
+## Question Marks and Confirmed Routes
 
-> The first floor is a normal combat.
-> The last floor before the Boss is a Rest Site.
-> There is a fixed treasure floor in the middle.
+A map's `?` node can become an event, combat, chest, or shop. Its resolution uses separate persistent randomness and depends on earlier question marks, previous room results, route position, and consecutive-shop restrictions. Six question marks do not guarantee six events.
 
-Other Rest Sites, Shops, Elites, and Unknowns follow the Act's quantity requirements and placement restrictions. Some cannot appear too early or late, consecutively, or next to the same type on neighboring branches.
+The map workspace lets you browse routes, find routes maximizing a node type, sketch a route, and confirm a complete path. A selected route establishes the order of question marks, previous room types, shop restrictions, and earlier Acts' Unknown RNG consumption. RT2 can then continue predicting ordinary question-mark room types. The specific event still requires its event queue and current eligibility; see [[event-appearance]].
 
-The game then removes duplicate route segments and restores room types lost during that cleanup.
+## Effects That Modify Maps
 
-The result is a directed route graph after generation, restrictions, and repairs—not one independent random roll per cell.
-
-# Acts Have Different Map Rules
-
-Act lengths and some room counts differ. In default single-player, Act 1 is longest, Act 2 shorter, and Act 3 shorter again.
-
-Ascension and multiplayer can alter parameters: Swarming Elites adds Elites, and multiplayer maps lose a floor.
-
-Although Act 1 has {{act:OVERGROWTH}} and {{act:UNDERDOCKS}}, both use the same standard length and room-count rules in 0.111.0. Their Bosses, events, and enemies differ, but their standard structural generation follows the same rules.
-
-# One Map Answers Two Different Questions
-
-The crucial distinction is between **at least one route meeting a goal** and **every route forcing a minimum count**.
-
-## Reachable Maximum
-
-“Can a complete route visit at least four Elites?” asks for the legal route with the most Elites.
-
-If the maximum is four, at least one such route exists. RT2 can express this type of goal for Elites, Rest Sites, and Unknowns.
-
-## Guaranteed Count
-
-“How many Elites must I visit regardless of my route?” asks for the **minimum across all complete routes**.
-
-GuaranteedElite = 2 means no complete route from the start to the Boss contains fewer than two Elites. Guaranteed counts can similarly describe normal combats, Elites, Rest Sites, and Unknowns.
-
-# Separate Maxima May Not Be Achievable Together
-
-A map may have a maximum of four Elites and a maximum of five Unknowns without having **one route containing both four Elites and five Unknowns**.
-
-The maxima may come from different routes. Advanced map properties treat them as **separate whole-map properties**, rather than combining them into a nonexistent perfect route.
-
-# A Question Mark Is Still Only a Question Mark
-
-The map can establish that a node is `?`, but on entry it may become Event, Monster, Treasure, or Shop.
-
-That result is not fixed by map generation. It uses another persistent random state affected by previous Unknown visits, their outcomes, route position, and shop-adjacency restrictions.
-
-**Unknown node count is not Event count.** Six question marks on a route do not prove six events.
-
-# Why Does Selecting a Route Reveal More?
-
-An explicit route supplies previously missing inputs:
-
-> Which Unknowns are entered in order;
-> the actual previous room;
-> whether the Shop blacklist applies;
-> previous Acts' Unknown RNG consumption.
-
-RT2's map workspace lets you browse routes, find routes maximizing a node type, sketch a desired path, and confirm a complete route.
-
-It can then continue to predict ordinary Unknown classifications as Event / Monster / Treasure / Shop.
-
-Even when a room is known to be Event, its specific identity still requires **the event queue and eligibility upon arrival**.
-
-# Game Effects Can Modify Maps
-
-The rules above describe **the standard map generated by default**.
-
-Some relics, cards, or Modifiers can regenerate maps, use another map type, change Elite counts, or add special node markings.
-
-Current RT2 map filtering targets **the standard map itself**. It does not assume a future map-changing effect has already occurred merely because the player might obtain it.
-
-Read the result as the seed's standard map **without additional map-changing effects**.
-
-# How Does RT2 Do It?
-
-RT2 does not estimate from historical statistics that a seed probably has many Elites. It reconstructs the game-generated nodes, room types, connections, and final route cleanup.
-
-On that actual graph it calculates reachable routes, maximum counts, guaranteed counts, and unavoidable opening normal combats.
-
-The target is **a complete map already determined by the seed**, not a probability estimate. What happens after entering its nodes requires further history-dependent prediction.
-
-The boundary is:
-
-> **The map determines which nodes exist and how they connect.**
-> **The route determines which nodes the player visits.**
-> **Unknowns, events, rewards, and other systems determine what happens inside them.**
+Relics, cards, or modifiers can regenerate a map, replace its type, alter Elite counts, or add node markers. Current map filters target the standard map before additional map-changing effects; they do not pre-apply effects the player might obtain later.

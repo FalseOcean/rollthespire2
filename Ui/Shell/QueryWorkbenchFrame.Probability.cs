@@ -39,7 +39,8 @@ internal sealed partial class QueryWorkbenchFrame
     }
     private int SearchWorkers => SearchWorkspacePersistence.ResolveSearchWorkers(
         _persistence.Preferences.SearchWorkerBudget, System.Environment.ProcessorCount);
-    private string AnalysisKey(string query) => query+_language+":"+_target+":"+_persistence.Preferences.SearchMode+":"+SearchWorkers;
+    private string AnalysisKey(string query) => query+_language+":"+_target+":"+_persistence.Preferences.SearchMode+":"+SearchWorkers+
+        ":gpu="+FamilyDeviceProfileFoundation.Initialization.Capture().Revision;
     private string _draftCompileIssue="";
     private bool UpdateProbabilityPanel(WorkbenchSearchDraft draft,string serialized)
     {

@@ -7,7 +7,7 @@ using RolltheSpire2.Core.Identity;
 namespace RolltheSpire2.Core.PredictorRuntime;
 
 internal enum CrystalOffsetVerdict { Possible, Impossible, Incomplete }
-internal readonly record struct CrystalOffsetReceipt(CrystalOffsetVerdict Verdict,int States)
+internal readonly record struct CrystalOffsetReceipt(CrystalOffsetVerdict Verdict,int States,bool RootCardSlotsRejected=false)
 {
     internal bool MaySupport => Verdict!=CrystalOffsetVerdict.Impossible;
 }
@@ -18,9 +18,9 @@ internal readonly record struct CrystalOffsetReceipt(CrystalOffsetVerdict Verdic
 // Potions run first; physical subscription blocks remain indivisible in each
 // phase. Each CardReward can satisfy only one card goal. Different physical
 // sources may satisfy the same identity, without binding the player's choice.
-internal sealed class PredictorCrystalOffsetBound
+internal sealed partial class PredictorCrystalOffsetBound
 {
-    private readonly record struct Block(string Kind,int Calls,UInt128 Need);
+    private readonly record struct Block(string Kind,int Calls,UInt128 Need,int Item);
     private readonly PredictorCrystalSnapshot _source;
     private readonly CrystalReachabilityTable _table;
     private readonly Block[] _potions,_core;
@@ -37,6 +37,16 @@ internal sealed class PredictorCrystalOffsetBound
     private readonly Dictionary<(int Bag,int Offset,int Calls),(int Bag,ImmutableArray<ModelKey> Keys)> _relics=[];
     private readonly object _sync=new();
     private readonly bool _admitted;
+    private readonly bool _avoidCurse;
+    private readonly bool _rootCardSlotsEnabled;
+    private readonly bool _packingCover;
+    private UInt128[]? _coCoverCells;
+    private long _coverSearchNodes,_packingChecks,_packingRejected;
+    internal long CoverSearchNodes=>Interlocked.Read(ref _coverSearchNodes);
+    internal long PackingChecks=>Interlocked.Read(ref _packingChecks);
+    internal long PackingRejected=>Interlocked.Read(ref _packingRejected);
+    internal bool MatchesLanguageContext(PredictorCrystalSnapshot source,CrystalReachabilityTable table,bool avoidCurse)
+        =>ReferenceEquals(_source,source) && ReferenceEquals(_table,table) && _avoidCurse==avoidCurse;
     private long _checks,_rejected,_incomplete,_cacheHits,_ticks;
     internal long Checks=>Interlocked.Read(ref _checks);
     internal long Rejected=>Interlocked.Read(ref _rejected);
@@ -44,9 +54,9 @@ internal sealed class PredictorCrystalOffsetBound
     internal long CacheHits=>Interlocked.Read(ref _cacheHits);
     internal double Seconds=>Interlocked.Read(ref _ticks)/(double)Stopwatch.Frequency;
 
-    internal PredictorCrystalOffsetBound(PredictorCrystalSnapshot source,CrystalReachabilityTable table,bool avoidCurse)
+    internal PredictorCrystalOffsetBound(PredictorCrystalSnapshot source,CrystalReachabilityTable table,bool avoidCurse,bool rootCardSlots=true,bool packingCover=true)
     {
-        _source=source;_table=table;
+        _source=source;_table=table;_avoidCurse=avoidCurse;_rootCardSlotsEnabled=rootCardSlots;_packingCover=packingCover;
         var placed=source.Items.Select((item,index)=>(item,index)).Where(x=>x.item.X>=0 &&
             x.item.Kind!="CURSE" && x.item.Subscriptions>0 && !source.Revealed.Contains(x.index)).ToArray();
         // A large failed-placement workload retains the existing legal solver.
@@ -61,7 +71,7 @@ internal sealed class PredictorCrystalOffsetBound
                 if(source.Hidden[x*11+y]) mask|=(UInt128)1<<(x*11+y);
             return mask;
         }
-        var blocks=placed.Select(x=>new Block(x.item.Kind,x.item.Subscriptions,Need(x.item))).ToArray();
+        var blocks=placed.Select(x=>new Block(x.item.Kind,x.item.Subscriptions,Need(x.item),x.index)).ToArray();
         _potions=blocks.Where(b=>b.Kind.StartsWith("POTION_",StringComparison.Ordinal)).ToArray();
         _core=blocks.Where(b=>!b.Kind.StartsWith("POTION_",StringComparison.Ordinal)).ToArray();
         (_potionCalls,_potionNeeds)=Subsets(_admitted?_potions:[]);
@@ -96,11 +106,18 @@ internal sealed class PredictorCrystalOffsetBound
         Interlocked.Increment(ref _checks);
         // Take order is relaxed here. The actual verifier keeps ordered takes;
         // relaxation only enlarges this necessary-condition solution set.
-        var ordered=goals.Distinct().OrderBy(g=>g.Kind).ThenBy(g=>g.Key.Serialized,StringComparer.Ordinal).ThenBy(g=>g.UpgradeLevel).ToImmutableArray();
+        var ordered=goals.Distinct().OrderBy(g=>g.Kind).ThenBy(g=>g.Key.Serialized,StringComparer.Ordinal).ThenBy(g=>g.UpgradeLevel).ThenBy(g=>g.CacheKey,StringComparer.Ordinal).ToImmutableArray();
         if(ordered.IsEmpty) return new(CrystalOffsetVerdict.Possible,0);
         if(!_admitted || ordered.Length>16) return new(CrystalOffsetVerdict.Incomplete,0);
+        // A later completed language proof may strengthen an older cached
+        // Possible/Incomplete receipt. Only all-orders reward-domain facts live
+        // here; geometric and ordered-query negatives stay outside Check.
+        if(Volatile.Read(ref _languageRewardFactsPublished))
+            lock(_sync)
+                if(_negativeSets.Any(prior=>prior.All(ordered.Contains)))
+                { Interlocked.Increment(ref _cacheHits);return new(CrystalOffsetVerdict.Impossible,0); }
         // Different audit work limits must not poison the normal proof cache.
-        string key=stateLimit+":"+string.Join('|',ordered.Select(g=>$"{g.Kind}:{g.Key.Serialized}:{g.UpgradeLevel?.ToString()??"*"}"));
+        string key=stateLimit+":"+string.Join('|',ordered.Select(g=>g.CacheKey));
         if(_proofs.TryGetValue(key,out var known)) { Interlocked.Increment(ref _cacheHits);return known.Value; }
         var pending=new Lazy<CrystalOffsetReceipt>(()=>
         {
@@ -112,9 +129,11 @@ internal sealed class PredictorCrystalOffsetBound
                 { Interlocked.Increment(ref _cacheHits);receipt=new(CrystalOffsetVerdict.Impossible,0); }
                 else
                 {
-                    receipt=Solve(ordered,stateLimit);
-                    if(receipt.Verdict==CrystalOffsetVerdict.Impossible && _negativeSets.Count<2048)
-                        _negativeSets.Add(ordered);
+                    receipt=stateLimit>0 && RejectRootCardSlots(ordered)
+                        ?new(CrystalOffsetVerdict.Impossible,0,RootCardSlotsRejected:true)
+                        :_table.IncludesRerolls?SolveRerolls(ordered,stateLimit):Solve(ordered,stateLimit);
+                    if(receipt.Verdict==CrystalOffsetVerdict.Impossible && _negativeSets.Count<2048 &&
+                        !_negativeSets.Any(prior=>prior.All(ordered.Contains))) _negativeSets.Add(ordered);
                 }
             }
             Interlocked.Add(ref _ticks,Stopwatch.GetTimestamp()-start);
@@ -280,10 +299,12 @@ internal sealed class PredictorCrystalOffsetBound
         if(need==0) return true;
         if(left<=0) return false;
         if(_coverMemo.TryGetValue((need,left),out bool found)) return found;
+        Interlocked.Increment(ref _coverSearchNodes);
         // In a fixed (x mod 3,y mod 3) class, every distinct pair is at
         // least three cells apart on some axis. One 3x3 click covers at most
         // one such cell. This is a certificate, independent of click order.
         if(_residues.Any(r=>PopCount(need&r)>left)) { _coverMemo.TryAdd((need,left),false);return false; }
+        if(_packingCover && PackingExceeds(need,left)) { _coverMemo.TryAdd((need,left),false);return false; }
         var maximal=new List<UInt128>();
         foreach(var gain in _covers.Select(c=>c&need).Where(c=>c!=0).Distinct().OrderByDescending(PopCount))
             if(!maximal.Any(larger=>(gain&larger)==gain)) maximal.Add(gain);
@@ -301,6 +322,34 @@ internal sealed class PredictorCrystalOffsetBound
         }
         bool possible=gains.Where(g=>(g&cell)!=0).Any(g=>CanCover(need & ~g,left-1));
         _coverMemo.TryAdd((need,left),possible);return possible;
+    }
+
+    // A failed greedy packing says nothing. A packing larger than the reveal
+    // budget is a certificate: no allowed initial Big cover contains two of
+    // these cells. Every actual Small/Big move is contained in this relaxation.
+    private bool PackingExceeds(UInt128 need,int left)
+    {
+        Interlocked.Increment(ref _packingChecks);
+        var neighbors=Volatile.Read(ref _coCoverCells);
+        if(neighbors==null)
+        {
+            var built=new UInt128[121];
+            foreach(var cover in _covers)
+                for(UInt128 bits=cover;bits!=0;bits &= bits-1) built[LowBitIndex(bits)] |= cover;
+            neighbors=Interlocked.CompareExchange(ref _coCoverCells,built,null)??built;
+        }
+        for(int direction=0;direction<2;direction++)
+        {
+            UInt128 remaining=need;int count=0;
+            while(remaining!=0)
+            {
+                int index=direction==1?((ulong)(remaining>>64)!=0?127-BitOperations.LeadingZeroCount((ulong)(remaining>>64)):
+                    63-BitOperations.LeadingZeroCount((ulong)remaining)):LowBitIndex(remaining);
+                if(++count>left) {Interlocked.Increment(ref _packingRejected);return true;}
+                remaining &= ~(neighbors[index]|((UInt128)1<<index));
+            }
+        }
+        return false;
     }
     private static int PopCount(UInt128 mask)=>BitOperations.PopCount((ulong)mask)+BitOperations.PopCount((ulong)(mask>>64));
 }

@@ -32,7 +32,7 @@ internal sealed partial class AnalysisPage
         ClosePartyConfiguration();
         string T(string suffix) => _uiText!.Get("predictor.party." + suffix);
         var staged = Enumerable.Range(0, 4).Select(slot => slot < current.Players.Count
-            ? current.Players[slot] with { Unlocks = LobbyUnlockReadout.Copy(current.Players[slot].Unlocks) }
+            ? current.Players[slot] with { Unlocks = LobbyUnlockReadout.Copy(current.Players[slot].RequireUnlocks()) }
             : new WorkbenchPlayerDraft(slot, current.Character, UnlockState.all.ToSerializable(), "AssumedFullyUnlocked")).ToArray();
         var popup = new PopupPanel { Name = "PredictorPartyConfigDialog", Exclusive = true };
         _partyConfigurationPopup = popup;

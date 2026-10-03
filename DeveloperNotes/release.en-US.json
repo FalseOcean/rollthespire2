@@ -4,6 +4,34 @@
   "Blocks": [
     {
       "Type": "Heading",
+      "Text": "RolltheSpire2 1.3.4"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "This update focuses on the Seed Library and search interface, expands event predictions and the encyclopedia, and improves Crystal Sphere prediction and GPU initialization diagnostics."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "The Seed Library brings favorite seeds, search presets and search history into a shared list-and-details layout. Favorite seeds support titles and notes, and presets link to their historical results. Queries with the same conditions and environment merge into one record. By default, history keeps the latest 30 queries, each with its latest 30 distinct results; the query limit is adjustable in Settings. Preset-linked records are retained, and favorite seeds are saved independently. Results remain available after closing the panel or restarting. Developer picks also provide ready-to-use seeds."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Search has a more visible results entry and per-category clearing. Switching between joint and separate targets for Leafy Poultice, New Leaf and Capsules preserves and reuses existing targets. Buttons and icons have clearer hierarchy, and interface colors are adjustable. Multiplayer event occurrence conditions are edited once for the party, while personal outcomes remain separate."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Click an event in Seed Analysis to inspect its currently supported filterable outcomes; event queue tooltips also show concise text results. Transform predictions follow the stated starter-card and other assumptions. The event picker can filter events with configurable outcomes. The encyclopedia has reorganized navigation and articles, including seed principles and shared multiplayer conditions; frequently asked questions now live there."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Crystal Sphere supports the local player in single-player and multiplayer, adds Driftwood reroll plans, and improves target-combination solving, target changes and reopening the same event. A new Include enchantments switch is off by default. When enabled, it distinguishes explicitly unenchanted cards and specific enchantment types and amounts; card upgrades remain distinct. Custom effects from other mods and complex multiplayer interactions may affect results."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "GPU initialization now distinguishes unverified, successful and failed creation, retains the failure stage and reason, avoids repeatedly hitting the same initialization failure, and offers an explicit retry. Feedback bundles include these diagnostics. This does not mean that every driver or D3D12 device compatibility issue has been resolved."
+    },
+    {
+      "Type": "Heading",
       "Text": "RolltheSpire2 1.3.3"
     },
     {

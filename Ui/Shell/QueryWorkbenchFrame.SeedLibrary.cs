@@ -9,7 +9,7 @@ internal sealed partial class QueryWorkbenchFrame
     private SeedLibraryContext? _resultSeedContext;
     internal WorkbenchSearchDraft? ResultDraft { get; private set; }
     internal SeedLibraryContext? ResultSeedContext => _resultSeedContext;
-    internal event Action<string, SeedLibraryContext>? FavoriteSeedRequested;
+    internal event Action<string, SeedLibraryContext, SeedQueryAssociation?>? FavoriteSeedRequested;
     internal void ShowLibraryReceipt(string message) => ReceiptText(message);
 
     private void InstallResultContext(WorkbenchSearchDraft draft)
@@ -33,7 +33,7 @@ internal sealed partial class QueryWorkbenchFrame
         if (context is null) button.TooltipText = _language == "zh" ? "此结果缺少可恢复的上下文。" : "This result has no restorable context.";
         button.Pressed += () =>
         {
-            try { FavoriteSeedRequested?.Invoke(result.Seed, SeedLibraryContextCapture.WithWitness(context!, result)); }
+            try { FavoriteSeedRequested?.Invoke(result.Seed, SeedLibraryContextCapture.WithWitness(context!, result), _persistence.ResultAssociation(result.Seed)); }
             catch (Exception ex) { ReceiptText(ex.Message); }
         };
         return button;

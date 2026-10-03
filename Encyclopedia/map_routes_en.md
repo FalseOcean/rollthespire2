@@ -1,76 +1,28 @@
-# Map Routes: How Far Can the Best and Worst Cases Go?
+# Map Routes: Minimum and Maximum Visits
 
-> Applies to: **Slay the Spire 2 Beta 0.111.0**
+> Mechanic reference: Slay the Spire 2 Beta 0.111.0
 
-A map has many routes from the start to the Boss. Total Elite, Rest Site, or Unknown count is often less useful than:
+Route counts cover complete legal paths from the start to the Boss. The number of Elites on a map is not necessarily the number one route can visit.
 
-> **Across all legal routes, what is the minimum count visited, and what is the maximum?**
+## Guaranteed and Reachable Max
 
-RT2 expresses this with two map properties.
+**Guaranteed** is the minimum count across complete routes. A Guaranteed Elite count of 4 means even the route with the fewest Elites visits at least four. A value of at most 2 only establishes that some route visits at most two.
 
-Click a seed below to open it in the predictor using the predictor's current character and Ascension settings.
-
-# Guaranteed: The Minimum You Must Visit
-
-`Guaranteed` is **the minimum across all complete routes**.
-
-For example:
-
-> [[seed:001W48N6QUWB]]
-
-Its **GuaranteedElite = 4** means that even a route chosen specifically to minimize Elites still visits **at least four**. It is a genuinely unavoidable four-Elite map.
-
-`GuaranteedElite ≥ 4` means **every route has at least four Elites**.
-
-Conversely, `GuaranteedElite ≤ 2` only means **at least one route has at most two Elites**. It does not limit every route to two.
-
-# Reachable Max: The Most You Can Visit
-
-`ReachableMax` is **the maximum across all complete routes**.
-
-For example:
-
-> [[seed:001W48LRVYMR]]
-
-Its **ReachableMaxRest = 1** means that even the route maximizing Rest Sites can visit only one.
-
-`ReachableMaxRest ≤ 1` is therefore a strong restriction: **no route can visit two Rest Sites**.
-
-Conversely, `ReachableMaxElite ≥ 4` means **at least one route can visit four Elites**.
-
-# Two Properties, Two Comparison Directions
-
-For one node type, four different requirements are possible:
+**Reachable Max** is the maximum count across complete routes. A maximum of one Rest Site means no route can visit two. A maximum of at least four Elites means some route visits at least four.
 
 | Condition | Meaning |
 | --- | --- |
-| `Guaranteed ≥ K` | **Every route** contains at least K |
-| `Guaranteed ≤ K` | **Some route** contains at most K |
-| `ReachableMax ≥ K` | **Some route** contains at least K |
-| `ReachableMax ≤ K` | **Every route** contains at most K |
+| `Guaranteed ≥ K` | Every route visits at least K |
+| `Guaranteed ≤ K` | Some route visits at most K |
+| `Reachable Max ≥ K` | Some route visits at least K |
+| `Reachable Max ≤ K` | Every route visits at most K |
 
-A good map does not have one universal direction. `ReachableMaxElite ≥ 4` seeks a high-Elite route; `GuaranteedElite ≥ 3` requires high Elite density whichever route you take.
+Different maxima may belong to different routes. Four reachable Elites and five reachable question marks do not establish a route containing both.
 
-For unwanted node types, the preferred direction may be reversed.
+Open [[seed:001W48N6QUWB]] or [[seed:001W48LRVYMR]] to inspect route properties with the predictor's current character and Ascension settings. The four-Elite and one-Rest-Site counts above illustrate the conditions; they are not claims about these seeds under every configuration.
 
-# A Special Property: Forced Monster Prefix
+## Unavoidable Opening Combats
 
-Some properties describe structure rather than total counts. For example:
+This property counts the consecutive normal combat nodes every route must visit at the beginning, rather than all normal combats in the Act. A value of six means every branch starts with six consecutive normal combats.
 
-> [[seed:001W48N78QTT]]
-
-Its **ForcedMonsterPrefix = 6** means **every legal branch starts with six consecutive normal combat nodes**.
-
-This is an unavoidable six-combat opening. The measure concerns the shared unavoidable normal-combat prefix, not the total normal combats across the Act.
-
-# What Are Map Conditions Actually Filtering?
-
-Three useful questions are:
-
-> **What is the minimum?** — Guaranteed
-> **What is the maximum?** — Reachable Max
-> **What opening structure is unavoidable?** — Forced Monster Prefix
-
-Use `≥` or `≤` to express the goal.
-
-RT2 need not decide that more Elites or more Rest Sites are better. It describes **what the map permits and what no route can avoid**. The player decides which map is worth searching for.
+Open [[seed:001W48N78QTT]] to inspect this property. Six combats is also an illustrative condition; use the predictor's current configuration for the actual value.

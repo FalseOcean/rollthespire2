@@ -18,11 +18,23 @@ internal sealed partial class DesignReferenceSurfaces : Control
     internal bool HasActiveSearch => _workbench.HasActiveSearch;
     internal WorkbenchSearchDraft? ResultDraft => _workbench.ResultDraft;
     internal SeedLibraryContext? ResultSeedContext => _workbench.ResultSeedContext;
+    internal int ResultCount => _workbench.ResultCount;
+    internal void ShowLastResults() => _workbench.ShowLastResults();
+    internal void EditLibraryPreset(SearchPresetDefinition? preset, bool metadata) => _workbench.EditLibraryPreset(preset, metadata);
+    internal void ApplyLibraryPreset(SearchPresetDefinition preset) => _workbench.ApplyPreset(preset);
+    internal void RefreshPresetEnvironment(SearchPresetDefinition preset) => _workbench.RefreshPresetEnvironment(preset);
+    internal SearchPresetDefinition PreparePresetHistory(SearchPresetDefinition preset) => _workbench.PreparePresetHistory(preset);
+    internal void LoadQueryHistory(QueryHistoryEntry entry, string title) => _workbench.LoadQueryHistory(entry, title);
+    internal event Action? PresetsRequested;
+    internal event Action? PresetsChanged;
+    internal event Action<string>? PresetIssueReported;
+    internal event Action? ResultsChanged;
+    internal event Action<PersistedSearchResult>? OpenSavedResultRequested;
     internal WorkbenchSearchDraft CaptureFeedbackDraft() => _workbench.CaptureDraft().WithoutCapturedAuthority();
     internal void SyncSearchPreferences() => _workbench.SyncSearchPreferences();
     internal object? CaptureSearchDiagnostics() => _workbench.CaptureSearchDiagnostics();
     internal void ShowLibraryReceipt(string message) => _workbench.ShowLibraryReceipt(message);
-    internal event Action<string, SeedLibraryContext>? FavoriteSeedRequested;
+    internal event Action<string, SeedLibraryContext, SeedQueryAssociation?>? FavoriteSeedRequested;
     public event Action<RolltheSpire2.Search.Contracts.SearchCandidate, WorkbenchSearchDraft>? OpenPartyInformation;
     public event Action<RolltheSpire2.Search.Contracts.SearchCandidate>? OpenSeedInformation;
 
@@ -32,7 +44,12 @@ internal sealed partial class DesignReferenceSurfaces : Control
         _workbench.Navigate += Navigate;
         _workbench.OpenPartyInformation += (candidate, draft) => OpenPartyInformation?.Invoke(candidate, draft);
         _workbench.OpenSeedInformation += candidate => OpenSeedInformation?.Invoke(candidate);
-        _workbench.FavoriteSeedRequested += (seed, context) => FavoriteSeedRequested?.Invoke(seed, context);
+        _workbench.FavoriteSeedRequested += (seed, context, key) => FavoriteSeedRequested?.Invoke(seed, context, key);
+        _workbench.PresetsRequested += () => PresetsRequested?.Invoke();
+        _workbench.PresetsChanged += () => PresetsChanged?.Invoke();
+        _workbench.PresetIssueReported += issue => PresetIssueReported?.Invoke(issue);
+        _workbench.ResultsChanged += () => ResultsChanged?.Invoke();
+        _workbench.OpenSavedResultRequested += result => OpenSavedResultRequested?.Invoke(result);
         _workbench.ModalChanged += open => ModalChanged?.Invoke(open);
         Name = "DesignReferenceSurfaces";
         AddChild(_workbench); _workbench.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);

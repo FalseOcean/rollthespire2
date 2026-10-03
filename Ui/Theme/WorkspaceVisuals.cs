@@ -2,13 +2,13 @@ using Godot;
 
 namespace RolltheSpire2.Ui.Theme;
 
-// Owner-approved 1.3 Blue ink base (2026-09-15). Charcoal is a neutral surface, not a theme.
+// Stable color tokens for the 1.3 Blue ink scheme; UiAppearance resolves the user's palette.
 internal sealed record WorkspacePalette(string Canvas, string Surface, string Hover, string Line,
     string Text, string Secondary, string Disabled, string Active, string Selected, string Primary)
 {
     public static readonly WorkspacePalette Canonical = new("131C29", "1E2B3C", "293B4E", "3B4D61", "E2E7EC", "A7B8CB", "78899C", "C9BA97", "C9BA97", "D7E2E5");
     public string NeutralSurface => "22292E";
-    public Color Color(string hex) => new(hex);
+    public Color Color(string hex) => UiAppearance.Resolve(hex);
     public Color Warning => new("D99783");
     public Color Error => new("D98780");
     public Color Confirmed => Color(Selected);
@@ -33,8 +33,8 @@ internal sealed record WorkspacePalette(string Canvas, string Surface, string Ho
     {
         if (_keyboardFocusVisible == visible) return;
         _keyboardFocusVisible = visible;
-        KeyboardFocus.BorderColor = visible ? new Color("C0D7E5") : new Color(0, 0, 0, 0);
-        PrimaryKeyboardFocus.BorderColor = visible ? new Color("416783") : new Color(0, 0, 0, 0);
+        KeyboardFocus.BorderColor = visible ? UiAppearance.Resolve("C0D7E5") : new Color(0, 0, 0, 0);
+        PrimaryKeyboardFocus.BorderColor = visible ? UiAppearance.Resolve("416783") : new Color(0, 0, 0, 0);
     }
 
     public Label Label(string text, int size = 20, bool secondary = false)

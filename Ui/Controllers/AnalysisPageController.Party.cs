@@ -100,7 +100,7 @@ internal sealed partial class AnalysisPageController
         _partyDraft = configured;
         // Search predicates do not filter this document; authored Capsule-effect premises do carry over.
         var party = Infrastructure.Snapshots.PartyRuntimeAuthorityCapture.Capture(_runtime.Profile, draft.RawSeed,
-            players.Select(p => p.Character).ToArray(), players.Select(p => p.Unlocks).ToArray(), draft.Ascension,
+            players.Select(p => p.Character).ToArray(), players.Select(p => p.RequireUnlocks()).ToArray(), draft.Ascension,
             _runtime.Detection.NormalizedVersion, players.Select(p => p.UnlockSource).ToArray());
         if (!_runtime.Profile.TryCanonicalizeSeed(draft.RawSeed, out var canonical, out var issue))
             throw new InvalidOperationException(issue);
@@ -121,6 +121,8 @@ internal sealed partial class AnalysisPageController
             if (_strictLibrarySeed == canonical && (selection.Choice.HasValue || !string.IsNullOrWhiteSpace(selection.Route)))
                 ValidateLibrarySelection(choices, selection.Choice, selection.Route);
             var desired = configured.Query.Players[slot].Conditions.OpeningRoute?.RouteRelicKey;
+            if (_strictLibrarySeed == canonical && desired is { IsValid: true } && !choices.Any(c => c.RelicKey == desired))
+                throw new InvalidOperationException("SeedLibrary.OpeningSelectionUnavailable");
             var choice = choices.FirstOrDefault(c => c.SlotIndex == selection.Choice)
                 ?? choices.FirstOrDefault(c => !string.IsNullOrWhiteSpace(selection.Route) &&
                     PartyNeowProjection.ConcreteRoutes(c).Any(r => r.OpeningRewardContinuations?.Routes.Any(x => x.Route.RouteId == selection.Route) == true))
@@ -140,7 +142,7 @@ internal sealed partial class AnalysisPageController
                 {
                     _page.SetPredictorContext(owner.Character.CharacterKey, owner.Ascension, owner.PlayersCount, slot,
                         draft.AncientOptionConditions, continuation?.Route.RouteId ?? "", choice.SlotIndex, "", false);
-                    _page.ShowDocument(request, document);
+                    _page.ShowDocument(request, document, players[slot].Unlocks);
                 }
                 finally { _bindingPartyDocument = false; }
                 _page.SetPartyOpeningChoices(selectedRelics);

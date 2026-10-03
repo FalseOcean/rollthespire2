@@ -5,19 +5,50 @@ using RolltheSpire2.Core.Identity;
 
 namespace RolltheSpire2.Core.PredictorRuntime;
 
-internal sealed record CrystalRewardOption(PredictorRewardKind Kind, ModelKey Key, int? UpgradeLevel = null)
+// Null on a target means any enchantment; a present value with no Key means
+// explicitly unenchanted. Do not merge either with a named enchantment.
+internal readonly record struct CrystalCardEnchantment(ModelKey? Key,int Amount)
+{
+    internal static CrystalCardEnchantment Of(PredictorCard card)=>new(card.Enchantment,card.Enchantment==null?0:card.EnchantmentAmount);
+    internal bool Matches(PredictorCard card)=>this==Of(card);
+    internal string CacheKey=>Key is { } key?$"{key.Serialized}@{Amount}":"none";
+}
+
+internal sealed record CrystalRewardOption(PredictorRewardKind Kind, ModelKey Key, int? UpgradeLevel = null,
+    CrystalCardEnchantment? Enchantment = null)
 {
     // Null remains identity-only for legacy/internal callers. Published card
     // candidates always carry an exact level, including zero (not upgraded).
     internal static CrystalRewardOption AnyRelic { get; } = new(PredictorRewardKind.Relic,default);
+    internal static CrystalRewardOption ForCard(PredictorCard card,bool exactEnchantments)=>
+        new(PredictorRewardKind.Card,card.Key,card.UpgradeLevel,exactEnchantments?CrystalCardEnchantment.Of(card):null);
+    internal static bool UsesEnchantments(PredictorState state)=>state.Relics.Any(r=>!r.Melted &&
+        r.Key.Entry is "WING_CHARM" or "FRESNEL_LENS" or "GLITTER" or "SILKEN_TRESS");
+    internal static bool UsesNicheEnchantments(PredictorState state)
+    {
+        foreach(var relic in state.Relics.Where(r=>!r.Melted))
+        {
+            if(relic.Key.Entry=="WING_CHARM") return true;
+            if(relic.Key.Entry=="GLITTER") return false;
+        }
+        return false;
+    }
+    internal string CacheKey=>$"{Kind}:{Key.Serialized}:{UpgradeLevel?.ToString()??"*"}:{Enchantment?.CacheKey??"*"}";
     internal bool MatchesCard(PredictorCard card) => Kind==PredictorRewardKind.Card && card.Key==Key &&
-        (UpgradeLevel==null || card.UpgradeLevel==UpgradeLevel);
+        (UpgradeLevel==null || card.UpgradeLevel==UpgradeLevel) && (Enchantment==null || Enchantment.Value.Matches(card));
     internal bool Accepts(CrystalRewardOption candidate) => Kind==candidate.Kind && Key==candidate.Key &&
-        (Kind!=PredictorRewardKind.Card || UpgradeLevel==null || UpgradeLevel==candidate.UpgradeLevel);
+        (Kind!=PredictorRewardKind.Card || (UpgradeLevel==null || UpgradeLevel==candidate.UpgradeLevel) &&
+            (Enchantment==null || Enchantment==candidate.Enchantment));
     internal bool Matches(PredictorReward reward) => reward.Kind==Kind &&
         (Key.IsValid ? reward.Key==Key : Kind==PredictorRewardKind.Relic && reward.Key.IsValid);
 }
-internal sealed record CrystalRewardRoute(ImmutableArray<PredictorCrystalStep> Steps, ImmutableArray<PredictorReward> Rewards);
+internal sealed record CrystalRerollVariant(ImmutableArray<PredictorReward> Rewards,ImmutableArray<PredictorInput> Actions);
+internal sealed record CrystalRewardRoute(ImmutableArray<PredictorCrystalStep> Steps, ImmutableArray<PredictorReward> Rewards)
+{
+    // Immutable offers/actions, never cached mutable Runs.
+    internal ImmutableArray<CrystalRerollVariant> RerollVariants { get; init; } = default;
+    internal bool EnchantmentTargets { get; init; }
+}
 internal sealed record CrystalOptionProjection(ImmutableDictionary<CrystalRewardOption, PredictorCrystalSolution> Available,
     PredictorCrystalSolution? SelectedPlan, int Gold);
 
@@ -44,6 +75,19 @@ internal sealed partial class PredictorCrystalExplorer
     private readonly bool _potionScenarioBound;
     private readonly bool _targetDirected;
     private readonly bool _stopAfterPlan;
+    private readonly int _rootPartition, _rootPartitions;
+    private readonly bool _continuationBound;
+    private readonly bool _completionCover;
+    private readonly bool _currentCenters;
+    private readonly bool _directedProof;
+    // Audit-only experiment: stronger exclusion has not paid for its tail cost.
+    private readonly bool _twoStepProof;
+    private readonly bool _reverseProof;
+    internal long TwoStepProofChecks { get; private set; }
+    internal long TwoStepProofRejected { get; private set; }
+    internal long TwoStepProofWords { get; private set; }
+    internal long TwoStepWordCacheHits { get; private set; }
+    private readonly Dictionary<HistoryKey,bool> _fixedWordSupport=[];
     private readonly PredictorCrystalOffsetBound? _offsetBound;
     private readonly PredictorCrystalIslands? _islands;
     private readonly int _potionScenarioLimit;
@@ -65,6 +109,10 @@ internal sealed partial class PredictorCrystalExplorer
     internal long BoundChecks=>_boundChecks;
     internal long BoundRejected=>_boundRejected;
     internal double BoundSeconds=>_boundTicks/(double)Stopwatch.Frequency;
+    internal long RelicOffsetChecks { get; private set; }
+    internal long RelicOffsetRejected { get; private set; }
+    internal long RelicOffsetCacheHits { get; private set; }
+    private readonly Dictionary<(HistoryKey History,UInt128 Eligible,int? PotionCalls,ModelKey Relic),bool> _relicOffsetMemo=[];
     private readonly CrystalReachabilityTable? _reachability;
     private readonly ImmutableArray<CrystalRewardOption> _selected;
     private readonly ImmutableArray<CrystalRewardOption> _queryCandidates;
@@ -108,12 +156,20 @@ internal sealed partial class PredictorCrystalExplorer
         bool useTwoStepCache = false,CrystalReachabilityTable? reachability=null,ImmutableArray<CrystalRewardOption> selected=default,bool discreteRewardBound=false,bool potionScenarioBound=false,int potionScenarioLimit=6,
         ImmutableArray<CrystalRewardOption> queryCandidates=default,bool targetDirected=false,PredictorCrystalIslands? islands=null,
         Func<CrystalRewardRoute,ImmutableArray<CrystalRewardOption>,PredictorCrystalSolution?>? verifySelection=null,bool stopAfterPlan=false,
-        PredictorCrystalOffsetBound? offsetBound=null)
+        PredictorCrystalOffsetBound? offsetBound=null,int rootPartition=0,int rootPartitions=1,bool continuationBound=true,bool completionCover=true,bool currentCenters=true,bool directedProof=false,bool twoStepProof=false,bool reverseProof=false)
     {
         _source = source; _avoidCurse = avoidCurse;
         _verifySelection=verifySelection??((row,selection)=>VerifySelection(source,row,selection));
         _targetDirected=targetDirected;_islands=islands;
         _stopAfterPlan=stopAfterPlan;
+        if(rootPartitions<1 || rootPartition<0 || rootPartition>=rootPartitions) throw new ArgumentOutOfRangeException(nameof(rootPartition));
+        _rootPartition=rootPartition;_rootPartitions=rootPartitions;
+        _continuationBound=continuationBound;
+        _completionCover=completionCover;
+        _currentCenters=currentCenters;
+        _directedProof=directedProof;
+        _twoStepProof=twoStepProof;
+        _reverseProof=reverseProof;
         _offsetBound=offsetBound;
         // Kept for bounded audit comparisons. The native six-click workload
         // advances faster with one-step finishing than rebuilding uncached tails.
@@ -237,10 +293,15 @@ internal sealed partial class PredictorCrystalExplorer
     }
     private bool ConsiderQueryRow(CrystalRewardRoute row)
     {
+        if(_reachability?.IncludesEnchantments==false) row=row with {EnchantmentTargets=false};
         var options=Options(row).ToArray();
-        if(_selected.Any(o=>!options.Any(o.Accepts))) return false;
+        // Published candidates may be wildcard variants, while an explicit
+        // predicate still needs the actual cards' enchantments for validation.
+        var selectedOptions=!row.EnchantmentTargets && _selected.Any(o=>o.Enchantment!=null)
+            ?Options(row with {EnchantmentTargets=true}).ToArray():options;
+        if(_selected.Any(o=>!selectedOptions.Any(o.Accepts))) return false;
         var cards=_selected.Where(o=>o.Kind==PredictorRewardKind.Card).ToImmutableArray();
-        if(MatchCardOptions(row.Rewards,cards)==null) return false;
+        if(row.RerollVariants.IsDefault && MatchCardOptions(row.Rewards,cards)==null) return false;
         int gold=row.Rewards.Where(r=>r.Kind==PredictorRewardKind.Gold).Sum(r=>r.GoldAmount);
         var additions=options.Where(o=>!_selected.Contains(o) && !_proven.ContainsKey(o) && (_candidateScope==null || _candidateScope.Contains(o))).ToArray();
         if(_queryPlan!=null && gold<=_queryGold && additions.Length==0) return false;
@@ -264,7 +325,7 @@ internal sealed partial class PredictorCrystalExplorer
     private bool QueryCanImprove(Position node,CrystalRewardOption? probe=null)
     {
         if(_reachability==null) return true;
-        int left=_source.Remaining-node.Path.Length,potions=0,core=0;
+        int left=_source.Remaining-node.Path.Length,potions=0,core=0,relicPrefix=-1;
         var slots=new List<PossibleSlot>();var relicMasks=new List<UInt128>();
         foreach(int item in node.Order)
         {
@@ -273,17 +334,18 @@ internal sealed partial class PredictorCrystalExplorer
             else
             {
                 if(kind.StartsWith("CARD_",StringComparison.Ordinal)) slots.Add(new(kind,core,core,0));
-                if(kind=="RELIC") relicMasks.Add(0);
+                if(kind=="RELIC") { relicMasks.Add(0);relicPrefix=core; }
                 core+=CrystalReachabilityTable.Draws(kind);
             }
         }
         int completedSlots=slots.Count;
-        var future=new List<(PredictorCrystalItem Item,UInt128 Need)>();int maxPotions=potions,maxCore=core;
+        var future=new List<(PredictorCrystalItem Item,UInt128 Need)>();int maxPotions=potions,maxCore=core;UInt128 futureBlocks=0;
         for(int i=0;i<_items.Length;i++)
         {
             UInt128 need=node.Fog & _items[i];var item=_source.Items[i];
             if(need==0 || item.Kind=="CURSE" || !CanCover(need,left)) continue;
             future.Add((item,need));
+            if(_items.Length<=128) futureBlocks|=(UInt128)1<<i;
             if(item.Kind.StartsWith("POTION_",StringComparison.Ordinal)) maxPotions+=item.Subscriptions;
             else maxCore+=item.Subscriptions*CrystalReachabilityTable.Draws(item.Kind);
         }
@@ -293,6 +355,34 @@ internal sealed partial class PredictorCrystalExplorer
             bool card=item.Kind.StartsWith("CARD_",StringComparison.Ordinal);
             if(!card && !item.Kind.StartsWith("POTION_",StringComparison.Ordinal)) continue;
             for(int n=0;n<item.Subscriptions;n++) slots.Add(new(item.Kind,card?core:potions,card?maxCore-6:maxPotions-1,need));
+        }
+        BigInteger? relicStarts=null,relicPotionSums=null;
+        bool RelicPossible(ModelKey key,int? potionCalls)
+        {
+            if(!key.IsValid || !_reachability.HasSingleRelicOffsets) return true;
+            var memoKey=(node.RewardKey,futureBlocks,potionCalls,key);
+            if(_items.Length<=128 && _relicOffsetMemo.TryGetValue(memoKey,out bool known)) { RelicOffsetCacheHits++;return known; }
+            if(!_reachability.TrySingleRelicOffsets(key,out var support)) return true;
+            if(relicStarts==null)
+            {
+                BigInteger starts=1,ps=1;
+                foreach(var (item,_) in future)
+                    if(item.Kind.StartsWith("POTION_",StringComparison.Ordinal)) ps|=ps<<item.Subscriptions;
+                    else if(relicPrefix<0 && item.Kind!="RELIC") starts|=starts<<checked(item.Subscriptions*CrystalReachabilityTable.Draws(item.Kind));
+                // Later core rewards cannot move an already completed relic;
+                // later potions still run before ALL core reward generation.
+                relicStarts=starts<<(relicPrefix>=0?relicPrefix:core);relicPotionSums=ps<<potions;
+            }
+            RelicOffsetChecks++;
+            bool possible=false;
+            if(potionCalls is int calls) possible=!(support&(relicStarts.Value<<calls)).IsZero;
+            else for(BigInteger bits=relicPotionSums!.Value;bits>0 && !possible;bits>>=1,support>>=1)
+                if(!bits.IsEven) possible=!(support&relicStarts.Value).IsZero;
+            if(!possible) RelicOffsetRejected++;
+            // Once individual eligibility is established, arithmetic depends on
+            // the remaining blocks, not partial fog shapes or blank centers.
+            if(_items.Length<=128 && _relicOffsetMemo.Count<100_000) _relicOffsetMemo.Add(memoKey,possible);
+            return possible;
         }
         bool Possible(ImmutableArray<CrystalRewardOption> targets,int? scenarioCalls=null,UInt128 scenarioNeed=default,List<PossibleSlot>? scenarioSlots=null)
         {
@@ -307,7 +397,10 @@ internal sealed partial class PredictorCrystalExplorer
                 for(int s=0;s<candidateSlots.Count;s++)
                 {
                     var slot=candidateSlots[s];bool matches=target.Kind==PredictorRewardKind.Card
-                        ? _reachability.CardAt(slot.Kind,target,(scenarioCalls??potions)+slot.Minimum,(scenarioCalls??maxPotions)+slot.Maximum)
+                        ? _reachability.CardAt(slot.Kind,target,(scenarioCalls??potions)+slot.Minimum,(scenarioCalls??maxPotions)+slot.Maximum) ||
+                            _reachability.IncludesRerolls && slot.Kind.StartsWith("CARD_",StringComparison.Ordinal) &&
+                            _reachability.CardAt(slot.Kind,target,(scenarioCalls??potions)+core,
+                                (scenarioCalls??maxPotions)+maxCore+6*Math.Max(0,candidateSlots.Count(s=>s.Kind.StartsWith("CARD_",StringComparison.Ordinal))-1))
                         : _reachability.PotionAt(slot.Kind,target.Key,slot.Minimum,slot.Maximum);
                     if(matches) { eligible.Add(s);intersection &= slot.Missing; }
                 }
@@ -318,6 +411,7 @@ internal sealed partial class PredictorCrystalExplorer
             {
                 int distinctRelics=targets.Where(t=>t.Kind==PredictorRewardKind.Relic && t.Key.IsValid).Select(t=>t.Key).Distinct().Count();
                 if(relicMasks.Count<Math.Max(1,distinctRelics) || targets.Where(t=>t.Kind==PredictorRewardKind.Relic).Any(t=>!_reachability.Candidates.Contains(t))) return false;
+                if(targets.Any(t=>t.Kind==PredictorRewardKind.Relic && !RelicPossible(t.Key,scenarioCalls))) return false;
                 required |= relicMasks.Aggregate(UInt128.MaxValue,(a,b)=>a & b);
             }
             if(!CanCover(required,left)) return false;
@@ -490,7 +584,10 @@ internal sealed partial class PredictorCrystalExplorer
                 try { bool result=ScenarioPossible(targets);if(!result) _boundRejected++;return result; }
                 finally { _boundTicks+=Stopwatch.GetTimestamp()-scenarioStarted; }
             }
-            if(!_discreteRewardBound || targets.All(t=>t.Kind==PredictorRewardKind.Relic)) return true;
+            // The old discrete overlap test describes initial generation only.
+            // Reroll-domain root proofs use the joint terminal suffix DP instead;
+            // per-position pruning above retains geometry/slot/potion conditions.
+            if(_reachability.IncludesRerolls || !_discreteRewardBound || targets.All(t=>t.Kind==PredictorRewardKind.Relic)) return true;
             // This memo stores only the relaxed bound, never exact board
             // reachability: CanCover ignores center legality. Blank fog/actual
             // center history therefore cannot change this bound's answer.
@@ -508,6 +605,11 @@ internal sealed partial class PredictorCrystalExplorer
             finally { _boundTicks+=Stopwatch.GetTimestamp()-started; }
         }
         if(!Bound(_selected)) return false;
+        // Spend stronger proof work on the constrained late prefix, after the
+        // cheap checks. Never treat its state/cache budget as a negative result.
+        if(_continuationBound && Phase==CrystalDiscoveryPhase.Exhaustive && _offsetBound!=null && _selected.Length>1 && left<=3 &&
+            node.Order.Length>_source.Revealed.Length &&
+            !_offsetBound.CheckContinuation(_selected,node.Order,node.Fog,left,completionCover:_completionCover,currentCenters:_currentCenters).MaySupport) return false;
         if(probe!=null) return Bound(_selected.Add(probe));
         if(_queryPlan==null && !_selected.IsEmpty) return true;
         return _queryCandidates.Any(c=>!_proven.ContainsKey(c) && Bound(_selected.Add(c)));
@@ -588,6 +690,9 @@ internal sealed partial class PredictorCrystalExplorer
         UInt128 relevant=RelevantCells(node);
         foreach(var move in _moves)
         {
+            // Focused workers cover disjoint first effective clicks. Padding
+            // remains handled by the existing legal witness reconstruction.
+            if(node.Path.IsEmpty && (move.Step.X*11+move.Step.Y+(move.Step.Tool==PredictorCrystalTool.Big?1:0))%_rootPartitions!=_rootPartition) continue;
             UInt128 center=(UInt128)1 << (move.Step.X*11+move.Step.Y);
             if((node.Fog & center)==0) continue;
             // A click must advance at least one item that could still complete.
@@ -652,7 +757,8 @@ internal sealed partial class PredictorCrystalExplorer
             throw new InvalidOperationException("CrystalPaddingOrderChanged");
         _orders.Add(signature);
         if(run.Phase!=PredictorPhase.Rewards) return null;
-        var row=new CrystalRewardRoute(path,run.Rewards);
+        var row=new CrystalRewardRoute(path,run.Rewards) { EnchantmentTargets=(_reachability?.IncludesEnchantments??true) && CrystalRewardOption.UsesEnchantments(_source.State) };
+        if(_reachability?.IncludesRerolls==true) row=WithRerolls(row,run,includeEnchantments:_reachability.IncludesEnchantments);
         return _reachability==null || ConsiderQueryRow(row)?row:null;
     }
     private void ValidateOrder(ImmutableArray<PredictorCrystalStep> path,ImmutableArray<int> expected)
@@ -713,6 +819,15 @@ internal sealed partial class PredictorCrystalExplorer
     {
         if(_targetDirected && _reachability!=null && !_selected.IsEmpty)
             foreach(var row in TargetDirected(initial)) yield return row;
+        if(_directedProof)
+        {
+            // A focused yes/no query keeps the short targeted witness pass, then
+            // goes straight to complete proof. Broad greedy/beam discovery is
+            // useful for listing suggestions, not mandatory for this question.
+            Phase=CrystalDiscoveryPhase.Exhaustive;
+            foreach(var row in Exhaustive(initial)) yield return row;
+            yield break;
+        }
         // Seed the index with directed single-object and joint-object covers,
         // so expensive relic shapes are not starved by many cheap gold rows.
         // These are witness heuristics only; exhaustive traversal still follows.
@@ -866,12 +981,28 @@ internal sealed partial class PredictorCrystalExplorer
             var suffix=RewardKey(items);
             if(known.Add(suffix)) choices.Add(new(steps,items,suffix));else _merged++;
         }
-        // Geometry depends on live fog/centers, not the preceding reward/RNG
-        // history. Keep the real depth and centers but collect only new callbacks.
-        var start=node with { Order=[],OrderKey="",RewardKey=default };
-        foreach(var next in Moves(start))
+        // Geometry only: no target pruning, score sorting or general search
+        // frontiers. Native cell-clear order still determines each callback.
+        UInt128 relevant=RelevantCells(node);
+        var seen=new HashSet<(UInt128 Fog,HistoryKey Word)>();
+        foreach(var move in _moves)
         {
-            var first=next.Path[^1];Add([first],next.Order);
+            int center=move.Step.X*11+move.Step.Y;
+            if(node.Path.IsEmpty && (center+(move.Step.Tool==PredictorCrystalTool.Big?1:0))%_rootPartitions!=_rootPartition) continue;
+            if((node.Fog & ((UInt128)1<<center))==0 || (move.Mask&relevant)==0) continue;
+            UInt128 fog=node.Fog;var order=ImmutableArray.CreateBuilder<int>();HistoryKey word=default;bool curse=false;
+            foreach(int cell in move.Cells)
+            {
+                UInt128 bit=(UInt128)1<<cell;if((fog&bit)==0) continue;
+                fog &= ~bit;int item=_source.Occupancy[cell];
+                if(item<0 || (fog&_items[item])!=0 || order.Contains(item)) continue;
+                if(_avoidCurse && _source.Items[item].Kind=="CURSE") {curse=true;break;}
+                for(int n=0;n<_source.Items[item].Subscriptions;n++) order.Add(item);
+                word=AppendItem(word,item);
+            }
+            if(curse || !seen.Add((fog,word))) continue;
+            var next=node with {Fog=fog,Order=order.ToImmutable(),OrderKey="",RewardKey=word};
+            var first=move.Step;Add([first],next.Order);
             foreach(var last in FinalChoices(next))
             {
                 var items=next.Order;
@@ -941,13 +1072,40 @@ internal sealed partial class PredictorCrystalExplorer
             if(_visited.Contains(key)) { _merged++;yield break; }
             if(_visited.Count<500_000) _visited.Add(key);
         }
+        if(_reverseProof && _alwaysCanPad && _offsetBound!=null && _selected.Length>1 &&
+            node.Path.Length==_source.Remaining-2 && !ReverseMaySupport(node)) {_pruned++;yield break;}
+        if(_twoStepProof && _alwaysCanPad && _offsetBound!=null && _selected.Length>1 &&
+            node.Path.Length==_source.Remaining-2)
+        {
+            TwoStepProofChecks++;
+            // Empty/one-step suffixes are admitted through the same verified
+            // padding premise as ordinary traversal. Keep the actual prefix:
+            // a geometry cache entry alone says nothing about reward offsets.
+            bool Supports(HistoryKey word,ImmutableArray<int> suffix)
+            {
+                // These are legal endpoint words under the padding premise.
+                // Equal phase words share generation even if physical IDs differ.
+                if(_fixedWordSupport.TryGetValue(word,out bool cached)) {TwoStepWordCacheHits++;return cached;}
+                bool result=_offsetBound.CheckFixedWord(_selected,node.Order.AddRange(suffix)).MaySupport;
+                if(_fixedWordSupport.Count<100_000) _fixedWordSupport[word]=result;
+                return result;
+            }
+            bool possible=Supports(node.RewardKey,[]);
+            if(!possible) foreach(var suffix in TwoStepChoices(node))
+            {
+                TwoStepProofWords++;
+                if(Supports(JoinHistory(node.RewardKey,suffix.Key),suffix.Items))
+                { possible=true;break; }
+            }
+            if(!possible) {TwoStepProofRejected++;_pruned++;yield break;}
+        }
         yield return Row(node);
         // A one-step tail representative may need another click. Without the
         // blank-padding guarantee, a different representative of the SAME reward
         // suffix can be the only one that completes the exact remaining budget.
-        // The legacy suffix cache erases the reward prefix before calling Moves.
-        // Query pruning requires that prefix; keep query mode on ordinary
-        // traversal even when an audit explicitly requests the old tail cache.
+        // Keep query replay on ordinary traversal. The optional two-step proof
+        // combines the actual prefix with geometry-only suffixes separately;
+        // it does not turn a suffix alone into a reward or positive witness.
         if(_useTwoStepCache && _reachability==null && _alwaysCanPad && node.Path.Length==_source.Remaining-2)
         {
             foreach(var row in TwoStepRows(node)) yield return row;
@@ -964,36 +1122,77 @@ internal sealed partial class PredictorCrystalExplorer
                 throw new InvalidOperationException("CrystalIndexWitnessInvalid");
         return run;
     }
-    internal static IEnumerable<CrystalRewardOption> Options(CrystalRewardRoute row) => row.Rewards.SelectMany(r=>r.Kind switch {
-        PredictorRewardKind.Card => r.Cards.Select(c=>new CrystalRewardOption(PredictorRewardKind.Card,c.Key,c.UpgradeLevel)),
+    internal static CrystalRewardRoute WithRerolls(CrystalRewardRoute row,PredictorRun run,bool includeEnchantments=true) => row with {
+        EnchantmentTargets=includeEnchantments && (row.EnchantmentTargets || CrystalRewardOption.UsesEnchantments(run.Working)),
+        RerollVariants=PredictorCrystalRerolls.Prefixes(run).Select(n=>new CrystalRerollVariant(n.Run.Rewards,n.Actions))
+            .OrderBy(v=>v.Actions.Length).ToImmutableArray() };
+    internal static IEnumerable<CrystalRewardOption> Options(CrystalRewardRoute row) =>
+        (row.RerollVariants.IsDefault?row.Rewards:row.RerollVariants.SelectMany(v=>v.Rewards)).SelectMany(r=>r.Kind switch {
+        PredictorRewardKind.Card => r.Cards.Select(c=>CrystalRewardOption.ForCard(c,row.EnchantmentTargets)),
         PredictorRewardKind.Potion when r.Key.IsValid => [new CrystalRewardOption(r.Kind,r.Key)],
         PredictorRewardKind.Relic when r.Key.IsValid => [CrystalRewardOption.AnyRelic, new CrystalRewardOption(r.Kind,r.Key)],
         _ => Enumerable.Empty<CrystalRewardOption>() }).Distinct();
     internal static PredictorCrystalSolution? VerifySelection(PredictorCrystalSnapshot source, CrystalRewardRoute row,
         ImmutableArray<CrystalRewardOption> selected)
     {
-        var cards=selected.Where(o=>o.Kind==PredictorRewardKind.Card).ToImmutableArray();
+        row=row with { EnchantmentTargets=row.EnchantmentTargets || CrystalRewardOption.UsesEnchantments(source.State) || selected.Any(g=>g.Enchantment!=null) };
         // Materialize every UI-visible/joint witness through the actual node inputs,
         // including relic/potion-only plans. Table settlement is candidate discovery.
-        var run=Replay(source,row.Steps);
-        if(run.Phase!=PredictorPhase.Rewards) return null;
-        if(selected.Any(o=>o.Kind==PredictorRewardKind.Potion) && PredictorSettlementEffects.Has(run.Working,"SOZU")) return null;
-        var slots=MatchCardOptions(run.Rewards,cards);
-        if(slots==null || selected.Any(o=>!Options(new(row.Steps,run.Rewards)).Any(o.Accepts))) return null;
-        if(cards.IsEmpty) return new("Found",0,row.Steps,[]);
-        for(int n=0;n<cards.Length;n++)
+        PredictorRun? entry=null;
+        var cards=selected.Where(o=>o.Kind==PredictorRewardKind.Card).ToImmutableArray();
+        if(!row.RerollVariants.IsDefault)
         {
-            var reward=run.Rewards[slots[n]]; var card=reward.Cards.FirstOrDefault(cards[n].MatchesCard);
-            if(card==null) return null;
-            var priorDeck=run.Working.Deck.ToHashSet();
-            if(run.Submit(run.Request!,new EnterCardSelection(reward.Id))!=PredictorInputResult.Accepted ||
-                run.Submit(run.Request!,new TakeReward(reward.Id,card.Id))!=PredictorInputResult.Accepted) return null;
-            if(!run.Working.Deck.Where(id=>!priorDeck.Contains(id)).Select(run.Working.Card).Any(cards[n].MatchesCard)) return null;
+            foreach(var variant in row.RerollVariants)
+            {
+                if(selected.Any(o=>!Options(new(row.Steps,variant.Rewards) { EnchantmentTargets=row.EnchantmentTargets }).Any(o.Accepts))) continue;
+                if(MatchCardOptions(variant.Rewards,cards)==null) continue;
+                entry??=Replay(source,row.Steps);
+                var proof=VerifyVariant(entry,row,selected,variant.Actions);if(proof!=null) return proof;
+            }
+            return null;
         }
-        // Non-card entries promise an available reward, not an automatic pickup.
-        // Full potion slots and nested relic choices remain native player choices.
-        if(selected.Where(o=>o.Kind!=PredictorRewardKind.Card).Any(o=>!run.Rewards.Any(r=>o.Matches(r) && r.Status==PredictorRewardStatus.Open))) return null;
-        return new("Found",0,row.Steps,cards.Select((option,n)=>new PredictorCrystalTake(slots[n],option.Key,option.UpgradeLevel)).ToImmutableArray());
+        return VerifyVariant(Replay(source,row.Steps),row,selected,[]);
+    }
+    private static PredictorCrystalSolution? VerifyVariant(PredictorRun entry,CrystalRewardRoute row,
+        ImmutableArray<CrystalRewardOption> selected,ImmutableArray<PredictorInput> rerolls)
+    {
+        var cards=selected.Where(o=>o.Kind==PredictorRewardKind.Card).ToImmutableArray();
+        if(entry.Phase!=PredictorPhase.Rewards) return null;
+        var run=entry.ForkCrystalRewards();
+        foreach(var action in rerolls) if(run.Submit(run.Request!,action)!=PredictorInputResult.Accepted) return null;
+        if(selected.Any(o=>o.Kind==PredictorRewardKind.Potion) && PredictorSettlementEffects.Has(run.Working,"SOZU")) return null;
+        if(MatchCardOptions(run.Rewards,cards)==null || selected.Any(o=>!Options(new(row.Steps,run.Rewards) { EnchantmentTargets=row.EnchantmentTargets }).Any(o.Accepts))) return null;
+        var takes=TakeCards(run,cards);
+        if(takes==null) return null;
+        // Non-card entries promise availability; native pickup follows card guidance.
+        if(selected.Where(o=>o.Kind!=PredictorRewardKind.Card).Any(o=>!takes.Value.Run.Rewards.Any(r=>o.Matches(r) && r.Status==PredictorRewardStatus.Open))) return null;
+        return new("Found",0,row.Steps,takes.Value.Takes) { RerollActions=rerolls,
+            RerollRewardIndices=rerolls.OfType<RerollCardReward>().Select(a=>entry.Rewards.FindIndex(r=>r.Id==a.RewardId)).ToImmutableArray() };
+    }
+    // Search assignments through actual insertion, not just a matching on offers.
+    // Different instances with the same key can have different obtain outcomes.
+    internal static (PredictorRun Run,ImmutableArray<PredictorCrystalTake> Takes)? TakeCards(
+        PredictorRun entry,ImmutableArray<CrystalRewardOption> cards)
+    {
+        return Visit(entry,0,[]);
+        (PredictorRun Run,ImmutableArray<PredictorCrystalTake> Takes)? Visit(PredictorRun run,int n,ImmutableArray<PredictorCrystalTake> takes)
+        {
+            if(n==cards.Length) return (run,takes);
+            for(int i=0;i<run.Rewards.Length;i++)
+            {
+                var reward=run.Rewards[i];
+                if(reward.Kind!=PredictorRewardKind.Card || reward.Status!=PredictorRewardStatus.Open) continue;
+                foreach(var card in reward.Cards.Where(cards[n].MatchesCard))
+                {
+                    var next=run.ForkCrystalRewards();var priorDeck=next.Working.Deck.ToHashSet();
+                    if(next.Submit(next.Request!,new EnterCardSelection(reward.Id))!=PredictorInputResult.Accepted ||
+                        next.Submit(next.Request!,new TakeReward(reward.Id,card.Id))!=PredictorInputResult.Accepted) continue;
+                    if(!next.Working.Deck.Where(id=>!priorDeck.Contains(id)).Select(next.Working.Card).Any(cards[n].MatchesCard)) continue;
+                    if(Visit(next,n+1,takes.Add(new(i,cards[n].Key,cards[n].UpgradeLevel,cards[n].Enchantment))) is { } found) return found;
+                }
+            }
+            return null;
+        }
     }
     internal static int[]? MatchCardOptions(ImmutableArray<PredictorReward> rewards, ImmutableArray<CrystalRewardOption> cards)
     {
@@ -1002,7 +1201,7 @@ internal sealed partial class PredictorCrystalExplorer
         {
             if(n==cards.Length) return true;
             for(int i=0;i<rewards.Length;i++)
-                if(!slots.Take(n).Contains(i) && rewards[i].Kind==PredictorRewardKind.Card && rewards[i].Cards.Any(cards[n].MatchesCard))
+                if(!slots.Take(n).Contains(i) && rewards[i].Status==PredictorRewardStatus.Open && rewards[i].Kind==PredictorRewardKind.Card && rewards[i].Cards.Any(cards[n].MatchesCard))
                 { slots[n]=i;if(Match(n+1)) return true; }
             return false;
         }
@@ -1010,7 +1209,7 @@ internal sealed partial class PredictorCrystalExplorer
     }
     internal static CrystalOptionProjection Project(PredictorCrystalSnapshot source, ImmutableArray<CrystalRewardRoute> rows,
         ImmutableArray<CrystalRewardOption> selected, CancellationToken token=default,CrystalOptionProjection? known=null,
-        Func<CrystalRewardRoute,ImmutableArray<CrystalRewardOption>,PredictorCrystalSolution?>? verifySelection=null)
+        Func<CrystalRewardRoute,ImmutableArray<CrystalRewardOption>,PredictorCrystalSolution?>? verifySelection=null,bool includeEnchantments=true)
     {
         var available=known?.Available.ToBuilder()??ImmutableDictionary.CreateBuilder<CrystalRewardOption,PredictorCrystalSolution>();
         PredictorCrystalSolution? best=known?.SelectedPlan; int gold=known?.Gold??-1;
@@ -1018,8 +1217,11 @@ internal sealed partial class PredictorCrystalExplorer
         foreach(var row in rows)
         {
             token.ThrowIfCancellationRequested();
-            var choices=Options(row).ToArray();
-            if(selected.Any(o=>!choices.Any(o.Accepts))) continue;
+            bool exactChoices=includeEnchantments && (row.EnchantmentTargets || CrystalRewardOption.UsesEnchantments(source.State));
+            var choices=Options(row with { EnchantmentTargets=exactChoices }).ToArray();
+            var selectedOptions=!exactChoices && selected.Any(o=>o.Enchantment!=null)
+                ?Options(row with {EnchantmentTargets=true}).ToArray():choices;
+            if(selected.Any(o=>!selectedOptions.Any(o.Accepts))) continue;
             int value=row.Rewards.Where(r=>r.Kind==PredictorRewardKind.Gold).Sum(r=>r.GoldAmount);
             var additions=choices.Where(o=>!selected.Contains(o) && !available.ContainsKey(o)).ToArray();
             if(best!=null && value<=gold && additions.Length==0) continue;

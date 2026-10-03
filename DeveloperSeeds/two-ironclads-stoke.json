@@ -1,0 +1,1007 @@
+{
+  "SchemaVersion": 1,
+  "Id": "developer:two-ironclads-stoke",
+  "Seed": "R93J1P8CQA34",
+  "Note": "这颗种子中，两位铁甲战士在变形灵林谷变化初始牌，可以得到相同的黑暗之拥与无惧疼痛。",
+  "Context": {
+    "GameVersion": "0.111.0",
+    "Profile": 4,
+    "Mode": 1,
+    "Ascension": 10,
+    "Players": [
+      {
+        "Slot": 0,
+        "Character": "CHARACTER:IRONCLAD",
+        "Unlocks": {
+          "unlocked_epochs": [
+            "ACT2_B_EPOCH",
+            "ACT3_B_EPOCH",
+            "COLORLESS1_EPOCH",
+            "COLORLESS2_EPOCH",
+            "COLORLESS3_EPOCH",
+            "COLORLESS4_EPOCH",
+            "COLORLESS5_EPOCH",
+            "CUSTOM_AND_SEEDS_EPOCH",
+            "DAILY_RUN_EPOCH",
+            "DARV_EPOCH",
+            "DEFECT1_EPOCH",
+            "DEFECT2_EPOCH",
+            "DEFECT3_EPOCH",
+            "DEFECT4_EPOCH",
+            "DEFECT5_EPOCH",
+            "DEFECT6_EPOCH",
+            "DEFECT7_EPOCH",
+            "EVENT1_EPOCH",
+            "EVENT2_EPOCH",
+            "EVENT3_EPOCH",
+            "IRONCLAD2_EPOCH",
+            "IRONCLAD3_EPOCH",
+            "IRONCLAD4_EPOCH",
+            "IRONCLAD5_EPOCH",
+            "IRONCLAD6_EPOCH",
+            "IRONCLAD7_EPOCH",
+            "NECROBINDER1_EPOCH",
+            "NECROBINDER2_EPOCH",
+            "NECROBINDER3_EPOCH",
+            "NECROBINDER4_EPOCH",
+            "NECROBINDER5_EPOCH",
+            "NECROBINDER6_EPOCH",
+            "NECROBINDER7_EPOCH",
+            "NEOW_EPOCH",
+            "OROBAS_EPOCH",
+            "POTION1_EPOCH",
+            "POTION2_EPOCH",
+            "REGENT1_EPOCH",
+            "REGENT2_EPOCH",
+            "REGENT3_EPOCH",
+            "REGENT4_EPOCH",
+            "REGENT5_EPOCH",
+            "REGENT6_EPOCH",
+            "REGENT7_EPOCH",
+            "RELIC1_EPOCH",
+            "RELIC2_EPOCH",
+            "RELIC3_EPOCH",
+            "RELIC4_EPOCH",
+            "RELIC5_EPOCH",
+            "SILENT1_EPOCH",
+            "SILENT2_EPOCH",
+            "SILENT3_EPOCH",
+            "SILENT4_EPOCH",
+            "SILENT5_EPOCH",
+            "SILENT6_EPOCH",
+            "SILENT7_EPOCH",
+            "UNDERDOCKS_EPOCH"
+          ],
+          "encounters_seen": [
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "BYGONE_EFFIGY_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "BYRDONIS_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "CEREMONIAL_BEAST_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "CUBEX_CONSTRUCT_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "FLYCONID_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "FOGMOG_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "FUZZY_WURM_CRAWLER_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "INKLETS_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "MAWLER_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "NIBBITS_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "NIBBITS_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "OVERGROWTH_CRAWLERS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "PHROG_PARASITE_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "RUBY_RAIDERS_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SHRINKER_BEETLE_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SLIMES_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SLIMES_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SLITHERING_STRANGLER_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SNAPPING_JAXFRUIT_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "THE_KIN_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "VANTOM_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "VINE_SHAMBLER_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "CORPSE_SLUGS_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "CORPSE_SLUGS_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "CULTISTS_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "FOSSIL_STALKER_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "GREMLIN_MERC_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "HAUNTED_SHIP_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "LAGAVULIN_MATRIARCH_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "LIVING_FOG_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "PHANTASMAL_GARDENERS_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "PUNCH_CONSTRUCT_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SEAPUNK_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SEAPUNK_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SEWER_CLAM_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SKULKING_COLONY_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SLUDGE_SPINNER_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SOUL_FYSH_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "TERROR_EEL_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "TOADPOLES_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "TWO_TAILED_RATS_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "WATERFALL_GIANT_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "BOWLBUGS_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "BOWLBUGS_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "CHOMPERS_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "DECIMILLIPEDE_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "ENTOMANCER_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "EXOSKELETONS_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "EXOSKELETONS_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "HUNTER_KILLER_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "KAISER_CRAB_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "INFESTED_PRISMS_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "KNOWLEDGE_DEMON_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "LOUSE_PROGENITOR_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "MYTES_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "OVICOPTER_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SLUMBERING_BEETLE_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SPINY_TOAD_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "THE_INSATIABLE_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "THE_OBSCURA_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "THIEVING_HOPPER_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "TUNNELER_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "AXEBOTS_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "CONSTRUCT_MENAGERIE_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "DEVOTED_SCULPTOR_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "AEONGLASS_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "FABRICATOR_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "FROG_KNIGHT_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "GLOBE_HEAD_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "KNIGHTS_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "MECHA_KNIGHT_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "OWL_MAGISTRATE_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "QUEEN_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SCROLLS_OF_BITING_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SCROLLS_OF_BITING_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SLIMED_BERSERKER_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SOUL_NEXUS_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "TEST_SUBJECT_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "THE_LOST_AND_FORGOTTEN_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "TURRET_OPERATOR_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "FAKE_MERCHANT_EVENT_ENCOUNTER"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "MYSTERIOUS_KNIGHT_EVENT_ENCOUNTER"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "BATTLEWORN_DUMMY_EVENT_V1_ENCOUNTER"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "BATTLEWORN_DUMMY_EVENT_V2_ENCOUNTER"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "BATTLEWORN_DUMMY_EVENT_V3_ENCOUNTER"
+            }
+          ],
+          "number_of_runs": 999999999
+        },
+        "UnlockSource": "AssumedFullyUnlocked",
+        "AncientPremises": {
+          "TezcataraHasBasicStrike": true,
+          "NonupeipeSwiftEnchantableAtLeast4": true,
+          "TanxInstinctEnchantableAtLeast3": true,
+          "PaelGoopyDefendCardsAtLeast3": true,
+          "PaelAllowLegionNoEventPet": true,
+          "PaelRemovableCardsAtLeast5": true,
+          "OrobasArchaicToothConditionMet": true,
+          "OrobasTouchOfOrobasConditionMet": true,
+          "DarvAllowPandorasBoxRelicSet": true,
+          "IsBroadDefault": true,
+          "Fingerprint": "1:1:1:1:1:1:1:1:1"
+        },
+        "OpeningPremise": {
+          "OpeningRoute": {
+            "RouteRelicKey": "RELIC:LEAFY_POULTICE",
+            "IsValid": true
+          },
+          "OpeningRouteRelicRequirement": null,
+          "StructuredOpeningEffects": [],
+          "VariantBossBranches": [],
+          "AncientBranches": [],
+          "RelicSequenceConstraints": [],
+          "EventSequenceConstraints": [],
+          "LegacyCombatRewardConstraints": [],
+          "LegacyNeow": {
+            "NeowRelics": {
+              "Any": [],
+              "All": [],
+              "Ban": [],
+              "IsEmpty": true
+            },
+            "RequireNeowsBones": false,
+            "BonesRelics": {
+              "Any": [],
+              "All": [],
+              "Ban": [],
+              "IsEmpty": true
+            },
+            "RequiredBonesCombination": [],
+            "RequireSmallCapsule": false,
+            "RequireLargeCapsule": false,
+            "CapsuleContainedRelics": {
+              "Any": [],
+              "All": [],
+              "Ban": [],
+              "IsEmpty": true
+            },
+            "RequireWhetstone": false,
+            "RequireWarPaint": false,
+            "RequiredFinalCurse": null,
+            "BannedFinalCurses": [],
+            "Preset": 0,
+            "RequiredBonesAcquisitionOrder": [],
+            "EffectOutputConditions": []
+          },
+          "LegacyWorld": {
+            "BossFilters": [],
+            "BossOrdinalFilters": [],
+            "AncientIdentityFilters": [],
+            "AncientOptionFilters": [],
+            "AncientSeaGlassTargetFilters": []
+          },
+          "Players": [],
+          "StandardMaps": [],
+          "CombatCardRewards": null,
+          "TransformationAggregate": null,
+          "CombatPotionRewards": null,
+          "EventResultConditions": [],
+          "MerchantColorlessConditions": [],
+          "MerchantColorlessSequenceConditions": [],
+          "RelicShopSequenceConditions": [],
+          "HasCombatRewardConstraints": false
+        },
+        "Selection": null
+      },
+      {
+        "Slot": 1,
+        "Character": "CHARACTER:IRONCLAD",
+        "Unlocks": {
+          "unlocked_epochs": [
+            "ACT2_B_EPOCH",
+            "ACT3_B_EPOCH",
+            "COLORLESS1_EPOCH",
+            "COLORLESS2_EPOCH",
+            "COLORLESS3_EPOCH",
+            "COLORLESS4_EPOCH",
+            "COLORLESS5_EPOCH",
+            "CUSTOM_AND_SEEDS_EPOCH",
+            "DAILY_RUN_EPOCH",
+            "DARV_EPOCH",
+            "DEFECT1_EPOCH",
+            "DEFECT2_EPOCH",
+            "DEFECT3_EPOCH",
+            "DEFECT4_EPOCH",
+            "DEFECT5_EPOCH",
+            "DEFECT6_EPOCH",
+            "DEFECT7_EPOCH",
+            "EVENT1_EPOCH",
+            "EVENT2_EPOCH",
+            "EVENT3_EPOCH",
+            "IRONCLAD2_EPOCH",
+            "IRONCLAD3_EPOCH",
+            "IRONCLAD4_EPOCH",
+            "IRONCLAD5_EPOCH",
+            "IRONCLAD6_EPOCH",
+            "IRONCLAD7_EPOCH",
+            "NECROBINDER1_EPOCH",
+            "NECROBINDER2_EPOCH",
+            "NECROBINDER3_EPOCH",
+            "NECROBINDER4_EPOCH",
+            "NECROBINDER5_EPOCH",
+            "NECROBINDER6_EPOCH",
+            "NECROBINDER7_EPOCH",
+            "NEOW_EPOCH",
+            "OROBAS_EPOCH",
+            "POTION1_EPOCH",
+            "POTION2_EPOCH",
+            "REGENT1_EPOCH",
+            "REGENT2_EPOCH",
+            "REGENT3_EPOCH",
+            "REGENT4_EPOCH",
+            "REGENT5_EPOCH",
+            "REGENT6_EPOCH",
+            "REGENT7_EPOCH",
+            "RELIC1_EPOCH",
+            "RELIC2_EPOCH",
+            "RELIC3_EPOCH",
+            "RELIC4_EPOCH",
+            "RELIC5_EPOCH",
+            "SILENT1_EPOCH",
+            "SILENT2_EPOCH",
+            "SILENT3_EPOCH",
+            "SILENT4_EPOCH",
+            "SILENT5_EPOCH",
+            "SILENT6_EPOCH",
+            "SILENT7_EPOCH",
+            "UNDERDOCKS_EPOCH"
+          ],
+          "encounters_seen": [
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "BYGONE_EFFIGY_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "BYRDONIS_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "CEREMONIAL_BEAST_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "CUBEX_CONSTRUCT_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "FLYCONID_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "FOGMOG_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "FUZZY_WURM_CRAWLER_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "INKLETS_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "MAWLER_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "NIBBITS_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "NIBBITS_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "OVERGROWTH_CRAWLERS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "PHROG_PARASITE_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "RUBY_RAIDERS_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SHRINKER_BEETLE_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SLIMES_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SLIMES_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SLITHERING_STRANGLER_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SNAPPING_JAXFRUIT_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "THE_KIN_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "VANTOM_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "VINE_SHAMBLER_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "CORPSE_SLUGS_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "CORPSE_SLUGS_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "CULTISTS_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "FOSSIL_STALKER_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "GREMLIN_MERC_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "HAUNTED_SHIP_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "LAGAVULIN_MATRIARCH_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "LIVING_FOG_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "PHANTASMAL_GARDENERS_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "PUNCH_CONSTRUCT_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SEAPUNK_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SEAPUNK_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SEWER_CLAM_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SKULKING_COLONY_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SLUDGE_SPINNER_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SOUL_FYSH_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "TERROR_EEL_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "TOADPOLES_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "TWO_TAILED_RATS_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "WATERFALL_GIANT_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "BOWLBUGS_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "BOWLBUGS_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "CHOMPERS_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "DECIMILLIPEDE_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "ENTOMANCER_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "EXOSKELETONS_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "EXOSKELETONS_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "HUNTER_KILLER_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "KAISER_CRAB_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "INFESTED_PRISMS_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "KNOWLEDGE_DEMON_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "LOUSE_PROGENITOR_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "MYTES_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "OVICOPTER_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SLUMBERING_BEETLE_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SPINY_TOAD_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "THE_INSATIABLE_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "THE_OBSCURA_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "THIEVING_HOPPER_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "TUNNELER_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "AXEBOTS_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "CONSTRUCT_MENAGERIE_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "DEVOTED_SCULPTOR_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "AEONGLASS_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "FABRICATOR_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "FROG_KNIGHT_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "GLOBE_HEAD_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "KNIGHTS_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "MECHA_KNIGHT_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "OWL_MAGISTRATE_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "QUEEN_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SCROLLS_OF_BITING_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SCROLLS_OF_BITING_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SLIMED_BERSERKER_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "SOUL_NEXUS_ELITE"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "TEST_SUBJECT_BOSS"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "THE_LOST_AND_FORGOTTEN_NORMAL"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "TURRET_OPERATOR_WEAK"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "FAKE_MERCHANT_EVENT_ENCOUNTER"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "MYSTERIOUS_KNIGHT_EVENT_ENCOUNTER"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "BATTLEWORN_DUMMY_EVENT_V1_ENCOUNTER"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "BATTLEWORN_DUMMY_EVENT_V2_ENCOUNTER"
+            },
+            {
+              "Category": "ENCOUNTER",
+              "Entry": "BATTLEWORN_DUMMY_EVENT_V3_ENCOUNTER"
+            }
+          ],
+          "number_of_runs": 999999999
+        },
+        "UnlockSource": "AssumedFullyUnlocked",
+        "AncientPremises": {
+          "TezcataraHasBasicStrike": true,
+          "NonupeipeSwiftEnchantableAtLeast4": true,
+          "TanxInstinctEnchantableAtLeast3": true,
+          "PaelGoopyDefendCardsAtLeast3": true,
+          "PaelAllowLegionNoEventPet": true,
+          "PaelRemovableCardsAtLeast5": true,
+          "OrobasArchaicToothConditionMet": true,
+          "OrobasTouchOfOrobasConditionMet": true,
+          "DarvAllowPandorasBoxRelicSet": true,
+          "IsBroadDefault": true,
+          "Fingerprint": "1:1:1:1:1:1:1:1:1"
+        },
+        "OpeningPremise": {
+          "OpeningRoute": {
+            "RouteRelicKey": "RELIC:LEAFY_POULTICE",
+            "IsValid": true
+          },
+          "OpeningRouteRelicRequirement": null,
+          "StructuredOpeningEffects": [],
+          "VariantBossBranches": [],
+          "AncientBranches": [],
+          "RelicSequenceConstraints": [],
+          "EventSequenceConstraints": [],
+          "LegacyCombatRewardConstraints": [],
+          "LegacyNeow": {
+            "NeowRelics": {
+              "Any": [],
+              "All": [],
+              "Ban": [],
+              "IsEmpty": true
+            },
+            "RequireNeowsBones": false,
+            "BonesRelics": {
+              "Any": [],
+              "All": [],
+              "Ban": [],
+              "IsEmpty": true
+            },
+            "RequiredBonesCombination": [],
+            "RequireSmallCapsule": false,
+            "RequireLargeCapsule": false,
+            "CapsuleContainedRelics": {
+              "Any": [],
+              "All": [],
+              "Ban": [],
+              "IsEmpty": true
+            },
+            "RequireWhetstone": false,
+            "RequireWarPaint": false,
+            "RequiredFinalCurse": null,
+            "BannedFinalCurses": [],
+            "Preset": 0,
+            "RequiredBonesAcquisitionOrder": [],
+            "EffectOutputConditions": []
+          },
+          "LegacyWorld": {
+            "BossFilters": [],
+            "BossOrdinalFilters": [],
+            "AncientIdentityFilters": [],
+            "AncientOptionFilters": [],
+            "AncientSeaGlassTargetFilters": []
+          },
+          "Players": [],
+          "StandardMaps": [],
+          "CombatCardRewards": null,
+          "TransformationAggregate": null,
+          "CombatPotionRewards": null,
+          "EventResultConditions": [],
+          "MerchantColorlessConditions": [],
+          "MerchantColorlessSequenceConditions": [],
+          "RelicShopSequenceConditions": [],
+          "HasCombatRewardConstraints": false
+        },
+        "Selection": null
+      }
+    ],
+    "SelectedSlot": 0
+  },
+  "SavedAtUtc": "2026-10-03T00:00:00+08:00",
+  "Title": "双人黑拥添柴无惧",
+  "QueryKeys": [],
+  "QueryAssociations": [],
+  "DeveloperDetails": {
+    "Title": {
+      "Zh": "双人黑拥添柴无惧",
+      "En": "Two Ironclads: Dark Embrace, Stoke & Feel No Pain"
+    },
+    "Icons": [
+      {
+        "Kind": "Relic",
+        "StableContentIdentity": "RELIC:LEAFY_POULTICE"
+      }
+    ],
+    "Instructions": {
+      "Zh": "双人铁甲战士，进阶 10。两人都选择树叶药膏，获得添柴。\n第一个问号会出现变形灵林谷，选择变化初始牌，可以得到黑暗之拥与无惧疼痛。\n这颗种子不要求两位玩家按特定先后顺序领取。\n按游戏 0.111.0、全解锁配置收录。",
+      "En": "Two Ironclads, Ascension 10. Both players choose Leafy Poultice for Stoke.\nThe first question-mark room contains Morphic Grove. Transform starter cards for Dark Embrace and Feel No Pain.\nThis seed does not require a particular pickup order between the two players.\nListed for game 0.111.0 with full unlocks."
+    },
+    "Description": {
+      "Zh": "最近发现：在这颗种子里，两位铁甲战士在变形灵林谷变化初始牌，可以得到相同的黑暗之拥与无惧疼痛。",
+      "En": "A recent discovery: on this seed, both Ironclads can transform starter cards at Morphic Grove into the same Dark Embrace and Feel No Pain."
+    }
+  }
+}

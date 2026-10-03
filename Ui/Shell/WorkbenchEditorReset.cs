@@ -4,13 +4,13 @@ namespace RolltheSpire2.Ui.Shell;
 // too. Detached drafts retain hidden mode choices for the single-step undo.
 internal static class WorkbenchConditionReset
 {
-    internal static Action Swap<T>(Dictionary<int, T> drafts, Func<T, T> empty) where T : class
+    internal static Action Swap<T>(Dictionary<int, T> drafts, Func<T, T> empty, int? onlySlot = null) where T : class
     {
-        var saved = drafts.ToArray();
+        var saved = drafts.Where(p => onlySlot is null || p.Key == onlySlot).ToArray();
         foreach (var (slot, value) in saved) drafts[slot] = empty(value);
         return () =>
         {
-            drafts.Clear();
+            if (onlySlot is null) drafts.Clear();
             foreach (var (slot, value) in saved) drafts[slot] = value;
         };
     }
@@ -21,16 +21,16 @@ internal sealed partial class NeowEditorPrototype
     internal bool HasConditions(bool party) => (party ? _partyCatalogDrafts : _drafts).Values.Any(d => d.Count > 0) ||
         party && _partyOffers.Values.Any(keys => keys.Count > 0);
 
-    internal Action ClearConditions(bool party)
+    internal Action ClearConditions(bool party, int? slot = null)
     {
-        var restore = WorkbenchConditionReset.Swap(party ? _partyCatalogDrafts : _drafts, _ => new SeatDraft());
+        var restore = WorkbenchConditionReset.Swap(party ? _partyCatalogDrafts : _drafts, _ => new SeatDraft(), slot);
         if (!party) return restore;
-        var offers = WorkbenchConditionReset.Swap(_partyOffers, _ => new HashSet<Core.Identity.ModelKey>());
-        var modes = _partyModes.ToArray(); var choices = _partyChoices.ToArray();
-        _partyModes.Clear(); _partyChoices.Clear();
+        var offers = WorkbenchConditionReset.Swap(_partyOffers, _ => new HashSet<Core.Identity.ModelKey>(), slot);
+        var modes = _partyModes.Where(p => slot is null || p.Key == slot).ToArray(); var choices = _partyChoices.Where(p => slot is null || p.Key == slot).ToArray();
+        foreach (var pair in modes) _partyModes.Remove(pair.Key); foreach (var pair in choices) _partyChoices.Remove(pair.Key);
         return () =>
         {
-            restore(); offers(); _partyModes.Clear(); _partyChoices.Clear();
+            restore(); offers(); foreach (var pair in modes) _partyModes.Remove(pair.Key); foreach (var pair in choices) _partyChoices.Remove(pair.Key);
             foreach (var (slot, mode) in modes) _partyModes[slot] = mode;
             foreach (var (slot, value) in choices) _partyChoices[slot] = value;
         };
@@ -41,23 +41,23 @@ internal sealed partial class CombatRewardEditorPrototype
 {
     internal bool HasConditions(bool party) => (party ? _partyDrafts : _drafts).Values.Any(d =>
         d.Slots.Any(k => k.HasValue) || d.Potions.Any(p => !p.IsNeutral));
-    internal Action ClearConditions(bool party) =>
-        WorkbenchConditionReset.Swap(party ? _partyDrafts : _drafts, _ => new SeatDraft());
+    internal Action ClearConditions(bool party, int? slot = null) =>
+        WorkbenchConditionReset.Swap(party ? _partyDrafts : _drafts, _ => new SeatDraft(), slot);
 }
 
 internal sealed partial class ShopEditorPrototype
 {
     internal bool HasConditions(bool party) => (party ? _partyDrafts : _drafts).Values.Any(d =>
         d.Relic.Slots.Concat(d.Uncommon.Slots).Concat(d.Rare.Slots).Any(k => k.HasValue));
-    internal Action ClearConditions(bool party) =>
-        WorkbenchConditionReset.Swap(party ? _partyDrafts : _drafts, _ => new SeatDraft());
+    internal Action ClearConditions(bool party, int? slot = null) =>
+        WorkbenchConditionReset.Swap(party ? _partyDrafts : _drafts, _ => new SeatDraft(), slot);
 }
 
 internal sealed partial class RelicSequenceEditorPrototype
 {
     internal bool HasConditions(bool party) => (party ? _partyDrafts : _drafts).Values.Any(d => d.Conditions.Count > 0);
-    internal Action ClearConditions(bool party) =>
-        WorkbenchConditionReset.Swap(party ? _partyDrafts : _drafts, _ => new SeatDraft());
+    internal Action ClearConditions(bool party, int? slot = null) =>
+        WorkbenchConditionReset.Swap(party ? _partyDrafts : _drafts, _ => new SeatDraft(), slot);
 }
 
 internal sealed partial class AncientEditorPrototype
@@ -85,15 +85,35 @@ internal sealed partial class AncientEditorPrototype
 
 internal sealed partial class EventEditorPrototype
 {
-    internal bool HasConditions(bool party) => (party ? _partyDrafts : _drafts).Values.Any(d =>
+    internal bool HasConditions(bool party) => party && _partyQueue.Count > 0 || (party ? _partyDrafts : _drafts).Values.Any(d =>
         d.QueueConditions.Count > 0 || d.Results.Values.Any(keys => keys.Any(k => k.HasValue)) ||
         d.CharacterColor >= 0 || d.TrialCase >= 0 || d.TinkerType >= 0 || d.PrototypeTargets.Count > 0);
-    internal Action ClearConditions(bool party) =>
-        WorkbenchConditionReset.Swap(party ? _partyDrafts : _drafts, _ => new SeatDraft());
+    internal Action ClearConditions(bool party)
+    {
+        var restore = WorkbenchConditionReset.Swap(party ? _partyDrafts : _drafts, _ => new SeatDraft());
+        var queue = _partyQueue.ToArray();
+        if (party) _partyQueue.Clear();
+        return () => { restore(); if (party) { _partyQueue.Clear(); _partyQueue.AddRange(queue); } };
+    }
 }
 
 internal sealed partial class ActInformationEditorPrototype
 {
+    internal Action ClearPageConditions(bool party, bool map)
+    {
+        if (!_drafts.TryGetValue(party ? -1 : 0, out var draft)) return () => { };
+        if (map)
+        {
+            var routes = draft.Routes.ToArray(); var properties = draft.Properties.ToArray();
+            draft.Routes.Clear(); draft.Properties.Clear();
+            return () => { foreach (var p in routes) draft.Routes[p.Key] = p.Value; foreach (var p in properties) draft.Properties[p.Key] = p.Value; };
+        }
+        var variants = draft.SelectedVariants.Select(s => s.ToArray()).ToArray();
+        var bosses = draft.SelectedBosses.Select(s => s.ToArray()).ToArray();
+        foreach (var set in draft.SelectedVariants.Concat(draft.SelectedBosses)) set.Clear();
+        return () => { for (int i = 0; i < variants.Length; i++) { draft.SelectedVariants[i].UnionWith(variants[i]); draft.SelectedBosses[i].UnionWith(bosses[i]); } };
+    }
+
     internal bool HasConditions(bool party) => _drafts.TryGetValue(party ? -1 : 0, out var d) &&
         (d.Routes.Count > 0 || d.Properties.Values.Any(rows => rows.Count > 0) ||
          d.SelectedVariants.Concat(d.SelectedBosses).Any(keys => keys.Count > 0));
@@ -108,6 +128,16 @@ internal sealed partial class ActInformationEditorPrototype
 
 internal sealed partial class TransformationEditorPrototype
 {
+    internal Action PreserveConditionsForUndo()
+    {
+        var saved = _drafts.ToDictionary(p => p.Key, p =>
+        {
+            var copy = new SeatDraft { Objective = p.Value.Objective, ResultCount = p.Value.ResultCount, RareCount = p.Value.RareCount };
+            copy.TakenOver.UnionWith(p.Value.TakenOver); copy.Cards.AddRange(p.Value.Cards); return copy;
+        });
+        return () => { _drafts.Clear(); foreach (var pair in saved) _drafts[pair.Key] = pair.Value; };
+    }
+
     internal bool HasConditions() => _drafts.Values.Any(d => d.TakenOver.Count > 0 || d.Cards.Count > 0);
     internal Action ClearConditions() => WorkbenchConditionReset.Swap(_drafts, _ => new SeatDraft());
 }

@@ -116,13 +116,47 @@ public sealed record FamilyDeviceProfile(
 
 internal static class FamilyDeviceProfileFoundation
 {
-    private static int _familyComputeRuntimeObserved;
-    private static int _gpuAvailable = 1; // unknown does not mean unavailable
-    internal static bool GpuAvailable => Volatile.Read(ref _gpuAvailable) != 0;
+    internal static readonly FamilyGpuInitialization Initialization = new();
+    internal static bool GpuAvailable => Initialization.Capture().GpuEligible;
+    private static readonly object RetryGate = new();
+    private static Task<string>? _retry;
+    private static string _retryEnvironment = "";
+    internal static Task<string>? RetryTask
+    {
+        get { lock (RetryGate) return _retryEnvironment == Initialization.Capture().EnvironmentKey ? _retry : null; }
+    }
+
+    internal static Task<string> RetryInitializationAsync()
+    {
+        lock (RetryGate)
+        {
+            if (_retry is { IsCompleted: false }) return _retry;
+            _retryEnvironment = Initialization.Capture().EnvironmentKey;
+            return _retry = ProbeAsync();
+        }
+    }
+
+    private static async Task<string> ProbeAsync()
+    {
+        try
+        {
+            await using var owner = new FamilyGpuExecutionOwner(
+                () => Godot.RenderingServer.CreateLocalRenderingDevice(), Initialization, explicitRetry: true);
+            await owner.ExecuteAsync(_ => true, CancellationToken.None).ConfigureAwait(false);
+            return "";
+        }
+        catch (Exception ex)
+        {
+            RuntimeLog.TryBackgroundWarning("familyGpuExplicitRetryFailed=true;failure=" + ex);
+            return ex.GetType().Name + ": " + ex.Message;
+        }
+    }
+
     internal static void CaptureAvailabilityOnMainThread()
     {
         Godot.RenderingDevice? device = Godot.RenderingServer.GetRenderingDevice();
-        Volatile.Write(ref _gpuAvailable, device is null ? 0 : 1);
+        string backend = Godot.RenderingServer.GetCurrentRenderingDriverName();
+        Initialization.ObserveEnvironment($"{backend}|{device?.GetDeviceName()}|{device?.GetInstanceId()}", device is not null);
         if (device is not null)
         {
             var known = SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity();
@@ -139,7 +173,7 @@ internal static class FamilyDeviceProfileFoundation
             identity.GpuIdentity,
             identity.RenderingBackend,
             identity.HasKnownGpu,
-            Volatile.Read(ref _familyComputeRuntimeObserved) != 0,
+            Initialization.Capture().State == FamilyGpuInitializationState.Available,
             ["ProductionExact.Terminal", "N.Neow.Cpu.LocalReplay.20260905.v1", "N.Neow.Cpu.IdentityPair.20260912.v1",
              "S.MerchantShopColorless.Cpu.Slot.20260912.v1", "C.CombatReward.Cpu.AuthoredPrefix.20260912.v1",
              "R.Relic.Cpu.TrackedPositions.20260912.v1", "R.Relic.Cpu.CapsuleTargets.20260912.v1",
@@ -171,7 +205,6 @@ internal static class FamilyDeviceProfileFoundation
     {
         SearchPerformanceDeviceIdentity known = SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity();
         SearchPerformanceProfileFoundation.ObserveGpuIdentity(deviceName, known.RenderingBackend);
-        Interlocked.Exchange(ref _familyComputeRuntimeObserved, 1);
         RuntimeLog.TryBackgroundInfo(
             "familyDeviceRuntimeAvailable=true;source=LocalRenderingDevice;" + Capture().FormatSummary());
     }

@@ -74,6 +74,15 @@ public static partial class FamilyExecutionCoordinator
         bool? gpuAvailable = null)
     {
         using var logScope = RuntimeLog.SearchScope(RuntimeLog.SessionId.Length > 0 ? RuntimeLog.SessionId : Guid.NewGuid().ToString("N"));
+        // A failed search is never silently restarted on CPU. The user can retry
+        // creation explicitly, or choose the existing CPU resource constraint.
+        if (gpuAvailable != false)
+        {
+            if (FamilyDeviceProfileFoundation.RetryTask is { IsCompleted: false })
+                throw new InvalidOperationException("FamilyGpuInitializationBusy");
+            if (FamilyDeviceProfileFoundation.Initialization.Capture().State == FamilyGpuInitializationState.Failed)
+                throw new InvalidOperationException("FamilyGpuInitializationRetryRequired");
+        }
         Infrastructure.Snapshots.ProductionSearchReplay.LogSessionWorkload(plan, RuntimeLog.SessionId);
         long started=Stopwatch.GetTimestamp();
         FamilyExecutionPlan executionPlan = Plan(plan, gpuAvailable);

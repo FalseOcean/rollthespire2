@@ -12,13 +12,22 @@ internal sealed record PredictorCrystalSnapshot(PredictorContext Context, Predic
     ImmutableArray<int> Revealed);
 internal sealed record PredictorCrystalOptions(bool AvoidCurse = true, bool RequireRelic = false);
 internal sealed record PredictorCrystalStep(int X, int Y, PredictorCrystalTool Tool);
-internal sealed record PredictorCrystalTake(int RewardIndex, ModelKey Card, int? UpgradeLevel = null);
+internal sealed record PredictorCrystalTake(int RewardIndex, ModelKey Card, int? UpgradeLevel = null,
+    CrystalCardEnchantment? Enchantment = null)
+{
+    internal bool MatchesCard(PredictorCard card)=>card.Key==Card && (UpgradeLevel==null || card.UpgradeLevel==UpgradeLevel) &&
+        (Enchantment==null || Enchantment.Value.Matches(card));
+}
 internal sealed record PredictorCrystalSolution(string Status, long Examined,
     ImmutableArray<PredictorCrystalStep> Steps, ImmutableArray<PredictorCrystalTake> Takes)
 {
     internal long RewardRows { get; init; }
     internal long RewardCacheHits { get; init; }
     internal long GeometryPruned { get; init; }
+    internal ImmutableArray<PredictorInput> RerollActions { get; init; } = [];
+    // Stable ordinal in the generated reward row, not a transient request/card ID.
+    // Persisted plans can reconstruct Enter / Reroll / Exit on a fresh replay.
+    public ImmutableArray<int> RerollRewardIndices { get; init; } = [];
 }
 
 internal sealed partial class PredictorRun

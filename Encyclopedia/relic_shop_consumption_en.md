@@ -1,74 +1,19 @@
-# How Do Shops Consume Relic Queues?
+# How Shops Consume Relic Queues
 
-> Applies to: **Slay the Spire 2 Beta 0.111.0**
+> Mechanic reference: Slay the Spire 2 Beta 0.111.0
 
-A normal initial shop inventory contains **three relic slots**:
+A normal initial shop has three relic slots. The first two roll Common, Uncommon, or Rare; the third requests Shop rarity. All take identities from the **back** of the player's corresponding bag.
 
-> The first two roll Common, Uncommon, or Rare;
-> the third always requests Shop rarity.
+## Two Ends of the Same Bag
 
-All three take the actual relic identity from the **back** of the corresponding player bag.
+RT2 displays Common, Uncommon, and Rare queues from the front by default. In A → B → C → D → E, a front-drawing reward encounters A, while a shop requesting that rarity begins looking at E. Both ends consume the same bag, so a queue position is not an ordinal among all relic pickups in the run.
 
-# Ordinary Relics: Shops Take from the Other End
+Shops skip relics that cannot be sold. In vanilla 0.111.0, {{relic:LUCKY_FYSH}}, {{relic:AMETHYST_AUBERGINE}}, {{relic:BOWLER_HAT}}, {{relic:OLD_COIN}}, and {{relic:THE_COURIER}} cannot appear in a normal shop, even at the back of a bag. The first four relate to gold gains; the Courier changes discounts and restocking.
 
-RT2 displays Common, Uncommon, and Rare queues **front to back**. Many ordinary sources also retrieve from the front, but shops retrieve from the back.
+RT2's Shop-exclusive queue already follows back order and filters unsellable entries. Its first entry is the first available relic for a normal shop's exclusive slot.
 
-For a Rare bag:
+## Generating Inventory and Purchasing
 
-> A → B → C → D → E
+A relic leaves the bag when inventory is generated, rather than when purchased. Leaving it unsold does not preserve it for another reward. Taking the identity adds no fresh random draw; the first two slots roll randomness when choosing rarity. Purchasing separately obtains the relic and triggers its on-obtain effects.
 
-a front-taking source first sees A. A shop that rolls Rare starts looking from E.
-
-**The same bag can be consumed from both ends.** A position in the Rare queue is therefore not directly equivalent to an ordinal among all Rare relic pickups in the run.
-
-# Shops Skip Relics That Cannot Be Sold
-
-A shop does not unconditionally take the last relic. It checks whether that relic is allowed in shop inventory. If not, it searches backward for the next legal one.
-
-In base-game 0.111.0, explicit exclusions include:
-
-> {{relic:LUCKY_FYSH}}
-> {{relic:AMETHYST_AUBERGINE}}
-> {{relic:BOWLER_HAT}}
-> {{relic:OLD_COIN}}
-> {{relic:THE_COURIER}}
-
-The first four directly concern gold income; {{relic:THE_COURIER}} changes discounts and restocking.
-
-**Normal shops skip these even if they are at the back of the bag.**
-
-# Shop Relics Also Come from the Back
-
-The third slot always requests **Shop rarity**, then reads from the back of the Shop bag.
-
-RT2 already displays the Shop queue in consumption order with shop-ineligible relics filtered out. Shop position 1 is therefore the first Shop relic a normal shop can take.
-
-# What Happens After Retrieval?
-
-**The retrieved relic is removed from the current bag.** Retrieving its identity does not make another random choice.
-
-For the first two slots, randomness happens earlier:
-
-> Roll Common / Uncommon / Rare
-> → Search from that bag's back for the first sellable relic
-
-Rarity selection and identity retrieval are separate steps.
-
-# The Courier Is a Special Case
-
-With **{{relic:THE_COURIER}}**, buying a relic triggers a replacement:
-
-> Roll Common / Uncommon / Rare again
-> → Continue taking from the back of the corresponding ordinary bag
-
-This does not consume another Shop-exclusive relic.
-
-The Shop queue describes **normal shops' fixed Shop-rarity slots**, not an endless Courier restock sequence.
-
-Remember:
-
-> **Ordinary rewards often take from the front of Common, Uncommon, and Rare bags.**
-> **Normal shops search from the back for the first sellable relic.**
-> **Fixed Shop relics also come from the back of their bag.**
-
-A bag can thus have both a front-consumption history and a back-consumption history, which complicates a full timeline of relic acquisition.
+With {{relic:THE_COURIER}}, a purchased relic restocks by rolling Common, Uncommon, or Rare and taking from that bag's back. This does not draw another Shop-exclusive relic. See [[shop-stability]].

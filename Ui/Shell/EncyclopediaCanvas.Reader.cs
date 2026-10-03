@@ -21,14 +21,16 @@ internal sealed partial class EncyclopediaCanvas
 
     private void RenderMarkdownArticle(ArticleDefinition definition)
     {
+        _mentionedRelics.Clear();
         _readingId = definition.Id;
         ArticleDefinition? parent = Articles.FirstOrDefault(a => a.Id == definition.ParentId);
-        var back = Button(_main, T("‹  目录", "‹  Topics"), 0, 0, 110, 38,
+        var back = Button(_main, parent is null ? T("‹  百科首页", "‹  Home") : "‹  " + ArticleName(parent), 0, 0, 270, 38,
             () => { if (parent is not null) ShowArticle(parent.Id); else { _articleId = null; Render(); } });
+        back.Alignment = HorizontalAlignment.Left;
         StyleQuietButton(back, false);
-        var breadcrumb = Label(_main, (parent is null ? T("手册", "Field guide") : ArticleName(parent)) + "  /  " + ArticleName(definition), 16, 128, 9, true);
+        var breadcrumb = Label(_main, (parent is null ? T("百科", "Encyclopedia") : ArticleName(parent)) + "  /  " + ArticleName(definition), 16, 288, 9, true);
         breadcrumb.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
-        breadcrumb.Size = new Vector2(710, 26);
+        breadcrumb.Size = new Vector2(650, 26);
         if (definition.ReturnToSearch)
         {
             var search = Button(_main, T("返回筛选  ↗", "Back to filters  ↗"), 1030, 0, 184, 38, () => ReturnToSearchRequested?.Invoke());
@@ -54,9 +56,9 @@ internal sealed partial class EncyclopediaCanvas
         string[] lines = reader.ReadToEnd().Replace("\r\n", "\n").Split('\n');
         int firstHeading = Array.FindIndex(lines, line => Regex.IsMatch(line, @"^#{1,3}\s"));
         string title = firstHeading >= 0 ? lines[firstHeading].TrimStart('#', ' ') : ArticleName(definition);
-        var eyebrow = ArticleText(T("筛选与预测手册", "THE SEED FIELD GUIDE") + "   /   BETA " + (definition.GameVersion ?? EncyclopediaGameVersion), 14, Gold);
+        var eyebrow = ArticleText(T("机制与使用参考", "MECHANICS & USAGE") + "   /   BETA " + (definition.GameVersion ?? EncyclopediaGameVersion), 14, Gold);
         content.AddChild(eyebrow);
-        var heading = ArticleText(title, 30, "E9ECED");
+        var heading = ArticleText(title, 30, "E9ECED", firstRelicIcons: false);
         content.AddChild(heading);
         if (_language != "zh" && localized is null)
             content.AddChild(ArticleText("English translation pending · Showing the Chinese article.", 16, Quiet));
@@ -142,12 +144,12 @@ internal sealed partial class EncyclopediaCanvas
         }
     }
 
-    private RichTextLabel ArticleText(string text, int size = 20, string color = "C4D0DC")
+    private RichTextLabel ArticleText(string text, int size = 20, string color = "C4D0DC", bool firstRelicIcons = true)
     {
         var label = new RichTextLabel
         {
             FitContent = true, ScrollActive = false, BbcodeEnabled = true,
-            SelectionEnabled = true, FocusMode = FocusModeEnum.None,
+            SelectionEnabled = false, FocusMode = FocusModeEnum.None,
             AutowrapMode = TextServer.AutowrapMode.WordSmart,
             SizeFlagsHorizontal = SizeFlags.ExpandFill,
             MouseFilter = MouseFilterEnum.Pass
@@ -163,7 +165,7 @@ internal sealed partial class EncyclopediaCanvas
             if (target.StartsWith("article:", StringComparison.Ordinal) && Articles.Any(a => a.Id == target[8..])) ShowArticle(target[8..]);
             else if (target.StartsWith("seed:", StringComparison.Ordinal)) OpenSeedRequested?.Invoke(target[5..]);
         };
-        RenderInline(label, text);
+        RenderInline(label, text, firstRelicIcons);
         return label;
     }
 
@@ -281,9 +283,11 @@ internal sealed partial class EncyclopediaCanvas
                 { AddArticleLink(related, target.Id, ArticleName(target)); related.AddText("    "); }
             content.AddChild(related);
         }
-        var row = new HBoxContainer(); row.AddThemeConstantOverride("separation", 14); content.AddChild(row);
         ArticleDefinition? previous = Articles.FirstOrDefault(a => a.NextId == definition.Id);
         ArticleDefinition? next = Articles.FirstOrDefault(a => a.Id == definition.NextId);
+        if (previous is not null || next is not null)
+            content.AddChild(ArticleText(T("推荐阅读", "SUGGESTED READING"), 14, Gold));
+        var row = new HBoxContainer(); row.AddThemeConstantOverride("separation", 14); content.AddChild(row);
         foreach (var (target, caption) in new[] { (previous, T("←  上一篇", "←  Previous")), (next, T("下一篇  →", "Next  →")) })
         {
             if (target is null) continue;

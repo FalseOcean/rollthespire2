@@ -59,12 +59,12 @@ internal sealed partial class SearchPresetSaveTransactionOverlay : Control
 
         var dialog = new PanelContainer
         {
-            CustomMinimumSize = new Vector2(650f, 500f),
+            CustomMinimumSize = new Vector2(700f, 560f),
             MouseFilter = MouseFilterEnum.Stop,
             SizeFlagsHorizontal = SizeFlags.ShrinkCenter,
             SizeFlagsVertical = SizeFlags.ShrinkCenter
         };
-        Ui1Theme.ApplyPanel(dialog, Ui1SurfaceRole.Drawer, 5f, 2, 18f);
+        Ui1Theme.ApplyPanel(dialog, Ui1SurfaceRole.Drawer, 10f, 1, 24f);
         center.AddChild(dialog);
 
         var root = new VBoxContainer
@@ -72,12 +72,13 @@ internal sealed partial class SearchPresetSaveTransactionOverlay : Control
             SizeFlagsHorizontal = SizeFlags.ExpandFill,
             SizeFlagsVertical = SizeFlags.ExpandFill
         };
-        root.AddThemeConstantOverride("separation", 10);
+        root.AddThemeConstantOverride("separation", 14);
 
         var header = new HBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         _title = Ui1Theme.Label(string.Empty, Ui1TextRole.SectionTitle);
+        _title.AddThemeFontSizeOverride("font_size", 26);
         _title.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-        var close = new Button { Text = "×", CustomMinimumSize = new Vector2(42f, 34f) };
+        var close = new Button { Text = "×", CustomMinimumSize = new Vector2(42f, 44f) };
         Ui1Theme.ApplyButton(close, Ui1ButtonRole.Ghost);
         close.Pressed += Cancel;
         header.AddChild(_title);
@@ -142,8 +143,8 @@ internal sealed partial class SearchPresetSaveTransactionOverlay : Control
 
         var footer = new HBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         footer.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill });
-        _cancel = new Button { CustomMinimumSize = new Vector2(92f, 34f) };
-        _save = new Button { CustomMinimumSize = new Vector2(104f, 34f), Disabled = true };
+        _cancel = new Button { CustomMinimumSize = new Vector2(92f, 44f) };
+        _save = new Button { CustomMinimumSize = new Vector2(104f, 44f), Disabled = true };
         Ui1Theme.ApplyButton(_cancel, Ui1ButtonRole.Ghost);
         Ui1Theme.ApplyButton(_save, Ui1ButtonRole.Primary);
         _cancel.Pressed += Cancel;

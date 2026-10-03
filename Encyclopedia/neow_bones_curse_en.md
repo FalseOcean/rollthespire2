@@ -1,122 +1,25 @@
-# {{relic:NEOWS_BONES}}' Final Curse: Why Player Choices Matter
+# {{relic:NEOWS_BONES}}' Final Curse: Earlier Choices Matter
 
-## What You Want
+After both internal relics are obtained and their effects resolve, {{relic-icon:NEOWS_BONES}} uses **Niche RNG** to generate its final curse. You can filter for a specified curse, but the answer corresponds to a particular opening history: pickup order, cards taken, and how later effects change the deck and random state.
 
-After both internal relics have been obtained and resolved, {{relic-icon:NEOWS_BONES}} generates a final curse.
+## Capsule Upgrades Can Change the Curse
 
-You can ask:
+{{relic:WHETSTONE}} selects upgradable Attacks; {{relic:WAR_PAINT}} selects upgradable Skills. Both use Niche RNG. The sequence is **first internal relic and its effects → second relic and its effects → final Bones curse**. These Capsule relics can advance Niche before the curse is generated.
 
-> **I want {{relic:NEOWS_BONES}} to give a specified final curse.**
+For example, take **{{relic:KALEIDOSCOPE}} → a Capsule** containing Whetstone. Taking an upgradable Attack from Kaleidoscope changes Whetstone's candidate set and may change its random consumption and the final curse. Knowing the displayed cards is insufficient; the cards actually taken also matter. The relevant state is the Niche state read by the curse; see [[why-predictable]].
 
-For most opening combinations this is straightforward. Special cases arise when an earlier relic changes **Niche RNG**, particularly **{{relic:WHETSTONE}} / {{relic:WAR_PAINT}} (W/WP)** from a Capsule.
+## Card Targets Are Pickup Commitments
 
-## Why Does W/WP Change the Final Curse?
+For optional rewards such as {{relic:KALEIDOSCOPE}} and {{relic:LOST_COFFER}}, **specified cards are taken; unspecified optional rewards are skipped**. One Kaleidoscope target means taking it and skipping the other group.
 
-{{relic:NEOWS_BONES}} generates the final curse with Niche RNG after resolving both internal relics:
+RT2 checks whether the specified actions produce the target. It does not automatically search whether any possible card-pick sequence could succeed. That would require branching over the different decks produced by every pickup and skip.
 
-> Obtain the first relic
-> → Execute its effect
-> → Obtain the second relic
-> → Execute its effect
-> → Generate the final curse using Niche RNG
+## Current Support and Missed Seeds
 
-{{relic:WHETSTONE}} and {{relic:WAR_PAINT}} immediately select upgradable Attacks or Skills from the current deck. That selection also uses Niche RNG.
+For supported single-player opening combinations, final verification replays the specified order, card picks, deck changes, legal upgrade candidates, and random consumption before checking the curse. The result corresponds to those query premises.
 
-If a Capsule produces W/WP:
+Multiplayer filtering accounts for the random consumption needed by later results when Whetstone or War Paint is explicitly required. It currently does not filter specific upgrade targets; predicting the curse does not imply prediction of the entire final deck.
 
-> W/WP consumes Niche RNG
-> → The stream advances
-> → {{relic:NEOWS_BONES}} generates its curse from the new position
+Early filtering can sometimes use only the legal upgrade-candidate count and Niche advancement. If the upgrade relic is required but prior conditions or the Capsule source do not determine that advancement, candidates are retained for final verification. **Hidden Whetstone or War Paint absent from the conditions may still be ignored during early filtering, causing missed seeds. Final verification cannot recover seeds already missed.**
 
-The curse therefore depends on the seed and **which upgradable cards are present when W/WP is obtained**.
-
-## Earlier Card Picks Become Part of the Question
-
-Suppose the {{relic:NEOWS_BONES}} pickup order is:
-
-> {{relic:KALEIDOSCOPE}} → Capsule
-
-The Capsule contains {{relic:WHETSTONE}}. Taking an upgradable Attack from {{relic:KALEIDOSCOPE}} changes the candidate set seen by {{relic:WHETSTONE}}.
-
-That can change:
-
-> {{relic:WHETSTONE}}'s random consumption
-> → Niche RNG's position
-> → {{relic:NEOWS_BONES}}' final curse
-
-Knowing what {{relic:KALEIDOSCOPE}} generated is no longer enough. We also need to know **what the player actually took**.
-
-## RT2's “Selection Is Commitment” Rule
-
-For optional card rewards such as {{relic:KALEIDOSCOPE}} and {{relic:LOST_COFFER}}, RT2 uses a clear rule:
-
-> **A card specified in the filter is a card you commit to taking.**
-
-Unspecified optional rewards are skipped. They do not mean “try every possible choice and find something that makes the later result succeed.”
-
-For example, if {{relic:KALEIDOSCOPE}} has two groups but you specify one card, the query means:
-
-> **Take that card and skip the other group.**
-
-It does not mean taking that card and then choosing whichever card from the other group best helps a later result.
-
-This distinction may be unobtrusive in an ordinary query, but can directly change the final curse when W/WP follows.
-
-## Why Not Try Every Player Choice Automatically?
-
-That would change the question from:
-
-> **Does this seed produce the target when I follow the actions I specified?**
-
-to:
-
-> **Is there any sequence of player actions that could produce the target?**
-
-The latter requires branching over choices. Taking or skipping either {{relic:KALEIDOSCOPE}} group produces different decks; each deck can then produce different W/WP targets and RNG continuations.
-
-A single opening history quickly becomes a tree of possible player actions. RT2 does not silently search that tree. It replays the choices you actually specified.
-
-## How Does RT2 Handle W/WP?
-
-For currently supported single-player opening combinations, Production Exact replays the agreed pickup order:
-
-> What the player takes
-> → How the deck changes
-> → Which upgrade targets are legal for W/WP
-> → How automatic upgrading executes
-> → Where Niche RNG ends
-> → Which curse {{relic:NEOWS_BONES}} generates
-
-**Exact's result corresponds only to the opening history you described.** If a key choice is missing, RT2 does not pretend to know what you will choose.
-
-Multiplayer filtering accounts for the RNG consumption needed by later results when W/WP is explicitly required, but does not currently offer filtering for specific upgrade targets. Predicting the final curse does not mean predicting the entire resulting deck.
-
-## Fast Can Use a Simpler Calculation
-
-Across many seeds, it is often unnecessary to know exactly which two cards {{relic:WHETSTONE}} upgrades. For a final-curse target, the important quantity is often:
-
-> **How far does W/WP advance Niche RNG?**
-
-When prior choices are sufficiently specified, RT2 can calculate the number of legal upgrade candidates and reduce the full upgrade process to its RNG advancement before checking the curse.
-
-This is much cheaper than storing and replaying a full deck for every seed.
-
-If W/WP is required but the prior conditions or Capsule source do not determine that advancement, Fast retains the relevant candidates for Exact.
-
-This does not cover hidden W/WP relics that were not required in the conditions. Fast may still ignore their effects and miss seeds that would actually qualify. Exact checks the candidates that reach it; it cannot recover seeds already missed. **Returned results satisfying the query's premises** and **finding every qualifying seed** are different guarantees.
-
-## Why Are Complete Conditions Often More Valuable?
-
-More conditions do not just make the desired seed rarer. They can tell RT2 more about **how you intend to play the opening**.
-
-For example, specifying:
-
-> Which {{relic:KALEIDOSCOPE}} card to take;
-> the pickup order for {{relic:NEOWS_BONES}};
-> and a Capsule containing {{relic:WHETSTONE}};
-
-makes the history more definite. RT2 can more readily determine the deck, W/WP's legal candidate count, Niche advancement, and the starting position for the curse.
-
-For interdependent queries, **more complete conditions can improve early filtering and make the replayed history more explicit**.
-
-This does not make Exact “more accurate.” Exact still checks only the conditions actually described. You have made the question more complete, allowing a more complete replay.
+Specifying Kaleidoscope picks, Bones order, and Capsule targets makes the history explicit and can strengthen early filtering. It completes the premises; it does not make final verification “more accurate.”

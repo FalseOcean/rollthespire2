@@ -3,12 +3,14 @@ using RolltheSpire2.Ui.Theme;
 
 namespace RolltheSpire2.Ui.Components;
 
-/// <summary>Plain-text note transaction; storage and seed context remain with the caller.</summary>
+/// <summary>Plain-text title/note transaction; storage and seed context remain with the caller.</summary>
 internal sealed partial class SeedLibraryNoteOverlay : Control
 {
     private readonly Label _title;
     private readonly Label _context;
     private readonly Label _notice;
+    private readonly Label _titleLabel;
+    private readonly LineEdit _titleInput;
     private readonly Label _noteLabel;
     private readonly TextEdit _note;
     private readonly Label _issue;
@@ -35,6 +37,9 @@ internal sealed partial class SeedLibraryNoteOverlay : Control
         _title = Ui1Theme.Label("", Ui1TextRole.SectionTitle, true); column.AddChild(_title);
         _context = Ui1Theme.Label("", Ui1TextRole.Meta, true); column.AddChild(_context);
         _notice = Ui1Theme.Label("", Ui1TextRole.Warning, true); column.AddChild(_notice);
+        _titleLabel = Ui1Theme.Label("", Ui1TextRole.Meta); column.AddChild(_titleLabel);
+        _titleInput = new LineEdit { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        Ui1Theme.ApplyLineEdit(_titleInput); column.AddChild(_titleInput);
         _noteLabel = Ui1Theme.Label("", Ui1TextRole.Meta); column.AddChild(_noteLabel);
         _note = new TextEdit { CustomMinimumSize = new Vector2(660, 210), SizeFlagsHorizontal = SizeFlags.ExpandFill, SizeFlagsVertical = SizeFlags.ExpandFill, WrapMode = TextEdit.LineWrappingMode.Boundary, TabInputMode = false };
         Ui1Theme.ApplyTextEdit(_note); column.AddChild(_note);
@@ -44,9 +49,9 @@ internal sealed partial class SeedLibraryNoteOverlay : Control
         _save = new Button { CustomMinimumSize = new Vector2(104, 38) };
         Ui1Theme.ApplyButton(_cancel, Ui1ButtonRole.Ghost); Ui1Theme.ApplyButton(_save, Ui1ButtonRole.Primary);
         _cancel.Pressed += Cancel;
-        _save.Pressed += () => SaveRequested?.Invoke(_note.Text);
+        _save.Pressed += () => SaveRequested?.Invoke(_titleInput.Text, _note.Text);
         actions.AddChild(_cancel); actions.AddChild(_save); column.AddChild(actions);
-        Control[] focus = [_note, _cancel, _save];
+        Control[] focus = [_titleInput, _note, _cancel, _save];
         for (int i = 0; i < focus.Length; i++)
         {
             NodePath next = focus[i].GetPathTo(focus[(i + 1) % focus.Length]);
@@ -56,20 +61,23 @@ internal sealed partial class SeedLibraryNoteOverlay : Control
         }
     }
 
-    public event Action<string>? SaveRequested;
+    public event Action<string, string>? SaveRequested;
     public event Action? Cancelled;
     public bool IsOpen => Visible;
 
-    public void Open(string language, string title, string context, string note, string notice = "")
+    public void Open(string language, string title, string context, string note, string notice = "", string seedTitle = "")
     {
         bool zh = language == "zh";
         _title.Text = title; _context.Text = context;
         _notice.Text = notice; _notice.Visible = !string.IsNullOrWhiteSpace(notice);
+        _titleLabel.Text = zh ? "标题" : "Title";
+        _titleInput.PlaceholderText = zh ? "给种子起个名字；留空则显示种子码。" : "Name this seed; leave blank to show its seed code.";
+        _titleInput.Text = seedTitle;
         _noteLabel.Text = zh ? "备注" : "Note";
         _note.PlaceholderText = zh ? "记录玩法、亮点或提醒，可留空。" : "Add ideas, highlights or reminders. Optional.";
         _cancel.Text = zh ? "取消" : "Cancel"; _save.Text = zh ? "保存" : "Save";
         _note.Text = note;
-        ShowIssue(""); Visible = true; _note.GrabFocus();
+        ShowIssue(""); Visible = true; _titleInput.GrabFocus();
     }
 
     public void ShowIssue(string message) { _issue.Text = message; _issue.Visible = !string.IsNullOrWhiteSpace(message); }

@@ -82,10 +82,12 @@ internal sealed partial class PredictorCrystalExplorer
                     bool Prefix(ImmutableArray<int> actual,ImmutableArray<int> expected)=>
                         actual.Length<=expected.Length && actual.SequenceEqual(expected.Take(actual.Length));
                     bool CoreCompatible(ImmutableArray<int> actual)=>Prefix(actual,recipe.Core) || actual.Take(recipe.Core.Length).SequenceEqual(recipe.Core);
-                    // Non-potion rewards completed after the whole planned core
-                    // cannot shift its earlier draws. Allow these incidental
-                    // rewards, but never an extra potion shifting every card.
-                    bool Compatible(Position node)=>CoreCompatible(node.Order.Where(Core).ToImmutableArray()) &&
+                    // Incidental core callbacks do not shift initial offers,
+                    // but DO shift the endpoint from which rerolls start. An
+                    // expanded-domain recipe therefore fixes the whole word.
+                    bool Compatible(Position node)=>(_reachability!.IncludesRerolls
+                        ?Prefix(node.Order.Where(Core).ToImmutableArray(),recipe.Core)
+                        :CoreCompatible(node.Order.Where(Core).ToImmutableArray())) &&
                         Prefix(node.Order.Where(Potion).ToImmutableArray(),recipe.Potions) &&
                         RecipeCoverable(node.Fog & recipe.Need,_source.Remaining-node.Path.Length);
                     for(int depth=0;depth<=_source.Remaining;depth++)
@@ -138,10 +140,12 @@ internal sealed partial class PredictorCrystalExplorer
                 var slots=new List<(string Kind,int Minimum,int Maximum)>();int offset=potions.Length;
                 for(int p=0;p<potions.Length;p++) slots.Add((_source.Items[potions[p]].Kind,p,p));
                 foreach(int i in core) { string kind=_source.Items[i].Kind;slots.Add((kind,offset,offset));offset+=CrystalReachabilityTable.Draws(kind); }
+                int maximumEnd=offset;
                 if(includeFuture)
                 {
                     var remaining=futureCore.Where(i=>!core.Contains(i)).ToArray();
                     int draws=remaining.Sum(i=>CrystalReachabilityTable.Draws(_source.Items[i].Kind)*_source.Items[i].Subscriptions);
+                    maximumEnd+=draws;
                     foreach(int i in remaining)
                     {
                         var item=_source.Items[i];int step=CrystalReachabilityTable.Draws(item.Kind);
@@ -149,28 +153,50 @@ internal sealed partial class PredictorCrystalExplorer
                             slots.Add((item.Kind,offset+n*step,offset+draws-(item.Subscriptions-n)*step));
                     }
                 }
-                var owners=Enumerable.Repeat(-1,slots.Count).ToArray();
-                bool Edge(int goal,int slot)=>goals[goal].Any(t=>(goal<goals.Length-1 || !_proven.ContainsKey(t)) && SlotMatches(t,slots[slot].Kind,slots[slot].Minimum,slots[slot].Maximum));
-                bool Assign(int goal,bool[] seen)
+                var cardSlots=Enumerable.Range(0,slots.Count).Where(s=>slots[s].Kind.StartsWith("CARD_",StringComparison.Ordinal)).ToArray();
+                int end=offset;
+                int Count(bool relaxedSuffix)
                 {
-                    for(int s=0;s<slots.Count;s++)
-                        if(!seen[s] && Edge(goal,s))
-                        {
-                            seen[s]=true;
-                            if(owners[s]<0 || Assign(owners[s],seen)) { owners[s]=goal;return true; }
-                        }
-                    return false;
+                    var owners=Enumerable.Repeat(-1,slots.Count).ToArray();
+                    bool Edge(int goal,int slot)=>goals[goal].Any(t=>(goal<goals.Length-1 || !_proven.ContainsKey(t)) &&
+                        (SlotMatches(t,slots[slot].Kind,slots[slot].Minimum,slots[slot].Maximum) || relaxedSuffix &&
+                        t.Kind==PredictorRewardKind.Card && SlotMatches(t,slots[slot].Kind,end,
+                            maximumEnd+6*Math.Max(0,cardSlots.Length-1))));
+                    bool Assign(int goal,bool[] seen)
+                    {
+                        for(int s=0;s<slots.Count;s++) if(!seen[s] && Edge(goal,s))
+                        { seen[s]=true;if(owners[s]<0 || Assign(owners[s],seen)) { owners[s]=goal;return true; } }
+                        return false;
+                    }
+                    int count=0;
+                    for(int g=0;g<goals.Length;g++)
+                    {
+                        // Any-relic and a particular relic may refer to one reward.
+                        // Actual coexistence/identity is checked by VerifySelection.
+                        if(goals[g].All(t=>t.Kind==PredictorRewardKind.Relic))
+                        { if(slots.Any(s=>s.Kind=="RELIC")) count++; }
+                        else if(Assign(g,new bool[slots.Count])) count++;
+                    }
+                    return count;
                 }
-                int count=0;
-                for(int g=0;g<goals.Length;g++)
+                if(!_reachability!.IncludesRerolls) return Count(false);
+                // Future slots are an optimistic recipe bound. A complete word
+                // instead binds each reward instance to its initial offers OR
+                // one ordered suffix offset. This remains positive discovery;
+                // quotas and table-only matches never establish Impossible.
+                if(includeFuture || cardSlots.Length>6) return Count(true);
+                int best=Count(false);
+                void Suffix(int used,int depth)
                 {
-                    // Any-relic and a particular relic may refer to one reward.
-                    // Actual coexistence/identity is checked by VerifySelection.
-                    if(goals[g].All(t=>t.Kind==PredictorRewardKind.Relic))
-                    { if(slots.Any(s=>s.Kind=="RELIC")) count++; }
-                    else if(Assign(g,new bool[slots.Count])) count++;
+                    if(best==goals.Length || !WithinBudget()) return;
+                    for(int n=0;n<cardSlots.Length;n++) if((used&(1<<n))==0)
+                    {
+                        int i=cardSlots[n];var previous=slots[i];slots[i]=(previous.Kind,end+6*depth,end+6*depth);
+                        best=Math.Max(best,Count(false));Suffix(used|(1<<n),depth+1);slots[i]=previous;
+                        if(best==goals.Length) return;
+                    }
                 }
-                return count;
+                Suffix(0,0);return best;
             }
             ImmutableArray<int> Append(ImmutableArray<int> order,int i)=>order.AddRange(Enumerable.Repeat(i,_source.Items[i].Subscriptions));
             IEnumerable<ImmutableArray<int>> PotionOrders(ImmutableArray<int> chosen,int count)

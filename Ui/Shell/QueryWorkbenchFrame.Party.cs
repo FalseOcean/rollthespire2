@@ -70,7 +70,8 @@ internal sealed partial class QueryWorkbenchFrame
             if (!ReferenceEquals(LobbyUnlockReadout.Find(GetTree().Root), _readLobby) || LobbyUnlockReadout.Roster(_readLobby) != _readRoster)
                 throw new InvalidOperationException("Party.LobbyChangedReadUnlocksAgain");
             for (int slot = 0; slot < _playerCount; slot++)
-                _lobbyUnlocks[slot] = LobbyUnlockReadout.Copy(_readLobby.Players.Single(p => p.slotId == slot).unlockState);
+                if (_partyUnlockSources[slot] != "AssumedFullyUnlocked")
+                    _lobbyUnlocks[slot] = LobbyUnlockReadout.Copy(_readLobby.Players.Single(p => p.slotId == slot).unlockState);
         }
         var players = Enumerable.Range(0, _playerCount).Select(slot => new WorkbenchPlayerDraft(slot, _seatCharacters[slot],
             _lobbyUnlocks[slot] ?? throw new InvalidOperationException($"Party.UnlocksUnread:P{slot + 1}"), _partyUnlockSources[slot])
@@ -88,7 +89,7 @@ internal sealed partial class QueryWorkbenchFrame
             queries.Add(new(slot, _neowEditor.ExportPartyOffers(slot))
             { Conditions = local, AncientPremises = _ancientEditor.PartyOptionConditions(slot) });
         }
-        var q = _ancientEditor.ExportSharedPartyQuery(_actInformationEditor.ExportQuery(SearchQuery.Empty)) with { Players = queries };
+        var q = _eventEditor.ExportSharedPartyQuery(_ancientEditor.ExportSharedPartyQuery(_actInformationEditor.ExportQuery(SearchQuery.Empty))) with { Players = queries };
         return new(players[0].Character, _partyAscension, q, AncientOptionConditionProfile.BroadDefault)
         { Version = 4, Players = players, PartyAncientEditor = _ancientEditor.ExportSharedPartyEditorState(),
             Mode = Core.World.Snapshots.WorldGameMode.Multiplayer, GameVersion = _runtime.Detection.NormalizedVersion,
@@ -109,7 +110,7 @@ internal sealed partial class QueryWorkbenchFrame
         _editorParty = null; _editorPartyKey = "";
         foreach (var p in draft.Players)
         {
-            _seatCharacters[p.Slot] = p.Character; _lobbyUnlocks[p.Slot] = LobbyUnlockReadout.Copy(p.Unlocks);
+            _seatCharacters[p.Slot] = p.Character; _lobbyUnlocks[p.Slot] = LobbyUnlockReadout.Copy(p.Unlocks!);
             _partyUnlockSources[p.Slot] = p.UnlockSource;
             _unlockReadStatus[p.Slot] = p.UnlockSource == "AssumedFullyUnlocked" ? 4 : 1;
             _neowEditor.ImportPartyOffers(p.Slot, ModelKeySetFilter.Empty);
@@ -118,6 +119,7 @@ internal sealed partial class QueryWorkbenchFrame
         // personal refresh can revalidate against the previous table's identities.
         _ancientEditor.ImportSharedPartyQuery(draft.Query, draft.PartyAncientEditor, draft.Players);
         RefreshEditorContexts(false);
+        _eventEditor.ImportSharedPartyQuery(draft.Query);
         foreach (var p in draft.Query.Players)
         {
             _seat = p.Slot; RefreshEditorContexts(false);
@@ -129,7 +131,7 @@ internal sealed partial class QueryWorkbenchFrame
             _neowEditor.ImportQuery(local);
             _relicEditor.ImportQuery(local); _combatEditor.ImportQuery(local);
             _ancientEditor.ImportQuery(local, p.AncientPremises, draft.Players[p.Slot].AncientEditor);
-            _eventEditor.ImportQuery(local); _shopEditor.ImportQuery(local);
+            _eventEditor.ImportQuery(local, importQueue: false); _shopEditor.ImportQuery(local);
         }
         _seat = 0;
         _ancientEditor.ImportSharedPartyQuery(draft.Query, draft.PartyAncientEditor, draft.Players);

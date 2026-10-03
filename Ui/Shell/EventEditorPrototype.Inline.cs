@@ -29,16 +29,16 @@ internal sealed partial class EventEditorPrototype
         Text(content, InlineText("hint"), 0, row + 49, width, 15, true);
 
         float y = row + 92;
-        Text(content, _text.Format("query.event.queue.conditions", _draft.QueueConditions.Count), 0, y, width, 18);
+        Text(content, _text.Format("query.event.queue.conditions", QueueConditions.Count), 0, y, width, 18);
         y += 34;
-        if (_draft.QueueConditions.Count == 0)
+        if (QueueConditions.Count == 0)
         {
             Text(content, _text.Get("query.event.queue.empty"), 0, y, width, 16, true);
             y += 42;
         }
-        for (int index = 0; index < _draft.QueueConditions.Count; index++)
+        for (int index = 0; index < QueueConditions.Count; index++)
         {
-            QueueCondition condition = _draft.QueueConditions[index];
+            QueueCondition condition = QueueConditions[index];
             int captured = index;
             bool supported = !condition.Excluded && EventResultPrototypeWhitelist.Find(condition.Event) is not null;
             bool expanded = supported && _draft.ExpandedCondition == index;
@@ -62,7 +62,7 @@ internal sealed partial class EventEditorPrototype
             }
             else Text(panel, InlineText(condition.Excluded ? "excluded" : "unavailable"), width - 280, 28, 216, 14, true);
             var remove = Button(panel, "×", width - 52, 22, 38, () => RemoveQueueCondition(captured), false, 36);
-            remove.TooltipText = InlineText("remove_hint");
+            remove.TooltipText = InlineText(_queuePickerPlayers > 1 ? "remove_party_hint" : "remove_hint");
             float height = 84;
             if (expanded)
             {
@@ -95,7 +95,7 @@ internal sealed partial class EventEditorPrototype
     // until the player explicitly binds them to W or removes them.
     private float RenderRetainedResults(Control content, float width, float top)
     {
-        string[] retained = AuthoredResultEvents().Where(id => !_draft.QueueConditions.Any(c => !c.Excluded && c.Event.Entry == id)).ToArray();
+        string[] retained = AuthoredResultEvents().Where(id => !QueueConditions.Any(c => !c.Excluded && c.Event.Entry == id)).ToArray();
         if (retained.Length == 0) return top;
         Text(content, InlineText("retained_title"), 0, top + 8, width, 18);
         Text(content, InlineText("retained_hint"), 0, top + 40, width, 14, true);
@@ -126,7 +126,7 @@ internal sealed partial class EventEditorPrototype
 
     internal void FocusEvent(ModelKey key)
     {
-        _draft.ExpandedCondition = _draft.QueueConditions.FindIndex(c => !c.Excluded && c.Event == key);
+        _draft.ExpandedCondition = QueueConditions.FindIndex(c => !c.Excluded && c.Event == key);
         _draft.SelectedEvent = key;
         Render();
     }
@@ -134,8 +134,8 @@ internal sealed partial class EventEditorPrototype
     private void AddQueueCondition(ModelKey key)
     {
         var condition = new QueueCondition(_draft.QueueAct, _draft.QueuePosition, _draft.QueueExact, _draft.QueueExcluded, key);
-        int index = _draft.QueueConditions.IndexOf(condition);
-        if (index < 0) { index = _draft.QueueConditions.Count; _draft.QueueConditions.Add(condition); }
+        int index = QueueConditions.IndexOf(condition);
+        if (index < 0) { index = QueueConditions.Count; QueueConditions.Add(condition); }
         _draft.ExpandedCondition = !condition.Excluded && EventResultPrototypeWhitelist.Find(key) is not null ? index : -1;
         _draft.SelectedEvent = _draft.ExpandedCondition >= 0 ? key : null;
         QueueChanged?.Invoke();
@@ -144,13 +144,24 @@ internal sealed partial class EventEditorPrototype
 
     private void RemoveQueueCondition(int index)
     {
-        QueueCondition removed = _draft.QueueConditions[index];
-        _draft.QueueConditions.RemoveAt(index);
-        if (!removed.Excluded && !_draft.QueueConditions.Any(c => !c.Excluded && c.Event == removed.Event)) ClearEventResults(removed.Event);
-        if (_draft.ExpandedCondition == index) _draft.ExpandedCondition = -1;
-        else if (_draft.ExpandedCondition > index) _draft.ExpandedCondition--;
+        QueueCondition removed = QueueConditions[index];
+        QueueConditions.RemoveAt(index);
+        if (!removed.Excluded && !QueueConditions.Any(c => !c.Excluded && c.Event == removed.Event)) ClearRemovedEventResults(removed.Event);
+        foreach (var draft in _queuePickerPlayers > 1 ? _partyDrafts.Values.AsEnumerable() : new[] { _draft })
+        {
+            if (draft.ExpandedCondition == index) draft.ExpandedCondition = -1;
+            else if (draft.ExpandedCondition > index) draft.ExpandedCondition--;
+        }
         QueueChanged?.Invoke(); // Also releases a T source when its last positive queue condition is removed.
         Render();
+    }
+
+    private void ClearRemovedEventResults(ModelKey key)
+    {
+        if (_queuePickerPlayers <= 1) { ClearEventResults(key); return; }
+        var active = _draft;
+        try { foreach (var draft in _partyDrafts.Values) { _draft = draft; ClearEventResults(key); _draft.ExpandedCondition = -1; } }
+        finally { _draft = active; }
     }
 
     private void ClearEventResults(ModelKey key)

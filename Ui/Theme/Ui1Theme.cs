@@ -93,7 +93,9 @@ internal sealed class Ui1Palette
 
 internal static class Ui1Theme
 {
-    public static Ui1Palette Palette { get; } = new()
+    public static Ui1Palette Palette { get; private set; } = CreatePalette();
+    internal static void RefreshPalette() => Palette = CreatePalette();
+    private static Ui1Palette CreatePalette() => new()
     {
         Window = Hex("#080B14", 0.996f),
         Header = Hex("#0D1220", 0.998f),
@@ -199,7 +201,7 @@ internal static class Ui1Theme
         Ui1Palette p = Palette;
         Color normal = role switch
         {
-            Ui1ButtonRole.Primary => new Color(0.08f, 0.22f, 0.29f, 1f),
+            Ui1ButtonRole.Primary => UiAppearance.Resolve("14384A"),
             Ui1ButtonRole.NavigationSelected => p.CardSelected,
             Ui1ButtonRole.Navigation => p.Navigation,
             Ui1ButtonRole.Ghost => new Color(p.Card.R, p.Card.G, p.Card.B, 0.32f),
@@ -379,11 +381,8 @@ internal static class Ui1Theme
 
     private static Color Hex(string hex, float alpha)
     {
-        string value = hex.TrimStart('#');
-        byte r = Convert.ToByte(value.Substring(0, 2), 16);
-        byte g = Convert.ToByte(value.Substring(2, 2), 16);
-        byte b = Convert.ToByte(value.Substring(4, 2), 16);
-        return new Color(r / 255f, g / 255f, b / 255f, alpha);
+        Color mapped = UiAppearance.Resolve(hex);
+        return new Color(mapped.R, mapped.G, mapped.B, alpha);
     }
 
     private static Color Lighten(Color color, float amount) => new(

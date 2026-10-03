@@ -63,6 +63,9 @@ internal sealed partial class WorkspaceShell : Control
         ClipContents = true;
         // Read existing preferences without creating a Search cursor for an empty UI.
         _persistence = SearchWorkspacePersistence.Open(persistenceDirectory, snapshot.Profile.ProfileId);
+        if (_crystalScene is null && !_persistence.HasSearchInFlight)
+            _persistence.EnsureEnvironment(SearchEnvironmentSignatureBuilder.Capture(snapshot));
+        UiAppearance.Apply(_crystalScene is { } crystal ? crystal : this, _persistence.Preferences.Appearance);
         var background = _background = new ColorRect { Color = _palette.Color(_palette.Canvas), MouseFilter = MouseFilterEnum.Ignore };
         AddChild(background);
         background.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
@@ -107,9 +110,11 @@ internal sealed partial class WorkspaceShell : Control
         _references = new DesignReferenceSurfaces(snapshot, _persistence);
         _content.AddChild(_references);
         _references.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        InitializeResultsEntry();
         _references.ModalChanged += open =>
         {
             _search.Disabled = _analysis.Disabled = _seeds.Disabled = _encyclopedia.Disabled = _status.Disabled = _notes.Disabled = _feedback.Disabled = _settings.Disabled = _close.Disabled = open;
+
 
         };
 
@@ -202,6 +207,7 @@ internal sealed partial class WorkspaceShell : Control
             if (workspace == Workspace.Seeds) _seedLibrary.RefreshEntries();
         }
         _content.Name = workspace + "Canvas";
+
         SetWorkspaceActive();
     }
 
@@ -251,6 +257,7 @@ internal sealed partial class WorkspaceShell : Control
         _notes.TooltipText = text.Get("shell.about_hint");
         _settings.Text = text.Get("shell.settings");
         _feedback.Text = text.Get("feedback.title");
+
         LocalizeSettings(text);
         RefreshFeedback();
         ApplyPalette();
@@ -279,6 +286,8 @@ internal sealed partial class WorkspaceShell : Control
     public override void _Ready() => FitCanvas();
     public override void _Process(double delta)
     {
+        _appearanceDelay -= delta;
+        if (_appearancePending && _appearanceDelay <= 0) ApplyPendingAppearance();
         RuntimeLog.PumpOnMainThread();
         PollFeedbackExport();
         TickNotesReminder(delta);

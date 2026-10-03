@@ -12,7 +12,7 @@ namespace RolltheSpire2.Infrastructure.Snapshots;
 
 internal static class PredictorSeedCapture
 {
-    private static ImmutableArray<PredictorCardLevelMetadata> CaptureLevels(CardModel canonical)
+    internal static ImmutableArray<PredictorCardLevelMetadata> CaptureLevels(CardModel canonical)
     {
         var card = canonical.ToMutable();
         var levels = ImmutableArray.CreateBuilder<PredictorCardLevelMetadata>();

@@ -15,7 +15,9 @@ internal sealed partial class EncyclopediaCanvas
         @"\*\*(?<bold>.+?)\*\*|\[\[(?<article>[a-z0-9-]+)(?:\|(?<label>[^\]]+))?\]\]|\[\[seed:(?<seed>[A-Z0-9]+)(?:\|(?<seedLabel>[^\]]+))?\]\]|\{\{(?<kind>relic|card|event|act|encounter)(?<icon>-icon)?:(?<content>[A-Z0-9_]+)\}\}|`(?<code>[^`]+)`",
         RegexOptions.Compiled);
 
-    private void RenderInline(RichTextLabel view, string text)
+    private readonly HashSet<ModelKey> _mentionedRelics = [];
+
+    private void RenderInline(RichTextLabel view, string text, bool firstRelicIcons = true)
     {
         int consumed = 0;
         foreach (Match match in InlineToken.Matches(text))
@@ -25,7 +27,7 @@ internal sealed partial class EncyclopediaCanvas
             if (match.Groups["bold"].Success)
             {
                 view.PushColor(new Color("E2E7EC"));
-                RenderInline(view, match.Groups["bold"].Value);
+                RenderInline(view, match.Groups["bold"].Value, firstRelicIcons);
                 view.Pop();
             }
             else if (match.Groups["article"].Success)
@@ -56,7 +58,8 @@ internal sealed partial class EncyclopediaCanvas
                 };
                 var key = new ModelKey(category, match.Groups["content"].Value);
                 string name = _contentNames.Resolve(key, kind);
-                if (match.Groups["icon"].Success)
+                bool firstRelic = firstRelicIcons && kind == GameContentKind.Relic && _mentionedRelics.Add(key);
+                if (match.Groups["icon"].Success || firstRelic)
                 {
                     IconDescriptor icon = _entryIcons.Resolve(key, kind, IconVariant.Small);
                     if (!icon.IsMissing && icon.Texture is not null)

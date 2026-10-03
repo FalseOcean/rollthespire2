@@ -180,7 +180,7 @@ internal sealed partial class AnalysisPageController
                 _runtime.Detection.DisplayVersion,
                 false,
                 "SingleSeedAnalysis");
-            _page.ShowDocument(request!, document);
+            _page.ShowDocument(request!, document, _lastPredictionUnlocks);
             _setGlobalStatus(
                 document.OverallStatus is SeedPredictionOverallStatus.Completed or SeedPredictionOverallStatus.CompletedWithWarnings
                     ? GlobalStatusKind.Idle

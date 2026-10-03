@@ -17,6 +17,9 @@ using RolltheSpire2.Ui.Shell;
 namespace RolltheSpire2.Ui.Persistence;
 
 internal enum SeedLibrarySource { Developer, User }
+internal enum SeedQueryAssociationKind { UserAssigned, VerifiedFromSearch, LegacyUnspecified }
+internal sealed record SeedQueryAssociation(string QueryKey, SeedQueryAssociationKind Kind,
+    string EnvironmentFingerprint = "", string SearchRecordId = "");
 
 internal sealed record SeedLibraryOpeningSelection(int? ChoiceSlot, string Route, bool Explicit);
 
@@ -32,6 +35,19 @@ internal sealed record SeedLibraryContext(string GameVersion, RuntimeProfileId P
 internal sealed record SeedLibraryEntry(string Id, SeedLibrarySource Source, string Seed, string Note,
     SeedLibraryContext? Context, DateTimeOffset SavedAtUtc)
 {
+    public string Title { get; init; } = "";
+    public DeveloperSeedDetails? DeveloperDetails { get; init; }
+    public string DisplayTitle => string.IsNullOrWhiteSpace(Title) ? Seed : Title;
+    public string TitleFor(string language) => DeveloperDetails?.Title.Resolve(language) is { Length: > 0 } title ? title : DisplayTitle;
+    public string NoteFor(string language) => DeveloperDetails?.Description.Resolve(language) is { Length: > 0 } note ? note : Note;
+    public string FavoriteNote(string language)
+    {
+        string instructions = DeveloperDetails?.Instructions.Resolve(language) ?? "";
+        return instructions.Length == 0 ? NoteFor(language) : string.Join("\n\n", new[] { NoteFor(language),
+            (language == "zh" ? "游玩说明\n" : "How to play\n") + instructions }.Where(s => !string.IsNullOrWhiteSpace(s)));
+    }
+    public IReadOnlyList<string> QueryKeys { get; init; } = [];
+    public IReadOnlyList<SeedQueryAssociation> QueryAssociations { get; init; } = [];
     public string RawContextJson { get; init; } = string.Empty;
     public string Issue { get; init; } = string.Empty;
     public bool CanOpen => Context is not null && string.IsNullOrEmpty(Issue);
@@ -49,7 +65,10 @@ internal sealed class SeedLibraryStore
     private static readonly JsonSerializerOptions Json = CreateJsonOptions();
 
     public SeedLibraryStore(string stateDirectory)
-        : this(stateDirectory, new DeveloperSeedLibraryProvider().GetEntries()) { }
+        : this(stateDirectory, new DeveloperSeedLibraryProvider()) { }
+
+    private SeedLibraryStore(string stateDirectory, DeveloperSeedLibraryProvider developer)
+        : this(stateDirectory, developer.GetEntries()) => _issues.AddRange(developer.LoadIssues);
 
     internal SeedLibraryStore(string stateDirectory, IReadOnlyList<SeedLibraryEntry> developer)
     {
@@ -69,7 +88,7 @@ internal sealed class SeedLibraryStore
         return entry is not null;
     }
 
-    public SeedLibraryEntry Save(string seed, SeedLibraryContext context, string note)
+    public SeedLibraryEntry Save(string seed, SeedLibraryContext context, string note, string? queryKey = null, SeedQueryAssociation? association = null, string? title = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         SeedLibraryContext savedContext = CloneContext(context);
@@ -78,18 +97,43 @@ internal sealed class SeedLibraryStore
         int index = _user.FindIndex(e => e.Context is not null && Identity(e.Seed, e.Context) == key);
         string id = index >= 0 ? _user[index].Id : "user:" + Guid.NewGuid().ToString("N");
         var saved = new SeedLibraryEntry(id, SeedLibrarySource.User, canonical, (note ?? string.Empty).Trim(),
-            savedContext, DateTimeOffset.UtcNow) { RawContextJson = JsonSerializer.Serialize(savedContext, Json) };
+            savedContext, DateTimeOffset.UtcNow) { RawContextJson = JsonSerializer.Serialize(savedContext, Json),
+                Title = title?.Trim() ?? (index >= 0 ? _user[index].Title : ""),
+                QueryKeys = (index >= 0 ? _user[index].QueryKeys : []).Concat(string.IsNullOrEmpty(queryKey) ? [] : new[] { queryKey }).Distinct().ToArray(),
+                QueryAssociations = (index >= 0 ? _user[index].QueryAssociations : [])
+                    .Concat(association is not null ? new[] { association } : !string.IsNullOrEmpty(queryKey)
+                        ? new[] { new SeedQueryAssociation(queryKey, SeedQueryAssociationKind.UserAssigned) } : [])
+                    .Distinct().ToArray() };
         Write(saved);
         if (index >= 0) _user[index] = saved;
         else _user.Add(saved);
         return saved;
     }
 
-    public SeedLibraryEntry UpdateNote(string id, string note)
+    public void SetQueryLinks(string id, IEnumerable<string> keys)
     {
         int index = _user.FindIndex(e => e.Id == id);
         if (index < 0) throw new KeyNotFoundException("SeedLibraryUserEntryMissing");
-        var updated = _user[index] with { Note = (note ?? string.Empty).Trim() };
+        var linked = keys.Where(k => !string.IsNullOrWhiteSpace(k)).Distinct().ToArray();
+        var updated = _user[index] with { QueryKeys = linked,
+            QueryAssociations = _user[index].QueryAssociations
+                .Where(a => a.Kind != SeedQueryAssociationKind.UserAssigned || linked.Contains(a.QueryKey))
+                .Concat(linked.Where(k => !_user[index].QueryAssociations.Any(a => a.QueryKey == k))
+                    .Select(k => new SeedQueryAssociation(k, SeedQueryAssociationKind.UserAssigned))).ToArray() };
+        Write(updated); _user[index] = updated;
+    }
+
+    public SeedLibraryEntry UpdateNote(string id, string note)
+    {
+        var entry = _user.FirstOrDefault(e => e.Id == id) ?? throw new KeyNotFoundException("SeedLibraryUserEntryMissing");
+        return UpdateInformation(id, entry.Title, note);
+    }
+
+    public SeedLibraryEntry UpdateInformation(string id, string title, string note)
+    {
+        int index = _user.FindIndex(e => e.Id == id);
+        if (index < 0) throw new KeyNotFoundException("SeedLibraryUserEntryMissing");
+        var updated = _user[index] with { Title = (title ?? "").Trim(), Note = (note ?? string.Empty).Trim() };
         Write(updated);
         _user[index] = updated;
         return updated;
@@ -160,7 +204,7 @@ internal sealed class SeedLibraryStore
         string raw = !string.IsNullOrWhiteSpace(entry.RawContextJson) ? entry.RawContextJson : JsonSerializer.Serialize(entry.Context, Json);
         using JsonDocument context = JsonDocument.Parse(raw);
         var document = new PersistedEntry(SchemaVersion, entry.Id, entry.Seed, entry.Note,
-            context.RootElement.Clone(), entry.SavedAtUtc);
+            context.RootElement.Clone(), entry.SavedAtUtc) { Title = entry.Title, QueryKeys = entry.QueryKeys, QueryAssociations = entry.QueryAssociations };
         string path = PathFor(entry.Id);
         SearchPersistenceFile.WriteAtomic(path, JsonSerializer.SerializeToUtf8Bytes(document, Json));
         _paths[entry.Id] = path;
@@ -177,6 +221,7 @@ internal sealed class SeedLibraryStore
         if (!id.StartsWith(prefix, StringComparison.Ordinal) || id.Length <= prefix.Length)
             throw new InvalidDataException("SeedLibraryIdInvalid");
         string seed = CanonicalSeed(document.Seed);
+        if (source == SeedLibrarySource.Developer) document.DeveloperDetails?.Validate();
         if (document.Context.ValueKind is not JsonValueKind.Object)
             throw new InvalidDataException("SeedLibraryContextMissing");
         string raw = document.Context.GetRawText();
@@ -193,8 +238,16 @@ internal sealed class SeedLibraryStore
             context = null;
             issue = "SeedLibraryContextUnsupported:" + SearchPresetStore.Compact(ex.Message);
         }
+        var keys = (document.QueryKeys ?? []).Where(k => !string.IsNullOrWhiteSpace(k)).Distinct().ToArray();
+        var associations = (document.QueryAssociations ?? []).Where(a => a is not null && !string.IsNullOrWhiteSpace(a.QueryKey))
+            .Select(a => !Enum.IsDefined(a.Kind) || a.Kind == SeedQueryAssociationKind.VerifiedFromSearch &&
+                (string.IsNullOrWhiteSpace(a.EnvironmentFingerprint) || string.IsNullOrWhiteSpace(a.SearchRecordId))
+                    ? a with { Kind = SeedQueryAssociationKind.LegacyUnspecified } : a).Distinct().ToList();
+        associations.AddRange(keys.Where(k => !associations.Any(a => a.QueryKey == k))
+            .Select(k => new SeedQueryAssociation(k, SeedQueryAssociationKind.LegacyUnspecified)));
         return new(id, source, seed, document.Note, context, document.SavedAtUtc)
-        { RawContextJson = raw, Issue = issue };
+        { Title = (document.Title ?? "").Trim(), RawContextJson = raw, Issue = issue, QueryKeys = keys, QueryAssociations = associations,
+            DeveloperDetails = source == SeedLibrarySource.Developer ? document.DeveloperDetails : null };
     }
 
     internal static SeedLibraryContext CloneContext(SeedLibraryContext context)
@@ -271,37 +324,58 @@ internal sealed class SeedLibraryStore
     };
 
     internal sealed record PersistedEntry(int SchemaVersion, string Id, string Seed, string Note,
-        JsonElement Context, DateTimeOffset SavedAtUtc);
+        JsonElement Context, DateTimeOffset SavedAtUtc)
+    {
+        public string Title { get; init; } = "";
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public DeveloperSeedDetails? DeveloperDetails { get; init; }
+        public IReadOnlyList<string> QueryKeys { get; init; } = [];
+        public IReadOnlyList<SeedQueryAssociation> QueryAssociations { get; init; } = [];
+    }
 }
 
 internal sealed class DeveloperSeedLibraryProvider
 {
     internal const string ResourcePrefix = "RolltheSpire2.DeveloperSeeds.";
     private readonly IReadOnlyList<SeedLibraryEntry> _entries;
+    public IReadOnlyList<string> LoadIssues { get; }
 
     public DeveloperSeedLibraryProvider() : this(typeof(DeveloperSeedLibraryProvider).Assembly) { }
-    internal DeveloperSeedLibraryProvider(Assembly assembly)
+    internal DeveloperSeedLibraryProvider(Assembly assembly) : this(assembly.GetManifestResourceNames().Where(n =>
+        n.StartsWith(ResourcePrefix, StringComparison.Ordinal) && n.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+        .OrderBy(n => n, StringComparer.Ordinal).Select(resource => (resource, (Func<string>)(() =>
+        {
+            using Stream stream = assembly.GetManifestResourceStream(resource)
+                ?? throw new InvalidDataException("SeedLibraryDeveloperResourceMissing");
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd();
+        })))) { }
+
+    internal DeveloperSeedLibraryProvider(IEnumerable<(string Resource, Func<string> Read)> resources)
     {
         var entries = new List<SeedLibraryEntry>();
-        foreach (string resource in assembly.GetManifestResourceNames().Where(n =>
-            n.StartsWith(ResourcePrefix, StringComparison.Ordinal) && n.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
-            .OrderBy(n => n, StringComparer.Ordinal))
+        var issues = new List<string>();
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (resource, read) in resources)
         {
             try
             {
-                using Stream stream = assembly.GetManifestResourceStream(resource)
-                    ?? throw new InvalidDataException("SeedLibraryDeveloperResourceMissing");
-                using var reader = new StreamReader(stream);
+                if (!resource.StartsWith(ResourcePrefix, StringComparison.Ordinal) || !resource.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("SeedLibraryDeveloperResourceNameInvalid");
                 string id = "developer:" + resource[ResourcePrefix.Length..^5];
-                entries.Add(SeedLibraryStore.Read(reader.ReadToEnd(), SeedLibrarySource.Developer, id));
+                var entry = SeedLibraryStore.Read(read(), SeedLibrarySource.Developer, id);
+                if (!ids.Add(id)) throw new InvalidDataException("SeedLibraryDeveloperDuplicateId");
+                entries.Add(entry);
             }
             catch (Exception ex)
             {
+                issues.Add(resource + ": " + SearchPresetStore.Compact(ex.Message));
                 RuntimeLog.Warn("developerSeedLibraryEntrySkipped=true;resource=" + resource +
                     ";issue=" + SearchPresetStore.Compact(ex.Message));
             }
         }
         _entries = entries;
+        LoadIssues = issues;
     }
     public IReadOnlyList<SeedLibraryEntry> GetEntries() => _entries;
 }

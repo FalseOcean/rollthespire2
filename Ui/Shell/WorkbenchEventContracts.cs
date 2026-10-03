@@ -11,11 +11,34 @@ namespace RolltheSpire2.Ui.Shell;
 
 internal sealed partial class EventEditorPrototype
 {
+    internal SearchQuery ExportSharedPartyQuery(SearchQuery query) => query with
+    {
+        EventSequenceConstraints = _partyQueue.Select(c => new EventSequenceSearchCondition(c.Act, null,
+            c.Exact ? SearchSequenceRangeMode.ExactSlot : SearchSequenceRangeMode.FirstN, c.Position,
+            c.Excluded ? new ModelKeySetFilter([], [], [c.Event]) : new ModelKeySetFilter([c.Event], [], []))).ToArray()
+    };
+
+    internal void ImportSharedPartyQuery(SearchQuery query)
+    {
+        _partyQueue.Clear();
+        // Migrate both old per-player drafts and new table-level drafts without dropping a predicate.
+        foreach (var c in new[] { query }.Concat(query.Players.Select(p => p.Conditions)).SelectMany(q => q.EventSequenceConstraints))
+        {
+            foreach (var key in c.Keys.Any.Concat(c.Keys.All)) Add(key, false);
+            foreach (var key in c.Keys.Ban) Add(key, true);
+            void Add(ModelKey key, bool excluded)
+            {
+                var row = new QueueCondition(c.Act, c.RangeValue, c.RangeMode == SearchSequenceRangeMode.ExactSlot, excluded, key);
+                if (!_partyQueue.Contains(row)) _partyQueue.Add(row);
+            }
+        }
+    }
+
     internal SearchQuery ExportPartyQuery(int slot, SearchQuery q)
     {
         if (!_partyDrafts.TryGetValue(slot, out var draft)) return q;
         var active = _draft;
-        try { _draft = draft; return ExportQuery(q); }
+        try { _draft = draft; return ExportQuery(q) with { EventSequenceConstraints = [] }; }
         finally { _draft = active; }
     }
 
@@ -88,21 +111,21 @@ internal sealed partial class EventEditorPrototype
         if (_draft.TinkerType >= 0) results.Add(new(EventResultConditionKind.TinkerTimeTypeAndRider, new("CARD", "MAD_SCIENCE")) {
             TinkerCardType = (TinkerCardTypeTarget)_draft.TinkerType,
             TinkerRider = _draft.TinkerEffect is { } effect ? Enum.Parse<TinkerRiderTarget>(effect, true) : null });
-        return q with { EventResultConditions = results.ToArray(), EventSequenceConstraints = _draft.QueueConditions.Select(c =>
+        return q with { EventResultConditions = results.ToArray(), EventSequenceConstraints = QueueConditions.Select(c =>
             new EventSequenceSearchCondition(c.Act, null, c.Exact ? SearchSequenceRangeMode.ExactSlot : SearchSequenceRangeMode.FirstN,
                 c.Position, c.Excluded ? new ModelKeySetFilter([], [], [c.Event]) : new ModelKeySetFilter([c.Event], [], []))).ToArray() };
     }
 
-    internal void ImportQuery(SearchQuery q)
+    internal void ImportQuery(SearchQuery q, bool importQueue = true)
     {
-        _draft.QueueConditions.Clear(); _draft.Results.Clear(); _draft.PrototypeTargets.Clear();
+        if (importQueue) QueueConditions.Clear(); _draft.Results.Clear(); _draft.PrototypeTargets.Clear();
         _draft.ExpandedCondition = -1; _draft.SelectedEvent = null;
         _draft.TrialCase = _draft.TinkerType = _draft.CharacterColor = -1;
         _draft.TinkerEffect = null;
-        foreach (var c in q.EventSequenceConstraints)
+        foreach (var c in importQueue ? q.EventSequenceConstraints : [])
         {
-            foreach(var k in c.Keys.Any.Concat(c.Keys.All)) _draft.QueueConditions.Add(new(c.Act,c.RangeValue,c.RangeMode == SearchSequenceRangeMode.ExactSlot,false,k));
-            foreach(var k in c.Keys.Ban) _draft.QueueConditions.Add(new(c.Act,c.RangeValue,c.RangeMode == SearchSequenceRangeMode.ExactSlot,true,k));
+            foreach(var k in c.Keys.Any.Concat(c.Keys.All)) QueueConditions.Add(new(c.Act,c.RangeValue,c.RangeMode == SearchSequenceRangeMode.ExactSlot,false,k));
+            foreach(var k in c.Keys.Ban) QueueConditions.Add(new(c.Act,c.RangeValue,c.RangeMode == SearchSequenceRangeMode.ExactSlot,true,k));
         }
         foreach(var c in q.EventResultConditions)
         {

@@ -13,7 +13,8 @@ internal sealed partial class WorkspaceShell
     {
         if (_statusPage is null)
         {
-            _statusPage = new SaveStatusPage(_runtime) { Name = "RuntimeStatusPage" };
+            _statusPage = new SaveStatusPage(_runtime) { Name = "RuntimeStatusPage",
+                SearchBusy = () => _persistence?.HasSearchInFlight == true };
             _content.AddChild(_statusPage);
             _statusPage.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         }

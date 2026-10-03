@@ -1,55 +1,19 @@
-# Tezcatara: Three Separate Relic Positions
+# Tezcatara: Three Relic Positions
 
-> Applies to: **Slay the Spire 2 Beta 0.111.0**
+Tezcatara offers one relic from each of three pools. Only the first needs a deck premise. These rules describe base-game 0.111.0; see [[reading-guide]] for the shared environment.
 
-## What You Want
+## First Position: Is a Basic Strike Still Present?
 
-Tezcatara offers three Ancient relics. Each position selects one from its own candidate pool, making position-specific targets straightforward. Only the first position needs extra attention.
+{{relic:VERY_HOT_COCOA}} and {{relic:YUMMY_COOKIE}} always participate. A **Basic Strike-type card in the current deck** adds {{relic:NUTRITIOUS_SOUP}}, giving each relic **1/3** probability.
 
-## First Position
+If all Basic Strikes have been removed or transformed, Soup is excluded and Cocoa and Cookie each have **1/2** probability. Eligibility changes the whole pool, not only Soup's appearance.
 
-It normally has three candidates:
+## Second and Third Positions
 
-- {{relic:VERY_HOT_COCOA}}
-- {{relic:YUMMY_COOKIE}}
-- {{relic:NUTRITIOUS_SOUP}}
+Position two selects from {{relic:BIIIG_HUG}}, {{relic:STORYBOOK}}, and {{relic:TOASTY_MITTENS}}, each at **1/3**.
 
-{{relic:NUTRITIOUS_SOUP}} requires **a Basic Strike-type card still in the current deck**.
+Position three selects from {{relic:GOLDEN_COMPASS}}, {{relic:PUMPKIN_CANDLE}}, {{relic:TOY_BOX}}, and {{relic:SEAL_OF_GOLD}}, each at **1/4**. Neither pool has additional eligibility conditions.
 
-When that condition holds, each candidate has about **1/3** probability. If those starting Strikes have all been removed or transformed, {{relic:NUTRITIOUS_SOUP}} is excluded, leaving:
+## Filter Premise
 
-- {{relic:VERY_HOT_COCOA}}
-- {{relic:YUMMY_COOKIE}}
-
-Each then has probability **1/2**. The condition changes both Soup's eligibility and the other two probabilities.
-
-## Second Position
-
-A fixed, equally likely choice among:
-
-- {{relic:BIIIG_HUG}}
-- {{relic:STORYBOOK}}
-- {{relic:TOASTY_MITTENS}}
-
-There are no additional eligibility requirements.
-
-## Third Position
-
-A fixed, equally likely choice among:
-
-- {{relic:GOLDEN_COMPASS}}
-- {{relic:PUMPKIN_CANDLE}}
-- {{relic:TOY_BOX}}
-- {{relic:SEAL_OF_GOLD}}
-
-There are no additional requirements here either.
-
-## Why Is It Easy to Predict?
-
-Tezcatara has neither complicated weights nor an internal random result like {{relic:SEA_GLASS}}.
-
-Once {{relic:NUTRITIOUS_SOUP}}'s eligibility is specified, the game simply selects once from each of the three pools.
-
-> **Deck state changes the first pool, but not the rules of the other two positions.**
-
-RT2 builds the correct first pool using the player's stated current state, then replays the three results.
+RT2 builds the first pool from whether a Basic Strike remains upon reaching Tezcatara, then replays all three selections. There is no character-target branch like {{relic:SEA_GLASS}}, but each position offers only one relic, so multiple candidates from the same position cannot be co-offered. See [[ancient]] for eligibility and targets and [[why-predictable]] for the shared random principle.

@@ -9,6 +9,9 @@ internal sealed partial class QueryWorkbenchFrame
     private HBoxContainer? _clearConditionsNotice;
     private Action? _restoreClearedConditions;
     private string _clearConditionsContext = "";
+    private string? _clearUndoStamp;
+    private Button? _clearCategory;
+    private string ConditionUndoStamp() { try { return System.Text.Json.JsonSerializer.Serialize(CaptureDraft()); } catch { return "incomplete"; } }
 
     private string ClearConditionsContext() => _multiplayer
         ? $"party:{_playerCount}:{_partyAscension}:{string.Join(",", _seatCharacters.Take(_playerCount))}:{_editorPartyKey}"
@@ -80,8 +83,15 @@ internal sealed partial class QueryWorkbenchFrame
     private void UpdateConditionActions()
     {
         bool hasConditions = HasAuthoredConditions();
+        if (_clearCategory is not null)
+        {
+            _clearCategory.Visible = !_showResults;
+            _clearCategory.Disabled = !CanChangeConditions;
+            _clearCategory.TooltipText = _text.Get(_multiplayer && _selectedDomain is "ancient" or "events" or "boss" or "map"
+                ? "workflow.conditions.clear_category.shared" : "workflow.conditions.clear_category.personal");
+        }
         if (_restoreClearedConditions is not null &&
-            (hasConditions || _clearConditionsContext != ClearConditionsContext() || _session is not null))
+            (_clearConditionsContext != ClearConditionsContext() || _session is not null || _clearUndoStamp is not null && _clearUndoStamp != ConditionUndoStamp()))
             _restoreClearedConditions = null;
         if (_clearConditions is not null)
         {
@@ -105,6 +115,7 @@ internal sealed partial class QueryWorkbenchFrame
         if (!_multiplayer) restores.Add(_transformationEditor.ClearConditions());
         _restoreClearedConditions = () => { foreach (var restore in restores) restore(); };
         _clearConditionsContext = ClearConditionsContext();
+        _clearUndoStamp = null;
         RefreshAfterConditionChange();
     }
 
@@ -118,6 +129,31 @@ internal sealed partial class QueryWorkbenchFrame
         Receipt("workflow.conditions.restored");
     }
 
+    internal void ClearCategoryConditions()
+    {
+        if (!CanChangeConditions) return;
+        var restoreTransformation = !_multiplayer && _selectedDomain is "neow" or "events"
+            ? _transformationEditor.PreserveConditionsForUndo() : null;
+        int slot = _multiplayer ? _seat : 0;
+        _restoreClearedConditions = _selectedDomain switch
+        {
+            "neow" => _neowEditor.ClearConditions(_multiplayer, slot),
+            "combat" => _combatEditor.ClearConditions(_multiplayer, slot),
+            "shop" => _shopEditor.ClearConditions(_multiplayer, slot),
+            "relics" => _relicEditor.ClearConditions(_multiplayer, slot),
+            "ancient" => _ancientEditor.ClearConditions(_multiplayer),
+            "events" => _eventEditor.ClearConditions(_multiplayer),
+            "map" => _actInformationEditor.ClearPageConditions(_multiplayer, true),
+            "boss" => _actInformationEditor.ClearPageConditions(_multiplayer, false),
+            "transform" => _transformationEditor.ClearConditions(),
+            _ => null
+        };
+        if (restoreTransformation is not null && _restoreClearedConditions is { } restorePage)
+            _restoreClearedConditions = () => { restorePage(); restoreTransformation(); };
+        _clearConditionsContext = ClearConditionsContext(); _clearUndoStamp = null;
+        RefreshAfterConditionChange();
+    }
+
     private void RefreshAfterConditionChange()
     {
         _probabilityPreview.Invalidate(); _probabilityPending = false; _analysisKey = "";
@@ -126,6 +162,7 @@ internal sealed partial class QueryWorkbenchFrame
         Refresh(_language, _text);
         SaveDraft();
         _persistence.FlushAll();
+        if (_restoreClearedConditions is not null) _clearUndoStamp = ConditionUndoStamp();
         UpdateConditionActions();
     }
 }

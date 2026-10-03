@@ -57,6 +57,7 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
     private RuntimeProfileId _profileId;
     private int _playersCount = 1;
     private Beta111EventResultProjection? _eventResults;
+    private Func<ModelKey, string>? _getConditionalEventResultText;
     private readonly Button _mapButton;
     public event Action<int>? MapRequested;
     public Control MapButtonAnchor => _mapButton;
@@ -169,12 +170,14 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
 
     public void SetMapAvailable(bool available) => _mapButton.Disabled = !available;
     internal void BindEventTooltipContext(RuntimeProfileId profileId, int playersCount,
-        Beta111EventResultProjection? eventResults, IUiTextProvider uiText)
+        Beta111EventResultProjection? eventResults, IUiTextProvider uiText,
+        Func<ModelKey, string> getConditionalEventResultText)
     {
         _profileId = profileId;
         _playersCount = Math.Max(1, playersCount);
         _eventResults = eventResults;
         _uiText = uiText;
+        _getConditionalEventResultText = getConditionalEventResultText;
     }
 
     internal void ShowEventTooltipFor(Control anchor, EventPoolSequenceEntryViewModel entry) =>
@@ -194,6 +197,7 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
         _profileId = profileId;
         _playersCount = Math.Max(1, playersCount);
         _eventResults = eventResults;
+        _getConditionalEventResultText = null;
         BindBosses(bossDomain, unavailableFormat, missingIconText);
         BindEvents(eventDomain, unavailableFormat);
     }
@@ -375,61 +379,54 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
     private void ShowEventTooltip(Control artworkHost, EventPoolSequenceEntryViewModel entry)
     {
         string title = entry.EventDisplay.DisplayName;
+        string results = BuildEventResultText(entry.EventDisplay.ModelKey);
+        if (!string.IsNullOrWhiteSpace(results))
+        {
+            _tooltipHost.ShowStructuredText(artworkHost, title,
+                _uiText?.Get(Ui1TextKey.SearchEventResultTitle) ?? string.Empty, results);
+            return;
+        }
+
         string conditionKey = Beta111EventPresentationKnowledge.RuntimeConditionLocalizationKey(
             _profileId,
             entry.EventDisplay.ModelKey,
             _playersCount);
-        Control? effects = BuildEventResultContent(entry.EventDisplay.ModelKey);
         if (_uiText is null || string.IsNullOrWhiteSpace(conditionKey))
         {
-            if (effects is null) _tooltipHost.ShowText(artworkHost, title);
-            else _tooltipHost.ShowStructuredContent(artworkHost, title, _uiText?.Get(Ui1TextKey.SearchEventResultTitle) ?? string.Empty, string.Empty, effects);
+            _tooltipHost.ShowText(artworkHost, title);
             return;
         }
 
         string condition = _uiText.Get(conditionKey);
         if (string.IsNullOrWhiteSpace(condition))
-        {
-            if (effects is null) _tooltipHost.ShowText(artworkHost, title);
-            else _tooltipHost.ShowStructuredContent(artworkHost, title, _uiText.Get(Ui1TextKey.SearchEventResultTitle), string.Empty, effects);
-            return;
-        }
-
-        // Full all-Event option-title authority is deliberately absent from the current
-        // Beta111 evidence. Omit that section rather than fabricating or labeling TODO data.
-        if (effects is null)
-            _tooltipHost.ShowStructuredText(artworkHost, title, _uiText.Get(Ui1TextKey.SearchEventTooltipConditionsTitle), condition);
+            _tooltipHost.ShowText(artworkHost, title);
         else
-            _tooltipHost.ShowStructuredContent(artworkHost, title, _uiText.Get(Ui1TextKey.SearchEventTooltipConditionsTitle), condition, effects);
+            _tooltipHost.ShowStructuredText(artworkHost, title, _uiText.Get(Ui1TextKey.SearchEventTooltipConditionsTitle), condition);
     }
 
-    private Control? BuildEventResultContent(ModelKey eventKey)
+    private string BuildEventResultText(ModelKey eventKey)
     {
-        if (_eventResults is null || _uiText is null) return null;
-        var content = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-        content.AddChild(Ui1Theme.Label(_uiText.Get(Ui1TextKey.SearchEventResultTitle), Ui1TextRole.Meta));
-        bool added = false;
+        string conditional = _getConditionalEventResultText?.Invoke(eventKey) ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(conditional)) return conditional;
+        if (_eventResults is null || _uiText is null) return string.Empty;
         if (eventKey.Entry == Beta111EventResultCatalog.TrashHeapEventEntry && _eventResults.TrashHeapPrecision == PredictionPrecision.Exact)
         {
-            AddResult(content, _eventResults.TrashHeapGrabCard, GameContentKind.Card); AddResult(content, _eventResults.TrashHeapDiveRelic, GameContentKind.Relic); added = true;
+            return _uiText.Format("predictor.event.tooltip.grab", _contentName(_eventResults.TrashHeapGrabCard, GameContentKind.Card)) + "\n" +
+                _uiText.Format("predictor.event.tooltip.dive", _contentName(_eventResults.TrashHeapDiveRelic, GameContentKind.Relic));
         }
-        else if (eventKey.Entry == Beta111EventResultCatalog.FakeMerchantEventEntry && _eventResults.FakeMerchantPrecision == PredictionPrecision.Exact)
+        if (eventKey.Entry == Beta111EventResultCatalog.FakeMerchantEventEntry &&
+            _eventResults.FakeMerchantPrecision == PredictionPrecision.Exact && _eventResults.FakeMerchantInventory.Count > 0)
         {
-            foreach (ModelKey key in _eventResults.FakeMerchantInventory) AddResult(content, key, GameContentKind.Relic); added = _eventResults.FakeMerchantInventory.Count > 0;
+            return _uiText.Format("predictor.event.tooltip.inventory",
+                string.Join(" · ", _eventResults.FakeMerchantInventory.Select(key => _contentName(key, GameContentKind.Relic))));
         }
-        else if (eventKey.Entry == Beta111EventResultCatalog.ColorfulPhilosophersEventEntry && _eventResults.ColorfulPrecision == PredictionPrecision.Exact)
+        if (eventKey.Entry == Beta111EventResultCatalog.ColorfulPhilosophersEventEntry &&
+            _eventResults.ColorfulPrecision == PredictionPrecision.Exact && _eventResults.ColorfulOfferedColors.Count > 0)
         {
-            foreach (ModelKey key in _eventResults.ColorfulOfferedColors) AddResult(content, key, GameContentKind.Character, IconVariant.CharacterPortrait); added = _eventResults.ColorfulOfferedColors.Count > 0;
+            return _uiText.Format("predictor.event.tooltip.colors",
+                string.Join(" / ", _eventResults.ColorfulOfferedColors.Select(key => _contentName(key, GameContentKind.Character))));
         }
-        if (!added) { content.QueueFree(); return null; }
-        return content;
-    }
-
-    private void AddResult(VBoxContainer parent, ModelKey key, GameContentKind kind, IconVariant variant = IconVariant.Small)
-    {
-        var item = new IconWithLabel(28, Ui1TextRole.Meta);
-        item.Bind(_icons.Resolve(key, kind, variant), _contentName(key, kind), string.Empty, _uiText?.Get(Ui1TextKey.MissingIconTooltip) ?? string.Empty);
-        parent.AddChild(item);
+        return string.Empty;
     }
 
     private string _contentName(ModelKey key, GameContentKind kind) => _getNames()?.Resolve(key, kind) ?? key.Entry;

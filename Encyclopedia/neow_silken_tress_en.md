@@ -1,43 +1,13 @@
-# {{relic:SILKEN_TRESS}}: The Next Card Reward
+# {{relic:SILKEN_TRESS}}: Which Reward Receives Glam?
 
-## What You Want
+Obtaining {{relic-icon:SILKEN_TRESS}} loses all current gold and applies Glam to enchantable cards in **the next card reward group generated afterward**. This is usually the first normal combat reward, but the effect is not tied to that combat.
 
-{{relic-icon:SILKEN_TRESS}} is one of Neow's curse options. After obtaining it, you will usually see **Glam** on the first card reward group from the first normal combat.
+## Bones Can Consume It During the Opening
 
-The natural goal is:
+{{relic:KALEIDOSCOPE}} and {{relic:LOST_COFFER}} generate opening card rewards. If {{relic:NEOWS_BONES}} gives Silken Tress first, Glam can apply directly to those rewards. Kaleidoscope has two groups; the next-group effect covers only the first generated group.
 
-> I want a specified Glam card in the first combat reward.
+**{{relic:SILKEN_TRESS}} → {{relic:KALEIDOSCOPE}}** and **{{relic:KALEIDOSCOPE}} → {{relic:SILKEN_TRESS}}** are different histories. Generation consumes the effect: skipping an already generated reward does not preserve Glam for a later combat.
 
-But the first combat is not what {{relic:SILKEN_TRESS}} is actually tied to.
+## RT2's Replay
 
-## Why It Can Be Predicted
-
-{{relic:SILKEN_TRESS}} applies to:
-
-> **The next card reward group generated after obtaining it.**
-
-Usually, that is the first normal combat reward. Some Neow relics, however, generate card rewards immediately, such as **{{relic:KALEIDOSCOPE}}** and **{{relic:LOST_COFFER}}**.
-
-If {{relic:NEOWS_BONES}} or another source gives you {{relic:SILKEN_TRESS}} before one of those reward-generating relics, their opening card reward can consume its effect first.
-
-Thus:
-
-> {{relic:SILKEN_TRESS}} → {{relic:KALEIDOSCOPE}}
-
-and:
-
-> {{relic:KALEIDOSCOPE}} → {{relic:SILKEN_TRESS}}
-
-are different opening histories. What matters is **which card reward group occurs first**.
-
-## What RT2 Can Do Today
-
-RT2 replays these effects in actual opening pickup order. It does not simply assume that {{relic:SILKEN_TRESS}} always applies to the first normal combat.
-
-In the base game, **obtaining a specified Glam card directly during the opening is possible**.
-
-With an appropriate {{relic:NEOWS_BONES}} combination and pickup order, {{relic:SILKEN_TRESS}} can take effect before {{relic:KALEIDOSCOPE}} or {{relic:LOST_COFFER}}, applying Glam to their card reward.
-
-This is one reason {{relic:NEOWS_BONES}} pickup order matters:
-
-> **Order can change which later result receives an effect that has not yet been consumed, as well as which relic you obtain first.**
+RT2 replays the effect in opening pickup order. A specified Glam card can be sought in the first combat reward or through the appropriate Bones combination and opening-card conditions, provided an earlier reward has not already consumed the effect. Generation and pickup are separate steps; card targets must also obey each reward's pickup limits. See [[why-predictable]] for the shared random principle and [[neow-offer]] for Bones order.

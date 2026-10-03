@@ -22,7 +22,7 @@ internal static class SeedLibraryContextCapture
     internal static SeedLibraryContext ForSearch(WorkbenchSearchDraft draft, ModRuntimeSnapshot runtime)
     {
         var players = draft.Mode == WorldGameMode.Multiplayer
-            ? draft.Players.Select(p => new SeedLibraryPlayer(p.Slot, p.Character, LobbyUnlockReadout.Copy(p.Unlocks),
+            ? draft.Players.Select(p => new SeedLibraryPlayer(p.Slot, p.Character, LobbyUnlockReadout.Copy(p.RequireUnlocks()),
                 p.UnlockSource, draft.Query.Players[p.Slot].AncientPremises,
                 OpeningPremise(draft.Query.Players[p.Slot].Conditions), null)).ToArray()
             : [new SeedLibraryPlayer(0, draft.Character, SaveManager.Instance.GenerateUnlockStateFromProgress().ToSerializable(),

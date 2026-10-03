@@ -10,7 +10,7 @@ internal sealed partial class QueryWorkbenchFrame
     private string FamilyTitle(string id)=>_text.Get("workflow.family."+id.ToLowerInvariant());
     private static string DashboardRarity(double? probability)=>Rarity(probability);
     private readonly Label?[] _expectationValues = new Label?[3];
-    private Label? _expectationNote;
+    private Label? _expectationNote, _familyHeading;
     private string _expectationContext = "";
 
     private void BuildSearchSidebar()
@@ -39,6 +39,10 @@ internal sealed partial class QueryWorkbenchFrame
         _planSelector.ItemSelected += index => { _persistence.SetWorkbenchSearchMode(index == 1 ? "CPU" : "Auto"); _analysisKey = ""; };
         _start = _p.Button(_text.Get("query.action.start"), primary: true); _start.CustomMinimumSize = new(0, 46);
         _start.Pressed += () => { if (_session is not null) _session.Cancel(); else StartSearch(); }; sidebar.AddChild(_start);
+        _savedResultsEntry = _p.CompactButton("", 44, 18, selected: true);
+        _savedResultsEntry.Name = "ViewLastSearchResults";
+        _savedResultsEntry.Pressed += ShowLastResults;
+        sidebar.AddChild(_savedResultsEntry);
         if (_persistence.Preferences.SkipExactValidation)
         {
             var notice = _p.Label(_text.Get("workflow.candidate_mode"), 15, true);
@@ -50,6 +54,7 @@ internal sealed partial class QueryWorkbenchFrame
         sidebar.AddChild(scroll);
         var content = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         content.AddThemeConstantOverride("separation", 16); scroll.AddChild(content);
+        content.AddChild(new RolltheSpire2.Ui.Components.GpuInitializationPanel(_language, () => HasActiveSearch, compact: true));
         var statistics = new PanelContainer(); statistics.AddThemeStyleboxOverride("panel", _p.Box(_p.Surface)); content.AddChild(statistics);
         var values = new VBoxContainer(); values.AddThemeConstantOverride("separation", 10); statistics.AddChild(values);
         string[] keys = ["workflow.total_rarity", "workflow.expected_speed", "workflow.eta"];
@@ -67,12 +72,14 @@ internal sealed partial class QueryWorkbenchFrame
         }
         _expectationNote = _p.Label("", 14, true); _expectationNote.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         _expectationNote.SizeFlagsHorizontal = SizeFlags.ExpandFill; content.AddChild(_expectationNote);
-        content.AddChild(_p.Label(_text.Get("workflow.conditions"), 17));
+        _familyHeading = _p.Label(_text.Get("workflow.conditions"), 17);
+        content.AddChild(_familyHeading);
         _familyRows=new VBoxContainer {SizeFlagsHorizontal=SizeFlags.ExpandFill};
         _familyRows.AddThemeConstantOverride("separation",10);content.AddChild(_familyRows);
         _summary=_p.Label("",15,true);_summary.Hide();AddChild(_summary);
         PresentExpectations(null, null, null);
         RenderFamilyDashboard();
+        UpdateResultNavigation();
     }
 
     private void PresentExpectations(double? time, double? probability, double? rate)

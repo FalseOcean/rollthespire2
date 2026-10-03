@@ -250,10 +250,15 @@ internal sealed partial class AnalysisPage : MarginContainer, IAppPage, IRespons
 
     public void ShowDocument(
         SeedPredictionRequest request,
-        SeedPredictionDocument document)
+        SeedPredictionDocument document,
+        MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState? eventUnlocks = null)
     {
         if (!ReferenceEquals(LastRequest, request) || !ReferenceEquals(LastDocument, document))
             ClearWorkbenchProjections();
+        // Copy the same player's unlock context used for this prediction. Never
+        // substitute the local profile when inspecting another seat/favorite.
+        _eventTransformUnlocks = eventUnlocks is null ? null :
+            MegaCrit.Sts2.Core.Unlocks.UnlockState.FromSerializable(LobbyUnlockReadout.Copy(eventUnlocks));
         bool isNewAnalysisContext = LastRequest is null || LastRequest.RequestId != request.RequestId;
         if (isNewAnalysisContext) ResetMaps();
         if (isNewAnalysisContext && !_openingPreselectionProvided)

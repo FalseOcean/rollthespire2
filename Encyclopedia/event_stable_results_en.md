@@ -1,103 +1,29 @@
-# Stable Event Results: Colorful Philosophers, Fake Merchant, and Junk Heap
+# Stable Event Outcomes: Colorful Philosophers, Fake Merchant and Trash Heap
 
-> Applies to: **Slay the Spire 2 Beta 0.111.0**
+These predictions do not continue the random progress of earlier normal rewards or shops. They still require the same event, player slot and relevant candidates. “Stable” describes the outcome's premises; it does not guarantee the event appears.
 
-These three result types share a feature: **once the event occurs, almost all inputs needed for the result are already known**.
+## Colorful Philosophers: initial color offers
 
-They use the event's own randomness without reconstructing earlier combat rewards, shop visits, or relic pickups, making them well suited to direct filtering.
+The game excludes your character from the unlocked character pools and offers at most three others. With all five vanilla characters unlocked, it randomly removes one of the four remaining characters. Any specified other character therefore appears with probability **3/4 (75%)**. If there are three or fewer eligible others, all are offered.
 
-In multiplayer, Colorful Philosophers and Junk Heap use the relevant player's slot-specific event randomness, while Fake Merchant's inventory identities use shared event randomness. This describes generation assuming the event occurs; it does not establish that the event is eligible in every mode.
+RT2 checks whether the target character is among these colors. Inputs are the seed, player slot, your character and unlocked pools. Earlier normal rewards, shops, deck and relic history do not advance this event draw. The actual cards generated after choosing a color belong to a later reward process and are not guaranteed by the color condition.
 
-# Colorful Philosophers
+## Fake Merchant: inventory identities
 
-## What You Want
+Fake Merchant shuffles a fixed set of **9 fake relics** and sells the first **6**. Any specified fake relic has a **6/9 (2/3)** chance to appear. RT2 checks inclusion anywhere in the inventory.
 
-Check **whether a specified character is among the three offered colors**.
+Inventory uses event randomness rather than normal relic bags; earlier normal shops do not alter the six identities. Prices, however, use the player's `Shops` random stream and can affect its later progress. An inventory condition does not guarantee prices.
 
-The target is the initial character choice, not the cards generated after choosing a color.
+Vanilla Fake Merchant is single-player-only. Its inventory initializes randomness using the shared-event rule, but that does not make the event eligible in multiplayer.
 
-## Why Is It Stable?
+## Trash Heap: a card or a relic
 
-The game excludes the player's own character and locked character pools, then offers up to three of those remaining.
+The card branch chooses one of **10 fixed cards**, giving each a **10%** chance. The relic branch chooses one of **5 fixed relics**, giving each a **20%** chance.
 
-With all five base-game characters unlocked:
+The card branch does not use normal card-reward rarity rolls or select anew from your character pool. The relic branch does not consume the Common, Uncommon or Rare relic bags.
 
-> Exclude your character
-> → Four remain
-> → Randomly remove one
-> → Offer the remaining three
+A draw occurs only when you choose a branch. RT2 predicts both alternatives separately from the same initial Trash Heap random state. You can compare what taking a card or a relic would yield without first executing the other branch.
 
-A specified other character appears with probability **3/4 = 75%**. With three or fewer legal other characters, all are offered without random elimination.
+## Whose outcome in multiplayer?
 
-This depends on **seed, player slot, character, and unlock state**. Earlier Rewards, Shops, deck, and relic history do not change this offer.
-
-## What Does RT2 Check?
-
-RT2 checks whether the specified character is in the color offer.
-
-The three card groups generated after choosing a color belong to a separate reward-generation process and are not the result filtered here.
-
-# Fake Merchant
-
-## What You Want
-
-Require **a specified fake relic among the six inventory items**, without fixing its merchandise position.
-
-## Why Is It Stable?
-
-Fake Merchant has **nine fixed fake relics**. The game shuffles all nine and takes the **first six**.
-
-Any specified one has probability **6/9 = 2/3** of appearing.
-
-Inventory identities come entirely from the event's own randomness. They do not draw from normal relic bags, and prior normal shops do not change which six are sold.
-
-## Prices Are a Separate Matter
-
-The prices use the player's Shops RNG. **What is sold** is independently stable; **its prices and their impact on later normal shops** belong to shop history.
-
-RT2 currently filters the former.
-
-# Junk Heap
-
-## What You Want
-
-Two choices have random results:
-
-> **Take a card: receive a random card.**
-> **Take a relic: receive a random relic.**
-
-You can specify the desired result for either branch.
-
-## Taking a Card
-
-The card branch chooses from **ten fixed cards**, each with probability **1/10 = 10%**.
-
-It does not perform normal reward rarity generation or generate a new card from the player's current character pool.
-
-## Taking a Relic
-
-The relic branch chooses from **five fixed relics**, each with probability **1/5 = 20%**.
-
-It does not use the Common, Uncommon, or Rare relic bags.
-
-# Why Can the Branches Be Predicted Separately?
-
-The two hidden outcomes are not both generated on entering Junk Heap. Only the chosen branch executes its random call.
-
-Both hypothetical branches start from the same initial event random state. For the same seed and player slot, RT2 can separately determine the card if you choose the card branch and the relic if you choose the relic branch.
-
-The actual choice belongs to the player. RT2 does not require the other branch to run first.
-
-# What Does “Stable” Mean Here?
-
-Once event identity is known, few inputs remain:
-
-| Event | Main inputs | Current filter result |
-| --- | --- | --- |
-| Colorful Philosophers | Seed, slot, character, unlocked pools | Specified character in the offer |
-| Fake Merchant | Seed | Specified fake relic in the six-item inventory |
-| Junk Heap | Seed, slot, chosen branch | Specified card or relic |
-
-None needs a long reconstruction of the journey to the event.
-
-“Stable” does not mean guaranteed to occur. It means **that if the event occurs, the target result is not easily changed by earlier gameplay**.
+Colorful Philosophers and Trash Heap include the player slot in their event random starting point, so players can get different outcomes from one seed. Shared events follow a different starting-point rule; see [[multiplayer-shared|Shared party conditions]]. See [[event-results|Event outcomes]] for other available filters.

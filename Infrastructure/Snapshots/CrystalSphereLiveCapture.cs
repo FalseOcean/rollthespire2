@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using Godot;
 using HarmonyLib;
+using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Entities.Relics;
 using MegaCrit.Sts2.Core.Events.Custom.CrystalSphereEvent;
@@ -45,7 +46,7 @@ internal static class CrystalSphereLiveCapture
     private static int Counter(object owner, string property) => (int)(owner.GetType().GetProperty(property, Fields)?.GetValue(owner)
         ?? throw new InvalidOperationException("CrystalCaptureCounter:" + property));
     private static ModelKey Key(AbstractModel model) => new(model.Id.Category, model.Id.Entry);
-    private static PredictorStreamState RngState(PredictorStream stream, Rng rng)
+    internal static PredictorStreamState RngState(PredictorStream stream, Rng rng)
     {
         var r = rng.ToSerializable(); return new(stream, r.state0, r.state1, r.state2, r.state3, r.counter);
     }
@@ -58,19 +59,23 @@ internal static class CrystalSphereLiveCapture
     private static (Player Player, EventModel Event, CrystalSphereMinigame? Game) Scene(IRunState run, Node root)
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
-        if (run.Players.Count != 1) throw new InvalidOperationException("CrystalSoloOnly");
+        var player = CurrentPlayer(run);
         if (run.CurrentRoom is not EventRoom room || room.CanonicalEvent.Id.Entry != "CRYSTAL_SPHERE")
             throw new InvalidOperationException("CrystalNotCurrentScene");
         var ev = room.LocalMutableEvent;
         var game = FindGame(root);
+        if (!ReferenceEquals(ev.Owner, player) || game != null && !ReferenceEquals(Read<Player>(game, "_owner"), player))
+            throw new InvalidOperationException("CrystalPlayerMismatch");
         if (game != null && (game.IsFinished || IsClickPending(game)))
             throw new InvalidOperationException("CrystalSceneBusy");
         if (game == null && (typeof(EventModel).GetField("_currentOptions", Fields)?.GetValue(ev)
             is not List<MegaCrit.Sts2.Core.Events.EventOption> options || options.Count == 0 || options.Any(o => o.WasChosen)))
             throw new InvalidOperationException("CrystalSceneBusy");
         if (ev.IsFinished) throw new InvalidOperationException("CrystalSceneFinished");
-        return (run.Players[0], ev, game);
+        return (player, ev, game);
     }
+    internal static Player CurrentPlayer(IRunState run) => LocalContext.GetMe(run)
+        ?? throw new InvalidOperationException("CrystalLocalPlayerMissing");
     internal static string Fingerprint(IRunState run, Node root)
     {
         var (player, ev, game) = Scene(run, root);
@@ -82,8 +87,9 @@ internal static class CrystalSphereLiveCapture
         var parts = new StringBuilder();
         parts.Append(run.Rng.StringSeed).Append('/').Append(run.TotalFloor).Append('/').Append(RuntimeHelpers.GetHashCode(ev));
         parts.Append(JsonSerializer.Serialize(player.ToSerializable(), FingerprintJson));
-        parts.Append(JsonSerializer.Serialize(run.Rng.ToSerializable(), FingerprintJson));
-        parts.Append(JsonSerializer.Serialize(Bag(run.SharedRelicGrabBag), FingerprintJson));
+        // Current-player snapshot policy: partner Niche/shared-bag changes are
+        // not a reason to discard this player's board/identity/upgrade plan.
+        parts.Append('/').Append(player.NetId).Append('/').Append(run.Players.Count);
         parts.Append(JsonSerializer.Serialize(ev.Rng.ToSerializable(), FingerprintJson));
         parts.Append(JsonSerializer.Serialize(Bag(player.RelicGrabBag), FingerprintJson));
         foreach (var modifier in run.Modifiers)
@@ -95,7 +101,9 @@ internal static class CrystalSphereLiveCapture
             if (relic.Id.Entry == "SILKEN_TRESS") parts.Append(Read<bool>(relic, "_isUsed"));
         if (game != null)
         {
-            parts.Append(game.DivinationCount).Append('/').Append(game.CrystalSphereTool);
+            // Selecting Small/Big is free; every witness explicitly chooses its
+            // tool before each reveal. A tool toggle does not invalidate results.
+            parts.Append(game.DivinationCount).Append('/');
             foreach (var cell in game.cells) parts.Append(cell.IsHidden ? '1' : '0');
             foreach (var item in Read<List<CrystalSphereItem>>(game, "_revealed")) parts.Append(game.Items.ToList().IndexOf(item)).Append(',');
             foreach (var item in game.Items) parts.Append(item.Position).Append(JsonSerializer.Serialize(item.ToSerializable(), FingerprintJson));
@@ -111,23 +119,36 @@ internal static class CrystalSphereLiveCapture
         CrystalSphereMinigame? game, string version)
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
+        if (!run.Players.Contains(player) || !ReferenceEquals(ev.Owner, player) ||
+            game != null && !ReferenceEquals(Read<Player>(game, "_owner"), player))
+            throw new InvalidOperationException("CrystalPlayerMismatch");
         string before = SceneFingerprint(run, player, ev, game);
         var unlock = player.UnlockState.ToSerializable();
         var discovered = run.Acts.Select(Key).ToImmutableArray();
-        var authority = RuntimeContextAuthorityCapture.CaptureRuntimeReadOnly(RolltheSpire2.Compatibility.Beta111Profile.Instance,
-            run.Rng.StringSeed, CharacterIdentity.FromKey(Key(player.Character)), run.AscensionLevel, version,
-            predictionGameMode: RolltheSpire2.Core.World.Snapshots.WorldGameMode.Singleplayer,
-            predictionGameModeAuthority: RolltheSpire2.Core.Authority.PredictionGameModeAuthority.ExplicitRequest,
-            explicitUnlockState: player.UnlockState);
+        var personalBag = Bag(player.RelicGrabBag);
+        var (catalog, unmodeled) = CrystalSphereCatalogCapture.Capture(run, player);
+        var relicModels = ModelDb.AllRelics.ToDictionary(Key);
+        var relicKeys = relicModels.Keys.Concat(personalBag.Original.Select(r=>r.Key))
+            .Concat(personalBag.Buckets.SelectMany(b=>b.Entries)).Concat(personalBag.MultiplayerFallback).Distinct().ToArray();
+        bool UnmodeledRelic(ModelKey key) => !relicModels.TryGetValue(key,out var relic) || relic.GetType().Assembly != typeof(RelicModel).Assembly;
+        var eligible = relicKeys.Where(k=>UnmodeledRelic(k) || relicModels[k].IsAllowed(run)).ToImmutableHashSet();
+        unmodeled = unmodeled.Concat(relicKeys.Where(UnmodeledRelic))
+            .Distinct().ToImmutableArray();
+        string Hash(object value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value, FingerprintJson))));
         var context = new PredictorContext(run.Rng.StringSeed, version, Key(player.Character), run.AscensionLevel,
-            authority.CatalogFingerprint, authority.UnlockSnapshotFingerprint, unlock.UnlockedEpochs.ToImmutableArray(),
-            unlock.EncountersSeen.Select(k => new ModelKey(k.Category, k.Entry)).ToImmutableArray(), discovered, unlock.NumberOfRuns);
-        context = PredictorSeedCapture.CaptureCatalog(context, authority) with { Modifiers = run.Modifiers.Select(m => new PredictorRunModifier(Key(m),
+            Hash(catalog), Hash(unlock), unlock.UnlockedEpochs.ToImmutableArray(),
+            unlock.EncountersSeen.Select(k => new ModelKey(k.Category, k.Entry)).ToImmutableArray(), discovered, unlock.NumberOfRuns)
+        {
+            Catalog = catalog,
+            Crystal = new(run.Players.Count, run.Players.ToList().IndexOf(player), player.NetId, eligible) { UnmodeledSources = unmodeled }
+        };
+        if (!unmodeled.IsEmpty) RolltheSpire2.Bootstrap.RuntimeLog.Info("crystalUnmodeledSources=" + string.Join(',', unmodeled.Select(k => k.Serialized)) + ";policy=base-properties-only;no-custom-hooks");
+        context = context with { Modifiers = run.Modifiers.Select(m => new PredictorRunModifier(Key(m),
             m is MegaCrit.Sts2.Core.Models.Modifiers.CharacterCards characterCards
                 ? new ModelKey(characterCards.CharacterModel.Category, characterCards.CharacterModel.Entry) : null)).ToImmutableArray() };
         long id = 1;
         var cards = player.Deck.Cards.Select(c => new PredictorCard(id++, Key(c),
-            Enum.Parse<RolltheSpire2.Core.Effects.Snapshots.EffectCardType>(c.Type.ToString()), c.CurrentUpgradeLevel,
+            Enum.TryParse<RolltheSpire2.Core.Effects.Snapshots.EffectCardType>(c.Type.ToString(), out var cardType) ? cardType : RolltheSpire2.Core.Effects.Snapshots.EffectCardType.Other, c.CurrentUpgradeLevel,
             c.MaxUpgradeLevel, c.IsRemovable, c.FloorAddedToDeck ?? 0, c.Enchantment == null ? null : Key(c.Enchantment), c.Enchantment?.Amount ?? 0)).ToImmutableArray();
         var relics = player.Relics.Select(r => new PredictorRelic(id++, Key(r), r.FloorAddedToDeck, r.IsMelted)
         {
@@ -156,7 +177,7 @@ internal static class CrystalSphereLiveCapture
             .Select(p => new PredictorPotionOption(Key(p), Enum.Parse<PredictorPotionRarity>(p.Rarity.ToString()), p.CanBeGeneratedInCombat)).ToImmutableArray() };
         var state = new PredictorState(id, new(run.CurrentActIndex + 1, run.TotalFloor, "live:crystal"), player.Gold,
             cards, cards.Select(c => c.Id).ToImmutableArray(), relics, potions, streams,
-            new(odds.CardRarityOddsValue, odds.PotionRewardOddsValue), Bag(player.RelicGrabBag), Bag(run.SharedRelicGrabBag));
+            new(odds.CardRarityOddsValue, odds.PotionRewardOddsValue), personalBag, Bag(run.SharedRelicGrabBag));
         state.Validate();
         var rng = RngState(PredictorStream.Rewards, ev.Rng);
         var branches = ImmutableArray.CreateBuilder<(string, PredictorCrystalSnapshot)>();

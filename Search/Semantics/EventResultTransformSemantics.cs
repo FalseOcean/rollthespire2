@@ -44,14 +44,8 @@ internal static class EventResultTransformSemantics
     internal static IReadOnlyList<MorphicGroveCard>? Project(ulong root, EventResultSearchCondition c)
     {
         if (ClosedPool(c) is not { } pool) return null;
-        var rng = Core.World.Beta109.Beta109WorldRng.CreateEventLocal(root,
-            c.MorphicGroveScenario!.Authority.PlayerSlotIndex,
-            c.Kind == EventResultConditionKind.MorphicGroveGroupInitialBasicsContains, Entry(c.Kind));
-        if (c.Kind == EventResultConditionKind.WhisperingHollowInitialBasicTransform) rng.NextInt(19, "CalculateVars:gold-minus-nine");
-        if (c.Kind == EventResultConditionKind.TrialNondescriptInitialBasicsContains && rng.NextInt(3, "Accept:case") != 2)
-            return [];
-        var first = pool[rng.NextInt(pool.Count, "transform:0")];
-        return DrawCount(c.Kind) == 1 ? [first] : [first, pool[rng.NextInt(pool.Count, "transform:1")]];
+        return Beta111EventTransformProjector.Project(root,
+            c.MorphicGroveScenario!.Authority.PlayerSlotIndex, Entry(c.Kind), pool);
     }
     internal static MorphicGrovePredicateResult Evaluate(ulong root, EventResultSearchCondition c)
     {

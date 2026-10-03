@@ -10,10 +10,18 @@ namespace RolltheSpire2.Core.PredictorRuntime;
 // pass proves globally optimal gold or changes candidate completeness.
 internal static class PredictorCrystalGoldFinish
 {
+    private static PredictorCrystalSolution? Verify(PredictorCrystalSnapshot source,
+        ImmutableArray<PredictorCrystalStep> path,PredictorRun run,ImmutableArray<CrystalRewardOption> selected,bool includeRerolls)
+    {
+        var row=new CrystalRewardRoute(path,run.Rewards) { EnchantmentTargets=CrystalRewardOption.UsesEnchantments(source.State) };
+        if(includeRerolls && PredictorSettlementEffects.Has(source.State,"DRIFTWOOD"))
+            row=PredictorCrystalExplorer.WithRerolls(row,run);
+        return PredictorCrystalExplorer.VerifySelection(source,row,selected);
+    }
     private sealed record Move(PredictorCrystalStep Step,int[] Cells,UInt128 Mask);
     private sealed record State(UInt128 Fog,ImmutableArray<int> Order,ImmutableArray<PredictorCrystalStep> Steps);
     internal static CrystalOptionProjection Improve(PredictorCrystalSnapshot source,
-        CrystalOptionProjection projection,ImmutableArray<CrystalRewardOption> selected,bool avoidCurse,bool reshape=true)
+        CrystalOptionProjection projection,ImmutableArray<CrystalRewardOption> selected,bool avoidCurse,bool reshape=true,bool includeRerolls=false)
     {
         if(projection.SelectedPlan is not { } plan || plan.Steps.Length!=source.Remaining || plan.Steps.IsEmpty) return projection;
         var original=PredictorCrystalExplorer.Replay(source,plan.Steps);
@@ -57,7 +65,7 @@ internal static class PredictorCrystalGoldFinish
                 var candidate=PredictorCrystalExplorer.Replay(source,path);outcomes.Add(history);
                 if(candidate.Phase==PredictorPhase.Rewards && Gold(candidate)>bestGold)
                 {
-                    var proof=PredictorCrystalExplorer.VerifySelection(source,new(path,candidate.Rewards),selected);
+                    var proof=Verify(source,path,candidate,selected,includeRerolls);
                     if(proof!=null) { best=proof;bestGold=Gold(candidate); }
                 }
             }
@@ -79,7 +87,7 @@ internal static class PredictorCrystalGoldFinish
             }
         }
         var improved=projection with { SelectedPlan=best,Gold=bestGold };
-        return reshape?Reshape(source,improved,selected,avoidCurse,masks):improved;
+        return reshape?Reshape(source,improved,selected,avoidCurse,masks,includeRerolls):improved;
 
         ImmutableArray<PredictorCrystalStep>? Pad(State node)
         {
@@ -117,7 +125,7 @@ internal static class PredictorCrystalGoldFinish
     // This can trade a small incidental pile for a large one in the prefix;
     // locking the old prefix would make that improvement undiscoverable.
     private static CrystalOptionProjection Reshape(PredictorCrystalSnapshot source,CrystalOptionProjection projection,
-        ImmutableArray<CrystalRewardOption> selected,bool avoidCurse,UInt128[] masks)
+        ImmutableArray<CrystalRewardOption> selected,bool avoidCurse,UInt128[] masks,bool includeRerolls)
     {
         var original=PredictorCrystalExplorer.Replay(source,projection.SelectedPlan!.Steps).ExportCrystal();
         bool Potion(string kind)=>kind.StartsWith("POTION_",StringComparison.Ordinal);
@@ -183,7 +191,7 @@ internal static class PredictorCrystalGoldFinish
                 {
                     var result=PredictorCrystalExplorer.Replay(source,path);
                     int amount=result.Rewards.Where(r=>r.Kind==PredictorRewardKind.Gold).Sum(r=>r.GoldAmount);
-                    if(amount>best.Gold && PredictorCrystalExplorer.VerifySelection(source,new(path,result.Rewards),selected) is { } proof)
+                    if(amount>best.Gold && Verify(source,path,result,selected,includeRerolls) is { } proof)
                         best=best with { SelectedPlan=proof,Gold=amount };
                     if(best.Gold>=upper) return best;
                 }

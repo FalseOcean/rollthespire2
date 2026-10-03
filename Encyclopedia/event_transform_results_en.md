@@ -1,62 +1,29 @@
-# Transformation Events: Starting Cards by Default
+# Transformation Events: Preserve the Agreed Starter Cards
 
-> Applies to: **Slay the Spire 2 Beta 0.111.0**
+RT2's event transform conditions predict **which cards the agreed starter targets become**. Your full deck may change on the way, but you must still have legal starting Strike / Defend targets, actually select them, and preserve the transformation pool and relevant rules used by the prediction.
 
-## What You Want
+## Available transformation branches
 
-Some events transform cards randomly. A common goal is:
+| Event | Agreed targets and choice |
+| --- | --- |
+| Symbiote | Choose the transformation branch; transform one starter card |
+| Aroma of Chaos | Choose Let Go; transform one starter card |
+| Whispering Hollow | Choose Hug; transform one starter card |
+| Morphic Grove | Choose the two-card transformation branch; transform two starter cards |
+| Trial | Accept, draw the Nondescript case and choose Innocent; transform two starter cards |
 
-> **Turn a starting card, such as Strike or Defend, into a specified card.**
+For two results, you can require inclusion of a target or a specified pair. Pair matching does not fix the results' order, but cards from different source pools may have different transformation pools. An acquired card cannot freely replace the agreed starter target.
 
-These results can be predicted in advance.
+## How the results are generated
 
-# Why Is a Premise Needed?
+These branches use the event's own randomness. RT2 replays the necessary internal steps first: Whispering Hollow rolls its gold variable, and Trial draws its case, before drawing replacement cards. Normal combat rewards and shop randomness do not directly advance this event stream.
 
-Besides the seed, the result depends on **which card the player actually chooses to transform**.
+Target source, unlocks, mode and relevant effects can change the legal transformation pool. Extra game effects or mod changes that alter event randomness, the second target or candidates also change the premises. Outcome conditions concern the drawn card identities; they do not simultaneously guarantee upgrades, enchantments or other changes applied when cards enter the deck.
 
-Allowing arbitrary picks after acquiring, removing, and replacing cards along the route would require knowing the full deck at the event. RT2 narrows the question to avoid that:
+## Morphic Grove in multiplayer
 
-> **By default, transform a Basic card present at the start.**
+Morphic Grove is a shared multiplayer event with a common option-selection mechanism. Its event random starting point does not include a slot difference. Matching characters, input cards, delivered processing order, pools and relevant effects can therefore produce matching outcomes. Ordinary non-shared events include the player slot in their starting point.
 
-This usually means a starting Strike or Defend.
+“Processing order” means the card order actually delivered to the event; clicking order alone does not establish it. When both agreed starter targets use the same pool, you can interpret their results as a pair. See [[multiplayer-shared|Shared party conditions]] for the preserved multiplayer test example.
 
-# The Premise Is Simple
-
-Keep the specified starting card until the event, then actually choose it for transformation.
-
-As long as premises such as the available transformation pool remain unchanged, RT2 need not reconstruct the entire deck. The condition is usually straightforward to maintain.
-
-# Different Events Transform Different Numbers of Cards
-
-Some supported events transform **one starting card**; others transform **two in sequence**.
-
-Morphic Grove's Group branch processes two cards, while Aroma of Chaos and Whispering Hollow can be handled as single starting-card transformations.
-
-If an event has fixed random steps before the transformation, RT2 includes them. It does not assume transformation is always the event's first random call.
-
-# Why Is the Result Still Stable?
-
-These transformations use the event's own random state. The result can be replayed from the seed when:
-
-> Event identity is known;
-> the specified starting card still exists;
-> the player takes the agreed branch;
-> no extra action changes the relevant premises.
-
-There is no need to prove every action throughout the run. The player accepts the commitment to transform that starting card at the event.
-
-# What Does RT2 Do?
-
-RT2 currently filters these explicit starting-card transformations. The player specifies the desired result and accepts the corresponding premise:
-
-> **A suitable starting card is still available on arrival, and the corresponding event branch is chosen.**
-
-RT2 then checks the event's actual transformation rules. With two transformations, you can require a specified card among the pair or a specified combination across both.
-
-The condition concerns **card identities drawn from the agreed transformation pool**. It does not also guarantee later upgrades, enchantments, or other modifications after those cards enter the deck.
-
-It also does not prove the event will appear or that the starting card survives the route. Those remain player-supplied premises.
-
-> **The result is stably predictable if the player commits to transforming the agreed starting card.**
-
-Restricting the default targets to starting cards makes this much simpler than recovering the entire deck at the event.
+These predictions assume the event occurs and you select the agreed cards. They do not prove event reachability or guarantee that the targets survive your route.

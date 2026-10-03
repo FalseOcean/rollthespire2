@@ -69,6 +69,7 @@ internal sealed partial class SearchWorkspacePersistence
         _cursor = Load<SearchCursorDocument>("search_cursor.json") ?? new SearchCursorDocument();
         _environment = Load<SearchEnvironmentSignature>("search_environment.json") ?? new SearchEnvironmentSignature();
         NormalizeDocuments();
+        LoadQueryHistory();
         if (initializeSearchCursor)
             EnsureCursorInitialized();
     }
@@ -172,6 +173,13 @@ internal sealed partial class SearchWorkspacePersistence
         _preferences.LanguageOverride = language is "en" or "zh" ? language : string.Empty;
         MarkPreferencesDirty();
         FlushPreferences();
+    }
+
+    internal void SetAppearance(UiColorPreferences appearance, bool flush = true)
+    {
+        _preferences.Appearance = appearance.Normalize();
+        MarkPreferencesDirty();
+        if (flush) FlushPreferences();
     }
 
     public void SetActInformationIdentityGuideExpanded(bool expanded)
@@ -305,10 +313,36 @@ internal sealed partial class SearchWorkspacePersistence
         MarkPredictorContextDirty();
     }
 
-    public void ResetWorkspaceForSuccessfulStart(string queryFingerprint)
+    internal long ResultsRevision { get; private set; }
+
+    public void ResetWorkspaceForSuccessfulStart(string queryFingerprint,
+        Shell.WorkbenchSearchDraft? draft = null, SeedLibraryContext? context = null, bool skipExactValidation = false)
     {
+        // Freeze user intent separately from the editor's next query. Runtime
+        // authority, prediction documents and execution plans never cross this boundary.
+        var savedDraft = draft is null ? null : JsonSerializer.Deserialize<Shell.WorkbenchSearchDraft>(
+            JsonSerializer.Serialize(draft.WithoutCapturedAuthority(), _json), _json);
+        var savedContext = context is null ? null : JsonSerializer.Deserialize<SeedLibraryContext>(
+            JsonSerializer.Serialize(context, _json), _json);
         _workspace.QueryFingerprint = queryFingerprint ?? string.Empty;
         _workspace.Results.Clear();
+        _workspace.ResultBatchId = Guid.NewGuid().ToString("N");
+        _workspace.ResultsStartedAtUtc = DateTimeOffset.UtcNow;
+        _workspace.ResultDraft = savedDraft;
+        _workspace.ResultContext = savedContext;
+        _workspace.ResultsSkipExactValidation = skipExactValidation;
+        _workspace.ResultProgress = null;
+        BeginQueryHistory(savedDraft, savedContext);
+        ResultsRevision++;
+        MarkWorkspaceDirty();
+    }
+
+    internal void SaveResultProgress(SearchProgressSnapshot progress)
+    {
+        if (ActiveHistory is { } history)
+            history.ElapsedSeconds += Math.Max(0, progress.ElapsedSeconds - _historyRunElapsed);
+        _historyRunElapsed = progress.ElapsedSeconds;
+        _workspace.ResultProgress = progress;
         MarkWorkspaceDirty();
     }
 
@@ -336,17 +370,18 @@ internal sealed partial class SearchWorkspacePersistence
             IsUnverified = candidate.IsUnverified,
             WitnessOpeningRouteId = routeWitness?.OpeningRouteId ?? string.Empty
         };
-        var previous = _workspace.Results.FirstOrDefault(existing =>
-                string.Equals(existing.Seed, result.Seed, StringComparison.Ordinal) &&
-                string.Equals(existing.QueryFingerprint, result.QueryFingerprint, StringComparison.Ordinal));
-        if (previous is not null)
+        if (_workspace.ResultContext is { } context)
         {
-            if (previous.IsUnverified && !result.IsUnverified)
-            { _workspace.Results[_workspace.Results.IndexOf(previous)] = result; MarkWorkspaceDirty(); }
-            return;
+            try
+            {
+                result.Context = candidate.IsUnverified ? context : SeedLibraryContextCapture.WithWitness(context, candidate);
+            }
+            catch (Exception ex)
+            {
+                RuntimeLog.Warn("savedSearchResultContextUnavailable=" + ex.Message);
+            }
         }
-        _workspace.Results.Add(result);
-        MarkWorkspaceDirty();
+        RecordHistoryResult(result);
     }
 
     public IReadOnlyList<PersistedSearchResult> GetPersistedResults() => _workspace.Results.ToArray();
@@ -403,6 +438,8 @@ internal sealed partial class SearchWorkspacePersistence
         if (!current.CaptureComplete || string.IsNullOrWhiteSpace(current.Fingerprint))
         {
             RuntimeLog.Warn($"searchWorkspaceEnvironmentCheckDeferred=true;reason=CurrentSignatureUnavailable;issue={current.CaptureIssue};workspacePreserved=true");
+            // An old successful capture is not evidence about this process.
+            _environment = current;
             return;
         }
         if (string.IsNullOrWhiteSpace(_environment.Fingerprint))
@@ -414,7 +451,10 @@ internal sealed partial class SearchWorkspacePersistence
 
         string[] reasons = CompareEnvironment(_environment, current).ToArray();
         if (reasons.Length == 0)
+        {
+            _environment = current;
             return;
+        }
 
         EnvironmentResetOccurred = true;
         EnvironmentResetReason = string.Join(",", reasons);
@@ -424,7 +464,19 @@ internal sealed partial class SearchWorkspacePersistence
             $"oldGameVersion={_environment.GameVersionIdentity};newGameVersion={current.GameVersionIdentity};" +
             $"oldCatalog={_environment.CatalogFingerprint};newCatalog={current.CatalogFingerprint};" +
             $"oldUnlock={_environment.UnlockFingerprint};newUnlock={current.UnlockFingerprint}");
-        _workspace = new SearchWorkspaceDocument();
+        // Historical results belong to the user. Environment changes invalidate
+        // reusable query state, not the saved seeds and their original context.
+        _workspace = new SearchWorkspaceDocument
+        {
+            QueryFingerprint = _workspace.QueryFingerprint, Results = _workspace.Results,
+            ResultBatchId = _workspace.ResultBatchId, ResultsStartedAtUtc = _workspace.ResultsStartedAtUtc,
+            ResultDraft = _workspace.ResultDraft, ResultContext = _workspace.ResultContext,
+            ResultsSkipExactValidation = _workspace.ResultsSkipExactValidation, ResultProgress = _workspace.ResultProgress,
+            QueryHistory = _workspace.QueryHistory, ActiveHistoryId = _workspace.ActiveHistoryId,
+            LegacyPresetQueryKeys = _workspace.LegacyPresetQueryKeys,
+            LegacyQueryAliases = _workspace.LegacyQueryAliases
+        };
+        ResultsRevision++;
         _environment = current;
         MarkWorkspaceDirty();
         FlushWorkspace();
@@ -554,6 +606,7 @@ internal sealed partial class SearchWorkspacePersistence
         if (!string.Equals(previous.PotionCatalogFingerprint, current.PotionCatalogFingerprint, StringComparison.Ordinal)) yield return "PotionCatalogChanged";
         if (!string.Equals(previous.WorldCatalogFingerprint, current.WorldCatalogFingerprint, StringComparison.Ordinal)) yield return "WorldCatalogChanged";
         if (!string.Equals(previous.UnlockFingerprint, current.UnlockFingerprint, StringComparison.Ordinal)) yield return "UnlockStateChanged";
+        if (!string.Equals(previous.Fingerprint, current.Fingerprint, StringComparison.Ordinal)) yield return "RuntimeEnvironmentChanged";
     }
 
     private T? Load<T>(string fileName, JsonSerializerOptions? options = null) where T : class
@@ -673,6 +726,7 @@ internal sealed partial class SearchWorkspacePersistence
 
 internal sealed class UserPreferencesDocument
 {
+    public UiColorPreferences Appearance { get; set; } = new();
     public Dictionary<string, bool> WorkbenchFlags { get; set; } = new();
     public string WorkbenchPage { get; set; } = "neow";
     public int SchemaVersion { get; set; } = SearchWorkspacePersistence.SchemaVersion;
@@ -685,6 +739,7 @@ internal sealed class UserPreferencesDocument
     public float PanelHeight { get; set; }
     public string SearchMode { get; set; } = "Auto";
     public int? SearchWorkerBudget { get; set; }
+    public int QueryHistoryLimit { get; set; } = 30;
     public bool ShowOfficialPresets { get; set; } = true;
     // Opt-in, including preferences saved before the in-run entry was introduced.
     public bool ShowInRunPredictionEntry { get; set; }
@@ -744,10 +799,21 @@ internal sealed class SearchWorkspaceDocument
     public SearchRunDraft? RunDraft { get; set; }
     public string QueryFingerprint { get; set; } = string.Empty;
     public List<PersistedSearchResult> Results { get; set; } = new();
+    public Dictionary<string, string> LegacyPresetQueryKeys { get; set; } = [];
+    public Dictionary<string, string> LegacyQueryAliases { get; set; } = [];
+    public List<QueryHistoryEntry> QueryHistory { get; set; } = [];
+    public string ActiveHistoryId { get; set; } = "";
+    public string ResultBatchId { get; set; } = string.Empty;
+    public DateTimeOffset? ResultsStartedAtUtc { get; set; }
+    public Shell.WorkbenchSearchDraft? ResultDraft { get; set; }
+    public SeedLibraryContext? ResultContext { get; set; }
+    public bool ResultsSkipExactValidation { get; set; }
+    public SearchProgressSnapshot? ResultProgress { get; set; }
 }
 
 internal sealed class PersistedSearchResult
 {
+    public SeedLibraryContext? Context { get; set; }
     public bool IsUnverified { get; set; }
     public PartySeedInformation? Party { get; set; }
     public string Seed { get; set; } = string.Empty;
@@ -777,6 +843,7 @@ internal sealed class SearchEnvironmentSignature
     public string WorldCatalogFingerprint { get; set; } = string.Empty;
     public string UnlockFingerprint { get; set; } = string.Empty;
     public string CatalogFingerprint { get; set; } = string.Empty;
+    public string RuntimeContentFingerprint { get; set; } = string.Empty;
     public string Fingerprint { get; set; } = string.Empty;
     public int CharacterCount { get; set; }
     public int CardCount { get; set; }
@@ -865,7 +932,19 @@ internal static class SearchEnvironmentSignatureBuilder
                 worldFingerprint
             }));
             string gameVersion = authority.ExactGameVersionIdentity.ToString();
-            string fingerprint = HashText(string.Join("|", gameVersion, catalogFingerprint, unlockFingerprint));
+            var semantic = RuntimeAuthorityEnvironment.Current.Authority.Fingerprint;
+            // Actual loaded DLL module identities and mod versions supplement the
+            // semantic catalog hash. No local paths or old preset provenance enter it.
+            string runtimeContent = HashText(JsonSerializer.Serialize(new
+            {
+                GameModule = typeof(MegaCrit.Sts2.Core.Models.ModelDb).Assembly.ManifestModule.ModuleVersionId,
+                semantic.SchemaVersion, semantic.OverallSemanticHash, semantic.UnlockUniverseHash,
+                Mods = MegaCrit.Sts2.Core.Modding.ModManager.Mods
+                    .Where(m => m.state == MegaCrit.Sts2.Core.Modding.ModLoadState.Loaded)
+                    .Select(m => new { m.manifest?.id, m.manifest?.version,
+                        Modules = m.assemblies.Select(a => a.ManifestModule.ModuleVersionId).ToArray() }).ToArray()
+            }));
+            string fingerprint = HashText(string.Join("|", gameVersion, catalogFingerprint, unlockFingerprint, runtimeContent));
             return new SearchEnvironmentSignature
             {
                 GameVersionIdentity = gameVersion,
@@ -876,14 +955,15 @@ internal static class SearchEnvironmentSignatureBuilder
                 WorldCatalogFingerprint = worldFingerprint,
                 UnlockFingerprint = unlockFingerprint,
                 CatalogFingerprint = catalogFingerprint,
+                RuntimeContentFingerprint = runtimeContent,
                 Fingerprint = fingerprint,
                 CharacterCount = characters.Length,
                 CardCount = cards.Length,
                 RelicCount = relics.Length,
                 PotionCount = potions.Length,
                 AncientCount = ancients.Length,
-                CaptureComplete = true,
-                CaptureIssue = string.Empty
+                CaptureComplete = semantic.Complete,
+                CaptureIssue = semantic.Complete ? string.Empty : semantic.EvidenceCode
             };
         }
         catch (Exception ex)

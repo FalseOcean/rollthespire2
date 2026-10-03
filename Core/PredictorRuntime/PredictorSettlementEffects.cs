@@ -8,8 +8,9 @@ internal static class PredictorSettlementEffects
 {
     internal static bool Has(PredictorState state, string entry) => state.Relics.Any(r => !r.Melted && r.Key.Entry == entry);
 
-    internal static void RequireImplementedRelic(ModelKey key)
+    internal static void RequireImplementedRelic(ModelKey key, bool crystalBestEffort = false)
     {
+        if (crystalBestEffort && key.IsValid && key.Category == "RELIC") return;
         if (key.Category != "RELIC" || key.Entry is not ("WHETSTONE" or "WAR_PAINT" or "POTION_BELT" or "EMPTY_CAGE" or "BURNING_BLOOD" or "BOWLER_HAT" or "ECTOPLASM" or "SOZU" or
             "LASTING_CANDY" or "PRAYER_WHEEL" or "WHITE_STAR" or "BLACK_STAR" or "WHITE_BEAST_STATUE" or "MOLTEN_EGG" or "TOXIC_EGG" or "FROZEN_EGG" or
             "DINGY_RUG" or "AMETHYST_AUBERGINE" or "WONGOS_MYSTERY_TICKET" or "CIRCLET" or "GOLDEN_PEARL" or "PRISMATIC_GEM" or "SILVER_CRUCIBLE" or "SILKEN_TRESS" or
@@ -49,8 +50,9 @@ internal static class PredictorSettlementEffects
             throw new NotImplementedException($"Predictor relic hooks pending: {key}");
     }
 
-    internal static void RequireImplementedCard(PredictorCard card)
+    internal static void RequireImplementedCard(PredictorCard card, bool crystalBestEffort = false)
     {
+        if (crystalBestEffort && card.Key.IsValid && card.Key.Category == "CARD") return;
         // Source-specific lifetime and persistent fields are admitted only with
         // their handlers; ordinary identities do not need a basic-card whitelist.
         // Sown/Nimble/Corrupted affect energy, block and combat HP. They do not
@@ -61,15 +63,15 @@ internal static class PredictorSettlementEffects
             throw new NotImplementedException($"Predictor card hooks pending: {card.Key}");
     }
 
-    internal static void RequireImplementedInventory(PredictorState state)
+    internal static void RequireImplementedInventory(PredictorState state, bool crystalBestEffort = false)
     {
         foreach (var relic in state.Relics.Where(r => !r.Melted))
         {
             // Opening handlers completed these obtains before publishing state.
             if (relic.Key.Entry is "GOLDEN_PEARL" or "ARCANE_SCROLL" or "LOST_COFFER" or "PHIAL_HOLSTER" or "SMALL_CAPSULE") continue;
-            RequireImplementedRelic(relic.Key);
+            RequireImplementedRelic(relic.Key, crystalBestEffort);
         }
-        foreach (long id in state.Deck) RequireImplementedCard(state.Card(id));
+        foreach (long id in state.Deck) RequireImplementedCard(state.Card(id), crystalBestEffort);
     }
 
     internal static PredictorState TakeGold(PredictorState state, int gold)

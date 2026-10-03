@@ -130,7 +130,7 @@ internal static class SearchPresetCompatibilityResolver
 
     internal static void ValidateWorkbenchShape(WorkbenchSearchDraft draft)
     {
-        if (draft.Version is not (1 or 2 or 3 or 4))
+        if (draft.Version is not (1 or 2 or 3 or 4 or 5))
             throw new InvalidDataException("PresetWorkbenchVersionUnsupported");
         // Inspect only authored/init properties, never computed getters (which may
         // assume complete DTOs), runtime authority, or serializable unlock internals.
@@ -145,7 +145,9 @@ internal static class SearchPresetCompatibilityResolver
         if (!party) return;
         if (draft.Version < 2 || draft.Players.Count is < 2 or > SeedPredictionInputLimits.MaximumPlayers || draft.Character != draft.Players[0].Character ||
             draft.Players.Where((p, i) => p.Slot != i || draft.Query.Players[i].Slot != i ||
-                !p.Character.IsValid || p.Unlocks is null || string.IsNullOrWhiteSpace(p.UnlockSource)).Any())
+                !p.Character.IsValid || (draft.Version < 5 && p.Unlocks is null) ||
+                (draft.Version == 5 && (p.Unlocks is not null || p.UnlockSource is not ("CurrentContext" or "AssumedFullyUnlocked"))) ||
+                string.IsNullOrWhiteSpace(p.UnlockSource)).Any())
             throw new InvalidDataException("PresetWorkbenchRosterInvalid");
         if (draft.Query.TransformationAggregate is not null || draft.Query.Players.Any(p =>
             p.Conditions.Players.Count != 0 || p.Conditions.TransformationAggregate is not null))
