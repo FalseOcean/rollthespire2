@@ -1180,6 +1180,10 @@ public static class ProductionQueryValidator
                 ConditionId: "relic-shop-sequence-" + shopSequenceIndex));
             shopSequenceIndex++;
         }
+        if (Semantics.TransformationAggregateCondition.HasFixedBonesRelicContinuation(plan.CompiledSearch.NormalizedQuery))
+            evidence.Add(new SearchMatchEvidence("FixedBonesRelicContinuationMatched",
+                EvidenceCode: new("RelicContinuation.FixedBonesLeafyNewLeaf.UnchangedInitialBags"),
+                StreamDomain: "up_front", ConditionId: "fixed-bones-relic-continuation"));
         return SearchQueryEvaluation.Match(evidence);
     }
 

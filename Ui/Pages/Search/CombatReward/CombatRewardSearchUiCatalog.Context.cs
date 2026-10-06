@@ -12,7 +12,7 @@ internal sealed partial record CombatRewardSearchUiCatalog
     public static CombatRewardSearchUiCatalog CaptureForPicker(ModRuntimeSnapshot runtime,
         ModelKey character, int ascension, int players, int seat, UnlockState unlocks)
     {
-        string seed = new(runtime.Profile.SeedAlphabet[0], runtime.Profile.SeedLength);
+        string seed = RolltheSpire2.Compatibility.ProfileSeedGenerator.CreateProbeSeed(runtime.Profile);
         var captured = ReflectionNeowEffectSnapshotAdapter.Capture(runtime.Profile, seed,
             CharacterIdentity.FromKey(character), ascension, players, seat, runtime.Profile.ProfileId,
             runtime.Detection.DisplayVersion, new ReflectionSnapshotProfileRules(true, true), unlocks);

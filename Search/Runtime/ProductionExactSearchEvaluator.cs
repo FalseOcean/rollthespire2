@@ -428,7 +428,7 @@ internal static class ProductionExactSearchEvaluator
             new[] { witness });
     }
 
-    private static SearchQueryEvaluation MergeCanonicalGlobalEvidence(
+    internal static SearchQueryEvaluation MergeCanonicalGlobalEvidence(
         SearchQueryEvaluation documentEvaluation,
         SearchQueryEvaluation canonicalEvaluation)
     {
@@ -440,8 +440,9 @@ internal static class ProductionExactSearchEvaluator
         }
 
         // An aggregate's Bones results are route facts, not global facts. Retain
-        // every matching route, then intersect with the N witness before C validates
-        // its copied Rewards continuation. Never combine two existential routes.
+        // every matching route, then intersect with the N witness carrying R's
+        // proven bag facts before C validates its copied Rewards continuation.
+        // Never combine two existential routes or report discarded T alternatives.
         var aggregateRoutes=canonicalEvaluation.Evidence.Where(e=>e.Code=="TransformationAggregateMatched" && e.AcquisitionOrder is {Count:2}).ToArray();
         if(aggregateRoutes.Length>0)
         {
@@ -451,6 +452,10 @@ internal static class ProductionExactSearchEvaluator
             if(compatible.Length==0) return SearchQueryEvaluation.NoMatch("TransformationAggregate.NoSharedOpeningRoute");
             documentEvaluation=SearchQueryEvaluation.Match(documentEvaluation.Evidence,
                 compatible.Select(w=>w.OpeningRouteId).Distinct(StringComparer.Ordinal).ToArray(),compatible);
+            canonicalEvaluation=SearchQueryEvaluation.Match(canonicalEvaluation.Evidence.Where(e=>
+                e.Code!="TransformationAggregateMatched" || compatible.Any(w=>
+                    w.AcquisitionOrder.SequenceEqual(e.AcquisitionOrder ?? Array.Empty<ModelKey>()) &&
+                    e.RouteId is { } route && w.OpeningRouteId.EndsWith("."+route["transformation-aggregate:".Length..],StringComparison.Ordinal))).ToArray());
         }
 
         SearchMatchEvidence[] evidence = documentEvaluation.Evidence

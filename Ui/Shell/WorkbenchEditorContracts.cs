@@ -203,7 +203,11 @@ internal sealed partial class AncientEditorPrototype
         }
         else
         {
-            _partyAdvanced = players?.Any(player => player.AncientEditor?.ActiveMode > 0) ?? _partyAdvanced;
+            _partyAdvanced = players?.Any(player => player.AncientEditor?.ActiveMode > 0 ||
+                player.AncientEditor is null && q.Players.Where(p => p.Slot == player.Slot).Any(p =>
+                    p.Conditions.AncientBranches.GroupBy(b => b.Act).Any(g => g.Count() > 1) ||
+                    p.Conditions.AncientBranches.Any(b => b.OptionAny.Count > 1) ||
+                    p.Conditions.LegacyWorld.AncientOptionFilters.Any(f => f.Keys.All.Count > 0))) ?? _partyAdvanced;
             foreach (int act in new[] { 2, 3 })
             {
                 for (int mode = 0; mode < 2; mode++)
@@ -211,7 +215,16 @@ internal sealed partial class AncientEditorPrototype
                     var sets = players?.Select(player =>
                     {
                         AncientEditorStateSnapshot? editor = player.AncientEditor;
-                        if (editor is null || editor.Modes.Count != 3) return Array.Empty<ModelKey>();
+                        // Older/semantic-only party drafts have no UI snapshot. Their
+                        // active per-player branches still constrain the shared identity.
+                        if (editor is null)
+                            return mode == (_partyAdvanced ? 1 : 0)
+                                ? q.Players.Where(p => p.Slot == player.Slot)
+                                    .SelectMany(p => p.Conditions.AncientBranches)
+                                    .Where(branch => branch.Act == act).Select(branch => branch.AncientKey)
+                                    .Distinct(ModelKeyComparer.Instance).ToArray()
+                                : Array.Empty<ModelKey>();
+                        if (editor.Modes.Count != 3) return Array.Empty<ModelKey>();
                         int personalMode = mode == 0 ? 0 : editor.ActiveMode == 0 ? editor.LastAdvancedMode : editor.ActiveMode;
                         return editor.Modes[personalMode].Rows.Where(row => row.Act == act)
                             .Select(row => row.Ancient).Distinct(ModelKeyComparer.Instance).ToArray();

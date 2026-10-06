@@ -192,15 +192,27 @@ internal sealed partial class QueryWorkbenchFrame
     private string Explain(Exception ex)
     {
         RuntimeLog.Warn("workbenchQuery="+ex);
+        if (ex.Message.StartsWith(RolltheSpire2.Compatibility.ProfileSeedGenerator.UnavailableCode, StringComparison.Ordinal))
+            return SeedProfileUnavailableMessage();
+        if (TransformationContinuationIssueKey(ex.Message) is { } continuationKey) return _text.Get(continuationKey);
         if (ex.Message is "FamilyGpuInitializationRetryRequired" or "FamilyGpuInitializationBusy")
             return RolltheSpire2.Presentation.Localization.JsonUiTextProvider.Create(_language).Get(
                 ex.Message == "FamilyGpuInitializationBusy" ? "ui1.devices.creating" : "ui1.devices.creation_failed_help");
         return ex.Message.StartsWith("integration.",StringComparison.Ordinal) ? _text.Get(ex.Message) : _text.Get("integration.rejected")+"\n"+ex.Message;
     }
+    private string SeedProfileUnavailableMessage() => _runtime.Detection.IsExact
+        ? _text.Format("integration.seed_profile_unavailable", _runtime.Detection.DisplayVersion, _runtime.Profile.ProfileId)
+        : _text.Get("integration.game_version_unavailable");
+    internal static string? TransformationContinuationIssueKey(string issue) =>
+        issue.Contains("NeowDependentRelicContinuationNotSupported", StringComparison.Ordinal) ? "integration.transform.relic_continuation_conflict" :
+        issue.Contains("NeowDependentCombatRewardContinuationNotSupported", StringComparison.Ordinal) ? "integration.transform.combat_continuation_conflict" :
+        issue.Contains("NeowDependentRewardRelicContinuationNotSupportedInV1", StringComparison.Ordinal) ? "integration.transform.continuation_conflict" : null;
     private void SaveDraft()
     {
         try
         {
+            // Unavailable catalogs must not replace the saved intent on panel closure.
+            _ = RolltheSpire2.Compatibility.ProfileSeedGenerator.CreateProbeSeed(_runtime.Profile);
             var draft=CaptureDraft().WithoutCapturedAuthority();
             _persistence.SaveWorkbench(draft); _lastSaved=JsonSerializer.Serialize(draft);
             _loadFailed=false;
@@ -229,6 +241,7 @@ internal sealed partial class QueryWorkbenchFrame
         if(_session is not null) return;
         try
         {
+            _ = RolltheSpire2.Compatibility.ProfileSeedGenerator.CreateProbeSeed(_runtime.Profile);
             var d=CaptureDraft().WithoutCapturedAuthority(); var q=d.Query;
             if (_editorContextIssue.Length > 0) throw new InvalidOperationException(_editorContextIssue);
             if(_start is not null) _start.Disabled=_loadFailed || _presetBlocked.Count > 0 || _persistence.HasSearchInFlight;

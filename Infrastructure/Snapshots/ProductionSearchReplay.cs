@@ -121,7 +121,7 @@ public static class ProductionSearchReplay
         var profile = RuntimeProfileRegistry.Select(source.Detection);
         if (profile.ProfileId != source.ProfileId)
             throw new InvalidOperationException("ReplayCaptureProfileMismatch");
-        string probeSeed = new(profile.SeedAlphabet[0], profile.SeedLength);
+        string probeSeed = ProfileSeedGenerator.CreateProbeSeed(profile);
         var entries = new List<ReplayContextCaptureEntry>();
         int characterIndex = -1;
         foreach (ModelKey key in catalog.CharactersInSourceOrder)

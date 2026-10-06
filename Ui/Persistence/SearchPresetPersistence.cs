@@ -129,6 +129,14 @@ internal sealed record SearchPresetDefinition(
     DateTimeOffset CreatedAtUtc)
 {
     public string Name => Title; // narrow v1/source compatibility alias
+    // Curated translations are presentation only; raw text remains the save/name identity.
+    [JsonIgnore] public DeveloperSeedText? BuiltInTitle { get; init; }
+    [JsonIgnore] public DeveloperSeedText? BuiltInDescription { get; init; }
+    public string TitleFor(string language) => Source == SearchPresetSource.BuiltIn && BuiltInTitle?.Zh == Title
+        ? BuiltInTitle.Resolve(language) : Title;
+    public string DescriptionFor(string language) => Source == SearchPresetSource.BuiltIn && BuiltInDescription?.Zh == Description
+        ? BuiltInDescription.Resolve(language) : Description;
+    [JsonIgnore] public string SearchText => Title + " " + Description + " " + TitleFor("en") + " " + DescriptionFor("en");
     public string EnvironmentFingerprint { get; init; } = "";
     public WorkbenchSearchDraft? Workbench { get; init; }
     public string RawWorkbenchJson { get; init; } = string.Empty;
@@ -862,6 +870,10 @@ internal sealed class SearchPresetStore
         {
             Workbench = workbench,
             RawWorkbenchJson = rawWorkbenchJson,
+            BuiltInTitle = source == SearchPresetSource.BuiltIn
+                ? new() { Zh = title, En = NormalizeTitle(persisted.EnglishTitle) } : null,
+            BuiltInDescription = source == SearchPresetSource.BuiltIn
+                ? new() { Zh = NormalizeDescription(persisted.Description), En = NormalizeDescription(persisted.EnglishDescription) } : null,
             EnvironmentFingerprint = persisted.EnvironmentFingerprint ?? ""
         };
     }
@@ -987,6 +999,11 @@ internal sealed class SearchPresetStore
         // v2
         public string Title { get; set; } = string.Empty;
         public string Description { get; set; } = string.Empty;
+        // Optional embedded-asset display metadata. User exports keep their literal text.
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? EnglishTitle { get; set; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? EnglishDescription { get; set; }
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public JsonElement QuerySnapshot { get; set; }
         // v3: full typed solo/party intent; never a single-player projection.

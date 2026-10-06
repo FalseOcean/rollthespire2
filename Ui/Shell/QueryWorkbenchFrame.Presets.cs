@@ -145,6 +145,7 @@ internal sealed partial class QueryWorkbenchFrame
             _presetCapture = intent == SearchPresetSaveIntentKind.CreateCurrentQuery ? CapturePreset() : null;
             LocalizePresets(); BeginPresetModal();
             _presetSave.OpenCreate(_language == "zh" ? "保存预设" : "Save preset",
+                // Editable/save-by-name text stays literal across UI language changes.
                 _presetSource?.Title ?? "",
                 _presetSource?.Description ?? "", _presetSource?.VisualIcons.Where(i => i.TryGetModelKey(out _))
                     .Select(i => { i.TryGetModelKey(out var key); return key; }).ToArray());

@@ -24,10 +24,51 @@ public sealed record GameVersionDetection(
 
 public static class GameVersionDetector
 {
-    public static GameVersionDetection Detect()
+    // The game entry point supplies its already initialized ReleaseInfoManager.
+    // File-only tools can omit the reader without loading Godot or sts2.
+    public static GameVersionDetection Detect() => Detect(null);
+
+    public static GameVersionDetection Detect(Func<(string Version, string Branch)?>? readRuntimeReleaseInfo) =>
+        Detect(readRuntimeReleaseInfo, null);
+
+    internal static GameVersionDetection Detect(Func<(string Version, string Branch)?>? readRuntimeReleaseInfo,
+        IEnumerable<string>? candidatePaths)
     {
-        IReadOnlyList<string> candidates = BuildCandidatePaths();
-        return DetectFromCandidates(candidates);
+        string runtimeIssue = "reader-not-provided";
+        if (readRuntimeReleaseInfo is not null)
+        {
+            try
+            {
+                var release = readRuntimeReleaseInfo();
+                if (release is { } info && IsVersion(info.Version, out string normalized))
+                    return new(info.Version.Trim(), normalized, info.Branch ?? string.Empty,
+                        $"runtime:ReleaseInfoManager.Instance.ReleaseInfo;branch={info.Branch}", true, string.Empty);
+                runtimeIssue = release is null ? "release-info-missing" : "version-missing-or-invalid";
+            }
+            catch (Exception ex)
+            {
+                runtimeIssue = ex.GetType().Name + ":" + ex.Message.Replace('\r', ' ').Replace('\n', ' ');
+            }
+        }
+        GameVersionDetection file;
+        try
+        {
+            // Directory/assembly paths are a fallback too. Do not inspect them
+            // before the runtime reader has had a chance to resolve the version.
+            file = DetectFromCandidates(candidatePaths ?? BuildCandidatePaths());
+        }
+        catch (Exception ex)
+        {
+            string issue = ex.GetType().Name + ":" + ex.Message.Replace('\r', ' ').Replace('\n', ' ');
+            file = new(string.Empty, string.Empty, string.Empty,
+                "release-info-path-discovery-failed:" + issue, false,
+                "Release metadata path discovery failed: " + issue + ". Unsupported profile selected.");
+        }
+        return file with
+        {
+            Evidence = "runtime-unavailable:" + runtimeIssue + ";" + file.Evidence,
+            FailureReason = file.IsExact ? string.Empty : "Runtime release information unavailable: " + runtimeIssue + ". " + file.FailureReason
+        };
     }
 
     public static GameVersionDetection DetectFromCandidates(IEnumerable<string> candidatePaths)
@@ -59,12 +100,12 @@ public static class GameVersionDetector
                 JsonElement root = document.RootElement;
                 string rawVersion = ReadString(root, "version");
                 string branch = ReadString(root, "branch");
-                if (string.IsNullOrWhiteSpace(rawVersion))
+                if (!IsVersion(rawVersion, out string normalized))
                 {
+                    attempted.Add($"version-missing-or-invalid:{fullPath}");
                     continue;
                 }
 
-                string normalized = NormalizeVersion(rawVersion);
                 return new GameVersionDetection(
                     rawVersion.Trim(),
                     normalized,
@@ -73,7 +114,7 @@ public static class GameVersionDetector
                     true,
                     string.Empty);
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
             {
                 attempted.Add($"read-failed:{fullPath}:{ex.GetType().Name}");
             }
@@ -85,7 +126,13 @@ public static class GameVersionDetector
             string.Empty,
             "release_info.json-not-found;attempted=" + string.Join("|", attempted),
             false,
-            "No readable release_info.json with a version field was found. Unsupported profile selected.");
+            "No readable release_info.json with a valid version field was found. Unsupported profile selected.");
+    }
+
+    private static bool IsVersion(string? rawVersion, out string normalized)
+    {
+        normalized = NormalizeVersion(rawVersion ?? string.Empty);
+        return GameVersionIdentity.IsExactVersion(normalized) && Version.TryParse(normalized, out _);
     }
 
     public static string NormalizeVersion(string version)

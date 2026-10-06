@@ -858,9 +858,15 @@ internal static class SearchEnvironmentSignatureBuilder
 {
     public static SearchEnvironmentSignature Capture(ModRuntimeSnapshot runtime)
     {
+        if (!ProfileSeedGenerator.TryCreateProbeSeed(runtime.Profile, out string seed, out string issue))
+            return new SearchEnvironmentSignature
+            {
+                GameVersionIdentity = runtime.Detection.DisplayVersion,
+                CaptureComplete = false,
+                CaptureIssue = issue + ";versionEvidence=" + runtime.Detection.Evidence
+            };
         try
         {
-            string seed = new string(runtime.Profile.SeedAlphabet[0], runtime.Profile.SeedLength);
             RuntimeContextAuthoritySnapshot authority = RuntimeContextAuthorityCapture.CaptureRuntimeReadOnly(
                 runtime.Profile,
                 seed,

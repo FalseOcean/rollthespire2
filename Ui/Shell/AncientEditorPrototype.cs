@@ -147,7 +147,7 @@ internal sealed partial class AncientEditorPrototype : Control
 
     private void CaptureCatalogs(ModelKey character, int ascension, int players, int seat, UnlockState unlocks)
     {
-        string seed = new(_runtime.Profile.SeedAlphabet[0], _runtime.Profile.SeedLength);
+        string seed = RolltheSpire2.Compatibility.ProfileSeedGenerator.CreateProbeSeed(_runtime.Profile);
         var effects = ReflectionNeowEffectSnapshotAdapter.Capture(_runtime.Profile, seed,
             CharacterIdentity.FromKey(character), ascension, players, seat, _runtime.Profile.ProfileId,
             _runtime.Detection.DisplayVersion, new ReflectionSnapshotProfileRules(true, true), unlocks);

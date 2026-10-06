@@ -105,9 +105,16 @@ public sealed record TransformationAggregateCondition(
         // Fixed Bones Leafy+NewLeaf has the same Rewards continuation in bound and
         // aggregate authoring: Bones offer shuffle, then no child Rewards consumption.
         // Other aggregate openings/continuations retain their existing boundary.
-        if (condition.UsesNeow && (query.HasCombatRewardConstraints && !HasFixedBonesRewardContinuation(query) ||
-            query.RelicSequenceConstraints.Any(c => !c.IsEmpty) || query.RelicShopSequenceConditions.Any(c => !c.IsEmpty)))
+        bool rewardBlocked = condition.UsesNeow && query.HasCombatRewardConstraints && !HasFixedBonesRewardContinuation(query);
+        bool relicBlocked = condition.UsesNeow &&
+            (query.RelicSequenceConstraints.Any(c => !c.IsEmpty) || query.RelicShopSequenceConditions.Any(c => !c.IsEmpty)) &&
+            !HasFixedBonesRelicContinuation(query);
+        if (rewardBlocked && relicBlocked)
             throw new ArgumentException("TransformationAggregate.NeowDependentRewardRelicContinuationNotSupportedInV1");
+        if (rewardBlocked)
+            throw new ArgumentException("TransformationAggregate.NeowDependentCombatRewardContinuationNotSupported");
+        if (relicBlocked)
+            throw new ArgumentException("TransformationAggregate.NeowDependentRelicContinuationNotSupported");
     }
 
     internal static bool HasFixedBonesRewardContinuation(SearchQuery query) =>
@@ -117,6 +124,14 @@ public sealed record TransformationAggregateCondition(
         query.OpeningRouteRelicRequirement is { RequiredRelicKeys.Count: 2 } pair &&
         pair.RequiredRelicKeys.Contains(BaseGameModelKeys.Relics.LeafyPoultice) &&
         pair.RequiredRelicKeys.Contains(BaseGameModelKeys.Relics.NewLeaf);
+
+    // Bounded R closure for the same authored fixed pair. Bones shuffles Rewards;
+    // Leafy uses Transformations; New Leaf and the final curse use Niche. None
+    // advances UpFront or draws/removes an entry from the observed personal
+    // Common/Uncommon/Rare/Shop bags: all three obtained relics are Ancient.
+    // R therefore reuses its initial-bag replay in either pickup order. Exact
+    // still intersects T with the N witness carrying the already-proven R facts.
+    internal static bool HasFixedBonesRelicContinuation(SearchQuery query) => HasFixedBonesRewardContinuation(query);
 
     internal ModelKey RequiredOpeningKey => Opening switch {
         TransformationOpening.LeafyPoultice => BaseGameModelKeys.Relics.LeafyPoultice,

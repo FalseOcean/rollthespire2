@@ -41,7 +41,7 @@ internal sealed partial class SeedLibraryCanvas
 
     private void RenderPresets()
     {
-        var presets = _historyStore!.Presets.GetAll().Where(p => p.Source != SearchPresetSource.Temporary && Matches(p.Title + " " + PresetContext(p))).ToArray();
+        var presets = _historyStore!.Presets.GetAll().Where(p => p.Source != SearchPresetSource.Temporary && Matches(p.SearchText + " " + PresetContext(p))).ToArray();
         if (!presets.Any(p => p.Id == _selectedPreset))
             _selectedPreset = presets.OrderBy(p => p.Source == SearchPresetSource.User ? 0 : 1).FirstOrDefault()?.Id ?? "";
         foreach (var source in new[] { SearchPresetSource.User, SearchPresetSource.BuiltIn })
@@ -50,7 +50,7 @@ internal sealed partial class SeedLibraryCanvas
             if (items.Length == 0) continue;
             _entries.AddChild(Text(source == SearchPresetSource.User ? T("我的预设", "My presets") : T("开发者预设", "Developer presets"), 16, true));
             foreach (var preset in items)
-                AddListItem(preset.Id, preset.Title, PresetContext(preset), _selectedPreset == preset.Id,
+                AddListItem(preset.Id, preset.TitleFor(_language), PresetContext(preset), _selectedPreset == preset.Id,
                     () => { _selectedPreset = preset.Id; SelectDetail(); }, preset.VisualIcons);
         }
         if (_historyStore.Presets.LoadIssues.Count > 0) ShowIssue(T("部分预设无法读取，原文件已保留。", "Some presets could not be read; original files are preserved."));
@@ -60,7 +60,7 @@ internal sealed partial class SeedLibraryCanvas
             EmptyDetail(T("可以在筛种页保存当前条件，或从开发者预设开始。", "Save conditions from Search, or start with a developer preset."));
             return;
         }
-        var primary = DetailHeading(selected.Title, PresetContext(selected), selected.VisualIcons);
+        var primary = DetailHeading(selected.TitleFor(_language), PresetContext(selected), selected.VisualIcons);
         bool canUse = CanUse(selected, out string issue);
         AddAction(primary, T("查看历史结果", "View search history"), () => PresetHistoryRequested?.Invoke(selected)).Name = "ViewPresetHistory";
         var use = AddAction(primary, T("使用这组预设", "Use this preset"), () => PresetUseRequested?.Invoke(selected), true);
@@ -74,7 +74,8 @@ internal sealed partial class SeedLibraryCanvas
             var edit = AddAction(management, T("修改信息", "Edit information"), () => PresetEditRequested?.Invoke(selected, true)); edit.Name = "EditLibraryPreset"; RequireIdle(edit);
             AddDeleteAction(management, () => ConfirmDeletePreset(selected)).Name = "DeleteLibraryPreset";
         }
-        if (!string.IsNullOrWhiteSpace(selected.Description)) _detail.AddChild(Text(selected.Description, 19));
+        string description = selected.DescriptionFor(_language);
+        if (!string.IsNullOrWhiteSpace(description)) _detail.AddChild(Text(description, 19));
         if (!canUse) _detail.AddChild(Text(issue, 17, true));
         if (selected.Source == SearchPresetSource.User) AddEnvironmentNotice(selected.EnvironmentFingerprint);
         AddConditions(selected);

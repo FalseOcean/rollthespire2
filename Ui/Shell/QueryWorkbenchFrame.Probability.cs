@@ -53,8 +53,9 @@ internal sealed partial class QueryWorkbenchFrame
         try { compiled=draft.Compile(_runtime,out _); }
         catch(Exception ex) {
             RuntimeLog.Warn("workbenchCompileUnavailable="+ex.Message);
-            _draftCompileIssue=_text.Get(ex.Message.Contains("NeowDependentRewardRelicContinuationNotSupportedInV1",StringComparison.Ordinal)
-                ? "integration.transform.continuation_conflict" : "integration.rejected");
+            _draftCompileIssue=ex.Message.StartsWith(RolltheSpire2.Compatibility.ProfileSeedGenerator.UnavailableCode, StringComparison.Ordinal)
+                ? SeedProfileUnavailableMessage()
+                : _text.Get(TransformationContinuationIssueKey(ex.Message) ?? "integration.rejected");
             _previewEta=null;_familyEntries.Clear();
             var q=draft.Query;
             void Pending(string id,bool present) {if(present)_familyEntries.Add(new(id,FamilyTitle(id),null,"—",""));}

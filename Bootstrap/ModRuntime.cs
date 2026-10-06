@@ -23,7 +23,12 @@ internal static class ModRuntime
             RuntimeLog.InitializeOnMainThread();
             Infrastructure.Persistence.HistoricalRuntimeData.Archive(Path.GetDirectoryName(OperationalFileLog.LogDirectory)!);
         Search.FamilyExecution.FamilyDeviceProfileFoundation.CaptureAvailabilityOnMainThread();
-            GameVersionDetection detection = GameVersionDetector.Detect();
+            // OneTimeInitialization reads this manager before ModManager invokes us.
+            GameVersionDetection detection = GameVersionDetector.Detect(() =>
+            {
+                var release = MegaCrit.Sts2.Core.Debug.ReleaseInfoManager.Instance.ReleaseInfo;
+                return release is null ? null : (release.Version, release.Branch);
+            });
             RuntimeVersionResolution compatibility = RuntimeProfileRegistry.Resolve(detection);
             IRuntimeProfile profile = RuntimeProfileRegistry.Select(compatibility);
             SeedRngVectorVerification vectors = SeedRngVectorVerifier.RunAll();
@@ -54,7 +59,8 @@ internal static class ModRuntime
             RuntimeLog.Info($"Readable log: {RuntimeLog.CurrentLogPath}");
             RuntimeLog.Info($"rt2BuildIdentity={typeof(ModRuntime).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false).OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion}");
             RuntimeLog.GlobalSummary("RT2 loaded", startup: true);
-            RuntimeLog.Detail($"versionEvidence={detection.Evidence}");
+            RuntimeLog.Info($"versionEvidence={detection.Evidence}");
+            if (!detection.IsExact) RuntimeLog.Warn($"versionDetectionFailed={detection.FailureReason}");
             // Stable historical log-parser keys; the current CLR/build identity is AssemblyEvidence.
             RuntimeLog.Info($"rewriteAssemblyPath={assemblyEvidence.AssemblyPath}");
             RuntimeLog.Info($"rewriteAssemblySha256={(assemblyEvidence.IsExact ? assemblyEvidence.Sha256 : "unavailable")}");

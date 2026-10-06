@@ -78,6 +78,7 @@ internal sealed record WorkbenchSearchDraft(ModelKey Character, int Ascension, S
 
     internal CompiledSearch Compile(ModRuntimeSnapshot runtime, out RuntimeContextAuthoritySnapshot authority)
     {
+        string probeSeed = RolltheSpire2.Compatibility.ProfileSeedGenerator.CreateProbeSeed(runtime.Profile);
         if (Version == 5) throw new InvalidOperationException("Preset.CurrentEnvironmentRequired");
         if (Version is not (1 or 2 or 3 or 4)) throw new InvalidOperationException("integration.load_version");
         if (Mode is not (WorldGameMode.Singleplayer or WorldGameMode.Multiplayer) || (Mode == WorldGameMode.Multiplayer) != (Players.Count > 0))
@@ -90,7 +91,7 @@ internal sealed record WorkbenchSearchDraft(ModelKey Character, int Ascension, S
             throw new InvalidOperationException("Party.InvalidDraft");
         if (GameVersion != runtime.Detection.NormalizedVersion || Profile != runtime.Profile.ProfileId)
             throw new InvalidOperationException("Party.StaleDraftVersion");
-        var party = Infrastructure.Snapshots.PartyRuntimeAuthorityCapture.Capture(runtime.Profile, "000000000000",
+        var party = Infrastructure.Snapshots.PartyRuntimeAuthorityCapture.Capture(runtime.Profile, probeSeed,
             Players.Select(p => p.Character).ToArray(), Players.Select(p => p.Unlocks ?? throw new InvalidOperationException("Party.UnlocksUnread")).ToArray(), Ascension, runtime.Detection.NormalizedVersion, Players.Select(p => p.UnlockSource).ToArray());
         authority = party.Players[0];
         var context = SearchContextFactory.From(runtime.Profile.ProfileId, authority.Character.CharacterKey, Ascension,

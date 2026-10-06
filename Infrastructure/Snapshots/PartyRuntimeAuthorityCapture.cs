@@ -76,6 +76,16 @@ public static class PartyRuntimeAuthorityCapture
             };
             players[slot] = players[slot].WithWorldAuthority(personalWorld with
             {
+                // Shared world generation was captured and verified against the party
+                // unlock union above. Do not relabel it with P1's partial solo-world
+                // confidence; personal pools and their exactness flags stay personal.
+                ActGroups = world.ActGroups,
+                SharedEvents = world.SharedEvents,
+                SharedAncients = world.SharedAncients,
+                CatalogOrderExact = world.CatalogOrderExact,
+                SourceAuthority = world.SourceAuthority,
+                Completeness = world.Completeness,
+                CaptureDiagnosticCode = world.CaptureDiagnosticCode,
                 Beta109Generation = bound,
                 SnapshotFingerprint = bound.SnapshotFingerprint
             });

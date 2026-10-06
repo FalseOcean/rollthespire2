@@ -38,7 +38,7 @@ internal static class WorkbenchQueryCompiler
         ModRuntimeSnapshot runtime, ModelKey characterKey, int ascension, out RuntimeContextAuthoritySnapshot authority)
     {
         CharacterIdentity character = CharacterIdentity.FromKey(characterKey);
-        string contextAuthoritySeed = new string(runtime.Profile.SeedAlphabet[0], runtime.Profile.SeedLength);
+        string contextAuthoritySeed = ProfileSeedGenerator.CreateProbeSeed(runtime.Profile);
         authority = RuntimeContextAuthorityCapture.CaptureRuntimeReadOnly(
             runtime.Profile, contextAuthoritySeed, character, ascension, runtime.Detection.DisplayVersion,
             playersCount: 1, playerSlotIndex: 0,

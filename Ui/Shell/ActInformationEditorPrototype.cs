@@ -102,7 +102,7 @@ internal sealed partial class ActInformationEditorPrototype : Control
                     UnlockState resolved = players == 1
                         ? SaveManager.Instance.GenerateUnlockStateFromProgress()
                         : UnlockState.FromSerializable(unlocks!);
-                    string seed = new(_runtime.Profile.SeedAlphabet[0], _runtime.Profile.SeedLength);
+                    string seed = RolltheSpire2.Compatibility.ProfileSeedGenerator.CreateProbeSeed(_runtime.Profile);
                     var effects = ReflectionNeowEffectSnapshotAdapter.Capture(_runtime.Profile, seed,
                         CharacterIdentity.FromKey(character), ascension, players, seat, _runtime.Profile.ProfileId,
                         _runtime.Detection.DisplayVersion, new ReflectionSnapshotProfileRules(true, true), resolved);

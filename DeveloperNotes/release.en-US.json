@@ -4,6 +4,30 @@
   "Blocks": [
     {
       "Type": "Heading",
+      "Text": "RolltheSpire2 1.3.5"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "This update fixes some combinations of Bones transformation targets and relic conditions, improves game version detection at startup, and adds bilingual display for developer presets."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Fixed transformation targets for Leafy Poultice and New Leaf inside Neow’s Bones can now be combined with supported relic conditions, including shop relics. Filtering checks transformation and relic outcomes under the same pickup order. Other unsupported transformation combinations remain restricted."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Fixed incorrect rejection of some multiplayer Boss conditions, shared-world authority handling for parties with mixed unlocks, and Ancient options being lost when restoring older configurations without editor metadata."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Startup now prefers version information supplied by the game and falls back to files when needed. If a usable seed and RNG profile is unavailable, RT2 explains the problem and preserves saved search configurations, avoiding some startup and pre-search index errors. This is a bounded fix for reported issues, not a claim of full Android support or a general device compatibility fix."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Developer preset titles and descriptions now follow the interface language and can be searched with Chinese or English keywords. Your own preset text remains unchanged."
+    },
+    {
+      "Type": "Heading",
       "Text": "RolltheSpire2 1.3.4"
     },
     {

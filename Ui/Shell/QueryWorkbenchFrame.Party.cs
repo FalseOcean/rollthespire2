@@ -54,7 +54,8 @@ internal sealed partial class QueryWorkbenchFrame
         { Ascension = _partyAscension, Characters = _seatCharacters.Take(_playerCount), Unlocks = _lobbyUnlocks.Take(_playerCount), Sources = _partyUnlockSources.Take(_playerCount) });
         if (key != _editorPartyKey)
         {
-            _editorParty = Infrastructure.Snapshots.PartyRuntimeAuthorityCapture.Capture(_runtime.Profile, "000000000000",
+            string seed = RolltheSpire2.Compatibility.ProfileSeedGenerator.CreateProbeSeed(_runtime.Profile);
+            _editorParty = Infrastructure.Snapshots.PartyRuntimeAuthorityCapture.Capture(_runtime.Profile, seed,
                 _seatCharacters.Take(_playerCount).ToArray(), _lobbyUnlocks.Take(_playerCount).Select(u => u!).ToArray(),
                 _partyAscension, _runtime.Detection.NormalizedVersion, _partyUnlockSources.Take(_playerCount).ToArray());
             _editorPartyKey = key;

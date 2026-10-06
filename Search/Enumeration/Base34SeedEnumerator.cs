@@ -11,6 +11,7 @@ public sealed class Base34SeedEnumerator
     public Base34SeedEnumerator(IRuntimeProfile profile, string canonicalStartSeed)
     {
         _profile = profile ?? throw new ArgumentNullException(nameof(profile));
+        _ = ProfileSeedGenerator.CreateProbeSeed(profile);
         if (!_profile.TryCanonicalizeSeed(canonicalStartSeed, out string canonical, out string issue))
         {
             throw new ArgumentException(issue, nameof(canonicalStartSeed));
@@ -50,7 +51,7 @@ public sealed class Base34SeedEnumerator
     public static string ZeroSeed(IRuntimeProfile profile)
     {
         ArgumentNullException.ThrowIfNull(profile);
-        return new string(profile.SeedAlphabet[0], profile.SeedLength);
+        return ProfileSeedGenerator.CreateProbeSeed(profile);
     }
 
     private static ulong Parse(string seed, string alphabet)

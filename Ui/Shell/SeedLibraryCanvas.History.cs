@@ -78,7 +78,7 @@ internal sealed partial class SeedLibraryCanvas
         _filter.PlaceholderText = _section == LibrarySection.Favorites ? T("查找标题、种子或备注", "Find a title, seed or note") : T("查找名称或角色", "Find a name or character");
         bool filtered = _section == LibrarySection.History && (_queryFilter is not null || _sourceHistoryId.Length > 0);
         _scope!.Visible = _clearScope!.Visible = filtered;
-        _scope.Text = filtered ? _queryFilter?.Title ?? T("来源记录", "Source search") : "";
+        _scope.Text = filtered ? _queryFilter?.TitleFor(_language) ?? T("来源记录", "Source search") : "";
         _clearScope.Text = T("全部历史", "All history");
     }
 
@@ -91,7 +91,7 @@ internal sealed partial class SeedLibraryCanvas
     private string QueryTitle(QueryHistoryEntry query)
     {
         var presets = _historyStore!.PresetsForQuery(query.QueryKey);
-        if (presets.Count > 0) return string.Join(" / ", presets.Select(p => p.Title));
+        if (presets.Count > 0) return string.Join(" / ", presets.Select(p => p.TitleFor(_language)));
         string characters = query.Draft.Players.Count > 0
             ? string.Join(" / ", query.Draft.Players.Select(p => _names.Resolve(p.Character, GameContentKind.Character)))
             : _names.Resolve(query.Draft.Character, GameContentKind.Character);
@@ -108,7 +108,8 @@ internal sealed partial class SeedLibraryCanvas
             ? _historyStore.Workspace.QueryHistory.Where(q => q.Id == _sourceHistoryId)
             : _queryFilter is null ? _historyStore.RecentQueries : _historyStore.QueriesForPreset(_queryFilter);
         var queries = records
-            .Where(q => Matches(QueryTitle(q) + " " + QueryContext(q))).ToArray();
+            .Where(q => Matches(QueryTitle(q) + " " + QueryContext(q) + " " +
+                string.Join(" ", _historyStore.PresetsForQuery(q.QueryKey).Select(p => p.SearchText)))).ToArray();
         // Preserve older condition-only records without inventing runs or results.
         var legacy = _queryFilter is null && _sourceHistoryId.Length == 0 ? _historyStore.Presets.GetAll().Where(p => p.Source == SearchPresetSource.Temporary && Matches(PresetContext(p))).ToArray() : [];
         if (!queries.Any(q => q.Id == _selectedHistory) && !legacy.Any(p => p.Id == _selectedHistory))
@@ -166,7 +167,7 @@ internal sealed partial class SeedLibraryCanvas
     {
         if (_historyStore is null) return;
         var presets = entry.QueryKeys.SelectMany(_historyStore.PresetsForQuery).DistinctBy(p => p.Id).ToArray();
-        if (presets.Length > 0) _detail.AddChild(Text(T("关联预设 · ", "Linked presets · ") + string.Join(" / ", presets.Select(p => p.Title)), 17, true));
+        if (presets.Length > 0) _detail.AddChild(Text(T("关联预设 · ", "Linked presets · ") + string.Join(" / ", presets.Select(p => p.TitleFor(_language))), 17, true));
         var source = _historyStore.Workspace.QueryHistory.FirstOrDefault(q => entry.QueryAssociations.Any(a => a.SearchRecordId == q.Id));
         if (source is not null)
         {

@@ -19,7 +19,9 @@ public static class ExactSearchExecutionRequestFactory
     internal static ExactSearchExecutionRequest ForPlayer(ExactSearchExecutionRequest parent, CompiledSearch player)
     {
         var projection = CompiledSearchEvaluationProjector.Project(player);
-        if (projection.Fidelity != ProjectionFidelity.Exact)
+        // Match the top-level Exact admission: runtime-proven equivalence is valid,
+        // while lossy and unsupported projections remain rejected.
+        if (projection.Fidelity is ProjectionFidelity.LossyButConservative or ProjectionFidelity.Unsupported)
             throw new InvalidOperationException("Party.PlayerProjection:" + string.Join(",", projection.Diagnostics));
         return new(player, parent.RunOptions, parent.CanonicalStartSeed, parent.ResolvedScanCount,
             projection.Evaluation, BuildCombatRewardRoutePolicy(player), player.SemanticFingerprint);
