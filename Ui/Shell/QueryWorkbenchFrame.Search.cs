@@ -280,13 +280,16 @@ internal sealed partial class QueryWorkbenchFrame
         {
             if (_loadFailed) throw new InvalidOperationException("integration.load_shape");
             if (_editorContextIssue.Length > 0) throw new InvalidOperationException(_editorContextIssue);
+            // [PROFILE] 先驗證測試範圍，再初始化游標與搜尋。
+            string benchmarkRequestPath = System.IO.Path.Combine(OS.GetUserDataDir(), "RolltheSpire2", "benchmark-scan-count.txt");
+            var benchmarkLimits = SearchBenchmarkRunLimits.Resolve(_target, benchmarkRequestPath);
             var draft=CaptureDraft();
             var compiled=draft.Compile(_runtime,out _);
             if(compiled.Status==QueryNormalizationStatus.Impossible || SearchFeasibilityAnalyzer.Analyze(compiled).IsImpossible) throw new InvalidOperationException("integration.impossible");
             UpdateProbabilityPanel(draft,JsonSerializer.Serialize(draft.WithoutCapturedAuthority()));
             _persistence.InitializeWorkbenchCursor();
             var execution=ExactSearchExecutionRequestFactory.Compile(compiled,new SearchRunOptions(_persistence.CurrentNextCursorSeed,
-                long.MaxValue,_target,SearchWorkers, SkipExactValidation: _persistence.Preferences.SkipExactValidation));
+                benchmarkLimits.ScanCount,benchmarkLimits.TargetMatchCount,SearchWorkers, SkipExactValidation: _persistence.Preferences.SkipExactValidation));
             if(!execution.Success || execution.Plan is null) throw new InvalidOperationException(execution.Issue);
             _persistence.EnsureEnvironment(SearchEnvironmentSignatureBuilder.Capture(_runtime));
             _persistence.SaveWorkbench(draft);
@@ -305,6 +308,9 @@ internal sealed partial class QueryWorkbenchFrame
             _showResults=true;
             RenderResults(); LockForRun(true);
             RuntimeLog.Info("workbenchProductionStart=true;terminal="+(execution.Plan.RunOptions.SkipExactValidation?"UnverifiedCandidates":"ProductionExact")+";fingerprint="+_activeFingerprint);
+            // [PROFILE] 記錄本輪實際範圍，不改已儲存偏好。
+            if (benchmarkLimits.IsActive) RuntimeLog.Info(FormattableString.Invariant(
+                $"benchmarkScanLimit=true;scanCount={benchmarkLimits.ScanCount};targetMatchCount={benchmarkLimits.TargetMatchCount};benchmarkRequestPath={benchmarkRequestPath};startSeed={execution.Plan.RunOptions.StartSeed};skipExactValidation={execution.Plan.RunOptions.SkipExactValidation};fingerprint={_activeFingerprint}"));
         }
         catch(Exception ex) { if(_status is not null) _status.Text=Explain(ex); }
     }

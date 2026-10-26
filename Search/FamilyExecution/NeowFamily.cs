@@ -45,6 +45,20 @@ internal sealed partial class NeowFamily : IFamilyInvocation
     private long _inputs, _outputs, _liveInputs;
     private double _ms, _liveMs, _peak;
     private double _uploadMs, _dispatchMs, _readbackMs, _canonicalizeMs;
+    // 只累計已完成呼叫，不逐種子寫日誌。
+    private double _submitCallMs, _syncCallMs, _headerReadCallMs, _payloadReadCallMs;
+    private long _submitSyncCalls, _headerReadCalls, _payloadReadCalls;
+    private long _smallPayloadReadCalls, _directPayloadReadCalls, _payloadReadSourceCapacityBytes;
+    private double _combinedReadCallMs;
+    private long _combinedReadCalls, _combinedPayloadBatches, _logicalPayloadBytes, _requestedReadbackBytes;
+    private long _combinedReadSourceCapacityBytes;
+    // 合併批次的群組記帳。
+    private long _batchMergeGroups, _batchMergeWindows;
+    private int _batchMergeMaxGroupSize;
+    // 中型候選的第二級有界讀回緩衝。
+    private double _mediumReadCallMs;
+    private long _mediumPayloadReadCalls, _mediumReadSourceCapacityBytes;
+    private NeowCandidateDigest? _candidateDigest;
     private long _fullBatchInputs, _fullBatchOutputs;
     private long _bonesEntryPass, _bonesPairPass;
     private double _fullBatchDispatchMs, _fullBatchCanonicalMs;
@@ -153,50 +167,11 @@ internal sealed partial class NeowFamily : IFamilyInvocation
         _compact = !input.IsDense;
         try
         {
-            if (_gpu is null) _gpu = await executionContext.ExecuteGpuAsync(rd => new NeowFamilyGpuExecutor(rd, _gpuPlan,
-                (uint)RolltheSpire2.Core.Seed.XxHash64.HashUtf8(_request.SnapshotFingerprint, 0), _composite), cancellationToken).ConfigureAwait(false);
-            var result = await executionContext.ExecuteGpuAsync(_ => {
-                var survivors = _gpu.Execute(input, cancellationToken, out var metrics); return (survivors, metrics);
+            await EnsureGpuAsync(executionContext, cancellationToken).ConfigureAwait(false);
+            var result = await executionContext.ExecutePrimaryGpuAsync(_ => {
+                var survivors = _gpu!.Execute(input, cancellationToken, out var metrics); return (survivors, metrics);
             }, cancellationToken).ConfigureAwait(false);
-            if (!_parity)
-            {
-                var profile = RuntimeProfileRegistry.Select(_request.Detection);
-                ulong[] survivors = result.survivors.ExportAbi1().ToArray();
-                foreach (ulong ordinal in input.EnumerateLogicalOrdinals().Take(256))
-                {
-                    ulong root = profile.ComputeRootSeed(VisibleSeedCandidateCodec.FormatOrdinal(profile, input.Batch.GlobalCandidate(ordinal)));
-                    if ((_cpuMatcher(root) && (_composite?.Reference.Matches(root) ?? true)) != (Array.BinarySearch(survivors, ordinal) >= 0))
-                        throw new InvalidDataException("NFamilyCpuReferenceParityMismatch");
-                }
-                _parity = true;
-            }
-            _costSamples.Observe(this, new(!input.IsDense, false, input.Count), input.Count, result.metrics.DispatchSyncMs, outputs: result.survivors.Count, canonicalMs: result.metrics.CanonicalMs, readbackMs: result.metrics.ReadbackMs, readbackBytes: result.metrics.ReadbackBytes);
-            _batches++; _inputs += input.Count; _outputs += result.survivors.Count; _ms += result.metrics.CanonicalMs;
-            _bonesEntryPass += result.metrics.CurseSurvivors; _bonesPairPass += result.metrics.PairSurvivors;
-            _uploadMs += result.metrics.UploadMs; _dispatchMs += result.metrics.DispatchSyncMs;
-            _readbackMs += result.metrics.ReadbackMs; _canonicalizeMs += result.metrics.CanonicalizeMs;
-            if (input.Count == NeowFamilyGpuExecutor.Capacity)
-            {
-                _fullBatchInputs += input.Count; _fullBatchOutputs += result.survivors.Count;
-                _fullBatchDispatchMs += result.metrics.DispatchSyncMs; _fullBatchCanonicalMs += result.metrics.CanonicalMs;
-            }
-            if (_composite?.UsesBonesArcane == true)
-            {
-                _nrPairPass += result.metrics.NrPairPass; _arcanePass += result.metrics.ArcanePass;
-                _rarityPass += result.metrics.CapsuleRarityPass; _heavyEntered += result.metrics.HeavyEntered;
-                if (result.survivors.Count == 0) _zeroSurvivorBatches++; else _payloadReadbackCount++;
-                _payloadReadbackMs += result.metrics.PayloadReadbackMs;
-                if (RolltheSpire2.Bootstrap.RuntimeLog.DetailEnabled)
-                    RuntimeLog.TryBackgroundDetail($"boundedBonesCapsuleArcaneNr=True;batchBase={input.Batch.BatchBase};pairPass={result.metrics.NrPairPass};arcanePass={result.metrics.ArcanePass};capsuleRarityPass={result.metrics.CapsuleRarityPass};heavyEntered={result.metrics.HeavyEntered};nrOutput={result.survivors.Count};zeroSurvivorBatches={_zeroSurvivorBatches};payloadReadbackCount={_payloadReadbackCount};payloadReadbackMs={result.metrics.PayloadReadbackMs}");
-            }
-            if (_batches > 1)
-            {
-                Interlocked.Add(ref _liveInputs, input.Count); _liveMs += result.metrics.CanonicalMs;
-                if (input.Count >= (_compact ? NeowFamilyGpuExecutor.Capacity / 4 : NeowFamilyGpuExecutor.Capacity))
-                { _steady++; _peak = Math.Max(_peak, input.Count * 1000d / result.metrics.CanonicalMs); }
-            }
-            if (RolltheSpire2.Bootstrap.RuntimeLog.DetailEnabled)
-                RuntimeLog.TryBackgroundDetail($"nFamilyBatch=true;physicalRevision={ResolveConditionPerformance(_compact).PhysicalImplementationRevision};batchBase={input.Batch.BatchBase};input={input.Count};processed={result.metrics.Processed};survivors={result.survivors.Count};groups={result.metrics.Groups};dispatches={result.metrics.Dispatches};curseSurvivors={result.metrics.CurseSurvivors};pairSurvivors={result.metrics.PairSurvivors};uploadMs={result.metrics.UploadMs};dispatchSyncMs={result.metrics.DispatchSyncMs};readbackMs={result.metrics.ReadbackMs};readbackBytes={result.metrics.ReadbackBytes};canonicalizeMs={result.metrics.CanonicalizeMs};canonicalAbi1ReadyMs={result.metrics.CanonicalMs};firstDrawAcceptMask={_gpuPlan.Meta[68]};firstDrawRejectMask={_gpuPlan.Meta[69]};trackedBones={_gpuPlan.Meta[67]};boundedBonesNr={_composite?.UsesBonesCheckpoint == true};leafyPreGate={_gpuPlan.UsesLeafyPreGate};parity={_parity};workspaceBytes={_gpu.ResidentBytes};scratchBytes=0;ownerThread={executionContext.GpuOwnerThreadId}");
+            RecordCompletedBatch(input, result.survivors, result.metrics, executionContext);
             return result.survivors;
         }
         catch (OperationCanceledException) { throw; }
@@ -207,16 +182,113 @@ internal sealed partial class NeowFamily : IFamilyInvocation
             throw;
         }
     }
+
+    private async ValueTask EnsureGpuAsync(FamilyExecutionContext executionContext,
+        CancellationToken cancellationToken)
+    {
+        if (_gpu is not null) return;
+        _gpu = await executionContext.ExecutePrimaryGpuAsync(rd => new NeowFamilyGpuExecutor(rd, _gpuPlan!,
+            (uint)RolltheSpire2.Core.Seed.XxHash64.HashUtf8(_request.SnapshotFingerprint, 0), _composite), cancellationToken).ConfigureAwait(false);
+    }
+
+    // 單窗口與合併路徑共用驗證、摘要及記帳。
+    private void RecordCompletedBatch(FamilyCandidateSet input, FamilyCandidateSet survivors,
+        in NeowFamilyGpuMetrics result, FamilyExecutionContext executionContext)
+    {
+        if (!_parity)
+        {
+            var profile = RuntimeProfileRegistry.Select(_request.Detection);
+            ulong[] referenceSurvivors = survivors.ExportAbi1().ToArray();
+            foreach (ulong ordinal in input.EnumerateLogicalOrdinals().Take(256))
+            {
+                ulong root = profile.ComputeRootSeed(VisibleSeedCandidateCodec.FormatOrdinal(profile, input.Batch.GlobalCandidate(ordinal)));
+                if ((_cpuMatcher(root) && (_composite?.Reference.Matches(root) ?? true)) != (Array.BinarySearch(referenceSurvivors, ordinal) >= 0))
+                    throw new InvalidDataException("NFamilyCpuReferenceParityMismatch");
+            }
+            _parity = true;
+        }
+        _costSamples.Observe(this, new(!input.IsDense, false, input.Count), input.Count, result.DispatchSyncMs, outputs: survivors.Count, canonicalMs: result.CanonicalMs, readbackMs: result.ReadbackMs, readbackBytes: result.ReadbackBytes);
+        // 配對測試比較完整中間候選流，空批次亦納入摘要。
+        (_candidateDigest ??= new()).Append(input.Batch.BatchBase, input.Batch.BatchCandidateCount,
+            survivors.ExportAbi1().Span, result.CurseSurvivors, result.PairSurvivors);
+        _batches++; _inputs += input.Count; _outputs += survivors.Count; _ms += result.CanonicalMs;
+        _bonesEntryPass += result.CurseSurvivors; _bonesPairPass += result.PairSurvivors;
+        _uploadMs += result.UploadMs; _dispatchMs += result.DispatchSyncMs;
+        _readbackMs += result.ReadbackMs; _canonicalizeMs += result.CanonicalizeMs;
+        _submitCallMs += result.SubmitMs; _syncCallMs += result.SyncMs;
+        _headerReadCallMs += result.HeaderReadCallMs; _payloadReadCallMs += result.PayloadReadCallMs;
+        _submitSyncCalls += result.BatchMergeWindow
+            ? result.CombinedReadCalls
+            : (result.Groups > 0 ? 1 : 0);
+        _headerReadCalls += result.HeaderReadCalls; _payloadReadCalls += result.PayloadReadCalls;
+        _smallPayloadReadCalls += result.SmallPayloadReadCalls;
+        _directPayloadReadCalls += result.DirectPayloadReadCalls;
+        _payloadReadSourceCapacityBytes += result.PayloadReadSourceCapacityBytes;
+        _combinedReadCallMs += result.CombinedReadCallMs;
+        _combinedReadCalls += result.CombinedReadCalls;
+        _combinedPayloadBatches += result.CombinedPayloadBatches;
+        _combinedReadSourceCapacityBytes += result.CombinedReadSourceCapacityBytes;
+        _mediumPayloadReadCalls += result.MediumPayloadReadCalls;
+        _mediumReadCallMs += result.MediumReadCallMs;
+        _mediumReadSourceCapacityBytes += result.MediumReadSourceCapacityBytes;
+        _logicalPayloadBytes += result.LogicalPayloadBytes;
+        _requestedReadbackBytes += result.ReadbackBytes;
+        if (result.BatchMergeWindow)
+        {
+            _batchMergeWindows++;
+            _batchMergeMaxGroupSize = Math.Max(_batchMergeMaxGroupSize, result.BatchMergeGroupSize);
+            if (result.CombinedReadCalls > 0) _batchMergeGroups++;
+        }
+        if (input.Count == NeowFamilyGpuExecutor.Capacity)
+        {
+            _fullBatchInputs += input.Count; _fullBatchOutputs += survivors.Count;
+            _fullBatchDispatchMs += result.DispatchSyncMs; _fullBatchCanonicalMs += result.CanonicalMs;
+        }
+        if (_composite?.UsesBonesArcane == true)
+        {
+            _nrPairPass += result.NrPairPass; _arcanePass += result.ArcanePass;
+            _rarityPass += result.CapsuleRarityPass; _heavyEntered += result.HeavyEntered;
+            if (survivors.Count == 0) _zeroSurvivorBatches++; else _payloadReadbackCount++;
+            _payloadReadbackMs += result.PayloadReadbackMs;
+            if (RolltheSpire2.Bootstrap.RuntimeLog.DetailEnabled)
+                RuntimeLog.TryBackgroundDetail($"boundedBonesCapsuleArcaneNr=True;batchBase={input.Batch.BatchBase};pairPass={result.NrPairPass};arcanePass={result.ArcanePass};capsuleRarityPass={result.CapsuleRarityPass};heavyEntered={result.HeavyEntered};nrOutput={survivors.Count};zeroSurvivorBatches={_zeroSurvivorBatches};payloadReadbackCount={_payloadReadbackCount};payloadReadbackMs={result.PayloadReadbackMs}");
+        }
+        if (_batches > 1)
+        {
+            Interlocked.Add(ref _liveInputs, input.Count); _liveMs += result.CanonicalMs;
+            if (input.Count >= (_compact ? NeowFamilyGpuExecutor.Capacity / 4 : NeowFamilyGpuExecutor.Capacity))
+            { _steady++; _peak = Math.Max(_peak, input.Count * 1000d / result.CanonicalMs); }
+        }
+        if (RolltheSpire2.Bootstrap.RuntimeLog.DetailEnabled)
+            RuntimeLog.TryBackgroundDetail($"nFamilyBatch=true;physicalRevision={ResolveConditionPerformance(_compact).PhysicalImplementationRevision};batchBase={input.Batch.BatchBase};input={input.Count};processed={result.Processed};survivors={survivors.Count};groups={result.Groups};dispatches={result.Dispatches};curseSurvivors={result.CurseSurvivors};pairSurvivors={result.PairSurvivors};uploadMs={result.UploadMs};dispatchSyncMs={result.DispatchSyncMs};readbackMs={result.ReadbackMs};readbackBytes={result.ReadbackBytes};canonicalizeMs={result.CanonicalizeMs};canonicalAbi1ReadyMs={result.CanonicalMs};firstDrawAcceptMask={_gpuPlan!.Meta[68]};firstDrawRejectMask={_gpuPlan.Meta[69]};trackedBones={_gpuPlan.Meta[67]};boundedBonesNr={_composite?.UsesBonesCheckpoint == true};leafyPreGate={_gpuPlan.UsesLeafyPreGate};parity={_parity};workspaceBytes={_gpu!.ResidentBytes};scratchBytes={_gpu.PayloadReadbackScratchBytes};ownerThread={executionContext.GpuOwnerThreadId};batchMerge={result.BatchMergeWindow}");
+    }
     public async ValueTask DisposeAsync(FamilyExecutionContext context)
     {
         if (_gpuPlan is null) { _physical.WriteSummary(); return; }
-        if (_gpu is not null) await context.ExecuteGpuAsync(_ => { _gpu.Dispose(); return true; }, CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            if (_gpu is not null) await context.ExecutePrimaryGpuAsync(_ => { _gpu.Dispose(); return true; }, CancellationToken.None).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (_candidateDigest is { } digest)
+            {
+                _candidateDigest = null;
+                try
+                {
+                    RuntimeLog.TryBackgroundInfo($"nFamilyCandidateDigest=true;schema=NeowCandidateDigest.v1;algorithm=SHA256;batches={_batches};input={_inputs};output={_outputs};digest={digest.GetCurrentHex()};scope=CompletedNeowCallsNotCommittedCursorSubset");
+                }
+                finally { digest.Dispose(); }
+            }
+        }
         if (_composite?.UsesBonesArcane == true)
             RuntimeLog.TryBackgroundInfo($"boundedBonesCapsuleArcaneNr=True;summary=True;batches={_batches};pairPass={_nrPairPass};arcanePass={_arcanePass};capsuleRarityPass={_rarityPass};heavyEntered={_heavyEntered};nrOutput={_outputs};zeroSurvivorBatches={_zeroSurvivorBatches};payloadReadbackCount={_payloadReadbackCount};payloadReadbackMs={_payloadReadbackMs}");
         RuntimeLog.TryBackgroundInfo($"nFamilySummary=true;gpu={_gpuPlan is not null};batches={_batches};input={_inputs};survivors={_outputs};canonicalMs={_ms};parity={_parity};recovery=False;faulted={_disabled};" +
             $"uploadMs={_uploadMs};dispatchSyncMs={_dispatchMs};readbackMs={_readbackMs};canonicalizeMs={_canonicalizeMs};" +
             $"fullBatchInputs={_fullBatchInputs};fullBatchOutputs={_fullBatchOutputs};fullBatchDispatchSyncMs={_fullBatchDispatchMs};fullBatchCanonicalMs={_fullBatchCanonicalMs};partialBatchInputs={_inputs-_fullBatchInputs};constructorSetupIncluded=false;firstBatchIncluded=true;" +
             $"bonesEntryPass={_bonesEntryPass};bonesPairPass={_bonesPairPass};bonesCheckpointCounters=StagedOnly");
+        RuntimeLog.TryBackgroundInfo(FormattableString.Invariant(
+            $"nFamilyPhaseSummary=true;schema=NeowHostPhaseTiming.v5;clock=StopwatchHost;gpuKernelTimestamp=false;batches={_batches};submitCalls={_submitSyncCalls};syncCalls={_submitSyncCalls};submitMs={_submitCallMs};syncMs={_syncCallMs};commandRecordingAndOtherHostMs={_dispatchMs-_submitCallMs-_syncCallMs};headerReadCalls={_headerReadCalls};headerReadApiMs={_headerReadCallMs};payloadReadCalls={_payloadReadCalls};payloadReadTransportMs={_payloadReadCallMs};combinedReadCalls={_combinedReadCalls};combinedReadApiMs={_combinedReadCallMs};combinedPayloadBatches={_combinedPayloadBatches};requestedReadbackBytes={_requestedReadbackBytes};logicalPayloadBytes={_logicalPayloadBytes};smallReadbackBuildEnabled={NeowReadbackTransport.Enabled};combinedReadbackBuildEnabled={NeowCombinedReadbackTransport.Enabled};smallPayloadReadCalls={_smallPayloadReadCalls};directPayloadReadCalls={_directPayloadReadCalls};payloadReadSourceCapacityBytes={_payloadReadSourceCapacityBytes};combinedReadSourceCapacityBytes={_combinedReadSourceCapacityBytes};mediumReadbackBuildEnabled={NeowMediumReadbackTransport.Enabled};mediumPayloadReadCalls={_mediumPayloadReadCalls};mediumReadApiMs={_mediumReadCallMs};mediumReadSourceCapacityBytes={_mediumReadSourceCapacityBytes};batchMergeBuildEnabled={FamilyBatchGrouping.Enabled};batchMergeGroupSize={FamilyBatchGrouping.GroupSize};batchMergeGroups={_batchMergeGroups};batchMergeWindows={_batchMergeWindows};batchMergeMaxGroupSize={_batchMergeMaxGroupSize};capacityMetric=LogicalSourceBufferSizesNotTransferredBytes;conversionValidationAndOtherReadbackMs={_readbackMs-_headerReadCallMs-_payloadReadCallMs-_combinedReadCallMs};scope=CompletedNeowPublicInvocationCalls;timingsAlsoIncludedInExistingSummary=true"));
     }
     internal static bool TryCreate(ExactSearchExecutionRequest request, out IFamilyInvocation? family)
     {

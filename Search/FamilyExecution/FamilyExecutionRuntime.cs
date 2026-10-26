@@ -13,6 +13,7 @@ public sealed class FamilyExecutionContext : IAsyncDisposable
 {
     private readonly FamilyGpuExecutionOwner? _gpuOwner;
     private readonly FamilyPipelineBoundaryAudit? _pipelineBoundaryAudit = FamilyPipelineBoundaryAudit.TryCreate();
+    private FamilyGpuExecutionOwner? _restGpuOwner;
 
     internal FamilyExecutionContext(bool requiresGpu, bool failOnPhysicalRecovery = false)
     {
@@ -25,12 +26,80 @@ public sealed class FamilyExecutionContext : IAsyncDisposable
     internal int GpuOwnerThreadId => _gpuOwner?.OwnerThreadId ?? 0;
     internal bool GpuOwnerStable => _gpuOwner?.IsStable ?? true;
 
-    internal ValueTask<T> ExecuteGpuAsync<T>(
+    // 第二個本地 RenderingDevice 是否已就緒。
+    internal bool PipelineActive { get; private set; }
+    internal bool PipelineCompiled => FamilyPipelineModel.Compiled;
+    internal int RestGpuOwnerThreadId => _restGpuOwner?.OwnerThreadId ?? 0;
+
+    // 延後建立並探測第二個本地裝置；失敗則本輪沿用單裝置路徑。
+    internal async ValueTask<bool> TryEnablePipelineAsync(CancellationToken cancellationToken)
+    {
+        if (!FamilyPipelineModel.Compiled || _gpuOwner is null) return false;
+        if (PipelineActive) return true;
+        try
+        {
+            // 先確保主裝置就緒，避免兩次 CreateLocalRenderingDevice 在引擎內同時執行。
+            await ExecuteGpuAsync(_ => 0, cancellationToken).ConfigureAwait(false);
+            _restGpuOwner ??= new FamilyGpuExecutionOwner();
+            string? device = await _restGpuOwner
+                .ExecuteAsync(rd => rd.GetDeviceName(), cancellationToken).ConfigureAwait(false);
+            PipelineActive = !string.IsNullOrWhiteSpace(device);
+            RuntimeLog.TryBackgroundInfo(
+                $"familyPipelineProbe=true;active={PipelineActive};ownerThreadId={_restGpuOwner.OwnerThreadId};" +
+                $"device={Sanitize(device ?? "none")}");
+            return PipelineActive;
+        }
+        catch (Exception ex)
+        {
+            PipelineActive = false;
+            RuntimeLog.TryBackgroundWarning(
+                $"familyPipelineUnavailable=true;reason={ex.GetType().Name}:{Sanitize(ex.Message)}");
+            return false;
+        }
+    }
+
+    internal void DisablePipeline()
+    {
+        PipelineActive = false;
+    }
+
+    // 流水線啟用時，下游工作使用第二個裝置；未啟用則沿用主裝置。
+    internal ValueTask<T> ExecuteRestGpuAsync<T>(
+        Func<RenderingDevice, T> action,
+        CancellationToken cancellationToken) =>
+        PipelineActive && _restGpuOwner is not null
+            ? _restGpuOwner.ExecuteAsync(action, cancellationToken)
+            : ExecuteGpuAsync(action, cancellationToken);
+
+    // Neow 已提交但未收取結果期間保留主裝置，拒絕其他呼叫，避免破壞單次提交狀態。
+    [ThreadStatic] private static bool _primaryLease;
+
+    private ValueTask<T> ExecuteGpuAsyncCore<T>(
         Func<RenderingDevice, T> action,
         CancellationToken cancellationToken) =>
         _gpuOwner is not null
             ? _gpuOwner.ExecuteAsync(action, cancellationToken)
             : ValueTask.FromException<T>(new InvalidOperationException("FamilyGpuOwnerUnavailable"));
+
+    internal ValueTask<T> ExecuteGpuAsync<T>(
+        Func<RenderingDevice, T> action,
+        CancellationToken cancellationToken)
+    {
+        if (PipelineActive && !_primaryLease)
+            return ValueTask.FromException<T>(
+                new InvalidOperationException("FamilyPipelinePrimaryLeaseViolated"));
+        return ExecuteGpuAsyncCore(action, cancellationToken);
+    }
+
+    internal ValueTask<T> ExecutePrimaryGpuAsync<T>(
+        Func<RenderingDevice, T> action,
+        CancellationToken cancellationToken)
+    {
+        bool previous = _primaryLease;
+        _primaryLease = true;
+        try { return ExecuteGpuAsyncCore(action, cancellationToken); }
+        finally { _primaryLease = previous; }
+    }
 
     internal void RecordPipelineBoundarySource(
         SearchBatch batch,
@@ -49,9 +118,22 @@ public sealed class FamilyExecutionContext : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _pipelineBoundaryAudit?.WriteSummary();
+        if (_restGpuOwner is not null)
+        {
+            try { await _restGpuOwner.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception ex)
+            {
+                RuntimeLog.TryBackgroundWarning(
+                    $"restGpuOwnerDisposeFailure=true;failure={ex.GetType().Name}:{Sanitize(ex.Message)}");
+            }
+        }
         if (_gpuOwner is not null)
             await _gpuOwner.DisposeAsync().ConfigureAwait(false);
     }
+
+    private static string Sanitize(string value) => string.IsNullOrWhiteSpace(value)
+        ? "none"
+        : value.Replace(';', '_').Replace('\r', ' ').Replace('\n', ' ').Trim();
 }
 
 internal sealed class FamilyGpuExecutionOwner : IAsyncDisposable

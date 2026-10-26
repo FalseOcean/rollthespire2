@@ -146,7 +146,7 @@ internal sealed partial class RelicFamily : IFamilyInvocation
             await EnsureGpuAsync(executionContext, cancellationToken).ConfigureAwait(false);
             var wall = Stopwatch.StartNew();
             (FamilyCandidateSet survivors, RelicFamilyGpuBatchMetrics metrics, long ownerStartTimestamp) =
-                await executionContext.ExecuteGpuAsync(
+                await executionContext.ExecuteRestGpuAsync(
                     _ =>
                     {
                         long targetStartTimestamp = Stopwatch.GetTimestamp();
@@ -155,61 +155,8 @@ internal sealed partial class RelicFamily : IFamilyInvocation
                     },
                     cancellationToken).ConfigureAwait(false);
             wall.Stop();
-
-            if (!_referenceMeasured && !MeasureReferenceAndParity(input, survivors, out string parityIssue))
-            {
-                throw new InvalidDataException("ReferenceParityMismatch:" + parityIssue);
-            }
-
-            _costSamples.Observe(this, new(!input.IsDense, false, input.Count), input.Count, metrics.CommandMs + metrics.SubmitMs + metrics.SyncMs, outputs: metrics.Survivors, canonicalMs: metrics.CanonicalAbi1ReadyMs, readbackMs: metrics.ReadbackMs, readbackBytes: metrics.ReadbackBytes);
-            int batchNumber = ++_gpuBatches;
-            _inputCandidates += metrics.InputCandidates;
-            _processedCandidates += metrics.ProcessedCandidates;
-            _survivors += metrics.Survivors;
-            _physicalMs += metrics.PhysicalMs;
-            _wallMs += wall.Elapsed.TotalMilliseconds;
-            _canonicalAbi1ReadyMs += metrics.CanonicalAbi1ReadyMs;
-            _readbackBytes += metrics.ReadbackBytes;
-            _dispatchGroups += metrics.DispatchGroups;
-            double canonicalCandidatesPerSecond =
-                CandidatesPerSecond(metrics.InputCandidates, metrics.CanonicalAbi1ReadyMs);
-            UpdateMaximum(ref _currentSearchPeakCandidatesPerSecond, canonicalCandidatesPerSecond);
-            bool liveSteadyInput = FamilyPerformanceEvidenceEligibility.IsLiveSteadyInput(
-                input.IsDense, metrics.InputCandidates, RelicFamilyGpuExecutor.Capacity);
-            bool durableComparableInput = FamilyPerformanceEvidenceEligibility.IsDurableComparableInput(
-                input.IsDense, metrics.InputCandidates,
-                RelicFamilyGpuExecutor.Capacity,
-                RelicFamilyGpuExecutor.CompactInputCapacity);
-            if (batchNumber > 1 && liveSteadyInput)
-            {
-                _liveSteadyBatches++;
-                _liveSteadyInputCandidates += metrics.InputCandidates;
-                _liveSteadyCanonicalMs += metrics.CanonicalAbi1ReadyMs;
-            }
-            if (batchNumber > 1 && durableComparableInput)
-            {
-                _comparableSteadyBatches++;
-                UpdateMaximum(ref _validSearchPeakCandidatesPerSecond, canonicalCandidatesPerSecond);
-            }
-            if (batchNumber <= InitialPerformanceSampleCount || batchNumber % PerformanceSamplePeriod == 0)
-            {
-                _performanceSamples++;
-                RuntimeLog.TryBackgroundDetail(
-                    $"rFamilyPerformanceBatch=true;family={FamilyId};batchNumber={batchNumber};" +
-                    $"inputCandidates={metrics.InputCandidates};processedCandidates={metrics.ProcessedCandidates};" +
-                    $"survivors={metrics.Survivors};" +
-                    $"liveEtaEligible={(batchNumber > 1 && liveSteadyInput).ToString().ToLowerInvariant()};" +
-                    $"durablePerformanceEligible={(batchNumber > 1 && durableComparableInput).ToString().ToLowerInvariant()};" +
-                    $"minimumDurableCompactInput={FamilyPerformanceEvidenceEligibility.MinimumDurableCompactInput(RelicFamilyGpuExecutor.CompactInputCapacity)};" +
-                    $"physicalMs={F(metrics.PhysicalMs)};wallMs={F(wall.Elapsed.TotalMilliseconds)};" +
-                    $"canonicalAbi1ReadyMs={F(metrics.CanonicalAbi1ReadyMs)};" +
-                    $"physicalCandidatesPerSecond={F(metrics.CandidatesPerSecond)};" +
-                    $"canonicalAbi1ReadyCandidatesPerSecond={F(canonicalCandidatesPerSecond)};" +
-                    $"wallCandidatesPerSecond={F(CandidatesPerSecond(metrics.InputCandidates, wall.Elapsed.TotalMilliseconds))};" +
-                    $"dispatchGroups={metrics.DispatchGroups};readbackBytes={metrics.ReadbackBytes};sampled=true");
-            }
-            executionContext.CompletePipelineBoundaryTarget(
-                input.Batch, metrics, ownerStartTimestamp, targetDispatched: true);
+            RecordCompletedBatch(input, survivors, metrics, wall.Elapsed.TotalMilliseconds,
+                ownerStartTimestamp, executionContext);
             return survivors;
         }
         catch (OperationCanceledException) { throw; }
@@ -218,6 +165,67 @@ internal sealed partial class RelicFamily : IFamilyInvocation
             await DisableGpuAsync(executionContext, ex.GetType().Name + ":" + ex.Message).ConfigureAwait(false);
             throw;
         }
+    }
+
+    // 單窗口與合併路徑共用記帳。
+    private void RecordCompletedBatch(FamilyCandidateSet input, FamilyCandidateSet survivors,
+        in RelicFamilyGpuBatchMetrics metrics, double wallMs, long ownerStartTimestamp,
+        FamilyExecutionContext executionContext)
+    {
+        if (!_referenceMeasured && !MeasureReferenceAndParity(input, survivors, out string parityIssue))
+        {
+            throw new InvalidDataException("ReferenceParityMismatch:" + parityIssue);
+        }
+
+        _costSamples.Observe(this, new(!input.IsDense, false, input.Count), input.Count, metrics.CommandMs + metrics.SubmitMs + metrics.SyncMs, outputs: metrics.Survivors, canonicalMs: metrics.CanonicalAbi1ReadyMs, readbackMs: metrics.ReadbackMs, readbackBytes: metrics.ReadbackBytes);
+        int batchNumber = ++_gpuBatches;
+        _inputCandidates += metrics.InputCandidates;
+        _processedCandidates += metrics.ProcessedCandidates;
+        _survivors += metrics.Survivors;
+        _physicalMs += metrics.PhysicalMs;
+        _wallMs += wallMs;
+        _canonicalAbi1ReadyMs += metrics.CanonicalAbi1ReadyMs;
+        _readbackBytes += metrics.ReadbackBytes;
+        _dispatchGroups += metrics.DispatchGroups;
+        double canonicalCandidatesPerSecond =
+            CandidatesPerSecond(metrics.InputCandidates, metrics.CanonicalAbi1ReadyMs);
+        UpdateMaximum(ref _currentSearchPeakCandidatesPerSecond, canonicalCandidatesPerSecond);
+        bool liveSteadyInput = FamilyPerformanceEvidenceEligibility.IsLiveSteadyInput(
+            input.IsDense, metrics.InputCandidates, RelicFamilyGpuExecutor.Capacity);
+        bool durableComparableInput = FamilyPerformanceEvidenceEligibility.IsDurableComparableInput(
+            input.IsDense, metrics.InputCandidates,
+            RelicFamilyGpuExecutor.Capacity,
+            RelicFamilyGpuExecutor.CompactInputCapacity);
+        if (batchNumber > 1 && liveSteadyInput)
+        {
+            _liveSteadyBatches++;
+            _liveSteadyInputCandidates += metrics.InputCandidates;
+            _liveSteadyCanonicalMs += metrics.CanonicalAbi1ReadyMs;
+        }
+        if (batchNumber > 1 && durableComparableInput)
+        {
+            _comparableSteadyBatches++;
+            UpdateMaximum(ref _validSearchPeakCandidatesPerSecond, canonicalCandidatesPerSecond);
+        }
+        if (batchNumber <= InitialPerformanceSampleCount || batchNumber % PerformanceSamplePeriod == 0)
+        {
+            _performanceSamples++;
+            RuntimeLog.TryBackgroundDetail(
+                $"rFamilyPerformanceBatch=true;family={FamilyId};batchNumber={batchNumber};" +
+                $"inputCandidates={metrics.InputCandidates};processedCandidates={metrics.ProcessedCandidates};" +
+                $"survivors={metrics.Survivors};" +
+                $"liveEtaEligible={(batchNumber > 1 && liveSteadyInput).ToString().ToLowerInvariant()};" +
+                $"durablePerformanceEligible={(batchNumber > 1 && durableComparableInput).ToString().ToLowerInvariant()};" +
+                $"minimumDurableCompactInput={FamilyPerformanceEvidenceEligibility.MinimumDurableCompactInput(RelicFamilyGpuExecutor.CompactInputCapacity)};" +
+                $"physicalMs={F(metrics.PhysicalMs)};wallMs={F(wallMs)};" +
+                $"canonicalAbi1ReadyMs={F(metrics.CanonicalAbi1ReadyMs)};" +
+                $"physicalCandidatesPerSecond={F(metrics.CandidatesPerSecond)};" +
+                $"canonicalAbi1ReadyCandidatesPerSecond={F(canonicalCandidatesPerSecond)};" +
+                $"wallCandidatesPerSecond={F(CandidatesPerSecond(metrics.InputCandidates, wallMs))};" +
+                $"dispatchGroups={metrics.DispatchGroups};readbackBytes={metrics.ReadbackBytes};sampled=true");
+        }
+        executionContext.CompletePipelineBoundaryTarget(
+            input.Batch, metrics, ownerStartTimestamp, targetDispatched: true);
     }
 
     public FamilyPerformanceObservation CapturePerformanceObservation()
@@ -278,7 +286,7 @@ internal sealed partial class RelicFamily : IFamilyInvocation
         {
             if (_gpu is not null)
             {
-                await executionContext.ExecuteGpuAsync(_ => { _gpu.Dispose(); return true; }, CancellationToken.None)
+                await executionContext.ExecuteRestGpuAsync(_ => { _gpu.Dispose(); return true; }, CancellationToken.None)
                     .ConfigureAwait(false);
             }
         }
@@ -330,7 +338,7 @@ internal sealed partial class RelicFamily : IFamilyInvocation
     private async ValueTask EnsureGpuAsync(FamilyExecutionContext context, CancellationToken cancellationToken)
     {
         if (_gpu is not null) return;
-        _gpu = await context.ExecuteGpuAsync(
+        _gpu = await context.ExecuteRestGpuAsync(
             rd => RelicFamilyGpuExecutor.Create(rd, _request, _plan), cancellationToken).ConfigureAwait(false);
         _setupMs = _gpu.SetupMs;
         _device = _gpu.DeviceName;
@@ -444,7 +452,7 @@ internal sealed partial class RelicFamily : IFamilyInvocation
         try
         {
             if (_gpu is not null)
-                await context.ExecuteGpuAsync(_ => { _gpu.Dispose(); return true; }, CancellationToken.None).ConfigureAwait(false);
+                await context.ExecuteRestGpuAsync(_ => { _gpu.Dispose(); return true; }, CancellationToken.None).ConfigureAwait(false);
         }
         catch { }
         _gpu = null;

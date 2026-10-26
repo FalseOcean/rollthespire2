@@ -61,6 +61,9 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
     private readonly Rid _outputHeader;
     private readonly Rid _outputOrdinals;
     private readonly Rid _uniformSet;
+    private readonly Rid _shader;
+    private readonly Rid[] _bindingBuffers;
+    private readonly uint[] _planMetaRaw;
     private readonly uint _planTag;
     private readonly int _ownerThreadId;
     private bool _disposed;
@@ -82,6 +85,9 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
         Rid outputHeader,
         Rid outputOrdinals,
         Rid uniformSet,
+        Rid shader,
+        Rid[] bindingBuffers,
+        uint[] planMetaRaw,
         uint planTag,
         int ownerThreadId,
         double setupMs,
@@ -95,6 +101,9 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
         _outputHeader = outputHeader;
         _outputOrdinals = outputOrdinals;
         _uniformSet = uniformSet;
+        _shader = shader;
+        _bindingBuffers = bindingBuffers;
+        _planMetaRaw = planMetaRaw;
         _planTag = planTag;
         _ownerThreadId = ownerThreadId;
         SetupMs = setupMs;
@@ -217,6 +226,7 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
             timer.Stop();
             var result = new RelicFamilyGpuExecutor(
                 rd, pipeline, batchMeta, inputOrdinals, outputHeader, outputOrdinals, uniformSet,
+                shader, buffers.ToArray(), planMeta,
                 planTag, Thread.CurrentThread.ManagedThreadId, timer.Elapsed.TotalMilliseconds,
                 rd.GetDeviceName()?.Trim() ?? "unknown", workspaceBytes);
             result._privateInput = privateInput; result._privateOutput = privateOutput;

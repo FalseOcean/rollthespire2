@@ -11,7 +11,26 @@
     <Version>1.3.5</Version>
     <AssemblyVersion>1.3.5.0</AssemblyVersion>
     <FileVersion>1.3.5.0</FileVersion>
-    <InformationalVersion>1.3.5+$(Configuration)</InformationalVersion>
+    <Rt2NeowSmallReadback Condition="'$(Rt2NeowSmallReadback)' == ''">true</Rt2NeowSmallReadback>
+    <Rt2NeowCombinedReadback Condition="'$(Rt2NeowCombinedReadback)' == ''">true</Rt2NeowCombinedReadback>
+    <Rt2NeowMediumReadback Condition="'$(Rt2NeowMediumReadback)' == ''">$(Rt2NeowCombinedReadback)</Rt2NeowMediumReadback>
+    <Rt2NeowBatchMerge Condition="'$(Rt2NeowBatchMerge)' == ''">true</Rt2NeowBatchMerge>
+    <Rt2NeowBatchMergeSize Condition="'$(Rt2NeowBatchMergeSize)' == ''">4</Rt2NeowBatchMergeSize>
+    <Rt2BatchMergeRelic Condition="'$(Rt2BatchMergeRelic)' == ''">false</Rt2BatchMergeRelic>
+    <Rt2NeowPipeline Condition="'$(Rt2NeowPipeline)' == ''">false</Rt2NeowPipeline>
+    <Rt2NeowEpochBatch Condition="'$(Rt2NeowEpochBatch)' == ''">true</Rt2NeowEpochBatch>
+    <Rt2TinyInputCpuOffload Condition="'$(Rt2TinyInputCpuOffload)' == ''">false</Rt2TinyInputCpuOffload>
+    <DefineConstants Condition="'$(Rt2NeowSmallReadback)' == 'true'">$(DefineConstants);RT2_NEOW_SMALL_READBACK</DefineConstants>
+    <DefineConstants Condition="'$(Rt2NeowCombinedReadback)' == 'true'">$(DefineConstants);RT2_NEOW_COMBINED_READBACK</DefineConstants>
+    <DefineConstants Condition="'$(Rt2NeowMediumReadback)' == 'true' and '$(Rt2NeowCombinedReadback)' == 'true'">$(DefineConstants);RT2_NEOW_MEDIUM_READBACK</DefineConstants>
+    <DefineConstants Condition="'$(Rt2NeowBatchMerge)' == 'true'">$(DefineConstants);RT2_NEOW_BATCH_MERGE</DefineConstants>
+    <DefineConstants Condition="'$(Rt2BatchMergeRelic)' == 'true'">$(DefineConstants);RT2_BATCH_MERGE_RELIC</DefineConstants>
+    <DefineConstants Condition="'$(Rt2NeowPipeline)' == 'true'">$(DefineConstants);RT2_NEOW_PIPELINE</DefineConstants>
+    <DefineConstants Condition="'$(Rt2NeowEpochBatch)' == 'true'">$(DefineConstants);RT2_NEOW_EPOCH_BATCH</DefineConstants>
+    <DefineConstants Condition="'$(Rt2TinyInputCpuOffload)' == 'true'">$(DefineConstants);RT2_TINY_INPUT_CPU_OFFLOAD</DefineConstants>
+    <DefineConstants Condition="'$(Rt2NeowBatchMerge)' == 'true' and '$(Rt2NeowBatchMergeSize)' == '2'">$(DefineConstants);RT2_NEOW_BATCH_MERGE_SIZE_2</DefineConstants>
+    <DefineConstants Condition="'$(Rt2NeowBatchMerge)' == 'true' and '$(Rt2NeowBatchMergeSize)' == '8'">$(DefineConstants);RT2_NEOW_BATCH_MERGE_SIZE_8</DefineConstants>
+    <InformationalVersion>1.3.5+$(Configuration).neow-readback.small-$(Rt2NeowSmallReadback).combined-$(Rt2NeowCombinedReadback).medium-$(Rt2NeowMediumReadback).merge-$(Rt2NeowBatchMerge).mergeSize-$(Rt2NeowBatchMergeSize).relicMerge-$(Rt2BatchMergeRelic).pipeline-$(Rt2NeowPipeline).epoch-$(Rt2NeowEpochBatch).tinycpu-$(Rt2TinyInputCpuOffload).77a7dbe</InformationalVersion>
     <NoWarn>$(NoWarn);MSB3270;STS002</NoWarn>
   </PropertyGroup>
 
@@ -53,12 +72,35 @@
   </ItemGroup>
 
   <ItemGroup>
-    <AssemblyMetadata Include="Rt2BuildIdentity" Value="RolltheSpire2-1.3.5-Production" />
+    <AssemblyMetadata Include="Rt2BuildIdentity" Value="RolltheSpire2-1.3.5-GpuFinal" />
+    <AssemblyMetadata Include="Rt2NeowSmallReadback" Value="$(Rt2NeowSmallReadback)" />
+    <AssemblyMetadata Include="Rt2NeowCombinedReadback" Value="$(Rt2NeowCombinedReadback)" />
+    <AssemblyMetadata Include="Rt2NeowMediumReadback" Value="$(Rt2NeowMediumReadback)" />
+    <AssemblyMetadata Include="Rt2NeowBatchMerge" Value="$(Rt2NeowBatchMerge)" />
+    <AssemblyMetadata Include="Rt2NeowBatchMergeSize" Value="$(Rt2NeowBatchMergeSize)" />
+    <AssemblyMetadata Include="Rt2BatchMergeRelic" Value="$(Rt2BatchMergeRelic)" />
+    <AssemblyMetadata Include="Rt2NeowPipeline" Value="$(Rt2NeowPipeline)" />
+    <AssemblyMetadata Include="Rt2NeowEpochBatch" Value="$(Rt2NeowEpochBatch)" />
+    <AssemblyMetadata Include="Rt2TinyInputCpuOffload" Value="$(Rt2TinyInputCpuOffload)" />
     <AssemblyMetadata Include="Rt2CompatibilityTarget" Value="Beta110-0.110.1-AuditedExact_Beta111-0.111.0-AcceptedCompatible-Modern110Semantic" />
     <AssemblyMetadata Include="Rt2BuildConfiguration" Value="$(Configuration)" />
   </ItemGroup>
 
   <Target Name="ValidateSts2ReferenceDir">
+    <Error Condition="'$(Rt2NeowCombinedReadback)' == 'true' and '$(Rt2NeowSmallReadback)' != 'true'"
+           Text="Rt2NeowCombinedReadback requires Rt2NeowSmallReadback=true." />
+    <Error Condition="'$(Rt2NeowMediumReadback)' == 'true' and '$(Rt2NeowCombinedReadback)' != 'true'"
+           Text="Rt2NeowMediumReadback requires Rt2NeowCombinedReadback=true." />
+    <Error Condition="'$(Rt2NeowBatchMerge)' == 'true' and ('$(Rt2NeowCombinedReadback)' != 'true' or '$(Rt2NeowMediumReadback)' != 'true')"
+           Text="Rt2NeowBatchMerge requires Rt2NeowCombinedReadback=true and Rt2NeowMediumReadback=true." />
+    <Error Condition="'$(Rt2BatchMergeRelic)' == 'true' and '$(Rt2NeowBatchMerge)' != 'true'"
+        Text="Rt2BatchMergeRelic requires Rt2NeowBatchMerge=true." />
+    <Error Condition="'$(Rt2NeowPipeline)' == 'true' and '$(Rt2NeowBatchMerge)' != 'true'"
+        Text="Rt2NeowPipeline requires Rt2NeowBatchMerge=true." />
+    <Error Condition="'$(Rt2NeowEpochBatch)' == 'true' and '$(Rt2NeowBatchMerge)' != 'true'"
+        Text="Rt2NeowEpochBatch requires Rt2NeowBatchMerge=true." />
+    <Error Condition="'$(Rt2NeowBatchMerge)' == 'true' and '$(Rt2NeowBatchMergeSize)' != '2' and '$(Rt2NeowBatchMergeSize)' != '4' and '$(Rt2NeowBatchMergeSize)' != '8'"
+           Text="Rt2NeowBatchMergeSize must be 2, 4 or 8." />
     <Message Importance="high"
              Condition="Exists('$(Sts2ReferenceDir)/sts2.dll') and Exists('$(Sts2ReferenceDir)/0Harmony.dll')"
              Text="RT2 path discovery source=$(Sts2PathDiscoverySource) gameRoot=$(Sts2Path) referenceDir=$(Sts2ReferenceDir) modsDir=$(Rt2ModsDir) modsSource=$(Rt2ModsDiscoverySource)" />

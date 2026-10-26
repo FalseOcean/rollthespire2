@@ -72,18 +72,18 @@ internal sealed partial class EventResultFamily : IFamilyInvocation
         _compact = !input.IsDense;
         try
         {
-            _gpu ??= await context.ExecuteGpuAsync(rd => new EventResultFamilyGpuExecutor(rd, Plan), token).ConfigureAwait(false);
+            _gpu ??= await context.ExecuteRestGpuAsync(rd => new EventResultFamilyGpuExecutor(rd, Plan), token).ConfigureAwait(false);
             if (!_parity)
             {
                 var sample = FamilyCandidateSet.FromSortedAbi1(input.Batch, input.EnumerateLogicalOrdinals().Take(2048).ToArray());
-                var actual = await context.ExecuteGpuAsync(rd => _gpu.Execute(sample, token, out _), token).ConfigureAwait(false);
+                var actual = await context.ExecuteRestGpuAsync(rd => _gpu.Execute(sample, token, out _), token).ConfigureAwait(false);
                 var profile = RolltheSpire2.Compatibility.RuntimeProfileRegistry.Select(_request.Detection);
                 var expected = sample.EnumerateLogicalOrdinals().Where(i => Plan.Reference(profile.ComputeRootSeed(
                     VisibleSeedCandidateCodec.FormatOrdinal(profile, input.Batch.GlobalCandidate(i)))));
                 if (!actual.EnumerateLogicalOrdinals().SequenceEqual(expected)) throw new InvalidDataException("E.EventResult.CanonicalReferenceParityMismatch");
                 _parity = true;
             }
-            var result = await context.ExecuteGpuAsync(rd => { var output = _gpu.Execute(input, token, out var m); return (output, m); }, token).ConfigureAwait(false);
+            var result = await context.ExecuteRestGpuAsync(rd => { var output = _gpu.Execute(input, token, out var m); return (output, m); }, token).ConfigureAwait(false);
             _costSamples.Observe(this, new(!input.IsDense, false, input.Count), input.Count, result.m.DispatchSyncMs, outputs: result.output.Count, canonicalMs: result.m.CanonicalMs, readbackMs: result.m.ReadbackMs, readbackBytes: result.m.ReadbackBytes);
             var metrics = result.m; var s = Current; s.Batches++; s.Input += metrics.Input; s.Output += metrics.Output; s.Ms += metrics.CanonicalMs;
             if (s.Batches > 1)
@@ -100,7 +100,7 @@ internal sealed partial class EventResultFamily : IFamilyInvocation
     public async ValueTask DisposeAsync(FamilyExecutionContext context)
     {
         if (!Plan.GpuSupported) { _cpu.WriteSummary(); return; }
-        if (_gpu != null) try { await context.ExecuteGpuAsync(_ => { _gpu.Dispose(); return true; }, CancellationToken.None).ConfigureAwait(false); }
+        if (_gpu != null) try { await context.ExecuteRestGpuAsync(_ => { _gpu.Dispose(); return true; }, CancellationToken.None).ConfigureAwait(false); }
             catch { _faulted = true; throw; }
         var s = Current;
         RuntimeLog.TryBackgroundInfo($"eventResultFamilySummary=true;family={FamilyId};physicalRevision={ResolveConditionPerformance(_compact).PhysicalImplementationRevision};batches={s.Batches};input={s.Input};output={s.Output};canonicalAbi1ReadyMs={s.Ms};parity={_parity};faulted={_faulted};recovery=None");

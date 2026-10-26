@@ -7,26 +7,49 @@ namespace RolltheSpire2.Search.FamilyExecution;
 internal readonly record struct NeowFamilyGpuMetrics(int Processed, int Survivors, uint Groups, long ReadbackBytes,
     double CanonicalMs, double UploadMs, double DispatchSyncMs, double ReadbackMs, double CanonicalizeMs,
     int Dispatches, uint CurseSurvivors, uint PairSurvivors,
-    uint NrPairPass, uint ArcanePass, uint CapsuleRarityPass, uint HeavyEntered, double PayloadReadbackMs);
+    uint NrPairPass, uint ArcanePass, uint CapsuleRarityPass, uint HeavyEntered, double PayloadReadbackMs)
+{
+    // 主機 API 耗時，不是 GPU 核心時間戳。
+    internal double SubmitMs { get; init; }
+    internal double SyncMs { get; init; }
+    internal double HeaderReadCallMs { get; init; }
+    internal double PayloadReadCallMs { get; init; }
+    internal int HeaderReadCalls { get; init; }
+    internal int PayloadReadCalls { get; init; }
+    internal int SmallPayloadReadCalls { get; init; }
+    internal int DirectPayloadReadCalls { get; init; }
+    internal long PayloadReadSourceCapacityBytes { get; init; }
+    internal double CombinedReadCallMs { get; init; }
+    internal int CombinedReadCalls { get; init; }
+    internal int CombinedPayloadBatches { get; init; }
+    internal long LogicalPayloadBytes { get; init; }
+    internal int MediumPayloadReadCalls { get; init; }
+    internal double MediumReadCallMs { get; init; }
+    internal long MediumReadSourceCapacityBytes { get; init; }
+    // 記錄合併緩衝容量與群組歸屬；共用耗時按窗口分攤。
+    internal long CombinedReadSourceCapacityBytes { get; init; }
+    internal bool BatchMergeWindow { get; init; }
+    internal int BatchMergeGroupSize { get; init; }
+}
 
 // Session-resident resources on the existing Family GPU owner. Host transport,
 // header validation and canonicalization follow the accepted R executor donor.
-internal sealed class NeowFamilyGpuExecutor : IDisposable
+internal sealed partial class NeowFamilyGpuExecutor : IDisposable
 {
     internal const int Capacity = FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize;
     // Full-capacity Compact transport prevents high-survival upstream N/S from
     // becoming an accidental Exact-only gate. Both workspaces remain bounded.
     private readonly RenderingDevice _rd;
     private readonly List<Rid> _owned = new();
-    private readonly Rid _meta, _header, _input, _output, _projectionMetadata;
-    private Rid _pipeline, _uniforms;
+    private readonly Rid _meta, _header, _input, _output, _projectionMetadata, _readbackScratch, _readbackBank, _readbackMediumBank;
+    private Rid _pipeline, _uniforms, _singleShader;
     private readonly Rid[] _buffers;
     private Rid[]? _stagedBuffers;
     private readonly NeowFamilyGpuPlan _plan;
     private readonly NeowCapsuleComposite? _composite;
     private readonly string? _partySource;
     private readonly int _capsulePhysicalMode;
-    private readonly List<(Rid Pipeline, Rid Uniforms)> _stages = new();
+    private readonly List<(Rid Shader, Rid Pipeline, Rid Uniforms)> _stages = new();
     private readonly int _owner = System.Environment.CurrentManagedThreadId;
     private readonly uint _tag;
     private readonly bool _bonesArcane;
@@ -34,12 +57,18 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
     internal uint[] BonesKCounts { get; private set; } = [];
     private readonly bool _privateInput;
     private readonly bool _privateOutput;
+    private readonly bool _useSmallReadback;
+    private readonly bool _useCombinedReadback;
+    private readonly bool _useMediumReadback;
     private bool _disposed, _initializationFaulted;
     private readonly bool _tracePrivate = NcPhysicalExperiment.Mode.Length != 0 || PrivateOrdinalSelection.IsRequested || NwaePhysicalExperiment.Mode.Length != 0;
     internal double SetupMs { get; private set; }
     internal string Device { get; }
     internal const long WorkspaceBytes = (long)Capacity * sizeof(uint) * 2;
-    internal long ResidentBytes => WorkspaceBytes + (_stagedBuffers is null ? 0 :
+    internal int PayloadReadbackScratchBytes => (_readbackBank.IsValid ? NeowCombinedReadbackTransport.BankBytes : 0)
+        + (_readbackMediumBank.IsValid ? NeowMediumReadbackTransport.BankBytes : 0)
+        + (_readbackScratch.IsValid ? NeowReadbackTransport.ScratchBytes : 0);
+    internal long ResidentBytes => WorkspaceBytes + PayloadReadbackScratchBytes + (_stagedBuffers is null ? 0 :
         (long)NeowFamilyGpuPlan.CurseCapacity * 12 + (long)NeowFamilyGpuPlan.PairCapacity * 48);
     internal static string ShaderSource(int stage = 3, bool capsuleComposite = false, bool leafyPreGate = false,
         bool bonesCapsuleComposite = false, bool bonesArcaneComposite = false, int directNestedMode = 0, int capsulePhysicalMode = 0, int bonesKMode = 0, bool authoredUpgrades = false,
@@ -86,6 +115,10 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
         _rd = rd; _tag = tag; _bonesArcane = composite?.UsesBonesArcane == true; _privateInput = privateInput is not null;
         _privateOutput = privateOutput is not null;
         _plan = plan; _composite = composite; _partySource = partySource; _capsulePhysicalMode = capsulePhysicalMode;
+        _useSmallReadback = NeowReadbackTransport.Enabled && !_privateInput && !_privateOutput && !plan.IsMultiplayer && partySource is null;
+        _useCombinedReadback = _useSmallReadback && NeowCombinedReadbackTransport.Enabled && !_bonesArcane && _bonesKMode == 0;
+        // 超出合併前綴的公開輸出使用第二級緩衝；只隨合併讀回啟用。
+        _useMediumReadback = _useCombinedReadback && NeowMediumReadbackTransport.Enabled;
         if (_privateInput && ReferenceEquals(privateInput, privateOutput)) throw new ArgumentException("N.PrivateBuffersAlias");
         var timer = Stopwatch.StartNew();
         Rid Buffer(uint[] values, string name) => Add(FamilyGpuComputeUtility.CreateStorageBuffer(rd, FamilyGpuComputeUtility.ToBytesNonEmpty(values), name));
@@ -94,6 +127,14 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
             _meta = Buffer(new uint[8], "N.Batch"); _header = Buffer(Header(), "N.Header");
             _input = privateInput?.Buffer ?? Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, Capacity * sizeof(uint), "N.Input"));
             _output = privateOutput?.Buffer ?? Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, Capacity * sizeof(uint), "N.Output"));
+            if (_useCombinedReadback)
+            {
+                _readbackBank = Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, NeowCombinedReadbackTransport.BankBytes, "N.CombinedReadbackBank"));
+                if (_useMediumReadback)
+                    _readbackMediumBank = Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, NeowMediumReadbackTransport.BankBytes, "N.MediumReadbackBank"));
+            }
+            else if (_useSmallReadback)
+                _readbackScratch = Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, NeowReadbackTransport.ScratchBytes, "N.PayloadReadbackScratch"));
             _buffers = [_meta, Buffer(plan.Meta, "N.Plan"), Buffer(plan.PoolMeta, "N.Pools"), Buffer(plan.Cards, "N.Cards"), Buffer(plan.Strike, "N.Strike"),
                 Buffer(plan.Defend, "N.Defend"), _header, _output, Buffer(plan.Bones, "N.Bones"), Buffer(plan.Conditions, "N.Conditions"), _input];
             if (bonesKMode == 2 || composite is not null)
@@ -154,7 +195,7 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
                     Rid shader = Add(FamilyGpuComputeUtility.CompileShader(_rd, ModuleSource(stage), name));
                     Rid pipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(_rd, shader, name));
                     if (!_rd.ComputePipelineIsValid(pipeline)) throw new InvalidOperationException("NFamilyStagePipelineInvalid:" + name);
-                    _stages.Add((pipeline, Add(FamilyGpuComputeUtility.CreateUniformSet(_rd, shader, _stagedBuffers, name))));
+                    _stages.Add((shader, pipeline, Add(FamilyGpuComputeUtility.CreateUniformSet(_rd, shader, _stagedBuffers, name))));
                 }
             }
             else
@@ -169,7 +210,7 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
                 Rid pipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(_rd, shader, name));
                 if (!_rd.ComputePipelineIsValid(pipeline)) throw new InvalidOperationException("NFamilyGpuPipelineInvalid:" + name);
                 Rid uniforms = Add(FamilyGpuComputeUtility.CreateUniformSet(_rd, shader, buffers, name));
-                _pipeline = pipeline; _uniforms = uniforms;
+                _pipeline = pipeline; _uniforms = uniforms; _singleShader = shader;
             }
         }
         catch (Exception ex)
@@ -227,10 +268,12 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
             (uint)input.Batch.BatchCandidateCount, (uint)inputCount, dense ? 0u : 1u, Capacity,
             NeowFamilyGpuPlan.CurseCapacity, NeowFamilyGpuPlan.PairCapacity], "NFamilyBatch");
         FamilyGpuComputeUtility.Update(_rd, _header, Header(), "NFamilyHeader");
-        if (!input.IsDense && !_privateInput) FamilyGpuComputeUtility.Update(_rd, _input,
-            input.ExportAbi1().ToArray().Select(x => checked((uint)x)).ToArray(), "NFamilyCompact");
+        if (!input.IsDense && !_privateInput) FamilyGpuComputeUtility.UpdateBytes(_rd, _input,
+            FamilyGpuOrdinalPacking.ToBytes(input.ExportAbi1().Span), "NFamilyCompact");
         double uploadedMs = timer.Elapsed.TotalMilliseconds;
         uint groups = (uint)((inputCount + 511) / 512);
+        bool combinedRead = _useCombinedReadback && inputCount > 0;
+        double submitMs = 0, syncMs = 0;
         if (groups > 0)
         {
             if (!staged && !_pipeline.IsValid) throw new InvalidOperationException("N.UnboundCompactModule");
@@ -251,11 +294,32 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
                 _rd.ComputeListDispatch(list, groups, 1, 1);
             }
             _rd.ComputeListEnd();
-            FamilyGpuComputeUtility.SubmitAndSync(_rd, "N.Neow");
+            // 清單結束後再排入複製，由 RD 追蹤依賴；複製至 Sync 之間不可取消。
+            if (combinedRead)
+                NeowCombinedReadbackTransport.QueueCopies(_rd, _header, _output, _readbackBank, checked((uint)inputCount));
+            // 合併模式的複製包含在本次提交。
+            (submitMs, syncMs) = FamilyGpuComputeUtility.SubmitAndSync(_rd, "N.Neow");
         }
         token.ThrowIfCancellationRequested();
         double syncedMs = timer.Elapsed.TotalMilliseconds;
-        uint[] header = FamilyGpuComputeUtility.FromUInt32Bytes(_rd.BufferGetData(_header));
+        // 讀回 API 與轉換、驗證分開計時。
+        byte[]? combinedBytes = null;
+        byte[] headerBytes;
+        double headerReadCallMs = 0, combinedReadCallMs = 0;
+        if (combinedRead)
+        {
+            long combinedReadStarted = Stopwatch.GetTimestamp();
+            combinedBytes = NeowCombinedReadbackTransport.ReadBank(_rd, _readbackBank, checked((uint)inputCount));
+            combinedReadCallMs = Stopwatch.GetElapsedTime(combinedReadStarted).TotalMilliseconds;
+            headerBytes = combinedBytes.AsSpan(0, NeowCombinedReadbackTransport.HeaderBytes).ToArray();
+        }
+        else
+        {
+            long headerReadStarted = Stopwatch.GetTimestamp();
+            headerBytes = _rd.BufferGetData(_header);
+            headerReadCallMs = Stopwatch.GetElapsedTime(headerReadStarted).TotalMilliseconds;
+        }
+        uint[] header = FamilyGpuComputeUtility.FromUInt32Bytes(headerBytes);
         if (header.Length != (_bonesKMode != 0 ? 16 : _bonesArcane ? 12 : 8) || header[0] != 0x4e464d52 || header[1] != 1 || header[5] != _tag ||
             header[3] != 0 || header[4] != inputCount || header[2] > header[4] ||
             (staged && (header[6] > NeowFamilyGpuPlan.CurseCapacity || header[7] > NeowFamilyGpuPlan.PairCapacity || header[7] > header[6])))
@@ -274,14 +338,52 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
         {
             double readyMs=timer.Elapsed.TotalMilliseconds;
             metrics=new(inputCount,checked((int)count),groups,header.Length*4,readyMs,uploadedMs,syncedMs-uploadedMs,
-                readyMs-syncedMs,0,groups==0?0:staged?3:1,header[6],header[7],0,0,0,0,0);
+                readyMs-syncedMs,0,groups==0?0:staged?3:1,header[6],header[7],0,0,0,0,0)
+            {
+                SubmitMs=submitMs, SyncMs=syncMs, HeaderReadCallMs=headerReadCallMs, HeaderReadCalls=1
+            };
             return null;
         }
         if (_bonesArcane && (header[8] > input.Count || header[9] > header[8] || header[10] > header[9] ||
             header[11] < header[10] || header[11] > 2UL * header[10] || count > header[10]))
             throw new InvalidDataException("NrBonesArcaneCountersInvalid");
         double payloadStartMs = _bonesArcane ? timer.Elapsed.TotalMilliseconds : 0;
-        uint[] packed = count == 0 ? [] : FamilyGpuComputeUtility.FromUInt32Bytes(_rd.BufferGetData(_output, 0, count * sizeof(uint)));
+        uint[] packed = [];
+        double payloadReadCallMs = 0, mediumReadCallMs = 0;
+        bool usedSmallReadback = false;
+        bool usedMediumReadback = false;
+        bool payloadFromCombined = false;
+        if (count > 0)
+        {
+            byte[] payloadBytes;
+            if (combinedBytes is not null && NeowCombinedReadbackTransport.TryExtractPayload(
+                    combinedBytes, checked((uint)inputCount), count, out byte[] prefixPayload))
+            {
+                // 只讀取已驗證的有效筆數；未使用前綴可能殘留舊資料。
+                payloadBytes = prefixPayload;
+                payloadFromCombined = true;
+            }
+            else
+            {
+                long payloadReadStarted = Stopwatch.GetTimestamp();
+                if (_useMediumReadback && NeowMediumReadbackTransport.CanStage(count))
+                {
+                    // 先將有效輸出搬入有界緩衝，避免同步讀回按 64 MiB 來源建立臨時資源。
+                    long mediumReadStarted = Stopwatch.GetTimestamp();
+                    payloadBytes = NeowMediumReadbackTransport.Read(_rd, _output, _readbackMediumBank, count);
+                    usedMediumReadback = true;
+                    mediumReadCallMs = Stopwatch.GetElapsedTime(mediumReadStarted).TotalMilliseconds;
+                }
+                else
+                {
+                    payloadBytes = _useSmallReadback && !combinedRead
+                        ? NeowReadbackTransport.Read(_rd, _output, _readbackScratch, count, out usedSmallReadback)
+                        : NeowReadbackTransport.ReadDirect(_rd, _output, count);
+                }
+                payloadReadCallMs = Stopwatch.GetElapsedTime(payloadReadStarted).TotalMilliseconds;
+            }
+            packed = FamilyGpuComputeUtility.FromUInt32Bytes(payloadBytes);
+        }
         double readMs = timer.Elapsed.TotalMilliseconds;
         // Solo high-output public boundaries spend far more time comparison-sorting
         // widened ordinals than dispatching. Sort the complete packed permutation
@@ -309,10 +411,23 @@ internal sealed class NeowFamilyGpuExecutor : IDisposable
         double validationStart = timer.Elapsed.TotalMilliseconds;
         var result = FamilyCandidateSet.FromSortedAbi1(input.Batch, ordinals);
         double canonicalMs = timer.Elapsed.TotalMilliseconds;
-        metrics = new((int)header[4], ordinals.Length, groups, header.Length * sizeof(uint) + count * sizeof(uint), canonicalMs,
+        int payloadReadCalls = count > 0 && !payloadFromCombined ? 1 : 0;
+        long readbackBytes = (combinedBytes?.Length ?? headerBytes.Length) + (payloadReadCalls > 0 ? (long)count * sizeof(uint) : 0);
+        metrics = new((int)header[4], ordinals.Length, groups, readbackBytes, canonicalMs,
             uploadedMs, syncedMs - uploadedMs, readMs - syncedMs, canonicalMs - readMs,
             groups == 0 ? 0 : staged ? 3 : 1, header[6], header[7], _bonesArcane ? header[8] : 0, _bonesArcane ? header[9] : 0,
-            _bonesArcane ? header[10] : 0, _bonesArcane ? header[11] : 0, _bonesArcane && count > 0 ? readMs - payloadStartMs : 0);
+            _bonesArcane ? header[10] : 0, _bonesArcane ? header[11] : 0, _bonesArcane && count > 0 ? readMs - payloadStartMs : 0)
+        {
+            SubmitMs=submitMs, SyncMs=syncMs, HeaderReadCallMs=headerReadCallMs,
+            PayloadReadCallMs=payloadReadCallMs, HeaderReadCalls=combinedRead?0:1, PayloadReadCalls=payloadReadCalls,
+            SmallPayloadReadCalls=usedSmallReadback?1:0, DirectPayloadReadCalls=payloadReadCalls>0&&!usedSmallReadback&&!usedMediumReadback?1:0,
+            PayloadReadSourceCapacityBytes=payloadReadCalls==0?0:usedSmallReadback?NeowReadbackTransport.ScratchBytes:usedMediumReadback?NeowMediumReadbackTransport.BankBytes:(long)Capacity*sizeof(uint),
+            CombinedReadCallMs=combinedReadCallMs, CombinedReadCalls=combinedRead?1:0,
+            CombinedPayloadBatches=payloadFromCombined?1:0, LogicalPayloadBytes=(long)count*sizeof(uint),
+            MediumPayloadReadCalls=usedMediumReadback?1:0, MediumReadCallMs=mediumReadCallMs,
+            MediumReadSourceCapacityBytes=usedMediumReadback?NeowMediumReadbackTransport.BankBytes:0,
+            CombinedReadSourceCapacityBytes=combinedRead?NeowCombinedReadbackTransport.BankBytes:0
+        };
         if (_tracePrivate)
             Bootstrap.RuntimeLog.TryBackgroundDetail($"ncStageTiming=true;stage=N;input={inputCount};output={result.Count};dispatches={metrics.Dispatches};uploadMs={uploadedMs};dispatchSyncMs={metrics.DispatchSyncMs};readbackMs={metrics.ReadbackMs};readbackBytes={metrics.ReadbackBytes};widenMs={widenMs};sortMs={sortMs};validationMs={canonicalMs-validationStart};canonicalMs={canonicalMs};packedRadix={packedRadix}");
         return result;

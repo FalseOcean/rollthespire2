@@ -26,6 +26,10 @@ internal sealed partial class CombatRewardFamily : IFamilyInvocation
     private CombatRewardGpuExecutor? _gpu;
     private bool _compact, _parity, _faulted;
     private int _batches;
+    private int _cpuOffloadBatches;
+    private int _cpuOffloadInputs;
+    private int _cpuOffloadOutputs;
+    private double _cpuOffloadMs;
     private long _inputs, _outputs, _liveInputs;
     private double _canonicalMs, _liveMs, _peak;
     internal CombatRewardReplay Replay { get; }
@@ -98,6 +102,7 @@ internal sealed partial class CombatRewardFamily : IFamilyInvocation
         if(_faulted)throw new InvalidOperationException("C.GpuInvocationFaulted");
         if(observationWindow.ExactRequest.SnapshotFingerprint!=_request.SnapshotFingerprint)throw new InvalidOperationException("C.ObservationMismatch");
         if(input.Count==0)return input;
+        if(TinyInputCpuOffload.ShouldOffload(input))return InvokeTinyCpu(observationWindow,input,cancellationToken);
         _compact=!input.IsDense;
         try
         {
@@ -132,10 +137,28 @@ internal sealed partial class CombatRewardFamily : IFamilyInvocation
         catch(OperationCanceledException){throw;}
         catch(Exception ex){_faulted=true;RuntimeLog.TryBackgroundWarning("combatRewardGpuFault=true;recovery=None;error="+ex.Message);throw;}
     }
+    // 少量候選直接使用既有 CPU 參考實作，省去 GPU 往返；耗時另行記帳。
+    private FamilyCandidateSet InvokeTinyCpu(FamilyObservationWindow window, FamilyCandidateSet input,
+        CancellationToken cancellationToken)
+    {
+        long started=System.Diagnostics.Stopwatch.GetTimestamp();
+        FamilyCandidateSet output=_cpu.Execute(window,input,cancellationToken,Replay.Matches);
+        double ms=System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        // CPU 分流不代表 GPU 已通過一致性檢查。
+        _cpuOffloadBatches++;
+        _cpuOffloadInputs+=input.Count;
+        _cpuOffloadOutputs+=output.Count;
+        _cpuOffloadMs+=ms;
+        if(RolltheSpire2.Bootstrap.RuntimeLog.DetailEnabled)RuntimeLog.TryBackgroundDetail(
+            $"combatRewardTinyCpuBatch=true;batchBase={input.Batch.BatchBase};input={input.Count};output={output.Count};cpuMs={ms:F4}");
+        return output;
+    }
+
     public async ValueTask DisposeAsync(FamilyExecutionContext executionContext)
     {
         if(_gpuPlan is null){_cpu.WriteSummary();return;}
-        RuntimeLog.TryBackgroundInfo($"combatRewardGpuSummary=true;batches={_batches};input={_inputs};output={_outputs};canonicalMs={_canonicalMs};parity={_parity};faulted={_faulted};recovery=False");
+        RuntimeLog.TryBackgroundInfo($"combatRewardGpuSummary=true;batches={_batches};input={_inputs};output={_outputs};canonicalMs={_canonicalMs};parity={_parity};faulted={_faulted};"+
+            $"cpuOffloadBatches={_cpuOffloadBatches};cpuOffloadInput={_cpuOffloadInputs};cpuOffloadOutput={_cpuOffloadOutputs};cpuOffloadMs={_cpuOffloadMs:F4};recovery=False");
         if(_gpu is not null)await executionContext.ExecuteGpuAsync(_=>{_gpu.Dispose();return true;},CancellationToken.None).ConfigureAwait(false);
     }
 

@@ -107,10 +107,10 @@ internal sealed partial class CapsuleRelicFamily : IFamilyInvocation
         try
         {
             if (_gpu is null)
-                _gpu = await executionContext.ExecuteGpuAsync(
+                _gpu = await executionContext.ExecuteRestGpuAsync(
                     rd => RelicFamilyGpuExecutor.Create(rd, _request, _gpuPlan), cancellationToken).ConfigureAwait(false);
             (FamilyCandidateSet survivors, RelicFamilyGpuBatchMetrics metrics) =
-                await executionContext.ExecuteGpuAsync(
+                await executionContext.ExecuteRestGpuAsync(
                     _ =>
                     {
                         FamilyCandidateSet result = _gpu.Execute(input, cancellationToken, out RelicFamilyGpuBatchMetrics batch);
@@ -155,7 +155,7 @@ internal sealed partial class CapsuleRelicFamily : IFamilyInvocation
             try
             {
                 if (_gpu is not null)
-                    await executionContext.ExecuteGpuAsync(_ => { _gpu.Dispose(); return true; }, CancellationToken.None)
+                    await executionContext.ExecuteRestGpuAsync(_ => { _gpu.Dispose(); return true; }, CancellationToken.None)
                         .ConfigureAwait(false);
             }
             catch { }
@@ -207,7 +207,7 @@ internal sealed partial class CapsuleRelicFamily : IFamilyInvocation
         {
             try
             {
-                await executionContext.ExecuteGpuAsync(_ => { _gpu.Dispose(); return true; }, CancellationToken.None)
+                await executionContext.ExecuteRestGpuAsync(_ => { _gpu.Dispose(); return true; }, CancellationToken.None)
                     .ConfigureAwait(false);
             }
             catch { _gpuDisabled = true; throw; }

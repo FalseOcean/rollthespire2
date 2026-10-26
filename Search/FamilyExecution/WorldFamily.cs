@@ -21,6 +21,10 @@ internal sealed partial class WorldFamily : IFamilyInvocation
     private WorldFamilyGpuExecutor? _gpu;
     private bool _compact, _parity, _faulted;
     private int _batches;
+    private int _cpuOffloadBatches;
+    private int _cpuOffloadInputs;
+    private int _cpuOffloadOutputs;
+    private double _cpuOffloadMs;
     private long _inputs, _outputs;
     private double _canonicalMs;
     private long _windows, _groups, _headerCalls, _headerBytes, _payloadCalls, _payloadBytes;
@@ -116,26 +120,27 @@ internal sealed partial class WorldFamily : IFamilyInvocation
         if(_faulted)throw new InvalidOperationException("W.GpuInvocationFaulted");
         if(observationWindow.ExactRequest.SnapshotFingerprint!=_request.SnapshotFingerprint)throw new InvalidOperationException("W.ObservationMismatch");
         if(input.Count==0)return input;
+        if(TinyInputCpuOffload.ShouldOffload(input))return InvokeTinyCpu(observationWindow,input,cancellationToken);
         _compact=!input.IsDense;
         long cancellationRequestedAt = 0;
         using var cancellationRegistration = cancellationToken.Register(() =>
             Interlocked.CompareExchange(ref cancellationRequestedAt, System.Diagnostics.Stopwatch.GetTimestamp(), 0));
         try
         {
-            _gpu??=await executionContext.ExecuteGpuAsync(rd=>new WorldFamilyGpuExecutor(rd,_gpuPlan),cancellationToken).ConfigureAwait(false);
+            _gpu??=await executionContext.ExecuteRestGpuAsync(rd=>new WorldFamilyGpuExecutor(rd,_gpuPlan),cancellationToken).ConfigureAwait(false);
             if(!_parity)
             {
                 // Separate tiny GPU dispatch, compared in full before admitting the
                 // large batch. Parity cost is not physical performance evidence.
                 var sample=FamilyCandidateSet.FromSortedAbi1(input.Batch,input.EnumerateLogicalOrdinals().Take(4096).ToArray());
-                var actual=await executionContext.ExecuteGpuAsync(rd=>_gpu.Execute(sample,cancellationToken,out _),cancellationToken).ConfigureAwait(false);
+                var actual=await executionContext.ExecuteRestGpuAsync(rd=>_gpu.Execute(sample,cancellationToken,out _),cancellationToken).ConfigureAwait(false);
                 var profile=RolltheSpire2.Compatibility.RuntimeProfileRegistry.Select(_request.Detection);
                 var expected=sample.EnumerateLogicalOrdinals().Where(i=>Replay.Matches(profile.ComputeRootSeed(
                     VisibleSeedCandidateCodec.FormatOrdinal(profile,input.Batch.GlobalCandidate(i)))));
                 if(!actual.EnumerateLogicalOrdinals().SequenceEqual(expected))throw new InvalidDataException("W.GpuCpuParityMismatch");
                 _parity=true;
             }
-            var result=await executionContext.ExecuteGpuAsync(_=>{
+            var result=await executionContext.ExecuteRestGpuAsync(_=>{
                 var output=_gpu.Execute(input,cancellationToken,out var metrics);return (output,metrics);
             },cancellationToken).ConfigureAwait(false);
             var m=result.metrics;
@@ -160,14 +165,32 @@ internal sealed partial class WorldFamily : IFamilyInvocation
         }
         catch(Exception ex){_faulted=true;RuntimeLog.TryBackgroundWarning("worldFamilyGpuFault=true;recovery=None;error="+ex.Message);throw;}
     }
+    // 少量候選直接使用既有 CPU 參考實作，省去 GPU 往返。
+    private FamilyCandidateSet InvokeTinyCpu(FamilyObservationWindow window, FamilyCandidateSet input,
+        CancellationToken cancellationToken)
+    {
+        long started=System.Diagnostics.Stopwatch.GetTimestamp();
+        FamilyCandidateSet output=_cpu.Execute(window,input,cancellationToken,Replay.Matches);
+        double ms=System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        // CPU 分流不代表 GPU 已通過一致性檢查。
+        _cpuOffloadBatches++;
+        _cpuOffloadInputs+=input.Count;
+        _cpuOffloadOutputs+=output.Count;
+        _cpuOffloadMs+=ms;
+        if(RolltheSpire2.Bootstrap.RuntimeLog.DetailEnabled)RuntimeLog.TryBackgroundDetail(
+            $"worldTinyCpuBatch=true;batchBase={input.Batch.BatchBase};input={input.Count};output={output.Count};cpuMs={ms:F4}");
+        return output;
+    }
+
     public async ValueTask DisposeAsync(FamilyExecutionContext executionContext)
     {
         if(_gpuPlan is null){_cpu.WriteSummary();return;}
         RuntimeLog.TryBackgroundInfo($"worldFamilyGpuSummary=true;family={FamilyId};physicalRevision={_gpuPlan.Revision(_compact)};groupingK={_gpuPlan.GroupingK};batches={_batches};input={_inputs};output={_outputs};canonicalAbi1ReadyMs={_canonicalMs};privateCapacity={_gpuPlan.Capacity};privateWindows={_windows};submissionGroups={_groups};dispatches={_windows};submits={_groups};syncs={_groups};" +
+            $"cpuOffloadBatches={_cpuOffloadBatches};cpuOffloadInput={_cpuOffloadInputs};cpuOffloadOutput={_cpuOffloadOutputs};cpuOffloadMs={_cpuOffloadMs:F4};" +
             $"headerReadCalls={_headerCalls};headerReadBytes={_headerBytes};payloadReadCalls={_payloadCalls};payloadReadBytes={_payloadBytes};dispatchSyncMs={_dispatchSyncMs};headerReadbackMs={_headerMs};workspaceBytes={_gpuPlan.WorkspaceBytes};groupingWorkspaceBytes={_gpuPlan.GroupingWorkspaceBytes};parity={_parity};faulted={_faulted};recovery=None");
         if(_gpu is not null)
         {
-            try { await executionContext.ExecuteGpuAsync(_=>{_gpu.Dispose();return true;},CancellationToken.None).ConfigureAwait(false); }
+            try { await executionContext.ExecuteRestGpuAsync(_=>{_gpu.Dispose();return true;},CancellationToken.None).ConfigureAwait(false); }
             catch { _faulted = true; throw; }
         }
     }

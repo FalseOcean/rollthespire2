@@ -144,20 +144,105 @@ public static class LinearFamilyPipeline
         IReadOnlyList<IFamilyInvocation> families,
         CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(executionContext);
-        ArgumentNullException.ThrowIfNull(families);
+        IReadOnlyList<FamilyCandidateSet> results = await FilterGroupAsync(
+            executionContext, [observationWindow], families, cancellationToken).ConfigureAwait(false);
+        return results[0];
+    }
 
-        FamilyCandidateSet current = FamilyCandidateSet.Dense(observationWindow.Batch);
+    // 獨立窗口一起通過篩選鏈；支援合併的 family 共用提交，其餘仍按索引逐次執行。
+    public static async ValueTask<IReadOnlyList<FamilyCandidateSet>> FilterGroupAsync(
+        FamilyExecutionContext executionContext,
+        IReadOnlyList<FamilyObservationWindow> windows,
+        IReadOnlyList<IFamilyInvocation> families,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(executionContext);
+        ArgumentNullException.ThrowIfNull(windows);
+        ArgumentNullException.ThrowIfNull(families);
+        if (windows.Count == 0) throw new ArgumentException("At least one window is required.", nameof(windows));
+
+        var current = new FamilyCandidateSet[windows.Count];
+        for (int index = 0; index < windows.Count; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            current[index] = FamilyCandidateSet.Dense(windows[index].Batch);
+        }
+        return await ApplyFamiliesAsync(
+            executionContext, windows, families, current, cancellationToken).ConfigureAwait(false);
+    }
+
+    // 接續已完成前段 family 的窗口群組，沿用相同排序與驗證規則。
+    public static ValueTask<IReadOnlyList<FamilyCandidateSet>> FilterRemainingGroupAsync(
+        FamilyExecutionContext executionContext,
+        IReadOnlyList<FamilyObservationWindow> windows,
+        IReadOnlyList<IFamilyInvocation> families,
+        IReadOnlyList<FamilyCandidateSet> current,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(executionContext);
+        ArgumentNullException.ThrowIfNull(windows);
+        ArgumentNullException.ThrowIfNull(families);
+        ArgumentNullException.ThrowIfNull(current);
+        if (windows.Count == 0) throw new ArgumentException("At least one window is required.", nameof(windows));
+        if (current.Count != windows.Count)
+            throw new InvalidOperationException("FamilyPipelineCurrentCountMismatch");
+        for (int index = 0; index < windows.Count; index++)
+        {
+            if (current[index].Batch != windows[index].Batch)
+                throw new InvalidOperationException("FamilyPipelineBatchIdentityMismatch");
+        }
+        var copy = new FamilyCandidateSet[windows.Count];
+        for (int index = 0; index < windows.Count; index++) copy[index] = current[index];
+        return ApplyFamiliesAsync(executionContext, windows, families, copy, cancellationToken);
+    }
+
+    private static async ValueTask<IReadOnlyList<FamilyCandidateSet>> ApplyFamiliesAsync(
+        FamilyExecutionContext executionContext,
+        IReadOnlyList<FamilyObservationWindow> windows,
+        IReadOnlyList<IFamilyInvocation> families,
+        FamilyCandidateSet[] current,
+        CancellationToken cancellationToken)
+    {
         foreach (IFamilyInvocation family in families)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            FamilyCandidateSet next = await family.InvokeAsync(
-                executionContext, observationWindow, current, cancellationToken).ConfigureAwait(false);
+            FamilyCandidateSet[] next = new FamilyCandidateSet[windows.Count];
+            bool merged = false;
+            if (windows.Count > 1 && family is IFamilyBatchInvocation batchInvocation &&
+                batchInvocation.BatchGroupCapacity >= windows.Count)
+            {
+                try
+                {
+                    IReadOnlyList<FamilyCandidateSet> batched = await batchInvocation.InvokeBatchAsync(
+                        executionContext, windows, current, cancellationToken).ConfigureAwait(false);
+                    if (batched.Count != windows.Count)
+                        throw new InvalidOperationException("FamilyBatchResultCountMismatch:" + family.FamilyId);
+                    for (int index = 0; index < windows.Count; index++) next[index] = batched[index];
+                    merged = true;
+                }
+                catch (FamilyBatchNotSupportedException)
+                {
+                    // 尚未提交，可安全退回逐窗口執行。
+                    merged = false;
+                }
+            }
+            if (!merged)
+            {
+                for (int index = 0; index < windows.Count; index++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    next[index] = await family.InvokeAsync(
+                        executionContext, windows[index], current[index], cancellationToken).ConfigureAwait(false);
+                }
+            }
             if (family.CapturePerformanceObservation().EligibilityEvidence == "PhysicalFailureOrRecovery")
                 throw new InvalidOperationException("PhysicalRecoveryRejected:" + family.FamilyId);
-            if (next.Batch != observationWindow.Batch)
-                throw new InvalidOperationException("Family changed SearchBatch identity.");
-            ValidateOrderedSubsequence(current, next);
+            for (int index = 0; index < windows.Count; index++)
+            {
+                if (next[index].Batch != windows[index].Batch)
+                    throw new InvalidOperationException("Family changed SearchBatch identity.");
+                ValidateOrderedSubsequence(current[index], next[index]);
+            }
             current = next;
         }
 

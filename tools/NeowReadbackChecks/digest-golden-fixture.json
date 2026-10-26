@@ -1,0 +1,16 @@
+{
+  "Method": "Independent Python hashlib.sha256 over literal domain and struct.pack('<QIIII') batch headers plus struct.pack('<QQQ') ordinals",
+  "DomainAsciiEscaped": "RolltheSpire2.NeowCandidateDigest.v1\u0000",
+  "DomainBytes": 37,
+  "DomainHex": "526f6c6c7468655370697265322e4e656f7743616e6469646174654469676573742e763100",
+  "DomainOnlySha256": "956592D3991ADF3FA635439F6A8AE90562C5C53A697595FD3BEB722A55688824",
+  "Batches": [
+    { "BaseHex": "0123456789ABCDEF", "Window": 4096, "Ordinals": [0, 7, 1023], "Curse": 1234, "Pair": 321 },
+    { "BaseHex": "0000000000000011", "Window": 5, "Ordinals": [], "Curse": 2, "Pair": 0 }
+  ],
+  "TwoBatchBytes": 109,
+  "TwoBatchStreamHex": "526f6c6c7468655370697265322e4e656f7743616e6469646174654469676573742e763100efcdab89674523010010000003000000d20400004101000000000000000000000700000000000000ff03000000000000110000000000000005000000000000000200000000000000",
+  "TwoBatchSha256": "F151EFA562A7C3BEAF28E6193420E4ADB239990B33E83BB569D5572E8850F5BB",
+  "SecondEmptyBatchOnlySha256": "A7BE1B96361C1D8AB50451DC8EC9BF64693AAFEDE8B8CA356A55583405A5148C",
+  "PythonConstruction": "prefix=b'RolltheSpire2.NeowCandidateDigest.v1\\0'; payload=prefix+struct.pack('<QIIII',0x0123456789ABCDEF,4096,3,1234,321)+struct.pack('<QQQ',0,7,1023)+struct.pack('<QIIII',17,5,0,2,0); hashlib.sha256(payload).hexdigest().upper()"
+}

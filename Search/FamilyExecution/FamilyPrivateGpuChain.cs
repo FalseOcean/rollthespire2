@@ -62,8 +62,8 @@ internal sealed class FamilyPrivateGpuChain : IDisposable
                 SetupMs += timer.Elapsed.TotalMilliseconds;
             }
             _incoming.CheckPopulation(input.Batch, input.Count);
-            FamilyGpuComputeUtility.Update(_rd, _incoming.Buffer,
-                input.ExportAbi1().ToArray().Select(i => checked((uint)i)).ToArray(), "FamilyParty.PrivateInput");
+            FamilyGpuComputeUtility.UpdateBytes(_rd, _incoming.Buffer,
+                FamilyGpuOrdinalPacking.ToBytes(input.ExportAbi1().Span), "FamilyParty.PrivateInput");
         }
         int count = input.Count;
         FamilyCandidateSet? result = null;

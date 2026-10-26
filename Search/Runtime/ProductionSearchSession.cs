@@ -33,6 +33,12 @@ public sealed class ProductionSearchSession : IProductionSearchSession
     private const int TerminalHandoffCapacity = 1;
     private const int TerminalOutstandingLimit = TerminalHandoffCapacity + 1;
     private const int LiveBatchStateLimit = TerminalHandoffCapacity + 2;
+    // 合批只改提交方式，Exact 與游標仍逐批處理；流水線上限多留一組。
+    private bool _pipelineActive;
+    private bool _epochBatchActive;
+    private int EffectivePipelineLookaheadLimit => _pipelineActive
+        ? LiveBatchStateLimit + 2 * (FamilyBatchGrouping.GroupSize - 1)
+        : LiveBatchStateLimit + (FamilyBatchGrouping.GroupSize - 1);
     private readonly ExactSearchExecutionRequest _plan;
     private readonly FamilyExecutionPlan _executionPlan;
     private readonly FamilySearchEtaProjectionV1 _etaProjection;
@@ -65,6 +71,8 @@ public sealed class ProductionSearchSession : IProductionSearchSession
     private long _exactBatchesCompleted;
     private long _familyExactOverlapCount;
     private long _familyPipelineWallTicks;
+    private long _batchMergeGroups;
+    private long _batchMergeWindows;
     private long _familyToTerminalEnqueueTicks;
     private long _terminalOfferToExactStartTicks;
     private long _exactWorkTicks;
@@ -378,7 +386,13 @@ public sealed class ProductionSearchSession : IProductionSearchSession
                 $"terminalHandoffCapacity={TerminalHandoffCapacity};" +
                 $"terminalOutstandingLimit={TerminalOutstandingLimit};terminalOutstandingDefinition=QueuedPlusCurrentOffer;" +
                 $"maxTerminalOutstanding={Volatile.Read(ref _maxTerminalOutstanding)};" +
-                $"liveBatchStateLimit={LiveBatchStateLimit};" +
+                $"liveBatchStateLimit={EffectivePipelineLookaheadLimit};pipelineActive={_pipelineActive.ToString().ToLowerInvariant()};" +
+                $"epochBatchActive={_epochBatchActive.ToString().ToLowerInvariant()};" +
+                $"epochBatchCompiled={FamilyPipelineModel.EpochCompiled.ToString().ToLowerInvariant()};" +
+                $"pipelineCompiled={FamilyPipelineModel.Compiled.ToString().ToLowerInvariant()};restGpuOwnerThreadId={_executionContext.RestGpuOwnerThreadId};" +
+                $"batchMergeGroupSize={FamilyBatchGrouping.GroupSize};" +
+                $"batchMergeGroups={Interlocked.Read(ref _batchMergeGroups)};" +
+                $"batchMergeWindows={Interlocked.Read(ref _batchMergeWindows)};" +
                 $"maxPipelineLookahead={Volatile.Read(ref _maxPipelineLookahead)};" +
                 $"boundedQueueViolationCount={Volatile.Read(ref _boundedQueueViolationCount)};" +
                 $"familyBatchesProduced={Interlocked.Read(ref _familyBatchesProduced)};" +
@@ -409,7 +423,529 @@ public sealed class ProductionSearchSession : IProductionSearchSession
 
     private async Task ProduceFamilyBatchesAsync(ulong startOrdinal, CancellationToken cancellationToken)
     {
+        if (TrySelectEpochBatch(out NeowFamily? epochNeow, out IFamilyEpochInvocation? epochRelic,
+                out IFamilyInvocation[]? epochRemaining))
+        {
+            _epochBatchActive = true;
+            await ProduceFamilyBatchesEpochAsync(
+                epochNeow!, epochRelic!, epochRemaining!, startOrdinal, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        if (TrySelectStagePipeline(out NeowFamily? pipelineNeow, out IFamilyInvocation[]? restFamilies) &&
+            await _executionContext.TryEnablePipelineAsync(cancellationToken).ConfigureAwait(false))
+        {
+            _pipelineActive = true;
+            await ProduceFamilyBatchesPipelinedAsync(
+                pipelineNeow!, restFamilies!, startOrdinal, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        await ProduceFamilyBatchesCoreAsync(startOrdinal, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>雙裝置流水線只接單人 N→R/W/A/E，其餘維持原執行路徑。</summary>
+    private bool TrySelectStagePipeline(out NeowFamily? neow, out IFamilyInvocation[]? restFamilies)
+    {
+        neow = null;
+        restFamilies = null;
+        if (!FamilyPipelineModel.Compiled || FamilyBatchGrouping.GroupSize < 2) return false;
+        if (_families.Count < 2 || _families[0] is not NeowFamily candidate || !candidate.PipelineCapable)
+            return false;
+        var rest = new IFamilyInvocation[_families.Count - 1];
+        for (int index = 1; index < _families.Count; index++)
+        {
+            IFamilyInvocation family = _families[index];
+            // 只放行已接到第二裝置的類別。
+            bool routed = family switch
+            {
+                CapsuleRelicFamily => true,
+                RelicFamily => true,
+                WorldFamily => true,
+                AncientOptionFamily => true,
+                EventResultFamily => true,
+                _ => false
+            };
+            if (!routed) return false;
+            rest[index - 1] = family;
+        }
+        neow = candidate;
+        restFamilies = rest;
+        return true;
+    }
+
+    private (List<FamilyObservationWindow> Windows, long Remaining, ulong BatchBase) BuildGroupWindows(
+        long remaining, ulong batchBase, int groupSize)
+    {
+        var windows = new List<FamilyObservationWindow>(groupSize);
+        while (windows.Count < groupSize && remaining > 0 &&
+               Volatile.Read(ref _targetReached) == 0)
+        {
+            int groupedCount = (int)Math.Min(remaining, _executionWindowSize);
+            windows.Add(new FamilyObservationWindow(new SearchBatch(batchBase, groupedCount), _plan));
+            batchBase = checked(batchBase + (ulong)groupedCount);
+            remaining -= groupedCount;
+        }
+        return (windows, remaining, batchBase);
+    }
+
+    private static IReadOnlyList<FamilyCandidateSet> BuildDenseInputs(IReadOnlyList<FamilyObservationWindow> windows)
+    {
+        var inputs = new FamilyCandidateSet[windows.Count];
+        for (int index = 0; index < windows.Count; index++)
+            inputs[index] = FamilyCandidateSet.Dense(windows[index].Batch);
+        return inputs;
+    }
+
+    private async Task ProduceFamilyBatchesPipelinedAsync(
+        NeowFamily neow,
+        IReadOnlyList<IFamilyInvocation> restFamilies,
+        ulong startOrdinal,
+        CancellationToken cancellationToken)
+    {
         Exception? completionError = null;
+        int groupSize = FamilyBatchGrouping.GroupSize;
+        List<FamilyObservationWindow>? inFlight = null;
+        bool inFlightSubmitted = false;
+        int inFlightStartBatch = 1;
+        List<FamilyObservationWindow>? collected = null;
+        IReadOnlyList<FamilyCandidateSet>? collectedNeow = null;
+        int collectedStartBatch = 1;
+        int nextBatchNumber = 1;
+        long remaining = _plan.ScanCount;
+        ulong batchBase = startOrdinal;
+        try
+        {
+            (List<FamilyObservationWindow> windows, long nextRemaining, ulong nextBase) =
+                BuildGroupWindows(remaining, batchBase, groupSize);
+            remaining = nextRemaining;
+            batchBase = nextBase;
+            if (windows.Count == 0) return;
+            long bootstrapStarted = Stopwatch.GetTimestamp();
+            try
+            {
+                await neow.SubmitPipelineGroupAsync(
+                    _executionContext, windows, BuildDenseInputs(windows), cancellationToken).ConfigureAwait(false);
+            }
+            catch (FamilyBatchNotSupportedException ex)
+            {
+                // 尚未產出批次，可直接退回原路徑。
+                _pipelineActive = false;
+                _executionContext.DisablePipeline();
+                RuntimeLog.TryBackgroundWarning(
+                    $"nPipelineFallback=true;reason={ex.Message};fallback=singleDevicePath");
+                await ProduceFamilyBatchesCoreAsync(startOrdinal, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            inFlight = windows;
+            inFlightSubmitted = true;
+            inFlightStartBatch = nextBatchNumber;
+            nextBatchNumber += windows.Count;
+            if (windows.Count > 1)
+            {
+                Interlocked.Increment(ref _batchMergeGroups);
+                Interlocked.Add(ref _batchMergeWindows, windows.Count);
+            }
+            Interlocked.Add(ref _familyPipelineWallTicks, Stopwatch.GetTimestamp() - bootstrapStarted);
+
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (Volatile.Read(ref _targetReached) != 0) break;
+                long iterationStarted = Stopwatch.GetTimestamp();
+
+                // 下一組 Neow 在主裝置執行時，處理上一組的下游。
+                if (collected is not null)
+                {
+                    int overlappingExactBatch = Volatile.Read(ref _activeExactBatchNumber);
+                    if (overlappingExactBatch != 0)
+                    {
+                        Interlocked.Exchange(ref _overlapObserved, 1);
+                        Interlocked.Increment(ref _familyExactOverlapCount);
+                    }
+                    int pipelineLookahead = checked(
+                        collectedStartBatch + collected.Count - 1 -
+                        (int)Interlocked.Read(ref _exactBatchesStarted));
+                    UpdateMaximum(ref _maxPipelineLookahead, pipelineLookahead);
+                    if (pipelineLookahead > EffectivePipelineLookaheadLimit)
+                        RecordBoundedQueueViolation("PipelineLookaheadExceeded", pipelineLookahead);
+                    IReadOnlyList<FamilyCandidateSet> restOutputs =
+                        await LinearFamilyPipeline.FilterRemainingGroupAsync(
+                            _executionContext, collected, restFamilies, collectedNeow!, cancellationToken)
+                            .ConfigureAwait(false);
+                    long familyCompletedTimestamp = Stopwatch.GetTimestamp();
+                    await EnqueuePipelinedGroupAsync(
+                        collected, restOutputs, collectedStartBatch, familyCompletedTimestamp, cancellationToken)
+                        .ConfigureAwait(false);
+                    collected = null;
+                    collectedNeow = null;
+                }
+
+                // 收回上一輪提交的 Neow 結果。
+                if (inFlightSubmitted && inFlight is not null)
+                {
+                    IReadOnlyList<FamilyCandidateSet> neowOutputs =
+                        await neow.CompletePipelineGroupAsync(_executionContext, cancellationToken)
+                            .ConfigureAwait(false);
+                    collected = inFlight;
+                    collectedNeow = neowOutputs;
+                    collectedStartBatch = inFlightStartBatch;
+                    inFlight = null;
+                    inFlightSubmitted = false;
+                }
+
+                // 先提交下一組 Neow，與下一輪下游工作重疊。
+                if (remaining > 0)
+                {
+                    (List<FamilyObservationWindow> nextWindows, long restRemaining, ulong restBase) =
+                        BuildGroupWindows(remaining, batchBase, groupSize);
+                    if (nextWindows.Count > 0)
+                    {
+                        try
+                        {
+                            await neow.SubmitPipelineGroupAsync(
+                                _executionContext, nextWindows, BuildDenseInputs(nextWindows), cancellationToken)
+                                .ConfigureAwait(false);
+                        }
+                        catch (FamilyBatchNotSupportedException ex)
+                        {
+                            throw new InvalidOperationException("NPipelineSubmissionRejected:" + ex.Message, ex);
+                        }
+                        if (nextWindows.Count > 1)
+                        {
+                            Interlocked.Increment(ref _batchMergeGroups);
+                            Interlocked.Add(ref _batchMergeWindows, nextWindows.Count);
+                        }
+                        inFlight = nextWindows;
+                        inFlightSubmitted = true;
+                        inFlightStartBatch = nextBatchNumber;
+                        nextBatchNumber += nextWindows.Count;
+                    }
+                    remaining = restRemaining;
+                    batchBase = restBase;
+                }
+
+                Interlocked.Add(ref _familyPipelineWallTicks, Stopwatch.GetTimestamp() - iterationStarted);
+                if (!inFlightSubmitted && collected is null) break;
+            }
+        }
+        catch (Exception ex)
+        {
+            completionError = ex;
+            _lifetime.Cancel();
+            throw;
+        }
+        finally
+        {
+            if (inFlightSubmitted && inFlight is not null) neow.AbortPipelineGroup(_executionContext);
+            _terminalHandoff.Writer.TryComplete(completionError);
+        }
+    }
+
+    private async Task EnqueuePipelinedGroupAsync(
+        IReadOnlyList<FamilyObservationWindow> windows,
+        IReadOnlyList<FamilyCandidateSet> survivorsGroup,
+        int firstBatchNumber,
+        long familyCompletedTimestamp,
+        CancellationToken cancellationToken)
+    {
+        for (int index = 0; index < windows.Count; index++)
+        {
+            int currentBatchNumber = checked(firstBatchNumber + index);
+            FamilyCandidateSet survivors = survivorsGroup[index];
+            SearchBatch batch = windows[index].Batch;
+            int count = batch.BatchCandidateCount;
+            if (currentBatchNumber == 1)
+            {
+                RuntimeLog.TryBackgroundInfo(
+                    $"searchStartup=true;phase=FirstRootBatchCompleted;ownerThreadId={_executionContext.GpuOwnerThreadId};" +
+                    $"sinceSessionMs={_clock.Elapsed.TotalMilliseconds:F4};roots={count};survivors={survivors.Count};plan={_executionPlan.PlanId}");
+                Interlocked.Exchange(ref _scanFirstCompletedTimestamp, familyCompletedTimestamp);
+            }
+            if (currentBatchNumber != 1) Interlocked.Add(ref _scanAfterFirstRoots, count);
+            Interlocked.Exchange(ref _scanLastCompletedTimestamp, familyCompletedTimestamp);
+            var terminalBatch = new FamilyTerminalBatch(currentBatchNumber, survivors, familyCompletedTimestamp);
+            int terminalOutstanding = _terminalHandoff.Reader.Count + 1;
+            UpdateMaximum(ref _maxTerminalOutstanding, terminalOutstanding);
+            if (terminalOutstanding > TerminalOutstandingLimit)
+                RecordBoundedQueueViolation("TerminalOutstandingExceeded", terminalOutstanding);
+            terminalBatch.MarkTerminalOffered();
+            await _terminalHandoff.Writer.WriteAsync(terminalBatch, cancellationToken).ConfigureAwait(false);
+            Interlocked.Add(
+                ref _familyToTerminalEnqueueTicks,
+                Stopwatch.GetTimestamp() - terminalBatch.FamilyCompletedTimestamp);
+            Interlocked.Increment(ref _familyBatchesProduced);
+        }
+    }
+
+    /// <summary>Epoch 只接單人 N→R→W/A/E，其餘維持原執行路徑。</summary>
+    private bool TrySelectEpochBatch(out NeowFamily? neow, out IFamilyEpochInvocation? relic,
+        out IFamilyInvocation[]? remainingFamilies)
+    {
+        neow = null;
+        relic = null;
+        remainingFamilies = null;
+        if (!FamilyPipelineModel.EpochCompiled || FamilyBatchGrouping.GroupSize < 2) return false;
+        if (_families.Count < 2 || _families[0] is not NeowFamily candidate ||
+            candidate is not IFamilyEpochInvocation neowEpoch || !neowEpoch.EpochEligible) return false;
+        if (_families[1] is not IFamilyEpochInvocation relicEpoch || !relicEpoch.EpochEligible) return false;
+        var rest = new IFamilyInvocation[_families.Count - 2];
+        for (int index = 2; index < _families.Count; index++)
+        {
+            bool routed = _families[index] switch
+            {
+                WorldFamily => true,
+                AncientOptionFamily => true,
+                EventResultFamily => true,
+                _ => false
+            };
+            if (!routed) return false;
+            rest[index - 2] = _families[index];
+        }
+        neow = candidate;
+        relic = relicEpoch;
+        remainingFamilies = rest;
+        return true;
+    }
+
+    private void CheckPipelineLookahead(int firstBatchNumber, int windowCount)
+    {
+        int pipelineLookahead = checked(
+            firstBatchNumber + windowCount - 1 - (int)Interlocked.Read(ref _exactBatchesStarted));
+        UpdateMaximum(ref _maxPipelineLookahead, pipelineLookahead);
+        if (pipelineLookahead > EffectivePipelineLookaheadLimit)
+            RecordBoundedQueueViolation("PipelineLookaheadExceeded", pipelineLookahead);
+    }
+
+    private async Task ProduceFamilyBatchesEpochAsync(NeowFamily neow, IFamilyEpochInvocation relic,
+        IReadOnlyList<IFamilyInvocation> remainingFamilies,
+        ulong startOrdinal, CancellationToken cancellationToken)
+    {
+        IFamilyEpochInvocation neowEpoch = neow;
+        IFamilyInvocation relicFamily = _families[1];
+        Exception? completionError = null;
+        int groupSize = FamilyBatchGrouping.GroupSize;
+        long remaining = _plan.ScanCount;
+        ulong batchBase = startOrdinal;
+        int nextBatchNumber = 1;
+        List<FamilyObservationWindow>? pendingWindows = null;
+        IReadOnlyList<FamilyCandidateSet>? pendingNeow = null;
+        int pendingStartBatch = 1;
+        try
+        {
+            try
+            {
+                await neowEpoch.EnsureEpochExecutorAsync(_executionContext, cancellationToken).ConfigureAwait(false);
+                await relic.EnsureEpochExecutorAsync(_executionContext, cancellationToken).ConfigureAwait(false);
+            }
+            catch (FamilyBatchNotSupportedException ex)
+            {
+                _epochBatchActive = false;
+                RuntimeLog.TryBackgroundWarning(
+                    $"nEpochFallback=true;reason={ex.Message};fallback=singleDevicePath");
+                await ProduceFamilyBatchesCoreAsync(startOrdinal, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            while (remaining > 0 && Volatile.Read(ref _targetReached) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                (List<FamilyObservationWindow> windows, long restRemaining, ulong restBase) =
+                    BuildGroupWindows(remaining, batchBase, groupSize);
+                remaining = restRemaining;
+                batchBase = restBase;
+                if (windows.Count == 0) break;
+
+                // 單窗口不能合批；先清掉待處理 Relic，再逐窗口執行。
+                if (windows.Count == 1)
+                {
+                    long singleStarted = Stopwatch.GetTimestamp();
+                    if (pendingWindows is not null && pendingNeow is not null)
+                    {
+                        IReadOnlyList<FamilyCandidateSet> pendingOutputs =
+                            await FlushRelicEpochAsync(relic, pendingWindows, pendingNeow, cancellationToken)
+                                .ConfigureAwait(false);
+                        await EnqueueWithRemainingAsync(pendingWindows, pendingOutputs, pendingStartBatch,
+                            remainingFamilies, cancellationToken).ConfigureAwait(false);
+                        pendingWindows = null;
+                        pendingNeow = null;
+                    }
+                    IReadOnlyList<FamilyCandidateSet> singleOutputs =
+                        await LinearFamilyPipeline.FilterGroupAsync(
+                            _executionContext, windows, _families, cancellationToken).ConfigureAwait(false);
+                    await EnqueuePipelinedGroupAsync(windows, singleOutputs, nextBatchNumber,
+                        Stopwatch.GetTimestamp(), cancellationToken).ConfigureAwait(false);
+                    nextBatchNumber += windows.Count;
+                    Interlocked.Add(ref _familyPipelineWallTicks, Stopwatch.GetTimestamp() - singleStarted);
+                    continue;
+                }
+
+                IReadOnlyList<FamilyCandidateSet> dense = BuildDenseInputs(windows);
+                bool hasPending = pendingWindows is not null;
+                List<FamilyObservationWindow>? relicWindows = pendingWindows;
+                IReadOnlyList<FamilyCandidateSet>? relicInputs = pendingNeow;
+                long iterationStarted = Stopwatch.GetTimestamp();
+                try
+                {
+                    (IReadOnlyList<FamilyCandidateSet> NeowResults, IReadOnlyList<FamilyCandidateSet>? RelicResults,
+                        double SubmitMs, double SyncMs) epoch = await _executionContext.ExecutePrimaryGpuAsync(
+                        rd =>
+                        {
+                            var epochContext = new FamilyEpoch(rd);
+                            try
+                            {
+                                // 開啟指令清單前完成所有上傳。
+                                neowEpoch.PrepareEpoch(epochContext, windows, dense, cancellationToken);
+                                if (hasPending)
+                                    relic.PrepareEpoch(epochContext, relicWindows!, relicInputs!, cancellationToken);
+                                // 共用一份指令清單，只 Submit/Sync 一次。
+                                epochContext.BeginList();
+                                neowEpoch.RecordEpochDispatches(epochContext);
+                                if (hasPending) relic.RecordEpochDispatches(epochContext);
+                                (double submitMs, double syncMs) = epochContext.SubmitAndSync("EpochBatch");
+                                IReadOnlyList<FamilyCandidateSet> neowResults =
+                                    neowEpoch.CompleteEpoch(_executionContext, submitMs, syncMs);
+                                IReadOnlyList<FamilyCandidateSet>? relicResults = hasPending
+                                    ? relic.CompleteEpoch(_executionContext, 0d, 0d)
+                                    : null;
+                                return (neowResults, relicResults, submitMs, syncMs);
+                            }
+                            catch
+                            {
+                                epochContext.TryAbort();
+                                neowEpoch.AbortEpoch();
+                                relic.AbortEpoch();
+                                throw;
+                            }
+                        }, cancellationToken).ConfigureAwait(false);
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    Interlocked.Increment(ref _batchMergeGroups);
+                    Interlocked.Add(ref _batchMergeWindows, windows.Count);
+                    if (epoch.RelicResults is not null && pendingWindows is not null)
+                        await EnqueueWithRemainingAsync(pendingWindows, epoch.RelicResults, pendingStartBatch,
+                            remainingFamilies, cancellationToken).ConfigureAwait(false);
+                    pendingWindows = windows;
+                    pendingNeow = epoch.NeowResults;
+                    pendingStartBatch = nextBatchNumber;
+                    nextBatchNumber += windows.Count;
+                }
+                catch (FamilyBatchNotSupportedException)
+                {
+                    // 不支援的輸入會在提交前拒絕；按原批號、順序逐窗口重跑。
+                    RuntimeLog.TryBackgroundWarning(
+                        "nEpochGroupFallback=true;shape=unsupported;fallback=perWindow");
+                    if (pendingWindows is not null && pendingNeow is not null)
+                    {
+                        IReadOnlyList<FamilyCandidateSet> pendingOutputs =
+                            await LinearFamilyPipeline.FilterRemainingGroupAsync(
+                                _executionContext, pendingWindows,
+                                PrependRelic(relicFamily, remainingFamilies), pendingNeow, cancellationToken)
+                                .ConfigureAwait(false);
+                        CheckPipelineLookahead(pendingStartBatch, pendingWindows.Count);
+                        await EnqueuePipelinedGroupAsync(pendingWindows, pendingOutputs, pendingStartBatch,
+                            Stopwatch.GetTimestamp(), cancellationToken).ConfigureAwait(false);
+                        // 待處理組已佔用批號，不能再加一次。
+                    }
+                    IReadOnlyList<FamilyCandidateSet> fallbackOutputs =
+                        await LinearFamilyPipeline.FilterGroupAsync(
+                            _executionContext, windows, _families, cancellationToken).ConfigureAwait(false);
+                    await EnqueuePipelinedGroupAsync(windows, fallbackOutputs, nextBatchNumber,
+                        Stopwatch.GetTimestamp(), cancellationToken).ConfigureAwait(false);
+                    nextBatchNumber += windows.Count;
+                    pendingWindows = null;
+                    pendingNeow = null;
+                }
+                Interlocked.Add(ref _familyPipelineWallTicks, Stopwatch.GetTimestamp() - iterationStarted);
+            }
+
+            // 最後一組仍須跑完 Relic 與下游。
+            if (pendingWindows is not null && pendingNeow is not null &&
+                Volatile.Read(ref _targetReached) == 0)
+            {
+                IReadOnlyList<FamilyCandidateSet> tailOutputs =
+                    await FlushRelicEpochAsync(relic, pendingWindows, pendingNeow, cancellationToken)
+                        .ConfigureAwait(false);
+                await EnqueueWithRemainingAsync(pendingWindows, tailOutputs, pendingStartBatch,
+                    remainingFamilies, cancellationToken).ConfigureAwait(false);
+                pendingWindows = null;
+                pendingNeow = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            completionError = ex;
+            _lifetime.Cancel();
+            throw;
+        }
+        finally
+        {
+            _terminalHandoff.Writer.TryComplete(completionError);
+        }
+    }
+
+    private static IReadOnlyList<IFamilyInvocation> PrependRelic(
+        IFamilyInvocation relicFamily, IReadOnlyList<IFamilyInvocation> remainingFamilies)
+    {
+        var chain = new IFamilyInvocation[remainingFamilies.Count + 1];
+        chain[0] = relicFamily;
+        for (int index = 0; index < remainingFamilies.Count; index++)
+            chain[index + 1] = remainingFamilies[index];
+        return chain;
+    }
+
+    /// <summary>補跑待處理組或尾組的 Relic。</summary>
+    private async Task<IReadOnlyList<FamilyCandidateSet>> FlushRelicEpochAsync(
+        IFamilyEpochInvocation relic, List<FamilyObservationWindow> windows,
+        IReadOnlyList<FamilyCandidateSet> inputs, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return await FamilyEpochFallback.RunAsync(
+            () => _executionContext.ExecutePrimaryGpuAsync(rd =>
+            {
+                var epochContext = new FamilyEpoch(rd);
+                try
+                {
+                    relic.PrepareEpoch(epochContext, windows, inputs, cancellationToken);
+                    epochContext.BeginList();
+                    relic.RecordEpochDispatches(epochContext);
+                    (double submitMs, double syncMs) = epochContext.SubmitAndSync("EpochBatchTail");
+                    return relic.CompleteEpoch(_executionContext, submitMs, syncMs);
+                }
+                catch
+                {
+                    epochContext.TryAbort();
+                    relic.AbortEpoch();
+                    throw;
+                }
+            }, cancellationToken).AsTask(),
+            () =>
+            {
+                RuntimeLog.TryBackgroundWarning(
+                    "nEpochTailFallback=true;shape=unsupported;fallback=perWindowRelic");
+                // 只補跑 Relic；後續 family 與入佇列仍由呼叫端執行一次。
+                return LinearFamilyPipeline.FilterRemainingGroupAsync(
+                    _executionContext, windows, [(IFamilyInvocation)relic], inputs, cancellationToken).AsTask();
+            }).ConfigureAwait(false);
+    }
+
+    private async Task EnqueueWithRemainingAsync(List<FamilyObservationWindow> windows,
+        IReadOnlyList<FamilyCandidateSet> relicResults, int firstBatchNumber,
+        IReadOnlyList<IFamilyInvocation> remainingFamilies, CancellationToken cancellationToken)
+    {
+        CheckPipelineLookahead(firstBatchNumber, windows.Count);
+        IReadOnlyList<FamilyCandidateSet> finalResults =
+            await LinearFamilyPipeline.FilterRemainingGroupAsync(
+                _executionContext, windows, remainingFamilies, relicResults, cancellationToken)
+                .ConfigureAwait(false);
+        await EnqueuePipelinedGroupAsync(windows, finalResults, firstBatchNumber,
+            Stopwatch.GetTimestamp(), cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task ProduceFamilyBatchesCoreAsync(ulong startOrdinal, CancellationToken cancellationToken)
+    {
+        Exception? completionError = null;
+        int groupSize = FamilyBatchGrouping.GroupSize;
+        int pipelineLookaheadLimit = EffectivePipelineLookaheadLimit;
+        var windows = new List<FamilyObservationWindow>(groupSize);
         try
         {
             long remaining = _plan.ScanCount;
@@ -418,6 +954,20 @@ public sealed class ProductionSearchSession : IProductionSearchSession
             while (remaining > 0 && Volatile.Read(ref _targetReached) == 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                // 只合併獨立根窗口，保留各批的起點與數量。
+                windows.Clear();
+                ulong groupBase = batchBase;
+                long groupRemaining = remaining;
+                while (windows.Count < groupSize && groupRemaining > 0 &&
+                       Volatile.Read(ref _targetReached) == 0)
+                {
+                    int groupedCount = (int)Math.Min(groupRemaining, _executionWindowSize);
+                    windows.Add(new FamilyObservationWindow(new SearchBatch(groupBase, groupedCount), _plan));
+                    groupBase = checked(groupBase + (ulong)groupedCount);
+                    groupRemaining -= groupedCount;
+                }
+                if (windows.Count == 0) break;
+
                 int nextBatchNumber = checked(batchNumber + 1);
                 int overlappingExactBatch = Volatile.Read(ref _activeExactBatchNumber);
                 if (overlappingExactBatch != 0)
@@ -425,22 +975,25 @@ public sealed class ProductionSearchSession : IProductionSearchSession
                     Interlocked.Exchange(ref _overlapObserved, 1);
                     Interlocked.Increment(ref _familyExactOverlapCount);
                 }
-                int pipelineLookahead = checked(nextBatchNumber - (int)Interlocked.Read(ref _exactBatchesStarted));
+                int pipelineLookahead = checked(
+                    nextBatchNumber + windows.Count - 1 - (int)Interlocked.Read(ref _exactBatchesStarted));
                 UpdateMaximum(ref _maxPipelineLookahead, pipelineLookahead);
-                if (pipelineLookahead > LiveBatchStateLimit)
+                if (pipelineLookahead > pipelineLookaheadLimit)
                     RecordBoundedQueueViolation("PipelineLookaheadExceeded", pipelineLookahead);
+                if (windows.Count > 1)
+                {
+                    Interlocked.Increment(ref _batchMergeGroups);
+                    Interlocked.Add(ref _batchMergeWindows, windows.Count);
+                }
 
                 // Window sizing is coordinator/physical policy. SearchBatch itself
                 // remains only BatchBase + BatchCandidateCount and owns no 2^24 rule.
-                int count = (int)Math.Min(remaining, _executionWindowSize);
-                var batch = new SearchBatch(batchBase, count);
-                var observation = new FamilyObservationWindow(batch, _plan);
                 long familyPipelineStarted = Stopwatch.GetTimestamp();
-                FamilyCandidateSet survivors;
+                IReadOnlyList<FamilyCandidateSet> survivorsGroup;
                 try
                 {
-                    survivors = await LinearFamilyPipeline.FilterAsync(
-                        _executionContext, observation, _families, cancellationToken).ConfigureAwait(false);
+                    survivorsGroup = await LinearFamilyPipeline.FilterGroupAsync(
+                        _executionContext, windows, _families, cancellationToken).ConfigureAwait(false);
                 }
                 finally
                 {
@@ -448,33 +1001,39 @@ public sealed class ProductionSearchSession : IProductionSearchSession
                 }
 
                 long familyCompletedTimestamp = Stopwatch.GetTimestamp();
-                if(nextBatchNumber==1) RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=FirstRootBatchCompleted;ownerThreadId={_executionContext.GpuOwnerThreadId};sinceSessionMs={_clock.Elapsed.TotalMilliseconds:F4};roots={count};survivors={survivors.Count};plan={_executionPlan.PlanId}");
-                // Presentation-only interval between completed root batches: excludes lazy GPU setup
-                // and the GPU first batch. CPU may include its first completed pure scanning batch.
-                // Includes subsequent submit/handoff/backpressure elapsed time.
-                if(nextBatchNumber==1)
+                // 記帳、移交、游標與 Exact 仍逐批處理。
+                for (int index = 0; index < windows.Count; index++)
                 {
-                    bool cpuOnly=_families.Count>0 && !_families.Any(f=>f.ConditionPerformance.UsesGpu);
-                    Interlocked.Exchange(ref _scanFirstCompletedTimestamp,cpuOnly?familyPipelineStarted:familyCompletedTimestamp);
-                    if(cpuOnly)Interlocked.Add(ref _scanAfterFirstRoots,count);
+                    int currentBatchNumber = checked(nextBatchNumber + index);
+                    FamilyCandidateSet survivors = survivorsGroup[index];
+                    SearchBatch batch = windows[index].Batch;
+                    int count = batch.BatchCandidateCount;
+                    if (currentBatchNumber == 1) RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=FirstRootBatchCompleted;ownerThreadId={_executionContext.GpuOwnerThreadId};sinceSessionMs={_clock.Elapsed.TotalMilliseconds:F4};roots={count};survivors={survivors.Count};plan={_executionPlan.PlanId}");
+                    // 顯示用速率排除 GPU 初始化與首批，後續提交、移交及背壓均計入。
+                    if (currentBatchNumber == 1)
+                    {
+                        bool cpuOnly = _families.Count > 0 && !_families.Any(f => f.ConditionPerformance.UsesGpu);
+                        Interlocked.Exchange(ref _scanFirstCompletedTimestamp, cpuOnly ? familyPipelineStarted : familyCompletedTimestamp);
+                        if (cpuOnly) Interlocked.Add(ref _scanAfterFirstRoots, count);
+                    }
+                    else Interlocked.Add(ref _scanAfterFirstRoots, count);
+                    Interlocked.Exchange(ref _scanLastCompletedTimestamp, familyCompletedTimestamp);
+                    var terminalBatch = new FamilyTerminalBatch(currentBatchNumber, survivors, familyCompletedTimestamp);
+                    // 已移交 Exact 的批次不再算入 Channel。
+                    int terminalOutstanding = _terminalHandoff.Reader.Count + 1;
+                    UpdateMaximum(ref _maxTerminalOutstanding, terminalOutstanding);
+                    if (terminalOutstanding > TerminalOutstandingLimit)
+                        RecordBoundedQueueViolation("TerminalOutstandingExceeded", terminalOutstanding);
+                    terminalBatch.MarkTerminalOffered();
+                    await _terminalHandoff.Writer.WriteAsync(terminalBatch, cancellationToken).ConfigureAwait(false);
+                    Interlocked.Add(
+                        ref _familyToTerminalEnqueueTicks,
+                        Stopwatch.GetTimestamp() - terminalBatch.FamilyCompletedTimestamp);
+                    Interlocked.Increment(ref _familyBatchesProduced);
+                    batchNumber = currentBatchNumber;
                 }
-                else Interlocked.Add(ref _scanAfterFirstRoots,count);
-                Interlocked.Exchange(ref _scanLastCompletedTimestamp,familyCompletedTimestamp);
-                var terminalBatch = new FamilyTerminalBatch(nextBatchNumber, survivors, familyCompletedTimestamp);
-                // Channel ownership excludes a batch already transferred to Exact.
-                int terminalOutstanding = _terminalHandoff.Reader.Count + 1;
-                UpdateMaximum(ref _maxTerminalOutstanding, terminalOutstanding);
-                if (terminalOutstanding > TerminalOutstandingLimit)
-                    RecordBoundedQueueViolation("TerminalOutstandingExceeded", terminalOutstanding);
-                terminalBatch.MarkTerminalOffered();
-                await _terminalHandoff.Writer.WriteAsync(terminalBatch, cancellationToken).ConfigureAwait(false);
-                Interlocked.Add(
-                    ref _familyToTerminalEnqueueTicks,
-                    Stopwatch.GetTimestamp() - terminalBatch.FamilyCompletedTimestamp);
-                Interlocked.Increment(ref _familyBatchesProduced);
-                batchNumber = nextBatchNumber;
-                remaining -= count;
-                batchBase = checked(batchBase + (ulong)count);
+                remaining = groupRemaining;
+                batchBase = groupBase;
             }
         }
         catch (Exception ex)
@@ -778,7 +1337,7 @@ public sealed class ProductionSearchSession : IProductionSearchSession
             $"familyBoundedQueueViolation=true;issue={issue};observedDepth={observedDepth};" +
             $"terminalHandoffCapacity={TerminalHandoffCapacity};" +
             $"terminalOutstandingLimit={TerminalOutstandingLimit};terminalOutstandingDefinition=QueuedPlusCurrentOffer;" +
-            $"liveBatchStateLimit={LiveBatchStateLimit}");
+            $"liveBatchStateLimit={EffectivePipelineLookaheadLimit}");
     }
 
     private static void UpdateMaximum(ref int target, int value)

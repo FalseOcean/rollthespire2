@@ -2,6 +2,7 @@
 bin/
 obj/
 .build-evidence/
+artifacts/
 local.props
 *.log
 *.user
