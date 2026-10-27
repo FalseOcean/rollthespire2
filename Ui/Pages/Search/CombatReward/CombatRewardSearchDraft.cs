@@ -1,4 +1,5 @@
 using RolltheSpire2.Core.Identity;
+using RolltheSpire2.Core.Collections;
 using RolltheSpire2.Search.Contracts;
 
 namespace RolltheSpire2.Ui.Pages.Search.CombatReward;
@@ -30,6 +31,10 @@ internal sealed record CombatRewardSearchDraft(
     CombatRewardCardSequenceDraft Cards,
     CombatRewardPotionSequenceDraft Potions)
 {
+    // A selected collection is an authored snapshot. Editing the library does not
+    // change saved presets, history, or an in-flight request.
+    public CardCollectionSnapshot? ExcludedCollection { get; init; }
+    public int ExclusionBattleCount { get; init; } = 3;
     public static CombatRewardSearchDraft Empty { get; } = new(
         new CombatRewardCardSequenceDraft(
             1,
@@ -45,5 +50,5 @@ internal sealed record CombatRewardSearchDraft(
                 new CombatRewardPotionSlotDraft(null, null)
             }));
 
-    public bool HasAnyValue => Cards.HasAnyValue || Potions.HasAnyValue;
+    public bool HasAnyValue => Cards.HasAnyValue || Potions.HasAnyValue || ExcludedCollection is not null;
 }

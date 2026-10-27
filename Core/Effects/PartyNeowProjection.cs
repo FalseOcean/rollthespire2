@@ -1,6 +1,7 @@
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Authority;
 using RolltheSpire2.Core.Identity;
+using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.Rng;
 
@@ -11,26 +12,32 @@ internal static class PartyNeowProjection
     internal static IReadOnlyList<Core.Neow.NeowChoiceResult> ProjectChoices(
         SeedPredictionRequest request, ulong root, Xoshiro256StarStar niche, Xoshiro256StarStar potions,
         bool sharedRngKnown = true,
-        IReadOnlyDictionary<ModelKey, IReadOnlySet<ModelKey>>? authoredCapsuleEffects = null)
+        IReadOnlyDictionary<ModelKey, IReadOnlySet<ModelKey>>? authoredCapsuleEffects = null,
+        Lazy<IReadOnlyList<NeowEffectRelicSnapshot>>? preparedRelicBag = null)
     {
         var owner = request.Authority;
         if (owner.EffectAuthority is { } effects)
             owner = owner.WithEffectAuthority(effects with { CurrentPotionCount = 0, PotionCapacity = owner.Ascension >= 4 ? 2 : 3 });
-        var offers = Core.Neow.ModernNeowIdentityPredictor.PredictModernCore(root, owner, Beta111Profile.Instance, true);
+        var offers = Core.Neow.ModernNeowIdentityPredictor.PredictModernCore(root, owner, Beta111Profile.Instance, owner.IsBeta111NeowIdentityAuthorityExact);
+        bool identityExact = offers.ExactAuthority && !offers.UnknownEligibilityAffectedPool;
         return offers.RelicKeys.Select((key, index) =>
         {
-            var rng = NeowEffectRngContext.CreateFromRootHash(Beta111Profile.Instance, root, owner.PlayerSlotIndex)
-                .WithShared(niche.Clone(), potions.Clone());
             bool sharedConsumer = key == BaseGameModelKeys.Relics.PhialHolster ||
                 !Core.Rewards.VanillaRelicRewardEffects.TryGet(owner.ProfileId, key, out var behavior) ||
                 (behavior.OnObtainCapabilities & (Core.Rewards.RelicOnObtainRewardEffects.ConsumesNicheRng |
                     Core.Rewards.RelicOnObtainRewardEffects.NestedRelicObtain)) != 0;
-            var effect = !sharedRngKnown && sharedConsumer
+            var effect = !request.ShouldProjectNeowEffects(key)
+                ? Core.Prediction.Profiles.SeedPredictionDocumentFactory.UnrequestedNeowEffects
+                : !identityExact
+                    ? NeowEffectProjection.UnknownAuthority(key, "party.neow-identity-authority-incomplete")
+                : !sharedRngKnown && sharedConsumer
                 ? NeowEffectProjection.UnknownAuthority(key, "party.earlier-player-shared-opening-unresolved")
                 : new NeowEffectProjectionEngine(Beta111Profile.Instance, "beta111.party-neow", root, owner,
-                    enableComplexBonesDeckInteractions: true) { AuthoredCapsuleEffects = authoredCapsuleEffects }.Project(key, rng);
+                    enableComplexBonesDeckInteractions: true) { AuthoredCapsuleEffects = authoredCapsuleEffects }.Project(key,
+                        NeowEffectRngContext.CreateFromRootHash(Beta111Profile.Instance, root, owner.PlayerSlotIndex)
+                            .WithShared(niche.Clone(), potions.Clone()), preparedRelicBag);
             return Core.Prediction.Profiles.SeedPredictionDocumentFactory.Choice(index + 1, key, request,
-                offers.ExactAuthority ? PredictionPrecision.Exact : PredictionPrecision.Unknown,
+                identityExact ? PredictionPrecision.Exact : PredictionPrecision.Unknown,
                 "beta111.party-neow.initial", effect);
         }).ToArray();
     }

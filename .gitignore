@@ -1,7 +1,12 @@
-.godot/
-bin/
+﻿bin/
 obj/
-.build-evidence/
-local.props
-*.log
+.godot/
+.vs/
+.idea/
 *.user
+*.suo
+*.log
+.rewrite-build-evidence/
+
+.build-evidence/
+tools/AuthoredEventChecks/localization/

@@ -21,7 +21,7 @@ internal sealed partial class CompactPredictionItem : PanelContainer
         SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin;
         CustomMinimumSize = new Vector2(150f, 44f);
         TooltipText = item.Tooltip;
-        Ui1Theme.ApplyPanel(this, Ui1SurfaceRole.Input, 3f, 1, 6f);
+        MainPanelTheme.ApplyPanel(this, Ui1SurfaceRole.Input, 3f, 1, 6f);
 
         var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         row.AddThemeConstantOverride("separation", 6);
@@ -33,7 +33,7 @@ internal sealed partial class CompactPredictionItem : PanelContainer
                 targetContent.ModelKey,
                 targetContent.ContentKind,
                 IconVariant.Small);
-            var icon = new IconWithLabel(34f, Ui1TextRole.Meta)
+            var icon = new IconWithLabel(34f, Ui1TextRole.Meta, WorkspacePalette.MainPanel)
             {
                 SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
             };
@@ -42,14 +42,14 @@ internal sealed partial class CompactPredictionItem : PanelContainer
         }
         else
         {
-            Label text = Ui1Theme.Label(visibleText, Ui1TextRole.Meta, true);
+            Label text = MainPanelTheme.Label(visibleText, Ui1TextRole.Meta, true);
             text.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
             row.AddChild(text);
         }
 
         if (item.Precision != PredictionPrecision.Exact)
         {
-            Label precision = Ui1Theme.Label(
+            Label precision = MainPanelTheme.Label(
                 PrecisionSymbol(item.Precision),
                 Ui1TextRole.Meta);
             precision.HorizontalAlignment = HorizontalAlignment.Right;
@@ -72,10 +72,10 @@ internal sealed partial class CompactPredictionItem : PanelContainer
 
     private static Color PrecisionColor(PredictionPrecision precision) => precision switch
     {
-        PredictionPrecision.Exact => Ui1Theme.Palette.Success,
-        PredictionPrecision.Partial => Ui1Theme.Palette.Partial,
-        PredictionPrecision.Unsupported => Ui1Theme.Palette.Unsupported,
-        PredictionPrecision.Unknown => Ui1Theme.Palette.Unknown,
-        _ => Ui1Theme.Palette.TextSecondary
+        PredictionPrecision.Exact => MainPanelTheme.Palette.Success,
+        PredictionPrecision.Partial => MainPanelTheme.Palette.Partial,
+        PredictionPrecision.Unsupported => MainPanelTheme.Palette.Unsupported,
+        PredictionPrecision.Unknown => MainPanelTheme.Palette.Unknown,
+        _ => MainPanelTheme.Palette.TextSecondary
     };
 }

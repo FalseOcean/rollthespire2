@@ -86,6 +86,8 @@ internal static class RuntimeCharacterCatalogCapture
         }
         catch (Exception ex)
         {
+            Diagnostics.RuntimeIssueLedger.Current.Record(ex, "RuntimeCharacterCatalogCaptureFailed",
+                nameof(RuntimeCharacterCatalogCapture), "CharacterCatalogCapture", "issues.capture_failed");
             return Fallback("RuntimeCharacterCatalogCaptureFailed:" + ex.GetType().Name);
         }
     }

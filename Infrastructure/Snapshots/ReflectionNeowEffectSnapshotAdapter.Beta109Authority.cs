@@ -11,7 +11,7 @@ namespace RolltheSpire2.Infrastructure.Snapshots;
 
 internal static partial class ReflectionNeowEffectSnapshotAdapter
 {
-    private sealed record Beta109StaticAuthorityCapture(
+    internal sealed record Beta109StaticAuthorityCapture(
         IReadOnlyList<Beta109ActSelectionGroupSnapshot> ActSelectionGroups,
         bool ActSelectionAuthorityExact,
         bool IsMultiplayer,
@@ -98,7 +98,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                 ["MegaCrit.Sts2.Core.Models.Acts.DeprecatedAct"] = (0, 0, 0, 0, 0)
             };
 
-    private static Beta109StaticAuthorityCapture CaptureBeta109StaticAuthority(
+    private static async Task<Beta109StaticAuthorityCapture> ObserveBeta109StaticAuthority(
         RuntimeProfileId profileId,
         Assembly assembly,
         Type modelDb,
@@ -109,7 +109,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         WorldGameMode predictionGameMode,
         PredictionGameModeAuthority predictionGameModeAuthority,
         string act1OverrideRaw,
-        IReadOnlyList<ModelKey>? orderedCharacters = null)
+        IReadOnlyList<ModelKey>? orderedCharacters,
+        IReadOnlyList<ModelKey>? explicitDiscoveredActs, NativeObservationSchedule schedule)
     {
         bool unlockStateExact = unlockState is not null;
         (bool runtimeIsMultiplayer, bool runtimeModeExact, string runtimeModeEvidence) = CaptureBeta109MultiplayerMode(assembly);
@@ -125,8 +126,10 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         bool multiplayerExact = modeResolution.IsExact;
         string multiplayerEvidence = modeResolution.EvidenceCode;
         (bool testModeIsOff, bool testModeExact) = CaptureBeta109TestMode(assembly);
-        (HashSet<ModelKey> discoveredActs, bool discoveredExact) = CaptureBeta109DiscoveredActs(assembly);
         IReadOnlyList<Beta109ActSourceGroup> sourceGroups = CaptureBeta109ActSourceGroups(modelDb);
+        (HashSet<ModelKey> discoveredActs, bool discoveredExact) = explicitDiscoveredActs == null
+            ? CaptureBeta109DiscoveredActs(assembly)
+            : CaptureDeclaredDiscoveredActs(explicitDiscoveredActs, sourceGroups);
         bool sourceGroupsExact = sourceGroups.Count > 0 && sourceGroups.All(group => group.SourceOrderExact);
 
         var selectionGroups = new List<Beta109ActSelectionGroupSnapshot>();
@@ -177,7 +180,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                     DeterministicFirstEligible: deterministic,
                     PredicateExact: predicateExact,
                     EvidenceCode: predicateExact
-                        ? "ModelDb.ActsByIndex+ActModel.IsUnlocked+Progress.DiscoveredActs"
+                        ? "ModelDb.ActsByIndex+ActModel.IsUnlocked+" +
+                          (explicitDiscoveredActs == null ? "Progress.DiscoveredActs" : "Declared.DiscoveredActs")
                         : string.Join("+", candidateIssues)));
             }
 
@@ -215,6 +219,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                 candidates));
         }
 
+        await schedule.Checkpoint("WorldCharacters").ConfigureAwait(false);
         ModelListCapture allCharactersCapture = ReadStaticModelsWorld(modelDb, "AllCharacters", "Characters");
         bool partyExact = orderedCharacters is not null && orderedCharacters.Count == playersCount &&
             playerSlotIndex >= 0 && playerSlotIndex < playersCount && orderedCharacters[playerSlotIndex] == character.CharacterKey &&
@@ -272,15 +277,16 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             assembly,
             unlockState,
             sharedEventsRawCapture);
-        IReadOnlyList<Beta109ActGenerationSnapshot> orderedActs = CaptureBeta109ActGenerationSnapshots(
+        IReadOnlyList<Beta109ActGenerationSnapshot> orderedActs = await ObserveBeta109ActGenerationSnapshots(
             sourceGroups,
             unlockState,
             isMultiplayer,
             modeFactsExact,
-            eventAuthority);
+            eventAuthority, schedule).ConfigureAwait(false);
         bool eventCatalogExact = eventAuthority.HasExactFilteringAuthority &&
                                  orderedActs.Count > 0 &&
                                  orderedActs.All(act => act.EventRngConsumptionExact);
+        await schedule.Checkpoint("WorldAncients").ConfigureAwait(false);
         ModelListCapture allSharedAncientsCapture = CapturePossiblyEmptyStaticModelsWorld(
             modelDb,
             "AllSharedAncients",
@@ -298,6 +304,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         // its returned order/rarity. A modded Character can therefore contribute an
         // exact runtime relic source when that structural capture itself is complete.
         bool characterAuthorityExact = characterModel is not null && selectedCharacterUnlocked;
+        await schedule.Checkpoint("WorldRelicPools").ConfigureAwait(false);
         Beta109WorldRelicPoolCapture sharedRelics = CaptureBeta109SharedRelicPool(
             assembly,
             unlockState);
@@ -559,18 +566,19 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             .ToArray();
     }
 
-    private static IReadOnlyList<Beta109ActGenerationSnapshot> CaptureBeta109ActGenerationSnapshots(
+    private static async Task<IReadOnlyList<Beta109ActGenerationSnapshot>> ObserveBeta109ActGenerationSnapshots(
         IReadOnlyList<Beta109ActSourceGroup> groups,
         object? unlockState,
         bool isMultiplayer,
         bool modeFactsExact,
-        Beta109EventCatalogAuthoritySnapshot eventAuthority)
+        Beta109EventCatalogAuthoritySnapshot eventAuthority, NativeObservationSchedule schedule)
     {
         var output = new List<Beta109ActGenerationSnapshot>();
         foreach (Beta109ActSourceGroup group in groups.OrderBy(group => group.ActNumber))
         {
             foreach (object model in group.Models)
             {
+                await schedule.Checkpoint("ActGeneration").ConfigureAwait(false);
                 if (!TryModelKey(model, out ModelKey actKey)) continue;
 
                 ModelListCapture rawEvents = CapturePossiblyEmptyInstanceModelsWorld(
@@ -590,7 +598,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                     "Ancients",
                     "AncientEvents");
                 Beta109EncounterCatalogCapture encounterCapture =
-                    CaptureBeta109GenerateAllEncounters(model);
+                    await ObserveBeta109GenerateAllEncounters(model, schedule).ConfigureAwait(false);
                 IReadOnlyList<Beta109EncounterEntrySnapshot> encounters =
                     encounterCapture.Encounters;
                 bool encounterOrderExact = encounterCapture.OrderExact;
@@ -645,8 +653,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         return output;
     }
 
-    private static Beta109EncounterCatalogCapture CaptureBeta109GenerateAllEncounters(
-        object actModel)
+    private static async Task<Beta109EncounterCatalogCapture> ObserveBeta109GenerateAllEncounters(
+        object actModel, NativeObservationSchedule schedule)
     {
         Type actType = actModel.GetType();
         string fullName = actType.FullName ?? string.Empty;
@@ -667,7 +675,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                 "UnsupportedModEncounter");
         }
 
-        MethodInfo? method = actType.GetMethods(PublicInstance | BindingFlags.NonPublic)
+        MethodInfo? method = RuntimeMethodsFor(actType, PublicInstance | BindingFlags.NonPublic)
             .Where(candidate => string.Equals(candidate.Name, "GenerateAllEncounters", StringComparison.Ordinal))
             .Where(candidate => candidate.GetParameters().Length == 0)
             .OrderBy(candidate => candidate.DeclaringType == actType ? 0 : 1)
@@ -729,6 +737,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         bool tagIdentityExact = true;
         for (int ordinal = 0; ordinal < models.Count; ordinal++)
         {
+            await schedule.Checkpoint("EncounterProperties:" + ordinal).ConfigureAwait(false);
             object model = models[ordinal];
             if (!referenceIds.TryGetValue(model, out int referenceId))
             {
@@ -797,8 +806,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         var withConflicts = new List<Beta109EncounterEntrySnapshot>(baseEntries.Count);
         for (int i = 0; i < models.Count; i++)
         {
-            MethodInfo? sharesTagsWith = models[i].GetType()
-                .GetMethods(PublicInstance | BindingFlags.NonPublic)
+            await schedule.Checkpoint("EncounterComparerRow:" + i).ConfigureAwait(false);
+            MethodInfo? sharesTagsWith = RuntimeMethodsFor(models[i].GetType(), PublicInstance | BindingFlags.NonPublic)
                 .Where(candidate => string.Equals(candidate.Name, "SharesTagsWith", StringComparison.Ordinal))
                 .FirstOrDefault(candidate =>
                 {
@@ -1002,7 +1011,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
     {
         if (pool is null)
             return new Beta109WorldRelicPoolCapture(Array.Empty<Beta109RelicSourceEntry>(), false, false, source + ":Missing");
-        MethodInfo? method = pool.GetType().GetMethods(PublicInstance | BindingFlags.NonPublic)
+        MethodInfo? method = RuntimeMethodsFor(pool.GetType(), PublicInstance | BindingFlags.NonPublic)
             .Where(candidate => string.Equals(candidate.Name, "GetUnlockedRelics", StringComparison.Ordinal))
             .FirstOrDefault(candidate =>
             {
@@ -1106,6 +1115,17 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         {
             return (false, false);
         }
+    }
+
+    private static (HashSet<ModelKey> Keys, bool Exact) CaptureDeclaredDiscoveredActs(
+        IReadOnlyList<ModelKey> declared, IReadOnlyList<Beta109ActSourceGroup> groups)
+    {
+        var known = groups.SelectMany(group => group.Models)
+            .Select(model => TryModelKey(model, out ModelKey key) ? key : default)
+            .Where(key => key.IsValid).ToHashSet(ModelKeyComparer.Instance);
+        var keys = declared.ToHashSet(ModelKeyComparer.Instance);
+        bool exact = keys.Count == declared.Count && keys.All(key => key.IsValid && known.Contains(key));
+        return (keys, exact);
     }
 
     private static (HashSet<ModelKey> Keys, bool Exact) CaptureBeta109DiscoveredActs(Assembly assembly)

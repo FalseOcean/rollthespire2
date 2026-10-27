@@ -563,7 +563,7 @@ internal static class SearchFeasibilityAnalyzer
         if (pool.Length == 0) return false;
 
         int bossCount = variant.Act == 3 && ascension >= 10 ? 2 : 1;
-        if (branch.IncludesSecondBoss && !branch.SecondBoss.IsEmpty && bossCount < 2)
+        if (branch.IncludesSecondBoss && bossCount < 2)
             return false;
 
         if (bossCount == 1)

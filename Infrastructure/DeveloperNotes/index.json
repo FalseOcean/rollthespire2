@@ -1,0 +1,28 @@
+{
+  "SchemaVersion": 2,
+  "ContentVersion": "1.4.0",
+  "TargetModVersion": "1.4.0",
+  "UpdatedAt": "2026-10-09",
+  "Chapters": [
+    {
+      "Id": "release",
+      "AcknowledgementVersion": "1.4.0",
+      "RequiresAcknowledgement": true
+    },
+    {
+      "Id": "next",
+      "AcknowledgementVersion": "1",
+      "RequiresAcknowledgement": false
+    },
+    {
+      "Id": "positioning",
+      "AcknowledgementVersion": "1",
+      "RequiresAcknowledgement": true
+    },
+    {
+      "Id": "devlog",
+      "AcknowledgementVersion": "1",
+      "RequiresAcknowledgement": false
+    }
+  ]
+}

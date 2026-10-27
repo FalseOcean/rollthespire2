@@ -9,6 +9,7 @@ internal sealed class RswPrivateInvocation(ExactSearchExecutionRequest request, 
     private int _batches;
     private double _ms;
     private bool _faulted;
+    GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => ConditionPerformance.UsesGpu ? GpuNumericRequirements.Int64 | GpuNumericRequirements.Float64 : GpuNumericRequirements.None;
     public string FamilyId => Name(order[0]);
     public IReadOnlyList<string> Coverage => order.Select(Name).ToArray();
     internal static string Name(char c) => c switch { 'R'=>"R.Relic",'S'=>"S.MerchantShopColorless",'W'=>"W.World",_=>throw new InvalidOperationException("RSW.Coverage") };

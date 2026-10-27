@@ -459,7 +459,7 @@ public static class Beta109WorldPredictionProvider
             : string.Join("+", assumptions);
     }
 
-    private static Beta109WorldRng CreateUpFront(Beta109WorldGenerationSnapshot snapshot)
+    internal static Beta109WorldRng CreateUpFront(Beta109WorldGenerationSnapshot snapshot)
     {
         if (snapshot.UpFrontPrefix.Kind == Beta109UpFrontPrefixAuthorityKind.ExactCheckpoint &&
             snapshot.UpFrontPrefix.Checkpoint is not null)
@@ -483,7 +483,7 @@ public static class Beta109WorldPredictionProvider
         return rng;
     }
 
-    private static Dictionary<int, List<ModelKey>> AssignSharedAncients(
+    internal static Dictionary<int, List<ModelKey>> AssignSharedAncients(
         IReadOnlyList<ModelKey> selectedActKeys,
         IReadOnlyList<Beta109ActGenerationSnapshot> catalog,
         IReadOnlyList<ModelKey> source,
@@ -504,7 +504,7 @@ public static class Beta109WorldPredictionProvider
         return output;
     }
 
-    private static void ConsumeEncounterQueue(
+    internal static void ConsumeEncounterQueue(
         IReadOnlyList<Beta109EncounterEntrySnapshot> source,
         int slots,
         Beta109WorldRng rng,

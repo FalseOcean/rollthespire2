@@ -1,7 +1,11 @@
 // R-private complete initial bag and actual opening pair. Shared Niche is not
 // observed: K's nonempty-pool Rewards draw count is invariant to its permutation.
+#ifndef RT2_R_GENERIC_BAG_CAPACITY
+#define RT2_R_GENERIC_BAG_CAPACITY 512
+#endif
+
 bool r_generic_route(uint64_t root,RngState rewards,uint first,uint second){
-    uint bag[512],rarities[512],total=0u;
+    uint bag[RT2_R_GENERIC_BAG_CAPACITY],rarities[RT2_R_GENERIC_BAG_CAPACITY],total=0u;
     rng_initialize(root+rfull_u64(22u));
     for(uint b=0u;b<plan_meta.values[0u];++b){
         uvec4 bucket=bucket_meta.values[b]; uint scope=bucket.z&255u,kind=(bucket.z>>8u)&255u;

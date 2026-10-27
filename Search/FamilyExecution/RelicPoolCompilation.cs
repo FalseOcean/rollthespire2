@@ -160,7 +160,7 @@ internal static class RelicPoolCompilation
         bool supportedSeedBranch =
             generation.RunSeedHashKind == Beta109RunSeedHashKind.ModernXxHash64 &&
             generation.OldSeedBranchStatus == Beta109OldSeedBranchStatus.NewSeedHashed;
-        bool partyAuthority = generation.HasExactFixedParty && generation.ModeFactsExact && generation.IsMultiplayerExact &&
+        bool partyAuthority = generation.HasExactPartyRelicBags && generation.ModeFactsExact && generation.IsMultiplayerExact &&
             authority.PlayersCount == generation.PlayerCount && authority.PlayerSlotIndex == generation.PersonalPlayerSlot &&
             generation.PersonalPlayerSlot >= 0 && generation.PersonalPlayerSlot < generation.PlayerCount &&
             generation.PartyRelicBuckets.Take(generation.PersonalPlayerSlot).SelectMany(b => b).All(IsBucketExact);

@@ -11,7 +11,7 @@ internal sealed partial class PrecisionBadge : PanelContainer
     public PrecisionBadge()
     {
         CustomMinimumSize = new Vector2(0, 25);
-        _label = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta);
+        _label = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta);
         _label.HorizontalAlignment = HorizontalAlignment.Center;
         AddChild(_label);
     }
@@ -28,18 +28,18 @@ internal sealed partial class PrecisionBadge : PanelContainer
             ? $"{dimension} {symbol}"
             : $"{symbol} {dimension}: {value}";
         Color color = notMigrated
-            ? Ui1Theme.Palette.TextMuted
+            ? MainPanelTheme.Palette.TextMuted
             : precision switch
             {
-                PredictionPrecision.Exact => Ui1Theme.Palette.Success,
-                PredictionPrecision.Partial => Ui1Theme.Palette.Partial,
-                PredictionPrecision.Unsupported => Ui1Theme.Palette.Unsupported,
-                PredictionPrecision.Unknown => Ui1Theme.Palette.Unknown,
-                _ => Ui1Theme.Palette.TextSecondary
+                PredictionPrecision.Exact => MainPanelTheme.Palette.Success,
+                PredictionPrecision.Partial => MainPanelTheme.Palette.Partial,
+                PredictionPrecision.Unsupported => MainPanelTheme.Palette.Unsupported,
+                PredictionPrecision.Unknown => MainPanelTheme.Palette.Unknown,
+                _ => MainPanelTheme.Palette.TextSecondary
             };
-        var box = Ui1Theme.Surface(Ui1SurfaceRole.Input, 3f, 1);
-        box.BorderColor = notMigrated ? Ui1Theme.Palette.BorderSubtle : color;
-        Ui1Theme.SetMargins(box, compact ? 6f : 8f, 3f, compact ? 6f : 8f, 3f);
+        var box = MainPanelTheme.Surface(Ui1SurfaceRole.Input, 3f, 1);
+        box.BorderColor = notMigrated ? MainPanelTheme.Palette.BorderSubtle : color;
+        MainPanelTheme.SetMargins(box, compact ? 6f : 8f, 3f, compact ? 6f : 8f, 3f);
         AddThemeStyleboxOverride("panel", box);
         _label.AddThemeColorOverride("font_color", color);
         TooltipText = $"{dimension}: {value}";

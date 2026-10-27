@@ -1,3 +1,4 @@
+using RolltheSpire2.Compatibility;
 using Godot;
 
 namespace RolltheSpire2.Ui.Pages.Analysis;
@@ -13,7 +14,7 @@ internal sealed partial class AnalysisPage
         remove { _favoriteSeedRequested -= value; RefreshFavoriteSeed(); }
     }
     internal bool CanFavoriteVisibleSeed => _wbHasResult && _requestBar.HasValidVisibleSeed && LastDocument is not null &&
-        _runtime.Profile.TryCanonicalizeSeed(CurrentDraft.RawSeed, out var canonical, out _) && LastDocument.CanonicalSeed == canonical;
+        ProfileSeedRules.TryCanonicalizePredictionSeed(_runtime.Profile, CurrentDraft.RawSeed, out var canonical, out _) && LastDocument.CanonicalSeed == canonical;
 
     private void BuildFavoriteSeed(Control rail)
     {

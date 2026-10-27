@@ -1,9 +1,15 @@
 #version 450
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
+#ifndef RT2_S_EARLY_REJECTION
+#define RT2_S_EARLY_REJECTION 0
+#endif
+
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
-const uint INVALID_ID = 65535u;
+// Pool positions are uint indexes. Only authored wildcards may skip checking;
+// missing identities use 0xfffffffe and cannot equal a valid draw position.
+const uint INVALID_ID = 0xffffffffu;
 const uint SEEDS_PER_INVOCATION = 8u;
 const uint CANDIDATES_PER_WORKGROUP = 64u * SEEDS_PER_INVOCATION;
 
@@ -65,6 +71,53 @@ uint next_int(uint bound) {
 
 /*__RT2_VISIBLE_SEED_ROOT_HASH__*/
 
+#if RT2_S_EARLY_REJECTION
+// Called only after this lane's current observation is complete. Surviving
+// roots still execute the original merchant cadence below, including the tail.
+bool merchant_observation_matches(uint ordinal, uint lane, uint observed[5], uint slot_count, uint sequence_count) {
+    for (uint index = 0u; index < slot_count; ++index) {
+        uint base = 7u + index * 3u;
+        if (merchant_plan_buffer.values[base] == ordinal && merchant_plan_buffer.values[base + 1u] == lane &&
+            observed[ordinal - 1u] != merchant_plan_buffer.values[base + 2u]) return false;
+    }
+    uint sequence_base = 7u + slot_count * 3u;
+    for (uint index = 0u; index < sequence_count; ++index) {
+        uint base = sequence_base + index * 5u;
+        uint count = merchant_plan_buffer.values[base + 1u];
+        if (merchant_plan_buffer.values[base] != lane || ordinal > count) continue;
+        uint target_offset = merchant_plan_buffer.values[base + 3u];
+        uint target_count = merchant_plan_buffer.values[base + 4u];
+        if (merchant_plan_buffer.values[base + 2u] == 0u) {
+            uint target = merchant_target_buffer.ids[target_offset + ordinal - 1u];
+            if (target != INVALID_ID && observed[ordinal - 1u] != target) return false;
+            continue;
+        }
+        uint required = 0u;
+        for (uint probe = 0u; probe < target_count; ++probe)
+            if (merchant_target_buffer.ids[target_offset + probe] != INVALID_ID) required++;
+        uint remaining = count - ordinal;
+        if (remaining >= required) continue;
+        uint missing = 0u;
+        for (uint target_index = 0u; target_index < target_count; ++target_index) {
+            uint target = merchant_target_buffer.ids[target_offset + target_index];
+            if (target == INVALID_ID) continue;
+            bool repeated = false;
+            for (uint probe = 0u; probe < target_index; ++probe)
+                repeated = repeated || merchant_target_buffer.ids[target_offset + probe] == target;
+            if (repeated) continue;
+            uint requested = 0u, actual = 0u;
+            for (uint probe = target_index; probe < target_count; ++probe)
+                if (merchant_target_buffer.ids[target_offset + probe] == target) requested++;
+            for (uint probe = 0u; probe < ordinal; ++probe)
+                if (observed[probe] == target) actual++;
+            if (requested > actual) missing += requested - actual;
+            if (missing > remaining) return false;
+        }
+    }
+    return true;
+}
+#endif
+
 bool evaluate_merchant_colorless(uint64_t root) {
     uint slot_count = merchant_plan_buffer.values[0u];
     uint sequence_count = merchant_plan_buffer.values[1u];
@@ -86,9 +139,22 @@ bool evaluate_merchant_colorless(uint64_t root) {
     for (uint ordinal = 1u; ordinal <= max_ordinal; ++ordinal) {
         for (uint call = 0u; call < 12u; ++call) consume_rng();
         uncommon[ordinal - 1u] = next_int(uncommon_pool_count);
+#ifdef RT2_S_CANONICAL_UNCOMMON_OFFSET
+        uncommon[ordinal - 1u] = merchant_target_buffer.ids[RT2_S_CANONICAL_UNCOMMON_OFFSET + uncommon[ordinal - 1u]];
+#endif
+#if RT2_S_EARLY_REJECTION
+        if (!merchant_observation_matches(ordinal, 0u, uncommon, slot_count, sequence_count)) return false;
+#endif
         consume_rng();
         rare[ordinal - 1u] = next_int(rare_pool_count);
+#ifdef RT2_S_CANONICAL_RARE_OFFSET
+        rare[ordinal - 1u] = merchant_target_buffer.ids[RT2_S_CANONICAL_RARE_OFFSET + rare[ordinal - 1u]];
+#endif
+#if RT2_S_EARLY_REJECTION
+        if (!merchant_observation_matches(ordinal, 1u, rare, slot_count, sequence_count)) return false;
+#endif
         for (uint call = 0u; call < 13u; ++call) consume_rng();
+#if !RT2_S_EARLY_REJECTION
         for (uint index = 0u; index < slot_count; ++index) {
             uint base = 7u + index * 3u;
             if (merchant_plan_buffer.values[base] != ordinal) continue;
@@ -124,6 +190,7 @@ bool evaluate_merchant_colorless(uint64_t root) {
                 }
             }
         }
+#endif
     }
     return true;
 }

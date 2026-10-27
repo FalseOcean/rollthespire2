@@ -1,0 +1,205 @@
+{
+  "SchemaVersion": 1,
+  "Query": {
+    "OpeningRoute": null,
+    "OpeningRouteRelicRequirement": null,
+    "StructuredOpeningEffects": [],
+    "VariantBossBranches": [
+      {
+        "Act": 2,
+        "VariantKey": "ACT:HIVE",
+        "FirstBoss": {
+          "Any": [
+            "ENCOUNTER:KNOWLEDGE_DEMON_BOSS"
+          ],
+          "All": [],
+          "Ban": [],
+          "IsEmpty": false
+        },
+        "SecondBoss": {
+          "Any": [],
+          "All": [],
+          "Ban": [],
+          "IsEmpty": true
+        },
+        "IncludesSecondBoss": false,
+        "IsValid": true
+      },
+      {
+        "Act": 3,
+        "VariantKey": "ACT:GLORY",
+        "FirstBoss": {
+          "Any": [
+            "ENCOUNTER:TEST_SUBJECT_BOSS"
+          ],
+          "All": [],
+          "Ban": [],
+          "IsEmpty": false
+        },
+        "SecondBoss": {
+          "Any": [
+            "ENCOUNTER:QUEEN_BOSS"
+          ],
+          "All": [],
+          "Ban": [],
+          "IsEmpty": false
+        },
+        "IncludesSecondBoss": true,
+        "IsValid": true
+      }
+    ],
+    "AncientBranches": [],
+    "RelicSequenceConstraints": [],
+    "EventSequenceConstraints": [
+      {
+        "Act": 3,
+        "Source": null,
+        "RangeMode": "FirstN",
+        "RangeValue": 3,
+        "Keys": {
+          "Any": [
+            "EVENT:THE_FUTURE_OF_POTIONS"
+          ],
+          "All": [],
+          "Ban": [],
+          "IsEmpty": false
+        },
+        "IsEmpty": false
+      },
+      {
+        "Act": 1,
+        "Source": null,
+        "RangeMode": "FirstN",
+        "RangeValue": 3,
+        "Keys": {
+          "Any": [
+            "EVENT:TRASH_HEAP"
+          ],
+          "All": [],
+          "Ban": [],
+          "IsEmpty": false
+        },
+        "IsEmpty": false
+      },
+      {
+        "Act": 1,
+        "Source": null,
+        "RangeMode": "FirstN",
+        "RangeValue": 3,
+        "Keys": {
+          "Any": [
+            "EVENT:DOORS_OF_LIGHT_AND_DARK"
+          ],
+          "All": [],
+          "Ban": [],
+          "IsEmpty": false
+        },
+        "IsEmpty": false
+      },
+      {
+        "Act": 1,
+        "Source": null,
+        "RangeMode": "FirstN",
+        "RangeValue": 3,
+        "Keys": {
+          "Any": [
+            "EVENT:ENDLESS_CONVEYOR"
+          ],
+          "All": [],
+          "Ban": [],
+          "IsEmpty": false
+        },
+        "IsEmpty": false
+      },
+      {
+        "Act": 2,
+        "Source": null,
+        "RangeMode": "FirstN",
+        "RangeValue": 3,
+        "Keys": {
+          "Any": [
+            "EVENT:FAKE_MERCHANT"
+          ],
+          "All": [],
+          "Ban": [],
+          "IsEmpty": false
+        },
+        "IsEmpty": false
+      },
+      {
+        "Act": 3,
+        "Source": null,
+        "RangeMode": "FirstN",
+        "RangeValue": 3,
+        "Keys": {
+          "Any": [
+            "EVENT:GRAVE_OF_THE_FORGOTTEN"
+          ],
+          "All": [],
+          "Ban": [],
+          "IsEmpty": false
+        },
+        "IsEmpty": false
+      }
+    ],
+    "LegacyCombatRewardConstraints": [],
+    "LegacyNeow": {
+      "NeowRelics": {
+        "Any": [],
+        "All": [],
+        "Ban": [],
+        "IsEmpty": true
+      },
+      "RequireNeowsBones": false,
+      "BonesRelics": {
+        "Any": [],
+        "All": [],
+        "Ban": [],
+        "IsEmpty": true
+      },
+      "RequiredBonesCombination": [],
+      "RequireSmallCapsule": false,
+      "RequireLargeCapsule": false,
+      "CapsuleContainedRelics": {
+        "Any": [],
+        "All": [],
+        "Ban": [],
+        "IsEmpty": true
+      },
+      "RequireWhetstone": false,
+      "RequireWarPaint": false,
+      "RequiredFinalCurse": null,
+      "BannedFinalCurses": [],
+      "Preset": "None",
+      "RequiredBonesAcquisitionOrder": [],
+      "EffectOutputConditions": []
+    },
+    "LegacyWorld": {
+      "BossFilters": [],
+      "BossOrdinalFilters": [],
+      "AncientIdentityFilters": [],
+      "AncientOptionFilters": [],
+      "AncientSeaGlassTargetFilters": []
+    },
+    "CombatCardRewards": null,
+    "CombatPotionRewards": null,
+    "EventResultConditions": [
+      {
+        "Kind": "TrashHeapGrabCard",
+        "TargetKey": "CARD:DUAL_WIELD",
+        "IsValid": true
+      }
+    ],
+    "MerchantColorlessConditions": [],
+    "MerchantColorlessSequenceConditions": [],
+    "RelicShopSequenceConditions": [],
+    "HasCombatRewardConstraints": false
+  },
+  "Options": {
+    "StartSeed": "N9U23MB4T6UG",
+    "ScanCount": 1677721600,
+    "TargetMatchCount": 2147483647,
+    "WorkerCount": 4,
+    "IncludeDiagnostics": true
+  }
+}

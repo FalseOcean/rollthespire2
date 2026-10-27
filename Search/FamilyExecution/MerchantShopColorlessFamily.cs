@@ -22,6 +22,7 @@ internal sealed partial class MerchantShopColorlessFamily : IFamilyInvocation
     private const int PerformanceSamplePeriod = 256;
     private const int InitialPerformanceSampleCount = 3;
     private readonly ExactSearchExecutionRequest _plan;
+    internal ExactSearchExecutionRequest PricingRequest => _plan;
     private readonly IRuntimeProfile _profile;
     private readonly FamilyAnalyticalCostProjection _analyticalCost;
     private readonly FamilySurvivalProjection _survival;
@@ -78,15 +79,19 @@ internal sealed partial class MerchantShopColorlessFamily : IFamilyInvocation
         string densePerformanceRevision = _compactionDecision.Path == MerchantShopColorlessCompactionPath.StableOrderedCompaction
             ? FamilyPhysicalImplementationRevisions.MerchantShopColorlessStableDensePerformance
             : FamilyPhysicalImplementationRevisions.MerchantShopColorlessAtomicDensePerformance;
+        string partyRevision = MerchantShopColorlessGpuExecutor.PartyEarlyRejectionRevision(plan.Evaluation, plan.Authority.PlayersCount);
         _denseConditionPerformance = MerchantShopColorlessConditionPerformance.Project(
-            plan.Evaluation, densePerformanceRevision);
+            plan.Evaluation, densePerformanceRevision + partyRevision);
         _compactConditionPerformance = MerchantShopColorlessConditionPerformance.Project(
-            plan.Evaluation, FamilyPhysicalImplementationRevisions.MerchantShopColorlessCompactPerformance);
+            plan.Evaluation, FamilyPhysicalImplementationRevisions.MerchantShopColorlessCompactPerformance + partyRevision);
     }
 
+    bool IFamilyInvocation.ExecutionFaulted => _gpuDisabled;
+    GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => ConditionPerformance.UsesGpu ? GpuNumericRequirements.Int64 : GpuNumericRequirements.None;
     public string FamilyId => "S.MerchantShopColorless";
     public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest request) =>
-        MerchantShopColorlessPhysicalPricing.Quote(_plan, _compactionDecision, request, _expectedFilteringCost);
+        FamilyGpuReadback.Reference(this, FamilyCanonicalMeasuredCost.TryDenseQuote(this, request) ??
+            MerchantShopColorlessPhysicalPricing.Quote(_plan, _compactionDecision, request, _expectedFilteringCost));
     bool IFamilyInvocation.CanBindPrivateSerial => !_gpuDisabled;
     FamilyPrivateGpuExecution IFamilyInvocation.BindPrivateSerial(Godot.RenderingDevice rd,
         PrivateOrdinalBuffer? input, PrivateOrdinalBuffer? output)
@@ -500,7 +505,11 @@ internal sealed partial class MerchantShopColorlessFamily : IFamilyInvocation
                     CancellationToken.None).ConfigureAwait(false);
             }
         }
-        catch { }
+        catch (Exception cleanupFailure)
+        {
+            executionContext.RecordGpuCleanupFailure(cleanupFailure, FamilyId,
+                "DisableGpu.Dispose", _plan.SnapshotFingerprint);
+        }
         _gpu = null;
         RuntimeLog.TryBackgroundWarning(
             $"sFamilyPhysicalFault=true;family={FamilyId};failure={Sanitize(failure)};" +

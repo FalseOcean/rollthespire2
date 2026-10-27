@@ -10,6 +10,10 @@ namespace RolltheSpire2.Search.FamilyExecution;
 internal sealed partial record RelicFullGpuPlan(RelicFamilyPlan SequencePlan, uint[] CapsuleMetadata, bool UsesBonesKBoundary = false)
 {
     internal bool GenericReplay { get; init; }
+    internal GpuNumericalVariant NumericalVariant { get; init; } = GpuNumericalVariant.NativeFloat64;
+    internal GpuNumericRequirements NumericRequirements => GpuIntegerNumerics.Requirements(NumericalVariant);
+    internal string NumericalRevision => NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "";
+    internal string ActualAlgorithmRevision => AlgorithmRevision + NumericalRevision;
     internal const string AlgorithmRevision =
         "R.Relic.Gpu.Rfull.v4.TrackedSequence.CapsuleRarityTrackedRank.EmptySequenceElided.LastTargetBucket";
     internal const string DenseRevision =
@@ -22,7 +26,10 @@ internal sealed partial record RelicFullGpuPlan(RelicFamilyPlan SequencePlan, ui
     internal const uint GroupedBonesArrival = 2;
     internal const uint SourceConstrainedBonesArrival = 3;
     internal bool SourceConstrainedCapsules => CapsuleMetadata[0] == SourceConstrainedBonesArrival;
-    internal string Revision(bool compact) => GenericReplay ? "R.Relic.Gpu.GenericCapsule.20260922." + (compact ? "Compact" : "Dense") : SourceConstrainedCapsules
+    internal string BagCapacityRevision => GenericReplay && UseExactGenericBagCapacity && ConfiguredGenericBagCapacity < 512
+        ? $".GenericBagCapacity.Slot{CapsuleMetadata[14]}.B{ConfiguredGenericBagCapacity}.20261016.v1" : "";
+    internal string Revision(bool compact) => NativeRevision(compact) + NumericalRevision;
+    private string NativeRevision(bool compact) => GenericReplay ? "R.Relic.Gpu.GenericCapsule.20260922." + (compact ? "Compact" : "Dense") + BagCapacityRevision : SourceConstrainedCapsules
         ? $"R.Relic.Rfull.SourceConstrainedSmallLarge.{(compact ? "Compact" : "Dense")}.CanonicalAbi1Ready.20260913.v2"
         : CapsuleMetadata[0] == FixedBonesArrival
         ? $"R.Relic.Rfull.FixedBones.{(compact ? "Compact" : "Dense")}.CanonicalAbi1Ready.20260913.v5"
@@ -37,13 +44,22 @@ internal sealed partial record RelicFullGpuPlan(RelicFamilyPlan SequencePlan, ui
         ExactSearchExecutionRequest request,
         NeowReplayPlan route,
         out RelicFullGpuPlan? plan,
-        out string issue)
+        out string issue, GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
+        if (numericalVariant is not (GpuNumericalVariant.NativeFloat64 or GpuNumericalVariant.IntegerRne))
+            throw new ArgumentOutOfRangeException(nameof(numericalVariant));
+        bool created;
         if (request.Authority.PlayersCount > 1 && RolltheSpire2.Search.Semantics.PartyInitialQuery.CapsuleEffectPremise(request.CompiledSearch.NormalizedQuery)
             .Values.SelectMany(keys => keys).Any(k => !Core.Rewards.VanillaRelicRewardEffects.TryGet(request.ProfileId, k, out var e) ||
-                !e.NestedOnObtainPreservesRewardContinuation)) return TryCreateGeneric(request, route, out plan, out issue);
-        if (TryCreateCore(request, route, false, out plan, out issue)) return true;
-        return request.Authority.PlayersCount > 1 && TryCreateGeneric(request, route, out plan, out issue);
+                !e.NestedOnObtainPreservesRewardContinuation)) created = TryCreateGeneric(request, route, out plan, out issue);
+        else
+        {
+            created = TryCreateCore(request, route, false, out plan, out issue);
+            if (!created && request.Authority.PlayersCount > 1) created = TryCreateGeneric(request, route, out plan, out issue);
+        }
+        if (created && plan is not null && numericalVariant != GpuNumericalVariant.NativeFloat64)
+            plan = plan with { NumericalVariant = numericalVariant };
+        return created;
     }
 
     // Only the bounded N physical supplies both actual Capsule arrivals. This

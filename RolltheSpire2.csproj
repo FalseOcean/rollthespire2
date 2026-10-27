@@ -8,11 +8,16 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
-    <Version>1.3.5</Version>
-    <AssemblyVersion>1.3.5.0</AssemblyVersion>
-    <FileVersion>1.3.5.0</FileVersion>
-    <InformationalVersion>1.3.5+$(Configuration)</InformationalVersion>
+    <Version>1.4.0</Version>
+    <AssemblyVersion>1.4.0.0</AssemblyVersion>
+    <FileVersion>1.4.0.0</FileVersion>
+    <InformationalVersion>1.4.0+$(Configuration)</InformationalVersion>
     <NoWarn>$(NoWarn);MSB3270;STS002</NoWarn>
+  </PropertyGroup>
+
+  <!-- Frozen Host comparison only; normal product builds retain root pairs. -->
+  <PropertyGroup Condition="'$(Rt2DisableRootBatchPairs)' == 'true'">
+    <DefineConstants>$(DefineConstants);RT2_DISABLE_ROOT_BATCH_PAIRS</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
@@ -32,16 +37,16 @@
     <Compile Remove=".build-evidence\**\*.cs" />
     <None Include="RolltheSpire2.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="project.godot" />
-    <EmbeddedResource Include="Localization\rt2_ui_legacy\*.json"
-                      LogicalName="RolltheSpire2.Localization.rt2_ui_legacy.%(Filename)%(Extension)" />
-    <EmbeddedResource Include="Localization\rt2_ui_v13\*.json"
-                      LogicalName="RolltheSpire2.Localization.rt2_ui_v13.%(Filename)%(Extension)" />
-    <EmbeddedResource Include="Localization\game_content\*.json"
-                      LogicalName="RolltheSpire2.Localization.game_content.%(Filename)%(Extension)" />
-    <EmbeddedResource Include="DeveloperNotes\*.json" WithCulture="false"
-                      LogicalName="RolltheSpire2.DeveloperNotes.%(Filename)%(Extension)" />
-    <EmbeddedResource Include="Encyclopedia\*.md"
-                      LogicalName="RolltheSpire2.Encyclopedia.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Texts\**\*.json" WithCulture="false" />
+    <EmbeddedResource Include="Search\FamilyExecution\FamilyPrivateCompleteCallCostReference.json"
+                      LogicalName="RolltheSpire2.Search.FamilyExecution.FamilyPrivateCompleteCallCostReference.json" />
+    <EmbeddedResource Include="Search\FamilyExecution\CanonicalCostReference.json"
+                      LogicalName="RolltheSpire2.Search.FamilyExecution.CanonicalCostReference.json" />
+    <EmbeddedResource Include="Texts\**\*.md" WithCulture="false" />
+    <EmbeddedResource Include="Assets\Icons\Rt2Launcher.png"
+                      LogicalName="RolltheSpire2.Assets.Icons.Rt2Launcher.png" />
+    <EmbeddedResource Include="Infrastructure\DeveloperNotes\index.json" WithCulture="false"
+                      LogicalName="RolltheSpire2.Infrastructure.DeveloperNotes.index.json" />
     <EmbeddedResource Include="OfficialPresets\*.json"
                       LogicalName="RolltheSpire2.OfficialPresets.%(Filename)%(Extension)" />
     <EmbeddedResource Include="DeveloperSeeds\*.json"
@@ -53,7 +58,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <AssemblyMetadata Include="Rt2BuildIdentity" Value="RolltheSpire2-1.3.5-Production" />
+    <AssemblyMetadata Include="Rt2BuildIdentity" Value="RolltheSpire2-1.4.0-Production" />
     <AssemblyMetadata Include="Rt2CompatibilityTarget" Value="Beta110-0.110.1-AuditedExact_Beta111-0.111.0-AcceptedCompatible-Modern110Semantic" />
     <AssemblyMetadata Include="Rt2BuildConfiguration" Value="$(Configuration)" />
   </ItemGroup>

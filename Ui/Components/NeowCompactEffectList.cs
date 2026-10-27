@@ -111,7 +111,7 @@ internal sealed partial class NeowCompactEffectList : VBoxContainer
 
         if (showGroupLabel)
         {
-            Label groupLabel = Ui1Theme.Label(
+            Label groupLabel = MainPanelTheme.Label(
                 string.Format(_groupShortFormat, visibleGroupIndex + 1),
                 Ui1TextRole.Muted,
                 wrap: false);
@@ -120,7 +120,7 @@ internal sealed partial class NeowCompactEffectList : VBoxContainer
             column.AddChild(groupLabel);
         }
 
-        Label groupHeading = Ui1Theme.Label(
+        Label groupHeading = MainPanelTheme.Label(
             string.IsNullOrWhiteSpace(group.DisplayLabel)
                 ? string.Format(_groupShortFormat, visibleGroupIndex + 1)
                 : group.DisplayLabel,
@@ -159,7 +159,7 @@ internal sealed partial class NeowCompactEffectList : VBoxContainer
 
         // Text-only predicted facts are atomic. The parent typed row owns layout;
         // proprietary/game object names are never character-wrapped here.
-        Label text = Ui1Theme.Label(visibleText, _textRole, wrap: false);
+        Label text = MainPanelTheme.Label(visibleText, _textRole, wrap: false);
         text.CustomMinimumSize = new Vector2(0f, _iconSize);
         text.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         text.ClipText = true;
@@ -204,7 +204,7 @@ internal sealed partial class NeowCompactEffectList : VBoxContainer
         texture.OffsetRight = -3f;
         texture.OffsetBottom = -3f;
 
-        Label missing = Ui1Theme.Label(texture.Visible ? string.Empty : "?", Ui1TextRole.Muted, wrap: false);
+        Label missing = MainPanelTheme.Label(texture.Visible ? string.Empty : "?", Ui1TextRole.Muted, wrap: false);
         missing.HorizontalAlignment = HorizontalAlignment.Center;
         missing.VerticalAlignment = VerticalAlignment.Center;
         missing.MouseFilter = Control.MouseFilterEnum.Ignore;
@@ -218,7 +218,7 @@ internal sealed partial class NeowCompactEffectList : VBoxContainer
         iconHost.MouseExited += () => _tooltipHost.Dismiss(iconHost);
         iconHost.TreeExiting += () => _tooltipHost.Dismiss(iconHost);
 
-        Label name = Ui1Theme.Label(visibleText, _textRole, wrap: false);
+        Label name = MainPanelTheme.Label(visibleText, _textRole, wrap: false);
         name.CustomMinimumSize = new Vector2(64f, _iconSize);
         name.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         name.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;

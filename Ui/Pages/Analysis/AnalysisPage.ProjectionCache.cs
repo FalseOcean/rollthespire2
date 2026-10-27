@@ -31,6 +31,7 @@ internal sealed partial class AnalysisPage
         _eventProjection = null;
         _eventTransformUnlocks = null;
         _eventTransformResults.Clear();
+        _stableEventResults.Clear();
         _merchantProjectionReady = _eventProjectionReady = false;
     }
 

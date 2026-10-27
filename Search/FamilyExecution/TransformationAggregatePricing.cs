@@ -8,10 +8,12 @@ internal static class TransformationAggregatePricing
 
     internal static FamilyPhysicalQuote? Cpu(TransformationAggregateNumericalPlan plan, TransformationAggregateProbability probability, FamilyPhysicalQuoteRequest g)
     {
+        if (!double.IsFinite(probability.IdentityProbability)) return null;
         if (!plan.Closed || !FamilyPhysicalQuote.AdmittedRequest(g) || g.PrivateInput || g.PrivateOutput) return null;
         var c = plan.Condition;
-        // CPU v1 observes the entire opening offer (and Bones pair when requested)
-        // before computing every selected output. GPU early rejection is NOT priced here.
+        // Retain the collector's full-output CPU work envelope. The current
+        // identity/streaming paths can reject earlier; their saved work is not
+        // inferred from GPU coefficients or observed survivor populations.
         double opening = c.UsesNeow ? 65 : 0;
         if (c.Opening is TransformationOpening.BonesLeafyNewLeaf or TransformationOpening.BonesLeafyOther)
             opening += 3 * plan.Neow!.Authority.BonesEligibleRelicIds.Length;
@@ -27,6 +29,8 @@ internal static class TransformationAggregatePricing
     internal static FamilyPhysicalQuote? Gpu(TransformationAggregateNumericalPlan plan, TransformationAggregateProbability probability,
         TransformationAggregateGpuPlan physical, FamilyPhysicalQuoteRequest g)
     {
+        if (physical.NumericalVariant != GpuNumericalVariant.NativeFloat64) return null;
+        if (!double.IsFinite(probability.IdentityProbability) || !double.IsFinite(probability.ExpectedGpuDraws)) return null;
         if (!plan.Closed || !FamilyPhysicalQuote.AdmittedRequest(g) || !FamilyPhysicalQuote.HasReferenceBackend()) return null;
         var c = plan.Condition;
         if (physical.BonesOptimized) return NeowTransformationPricing.Transform(plan, probability, physical, g);

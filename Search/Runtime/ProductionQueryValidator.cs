@@ -15,13 +15,14 @@ using RolltheSpire2.Search.Semantics;
 namespace RolltheSpire2.Search.Runtime;
 
 /// <summary>
-/// Validates Query against authoritative prediction. It never replays an RNG or reconstructs
-/// a Predictor. The document's OverallStatus is used only for request/document
+/// Validates Query against authoritative prediction. Initial-room commitments use the
+/// existing pure room predictors with this document's shared bags and actual opening.
+/// The document's OverallStatus is used only for request/document
 /// viability; Query-relevant section/domain status is checked locally before
 /// route-related conditions are evaluated against one OpeningRouteId and a Match
 /// witness is emitted.
 /// </summary>
-public static class ProductionQueryValidator
+public static partial class ProductionQueryValidator
 {
     private static readonly ModelKey SeaGlassKey = new(BaseGameModelKeys.Categories.Relic, "SEA_GLASS");
 
@@ -30,19 +31,31 @@ public static class ProductionQueryValidator
         SeedPredictionDocument document,
         RuntimeContextAuthoritySnapshot? evaluatedAuthority = null)
     {
-        SearchQueryEvaluation cheap = EvaluateCheap(plan, document, evaluatedAuthority);
-        if (cheap.Disposition != SearchDisposition.Match || !plan.Evaluation.RequiresNormalCombatRewardDomain)
+        SearchQueryEvaluation cheap = EvaluateCheap(plan, document, evaluatedAuthority, out SearchQueryEvaluation opening);
+        SearchQueryEvaluation rewardBase = cheap.Disposition == SearchDisposition.Match ? cheap : opening;
+        if (cheap.Disposition == SearchDisposition.NoMatch || !plan.Evaluation.RequiresNormalCombatRewardDomain ||
+            rewardBase.Disposition != SearchDisposition.Match ||
+            !rewardBase.Witnesses.Any(w => !string.IsNullOrWhiteSpace(w.OpeningRouteId)))
         {
             return cheap;
         }
-        return EvaluateRewards(plan, document, cheap);
+        return ProductionExactSearchEvaluator.CombineIndependentEvaluations(EvaluateRewards(plan, document, rewardBase), cheap);
     }
 
     public static SearchQueryEvaluation EvaluateCheap(
         ExactSearchExecutionRequest plan,
         SeedPredictionDocument document,
-        RuntimeContextAuthoritySnapshot? evaluatedAuthority = null)
+        RuntimeContextAuthoritySnapshot? evaluatedAuthority = null) => EvaluateCheap(plan, document, evaluatedAuthority, out _);
+
+    // Preserve only the actually evaluated N result for C's common-route check.
+    // The returned whole-query Unknown carries no borrowed Match witness.
+    internal static SearchQueryEvaluation EvaluateCheap(
+        ExactSearchExecutionRequest plan,
+        SeedPredictionDocument document,
+        RuntimeContextAuthoritySnapshot? evaluatedAuthority,
+        out SearchQueryEvaluation opening, ulong? rootHash = null)
     {
+        opening = SearchQueryEvaluation.Unknown("OpeningDocumentContextNotValidated");
         RuntimeContextAuthoritySnapshot expectedAuthority = evaluatedAuthority ?? plan.Authority;
         SearchQueryEvaluation context = ValidateDocumentContextAndViability(plan, document, expectedAuthority);
         if (context.Disposition != SearchDisposition.Match)
@@ -50,36 +63,61 @@ public static class ProductionQueryValidator
             return context;
         }
 
+        ulong initialRoomRoot = HasInitialRoomConditions(plan.Evaluation)
+            ? rootHash ?? RuntimeProfileRegistry.Select(plan.Detection).ComputeRootSeed(document.CanonicalSeed) : 0;
+
         bool requiresNeowTruth = plan.Evaluation.HasNeowConstraints || plan.Evaluation.RequiresNormalCombatRewardDomain;
         SearchQueryEvaluation neow = requiresNeowTruth
-            ? EvaluateNeowAndOpeningRoutes(plan, document, expectedAuthority)
+            ? EvaluateNeowAndOpeningRoutes(plan, document, expectedAuthority, initialRoomRoot)
             : SearchQueryEvaluation.Match();
-        if (neow.Disposition != SearchDisposition.Match)
+        opening = neow;
+        if (neow.Disposition == SearchDisposition.NoMatch)
         {
             return neow;
         }
 
+        var initialRooms = HasOpeningInitialRoomConditions(plan.Evaluation)
+            ? SearchQueryEvaluation.Match()
+            : EvaluateInitialRoomBaseline(plan, document, initialRoomRoot);
+        if (initialRooms.Disposition == SearchDisposition.NoMatch) return initialRooms;
+        neow = ProductionExactSearchEvaluator.CombineIndependentEvaluations(neow, initialRooms);
+        if (neow.Disposition == SearchDisposition.Match && initialRooms.Evidence.Count > 0)
+            neow = neow with { Witnesses = neow.Witnesses.Select(witness => witness with {
+                MatchedConditions = witness.MatchedConditions.Concat(initialRooms.Evidence.Select(e => e.ConditionId ?? e.Code)).Distinct().ToArray(),
+                EvidenceCodes = witness.EvidenceCodes.Concat(initialRooms.Evidence.Select(e => e.EvidenceCode)).Distinct().ToArray()
+            }).ToArray() };
+        opening = neow;
+
         var evidence = new List<SearchMatchEvidence>(neow.Evidence);
-        SearchQueryEvaluation world = EvaluateWorld(plan, document);
-        if (world.Disposition != SearchDisposition.Match)
+        SearchQueryEvaluation world = EvaluateWorld(plan, document, expectedAuthority);
+        if (world.Disposition == SearchDisposition.NoMatch)
         {
             return world;
         }
         evidence.AddRange(world.Evidence);
 
         SearchQueryEvaluation relics = EvaluateRelicSequences(plan, document);
-        if (relics.Disposition != SearchDisposition.Match)
+        if (relics.Disposition == SearchDisposition.NoMatch)
         {
             return relics;
         }
         evidence.AddRange(relics.Evidence);
 
         SearchQueryEvaluation events = EvaluateEventSequences(plan, document);
-        if (events.Disposition != SearchDisposition.Match)
+        if (events.Disposition == SearchDisposition.NoMatch)
         {
             return events;
         }
         evidence.AddRange(events.Evidence);
+
+        // These are conjunctive, independently observed domains. A proved
+        // mismatch decides the query even when another required domain is
+        // incomplete. Never create witnesses by combining unresolved routes:
+        // all domain checks must still Match before the existing intersection.
+        if (neow.Disposition != SearchDisposition.Match) return neow;
+        if (world.Disposition != SearchDisposition.Match) return world;
+        if (relics.Disposition != SearchDisposition.Match) return relics;
+        if (events.Disposition != SearchDisposition.Match) return events;
 
         IReadOnlyList<SearchMatchWitness> witnesses = neow.Witnesses.Count > 0
             ? neow.Witnesses.Select(witness => witness with
@@ -156,10 +194,12 @@ public static class ProductionQueryValidator
 
         if (sequence.NoEligibleSearchRewardRoute)
         {
-            return SearchQueryEvaluation.NoMatch(
-                plan.CombatRewardRoutePolicy.ExactPolicy == CombatRewardExactRoutePolicy.PinnedRealRoute
-                    ? "NoEligiblePinnedRewardRoute"
-                    : "NoEligibleUnpinnedRewardRoute");
+            // The unpinned model deliberately observes only proven-neutral
+            // openings. An empty policy subset cannot disprove rewards after
+            // every actual opening, nor authorize a synthetic continuation.
+            return plan.CombatRewardRoutePolicy.ExactPolicy == CombatRewardExactRoutePolicy.PinnedRealRoute
+                ? SearchQueryEvaluation.NoMatch("NoEligiblePinnedRewardRoute")
+                : SearchQueryEvaluation.Unknown("NoEligibleUnpinnedRewardRoute");
         }
 
         var allowed = cheapEvaluation.Witnesses
@@ -179,10 +219,15 @@ public static class ProductionQueryValidator
             rewardRejections.Add(new(route.RouteGroupId, Array.Empty<ModelKey>(), disposition, reason));
         }
         bool encounteredUnknown = false;
+        bool encounteredUnsupported = false;
         foreach (NormalCombatRewardRoutePredictionResult routeGroup in sequence.Routes)
         {
             if (routeGroup.Status == SeedDomainEvaluationStatus.Unsupported)
             {
+                // Unimplemented alternatives are not disproven alternatives.
+                // Continue looking for a common witness, but preserve uncertainty
+                // when none of the supported routes can prove the whole query.
+                encounteredUnsupported = true;
                 RejectRewardRoute(routeGroup, SearchDisposition.Unsupported, "RewardRouteUnsupported:" + routeGroup.IssueCode);
                 continue;
             }
@@ -207,7 +252,7 @@ public static class ProductionQueryValidator
             RewardRouteEvaluation rewardEvaluation = EvaluateRewardConditions(
                 plan.Evaluation,
                 routeGroup,
-                plan.CompiledSearch.NormalizedQuery.LegacyCombatRewardConstraints);
+                plan.CompiledSearch.NormalizedQuery.LegacyCombatRewardConstraints, plan.Authority.AvailableCardIdentities);
             if (rewardEvaluation.Disposition == SearchDisposition.Unknown)
             {
                 encounteredUnknown = true;
@@ -272,7 +317,9 @@ public static class ProductionQueryValidator
         {
             return (encounteredUnknown
                 ? SearchQueryEvaluation.Unknown("NoReliableNormalCombatRewardRouteMatched")
-                : SearchQueryEvaluation.NoMatch("NoNormalCombatRewardRouteMatched")) with { RouteRejections = rewardRejections.ToArray() };
+                : encounteredUnsupported
+                    ? SearchQueryEvaluation.Unsupported("NoSupportedNormalCombatRewardRouteMatched")
+                    : SearchQueryEvaluation.NoMatch("NoNormalCombatRewardRouteMatched")) with { RouteRejections = rewardRejections.ToArray() };
         }
 
         return SearchQueryEvaluation.Match(
@@ -344,8 +391,13 @@ public static class ProductionQueryValidator
     private static SearchQueryEvaluation EvaluateNeowAndOpeningRoutes(
         ExactSearchExecutionRequest plan,
         SeedPredictionDocument document,
-        RuntimeContextAuthoritySnapshot evaluatedAuthority)
+        RuntimeContextAuthoritySnapshot evaluatedAuthority, ulong initialRoomRoot)
     {
+        PredictionSection? section = document.Sections.FirstOrDefault(item => item.Kind == PredictionSectionKind.NeowIdentity);
+        if (section?.DomainStatus == SeedDomainEvaluationStatus.Unsupported)
+            return SearchQueryEvaluation.Unsupported("NeowDomainUnsupported:" + section.IssueCode);
+        if (section is not null && section.DomainStatus != SeedDomainEvaluationStatus.Evaluated)
+            return SearchQueryEvaluation.Unknown("NeowDomainUnknown:" + section.IssueCode);
         NeowChoiceResult[] choices = document.Sections
             .Where(section => section.Kind == PredictionSectionKind.NeowIdentity)
             .SelectMany(section => section.NeowChoices)
@@ -393,7 +445,7 @@ public static class ProductionQueryValidator
                 ConditionId: "neow-unconstrained"));
         }
 
-        bool routeScopeRequiredBeforeRewards = HasRouteScopedNeowConstraints(plan.Evaluation);
+        bool routeScopeRequiredBeforeRewards = HasRouteScopedNeowConstraints(plan.Evaluation) || HasOpeningInitialRoomConditions(plan.Evaluation);
         if (!routeScopeRequiredBeforeRewards && !plan.Evaluation.RequiresNormalCombatRewardDomain)
         {
             return SearchQueryEvaluation.Match(globalEvidence);
@@ -408,7 +460,7 @@ public static class ProductionQueryValidator
         {
             // Only identity observations can be decided from the retained offer.
             // Do not invent continuation or a successful nested-result witness.
-            bool identityOnly = !criteria.RequiresNormalCombatRewardDomain &&
+            bool identityOnly = !HasOpeningInitialRoomConditions(criteria) && !criteria.RequiresNormalCombatRewardDomain &&
                 criteria.StructuredNeowEffects.Count == 0 && criteria.EffectOutputConditions.Count == 0 &&
                 criteria.CapsuleContainedRelics.IsEmpty && !criteria.RequireWhetstone && !criteria.RequireWarPaint &&
                 !criteria.RequireSmallCapsule && !criteria.RequireLargeCapsule &&
@@ -432,7 +484,7 @@ public static class ProductionQueryValidator
         List<OpeningRouteContext> routeContexts = BuildOpeningRouteContexts(routeChoices);
         if (routeContexts.Count == 0)
         {
-            return plan.Evaluation.RequiresNormalCombatRewardDomain || HasRouteScopedNeowConstraints(plan.Evaluation)
+            return plan.Evaluation.RequiresNormalCombatRewardDomain || routeScopeRequiredBeforeRewards
                 ? SearchQueryEvaluation.Unknown("OpeningRewardRoutesUnavailable")
                 : SearchQueryEvaluation.Match(globalEvidence);
         }
@@ -441,17 +493,39 @@ public static class ProductionQueryValidator
         var routeMatches = new List<OpeningRouteEvaluation>();
         var routeRejections = new List<SearchRouteRejection>();
         bool unknownSeen = incompleteBones is not null;
+        bool unsupportedSeen = false;
+        string? missingBonesCause = null;
         bool notEvaluatedSeen = false;
         foreach (OpeningRouteContext route in routeContexts)
         {
             if (requiresBones && route.BonesRoute is null)
             {
+                // PartyNeowProjection.UnknownAuthority can retain exact Bones
+                // identity while publishing no outcome at an unknown shared
+                // cursor. That is a missing observation, not an absent route.
+                if (route.Choice.RelicKey == BaseGameModelKeys.Relics.NeowsBones && route.Choice.BonesOutcome is null &&
+                    (route.Choice.EffectPrecision is PredictionPrecision.Unknown or PredictionPrecision.Unsupported ||
+                     route.Choice.ProductRelevantProjectionStatus is ProductRelevantProjectionStatus.Unknown or ProductRelevantProjectionStatus.Unsupported))
+                {
+                    bool conflict = criteria.StructuredNeowEffects.Select(c => c.SourceRelicKey).Distinct()
+                        .Any(source => !NeowChoiceCommitment.HasCompatibleRequirements(criteria.StructuredNeowEffects, source));
+                    string cause = conflict ? "OptionalChoiceCommitmentConflict" :
+                        string.IsNullOrWhiteSpace(route.Choice.EffectEvidenceCode.Value) ? "BonesOutcomeUnavailable" : route.Choice.EffectEvidenceCode.Value;
+                    if (!conflict) { unknownSeen = true; missingBonesCause ??= cause; }
+                    if (routeRejections.Count < 8) routeRejections.Add(new(route.RouteId, route.AcquisitionOrder,
+                        conflict ? SearchDisposition.NoMatch : SearchDisposition.Unknown, cause));
+                }
                 continue;
             }
             OpeningRouteEvaluation evaluation = EvaluateOpeningRoute(
                 plan.Evaluation,
                 route,
                 evaluatedAuthority.EffectAuthority);
+            if (evaluation.Disposition == SearchDisposition.Match && HasOpeningInitialRoomConditions(criteria))
+            {
+                var rooms = EvaluateOpeningInitialRooms(plan, document, initialRoomRoot, route);
+                evaluation = new(rooms.Disposition, route, evaluation.Evidence.Concat(rooms.Evidence).ToArray(), rooms.FailureCode);
+            }
             if (evaluation.Disposition != SearchDisposition.Match && routeRejections.Count < 8)
                 routeRejections.Add(new(route.RouteId, route.AcquisitionOrder, evaluation.Disposition, evaluation.FailureCode));
             if (evaluation.Disposition == SearchDisposition.Match)
@@ -462,13 +536,14 @@ public static class ProductionQueryValidator
             {
                 unknownSeen = true;
             }
+            else if (evaluation.Disposition == SearchDisposition.Unsupported) unsupportedSeen = true;
             else if (evaluation.Disposition == SearchDisposition.NotEvaluatedByPolicy)
             {
                 notEvaluatedSeen = true;
             }
         }
 
-        bool routeScopeRequired = HasRouteScopedNeowConstraints(plan.Evaluation) || plan.Evaluation.RequiresNormalCombatRewardDomain;
+        bool routeScopeRequired = routeScopeRequiredBeforeRewards || plan.Evaluation.RequiresNormalCombatRewardDomain;
         if (routeMatches.Count == 0)
         {
             if (!routeScopeRequired)
@@ -477,10 +552,13 @@ public static class ProductionQueryValidator
             }
             if (notEvaluatedSeen)
             {
-                return SearchQueryEvaluation.NotEvaluatedByPolicy("ComplexResultNotEvaluatedByPolicy") with { RouteRejections = routeRejections };
+                // This is an unimplemented internal observation policy, not the
+                // user's explicit request to skip candidate checking.
+                return SearchQueryEvaluation.Unknown("ComplexResultNotEvaluatedByPolicy") with { RouteRejections = routeRejections };
             }
             return (unknownSeen
-                ? SearchQueryEvaluation.Unknown("NoReliableOpeningRouteMatched")
+                ? SearchQueryEvaluation.Unknown(missingBonesCause ?? "NoReliableOpeningRouteMatched")
+                : unsupportedSeen ? SearchQueryEvaluation.Unsupported("OpeningInitialRoomsUnsupported")
                 : SearchQueryEvaluation.NoMatch("NoOpeningRouteMatched")) with { RouteRejections = routeRejections };
         }
 
@@ -873,7 +951,8 @@ public static class ProductionQueryValidator
 
     private static SearchQueryEvaluation EvaluateWorld(
         ExactSearchExecutionRequest plan,
-        SeedPredictionDocument document)
+        SeedPredictionDocument document,
+        RuntimeContextAuthoritySnapshot authority)
     {
         if (!plan.Evaluation.RequiresWorldDomain)
         {
@@ -883,6 +962,9 @@ public static class ProductionQueryValidator
         PredictionSection? bossSection = document.Sections.FirstOrDefault(section => section.Kind == PredictionSectionKind.BossIdentity);
         PredictionSection? ancientSection = document.Sections.FirstOrDefault(section => section.Kind == PredictionSectionKind.AncientIdentityAndOptions);
         var evidence = new List<SearchMatchEvidence>();
+        SearchQueryEvaluation variants = EvaluateVariantBossBranches(plan.Evaluation.VariantBossBranches, bossSection, authority);
+        if (variants.Disposition == SearchDisposition.NoMatch) return variants;
+        evidence.AddRange(variants.Evidence);
 
         foreach (ActModelKeySetFilter filter in plan.Evaluation.BossFilters)
         {
@@ -1117,7 +1199,64 @@ public static class ProductionQueryValidator
                 ConditionId: $"sea-glass-target-act-{filter.Act}"));
         }
 
-        return SearchQueryEvaluation.Match(evidence);
+        return variants.Disposition != SearchDisposition.Match ? variants : SearchQueryEvaluation.Match(evidence);
+    }
+
+    private static SearchQueryEvaluation EvaluateVariantBossBranches(
+        IReadOnlyList<VariantScopedBossBranch> branches,
+        PredictionSection? bossSection,
+        RuntimeContextAuthoritySnapshot authority)
+    {
+        if (branches.Count == 0) return SearchQueryEvaluation.Match();
+        var selected = authority.WorldAuthority?.Beta109Generation;
+        if (selected is null || !selected.SelectedActsExact)
+            return SearchQueryEvaluation.Unknown("VariantSelectedActsNotExact");
+        var evidence = new List<SearchMatchEvidence>();
+        SearchQueryEvaluation? unresolved = null;
+        foreach (var group in branches.GroupBy(b => b.Act).OrderBy(g => g.Key))
+        {
+            if (selected.SelectedActs.Count < group.Key)
+            {
+                unresolved ??= SearchQueryEvaluation.Unknown("VariantSelectedActMissing:Act" + group.Key);
+                continue;
+            }
+            ModelKey actual = selected.SelectedActs[group.Key - 1];
+            if (!actual.IsValid)
+            {
+                unresolved ??= SearchQueryEvaluation.Unknown("VariantSelectedActInvalid:Act" + group.Key);
+                continue;
+            }
+            var rows = group.Where(b => b.VariantKey == actual).ToArray();
+            if (rows.Length == 0) return SearchQueryEvaluation.NoMatch("VariantParentRejected:Act" + group.Key);
+
+            SearchQueryEvaluation Boss(ModelKeySetFilter predicate, int ordinal, bool requiresObservation = false)
+            {
+                if (predicate.IsEmpty && !requiresObservation) return SearchQueryEvaluation.Match();
+                SearchQueryEvaluation status = ValidateSection(bossSection, "Boss");
+                if (status.Disposition != SearchDisposition.Match) return status;
+                var boss = bossSection!.Bosses.FirstOrDefault(b => b.Act == group.Key && b.Ordinal == ordinal);
+                if (boss is null || !IsBossIdentityUsableForSearch(boss))
+                    return SearchQueryEvaluation.Unknown($"VariantBossNotReplayable:Act{group.Key}:Ordinal{ordinal}");
+                return QueryKeySetPredicate.MatchesKeySet([boss.BossKey], predicate)
+                    ? SearchQueryEvaluation.Match()
+                    : SearchQueryEvaluation.NoMatch($"VariantBossRejected:Act{group.Key}:Ordinal{ordinal}");
+            }
+            var results = rows.Select(row => ProductionExactSearchEvaluator.CombineIndependentEvaluations(
+                Boss(row.FirstBoss, 1), row.IncludesSecondBoss ? Boss(row.SecondBoss, 2, requiresObservation: true) : SearchQueryEvaluation.Match())).ToArray();
+            if (results.Any(r => r.Disposition == SearchDisposition.Match))
+            {
+                evidence.Add(new SearchMatchEvidence("VariantBossBranchMatched", actual,
+                    Act: group.Key, AuthorityFingerprint: selected.SnapshotFingerprint,
+                    ConditionId: "variant-boss-act-" + group.Key));
+            }
+            else
+            {
+                SearchQueryEvaluation? unknown = results.FirstOrDefault(r => r.Disposition != SearchDisposition.NoMatch);
+                if (unknown is null) return SearchQueryEvaluation.NoMatch("VariantBossBranchesRejected:Act" + group.Key);
+                unresolved ??= unknown;
+            }
+        }
+        return unresolved ?? SearchQueryEvaluation.Match(evidence);
     }
 
     private static SearchQueryEvaluation EvaluateRelicSequences(
@@ -1140,7 +1279,8 @@ public static class ProductionQueryValidator
         {
             RelicSequenceLaneResult? lane = prediction.Lanes.FirstOrDefault(item => item.Kind == condition.Lane);
             if (lane is null || lane.Precision != PredictionPrecision.Exact)
-                return SearchQueryEvaluation.Unknown("RelicSequenceLaneNotExact:" + condition.Lane);
+                return SearchQueryEvaluation.Unknown("RelicSequenceLaneNotExact:" + condition.Lane +
+                    (string.IsNullOrWhiteSpace(lane?.IssueCode) ? string.Empty : ":" + lane.IssueCode));
             RelicSequenceEntryResult[] range = condition.RangeMode == SearchSequenceRangeMode.FirstN
                 ? lane.Entries.Where(item => item.Position <= condition.RangeValue).ToArray()
                 : lane.Entries.Where(item => item.Position == condition.RangeValue).ToArray();
@@ -1163,7 +1303,8 @@ public static class ProductionQueryValidator
         foreach (RelicShopSequenceSearchCondition condition in plan.Evaluation.RelicShopSequenceConditions)
         {
             if (shopLane is null || shopLane.Precision != PredictionPrecision.Exact)
-                return SearchQueryEvaluation.Unknown("RelicShopSequenceLaneNotExact");
+                return SearchQueryEvaluation.Unknown("RelicShopSequenceLaneNotExact" +
+                    (string.IsNullOrWhiteSpace(shopLane?.IssueCode) ? string.Empty : ":" + shopLane.IssueCode));
             RelicSequenceEntryResult[] range = shopLane.Entries
                 .Where(item => item.Position <= condition.Count)
                 .OrderBy(item => item.Position)
@@ -1250,43 +1391,32 @@ public static class ProductionQueryValidator
     private static RewardRouteEvaluation EvaluateRewardConditions(
         ExactSearchEvaluationProjection filter,
         NormalCombatRewardRoutePredictionResult route,
-        IReadOnlyList<NormalCombatRewardSearchCondition> legacyConditions)
+        IReadOnlyList<NormalCombatRewardSearchCondition> legacyConditions,
+        IReadOnlyList<ModelKey>? availableCardIdentities)
     {
-        var matchedIds = new List<string>();
-        var evidenceCodes = new List<EvidenceCode>();
-        int? representativeBattle = null;
-
-        RewardRouteEvaluation legacy = EvaluateLegacyRewardConditions(legacyConditions, route);
-        if (legacy.Disposition != SearchDisposition.Match)
-            return legacy;
-        matchedIds.AddRange(legacy.MatchedConditionIds);
-        evidenceCodes.AddRange(legacy.EvidenceCodes);
-        representativeBattle ??= legacy.MatchedBattleOrdinal;
-
+        var results = new List<RewardRouteEvaluation> { EvaluateLegacyRewardConditions(legacyConditions, route) };
+        if (filter.CombatCardExclusion is { IsEmpty: false } exclusion)
+        {
+            var result = CombatCardExclusionMatcher.Evaluate(exclusion, route, availableCardIdentities);
+            results.Add(result.Disposition switch
+            {
+                SearchDisposition.Match => RewardRouteEvaluation.Match(["combat-card-exclusion"], null,
+                    FirstBattles(route, exclusion.BattleCount).Select(b => b.EvidenceCode).ToArray()),
+                SearchDisposition.NoMatch => RewardRouteEvaluation.NoMatch(result.FailureCode),
+                _ => RewardRouteEvaluation.Unknown(result.FailureCode)
+            });
+        }
         if (filter.CombatCardRewardSequence is { IsEmpty: false } cards)
-        {
-            RewardRouteEvaluation cardResult = EvaluateCardRewardSequence(cards, route);
-            if (cardResult.Disposition != SearchDisposition.Match)
-                return cardResult;
-            matchedIds.AddRange(cardResult.MatchedConditionIds);
-            evidenceCodes.AddRange(cardResult.EvidenceCodes);
-            representativeBattle ??= cardResult.MatchedBattleOrdinal;
-        }
-
+            results.Add(EvaluateCardRewardSequence(cards, route));
         if (filter.CombatPotionRewardSequence is { IsEmpty: false } potions)
-        {
-            RewardRouteEvaluation potionResult = EvaluatePotionRewardSequence(potions, route);
-            if (potionResult.Disposition != SearchDisposition.Match)
-                return potionResult;
-            matchedIds.AddRange(potionResult.MatchedConditionIds);
-            evidenceCodes.AddRange(potionResult.EvidenceCodes);
-            representativeBattle ??= potionResult.MatchedBattleOrdinal;
-        }
-
-        return RewardRouteEvaluation.Match(
-            matchedIds.Distinct(StringComparer.Ordinal).ToArray(),
-            representativeBattle,
-            evidenceCodes.Where(code => !string.IsNullOrWhiteSpace(code.Value)).Distinct().ToArray());
+            results.Add(EvaluatePotionRewardSequence(potions, route));
+        // Independent proven contradictions reject this witness; otherwise any
+        // unfinished obligation prevents confirmation of the conjunction.
+        if (results.FirstOrDefault(r => r.Disposition == SearchDisposition.NoMatch) is { } mismatch) return mismatch;
+        if (results.FirstOrDefault(r => r.Disposition != SearchDisposition.Match) is { } unresolved) return unresolved;
+        return RewardRouteEvaluation.Match(results.SelectMany(r => r.MatchedConditionIds).Distinct(StringComparer.Ordinal).ToArray(),
+            results.Select(r => r.MatchedBattleOrdinal).FirstOrDefault(o => o.HasValue),
+            results.SelectMany(r => r.EvidenceCodes).Where(c => !string.IsNullOrWhiteSpace(c.Value)).Distinct().ToArray());
     }
 
     private static RewardRouteEvaluation EvaluateLegacyRewardConditions(
@@ -1588,7 +1718,7 @@ public static class ProductionQueryValidator
         IReadOnlyList<NormalCombatRewardCardResult> rewardCards = battle.CardRewards.Count > 0
             ? battle.CardRewards.SelectMany(reward => reward.Cards).ToArray()
             : battle.Cards;
-        if (rewardCards.Any(card => card.Precision is PredictionPrecision.Unknown or PredictionPrecision.Unsupported))
+        if (!condition.Cards.IsEmpty && rewardCards.Any(card => card.Precision is PredictionPrecision.Unknown or PredictionPrecision.Unsupported))
         {
             return BattleConditionEvaluation.Unknown("RewardCardIdentityUnknown");
         }

@@ -1,0 +1,89 @@
+{
+  "SchemaVersion": 1,
+  "Query": {
+    "OpeningRoute": null,
+    "OpeningRouteRelicRequirement": null,
+    "StructuredOpeningEffects": [],
+    "VariantBossBranches": [],
+    "AncientBranches": [],
+    "RelicSequenceConstraints": [
+      {
+        "Lane": "Common",
+        "RangeMode": "FirstN",
+        "RangeValue": 3,
+        "Keys": {
+          "Any": [],
+          "All": [
+            "RELIC:ANCHOR",
+            "RELIC:BAG_OF_MARBLES",
+            "RELIC:BAG_OF_PREPARATION"
+          ],
+          "Ban": [],
+          "IsEmpty": false
+        },
+        "IsEmpty": false
+      }
+    ],
+    "EventSequenceConstraints": [],
+    "LegacyCombatRewardConstraints": [],
+    "LegacyNeow": {
+      "NeowRelics": {
+        "Any": [],
+        "All": [],
+        "Ban": [],
+        "IsEmpty": true
+      },
+      "RequireNeowsBones": false,
+      "BonesRelics": {
+        "Any": [],
+        "All": [],
+        "Ban": [],
+        "IsEmpty": true
+      },
+      "RequiredBonesCombination": [],
+      "RequireSmallCapsule": false,
+      "RequireLargeCapsule": false,
+      "CapsuleContainedRelics": {
+        "Any": [],
+        "All": [],
+        "Ban": [],
+        "IsEmpty": true
+      },
+      "RequireWhetstone": false,
+      "RequireWarPaint": false,
+      "RequiredFinalCurse": null,
+      "BannedFinalCurses": [],
+      "Preset": "None",
+      "RequiredBonesAcquisitionOrder": [],
+      "EffectOutputConditions": []
+    },
+    "LegacyWorld": {
+      "BossFilters": [],
+      "BossOrdinalFilters": [],
+      "AncientIdentityFilters": [],
+      "AncientOptionFilters": [],
+      "AncientSeaGlassTargetFilters": []
+    },
+    "CombatCardRewards": null,
+    "CombatPotionRewards": null,
+    "EventResultConditions": [],
+    "MerchantColorlessConditions": [
+      {
+        "MerchantOrdinal": 1,
+        "Slot": "Uncommon",
+        "TargetCardKey": "CARD:AUTOMATION",
+        "IsValid": true
+      }
+    ],
+    "MerchantColorlessSequenceConditions": [],
+    "RelicShopSequenceConditions": [],
+    "HasCombatRewardConstraints": false
+  },
+  "Options": {
+    "StartSeed": "000000000000",
+    "ScanCount": 134217728,
+    "TargetMatchCount": 2147483647,
+    "WorkerCount": 4,
+    "IncludeDiagnostics": true
+  }
+}

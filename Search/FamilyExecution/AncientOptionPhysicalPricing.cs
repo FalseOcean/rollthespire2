@@ -8,12 +8,13 @@ namespace RolltheSpire2.Search.FamilyExecution;
 internal static class AncientOptionPhysicalPricing
 {
     internal static bool IsSingleOptionWork(AncientOptionFamilyPlan plan) =>
-        plan.SingleOptionPlan is { Generator: WorldFastAncientOptionGeneratorKind.Tezcatara,
+        plan.NumericalVariant == GpuNumericalVariant.NativeFloat64 && plan.SingleOptionPlan is { Generator: WorldFastAncientOptionGeneratorKind.Tezcatara,
             MaxScratchCount: 3 } && plan.ScratchWords == 3;
 
     internal static FamilyPhysicalQuote? Quote(ExactSearchExecutionRequest request,
         AncientOptionFamilyPlan plan, FamilyPhysicalQuoteRequest geometry) =>
-        QuoteSeaGlass(request, plan, geometry) ?? QuoteMeasured(request, plan, geometry) ?? QuoteGeneratorEnvelope(request, plan, geometry, false);
+        plan.NumericalVariant != GpuNumericalVariant.NativeFloat64 ? null :
+            QuoteSeaGlass(request, plan, geometry) ?? QuoteMeasured(request, plan, geometry) ?? QuoteGeneratorEnvelope(request, plan, geometry, false);
 
     private static FamilyPhysicalQuote? QuoteSeaGlass(ExactSearchExecutionRequest request,
         AncientOptionFamilyPlan plan, FamilyPhysicalQuoteRequest geometry)

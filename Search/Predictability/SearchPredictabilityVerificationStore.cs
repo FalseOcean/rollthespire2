@@ -10,6 +10,8 @@ namespace RolltheSpire2.Search.Predictability;
 /// in-memory aggregate; disk load/save remains on the AppShell main thread. Production
 /// Analytical Cost consumes only ms/attempt timing. Exact acceptance remains diagnostic
 /// legacy evidence and never becomes Planning Population authority.
+/// Changed Exact implementations have independent timing entries; absent revisions
+/// retain saved legacy evidence without lending it to the default optimized body.
 /// </summary>
 internal static class SearchPredictabilityVerificationStore
 {
@@ -34,6 +36,8 @@ internal static class SearchPredictabilityVerificationStore
     private sealed class Entry
     {
         public string Family { get; set; } = string.Empty;
+        // Optional in existing v1 files: omitted/empty means legacy Exact work.
+        public string ImplementationRevision { get; set; } = string.Empty;
         public int SearchSampleCount { get; set; }
         public long ExactAttempts { get; set; }
         public long VerifiedMatches { get; set; }
@@ -95,7 +99,8 @@ internal static class SearchPredictabilityVerificationStore
         SearchVerificationFamily family,
         long exactAttempts,
         double exactAggregateWorkMs,
-        string evidence)
+        string evidence,
+        string implementationRevision = "")
     {
         if (exactAttempts <= 0 || !(exactAggregateWorkMs > 0d) || !double.IsFinite(exactAggregateWorkMs)) return;
         SearchPerformanceDeviceIdentity identity = SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity();
@@ -106,13 +111,14 @@ internal static class SearchPredictabilityVerificationStore
         lock (Gate)
         {
             if (!_loaded) return;
-            Entry entry = FindOrCreateEntry_NoLock(family, identity);
+            Entry entry = FindOrCreateEntry_NoLock(family, identity, implementationRevision);
             UpdateTiming_NoLock(entry, exactAttempts, exactAggregateWorkMs, observedMsPerAttempt, evidence);
             _dirty = true;
         }
     }
 
-    public static SearchExactTimingEvidence? TryGetExactTiming(SearchVerificationFamily family)
+    public static SearchExactTimingEvidence? TryGetExactTiming(SearchVerificationFamily family,
+        string implementationRevision = "")
     {
         SearchPerformanceDeviceIdentity identity = SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity();
         lock (Gate)
@@ -120,6 +126,7 @@ internal static class SearchPredictabilityVerificationStore
             if (!_loaded) return null;
             Entry? entry = _document.Entries.FirstOrDefault(item =>
                 string.Equals(item.Family, family.ToString(), StringComparison.Ordinal) &&
+                string.Equals(item.ImplementationRevision, implementationRevision, StringComparison.Ordinal) &&
                 string.Equals(item.RuntimeTarget, identity.RuntimeTarget, StringComparison.Ordinal) &&
                 string.Equals(item.CpuIdentity, identity.CpuIdentity, StringComparison.Ordinal));
             if (entry is null) return null;
@@ -130,7 +137,8 @@ internal static class SearchPredictabilityVerificationStore
             if (samples <= 0 || attempts <= 0 || !(workMs > 0d) || !(entry.SmoothedExactMsPerAttempt > 0d)) return null;
             return new SearchExactTimingEvidence(
                 family, samples, attempts, workMs, entry.SmoothedExactMsPerAttempt,
-                Confidence(samples, attempts), entry.Source, entry.LastObservedAtUtc);
+                Confidence(samples, attempts), entry.Source, entry.LastObservedAtUtc)
+            { ImplementationRevision = entry.ImplementationRevision };
         }
     }
 
@@ -142,6 +150,7 @@ internal static class SearchPredictabilityVerificationStore
             if (!_loaded) return null;
             Entry? entry = _document.Entries.FirstOrDefault(item =>
                 string.Equals(item.Family, family.ToString(), StringComparison.Ordinal) &&
+                item.ImplementationRevision.Length == 0 &&
                 string.Equals(item.RuntimeTarget, identity.RuntimeTarget, StringComparison.Ordinal) &&
                 string.Equals(item.CpuIdentity, identity.CpuIdentity, StringComparison.Ordinal));
             if (entry is null || entry.SearchSampleCount <= 0 || entry.ExactAttempts <= 0 || entry.VerifiedMatches <= 0) return null;
@@ -162,16 +171,19 @@ internal static class SearchPredictabilityVerificationStore
         }
     }
 
-    private static Entry FindOrCreateEntry_NoLock(SearchVerificationFamily family, SearchPerformanceDeviceIdentity identity)
+    private static Entry FindOrCreateEntry_NoLock(SearchVerificationFamily family, SearchPerformanceDeviceIdentity identity,
+        string implementationRevision)
     {
         Entry? entry = _document.Entries.FirstOrDefault(item =>
             string.Equals(item.Family, family.ToString(), StringComparison.Ordinal) &&
+            string.Equals(item.ImplementationRevision, implementationRevision, StringComparison.Ordinal) &&
             string.Equals(item.RuntimeTarget, identity.RuntimeTarget, StringComparison.Ordinal) &&
             string.Equals(item.CpuIdentity, identity.CpuIdentity, StringComparison.Ordinal));
         if (entry is not null) return entry;
         entry = new Entry
         {
             Family = family.ToString(),
+            ImplementationRevision = implementationRevision,
             RuntimeTarget = identity.RuntimeTarget,
             CpuIdentity = identity.CpuIdentity
         };
@@ -311,6 +323,7 @@ internal static class SearchPredictabilityVerificationStore
 
     private static bool Validate(Entry entry)
     {
+        entry.ImplementationRevision ??= string.Empty;
         if (!Enum.TryParse<SearchVerificationFamily>(entry.Family, out _) ||
             string.IsNullOrWhiteSpace(entry.RuntimeTarget) || string.IsNullOrWhiteSpace(entry.CpuIdentity))
             return false;

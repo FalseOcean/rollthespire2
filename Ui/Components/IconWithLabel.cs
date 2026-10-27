@@ -11,14 +11,18 @@ internal sealed partial class IconWithLabel : HBoxContainer
     private readonly Label _missing;
     private readonly Label _name;
 
-    public IconWithLabel(float iconSize, Ui1TextRole nameRole)
+    public IconWithLabel(float iconSize, Ui1TextRole nameRole) : this(iconSize, nameRole, null) { }
+
+    public IconWithLabel(float iconSize, Ui1TextRole nameRole, WorkspacePalette? palette)
     {
+        bool mainPanel = ReferenceEquals(palette, WorkspacePalette.MainPanel);
         Alignment = AlignmentMode.Center;
         AddThemeConstantOverride("separation", 10);
         SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
 
         _iconSurface = new PanelContainer { CustomMinimumSize = new Vector2(iconSize, iconSize) };
-        Ui1Theme.ApplyPanel(_iconSurface, Ui1SurfaceRole.Input, 3f, 1);
+        if (mainPanel) MainPanelTheme.ApplyPanel(_iconSurface, Ui1SurfaceRole.Input, 3f, 1);
+        else Ui1Theme.ApplyPanel(_iconSurface, Ui1SurfaceRole.Input, 3f, 1);
         _texture = new TextureRect
         {
             ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
@@ -30,7 +34,7 @@ internal sealed partial class IconWithLabel : HBoxContainer
         _texture.OffsetTop = 4;
         _texture.OffsetRight = -4;
         _texture.OffsetBottom = -4;
-        _missing = Ui1Theme.Label("?", Ui1TextRole.SectionTitle);
+        _missing = mainPanel ? MainPanelTheme.Label("?", Ui1TextRole.SectionTitle) : Ui1Theme.Label("?", Ui1TextRole.SectionTitle);
         _missing.HorizontalAlignment = HorizontalAlignment.Center;
         _missing.VerticalAlignment = VerticalAlignment.Center;
         _missing.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
@@ -42,7 +46,7 @@ internal sealed partial class IconWithLabel : HBoxContainer
         // an old dense result item advertised an 88px minimum width. With wrapping off,
         // the label contributes its natural text width and the surrounding Flow/Grid
         // decides whether the whole result item moves as a unit.
-        _name = Ui1Theme.Label(string.Empty, nameRole, wrap: false);
+        _name = mainPanel ? MainPanelTheme.Label(string.Empty, nameRole, wrap: false) : Ui1Theme.Label(string.Empty, nameRole, wrap: false);
         _name.HorizontalAlignment = HorizontalAlignment.Left;
         _name.VerticalAlignment = VerticalAlignment.Center;
         _name.SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin;

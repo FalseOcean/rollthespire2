@@ -17,6 +17,7 @@ internal static class RuntimeLog
     public static string LogDirectory => OperationalFileLog.LogDirectory;
     public static string CurrentLogPath => OperationalFileLog.CurrentLogPath;
     public static string LastFailureCode => OperationalFileLog.LastFailureCode;
+    public static string LastFailureDetail => OperationalFileLog.LastFailureDetail;
     public static void InitializeOnMainThread(bool hostConsole = false)
     {
         _mainThread = System.Environment.CurrentManagedThreadId; _hostConsole = hostConsole;

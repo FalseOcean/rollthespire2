@@ -20,15 +20,24 @@ internal static class OperationalFileLog
     public static void Flush()
     {
         lock (Sync) { try { _writer?.Flush(); _lastFlush = System.Environment.TickCount64; }
-            catch (Exception ex) { _lastFailureCode = "OperationalLogFlushFailed:" + ex.GetType().Name; } }
+            catch (Exception ex) { RememberFailure("OperationalLogFlushFailed", ex); } }
     }
     public static void FlushIfDue()
     { lock (Sync) { if (System.Environment.TickCount64 - _lastFlush >= 1000) Flush(); } }
     private static void Close()
-    { lock (Sync) { try { _writer?.Dispose(); } catch { } _writer = null; } }
+    { lock (Sync) { try { _writer?.Dispose(); } catch (Exception ex) { RememberFailure("OperationalLogCloseFailed", ex); } _writer = null; } }
 
     private static string _currentLogPath = string.Empty;
     private static string _lastFailureCode = string.Empty;
+    private static string _lastFailureDetail = string.Empty;
+    public static string LastFailureDetail { get { lock (Sync) return _lastFailureDetail; } }
+
+    // Keep logger failures in memory; reporting them through this writer would recurse.
+    private static void RememberFailure(string code, Exception exception)
+    {
+        _lastFailureCode = code + ":" + exception.GetType().Name;
+        _lastFailureDetail = exception.ToString();
+    }
 
     public static string LogDirectory
     {
@@ -118,7 +127,7 @@ internal static class OperationalFileLog
         catch (Exception ex)
         {
             _currentLogPath = string.Empty;
-            _lastFailureCode = "OperationalLogInitializationFailed:" + ex.GetType().Name;
+            RememberFailure("OperationalLogInitializationFailed", ex);
             _initialized = true;
         }
     }
@@ -139,7 +148,7 @@ internal static class OperationalFileLog
         }
         catch (Exception ex)
         {
-            _lastFailureCode = "OperationalLogWriteFailed:" + ex.GetType().Name;
+            RememberFailure("OperationalLogWriteFailed", ex);
             return false;
         }
     }
@@ -159,15 +168,16 @@ internal static class OperationalFileLog
                 {
                     file.Delete();
                 }
-                catch
+                catch (Exception ex)
                 {
                     // Retention is best-effort only.
+                    RememberFailure("OperationalLogRetentionDeleteFailed", ex);
                 }
             }
         }
         catch (Exception ex)
         {
-            _lastFailureCode = "OperationalLogRetentionFailed:" + ex.GetType().Name;
+            RememberFailure("OperationalLogRetentionFailed", ex);
         }
     }
 }

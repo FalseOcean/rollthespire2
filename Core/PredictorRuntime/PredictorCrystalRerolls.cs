@@ -28,7 +28,7 @@ internal sealed partial class PredictorRun
         var state = Working;
         var eventRng = _eventRng!.Clone();
         var generated = PredictorRewardGeneration.GenerateCards(Context, ref state, recipe,
-            reward.RerollIsCardReward, recipe.UseEventRng ? eventRng : null);
+            reward.RerollIsCardReward, out var nicheScope, recipe.UseEventRng ? eventRng : null);
         var cards = ImmutableArray.CreateBuilder<PredictorCard>();
         foreach (var card in generated)
         {
@@ -38,7 +38,8 @@ internal sealed partial class PredictorRun
         }
         state.Validate();
         Working = state; if (recipe.UseEventRng) _eventRng = eventRng;
-        Rewards = Rewards.SetItem(i, reward with { Cards = cards.ToImmutable(), CanReroll = false, HasRerolled = true });
+        Rewards = Rewards.SetItem(i, reward with { Cards = cards.ToImmutable(), CanReroll = false, HasRerolled = true,
+            CardRewardNicheScope = nicheScope });
         Accept(new("RerollCardReward", input.RewardId, reward.Cards.Select(c => c.Id).ToImmutableArray(), null, null));
         return PredictorInputResult.Accepted;
     }

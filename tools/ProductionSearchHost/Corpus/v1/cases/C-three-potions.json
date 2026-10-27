@@ -1,0 +1,83 @@
+{
+  "SchemaVersion": 1,
+  "Query": {
+    "OpeningRoute": null,
+    "OpeningRouteRelicRequirement": null,
+    "StructuredOpeningEffects": [],
+    "VariantBossBranches": [],
+    "AncientBranches": [],
+    "RelicSequenceConstraints": [],
+    "EventSequenceConstraints": [],
+    "LegacyCombatRewardConstraints": [],
+    "LegacyNeow": {
+      "NeowRelics": {
+        "Any": [],
+        "All": [],
+        "Ban": [],
+        "IsEmpty": true
+      },
+      "RequireNeowsBones": false,
+      "BonesRelics": {
+        "Any": [],
+        "All": [],
+        "Ban": [],
+        "IsEmpty": true
+      },
+      "RequiredBonesCombination": [],
+      "RequireSmallCapsule": false,
+      "RequireLargeCapsule": false,
+      "CapsuleContainedRelics": {
+        "Any": [],
+        "All": [],
+        "Ban": [],
+        "IsEmpty": true
+      },
+      "RequireWhetstone": false,
+      "RequireWarPaint": false,
+      "RequiredFinalCurse": null,
+      "BannedFinalCurses": [],
+      "Preset": "None",
+      "RequiredBonesAcquisitionOrder": [],
+      "EffectOutputConditions": []
+    },
+    "LegacyWorld": {
+      "BossFilters": [],
+      "BossOrdinalFilters": [],
+      "AncientIdentityFilters": [],
+      "AncientOptionFilters": [],
+      "AncientSeaGlassTargetFilters": []
+    },
+    "CombatCardRewards": null,
+    "CombatPotionRewards": {
+      "Count": 3,
+      "OrderMode": "Ordered",
+      "Slots": [
+        {
+          "Requirement": "DropSpecific",
+          "PotionKey": "POTION:BLOOD_POTION"
+        },
+        {
+          "Requirement": "DropSpecific",
+          "PotionKey": "POTION:BLOOD_POTION"
+        },
+        {
+          "Requirement": "DropSpecific",
+          "PotionKey": "POTION:BLOOD_POTION"
+        }
+      ],
+      "IsEmpty": false
+    },
+    "EventResultConditions": [],
+    "MerchantColorlessConditions": [],
+    "MerchantColorlessSequenceConditions": [],
+    "RelicShopSequenceConditions": [],
+    "HasCombatRewardConstraints": true
+  },
+  "Options": {
+    "StartSeed": "000000000000",
+    "ScanCount": 134217728,
+    "TargetMatchCount": 2147483647,
+    "WorkerCount": 4,
+    "IncludeDiagnostics": true
+  }
+}

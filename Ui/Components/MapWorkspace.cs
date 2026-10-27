@@ -27,16 +27,16 @@ internal sealed partial class MapWorkspace : PanelContainer
         Visible = false;
         SizeFlagsHorizontal = SizeFlags.ExpandFill;
         SizeFlagsVertical = SizeFlags.ExpandFill;
-        Ui1Theme.ApplyPanel(this, Ui1SurfaceRole.Card, 6, 1, 16);
+        MainPanelTheme.ApplyPanel(this, Ui1SurfaceRole.Card, 6, 1, 16);
         var body = new VBoxContainer();
         body.AddThemeConstantOverride("separation", 16);
         AddChild(body);
         var header = new HBoxContainer();
-        _title = Ui1Theme.Label(string.Empty, Ui1TextRole.SectionTitle);
+        _title = MainPanelTheme.Label(string.Empty, Ui1TextRole.SectionTitle);
         _title.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         header.AddChild(_title);
         _back = new Button { Name = "BackToPrediction", CustomMinimumSize = new Vector2(40, 40) };
-        Ui1Theme.ApplyButton(_back, Ui1ButtonRole.Ghost);
+        MainPanelTheme.ApplyButton(_back, Ui1ButtonRole.Ghost);
         _back.Pressed += Close;
         header.AddChild(_back);
         body.AddChild(header);
@@ -56,8 +56,8 @@ internal sealed partial class MapWorkspace : PanelContainer
         body.AddChild(panes);
         var information = new VBoxContainer { Name = "MapInformation", SizeFlagsHorizontal = SizeFlags.ExpandFill, SizeFlagsStretchRatio = 2 };
         information.AddThemeConstantOverride("separation", 12);
-        _seed = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta, true);
-        _status = Ui1Theme.Label(string.Empty, Ui1TextRole.Muted, true);
+        _seed = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta, true);
+        _status = MainPanelTheme.Label(string.Empty, Ui1TextRole.Muted, true);
         information.AddChild(_seed);
         information.AddChild(_status);
         BuildUnknownControls(information);
@@ -157,7 +157,7 @@ internal sealed partial class MapWorkspace : PanelContainer
         {
             bool selected = SelectedAct == index + 1;
             _actButtons[index].SetPressedNoSignal(selected);
-            Ui1Theme.ApplyButton(_actButtons[index], selected ? Ui1ButtonRole.NavigationSelected : Ui1ButtonRole.Ghost);
+            MainPanelTheme.ApplyButton(_actButtons[index], selected ? Ui1ButtonRole.NavigationSelected : Ui1ButtonRole.Ghost);
         }
     }
 }

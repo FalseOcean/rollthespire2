@@ -1,0 +1,7 @@
+# {{relic:NEW_LEAF}} Targets and the Starting-Card Convention
+
+In the game, {{relic-icon:NEW_LEAF}} can transform more than starting cards. With {{relic-icon:NEOWS_BONES}}, take a card from the other relic before taking New Leaf, and more targets become available: a non-starting card from your own character, another character's card obtained through {{relic-icon:KALEIDOSCOPE}}, a Colorless card from {{relic-icon:LEAD_PAPERWEIGHT}}, or {{card:NEOWS_FURY}} from {{relic-icon:NEOWS_TORMENT}} can all be transformed.
+
+Even {{card:INJURY}} from {{relic-icon:HEFTY_TABLET}} is an option. Injury is a Curse card, and transforming it produces another Curse. This may be a relatively easy route to an opening with a specified curse: take Hefty Tablet first, then transform Injury with New Leaf, looking for a seed that produces the target curse.
+
+Supporting all these possibilities in search would also require an input for which card to transform. To keep calculation and input simpler for now, RT2's New Leaf filter still **defaults to transforming a starting card, including character-specific starting cards, and does not currently offer an input for an arbitrary transformation target**. The examples above describe possible actions in the game; those targets are not currently part of the filter. See [[neow-offer]] for Bones pickup order, and [[neow-bones-curse]] for an example of filtering the Bones curse directly.

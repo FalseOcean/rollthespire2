@@ -153,6 +153,7 @@ internal static class CrystalSphereLiveCapture
         var relics = player.Relics.Select(r => new PredictorRelic(id++, Key(r), r.FloorAddedToDeck, r.IsMelted)
         {
             IsWax = r.IsWax,
+            RewardsSacrificed = r.Id.Entry == "PAELS_WING" ? Counter(r, "RewardsSacrificed") : 0,
             RewardUpgradeUses = r.Id.Entry == "SILVER_CRUCIBLE" ? Counter(r, "TimesUsed") : 0,
             TreasureRoomsEntered = r.Id.Entry == "SILVER_CRUCIBLE" ? Counter(r, "TreasureRoomsEntered") : 0,
             SilkenUsed = r.Id.Entry == "SILKEN_TRESS" && Read<bool>(r, "_isUsed"),

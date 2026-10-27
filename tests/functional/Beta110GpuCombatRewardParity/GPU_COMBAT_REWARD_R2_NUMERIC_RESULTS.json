@@ -1,0 +1,19 @@
+{
+  "roots": 4096,
+  "scenarioMismatches": {
+    "neutral": 0,
+    "prayer_wheel": 0,
+    "white_beast": 0,
+    "lasting_candy": 0,
+    "capsule_nested": 0,
+    "unknown_hook": 0
+  },
+  "rewardCheckpointMismatch": 0,
+  "offeredReverseGpuMismatch": 0,
+  "offeredReverseDifferentRootCount": 1964,
+  "routeMaskMismatch": 0,
+  "missingRouteBits": 0,
+  "extraRouteBits": 0,
+  "unknownHookConservativeKeep": true,
+  "baseGoldRngConsumed": true
+}

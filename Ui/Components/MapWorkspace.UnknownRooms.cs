@@ -16,9 +16,9 @@ internal sealed partial class MapWorkspace
     {
         var box = new VBoxContainer { Name = "UnknownRoomSequence" };
         box.AddThemeConstantOverride("separation", 6);
-        _unknownTitle = Ui1Theme.Label(string.Empty, Ui1TextRole.CardTitle);
-        _unknownPremise = Ui1Theme.Label(string.Empty, Ui1TextRole.Muted, true);
-        _unknownPrecision = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta, true);
+        _unknownTitle = MainPanelTheme.Label(string.Empty, Ui1TextRole.CardTitle);
+        _unknownPremise = MainPanelTheme.Label(string.Empty, Ui1TextRole.Muted, true);
+        _unknownPrecision = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta, true);
         _unknownRows = new GridContainer { Columns = 2 };
         _unknownRows.AddThemeConstantOverride("h_separation", 16);
         box.AddChild(_unknownTitle); box.AddChild(_unknownPremise); box.AddChild(_unknownPrecision); box.AddChild(_unknownRows);
@@ -52,11 +52,11 @@ internal sealed partial class MapWorkspace
             : string.Format(T(routeBound ? "route_precision" : "baseline_precision"), priorDraws);
         foreach (var step in sequence.Steps)
         {
-            var row = Ui1Theme.Label($"{step.Ordinal}. {_text.Get("ui1.map.room." + step.Room)}", Ui1TextRole.Meta);
+            var row = MainPanelTheme.Label($"{step.Ordinal}. {_text.Get("ui1.map.room." + step.Room)}", Ui1TextRole.Meta);
             row.TooltipText = step.Position is { } position ? $"({position.Column}, {position.Row})" : string.Empty;
             _unknownRows.AddChild(row);
         }
-        if (sequence.Steps.Count == 0) _unknownRows.AddChild(Ui1Theme.Label(T("empty"), Ui1TextRole.Muted));
+        if (sequence.Steps.Count == 0) _unknownRows.AddChild(MainPanelTheme.Label(T("empty"), Ui1TextRole.Muted));
         _map.SetUnknownRooms(routeBound ? sequence.Steps : null);
     }
 }

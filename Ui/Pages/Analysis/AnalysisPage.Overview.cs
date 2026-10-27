@@ -27,13 +27,30 @@ internal sealed partial class AnalysisPage
         string title = Text(PageKeys[index]);
         var actInfo = _wbHasResult ? _viewModel?.EventPoolSequenceDomain.Items.FirstOrDefault(a => a.Act == index + 1) : null;
         if (index < 3 && actInfo is not null) title += " · " + _contentNames!.Resolve(actInfo.ActKey, GameContentKind.Act);
-        row.AddChild(new Label { Text = title, ClipText = false,
-            SizeFlagsHorizontal = SizeFlags.ShrinkCenter, VerticalAlignment = VerticalAlignment.Center, MouseFilter = MouseFilterEnum.Ignore });
+        var caption = _palette.Label(title, 16);
+        caption.ClipText = true;
+        caption.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+        caption.SizeFlagsHorizontal = SizeFlags.Fill;
+        caption.VerticalAlignment = VerticalAlignment.Center;
+        caption.MouseFilter = MouseFilterEnum.Ignore;
+        row.AddChild(caption);
+        // Keep the title and previews together; only trim a title when the
+        // complete group would exceed its existing full-width tab target.
+        void FitCaption()
+        {
+            float textWidth = Mathf.Ceil(caption.GetThemeFont("font").GetStringSize(title,
+                fontSize: caption.GetThemeFontSize("font_size")).X);
+            float previewWidth = (row.GetChildCount() - 1) * 25;
+            caption.CustomMinimumSize = new Vector2(Math.Min(textWidth, Math.Max(0, row.Size.X - previewWidth)), 0);
+        }
+        row.Resized += FitCaption;
+        caption.ThemeChanged += FitCaption;
+        Callable.From(FitCaption).CallDeferred();
         button.TooltipText = title;
         void Icon(ModelKey key, GameContentKind kind, IconVariant variant)
         {
             row.AddChild(new TextureRect { Texture = _icons.Resolve(key, kind, variant).Texture,
-                CustomMinimumSize = new Vector2(24, 24), SizeFlagsVertical = SizeFlags.ShrinkCenter,
+                CustomMinimumSize = new Vector2(20, 20), SizeFlagsVertical = SizeFlags.ShrinkCenter,
                 ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
                 MouseFilter = MouseFilterEnum.Ignore });
         }
@@ -146,6 +163,8 @@ internal sealed partial class AnalysisPage
         var bosses = WColumn(); bosses.SizeFlagsHorizontal = SizeFlags.Fill;
         bosses.CustomMinimumSize = new Vector2(actBosses.Length > 1 ? 340 : 220, 0); header.AddChild(bosses);
         WTitle(bosses, "predictor.boss");
+        if (_viewModel.BossDomain.Status != RolltheSpire2.Core.World.SeedDomainEvaluationStatus.Evaluated)
+            bosses.AddChild(WNote(Text("predictor.unavailable") + "\n" + _viewModel.BossDomain.IssueCode));
         var bossIdentities = new HBoxContainer { Name = "BossIdentities" };
         bossIdentities.AddThemeConstantOverride("separation", 16); bosses.AddChild(bossIdentities);
         for (int index = 0; index < actBosses.Length; index++)

@@ -468,6 +468,9 @@ bool execute_kaleidoscope_route(
     return (group0_target0 && group1_target1) || (group0_target1 && group1_target0);
 }
 
+#ifndef RT2_MP_N_ORDERED_K_FIRST_REJECT
+#define RT2_MP_N_ORDERED_K_FIRST_REJECT 1
+#endif
 bool execute_kaleidoscope_ordered_route(uint first, uint second, inout RouteRngState state) {
     bool pass = true;
     for (uint group = 0u; group < 2u; ++group) {
@@ -478,6 +481,12 @@ bool execute_kaleidoscope_ordered_route(uint first, uint second, inout RouteRngS
             uint card = roll_card(permutation_value(order, item), plan_value(7u), state.rewards);
             found = found || card == target;
         }
+#if RT2_MP_N_ORDERED_K_FIRST_REJECT
+        // Only this route/arrival failed. Its caller still enumerates the other
+        // arrivals and pickup order from their original checkpoints. Party GPU
+        // admission proves every source pool nonempty before either group runs.
+        if (group == 0u && !found) return false;
+#endif
         pass = pass && found;
     }
     return pass;

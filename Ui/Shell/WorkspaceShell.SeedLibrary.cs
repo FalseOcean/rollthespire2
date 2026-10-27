@@ -5,16 +5,65 @@ namespace RolltheSpire2.Ui.Shell;
 
 internal sealed partial class WorkspaceShell
 {
-    private readonly Button _seeds = MakeButton();
+    private Button _seeds = null!;
     private SeedLibraryCanvas? _seedLibrary;
     private readonly Dictionary<BaseButton, bool> _seedModalBlocked = [];
+    private string? _pendingLibraryIssue;
+    private CardCollectionStore? _cardCollections;
+
+    private CardCollectionStore CardCollections => _cardCollections ??= new(
+        Path.Combine(_persistenceDirectory, "RolltheSpire2", "state"));
+
+    private void InitializeLibraryNavigation()
+    {
+        _seeds.Pressed += () => SelectTask(Workspace.Seeds);
+        if (_references is null) return;
+        _references.ConfigureCardCollections(CardCollections);
+        _references.CardCollectionEditRequested += id =>
+        {
+            try
+            {
+                EnsureSeedLibrary();
+                SelectTask(Workspace.Seeds);
+                _seedLibrary!.OpenCardCollection(id, returnToSearch: true);
+            }
+            catch (Exception ex) { _references.ShowLibraryReceipt(SeedLibraryIssue(ex)); }
+        };
+        _references.PresetsRequested += () =>
+        {
+            try
+            {
+                EnsureSeedLibrary();
+                SelectTask(Workspace.Seeds);
+                _seedLibrary!.ShowSection(SeedLibraryCanvas.LibrarySection.Presets);
+            }
+            catch (Exception ex) { _references.ShowLibraryReceipt(SeedLibraryIssue(ex)); }
+        };
+        _references.FavoriteSeedRequested += action =>
+            FavoriteSeed(action.Result.Seed, action.Context!, action.Association, action.Provenance);
+        _references.PresetsChanged += () => _seedLibrary?.RefreshEntries();
+        _references.PresetIssueReported += message =>
+        {
+            if (_seedLibrary is { } library) library.ShowIssue(message);
+            else _pendingLibraryIssue = message;
+        };
+    }
+
+    private void EnsureSeedLibrary()
+    {
+        if (_seedLibrary is not null) return;
+        PrepareDeferredPage();
+        InitializeSeedLibrary(_persistenceDirectory);
+        if (_pendingLibraryIssue is { } issue) { _seedLibrary!.ShowIssue(issue); _pendingLibraryIssue = null; }
+    }
 
     private void InitializeSeedLibrary(string userDataDirectory)
     {
         var store = new SeedLibraryStore(Path.Combine(userDataDirectory, "RolltheSpire2", "state"));
-        _seedLibrary = new(store, _references is null ? null : _persistence) { Visible = false };
+        _seedLibrary = new(store, _references is null ? null : _persistence, _languageCode, CardCollections) { Visible = false };
         _content.AddChild(_seedLibrary); _seedLibrary.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         _seedLibrary.AttachOverlay(this);
+        _seedLibrary.CardCollectionReturnRequested += () => SelectTask(Workspace.Search);
         _seedLibrary.ModalChanged += open =>
         {
             if (open)
@@ -22,7 +71,7 @@ internal sealed partial class WorkspaceShell
                 // The overlay owns pointer input and a closed keyboard-focus loop.
                 // Search may finish behind it, so do not snapshot/restore mutable
                 // content-button states over the session's newer state.
-                foreach (var button in new[] { _search, _analysis, _currentPrediction, _seeds, _encyclopedia, _status, _notes, _settings, _close })
+                foreach (var button in new[] { _search, _analysis, _currentPrediction, _seeds, _encyclopedia, _status, _notes, _settings, _feedback, _close })
                 { _seedModalBlocked.TryAdd(button, button.Disabled); button.Disabled = true; }
             }
             else
@@ -39,10 +88,9 @@ internal sealed partial class WorkspaceShell
             {
                 if (_predictor is null) CreatePredictor();
                 _predictorController!.OpenSeedLibraryEntry(entry);
-                _partyExpected = null; _partyResultDraft = null;
                 SelectTask(Workspace.Analysis);
                 _predictor!.ShowLibraryReceipt(entry.Source == SeedLibrarySource.Developer
-                    ? (_languageCode == "zh" ? "已按推荐配置重新预测；游玩说明见种子库。" : "Predicted using the recommended configuration. See the seed library for play instructions.")
+                    ? (_languageCode == "zh" ? "已按推荐配置重新预测；游玩说明见资料库。" : "Predicted using the recommended configuration. See the library for play instructions.")
                     : (_languageCode == "zh" ? "已按保存的上下文重新预测；收藏备注仅供参考。" : "Predicted again using the saved context. Saved notes are historical."));
             }
             catch (Exception ex) { _seedLibrary.ShowIssue(SeedLibraryIssue(ex)); }
@@ -52,7 +100,7 @@ internal sealed partial class WorkspaceShell
             _seedLibrary.SearchBusy = () => _references.HasActiveSearch;
             _seedLibrary.PresetUseRequested += preset =>
             {
-                try { _references.ApplyLibraryPreset(preset); SelectTask(Workspace.Search); }
+                try { _references.ApplyPreset(preset); SelectTask(Workspace.Search); }
                 catch (Exception ex) { _seedLibrary.ShowIssue(ex.Message); }
             };
             _seedLibrary.QueryLoadRequested += (record, title) =>
@@ -62,7 +110,7 @@ internal sealed partial class WorkspaceShell
             };
             _seedLibrary.PresetHistoryRequested += preset =>
             {
-                try { _seedLibrary.ShowPresetResults(_references.PreparePresetHistory(preset)); }
+                try { _seedLibrary.ShowPresetResults(preset); }
                 catch (Exception ex) { _seedLibrary.ShowIssue(ex.Message); }
             };
             _seedLibrary.PresetEditRequested += (preset, metadata) =>
@@ -75,19 +123,14 @@ internal sealed partial class WorkspaceShell
                 try { _references.RefreshPresetEnvironment(preset); }
                 catch (Exception ex) { _seedLibrary.ShowIssue(ex.Message); }
             };
-            _references.PresetsChanged += _seedLibrary.RefreshEntries;
-            _references.PresetIssueReported += _seedLibrary.ShowIssue;
-            _references.PresetsRequested += () =>
-            { SelectTask(Workspace.Seeds); _seedLibrary.ShowSection(SeedLibraryCanvas.LibrarySection.Presets); };
         }
         _seedLibrary.ResultOpenRequested += OpenSavedSearchResult;
-        _seeds.Pressed += () => SelectTask(Workspace.Seeds);
-        if(_references!=null) _references.FavoriteSeedRequested += FavoriteSeed;
     }
 
-    private void FavoriteSeed(string seed, SeedLibraryContext context, SeedQueryAssociation? association = null)
+    private void FavoriteSeed(string seed, SeedLibraryContext context, SeedQueryAssociation? association = null,
+        SeedLibraryResultProvenance? provenance = null)
     {
-        try { _seedLibrary!.OpenSave(seed, context, queryKey: association?.QueryKey, association: association); }
+        try { EnsureSeedLibrary(); _seedLibrary!.OpenSave(seed, context, queryKey: association?.QueryKey, association: association, resultProvenance: provenance); }
         catch (Exception ex) { ShowSeedLibraryReceipt(SeedLibraryIssue(ex)); }
     }
 
@@ -96,7 +139,8 @@ internal sealed partial class WorkspaceShell
         try
         {
             var context = _predictorController!.CaptureSeedLibraryContext();
-            FavoriteSeed(_predictor!.LastDocument!.CanonicalSeed, context);
+            var origin = _predictorController.CaptureResultOrigin(context);
+            FavoriteSeed(_predictor!.LastDocument!.CanonicalSeed, context, origin.Association, origin.Provenance);
         }
         catch (Exception ex) { ShowSeedLibraryReceipt(SeedLibraryIssue(ex)); }
     }

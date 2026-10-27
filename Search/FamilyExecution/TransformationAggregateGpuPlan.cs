@@ -32,12 +32,22 @@ internal sealed class TransformationAggregateGpuPlan
          p.Condition.TargetMultiset.Count == p.Condition.OpportunityCount || UsesBonesOptimization(p) && AllDrawsRequired(p));
     internal bool BonesOptimized { get; }
     internal bool FullTarget { get; }
+    internal GpuNumericalVariant NumericalVariant { get; }
+    internal GpuNumericRequirements NumericRequirements => Supported ? GpuIntegerNumerics.Requirements(NumericalVariant) : GpuNumericRequirements.None;
+    internal string NumericalRevision => NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "";
+    internal string Revision(bool compact) => (BonesOptimized ? "T.Gpu.BonesTracked."+(FullTarget?"TransformFirst.Carry8.AllRequired":"OpeningFirst.Generic")+".20261001.v1" :
+        FullTarget?FullTargetRevision:GenericRevision)+"."+(compact?"CompactAbi1":"Dense")+".CanonicalAbi1Ready" + NumericalRevision;
     internal int SeedsPerInvocation => FullTarget ? 8 : 1;
     internal int Capacity => FullTarget && Experiment != "full1m" ? FullTargetCapacity : WindowCapacity;
     internal uint[][] Buffers { get; }
     internal bool Supported { get; }
-    internal TransformationAggregateGpuPlan(TransformationAggregateNumericalPlan p)
+    internal TransformationAggregateGpuPlan() { Buffers = []; }
+    internal TransformationAggregateGpuPlan(TransformationAggregateNumericalPlan p,
+        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
+        if (numericalVariant is not (GpuNumericalVariant.NativeFloat64 or GpuNumericalVariant.IntegerRne))
+            throw new ArgumentOutOfRangeException(nameof(numericalVariant));
+        NumericalVariant = numericalVariant;
         var n=p.Neow; var groups=p.DrawGroups;
         BonesOptimized = UsesBonesOptimization(p);
         FullTarget = UsesFullTarget(p);
@@ -112,6 +122,7 @@ internal sealed class TransformationAggregateGpuPlan
         string defines = BonesOptimized ? "\n#define T_BONES_TRACKED" : "";
         if (BonesOptimized && FullTarget && Buffers[0][1] == 0) defines += "\n#define T_ALL_RARE";
         body = body.Replace("#version 450", "#version 450" + defines, StringComparison.Ordinal);
-        return body.Replace("/*__RNG__*/",rng,StringComparison.Ordinal);
+        string assembled = body.Replace("/*__RNG__*/",rng,StringComparison.Ordinal);
+        return NumericalVariant == GpuNumericalVariant.IntegerRne ? TransformationAggregateGpuNumericalSource.IntegerRne(assembled) : assembled;
     }
 }

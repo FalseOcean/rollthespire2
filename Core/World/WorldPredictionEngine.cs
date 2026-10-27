@@ -93,20 +93,6 @@ public static class WorldPredictionEngine
             ancientOptionConditions ?? AncientOptionConditionProfile.BroadDefault);
     }
 
-    private static string WorldProviderDiagnosticPrefix(RuntimeProfileId profileId) => profileId switch
-    {
-        RuntimeProfileId.Beta111 => "world-beta111-",
-        RuntimeProfileId.Beta110 => "world-beta110-",
-        _ => "world-beta109-provider-"
-    };
-
-    private static string WorldProfileIssue(RuntimeProfileId profileId, string suffix) => profileId switch
-    {
-        RuntimeProfileId.Beta111 => "Beta111" + suffix,
-        RuntimeProfileId.Beta110 => "Beta110" + suffix,
-        _ => "Beta109" + suffix
-    };
-
     private static WorldPredictionResult PredictStable107(
         IRuntimeProfile profile,
         string canonicalSeed,

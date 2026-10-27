@@ -39,22 +39,12 @@ internal sealed class SearchSelectivityInput
     public static SearchSelectivityInput From(CompiledSearch compiled)
     {
         ArgumentNullException.ThrowIfNull(compiled);
-        LegacySearchCriteriaProjection projection = LegacySearchCriteriaAdapter.Project(compiled);
+        ExactSearchEvaluationProjectionResult projection = CompiledSearchEvaluationProjector.Project(compiled);
         return new SearchSelectivityInput(
             compiled,
-            projection.Filter,
+            projection.Evaluation.ToLegacyFilter(),
             projection.Fidelity,
             BuildRewardPolicy(compiled));
-    }
-
-    public static SearchSelectivityInput From(SearchExecutionRequest request)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-        return new SearchSelectivityInput(
-            request.CompiledSearch,
-            request.Filter,
-            ProjectionFidelity.Exact,
-            request.CombatRewardRoutePolicy);
     }
 
     public static SearchSelectivityInput From(ExactSearchExecutionRequest request)
@@ -68,7 +58,6 @@ internal sealed class SearchSelectivityInput
     }
 
     public static implicit operator SearchSelectivityInput(CompiledSearch compiled) => From(compiled);
-    public static implicit operator SearchSelectivityInput(SearchExecutionRequest request) => From(request);
 
     private static CombatRewardRoutePolicyContract BuildRewardPolicy(CompiledSearch compiled) =>
         compiled.ResolvedRouteSemantics.CombatReward.Kind switch

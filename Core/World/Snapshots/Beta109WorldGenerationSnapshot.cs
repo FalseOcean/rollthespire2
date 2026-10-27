@@ -430,10 +430,13 @@ public sealed record Beta109WorldGenerationSnapshot(
         Array.Empty<IReadOnlyList<Beta109RelicBucketSnapshot>>();
     public IReadOnlyDictionary<string, ModelKey> PartyBossDiscoveryOverrides { get; init; } = new Dictionary<string, ModelKey>();
     public bool PartyBossDiscoveryExact { get; init; }
-    public bool HasExactFixedParty => GameMode == WorldGameMode.Multiplayer && IsMultiplayer &&
-        PlayerCount >= 2 && PartyBossDiscoveryExact && LobbyPlayers.Count == PlayerCount && PartyRelicBuckets.Count == PlayerCount &&
-        LobbyPlayers.Select((p, slot) => p.Exact && !p.IsRandomCharacter && p.Slot == slot).All(x => x) &&
+    public bool HasExactPartyRoster => GameMode == WorldGameMode.Multiplayer && IsMultiplayer &&
+        PlayerCount >= 2 && LobbyPlayers.Count == PlayerCount &&
+        LobbyPlayers.Select((p, slot) => p.Exact && !p.IsRandomCharacter && p.Slot == slot).All(x => x);
+    public bool HasExactPartyRelicBags => HasExactPartyRoster && SharedRelicBuckets.Count > 0 &&
+        SharedRelicBuckets.All(b => b.OrderExact) && PartyRelicBuckets.Count == PlayerCount &&
         PartyRelicBuckets.All(b => b.Count > 0 && b.All(r => r.OrderExact));
+    public bool HasExactFixedParty => HasExactPartyRelicBags && PartyBossDiscoveryExact;
     public bool RequestedGameModeExact { get; init; }
     public string GameModeEvidenceCode { get; init; } = string.Empty;
     public Beta109EventCatalogAuthoritySnapshot EventAuthority { get; init; } =

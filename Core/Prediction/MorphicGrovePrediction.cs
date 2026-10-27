@@ -74,7 +74,7 @@ internal static class MorphicGrovePredictor
         if (request.TrustedRootHashInput is { } trusted) root = trusted;
         else
         {
-            if (!Beta111Profile.Instance.TryCanonicalizeSeed(request.OriginalSeed, out var canonicalSeed, out var issue))
+            if (!ProfileSeedRules.TryCanonicalizePredictionSeed(Beta111Profile.Instance, request.OriginalSeed, out var canonicalSeed, out var issue))
                 throw new ArgumentException("MorphicGrove.InvalidSeed:" + issue);
             root = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, canonicalSeed);
         }

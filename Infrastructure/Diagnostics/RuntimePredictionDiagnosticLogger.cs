@@ -89,6 +89,7 @@ public sealed class RuntimePredictionDiagnosticLogger : IRuntimePredictionDiagno
         catch (Exception ex)
         {
             Volatile.Write(ref _lastFailureCode, "DiagnosticQueueFailed:" + ex.GetType().Name);
+            RecordFailure(ex, "Queue");
             return false;
         }
     }
@@ -101,9 +102,10 @@ public sealed class RuntimePredictionDiagnosticLogger : IRuntimePredictionDiagno
         {
             await _writerTask.ConfigureAwait(false);
         }
-        catch
+        catch (Exception ex)
         {
             // Diagnostic shutdown must never escape into game shutdown.
+            if (ex is not OperationCanceledException) RecordFailure(ex, "Shutdown");
         }
         _lifetime.Dispose();
     }
@@ -129,6 +131,7 @@ public sealed class RuntimePredictionDiagnosticLogger : IRuntimePredictionDiagno
                 catch (Exception ex)
                 {
                     Volatile.Write(ref _lastFailureCode, "DiagnosticSerializationFailed:" + ex.GetType().Name);
+                    RecordFailure(ex, "Serialization");
                     continue;
                 }
 
@@ -155,6 +158,7 @@ public sealed class RuntimePredictionDiagnosticLogger : IRuntimePredictionDiagno
         catch (Exception ex)
         {
             Volatile.Write(ref _lastFailureCode, "DiagnosticWriterFailed:" + ex.GetType().Name);
+            RecordFailure(ex, "Writer");
         }
         finally
         {
@@ -165,12 +169,17 @@ public sealed class RuntimePredictionDiagnosticLogger : IRuntimePredictionDiagno
                     await writer.FlushAsync().ConfigureAwait(false);
                     await writer.DisposeAsync().ConfigureAwait(false);
                 }
-                catch
+                catch (Exception ex)
                 {
+                    RecordFailure(ex, "WriterCleanup");
                 }
             }
         }
     }
+
+    private static void RecordFailure(Exception exception, string stage) =>
+        RuntimeIssueLedger.Current.Record(exception, "PredictionDiagnosticFailed",
+            nameof(RuntimePredictionDiagnosticLogger), stage, "issues.diagnostics_failed", RuntimeIssueSeverity.Warning);
 
     private Task<StreamWriter> CreateWriterAsync()
     {
@@ -204,14 +213,16 @@ public sealed class RuntimePredictionDiagnosticLogger : IRuntimePredictionDiagno
                 {
                     file.Delete();
                 }
-                catch
+                catch (Exception ex)
                 {
+                    RecordFailure(ex, "RetentionDelete");
                 }
             }
         }
         catch (Exception ex)
         {
             Volatile.Write(ref _lastFailureCode, "DiagnosticRetentionFailed:" + ex.GetType().Name);
+            RecordFailure(ex, "Retention");
         }
     }
 }

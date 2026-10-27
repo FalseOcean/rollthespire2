@@ -39,14 +39,14 @@ internal sealed partial class HorizontalOfferGroup : VBoxContainer
         string headerText = BuildHeader(group);
         if (!string.IsNullOrWhiteSpace(headerText))
         {
-            Label header = Ui1Theme.Label(headerText, Ui1TextRole.Meta, true);
+            Label header = MainPanelTheme.Label(headerText, Ui1TextRole.Meta, true);
             header.AddThemeColorOverride("font_color", PrecisionColor(group.Precision));
             AddChild(header);
         }
 
         if (compactNormalSummary)
         {
-            AddChild(Ui1Theme.Label(group.CompactSummaryText, Ui1TextRole.Meta, true));
+            AddChild(MainPanelTheme.Label(group.CompactSummaryText, Ui1TextRole.Meta, true));
             return;
         }
 
@@ -72,7 +72,7 @@ internal sealed partial class HorizontalOfferGroup : VBoxContainer
                 row.AddThemeConstantOverride("separation", 5);
                 if (depth > 0)
                 {
-                    row.AddChild(Ui1Theme.Label("↳", Ui1TextRole.Muted));
+                    row.AddChild(MainPanelTheme.Label("↳", Ui1TextRole.Muted));
                 }
                 row.AddChild(new CompactPredictionItem(
                     item,
@@ -131,10 +131,10 @@ internal sealed partial class HorizontalOfferGroup : VBoxContainer
 
     private static Color PrecisionColor(PredictionPrecision precision) => precision switch
     {
-        PredictionPrecision.Exact => Ui1Theme.Palette.Success,
-        PredictionPrecision.Partial => Ui1Theme.Palette.Partial,
-        PredictionPrecision.Unsupported => Ui1Theme.Palette.Unsupported,
-        PredictionPrecision.Unknown => Ui1Theme.Palette.Unknown,
-        _ => Ui1Theme.Palette.TextSecondary
+        PredictionPrecision.Exact => MainPanelTheme.Palette.Success,
+        PredictionPrecision.Partial => MainPanelTheme.Palette.Partial,
+        PredictionPrecision.Unsupported => MainPanelTheme.Palette.Unsupported,
+        PredictionPrecision.Unknown => MainPanelTheme.Palette.Unknown,
+        _ => MainPanelTheme.Palette.TextSecondary
     };
 }

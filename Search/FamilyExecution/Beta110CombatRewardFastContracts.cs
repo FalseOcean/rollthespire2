@@ -39,6 +39,8 @@ internal readonly record struct Beta110CombatRewardFastPredicate(
     bool HasMinimumGold,
     bool HasMaximumGold)
 {
+    // Zero retains the full-window meaning for explicitly constructed diagnostic rows.
+    public byte AnyBattleWindow { get; init; }
     public bool IsAnyBattle => BattleOrdinal == 0;
     public bool HasCardPredicate => CardAny.Length > 0 || CardAll.Length > 0 || CardBan.Length > 0;
     public bool HasPotionDropPredicate => PotionRequirement != NormalCombatPotionRequirement.Any;
@@ -62,6 +64,7 @@ internal sealed record Beta110CombatRewardFastPlan(
     bool PotionPoolAuthorityExact,
     string Fingerprint)
 {
+    public bool NeedsCompleteMatchingReference { get; init; }
     public byte CardAssignmentWindow { get; init; }
     public ushort[] CardAssignmentTargets { get; init; } = [];
     public byte PotionAssignmentWindow { get; init; }

@@ -68,7 +68,8 @@ internal sealed partial class NeowEffectProjectionEngine
 
     public NeowEffectProjection Project(ModelKey relicKey) => Project(relicKey, null);
 
-    internal NeowEffectProjection Project(ModelKey relicKey, NeowEffectRngContext? openingRng)
+    internal NeowEffectProjection Project(ModelKey relicKey, NeowEffectRngContext? openingRng,
+        Lazy<IReadOnlyList<NeowEffectRelicSnapshot>>? preparedRelicBag = null)
     {
         NeowEffectImplementationStatus implementation =
             NeowEffectCoverageRegistry.GetImplementation(_profileId, relicKey);
@@ -108,11 +109,15 @@ internal sealed partial class NeowEffectProjectionEngine
                 (relicKey == BaseGameModelKeys.Relics.NeowsBones ||
                  relicKey == BaseGameModelKeys.Relics.SmallCapsule || relicKey == BaseGameModelKeys.Relics.LargeCapsule))
             {
-                if (effectAuthority.HasExactRelicBagSourcePools)
+                if (effectAuthority.HasExactRelicBagSourcePools && (_analysisAuthority.PlayersCount == 1 ||
+                    _analysisAuthority.WorldAuthority?.Beta109Generation is { HasExactPartyRelicBags: true }))
                 {
+                    // A party candidate may supply this same root/slot's pure
+                    // preparation. Each working state still owns a mutable copy.
                     effectAuthority = effectAuthority with
                     {
-                        OrderedRelicBag = NeowRewardGenerator.BuildOrderedRelicBag(_profile, _trustedRootHash.Value, _analysisAuthority),
+                        OrderedRelicBag = preparedRelicBag?.Value ??
+                            NeowRewardGenerator.BuildOrderedRelicBag(_profile, _trustedRootHash.Value, _analysisAuthority),
                         RelicBagExact = true
                     };
                 }

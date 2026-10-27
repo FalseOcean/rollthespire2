@@ -4,6 +4,7 @@ using RolltheSpire2.Presentation.ContentNames;
 using RolltheSpire2.Presentation.Localization;
 using RolltheSpire2.Ui.Icons;
 using RolltheSpire2.Ui.Theme;
+using RolltheSpire2.Ui.Tooltips;
 
 namespace RolltheSpire2.Ui.Shell;
 
@@ -11,45 +12,80 @@ namespace RolltheSpire2.Ui.Shell;
 internal sealed partial class WorkspaceResultTile : Control
 {
     public const float TileWidth = 120, TileHeight = 128;
+    public const float CompactWidth = 160, CompactHeight = 64;
 
     public WorkspaceResultTile(WorkspacePalette palette, IGameIconResolver icons,
         IGameContentNameResolver names, IUiTextProvider text, ModelKey? key,
-        GameContentKind kind, Action choose, Action clear, bool allowClear = true, string? displayNameOverride = null)
+        GameContentKind kind, Action? choose, Action clear, bool allowClear = true, string? displayNameOverride = null,
+        bool isRequested = true, bool compact = false, float compactWidth = CompactWidth, bool candidateSurface = false)
     {
-        Size = new(TileWidth, TileHeight);
+        float width = compact ? compactWidth : TileWidth;
+        float height = compact ? CompactHeight : TileHeight;
+        Size = new(width, height);
         CustomMinimumSize = Size;
         MouseFilter = MouseFilterEnum.Pass;
 
-        var tile = palette.Button(key.HasValue ? string.Empty : "+");
+        Control tile;
+        if (choose is null)
+        {
+            // A committed read-only target still has its own delete action,
+            // but must not pretend the object can be reopened in a picker.
+            var display = new Panel { MouseFilter = MouseFilterEnum.Pass,
+                FocusMode = allowClear ? FocusModeEnum.All : FocusModeEnum.None };
+            display.AddThemeStyleboxOverride("panel", palette.Box(
+                isRequested ? palette.SelectedSurface : palette.OptionSurface,
+                isRequested ? palette.Selected : palette.Line, isRequested ? 2 : 1));
+            tile = display;
+        }
+        else
+        {
+            var button = palette.Button(key.HasValue ? string.Empty : "+", selected: key.HasValue && isRequested);
+            if (candidateSurface) palette.ApplyCandidateSurface(button, key.HasValue && isRequested);
+            button.Pressed += choose;
+            tile = button;
+        }
         tile.Size = Size;
         tile.CustomMinimumSize = Size;
+        tile.ClipContents = true;
         tile.AccessibilityName = displayNameOverride ?? (key is { } named ? names.Resolve(named, kind) : text.Get("picker.any_choose_result"));
-        tile.Pressed += choose;
         AddChild(tile);
 
         if (key is not { } value)
         {
-            tile.AddThemeStyleboxOverride("normal", palette.Box(palette.Surface, palette.Line, 1));
+            tile.AddThemeStyleboxOverride("normal", candidateSurface ? palette.Box(palette.CandidateSurface) : palette.EmptySlotBox());
             return;
         }
 
         string displayName = displayNameOverride ?? names.Resolve(value, kind);
-        tile.TooltipText = displayName;
-        var name = palette.Label(displayName, 16);
-        name.Position = new(6, 5);
-        name.Size = new(TileWidth - 12, 26);
-        name.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
-        name.HorizontalAlignment = HorizontalAlignment.Center;
+        SearchTooltip.SetIfScoped(tile, displayName);
+        var name = palette.Label(displayName, 15);
+        if (palette.IsMainPanel) MainPanelTheme.SetColor(name, "font_color", isRequested ? palette.Selected : palette.Text);
+        name.Position = compact ? new(44, 8) : new(8, 82);
+        name.Size = compact ? new(width - 52, 48) : new(width - 16, 40);
+        name.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        name.MaxLinesVisible = 2;
+        name.ClipText = false;
+        // Label initially measures its unwrapped text; apply the authored bounds
+        // after wrapping/clipping has removed that minimum-width constraint.
+        name.Size = compact ? new(width - 52, 48) : new(width - 16, 40);
+        name.VerticalAlignment = VerticalAlignment.Center;
+        name.TextOverrunBehavior = TextServer.OverrunBehavior.NoTrimming;
+        name.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Center;
         name.MouseFilter = MouseFilterEnum.Ignore;
+        // Godot defers the wrapped label's minimum-size update until it enters
+        // the themed tree. Apply bounds after that update, not against its old
+        // unwrapped width.
+        name.Ready += () => name.SetDeferred(Control.PropertyName.Size,
+            compact ? new Vector2(width - 52, 48) : new Vector2(width - 16, 40));
         tile.AddChild(name);
 
         var artwork = new TextureRect
         {
-            Position = new(6, 36),
-            Size = new(TileWidth - 12, TileHeight - 42),
+            Position = compact ? new(8, 16) : new((width - 64) / 2, 10),
+            Size = compact ? new(32, 32) : new(64, 64),
             Texture = icons.Resolve(value, kind, kind == GameContentKind.Card ? IconVariant.CardPickerLarge : IconVariant.RelicLarge).Texture,
             ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-            StretchMode = kind == GameContentKind.Card ? TextureRect.StretchModeEnum.KeepAspectCovered : TextureRect.StretchModeEnum.KeepAspectCentered,
+            StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
             MouseFilter = MouseFilterEnum.Ignore,
             ClipContents = true
         };
@@ -58,7 +94,7 @@ internal sealed partial class WorkspaceResultTile : Control
         if (!allowClear) return;
         var removeHost = new Control
         {
-            Position = new(TileWidth - 22, 2),
+            Position = new(width - 22, 2),
             Size = new(20, 20),
             CustomMinimumSize = new(20, 20),
             ClipContents = true,
@@ -79,7 +115,7 @@ internal sealed partial class WorkspaceResultTile : Control
         remove.AddThemeColorOverride("font_disabled_color", palette.Color(palette.Disabled));
         remove.AccessibilityName = text.Format("common.remove_named", displayName);
         remove.Pressed += clear;
-        foreach (var (state, fill, border, width) in new[]
+        foreach (var (state, fill, border, borderWidth) in new[]
         {
             ("normal", palette.Surface, palette.Line, 0),
             ("hover", palette.Hover, palette.Line, 1),
@@ -87,7 +123,7 @@ internal sealed partial class WorkspaceResultTile : Control
             ("disabled", palette.Canvas, palette.Line, 0)
         })
         {
-            var style = palette.Box(fill, border, width);
+            var style = palette.Box(fill, border, borderWidth);
             style.ContentMarginLeft = style.ContentMarginRight = 0;
             style.ContentMarginTop = style.ContentMarginBottom = 0;
             remove.AddThemeStyleboxOverride(state, style);

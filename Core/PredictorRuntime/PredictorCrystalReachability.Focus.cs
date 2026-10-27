@@ -87,8 +87,8 @@ internal sealed partial class PredictorCrystalReachability
             if(plan!=null)
             {
                 // Do not replace the existing selected-only plan/gold value.
-                var positive=new CrystalOptionProjection(ImmutableDictionary<CrystalRewardOption,PredictorCrystalSolution>.Empty.Add(target,plan),null,0);
-                projection=_published.AddOrUpdate(key,positive,(_,prior)=>prior with { Available=prior.Available.SetItem(target,plan) });
+                var positive=new CrystalOptionProjection(ImmutableDictionary<CrystalRewardOption,PredictorCrystalSolution>.Empty.Add(target,plan),null,0) {SacrificeRelics=plan.SacrificeRelics};
+                projection=_published.AddOrUpdate(key,positive,(_,prior)=>prior with { Available=prior.Available.SetItem(target,plan),SacrificeRelics=prior.SacrificeRelics.Union(plan.SacrificeRelics) });
             }
             if(verdict==CrystalFocusVerdict.Unreachable)
             {

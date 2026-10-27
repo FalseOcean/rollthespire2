@@ -13,11 +13,13 @@ namespace RolltheSpire2.Core.PredictorRuntime;
 internal sealed record PredictorCatalog(ImmutableArray<NeowEffectCardSnapshot> CharacterCards,
     ImmutableArray<NeowEffectCardSnapshot> ColorlessCards)
 {
+    public ImmutableArray<PredictorEncounterDefinition> Encounters { get; init; } = [];
     public ImmutableArray<NeowEffectCardSnapshot> AllCharacterCards { get; init; } = [];
     public ImmutableArray<PredictorCardDefinition> CardDefinitions { get; init; } = [];
     public ImmutableArray<PredictorCardPool> TransformationPools { get; init; } = [];
     public ImmutableArray<ModelKey> UnlockedCurseCards { get; init; } = [];
     public ImmutableArray<ModelKey> ModifierCurseCards { get; init; } = [];
+    public ImmutableArray<PredictorShopRelicOption> ShopRelics { get; init; } = [];
     public ImmutableArray<PredictorCharacterPool> CharacterPools { get; init; } = [];
     public ImmutableArray<ModelKey> ShopGainsBlock { get; init; } = [];
     public ModelKey? CharacterStrikeKey { get; init; }

@@ -1,20 +1,18 @@
 using RolltheSpire2.Search.Contracts;
+using RolltheSpire2.Ui.Workspace;
 
 namespace RolltheSpire2.Ui.Shell;
 
 internal sealed partial class WorkspaceShell
 {
-    private SearchCandidate? _partyExpected;
-    private WorkbenchSearchDraft? _partyResultDraft;
-
-    private void ShowSingleResult(SearchCandidate candidate)
+    private void ShowSingleResult(SearchResultAction action)
     {
-        _partyExpected = null; _partyResultDraft = null;
+        var candidate = action.Live!.Candidate;
         SelectTask(Workspace.Analysis);
         if (_predictor is null || _predictorController is null) return;
         _predictorController.SetPartyDraft(null);
         _predictorController.ClearSeedLibraryOverrides();
-        _predictorController.ImportSearchOpening(candidate, _references?.ResultDraft, _references?.ResultSeedContext);
+        _predictorController.ImportSearchOpening(candidate, action.Draft, action.Context, action.Association);
 
         string route = candidate.Witnesses.FirstOrDefault(w => !string.IsNullOrWhiteSpace(w.OpeningRouteId))
             ?.OpeningRouteId ?? string.Empty;
@@ -39,10 +37,11 @@ internal sealed partial class WorkspaceShell
         _predictorController.AnalyzeCurrentDraft();
     }
 
-    private void ShowPartyResult(SearchCandidate candidate, WorkbenchSearchDraft draft)
+    private void ShowPartyResult(SearchResultAction action)
     {
-        _partyExpected = candidate;
-        _partyResultDraft = draft;
+        var candidate = action.Live!.Candidate;
         SelectTask(Workspace.Analysis);
+        _predictorController?.SetPartyDraft(action.Draft!, candidate.Seed, candidate.Document?.Party);
+        _predictorController?.ImportSearchOpening(candidate, action.Draft, action.Context, action.Association);
     }
 }

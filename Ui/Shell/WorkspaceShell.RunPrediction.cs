@@ -10,11 +10,11 @@ namespace RolltheSpire2.Ui.Shell;
 
 internal sealed partial class WorkspaceShell
 {
-    internal void OpenRunPrediction(IRunState run)
+    private string? _livePredictionBinding;
+    internal void OpenRunPrediction(IRunState run, SeedLibraryContext? observedContext = null)
     {
-        var context = CaptureRunPredictionContext(run, _runtime.Detection.NormalizedVersion, _runtime.Profile.ProfileId,
+        var context = observedContext ?? CaptureRunPredictionContext(run, _runtime.Detection.NormalizedVersion, _runtime.Profile.ProfileId,
             LocalContext.NetId, _persistence!.PredictorContext);
-        _partyExpected = null; _partyResultDraft = null;
         if (_predictor is null) CreatePredictor();
         _predictorController!.ClearSeedLibraryOverrides();
         _predictorController.OpenPredictionContext(run.Rng.StringSeed, context);

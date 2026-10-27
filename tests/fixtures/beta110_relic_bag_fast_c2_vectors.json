@@ -1,0 +1,71 @@
+{
+  "schema": "rollthespire2.beta110.relic-bag-fast-c2.v1",
+  "profile": "Beta110",
+  "stream": "up_front",
+  "vectors": [
+    {
+      "id": "c2-synthetic-silent-standard",
+      "seed": "000000000000",
+      "rootHashHex": "7c929c820017313f",
+      "streamHashHex": "1a8a7b60da243e80",
+      "streamSeedHex": "971d17e2da3b6fbf",
+      "sharedBuckets": [
+        ["M_SHARED_C0", "M_SHARED_C1", "M_SHARED_C2"],
+        ["M_SHARED_U0", "M_SHARED_U1"],
+        ["M_SHARED_R0", "M_SHARED_R1"],
+        ["M_SHARED_S0", "M_SHARED_S_BLOCKED"]
+      ],
+      "playerBuckets": {
+        "Common": ["M_PLAYER_C0", "M_PLAYER_C1", "M_PLAYER_C2", "M_PLAYER_C3", "CHARACTER_POOL_SILENT"],
+        "Uncommon": ["M_PLAYER_U0", "M_PLAYER_U1", "M_PLAYER_U2"],
+        "Rare": ["M_PLAYER_R0", "M_PLAYER_R1", "M_PLAYER_R2"],
+        "Shop": ["M_PLAYER_S0", "M_PLAYER_S_BLOCKED", "M_PLAYER_S1", "M_PLAYER_S2"]
+      },
+      "shopAllowed": [true, false, true, true],
+      "expectedLanes": {
+        "Common": ["M_PLAYER_C0", "M_PLAYER_C2", "CHARACTER_POOL_SILENT", "M_PLAYER_C1", "M_PLAYER_C3"],
+        "Uncommon": ["M_PLAYER_U2", "M_PLAYER_U0", "M_PLAYER_U1"],
+        "Rare": ["M_PLAYER_R0", "M_PLAYER_R1", "M_PLAYER_R2"],
+        "Shop": ["M_PLAYER_S2", "M_PLAYER_S0", "M_PLAYER_S1"]
+      },
+      "expectedCheckpoint": {
+        "s0": 2925975358517631776,
+        "s1": 11218747387519853552,
+        "s2": 315971942618306198,
+        "s3": 17141021167246944235
+      }
+    },
+    {
+      "id": "c2-synthetic-silent-opaque-mod-relic",
+      "seed": "000000000000",
+      "rootHashHex": "7c929c820017313f",
+      "streamHashHex": "1a8a7b60da243e80",
+      "streamSeedHex": "971d17e2da3b6fbf",
+      "sharedBuckets": [
+        ["M_SHARED_C0", "M_SHARED_C1", "M_SHARED_C2"],
+        ["M_SHARED_U0", "M_SHARED_U1"],
+        ["M_SHARED_R0", "M_SHARED_R1"],
+        ["M_SHARED_S0", "M_SHARED_S_BLOCKED"]
+      ],
+      "playerBuckets": {
+        "Common": ["M_PLAYER_C0", "M_PLAYER_C1", "M_PLAYER_C2", "M_PLAYER_C3", "CHARACTER_POOL_SILENT", "MOD_OPAQUE_RELIC"],
+        "Uncommon": ["M_PLAYER_U0", "M_PLAYER_U1", "M_PLAYER_U2"],
+        "Rare": ["M_PLAYER_R0", "M_PLAYER_R1", "M_PLAYER_R2"],
+        "Shop": ["M_PLAYER_S0", "M_PLAYER_S_BLOCKED", "M_PLAYER_S1", "M_PLAYER_S2"]
+      },
+      "shopAllowed": [true, false, true, true],
+      "expectedLanes": {
+        "Common": ["M_PLAYER_C2", "M_PLAYER_C0", "M_PLAYER_C3", "MOD_OPAQUE_RELIC", "M_PLAYER_C1", "CHARACTER_POOL_SILENT"],
+        "Uncommon": ["M_PLAYER_U2", "M_PLAYER_U1", "M_PLAYER_U0"],
+        "Rare": ["M_PLAYER_R0", "M_PLAYER_R2", "M_PLAYER_R1"],
+        "Shop": ["M_PLAYER_S1", "M_PLAYER_S0", "M_PLAYER_S2"]
+      },
+      "expectedCheckpoint": {
+        "s0": 6830548545863393083,
+        "s1": 13207182592921185862,
+        "s2": 15161326587587874230,
+        "s3": 6378063312148762392
+      }
+    }
+  ]
+}

@@ -1,1 +1,18 @@
-* -text
+# Corpus manifests pin exact captured/workload bytes. Preserve their hashes on
+# Windows checkouts even when the developer's core.autocrlf is enabled.
+tools/ProductionSearchHost/Corpus/**/*.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+
+# Embedded cost references are hash-pinned measured assets. Preserve their
+# original bytes rather than applying checkout-dependent newline conversion.
+Search/FamilyExecution/CanonicalCostReference.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+Search/FamilyExecution/FamilyPrivateCompleteCallCostReference.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+
+# Historical sources are hash-pinned originals. Keep their bytes and authored
+# Markdown hard breaks instead of rewriting the archived evidence to satisfy lint.
+docs/archive/decision-history-20261016/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+docs/archive/decision-history-20261016/*.md whitespace=-blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+
+# The compressed performance entries retain byte-verified historical originals.
+docs/source_audits/SINGLEPLAYER_COST_BASELINE_20261012.history-20261026.md -text whitespace=-blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+docs/tasks/20261017-collaboration-workflow.history-20261026.md -text whitespace=-blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+docs/tasks/20261018-exact-cost-attribution.history-20261026.md -text whitespace=-blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

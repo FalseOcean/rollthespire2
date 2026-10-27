@@ -7,6 +7,7 @@ namespace RolltheSpire2.Search.FamilyExecution;
 // not ConditionPerformance normalization, and never learned from current survivors.
 internal static class NeowPhysicalPricing
 {
+    internal readonly record struct Work(double DenseNs, double CompactNs, int Capacity);
     // Existing offline constructor quotes, split by the modules actually bound.
     // The 2400ms full donor has the same source as the omitted staged-producer
     // module (DB36DC...E66E); 4200ms included that donor plus Dense stages.
@@ -16,6 +17,7 @@ internal static class NeowPhysicalPricing
 
     internal static FamilyPhysicalQuote? Quote(NeowFamily family, FamilyPhysicalQuoteRequest request)
     {
+        if (family.UsesCompatibilityGpu) return null;
         var p = family.PricingReplayPlan;
         var gpu = family.GpuPlan;
         if (family.PricingComposite is { UsesBonesCheckpoint: true, UsesBonesArcane: false } grouped &&
@@ -72,9 +74,10 @@ internal static class NeowPhysicalPricing
         ("N.LocalRequestedSide", .92, 1.20)
     ];
 
-    internal static bool TryResolve(NeowFamily family, out PrivateOrdinalAllocationPricing.Work work, out string shape)
+    internal static bool TryResolve(NeowFamily family, out Work work, out string shape)
     {
         work = default; shape = "Unknown";
+        if (family.UsesCompatibilityGpu) return false;
         var gpu = family.GpuPlan;
         var p = family.PricingReplayPlan;
         bool identityOnly = p.EnabledDomains == Beta110FastDomain.None && p.StructuredConditions.Length == 0;

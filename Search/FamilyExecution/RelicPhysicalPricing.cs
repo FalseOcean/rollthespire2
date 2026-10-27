@@ -9,7 +9,7 @@ internal static partial class RelicPhysicalPricing
     {
         // Old reference constrained both sources. A blank side can admit more heavy work;
         // use the owned full-work envelope rather than aliasing that rarity-band measurement.
-        if (plan is not { SourceConstrainedCapsules: true } || !FamilyPhysicalQuote.AdmittedRequest(geometry) ||
+        if (plan is not { SourceConstrainedCapsules: true, NumericalVariant: GpuNumericalVariant.NativeFloat64 } || !FamilyPhysicalQuote.AdmittedRequest(geometry) ||
             !FamilyPhysicalQuote.HasReferenceBackend() || request.Authority.PlayersCount != 1 ||
             !request.Authority.CanUseCurrentModel || plan.SequencePlan.Predicates.Length != 0 || plan.SequencePlan.ShopPredicates.Length != 0 ||
             plan.CapsuleMetadata[24] != 28 || (plan.CapsuleMetadata[16] & 16u) != 0 || plan.CapsuleMetadata[3] < 2 ||

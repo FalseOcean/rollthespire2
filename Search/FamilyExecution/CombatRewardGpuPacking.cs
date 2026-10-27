@@ -8,8 +8,8 @@ namespace RolltheSpire2.Search.FamilyExecution;
 
 internal static class Beta110GpuCombatRewardConstants
 {
-    public const int PlanAbiVersion = 10;
-    public const int ShaderAbiVersion = 7;
+    public const int PlanAbiVersion = 11;
+    public const int ShaderAbiVersion = 8;
     public const uint SyntheticCandidatePassFlag = 0x80000000u;
     public const uint RealRouteMaskBits = 0x0000001fu;
     public const int WorkgroupSize = 64;
@@ -53,16 +53,13 @@ internal static class CombatRewardGpuPacking
         Beta110GpuCombatRewardRoutePolicy routePolicy, byte pinnedRelicId,
         byte requestedBonesFirstId, byte requestedBonesSecondId, Beta110GpuCombatRewardHotLoopPlan hotLoop,
         int? precedingNicheDraws = 0, int[]? capsuleNicheAdvances = null,
-        bool kaleidoscopeCountOnly = false, bool conservativeOpening = false,
-        bool actualBonesPair = false, byte[]? bonesPool = null, bool dynamicCapsuleNicheUnknown = false,
-        bool capsuleHeldReplay = false)
+        bool kaleidoscopeCountOnly = false, bool conservativeOpening = false)
     {
         const int fixedHeader = 61;
         int cardTableUInts = hotLoop.Enabled ? hotLoop.CardStateCount * 4 : 0;
         int potionDropUInts = hotLoop.Enabled ? hotLoop.PotionDropNodeCount * 2 : 0;
         int potionRarityUInts = hotLoop.Enabled ? 4 : 0;
-        int bonesOffset = fixedHeader + cardTableUInts + potionDropUInts + potionRarityUInts;
-        int cardAssignmentOffset = bonesOffset + (bonesPool?.Length ?? 0);
+        int cardAssignmentOffset = fixedHeader + cardTableUInts + potionDropUInts + potionRarityUInts;
         int potionAssignmentOffset = cardAssignmentOffset + reward.CardAssignmentTargets.Length;
         var meta = new uint[potionAssignmentOffset + reward.PotionAssignmentTargets.Length * 2];
         meta[0] = Beta110GpuCombatRewardConstants.PlanAbiVersion;
@@ -117,8 +114,8 @@ internal static class CombatRewardGpuPacking
         meta[39] = unchecked((uint)(ushort)reward.ExplicitContext.FixedGoldAmount);
         // 40-43 carry the authored opening RNG-consumption replay. This is not
         // Neow result state: it only tells C which player-authored mechanics must
-        // be replayed before Reward generation. MP partial Bones instead recovers
-        // the actual root pair via [51..53]; Capsule latent obtains stay neutral.
+        // be replayed before Reward generation. Unspecified Bones children and
+        // Capsule latent obtains stay neutral in both solo and party C.
         meta[40] = reward.OpeningConsumption.ReplayBonesOffer ? 1u : 0u;
         meta[41] = checked((uint)Math.Min(2, reward.OpeningConsumption.OrderedRelicIds.Length));
         meta[42] = reward.OpeningConsumption.OrderedRelicIds.Length > 0
@@ -132,10 +129,7 @@ internal static class CombatRewardGpuPacking
         for (int index = 0; index < 4; index++) meta[45 + index] = unchecked((uint)(capsuleNicheAdvances?[index] ?? 0));
         meta[49] = kaleidoscopeCountOnly ? 1u : 0u;
         meta[50] = conservativeOpening ? 1u : 0u;
-        meta[51] = actualBonesPair ? 1u : 0u;
-        meta[52] = checked((uint)bonesOffset);
-        meta[53] = dynamicCapsuleNicheUnknown ? 1u : 0u;
-        meta[54] = capsuleHeldReplay ? 1u : 0u;
+        // 51..54 are reserved: production no longer recovers latent identities.
         meta[55] = reward.CardAssignmentWindow;
         meta[56] = checked((uint)reward.CardAssignmentTargets.Length);
         meta[57] = checked((uint)cardAssignmentOffset);
@@ -149,8 +143,7 @@ internal static class CombatRewardGpuPacking
             meta[potionAssignmentOffset + index * 2] = reward.PotionAssignmentRequirements[index];
             meta[potionAssignmentOffset + index * 2 + 1] = reward.PotionAssignmentTargets[index];
         }
-        if (bonesPool is not null)
-            for (int index = 0; index < bonesPool.Length; index++) meta[bonesOffset + index] = bonesPool[index];
+
         int potionRarityOffset = potionDropOffset + potionDropUInts;
         meta[34] = checked((uint)potionRarityOffset);
         meta[35] = checked((uint)hotLoop.MaximumBattleOrdinal);
@@ -269,7 +262,8 @@ internal static class CombatRewardGpuPacking
             Beta110CombatRewardFastPredicate predicate = plan.Predicates[index];
             int offset = index * Beta110GpuCombatRewardConstants.PredicateStrideUInts;
             meta[offset] = predicate.BattleOrdinal;
-            meta[offset + 1] = (uint)predicate.PotionRequirement;
+            // Low byte is the original requirement; upper byte bounds AnyBattle.
+            meta[offset + 1] = (uint)predicate.PotionRequirement | ((uint)predicate.AnyBattleWindow << 8);
             Append(predicate.CardAny, offset + 2);
             Append(predicate.CardAll, offset + 4);
             Append(predicate.CardBan, offset + 6);

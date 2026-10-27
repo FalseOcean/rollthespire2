@@ -1,0 +1,58 @@
+{
+  "Format": "MPS1 paired Final signatures",
+  "Evidence": "MAP_MULTIPLAYER_RESEARCH_EXTENSION_20260914",
+  "Source": "RolltheSpire2-map-research/docs/source_audits/map_mp_extension_20260914/study",
+  "GameVersion": "0.111.0",
+  "GameDllSha256": "0861BFA1DF347538D932F22D580E75420F08082792EB914E53B4882764ACDBE9",
+  "Population": "vanilla multiplayer standard pre-hook maps; 2-4 players share the law",
+  "BeginCanonicalOrdinal": 1146000000000,
+  "PairedRootCount": 65536,
+  "Selection": "prospective contiguous canonical range; not an unbiased global sample",
+  "Encoding": "gzip: int32 LE magic 0x4d505331, bool multiplayer, BinaryWriter UTF-8 law, uint64 begin, int32 count; repeated uint64 FinalSignatureBits plus byte legacy FastMask",
+  "Dimensions": [
+    "GuaranteedMonster",
+    "GuaranteedElite",
+    "GuaranteedRest",
+    "GuaranteedShop",
+    "GuaranteedUnknown",
+    "ForcedMonsterPrefix",
+    "ReachableMaxMonster",
+    "ReachableMaxElite",
+    "ReachableMaxRest",
+    "ReachableMaxShop",
+    "ReachableMaxUnknown"
+  ],
+  "Interpretation": "4-bit scalar per dimension; all Acts and predicates matched on the same ordinal. FastMask ignored. Zero observed hits do not prove impossibility.",
+  "Files": [
+    {
+      "Name": "MP-Glory-a0.signatures.gz",
+      "Bytes": 175099,
+      "Sha256": "95DB1C097A99E6A723BA7E6511E475CB561F93C6BBA10890A6213DE9A16FCCDB"
+    },
+    {
+      "Name": "MP-Glory-swarming.signatures.gz",
+      "Bytes": 183659,
+      "Sha256": "8E227FB327D2E48AE6EE1B07FD1C9BF024240616242097EC13BC88CF7A067CD1"
+    },
+    {
+      "Name": "MP-Hive-a0.signatures.gz",
+      "Bytes": 193058,
+      "Sha256": "F7EABAD417737188C015F96A263EC7B262E4B3C06E17A9E515C1E808BFF0CC9B"
+    },
+    {
+      "Name": "MP-Hive-swarming.signatures.gz",
+      "Bytes": 193179,
+      "Sha256": "CBD274436F98BDF4F4349EB2C8E4F60FD3735AD751C891D116B736582C3D2E07"
+    },
+    {
+      "Name": "MP-Overgrowth-a0.signatures.gz",
+      "Bytes": 198861,
+      "Sha256": "67879F0B8534E8C84EBB3CF97FDC70E53B3D12A17C3A7BD75AC2B481A2AD43E2"
+    },
+    {
+      "Name": "MP-Overgrowth-swarming.signatures.gz",
+      "Bytes": 194453,
+      "Sha256": "AF9A986CFA67ED8BBCB3426372F2D526961BD9414273E6FF64E48988BC63B3DC"
+    }
+  ]
+}

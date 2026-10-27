@@ -35,7 +35,7 @@ internal readonly record struct TrustedRootHashInput
         out string issue)
     {
         ArgumentNullException.ThrowIfNull(profile);
-        if (!profile.TryCanonicalizeSeed(rawSeed, out string canonicalSeed, out issue))
+        if (!ProfileSeedRules.TryCanonicalizePredictionSeed(profile, rawSeed, out string canonicalSeed, out issue))
         {
             input = default;
             return false;

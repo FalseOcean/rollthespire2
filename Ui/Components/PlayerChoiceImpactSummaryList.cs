@@ -34,7 +34,7 @@ internal sealed partial class PlayerChoiceImpactSummaryList : VBoxContainer
             return;
         }
 
-        Label title = Ui1Theme.Label(model.Title, Ui1TextRole.SectionTitle, true);
+        Label title = MainPanelTheme.Label(model.Title, Ui1TextRole.SectionTitle, true);
         AddChild(title);
 
         foreach (PlayerChoiceRouteSetViewModel routeSet in model.RouteSets)
@@ -46,16 +46,16 @@ internal sealed partial class PlayerChoiceImpactSummaryList : VBoxContainer
     private Control CreateRouteSet(PlayerChoiceRouteSetViewModel routeSet, string missingIconTooltip)
     {
         var panel = new PanelContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-        Ui1Theme.ApplyPanel(panel, Ui1SurfaceRole.CardElevated, 4f, 1, 10f);
+        MainPanelTheme.ApplyPanel(panel, Ui1SurfaceRole.CardElevated, 4f, 1, 10f);
         var column = new VBoxContainer();
         column.AddThemeConstantOverride("separation", 7);
-        column.AddChild(Ui1Theme.Label(routeSet.AcquisitionOrderLabel, Ui1TextRole.CardTitle, true));
+        column.AddChild(MainPanelTheme.Label(routeSet.AcquisitionOrderLabel, Ui1TextRole.CardTitle, true));
 
         for (int index = 0; index < routeSet.DistinctOutcomes.Count; index++)
         {
             PlayerChoiceOutcomeViewModel outcome = routeSet.DistinctOutcomes[index];
             var outcomePanel = new PanelContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-            Ui1Theme.ApplyPanel(outcomePanel, Ui1SurfaceRole.Card, 3f, 1, 8f);
+            MainPanelTheme.ApplyPanel(outcomePanel, Ui1SurfaceRole.Card, 3f, 1, 8f);
             var outcomeColumn = new VBoxContainer();
             outcomeColumn.AddThemeConstantOverride("separation", 5);
             var choices = new PredictedEffectSummaryList(_icons);
@@ -72,7 +72,7 @@ internal sealed partial class PlayerChoiceImpactSummaryList : VBoxContainer
                     finalCurse.Content.ModelKey,
                     finalCurse.Content.ContentKind,
                     IconVariant.Small);
-                var curseIcon = new IconWithLabel(34f, Ui1TextRole.Meta);
+                var curseIcon = new IconWithLabel(34f, Ui1TextRole.Meta, WorkspacePalette.MainPanel);
                 curseIcon.Bind(
                     descriptor,
                     finalCurse.Content.DisplayName,

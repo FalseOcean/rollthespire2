@@ -27,14 +27,15 @@ internal sealed partial record NeowSearchUiCatalog
     // Main-thread UI capture only. Never attach these temporary players/run to RunManager.
     // The other temporary players supply population count for IsAllowed; no outcomes are simulated.
     public static NeowSearchUiCatalog CaptureForPicker(ModRuntimeSnapshot runtime, ModelKey character,
-        int ascension, int players, int seat, UnlockState unlocks)
+        int ascension, int players, int seat, UnlockState unlocks,
+        RolltheSpire2.Core.Authority.RuntimeContextAuthoritySnapshot? sharedAuthority = null)
     {
         string seed = RolltheSpire2.Compatibility.ProfileSeedGenerator.CreateProbeSeed(runtime.Profile);
-        var captured = ReflectionNeowEffectSnapshotAdapter.Capture(runtime.Profile, seed,
+        var effects = sharedAuthority is not null ? sharedAuthority.EffectAuthority : ReflectionNeowEffectSnapshotAdapter.Capture(runtime.Profile, seed,
             CharacterIdentity.FromKey(character), ascension, players, seat, runtime.Profile.ProfileId,
-            runtime.Detection.DisplayVersion, new ReflectionSnapshotProfileRules(true, true), unlocks);
-        if (captured.EffectAuthority is null) throw new InvalidOperationException("Picker candidate capture unavailable");
-        var catalog = FromAuthority(runtime.Profile.ProfileId, character, captured.EffectAuthority);
+            runtime.Detection.DisplayVersion, new ReflectionSnapshotProfileRules(true, true), unlocks).EffectAuthority;
+        if (effects is null) throw new InvalidOperationException("Picker candidate capture unavailable");
+        var catalog = FromAuthority(runtime.Profile.ProfileId, character, effects);
         var model = ModelDb.GetById<CharacterModel>(new ModelId("CHARACTER", character.Entry));
         var temporaryPlayers = Enumerable.Range(0, players)
             .Select(i => Player.CreateForNewRun(model, unlocks, (ulong)(i + 1))).ToArray();

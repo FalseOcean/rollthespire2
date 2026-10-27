@@ -36,13 +36,17 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
     {
         _runtime = runtime ?? ModRuntimeSnapshot.NotInitialized;
         PageKey = AppPageKey.SaveStatus;
+        Theme = MainPanelTheme.Create();
+        foreach (string side in new[] { "left", "top", "right", "bottom" })
+            AddThemeConstantOverride("margin_" + side, 16);
         SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         SizeFlagsVertical = Control.SizeFlags.ExpandFill;
 
         var root = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, SizeFlagsVertical = Control.SizeFlags.ExpandFill };
-        root.AddThemeConstantOverride("separation", 14);
-        _pageTitle = Ui1Theme.Label(string.Empty, Ui1TextRole.PageTitle);
-        _subtitle = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta, true);
+        root.AddThemeConstantOverride("separation", 12);
+        _pageTitle = WorkspacePalette.MainPanel.Label(string.Empty, 24, heading: true);
+        _subtitle = WorkspacePalette.MainPanel.Label(string.Empty, 16, secondary: true);
+        _subtitle.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         root.AddChild(_pageTitle);
         root.AddChild(_subtitle);
 
@@ -53,16 +57,15 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
             HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled
         };
         var content = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-        content.AddThemeConstantOverride("separation", 14);
+        content.AddThemeConstantOverride("separation", 16);
 
         (_deviceRows, _) = CreateSection(content);
         (_gameRows, _) = CreateSection(content);
         _semanticRows = CreateSectionWithHeader(content, out _semanticSummary, out _semanticMessage);
         _unlockRows = CreateSectionWithHeader(content, out _unlockSummary, out _unlockMessage);
 
-        var fingerprintPanel = new PanelContainer();
-        Ui1Theme.ApplyPanel(fingerprintPanel, Ui1SurfaceRole.Card, 4f, 1, 14f);
-        _fingerprintMeta = Ui1Theme.Label(string.Empty, Ui1TextRole.Code, true);
+        var fingerprintPanel = CreateStatusPanel();
+        _fingerprintMeta = MainPanelTheme.Label(string.Empty, Ui1TextRole.Code, true);
         _fingerprintMeta.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         fingerprintPanel.AddChild(_fingerprintMeta);
         content.AddChild(fingerprintPanel);
@@ -74,9 +77,19 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
             var panel = content.GetChild<PanelContainer>(i);
             var body = panel.GetChild<Control>(0);
             panel.RemoveChild(body);
-            var section = new VBoxContainer();
-            var header = new Button { ToggleMode = true, ButtonPressed = true, Alignment = HorizontalAlignment.Left };
-            Ui1Theme.ApplyButton(header, Ui1ButtonRole.Secondary);
+            var section = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+            section.AddThemeConstantOverride("separation", 12);
+            var header = WorkspacePalette.MainPanel.CompactButton(string.Empty, 36, 18);
+            header.ToggleMode = true;
+            header.ButtonPressed = true;
+            header.Alignment = HorizontalAlignment.Left;
+            header.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+            // Expansion is disclosure, so keep the title on its content plane.
+            WorkspacePalette.MainPanel.SetModeActive(header, false, horizontalPadding: 0);
+            var hover = WorkspacePalette.MainPanel.Box(WorkspacePalette.MainPanel.Hover);
+            hover.ContentMarginLeft = hover.ContentMarginRight = 0;
+            hover.ContentMarginTop = hover.ContentMarginBottom = 2;
+            header.AddThemeStyleboxOverride("hover_pressed", hover);
             header.Toggled += expanded => {
                 body.Visible = expanded;
                 header.Text = (expanded ? "▾ " : "▸ ") + header.Text[2..];
@@ -139,7 +152,7 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
             : text.Get("ui1.devices.reference_default"));
         AddKeyValue(_deviceRows, text.Get("ui1.devices.recorded"), gpu.Recorded.ToString());
         AddKeyValue(_deviceRows, text.Get("ui1.devices.backend"), string.IsNullOrEmpty(identity.RenderingBackend) ? "—" : identity.RenderingBackend);
-        var help = Ui1Theme.Label(text.Get("ui1.devices.help"), Ui1TextRole.Meta, true);
+        var help = WorkspacePalette.MainPanel.Label(text.Get("ui1.devices.help"), 15, secondary: true);
         help.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         _deviceRows.AddChild(help);
     }
@@ -164,19 +177,20 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
         (_semanticMessage.Text, Color color) = interpretation.EnvironmentStatus switch
         {
             SemanticEnvironmentStatus.VerifiedVanillaMatch =>
-                (uiText.Format(Ui1TextKey.SaveStatusSemanticVerified, interpretation.MatchedBaselineGameVersion), Ui1Theme.Palette.Success),
+                (uiText.Format(Ui1TextKey.SaveStatusSemanticVerified, interpretation.MatchedBaselineGameVersion), MainPanelTheme.Palette.Success),
             SemanticEnvironmentStatus.KnownBaselineMatchButGameVersionUnverified =>
-                (uiText.Format(Ui1TextKey.SaveStatusSemanticCrossVersionMatch, interpretation.MatchedBaselineGameVersion), Ui1Theme.Palette.Partial),
+                (uiText.Format(Ui1TextKey.SaveStatusSemanticCrossVersionMatch, interpretation.MatchedBaselineGameVersion), MainPanelTheme.Palette.Partial),
             SemanticEnvironmentStatus.SemanticMismatch when interpretation.SameGameVersionBaselineKnown =>
-                (uiText.Format(Ui1TextKey.SaveStatusSemanticMismatchSameVersion, interpretation.ComparisonBaselineGameVersion), Ui1Theme.Palette.Warning),
+                (uiText.Format(Ui1TextKey.SaveStatusSemanticMismatchSameVersion, interpretation.ComparisonBaselineGameVersion), MainPanelTheme.Palette.Warning),
             SemanticEnvironmentStatus.SemanticMismatch =>
-                (uiText.Get(Ui1TextKey.SaveStatusSemanticMismatchUnknownVersion), Ui1Theme.Palette.Warning),
+                (uiText.Get(Ui1TextKey.SaveStatusSemanticMismatchUnknownVersion), MainPanelTheme.Palette.Warning),
             _ when !authority.Fingerprint.Complete =>
-                (uiText.Get(Ui1TextKey.SaveStatusSemanticFingerprintIncomplete), Ui1Theme.Palette.Unknown),
+                (uiText.Get(Ui1TextKey.SaveStatusSemanticFingerprintIncomplete), MainPanelTheme.Palette.Unknown),
             _ =>
-                (uiText.Get(Ui1TextKey.SaveStatusSemanticAwaitingBaseline), Ui1Theme.Palette.Unknown)
+                (uiText.Get(Ui1TextKey.SaveStatusSemanticAwaitingBaseline), MainPanelTheme.Palette.Unknown)
         };
         _semanticSummary.AddThemeColorOverride("font_color", color);
+        _semanticMessage.AddThemeColorOverride("font_color", color);
 
         var comparisons = interpretation.DomainComparisons.ToDictionary(item => item.Domain, StringComparer.Ordinal);
         foreach (RuntimeSemanticDomainSnapshot domain in authority.SemanticUniverse)
@@ -199,7 +213,7 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
                 ShortHash(hash));
             AddKeyValue(_semanticRows, LocalizeDomain(uiText, domain.Domain), value,
                 comparisons.TryGetValue(domain.Domain, out RuntimeAuthorityDomainComparison? c) && c.Status == RuntimeAuthorityDomainComparisonStatus.Mismatch
-                    ? Ui1Theme.Palette.Warning
+                    ? MainPanelTheme.Palette.Warning
                     : null);
         }
     }
@@ -213,11 +227,12 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
         _unlockSummary.Text = uiText.Get(Ui1TextKey.SaveStatusUnlockTitle);
         (_unlockMessage.Text, Color color) = interpretation.VanillaUnlockStatus switch
         {
-            VanillaUnlockOverallStatus.Full => (uiText.Get(Ui1TextKey.SaveStatusUnlockFull), Ui1Theme.Palette.Success),
-            VanillaUnlockOverallStatus.Partial => (uiText.Get(Ui1TextKey.SaveStatusUnlockPartial), Ui1Theme.Palette.Partial),
-            _ => (uiText.Get(Ui1TextKey.SaveStatusUnlockUnknown), Ui1Theme.Palette.Unknown)
+            VanillaUnlockOverallStatus.Full => (uiText.Get(Ui1TextKey.SaveStatusUnlockFull), MainPanelTheme.Palette.Success),
+            VanillaUnlockOverallStatus.Partial => (uiText.Get(Ui1TextKey.SaveStatusUnlockPartial), MainPanelTheme.Palette.Partial),
+            _ => (uiText.Get(Ui1TextKey.SaveStatusUnlockUnknown), MainPanelTheme.Palette.Unknown)
         };
         _unlockSummary.AddThemeColorOverride("font_color", color);
+        _unlockMessage.AddThemeColorOverride("font_color", color);
 
         if (interpretation.VanillaUnlockCoverage.Count > 0)
         {
@@ -227,7 +242,7 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
                     ? uiText.Format(Ui1TextKey.SaveStatusUnlockCoverage, coverage.Unlocked, coverage.VanillaUniverse)
                     : uiText.Get(Ui1TextKey.SaveStatusDomainUnavailable);
                 AddKeyValue(_unlockRows, LocalizeDomain(uiText, coverage.Domain), value,
-                    coverage.Complete && !coverage.IsFull ? Ui1Theme.Palette.Partial : null);
+                    coverage.Complete && !coverage.IsFull ? MainPanelTheme.Palette.Partial : null);
             }
             return;
         }
@@ -285,12 +300,21 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
         _ => domain
     };
 
+    private static PanelContainer CreateStatusPanel()
+    {
+        var panel = new PanelContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        var box = WorkspacePalette.MainPanel.ContentBox(borderWidth: 0);
+        box.ContentMarginLeft = box.ContentMarginRight = 16;
+        box.ContentMarginTop = box.ContentMarginBottom = 12;
+        panel.AddThemeStyleboxOverride("panel", box);
+        return panel;
+    }
+
     private static (VBoxContainer Rows, PanelContainer Panel) CreateSection(VBoxContainer parent)
     {
-        var panel = new PanelContainer();
-        Ui1Theme.ApplyPanel(panel, Ui1SurfaceRole.Card, 4f, 1, 14f);
+        var panel = CreateStatusPanel();
         var rows = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-        rows.AddThemeConstantOverride("separation", 7);
+        rows.AddThemeConstantOverride("separation", 8);
         panel.AddChild(rows);
         parent.AddChild(panel);
         return (rows, panel);
@@ -301,23 +325,23 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
         out Label title,
         out Label message)
     {
-        var panel = new PanelContainer();
-        Ui1Theme.ApplyPanel(panel, Ui1SurfaceRole.Card, 4f, 1, 14f);
+        var panel = CreateStatusPanel();
 
         var section = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-        section.AddThemeConstantOverride("separation", 7);
-        title = Ui1Theme.Label(string.Empty, Ui1TextRole.SectionTitle);
-        message = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta, true);
+        section.AddThemeConstantOverride("separation", 12);
+        title = WorkspacePalette.MainPanel.Label(string.Empty, 18, heading: true);
+        message = WorkspacePalette.MainPanel.Label(string.Empty, 16);
+        message.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         section.AddChild(title);
         section.AddChild(message);
         var separator = new HSeparator();
-        Ui1Theme.ApplySeparator(separator);
+        MainPanelTheme.ApplySeparator(separator);
         section.AddChild(separator);
 
         // Only this body is rebuilt. Header/message/separator are fixed children so
         // localization refresh cannot QueueFree the controls retained by the page.
         var body = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-        body.AddThemeConstantOverride("separation", 7);
+        body.AddThemeConstantOverride("separation", 8);
         section.AddChild(body);
         panel.AddChild(section);
         parent.AddChild(panel);
@@ -326,9 +350,9 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
 
     private static void AddSectionTitle(VBoxContainer rows, string text)
     {
-        rows.AddChild(Ui1Theme.Label(text, Ui1TextRole.SectionTitle));
+        rows.AddChild(WorkspacePalette.MainPanel.Label(text, 18, heading: true));
         var separator = new HSeparator();
-        Ui1Theme.ApplySeparator(separator);
+        MainPanelTheme.ApplySeparator(separator);
         rows.AddChild(separator);
     }
 
@@ -336,9 +360,12 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
     {
         var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         row.AddThemeConstantOverride("separation", 16);
-        var keyLabel = Ui1Theme.Label(key, Ui1TextRole.Meta);
+        var keyLabel = WorkspacePalette.MainPanel.Label(key, 16, secondary: true);
+        keyLabel.VerticalAlignment = VerticalAlignment.Top;
         keyLabel.CustomMinimumSize = new Vector2(220f, 0f);
-        var valueLabel = Ui1Theme.Label(value, Ui1TextRole.Body, true);
+        var valueLabel = WorkspacePalette.MainPanel.Label(value, 16);
+        valueLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        valueLabel.VerticalAlignment = VerticalAlignment.Top;
         valueLabel.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         if (valueColor.HasValue) valueLabel.AddThemeColorOverride("font_color", valueColor.Value);
         row.AddChild(keyLabel);

@@ -11,11 +11,14 @@ namespace RolltheSpire2.Search.FamilyExecution;
 internal sealed class MerchantShopColorlessCpuPlan
 {
     private static readonly ulong ShopsHash = XxHash64.Hash("shops"u8, 0);
-    private readonly record struct Predicate(int Call, ModelKey Target, ModelKey[] Pool);
+    private readonly record struct Predicate(int Call, int PoolLength, bool[] AcceptedIndexes);
     private readonly Predicate[] _predicates;
     private readonly int _slot;
-    private readonly record struct Observation(int Call, int Merchant, bool Uncommon, ModelKey[] Pool, ModelKey[] FixedTargets);
-    private readonly record struct Sequence(int Count, bool Uncommon, ushort[] Targets);
+    private readonly record struct Observation(int Call, int Merchant, bool Uncommon, int PoolLength,
+        bool[]? FixedAcceptedIndexes, ushort[]? CanonicalIndexes);
+    private readonly record struct RequiredMultiplicity(ushort Target, int Count);
+    private readonly record struct Sequence(int Count, bool Uncommon, ushort[] Targets,
+        RequiredMultiplicity[] Required, int RequiredCount);
     private readonly Observation[] _observations = [];
     private readonly Sequence[] _sequences = [];
 
@@ -34,7 +37,7 @@ internal sealed class MerchantShopColorlessCpuPlan
         if (e.MerchantColorlessConditions.Count == 0) return null;
         var uncommon = authority.UncommonPool.ToArray();
         var rare = authority.RarePool.ToArray();
-        var predicates = new List<Predicate>();
+        var predicates = new List<(int Call, ModelKey Target, ModelKey[] Pool)>();
         foreach (var c in e.MerchantColorlessConditions)
         {
             if (c.MerchantOrdinal is < 1 or > 5) return null;
@@ -44,7 +47,11 @@ internal sealed class MerchantShopColorlessCpuPlan
                 (u ? Beta111NormalMerchantShopsContinuation.UncommonCallWithinMerchant : Beta111NormalMerchantShopsContinuation.RareCallWithinMerchant),
                 c.TargetCardKey, u ? uncommon : rare));
         }
-        return new(predicates.OrderBy(p => p.Call).ToArray(), authority.PlayerSlotIndex);
+        return new(predicates.GroupBy(p => p.Call).OrderBy(g => g.Key).Select(g =>
+        {
+            var pool = g.First().Pool;
+            return new Predicate(g.Key, pool.Length, CompileAcceptedIndexes(pool, g.Select(p => p.Target).Distinct().ToArray()));
+        }).ToArray(), authority.PlayerSlotIndex);
     }
 
     internal bool Matches(ulong root)
@@ -52,19 +59,28 @@ internal sealed class MerchantShopColorlessCpuPlan
         if (_observations.Length != 0) return MatchesSequences(root);
         var rng = new Beta110FastRng(unchecked(root + (ulong)_slot + ShopsHash));
         int call = 0;
-        ModelKey actual = default;
         foreach (var p in _predicates)
         {
-            if (call != p.Call)
-            {
-                while (++call < p.Call) _ = rng.NextDouble();
-                actual = p.Pool[rng.NextInt(p.Pool.Length)];
-            }
-            if (actual != p.Target) return false;
+            while (++call < p.Call) _ = rng.NextDouble();
+            if (!p.AcceptedIndexes[rng.NextInt(p.PoolLength)]) return false;
         }
         // Later calls cannot change an already-observed slot. S exports ordinals,
         // not continuation state; another Family independently replays its RNG.
         return true;
+    }
+
+    private static bool[] CompileAcceptedIndexes(ModelKey[] pool, ModelKey[] targets)
+    {
+        var accepted = new bool[pool.Length];
+        for (int index = 0; index < pool.Length; index++)
+        {
+            bool matches = true;
+            foreach (var target in targets) matches &= pool[index] == target;
+            // Every duplicate source entry retains its own draw index. Missing
+            // targets and conflicting same-call requirements accept no index.
+            accepted[index] = matches;
+        }
+        return accepted;
     }
 
     private static MerchantShopColorlessCpuPlan? CompileSequences(ExactSearchExecutionRequest request, Beta111MerchantColorlessAuthority authority)
@@ -74,6 +90,8 @@ internal sealed class MerchantShopColorlessCpuPlan
         var u = authority.UncommonPool.ToArray();
         var r = authority.RarePool.ToArray();
         if (u.Length >= ushort.MaxValue || r.Length >= ushort.MaxValue) return null;
+        var canonicalU = CompileCanonicalIndexes(u);
+        var canonicalR = CompileCanonicalIndexes(r);
         foreach (var c in request.Evaluation.MerchantColorlessSequenceConditions)
         {
             if (c.Count is < 1 or > 5 || c.Slots.Count != c.Count ||
@@ -94,7 +112,10 @@ internal sealed class MerchantShopColorlessCpuPlan
                     // Missing target is a semantic impossibility, not a wildcard.
                     targets[i] = index < 0 ? (ushort)(ushort.MaxValue - 1) : checked((ushort)index);
                 }
-                unordered.Add(new(c.Count, c.Slot == MerchantColorlessSlot.Uncommon, targets));
+                var required = targets.Where(target => target != ushort.MaxValue).GroupBy(target => target)
+                    .Select(group => new RequiredMultiplicity(group.Key, group.Count())).ToArray();
+                unordered.Add(new(c.Count, c.Slot == MerchantColorlessSlot.Uncommon, targets,
+                    required, required.Sum(requirement => requirement.Count)));
             }
             else return null;
         }
@@ -109,11 +130,37 @@ internal sealed class MerchantShopColorlessCpuPlan
             if (targets.Length == 0 && !unordered.Any(c => c.Uncommon == uncommon && c.Count >= merchant)) continue;
             int call = (merchant - 1) * Beta111NormalMerchantShopsContinuation.CallsPerMerchant +
                 (uncommon ? Beta111NormalMerchantShopsContinuation.UncommonCallWithinMerchant : Beta111NormalMerchantShopsContinuation.RareCallWithinMerchant);
-            observations.Add(new(call, merchant, uncommon, uncommon ? u : r, targets));
+            var pool = uncommon ? u : r;
+            observations.Add(new(call, merchant, uncommon, pool.Length,
+                targets.Length == 0 ? null : CompileAcceptedIndexes(pool, targets), uncommon ? canonicalU : canonicalR));
         }
         // Entirely wildcard ordered conditions need no observation, but still use
         // a compiled numerical realization; returning true is exact here.
         return new(observations.ToArray(), unordered.ToArray(), authority.PlayerSlotIndex);
+    }
+
+    private static ushort[]? CompileCanonicalIndexes(ModelKey[] pool)
+    {
+        var firstIndexes = new Dictionary<ModelKey, ushort>(ModelKeyComparer.Instance);
+        ushort[]? canonical = null;
+        for (int index = 0; index < pool.Length; index++)
+        {
+            ushort actual = checked((ushort)index);
+            if (!firstIndexes.TryGetValue(pool[index], out ushort first))
+            {
+                firstIndexes.Add(pool[index], actual);
+                first = actual;
+            }
+            else if (canonical is null)
+            {
+                canonical = new ushort[pool.Length];
+                for (int previous = 0; previous < index; previous++) canonical[previous] = checked((ushort)previous);
+            }
+            if (canonical is not null) canonical[index] = first;
+        }
+        // Unique pools retain the original identity representation without an
+        // extra lookup. Duplicate entries keep their original draw weights.
+        return canonical;
     }
 
     private bool MatchesSequences(ulong root)
@@ -126,13 +173,41 @@ internal sealed class MerchantShopColorlessCpuPlan
         foreach (var p in _observations)
         {
             while (++call < p.Call) _ = rng.NextDouble();
-            ushort actual = checked((ushort)rng.NextInt(p.Pool.Length));
+            ushort actual = checked((ushort)rng.NextInt(p.PoolLength));
             var lane = p.Uncommon ? uncommon : rare;
-            lane[p.Merchant - 1] = actual;
-            foreach (var target in p.FixedTargets) if (p.Pool[actual] != target) return false;
+            // Sequence targets use the first index for their ModelKey. Keep the
+            // raw draw index for fixed-slot acceptance, but observe its identity.
+            lane[p.Merchant - 1] = p.CanonicalIndexes is { } canonical ? canonical[actual] : actual;
+            if (p.FixedAcceptedIndexes is { } accepted && !accepted[actual]) return false;
             foreach (var sequence in _sequences)
-                if (sequence.Uncommon == p.Uncommon && sequence.Count == p.Merchant &&
-                    !ShopSequenceSemantics.MatchesDense(lane, sequence.Count, false, sequence.Targets, ushort.MaxValue)) return false;
+            {
+                if (sequence.Uncommon != p.Uncommon) continue;
+                if (sequence.Count == p.Merchant)
+                {
+                    if (!ShopSequenceSemantics.MatchesDense(lane, sequence.Count, false, sequence.Targets, ushort.MaxValue)) return false;
+                }
+                else if (sequence.Count > p.Merchant && !CanCompleteSequence(lane[..p.Merchant], sequence)) return false;
+            }
+        }
+        return true;
+    }
+
+    private static bool CanCompleteSequence(ReadOnlySpan<ushort> observed, Sequence sequence)
+    {
+        int remaining = sequence.Count - observed.Length;
+        // Even a completely unmet requirement fits while this holds; avoid a
+        // prefix scan for wildcard-heavy sequences that cannot yet be rejected.
+        if (remaining >= sequence.RequiredCount) return true;
+        int missing = 0;
+        foreach (var requirement in sequence.Required)
+        {
+            int available = 0;
+            foreach (ushort actual in observed) if (actual == requirement.Target) available++;
+            missing += Math.Max(0, requirement.Count - available);
+            // Each remaining merchant supplies at most one index for this lane.
+            // A proven deficit rejects only this sequence's candidate; separate
+            // sequence horizons and fixed-slot conjunctions remain unchanged.
+            if (missing > remaining) return false;
         }
         return true;
     }

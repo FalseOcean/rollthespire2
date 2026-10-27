@@ -61,15 +61,20 @@ internal static partial class TransformationAggregateQueryProbability
         var baseline=estimateOther(SearchSelectivityInput.From(rest));
         if(probability.QueryHitProbability is not { } p)
             return JointSelectivityResult.Partial("Probability.TransformationAggregate.Unknown", probability.Evidence, "No empirical fallback", baseline.KnownComponents, baseline.UnknownComponents.Append("T.TransformationAggregate.AuthorityUnclosed").ToArray());
-        var assumptions=new[]{probability.Evidence,"CrossFamilyRelation=AssumedIndependentUnlessStructuralDependencyRegistered;NotFiniteSeedCount"};
+        var assumptions=new[]{probability.Evidence,"CrossFamilyRelation=AssumedIndependentUnlessStructuralDependencyRegistered;NotFiniteSeedCount",
+            "AdditionalNDependenceUnproved=OwnerApprovedIndependentProduct;SharedIdentityPaidOnce"};
+        if (shared && !identityOnly)
+        {
+            // The residual N probability already includes this parent offer/pair.
+            // Keep any known same-draw term above, then multiply the remaining
+            // predicates under the Owner's independence premise without paying
+            // the parent's finite identity probability a second time.
+            p = probability.IdentityProbability > 0 ? p / probability.IdentityProbability : 0;
+        }
         var component=new JointSelectivityComponent("transformation-aggregate", "Transformation aggregate", "Authored raw transformation sources",p,
             "T.LocalCountDistribution.20260914.v1",JointSelectivityCombinationMethod.IndependentProduct,SearchSelectivityDependencyClass.AssumedIndependent,
             true,p>0,probability.Evidence,assumptions);
         var components=baseline.KnownComponents.Append(component).ToArray();
-        if (shared && !identityOnly)
-            return JointSelectivityResult.Partial("Probability.TransformationAggregate.SharedNeowJointUnknown",
-                "Additional N predicates may constrain T's same transformation outcomes", "Shared opening counted once; no independent product", components,
-                baseline.UnknownComponents.Append("T+N.AdditionalPredicateJoint").ToArray(), assumptions: assumptions);
         if(baseline.Probability is not { } other)
             return JointSelectivityResult.Partial("Probability.TransformationAggregate.Partial",probability.Evidence, "Other authored predicate unresolved", components,baseline.UnknownComponents,assumptions:assumptions);
         double joint=p*other;

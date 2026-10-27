@@ -66,70 +66,12 @@ internal static class Beta110CombatRewardExplicitContextProjector
     public static Beta110CombatRewardExplicitContext Project(CompiledSearch compiled)
     {
         ArgumentNullException.ThrowIfNull(compiled);
-        SearchQuery query = compiled.NormalizedQuery;
         RuntimeProfileId profileId = compiled.Context.ProfileId;
-        var candidates = new List<ModelKey>();
-
-        // Reward influence follows legal player-authored opening acquisition positions,
-        // not arbitrary mentions of a relic elsewhere in the Query. A direct Neow route
-        // may itself be a supported Reward modifier (for example Silken Tress / Silver
-        // Crucible). On a Bones route, only explicitly authored Bones grants are acquired
-        // sources. This never consults RelicSequenceConditions, so a queue requirement such
-        // as "Rare #1 = Prayer Wheel" cannot leak into C.
-        if (query.OpeningRoute is { IsValid: true } route)
-        {
-            if (route.RouteRelicKey != BaseGameModelKeys.Relics.NeowsBones)
-            {
-                candidates.Add(route.RouteRelicKey);
-            }
-            else
-            {
-                if (query.OpeningRouteRelicRequirement is { IsEmpty: false } routeRelics &&
-                    routeRelics.ParentRouteRelicKey == BaseGameModelKeys.Relics.NeowsBones)
-                {
-                    candidates.AddRange(routeRelics.RequiredRelicKeys);
-                }
-
-                candidates.AddRange(query.LegacyNeow.RequiredBonesAcquisitionOrder);
-                candidates.AddRange(query.LegacyNeow.RequiredBonesCombination);
-
-                // A structured effect authored under Bones necessarily names the child
-                // relic whose effect is being requested, so that source is also an explicit
-                // grant even when the separate route-relic requirement is absent.
-                candidates.AddRange(query.StructuredOpeningEffects
-                    .Where(condition => !condition.IsEmpty &&
-                                        condition.SourceRelicKey.IsValid &&
-                                        condition.SourceRelicKey != BaseGameModelKeys.Relics.NeowsBones)
-                    .Select(condition => condition.SourceRelicKey));
-            }
-        }
-
-        // Capsule nested Reward modifiers are a deeper authored acquisition position.
-        // Prayer Wheel / Lasting Candy enter C only through this explicit nested output;
-        // an unrelated relic-sequence condition remains invisible here.
-        candidates.AddRange(query.StructuredOpeningEffects
-            .Where(condition => !condition.IsEmpty &&
-                                (IsCapsule(condition.SourceRelicKey) ||
-                                 (condition.SourceRelicKey == BaseGameModelKeys.Relics.NeowsBones &&
-                                  condition.Kind == NeowStructuredConditionKind.ExactGroupedCapsuleMultiset)) &&
-                                condition.Scope == NeowStructuredEffectScope.NestedRelics &&
-                                condition.OutputKind == NeowStructuredOutputKind.Relic)
-            .SelectMany(condition => condition.OutputKeys));
-
-        LegacyNeowSemanticConstraints legacy = query.LegacyNeow;
-        if (HasExplicitCapsuleSource(query))
-        {
-            // Legacy CapsuleContainedRelics is a single normalized Capsule-output
-            // surface. All and singleton Any are deterministic authored nested outcomes;
-            // multi-Any remains alternatives and must not be guessed into a context.
-            AddGuaranteedKeys(candidates, legacy.CapsuleContainedRelics);
-        }
-
-        ModelKey[] sources = candidates
-            .Where(key => key.IsValid)
-            .Distinct(ModelKeyComparer.Instance)
+        // Shared guaranteed acquisitions retain source position semantics. This
+        // includes source-ambiguous required Capsule outputs as held facts, but
+        // never guesses multi-Any or future relic-queue observations.
+        ModelKey[] sources = ExplicitOpeningRelicFacts.EnumerateGuaranteed(compiled.NormalizedQuery)
             .Where(key => OpeningCombatRewardImpactAdapterRegistry.TryResolve(profileId, key, out _))
-            .OrderBy(key => key.Serialized, StringComparer.Ordinal)
             .ToArray();
 
         Beta110CombatRewardInfluenceFlags flags = Beta110CombatRewardInfluenceFlags.None;
@@ -188,32 +130,4 @@ internal static class Beta110CombatRewardExplicitContextProjector
             OpeningCombatRewardImpactAdapterRegistry.BuildImpactFingerprint(profileId, impactSources));
     }
 
-    private static bool HasExplicitCapsuleSource(SearchQuery query)
-    {
-        if (query.OpeningRoute is { IsValid: true } route && IsCapsule(route.RouteRelicKey))
-            return true;
-
-        if (query.OpeningRouteRelicRequirement is { IsEmpty: false } routeRelics &&
-            routeRelics.RequiredRelicKeys.Any(IsCapsule))
-            return true;
-
-        LegacyNeowSemanticConstraints legacy = query.LegacyNeow;
-        if (legacy.RequiredBonesCombination.Any(IsCapsule) ||
-            legacy.RequiredBonesAcquisitionOrder.Any(IsCapsule))
-            return true;
-
-        return query.StructuredOpeningEffects.Any(condition =>
-            !condition.IsEmpty && IsCapsule(condition.SourceRelicKey));
-    }
-
-    private static bool IsCapsule(ModelKey key) =>
-        key == BaseGameModelKeys.Relics.SmallCapsule || key == BaseGameModelKeys.Relics.LargeCapsule;
-
-    private static void AddGuaranteedKeys(ICollection<ModelKey> target, ModelKeySetFilter filter)
-    {
-        foreach (ModelKey key in filter.All)
-            target.Add(key);
-        if (filter.Any.Count == 1)
-            target.Add(filter.Any[0]);
-    }
 }

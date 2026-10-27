@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <!-- Point to the Slay the Spire 2 installation root. -->
+    <Sts2Path>D:\SteamLibrary\steamapps\common\Slay the Spire 2</Sts2Path>
+
+    <!-- Alternatively, set these directly and remove Sts2Path above. -->
+    <!-- <Sts2ReferenceDir>D:\SteamLibrary\steamapps\common\Slay the Spire 2\data_sts2_windows_x86_64</Sts2ReferenceDir> -->
+    <!-- <Rt2ModsDir>D:\SteamLibrary\steamapps\common\Slay the Spire 2\mods</Rt2ModsDir> -->
+  </PropertyGroup>
+</Project>

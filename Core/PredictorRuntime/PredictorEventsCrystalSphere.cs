@@ -73,6 +73,7 @@ internal sealed partial class PredictorRun
             _crystalPlacedAllItems = PopulateCrystalItems();
             attempts++;
         } while (!_crystalPlacedAllItems && attempts < 10);
+        EventOptions = [];
         Phase = PredictorPhase.EventChoice;
         _requestId++;
     }
@@ -175,7 +176,7 @@ internal sealed partial class PredictorRun
         if (item.Kind == "CURSE")
         {
             var key = new ModelKey("CARD", "DOUBT");
-            PredictorSettlementEffects.RequireImplementedCard(PredictorCardChanges.Definition(Context, key).Prototype, Context.Crystal != null);
+            PredictorSettlementEffects.RequireImplementedCard(PredictorCardChanges.Definition(Context, key).Prototype, Context.Crystal != null, context: Context);
             Working = PredictorObtainSources.AddCard(Context, Working, key);
             Accept(new("CrystalDoubtRevealed", Working.Deck[^1], [], null, null));
         }
@@ -223,12 +224,14 @@ internal sealed partial class PredictorRun
         }
         var generated = PredictorRewardGeneration.Generate(Context, Working, plans,
             cancellationToken: token, eventRng: _eventRng);
+        _eventRewardContinuation = true;
         var parentInputs = _inputs;
         Phase = PredictorPhase.Complete;
         PrepareRewardNode(Working.Position,
             generated.Rewards.Select(r => r with { Origin = PredictorRewardOrigin.Event }).ToImmutableArray(),
             generated.State, token);
         _inputs = parentInputs;
+        EventOptions = [];
         GenerationStages = generated.Stages;
     }
 

@@ -1,0 +1,153 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="..\..\..\Sts2PathDiscovery.props" />
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <Optimize>true</Optimize>
+    <GodotProjectDir>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\..\..'))</GodotProjectDir>
+    <NoWarn>$(NoWarn);CS0436</NoWarn>
+    <AssemblyName>Rt2FunctionalChecks</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <CompilerVisibleProperty Include="GodotProjectDir" />
+    <Compile Include="Program.cs" />
+    <Compile Include="ShionNeowOptimizationChecks.cs" />
+    <Compile Include="ShionExactTrialChecks.cs" />
+    <Compile Include="NeowCpuFourWayChecks.cs" />
+    <Compile Include="PreparedCombatRewardPoolChecks.cs" />
+    <Compile Include="CCompleteMatchingChecks.cs" />
+    <Compile Include="SimpleProbabilityPrinciplesChecks.cs" />
+    <Compile Include="EtaCostClosureChecks.cs" />
+    <Compile Include="SmallCandidateExactChecks.cs" />
+    <Compile Include="SmallCandidateExactChecks.BatchGrouping.cs" />
+    <Compile Include="PredictorOperationSceneChecks.cs" />
+    <Compile Include="PredictorOperationCrystalChecks.cs" />
+    <Compile Include="PredictorOperationTreasurePartyChecks.cs" />
+    <Compile Include="PredictorOperationRelicSmokeChecks.cs" />
+    <Compile Include="PredictorOperationLinkedRewardChecks.cs" />
+    <Compile Include="PredictorOperationMendChecks.cs" />
+    <Compile Include="PredictorOperationChecks.cs" />
+    <Compile Include="NeowOperationPreviewChecks.cs" />
+    <Compile Include="PredictorOperationEventChecks.cs" />
+    <Compile Include="PredictorOperationEventProjectionChecks.cs" />
+    <Compile Include="PredictorOperationEventCaptureChecks.cs" />
+    <Compile Include="PredictorOperationCaptureChecks.cs" />
+    <Compile Include="SearchFailureContinuationChecks.cs" />
+    <Compile Include="SearchFailureContinuationChecks.RecoveryCost.cs" />
+    <Compile Include="FamilyCanonicalCostChecks.cs" />
+    <Compile Include="FamilyPrivateCompleteCallCostChecks.cs" />
+    <Compile Include="InitialRoomNumericalChecks.cs" />
+    <Compile Include="FeedbackBundleChecks.cs" />
+    <Compile Include="CombinationRegressionChecks.cs" />
+    <Compile Include="CombinationRegressionChecks.Party.cs" />
+    <Compile Include="PersistenceChecks.cs" />
+    <Compile Include="PresetWorkbenchChecks.cs" />
+    <Compile Include="NativeWorkbenchCheckEnvironment.cs" />
+    <Compile Include="SeedLibraryWorkflowChecks.cs" />
+    <Compile Include="SeedLibraryPersistenceChecks.cs" />
+    <Compile Include="CardCollectionStoreChecks.cs" />
+    <Compile Include="CombatCardExclusionChecks.cs" />
+    <Compile Include="CardCollectionWorkbenchChecks.cs" />
+    <Compile Include="PredictabilityMathChecks.cs" />
+    <Compile Include="WorkbenchContractChecks.cs" />
+    <Compile Include="ObjectPickerContextChecks.cs" />
+    <Compile Include="AuthoredMorphicChecks.cs" />
+    <Compile Include="MapPreviewChecks.cs" />
+    <Compile Include="MapRouteChecks.cs" />
+    <Compile Include="MapRouteSequenceChecks.cs" />
+    <Compile Include="UnknownRoomChecks.cs" />
+    <Compile Include="InitialRoomExactChecks.cs" />
+    <Compile Include="MorphicFilterChecks.cs" />
+    <Compile Include="TransformationAggregateChecks.cs" />
+    <Compile Include="TransformationRelicContinuationChecks.cs" />
+    <Compile Include="MorphicFilterChecks.EventClosure.cs" />
+    <Compile Include="MorphicFilterChecks.Whitelist.cs" />
+    <Compile Include="ReleaseCompatibilityChecks.cs" />
+    <Compile Include="RuntimeVersionProfileChecks.cs" />
+    <Compile Include="HistoricalDataChecks.cs" />
+    <Compile Include="CpuCostClosureChecks.cs" />
+    <Compile Include="FamilyCpuIntegrationChecks.cs" />
+    <Compile Include="FamilyCpuIntegrationChecks.Resume.cs" />
+    <Compile Include="FamilyCpuOnlyChecks.cs" />
+    <Compile Include="CpuWorkerBudgetChecks.cs" />
+    <Compile Include="RelicCpuChecks.cs" />
+    <Compile Include="NeowIdentityCpuChecks.cs" />
+    <Compile Include="RelicShopCpuChecks.cs" />
+
+    <Compile Include="TerminalQueueAccountingChecks.cs" />
+    <Compile Include="ProductionReplayChecks.cs" />
+    <Compile Include="FamilyNeowChecks.cs" />
+    <Compile Include="FamilyBonesArcaneChecks.cs" />
+    <Compile Include="FamilyCombatRewardChecks.cs" />
+    <Compile Include="CExplicitOpeningChecks.cs" />
+    <Compile Include="CombatRarityAuditChecks.cs" />
+    <Compile Include="FamilyWorldChecks.cs" />
+    <Compile Include="FamilyAEChecks.cs" />
+    <Compile Include="FamilyAllocationPricingChecks.cs" />
+    <Compile Include="GpuCostCalibrationChecks.cs" />
+    <Compile Include="GpuOwnerLifecycleChecks.cs" />
+    <Compile Include="GpuInitializationChecks.cs" />
+    <Compile Include="ExactBoundaryChecks.cs" />
+    <Compile Include="PredictorClosureChecks.cs" />
+    <Compile Include="PredictorClosureChecks.Events.cs" />
+    <Compile Include="PredictorRuntimeChecks.cs" />
+    <Compile Include="PredictorRouteLivePolicyChecks.cs" />
+    <Compile Include="PredictorDrawingEventChecks.cs" />
+    <Compile Include="PredictorDrawRewardContinuationChecks.cs" />
+    <Compile Include="PredictorChoiceIntChecks.cs" />
+    <Compile Include="PredictorKnowledgeTraceChecks.cs" />
+    <Compile Include="PredictorDeckKnowledgeChecks.cs" />
+    <Compile Include="PredictorCauseEvidenceChecks.cs" />
+    <Compile Include="PredictorRouteFactRecorderChecks.cs" />
+    <Compile Include="PredictorRoutePartialKnowledgeChecks.cs" />
+    <Compile Include="PredictorRoomResultRecordingChecks.cs" />
+    <Compile Include="PredictorCombatTraceChecks.cs" />
+    <Compile Include="PredictorShopReadRecordingChecks.cs" />
+    <Compile Include="PredictorTerminalBoundaryUiChecks.cs" />
+    <Compile Include="PredictorStreamKnowledgeChecks.cs" />
+    <Compile Include="PredictorAncientTraceChecks.cs" />
+    <Compile Include="PredictorEventTraceChecks.cs" />
+    <Compile Include="PredictorRestTreasureReadRecordingChecks.cs" />
+    <Compile Include="InRunMapDiagnosticsFormatterChecks.cs" />
+    <Compile Include="PredictorRuntimeSourceChecks.cs" />
+    <Compile Include="PredictorLiveCaptureChecks.cs" />
+    <Compile Include="PredictorCombatRewardFactsChecks.cs" />
+    <Compile Include="PredictorCombatKnowledgeChecks.cs" />
+    <Compile Include="PredictorCardRewardNicheKnowledgeChecks.cs" />
+    <Compile Include="PredictorRewardPickupScopeChecks.cs" />
+    <Compile Include="PredictorRoutePlansChecks.cs" />
+    <Compile Include="PredictorRouteKnowledgeChecks.cs" />
+    <Compile Include="PredictorRouteShopChecks.cs" />
+    <Compile Include="PredictorRouteAncientChecks.cs" />
+    <Compile Include="PredictorEventOccurrenceChecks.cs" />
+    <Compile Include="PredictorRouteEventChecks.cs" />
+    <Compile Include="PredictorRouteTreasureChecks.cs" />
+    <Compile Include="PredictorRouteEditChecks.cs" />
+    <Compile Include="PredictorRouteJourneyChecks.cs" />
+    <Compile Include="PredictorMapRouteDraftChecks.cs" />
+    <Compile Include="PredictorMapStrokeRecognitionChecks.cs" />
+    <Compile Include="PredictorEncounterEntryChecks.cs" />
+    <Compile Include="PredictorEventChecks.cs" />
+    <Compile Include="PredictorShopChecks.cs" />
+    <Compile Include="PredictorObtainChecks.cs" />
+    <Compile Include="PredictorMapChecks.cs" />
+    <Compile Include="PredictorAncientChecks.cs" />
+    <Compile Include="PredictorPressureChecks.cs" />
+    <Compile Include="WwpCommitmentChecks.cs" />
+    <Compile Include="CompatibilityReferenceChecks.cs" />
+    <Compile Include="ShopOrderedChecks.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\RolltheSpire2.csproj" />
+    <Compile Include="..\..\shared\Beta110FastSearchFixtureAuthority.cs" Link="Beta110FastSearchFixtureAuthority.cs" />
+    <Compile Include="..\..\shared\Beta110LargeCapsuleSemanticFixture.cs" Link="Beta110LargeCapsuleSemanticFixture.cs" />
+    <Compile Include="..\..\shared\Beta109WorldFixtureFactory.cs" Link="Beta109WorldFixtureFactory.cs" />
+    <Compile Include="..\..\shared\RelicSequenceFixtureFactory.cs" Link="RelicSequenceFixtureFactory.cs" />
+    <Reference Include="sts2"><HintPath>$(Sts2ReferenceDir)\sts2.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(Sts2ReferenceDir)\0Harmony.dll</HintPath><Private>true</Private></Reference>
+  </ItemGroup>
+</Project>

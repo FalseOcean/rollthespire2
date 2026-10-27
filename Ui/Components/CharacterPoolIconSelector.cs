@@ -113,7 +113,7 @@ internal sealed partial class CharacterPoolIconSelector : HBoxContainer
                 AddFallbackVisual(button);
             }
 
-            var selectedBadge = Ui1Theme.Label("✓", Ui1TextRole.Accent);
+            var selectedBadge = MainPanelTheme.Label("✓", Ui1TextRole.Accent);
             selectedBadge.MouseFilter = Control.MouseFilterEnum.Ignore;
             selectedBadge.HorizontalAlignment = HorizontalAlignment.Center;
             selectedBadge.VerticalAlignment = VerticalAlignment.Center;
@@ -211,7 +211,7 @@ internal sealed partial class CharacterPoolIconSelector : HBoxContainer
 
     private static void AddFallbackVisual(Button button)
     {
-        var fallback = Ui1Theme.Label("?", Ui1TextRole.Muted);
+        var fallback = MainPanelTheme.Label("?", Ui1TextRole.Muted);
         fallback.HorizontalAlignment = HorizontalAlignment.Center;
         fallback.VerticalAlignment = VerticalAlignment.Center;
         fallback.MouseFilter = Control.MouseFilterEnum.Ignore;
@@ -235,7 +235,7 @@ internal sealed partial class CharacterPoolIconSelector : HBoxContainer
         foreach ((ModelKey key, Button button) in _buttons)
         {
             bool selected = key == _selectedKey;
-            Ui1Theme.ApplyButton(
+            MainPanelTheme.ApplyButton(
                 button,
                 selected ? Ui1ButtonRole.NavigationSelected : Ui1ButtonRole.Secondary);
             if (_selectionBadges.TryGetValue(key, out Label? badge) && badge is not null)

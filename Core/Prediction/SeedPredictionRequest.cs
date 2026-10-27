@@ -36,6 +36,11 @@ public sealed class SeedPredictionRequest
 {
     // Root-local party replay supplies the actual opening choices to the existing information pipeline.
     internal IReadOnlyList<NeowChoiceResult>? PartyOpeningChoices { get; set; }
+    internal CombatRewardPoolPreparation? RewardPoolPreparation { get; set; }
+    // Null keeps rich analysis; Exact may request effects for only the opening
+    // roots whose outcomes or continuation its authored conditions consume.
+    internal IReadOnlySet<ModelKey>? NeowEffectRoots { get; set; }
+    internal bool ShouldProjectNeowEffects(ModelKey root) => NeowEffectRoots is null || NeowEffectRoots.Contains(root);
     // Legacy result envelope metadata only. The party projector owns its observation;
     // this does not invoke the single-player analysis pipeline or inherit its UI cap.
     internal static SeedPredictionRequest ForPartyInitialInformation(TrustedRootHashInput input, OrderedPartyAuthority party, bool diagnostics)
@@ -108,7 +113,8 @@ public sealed class SeedPredictionRequest
         IncludeDiagnostics,
         enabled,
         TrustedRootHashInput,
-        CombatRewardProjectionRequest) { PartyOpeningChoices = PartyOpeningChoices };
+        CombatRewardProjectionRequest) { PartyOpeningChoices = PartyOpeningChoices, NeowEffectRoots = NeowEffectRoots,
+            RewardPoolPreparation = RewardPoolPreparation };
 
     public bool Includes(SeedPredictionDomainSelection domain) => (Domains & domain) == domain;
 
@@ -118,7 +124,8 @@ public sealed class SeedPredictionRequest
         PredictionRequestId.Create(), OriginalSeed, Character, Ascension, PlayersCount, PlayerSlotIndex,
         Authority, conditions, Domains, RelicSequencePreviewCount, IncludeDiagnostics,
         EnableComplexBonesDeckInteractions, TrustedRootHashInput, CombatRewardProjectionRequest)
-        { PartyOpeningChoices = PartyOpeningChoices };
+        { PartyOpeningChoices = PartyOpeningChoices, NeowEffectRoots = NeowEffectRoots,
+            RewardPoolPreparation = RewardPoolPreparation };
 
     public static bool TryCreate(
         string? originalSeed,

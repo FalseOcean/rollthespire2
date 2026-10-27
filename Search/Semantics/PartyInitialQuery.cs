@@ -42,6 +42,7 @@ internal static class PartyInitialQuery
         query = BindSharedConditions(query);
         string empty = JsonSerializer.Serialize(SearchQuery.Empty);
         var personalAtSharedLevel = query with { Players = [], VariantBossBranches = [], StandardMaps = [], EventSequenceConstraints = [],
+            FirstActUnknownEventPrefixCount = 0,
             LegacyWorld = query.LegacyWorld with { BossFilters = [], BossOrdinalFilters = [], AncientIdentityFilters = [] } };
         if (JsonSerializer.Serialize(personalAtSharedLevel) != empty)
             throw new ArgumentException("Party.PersonalConditionsRequirePlayerSlot");
@@ -72,6 +73,7 @@ internal static class PartyInitialQuery
         var normalized = query with
         {
             Players = query.Players.Select(p => p with { Offers = Canonical(p.Offers),
+                Conditions = p.Conditions with { CombatCardExclusion = personal[p.Slot].NormalizedQuery.CombatCardExclusion },
                 SelectedOption = p.SelectedOption is { } plan ? plan with { Choices = plan.Choices.OrderBy(c => c.GroupId, StringComparer.Ordinal).ToArray() } : null,
                 Results = p.Results.DistinctBy(c => JsonSerializer.Serialize(c)).OrderBy(c => JsonSerializer.Serialize(c), StringComparer.Ordinal).ToArray() }).ToArray(),
             VariantBossBranches = query.VariantBossBranches.Select(b => b with { FirstBoss = Canonical(b.FirstBoss), SecondBoss = Canonical(b.SecondBoss) })
@@ -86,7 +88,8 @@ internal static class PartyInitialQuery
             throw new ArgumentException("Party.SecondBossPredicateWithoutOrdinal");
         var acts = normalized.VariantBossBranches.Select(b => b.Act).Concat(normalized.LegacyWorld.BossFilters.Select(b => b.Act))
             .Concat(normalized.LegacyWorld.BossOrdinalFilters.Select(b => b.Act)).Distinct();
-        bool impossible = acts.Any(number => !party.World.Beta109Generation!.OrderedActCatalog.Where(a => a.Act == number).Any(act =>
+        bool impossible = party.World.Beta109Generation is { CanReplayBossIdentityForSearch: true } generation &&
+            acts.Any(number => !generation.OrderedActCatalog.Where(a => a.Act == number).Any(act =>
         {
             var branches = normalized.VariantBossBranches.Where(b => b.Act == number).ToArray();
             var variant = branches.Where(b => b.VariantKey == act.ActKey).ToArray();
@@ -100,7 +103,7 @@ internal static class PartyInitialQuery
                 return seconds.Any(second =>
                 {
                     ModelKey[] all = second is { } key ? [boss, key] : [boss];
-                    return variant.All(b => Matches(b.FirstBoss, [boss]) && (!b.IncludesSecondBoss || second is { } s && Matches(b.SecondBoss, [s]))) &&
+                    return (variant.Length == 0 || variant.Any(b => Matches(b.FirstBoss, [boss]) && (!b.IncludesSecondBoss || second is { } s && Matches(b.SecondBoss, [s])))) &&
                         normalized.LegacyWorld.BossFilters.Where(b => b.Act == number).All(b => Matches(b.Keys, all)) &&
                         normalized.LegacyWorld.BossOrdinalFilters.Where(b => b.Act == number).All(b =>
                             b.Ordinal == 1 ? Matches(b.Keys, [boss]) : second is { } s && Matches(b.Keys, [s]));
@@ -110,7 +113,9 @@ internal static class PartyInitialQuery
         impossible |= personal.Any(p => p.Status == QueryNormalizationStatus.Impossible) || shared.Status == QueryNormalizationStatus.Impossible;
         return new CompiledSearch(authored, context, new(normalized, impossible ? QueryNormalizationStatus.Impossible : QueryNormalizationStatus.Legal, [], [], [], []),
             new(new(ResolvedCombatRewardRouteKind.NotApplicable, null, false, OrderedPartyAuthority.ObservationVersion)), false,
-            OrderedPartyAuthority.Hash(party.Fingerprint + "|" + OpeningPremiseId + "|" + (PartyNeowQuery.HasTransactions(normalized) ? Core.Effects.PartyNeowAdmission.ObservationVersion : "") + "|" + JsonSerializer.Serialize(normalized)))
+            OrderedPartyAuthority.Hash(party.Fingerprint + "|" + OpeningPremiseId + "|" + (PartyNeowQuery.HasTransactions(normalized) ? Core.Effects.PartyNeowAdmission.ObservationVersion : "") + "|" + JsonSerializer.Serialize(normalized) +
+                string.Concat(personal.Where(p => p.NormalizedQuery.CombatCardExclusion is { IsEmpty: false })
+                    .Select(p => "|CardIdentity:P" + p.Context.Authority.PlayerSlotIndex + ":" + p.Context.Authority.CardIdentityFingerprint))))
             { PlayerSearches = personal.Append(shared).ToArray(), UsesPartyFamilyProjection = familyProjection };
     }
 
@@ -126,8 +131,23 @@ internal static class PartyInitialQuery
             var groups = sources.Select(q => q.VariantBossBranches.Where(b => b.Act == act).ToArray()).Where(g => g.Length > 0).ToArray();
             var allowed = groups[0].Select(b => b.VariantKey).ToHashSet();
             foreach (var group in groups.Skip(1)) allowed.IntersectWith(group.Select(b => b.VariantKey));
-            if (allowed.Count == 0) throw new ArgumentException("Party.ConflictingSharedVariants:Act" + act);
-            variants.AddRange(groups.SelectMany(g => g).Where(b => allowed.Contains(b.VariantKey)));
+            if (allowed.Count == 0)
+            {
+                // Legal contradictory declarations have no shared parent. Keep
+                // explicit contradiction rather than turning zero rows into a
+                // wildcard or treating the authored shape as malformed.
+                variants.AddRange(groups[0].Select(b => b with { FirstBoss = new([], [b.VariantKey], [b.VariantKey]) }));
+                continue;
+            }
+            foreach (var key in allowed)
+            {
+                var alternatives = groups[0].Where(b => b.VariantKey == key).ToArray();
+                foreach (var source in groups.Skip(1))
+                    alternatives = alternatives.SelectMany(left => source.Where(right => right.VariantKey == key).Select(right =>
+                        new VariantScopedBossBranch(act, key, Conjoin(left.FirstBoss, right.FirstBoss),
+                            Conjoin(left.SecondBoss, right.SecondBoss), left.IncludesSecondBoss || right.IncludesSecondBoss))).ToArray();
+                variants.AddRange(alternatives);
+            }
         }
         var identities = sources.SelectMany(q => q.LegacyWorld.AncientIdentityFilters).ToList();
         // Options remain attached to their player and their exact Ancient branch.
@@ -154,6 +174,18 @@ internal static class PartyInitialQuery
             } }).ToArray()
         };
     }
+    private static ModelKeySetFilter Conjoin(ModelKeySetFilter left, ModelKeySetFilter right)
+    {
+        ModelKey[] any = left.Any.Count == 0 ? right.Any.ToArray() : right.Any.Count == 0 ? left.Any.ToArray() : left.Any.Intersect(right.Any).ToArray();
+        ModelKey[] all = left.All.Concat(right.All).Distinct().ToArray();
+        ModelKey[] ban = left.Ban.Concat(right.Ban).Distinct().ToArray();
+        if (left.Any.Count > 0 && right.Any.Count > 0 && any.Length == 0)
+        {
+            all = all.Append(left.Any[0]).Distinct().ToArray();
+            ban = ban.Append(left.Any[0]).Distinct().ToArray();
+        }
+        return new(any, all, ban);
+    }
     internal static bool Matches(ModelKeySetFilter condition, IEnumerable<ModelKey> values)
     {
         var set = values.ToHashSet();
@@ -165,7 +197,7 @@ internal static class PartyInitialQuery
             Matches(c.Keys, observation.Bosses.Where(b => b.Act == c.Act && b.Ordinal == c.Ordinal).Select(b => b.BossKey))) &&
         query.VariantBossBranches.GroupBy(b => b.Act).All(act =>
         observation.Acts.Count >= act.Key && act.GroupBy(b => b.VariantKey).Any(variant => observation.Acts[act.Key - 1] == variant.Key &&
-            variant.All(b => Matches(b.FirstBoss, observation.Bosses.Where(x => x.Act == b.Act && x.Ordinal == 1).Select(x => x.BossKey)) &&
+            variant.Any(b => Matches(b.FirstBoss, observation.Bosses.Where(x => x.Act == b.Act && x.Ordinal == 1).Select(x => x.BossKey)) &&
                 (!b.IncludesSecondBoss || observation.Bosses.Any(x => x.Act == b.Act && x.Ordinal == 2) &&
                     Matches(b.SecondBoss, observation.Bosses.Where(x => x.Act == b.Act && x.Ordinal == 2).Select(x => x.BossKey))))));
     internal static bool MatchesOffers(SearchQuery query, PartySeedInformation observation) => query.Players.All(p =>

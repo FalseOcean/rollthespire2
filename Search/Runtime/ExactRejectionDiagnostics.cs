@@ -28,10 +28,12 @@ internal static class ExactRejectionDiagnostics
                     { s.SourceRelicKey, s.Precision, groups = Groups(s.EffectGroups) }).ToArray()
                 }).ToArray()
             }).ToArray();
+            var childEvaluationScopes = result.Evaluation.Evidence
+                .Where(e => e.Code == "Party.ChildEvaluationScope").Take(4).ToArray();
             string json = RuntimeLog.SafeJson(new
             {
                 seed, result.Evaluation.Disposition, result.Evaluation.FailureCode,
-                result.Evaluation.RouteRejections,
+                result.Evaluation.RouteRejections, childEvaluationScopes,
                 plan.SnapshotFingerprint, result.Authority.CatalogFingerprint,
                 result.Authority.UnlockSnapshotFingerprint, result.Authority.EffectSnapshotFingerprint,
                 result.Authority.WorldSnapshotFingerprint,
@@ -57,18 +59,20 @@ internal static class ExactRejectionDiagnostics
                 observedParty = result.Document?.Party?.Transactions.Take(4).Select(t => new
                 { t.Slot, t.Option, t.OpeningRouteId, t.Choices, offers = Groups(t.Offers), results = Groups(t.Results) }).ToArray(),
                 documentAvailable = result.Document is not null,
-                sampleBounds = "3 offers;8 routes;12 groups;16 items per group;6 battles;4 card rewards"
+                sampleBounds = "3 offers;8 routes;12 groups;16 items per group;6 battles;4 card rewards;4 child scopes"
             });
             if (json.Length > 65536)
                 json = RuntimeLog.SafeJson(new { seed, result.Evaluation.Disposition, result.Evaluation.FailureCode,
-                    result.Evaluation.RouteRejections, plan.SnapshotFingerprint,
+                    result.Evaluation.RouteRejections, childEvaluationScopes, plan.SnapshotFingerprint,
                     observationOmitted = "SampleExceeds64KCharacters", originalCharacters = json.Length });
             RuntimeLog.TryBackgroundInfo("searchExactRejectionSample=true;sampleJson=" + json);
         }
         catch (Exception ex)
         {
             // Diagnostics must never change a search outcome.
-            RuntimeLog.TryBackgroundWarning("searchExactRejectionDiagnosticFailed=" + ex.GetType().Name);
+            Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Record(ex, "SearchRejectionDiagnosticFailed",
+                nameof(ExactRejectionDiagnostics), "RejectionSample", "issues.diagnostics_failed",
+                Infrastructure.Diagnostics.RuntimeIssueSeverity.Warning, correlationId: seed);
         }
     }
 }

@@ -9,6 +9,8 @@ internal sealed class EwPrivateInvocation(ExactSearchExecutionRequest request, E
     private int _batches;
     private double _ms;
     private bool _faulted;
+    bool IFamilyInvocation.ExecutionFaulted => _faulted;
+    GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => ConditionPerformance.UsesGpu ? GpuNumericRequirements.Int64 | GpuNumericRequirements.Float64 : GpuNumericRequirements.None;
     public string FamilyId => "E.EventResult";
     public IReadOnlyList<string> Coverage => ["E.EventResult","W.World"];
     public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId,EwPrivateGpuExecutor.MaxRoots,[],"EW.UnpricedEquivalentCoverage");

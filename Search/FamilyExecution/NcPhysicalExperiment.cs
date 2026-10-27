@@ -14,10 +14,9 @@ internal static class NcPhysicalExperiment
         if(registered.Count!=2||registered.OfType<CombatRewardFamily>().SingleOrDefault()?.GpuPlan is not {} c ||
             registered.OfType<NeowFamily>().SingleOrDefault()?.GpuPlan is not {} n)
             throw new InvalidOperationException("Y5.RequiresGpuNCOnly");
-        // Preserve the original Y5 natural-order modes; rare-NC modes explicitly compare complete allocations.
-        if(mode is "ordinary" or "private-ordinal" or "verify-ordinal" && ordinary.OrderedFamilies[0].FamilyId!="C.CombatReward")throw new InvalidOperationException("Y5.ExpectedNaturalCFirst");
-        if(mode=="ordinary")selected=ordinary;
-        else if(mode is "ordinary-nc" or "ordinary-cn")
+        // Every trial names its execution order directly. The original Y5
+        // aliases retain C>N independently of the ordinary Search planner.
+        if(mode is "ordinary" or "ordinary-nc" or "ordinary-cn")
         {
             var first=mode=="ordinary-nc"?"N.Neow":"C.CombatReward";
             var ordered=registered.OrderBy(f=>f.FamilyId==first?0:1).ToArray();
@@ -27,7 +26,7 @@ internal static class NcPhysicalExperiment
                 return new FamilyExecutionPlanStage(f,f.Coverage,i!=0,i==0?1:double.NaN,null,null,null,condition,
                     GpuCostCalibration.ResolveReference(condition),null,null,null,null,i);
             }).ToArray();
-            selected=new("RareNC."+mode,"RareNC.ExplicitUnpriced.20260908",FamilyPlannerRankingAuthority.UnpricedPhysicalTrial,
+            selected=new((mode=="ordinary"?"Y5.":"RareNC.")+mode,"RareNC.ExplicitUnpriced.20260908",FamilyPlannerRankingAuthority.UnpricedPhysicalTrial,
                 stages,null,["ExplicitOwnerExperiment"],["ExperimentalQuoteUnavailable"]);
         }
         else

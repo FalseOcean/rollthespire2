@@ -20,11 +20,6 @@ internal sealed partial class RelicFamily : IFamilyInvocation
     IEnumerable<GpuLocalPeak> IFamilyInvocation.CostPeaks => _costSamples.Peaks;
     void IFamilyInvocation.LogExecutionEvidence() => _costSamples.WriteSummary();
     bool IFamilyInvocation.CanBindPrivateSerial => !_gpuDisabled;
-    FamilyPhysicalQuote? IFamilyInvocation.QuoteCommonPrivateWorkCancellation(FamilyPhysicalQuoteRequest g) =>
-        _gpuDisabled || !FamilyPhysicalQuote.AdmittedRequest(g) || !FamilyPhysicalQuote.HasReferenceBackend() ? null :
-        new(FamilyId, "R.SameCompiledTrackedShopBody", 0, RelicFamilyGpuExecutor.Capacity,
-            390,
-            "ComparisonOnly;UnknownNumericalCancelled;SamePlanAndAppend32;SameBodyReferenceSetup;PublicReachAppliedByAllocation");
     FamilyPrivateGpuExecution IFamilyInvocation.BindPrivateSerial(Godot.RenderingDevice rd,
         PrivateOrdinalBuffer? input, PrivateOrdinalBuffer? output)
     {
@@ -88,11 +83,17 @@ internal sealed partial class RelicFamily : IFamilyInvocation
             plan, FamilyPhysicalImplementationRevisions.RelicCompactPerformance);
     }
 
+    bool IFamilyInvocation.ExecutionFaulted => _gpuDisabled;
+    GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => ConditionPerformance.UsesGpu ? GpuNumericRequirements.Int64 : GpuNumericRequirements.None;
     public string FamilyId => "R.Relic";
+    internal ExactSearchExecutionRequest PricingRequest => _request;
+    internal RelicFamilyPlan PricingPlan => _plan;
+    internal bool PricingMeasuredBodyEligible => true;
     internal string PricingSignature => $"last={_plan.LastRequiredBucket};pool=" + string.Join(',', _plan.Pool.BucketLengths) +
         ";tracked=" + string.Join(',', _plan.TrackedCountsByLane) + ";depth=" + string.Join(',', _plan.PositiveDepthByLane);
     public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest request) =>
-        RelicPhysicalPricing.Quote(_request, _plan, request, _expectedFilteringCost);
+        FamilyGpuReadback.Reference(this, FamilyCanonicalMeasuredCost.TryDenseQuote(this, request) ??
+            RelicPhysicalPricing.Quote(_request, _plan, request, _expectedFilteringCost));
     public FamilyAnalyticalCostProjection AnalyticalCost => _analyticalCost;
     public FamilySurvivalProjection Survival => _survival;
     public FamilyExpectedFilteringCostProjection ExpectedFilteringCost => _expectedFilteringCost;
@@ -102,18 +103,33 @@ internal sealed partial class RelicFamily : IFamilyInvocation
     internal int PreferredExecutionWindowSize => RelicFamilyGpuExecutor.Capacity;
 
     public static bool TryCreate(ExactSearchExecutionRequest request, out IFamilyInvocation? family)
+        => TryCreate(request, out family, true);
+
+    internal static bool TryCreate(ExactSearchExecutionRequest request, out IFamilyInvocation? family, bool preferGpu,
+        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
         ArgumentNullException.ThrowIfNull(request);
         family = null;
-        if (!request.Evaluation.RequiresRelicSequenceDomain) return false;
+        InitialRoomsPlan? treasure = InitialRoomsPlan.TryCompileTreasure(request, numericalVariant);
+        if (!request.Evaluation.RelicSequenceConditions.Any(c => !c.IsEmpty) &&
+            !request.Evaluation.RelicShopSequenceConditions.Any(c => !c.IsEmpty))
+        {
+            if (treasure is null) return false;
+            family = new InitialRoomsInvocation(request, "R.Relic", treasure, null, preferGpu);
+            return true;
+        }
         IRuntimeProfile profile = RuntimeProfileRegistry.Select(request.Detection);
         if (!RelicFamilyPlanCompiler.TryCompile(request, out RelicFamilyPlan? plan, out string issue) || plan is null)
         {
             RuntimeLog.TryBackgroundWarning(
                 $"rFamilyUnavailable=true;issue={Sanitize(issue)};recovery=ExactOnly;legacyFallback=false");
-            return false;
+            if (treasure is null) return false;
+            family = new InitialRoomsInvocation(request, "R.Relic", treasure, null, preferGpu);
+            return true;
         }
         family = new RelicFamily(request, profile, plan);
+        if (treasure is not null) family = new InitialRoomsInvocation(request, "R.Relic", treasure, family, preferGpu);
+        else if (!preferGpu) family = FamilyCpuExecution.ConfiguredRealizations(family).First();
         return true;
     }
 
@@ -403,9 +419,17 @@ internal sealed partial class RelicFamily : IFamilyInvocation
             _request.Evaluation.RelicShopSequenceConditions.Select(c => c.Count).DefaultIfEmpty(1).Max());
         var prediction = RelicSequencePredictor.PredictFromRootHash(_profile, root, "CpuReference", _request.Authority.WorldAuthority, preview);
         if (prediction.Status != SeedDomainEvaluationStatus.Evaluated || prediction.Lanes.Any(l => l.Precision != PredictionPrecision.Exact))
-            throw new InvalidOperationException("R.CpuReferenceNotExact");
+        {
+            if (Interlocked.Exchange(ref _referenceIncompleteReported, 1) == 0)
+                RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.RecordDegradation(
+                    "RelicFilterIncomplete", nameof(RelicFamily), "Filter.Reference", "issues.filter_incomplete",
+                    $"cause=R.CpuReferenceNotExact;status={prediction.Status};retained=true;filterDecision=Unknown;matchClaimed=false");
+            return true;
+        }
         return MatchesReference(prediction);
     }
+
+    private int _referenceIncompleteReported;
 
     private bool MatchesReference(RelicSequencePredictionResult prediction)
     {
@@ -446,7 +470,11 @@ internal sealed partial class RelicFamily : IFamilyInvocation
             if (_gpu is not null)
                 await context.ExecuteGpuAsync(_ => { _gpu.Dispose(); return true; }, CancellationToken.None).ConfigureAwait(false);
         }
-        catch { }
+        catch (Exception cleanupFailure)
+        {
+            context.RecordGpuCleanupFailure(cleanupFailure, FamilyId,
+                "DisableGpu.Dispose", _request.SnapshotFingerprint);
+        }
         _gpu = null;
         RuntimeLog.TryBackgroundWarning(
             $"rFamilyPhysicalFault=true;family={FamilyId};failure={Sanitize(failure)};" +

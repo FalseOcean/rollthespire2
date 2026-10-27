@@ -3,8 +3,7 @@ using RolltheSpire2.Core.Identity;
 namespace RolltheSpire2.Presentation.ContentNames;
 
 /// <summary>
-/// Selects the user-facing content name without allowing an embedded catalog
-/// fallback to pre-empt a name copied from the live game's localization model.
+/// Selects the live game's name or the full original ID when no useful name exists.
 /// This policy is pure and worker-safe; the runtime model lookup itself remains
 /// a main-thread Infrastructure responsibility.
 /// </summary>
@@ -12,20 +11,14 @@ public static class GameContentNameResolutionPolicy
 {
     public static string PreferRuntimeLocalizedName(
         ModelKey key,
-        string? runtimeLocalizedName,
-        string? fallbackName)
+        string? runtimeLocalizedName)
     {
         if (IsUsefulRuntimeName(runtimeLocalizedName, key))
         {
             return runtimeLocalizedName!.Trim();
         }
 
-        if (!string.IsNullOrWhiteSpace(fallbackName))
-        {
-            return fallbackName.Trim();
-        }
-
-        return key.IsValid ? key.Entry : key.Serialized;
+        return key.Serialized;
     }
 
     public static bool IsUsefulRuntimeName(string? value, ModelKey key)

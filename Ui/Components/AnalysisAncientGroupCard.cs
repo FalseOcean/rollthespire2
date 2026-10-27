@@ -48,12 +48,12 @@ internal sealed partial class AnalysisAncientGroupCard : PanelContainer
 
         Name = "AnalysisAncientGroupCard";
         SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        Ui1Theme.ApplyPanel(this, Ui1SurfaceRole.Card, CardRadius, CardBorderWidth, CardPadding);
+        MainPanelTheme.ApplyPanel(this, Ui1SurfaceRole.Card, CardRadius, CardBorderWidth, CardPadding);
 
         var root = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         root.AddThemeConstantOverride("separation", OuterGap);
 
-        _header = Ui1Theme.Label(string.Empty, Ui1TextRole.SectionTitle);
+        _header = MainPanelTheme.Label(string.Empty, Ui1TextRole.SectionTitle);
         _header.Name = "AncientCardHeader";
         root.AddChild(_header);
 
@@ -88,7 +88,7 @@ internal sealed partial class AnalysisAncientGroupCard : PanelContainer
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             SizeFlagsStretchRatio = 1f
         };
-        Ui1Theme.ApplyPanel(_act2Card, Ui1SurfaceRole.Input, ActSubcardRadius, ActSubcardBorderWidth, ActSubcardPadding);
+        MainPanelTheme.ApplyPanel(_act2Card, Ui1SurfaceRole.Input, ActSubcardRadius, ActSubcardBorderWidth, ActSubcardPadding);
 
         _act3Card = new AnalysisAncientActSubcard(
             icons,
@@ -107,7 +107,7 @@ internal sealed partial class AnalysisAncientGroupCard : PanelContainer
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             SizeFlagsStretchRatio = 1f
         };
-        Ui1Theme.ApplyPanel(_act3Card, Ui1SurfaceRole.Input, ActSubcardRadius, ActSubcardBorderWidth, ActSubcardPadding);
+        MainPanelTheme.ApplyPanel(_act3Card, Ui1SurfaceRole.Input, ActSubcardRadius, ActSubcardBorderWidth, ActSubcardPadding);
 
         resultRow.AddChild(_act2Card);
         resultRow.AddChild(_act3Card);
@@ -211,7 +211,7 @@ internal sealed partial class AnalysisAncientActSubcard : PanelContainer
         };
         root.AddThemeConstantOverride("separation", LayerGap);
 
-        _actLabel = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta);
+        _actLabel = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta);
         _actLabel.Name = "ActLabel";
         _actLabel.CustomMinimumSize = new Vector2(actLabelWidth, 20f);
         _actLabel.SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin;
@@ -237,7 +237,7 @@ internal sealed partial class AnalysisAncientActSubcard : PanelContainer
         _optionsHost.AddThemeConstantOverride("separation", optionGap);
         _optionsHost.Resized += ReflowOptionWidths;
 
-        _optionMeasureLabel = Ui1Theme.Label(string.Empty, Ui1TextRole.Body, wrap: false);
+        _optionMeasureLabel = MainPanelTheme.Label(string.Empty, Ui1TextRole.Body, wrap: false);
         _optionMeasureLabel.Visible = false;
         _optionMeasureLabel.MouseFilter = Control.MouseFilterEnum.Ignore;
 
@@ -341,7 +341,7 @@ internal sealed partial class AnalysisAncientActSubcard : PanelContainer
             interactive: false);
         row.AddChild(icon);
 
-        Label name = Ui1Theme.Label(ancient.AncientDisplay.DisplayName, Ui1TextRole.CardTitle, wrap: false);
+        Label name = MainPanelTheme.Label(ancient.AncientDisplay.DisplayName, Ui1TextRole.CardTitle, wrap: false);
         name.SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin;
         name.CustomMinimumSize = new Vector2(120f, _identityIconSize);
         name.ClipText = false;
@@ -386,7 +386,7 @@ internal sealed partial class AnalysisAncientActSubcard : PanelContainer
                                !string.IsNullOrWhiteSpace(option.CharacterTargetLabel)
             ? Ui1TextRole.Warning
             : Ui1TextRole.Body;
-        Label name = Ui1Theme.Label(compositeText, textRole, wrap: false);
+        Label name = MainPanelTheme.Label(compositeText, textRole, wrap: false);
         name.Name = "OptionName";
         name.CustomMinimumSize = new Vector2(0f, _optionIconSize);
         name.SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin;
@@ -507,7 +507,7 @@ internal sealed partial class AnalysisAncientActSubcard : PanelContainer
             SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
             MouseFilter = interactive ? Control.MouseFilterEnum.Stop : Control.MouseFilterEnum.Ignore
         };
-        Ui1Theme.ApplyPanel(surface, Ui1SurfaceRole.Input, 3f, 1);
+        MainPanelTheme.ApplyPanel(surface, Ui1SurfaceRole.Input, 3f, 1);
 
         var texture = new TextureRect
         {
@@ -523,7 +523,7 @@ internal sealed partial class AnalysisAncientActSubcard : PanelContainer
         texture.OffsetRight = -4f;
         texture.OffsetBottom = -4f;
 
-        Label missing = Ui1Theme.Label(texture.Visible ? string.Empty : "?", Ui1TextRole.Muted);
+        Label missing = MainPanelTheme.Label(texture.Visible ? string.Empty : "?", Ui1TextRole.Muted);
         missing.HorizontalAlignment = HorizontalAlignment.Center;
         missing.VerticalAlignment = VerticalAlignment.Center;
         missing.MouseFilter = Control.MouseFilterEnum.Ignore;
@@ -537,7 +537,7 @@ internal sealed partial class AnalysisAncientActSubcard : PanelContainer
 
     private void AddUnavailable(string text, int optionSlotCount)
     {
-        var unavailable = Ui1Theme.Label(text, Ui1TextRole.Warning, true);
+        var unavailable = MainPanelTheme.Label(text, Ui1TextRole.Warning, true);
         unavailable.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         unavailable.VerticalAlignment = VerticalAlignment.Center;
         _identityHost.AddChild(unavailable);

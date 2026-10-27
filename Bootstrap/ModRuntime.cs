@@ -80,6 +80,26 @@ internal static class ModRuntime
                 RuntimeLog.Fault("startupFault=true;phase=MainMenuPatchInstallation", ex);
             }
 
+            try
+            {
+                var harmony = new Harmony(ModEntry.ModId + ".OperationObservation");
+                Infrastructure.Snapshots.PredictorOperationCapture.Install(harmony);
+                Infrastructure.Snapshots.PredictorOperationEventCapture.Install(harmony);
+            }
+            catch (Exception ex)
+            {
+                RuntimeLog.Fault("startupFault=true;phase=OperationObservationInstallation", ex);
+            }
+
+            try
+            {
+                NeowOperationPredictionPatch.Install(new Harmony(ModEntry.ModId + ".NeowOperationUi"));
+            }
+            catch (Exception ex)
+            {
+                RuntimeLog.Fault("startupFault=true;phase=NeowOperationUiInstallation", ex);
+            }
+
             _initialized = true;
         }
     }

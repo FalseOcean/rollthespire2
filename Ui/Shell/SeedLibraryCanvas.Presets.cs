@@ -9,6 +9,7 @@ namespace RolltheSpire2.Ui.Shell;
 internal sealed partial class SeedLibraryCanvas
 {
     private string _selectedPreset = "";
+    private SearchPresetDefinition[] _visiblePresets = [];
     private readonly IGameIconResolver _presetIcons = new ReflectionGameIconResolver("seed-library-presets");
     public event Action<SearchPresetDefinition>? PresetUseRequested;
     public event Action<SearchPresetDefinition>? PresetHistoryRequested;
@@ -26,39 +27,22 @@ internal sealed partial class SeedLibraryCanvas
 
     private bool CanUse(SearchPresetDefinition preset, out string issue)
     {
-        if (preset.IsWorkbench)
-        {
-            var resolution = SearchPresetCompatibilityResolver.ResolveWorkbench(preset, RuntimeAuthorityEnvironment.Current.Authority);
-            issue = resolution.Unresolved.Count > 0
-                ? T("当前缺少：", "Currently unavailable: ") + string.Join("、", resolution.Unresolved.Select(r => r.StableIdentity).Distinct())
-                : resolution.CanLoad ? "" : T("当前无法完整读取这些条件，原始内容已保留。", "These conditions cannot be fully read. The original content is preserved.");
-            return resolution.CanLoad;
-        }
-        var legacy = SearchPresetCompatibilityResolver.Resolve(preset, RuntimeAuthorityEnvironment.Current.Authority);
-        issue = legacy.Kind == SearchPresetLoadResolutionKind.Full ? "" : T("当前无法完整使用这些条件，原始内容已保留。", "These conditions cannot be used in full. The original content is preserved.");
-        return legacy.Kind == SearchPresetLoadResolutionKind.Full;
+        var resolution = SearchPresetCompatibilityResolver.ResolveWorkbench(preset, RuntimeAuthorityEnvironment.Current.Authority);
+        var text = RolltheSpire2.Presentation.Localization.JsonUiTextProvider.CreatePredictorUi13(_language);
+        issue = resolution.CanLoad ? "" : text.Get("ui1.preset.intent_unresolved") + "\n" + resolution.Issue;
+        if (resolution.Unresolved.Count > 0)
+            issue += "\n" + text.Get("ui1.preset.references_unavailable") + " " +
+                string.Join("、", resolution.Unresolved.Select(r => r.StableIdentity).Distinct());
+        return resolution.CanLoad;
     }
 
-    private void RenderPresets()
+    private SearchPresetDefinition? RenderPresets()
     {
-        var presets = _historyStore!.Presets.GetAll().Where(p => p.Source != SearchPresetSource.Temporary && Matches(p.SearchText + " " + PresetContext(p))).ToArray();
-        if (!presets.Any(p => p.Id == _selectedPreset))
-            _selectedPreset = presets.OrderBy(p => p.Source == SearchPresetSource.User ? 0 : 1).FirstOrDefault()?.Id ?? "";
-        foreach (var source in new[] { SearchPresetSource.User, SearchPresetSource.BuiltIn })
-        {
-            var items = presets.Where(p => p.Source == source).ToArray();
-            if (items.Length == 0) continue;
-            _entries.AddChild(Text(source == SearchPresetSource.User ? T("我的预设", "My presets") : T("开发者预设", "Developer presets"), 16, true));
-            foreach (var preset in items)
-                AddListItem(preset.Id, preset.TitleFor(_language), PresetContext(preset), _selectedPreset == preset.Id,
-                    () => { _selectedPreset = preset.Id; SelectDetail(); }, preset.VisualIcons);
-        }
-        if (_historyStore.Presets.LoadIssues.Count > 0) ShowIssue(T("部分预设无法读取，原文件已保留。", "Some presets could not be read; original files are preserved."));
-        var selected = presets.FirstOrDefault(p => p.Id == _selectedPreset);
+        var selected = _visiblePresets.FirstOrDefault(p => p.Id == _selectedPreset);
         if (selected is null)
         {
             EmptyDetail(T("可以在筛种页保存当前条件，或从开发者预设开始。", "Save conditions from Search, or start with a developer preset."));
-            return;
+            return null;
         }
         var primary = DetailHeading(selected.TitleFor(_language), PresetContext(selected), selected.VisualIcons);
         bool canUse = CanUse(selected, out string issue);
@@ -77,8 +61,17 @@ internal sealed partial class SeedLibraryCanvas
         string description = selected.DescriptionFor(_language);
         if (!string.IsNullOrWhiteSpace(description)) _detail.AddChild(Text(description, 19));
         if (!canUse) _detail.AddChild(Text(issue, 17, true));
-        if (selected.Source == SearchPresetSource.User) AddEnvironmentNotice(selected.EnvironmentFingerprint);
-        AddConditions(selected);
+        if (selected.Source == SearchPresetSource.User)
+        {
+            // Saved marker applicability is independent of historical executions.
+            string key = SearchEnvironmentIdentity.PresetMarkerNoticeKey(selected, _historyStore!.Environment);
+            string message = RolltheSpire2.Presentation.Localization.JsonUiTextProvider.CreateUi13(_language).Get(key);
+            if (key == "ui1.library.environment.current_unavailable" && _historyStore.Environment.CaptureIssue.Length > 0)
+                message += " " + _historyStore.Environment.CaptureIssue;
+            var notice = Text(message, 16, true);
+            notice.Name = "LibraryEnvironmentNotice"; _detail.AddChild(notice);
+        }
+        return selected;
     }
 
     private void AddPresetIcons(Control parent, IReadOnlyList<SearchPresetVisualIconRef> icons, int size)

@@ -1,6 +1,7 @@
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.Effects;
+using RolltheSpire2.Core.Effects.Coverage;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Neow;
@@ -29,7 +30,9 @@ internal static class SeedPredictionDocumentFactory
         SeedPredictionOverallStatus documentViabilityStatus,
         WorldPredictionResult? worldPrediction = null,
         RelicSequencePredictionResult? relicSequencePrediction = null,
-        NormalCombatRewardSequencePredictionResult? normalCombatRewardPrediction = null) => new()
+        NormalCombatRewardSequencePredictionResult? normalCombatRewardPrediction = null,
+        SeedDomainEvaluationStatus? neowStatus = null,
+        string neowIssueCode = "") => new()
     {
         Context = SeedPredictionDocument.CreateContext(request, detection.DisplayVersion, profileId),
         PredictorId = analyzerId,
@@ -40,7 +43,9 @@ internal static class SeedPredictionDocumentFactory
             worldPrediction,
             relicSequencePrediction,
             normalCombatRewardPrediction,
-            request.Authority.WorldSnapshotFingerprint),
+            request.Authority.WorldSnapshotFingerprint,
+            neowStatus,
+            neowIssueCode),
         Warnings = warnings,
         Diagnostics = request.IncludeDiagnostics
             ? ContextDiagnostics(request)
@@ -64,17 +69,23 @@ internal static class SeedPredictionDocumentFactory
         WorldPredictionResult? worldPrediction,
         RelicSequencePredictionResult? relicSequencePrediction,
         NormalCombatRewardSequencePredictionResult? normalCombatRewardPrediction,
-        string worldSnapshotFingerprint)
+        string worldSnapshotFingerprint,
+        SeedDomainEvaluationStatus? neowStatus,
+        string neowIssueCode)
     {
         var sections = new List<PredictionSection>();
-        if (choices.Count > 0)
+        if (choices.Count > 0 || neowStatus.HasValue)
         {
             sections.Add(new PredictionSection(
                 PredictionSectionKind.NeowIdentity,
                 PredictionDomain.NeowOpening,
                 PredictionScope.NeowChoiceIdentityAndMigratedImmediateEffects,
                 PredictionSourceState.SeedAndAuthoritySnapshot,
-                choices));
+                choices)
+            {
+                DomainStatus = neowStatus ?? SeedDomainEvaluationStatus.Evaluated,
+                IssueCode = neowIssueCode
+            });
         }
 
         if (worldPrediction is not null)
@@ -291,6 +302,17 @@ internal static class SeedPredictionDocumentFactory
         }
         return diagnostics;
     }
+
+    // Omitted observations retain no effect or continuation proof. Offer identity
+    // remains available without invoking an unrelated effect implementation.
+    internal static NeowEffectProjection UnrequestedNeowEffects => new(
+        NeowEffectImplementationStatus.Implemented,
+        PredictionPrecision.DescriptionOnly,
+        Array.Empty<PredictedEffectGroup>(),
+        Array.Empty<PredictionWarning>(),
+        "search.neow-effects-not-requested",
+        FullEffectSemanticsCompleteness: FullEffectSemanticsCompleteness.NotEvaluated,
+        ProductRelevantProjectionStatus: ProductRelevantProjectionStatus.NotEvaluatedByPolicy);
 
     public static NeowChoiceResult Choice(
         int slotIndex,

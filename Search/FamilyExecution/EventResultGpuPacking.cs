@@ -23,6 +23,9 @@ internal static class EventResultGpuPacking
 
     internal static uint[] PackForFamily(IReadOnlyList<EventResultSearchCondition> conditions, Beta111EventResultAuthority? eventAuthority, int playerSlot, out uint[] colorfulPool)
     {
+        ValidateFixedPoolGeometry(conditions, Beta111EventResultCatalog.TrashHeapGrabCards.Count,
+            Beta111EventResultCatalog.TrashHeapDiveRelics.Count, Beta111EventResultCatalog.FakeMerchantRelics.Count,
+            Beta111EventResultCatalog.ColorfulCharacterOrder.Count);
         var output = new List<uint> { 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u };
         foreach (EventResultSearchCondition condition in conditions)
         {
@@ -93,6 +96,25 @@ internal static class EventResultGpuPacking
         WriteU64(output, 7, ColorfulHash);
         colorfulPool = colors.ToArray();
         return output.ToArray();
+    }
+
+    // The unchanged shader has fixed scratch sizes and derives Dive by Grab/2.
+    // Check only selected observables so a changed pool cannot disable unrelated E paths.
+    internal static void ValidateFixedPoolGeometry(IReadOnlyList<EventResultSearchCondition> conditions,
+        int trashGrabCount, int trashDiveCount, int fakeCount, int colorfulCount)
+    {
+        foreach (var condition in conditions)
+        {
+            string? issue = condition.Kind switch
+            {
+                EventResultConditionKind.TrashHeapGrabCard or EventResultConditionKind.TrashHeapDiveRelic
+                    when trashGrabCount != 10 || trashDiveCount != 5 => $"TrashHeap:grab={trashGrabCount};dive={trashDiveCount};expected=10/5",
+                EventResultConditionKind.FakeMerchantOfferedFakeRelic when fakeCount != 9 => $"FakeMerchant:count={fakeCount};expected=9",
+                EventResultConditionKind.ColorfulPhilosophersOfferedColor when colorfulCount != 5 => $"ColorfulPhilosophers:count={colorfulCount};expected=5",
+                _ => null
+            };
+            if (issue != null) throw new NotSupportedException("E.GpuFixedPoolGeometryUnsupported:" + issue);
+        }
     }
 
     private static int IndexOf(IReadOnlyList<ModelKey> values, ModelKey target)

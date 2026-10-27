@@ -15,9 +15,8 @@ internal sealed record TransformationAggregateProbability(double? QueryHitProbab
     internal static double? SharedNeowJoint(RolltheSpire2.Search.Contracts.ExactSearchExecutionRequest request,
         TransformationAggregateNumericalPlan numerical)
     {
-        if (!TransformationAggregateCondition.HasSharedNeow(request.Evaluation) || !numerical.Closed ||
-            numerical.Neow is null || NeowReplayPlan.Compile(request, false).ExactOnly.Length != 0 ||
-            request.Evaluation.EffectOutputConditions.Count != 0) return null;
+        if (!TransformationAggregateCondition.HasSharedNeow(request.Evaluation) || !numerical.ProbabilityClosed ||
+            numerical.Neow is null) return null;
         var source = request.CompiledSearch.NormalizedQuery;
         var query = LegacySearchQueryAdapter.FromFilter(NeowReplayPlan.NeowFilter(request, false)) with {
             OpeningRoute = source.OpeningRoute,
@@ -39,7 +38,7 @@ internal sealed record TransformationAggregateProbability(double? QueryHitProbab
         const string policy = "T.LocalWithReplacementDistributions;NFiniteOfferAndUnorderedPair;NamedStreamsModeledIndependent;NoEmpiricalFit;BonesRoutesSameClosedOutputs_NotDoubleMass";
         double identity = plan.Neow is { } n ? NeowFamilyProjections.IdentityProbability(n, n.Filter) : 1;
         var groups = plan.DrawGroups;
-        if (!plan.Closed)
+        if (!plan.ProbabilityClosed)
             return new(null, null, identity, plan.Condition.OpportunityCount, [], "T.ObservationAuthorityUnclosed");
         var local = groups.Select(g => RareDistribution(g.Pools.Select(pool => pool.Count(i => plan.IsRare(i)) / (double)pool.Length))).ToArray();
         var c = plan.Condition;
@@ -73,9 +72,11 @@ internal sealed record TransformationAggregateProbability(double? QueryHitProbab
         }
         double conditional = states.Select((p,s) => Score(s) >= Goal() ? p : 0).Sum();
         double probability = Math.Clamp(identity * plan.EventGateProbability * conditional, 0, 1);
-        return new(probability, probability, identity, expectedDraws, local, policy +
+        return new(probability, plan.Closed ? probability : null, identity, expectedDraws, local, policy +
             (c.RequiresRareRemainder ? ";TargetMultisetAndRemainingRare=SameDrawJoint" : "") +
-            (c.TrialNondescript ? ";TrialNondescriptCaseMass=1/3;CaseDrawPrecedesTransforms" : ""));
+            (c.TrialNondescript ? ";TrialNondescriptCaseMass=1/3;CaseDrawPrecedesTransforms" : "") +
+            ";UnspecifiedCompanionInfluenceIgnored=OwnerApproved;RuntimeContinuationProofUnchanged" +
+            (plan.Closed ? "" : ";RuntimeSurvivalUnmodeled=ConservativeUnknownOutputs"));
         int Score(int state) => c.Predicate == TransformationAggregatePredicate.RareCountAtLeast ? state : System.Numerics.BitOperations.PopCount((uint)state);
         int Goal() => c.Predicate == TransformationAggregatePredicate.RareCountAtLeast ? c.MinimumRareCount : c.TargetMultiset.Count;
     }
@@ -84,7 +85,7 @@ internal sealed record TransformationAggregateProbability(double? QueryHitProbab
     internal static double? WithNeowConditions(TransformationAggregateNumericalPlan plan,
         IReadOnlyList<RolltheSpire2.Search.Contracts.NeowStructuredEffectSearchCondition> conditions)
     {
-        if (!plan.Closed) return null;
+        if (!plan.ProbabilityClosed) return null;
         var c = plan.Condition;
         var states = new Dictionary<int,double> { [0] = 1 };
         foreach (var group in plan.DrawGroups)
@@ -141,44 +142,5 @@ internal sealed record TransformationAggregateProbability(double? QueryHitProbab
             distribution=next;
         }
         return distribution;
-    }
-}
-
-internal sealed partial class TransformationAggregateNumericalPlan
-{
-    internal int LocalId(RolltheSpire2.Core.Identity.ModelKey key)
-    {
-        if (_neow is null) return -2;
-        int dense = Array.IndexOf(_neow.Authority.EffectCatalog.DenseKeys,key);
-        return dense >= 0 ? _neowIds[dense] : -2;
-    }
-    internal bool OwnsGroup(ulong hash, RolltheSpire2.Core.Identity.ModelKey source) =>
-        hash == TransformationsHash && source == RolltheSpire2.Core.Identity.BaseGameModelKeys.Relics.LeafyPoultice ||
-        hash == NicheHash && source == RolltheSpire2.Core.Identity.BaseGameModelKeys.Relics.NewLeaf;
-    internal double EventGateProbability => _condition.TrialNondescript ? 1d/3 : 1d;
-    internal TransformationAggregateCondition Condition => _condition;
-    internal NeowReplayPlan? Neow => _neow;
-    internal bool IsRare(int id) => _rare[id];
-    internal uint TargetBits(int id)
-    {
-        uint bits=0; for(int i=0;i<_targets.Length;i++) if(_targets[i]==id) bits |= 1u<<i; return bits;
-    }
-    internal bool Closed => (_neow is null || _closedNeow) && _events.All(g=>g.Pools.All(p=>p.Length>0));
-    internal (ulong Hash, int Prefix, int[][] Pools)[] DrawGroups
-    {
-        get
-        {
-            var groups = new List<(ulong,int,int[][])>();
-            if (_neow is { } n)
-            {
-                int[] Pool(ushort[] ids) => ids.Select(i=>_neowIds[i]).ToArray();
-                var catalog=n.Authority.EffectCatalog;
-                if (_condition.Opening != TransformationOpening.NewLeaf)
-                    groups.Add((TransformationsHash,0,[Pool(catalog.LeafyStrikeTransformPool),Pool(catalog.LeafyDefendTransformPool)]));
-                if (_condition.Opening is TransformationOpening.NewLeaf or TransformationOpening.BonesLeafyNewLeaf)
-                    groups.Add((NicheHash,0,[Pool(catalog.NewLeafTransformPool)]));
-            }
-            groups.AddRange(_events); return groups.ToArray();
-        }
     }
 }

@@ -156,10 +156,34 @@ public sealed class DeveloperNotesDocumentProvider
         }
     }
 
-    private static Stream? OpenDocumentStream(string locale)
+    private static Stream? OpenDocumentStream(string documentKey)
     {
         Assembly assembly = typeof(DeveloperNotesDocumentProvider).Assembly;
-        string resourceName = $"RolltheSpire2.DeveloperNotes.{locale}.json";
+        string relativePath;
+        if (string.Equals(documentKey, "index", StringComparison.Ordinal))
+        {
+            relativePath = "Infrastructure/DeveloperNotes/index.json";
+        }
+        else
+        {
+            int localeSeparator = documentKey.LastIndexOf('.');
+            if (localeSeparator < 0)
+            {
+                return null;
+            }
+            string? language = documentKey[(localeSeparator + 1)..] switch
+            {
+                ChineseLocale => "zh",
+                EnglishLocale => "en",
+                _ => null
+            };
+            if (language is null)
+            {
+                return null;
+            }
+            relativePath = $"Texts/{language}/DeveloperNotes/{documentKey[..localeSeparator]}.json";
+        }
+        string resourceName = "RolltheSpire2." + relativePath.Replace('/', '.');
         Stream? embedded = assembly.GetManifestResourceStream(resourceName);
         if (embedded is not null)
         {
@@ -167,7 +191,7 @@ public sealed class DeveloperNotesDocumentProvider
         }
 
         string assemblyDirectory = Path.GetDirectoryName(assembly.Location) ?? AppContext.BaseDirectory;
-        string loosePath = Path.Combine(assemblyDirectory, "DeveloperNotes", locale + ".json");
+        string loosePath = Path.Combine(assemblyDirectory, relativePath.Replace('/', Path.DirectorySeparatorChar));
         return File.Exists(loosePath) ? File.OpenRead(loosePath) : null;
     }
 

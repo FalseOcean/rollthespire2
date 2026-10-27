@@ -18,9 +18,14 @@ internal sealed record PredictorCrystalTake(int RewardIndex, ModelKey Card, int?
     internal bool MatchesCard(PredictorCard card)=>card.Key==Card && (UpgradeLevel==null || card.UpgradeLevel==UpgradeLevel) &&
         (Enchantment==null || Enchantment.Value.Matches(card));
 }
+internal enum CrystalRewardActionKind { TakeCard, Sacrifice }
+internal sealed record CrystalRewardAction(int RewardIndex, CrystalRewardActionKind Kind, ModelKey Card = default,
+    int? UpgradeLevel = null, CrystalCardEnchantment? Enchantment = null, ModelKey Gift = default);
 internal sealed record PredictorCrystalSolution(string Status, long Examined,
     ImmutableArray<PredictorCrystalStep> Steps, ImmutableArray<PredictorCrystalTake> Takes)
 {
+    public ImmutableArray<CrystalRewardAction> RewardActions { get; init; } = [];
+    public ImmutableHashSet<ModelKey> SacrificeRelics { get; init; } = ImmutableHashSet<ModelKey>.Empty;
     internal long RewardRows { get; init; }
     internal long RewardCacheHits { get; init; }
     internal long GeometryPruned { get; init; }
@@ -41,6 +46,7 @@ internal sealed partial class PredictorRun
     internal static PredictorRun FromCrystal(PredictorCrystalSnapshot snapshot)
     {
         var run = new PredictorRun(snapshot.Context, snapshot.State);
+        run._localCrystalSimulation = true;
         run._eventKey = new("EVENT", "CRYSTAL_SPHERE"); run._eventRng = snapshot.EventRng.Restore();
         run._crystalActive = true; run._crystalRemaining = snapshot.Remaining;
         run._crystalTool = snapshot.Tool; run._crystalPlacedAllItems = snapshot.PlacedAllItems;
@@ -76,6 +82,7 @@ internal sealed partial class PredictorRun
         PredictorStreamState eventRng, bool debt, int price)
     {
         var run = new PredictorRun(context, state);
+        run._localCrystalSimulation = true;
         run._eventKey = new("EVENT", "CRYSTAL_SPHERE"); run._eventRng = eventRng.Restore();
         if (debt) run.Working = PredictorObtainSources.AddCard(context, state, new ModelKey("CARD", "DEBT"));
         // Native option has no affordability lock after occurrence; LoseGold

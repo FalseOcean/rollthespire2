@@ -1,11 +1,9 @@
 using System.Globalization;
-using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Identity;
-using RolltheSpire2.Core.World;
-using RolltheSpire2.Core.World.Snapshots;
 using RolltheSpire2.Core.Relics;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.Semantics;
+using RolltheSpire2.Search.FamilyExecution;
 
 namespace RolltheSpire2.Search.Selectivity;
 
@@ -17,25 +15,27 @@ namespace RolltheSpire2.Search.Selectivity;
 /// </summary>
 internal static class JointSelectivityEstimator
 {
-    private sealed record WorldBranchEstimate(
-        ModelKey ActKey,
-        double Prior,
-        double? EventProbability,
-        bool EventEligibilityKnown,
-        bool EventEligible,
-        double? BossProbability,
-        bool BossEligibilityKnown,
-        bool BossEligible,
-        double? ConditionalJoint,
-        bool Pruned,
-        string Reason,
-        IReadOnlyList<JointSelectivityComponent> Components);
-
     public static JointSelectivityResult EstimateQuery(SearchSelectivityInput plan)
     {
         ArgumentNullException.ThrowIfNull(plan);
+        return FamilyAuxiliaryEvidence.Read(nameof(JointSelectivityEstimator), "QueryProbability",
+            () => EstimateQueryUnchecked(plan), JointSelectivityResult.Unpriced(
+                "Probability.EstimationFailed", "Query probability is unavailable after an auxiliary estimation failure.",
+                "The original query and execution obligations are unchanged."), plan.CompiledSearch.SemanticFingerprint);
+    }
+
+    private static JointSelectivityResult EstimateQueryUnchecked(SearchSelectivityInput plan)
+    {
+        var query = plan.CompiledSearch.NormalizedQuery;
+        static bool HasExactOnlyConditions(SearchQuery q) => q.TreasureRelics is { IsEmpty: false };
+        if (HasExactOnlyConditions(query) || query.Players.Any(p => HasExactOnlyConditions(p.Conditions)))
+            return TreasureRelicProbability.Compose(plan, EstimateQuery);
+        if (query.FirstActUnknownEventPrefixCount > 0 || query.Players.Any(p => p.Conditions.FirstActUnknownEventPrefixCount > 0))
+            return FirstActUnknownEventProbability.Compose(plan, EstimateQuery);
         if (plan.CompiledSearch.Context.Party is not null)
+        {
             return PartyQueryProbability.Estimate(plan.CompiledSearch);
+        }
         if (plan.CompiledSearch.Query.TransformationAggregate is not null)
             return TransformationAggregateQueryProbability.Compose(plan, EstimateQuery);
         ProbabilitySemanticView semantic = ProbabilitySemanticProjection.From(plan);
@@ -221,12 +221,12 @@ internal static class JointSelectivityEstimator
         if (activeDomains.Length == 1)
         {
             SearchSelectivityDomain domain = activeDomains[0];
-            SearchSelectivityEstimate stage = SearchSelectivityEstimator.EstimateStage(plan, domain);
+            SearchSelectivityEstimate stage = EstimateStage(plan, domain);
             return FromSingleStage(stage, domain);
         }
 
         var stageEstimates = activeDomains
-            .Select(domain => (Domain: domain, Estimate: SearchSelectivityEstimator.EstimateStage(plan, domain)))
+            .Select(domain => (Domain: domain, Estimate: EstimateStage(plan, domain)))
             .ToArray();
 
         // A provable impossible factor makes the entire conjunction impossible even if
@@ -307,6 +307,12 @@ internal static class JointSelectivityEstimator
                 "RepresentativeSeedForQueryProbability=false"
             });
     }
+
+    private static SearchSelectivityEstimate EstimateStage(SearchSelectivityInput plan, SearchSelectivityDomain domain) =>
+        FamilyAuxiliaryEvidence.Read(nameof(JointSelectivityEstimator), "StageProbability:" + domain,
+            () => SearchSelectivityEstimator.EstimateStage(plan, domain),
+            SearchSelectivityEstimate.Unpriced("Probability.StageEstimationFailed", "Auxiliary estimate unavailable for " + domain),
+            plan.CompiledSearch.SemanticFingerprint);
 
     private static SearchSelectivityEstimate? TryEstimateEventResultBlock(
         SearchSelectivityInput plan,
@@ -1094,488 +1100,6 @@ internal static class JointSelectivityEstimator
         reason,
         estimate.Assumptions);
 
-    /// <summary>
-    /// Exact finite-mixture World model for the first supported query-wide family:
-    /// Act-selection variant + first effective Event + simple first-Boss predicate.
-    /// Shared up_front continuation is never multiplied unless one branch term is
-    /// deterministic (0/1), which makes the conjunction algebraically exact.
-    /// </summary>
-    private static JointSelectivityResult? EstimateWorldInternalJoint(SearchSelectivityInput plan)
-    {
-        NeowSearchFilter filter = ProbabilitySemanticProjection.From(plan).NumericalFilter;
-        EventSequenceSearchCondition[] events = filter.EventSequenceConditions.Where(item => !item.IsEmpty).ToArray();
-        ActModelKeySetFilter[] bosses = filter.BossFilters.Where(item => !item.IsEmpty).ToArray();
-        ActOrdinalModelKeySetFilter[] bossOrdinals = filter.BossOrdinalFilters.Where(item => !item.IsEmpty).ToArray();
-
-        // Preserve the already-audited Act3 two-Boss without-replacement model.
-        if (events.Length == 0 && bosses.Length == 0 && bossOrdinals.Length == 2)
-        {
-            SearchSelectivityEstimate existing = SearchSelectivityEstimator.EstimateAct3BossPair(plan);
-            if (existing.IsPriced && existing.Probability.HasValue)
-                return FromSingleStage(existing, SearchSelectivityDomain.WorldEvent);
-        }
-
-        if (events.Length > 1 || bosses.Length > 1 || bossOrdinals.Length != 0)
-            return null;
-        if (events.Length == 0 && bosses.Length == 0)
-            return null;
-
-        int act = events.Length == 1 ? events[0].Act : bosses[0].Act;
-        if (events.Any(item => item.Act != act) || bosses.Any(item => item.Act != act))
-            return null;
-        if (act is < 1 or > 3)
-            return null;
-
-        EventSequenceSearchCondition? eventCondition = events.SingleOrDefault();
-        ActModelKeySetFilter? bossCondition = bosses.SingleOrDefault();
-        ModelKey eventTarget = default;
-        var bossTargets = new HashSet<ModelKey>(ModelKeyComparer.Instance);
-        if (eventCondition is not null && !TryGetSinglePositiveEventTarget(eventCondition, out eventTarget))
-            return null;
-        if (bossCondition is not null && !TryGetSimplePositiveBossTargets(bossCondition.Keys, out bossTargets))
-            return null;
-
-        Beta109WorldGenerationSnapshot? generation = plan.Authority.WorldAuthority?.Beta109Generation;
-        if (generation is null || !generation.ActSelectionAuthorityExact)
-        {
-            return JointSelectivityResult.Unpriced(
-                "Joint.World.ActSelectionAuthorityMissing",
-                "World finite mixture requires exact act-selection authority.",
-                "Act-selection branch priors are unavailable; mixture is not normalized or guessed.",
-                new[] { "ActVariantPrior" });
-        }
-
-        Beta109ActSelectionGroupSnapshot? group = generation.ActSelectionGroups.SingleOrDefault(item => item.Act == act);
-        if (group is null || !group.EligibilityAndOrderExact || group.EligibleActsInSourceOrder.Count == 0)
-        {
-            return JointSelectivityResult.Unpriced(
-                "Joint.World.ActSelectionGroupMissing",
-                "Requested Act has no exact eligible-variant selection group.",
-                "Finite mixture cannot be constructed.",
-                new[] { "ActVariantGroup" });
-        }
-
-        IReadOnlyList<(ModelKey Key, double Prior)> priors = ResolveVariantPriors(generation, group);
-        double priorSum = priors.Sum(item => item.Prior);
-        if (Math.Abs(priorSum - 1d) > 1e-12)
-        {
-            return JointSelectivityResult.Unpriced(
-                "Joint.World.MixturePriorNotNormalized",
-                "Exact variant priors do not sum to one.",
-                $"Σ branch prior={F(priorSum)}; automatic renormalization is forbidden.",
-                new[] { "FiniteMixturePrior" });
-        }
-
-        var graphNodes = new List<SelectivityDependencyNode>
-        {
-            new("query", SelectivityDependencyNodeKind.QueryRoot, $"Act{act} Query", null, "QuerySemanticModel", SearchSelectivityDependencyClass.StructuralDependence, Array.Empty<string>()),
-            new("variant", SelectivityDependencyNodeKind.LatentParent, $"Act{act} Variant", null, "ActSelectionAuthority", SearchSelectivityDependencyClass.StructuralDependence, Array.Empty<string>())
-        };
-        var graphEdges = new List<SelectivityDependencyEdge>
-        {
-            new("variant", "query", SelectivityDependencyEdgeKind.SharedParent, "ActSelectionAuthority", "Observable conditions are evaluated under the selected Act variant.")
-        };
-        if (eventCondition is not null)
-        {
-            graphNodes.Add(new("event", SelectivityDependencyNodeKind.ObservableCondition, "Event " + eventTarget.Serialized, null, "EventPoolSequenceProjector", SearchSelectivityDependencyClass.SharedContinuation, Array.Empty<string>()));
-            graphEdges.Add(new("variant", "event", SelectivityDependencyEdgeKind.ConditionalOn, "ActEventCatalog", "Event eligibility and candidate multiplicity are variant-conditional."));
-        }
-        if (bossCondition is not null)
-        {
-            graphNodes.Add(new("boss", SelectivityDependencyNodeKind.ObservableCondition, "Boss target set", null, "ActBossPoolAuthority", SearchSelectivityDependencyClass.SharedContinuation, Array.Empty<string>()));
-            graphEdges.Add(new("variant", "boss", SelectivityDependencyEdgeKind.ConditionalOn, "ActBossPool", "Boss pool is variant-conditional."));
-        }
-        if (eventCondition is not null && bossCondition is not null)
-        {
-            graphEdges.Add(new("event", "boss", SelectivityDependencyEdgeKind.SharedContinuation, "up_front", "Event shuffle and Boss draw share the world up_front continuation; no product is permitted without mechanism authority."));
-        }
-
-        var branches = new List<JointSelectivityBranchTrace>();
-        var allKnownComponents = new List<JointSelectivityComponent>();
-        var unknownComponents = new List<string>();
-        double final = 0d;
-        bool allBranchesKnown = true;
-
-        foreach ((ModelKey actKey, double prior) in priors)
-        {
-            Beta109ActGenerationSnapshot? variant = generation.OrderedActCatalog.FirstOrDefault(item => item.ActKey == actKey && item.Act == act);
-            if (variant is null || !variant.HasExactGenerationInputs)
-            {
-                allBranchesKnown = false;
-                unknownComponents.Add("ActVariantAuthorityIncomplete:" + actKey.Serialized);
-                branches.Add(new JointSelectivityBranchTrace(
-                    "variant:" + actKey.Serialized,
-                    actKey.Serialized,
-                    prior,
-                    true,
-                    null,
-                    false,
-                    "VariantAuthorityIncomplete",
-                    Array.Empty<JointSelectivityComponent>(),
-                    Array.Empty<string>()));
-                continue;
-            }
-
-            var components = new List<JointSelectivityComponent>();
-            double? eventP = null;
-            bool eventKnown = eventCondition is null;
-            bool eventEligible = eventCondition is null;
-            if (eventCondition is not null)
-            {
-                if (TryEstimateFirstEffectiveEventProbability(generation, variant, eventCondition, eventTarget, out double p, out string authority, out string reason))
-                {
-                    eventP = p;
-                    eventKnown = true;
-                    eventEligible = p > 0d;
-                    components.Add(new JointSelectivityComponent(
-                        "event:" + actKey.Serialized,
-                        "Event=" + eventTarget.Serialized,
-                        actKey.Serialized,
-                        p,
-                        authority,
-                        JointSelectivityCombinationMethod.ConditionalEligibility,
-                        SearchSelectivityDependencyClass.SharedContinuation,
-                        true,
-                        eventEligible,
-                        reason,
-                        new[] { "ExactSlot=1 means first static-effective ordinary event after opening Ancient cursor offset." }));
-                }
-                else
-                {
-                    components.Add(new JointSelectivityComponent(
-                        "event:" + actKey.Serialized,
-                        "Event=" + eventTarget.Serialized,
-                        actKey.Serialized,
-                        null,
-                        authority,
-                        JointSelectivityCombinationMethod.Unknown,
-                        SearchSelectivityDependencyClass.SharedContinuation,
-                        false,
-                        false,
-                        reason,
-                        Array.Empty<string>()));
-                }
-            }
-
-            double? bossP = null;
-            bool bossKnown = bossCondition is null;
-            bool bossEligible = bossCondition is null;
-            if (bossCondition is not null)
-            {
-                if (TryEstimateSimpleFirstBossProbability(plan, variant, bossTargets, out double p, out string reason))
-                {
-                    bossP = p;
-                    bossKnown = true;
-                    bossEligible = p > 0d;
-                    components.Add(new JointSelectivityComponent(
-                        "boss:" + actKey.Serialized,
-                        "Boss∈{" + string.Join(',', bossTargets.Select(item => item.Serialized)) + "}",
-                        actKey.Serialized,
-                        p,
-                        "RuntimeAuthority.ActBossPool",
-                        JointSelectivityCombinationMethod.ConditionalEligibility,
-                        SearchSelectivityDependencyClass.SharedContinuation,
-                        true,
-                        bossEligible,
-                        reason,
-                        new[] { "Single first-Boss draw only; Act3 A10 two-Boss act-level set is not generalized here." }));
-                }
-                else
-                {
-                    components.Add(new JointSelectivityComponent(
-                        "boss:" + actKey.Serialized,
-                        "Boss target set",
-                        actKey.Serialized,
-                        null,
-                        "RuntimeAuthority.ActBossPool",
-                        JointSelectivityCombinationMethod.Unknown,
-                        SearchSelectivityDependencyClass.SharedContinuation,
-                        false,
-                        false,
-                        reason,
-                        Array.Empty<string>()));
-                }
-            }
-
-            double? conditional = CombineBranch(eventP, eventKnown, bossP, bossKnown, out bool pruned, out string branchReason);
-            if (!conditional.HasValue)
-            {
-                allBranchesKnown = false;
-                unknownComponents.Add("SharedContinuation:" + actKey.Serialized + ":EventBossConditionalJoint");
-            }
-            else
-            {
-                final += prior * conditional.Value;
-            }
-            allKnownComponents.AddRange(components.Where(item => item.Probability.HasValue));
-            branches.Add(new JointSelectivityBranchTrace(
-                "variant:" + actKey.Serialized,
-                actKey.Serialized,
-                prior,
-                true,
-                conditional,
-                pruned,
-                branchReason,
-                components,
-                Array.Empty<string>()));
-        }
-
-        string derivation = BuildMixtureDerivation(act, branches, allBranchesKnown ? final : null);
-        var graph = new SelectivityDependencyGraph(graphNodes, graphEdges);
-        if (allBranchesKnown)
-        {
-            return JointSelectivityResult.Exact(
-                final,
-                JointSelectivityCombinationMethod.FiniteMixture,
-                "Joint.World.ActVariantFiniteMixture",
-                "Exact finite mixture over source-authoritative Act variants. Branch-local SharedContinuation is multiplied only when algebraically resolved by a deterministic 0/1 term.",
-                derivation,
-                graph,
-                allKnownComponents,
-                branches,
-                new[]
-                {
-                    "Variant priors come from exact ActSelectionMode authority.",
-                    "No representative seed is used for query-wide probability.",
-                    "NaiveMarginalMultiplicationUsed=false"
-                },
-                "CompleteFiniteMixture");
-        }
-
-        return JointSelectivityResult.Partial(
-            "Joint.World.ActVariantPartialMixture",
-            "Act-variant branches and marginals are known, but at least one branch requires an unresolved Event/Boss SharedContinuation joint.",
-            derivation,
-            allKnownComponents,
-            unknownComponents,
-            graph,
-            branches,
-            new[]
-            {
-                "Known branch priors and marginals are preserved.",
-                "Unknown branch conditional joints are not filled with marginal products.",
-                "PlanningSurvivalUpperBound=1.0"
-            },
-            SearchSelectivityConfidence.High,
-            "FiniteMixtureBranchesKnown_JointContinuationPartial");
-    }
-
-    private static double? CombineBranch(
-        double? eventProbability,
-        bool eventKnown,
-        double? bossProbability,
-        bool bossKnown,
-        out bool pruned,
-        out string reason)
-    {
-        pruned = false;
-        if (!eventKnown || !bossKnown)
-        {
-            reason = "BranchComponentUnpriced";
-            return null;
-        }
-
-        bool hasEvent = eventProbability.HasValue;
-        bool hasBoss = bossProbability.HasValue;
-        if (!hasEvent && !hasBoss)
-        {
-            reason = "NoBranchPredicate";
-            return 1d;
-        }
-        if (hasEvent && !hasBoss)
-        {
-            pruned = eventProbability!.Value == 0d;
-            reason = pruned ? "EventEligibilityImpossible" : "EventOnly";
-            return eventProbability.Value;
-        }
-        if (!hasEvent && hasBoss)
-        {
-            pruned = bossProbability!.Value == 0d;
-            reason = pruned ? "BossEligibilityImpossible" : "BossOnly";
-            return bossProbability.Value;
-        }
-
-        double e = eventProbability!.Value;
-        double b = bossProbability!.Value;
-        if (e == 0d)
-        {
-            pruned = true;
-            reason = "EventEligibilityImpossible";
-            return 0d;
-        }
-        if (b == 0d)
-        {
-            pruned = true;
-            reason = "BossEligibilityImpossible";
-            return 0d;
-        }
-        if (e == 1d)
-        {
-            reason = "EventDeterministicTrue_BossConditionalRetained";
-            return b;
-        }
-        if (b == 1d)
-        {
-            reason = "BossDeterministicTrue_EventConditionalRetained";
-            return e;
-        }
-
-        reason = "SharedContinuationConditionalJointUnpriced_NoNaiveProduct";
-        return null;
-    }
-
-    private static IReadOnlyList<(ModelKey Key, double Prior)> ResolveVariantPriors(
-        Beta109WorldGenerationSnapshot generation,
-        Beta109ActSelectionGroupSnapshot group)
-    {
-        // BeginRunLocally performs the normal Act 1 draw and then applies the explicit
-        // overgrowth/underdocks override. Query-wide probability must model the effective
-        // selected Act, not the discarded pre-override draw.
-        if (group.Act == 1)
-        {
-            if (!generation.Act1OverrideExact)
-                return Array.Empty<(ModelKey, double)>();
-            if (generation.Act1OverrideResolvedKey is ModelKey overrideKey && overrideKey.IsValid)
-                return new[] { (overrideKey, 1d) };
-        }
-
-        if (group.SelectionMode == Beta109ActSelectionMode.DeterministicFirst)
-            return new[] { (group.EligibleActsInSourceOrder[0], 1d) };
-        if (group.SelectionMode != Beta109ActSelectionMode.RandomNextItem)
-            return Array.Empty<(ModelKey, double)>();
-
-        int count = group.EligibleActsInSourceOrder.Count;
-        if (count <= 0) return Array.Empty<(ModelKey, double)>();
-        return group.EligibleActsInSourceOrder
-            .GroupBy(key => key, ModelKeyComparer.Instance)
-            .Select(items => (items.Key, items.Count() / (double)count))
-            .ToArray();
-    }
-
-    private static bool TryEstimateFirstEffectiveEventProbability(
-        Beta109WorldGenerationSnapshot generation,
-        Beta109ActGenerationSnapshot variant,
-        EventSequenceSearchCondition condition,
-        ModelKey target,
-        out double probability,
-        out string authority,
-        out string reason)
-    {
-        probability = 0d;
-        authority = "EventPoolSequenceProjector";
-        reason = string.Empty;
-        if (condition.RangeMode != SearchSequenceRangeMode.ExactSlot || condition.RangeValue != 1)
-        {
-            reason = "OnlyExactSlot1Supported";
-            return false;
-        }
-        if (!EventPoolSequenceProjector.TryPrepare(
-                variant.Act,
-                variant.ActKey,
-                variant.EventRngConsumptionExact,
-                variant.OrderedRawEvents,
-                generation.EventAuthority.OrderedSharedEventsRaw,
-                generation.EventAuthority,
-                variant.OrderedEligibleEvents,
-                out EventPoolSequenceProjector.PreparedAct? prepared,
-                out string issue) || prepared is null)
-        {
-            reason = "EventAuthority:" + issue;
-            return false;
-        }
-
-        int n = prepared.Candidates.Count;
-        if (n <= EventPoolSequenceProjector.NormalNeowOpeningAncientEventCursorOffset)
-        {
-            probability = 0d;
-            reason = "NoOrdinaryEventAfterOpeningCursor";
-            return true;
-        }
-
-        int eligible = 0;
-        int targetEligible = 0;
-        foreach (EventPoolSequenceProjector.Candidate candidate in prepared.Candidates)
-        {
-            EventStaticEligibilityResult staticRule = EventStaticEligibilityCatalog.Evaluate(
-                candidate.EventKey,
-                variant.Act,
-                generation.Profile,
-                candidate.Source);
-            if (staticRule.ShouldReject) continue;
-            eligible++;
-            bool sourceMatches = !condition.Source.HasValue || condition.Source.Value == candidate.Source;
-            if (sourceMatches && candidate.EventKey == target) targetEligible++;
-        }
-
-        if (targetEligible == 0 || eligible == 0)
-        {
-            probability = 0d;
-            reason = "EventEligibilityImpossible";
-            return true;
-        }
-
-        // The first raw shuffled candidate is reserved for the opening Ancient cursor.
-        // With >=2 statically eligible occurrences, symmetry leaves the first remaining
-        // eligible occurrence uniform among those occurrences. With exactly one eligible
-        // occurrence it succeeds only when that sole occurrence was not the skipped first.
-        probability = eligible == 1
-            ? targetEligible * ((n - 1d) / n)
-            : targetEligible / (double)eligible;
-        probability = Math.Clamp(probability, 0d, 1d);
-        reason = $"PreparedCandidates={n};StaticEligibleOccurrences={eligible};TargetEligibleOccurrences={targetEligible};OpeningCursorOffset=1";
-        return true;
-    }
-
-    private static bool TryEstimateSimpleFirstBossProbability(
-        SearchSelectivityInput plan,
-        Beta109ActGenerationSnapshot variant,
-        HashSet<ModelKey> targets,
-        out double probability,
-        out string reason)
-    {
-        probability = 0d;
-        reason = string.Empty;
-        // At Ascension 10, Act3 act-level BossFilters are evaluated against the two-Boss
-        // pair. That structural shape already has a separate ordinal without-replacement
-        // authority and is intentionally not collapsed to first-Boss membership here.
-        if (plan.Ascension >= 10 && variant.Act == 3)
-        {
-            reason = "Act3A10ActLevelBossSetRequiresTwoBossJoint";
-            return false;
-        }
-        ModelKey[] pool = variant.Bosses.Where(key => key.IsValid).ToArray();
-        if (pool.Length == 0)
-        {
-            reason = "BossPoolEmpty";
-            return false;
-        }
-        int allowed = pool.Count(targets.Contains);
-        probability = allowed / (double)pool.Length;
-        reason = $"AllowedBosses={allowed};BossPool={pool.Length}";
-        return true;
-    }
-
-    private static bool TryGetSinglePositiveEventTarget(EventSequenceSearchCondition condition, out ModelKey target)
-    {
-        target = default;
-        if (condition.Keys.Ban.Count != 0 || (condition.Keys.Any.Count != 0 && condition.Keys.All.Count != 0)) return false;
-        IReadOnlyList<ModelKey> source = condition.Keys.Any.Count != 0 ? condition.Keys.Any : condition.Keys.All;
-        ModelKey[] distinct = source.Where(key => key.IsValid).Distinct(ModelKeyComparer.Instance).ToArray();
-        if (distinct.Length != 1) return false;
-        target = distinct[0];
-        return true;
-    }
-
-    private static bool TryGetSimplePositiveBossTargets(ModelKeySetFilter keys, out HashSet<ModelKey> targets)
-    {
-        targets = new HashSet<ModelKey>(ModelKeyComparer.Instance);
-        if (keys.Ban.Count != 0 || (keys.Any.Count != 0 && keys.All.Count != 0)) return false;
-        IReadOnlyList<ModelKey> source = keys.Any.Count != 0 ? keys.Any : keys.All;
-        if (keys.All.Count > 1) return false; // one first Boss cannot satisfy multiple All identities
-        foreach (ModelKey key in source.Where(key => key.IsValid).Distinct(ModelKeyComparer.Instance)) targets.Add(key);
-        return targets.Count != 0;
-    }
-
     private static JointSelectivityResult FromSingleStage(SearchSelectivityEstimate estimate, SearchSelectivityDomain domain)
     {
         SelectivityDependencyGraph graph;
@@ -1751,13 +1275,6 @@ internal static class JointSelectivityEstimator
         SearchSelectivityDependencyClass.AssumedIndependent => SelectivityDependencyEdgeKind.AssumedIndependent,
         _ => SelectivityDependencyEdgeKind.Unknown
     };
-
-    private static string BuildMixtureDerivation(int act, IReadOnlyList<JointSelectivityBranchTrace> branches, double? final)
-    {
-        string terms = string.Join(" + ", branches.Select(branch =>
-            F(branch.PriorProbability) + "×" + (branch.ConditionalProbability.HasValue ? F(branch.ConditionalProbability) : "Unknown")));
-        return $"Act{act} finite mixture: P(Query)={terms}=" + (final.HasValue ? F(final) : "Unknown") + "; Σ prior=" + F(branches.Sum(branch => branch.PriorProbability));
-    }
 
     private static string F(double? value) => value.HasValue
         ? value.Value.ToString("G17", CultureInfo.InvariantCulture)

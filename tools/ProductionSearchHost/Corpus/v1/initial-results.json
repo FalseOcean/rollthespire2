@@ -1,0 +1,636 @@
+[
+  {
+    "Case": "N-entry",
+    "Run": "run0.summary",
+    "Families": [
+      "N.Neow"
+    ],
+    "PhysicalRevisions": [
+      "N.Neow.Gpu.LocalDonor.DenseCarry8.CanonicalAbi1Ready.20260905.v2"
+    ],
+    "Roots": 262144,
+    "Matches": 30663,
+    "Cursor": 262144,
+    "SessionSeconds": 3.662634,
+    "ResultSha256": "29811F4D7122E9E895C3E3C3B8558328CF09B28251E03C40A902A8C8CDCB4E6F",
+    "NormalizedResultSha256": "D33A3EAD565ADC14228C605AB258B36E67B2A95EA32EEC7D6C1EC60A8D4ED07B",
+    "WorkloadSha256": "D5992879F9BDA256EEF58D553677F5045429FAE90D5B86715DF8C7CE243484B8",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "N-entry",
+    "Run": "run1.summary",
+    "Families": [
+      "N.Neow"
+    ],
+    "PhysicalRevisions": [
+      "N.Neow.Gpu.LocalDonor.DenseCarry8.CanonicalAbi1Ready.20260905.v2"
+    ],
+    "Roots": 262144,
+    "Matches": 30663,
+    "Cursor": 262144,
+    "SessionSeconds": 3.0661888,
+    "ResultSha256": "DFCE350504D311DE1905B46A22B3E79DA91EB414B0C1B7F49FE0AED573E33E50",
+    "NormalizedResultSha256": "D33A3EAD565ADC14228C605AB258B36E67B2A95EA32EEC7D6C1EC60A8D4ED07B",
+    "WorkloadSha256": "D5992879F9BDA256EEF58D553677F5045429FAE90D5B86715DF8C7CE243484B8",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "N-leafy",
+    "Run": "run0.summary",
+    "Families": [
+      "N.Neow"
+    ],
+    "PhysicalRevisions": [
+      "N.Neow.Gpu.LocalDonor.LeafyPreGate.DensePreBonesCarry8.CanonicalAbi1Ready.20260906.v1"
+    ],
+    "Roots": 134217728,
+    "Matches": 0,
+    "Cursor": 134217728,
+    "SessionSeconds": 3.8252599,
+    "ResultSha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+    "NormalizedResultSha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+    "WorkloadSha256": "8A580569495682219A0819A749AD3A76416B1B1F72B6D0C071F4602C1DAE1BB8",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "N-leafy",
+    "Run": "run1.summary",
+    "Families": [
+      "N.Neow"
+    ],
+    "PhysicalRevisions": [
+      "N.Neow.Gpu.LocalDonor.LeafyPreGate.DensePreBonesCarry8.CanonicalAbi1Ready.20260906.v1"
+    ],
+    "Roots": 134217728,
+    "Matches": 0,
+    "Cursor": 134217728,
+    "SessionSeconds": 3.9520551,
+    "ResultSha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+    "NormalizedResultSha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+    "WorkloadSha256": "8A580569495682219A0819A749AD3A76416B1B1F72B6D0C071F4602C1DAE1BB8",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "S-high-output",
+    "Run": "run0.summary",
+    "Families": [
+      "S.MerchantShopColorless"
+    ],
+    "PhysicalRevisions": [
+      "S.MerchantShopColorless.Stable.DenseCarry8.CanonicalAbi1Ready.20260904.v1",
+      "S.MerchantShopColorless.Gpu.v8.StableOrderedCompaction.HostPrefixScatter.Base34Carry8.ProcessedWorkgroup.ConsumeOnly.HistoricalNextInt"
+    ],
+    "Roots": 262144,
+    "Matches": 8198,
+    "Cursor": 262144,
+    "SessionSeconds": 0.5666196,
+    "ResultSha256": "A34ECD74530203D052F4B74E29CE93149DFD308E173ED3FADB003B2B8A9840F1",
+    "NormalizedResultSha256": "FD60D0BCC7B6E2C0DCC05181DD3920392F04AC3754210A277517A74EED574B5D",
+    "WorkloadSha256": "A5D430D4D318E2E9F8C88533DAF4D9C646DD56CCDE19074401C941EE2565D8E4",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "S-high-output",
+    "Run": "run1.summary",
+    "Families": [
+      "S.MerchantShopColorless"
+    ],
+    "PhysicalRevisions": [
+      "S.MerchantShopColorless.Stable.DenseCarry8.CanonicalAbi1Ready.20260904.v1",
+      "S.MerchantShopColorless.Gpu.v8.StableOrderedCompaction.HostPrefixScatter.Base34Carry8.ProcessedWorkgroup.ConsumeOnly.HistoricalNextInt"
+    ],
+    "Roots": 262144,
+    "Matches": 8198,
+    "Cursor": 262144,
+    "SessionSeconds": 0.4365756,
+    "ResultSha256": "C32D19A609A1898835C3B05C16D6E270E94619193A93D539EEAC43B31A8B45B5",
+    "NormalizedResultSha256": "FD60D0BCC7B6E2C0DCC05181DD3920392F04AC3754210A277517A74EED574B5D",
+    "WorkloadSha256": "A5D430D4D318E2E9F8C88533DAF4D9C646DD56CCDE19074401C941EE2565D8E4",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "S-three-shops",
+    "Run": "run0.summary",
+    "Families": [
+      "S.MerchantShopColorless"
+    ],
+    "PhysicalRevisions": [
+      "S.MerchantShopColorless.Atomic.DenseCarry8.CanonicalAbi1Ready.20260904.v1",
+      "S.MerchantShopColorless.Gpu.v7.Base34Carry8.ProcessedWorkgroup.ConsumeOnly.HistoricalNextInt"
+    ],
+    "Roots": 134217728,
+    "Matches": 4117,
+    "Cursor": 134217728,
+    "SessionSeconds": 0.5404225,
+    "ResultSha256": "0B29ECD502C4C5D8107907EDD26E3B618994EA32070B8556F31121403CA28A08",
+    "NormalizedResultSha256": "5AA41558395C5EC0F3D974587301EAD78FA3C79620A048BF71684A6A25448968",
+    "WorkloadSha256": "9671EA69A83FCD6A9D748BBDB78DBE7F422475E3A94C92DC73AB1E59D63953CD",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "S-three-shops",
+    "Run": "run1.summary",
+    "Families": [
+      "S.MerchantShopColorless"
+    ],
+    "PhysicalRevisions": [
+      "S.MerchantShopColorless.Atomic.DenseCarry8.CanonicalAbi1Ready.20260904.v1",
+      "S.MerchantShopColorless.Gpu.v7.Base34Carry8.ProcessedWorkgroup.ConsumeOnly.HistoricalNextInt"
+    ],
+    "Roots": 134217728,
+    "Matches": 4117,
+    "Cursor": 134217728,
+    "SessionSeconds": 0.387676,
+    "ResultSha256": "3191019D6EBF38CC1D3345CD34650C13915D96303A9516A7B285FAF3F9678B62",
+    "NormalizedResultSha256": "5AA41558395C5EC0F3D974587301EAD78FA3C79620A048BF71684A6A25448968",
+    "WorkloadSha256": "9671EA69A83FCD6A9D748BBDB78DBE7F422475E3A94C92DC73AB1E59D63953CD",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "R-common",
+    "Run": "run0.summary",
+    "Families": [
+      "R.Relic"
+    ],
+    "PhysicalRevisions": [
+      "R.Relic.DenseCarry8.CanonicalAbi1Ready.20260904.v1"
+    ],
+    "Roots": 262144,
+    "Matches": 10130,
+    "Cursor": 262144,
+    "SessionSeconds": 1.3485313,
+    "ResultSha256": "CEECA0B43182CA5C6FC4CD6CC57A981E07662C6366DF23E4C78BF390B4A4D9C8",
+    "NormalizedResultSha256": "B392A4D38F70762D5651637FD92E524802B4AB705536136A3CCF0E5975865FAA",
+    "WorkloadSha256": "BB6FEB5CCD07C16391B9EE48CBF5BA32E5DFA3E5B3A18AE4428369C76330BEBB",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "R-common",
+    "Run": "run1.summary",
+    "Families": [
+      "R.Relic"
+    ],
+    "PhysicalRevisions": [
+      "R.Relic.DenseCarry8.CanonicalAbi1Ready.20260904.v1"
+    ],
+    "Roots": 262144,
+    "Matches": 10130,
+    "Cursor": 262144,
+    "SessionSeconds": 0.9629876,
+    "ResultSha256": "3D586F605099E5724B4EFB15B8989A537C04987DFD2ED66BB1D5D167EFF4B019",
+    "NormalizedResultSha256": "B392A4D38F70762D5651637FD92E524802B4AB705536136A3CCF0E5975865FAA",
+    "WorkloadSha256": "BB6FEB5CCD07C16391B9EE48CBF5BA32E5DFA3E5B3A18AE4428369C76330BEBB",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "R-three-common",
+    "Run": "run0.summary",
+    "Families": [
+      "R.Relic"
+    ],
+    "PhysicalRevisions": [
+      "R.Relic.DenseCarry8.CanonicalAbi1Ready.20260904.v1"
+    ],
+    "Roots": 134217728,
+    "Matches": 51816,
+    "Cursor": 134217728,
+    "SessionSeconds": 3.3706022,
+    "ResultSha256": "631A0FA95B68117B599D9101E188630703C7A4DFD39019A10AABA45CB4A8C311",
+    "NormalizedResultSha256": "35F16EF075B9ECEC3D01EADA6F328EEEC459BBF8F895DCB67E01D09F40877EFF",
+    "WorkloadSha256": "DE82260FECB4DF11A8AFDC796893204D1F433BA0B573C37E3ABAFAE1EBE86322",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "R-three-common",
+    "Run": "run1.summary",
+    "Families": [
+      "R.Relic"
+    ],
+    "PhysicalRevisions": [
+      "R.Relic.DenseCarry8.CanonicalAbi1Ready.20260904.v1"
+    ],
+    "Roots": 134217728,
+    "Matches": 51816,
+    "Cursor": 134217728,
+    "SessionSeconds": 2.0283685,
+    "ResultSha256": "026577EE43BA9E8DAA8F1F0689F68C116E766943B811E1B9E8EAE47C9370B6FF",
+    "NormalizedResultSha256": "35F16EF075B9ECEC3D01EADA6F328EEEC459BBF8F895DCB67E01D09F40877EFF",
+    "WorkloadSha256": "DE82260FECB4DF11A8AFDC796893204D1F433BA0B573C37E3ABAFAE1EBE86322",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "C-three-potions",
+    "Run": "run0.summary",
+    "Families": [
+      "C.CombatReward"
+    ],
+    "PhysicalRevisions": [
+      "C.CombatReward.Gpu.NeutralHotLoop.Dense.CanonicalAbi1Ready.20260907.v1"
+    ],
+    "Roots": 134217728,
+    "Matches": 181,
+    "Cursor": 134217728,
+    "SessionSeconds": 0.5799894,
+    "ResultSha256": "56272F0786E04D5859510F86312A788AC5B2B7BD7FBE910CE940E4A47F5272A1",
+    "NormalizedResultSha256": "1340DFF7ABD9473AB01D3531611BDFE9C05E9F498F993C434BCD932BF6EA4E16",
+    "WorkloadSha256": "6462300D4DCD3EE70D10DB6C024764C4ACA1479C0F5838F3203EE542D22B72B7",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "C-three-potions",
+    "Run": "run1.summary",
+    "Families": [
+      "C.CombatReward"
+    ],
+    "PhysicalRevisions": [
+      "C.CombatReward.Gpu.NeutralHotLoop.Dense.CanonicalAbi1Ready.20260907.v1"
+    ],
+    "Roots": 134217728,
+    "Matches": 181,
+    "Cursor": 134217728,
+    "SessionSeconds": 0.3835634,
+    "ResultSha256": "01CF424CE1D63E07468AD03E44C551B885B77FACD21648A04DB7D66793FC1DC8",
+    "NormalizedResultSha256": "1340DFF7ABD9473AB01D3531611BDFE9C05E9F498F993C434BCD932BF6EA4E16",
+    "WorkloadSha256": "6462300D4DCD3EE70D10DB6C024764C4ACA1479C0F5838F3203EE542D22B72B7",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "W-K4",
+    "Run": "run0.summary",
+    "Families": [
+      "W.World"
+    ],
+    "PhysicalRevisions": [
+      "W.World.Gpu.Progression.Dense.K4.CanonicalAbi1Ready.20260907.v2"
+    ],
+    "Roots": 134217728,
+    "Matches": 7,
+    "Cursor": 134217728,
+    "SessionSeconds": 1.415611,
+    "ResultSha256": "FE718B6BA130B995DF07157EDB8C7F771E923E1892DDFFAC41C5F3D46E981865",
+    "NormalizedResultSha256": "1C075A9ADFD0DD118D1863A284BD8B5A3D6E04D283637F9A0E4C5896684D78E2",
+    "WorkloadSha256": "D7824D6955160F32A22BE8D9069D5BDF317837685B06A02ED5B4B9FD684080AE",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "W-K4",
+    "Run": "run1.summary",
+    "Families": [
+      "W.World"
+    ],
+    "PhysicalRevisions": [
+      "W.World.Gpu.Progression.Dense.K4.CanonicalAbi1Ready.20260907.v2"
+    ],
+    "Roots": 134217728,
+    "Matches": 7,
+    "Cursor": 134217728,
+    "SessionSeconds": 1.2992569,
+    "ResultSha256": "AA936714AB44225CC194D210B47E46C67FEADC1198D2C313D7D53C6290811800",
+    "NormalizedResultSha256": "1C075A9ADFD0DD118D1863A284BD8B5A3D6E04D283637F9A0E4C5896684D78E2",
+    "WorkloadSha256": "D7824D6955160F32A22BE8D9069D5BDF317837685B06A02ED5B4B9FD684080AE",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "A-pael",
+    "Run": "run0.summary",
+    "Families": [
+      "W.World",
+      "A.AncientOption"
+    ],
+    "PhysicalRevisions": [
+      "W.World.Gpu.Progression.Dense.K4.CanonicalAbi1Ready.20260907.v2",
+      "A.AncientOption.Gpu.EventLocal.CompactAbi1.CanonicalAbi1Ready.20260907.v1"
+    ],
+    "Roots": 262144,
+    "Matches": 25518,
+    "Cursor": 262144,
+    "SessionSeconds": 7.365696,
+    "ResultSha256": "7D0B32307DCCEE7CCD737A5D2D33BF27C52180C19119C514FF72A9BA4E8B125B",
+    "NormalizedResultSha256": "829DC73510E33769F97C926AAF4583793048FB1D9988D929428CEDEC264D813B",
+    "WorkloadSha256": "E96406787701C0BD76D0D4476A46B54B35B91EA4C8FA06D0DFEBADB0AB408F37",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "A-pael",
+    "Run": "run1.summary",
+    "Families": [
+      "W.World",
+      "A.AncientOption"
+    ],
+    "PhysicalRevisions": [
+      "W.World.Gpu.Progression.Dense.K4.CanonicalAbi1Ready.20260907.v2",
+      "A.AncientOption.Gpu.EventLocal.CompactAbi1.CanonicalAbi1Ready.20260907.v1"
+    ],
+    "Roots": 262144,
+    "Matches": 25518,
+    "Cursor": 262144,
+    "SessionSeconds": 4.0145968,
+    "ResultSha256": "3715065E8602B4688602FCE4D625ACC73D10DEABE817ABAFA1402084C991A558",
+    "NormalizedResultSha256": "829DC73510E33769F97C926AAF4583793048FB1D9988D929428CEDEC264D813B",
+    "WorkloadSha256": "E96406787701C0BD76D0D4476A46B54B35B91EA4C8FA06D0DFEBADB0AB408F37",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "E-grab",
+    "Run": "run0.summary",
+    "Families": [
+      "E.EventResult"
+    ],
+    "PhysicalRevisions": [
+      "E.EventResult.Gpu.EventLocal.Dense.CanonicalAbi1Ready.20260907.v1"
+    ],
+    "Roots": 262144,
+    "Matches": 25956,
+    "Cursor": 262144,
+    "SessionSeconds": 0.4857741,
+    "ResultSha256": "FFB3B2A82DB42FDE80CF2D8737B99AD0BB954555803DFBA6327221A81E9DDD37",
+    "NormalizedResultSha256": "3213730B7A725A078CFC3161CB552CF1A98D3F081CC2961ABA4F2CBCC2DA1D86",
+    "WorkloadSha256": "84B046AD52FDE35711681D70074E6532C88AA2FE362F7B4DBB5C60597B2BABC8",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "E-grab",
+    "Run": "run1.summary",
+    "Families": [
+      "E.EventResult"
+    ],
+    "PhysicalRevisions": [
+      "E.EventResult.Gpu.EventLocal.Dense.CanonicalAbi1Ready.20260907.v1"
+    ],
+    "Roots": 262144,
+    "Matches": 25956,
+    "Cursor": 262144,
+    "SessionSeconds": 0.4239157,
+    "ResultSha256": "E75BFA4E8E6F2357E3A0DBB69E82F7392AE559BD537D6DAC440CB3E4F70E96F0",
+    "NormalizedResultSha256": "3213730B7A725A078CFC3161CB552CF1A98D3F081CC2961ABA4F2CBCC2DA1D86",
+    "WorkloadSha256": "84B046AD52FDE35711681D70074E6532C88AA2FE362F7B4DBB5C60597B2BABC8",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "NC-silken",
+    "Run": "run0.summary",
+    "Families": [
+      "C.CombatReward",
+      "N.Neow"
+    ],
+    "PhysicalRevisions": [
+      "C.CombatReward.Gpu.NeutralHotLoop.Dense.CanonicalAbi1Ready.20260907.v1",
+      "N.Neow.Gpu.LocalDonor.CompactFullDecode.CanonicalAbi1Ready.20260905.v2"
+    ],
+    "Roots": 262144,
+    "Matches": 14730,
+    "Cursor": 262144,
+    "SessionSeconds": 5.2534266,
+    "ResultSha256": "66E19250251C129835EF4F007D9F8ECB0BB926FA9525E8B82DC8FD5C19506618",
+    "NormalizedResultSha256": "6159CCB291CCBE7960F9885604B325350E4DE4A5A778D8DD4B9AF1E2508036F3",
+    "WorkloadSha256": "51D5658E55D60E2D65F2FE3C4F599A06C6F503E409D90B8E11824F9B4C50D282",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "NC-silken",
+    "Run": "run1.summary",
+    "Families": [
+      "C.CombatReward",
+      "N.Neow"
+    ],
+    "PhysicalRevisions": [
+      "C.CombatReward.Gpu.NeutralHotLoop.Dense.CanonicalAbi1Ready.20260907.v1",
+      "N.Neow.Gpu.LocalDonor.CompactFullDecode.CanonicalAbi1Ready.20260905.v2"
+    ],
+    "Roots": 262144,
+    "Matches": 14730,
+    "Cursor": 262144,
+    "SessionSeconds": 3.3911323,
+    "ResultSha256": "74D069B27774B1C003238FCCCFE97021E1DE2DAC9F064C434FDCF3A598B39F27",
+    "NormalizedResultSha256": "6159CCB291CCBE7960F9885604B325350E4DE4A5A778D8DD4B9AF1E2508036F3",
+    "WorkloadSha256": "51D5658E55D60E2D65F2FE3C4F599A06C6F503E409D90B8E11824F9B4C50D282",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "SR-high-output",
+    "Run": "run0.summary",
+    "Families": [
+      "S.MerchantShopColorless",
+      "R.Relic"
+    ],
+    "PhysicalRevisions": [
+      "S.MerchantShopColorless.Stable.DenseCarry8.CanonicalAbi1Ready.20260904.v1",
+      "R.Relic.CompactAbi1FullDecode.CanonicalAbi1Ready.20260904.v1",
+      "S.MerchantShopColorless.Gpu.v8.StableOrderedCompaction.HostPrefixScatter.Base34Carry8.ProcessedWorkgroup.ConsumeOnly.HistoricalNextInt"
+    ],
+    "Roots": 134217728,
+    "Matches": 1664,
+    "Cursor": 134217728,
+    "SessionSeconds": 1.0609136,
+    "ResultSha256": "BACDB81B825DE92F0A6A890B18A86F171122E98DFFF11B92BE0861D9C49CF292",
+    "NormalizedResultSha256": "958ECA6051979BF129E730D225A14C996B695CE5D724E1E44C215052E32A5475",
+    "WorkloadSha256": "323ED4CE64DD71134234168A95E6C98632011466C0427F2EEC30E8F6D1E9E23F",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "SR-high-output",
+    "Run": "run1.summary",
+    "Families": [
+      "S.MerchantShopColorless",
+      "R.Relic"
+    ],
+    "PhysicalRevisions": [
+      "S.MerchantShopColorless.Stable.DenseCarry8.CanonicalAbi1Ready.20260904.v1",
+      "R.Relic.CompactAbi1FullDecode.CanonicalAbi1Ready.20260904.v1",
+      "S.MerchantShopColorless.Gpu.v8.StableOrderedCompaction.HostPrefixScatter.Base34Carry8.ProcessedWorkgroup.ConsumeOnly.HistoricalNextInt"
+    ],
+    "Roots": 134217728,
+    "Matches": 1664,
+    "Cursor": 134217728,
+    "SessionSeconds": 0.9092938,
+    "ResultSha256": "DD3BCB41B52BE9042B33135F9CB302118BA4DEF5373EDD5E7010E052AE5BC072",
+    "NormalizedResultSha256": "958ECA6051979BF129E730D225A14C996B695CE5D724E1E44C215052E32A5475",
+    "WorkloadSha256": "323ED4CE64DD71134234168A95E6C98632011466C0427F2EEC30E8F6D1E9E23F",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "EW-high-output",
+    "Run": "run0.summary",
+    "Families": [
+      "E.EventResult",
+      "W.World"
+    ],
+    "PhysicalRevisions": [
+      "E.EventResult.Gpu.EventLocal.Dense.CanonicalAbi1Ready.20260907.v1",
+      "W.World.Gpu.Progression.CompactAbi1.K4.CanonicalAbi1Ready.20260907.v2"
+    ],
+    "Roots": 1677721600,
+    "Matches": 17,
+    "Cursor": 1564437799403390104,
+    "SessionSeconds": 8.1852258,
+    "ResultSha256": "E9D4ED6E81EBC5E240DE8E10325ED09CF5EA9F632593CD280F56222B89F78D69",
+    "NormalizedResultSha256": "183A68151B0E287DA9115596927F5A7A28628E1DEFBA3334CBBD364FD04F6CEE",
+    "WorkloadSha256": "B84E1E878B17A98038785D67CAF2AF154CCC69674CC7EEDE36EE5528F79A5A55",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "EW-high-output",
+    "Run": "run1.summary",
+    "Families": [
+      "E.EventResult",
+      "W.World"
+    ],
+    "PhysicalRevisions": [
+      "E.EventResult.Gpu.EventLocal.Dense.CanonicalAbi1Ready.20260907.v1",
+      "W.World.Gpu.Progression.CompactAbi1.K4.CanonicalAbi1Ready.20260907.v2"
+    ],
+    "Roots": 1677721600,
+    "Matches": 17,
+    "Cursor": 1564437799403390104,
+    "SessionSeconds": 8.1031854,
+    "ResultSha256": "E9D4ED6E81EBC5E240DE8E10325ED09CF5EA9F632593CD280F56222B89F78D69",
+    "NormalizedResultSha256": "183A68151B0E287DA9115596927F5A7A28628E1DEFBA3334CBBD364FD04F6CEE",
+    "WorkloadSha256": "B84E1E878B17A98038785D67CAF2AF154CCC69674CC7EEDE36EE5528F79A5A55",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "NR-small-capsule",
+    "Run": "run0.summary",
+    "Families": [
+      "N.Neow"
+    ],
+    "PhysicalRevisions": [
+      "N.Neow.Composite.RCapsule.TargetRank.DenseCarry8.CanonicalAbi1Ready.20260906.v2"
+    ],
+    "Roots": 134217728,
+    "Matches": 151792,
+    "Cursor": 134217728,
+    "SessionSeconds": 11.7484744,
+    "ResultSha256": "8398DF94E151F9C33429331FFCB1440ADB55A65405AAD0FFCC9A78560892BE41",
+    "NormalizedResultSha256": "A4C554621B44E5218C30DE25F6D6452E3B27485D074B2F3108E2B8BD1057DDD7",
+    "WorkloadSha256": "C9E3E4F108D7463B06F80D4381CAAB401399B543A3884FFB6A8B45547C9E01E9",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "NR-small-capsule",
+    "Run": "run1.summary",
+    "Families": [
+      "N.Neow"
+    ],
+    "PhysicalRevisions": [
+      "N.Neow.Composite.RCapsule.TargetRank.DenseCarry8.CanonicalAbi1Ready.20260906.v2"
+    ],
+    "Roots": 134217728,
+    "Matches": 151792,
+    "Cursor": 134217728,
+    "SessionSeconds": 9.0395966,
+    "ResultSha256": "09C2ABC46B5F05452FC0504469C97C9A9DFD0AE10C732A0A0D5662A95E9E5ED6",
+    "NormalizedResultSha256": "A4C554621B44E5218C30DE25F6D6452E3B27485D074B2F3108E2B8BD1057DDD7",
+    "WorkloadSha256": "C9E3E4F108D7463B06F80D4381CAAB401399B543A3884FFB6A8B45547C9E01E9",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "C-cards",
+    "Run": "run0.summary",
+    "Families": [
+      "C.CombatReward"
+    ],
+    "PhysicalRevisions": [
+      "C.CombatReward.Gpu.NeutralHotLoop.Dense.CanonicalAbi1Ready.20260907.v1"
+    ],
+    "Roots": 262144,
+    "Matches": 231,
+    "Cursor": 262144,
+    "SessionSeconds": 0.5173014,
+    "ResultSha256": "9A4582F1C92A360E0D9BCEC80B0A7928B3714492BD7173B8C523D8A6C9EAA1B0",
+    "NormalizedResultSha256": "CCB8A9C3DAB0ABD5BD88641ED056759AE4605EE885132AE498DCB95F640FFA75",
+    "WorkloadSha256": "035F5660D3A7AF5EEE9C0E15D07ACC589FF3422476A9CB0CF1A72EBD081C3D69",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "C-cards",
+    "Run": "run1.summary",
+    "Families": [
+      "C.CombatReward"
+    ],
+    "PhysicalRevisions": [
+      "C.CombatReward.Gpu.NeutralHotLoop.Dense.CanonicalAbi1Ready.20260907.v1"
+    ],
+    "Roots": 262144,
+    "Matches": 231,
+    "Cursor": 262144,
+    "SessionSeconds": 0.2416521,
+    "ResultSha256": "A637FDE50683E2608596C24777F7511850094325084B90F45C598362C6CEE978",
+    "NormalizedResultSha256": "CCB8A9C3DAB0ABD5BD88641ED056759AE4605EE885132AE498DCB95F640FFA75",
+    "WorkloadSha256": "035F5660D3A7AF5EEE9C0E15D07ACC589FF3422476A9CB0CF1A72EBD081C3D69",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "NC-silken-cards",
+    "Run": "run0.summary",
+    "Families": [
+      "C.CombatReward",
+      "N.Neow"
+    ],
+    "PhysicalRevisions": [
+      "C.CombatReward.Gpu.NeutralHotLoop.Dense.CanonicalAbi1Ready.20260907.v1",
+      "N.Neow.Gpu.LocalDonor.CompactFullDecode.CanonicalAbi1Ready.20260905.v2"
+    ],
+    "Roots": 134217728,
+    "Matches": 11265,
+    "Cursor": 134217728,
+    "SessionSeconds": 4.0719615,
+    "ResultSha256": "78F8F8466311C6086F61282939D5AF8E8935E9D410ABD2523AC28B4323483A40",
+    "NormalizedResultSha256": "BABD415755814EA1465C768731258E5B232048FF7EAB9999E1CCCD018322D06B",
+    "WorkloadSha256": "AD15D01A882571C4BD3501BA987B7068B2492859F9E140C6B287683B133BACCF",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  },
+  {
+    "Case": "NC-silken-cards",
+    "Run": "run1.summary",
+    "Families": [
+      "C.CombatReward",
+      "N.Neow"
+    ],
+    "PhysicalRevisions": [
+      "C.CombatReward.Gpu.NeutralHotLoop.Dense.CanonicalAbi1Ready.20260907.v1",
+      "N.Neow.Gpu.LocalDonor.CompactFullDecode.CanonicalAbi1Ready.20260905.v2"
+    ],
+    "Roots": 134217728,
+    "Matches": 11265,
+    "Cursor": 134217728,
+    "SessionSeconds": 3.0632644,
+    "ResultSha256": "25E362FD753965D66669CCA8C3C953FB9E6E34A0BD9F5CBDE7F83183846D4320",
+    "NormalizedResultSha256": "BABD415755814EA1465C768731258E5B232048FF7EAB9999E1CCCD018322D06B",
+    "WorkloadSha256": "AD15D01A882571C4BD3501BA987B7068B2492859F9E140C6B287683B133BACCF",
+    "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+    "Driver": "d3d12"
+  }
+]

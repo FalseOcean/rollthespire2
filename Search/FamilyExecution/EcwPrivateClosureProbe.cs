@@ -10,6 +10,7 @@ internal sealed class EcwPrivateClosureProbe(ExactSearchExecutionRequest request
 {
     private Gpu? _gpu;
     private bool _faulted;
+    GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => ConditionPerformance.UsesGpu ? GpuNumericRequirements.Int64 | GpuNumericRequirements.Float64 : GpuNumericRequirements.None;
     public string FamilyId => "E.EventResult";
     public IReadOnlyList<string> Coverage => ["E.EventResult","C.CombatReward","W.World"];
     public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId,PrivateOrdinalBuffer.Capacity,[],"ECW.ClosureProbe.Unpriced");

@@ -52,7 +52,7 @@ internal static class SearchEtaPresentationBuilder
         // Very rare p may round 1-p to 1; its limiting exponential horizon is safe
         // for presentation without changing the frozen probability authority.
         if (!double.IsFinite(p99Roots)) p99Roots = -Math.Log(.01) / probability;
-        int remaining = Math.Max(0, progress.TargetMatchCount - progress.MatchCount);
+        int remaining = Math.Max(0, progress.TargetMatchCount - progress.DeliveredCandidateCount);
         double targetMs = remaining * meanMs;
         double p99Ms = 1000 * p99Roots / stableRootsPerSecond.Value;
         if (!double.IsFinite(meanMs) || !double.IsFinite(targetMs) || !double.IsFinite(p99Ms)) return predicted;

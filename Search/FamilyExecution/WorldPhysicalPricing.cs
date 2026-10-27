@@ -5,19 +5,10 @@ namespace RolltheSpire2.Search.FamilyExecution;
 
 internal static class WorldPhysicalPricing
 {
-    internal static PrivateOrdinalAllocationPricing.Work LegacyEwWork(WorldFamilyGpuPlan plan) =>
-        new(6.8, 8.5, plan.Capacity * plan.GroupingK);
-    internal static PrivateSerialChainPricing.Node LegacyDirectCapsuleTail(WorldFamilyReplay replay,
-        WorldFamilyGpuPlan plan, double survival)
-    {
-        bool act2 = replay.Plan.MaxRequiredAct == 2;
-        return new('W', act2 ? "W.Progression.Act2.K4" : "W.Progression.Act3.K4",
-            act2 ? 11.5 : 6.8, act2 ? 6 : 12, plan.Capacity * plan.GroupingK, survival, 190);
-    }
     internal static FamilyPhysicalQuote? Quote(WorldFamilyReplay replay, WorldFamilyGpuPlan? plan,
         FamilyPhysicalQuoteRequest geometry)
     {
-        if (plan is null ||
+        if (plan is null || plan.NumericalVariant != GpuNumericalVariant.NativeFloat64 ||
             !FamilyPhysicalQuote.AdmittedRequest(geometry) || !FamilyPhysicalQuote.HasReferenceBackend()) return null;
         var p = replay.Plan;
         int events = p.Acts.Sum(a => a.EventPredicates.Length);

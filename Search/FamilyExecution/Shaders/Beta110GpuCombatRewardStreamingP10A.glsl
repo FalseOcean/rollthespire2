@@ -1,6 +1,9 @@
 #ifndef RT2_CR_NUMERIC_FAILURE
 #define RT2_CR_NUMERIC_FAILURE() true
 #endif
+#ifndef RT2_C_TERMINAL_CARD_GATE
+#define RT2_C_TERMINAL_CARD_GATE 0
+#endif
 // P10-A Runtime-Accepted donor: streaming predicate evaluation + current-battle-only materialization.
 // P10-RP1 production GPU Reward uses this as the retained single-route evaluator;
 // the historical BaselineCurrent variant remains diagnostic-only.
@@ -18,7 +21,7 @@ bool cr_p10a_match_predicate(uint cards[12],uint card_count,bool drop,uint potio
     if(!cr_p10a_target_set(cards,card_count,predicate_meta.values[base+2u],predicate_meta.values[base+3u],0u))return false;
     if(!cr_p10a_target_set(cards,card_count,predicate_meta.values[base+4u],predicate_meta.values[base+5u],1u))return false;
     if(!cr_p10a_target_set(cards,card_count,predicate_meta.values[base+6u],predicate_meta.values[base+7u],2u))return false;
-    uint req=predicate_meta.values[base+1u];if(req==1u&&!drop)return false;if(req==2u&&drop)return false;
+    uint req=predicate_meta.values[base+1u]&255u;if(req==1u&&!drop)return false;if(req==2u&&drop)return false;
     uint pao=predicate_meta.values[base+8u],pac=predicate_meta.values[base+9u],plo=predicate_meta.values[base+10u],plc=predicate_meta.values[base+11u],pbo=predicate_meta.values[base+12u],pbc=predicate_meta.values[base+13u];
     if((pac+plc+pbc)>0u){
         if(!drop||potion==0xffffffffu)return false;
@@ -29,17 +32,22 @@ bool cr_p10a_match_predicate(uint cards[12],uint card_count,bool drop,uint potio
     return true;
 }
 
-#ifndef RT2_C_MULTIPLAYER
-#define RT2_C_MULTIPLAYER 1
+#ifndef RT2_C_ASSIGNMENT
+#define RT2_C_ASSIGNMENT 1
 #endif
-#if RT2_C_MULTIPLAYER
+#if RT2_C_ASSIGNMENT
+uint64_t cr_assignment_lacks(uint target){
+    if(target==0u)return uint64_t(0x5555555555555555ul);
+    if(target==1u)return uint64_t(0x3333333333333333ul);
+    if(target==2u)return uint64_t(0x0F0F0F0F0F0F0F0Ful);
+    if(target==3u)return uint64_t(0x00FF00FF00FF00FFul);
+    if(target==4u)return uint64_t(0x0000FFFF0000FFFFul);
+    return uint64_t(0x00000000FFFFFFFFul);
+}
 uint64_t cr_assignment_step(uint64_t states,uint matches,uint count){
     uint64_t next=states;
-    for(uint subset=0u;subset<(1u<<count);++subset){
-        if((states&(uint64_t(1u)<<subset))==uint64_t(0u))continue;
-        for(uint target=0u;target<count;++target)
-            if((matches&(1u<<target))!=0u&&(subset&(1u<<target))==0u)next|=uint64_t(1u)<<(subset|(1u<<target));
-    }
+    for(uint target=0u;target<count;++target)
+        if((matches&(1u<<target))!=0u)next|=(states&cr_assignment_lacks(target))<<(1u<<target);
     return next;
 }
 #endif
@@ -49,7 +57,7 @@ bool cr_evaluate_rewards(inout RewardRouteState state){
 #endif
     uint asc=plan_meta.values[4u],maxBattle=clamp(plan_meta.values[5u],1u,6u),predicate_count=plan_meta.values[11u];
     uint64_t matched_mask=uint64_t(0u);
-#if RT2_C_MULTIPLAYER
+#if RT2_C_ASSIGNMENT
     uint64_t card_states=uint64_t(1u),potion_states=uint64_t(1u);
 #endif
     for(uint battle=0u;battle<maxBattle;++battle){
@@ -66,7 +74,25 @@ bool cr_evaluate_rewards(inout RewardRouteState state){
         }
         uint cards[12];for(uint i=0u;i<12u;++i)cards[i]=0xffffffffu;uint count=0u;
         uint group_selected[12];for(uint i=0u;i<12u;++i)group_selected[i]=0xffffffffu;uint group_count=0u;
-        for(uint i=0u;i<3u;++i){uint v=cr_generate_combat_card(false,asc,group_selected,group_count,state);if(v==0xffffffffu)return RT2_CR_NUMERIC_FAILURE();group_selected[group_count++]=v;cards[count++]=v;}
+#if RT2_C_TERMINAL_CARD_GATE
+        // Potion/gold and every previous battle have already executed. Only a
+        // proven fault-free terminal three-card suffix may be omitted. Additional
+        // rewards and Candy retain the full evaluator, including capacity faults.
+        bool terminal_card_gate=battle+1u==maxBattle&&state.additional_card_rewards==0u&&(state.influence_flags&4u)==0u;
+        uint terminal_missing=terminal_card_gate?cr_terminal_card_missing(matched_mask):0u;
+        if(terminal_card_gate&&bitCount(terminal_missing)>3)return false;
+#endif
+        for(uint i=0u;i<3u;++i){
+            uint v=cr_generate_combat_card(false,asc,group_selected,group_count,state);
+            if(v==0xffffffffu)return RT2_CR_NUMERIC_FAILURE();
+            group_selected[group_count++]=v;cards[count++]=v;
+#if RT2_C_TERMINAL_CARD_GATE
+            if(terminal_card_gate){
+                terminal_missing=cr_terminal_card_seen(terminal_missing,v);
+                if(bitCount(terminal_missing)>int(2u-i))return false;
+            }
+#endif
+        }
         if((state.influence_flags&4u)!=0u&&(state.lasting_candy_counter&1u)==1u){
             uint excluded[12];for(uint i=0u;i<12u;++i)excluded[i]=i<count?cards[i]:0xffffffffu;
             uint v=cr_generate_combat_card(true,asc,excluded,count,state);if(v==0xffffffffu)return RT2_CR_NUMERIC_FAILURE();cards[count++]=v;
@@ -78,7 +104,7 @@ bool cr_evaluate_rewards(inout RewardRouteState state){
         if((state.influence_flags&4u)!=0u)state.lasting_candy_counter++;
 
         uint battle_ordinal=battle+1u;
-#if RT2_C_MULTIPLAYER
+#if RT2_C_ASSIGNMENT
         if(battle_ordinal<=plan_meta.values[55]){
             uint matches=0u;
             for(uint target=0u;target<plan_meta.values[56];++target)
@@ -98,7 +124,8 @@ bool cr_evaluate_rewards(inout RewardRouteState state){
         for(uint pi=0u;pi<predicate_count;++pi){
             uint base=pi*16u,predicate_battle=predicate_meta.values[base];uint64_t bit=uint64_t(1u)<<pi;
             if(predicate_battle==0u){
-                if((matched_mask&bit)==uint64_t(0u)&&cr_p10a_match_predicate(cards,count,drop,potion,gold,base))matched_mask|=bit;
+                uint window=predicate_meta.values[base+1u]>>8u;
+                if((window==0u||battle_ordinal<=window)&&(matched_mask&bit)==uint64_t(0u)&&cr_p10a_match_predicate(cards,count,drop,potion,gold,base))matched_mask|=bit;
             }else if(predicate_battle==battle_ordinal){
                 if(!cr_p10a_match_predicate(cards,count,drop,potion,gold,base))return false;
                 matched_mask|=bit;
@@ -107,7 +134,7 @@ bool cr_evaluate_rewards(inout RewardRouteState state){
     }
     uint64_t required_mask=predicate_count>=64u?~uint64_t(0u):((uint64_t(1u)<<predicate_count)-uint64_t(1u));
     return (matched_mask&required_mask)==required_mask
-#if RT2_C_MULTIPLAYER
+#if RT2_C_ASSIGNMENT
         &&
         (card_states&(uint64_t(1u)<<((1u<<plan_meta.values[56])-1u)))!=uint64_t(0u) &&
         (potion_states&(uint64_t(1u)<<((1u<<plan_meta.values[59])-1u)))!=uint64_t(0u)
@@ -156,7 +183,7 @@ bool cr_hot_match_predicate3(uint a,uint b,uint c,bool drop,uint potion,uint bas
     if(!cr_hot_target_set3(a,b,c,predicate_meta.values[base+2u],predicate_meta.values[base+3u],0u))return false;
     if(!cr_hot_target_set3(a,b,c,predicate_meta.values[base+4u],predicate_meta.values[base+5u],1u))return false;
     if(!cr_hot_target_set3(a,b,c,predicate_meta.values[base+6u],predicate_meta.values[base+7u],2u))return false;
-    uint req=predicate_meta.values[base+1u];if(req==1u&&!drop)return false;if(req==2u&&drop)return false;
+    uint req=predicate_meta.values[base+1u]&255u;if(req==1u&&!drop)return false;if(req==2u&&drop)return false;
     uint pao=predicate_meta.values[base+8u],pac=predicate_meta.values[base+9u],plo=predicate_meta.values[base+10u],plc=predicate_meta.values[base+11u],pbo=predicate_meta.values[base+12u],pbc=predicate_meta.values[base+13u];
     if((pac+plc+pbc)>0u){
         if(!drop||potion==0xffffffffu)return false;
@@ -236,6 +263,9 @@ bool cr_evaluate_rewards_unpinned_hot(uint64_t root){
     uint potion_node=0u;
     uint card_state=0u;
     uint64_t matched_mask=uint64_t(0u);
+#if RT2_C_ASSIGNMENT
+    uint64_t card_states=uint64_t(1u),potion_states=uint64_t(1u);
+#endif
 
     for(uint battle=0u;battle<RT2_CR_HOT_MAX_BATTLE;++battle){
         bool drop;
@@ -283,10 +313,30 @@ bool cr_evaluate_rewards_unpinned_hot(uint64_t root){
         if(!cr_hot_generate_card(rewards,asc,card_offset,card_state,c0,m0,i0,c1,m1,i1,2u,c2,m2,i2))return RT2_CR_NUMERIC_FAILURE();
 
         uint battle_ordinal=battle+1u;
+#if RT2_C_ASSIGNMENT
+        if(battle_ordinal<=plan_meta.values[55]){
+            uint matches=0u;
+            for(uint target=0u;target<plan_meta.values[56];++target){
+                uint value=plan_meta.values[plan_meta.values[57]+target];
+                if(value==c0||value==c1||value==c2)matches|=1u<<target;
+            }
+            card_states=cr_assignment_step(card_states,matches,plan_meta.values[56]);
+        }
+        if(battle_ordinal<=plan_meta.values[58]){
+            uint matches=0u;
+            for(uint target=0u;target<plan_meta.values[59];++target){
+                uint at=plan_meta.values[60]+target*2u,req=plan_meta.values[at];
+                bool pass=req==0u?!drop:req==1u?drop:req==2u?(drop&&potion==plan_meta.values[at+1u]):true;
+                if(pass)matches|=1u<<target;
+            }
+            potion_states=cr_assignment_step(potion_states,matches,plan_meta.values[59]);
+        }
+#endif
         for(uint pi=0u;pi<RT2_CR_HOT_PREDICATE_COUNT;++pi){
             uint base=pi*16u,predicate_battle=predicate_meta.values[base];uint64_t bit=uint64_t(1u)<<pi;
             if(predicate_battle==0u){
-                if((matched_mask&bit)==uint64_t(0u)&&cr_hot_match_predicate3(c0,c1,c2,drop,potion,base))matched_mask|=bit;
+                uint window=predicate_meta.values[base+1u]>>8u;
+                if((window==0u||battle_ordinal<=window)&&(matched_mask&bit)==uint64_t(0u)&&cr_hot_match_predicate3(c0,c1,c2,drop,potion,base))matched_mask|=bit;
             }else if(predicate_battle==battle_ordinal){
                 if(!cr_hot_match_predicate3(c0,c1,c2,drop,potion,base))return false;
                 matched_mask|=bit;
@@ -294,5 +344,10 @@ bool cr_evaluate_rewards_unpinned_hot(uint64_t root){
         }
     }
     uint64_t required_mask=RT2_CR_HOT_PREDICATE_COUNT>=64u?~uint64_t(0u):((uint64_t(1u)<<RT2_CR_HOT_PREDICATE_COUNT)-uint64_t(1u));
-    return (matched_mask&required_mask)==required_mask;
+    return (matched_mask&required_mask)==required_mask
+#if RT2_C_ASSIGNMENT
+        && (card_states&(uint64_t(1u)<<((1u<<plan_meta.values[56])-1u)))!=uint64_t(0u)
+        && (potion_states&(uint64_t(1u)<<((1u<<plan_meta.values[59])-1u)))!=uint64_t(0u)
+#endif
+        ;
 }

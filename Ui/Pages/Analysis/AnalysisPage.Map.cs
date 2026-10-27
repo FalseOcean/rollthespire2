@@ -48,6 +48,8 @@ internal sealed partial class AnalysisPage
         catch (OperationCanceledException) when (cancel.IsCancellationRequested) { }
         catch (Exception ex)
         {
+            RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Record(ex,
+                "PredictionMapFailed", nameof(AnalysisPage), "MapWorker", "issues.capture_failed", correlationId: "act=" + act);
             if (!cancel.IsCancellationRequested && IsInstanceValid(_mapWorkspace) && _mapWorkspace.IsInsideTree() && _mapWorkspace.Visible && _mapWorkspace.SelectedAct == act)
                 _mapWorkspace.SetStatus(_uiText.Get("ui1.map.unavailable") + " · " + ex.Message);
         }

@@ -17,7 +17,7 @@ internal static class SearchEditorGuide
         var header = new HBoxContainer();
         header.AddThemeConstantOverride("separation", 8);
         guide.AddChild(header);
-        var heading = palette.Label(title, 24);
+        var heading = palette.Label(title, 24, heading: true);
         heading.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         heading.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
         heading.VerticalAlignment = VerticalAlignment.Center;
@@ -66,9 +66,10 @@ internal static class SearchEditorGuide
                 paragraphs.AddChild(paragraph);
             }
         }
-        guide.AddChild(new ColorRect
+        // Preserve the guide height used by editor panes without drawing a rule.
+        guide.AddChild(new Control
         {
-            Color = palette.Color(palette.Line), CustomMinimumSize = new(0, 1),
+            CustomMinimumSize = new(0, 1),
             MouseFilter = Control.MouseFilterEnum.Ignore
         });
         return guide;

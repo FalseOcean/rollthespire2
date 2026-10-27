@@ -1,0 +1,145 @@
+{
+  "numericVectors": 8216,
+  "thresholdBoundaryVectors": 492,
+  "boundaryMismatch": 0,
+  "poolMappingVectors": 3084,
+  "selectedCardMismatch": 0,
+  "rawBurnVectors": 12288,
+  "rawBurnRngStateMismatch": 0,
+  "retainedStructuralObservableMismatch": 0,
+  "retainedStructuralCheckpointMismatch": 0,
+  "retainedStructuralPersistentStateMismatch": 0,
+  "fullExperimentalObservableMismatch": 0,
+  "fullExperimentalCheckpointMismatch": 0,
+  "fullExperimentalPersistentStateMismatch": 0,
+  "workloadOperationAverages": {
+    "MinimalCard": {
+      "baseline": {
+        "cards": 3.0,
+        "count_scans": 65.816,
+        "mapping_scans": 65.816,
+        "exclusion_checks": 100.1417,
+        "fp64_probability_ops": 11.7673,
+        "integer_threshold_compares": 0.0,
+        "raw_burns": 0.0,
+        "predicate_compares": 0.0
+      },
+      "retainedStructural": {
+        "cards": 3.0,
+        "count_scans": 0.0,
+        "mapping_scans": 0.0,
+        "exclusion_checks": 0.0,
+        "fp64_probability_ops": 7.0,
+        "integer_threshold_compares": 0.0,
+        "raw_burns": 4.7673,
+        "predicate_compares": 0.0
+      },
+      "fullExperimental": {
+        "cards": 3.0,
+        "count_scans": 0.0,
+        "mapping_scans": 0.0,
+        "exclusion_checks": 0.0,
+        "fp64_probability_ops": 3.0,
+        "integer_threshold_compares": 7.0,
+        "raw_burns": 4.7673,
+        "predicate_compares": 0.0
+      }
+    },
+    "CardPotion": {
+      "baseline": {
+        "cards": 3.0,
+        "count_scans": 65.816,
+        "mapping_scans": 65.816,
+        "exclusion_checks": 100.1417,
+        "fp64_probability_ops": 11.7673,
+        "integer_threshold_compares": 0.0,
+        "raw_burns": 0.0,
+        "predicate_compares": 0.0
+      },
+      "retainedStructural": {
+        "cards": 3.0,
+        "count_scans": 0.0,
+        "mapping_scans": 0.0,
+        "exclusion_checks": 0.0,
+        "fp64_probability_ops": 7.7673,
+        "integer_threshold_compares": 0.0,
+        "raw_burns": 4.0,
+        "predicate_compares": 0.0
+      },
+      "fullExperimental": {
+        "cards": 3.0,
+        "count_scans": 0.0,
+        "mapping_scans": 0.0,
+        "exclusion_checks": 0.0,
+        "fp64_probability_ops": 3.3836,
+        "integer_threshold_compares": 7.7673,
+        "raw_burns": 4.0,
+        "predicate_compares": 0.0
+      }
+    },
+    "FirstThreeProduct": {
+      "baseline": {
+        "cards": 9.0,
+        "count_scans": 196.7614,
+        "mapping_scans": 196.7614,
+        "exclusion_checks": 299.5312,
+        "fp64_probability_ops": 35.4742,
+        "integer_threshold_compares": 0.0,
+        "raw_burns": 0.0,
+        "predicate_compares": 0.0
+      },
+      "retainedStructural": {
+        "cards": 9.0,
+        "count_scans": 0.0,
+        "mapping_scans": 0.0,
+        "exclusion_checks": 0.0,
+        "fp64_probability_ops": 23.4742,
+        "integer_threshold_compares": 0.0,
+        "raw_burns": 12.0,
+        "predicate_compares": 0.0
+      },
+      "fullExperimental": {
+        "cards": 9.0,
+        "count_scans": 0.0,
+        "mapping_scans": 0.0,
+        "exclusion_checks": 0.0,
+        "fp64_probability_ops": 10.2371,
+        "integer_threshold_compares": 23.4742,
+        "raw_burns": 12.0,
+        "predicate_compares": 0.0
+      }
+    },
+    "FirstThreeNoPotionIdentity": {
+      "baseline": {
+        "cards": 9.0,
+        "count_scans": 196.7614,
+        "mapping_scans": 196.7614,
+        "exclusion_checks": 299.5312,
+        "fp64_probability_ops": 35.4742,
+        "integer_threshold_compares": 0.0,
+        "raw_burns": 0.0,
+        "predicate_compares": 0.0
+      },
+      "retainedStructural": {
+        "cards": 9.0,
+        "count_scans": 0.0,
+        "mapping_scans": 0.0,
+        "exclusion_checks": 0.0,
+        "fp64_probability_ops": 21.0,
+        "integer_threshold_compares": 0.0,
+        "raw_burns": 14.4742,
+        "predicate_compares": 0.0
+      },
+      "fullExperimental": {
+        "cards": 9.0,
+        "count_scans": 0.0,
+        "mapping_scans": 0.0,
+        "exclusion_checks": 0.0,
+        "fp64_probability_ops": 9.0,
+        "integer_threshold_compares": 21.0,
+        "raw_burns": 14.4742,
+        "predicate_compares": 0.0
+      }
+    }
+  }
+}

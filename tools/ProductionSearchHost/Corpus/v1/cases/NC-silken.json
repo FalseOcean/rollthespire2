@@ -1,0 +1,79 @@
+{
+  "SchemaVersion": 1,
+  "Query": {
+    "OpeningRoute": null,
+    "OpeningRouteRelicRequirement": null,
+    "StructuredOpeningEffects": [],
+    "VariantBossBranches": [],
+    "AncientBranches": [],
+    "RelicSequenceConstraints": [],
+    "EventSequenceConstraints": [],
+    "LegacyCombatRewardConstraints": [],
+    "LegacyNeow": {
+      "NeowRelics": {
+        "Any": [
+          "RELIC:SILKEN_TRESS"
+        ],
+        "All": [],
+        "Ban": [],
+        "IsEmpty": false
+      },
+      "RequireNeowsBones": false,
+      "BonesRelics": {
+        "Any": [],
+        "All": [],
+        "Ban": [],
+        "IsEmpty": true
+      },
+      "RequiredBonesCombination": [],
+      "RequireSmallCapsule": false,
+      "RequireLargeCapsule": false,
+      "CapsuleContainedRelics": {
+        "Any": [],
+        "All": [],
+        "Ban": [],
+        "IsEmpty": true
+      },
+      "RequireWhetstone": false,
+      "RequireWarPaint": false,
+      "RequiredFinalCurse": null,
+      "BannedFinalCurses": [],
+      "Preset": "None",
+      "RequiredBonesAcquisitionOrder": [],
+      "EffectOutputConditions": []
+    },
+    "LegacyWorld": {
+      "BossFilters": [],
+      "BossOrdinalFilters": [],
+      "AncientIdentityFilters": [],
+      "AncientOptionFilters": [],
+      "AncientSeaGlassTargetFilters": []
+    },
+    "CombatCardRewards": null,
+    "CombatPotionRewards": {
+      "Count": 1,
+      "OrderMode": "Ordered",
+      "Slots": [
+        {
+          "Requirement": "NoDrop",
+          "PotionKey": null,
+          "IsNeutral": false,
+          "IsValid": true
+        }
+      ],
+      "IsEmpty": false
+    },
+    "EventResultConditions": [],
+    "MerchantColorlessConditions": [],
+    "MerchantColorlessSequenceConditions": [],
+    "RelicShopSequenceConditions": [],
+    "HasCombatRewardConstraints": true
+  },
+  "Options": {
+    "StartSeed": "000000000000",
+    "ScanCount": 262144,
+    "TargetMatchCount": 2147483647,
+    "WorkerCount": 4,
+    "IncludeDiagnostics": true
+  }
+}

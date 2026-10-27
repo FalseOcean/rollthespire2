@@ -7,12 +7,13 @@ namespace RolltheSpire2.Search.FamilyExecution;
 internal sealed class EventResultCpuPlan(EventResultFamilyPlan plan, uint allowedRemovalMask,
     EventResultSearchCondition[] remaining)
 {
+    private readonly EventResultNumericPredicate.Compiled _remainingNumeric = new(remaining, plan.Authority);
     internal uint AllowedRemovalMask => allowedRemovalMask;
     internal EventResultSearchCondition[] Remaining => remaining;
 
     internal static EventResultCpuPlan? TryCompile(ExactSearchExecutionRequest request, EventResultFamilyPlan plan)
     {
-        if (plan.HasMorphic || !request.Authority.CanUseCurrentModel || !plan.GpuSupported ||
+        if (plan.HasMorphic || !request.Authority.CanUseCurrentModel || !plan.NumericalSupported ||
             !plan.Authority.ColorfulPoolAuthorityExact ||
             !plan.Conditions.Any(c => c.Kind == EventResultConditionKind.ColorfulPhilosophersOfferedColor)) return null;
         var candidates = Beta111EventResultCatalog.ColorfulCharacterOrder.Where(c =>
@@ -35,6 +36,6 @@ internal sealed class EventResultCpuPlan(EventResultFamilyPlan plan, uint allowe
         var rng = EventResultNumericPredicate.ColorfulRng(root, plan.PlayerSlot);
         if ((allowedRemovalMask & (1u << rng.NextInt(4))) == 0) return false;
         return remaining.Length == 0 || !EventResultNumericPredicate.RejectsEventResultForFamily(
-            root, remaining, plan.Authority, plan.PlayerSlot);
+            root, _remainingNumeric, plan.PlayerSlot);
     }
 }

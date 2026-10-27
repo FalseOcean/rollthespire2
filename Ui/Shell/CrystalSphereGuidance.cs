@@ -8,7 +8,7 @@ using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Core.PredictorRuntime;
 using RolltheSpire2.Infrastructure.Snapshots;
 using RolltheSpire2.Presentation.Localization;
-using RolltheSpire2.Ui.Persistence;
+using RolltheSpire2.Ui.Settings;
 using System.Text.Json;
 using System.Reflection;
 using MegaCrit.Sts2.Core.Rewards;
@@ -48,12 +48,32 @@ internal sealed partial class CrystalSphereGuidance : Control
     private bool _exactEnchantments;
     private bool _observeNiche;
     private IGameContentNameResolver _names=null!;
+    private string? _language;
+    private string _messageKey = "guide_done";
+    private Func<object[]>? _messageArguments;
     private Rect2? _rewardHighlight;
     private static readonly FieldInfo ShownSelector=typeof(CardReward).GetField("_currentlyShownScreen",BindingFlags.Instance|BindingFlags.NonPublic)
         ??throw new InvalidOperationException("CrystalRewardScreenFieldMissing");
     private static readonly FieldInfo SelectorCompletion=typeof(NCardRewardSelectionScreen).GetField("_completionSource",BindingFlags.Instance|BindingFlags.NonPublic)
         ??throw new InvalidOperationException("CrystalSelectorCompletionFieldMissing");
     private string T(string key) => _text.Get("predictor.crystal." + key);
+
+    internal void ApplyLanguage(string language)
+    {
+        if(_language==language) return;
+        _language=language;
+        _text=JsonUiTextProvider.CreatePredictorUi13(language);
+        _names=RuntimeGameContentNameResolver.Create(language);
+        if(_label!=null) RenderMessage();
+    }
+    private void ShowMessage(string key,Func<object[]>? arguments=null)
+    {
+        _messageKey=key;_messageArguments=arguments;RenderMessage();
+    }
+    // Deferred arguments only format the last observation. A language refresh
+    // must not recapture the board, advance guidance or replay its witness.
+    private void RenderMessage()=>_label.Text=_messageArguments==null?T(_messageKey):
+        string.Format(T(_messageKey),_messageArguments());
 
     internal void Initialize(IRunState run, ModRuntimeSnapshot runtime, CrystalSphereLiveSnapshot snapshot,
         string mode, PredictorCrystalSolution solution)
@@ -77,20 +97,17 @@ internal sealed partial class CrystalSphereGuidance : Control
                 throw new InvalidOperationException("CrystalGuideInvalidWitness");
             _prefixes.Add(replay.ExportCrystal());
         }
-        var preferences = new SearchWorkspacePersistence(OS.GetUserDataDir(), runtime.Profile.ProfileId, false).Preferences;
-        string language = preferences.LanguageOverride is "zh" or "en" ? preferences.LanguageOverride :
-            TranslationServer.GetLocale().StartsWith("zh") ? "zh" : "en";
-        _text = JsonUiTextProvider.CreatePredictorUi13(language);
-        _names=RuntimeGameContentNameResolver.Create(language);
+        ApplyLanguage(UiLanguagePreferences.LanguageCode);
         _banner = new HBoxContainer { MouseFilter = MouseFilterEnum.Ignore };
         AddChild(_banner);
-        _label = new Label { Text = string.Format(T("guide_wait"), T(mode)), AutowrapMode = TextServer.AutowrapMode.WordSmart,
+        _label = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart,
             SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Ignore };
         _label.AddThemeFontSizeOverride("font_size", 20);
         _label.AddThemeColorOverride("font_color", new Color("ffe5a0"));
         _label.AddThemeColorOverride("font_shadow_color", Colors.Black);
         _label.AddThemeConstantOverride("shadow_outline_size", 5);
         _banner.AddChild(_label);
+        ShowMessage("guide_wait",()=>[T(mode)]);
     }
     private static IEnumerable<Node> Descendants(Node node)
     {
@@ -114,6 +131,7 @@ internal sealed partial class CrystalSphereGuidance : Control
     }
     public override void _Process(double delta)
     {
+        ApplyLanguage(UiLanguagePreferences.LanguageCode);
         if (_run.CurrentRoom is not EventRoom room || !ReferenceEquals(room.LocalMutableEvent, _event)) { QueueFree(); return; }
         var top = NOverlayStack.Instance?.Peek();
         bool sceneVisible = top == null || top is NCrystalSphereScreen or NRewardsScreen or NCardRewardSelectionScreen;
@@ -150,16 +168,16 @@ internal sealed partial class CrystalSphereGuidance : Control
             var actual = CrystalSphereLiveCapture.CaptureScene(_run, _player, _event, game, _runtime.Detection.DisplayVersion).Branches[0].Snapshot;
             if (!Matches(_prefixes[progress], actual, progress == _solution.Steps.Length,_observeNiche)) { Stop(); return; }
             _lastFingerprint = fingerprint; _started = true; _progress = progress;
-            _label.Text = progress == _solution.Steps.Length ? T("guide_done") :
-                string.Format(T("guide_step"), progress + 1, _solution.Steps.Length, T(_solution.Steps[progress].Tool.ToString()));
+            if(progress==_solution.Steps.Length) ShowMessage("guide_done");
+            else ShowMessage("guide_step",()=>[progress+1,_solution.Steps.Length,T(_solution.Steps[progress].Tool.ToString())]);
         }
         catch (Exception ex) { RuntimeLog.WarnException("crystalGuideStopped=true", ex); Stop(); }
     }
-    private void Stop() { _stopped = true; _cells.Clear(); _label.Text = T("guide_stale"); QueueRedraw(); }
+    private void Stop() { _stopped = true; _cells.Clear(); ShowMessage("guide_stale"); QueueRedraw(); }
     private void ObserveRewards()
     {
-        if(_rewardGuide.Actions.IsEmpty) { _progress=_solution.Steps.Length;_cells.Clear();_label.Text=T("guide_done");return; }
-        if(_rewardProgress==_rewardGuide.Actions.Length) { ShowRerollsComplete();return; }
+        if(_rewardGuide.Actions.IsEmpty) { _progress=_solution.Steps.Length;_cells.Clear();ShowMessage("guide_done");return; }
+        if(_rewardProgress==_rewardGuide.Actions.Length) { ShowRewardsComplete();return; }
         try
         {
             // Collection is allowed. Match the actual offers and reroll RNG
@@ -176,9 +194,12 @@ internal sealed partial class CrystalSphereGuidance : Control
             }
             var eventRng=CrystalSphereLiveCapture.RngState(PredictorStream.Rewards,_event.Rng);
             var niche=CrystalSphereLiveCapture.RngState(PredictorStream.Niche,_run.Rng.Niche);
+            var wing=_rewardGuide.Frames[0].RewardsRng!=null?
+                CrystalSphereRewardObservation.CaptureWing(_player,localSnapshot:!_exactEnchantments):null;
             int matched=-1;
             for(int i=_rewardGuide.Frames.Length-1;i>=_rewardProgress;i--)
-                if(CrystalSphereRewardObservation.Matches(_rewardGuide.Frames[i],_rewardBinding,eventRng,niche,localSnapshot:!_exactEnchantments,observeNiche:_observeNiche)) { matched=i;break; }
+                if(CrystalSphereRewardObservation.Matches(_rewardGuide.Frames[i],_rewardBinding,eventRng,niche,
+                    localSnapshot:!_exactEnchantments,observeNiche:_observeNiche,wing:wing)) { matched=i;break; }
             if(matched<0)
             {
                 // Native card insertion may await animations/hooks before setting
@@ -188,13 +209,22 @@ internal sealed partial class CrystalSphereGuidance : Control
                 if(++_rewardMismatches>=10) Stop();return;
             }
             _rewardMismatches=0;_rewardProgress=matched;_rewardHighlight=null;
-            if(matched==_rewardGuide.Actions.Length) { ShowRerollsComplete();return; }
+            if(matched==_rewardGuide.Actions.Length) { ShowRewardsComplete();return; }
             var action=_rewardGuide.Actions[matched];var reward=_rewardBinding[action.RewardIndex];
             var shown=_rewardBinding.Values.FirstOrDefault(r=>ShownSelector.GetValue(r)!=null);
-            if(shown!=null && !ReferenceEquals(shown,reward)) { _label.Text=T("guide_return_rewards");return; }
-            string cards=string.Join(" / ",reward.Cards.Select(c=>_names.Resolve(new(c.Id.Category,c.Id.Entry),GameContentKind.Card)+(c.CurrentUpgradeLevel>0?"+":"")));
-            _label.Text=action.Reroll?string.Format(T("guide_reroll"),cards):
-                string.Format(T("guide_take"),_names.Resolve(action.Card,GameContentKind.Card)+(action.UpgradeLevel>0?"+":""),cards);
+            if(shown!=null && !ReferenceEquals(shown,reward)) { ShowMessage("guide_return_rewards");return; }
+            var offered=reward.Cards.Select(c=>(Key:new RolltheSpire2.Core.Identity.ModelKey(c.Id.Category,c.Id.Entry),Upgraded:c.CurrentUpgradeLevel>0)).ToArray();
+            string Cards()=>string.Join(" / ",offered.Select(c=>_names.Resolve(c.Key,GameContentKind.Card)+(c.Upgraded?"+":"")));
+            if(action.Sacrifice)
+            {
+                if(action.Gift.IsValid) ShowMessage("guide_sacrifice_gift",()=>[Cards(),_names.Resolve(action.Gift,GameContentKind.Relic)]);
+                else ShowMessage("guide_sacrifice",()=>[Cards()]);
+            }
+            else if(action.Reroll) ShowMessage("guide_reroll",()=>[Cards()]);
+            else if(action.OfferedUpgradeLevel!=null && action.UpgradeLevel>action.OfferedUpgradeLevel)
+                ShowMessage("guide_take_upgraded",()=>[_names.Resolve(action.Card,GameContentKind.Card)+(action.OfferedUpgradeLevel>0?"+":""),
+                    _names.Resolve(action.Card,GameContentKind.Card)+(action.UpgradeLevel>0?"+":""),Cards()]);
+            else ShowMessage("guide_take",()=>[_names.Resolve(action.Card,GameContentKind.Card)+(action.UpgradeLevel>0?"+":""),Cards()]);
             if(shown==null && _rewardButtons.TryGetValue(action.RewardIndex,out var button) && IsInstanceValid(button) && button.IsVisibleInTree())
             {
                 var rect=button.GetGlobalRect();var inv=GetGlobalTransform().AffineInverse();
@@ -204,12 +234,14 @@ internal sealed partial class CrystalSphereGuidance : Control
         catch(Exception ex) { RuntimeLog.WarnException("crystalRewardGuideStopped=true",ex);Stop(); }
         finally { QueueRedraw(); }
     }
-    private void ShowRerollsComplete()
+    private void ShowRewardsComplete()
     {
         _rewardHighlight=null;
         bool selectorOpen=!_rewardCollectionReleased && _rewardBinding?.Values.Any(r=>ShownSelector.GetValue(r)!=null)==true;
         if(!selectorOpen) _rewardCollectionReleased=true;
-        _label.Text=T(selectorOpen?"guide_finish_skip":"guide_rewards_done");
+        bool wingTrace=!_solution.RewardActions.IsEmpty;
+        ShowMessage(wingTrace?(selectorOpen?"guide_wing_finish_skip":"guide_wing_rewards_done"):
+            (selectorOpen?"guide_finish_skip":"guide_rewards_done"));
     }
     public override void _Draw()
     {

@@ -10,6 +10,19 @@ internal static class ProfileSeedRules
         return rawSeed.ToUpperInvariant().Replace('O', '0').Replace('I', '1').Trim();
     }
 
+    // Native Beta111 prediction hashes the canonical input string. Twelve
+    // base-34 characters describe generated Search candidates, not custom or
+    // daily-run inputs (the latter use dd_MM_yyyy). Never pad or truncate here.
+    internal static bool TryCanonicalizePredictionSeed(IRuntimeProfile profile, string rawSeed,
+        out string canonicalSeed, out string issue)
+    {
+        if (profile.ProfileId != RuntimeProfileId.Beta111)
+            return profile.TryCanonicalizeSeed(rawSeed, out canonicalSeed, out issue);
+        canonicalSeed = Canonicalize(rawSeed);
+        issue = canonicalSeed.Length == 0 ? "Prediction seed is empty." : string.Empty;
+        return canonicalSeed.Length > 0;
+    }
+
     public static bool TryCanonicalize(string rawSeed, int requiredLength, out string canonicalSeed, out string issue)
     {
         canonicalSeed = Canonicalize(rawSeed);

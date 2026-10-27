@@ -56,6 +56,7 @@ internal sealed partial class AnalysisPage : MarginContainer, IAppPage, IRespons
         _icons = icons ?? throw new ArgumentNullException(nameof(icons));
         _tooltipHost = tooltipHost ?? throw new ArgumentNullException(nameof(tooltipHost));
         _runtime = runtime;
+        Theme = MainPanelTheme.Create();
         _partyCharacters = characterKeys.ToArray();
         PageKey = AppPageKey.Analysis;
         SizeFlagsHorizontal = SizeFlags.ExpandFill;
@@ -123,8 +124,8 @@ internal sealed partial class AnalysisPage : MarginContainer, IAppPage, IRespons
     public Control View => this;
     public SeedPredictionRequest? LastRequest { get; private set; }
     public SeedPredictionDocument? LastDocument { get; private set; }
-    public AnalysisRequestDraft CurrentDraft => _requestBar.CurrentDraft.WithAncientConditions(_ancientGroupCard.CurrentConditions);
-    public AnalysisRequestDraft CurrentReactiveDraft => _requestBar.CurrentReactiveDraft.WithAncientConditions(_ancientGroupCard.CurrentConditions);
+    public AnalysisRequestDraft CurrentDraft => _requestBar.CurrentDraft with { AncientOptionConditions = _ancientGroupCard.CurrentConditions };
+    public AnalysisRequestDraft CurrentReactiveDraft => _requestBar.CurrentReactiveDraft with { AncientOptionConditions = _ancientGroupCard.CurrentConditions };
     public string PreferredOpeningRouteId => _preferredOpeningRouteId;
     public int? PreferredOpeningChoiceSlotIndex => _preferredOpeningChoiceSlotIndex;
     public string PreferredRewardRouteGroupId => _preferredRewardRouteGroupId;
@@ -204,28 +205,6 @@ internal sealed partial class AnalysisPage : MarginContainer, IAppPage, IRespons
         }
     }
 
-    public void ImportSearchContext(
-        SeedPredictionRequest request,
-        string preferredOpeningRouteId,
-        int? preferredOpeningChoiceSlotIndex)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-        _requestBar.SetSeedText(request.OriginalSeed, commit: true);
-        _requestBar.SetContext(
-            request.Character.CharacterKey,
-            request.Ascension,
-            request.PlayersCount,
-            request.PlayerSlotIndex,
-            notify: false);
-        _requestBar.SetUnlockState(request.Authority.AllCharacterCardPoolsUnlocked);
-        _ancientGroupCard.SetConditions(request.AncientOptionConditions, notify: false);
-        _preferredOpeningRouteId = preferredOpeningRouteId?.Trim() ?? string.Empty;
-        _preferredOpeningChoiceSlotIndex = preferredOpeningChoiceSlotIndex;
-        _openingPreselectionProvided = _preferredOpeningChoiceSlotIndex.HasValue || !string.IsNullOrWhiteSpace(_preferredOpeningRouteId);
-        _preferredRewardRouteGroupId = string.Empty;
-        PredictorContextChanged?.Invoke(CurrentReactiveDraft, _preferredOpeningRouteId, _preferredOpeningChoiceSlotIndex, _preferredRewardRouteGroupId);
-    }
-
     public void ShowLoading(AnalysisRequestDraft draft)
     {
         ClearWorkbenchResults(Ui1TextKey.Analyzing);
@@ -259,6 +238,7 @@ internal sealed partial class AnalysisPage : MarginContainer, IAppPage, IRespons
         // substitute the local profile when inspecting another seat/favorite.
         _eventTransformUnlocks = eventUnlocks is null ? null :
             MegaCrit.Sts2.Core.Unlocks.UnlockState.FromSerializable(LobbyUnlockReadout.Copy(eventUnlocks));
+        BindRouteContext(request, document, eventUnlocks);
         bool isNewAnalysisContext = LastRequest is null || LastRequest.RequestId != request.RequestId;
         if (isNewAnalysisContext) ResetMaps();
         if (isNewAnalysisContext && !_openingPreselectionProvided)
@@ -347,7 +327,7 @@ internal sealed partial class AnalysisPage : MarginContainer, IAppPage, IRespons
         IRuntimeProfile profile = LastRequest.Authority.ProfileId == RuntimeProfileId.Beta111
             ? Beta111Profile.Instance
             : _runtime.Profile;
-        if (!profile.TryCanonicalizeSeed(canonicalSeed, out string normalized, out _)) return false;
+        if (!ProfileSeedRules.TryCanonicalizePredictionSeed(profile, canonicalSeed, out string normalized, out _)) return false;
         rootHash = profile.ComputeRootSeed(normalized);
         return true;
     }
@@ -358,6 +338,7 @@ internal sealed partial class AnalysisPage : MarginContainer, IAppPage, IRespons
         if (_viewModel is null || _viewModel.NeowChoices.Count == 0)
         {
             _selectedNeowRelicKey = default;
+            if (_viewModel?.NeowIdentityStatus != RolltheSpire2.Core.World.SeedDomainEvaluationStatus.Evaluated) return;
             _preferredOpeningRouteId = string.Empty;
             _preferredOpeningChoiceSlotIndex = null;
             _preferredRewardRouteGroupId = string.Empty;
@@ -373,6 +354,15 @@ internal sealed partial class AnalysisPage : MarginContainer, IAppPage, IRespons
             : _selectedNeowRelicKey.IsValid
                 ? _viewModel.NeowChoices.FirstOrDefault(choice => choice.RelicKey == _selectedNeowRelicKey)
                 : null;
+
+        // A missing projection is not permission to replace a frozen requested route.
+        if (selectedRoute is null && !string.IsNullOrWhiteSpace(_preferredOpeningRouteId) &&
+            (_viewModel.NeowIdentityStatus != RolltheSpire2.Core.World.SeedDomainEvaluationStatus.Evaluated ||
+             selectedChoice?.ProductRelevantProjectionPrecision is PredictionPrecision.Unknown or PredictionPrecision.Unsupported))
+        {
+            _selectedNeowRelicKey = selectedChoice?.RelicKey ?? default;
+            return;
+        }
 
         // A fresh analysis context always has a concrete opening selection. A route
         // supplied by Search remains authoritative; otherwise use the first top-level
@@ -551,13 +541,13 @@ internal sealed partial class AnalysisPage : MarginContainer, IAppPage, IRespons
     {
         // AnalysisRequestBar emits only after the active runtime profile has accepted
         // a complete legal Seed. Intermediate edit states never reach prediction.
-        AnalysisRequestDraft draft = requestBarDraft.WithAncientConditions(_ancientGroupCard.CurrentConditions);
+        AnalysisRequestDraft draft = requestBarDraft with { AncientOptionConditions = _ancientGroupCard.CurrentConditions };
         SubmitDraft(draft);
     }
 
     private void SubmitReactiveDraft(AnalysisRequestDraft requestBarDraft)
     {
-        AnalysisRequestDraft draft = requestBarDraft.WithAncientConditions(_ancientGroupCard.CurrentConditions);
+        AnalysisRequestDraft draft = requestBarDraft with { AncientOptionConditions = _ancientGroupCard.CurrentConditions };
         PredictorContextChanged?.Invoke(draft, _preferredOpeningRouteId, _preferredOpeningChoiceSlotIndex, _preferredRewardRouteGroupId);
         SubmitDraft(draft);
     }

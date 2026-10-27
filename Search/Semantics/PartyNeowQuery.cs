@@ -55,6 +55,13 @@ internal static class PartyNeowQuery
     internal static PartySeedInformation? Complete(PartySeedInformation information, CompiledSearch compiled, CancellationToken cancellationToken = default)
     {
         var query = compiled.NormalizedQuery;
+        bool needsBoss = query.LegacyWorld.BossFilters.Any(c => !c.IsEmpty) || query.LegacyWorld.BossOrdinalFilters.Any(c => !c.IsEmpty) ||
+            query.VariantBossBranches.Any(b => !b.FirstBoss.IsEmpty || b.IncludesSecondBoss);
+        if (query.VariantBossBranches.Count > 0 && information.ActIdentityPrecision != PredictionPrecision.Exact ||
+            needsBoss && information.BossStatus != Core.World.SeedDomainEvaluationStatus.Evaluated ||
+            query.Players.Any(p => (!p.Offers.IsEmpty || p.SelectedOption is not null) &&
+                information.Players.Single(o => o.Slot == p.Slot).IdentityPrecision != PredictionPrecision.Exact))
+            return information;
         if (!PartyInitialQuery.MatchesOffers(query, information) || !PartyInitialQuery.MatchesWorld(query, information)) return null;
         var participants = query.Players.Where(p => p.SelectedOption is not null).Select(p => new PartyNeowParticipant(p.Slot, p.SelectedOption!)).ToArray();
         if (participants.Length == 0) return information;

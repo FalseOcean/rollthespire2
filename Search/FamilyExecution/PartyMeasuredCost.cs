@@ -25,11 +25,36 @@ internal static class PartyMeasuredCost
 
     internal static (double Ms, double SetupMs, string Evidence)? Price(
         string familyId, double inputs, int stages, bool gpu, bool privateChain,
-        int capacity, double work, double survival, int cpuWorkers = 1)
+        int capacity, double work, double survival, int cpuWorkers = 1, bool smallConfiguredShopCpu = false,
+        string? cpuPhysicalRevision = null,
+        IReadOnlyList<(string PhysicalRevision, int Capacity)>? cpuStages = null)
     {
         if (inputs < 0 || !double.IsFinite(inputs) || stages < 1 || capacity < 1 ||
             work <= 0 || !double.IsFinite(work) || survival is < 0 or > 1 ||
             !Anchors.TryGetValue(familyId, out Anchor? anchor)) return null;
+        // Pin the legacy CPU N envelope to this branch's existing v3/RootMode2/
+        // B8192 baseline; this does not recertify its historical measurements.
+        // New numerical bodies or scheduler windows need independent evidence;
+        // absent pricing does not remove the registered execution alternative.
+        if (!gpu && familyId == "N.Neow")
+        {
+            string anchoredBody = $"N.Neow.PartyEffects.Cpu.v3.RootMode2.P{cpuWorkers}.B8192";
+            if (capacity != 8192 ||
+                (cpuPhysicalRevision != anchoredBody + ".Dense.CanonicalAbi1Ready" &&
+                 cpuPhysicalRevision != anchoredBody + ".CompactAbi1.CanonicalAbi1Ready")) return null;
+        }
+        if (!gpu && familyId == "R.Relic")
+        {
+            // Pin this branch's legacy P1 wrapper envelope without recertifying
+            // its old measurements for changed child bodies or windows.
+            string[] bodies = ["R.Relic.Cpu.TrackedPositions.20261013.v2", "R.Relic.Cpu.ShopBackPrefix.20260912.v1",
+                "R.Relic.Cpu.Reference.20260912.v1", "R.Relic.Cpu.CapsuleTargets.20261013.v2",
+                "R.Relic.Cpu.CapsuleAndSequenceReplay.20260905.v1"];
+            if (cpuWorkers != 1 || cpuStages is null || cpuStages.Count != stages || cpuStages.Any(stage =>
+                stage.Capacity != 65536 || !bodies.Any(body =>
+                    stage.PhysicalRevision == body + ".RootMode2.P1.B65536.Dense.CanonicalAbi1Ready" ||
+                    stage.PhysicalRevision == body + ".RootMode2.P1.B65536.CompactAbi1.CanonicalAbi1Ready"))) return null;
+        }
         var device = SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity();
         if (gpu)
         {
@@ -46,19 +71,27 @@ internal static class PartyMeasuredCost
         {
             // N is the only wrapper whose selected CPU worker count changes this
             // measured path. P8 has a real small-window regression, so no linear
-            // worker extrapolation is used. Other party CPU stages select P1.
+            // worker extrapolation is used. Only the explicit small-S alternative
+            // may reuse P1 at other requested worker counts; execution is unchanged.
+            bool smallShop = smallConfiguredShopCpu && familyId == "S.MerchantShopColorless" &&
+                inputs is > 0 and <= 1024 && cpuWorkers is >= 1 and <= 32;
             double ns = familyId == "N.Neow" ? cpuWorkers switch
             {
                 1 => 5800,
                 >= 2 and <= 4 => 2000,
                 >= 5 and <= 8 => 8000,
                 _ => double.NaN
-            } : cpuWorkers == 1 ? anchor.CpuNs : double.NaN;
+            } : cpuWorkers == 1 || smallShop ? anchor.CpuNs : double.NaN;
             if (!double.IsFinite(ns)) return null;
             double ms = anchor.CpuFloorMs + inputs * ns * scale / 1e6 + outputExtra * 8 / 1e6;
             return (ms, 0, "LocalMeasuredCPU;Beta111FourSeatFamily;64And8192Roots;" +
                 "P1P4P8Compared;SteadyInvokeAsyncAbi1;ShapeWorkEnvelope;OutputDelta;" +
-                "CpuIdentity=" + device.CpuIdentity);
+                "CpuIdentity=" + device.CpuIdentity + (smallShop
+                    ? $";SmallConfiguredShopCpuP1Envelope;RequestedWorkers={cpuWorkers};ModeledEffectiveWorkers=1;ConditionalMeanNotActualPopulationLimit;SchedulerAndCpuPermitsUnchanged"
+                    : "") +
+                (familyId == "R.Relic" ? ";LegacyPartyR840P1Envelope;IdentityPinnedNotRevalidated;CpuStagePhysicalRevisions=" +
+                    string.Join('|', cpuStages!.Select(stage => stage.PhysicalRevision + ":Capacity=" + stage.Capacity)) : "") +
+                (familyId == "N.Neow" ? ";CpuPhysicalRevision=" + cpuPhysicalRevision : ""));
         }
         int referenceStages = familyId == "W.World" ? 1 : 4;
         bool vulkan = device.RenderingBackend == "vulkan";

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 
 namespace RolltheSpire2.Core.PredictorRuntime;
 
@@ -8,6 +9,8 @@ internal sealed partial class PredictorCrystalReachability
 {
     // Optional host diagnostics; no observer is installed by production UI.
     internal Action<ImmutableArray<CrystalRewardOption>,CrystalRewardOption?,CrystalGoalSearchResult>? LanguageResultObserved { get; set; }
+    // The host sink must be worker-safe and independent of any page lifetime.
+    internal Action<Exception,string>? LanguageFailureObserved { get; set; }
     internal bool ProfileLanguageCompilation { get; set; }
     private sealed class LanguageQuery(ImmutableArray<CrystalRewardOption> selected,ImmutableArray<CrystalRewardOption> candidates)
     {
@@ -16,12 +19,32 @@ internal sealed partial class PredictorCrystalReachability
         internal readonly ConcurrentQueue<(CrystalRewardOption? Target,CrystalGoalSearchResult Result)> Results=new();
         internal Task? Worker;
         internal CancellationTokenSource? Cancel;
+        internal ExceptionDispatchInfo? Failure;
         internal bool SelectedAttempted,SelectedImpossible;
         internal double Seconds;
         internal long Work,Pruned,Queries,Positives;
     }
     private readonly Dictionary<string,LanguageQuery> _languageQueries=[];
     private LanguageQuery? _activeLanguage;
+
+    // Observe the task even if its query is cancelled, retargeted or never polled
+    // again. Reporting is auxiliary; the original failure remains on the worker.
+    internal static Task StartLanguageWorker(Action work,CancellationToken token,Action<Exception> failed)
+    {
+        var worker=Task.Run(()=>
+        {
+            try { work(); }
+            catch(OperationCanceledException) when(token.IsCancellationRequested) { throw; }
+            catch(Exception exception)
+            {
+                try { failed(exception); } catch { /* Diagnostics cannot replace the computation failure. */ }
+                throw;
+            }
+        },token);
+        _=worker.ContinueWith(static faulted=>{_ = faulted.Exception;},CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted|TaskContinuationOptions.ExecuteSynchronously,TaskScheduler.Default);
+        return worker;
+    }
 
     private void StopLanguageWorker()
     {
@@ -41,7 +64,7 @@ internal sealed partial class PredictorCrystalReachability
             _offsetBound??=new(source,_table,avoidCurse,rootCardSlots:rootCardSlots,packingCover:packingCover);
             if(focus!=null && (selected.Contains(focus) || !_table.Candidates.Contains(focus))) throw new ArgumentException("CrystalFocusTargetInvalid");
             string selectionKey=SelectionKey(selected),key=focus==null?selectionKey:"focus:"+SelectionKey(selected.Add(focus));
-            if(focus==null && _finished.TryGetValue(selectionKey,out var finished)) {StopLanguageWorker();return finished;}
+            if(focus==null && _finished.TryGetValue(selectionKey,out var finished)) {StopLanguageWorker();return finished with {Projection=PeekKnown(selected)};}
             if(!_languageQueries.TryGetValue(key,out var query))
             {
                 ImmutableArray<CrystalRewardOption> candidates=focus==null?ProbeOrder(_table.Candidates.Where(c=>!selected.Contains(c)).ToImmutableArray()).ToImmutableArray():[focus];
@@ -105,6 +128,9 @@ internal sealed partial class PredictorCrystalReachability
                 finally {query.Worker=null;query.Cancel?.Dispose();query.Cancel=null;}
                 Drain();
             }
+            // Completed workers release their cancellation resources before the
+            // retained failure is rethrown. A failure is never a retry request.
+            Volatile.Read(ref query.Failure)?.Throw();
             var remaining=query.Candidates.Where(c=>!query.Excluded.Contains(c) && !projection.Available.ContainsKey(c)).ToImmutableArray();
             if(query.Worker==null && budget>TimeSpan.Zero &&
                 ((!query.SelectedAttempted && projection.SelectedPlan==null) || remaining.Any(c=>!query.Attempted.Contains(c))))
@@ -112,10 +138,13 @@ internal sealed partial class PredictorCrystalReachability
                 var targets=remaining.Where(c=>!query.Attempted.Contains(c)).ToImmutableArray();
                 bool needSelected=!query.SelectedAttempted && projection.SelectedPlan==null;
                 query.Cancel=CancellationTokenSource.CreateLinkedTokenSource(token);var workerToken=query.Cancel.Token;
-                query.Worker=Task.Run(()=>
+                string targetContext="selected";
+                string queryContext=$"seed={source.Context.Seed};query={key};selected={string.Join('|',selected)}";
+                query.Worker=StartLanguageWorker(()=>
                 {
                     bool Solve(CrystalRewardOption? target)
                     {
+                        targetContext=target?.ToString()??"selected";
                         var goals=target==null?selected:selected.Add(target);
                         var result=PredictorCrystalGoalLanguage.Solve(source,_table,goals,avoidCurse,TimeSpan.FromSeconds(2),
                             token:workerToken,sharedBound:_offsetBound,rootCardSlots:rootCardSlots,profileCompilation:ProfileLanguageCompilation);
@@ -128,7 +157,22 @@ internal sealed partial class PredictorCrystalReachability
                         workerToken.ThrowIfCancellationRequested();
                         if(!PeekKnown(selected).Available.ContainsKey(target)) Solve(target);
                     }
-                },workerToken);
+                },workerToken,exception=>
+                {
+                    Interlocked.CompareExchange(ref query.Failure,ExceptionDispatchInfo.Capture(exception),null);
+                    LanguageFailureObserved?.Invoke(exception,queryContext+";target="+targetContext);
+                });
+                var startedWorker=query.Worker!;
+                _=startedWorker.ContinueWith(completed=>
+                {
+                    // Old queries may never be polled again. Release their
+                    // linked-token registration after work has actually ended.
+                    lock(_sync)
+                    {
+                        if(!ReferenceEquals(query.Worker,completed)) return;
+                        query.Cancel?.Dispose();query.Cancel=null;
+                    }
+                },CancellationToken.None,TaskContinuationOptions.ExecuteSynchronously,TaskScheduler.Default);
             }
             if(query.Worker!=null)
             {
@@ -154,7 +198,7 @@ internal sealed partial class PredictorCrystalReachability
             bool complete=(projection.SelectedPlan!=null || query.SelectedImpossible) &&
                 query.Candidates.All(c=>projection.Available.ContainsKey(c) || query.Excluded.Contains(c));
             if(complete) StopLanguageWorker();
-            if(complete && projection.SelectedPlan!=null) projection=PublishKnown(selectionKey,projection,selected,reshape:true);
+            if(complete && projection.SelectedPlan!=null) projection=PublishKnown(selectionKey,projection,selected);
             query.Seconds+=watch.Elapsed.TotalSeconds;
             var excluded=query.Excluded.ToImmutableArray();if(changed && !excluded.IsEmpty) publishExcluded?.Invoke(excluded);
             var update=new CrystalReachabilityUpdate(projection,new(query.Work,query.Pruned,0,(int)query.Queries,query.Seconds),

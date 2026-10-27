@@ -10,7 +10,7 @@ namespace RolltheSpire2.Infrastructure.Snapshots;
 /// Main-thread boundary. It produces immutable primitives/identities only and never
 /// retains Godot controls, game Model objects, RunState, Player, or real RNG.
 /// </summary>
-public static class RuntimeContextAuthorityCapture
+public static partial class RuntimeContextAuthorityCapture
 {
     private static int _neowCatalogWarning;
     /// <summary>
@@ -28,12 +28,26 @@ public static class RuntimeContextAuthorityCapture
         WorldGameMode predictionGameMode = WorldGameMode.Unknown,
         PredictionGameModeAuthority predictionGameModeAuthority = PredictionGameModeAuthority.Unknown,
         object? explicitUnlockState = null,
-        IReadOnlyList<ModelKey>? orderedCharacters = null)
+        IReadOnlyList<ModelKey>? orderedCharacters = null,
+        IReadOnlyList<ModelKey>? explicitDiscoveredActs = null)
     {
         ArgumentNullException.ThrowIfNull(profile);
-        RuntimeEffectSnapshotCaptureResult captured = explicitUnlockState is not null
+        RuntimeSnapshotThreadGuard.RequireMainThread();
+        if (profile.ProfileId == RuntimeProfileId.Beta111)
+        {
+            using var observation = BeginObservation(profile, rawSeed, character, ascension, gameVersion,
+                playersCount, playerSlotIndex, predictionGameMode, predictionGameModeAuthority,
+                explicitUnlockState, orderedCharacters, explicitDiscoveredActs);
+            return observation.CompleteOnMainThread().Derive(profile);
+        }
+        bool suppliedUnlockState = explicitUnlockState is not null;
+        var requestInputs = RequestSupportEvidenceCapture.FreezeInputs(explicitUnlockState, explicitDiscoveredActs);
+        explicitUnlockState = requestInputs.UnlockState;
+        explicitDiscoveredActs = requestInputs.DiscoveredActs;
+        RuntimeEffectSnapshotCaptureResult captured = suppliedUnlockState &&
+            profile.ProfileId is RuntimeProfileId.Beta110 or RuntimeProfileId.Beta111
             ? ReflectionNeowEffectSnapshotAdapter.Capture(profile, rawSeed, character, ascension, playersCount,
-                playerSlotIndex, RuntimeProfileId.Beta111, gameVersion, new(true, true), explicitUnlockState)
+                playerSlotIndex, profile.ProfileId, gameVersion, new(true, true), explicitUnlockState)
             : NeowEffectRuntimeSnapshotCapture.Capture(
             profile,
             rawSeed,
@@ -41,7 +55,8 @@ public static class RuntimeContextAuthorityCapture
             ascension,
             gameVersion,
             playersCount,
-            playerSlotIndex);
+            playerSlotIndex,
+            frozenUnlockState: explicitUnlockState);
         var worldAuthority = ReflectionNeowEffectSnapshotAdapter.CaptureWorld(
             profile,
             rawSeed,
@@ -53,7 +68,8 @@ public static class RuntimeContextAuthorityCapture
             captured.EffectAuthority,
             predictionGameMode,
             predictionGameModeAuthority,
-            gameVersion, explicitUnlockState: explicitUnlockState, orderedCharacters: orderedCharacters);
+            gameVersion, explicitUnlockState: explicitUnlockState, orderedCharacters: orderedCharacters,
+            explicitDiscoveredActs: explicitDiscoveredActs);
 
         bool vanilla = character.IsKnownVanilla;
         bool? runtimeNeowCatalogExact = ReflectionNeowEffectSnapshotAdapter.CaptureVanillaNeowCatalogExact(out string neowCatalogEvidence);
@@ -99,7 +115,8 @@ public static class RuntimeContextAuthorityCapture
             captured.EffectAuthority,
             worldAuthority,
             predictionGameMode,
-            predictionGameModeAuthority);
+            predictionGameModeAuthority,
+            supportEvidence: RequestSupportEvidenceCapture.Capture(requestInputs));
     }
 
     /// <summary>

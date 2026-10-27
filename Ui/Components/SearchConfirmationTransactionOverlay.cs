@@ -49,7 +49,7 @@ internal sealed partial class SearchConfirmationTransactionOverlay : Control
             SizeFlagsHorizontal = SizeFlags.ShrinkCenter,
             SizeFlagsVertical = SizeFlags.ShrinkCenter
         };
-        Ui1Theme.ApplyPanel(panel, Ui1SurfaceRole.Drawer, 5f, 2, 18f);
+        MainPanelTheme.ApplyPanel(panel, Ui1SurfaceRole.Drawer, 5f, 2, 18f);
         center.AddChild(panel);
 
         var root = new VBoxContainer
@@ -58,8 +58,8 @@ internal sealed partial class SearchConfirmationTransactionOverlay : Control
             SizeFlagsVertical = SizeFlags.ExpandFill
         };
         root.AddThemeConstantOverride("separation", 12);
-        _title = Ui1Theme.Label(string.Empty, Ui1TextRole.SectionTitle, true);
-        _message = Ui1Theme.Label(string.Empty, Ui1TextRole.Body, true);
+        _title = MainPanelTheme.Label(string.Empty, Ui1TextRole.SectionTitle, true);
+        _message = MainPanelTheme.Label(string.Empty, Ui1TextRole.Body, true);
         root.AddChild(_title);
         root.AddChild(_message);
         root.AddChild(new Control { SizeFlagsVertical = SizeFlags.ExpandFill });
@@ -68,8 +68,8 @@ internal sealed partial class SearchConfirmationTransactionOverlay : Control
         footer.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill });
         _cancel = new Button { CustomMinimumSize = new Vector2(92f, 34f) };
         _confirm = new Button { CustomMinimumSize = new Vector2(104f, 34f) };
-        Ui1Theme.ApplyButton(_cancel, Ui1ButtonRole.Ghost);
-        Ui1Theme.ApplyButton(_confirm, Ui1ButtonRole.Primary);
+        MainPanelTheme.ApplyButton(_cancel, Ui1ButtonRole.Ghost);
+        MainPanelTheme.ApplyButton(_confirm, Ui1ButtonRole.Primary);
         _cancel.Pressed += Cancel;
         _confirm.Pressed += () =>
         {

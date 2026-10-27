@@ -116,7 +116,7 @@ internal sealed partial class NeowChoiceDetailPanel : VBoxContainer
                 return;
             }
 
-            _content.AddChild(Ui1Theme.Label(_predictionFailed, Ui1TextRole.Warning, true));
+            _content.AddChild(MainPanelTheme.Label(_predictionFailed, Ui1TextRole.Warning, true));
             Visible = true;
             return;
         }
@@ -127,7 +127,7 @@ internal sealed partial class NeowChoiceDetailPanel : VBoxContainer
         {
             if (choice.PredictionState == NeowPredictionPresentationState.PredictionUnavailable)
             {
-                _content.AddChild(Ui1Theme.Label(_predictionFailed, Ui1TextRole.Warning, true));
+                _content.AddChild(MainPanelTheme.Label(_predictionFailed, Ui1TextRole.Warning, true));
                 Visible = true;
                 return;
             }
@@ -190,7 +190,7 @@ internal sealed partial class NeowChoiceDetailPanel : VBoxContainer
             var wrapper = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
             wrapper.AddThemeConstantOverride("separation", 8);
             wrapper.AddChild(column);
-            wrapper.AddChild(Ui1Theme.Label("△ " + group.RouteWarningLabels[0], Ui1TextRole.Warning, true));
+            wrapper.AddChild(MainPanelTheme.Label("△ " + group.RouteWarningLabels[0], Ui1TextRole.Warning, true));
             return wrapper;
         }
         return column;
@@ -206,7 +206,7 @@ internal sealed partial class NeowChoiceDetailPanel : VBoxContainer
                 SizeFlagsVertical = Control.SizeFlags.ShrinkBegin
             };
             curseColumn.AddThemeConstantOverride("separation", 6);
-            curseColumn.AddChild(Ui1Theme.Label(_finalCurseLabel, Ui1TextRole.Muted, wrap: false));
+            curseColumn.AddChild(MainPanelTheme.Label(_finalCurseLabel, Ui1TextRole.Muted, wrap: false));
             curseColumn.AddChild(BuildSourceHeader(curse, BonesEffectObjectSize, missingIconTooltip));
             return curseColumn;
         }
@@ -258,7 +258,7 @@ internal sealed partial class NeowChoiceDetailPanel : VBoxContainer
             }
         }
 
-        Label title = Ui1Theme.Label(_finalCurseLabel, Ui1TextRole.Muted, wrap: false);
+        Label title = MainPanelTheme.Label(_finalCurseLabel, Ui1TextRole.Muted, wrap: false);
         title.MouseFilter = Control.MouseFilterEnum.Ignore;
         title.VerticalAlignment = VerticalAlignment.Center;
         row.AddChild(title);
@@ -272,7 +272,7 @@ internal sealed partial class NeowChoiceDetailPanel : VBoxContainer
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             SizeFlagsVertical = Control.SizeFlags.ShrinkBegin
         };
-        Ui1Theme.ApplyPanel(
+        MainPanelTheme.ApplyPanel(
             panel,
             Ui1SurfaceRole.Input,
             BonesResultSubcardRadius,
@@ -341,7 +341,7 @@ internal sealed partial class NeowChoiceDetailPanel : VBoxContainer
         texture.OffsetTop = 3f;
         texture.OffsetRight = -3f;
         texture.OffsetBottom = -3f;
-        Label missing = Ui1Theme.Label(texture.Visible ? string.Empty : "?", Ui1TextRole.Muted, wrap: false);
+        Label missing = MainPanelTheme.Label(texture.Visible ? string.Empty : "?", Ui1TextRole.Muted, wrap: false);
         missing.HorizontalAlignment = HorizontalAlignment.Center;
         missing.VerticalAlignment = VerticalAlignment.Center;
         missing.MouseFilter = Control.MouseFilterEnum.Ignore;
@@ -354,7 +354,7 @@ internal sealed partial class NeowChoiceDetailPanel : VBoxContainer
         iconHost.MouseExited += () => _tooltipHost.Dismiss(iconHost);
         iconHost.TreeExiting += () => _tooltipHost.Dismiss(iconHost);
 
-        Label name = Ui1Theme.Label(source.DisplayName, Ui1TextRole.Body, wrap: false);
+        Label name = MainPanelTheme.Label(source.DisplayName, Ui1TextRole.Body, wrap: false);
         name.CustomMinimumSize = new Vector2(120f, iconSize);
         name.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         name.ClipText = true;

@@ -5,7 +5,7 @@ namespace RolltheSpire2.Search.Selectivity;
 
 internal static partial class CombatRewardProbabilityEstimator
 {
-    // Only the inner, pure DP result is shared. Route compatibility, authority
+    // Only the inner, pure DP result is shared. Authored route/profile authority
     // checks and probability evidence are rebuilt for every query above this layer.
     private const int ProfileProbabilityCacheCapacity = 32;
     private const int MaximumProfileProbabilityKeyBytes = 32 * 1024;

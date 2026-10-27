@@ -14,23 +14,41 @@ namespace RolltheSpire2.Search.FamilyExecution;
 internal static class BonesCapsuleAllocation
 {
     internal const string LocalRevision = "N.Neow.Composite.RCapsule.BonesK.LocalSameRoute.DensePreBones.CanonicalAbi1Ready.20260909.v1";
-    internal static bool TrySelectDefault(ExactSearchExecutionRequest request, IReadOnlyList<IFamilyInvocation> registered,
-        out FamilyExecutionPlan? selected) => TrySelect(request, registered, out selected, defaultSelection: true);
+    internal static bool TryCreateDefaultUnit(ExactSearchExecutionRequest request,
+        IReadOnlyList<IFamilyInvocation> registered, out IFamilyInvocation? unit)
+    {
+        unit = null;
+        string control = System.Environment.GetEnvironmentVariable("RT2_BONES_CAPSULE_BOUNDARY") ?? "";
+        if (control is not ("" or "default") ||
+            registered.OfType<NeowFamily>().SingleOrDefault() is not { GpuPlan: not null } ||
+            registered.OfType<CapsuleRelicFamily>().SingleOrDefault() is not { } relic ||
+            relic.GpuPreparationFailureDetail.Length != 0) return false;
+        // Ordinary Rfull deliberately cannot model the K-first continuation.
+        // The coupled body below supplies those two same-route arrivals itself;
+        // standalone R being CPU-only is therefore not an availability failure.
+        return TryCreate(request, registered, "local", true, out unit);
+    }
 
-    internal static bool TrySelect(ExactSearchExecutionRequest request, IReadOnlyList<IFamilyInvocation> registered,
-        out FamilyExecutionPlan? selected, bool defaultSelection = false)
+    internal static bool TrySelect(ExactSearchExecutionRequest request,
+        IReadOnlyList<IFamilyInvocation> registered, out FamilyExecutionPlan? selected)
     {
         selected = null;
         string mode = System.Environment.GetEnvironmentVariable("RT2_BONES_CAPSULE_BOUNDARY") ?? "";
-        if (defaultSelection)
-        {
-            if (mode.Length != 0 && mode != "default") return false;
-            // Do not compile/replay N or allocate Capsule metadata for other Families.
-            if (!registered.Any(f => f.FamilyId == "N.Neow") || !registered.Any(f => f.FamilyId == "R.Relic")) return false;
-            mode = "local";
-        }
-        else if (mode.Length == 0 || mode is "ordinary" or "default") return false;
-        if (mode is not ("private" or "verify" or "mask" or "local" or "recompute" or "verify-mask" or "verify-local" or "verify-recompute")) throw new InvalidOperationException("BonesBoundary.UnknownMode");
+        if (mode is "" or "ordinary" or "default") return false;
+        if (!TryCreate(request, registered, mode, false, out var unit)) return false;
+        selected = FamilyPlanner.InOrder([unit!, ..registered.Where(f => f.FamilyId is not ("N.Neow" or "R.Relic"))])
+            with { SelectionPolicyId = "BonesCapsuleBoundary.Explicit.20260909.v1",
+                RankingAuthority = FamilyPlannerRankingAuthority.UnpricedPhysicalTrial,
+                DecisionEvidence = ["ExplicitBoundaryExperiment"] };
+        return true;
+    }
+
+    private static bool TryCreate(ExactSearchExecutionRequest request,
+        IReadOnlyList<IFamilyInvocation> registered, string mode, bool defaultSelection, out IFamilyInvocation? unit)
+    {
+        unit = null;
+        if (mode is not ("private" or "verify" or "mask" or "local" or "recompute" or "verify-mask" or "verify-local" or "verify-recompute"))
+            throw new InvalidOperationException("BonesBoundary.UnknownMode");
         var n = NeowReplayPlan.Compile(request, false);
         var effects = request.Evaluation.StructuredNeowEffects.Where(c => !c.IsEmpty).ToArray();
         var capsule = effects.FirstOrDefault(c => c.SourceRelicKey == BaseGameModelKeys.Relics.LargeCapsule);
@@ -50,30 +68,17 @@ internal static class BonesCapsuleAllocation
              (isK && kaleidoscope!.Kind == NeowStructuredConditionKind.IndependentOfferGroupTargets && kaleidoscope.OutputKeys.Count is 1 or 2)) &&
             !request.Evaluation.RelicSequenceConditions.Any(c => !c.IsEmpty) && !request.Evaluation.RelicShopSequenceConditions.Any(c => !c.IsEmpty) &&
             request.Evaluation.CapsuleContainedRelics.IsEmpty && !request.Evaluation.RequireWhetstone && !request.Evaluation.RequireWarPaint &&
-            registered.Any(f => f.FamilyId == "N.Neow") && registered.Any(f => f.FamilyId == "R.Relic") &&
-            registered.All(f => f.FamilyId is "N.Neow" or "R.Relic" or "W.World" or "E.EventResult");
+            registered.Any(f => f.FamilyId == "N.Neow") && registered.Any(f => f.FamilyId == "R.Relic");
         if (!applicable || !NeowFamilyGpuPlan.TryCreate(n, out var np, out _) || np is null ||
             !CreateR(request, isK, out var rp) || rp is null)
         {
             if (!defaultSelection) Bootstrap.RuntimeLog.TryBackgroundInfo("bonesCapsuleBoundaryRequested=true;applicable=false;normalAllocationRetained=true");
             return false;
         }
-        // This fixed allocation is unpriced; no observed survival repricing.
-        IFamilyInvocation[] ordered = [new BonesCapsuleBoundaryInvocation(request, np, rp, mode, defaultSelection),
-            ..registered.Where(f => f.FamilyId is not ("N.Neow" or "R.Relic"))];
-        var stages = ordered.Select((f,i) => {
-            var condition = f.ResolveConditionPerformance(i != 0);
-            return new FamilyExecutionPlanStage(f, f.Coverage, i != 0, i == 0 ? 1 : double.NaN, null, null, null,
-                condition, GpuCostCalibration.ResolveReference(condition), null, null, null, null, i);
-        }).ToArray();
-        selected = new(defaultSelection ? "FamilyAllocation.BonesKLarge.LocalDefault" : "BonesCapsuleBoundary." + mode,
-            defaultSelection ? "FamilyAllocation.BonesKLarge.LocalDefault.20260910.v1" : "BonesCapsuleBoundary.Explicit.20260909.v1",
-            defaultSelection ? FamilyPlannerRankingAuthority.RegistrationOrderFallback : FamilyPlannerRankingAuthority.UnpricedPhysicalTrial,
-            stages, null, [defaultSelection ? "OwnerAcceptedBoundedLocalDefault" : "ExplicitBoundaryExperiment"],
-            ["BoundedCompositeSurvivalAndPricingDeferredToGlobalPhysicalComposition"]);
-        if(!selected.Stages.SelectMany(stage=>stage.Coverage).ToHashSet(StringComparer.Ordinal)
-            .SetEquals(registered.SelectMany(family=>family.Coverage))) throw new InvalidOperationException("BonesK.CoverageMismatch");
-        Bootstrap.RuntimeLog.TryBackgroundInfo($"bonesCapsuleBoundarySelected=true;mode={mode};coverage=N.Neow,R.Relic;order=N>R;intermediate={((mode.EndsWith("mask",StringComparison.Ordinal)) ? "PrivatePackedOrdinalRouteMask" : mode.EndsWith("local",StringComparison.Ordinal) ? "LocalCheckpoint" : "PrivateOrdinal")};normalPricingChanged=false;defaultSelection={defaultSelection};physicalRevision={(mode=="local" ? LocalRevision : "ExplicitControl")};pricingDeferred=true");
+        // Existing same-route body is indivisible and Dense-only. Its accepted
+        // stable local default needs no complete-plan or suffix price.
+        unit = new BonesCapsuleBoundaryInvocation(request, np, rp, mode, defaultSelection);
+        Bootstrap.RuntimeLog.TryBackgroundInfo($"bonesCapsuleBoundarySelected=true;mode={mode};coverage=N.Neow,R.Relic;order=N>R;intermediate={((mode.EndsWith("mask",StringComparison.Ordinal)) ? "PrivatePackedOrdinalRouteMask" : mode.EndsWith("local",StringComparison.Ordinal) ? "LocalCheckpoint" : "PrivateOrdinal")};localUnitSelection=true;defaultSelection={defaultSelection};physicalRevision={(mode=="local" ? LocalRevision : "ExplicitControl")};pricingDeferred=true");
         return true;
     }
     private static bool CreateR(ExactSearchExecutionRequest request, bool isK, out RelicFullGpuPlan? plan)
@@ -93,6 +98,7 @@ internal sealed class BonesCapsuleBoundaryInvocation(ExactSearchExecutionRequest
     private int _batches;
     private double _ms;
     private bool _faulted;
+    GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => ConditionPerformance.UsesGpu ? GpuNumericRequirements.Int64 | GpuNumericRequirements.Float64 : GpuNumericRequirements.None;
     public string FamilyId => "N.Neow";
     public IReadOnlyList<string> Coverage => ["N.Neow", "R.Relic"];
     public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId, PrivateOrdinalBuffer.Capacity, [], "BonesKLocalAllocation.Unpriced");
@@ -102,7 +108,7 @@ internal sealed class BonesCapsuleBoundaryInvocation(ExactSearchExecutionRequest
         "N.Neow.Composite.RCapsule.Bones" + (rp.UsesBonesKBoundary ? "K" : "Leafy") + $".{mode}.CanonicalAbi1Ready.20260909.v2",
         "Neutral", 1, defaultSelection ? "OwnerAcceptedBoundedDefault_Unpriced" : "Explicit", usesGpu:true);
     public FamilyPerformanceObservation CapturePerformanceObservation() => new(ConditionPerformance, _gpu?.Device ?? "", _gpu?.SetupMs ?? 0,
-        0, 0, _batches, 0, _input, _output, _ms, false, _faulted ? "PhysicalFailure" : defaultSelection ? "BoundedDefaultPricingDeferred" : "ExplicitExperimentNoCalibration");
+        0, 0, _batches, 0, _input, _output, _ms, false, _faulted ? "PhysicalFailure" : defaultSelection ? "CoupledDenseOnlyUnitTimeUnavailable" : "ExplicitExperimentNoCalibration");
     public async ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow observation,
         FamilyCandidateSet input, CancellationToken token)
     {

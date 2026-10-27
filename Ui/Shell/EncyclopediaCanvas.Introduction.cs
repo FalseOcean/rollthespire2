@@ -3,6 +3,7 @@ using Godot;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Presentation.ContentNames;
 using RolltheSpire2.Ui.Icons;
+using RolltheSpire2.Ui.Theme;
 
 namespace RolltheSpire2.Ui.Shell;
 
@@ -26,8 +27,10 @@ internal sealed partial class EncyclopediaCanvas
                 view.AddText(text[consumed..match.Index]);
             if (match.Groups["bold"].Success)
             {
-                view.PushColor(new Color("E2E7EC"));
+                view.PushBold();
+                view.PushColor(_palette.Color(_palette.Text));
                 RenderInline(view, match.Groups["bold"].Value, firstRelicIcons);
+                view.Pop();
                 view.Pop();
             }
             else if (match.Groups["article"].Success)
@@ -73,7 +76,7 @@ internal sealed partial class EncyclopediaCanvas
             else if (match.Groups["code"].Success)
             {
                 view.PushMono();
-                view.PushColor(new Color("A7B8CB"));
+                view.PushColor(_palette.Color(_palette.Secondary));
                 view.AddText(match.Groups["code"].Value);
                 view.Pop();
                 view.Pop();
@@ -87,7 +90,7 @@ internal sealed partial class EncyclopediaCanvas
     private static void AddArticleLink(RichTextLabel view, string id, string text)
     {
         view.PushMeta("article:" + id);
-        view.PushColor(new Color("9CC9D8"));
+        view.PushColor(WorkspacePalette.MainPanel.Color(WorkspacePalette.MainPanel.Secondary));
         view.PushUnderline();
         view.AddText(text);
         view.Pop();
@@ -98,7 +101,7 @@ internal sealed partial class EncyclopediaCanvas
     private static void AddSeedLink(RichTextLabel view, string seed, string text)
     {
         view.PushMeta("seed:" + seed);
-        view.PushColor(new Color("9CC9D8"));
+        view.PushColor(WorkspacePalette.MainPanel.Color(WorkspacePalette.MainPanel.Secondary));
         view.PushUnderline();
         view.PushMono();
         view.AddText(text);

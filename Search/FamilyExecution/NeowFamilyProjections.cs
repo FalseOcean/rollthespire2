@@ -47,6 +47,8 @@ internal sealed class NeowFamilyProjections
 
     internal FamilySurvivalProjection Survival(IReadOnlySet<string> passed)
     {
+        if (HasInitialRoomCoverage(passed))
+            return FamilySurvivalProjection.Unresolved(_id, "InitialRoomsPassedPopulationJointProbabilityUnavailable");
         bool conditioned = _correlated && passed.Contains(_capsule ? "N.Neow" : "R.Relic");
         if (_ambiguousRouteUnion && conditioned)
             return FamilySurvivalProjection.Unresolved(_id, "IndependentUnpinnedRouteUnionsRequireIntersectionProbability_NotSameRouteJoint");
@@ -63,6 +65,9 @@ internal sealed class NeowFamilyProjections
 
     internal FamilyExpectedFilteringCostProjection Expected(IReadOnlySet<string> passed)
     {
+        if (HasInitialRoomCoverage(passed))
+            return new(_id, Full.WorkUnitsPerInput + 1, null, null, 1, [],
+                "InitialRoomsPassedPopulationJointProbabilityUnavailable");
         FamilySurvivalProjection survival = Survival(passed);
         bool conditional = _correlated && passed.Contains(_capsule ? "N.Neow" : "R.Relic");
         NeowSearchFilter parent = conditional ? (_capsule ? _n : _r) : NeowSearchFilter.Empty;
@@ -132,6 +137,8 @@ internal sealed class NeowFamilyProjections
     private FamilySurvivalProjection Projection(double? probability, string evidence) => probability.HasValue
         ? FamilySurvivalProjection.Resolved(_id, probability.Value, evidence)
         : FamilySurvivalProjection.Unresolved(_id, evidence + ":DonorProbabilityUnresolved");
+    private static bool HasInitialRoomCoverage(IReadOnlySet<string> passed) =>
+        passed.Contains(InitialRoomsInvocation.TreasureCoverage) || passed.Contains(InitialRoomsInvocation.UnknownCoverage);
     private double? Probability(NeowSearchFilter filter)
     {
         // Family projections belong to one owner, including multiplayer slots.

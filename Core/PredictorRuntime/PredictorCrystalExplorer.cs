@@ -45,12 +45,20 @@ internal sealed record CrystalRewardOption(PredictorRewardKind Kind, ModelKey Ke
 internal sealed record CrystalRerollVariant(ImmutableArray<PredictorReward> Rewards,ImmutableArray<PredictorInput> Actions);
 internal sealed record CrystalRewardRoute(ImmutableArray<PredictorCrystalStep> Steps, ImmutableArray<PredictorReward> Rewards)
 {
+    internal ImmutableArray<CrystalRewardOption> WingOptions { get; init; } = default;
     // Immutable offers/actions, never cached mutable Runs.
     internal ImmutableArray<CrystalRerollVariant> RerollVariants { get; init; } = default;
     internal bool EnchantmentTargets { get; init; }
 }
 internal sealed record CrystalOptionProjection(ImmutableDictionary<CrystalRewardOption, PredictorCrystalSolution> Available,
-    PredictorCrystalSolution? SelectedPlan, int Gold);
+    PredictorCrystalSolution? SelectedPlan, int Gold)
+{
+    public ImmutableHashSet<ModelKey> SacrificeRelics { get; init; } = ImmutableHashSet<ModelKey>.Empty;
+    // Candidate discovery and currency optimization answer different questions.
+    // Complete with no plan proves no legal endpoint satisfies this selection.
+    internal bool GoldComplete { get; init; }
+    internal int? GoldUpperBound { get; init; }
+}
 
 // Resumable legal-board traversal. Production uses a selection-scoped query;
 // the existing audit can still enumerate the full reward index. Partial results
@@ -118,9 +126,11 @@ internal sealed partial class PredictorCrystalExplorer
     private readonly ImmutableArray<CrystalRewardOption> _queryCandidates;
     private readonly ImmutableHashSet<CrystalRewardOption>? _candidateScope;
     private readonly Dictionary<CrystalRewardOption,PredictorCrystalSolution> _proven=[];
+    private readonly HashSet<ModelKey> _sacrificeRelics=[];
     private PredictorCrystalSolution? _queryPlan;
     private int _queryGold=-1;
-    internal CrystalOptionProjection QueryProjection=>new(_proven.ToImmutableDictionary(),_queryPlan,Math.Max(0,_queryGold));
+    internal CrystalOptionProjection QueryProjection=>new(_proven.ToImmutableDictionary(),_queryPlan,Math.Max(0,_queryGold)) {
+        SacrificeRelics=_sacrificeRelics.Concat(_proven.Values.SelectMany(p=>p.SacrificeRelics)).Concat(_queryPlan?.SacrificeRelics??[]).ToImmutableHashSet() };
     private bool QuerySatisfied=>_reachability!=null && (_selected.IsEmpty || _queryPlan!=null) &&
         (_stopAfterPlan || _queryCandidates.All(_proven.ContainsKey));
     private readonly UInt128[] _items;
@@ -160,7 +170,7 @@ internal sealed partial class PredictorCrystalExplorer
     {
         _source = source; _avoidCurse = avoidCurse;
         _verifySelection=verifySelection??((row,selection)=>VerifySelection(source,row,selection));
-        _targetDirected=targetDirected;_islands=islands;
+        _targetDirected=targetDirected && !PredictorCrystalWing.Active(source.State);_islands=islands;
         _stopAfterPlan=stopAfterPlan;
         if(rootPartitions<1 || rootPartition<0 || rootPartition>=rootPartitions) throw new ArgumentOutOfRangeException(nameof(rootPartition));
         _rootPartition=rootPartition;_rootPartitions=rootPartitions;
@@ -286,6 +296,7 @@ internal sealed partial class PredictorCrystalExplorer
     }
     internal void SeedProjection(CrystalOptionProjection projection)
     {
+        _sacrificeRelics.UnionWith(projection.SacrificeRelics);
         if(projection.SelectedPlan!=null && (_queryPlan==null || projection.Gold>_queryGold))
         { _queryPlan=projection.SelectedPlan;_queryGold=projection.Gold; }
         foreach(var (option,proof) in projection.Available)
@@ -299,13 +310,17 @@ internal sealed partial class PredictorCrystalExplorer
         // predicate still needs the actual cards' enchantments for validation.
         var selectedOptions=!row.EnchantmentTargets && _selected.Any(o=>o.Enchantment!=null)
             ?Options(row with {EnchantmentTargets=true}).ToArray():options;
-        if(_selected.Any(o=>!selectedOptions.Any(o.Accepts))) return false;
+        bool wing=PredictorCrystalWing.Active(_source.State);
+        if(!wing && _selected.Any(o=>!selectedOptions.Any(o.Accepts))) return false;
         var cards=_selected.Where(o=>o.Kind==PredictorRewardKind.Card).ToImmutableArray();
-        if(row.RerollVariants.IsDefault && MatchCardOptions(row.Rewards,cards)==null) return false;
+        if(!wing && row.RerollVariants.IsDefault && MatchCardOptions(row.Rewards,cards)==null) return false;
         int gold=row.Rewards.Where(r=>r.Kind==PredictorRewardKind.Gold).Sum(r=>r.GoldAmount);
         var additions=options.Where(o=>!_selected.Contains(o) && !_proven.ContainsKey(o) && (_candidateScope==null || _candidateScope.Contains(o))).ToArray();
-        if(_queryPlan!=null && gold<=_queryGold && additions.Length==0) return false;
+        var origins=wing?options.Where(o=>o.Kind==PredictorRewardKind.Relic && o.Key.IsValid && !_sacrificeRelics.Contains(o.Key) &&
+            (_selected.Contains(o) || _queryCandidates.Contains(o))).ToArray():[];
+        if(_queryPlan!=null && gold<=_queryGold && additions.Length==0 && origins.Length==0) return false;
         var proof=_verifySelection(row,_selected);if(proof==null) return false;
+        _sacrificeRelics.UnionWith(proof.SacrificeRelics);
         bool useful=false;
         if(_queryPlan==null || gold>_queryGold) { _queryPlan=proof;_queryGold=gold;useful=true; }
         if(_stopAfterPlan) return useful; // Probe success, not candidate completeness.
@@ -314,6 +329,13 @@ internal sealed partial class PredictorCrystalExplorer
             var extended=_verifySelection(row,_selected.Add(option));if(extended==null) continue;
             if(!_queryCandidates.Contains(option)) throw new InvalidOperationException("CrystalOptionOutsideReachabilityBound:"+option.Key);
             _proven.Add(option,extended);useful=true;
+            _sacrificeRelics.UnionWith(extended.SacrificeRelics);
+        }
+        foreach(var option in origins.Where(o=>!_sacrificeRelics.Contains(o.Key)))
+        {
+            var selection=_selected.Where(g=>g!=option).Append(option).ToImmutableArray();
+            var origin=_verifySelection(row,selection);
+            if(origin!=null) {int before=_sacrificeRelics.Count;_sacrificeRelics.UnionWith(origin.SacrificeRelics);useful|=_sacrificeRelics.Count>before;}
         }
         return useful;
     }
@@ -325,6 +347,7 @@ internal sealed partial class PredictorCrystalExplorer
     private bool QueryCanImprove(Position node,CrystalRewardOption? probe=null)
     {
         if(_reachability==null) return true;
+        if(_reachability.IncludesSacrifices) return WingMaySupport(node,probe);
         int left=_source.Remaining-node.Path.Length,potions=0,core=0,relicPrefix=-1;
         var slots=new List<PossibleSlot>();var relicMasks=new List<UInt128>();
         foreach(int item in node.Order)
@@ -758,6 +781,7 @@ internal sealed partial class PredictorCrystalExplorer
         _orders.Add(signature);
         if(run.Phase!=PredictorPhase.Rewards) return null;
         var row=new CrystalRewardRoute(path,run.Rewards) { EnchantmentTargets=(_reachability?.IncludesEnchantments??true) && CrystalRewardOption.UsesEnchantments(_source.State) };
+        if(PredictorCrystalWing.Active(_source.State)) row=row with { WingOptions=PredictorCrystalWing.Options(run,row.EnchantmentTargets) };
         if(_reachability?.IncludesRerolls==true) row=WithRerolls(row,run,includeEnchantments:_reachability.IncludesEnchantments);
         return _reachability==null || ConsiderQueryRow(row)?row:null;
     }
@@ -1131,11 +1155,12 @@ internal sealed partial class PredictorCrystalExplorer
         PredictorRewardKind.Card => r.Cards.Select(c=>CrystalRewardOption.ForCard(c,row.EnchantmentTargets)),
         PredictorRewardKind.Potion when r.Key.IsValid => [new CrystalRewardOption(r.Kind,r.Key)],
         PredictorRewardKind.Relic when r.Key.IsValid => [CrystalRewardOption.AnyRelic, new CrystalRewardOption(r.Kind,r.Key)],
-        _ => Enumerable.Empty<CrystalRewardOption>() }).Distinct();
+        _ => Enumerable.Empty<CrystalRewardOption>() }).Concat(row.WingOptions.IsDefault?[]:row.WingOptions).Distinct();
     internal static PredictorCrystalSolution? VerifySelection(PredictorCrystalSnapshot source, CrystalRewardRoute row,
         ImmutableArray<CrystalRewardOption> selected)
     {
         row=row with { EnchantmentTargets=row.EnchantmentTargets || CrystalRewardOption.UsesEnchantments(source.State) || selected.Any(g=>g.Enchantment!=null) };
+        if(PredictorCrystalWing.Active(source.State)) return PredictorCrystalWing.Verify(Replay(source,row.Steps),row,selected);
         // Materialize every UI-visible/joint witness through the actual node inputs,
         // including relic/potion-only plans. Table settlement is candidate discovery.
         PredictorRun? entry=null;
@@ -1212,28 +1237,41 @@ internal sealed partial class PredictorCrystalExplorer
         Func<CrystalRewardRoute,ImmutableArray<CrystalRewardOption>,PredictorCrystalSolution?>? verifySelection=null,bool includeEnchantments=true)
     {
         var available=known?.Available.ToBuilder()??ImmutableDictionary.CreateBuilder<CrystalRewardOption,PredictorCrystalSolution>();
+        var sacrificeRelics=known?.SacrificeRelics.ToBuilder()??ImmutableHashSet.CreateBuilder<ModelKey>();
         PredictorCrystalSolution? best=known?.SelectedPlan; int gold=known?.Gold??-1;
         verifySelection??=(row,selection)=>VerifySelection(source,row,selection);
-        foreach(var row in rows)
+        foreach(var original in rows)
         {
+            var row=original;
+            bool wing=PredictorCrystalWing.Active(source.State);
+            if(wing && row.WingOptions.IsDefault) row=row with { WingOptions=PredictorCrystalWing.Options(Replay(source,row.Steps),row.EnchantmentTargets) };
             token.ThrowIfCancellationRequested();
             bool exactChoices=includeEnchantments && (row.EnchantmentTargets || CrystalRewardOption.UsesEnchantments(source.State));
             var choices=Options(row with { EnchantmentTargets=exactChoices }).ToArray();
             var selectedOptions=!exactChoices && selected.Any(o=>o.Enchantment!=null)
                 ?Options(row with {EnchantmentTargets=true}).ToArray():choices;
-            if(selected.Any(o=>!selectedOptions.Any(o.Accepts))) continue;
+            if(!wing && selected.Any(o=>!selectedOptions.Any(o.Accepts))) continue;
             int value=row.Rewards.Where(r=>r.Kind==PredictorRewardKind.Gold).Sum(r=>r.GoldAmount);
             var additions=choices.Where(o=>!selected.Contains(o) && !available.ContainsKey(o)).ToArray();
-            if(best!=null && value<=gold && additions.Length==0) continue;
+            var origins=wing?choices.Where(o=>o.Kind==PredictorRewardKind.Relic && o.Key.IsValid &&
+                !sacrificeRelics.Contains(o.Key) && (selected.Contains(o) || available.ContainsKey(o))).ToArray():[];
+            if(best!=null && value<=gold && additions.Length==0 && origins.Length==0) continue;
             var proof=verifySelection(row,selected); if(proof==null) continue;
+            sacrificeRelics.UnionWith(proof.SacrificeRelics);
             if(best==null || value>gold) { best=proof; gold=value; }
             foreach(var option in additions)
             {
                 token.ThrowIfCancellationRequested();
                 var extended=verifySelection(row,selected.Add(option));
-                if(extended!=null) available.Add(option,extended);
+                if(extended!=null) {available.Add(option,extended);sacrificeRelics.UnionWith(extended.SacrificeRelics);}
+            }
+            foreach(var option in origins.Where(o=>!sacrificeRelics.Contains(o.Key)))
+            {
+                var selection=selected.Where(g=>g!=option).Append(option).ToImmutableArray();
+                var origin=verifySelection(row,selection);
+                if(origin!=null) sacrificeRelics.UnionWith(origin.SacrificeRelics);
             }
         }
-        return new(available.ToImmutable(),best,Math.Max(0,gold));
+        return new(available.ToImmutable(),best,Math.Max(0,gold)) {SacrificeRelics=sacrificeRelics.ToImmutable()};
     }
 }

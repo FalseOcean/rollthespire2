@@ -31,6 +31,38 @@ internal sealed record NeowReplayPlan(
     internal NeowAuthoredUpgradeContinuation? AuthoredUpgrades { get; init; }
     internal bool HasFinalCurseFastProjection => (EnabledDomains & Beta110FastDomain.FinalCurse) != 0;
 
+    internal string ContinuationIssue(bool capsule = false)
+    {
+        bool rewards = capsule || (EnabledDomains & ~(Beta110FastDomain.FinalCurse | Beta110FastDomain.NewLeafTransform |
+            Beta110FastDomain.LeafyPoulticeTransforms | Beta110FastDomain.PhialHolsterPotions)) != 0;
+        bool niche = capsule || rewards || HasFinalCurseFastProjection || (EnabledDomains & Beta110FastDomain.NewLeafTransform) != 0;
+        bool transform = !capsule && (EnabledDomains & Beta110FastDomain.LeafyPoulticeTransforms) != 0;
+        bool potion = !capsule && (EnabledDomains & Beta110FastDomain.PhialHolsterPotions) != 0;
+        var c = Authority.EffectCatalog;
+        byte[] sources = !Bones ? [Selected] : First != 255 && Second != 255 ? [First, Second] : Authority.BonesEligibleRelicIds.Where(id =>
+            (BonesBan & Beta110FastRelicCatalog.Bit(id)) == 0 && (System.Numerics.BitOperations.PopCount(BonesAll) != 2 ||
+                (BonesAll & Beta110FastRelicCatalog.Bit(id)) != 0)).ToArray();
+        foreach (byte source in sources)
+        {
+            bool ready = source switch
+            {
+                Beta110FastRelicCatalog.ArcaneScroll when rewards => c.CharacterRewardAuthorityExact && c.CharacterRewardPool.Rare.Length > 0,
+                Beta110FastRelicCatalog.MassiveScroll when rewards && Authority.PlayersCount > 1 => c.CharacterRewardAuthorityExact && c.ColorlessRewardAuthorityExact && c.MultiplayerRewardPool.TotalCount >= 3,
+                Beta110FastRelicCatalog.HeftyTablet when rewards => c.CharacterRewardAuthorityExact && c.CharacterRewardPool.Rare.Length >= 3,
+                Beta110FastRelicCatalog.LeadPaperweight when rewards => c.ColorlessRewardAuthorityExact && c.ColorlessRewardPool.TotalCount >= 2,
+                Beta110FastRelicCatalog.LostCoffer when rewards => c.CharacterRewardAuthorityExact && c.CharacterRewardPool.TotalCount >= 3 && c.PotionAuthorityExact && c.PotionPool.HasAtLeastPerRarity(1),
+                Beta110FastRelicCatalog.ScrollBoxes when rewards => c.CharacterCardAuthorityExact && c.CharacterRewardPool.Common.Length >= 4 && c.CharacterRewardPool.Uncommon.Length >= 2,
+                Beta110FastRelicCatalog.Kaleidoscope when rewards || niche => c.OtherCharacterCardAuthorityExact && c.OtherCharacterPools.Length >= 3 && (!rewards || c.OtherCharacterPools.All(pool => pool.TotalCount > 0)),
+                Beta110FastRelicCatalog.NewLeaf when niche => c.NewLeafTransformAuthorityExact && c.NewLeafTransformPool.Length > 0,
+                Beta110FastRelicCatalog.LeafyPoultice when transform => c.LeafyTransformAuthorityExact && c.LeafyStrikeTransformPool.Length > 0 && c.LeafyDefendTransformPool.Length > 0,
+                Beta110FastRelicCatalog.PhialHolster when potion => c.PotionAuthorityExact && c.PotionPool.HasAtLeastPerRarity(2),
+                _ => true
+            };
+            if (!ready) return "DonorContinuationAuthorityUnavailable:Source" + source;
+        }
+        return "";
+    }
+
     internal void ValidateExecutionScope()
     {
         if (Authority.PlayersCount == 1 && (Authority.PlayerSlotIndex != 0 || SharedNicheDraws != 0 ||
@@ -163,10 +195,8 @@ internal sealed record NeowReplayPlan(
             conditions.Clear();
             domains = Beta110FastDomain.None;
         }
-        var requestDto = new SearchExecutionRequest(request.CompiledSearch, request.RunOptions, request.CanonicalStartSeed,
-            request.ResolvedScanCount, filter, request.CombatRewardRoutePolicy, request.SnapshotFingerprint);
         if (!capsule) catalog = catalog with { OrdinaryRelics = [], SharedRelicConsumeShuffleLengths = [], PlayerRelicBuckets = [], RelicBagAuthorityExact = false };
-        var authority = NeowNumericCompilation.BuildAuthority(requestDto, catalog, bones);
+        var authority = NeowNumericCompilation.BuildAuthority(request.CompiledSearch.Context, catalog, bones);
         if (!authority.IdentityAuthorityExact || bones && !authority.BonesAuthorityExact)
             throw new InvalidOperationException("NeowFamilyReplayAuthorityUnavailable");
         ModelKey[] sources = request.Evaluation.StructuredNeowEffects.Where(c => !c.IsEmpty)

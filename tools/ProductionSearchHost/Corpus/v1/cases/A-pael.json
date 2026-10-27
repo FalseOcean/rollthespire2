@@ -1,0 +1,75 @@
+{
+  "SchemaVersion": 1,
+  "Query": {
+    "OpeningRoute": null,
+    "OpeningRouteRelicRequirement": null,
+    "StructuredOpeningEffects": [],
+    "VariantBossBranches": [],
+    "AncientBranches": [
+      {
+        "Act": 2,
+        "AncientKey": "EVENT:PAEL",
+        "OptionAny": [
+          "RELIC:PAELS_FLESH"
+        ],
+        "SeaGlassTargetAny": [],
+        "IsValid": true
+      }
+    ],
+    "RelicSequenceConstraints": [],
+    "EventSequenceConstraints": [],
+    "LegacyCombatRewardConstraints": [],
+    "LegacyNeow": {
+      "NeowRelics": {
+        "Any": [],
+        "All": [],
+        "Ban": [],
+        "IsEmpty": true
+      },
+      "RequireNeowsBones": false,
+      "BonesRelics": {
+        "Any": [],
+        "All": [],
+        "Ban": [],
+        "IsEmpty": true
+      },
+      "RequiredBonesCombination": [],
+      "RequireSmallCapsule": false,
+      "RequireLargeCapsule": false,
+      "CapsuleContainedRelics": {
+        "Any": [],
+        "All": [],
+        "Ban": [],
+        "IsEmpty": true
+      },
+      "RequireWhetstone": false,
+      "RequireWarPaint": false,
+      "RequiredFinalCurse": null,
+      "BannedFinalCurses": [],
+      "Preset": "None",
+      "RequiredBonesAcquisitionOrder": [],
+      "EffectOutputConditions": []
+    },
+    "LegacyWorld": {
+      "BossFilters": [],
+      "BossOrdinalFilters": [],
+      "AncientIdentityFilters": [],
+      "AncientOptionFilters": [],
+      "AncientSeaGlassTargetFilters": []
+    },
+    "CombatCardRewards": null,
+    "CombatPotionRewards": null,
+    "EventResultConditions": [],
+    "MerchantColorlessConditions": [],
+    "MerchantColorlessSequenceConditions": [],
+    "RelicShopSequenceConditions": [],
+    "HasCombatRewardConstraints": false
+  },
+  "Options": {
+    "StartSeed": "000000000000",
+    "ScanCount": 262144,
+    "TargetMatchCount": 2147483647,
+    "WorkerCount": 4,
+    "IncludeDiagnostics": true
+  }
+}

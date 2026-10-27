@@ -1,9 +1,7 @@
-using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Prediction.Maps;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.Semantics;
 using RolltheSpire2.Search.Selectivity;
-using RolltheSpire2.Search.Runtime;
 
 namespace RolltheSpire2.Search.FamilyExecution;
 
@@ -53,8 +51,9 @@ internal sealed class StandardMapFamily : IFamilyInvocation
         }); }
         finally { _work.Add(maps); }
     }
+    GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => GpuNumericRequirements.None;
     public string FamilyId => "M.StandardMap";
-    public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId,FamilyCpuExecution.Capacity,[],"FullFinalReplay;AbsoluteCostNotCalibrated");
+    public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId,FamilyCpuExecution.Capacity,[],"FullFinalReplay;MapPricingDeferredByOwner.20261026");
     public FamilySurvivalProjection Survival
     {
         get
@@ -70,31 +69,14 @@ internal sealed class StandardMapFamily : IFamilyInvocation
                     "M.FinalMapProbabilityUnavailable;" + estimate.EvidenceCode);
         }
     }
-    public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest geometry)
-    {
-        if (_request.ProfileId != RuntimeProfileId.Beta111 || !_request.Authority.IsVanilla ||
-            !FamilyPhysicalQuote.AdmittedRequest(geometry) || geometry.PrivateInput || geometry.PrivateOutput ||
-            _request.WorkerCount is < 1 or > 8 ||
-            !SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity().CpuIdentity
-                .Contains("Intel64 Family 6 Model 183", StringComparison.Ordinal)) return null;
-        int acts = _request.CompiledSearch.NormalizedQuery.StandardMaps.Any(c => c.Scope == 0) ? 3 :
-            _request.CompiledSearch.NormalizedQuery.StandardMaps.Select(c => c.Scope).Distinct().Count();
-        if (acts is < 1 or > 3) return null;
-        double ns = 185000 + 225000 * acts;
-        return new(FamilyId, "M.FinalMapCpu.Acts" + acts + ".P" + _request.WorkerCount,
-            ns, FamilyCpuExecution.Capacity, 0,
-            "LocalMeasuredCPU;Beta111FinalMap;Disjoint64RootReplay;" +
-            "OneAct26ms_ThreeActs60ms;1024RootCanonicalP1P4P8;" +
-            "NoWorkerSpeedupAssumed;PoolAndMapGraph=VanillaCurrent;" +
-            "CpuCanonicalIncludesOrderedAbi1;ProbabilityCorpusSeparate",
-            OutputElementBytes: 8, OutputAlreadyOrdered: true, PublicTransportClass: "CpuOrderedAbi1")
-        { FixedWindowMilliseconds = .002 };
-    }
+    // Owner defers map pricing while map work remains unfinished, including
+    // existing references. See Search/README.md, performance exceptions.
+    public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest geometry) => null;
     public FamilyConditionPerformanceProjection ConditionPerformance => _cpu.Condition(false);
     public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compact) => _cpu.Condition(compact);
     IEnumerable<IFamilyInvocation> IFamilyInvocation.CpuRealizations => [this];
     public ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow window, FamilyCandidateSet input, CancellationToken token) =>
-        new(_cpu.Execute(window,input,token,root => MatchesRoot(root,token)));
+        new(_cpu.Execute(window,input,token,root => MatchesRoot(root,token),context));
     public FamilyPerformanceObservation CapturePerformanceObservation() => _cpu.Observation();
     public FamilyLivePerformanceSnapshot? CaptureLivePerformanceSnapshot() => _cpu.Live();
     public ValueTask DisposeAsync(FamilyExecutionContext context) { _cpu.WriteSummary(); _work.Clear(); return ValueTask.CompletedTask; }

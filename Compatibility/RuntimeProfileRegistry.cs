@@ -1,5 +1,6 @@
 using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.Prediction.Profiles;
+using RolltheSpire2.Core.Neow;
 
 namespace RolltheSpire2.Compatibility;
 
@@ -52,17 +53,21 @@ public static class RuntimeProfileRegistry
         };
     }
 
+    // Prepared choices belong to an earlier projection in this same candidate's
+    // root/authority/effect context; callers retain ownership of those immutable facts.
     internal static SeedPredictionDocument PredictFromRootHash(
         GameVersionDetection detection,
         SeedPredictionRequest request,
-        TrustedRootHashInput input)
+        TrustedRootHashInput input,
+        IReadOnlyList<NeowChoiceResult>? preparedOpeningChoices = null,
+        Beta111NeowIdentityReuse? identityReuse = null)
     {
         ArgumentNullException.ThrowIfNull(detection);
         ArgumentNullException.ThrowIfNull(request);
         return Resolve(detection).ProfileId switch
         {
-            RuntimeProfileId.Beta110 => Beta110PredictionProfile.Instance.PredictFromRootHash(request, detection, input),
-            RuntimeProfileId.Beta111 => Beta111PredictionProfile.Instance.PredictFromRootHash(request, detection, input),
+            RuntimeProfileId.Beta110 => Beta110PredictionProfile.Instance.PredictFromRootHash(request, detection, input, preparedOpeningChoices),
+            RuntimeProfileId.Beta111 => Beta111PredictionProfile.Instance.PredictFromRootHash(request, detection, input, preparedOpeningChoices, identityReuse),
             _ => UnsupportedPredictionProfile.Instance.Predict(request, detection)
         };
     }

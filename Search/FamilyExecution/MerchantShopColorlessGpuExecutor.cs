@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using Godot;
@@ -89,7 +90,10 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
     private readonly Rid _stableBlockCounts;
     private readonly Rid _stableBlockOffsets;
     private readonly uint _planTag;
+    private readonly string _performanceSuffix;
     private readonly int _ownerThreadId;
+    private readonly byte[] _metadataBytes = new byte[6 * sizeof(uint)];
+    private readonly byte[] _headerResetBytes;
     private bool _disposed;
     private PrivateOrdinalBuffer? _privateInput, _privateOutput;
     private int OutputCapacity => _privateInput is not null || _privateOutput is not null ? Capacity : SurvivorCapacity;
@@ -113,7 +117,8 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
         uint planTag,
         int ownerThreadId,
         double setupMs,
-        string deviceName)
+        string deviceName,
+        string performanceSuffix)
     {
         _rd = rd;
         _pipeline = pipeline;
@@ -131,17 +136,19 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
         _stableBlockCounts = stableBlockCounts;
         _stableBlockOffsets = stableBlockOffsets;
         _planTag = planTag;
+        _headerResetBytes = FamilyGpuComputeUtility.ToBytes(CreateHeader(planTag));
         _ownerThreadId = ownerThreadId;
         SetupMs = setupMs;
         DeviceName = deviceName;
+        _performanceSuffix = performanceSuffix;
     }
 
     public double SetupMs { get; }
     public string DeviceName { get; }
     public bool StableOrderedCompactionEnabled => _stableEnabled;
-    public string PhysicalImplementationRevision => _stableEnabled
+    public string PhysicalImplementationRevision => (_stableEnabled
         ? FamilyPhysicalImplementationRevisions.MerchantShopColorlessStableOrderedCompaction
-        : FamilyPhysicalImplementationRevisions.MerchantShopColorlessAtomicAppendHostSort;
+        : FamilyPhysicalImplementationRevisions.MerchantShopColorlessAtomicAppendHostSort) + _performanceSuffix;
 
     public static MerchantShopColorlessGpuExecutor Create(RenderingDevice rd, ExactSearchExecutionRequest request,
         MerchantShopColorlessCompactionPath compactionPath) => Create(rd, request, compactionPath, null, null);
@@ -163,23 +170,26 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
             Rid Add(Rid rid) { owned.Add(rid); return rid; }
             bool stableEnabled = compactionPath == MerchantShopColorlessCompactionPath.StableOrderedCompaction;
             Beta111MerchantColorlessAuthority authority = Beta111MerchantColorlessAuthority.From(request.Authority);
-            uint[] plan = PackPlan(request.Evaluation, authority, out uint[] targets);
+            string performanceSuffix = PartyEarlyRejectionRevision(request.Evaluation, authority.PlayersCount);
+            uint[] plan = PackPlan(request.Evaluation, authority, out uint[] targets, out string identityDefines);
             uint planTag = StableTag(
                 request.SnapshotFingerprint + "|" + (stableEnabled
                     ? FamilyPhysicalImplementationRevisions.MerchantShopColorlessStableOrderedCompaction
-                    : FamilyPhysicalImplementationRevisions.MerchantShopColorlessAtomicAppendHostSort));
+                    : FamilyPhysicalImplementationRevisions.MerchantShopColorlessAtomicAppendHostSort) + performanceSuffix);
 
-            Rid batchMeta = Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, 6 * sizeof(uint)));
-            Rid inputOrdinals = privateInput?.Buffer ?? Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(
+            Rid batchMeta = Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, 6 * sizeof(uint)));
+            Rid inputOrdinals = privateInput?.Buffer ?? Add(FamilyGpuComputeUtility.AllocateStorageBuffer(
                 rd, CompactInputCapacity * 2 * sizeof(uint)));
             Rid planBuffer = Add(FamilyGpuComputeUtility.CreateStorageBuffer(rd, FamilyGpuComputeUtility.ToBytes(plan)));
             Rid targetBuffer = Add(FamilyGpuComputeUtility.CreateStorageBuffer(rd, FamilyGpuComputeUtility.ToBytesNonEmpty(targets)));
             Rid outputHeader = Add(FamilyGpuComputeUtility.CreateStorageBuffer(rd,
                 FamilyGpuComputeUtility.ToBytes(CreateHeader(planTag))));
-            Rid outputOrdinals = privateOutput?.Buffer ?? Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(
+            Rid outputOrdinals = privateOutput?.Buffer ?? Add(FamilyGpuComputeUtility.AllocateStorageBuffer(
                 rd, (privateInput is null ? SurvivorCapacity : Capacity) * 2 * sizeof(uint)));
 
             string source = FamilyGpuComputeUtility.LoadFamilyShaderWithVisibleSeedRootHash(ShaderSuffix);
+            source = ConfigureEarlyRejection(source, request.Evaluation, request.Authority.PlayersCount);
+            if (identityDefines.Length != 0) source = source.Insert("#version 450".Length, identityDefines);
             // Addressing/emission only; reuse the existing merchant predicate and RNG body.
             if (privateInput is not null)
             {
@@ -214,9 +224,9 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
             Rid stableBlockOffsets = default;
             if (stableEnabled)
             {
-                stableKeepMasks = Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, StableKeepMaskBytes));
-                stableBlockCounts = Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, StableBlockCountBytes));
-                stableBlockOffsets = Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, StableBlockOffsetBytes));
+                stableKeepMasks = Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, StableKeepMaskBytes));
+                stableBlockCounts = Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, StableBlockCountBytes));
+                stableBlockOffsets = Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, StableBlockOffsetBytes));
 
                 string stablePhase1Source = EnableStableOrderedCompaction(source);
                 Rid stablePhase1Shader = Add(FamilyGpuComputeUtility.CompileShader(
@@ -248,7 +258,7 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
                 uniformSet, stableEnabled, stablePhase1Pipeline, stablePhase1UniformSet,
                 stableScatterPipeline, stableScatterUniformSet, stableKeepMasks, stableBlockCounts,
                 stableBlockOffsets, planTag, Thread.CurrentThread.ManagedThreadId,
-                timer.Elapsed.TotalMilliseconds, rd.GetDeviceName()?.Trim() ?? "unknown");
+                timer.Elapsed.TotalMilliseconds, rd.GetDeviceName()?.Trim() ?? "unknown", performanceSuffix);
             result._privateInput = privateInput; result._privateOutput = privateOutput;
             result._owned.AddRange(owned);
             owned.Clear();
@@ -303,27 +313,19 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
 
         var canonicalTimer = Stopwatch.StartNew();
         var timer = Stopwatch.StartNew();
-        uint[] meta =
-        {
-            unchecked((uint)input.Batch.BatchBase),
-            unchecked((uint)(input.Batch.BatchBase >> 32)),
-            checked((uint)input.Batch.BatchCandidateCount),
-            checked((uint)inputCount),
-            input.IsDense && _privateInput is null ? 0u : 1u,
-            (uint)OutputCapacity
-        };
-        FamilyGpuComputeUtility.Update(_rd, _batchMeta, meta, "SFamilyBatchMeta");
-        FamilyGpuComputeUtility.Update(_rd, _outputHeader, CreateHeader(_planTag), "SFamilyOutputHeader");
+        Span<uint> meta = FamilyGpuComputeUtility.UInt32Span(_metadataBytes);
+        meta[0] = unchecked((uint)input.Batch.BatchBase); meta[1] = unchecked((uint)(input.Batch.BatchBase >> 32));
+        meta[2] = checked((uint)input.Batch.BatchCandidateCount); meta[3] = checked((uint)inputCount);
+        meta[4] = input.IsDense && _privateInput is null ? 0u : 1u; meta[5] = (uint)OutputCapacity;
+        FamilyGpuComputeUtility.UpdateBytes(_rd, _batchMeta, _metadataBytes, "SFamilyBatchMeta");
+        FamilyGpuComputeUtility.UpdateBytes(_rd, _outputHeader, _headerResetBytes, "SFamilyOutputHeader");
         if (!input.IsDense && _privateInput is null)
         {
             ReadOnlySpan<ulong> ordinals = input.ExportAbi1().Span;
-            var packed = new uint[checked(ordinals.Length * 2)];
-            for (int index = 0; index < ordinals.Length; index++)
-            {
-                packed[index * 2] = unchecked((uint)ordinals[index]);
-                packed[index * 2 + 1] = unchecked((uint)(ordinals[index] >> 32));
-            }
-            FamilyGpuComputeUtility.Update(_rd, _inputOrdinals, packed, "SFamilyCompactInput");
+            // S's public transport is genuinely two-word. Copy the complete
+            // ABI1 words directly without a second typed staging allocation.
+            byte[] packed = MemoryMarshal.AsBytes(ordinals).ToArray();
+            FamilyGpuComputeUtility.UpdateBytes(_rd, _inputOrdinals, packed, "SFamilyCompactInput");
         }
         timer.Stop();
         double uploadMs = timer.Elapsed.TotalMilliseconds;
@@ -345,7 +347,7 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
 
         timer.Restart();
         byte[] rawHeader = _rd.BufferGetData(_outputHeader, 0u, HeaderUIntCount * sizeof(uint));
-        uint[] header = FamilyGpuComputeUtility.FromUInt32Bytes(rawHeader);
+        ReadOnlySpan<uint> header = FamilyGpuComputeUtility.UInt32Span(rawHeader);
         int processedCount = ValidateHeader(header, inputCount);
         int survivorCount = checked((int)header[2]);
         timer.Stop();
@@ -379,6 +381,8 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
         double typedAllocationMs = timer.Elapsed.TotalMilliseconds;
 
         timer.Restart();
+        if (rawOrdinals.Length != checked(survivorCount * sizeof(ulong)))
+            throw new InvalidDataException("SFamilyGpuPayloadLengthMismatch");
         if (rawOrdinals.Length > 0)
             Buffer.BlockCopy(rawOrdinals, 0, survivors, 0, rawOrdinals.Length);
         timer.Stop();
@@ -416,17 +420,12 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
         if (!input.IsDense) throw new InvalidOperationException("SFamilyStableCompactionRequiresDenseInput");
         var canonicalTimer = Stopwatch.StartNew();
         var timer = Stopwatch.StartNew();
-        uint[] meta =
-        {
-            unchecked((uint)input.Batch.BatchBase),
-            unchecked((uint)(input.Batch.BatchBase >> 32)),
-            checked((uint)input.Batch.BatchCandidateCount),
-            checked((uint)input.Count),
-            0u,
-            SurvivorCapacity
-        };
-        FamilyGpuComputeUtility.Update(_rd, _batchMeta, meta, "SFamilyStableBatchMeta");
-        FamilyGpuComputeUtility.Update(_rd, _outputHeader, CreateHeader(_planTag), "SFamilyStableOutputHeader");
+        Span<uint> meta = FamilyGpuComputeUtility.UInt32Span(_metadataBytes);
+        meta[0] = unchecked((uint)input.Batch.BatchBase); meta[1] = unchecked((uint)(input.Batch.BatchBase >> 32));
+        meta[2] = checked((uint)input.Batch.BatchCandidateCount); meta[3] = checked((uint)input.Count);
+        meta[4] = 0u; meta[5] = SurvivorCapacity;
+        FamilyGpuComputeUtility.UpdateBytes(_rd, _batchMeta, _metadataBytes, "SFamilyStableBatchMeta");
+        FamilyGpuComputeUtility.UpdateBytes(_rd, _outputHeader, _headerResetBytes, "SFamilyStableOutputHeader");
         timer.Stop();
         double uploadMs = timer.Elapsed.TotalMilliseconds;
 
@@ -447,7 +446,7 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
 
         timer.Restart();
         byte[] phase1RawHeader = _rd.BufferGetData(_outputHeader, 0u, HeaderUIntCount * sizeof(uint));
-        uint[] phase1Header = FamilyGpuComputeUtility.FromUInt32Bytes(phase1RawHeader);
+        ReadOnlySpan<uint> phase1Header = FamilyGpuComputeUtility.UInt32Span(phase1RawHeader);
         int processedCount = ValidateHeader(phase1Header, input.Count);
         int survivorCount = checked((int)phase1Header[2]);
         timer.Stop();
@@ -455,12 +454,15 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
 
         timer.Restart();
         byte[] rawCounts = _rd.BufferGetData(_stableBlockCounts, 0u, checked(groups * sizeof(uint)));
-        uint[] counts = FamilyGpuComputeUtility.FromUInt32Bytes(rawCounts);
+        if (rawCounts.Length != checked((int)groups * sizeof(uint)))
+            throw new InvalidDataException("SFamilyStableBlockCountLengthMismatch");
+        ReadOnlySpan<uint> counts = FamilyGpuComputeUtility.UInt32Span(rawCounts);
         timer.Stop();
         double countsReadbackMs = timer.Elapsed.TotalMilliseconds;
 
         timer.Restart();
-        var offsets = new uint[counts.Length];
+        var offsetBytes = new byte[checked(counts.Length * sizeof(uint))];
+        Span<uint> offsets = FamilyGpuComputeUtility.UInt32Span(offsetBytes);
         ulong total = 0UL;
         for (int index = 0; index < counts.Length; index++)
         {
@@ -478,7 +480,7 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
         double hostPrefixMs = timer.Elapsed.TotalMilliseconds;
 
         timer.Restart();
-        FamilyGpuComputeUtility.Update(_rd, _stableBlockOffsets, offsets, "SFamilyStableBlockOffsets");
+        FamilyGpuComputeUtility.UpdateBytes(_rd, _stableBlockOffsets, offsetBytes, "SFamilyStableBlockOffsets");
         timer.Stop();
         double offsetsUploadMs = timer.Elapsed.TotalMilliseconds;
         cancellationToken.ThrowIfCancellationRequested();
@@ -497,7 +499,7 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
 
         timer.Restart();
         byte[] finalRawHeader = _rd.BufferGetData(_outputHeader, 0u, HeaderUIntCount * sizeof(uint));
-        uint[] finalHeader = FamilyGpuComputeUtility.FromUInt32Bytes(finalRawHeader);
+        ReadOnlySpan<uint> finalHeader = FamilyGpuComputeUtility.UInt32Span(finalRawHeader);
         ValidateHeader(finalHeader, input.Count);
         if (checked((int)finalHeader[2]) != survivorCount)
             throw new InvalidDataException("SFamilyStableScatterChangedSurvivorCount");
@@ -520,6 +522,8 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
         double typedAllocationMs = timer.Elapsed.TotalMilliseconds;
 
         timer.Restart();
+        if (rawOrdinals.Length != checked(survivorCount * sizeof(ulong)))
+            throw new InvalidDataException("SFamilyGpuPayloadLengthMismatch");
         if (rawOrdinals.Length > 0)
             Buffer.BlockCopy(rawOrdinals, 0, survivors, 0, rawOrdinals.Length);
         timer.Stop();
@@ -580,7 +584,7 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
             throw new InvalidOperationException("SFamilyGpuOwnerThreadMismatch");
     }
 
-    private int ValidateHeader(uint[] header, int maximumProcessed)
+    private int ValidateHeader(ReadOnlySpan<uint> header, int maximumProcessed)
     {
         if (header.Length < HeaderUIntCount || header[0] != HeaderMagic || header[1] != HeaderAbi || header[5] != _planTag)
             throw new InvalidDataException("SFamilyGpuHeaderIdentityMismatch");
@@ -607,10 +611,58 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
         return source.Insert(version.Length, "\n#define RT2_S_STABLE_ORDERED_COMPACTION 1");
     }
 
+    internal static string PartyEarlyRejectionRevision(ExactSearchEvaluationProjection evaluation, int playersCount) =>
+        playersCount > 1 && HasEarlyRejectionOpportunity(evaluation, playersCount)
+            ? FamilyPhysicalImplementationRevisions.MerchantShopColorlessPartyPrefix : "";
+
+    private static bool HasEarlyRejectionOpportunity(ExactSearchEvaluationProjection evaluation, int playersCount)
+    {
+        if (playersCount is < 1 or > 4) return false;
+        int earliestFailure = int.MaxValue, lastObservation = 0;
+        foreach (var condition in evaluation.MerchantColorlessConditions)
+        {
+            lastObservation = Math.Max(lastObservation, condition.MerchantOrdinal);
+            earliestFailure = Math.Min(earliestFailure, condition.MerchantOrdinal);
+        }
+        foreach (var condition in evaluation.MerchantColorlessSequenceConditions)
+        {
+            lastObservation = Math.Max(lastObservation, condition.Count);
+            if (condition.OrderMode == CombatRewardSequenceOrderMode.Ordered)
+            {
+                for (int i = 0; i < condition.Slots.Count; i++)
+                {
+                    if (!condition.Slots[i].HasValue) continue;
+                    earliestFailure = Math.Min(earliestFailure, i + 1);
+                    break;
+                }
+            }
+            else if (condition.OrderMode == CombatRewardSequenceOrderMode.Unordered)
+            {
+                // Every non-wildcard is an obligation, including repeated identities.
+                int required = condition.Slots.Count(slot => slot.HasValue);
+                earliestFailure = Math.Min(earliestFailure, condition.Count - required + 1);
+            }
+        }
+        return earliestFailure < lastObservation;
+    }
+
+    internal static string ConfigureEarlyRejection(string source, ExactSearchEvaluationProjection evaluation, int playersCount)
+    {
+        const string version = "#version 450";
+        if (!source.StartsWith(version, StringComparison.Ordinal))
+            throw new InvalidOperationException("SFamilyEarlyRejectionShaderVersionMarkerMissing");
+        // S family admission owns exact pool and slot inputs for one to four
+        // players. Each child keeps its own root+slot Shops stream; only shapes
+        // with an opportunity before the final merchant use the streaming body.
+        return source.Insert(version.Length, "\n#define RT2_S_EARLY_REJECTION " +
+            (HasEarlyRejectionOpportunity(evaluation, playersCount) ? "1" : "0") + "\n");
+    }
+
     private static uint[] PackPlan(
         ExactSearchEvaluationProjection evaluation,
         Beta111MerchantColorlessAuthority authority,
-        out uint[] targets)
+        out uint[] targets,
+        out string identityDefines)
     {
         ulong shopsHash = XxHash64.Hash("shops"u8, 0UL);
         var output = new List<uint> { 0u, 0u, 0u, 0u, 0u, 0u, 0u };
@@ -623,7 +675,7 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
             output.Add(checked((uint)condition.MerchantOrdinal));
             output.Add(condition.Slot == MerchantColorlessSlot.Uncommon ? 0u : 1u);
             int target = IndexOf(pool, condition.TargetCardKey);
-            output.Add(target < 0 ? ushort.MaxValue : checked((uint)target));
+            output.Add(target < 0 ? uint.MaxValue - 1 : checked((uint)target));
         }
         foreach (MerchantColorlessSequenceSearchCondition condition in evaluation.MerchantColorlessSequenceConditions)
         {
@@ -637,11 +689,31 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
             output.Add(checked((uint)condition.Slots.Count));
             targetValues.AddRange(condition.Slots.Select(key =>
             {
-                if (!key.HasValue) return (uint)ushort.MaxValue;
+                if (!key.HasValue) return uint.MaxValue;
                 int target = IndexOf(pool, key.Value);
-                return target < 0 ? (uint)ushort.MaxValue : checked((uint)target);
+                return target < 0 ? uint.MaxValue - 1 : checked((uint)target);
             }));
         }
+        // Draw from every original occurrence, then compare its ModelKey identity.
+        // Unique pools retain the original shader body without an extra lookup.
+        string PackCanonicalIndexes(IReadOnlyList<ModelKey> pool, string macro)
+        {
+            var first = new Dictionary<ModelKey, uint>(ModelKeyComparer.Instance);
+            var canonical = new uint[pool.Count];
+            bool duplicates = false;
+            for (int i = 0; i < pool.Count; i++)
+            {
+                if (!first.TryGetValue(pool[i], out uint index)) first.Add(pool[i], index = checked((uint)i));
+                else duplicates = true;
+                canonical[i] = index;
+            }
+            if (!duplicates) return string.Empty;
+            int offset = targetValues.Count;
+            targetValues.AddRange(canonical);
+            return "\n#define " + macro + " " + offset.ToString(System.Globalization.CultureInfo.InvariantCulture) + "u\n";
+        }
+        identityDefines = PackCanonicalIndexes(authority.UncommonPool, "RT2_S_CANONICAL_UNCOMMON_OFFSET") +
+            PackCanonicalIndexes(authority.RarePool, "RT2_S_CANONICAL_RARE_OFFSET");
         output[0] = checked((uint)evaluation.MerchantColorlessConditions.Count);
         output[1] = checked((uint)evaluation.MerchantColorlessSequenceConditions.Count);
         output[2] = checked((uint)authority.UncommonPool.Count);

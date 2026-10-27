@@ -27,20 +27,23 @@ internal static class Beta111CanonicalEventShopSearchEvaluator
         var evidence = new List<SearchMatchEvidence>();
 
         SearchQueryEvaluation aggregate = TransformationAggregateValidator.Evaluate(plan, rootHash, authority);
-        if (aggregate.Disposition != SearchDisposition.Match) return aggregate;
+        if (aggregate.Disposition == SearchDisposition.NoMatch) return aggregate;
         evidence.AddRange(aggregate.Evidence);
 
         SearchQueryEvaluation eventResult = EvaluateEventResult(plan, rootHash, authority);
-        if (eventResult.Disposition != SearchDisposition.Match)
+        if (eventResult.Disposition == SearchDisposition.NoMatch)
             return eventResult;
         evidence.AddRange(eventResult.Evidence);
 
         SearchQueryEvaluation merchant = MerchantShopColorlessQueryEvaluator.Evaluate(plan.Evaluation, rootHash, authority);
-        if (merchant.Disposition != SearchDisposition.Match)
+        if (merchant.Disposition == SearchDisposition.NoMatch)
             return merchant;
         evidence.AddRange(merchant.Evidence);
 
-        return SearchQueryEvaluation.Match(evidence.Distinct().ToArray());
+        SearchQueryEvaluation combined = ProductionExactSearchEvaluator.CombineIndependentEvaluations(aggregate, eventResult, merchant);
+        return combined.Disposition == SearchDisposition.Match
+            ? SearchQueryEvaluation.Match(evidence.Distinct().ToArray())
+            : combined;
     }
 
     private static SearchQueryEvaluation EvaluateEventResult(

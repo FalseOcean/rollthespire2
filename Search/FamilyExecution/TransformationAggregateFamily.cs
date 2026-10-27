@@ -1,142 +1,140 @@
-using RolltheSpire2.Core.Effects.Snapshots;
-using RolltheSpire2.Core.Identity;
-using RolltheSpire2.Core.Seed;
+using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Search.Contracts;
-using RolltheSpire2.Search.Semantics;
+using RolltheSpire2.Core.Seed;
 
 namespace RolltheSpire2.Search.FamilyExecution;
 
-/// <summary>One semantic Coverage atom. All card identities/counters are local;
-/// only ordered logical ordinals leave this CPU realization.</summary>
-internal sealed partial class TransformationAggregateNumericalPlan
+internal sealed class TransformationAggregateFamily : IFamilyInvocation
 {
-    private readonly TransformationAggregateCondition _condition;
-    private readonly NeowReplayPlan? _neow;
-    private readonly int[] _neowIds = [];
-    private readonly List<bool> _rare = [];
-    private readonly int[] _targets;
-    private readonly (ulong Hash, int Prefix, int[][] Pools)[] _events;
-    private readonly bool _closedNeow;
-    private static readonly ulong TransformationsHash = XxHash64.Hash("transformations"u8, 0);
-    private static readonly ulong NicheHash = XxHash64.Hash("niche"u8, 0);
-
-    internal TransformationAggregateNumericalPlan(ExactSearchExecutionRequest request)
+    internal const string Id="T.TransformationAggregate";
+    internal const string CpuRevision="T.Cpu.InitialBasicsAggregate.20261016.v4";
+    private readonly ExactSearchExecutionRequest _request;
+    internal ExactSearchExecutionRequest PricingRequest => _request;
+    internal TransformationAggregateNumericalPlan Plan { get; }
+    internal TransformationAggregateGpuPlan GpuPlan { get; }
+    internal TransformationAggregateProbability Probability { get; }
+    internal string GpuPreparationFailureDetail { get; } = "";
+    private readonly double? _givenNeow;
+    private readonly FamilyCpuExecution _cpu;
+    private TransformationAggregateGpuExecutor? _gpu;
+    private bool _parity,_faulted,_compact;
+    private readonly GpuCostSamples _costSamples=new();
+    private int _batches,_comparable; private long _inputs,_outputs,_liveInputs;
+    private double _canonical,_liveMs,_peak,_validPeak,_dispatch,_readback;
+    internal TransformationAggregateFamily(ExactSearchExecutionRequest request, bool preferGpu = true,
+        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
-        _condition = request.Evaluation.TransformationAggregate ?? throw new ArgumentException("MissingAggregate");
-        var keys = new Dictionary<ModelKey, int>();
-        int Key(ModelKey key, bool rare)
+        _request=request;Plan=new(request);
+        Probability = FamilyAuxiliaryEvidence.Read(Id, "InitialProbability", () => TransformationAggregateProbability.Build(Plan),
+            new TransformationAggregateProbability(null, null, double.NaN, double.NaN, [], "AuxiliaryProbabilityFailed"), request.SnapshotFingerprint);
+        if (Plan.Closed && Plan.Neow is not null && HasConditionalProjections)
+            _givenNeow = FamilyAuxiliaryEvidence.Read<double?>(Id, "ConditionalProbability", () => TransformationAggregateProbability.Conditional(
+                TransformationAggregateProbability.SharedNeowJoint(request, Plan),
+                new NeowFamilyProjections(request, NeowReplayPlan.Compile(request, false), false, null).Survival(new HashSet<string>()).SurvivalProbability),
+                null, request.SnapshotFingerprint);
+        _cpu=new(request,this,CpuRevision,Plan.Matches,FamilyCpuExecution.ConfiguredWorkers(request),
+            g=>request.WorkerCount==1 ? TransformationAggregatePricing.Cpu(Plan,Probability,g) : null,
+            packedSeedRoots: request.ProfileId == Compatibility.RuntimeProfileId.Beta111);
+        GpuPlan = new();
+        if (preferGpu)
         {
-            if (keys.TryGetValue(key, out int id))
+            try { GpuPlan = new(Plan, numericalVariant); }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
             {
-                if (_rare[id] != rare) throw new InvalidOperationException("TransformationAggregate.InconsistentCardRarity");
-                return id;
-            }
-            id = keys.Count; keys.Add(key, id); _rare.Add(rare); return id;
-        }
-        if (_condition.UsesNeow)
-        {
-            ModelKey selected = _condition.Opening switch {
-                TransformationOpening.LeafyPoultice => BaseGameModelKeys.Relics.LeafyPoultice,
-                TransformationOpening.NewLeaf => BaseGameModelKeys.Relics.NewLeaf, _ => BaseGameModelKeys.Relics.NeowsBones };
-            // Donor compilation only: these are not hidden Query/Family obligations.
-            var e = ExactSearchEvaluationProjection.Empty with { NeowRoute = new(selected),
-                RequiredBonesCombination = _condition.IsBones
-                    ? [BaseGameModelKeys.Relics.LeafyPoultice, _condition.BonesCompanion] : [] };
-            _neow = NeowReplayPlan.Compile(request with { Evaluation = e }, false);
-            var catalog = _neow.Authority.EffectCatalog;
-            _neowIds = Enumerable.Repeat(-1, catalog.DenseKeys.Length).ToArray();
-            foreach (ushort id in catalog.LeafyStrikeTransformPool.Concat(catalog.LeafyDefendTransformPool).Concat(catalog.NewLeafTransformPool).Distinct())
-                _neowIds[id] = Key(catalog.DenseKeys[id], catalog.CardRarityByDenseId[id] == (byte)EffectCardRarity.Rare);
-            bool leafy = _condition.Opening != TransformationOpening.NewLeaf, leaf = _condition.Opening is TransformationOpening.NewLeaf or TransformationOpening.BonesLeafyNewLeaf;
-            _closedNeow = (!leafy || catalog.LeafyTransformAuthorityExact && catalog.LeafyStrikeTransformPool.Length > 0 && catalog.LeafyDefendTransformPool.Length > 0) &&
-                (!leaf || catalog.NewLeafTransformAuthorityExact && catalog.NewLeafTransformPool.Length > 0);
-            if (_condition.Opening == TransformationOpening.BonesLeafyNewLeaf)
-            {
-                var deck = request.Authority.EffectAuthority?.OrderedDeck;
-                var strikes = deck?.Where(c => c.IsBasic && c.IsStrike).ToArray() ?? [];
-                // Both routes consume distinct Basics. Equality of the surviving
-                // source pools is a captured fact, not a name-based assumption.
-                _closedNeow &= strikes.Length >= 2 && strikes.All(c => c.CardKey == strikes[0].CardKey && c.PoolId == strikes[0].PoolId);
+                GpuPreparationFailureDetail = ex.ToString();
+                RuntimeLog.TryBackgroundWarning("transformationGpuPreparationFailed=true;selected=CpuAggregate;exceptionJson=" + RuntimeLog.SafeJson(ex.ToString()));
             }
         }
-        if (_condition.Opening == TransformationOpening.BonesLeafyOther)
-        {
-            // Only certify companions whose immediate projection cannot consume
-            // Transformations or remove the two source Basics before Leafy.
-            _closedNeow &= _condition.LeafyFirst || _condition.BonesCompanion.Entry is
-                "ARCANE_SCROLL" or "HEFTY_TABLET" or "LEAD_PAPERWEIGHT" or "LOST_COFFER" or "KALEIDOSCOPE" or
-                "SCROLL_BOXES" or "PHIAL_HOLSTER" or "NEOWS_TALISMAN" or "POMANDER" or
-                "BOOMING_CONCH" or "FISHING_ROD" or "GOLDEN_PEARL" or "NEOWS_TORMENT" or
-                "LAVA_ROCK" or "NUTRITIOUS_OYSTER" or "STONE_HUMIDIFIER";
-        }
-        var events = new List<(ulong, int, int[][])>();
-        if (_condition.EventScenario is { } scenario)
-        {
-            int[][] Pool(int count) => Enumerable.Range(0, count).Select(i =>
-                scenario.Premises.VanillaLocalDependenciesBound && scenario.Targets[i].OrderedSourceCandidates is { } pool
-                    ? pool.Select(c => Key(c.CardKey, c.Rarity == "Rare")).ToArray() : []).ToArray();
-            if (_condition.MorphicGrove) events.Add((XxHash64.Hash("MORPHIC_GROVE"u8, 0), 0, Pool(2)));
-            if (_condition.AromaOfChaos) events.Add((XxHash64.Hash("AROMA_OF_CHAOS"u8, 0), 0, Pool(1)));
-            if (_condition.WhisperingHollow) events.Add((XxHash64.Hash("WHISPERING_HOLLOW"u8, 0), 1, Pool(1)));
-            if (_condition.Symbiote) events.Add((XxHash64.Hash("SYMBIOTE"u8, 0), 0, Pool(1)));
-            if (_condition.TrialNondescript) events.Add((XxHash64.Hash("TRIAL"u8, 0), 2, Pool(2)));
-        }
-        _events = events.ToArray();
-        _targets = _condition.TargetMultiset.Select(k => keys.TryGetValue(k, out int id) ? id : -2).ToArray();
     }
-
-    internal bool Matches(ulong root)
+    internal static bool TryCreate(ExactSearchExecutionRequest request, bool preferGpu, out IFamilyInvocation? family,
+        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
-        Span<int> outputs = stackalloc int[10]; int count = 0;
-        if (_neow is { } n)
+        family = null;
+        if (request.Evaluation.TransformationAggregate is null) return false;
+        try { family = new TransformationAggregateFamily(request, preferGpu, numericalVariant); return true; }
+        catch (InvalidOperationException ex) when (ex.Message is "NeowFamilyReplayAuthorityUnavailable" or "NeowFamilyUnmappedIdentity")
         {
-            if (!NeowFamilyReplay.Observe(root, n).IdentityPass) return false;
-            int nc = _condition.Opening == TransformationOpening.BonesLeafyNewLeaf ? 3 : _condition.Opening is TransformationOpening.LeafyPoultice or TransformationOpening.BonesLeafyOther ? 2 : 1;
-            if (!_closedNeow) { outputs[..nc].Fill(-1); count = nc; }
-            else
+            RuntimeLog.TryBackgroundWarning("transformationFilterUnavailable=true;remainingQueryOwner=ProductionExact;replacementCompleteness=NotClaimed;exceptionJson=" + RuntimeLog.SafeJson(ex.ToString()));
+            if (RuntimeLog.SessionId.Length > 0) Infrastructure.Diagnostics.RuntimeIssueLedger.Current.RecordDegradation("TransformationFilterUnavailable", nameof(TransformationAggregateFamily),
+                "Filter.Construction", "issues.filter_incomplete", $"cause={ex};predicatesRetained=true;finalValidationSkipped={request.RunOptions.SkipExactValidation};matchClaimed=false");
+            return false;
+        }
+    }
+    bool IFamilyInvocation.ExecutionFaulted => _faulted;
+    GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => GpuPlan.NumericRequirements;
+    public string FamilyId=>Id;
+    public FamilySurvivalProjection Survival=>Probability.StageSurvival is { } p
+        ? FamilySurvivalProjection.Resolved(Id,p,Probability.Evidence):FamilySurvivalProjection.Unresolved(Id,Probability.Evidence);
+    public bool HasConditionalProjections => Search.Semantics.TransformationAggregateCondition.HasSharedNeow(_request.Evaluation);
+    public FamilySurvivalProjection ResolveSurvival(IReadOnlySet<string> passed) => !HasConditionalProjections || !passed.Contains("N.Neow") ? Survival :
+        Search.Semantics.TransformationAggregateCondition.SharedNeowIdentityOnly(_request.Evaluation) && Probability.StageSurvival is { } p
+            ? FamilySurvivalProjection.Resolved(Id, Probability.IdentityProbability > 0 ? p / Probability.IdentityProbability : 0, "T.GivenSharedNIdentity;CountOpeningOnce")
+            : _givenNeow is { } joint ? FamilySurvivalProjection.Resolved(Id, joint, "T.GivenN;ExistingSameDrawJointOverNMarginal")
+            : FamilySurvivalProjection.Unresolved(Id, "T+N.AdditionalPredicateJointUnknown");
+    public FamilyAnalyticalCostProjection AnalyticalCost=>new(Id,GpuPlan.Capacity,[],"T.OwnedNumericalWork");
+    public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest g)=>
+        FamilyGpuReadback.Reference(this, FamilyCanonicalMeasuredCost.TryDenseQuote(this,g) ?? (GpuPlan.Supported
+            ? TransformationAggregatePricing.Gpu(Plan,Probability,GpuPlan,g):TransformationAggregatePricing.Cpu(Plan,Probability,g)));
+    public FamilyConditionPerformanceProjection ConditionPerformance=>ResolveConditionPerformance(false);
+    public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compact)=>!GpuPlan.Supported?_cpu.Condition(compact):
+        new(Id,GpuPlan.Revision(compact),
+            "T.Gpu.Neutral.20260914.v1" + GpuPlan.NumericalRevision,1,"FamilyOwned;LocalAggregate;NoLeafPredicate" +
+            (GpuPlan.NumericalVariant == GpuNumericalVariant.IntegerRne ? ";NoAcceptedPhysicalPrice;IntegerRne" : ""),usesGpu:true);
+    IEnumerable<IFamilyInvocation> IFamilyInvocation.CpuRealizations=>FamilyCpuExecution.WorkerConfigurations(_request).Select(workers =>
+        new FamilyCpuExecution(_request,this,CpuRevision,Plan.Matches,workers,g=>workers==1 ? TransformationAggregatePricing.Cpu(Plan,Probability,g) : null,
+            packedSeedRoots: _request.ProfileId == Compatibility.RuntimeProfileId.Beta111));
+    IEnumerable<GpuLocalPeak> IFamilyInvocation.CostPeaks=>_costSamples.Peaks;
+    bool IFamilyInvocation.CanBindPrivateSerial=>GpuPlan.Supported && GpuPlan.NumericalVariant == GpuNumericalVariant.NativeFloat64;
+    FamilyPrivateGpuExecution IFamilyInvocation.BindPrivateSerial(Godot.RenderingDevice rd,PrivateOrdinalBuffer? input,PrivateOrdinalBuffer? output)
+    {
+        if(!GpuPlan.Supported || GpuPlan.NumericalVariant != GpuNumericalVariant.NativeFloat64)throw new InvalidOperationException("T.PrivateNotAdmitted");
+        var gpu=new TransformationAggregateGpuExecutor(rd,GpuPlan,input,output);
+        return new(gpu,gpu.Device,gpu.SetupMs,input,output,(batch,count,token)=>
+        {
+            FamilyCandidateSet? result=null;TransformationAggregateGpuMetrics m;
+            if(output is not null)gpu.ExecutePrivateStage(batch,count,token,out m);
+            else result=input is null?gpu.Execute(FamilyCandidateSet.Dense(batch),token,out m):gpu.ExecutePrivate(batch,count,token,out m);
+            return new(m.Output,result,m.DispatchSyncMs,m.ReadbackMs,m.ReadbackBytes,m.CanonicalMs,m.Dispatches);
+        });
+    }
+    public FamilyPerformanceObservation CapturePerformanceObservation()=>!GpuPlan.Supported?_cpu.Observation():
+        new(ResolveConditionPerformance(_compact),_gpu?.Device??"",_gpu?.SetupMs??0,_peak,_validPeak,_batches,_comparable,
+            _inputs,_outputs,_canonical,_parity&&!_faulted&&_comparable>0,"T.CpuParity="+_parity+";Fault="+_faulted);
+    public FamilyLivePerformanceSnapshot? CaptureLivePerformanceSnapshot()=>!GpuPlan.Supported?_cpu.Live():
+        _faulted||_batches<2?null:new(Id,ResolveConditionPerformance(_compact).PhysicalImplementationRevision,_liveInputs,_liveMs,_batches-1);
+    public async ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context,FamilyObservationWindow window,FamilyCandidateSet input,CancellationToken token)
+    {
+        if(!GpuPlan.Supported)return _cpu.Execute(window,input,token,Plan.Matches,context);
+        token.ThrowIfCancellationRequested(); if(_faulted)throw new InvalidOperationException("T.InvocationFaulted");
+        if(window.ExactRequest.SnapshotFingerprint!=_request.SnapshotFingerprint)throw new InvalidOperationException("T.ContextMismatch");
+        if(input.Count==0)return input;_compact=!input.IsDense;
+        try
+        {
+            _gpu??=await context.ExecuteGpuAsync(rd=>new TransformationAggregateGpuExecutor(rd,GpuPlan),token).ConfigureAwait(false);
+            if(!_parity)
             {
-                var catalog = n.Authority.EffectCatalog;
-                // The closed Leafy/NewLeaf pair has separate streams and equal
-                // remaining Basic pools in either order; no route union of cards.
-                if (_condition.Opening != TransformationOpening.NewLeaf)
-                {
-                    var rng = new Beta110FastRng(unchecked(root + (ulong)n.Authority.PlayerSlotIndex + TransformationsHash));
-                    Span<ushort> pair = stackalloc ushort[2]; NeowLocalOperators.DrawLeafyTransforms(catalog, ref rng, pair);
-                    outputs[count++] = _neowIds[pair[0]]; outputs[count++] = _neowIds[pair[1]];
-                }
-                if (_condition.Opening is TransformationOpening.NewLeaf or TransformationOpening.BonesLeafyNewLeaf)
-                {
-                    var rng = new Beta110FastRng(unchecked(root + NicheHash));
-                    outputs[count++] = _neowIds[NeowLocalOperators.DrawNewLeafTransform(catalog, ref rng)];
-                }
+                var sample=FamilyCandidateSet.FromSortedAbi1(input.Batch,input.EnumerateLogicalOrdinals().Take(2048).ToArray());
+                var actual=await context.ExecuteGpuAsync(rd=>_gpu.Execute(sample,token,out _),token).ConfigureAwait(false);
+                var expected=sample.EnumerateLogicalOrdinals().Where(i=>Plan.Matches(XxHash64.HashUtf8(Beta110SeedCodec.FormatOrdinal(input.Batch.GlobalCandidate(i)),0)));
+                if(!actual.EnumerateLogicalOrdinals().SequenceEqual(expected))throw new InvalidDataException("T.GpuCpuParityMismatch");
+                _parity=true;
             }
+            var value=await context.ExecuteGpuAsync(_=>{var r=_gpu.Execute(input,token,out var m);return(Result:r,Metrics:m);},token).ConfigureAwait(false);
+            var m=value.Metrics;_batches++;_inputs+=m.Input;_outputs+=m.Output;_canonical+=m.CanonicalMs;_dispatch+=m.DispatchSyncMs;_readback+=m.ReadbackMs;
+            if(_batches>1){_liveInputs+=m.Input;_liveMs+=m.CanonicalMs;double rate=m.Input*1000d/m.CanonicalMs;_peak=Math.Max(_peak,rate);
+                if(m.Input>=GpuPlan.Capacity){_comparable++;_validPeak=Math.Max(_validPeak,rate);}}
+            _costSamples.Observe(this,new(_compact,false,m.Input),m.Input,m.DispatchSyncMs,outputs:m.Output,canonicalMs:m.CanonicalMs,readbackMs:m.ReadbackMs,readbackBytes:m.ReadbackBytes);
+            return value.Result;
         }
-        foreach (var e in _events)
-        {
-            var rng = new Beta110FastRng(unchecked(root + e.Hash));
-            if (e.Prefix == 1) rng.NextInt(19);
-            if (e.Prefix == 2 && rng.NextInt(3) != 2) return false;
-            foreach (int[] pool in e.Pools)
-            {
-                int draw = rng.NextInt(pool.Length == 0 ? 1 : pool.Length);
-                outputs[count++] = pool.Length == 0 ? -1 : pool[draw];
-            }
-        }
-        if (count != _condition.OpportunityCount) throw new InvalidOperationException("TransformationAggregate.NumericalOutputCount");
-        int unknown = 0, rare = 0;
-        foreach (int value in outputs[..count]) { if (value == -1) unknown++; else if (_rare[value]) rare++; }
-        if (_condition.Predicate == TransformationAggregatePredicate.RareCountAtLeast) return rare + unknown >= _condition.MinimumRareCount;
-        Span<bool> used = stackalloc bool[10]; used.Clear(); int missing = 0;
-        foreach (int target in _targets)
-        {
-            int found = -1;
-            for (int i = 0; i < count; i++) if (!used[i] && outputs[i] == target) { found = i; break; }
-            if (found < 0) missing++; else used[found] = true;
-        }
-        if (missing > unknown) return false;
-        if (_condition.RequiresRareRemainder)
-            for (int i = 0; i < count; i++)
-                if (!used[i] && outputs[i] >= 0 && !_rare[outputs[i]]) return false;
-        return true;
+        catch(OperationCanceledException){throw;}
+        catch{_faulted=true;throw;}
+    }
+    public void LogExecutionEvidence()=>_costSamples.WriteSummary();
+    public async ValueTask DisposeAsync(FamilyExecutionContext context)
+    {
+        if(!GpuPlan.Supported){_cpu.WriteSummary();return;}
+        if(_gpu is not null)try{await context.ExecuteGpuAsync(_=>{_gpu.Dispose();return true;},CancellationToken.None).ConfigureAwait(false);}catch{_faulted=true;throw;}
+        RuntimeLog.TryBackgroundInfo($"transformationFamilySummary=true;family={Id};batches={_batches};input={_inputs};output={_outputs};setupMs={_gpu?.SetupMs??0};dispatchSyncMs={_dispatch};readbackMs={_readback};canonicalMs={_canonical};parity={_parity};faulted={_faulted};recovery=None");
     }
 }

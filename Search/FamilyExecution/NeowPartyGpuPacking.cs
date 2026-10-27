@@ -8,6 +8,8 @@ internal static class NeowPartyGpuPacking
     {
         if (plans.Length < 2) throw new ArgumentException("PartyN.FusedPlanCount");
         if (plans.Any(p => !p.IsMultiplayer)) throw new ArgumentException("PartyN.SingleplayerPlan");
+        if (plans.Any(p => p.NumericalVariant != NeowGpuNumericalVariant.NativeFloat64))
+            throw new InvalidOperationException("PartyN.FusedNumericalVariantNotAdmitted");
         string source = NeowFamilyGpuExecutor.ShaderSource(leafyPreGate: plans.Any(p => p.UsesLeafyPreGate),
             authoredUpgrades: plans.Any(p => p.HasAuthoredUpgrades), localResults: plans.Any(p => p.HasLocalResults), multiplayer: true);
         source = source.Replace("uint plan_value(uint i)", "uint party_plan = 0u;\nuint plan_value(uint i)", StringComparison.Ordinal);

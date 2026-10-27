@@ -1,3 +1,4 @@
+using RolltheSpire2.Ui.Workspace;
 using MegaCrit.Sts2.Core.Saves;
 using MegaCrit.Sts2.Core.Unlocks;
 using RolltheSpire2.Bootstrap;
@@ -8,8 +9,8 @@ using RolltheSpire2.Ui.Shell;
 
 namespace RolltheSpire2.Ui.Persistence;
 
-// Only authored context and legal opening selections cross the bookmark boundary.
-// Prediction documents, witnesses, runtime pools and search conditions stay transient.
+// Authored opening premises and separately recorded selections cross the bookmark
+// boundary. An authored premise is not a Match witness.
 internal static class SeedLibraryContextCapture
 {
     internal static SearchQuery OpeningPremise(SearchQuery query) => SearchQuery.Empty with
@@ -26,7 +27,7 @@ internal static class SeedLibraryContextCapture
                 p.UnlockSource, draft.Query.Players[p.Slot].AncientPremises,
                 OpeningPremise(draft.Query.Players[p.Slot].Conditions), null)).ToArray()
             : [new SeedLibraryPlayer(0, draft.Character, SaveManager.Instance.GenerateUnlockStateFromProgress().ToSerializable(),
-                "CapturedLocalProfile", draft.AncientPremises, SearchQuery.Empty, null)];
+                "CapturedLocalProfile", draft.AncientPremises, OpeningPremise(draft.Query), null)];
         return new(runtime.Detection.NormalizedVersion, runtime.Profile.ProfileId, draft.Mode, draft.Ascension, players);
     }
 

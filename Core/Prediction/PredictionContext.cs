@@ -34,6 +34,9 @@ public sealed record PredictionContext(
     string? SourceModId,
     string? SourceAssembly)
 {
+    // Frozen request scope, independent of the document's modeled precision.
+    // Missing evidence in older documents is unknown, never an inferred promise.
+    public RequestSupportAssessment? SupportScope { get; init; }
     public ModelKey CharacterKey => Character.CharacterKey;
     public KnownVanillaCharacterKind? KnownVanillaCharacterKind => Character.KnownVanillaKind;
 }

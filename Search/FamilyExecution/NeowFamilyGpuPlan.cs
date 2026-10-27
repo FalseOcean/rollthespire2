@@ -1,12 +1,22 @@
 using RolltheSpire2.Core.Seed;
 using RolltheSpire2.Search.FamilyExecution;
+using NumericRequirements = RolltheSpire2.Search.FamilyExecution.GpuNumericRequirements;
 
 namespace RolltheSpire2.Search.FamilyExecution;
+
+internal enum NeowGpuNumericalVariant { NativeFloat64, IntegerUnitFloat }
 
 // Numeric packing adopted from N0/P1. No historical executable plan is created.
 internal sealed record NeowFamilyGpuPlan(uint[] Meta, uint[] PoolMeta, uint[] Cards,
     uint[] Strike, uint[] Defend, uint[] Bones, uint[] Conditions)
 {
+    internal NeowGpuNumericalVariant NumericalVariant { get; init; }
+    internal GpuNumericRequirements GpuNumericRequirements => NumericalVariant switch
+    {
+        NeowGpuNumericalVariant.NativeFloat64 => NumericRequirements.Int64 | NumericRequirements.Float64,
+        NeowGpuNumericalVariant.IntegerUnitFloat => NumericRequirements.Int64,
+        _ => NumericRequirements.Unspecified
+    };
     internal bool HasAuthoredUpgrades { get; init; }
     internal int JointTransformMetaOffset { get; init; } = -1;
     internal bool IsMultiplayer => Meta[6] > 1;
@@ -39,4 +49,14 @@ internal sealed record NeowFamilyGpuPlan(uint[] Meta, uint[] PoolMeta, uint[] Ca
         plan.Authority.PlayersCount == 1
             ? NeowSingleplayerGpuPlan.TryCreate(plan, out gpu, out issue)
             : NeowPartyGpuPlan.TryCreate(plan, out gpu, out issue);
+
+    // Public ordinary solo and individual party bodies only. Fused/private and
+    // composite paths must not infer compatibility from the N family name.
+    internal static bool TryCreateIntegerUnitFloat(NeowReplayPlan plan, out NeowFamilyGpuPlan? gpu, out string issue)
+    {
+        gpu = null;
+        if (!TryCreate(plan, out var native, out issue) || native is null) return false;
+        gpu = native with { NumericalVariant = NeowGpuNumericalVariant.IntegerUnitFloat };
+        return true;
+    }
 }

@@ -131,7 +131,7 @@ internal sealed partial class PredictorCrystalOffsetBound
                 {
                     receipt=stateLimit>0 && RejectRootCardSlots(ordered)
                         ?new(CrystalOffsetVerdict.Impossible,0,RootCardSlotsRejected:true)
-                        :_table.IncludesRerolls?SolveRerolls(ordered,stateLimit):Solve(ordered,stateLimit);
+                        :_table.IncludesSacrifices?CheckWing(ordered,stateLimit):_table.IncludesRerolls?SolveRerolls(ordered,stateLimit):Solve(ordered,stateLimit);
                     if(receipt.Verdict==CrystalOffsetVerdict.Impossible && _negativeSets.Count<2048 &&
                         !_negativeSets.Any(prior=>prior.All(ordered.Contains))) _negativeSets.Add(ordered);
                 }
@@ -144,6 +144,13 @@ internal sealed partial class PredictorCrystalOffsetBound
         var proof=_proofs.Count<2048?_proofs.GetOrAdd(key,pending):pending;
         if(!ReferenceEquals(proof,pending)) Interlocked.Increment(ref _cacheHits);
         return proof.Value;
+    }
+
+    private CrystalOffsetReceipt CheckWing(ImmutableArray<CrystalRewardOption> goals,int stateLimit)
+    {
+        var language=CompileLanguage(goals,()=>true,stateLimit);
+        return new(!language.Roots.IsEmpty?CrystalOffsetVerdict.Possible:
+            language.Complete?CrystalOffsetVerdict.Impossible:CrystalOffsetVerdict.Incomplete,language.States);
     }
 
     private CrystalOffsetReceipt Solve(ImmutableArray<CrystalRewardOption> goals,int stateLimit)

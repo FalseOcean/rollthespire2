@@ -2,7 +2,7 @@ using RolltheSpire2.Compatibility;
 
 namespace RolltheSpire2.Core.Prediction.Maps;
 
-internal enum MapReplayMode { Reference, PackedSegmentDedup }
+internal enum MapReplayMode { Reference, PackedSegmentDedup, GraphSegmentDiscovery }
 
 internal enum ActKind
 {
@@ -134,7 +134,7 @@ internal sealed class MapPointTypeCounts
         PointTypesThatIgnoreRules.Contains(type);
 }
 
-internal static class Beta111StandardMapGenerator
+internal static partial class Beta111StandardMapGenerator
 {
     private const int MapWidth = 7;
     private const int PathIterations = 7;
@@ -166,12 +166,12 @@ internal static class Beta111StandardMapGenerator
 
     internal static GeneratedStandardMap GenerateStandardMap(string seed, ActContext context,
         CancellationToken cancellationToken = default,
-        MapReplayMode mode = MapReplayMode.PackedSegmentDedup)
+        MapReplayMode mode = MapReplayMode.GraphSegmentDiscovery)
     {
         if (!Enum.IsDefined(mode)) throw new ArgumentOutOfRangeException(nameof(mode));
         ValidateContext(context);
         var profile = Beta111Profile.Instance;
-        if (!profile.TryCanonicalizeSeed(seed, out string canonical, out string issue))
+        if (!ProfileSeedRules.TryCanonicalizePredictionSeed(profile, seed, out string canonical, out string issue))
             throw new ArgumentException(issue, nameof(seed));
         cancellationToken.ThrowIfCancellationRequested();
         ReferenceRng rng = new(profile.DeriveNamedStreamSeed(profile.ComputeRootSeed(canonical), $"act_{context.ActIndex + 1}_map"), cancellationToken, mode);
@@ -451,9 +451,12 @@ internal static class Beta111StandardMapGenerator
 
     // Mirrors MapPathPruning.FindMatchingSegments and FindAllPaths.
     private static List<List<MapNode[]>> FindMatchingSegments(MapNode start, ReferenceRng rng) =>
-        (rng.Mode == MapReplayMode.PackedSegmentDedup
-            ? PackedPruneDiscovery.Find(start, rng)
-            : FindMatchingSegmentDictionary(start, rng))
+        (rng.Mode switch
+        {
+            MapReplayMode.GraphSegmentDiscovery => FindGraphSegmentDictionary(start, rng),
+            MapReplayMode.PackedSegmentDedup => PackedPruneDiscovery.Find(start, rng),
+            _ => FindMatchingSegmentDictionary(start, rng)
+        })
             .Values
             .Where(segmentList => segmentList.Count > 1)
             .ToList();

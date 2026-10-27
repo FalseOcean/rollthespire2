@@ -1,13 +1,24 @@
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Nodes.Events.Custom.CrystalSphere;
+using RolltheSpire2.Ui.Settings;
 
 namespace RolltheSpire2.Ui.Shell;
 
 internal static class CrystalSphereMaskAppearance
 {
     internal const float Opacity = .35f;
-    internal static bool Enabled { get; private set; } // Opt-in, session-local.
+    private static bool? _enabled;
+    // First native mask Ready restores the saved appearance even before opening
+    // the assistant. Preference capture and mask changes stay on the main thread.
+    internal static bool Enabled
+    {
+        get
+        {
+            _enabled ??= InRunFeaturePreferences.CrystalSphereTransparentMask;
+            return _enabled.Value;
+        }
+    }
     private sealed class TrackedMask(NCrystalSphereMask mask)
     {
         internal readonly WeakReference<NCrystalSphereMask> Node = new(mask);
@@ -15,11 +26,11 @@ internal static class CrystalSphereMaskAppearance
     }
     private static readonly List<TrackedMask> Masks = [];
 
-    // Called only by the Godot panel, on the main thread. Do not persist opt-in.
+    // Called only on the main thread. The panel separately saves the user's choice.
     internal static void SetEnabled(bool enabled)
     {
         if (Enabled == enabled) return;
-        Enabled = enabled;
+        _enabled = enabled;
         for (int i = Masks.Count - 1; i >= 0; i--)
         {
             if (!Masks[i].Node.TryGetTarget(out var mask) || !GodotObject.IsInstanceValid(mask))

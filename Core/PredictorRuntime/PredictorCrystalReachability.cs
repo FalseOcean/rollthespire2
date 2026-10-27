@@ -20,6 +20,7 @@ internal sealed partial class CrystalReachabilityTable
     internal int MaximumInitialDraws { get; }
     internal bool IncludesRerolls { get; }
     internal bool IncludesEnchantments { get; }
+    internal bool IncludesSacrifices { get; }
     internal bool HasSingleRelicOffsets=>_singleRelicBits!=null;
     internal static int Draws(string kind)=>kind switch {
         "CARD_COMMON" or "CARD_UNCOMMON" or "CARD_RARE"=>6,
@@ -28,12 +29,13 @@ internal sealed partial class CrystalReachabilityTable
     };
     internal CrystalReachabilityTable(PredictorCrystalSnapshot source,CancellationToken token=default,bool includeRerolls=false,bool relicOffsetBound=false,bool includeEnchantments=true)
     {
+        IncludesSacrifices=PredictorCrystalWing.Active(source.State);
         var placed=source.Items.Where(i=>i.X>=0).ToArray();
         var future=source.Items.Select((item,index)=>(item,index))
             .Where(p=>p.item.X>=0 && !source.Revealed.Contains(p.index)).Select(p=>p.item).ToArray();
         int relicCallbacks=source.Revealed.Count(i=>source.Items[i].Kind=="RELIC")+
             future.Where(i=>i.Kind=="RELIC").Sum(i=>i.Subscriptions);
-        if(relicOffsetBound && relicCallbacks==1)
+        if(relicOffsetBound && relicCallbacks==1 && !IncludesSacrifices)
         {
             // Historical entries are callbacks, not physical items. Each offset
             // starts from the original bag; no real run or shared mutable state.
@@ -123,13 +125,14 @@ internal sealed partial class CrystalReachabilityTable
                 }
             }
         }
-        int relicCount=placed.Where(i=>i.Kind=="RELIC").Sum(i=>i.Subscriptions);
+        int relicCount=placed.Where(i=>i.Kind=="RELIC").Sum(i=>i.Subscriptions)+
+            (IncludesSacrifices?(cardInstances+PredictorCrystalWing.Parity(source.State))/2:0);
         if(relicCount>0)
         {
             bool Allowed(ModelKey key)=>PredictorRewardGeneration.RelicAllowed(source.Context,source.State,key);
             var bag=source.State.PersonalBag;
-            foreach(var key in bag.Buckets.SelectMany(b=>b.Entries.Where(Allowed).Take(relicCount))
-                .Concat(bag.MultiplayerFallback.Where(Allowed).Take(relicCount))
+            foreach(var key in bag.Buckets.SelectMany(b=>b.Entries.Where(Allowed).Distinct().Take(relicCount))
+                .Concat(bag.MultiplayerFallback.Where(Allowed).Distinct().Take(relicCount))
                 .Concat(bag.RefreshAllowed?bag.Original.Select(e=>e.Key).Where(Allowed):[]).Distinct())
                 candidates.Add(new(PredictorRewardKind.Relic,key));
             if(new[]{"Common","Uncommon","Rare"}.Any(r=>bag.Buckets.Where(b=>b.Rarity==r).Sum(b=>b.Entries.Count(Allowed))<relicCount))
@@ -272,7 +275,7 @@ internal sealed partial class PredictorCrystalReachability(PredictorCrystalSnaps
             if(jointOffsetBound) _offsetBound??=new(source,_table,avoidCurse,rootCardSlots:rootCardSlots,packingCover:packingCover);
             if(islandDiscovery) _islands??=new(source,avoidCurse);
             string key=SelectionKey(selected);
-            if(_finished.TryGetValue(key,out var finished)) return finished;
+            if(_finished.TryGetValue(key,out var finished)) return finished with {Projection=PeekKnown(selected)};
             if(!_queries.TryGetValue(key,out var query))
             {
                 // Dormant proof frontiers are expendable; all their published
@@ -348,9 +351,8 @@ internal sealed partial class PredictorCrystalReachability(PredictorCrystalSnaps
             var best=projections.OrderByDescending(p=>p.Gold).FirstOrDefault(p=>p.SelectedPlan!=null);
             var available=projections.SelectMany(p=>p.Available).ToImmutableDictionary();
             PublishWitnesses();
-            var projection=PublishKnown(key,new(available,best?.SelectedPlan,projections.Max(p=>p.Gold)),selected,reshape:true);
-            // Gold refinement is worker computation too; include publication
-            // work in elapsed time instead of reporting only click traversal.
+            var projection=PublishKnown(key,new(available,best?.SelectedPlan,projections.Max(p=>p.Gold)),selected);
+            // Include projection/replay publication work in visible query time.
             query.Seconds+=watch.Elapsed.TotalSeconds-accountedSeconds;
             var progress=new CrystalDiscoveryProgress(explorers.Sum(e=>e.Progress.Examined)+query.ProbeExamined,explorers.Sum(e=>e.Progress.Pruned)+query.ProbePruned,
                 explorers.Sum(e=>e.Progress.Merged)+query.ProbeMerged,explorers.Sum(e=>e.Progress.Orders),query.Seconds);

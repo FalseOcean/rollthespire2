@@ -150,7 +150,8 @@ public static class NormalCombatRewardSequencePredictor
         IReadOnlyList<NeowChoiceResult> neowChoices,
         NeowEffectAuthoritySnapshot? effectAuthority,
         WorldAuthoritySnapshot? worldAuthority,
-        NormalCombatRewardProjectionRequest projectionRequest) =>
+        NormalCombatRewardProjectionRequest projectionRequest,
+        CombatRewardPoolPreparation? poolPreparation = null) =>
         PredictCore(
             profile,
             rootHash,
@@ -160,7 +161,8 @@ public static class NormalCombatRewardSequencePredictor
             neowChoices,
             effectAuthority,
             worldAuthority,
-            projectionRequest);
+            projectionRequest,
+            poolPreparation);
 
     private static NormalCombatRewardSequencePredictionResult PredictCore(
         IRuntimeProfile profile,
@@ -171,10 +173,12 @@ public static class NormalCombatRewardSequencePredictor
         IReadOnlyList<NeowChoiceResult> neowChoices,
         NeowEffectAuthoritySnapshot? effectAuthority,
         WorldAuthoritySnapshot? worldAuthority,
-        NormalCombatRewardProjectionRequest projectionRequest)
+        NormalCombatRewardProjectionRequest projectionRequest,
+        CombatRewardPoolPreparation? poolPreparation = null)
     {
         ArgumentNullException.ThrowIfNull(profile);
         ArgumentNullException.ThrowIfNull(neowChoices);
+        poolPreparation?.ObservePrediction();
         string fingerprint = effectAuthority?.SnapshotFingerprint ?? string.Empty;
         if (!profile.SupportsSeedRng)
         {
@@ -232,21 +236,14 @@ public static class NormalCombatRewardSequencePredictor
                 fingerprint);
         }
 
-        List<NeowEffectCardSnapshot> cards = effectAuthority.CharacterRewardPool
-            .Where(card => worldAuthority?.Beta109Generation?.IsMultiplayer == true || !card.IsMultiplayerOnly)
-            // Post-combat CardReward uses runtime reward-pool membership. It does not
-            // apply CardModel.CanBeGeneratedInCombat, which is a separate combat-only filter.
-            .Where(card => card.EligibleForPostCombatRewardByPoolMembership)
-            .Where(card => card.IsUnlockedInCapturedPool)
-            .Where(card => card.Rarity is EffectCardRarity.Common or EffectCardRarity.Uncommon or EffectCardRarity.Rare)
-            .OrderBy(card => card.PoolOrder)
-            .ToList();
-        List<NeowEffectPotionSnapshot> potions = effectAuthority.PotionPool
-            .Where(potion => worldAuthority?.Beta109Generation?.IsMultiplayer == true || !potion.IsMultiplayerOnly)
-            .Where(potion => potion.Rarity is EffectPotionRarity.Common or EffectPotionRarity.Uncommon or EffectPotionRarity.Rare)
-            .OrderBy(potion => potion.PoolOrder)
-            .ToList();
-        string? poolIssue = ValidatePools(profile.ProfileId, cards, potions);
+        // Resolve only after the original authority and starting-act guards, so
+        // preparation never changes their failure precedence or scope.
+        var prepared = poolPreparation?.Resolve(profile.ProfileId, effectAuthority, worldAuthority);
+        IReadOnlyList<NeowEffectCardSnapshot> cards;
+        IReadOnlyList<NeowEffectPotionSnapshot> potions;
+        if (prepared is not null) { cards = prepared.Cards; potions = prepared.Potions; }
+        else (cards, potions) = BuildPoolInputs(effectAuthority, worldAuthority);
+        string? poolIssue = prepared is null ? ValidatePools(profile.ProfileId, cards, potions) : null;
         if (poolIssue is not null)
         {
             return NormalCombatRewardSequencePredictionResult.Unknown(profile.ProfileId, poolIssue, fingerprint);
@@ -274,12 +271,8 @@ public static class NormalCombatRewardSequencePredictor
             .OrderBy(source => source.Serialized, StringComparer.Ordinal)
             .ToArray();
 
-        string cardPoolFingerprint = BuildFingerprint(cards.Select(card =>
-            $"{card.PoolOrder}:{card.CardKey.Serialized}:{card.Rarity}:{card.CardType}:{card.CanUpgrade}:" +
-            $"{card.CanBeGeneratedInCombat}:{card.IsUnlockedInCapturedPool}:{card.IsDiscovered}:" +
-            $"{card.EligibleForPostCombatRewardByPoolMembership}:{card.EligibilityAuthority}:{card.CatalogProfileId}"));
-        string potionPoolFingerprint = BuildFingerprint(potions.Select(potion =>
-            $"{potion.PoolOrder}:{potion.PotionKey.Serialized}:{potion.Rarity}"));
+        string cardPoolFingerprint = prepared?.CardPoolFingerprint ?? BuildCardPoolFingerprint(cards);
+        string potionPoolFingerprint = prepared?.PotionPoolFingerprint ?? BuildPotionPoolFingerprint(potions);
         IGrouping<string, OpeningRewardContinuation>[] grouped = continuations
             .GroupBy(
                 continuation => continuation.RewardsRngState is null
@@ -1334,7 +1327,33 @@ public static class NormalCombatRewardSequencePredictor
         return true;
     }
 
-    private static string? ValidatePools(
+    internal static (IReadOnlyList<NeowEffectCardSnapshot> Cards, IReadOnlyList<NeowEffectPotionSnapshot> Potions)
+        BuildPoolInputs(NeowEffectAuthoritySnapshot authority, WorldAuthoritySnapshot? worldAuthority)
+    {
+        // Post-combat reward-pool membership is distinct from the combat-only
+        // CanBeGeneratedInCombat filter. Keep original ordering and duplicates.
+        return (authority.CharacterRewardPool!
+            .Where(card => worldAuthority?.Beta109Generation?.IsMultiplayer == true || !card.IsMultiplayerOnly)
+            .Where(card => card.EligibleForPostCombatRewardByPoolMembership)
+            .Where(card => card.IsUnlockedInCapturedPool)
+            .Where(card => card.Rarity is EffectCardRarity.Common or EffectCardRarity.Uncommon or EffectCardRarity.Rare)
+            .OrderBy(card => card.PoolOrder).ToList(),
+            authority.PotionPool!
+            .Where(potion => worldAuthority?.Beta109Generation?.IsMultiplayer == true || !potion.IsMultiplayerOnly)
+            .Where(potion => potion.Rarity is EffectPotionRarity.Common or EffectPotionRarity.Uncommon or EffectPotionRarity.Rare)
+            .OrderBy(potion => potion.PoolOrder).ToList());
+    }
+
+    internal static string BuildCardPoolFingerprint(IEnumerable<NeowEffectCardSnapshot> cards) =>
+        BuildFingerprint(cards.Select(card =>
+            $"{card.PoolOrder}:{card.CardKey.Serialized}:{card.Rarity}:{card.CardType}:{card.CanUpgrade}:" +
+            $"{card.CanBeGeneratedInCombat}:{card.IsUnlockedInCapturedPool}:{card.IsDiscovered}:" +
+            $"{card.EligibleForPostCombatRewardByPoolMembership}:{card.EligibilityAuthority}:{card.CatalogProfileId}"));
+
+    internal static string BuildPotionPoolFingerprint(IEnumerable<NeowEffectPotionSnapshot> potions) =>
+        BuildFingerprint(potions.Select(potion => $"{potion.PoolOrder}:{potion.PotionKey.Serialized}:{potion.Rarity}"));
+
+    internal static string? ValidatePools(
         RuntimeProfileId profileId,
         IReadOnlyList<NeowEffectCardSnapshot> cards,
         IReadOnlyList<NeowEffectPotionSnapshot> potions)

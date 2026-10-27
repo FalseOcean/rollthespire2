@@ -351,7 +351,7 @@ internal static partial class NeowStructuredEffectProbabilityEstimator
                 double capsuleP;
                 string capsuleDetail, capsuleIssue;
                 bool capsulePriced = plan.Authority.PlayersCount > 1
-                    ? CapsuleRelicProbabilityEstimator.TryEstimateOpeningCapsules(plan,
+                    ? CapsuleBagProbabilityEstimator.TryEstimateConjunction(plan,
                         pair.Where(k => k == BaseGameModelKeys.Relics.SmallCapsule || k == BaseGameModelKeys.Relics.LargeCapsule).ToArray(),
                         includeExplicitRelicSequence, out capsuleP, out capsuleDetail, out capsuleIssue)
                     : CapsuleRelicProbabilityEstimator.TryEstimateBonesNestedCapsules(plan, capsuleConditions,

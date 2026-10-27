@@ -6,7 +6,7 @@ namespace RolltheSpire2.Core.PredictorRuntime;
 
 // Same card-obtain handlers as the route research runtime. Crystal witnesses
 // use these to validate taking rewards on detached state, never on the live run.
-internal static class PredictorObtainSources
+internal static partial class PredictorObtainSources
 {
     internal static PredictorState AddCard(PredictorContext context, PredictorState state, ModelKey key)
     {
@@ -25,6 +25,16 @@ internal static class PredictorObtainSources
     {
         var card = prototype with { Id = state.NextInstanceId,
             FloorAdded = preserveFloorAdded ? prototype.FloorAdded : state.Position.Floor };
+        card = PrepareAddedCard(context, state, card);
+        state = state with { NextInstanceId = state.NextInstanceId + 1,
+            Cards = state.Cards.Add(card), Deck = state.Deck.Add(card.Id) };
+        return AfterCardAddedToDeck(context, state, card.Id, suppressCopies);
+    }
+
+    // Creation metadata only. No identity allocation, deck insertion, receipt,
+    // copy listener or health/gold hook belongs to this pure preparation step.
+    internal static PredictorCard PrepareAddedCard(PredictorContext context, PredictorState state, PredictorCard card)
+    {
         foreach (var relic in state.Relics.Where(r => !r.Melted))
         {
             card = PredictorRewardGeneration.UpgradeOnDeckAddWithEgg(card, relic.Key.Entry);
@@ -32,10 +42,7 @@ internal static class PredictorObtainSources
                 GainsBlockForFresnel(context, card))
                 card = card with { Enchantment = new("ENCHANTMENT", "NIMBLE"), EnchantmentAmount = 2 };
         }
-        card = PredictorCardLevelEffects.Reconcile(context, card);
-        state = state with { NextInstanceId = state.NextInstanceId + 1,
-            Cards = state.Cards.Add(card), Deck = state.Deck.Add(card.Id) };
-        return AfterCardAddedToDeck(context, state, card.Id, suppressCopies);
+        return PredictorCardLevelEffects.Reconcile(context, card);
     }
 
     internal static PredictorState AddExistingCard(PredictorContext context, PredictorState state, PredictorCard offered)

@@ -76,31 +76,57 @@ internal sealed partial class AnalysisRequestBar : PanelContainer
         AddThemeStyleboxOverride("panel", new StyleBoxEmpty());
         var column = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         column.AddThemeConstantOverride("separation", 12); AddChild(column);
-        _railTitle = new Label(); column.AddChild(_railTitle);
-        var mode = new HBoxContainer(); column.AddChild(mode);
-        var palette = WorkspacePalette.Canonical;
+        var palette = WorkspacePalette.MainPanel;
+        _railTitle = palette.Label("", 15, true, heading: true); column.AddChild(_railTitle);
+        var mode = new HBoxContainer { Name = "PredictorModeTabs" };
+        mode.AddThemeConstantOverride("separation", 8); column.AddChild(mode);
         _railSolo = palette.Button(""); _railMulti = palette.Button("");
-        _railSolo.AddThemeFontSizeOverride("font_size", 18); _railMulti.AddThemeFontSizeOverride("font_size", 18);
+        foreach (var tab in new[] { _railSolo, _railMulti })
+        {
+            tab.CustomMinimumSize = new Vector2(0, 38);
+            tab.AddThemeFontSizeOverride("font_size", 16);
+            tab.ClipText = true;
+            tab.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+        }
         _railSolo.SizeFlagsHorizontal = _railMulti.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         _railSolo.Pressed += () => PartyModeSelected?.Invoke(false);
         _railMulti.Pressed += () => PartyModeSelected?.Invoke(true);
-        palette.SetActive(_railSolo, true);
+        palette.SetActive(_railSolo, true, horizontalPadding: 6);
+        palette.SetActive(_railMulti, false, horizontalPadding: 6);
         mode.AddChild(_railSolo); mode.AddChild(_railMulti);
         _partyConfig = palette.Button(""); _partyConfig.Name = "PredictorPartyConfiguration";
+        _partyConfig.CustomMinimumSize = new Vector2(0, 38);
+        _partyConfig.AddThemeFontSizeOverride("font_size", 16);
+        _partyConfig.ClipText = true;
         _partyConfig.Visible = false;
         _partyConfig.Pressed += () => PartyConfigurationRequested?.Invoke();
         column.AddChild(_partyConfig);
-        _partyPlayer = new OptionButton { Visible = false, FitToLongestItem = false, CustomMinimumSize = new Vector2(0, 40) };
+        _partyPlayer = new OptionButton { Name = "PredictorPlayer", Visible = false, FitToLongestItem = false,
+            ClipText = true, CustomMinimumSize = new Vector2(0, 38) };
         _partyPlayer.ItemSelected += index => PartyPlayerSelected?.Invoke((int)index);
         column.AddChild(_partyPlayer);
         void Move(Control c, Node target) { c.GetParent().RemoveChild(c); target.AddChild(c); c.SizeFlagsHorizontal = SizeFlags.ExpandFill; }
         Move(_seedLabel, column); Move(_seedInput, column);
         _seedInput.CustomMinimumSize = new Vector2(0, 40); _seedInput.ExpandToTextLength = false;
         var actions = new HBoxContainer(); column.AddChild(actions);
+        actions.AddThemeConstantOverride("separation", 8);
         Move(_copySeed, actions); Move(_randomSeed, actions);
+        foreach (var action in new[] { _copySeed, _randomSeed })
+        {
+            action.CustomMinimumSize = new Vector2(0, 36);
+            action.AddThemeFontSizeOverride("font_size", 16);
+            action.ClipText = true;
+            foreach (string state in new[] { "normal", "hover", "pressed", "disabled" })
+            {
+                var style = (StyleBox)action.GetThemeStylebox(state).Duplicate();
+                style.ContentMarginLeft = style.ContentMarginRight = 6;
+                action.AddThemeStyleboxOverride(state, style);
+            }
+        }
         Move(_characterLabel, column);
         _railKeys = keys.ToArray(); _railCharacter = new OptionButton { CustomMinimumSize = new Vector2(0, 40), FitToLongestItem = false };
         _railCharacter.ExpandIcon = true;
+        _railCharacter.ClipText = true;
         _railCharacter.AddThemeConstantOverride("icon_max_width", 28);
         column.AddChild(_railCharacter);
         _railCharacter.ItemSelected += i => _characterPicker.Select(_railKeys[(int)i], notify: true);
@@ -118,7 +144,7 @@ internal sealed partial class AnalysisRequestBar : PanelContainer
         _characterIcons = characterPoolIcons;
         _committedSeed = initialSeed.Trim();
         SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        Ui1Theme.ApplyPanel(this, Ui1SurfaceRole.Card, 4f, 1, 9f);
+        MainPanelTheme.ApplyPanel(this, Ui1SurfaceRole.Card, 4f, 1, 9f);
 
         var toolbar = new HBoxContainer
         {
@@ -127,24 +153,24 @@ internal sealed partial class AnalysisRequestBar : PanelContainer
         };
         toolbar.AddThemeConstantOverride("separation", 9);
 
-        _seedLabel = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta);
+        _seedLabel = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta);
         _seedInput = new LineEdit
         {
             Text = initialSeed,
             CustomMinimumSize = new Vector2(270, 38),
             SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin
         };
-        Ui1Theme.ApplyLineEdit(_seedInput);
+        MainPanelTheme.ApplyLineEdit(_seedInput);
         _copySeed = new Button
         {
             CustomMinimumSize = new Vector2(76, 38),
             Disabled = string.IsNullOrWhiteSpace(initialSeed)
         };
-        Ui1Theme.ApplyButton(_copySeed, Ui1ButtonRole.Secondary);
+        MainPanelTheme.ApplyButton(_copySeed, Ui1ButtonRole.Secondary);
         _randomSeed = new Button { CustomMinimumSize = new Vector2(76, 38) };
-        Ui1Theme.ApplyButton(_randomSeed, Ui1ButtonRole.Secondary);
+        MainPanelTheme.ApplyButton(_randomSeed, Ui1ButtonRole.Secondary);
 
-        _characterLabel = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta);
+        _characterLabel = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta);
         _characterPicker = new CharacterPoolIconSelector(characterKeys, characterPoolIcons);
         Control characterHost;
         if (_characterPicker.RequiresHorizontalOverflow(CharacterOverflowThreshold))
@@ -167,15 +193,15 @@ internal sealed partial class AnalysisRequestBar : PanelContainer
             characterHost = _characterPicker;
         }
 
-        _ascensionLabel = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta);
+        _ascensionLabel = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta);
         _ascension = new AscensionStepper();
         _ascension.Configure(
             SeedPredictionInputLimits.MinimumAscension,
             SeedPredictionInputLimits.MaximumAscension,
             SeedPredictionInputLimits.MaximumAscension);
-        _unlockLabel = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta);
+        _unlockLabel = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta);
         _unlockSummary = new UnlockSummary();
-        _partySummary = Ui1Theme.Label(string.Empty, Ui1TextRole.Muted);
+        _partySummary = MainPanelTheme.Label(string.Empty, Ui1TextRole.Muted);
         _partySummary.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         _partySummary.Visible = false;
 
@@ -214,7 +240,7 @@ internal sealed partial class AnalysisRequestBar : PanelContainer
     public AnalysisRequestDraft CurrentDraft => BuildDraft(_committedSeed);
     public AnalysisRequestDraft CurrentReactiveDraft => BuildDraft(_committedSeed);
     public string CommittedSeed => _committedSeed;
-    internal bool HasValidVisibleSeed => _seedProfile.TryCanonicalizeSeed(_seedInput.Text, out var canonical, out _) && canonical == _committedSeed;
+    internal bool HasValidVisibleSeed => ProfileSeedRules.TryCanonicalizePredictionSeed(_seedProfile, _seedInput.Text, out var canonical, out _) && canonical == _committedSeed;
     public bool? AllCharacterCardPoolsUnlocked => _allCharacterCardPoolsUnlocked;
 
     public void ApplyLocalization(
@@ -253,7 +279,7 @@ internal sealed partial class AnalysisRequestBar : PanelContainer
     public void SetSeedText(string seed, bool commit)
     {
         string value = seed ?? string.Empty;
-        if (commit && _seedProfile.TryCanonicalizeSeed(value, out string canonical, out _))
+        if (commit && ProfileSeedRules.TryCanonicalizePredictionSeed(_seedProfile, value, out string canonical, out _))
         {
             value = canonical;
             _committedSeed = canonical;
@@ -269,7 +295,7 @@ internal sealed partial class AnalysisRequestBar : PanelContainer
     public void CommitSeed(string seed)
     {
         string value = seed?.Trim() ?? string.Empty;
-        if (_seedProfile.TryCanonicalizeSeed(value, out string canonical, out _))
+        if (ProfileSeedRules.TryCanonicalizePredictionSeed(_seedProfile, value, out string canonical, out _))
         {
             value = canonical;
         }
@@ -313,7 +339,7 @@ internal sealed partial class AnalysisRequestBar : PanelContainer
             return;
         }
         _copySeed.Disabled = string.IsNullOrWhiteSpace(text);
-        if (!_seedProfile.TryCanonicalizeSeed(text, out string canonical, out _))
+        if (!ProfileSeedRules.TryCanonicalizePredictionSeed(_seedProfile, text, out string canonical, out _))
         {
             InvalidSeedEdited?.Invoke();
             return;
@@ -373,9 +399,9 @@ internal sealed partial class AnalysisRequestBar : PanelContainer
     {
         if (_railSolo is not null)
         {
-            var palette = WorkspacePalette.Canonical;
-            palette.SetActive(_railSolo, _playersCount == 1);
-            palette.SetActive(_railMulti!, _playersCount > 1);
+            var palette = WorkspacePalette.MainPanel;
+            palette.SetActive(_railSolo, _playersCount == 1, horizontalPadding: 6);
+            palette.SetActive(_railMulti!, _playersCount > 1, horizontalPadding: 6);
         }
         if (_playersCount <= 1)
         {

@@ -19,6 +19,7 @@ internal sealed partial class VerticalMapView : Control
     private ShaderMaterial? _material;
     private Color _backgroundColor = PaperColor;
     private MapPointType? _pointTypeHighlight;
+    private MapPosition? _currentPosition;
     private static readonly MethodInfo? IconName = typeof(GameNormalPoint).GetMethod("IconName", BindingFlags.NonPublic | BindingFlags.Static);
 
     public VerticalMapView()
@@ -34,6 +35,7 @@ internal sealed partial class VerticalMapView : Control
     {
         CancelStroke();
         _highlight = Array.Empty<MapPosition>(); _stroke.Clear(); _resolvedRooms.Clear();
+        _currentPosition = null; _previewRooms.Clear();
         _map = map; _bossIcons = bosses; _ancientIcon = ancient; _text = text;
         DrawMap();
     }
@@ -49,10 +51,16 @@ internal sealed partial class VerticalMapView : Control
         _pointTypeHighlight = type;
         DrawMap();
     }
+    public void SetCurrentPosition(MapPosition? position)
+    {
+        _currentPosition = position;
+        DrawMap();
+    }
     public void Clear()
     {
         CancelStroke();
         _highlight = Array.Empty<MapPosition>(); _stroke.Clear(); _resolvedRooms.Clear();
+        _currentPosition = null; _previewRooms.Clear();
         _map = null;
         foreach (var child in GetChildren()) child.Free();
     }
@@ -91,7 +99,8 @@ internal sealed partial class VerticalMapView : Control
                 string path = MegaCrit.Sts2.Core.Helpers.ImageHelper.GetRoomIconPath(GamePointType.Unknown,
                     Enum.Parse<MegaCrit.Sts2.Core.Rooms.RoomType>(category.ToString()), null)!;
                 icon = ResourceLoader.Load<Texture2D>(path);
-                label = string.Format(_text.Get("ui1.map.unknown.tooltip"), _text.Get("ui1.map.room." + category));
+                label = string.Format(_text.Get("ui1.map.unknown.tooltip"), _text.Get(category == MegaCrit.Sts2.Core.Rooms.RoomType.Elite ? "ui1.map.type.Elite" : "ui1.map.room." + category));
+                if (_previewRooms.Contains(p.Position)) label += "\n" + _text.Get("predictor.runtime.unknown_preview");
             }
             else if (p.Type == MapPointType.Boss) icon = _bossIcons.ElementAtOrDefault(bossIndex++);
             else if (p.Type == MapPointType.Ancient) icon = _ancientIcon;
@@ -111,6 +120,11 @@ internal sealed partial class VerticalMapView : Control
                 var ring = Enumerable.Range(0, 33).Select(i => At(p.Position) + Vector2.FromAngle(i * Mathf.Tau / 32) * side * .47f).ToArray();
                 edges.AddChild(new Line2D { Points = ring, Width = 1.25f, DefaultColor = new Color("ead39b"), Antialiased = true });
             }
+            if (_currentPosition == p.Position)
+            {
+                var ring = Enumerable.Range(0, 33).Select(i => At(p.Position) + Vector2.FromAngle(i * Mathf.Tau / 32) * side * .52f).ToArray();
+                edges.AddChild(new Line2D { Points = ring, Width = 3, DefaultColor = new Color("9b551b"), Antialiased = true });
+            }
             float iconSide = special ? side * .85f : side;
             var texture = new TextureRect { Texture = icon, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
                 StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered, Size = Vector2.One * iconSide,
@@ -122,7 +136,7 @@ internal sealed partial class VerticalMapView : Control
             AddChild(texture);
             if (icon is null)
             {
-                var caption = Ui1Theme.Label(label, Ui1TextRole.Meta);
+                var caption = MainPanelTheme.Label(label, Ui1TextRole.Meta);
                 caption.Position = At(p.Position) + new Vector2(-65, 0);
                 caption.Size = new Vector2(130, 20); caption.HorizontalAlignment = HorizontalAlignment.Center;
                 caption.MouseFilter = MouseFilterEnum.Ignore; AddChild(caption);

@@ -17,7 +17,7 @@ internal static class NeowRewardGenerator
         if (owner.PlayersCount == 1)
             return BuildOrderedRelicBag(profile, rootHash, effects.SharedRelicPoolSource!, effects.CharacterRelicPoolSource!);
         var party = owner.WorldAuthority?.Beta109Generation;
-        if (party is not { HasExactFixedParty: true } || party.PersonalPlayerSlot != owner.PlayerSlotIndex)
+        if (party is not { HasExactPartyRelicBags: true } || party.PersonalPlayerSlot != owner.PlayerSlotIndex)
             throw new InvalidOperationException("RelicBag.OrderedPartyAuthorityMissing");
         var catalog = effects.SharedRelicPoolSource!.Concat(effects.CharacterRelicPoolSource!)
             .DistinctBy(r => r.RelicKey).ToDictionary(r => r.RelicKey);

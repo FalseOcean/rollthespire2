@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Presentation.ContentNames;
+using RolltheSpire2.Ui.Theme;
 
 namespace RolltheSpire2.Ui.Shell;
 
@@ -37,7 +38,7 @@ internal sealed partial class EncyclopediaCanvas
             StyleQuietButton(search, false);
         }
 
-        Panel(_main, 0, 54, 944, 642, Paper);
+        Rule(_main, 954, -10, 1, 710);
         var scroll = NewScroll(_main, 0, 54, 944, 642);
         _articleScroll = scroll;
         var margin = new MarginContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
@@ -56,12 +57,12 @@ internal sealed partial class EncyclopediaCanvas
         string[] lines = reader.ReadToEnd().Replace("\r\n", "\n").Split('\n');
         int firstHeading = Array.FindIndex(lines, line => Regex.IsMatch(line, @"^#{1,3}\s"));
         string title = firstHeading >= 0 ? lines[firstHeading].TrimStart('#', ' ') : ArticleName(definition);
-        var eyebrow = ArticleText(T("机制与使用参考", "MECHANICS & USAGE") + "   /   BETA " + (definition.GameVersion ?? EncyclopediaGameVersion), 14, Gold);
+        var eyebrow = ArticleText(T("约定与设计说明", "CONVENTIONS & DESIGN") + "   /   BETA " + (definition.GameVersion ?? EncyclopediaGameVersion), 14, _palette.Secondary);
         content.AddChild(eyebrow);
-        var heading = ArticleText(title, 30, "E9ECED", firstRelicIcons: false);
+        var heading = ArticleText(title, 30, firstRelicIcons: false);
         content.AddChild(heading);
         if (_language != "zh" && localized is null)
-            content.AddChild(ArticleText("English translation pending · Showing the Chinese article.", 16, Quiet));
+            content.AddChild(ArticleText("English translation pending · Showing the Chinese article.", 16, _palette.Secondary));
         string? takeaway = Takeaway(definition.Id);
         if (takeaway is not null) AddCallout(content, takeaway, T("阅读提示", "AT A GLANCE"));
 
@@ -79,7 +80,7 @@ internal sealed partial class EncyclopediaCanvas
     private string? Takeaway(string id) => id switch
     {
         IntroductionId => T("同一个 Seed，在相同规则与选择下，会产生相同的随机过程。", "The same seed, rules and choices produce the same random process."),
-        NeowOfferId => T("先区分候选池；提供哪些选项，与领取后产生什么结果，是两层问题。", "Separate the offer pools. Offered choices and pickup results are different questions."),
+        NeowOfferId => T("“不限顺序”保留搜索时的选择；实际领取遵循结果中的顺序。", "Any order keeps search choices open; follow the order given by the result."),
         TransformEventResultsId => T("默认变化开局初始牌：把指定的牌保留到事件，并在事件中选择它。", "Transform a starting Basic card: keep that card until the event, then select it."),
         MapRoutesId => T("Guaranteed 看所有路线的最小值；Reachable Max 看所有路线的最大值。", "Guaranteed is the minimum across complete routes; Reachable Max is the maximum."),
         "multiplayer" => T("共享事实一起看，个人结果按玩家区分。", "Shared facts belong to the party; personal results belong to each player."),
@@ -100,7 +101,7 @@ internal sealed partial class EncyclopediaCanvas
                 var section = new MarginContainer();
                 section.AddThemeConstantOverride("margin_top", level == 3 ? 12 : 22);
                 section.AddThemeConstantOverride("margin_bottom", 4);
-                section.AddChild(ArticleText(heading.Groups[2].Value, level == 3 ? 22 : 25, level == 3 ? "D3DCE4" : Gold));
+                section.AddChild(ArticleText(heading.Groups[2].Value, level == 3 ? 22 : 25));
                 content.AddChild(section);
                 if (level <= 2) chapters.Add(new(heading.Groups[2].Value, section, level));
                 i++; continue;
@@ -110,8 +111,8 @@ internal sealed partial class EncyclopediaCanvas
                 i++; var code = new List<string>();
                 while (i < lines.Length && !lines[i].StartsWith("```", StringComparison.Ordinal)) code.Add(lines[i++]);
                 if (i < lines.Length) i++;
-                var box = BlockPanel("111C28");
-                var text = ArticleText(string.Empty, 18, "BDCFDD");
+                var box = BlockPanel(_palette.OptionSurface);
+                var text = ArticleText(string.Empty, 18, _palette.Secondary);
                 text.PushMono(); text.AddText(string.Join('\n', code)); text.Pop(); box.AddChild(text); content.AddChild(box);
                 continue;
             }
@@ -144,7 +145,7 @@ internal sealed partial class EncyclopediaCanvas
         }
     }
 
-    private RichTextLabel ArticleText(string text, int size = 20, string color = "C4D0DC", bool firstRelicIcons = true)
+    private RichTextLabel ArticleText(string text, int size = 20, string? color = null, bool firstRelicIcons = true, bool heading = false)
     {
         var label = new RichTextLabel
         {
@@ -154,10 +155,12 @@ internal sealed partial class EncyclopediaCanvas
             SizeFlagsHorizontal = SizeFlags.ExpandFill,
             MouseFilter = MouseFilterEnum.Pass
         };
-        label.AddThemeFontOverride("normal_font", _main.GetThemeFont("font", "Label"));
-        label.AddThemeFontSizeOverride("normal_font_size", size);
-        label.AddThemeColorOverride("default_color", new Color(color));
+        MainPanelTheme.ApplyFont(label, heading || size >= 22);
+        foreach (string font in new[] { "normal_font_size", "bold_font_size", "italics_font_size", "bold_italics_font_size", "mono_font_size" })
+            label.AddThemeFontSizeOverride(font, size);
+        MainPanelTheme.SetColor(label, "default_color", color ?? _palette.Text);
         label.AddThemeConstantOverride("line_separation", 5);
+        label.AddThemeStyleboxOverride("normal", new StyleBoxEmpty());
         label.AddThemeStyleboxOverride("focus", new StyleBoxEmpty());
         label.MetaClicked += meta =>
         {
@@ -169,24 +172,27 @@ internal sealed partial class EncyclopediaCanvas
         return label;
     }
 
-    private PanelContainer BlockPanel(string fill, bool accent = false)
+    private PanelContainer BlockPanel(string? fill = null, bool accent = false)
     {
         var box = new PanelContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Pass };
-        var style = _palette.Box(fill);
-        style.ContentMarginLeft = style.ContentMarginRight = 18;
-        style.ContentMarginTop = style.ContentMarginBottom = 13;
-        if (accent) { style.BorderColor = new Color("8B806A"); style.BorderWidthLeft = 2; }
+        var style = new StyleBoxFlat
+        {
+            BgColor = fill is null ? Colors.Transparent : _palette.Color(fill),
+            BorderColor = _palette.Color(_palette.Line), BorderWidthLeft = accent ? 2 : 0,
+            ContentMarginLeft = 18, ContentMarginRight = 18, ContentMarginTop = 13, ContentMarginBottom = 13,
+            CornerRadiusTopLeft = 4, CornerRadiusTopRight = 4, CornerRadiusBottomLeft = 4, CornerRadiusBottomRight = 4
+        };
         box.AddThemeStyleboxOverride("panel", style);
         return box;
     }
 
     private void AddCallout(VBoxContainer content, string text, string? caption = null)
     {
-        var panel = BlockPanel("223143", true);
+        var panel = BlockPanel(_palette.OptionSurface, true);
         var inner = new VBoxContainer(); inner.AddThemeConstantOverride("separation", 7);
         panel.AddChild(inner);
-        if (caption is not null) inner.AddChild(ArticleText(caption, 13, Gold));
-        inner.AddChild(ArticleText(text, 20, "DDD5C4"));
+        if (caption is not null) inner.AddChild(ArticleText(caption, 13, _palette.Secondary));
+        inner.AddChild(ArticleText(text, 20));
         content.AddChild(panel);
     }
 
@@ -213,10 +219,11 @@ internal sealed partial class EncyclopediaCanvas
         foreach (string[] cells in rows)
         {
             if (cells.All(c => c.Trim('-', ':', ' ').Length == 0)) continue;
-            var row = BlockPanel(index == 0 && header ? "2B3B4E" : index % 2 == 0 ? "1B2939" : "1D2C3D");
+            var row = BlockPanel(index == 0 && header ? _palette.OptionSurface : null);
+            ((StyleBoxFlat)row.GetThemeStylebox("panel")).BorderWidthBottom = 1;
             var grid = new HBoxContainer(); grid.AddThemeConstantOverride("separation", 18); row.AddChild(grid);
             foreach (string cell in cells)
-                grid.AddChild(ArticleText(cell, 18, index == 0 && header ? Gold : "C4D0DC"));
+                grid.AddChild(ArticleText(cell, 18, heading: index == 0 && header));
             table.AddChild(row); index++;
         }
         content.AddChild(table);
@@ -237,7 +244,7 @@ internal sealed partial class EncyclopediaCanvas
             StyleQuietButton(button, false);
             button.AddThemeStyleboxOverride("focus", _palette.FocusRing());
             string chapterTitle = InlinePlainText(chapter.Title);
-            var title = ArticleText(chapterTitle, 16, "A7B8CB");
+            var title = ArticleText(chapterTitle, 16, _palette.Secondary);
             title.SelectionEnabled = false;
             title.MouseFilter = MouseFilterEnum.Ignore;
             title.Position = new Vector2(32, 8);
@@ -276,7 +283,7 @@ internal sealed partial class EncyclopediaCanvas
         var spacer = new Control { CustomMinimumSize = new Vector2(0, 18) }; content.AddChild(spacer);
         if (definition.RelatedIds.Length > 0)
         {
-            content.AddChild(ArticleText(T("继续探索", "EXPLORE FURTHER"), 14, Gold));
+            content.AddChild(ArticleText(T("继续探索", "EXPLORE FURTHER"), 14, _palette.Secondary));
             var related = ArticleText(string.Empty, 18);
             foreach (string id in definition.RelatedIds)
                 if (Articles.FirstOrDefault(a => a.Id == id) is { } target)
@@ -286,16 +293,13 @@ internal sealed partial class EncyclopediaCanvas
         ArticleDefinition? previous = Articles.FirstOrDefault(a => a.NextId == definition.Id);
         ArticleDefinition? next = Articles.FirstOrDefault(a => a.Id == definition.NextId);
         if (previous is not null || next is not null)
-            content.AddChild(ArticleText(T("推荐阅读", "SUGGESTED READING"), 14, Gold));
+            content.AddChild(ArticleText(T("推荐阅读", "SUGGESTED READING"), 14, _palette.Secondary));
         var row = new HBoxContainer(); row.AddThemeConstantOverride("separation", 14); content.AddChild(row);
         foreach (var (target, caption) in new[] { (previous, T("←  上一篇", "←  Previous")), (next, T("下一篇  →", "Next  →")) })
         {
             if (target is null) continue;
             var button = new Button { CustomMinimumSize = new Vector2(0, 84), SizeFlagsHorizontal = SizeFlags.ExpandFill };
-            button.AddThemeStyleboxOverride("normal", _palette.Box("223244", "34485C", 1));
-            button.AddThemeStyleboxOverride("hover", _palette.Box("2B3E52", "667B8D", 1));
-            button.AddThemeStyleboxOverride("pressed", _palette.Box("304255"));
-            button.AddThemeStyleboxOverride("focus", _palette.FocusRing());
+            StyleQuietButton(button, false, 18);
             Label(button, caption, 14, 18, 12, true);
             var name = Label(button, ArticleName(target), 20, 18, 40);
             name.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis; name.Size = new Vector2(366, 30);
@@ -305,7 +309,7 @@ internal sealed partial class EncyclopediaCanvas
         }
     }
 
-    private static string ResourceName(ArticleDefinition definition, string language) => $"RolltheSpire2.Encyclopedia.{definition.ResourceStem}_{language}.md";
+    private static string ResourceName(ArticleDefinition definition, string language) => $"RolltheSpire2.Texts.{language}.Encyclopedia.{definition.ResourceStem}.md";
 
     private string InlinePlainText(string text) => InlineToken.Replace(text, match =>
     {
@@ -330,7 +334,6 @@ internal sealed partial class EncyclopediaCanvas
     });
     private string ArticleName(ArticleDefinition article) => article.Id switch
     {
-        NeowKaleidoscopeId => _contentNames.Resolve(BaseGameModelKeys.Relics.Kaleidoscope, GameContentKind.Relic),
         NeowSilkenTressId => _contentNames.Resolve(BaseGameModelKeys.Relics.SilkenTress, GameContentKind.Relic),
         _ => T(article.ZhName, article.EnName)
     };

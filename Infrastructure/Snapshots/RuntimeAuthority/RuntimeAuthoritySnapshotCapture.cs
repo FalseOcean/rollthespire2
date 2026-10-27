@@ -7,10 +7,11 @@ namespace RolltheSpire2.Infrastructure.Snapshots.RuntimeAuthority;
 
 /// <summary>
 /// Main-thread-only capture of the live game facts RT2 actually relies on for content
-/// identity/pool generation. No Godot/game model/UnlockState object escapes this method.
+/// identity/pool generation. Native objects remain inside a main-thread observation
+/// cursor; only copied primitive facts cross its completed-input boundary.
 /// Reflection is intentionally limited to source-audited public runtime members.
 /// </summary>
-internal static class RuntimeAuthoritySnapshotCapture
+internal static partial class RuntimeAuthoritySnapshotCapture
 {
     private const BindingFlags PublicStatic = BindingFlags.Public | BindingFlags.Static;
     private const BindingFlags PublicInstance = BindingFlags.Public | BindingFlags.Instance;
@@ -18,85 +19,40 @@ internal static class RuntimeAuthoritySnapshotCapture
     public static RuntimeAuthoritySnapshot Capture(string gameVersion)
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
-        var issues = new List<string>();
         try
         {
-            Assembly? gameAssembly = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(assembly =>
-                string.Equals(assembly.GetName().Name, "sts2", StringComparison.OrdinalIgnoreCase));
-            if (gameAssembly is null)
-                return RuntimeAuthoritySnapshot.Unavailable(gameVersion, "RuntimeAuthoritySts2AssemblyMissing");
-
-            Type? modelDb = FindType(gameAssembly, "MegaCrit.Sts2.Core.Models.ModelDb", "ModelDb");
-            if (modelDb is null)
-                return RuntimeAuthoritySnapshot.Unavailable(gameVersion, "RuntimeAuthorityModelDbMissing");
-
-            IReadOnlyList<object> cardPools = ReadStaticModelsRaw(modelDb, "AllCardPools", issues);
-            IReadOnlyList<object> relicPools = ReadStaticModelsRaw(modelDb, "AllRelicPools", issues);
-            IReadOnlyList<object> potionPools = ReadStaticModelsRaw(modelDb, "AllPotionPools", issues);
-            IReadOnlyList<object> acts = ReadActs(modelDb, issues);
-
-            PoolMembershipCapture cardMembership = BuildPoolMembership(cardPools, "AllCards", issues, "Cards");
-            PoolMembershipCapture relicMembership = BuildPoolMembership(relicPools, "AllRelics", issues, "Relics");
-            PoolMembershipCapture potionMembership = BuildPoolMembership(potionPools, "AllPotions", issues, "Potions");
-
-            var semanticDomains = new List<RuntimeSemanticDomainSnapshot>
-            {
-                CaptureCharacters(modelDb),
-                CaptureCards(modelDb, cardMembership),
-                CaptureRelics(modelDb, relicMembership),
-                CaptureAncients(modelDb, acts),
-                CapturePotions(potionPools, potionMembership),
-                CaptureEvents(gameAssembly, modelDb, acts),
-                CaptureBosses(acts)
-            };
-
-            object? currentUnlock = TryCaptureCurrentUnlockState(gameAssembly, out string currentUnlockEvidence);
-            object? allUnlock = TryCaptureAllUnlockState(gameAssembly, out string allUnlockEvidence);
-            (IReadOnlyList<RuntimeUnlockAuthorityDomainSnapshot> unlockAuthority,
-                IReadOnlyList<RuntimeCurrentUnlockDomainSnapshot> currentUnlockState) = CaptureUnlockDomains(
-                cardPools,
-                relicPools,
-                potionPools,
-                acts,
-                currentUnlock,
-                allUnlock,
-                currentUnlockEvidence,
-                allUnlockEvidence);
-
-            RuntimeSemanticFingerprintBundle fingerprint = RuntimeSemanticFingerprint.Build(
-                RuntimeAuthorityFingerprintSchema.Current,
-                semanticDomains,
-                unlockAuthority);
-            if (!fingerprint.Complete)
-                issues.Add(fingerprint.EvidenceCode);
-
-            return new RuntimeAuthoritySnapshot(
-                gameVersion ?? string.Empty,
-                RuntimeAuthorityFingerprintSchema.Current,
-                semanticDomains,
-                unlockAuthority,
-                currentUnlockState,
-                fingerprint,
-                DateTimeOffset.UtcNow,
-                issues.Distinct(StringComparer.Ordinal).ToArray());
+            using var observation = BeginObservation(gameVersion);
+            return observation.CompleteOnMainThread().Derive();
         }
         catch (Exception ex)
         {
-            return RuntimeAuthoritySnapshot.Unavailable(
-                gameVersion,
+            Diagnostics.RuntimeIssueLedger.Current.Record(ex, "RuntimeAuthorityCaptureFailed",
+                nameof(RuntimeAuthoritySnapshotCapture), "EnvironmentCapture", "issues.capture_failed");
+            return RuntimeAuthoritySnapshot.Unavailable(gameVersion,
                 "RuntimeAuthorityCaptureFailed:" + ex.GetType().Name + ":" + Compact(ex.Message));
         }
     }
 
-    private static RuntimeSemanticDomainSnapshot CaptureCharacters(Type modelDb)
+    public static RuntimeAuthorityObservationCursor BeginObservation(string gameVersion)
+    {
+        RuntimeSnapshotThreadGuard.RequireMainThread();
+        return new RuntimeAuthorityObservationCursor(gameVersion);
+    }
+
+    private static IEnumerable<object?> ObserveCharacters(Type modelDb,
+        Action<RuntimeSemanticDomainSnapshot> completed)
     {
         if (!TryReadStaticEnumerable(modelDb, "AllCharacters", out IReadOnlyList<object> values))
-            return Missing(RuntimeAuthorityDomains.Characters, "ModelDb.AllCharactersMissing");
+        {
+            completed(Missing(RuntimeAuthorityDomains.Characters, "ModelDb.AllCharactersMissing"));
+            yield break;
+        }
 
         var output = new List<RuntimeSemanticItem>();
         bool complete = true;
         foreach (object model in values)
         {
+            yield return null;
             if (!TryModelKey(model, out ModelKey key))
             {
                 complete = false;
@@ -111,16 +67,20 @@ internal static class RuntimeAuthoritySnapshotCapture
                 key.Serialized,
                 new[] { "cardPool=" + cardPool, "relicPool=" + relicPool, "potionPool=" + potionPool }));
         }
-        return Domain(RuntimeAuthorityDomains.Characters, output, complete && output.Count == values.Count,
-            "ModelDb.AllCharacters+CharacterModel.CardPool/RelicPool/PotionPool");
+        completed(Domain(RuntimeAuthorityDomains.Characters, output, complete && output.Count == values.Count,
+            "ModelDb.AllCharacters+CharacterModel.CardPool/RelicPool/PotionPool"));
     }
 
-    private static RuntimeSemanticDomainSnapshot CaptureCards(
+    private static IEnumerable<object?> ObserveCards(
         Type modelDb,
-        PoolMembershipCapture membership)
+        PoolMembershipCapture membership,
+        Action<RuntimeSemanticDomainSnapshot> completed)
     {
         if (!TryReadStaticEnumerable(modelDb, "AllCards", out IReadOnlyList<object> values))
-            return Missing(RuntimeAuthorityDomains.Cards, "ModelDb.AllCardsMissing");
+        {
+            completed(Missing(RuntimeAuthorityDomains.Cards, "ModelDb.AllCardsMissing"));
+            yield break;
+        }
 
         // Schema 1 deliberately fingerprints only source-audited fields already consumed
         // by RT2's card generation / deck-coupled predictors. Presentation/localization
@@ -130,6 +90,7 @@ internal static class RuntimeAuthoritySnapshotCapture
         bool complete = true;
         foreach (object model in values)
         {
+            yield return null;
             if (!TryModelKey(model, out ModelKey key))
             {
                 complete = false;
@@ -171,21 +132,26 @@ internal static class RuntimeAuthoritySnapshotCapture
                     "orderedPools=" + string.Join(",", pools)
                 }));
         }
-        return Domain(RuntimeAuthorityDomains.Cards, output,
+        completed(Domain(RuntimeAuthorityDomains.Cards, output,
             complete && membership.Exact && output.Count == values.Count,
-            "ModelDb.AllCards+CardModel.Rarity/Type/upgrade-removal/modifier-generation+multiplayer applicability+ordered AllCardPools membership");
+            "ModelDb.AllCards+CardModel.Rarity/Type/upgrade-removal/modifier-generation+multiplayer applicability+ordered AllCardPools membership"));
     }
 
-    private static RuntimeSemanticDomainSnapshot CaptureRelics(
+    private static IEnumerable<object?> ObserveRelics(
         Type modelDb,
-        PoolMembershipCapture membership)
+        PoolMembershipCapture membership,
+        Action<RuntimeSemanticDomainSnapshot> completed)
     {
         if (!TryReadStaticEnumerable(modelDb, "AllRelics", out IReadOnlyList<object> values))
-            return Missing(RuntimeAuthorityDomains.Relics, "ModelDb.AllRelicsMissing");
+        {
+            completed(Missing(RuntimeAuthorityDomains.Relics, "ModelDb.AllRelicsMissing"));
+            yield break;
+        }
         var output = new List<RuntimeSemanticItem>();
         bool complete = true;
         foreach (object model in values)
         {
+            yield return null;
             if (!TryModelKey(model, out ModelKey key))
             {
                 complete = false;
@@ -205,14 +171,15 @@ internal static class RuntimeAuthoritySnapshotCapture
                     "orderedPools=" + string.Join(",", pools)
                 }));
         }
-        return Domain(RuntimeAuthorityDomains.Relics, output,
+        completed(Domain(RuntimeAuthorityDomains.Relics, output,
             complete && membership.Exact && output.Count == values.Count,
-            "ModelDb.AllRelics+RelicModel.Rarity/IsAllowedInShops+ordered AllRelicPools membership");
+            "ModelDb.AllRelics+RelicModel.Rarity/IsAllowedInShops+ordered AllRelicPools membership"));
     }
 
-    private static RuntimeSemanticDomainSnapshot CapturePotions(
+    private static IEnumerable<object?> ObservePotions(
         IReadOnlyList<object> potionPools,
-        PoolMembershipCapture membership)
+        PoolMembershipCapture membership,
+        Action<RuntimeSemanticDomainSnapshot> completed)
     {
         // Direct source audit shows PotionPoolModel.AllPotions as the authoritative
         // pool content source. Beta111 does not need (and may not expose) a global
@@ -223,6 +190,7 @@ internal static class RuntimeAuthoritySnapshotCapture
         bool complete = potionPools.Count > 0;
         foreach (object pool in potionPools)
         {
+            yield return null;
             if (!TryReadInstanceEnumerableAllowEmpty(pool, "AllPotions", out IReadOnlyList<object> values))
             {
                 complete = false;
@@ -231,6 +199,7 @@ internal static class RuntimeAuthoritySnapshotCapture
 
             foreach (object model in values)
             {
+                yield return null;
                 if (!TryModelKey(model, out ModelKey key))
                 {
                     complete = false;
@@ -259,14 +228,15 @@ internal static class RuntimeAuthoritySnapshotCapture
             }
         }
 
-        return Domain(
+        completed(Domain(
             RuntimeAuthorityDomains.Potions,
             byIdentity.Values.OrderBy(item => item.StableIdentity, StringComparer.Ordinal).ToArray(),
             complete && membership.Exact,
-            "ModelDb.AllPotionPools+PotionPoolModel.AllPotions+PotionModel.Rarity+ordered pool membership");
+            "ModelDb.AllPotionPools+PotionPoolModel.AllPotions+PotionModel.Rarity+ordered pool membership"));
     }
 
-    private static RuntimeSemanticDomainSnapshot CaptureAncients(Type modelDb, IReadOnlyList<object> acts)
+    private static IEnumerable<object?> ObserveAncients(Type modelDb, IReadOnlyList<object> acts,
+        Action<RuntimeSemanticDomainSnapshot> completed)
     {
         var membership = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
         bool complete = acts.Count > 0;
@@ -281,6 +251,7 @@ internal static class RuntimeAuthoritySnapshotCapture
 
         foreach (object act in acts)
         {
+            yield return null;
             if (!TryModelKey(act, out ModelKey actKey))
             {
                 complete = false;
@@ -298,17 +269,21 @@ internal static class RuntimeAuthoritySnapshotCapture
             .OrderBy(pair => pair.Key, StringComparer.Ordinal)
             .Select(pair => new RuntimeSemanticItem(pair.Key, new[] { "membership=" + string.Join(",", pair.Value) }))
             .ToArray();
-        return Domain(RuntimeAuthorityDomains.Ancients, items, complete,
-            "ModelDb.AllSharedAncients+ActModel.AllAncients");
+        completed(Domain(RuntimeAuthorityDomains.Ancients, items, complete,
+            "ModelDb.AllSharedAncients+ActModel.AllAncients"));
     }
 
-    private static RuntimeSemanticDomainSnapshot CaptureEvents(
+    private static IEnumerable<object?> ObserveEvents(
         Assembly assembly,
         Type modelDb,
-        IReadOnlyList<object> acts)
+        IReadOnlyList<object> acts,
+        Action<RuntimeSemanticDomainSnapshot> completed)
     {
         if (!TryReadStaticEnumerable(modelDb, "AllEvents", out IReadOnlyList<object> allEvents))
-            return Missing(RuntimeAuthorityDomains.Events, "ModelDb.AllEventsMissing");
+        {
+            completed(Missing(RuntimeAuthorityDomains.Events, "ModelDb.AllEventsMissing"));
+            yield break;
+        }
 
         var membership = allEvents
             .Select(model => TryModelKey(model, out ModelKey key) ? key.Serialized : string.Empty)
@@ -324,6 +299,7 @@ internal static class RuntimeAuthoritySnapshotCapture
 
         foreach (object act in acts)
         {
+            yield return null;
             if (!TryModelKey(act, out ModelKey actKey))
             {
                 complete = false;
@@ -345,6 +321,7 @@ internal static class RuntimeAuthoritySnapshotCapture
         };
         for (int index = 0; index < epochTypeNames.Length; index++)
         {
+            yield return null;
             Type? epochType = assembly.GetType(epochTypeNames[index], false, false);
             if (epochType is null || !TryReadStaticEnumerableAllowEmpty(epochType, "Events", out IReadOnlyList<object> events))
             {
@@ -358,16 +335,18 @@ internal static class RuntimeAuthoritySnapshotCapture
             .OrderBy(pair => pair.Key, StringComparer.Ordinal)
             .Select(pair => new RuntimeSemanticItem(pair.Key, new[] { "membership=" + string.Join(",", pair.Value) }))
             .ToArray();
-        return Domain(RuntimeAuthorityDomains.Events, items, complete,
-            "ModelDb.AllEvents+AllSharedEvents+ActModel.AllEvents+Event1/2/3Epoch.Events");
+        completed(Domain(RuntimeAuthorityDomains.Events, items, complete,
+            "ModelDb.AllEvents+AllSharedEvents+ActModel.AllEvents+Event1/2/3Epoch.Events"));
     }
 
-    private static RuntimeSemanticDomainSnapshot CaptureBosses(IReadOnlyList<object> acts)
+    private static IEnumerable<object?> ObserveBosses(IReadOnlyList<object> acts,
+        Action<RuntimeSemanticDomainSnapshot> completed)
     {
         var membership = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
         bool complete = acts.Count > 0;
         foreach (object act in acts)
         {
+            yield return null;
             if (!TryModelKey(act, out ModelKey actKey))
             {
                 complete = false;
@@ -385,89 +364,8 @@ internal static class RuntimeAuthoritySnapshotCapture
             .OrderBy(pair => pair.Key, StringComparer.Ordinal)
             .Select(pair => new RuntimeSemanticItem(pair.Key, new[] { "membership=" + string.Join(",", pair.Value) }))
             .ToArray();
-        return Domain(RuntimeAuthorityDomains.Bosses, items, complete,
-            "ActModel.AllBossEncounters membership");
-    }
-
-    private static (IReadOnlyList<RuntimeUnlockAuthorityDomainSnapshot> Authority,
-        IReadOnlyList<RuntimeCurrentUnlockDomainSnapshot> CurrentState) CaptureUnlockDomains(
-        IReadOnlyList<object> cardPools,
-        IReadOnlyList<object> relicPools,
-        IReadOnlyList<object> potionPools,
-        IReadOnlyList<object> acts,
-        object? currentUnlock,
-        object? allUnlock,
-        string currentEvidence,
-        string allEvidence)
-    {
-        var authority = new List<RuntimeUnlockAuthorityDomainSnapshot>();
-        var current = new List<RuntimeCurrentUnlockDomainSnapshot>();
-
-        AddPropertyDomain(RuntimeAuthorityDomains.Characters, "Characters");
-        AddPoolDomain(RuntimeAuthorityDomains.Cards, cardPools, "GetUnlockedCards");
-        AddPoolDomain(RuntimeAuthorityDomains.Relics, relicPools, "GetUnlockedRelics");
-        AddAncientDomain();
-        AddPoolDomain(RuntimeAuthorityDomains.Potions, potionPools, "GetUnlockedPotions");
-        return (authority, current);
-
-        void AddPropertyDomain(string domain, string property)
-        {
-            (string[] all, bool allExact) = ReadModelIdentityProperty(allUnlock, property);
-            (string[] unlocked, bool currentExact) = ReadModelIdentityProperty(currentUnlock, property);
-            authority.Add(new RuntimeUnlockAuthorityDomainSnapshot(
-                domain, all, allExact, $"{allEvidence}:{property}"));
-            current.Add(new RuntimeCurrentUnlockDomainSnapshot(
-                domain, unlocked, currentExact, $"{currentEvidence}:{property}"));
-        }
-
-        void AddPoolDomain(string domain, IReadOnlyList<object> pools, string methodName)
-        {
-            (string[] all, bool allExact) = InvokeUnlockedAcrossPools(pools, methodName, allUnlock);
-            (string[] unlocked, bool currentExact) = InvokeUnlockedAcrossPools(pools, methodName, currentUnlock);
-            authority.Add(new RuntimeUnlockAuthorityDomainSnapshot(
-                domain, all, allExact, $"{allEvidence}:{methodName};poolCount={pools.Count}"));
-            current.Add(new RuntimeCurrentUnlockDomainSnapshot(
-                domain, unlocked, currentExact, $"{currentEvidence}:{methodName};poolCount={pools.Count}"));
-        }
-
-        void AddAncientDomain()
-        {
-            (string[] all, bool allExact) = CaptureUnlockedAncients(acts, allUnlock);
-            (string[] unlocked, bool currentExact) = CaptureUnlockedAncients(acts, currentUnlock);
-            authority.Add(new RuntimeUnlockAuthorityDomainSnapshot(
-                RuntimeAuthorityDomains.Ancients, all, allExact,
-                $"{allEvidence};UnlockState.SharedAncients+ActModel.GetUnlockedAncients"));
-            current.Add(new RuntimeCurrentUnlockDomainSnapshot(
-                RuntimeAuthorityDomains.Ancients, unlocked, currentExact,
-                $"{currentEvidence};UnlockState.SharedAncients+ActModel.GetUnlockedAncients"));
-        }
-    }
-
-    private static (string[] Identities, bool Exact) CaptureUnlockedAncients(
-        IReadOnlyList<object> acts,
-        object? unlockState)
-    {
-        if (unlockState is null) return (Array.Empty<string>(), false);
-        var output = new HashSet<string>(StringComparer.Ordinal);
-        bool exact = true;
-        (string[] shared, bool sharedExact) = ReadModelIdentityProperty(unlockState, "SharedAncients");
-        exact &= sharedExact;
-        foreach (string identity in shared) output.Add(identity);
-
-        foreach (object act in acts)
-        {
-            if (!TryInvokeUnlocked(act, "GetUnlockedAncients", unlockState, out IReadOnlyList<object> values))
-            {
-                exact = false;
-                continue;
-            }
-            foreach (object value in values)
-            {
-                if (TryModelKey(value, out ModelKey key)) output.Add(key.Serialized);
-                else exact = false;
-            }
-        }
-        return (output.OrderBy(value => value, StringComparer.Ordinal).ToArray(), exact);
+        completed(Domain(RuntimeAuthorityDomains.Bosses, items, complete,
+            "ActModel.AllBossEncounters membership"));
     }
 
     private static (string[] Identities, bool Exact) InvokeUnlockedAcrossPools(
@@ -682,11 +580,12 @@ internal static class RuntimeAuthoritySnapshotCapture
         IReadOnlyDictionary<string, string[]> Items,
         bool Exact);
 
-    private static PoolMembershipCapture BuildPoolMembership(
+    private static IEnumerable<object?> ObservePoolMembership(
         IReadOnlyList<object> pools,
         string itemsProperty,
         List<string> issues,
-        string domain)
+        string domain,
+        Action<PoolMembershipCapture> completed)
     {
         // Pool model enumeration order is not hashed. Each pool is identified by stable
         // ModelKey. The ordinal inside a source-audited generator collection *is* semantic:
@@ -696,6 +595,7 @@ internal static class RuntimeAuthoritySnapshotCapture
         bool complete = pools.Count > 0;
         foreach (object pool in pools)
         {
+            yield return null;
             if (!TryModelKey(pool, out ModelKey poolKey))
             {
                 complete = false;
@@ -708,6 +608,7 @@ internal static class RuntimeAuthoritySnapshotCapture
             }
             for (int ordinal = 0; ordinal < items.Count; ordinal++)
             {
+                yield return null;
                 object item = items[ordinal];
                 if (!TryModelKey(item, out ModelKey itemKey))
                 {
@@ -723,12 +624,12 @@ internal static class RuntimeAuthoritySnapshotCapture
             }
         }
         if (!complete) issues.Add("RuntimeAuthorityPoolMembershipIncomplete:" + domain);
-        return new PoolMembershipCapture(
+        completed(new PoolMembershipCapture(
             membership.ToDictionary(
                 pair => pair.Key,
                 pair => pair.Value.ToArray(),
                 StringComparer.Ordinal),
-            complete);
+            complete));
     }
 
     private static void AddMembership(

@@ -13,8 +13,16 @@ internal sealed class FamilyCpuExecution : IFamilyInvocation
     internal const int Capacity = 8192;
     private readonly IFamilyInvocation? _owner;
     private readonly Func<ulong, bool>? _matches;
+    private readonly NeowCpuFourWayPreGate? _fourWayPreGate;
+    private long _fourWayInputs, _fourWayRejected, _fourWayScalarInputs;
+    internal long FourWayInputs => Interlocked.Read(ref _fourWayInputs);
+    internal long FourWayRejected => Interlocked.Read(ref _fourWayRejected);
+    internal long FourWayScalarInputs => Interlocked.Read(ref _fourWayScalarInputs);
+    internal bool UsesFourWayPreGate => _fourWayPreGate is not null;
+    internal string OptimizationCostShape => _fourWayPreGate is null ? "" :
+        $";N.FourWayGate.v1:bound={_fourWayPreGate.Bound};allowed={System.Numerics.BitOperations.PopCount(_fourWayPreGate.AllowedIndexes)}";
     private readonly Func<FamilyPhysicalQuoteRequest, FamilyPhysicalQuote?>? _quote;
-    private readonly CpuCostSnapshot _cost = CpuCostCalibration.Capture();
+    private readonly CpuCostSnapshot? _cost = FamilyAuxiliaryEvidence.Read<CpuCostSnapshot?>(nameof(FamilyCpuExecution), "CostSnapshot", CpuCostCalibration.Capture, null);
     private CpuLocalPeak? _localPeak;
     private bool _calibrationCoverageMatched;
     // Bound once by the selected session order, never by a speculative planning traversal.
@@ -25,22 +33,37 @@ internal sealed class FamilyCpuExecution : IFamilyInvocation
     private long _sampleInputs;
     private double _sampleMs;
     internal int Workers => _workers;
+    internal IFamilyInvocation? PricingOwner => _owner;
+    internal ExactSearchExecutionRequest PricingRequest => _request;
+    internal IFamilyInvocation? RealizationOwner => _owner;
+    internal static int ConfiguredWorkers(ExactSearchExecutionRequest request) => Math.Clamp(request.WorkerCount, 1, 32);
+    internal static IEnumerable<int> WorkerConfigurations(ExactSearchExecutionRequest request) => Enumerable.Range(1, ConfiguredWorkers(request));
+    internal static IEnumerable<IFamilyInvocation> ConfiguredRealizations(IFamilyInvocation family) =>
+        family.CpuRealizations.Where(f => f is not FamilyCpuExecution cpu || cpu.Workers == ConfiguredWorkers(cpu._request));
     internal IEnumerable<CpuLocalPeak> LocalPeaks => !_disabled && _localPeak is not null ? new[]{_localPeak} : [];
-    private FamilyPhysicalQuote? LocalQuote(FamilyPhysicalQuoteRequest g) => _quote?.Invoke(g) is {} raw
-        ? _cost.Local(raw,Condition(g.CompactInput).PhysicalImplementationRevision,_workers,g.CompactInput) : null;
+    private FamilyPhysicalQuote? LocalQuote(FamilyPhysicalQuoteRequest g) =>
+        FamilyCanonicalMeasuredCost.TryDenseQuote(this, g) ?? (_quote?.Invoke(g) is {} raw
+            ? _cost?.Local(raw,Condition(g.CompactInput).PhysicalImplementationRevision,_workers,g.CompactInput) : null);
     internal int WindowCapacity => _windowCapacity;
     internal IReadOnlySet<string>? RequiredPassedCoverage { get; set; }
     internal FamilyPhysicalQuote? Quote(FamilyPhysicalQuoteRequest g, IReadOnlySet<string> passed) =>
         RequiredPassedCoverage is not null && !RequiredPassedCoverage.SetEquals(passed) ? null : LocalQuote(g);
     internal FamilyCpuExecution(ExactSearchExecutionRequest request, IFamilyInvocation owner,
         string revision, Func<ulong, bool> matches, int workers,
-        Func<FamilyPhysicalQuoteRequest, FamilyPhysicalQuote?> quote)
-        : this(request, owner.FamilyId, revision, workers, 65536, numericalRoots: request.ProfileId == RuntimeProfileId.Beta111)
+        Func<FamilyPhysicalQuoteRequest, FamilyPhysicalQuote?> quote, bool packedSeedRoots = false,
+        NeowCpuFourWayPreGate? fourWayPreGate = null)
+        : this(request, owner.FamilyId, revision, workers, 65536, numericalRoots: request.ProfileId == RuntimeProfileId.Beta111,
+            packedSeedRoots: packedSeedRoots)
     {
         if (owner.Coverage.Count != 1 || owner.Coverage[0] != owner.FamilyId)
             throw new ArgumentException("CPU realization requires one owning Family", nameof(owner));
+        if (fourWayPreGate is not null && (!packedSeedRoots || !fourWayPreGate.Enabled))
+            throw new ArgumentException("Four-way Neow prefilter requires packed roots and an enabled compiled gate", nameof(fourWayPreGate));
+        _fourWayPreGate = fourWayPreGate;
         _owner = owner; _matches = matches; _quote = quote;
     }
+    bool IFamilyInvocation.ExecutionFaulted => _disabled;
+    GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => GpuNumericRequirements.None;
     string IFamilyInvocation.FamilyId => _id;
     IReadOnlyList<string> IFamilyInvocation.Coverage => _owner!.Coverage;
     FamilyAnalyticalCostProjection IFamilyInvocation.AnalyticalCost => _owner!.AnalyticalCost;
@@ -53,7 +76,7 @@ internal sealed class FamilyCpuExecution : IFamilyInvocation
     FamilyConditionPerformanceProjection IFamilyInvocation.ConditionPerformance => Condition(false);
     FamilyConditionPerformanceProjection IFamilyInvocation.ResolveConditionPerformance(bool compact) => Condition(compact);
     ValueTask<FamilyCandidateSet> IFamilyInvocation.InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow window,
-        FamilyCandidateSet input, CancellationToken token) => new(Execute(window, input, token, _matches!));
+        FamilyCandidateSet input, CancellationToken token) => new(Execute(window, input, token, _matches!, context));
     FamilyPerformanceObservation IFamilyInvocation.CapturePerformanceObservation() => Observation();
     FamilyLivePerformanceSnapshot? IFamilyInvocation.CaptureLivePerformanceSnapshot() => Live();
     void IFamilyInvocation.LogExecutionEvidence() => WriteSummary();
@@ -64,25 +87,27 @@ internal sealed class FamilyCpuExecution : IFamilyInvocation
     private readonly int _workers;
     private readonly int _windowCapacity;
     private readonly bool _partitioned;
-    private bool _disabled, _compact;
+    private bool _disabled, _compact, _calibrationFailed;
     private int _batches, _steady;
     private long _inputs, _outputs, _liveInputs;
     private double _ms, _liveMs, _peak;
-    internal FamilyCpuExecution(ExactSearchExecutionRequest request, string id, string revision, int workers = 1, int windowCapacity = Capacity, bool numericalRoots = false)
+    internal FamilyCpuExecution(ExactSearchExecutionRequest request, string id, string revision, int workers = 1, int windowCapacity = Capacity, bool numericalRoots = false,
+        bool packedSeedRoots = false)
     {
         _request = request; _id = id; _revision = revision; _profile = RuntimeProfileRegistry.Select(request.Detection);
         if (workers is < 1 or > 32 || windowCapacity is < 1024 or > (1 << 20)) throw new ArgumentOutOfRangeException(nameof(workers));
+        if (packedSeedRoots && !numericalRoots) throw new ArgumentException("Packed roots require numerical roots", nameof(packedSeedRoots));
         _workers = workers; _windowCapacity = windowCapacity;
         _partitioned = numericalRoots || workers > 1;
-        _rootMode = numericalRoots ? 2 : 0;
+        _rootMode = numericalRoots ? (packedSeedRoots ? 3 : 2) : 0;
         if (_rootMode != 0 && _profile.ProfileId != RuntimeProfileId.Beta111)
             throw new InvalidOperationException("CpuByteRootsRequireBeta111");
     }
     internal FamilyConditionPerformanceProjection Condition(bool compact) => new(_id,
-        _revision + ".RootMode" + _rootMode + ".P" + (_partitioned ? _workers : 0) + ".B" + _windowCapacity + (compact ? ".CompactAbi1" : ".Dense") + ".CanonicalAbi1Ready",
+        _revision + ".RootMode" + _rootMode + ".P" + (_partitioned ? _workers : 0) + ".B" + _windowCapacity + (compact ? ".CompactAbi1" : ".Dense") + ".CanonicalAbi1Ready" + (_fourWayPreGate is null ? "" : NeowCpuFourWayPreGate.Revision),
         "Cpu.NeutralCondition.20260905.v1", 1, "Neutral_NoAcceptedWithinPathCurve;device=CPU", usesGpu: false);
     internal FamilyCandidateSet Execute(FamilyObservationWindow window, FamilyCandidateSet input,
-        CancellationToken token, Func<ulong, bool> matches)
+        CancellationToken token, Func<ulong, bool> matches, FamilyExecutionContext? context = null)
     {
         token.ThrowIfCancellationRequested();
         if (window.ExactRequest.SnapshotFingerprint != _request.SnapshotFingerprint)
@@ -95,65 +120,79 @@ internal sealed class FamilyCpuExecution : IFamilyInvocation
         {
             int chunks;
             FamilyCandidateSet result;
-            if (_partitioned) result = ExecutePartitioned(input, token, matches, out chunks);
+            if (_partitioned) result = ExecutePartitioned(input, token, matches, out chunks, context);
             else
             {
-                var survivors = new List<ulong>(Math.Min(input.Count, Capacity));
-                // Keep one observation window and original batch-local ordinals. Only
-                // the private CPU output staging is chunked; no partial result is handed
-                // to another Family or to Exact before this invocation completes.
-                var chunk = new ulong[Math.Min(input.Count, Capacity)];
-                int chunkSurvivors = 0, chunkInputs = 0; chunks = 0;
-                Span<byte> seedBytes = stackalloc byte[Beta110SeedCodec.SeedLength];
-                bool carry = _rootMode == 2 && input.IsDense;
-                if (carry) Beta110SeedCodec.WriteOrdinal(input.Batch.BatchBase, seedBytes);
-                foreach (ulong ordinal in input.EnumerateLogicalOrdinals())
+                context?.EnterCpu(token);
+                try
                 {
-                    token.ThrowIfCancellationRequested();
-                    ulong global = input.Batch.GlobalCandidate(ordinal);
-                    ulong root;
-                    if (_rootMode == 0) root = _profile.ComputeRootSeed(VisibleSeedCandidateCodec.FormatOrdinal(_profile, global));
-                    else
+                    var survivors = new List<ulong>(Math.Min(input.Count, Capacity));
+                    // Keep one observation window and original batch-local ordinals. Only
+                    // the private CPU output staging is chunked; no partial result is handed
+                    // to another Family or to Exact before this invocation completes.
+                    var chunk = new ulong[Math.Min(input.Count, Capacity)];
+                    int chunkSurvivors = 0, chunkInputs = 0; chunks = 0;
+                    Span<byte> seedBytes = stackalloc byte[Beta110SeedCodec.SeedLength];
+                    bool carry = _rootMode == 2 && input.IsDense;
+                    if (carry) Beta110SeedCodec.WriteOrdinal(input.Batch.BatchBase, seedBytes);
+                    foreach (ulong ordinal in input.EnumerateLogicalOrdinals())
                     {
-                        if (!carry) Beta110SeedCodec.WriteOrdinal(global, seedBytes);
-                        root = XxHash64.Hash(seedBytes, 0);
-                        if (carry && ordinal + 1 < (ulong)input.Count && !Beta110SeedCodec.Advance(seedBytes, 1))
-                            throw new InvalidOperationException("CpuDenseSeedCarryOverflow");
+                        token.ThrowIfCancellationRequested();
+                        ulong global = input.Batch.GlobalCandidate(ordinal);
+                        ulong root;
+                        if (_rootMode == 0) root = _profile.ComputeRootSeed(VisibleSeedCandidateCodec.FormatOrdinal(_profile, global));
+                        else
+                        {
+                            if (!carry) Beta110SeedCodec.WriteOrdinal(global, seedBytes);
+                            root = XxHash64.Hash(seedBytes, 0);
+                            if (carry && ordinal + 1 < (ulong)input.Count && !Beta110SeedCodec.Advance(seedBytes, 1))
+                                throw new InvalidOperationException("CpuDenseSeedCarryOverflow");
+                        }
+                        bool passed;
+                        try { passed = matches(root); }
+                        catch (Exception error) when (error is not OutOfMemoryException &&
+                            !(error is OperationCanceledException && token.IsCancellationRequested))
+                        { throw new FamilyCpuMatchException(_id, input.Batch, ordinal, global, root, error); }
+                        if (passed) chunk[chunkSurvivors++] = ordinal;
+                        if (++chunkInputs == Capacity)
+                        {
+                            for (int i = 0; i < chunkSurvivors; i++) survivors.Add(chunk[i]);
+                            chunkInputs = chunkSurvivors = 0; chunks++;
+                        }
                     }
-                    if (matches(root)) chunk[chunkSurvivors++] = ordinal;
-                    if (++chunkInputs == Capacity)
+                    if (chunkInputs > 0)
                     {
                         for (int i = 0; i < chunkSurvivors; i++) survivors.Add(chunk[i]);
-                        chunkInputs = chunkSurvivors = 0; chunks++;
+                        chunks++;
                     }
+                    token.ThrowIfCancellationRequested();
+                    result = FamilyCandidateSet.FromSortedAbi1(input.Batch, survivors.ToArray());
                 }
-                if (chunkInputs > 0)
-                {
-                    for (int i = 0; i < chunkSurvivors; i++) survivors.Add(chunk[i]);
-                    chunks++;
-                }
-                token.ThrowIfCancellationRequested();
-                result = FamilyCandidateSet.FromSortedAbi1(input.Batch, survivors.ToArray());
+                finally { context?.ExitCpu(); }
             }
             watch.Stop();
             _batches++; _inputs += input.Count; _outputs += result.Count; _ms += watch.Elapsed.TotalMilliseconds;
             // Only full-window, completed canonical CPU work is comparable to the atlas.
             // No survivor-based learning, Exact time, terminal wait or cold first invocation.
-            if (_batches > 1 && (RequiredPassedCoverage is null || _calibrationCoverageMatched) && input.Batch.BatchCandidateCount == _windowCapacity &&
-                (input.IsDense || CalibrationMeanInput.HasValue) &&
-                _quote?.Invoke(new(!input.IsDense,false,input.IsDense?_windowCapacity:CalibrationMeanInput!.Value)) is {} raw && watch.Elapsed.TotalMilliseconds > 0)
+            if (!_calibrationFailed) _calibrationFailed = !FamilyAuxiliaryEvidence.Read(_id, "ObserveCpuCost", () =>
             {
-                _sampleRootBatches++; _sampleInputs += input.Count; _sampleMs += watch.Elapsed.TotalMilliseconds;
-                if (_sampleInputs >= 262144 && _sampleMs >= 50)
+                if (_batches > 1 && (RequiredPassedCoverage is null || _calibrationCoverageMatched) && input.Batch.BatchCandidateCount == _windowCapacity &&
+                    (input.IsDense || CalibrationMeanInput.HasValue) &&
+                    _quote?.Invoke(new(!input.IsDense,false,input.IsDense?_windowCapacity:CalibrationMeanInput!.Value)) is {} raw && watch.Elapsed.TotalMilliseconds > 0)
                 {
-                    var peak = new CpuLocalPeak(CpuCostCalibration.DeviceKey(),
-                        CpuCostCalibration.Key(raw.Shape,Condition(_compact).PhysicalImplementationRevision,_workers,_compact),
-                        raw.Shape,Condition(_compact).PhysicalImplementationRevision,_workers,_sampleInputs,_sampleMs,DateTimeOffset.UtcNow,
-                        _compact,_sampleRootBatches,CalibrationMeanInput);
-                    if (CpuCostCalibration.Valid(peak) && (_localPeak is null || peak.NanosecondsPerInput < _localPeak.NanosecondsPerInput)) _localPeak=peak;
-                    _sampleInputs=0; _sampleMs=0; _sampleRootBatches=0;
+                    _sampleRootBatches++; _sampleInputs += input.Count; _sampleMs += watch.Elapsed.TotalMilliseconds;
+                    if (_sampleInputs >= 262144 && _sampleMs >= 50)
+                    {
+                        var peak = new CpuLocalPeak(CpuCostCalibration.DeviceKey(),
+                            CpuCostCalibration.Key(raw.Shape,Condition(_compact).PhysicalImplementationRevision,_workers,_compact),
+                            raw.Shape,Condition(_compact).PhysicalImplementationRevision,_workers,_sampleInputs,_sampleMs,DateTimeOffset.UtcNow,
+                            _compact,_sampleRootBatches,CalibrationMeanInput);
+                        if (CpuCostCalibration.Valid(peak) && (_localPeak is null || peak.NanosecondsPerInput < _localPeak.NanosecondsPerInput)) _localPeak=peak;
+                        _sampleInputs=0; _sampleMs=0; _sampleRootBatches=0;
+                    }
                 }
-            }
+                return true;
+            }, false, _request.SnapshotFingerprint);
             if (RuntimeLog.DetailEnabled)
                 RuntimeLog.TryBackgroundDetail($"familyCpuBatch=true;family={_id};physicalRevision={Condition(_compact).PhysicalImplementationRevision};batchBase={input.Batch.BatchBase};rootBatchCount={input.Batch.BatchCandidateCount};input={input.Count};survivors={result.Count};cpuChunkSize={(_partitioned ? (input.Count + chunks - 1) / chunks : Capacity)};cpuChunks={chunks};partitioned={_partitioned};maxCpuWorkers={_workers};canonicalAbi1ReadyMs={watch.Elapsed.TotalMilliseconds};abi=ABI1");
             if (_batches > 1)
@@ -174,7 +213,7 @@ internal sealed class FamilyCpuExecution : IFamilyInvocation
         }
     }
     private FamilyCandidateSet ExecutePartitioned(FamilyCandidateSet input, CancellationToken token,
-        Func<ulong, bool> matches, out int parts, int firstIndex = 0, int? inputLength = null)
+        Func<ulong, bool> matches, out int parts, FamilyExecutionContext? context, int firstIndex = 0, int? inputLength = null)
     {
         // Preserve the measured CPU window inside a larger GPU root batch.
         // No intermediate CPU chunk is published to the next Family.
@@ -183,7 +222,7 @@ internal sealed class FamilyCpuExecution : IFamilyInvocation
             var combined = new List<ulong>(); parts = 0;
             for(int start=0;start<input.Count;start+=_windowCapacity)
             {
-                var result = ExecutePartitioned(input,token,matches,out int chunkParts,start,Math.Min(_windowCapacity,input.Count-start));
+                var result = ExecutePartitioned(input,token,matches,out int chunkParts,context,start,Math.Min(_windowCapacity,input.Count-start));
                 combined.AddRange(result.ExportAbi1().ToArray()); parts += chunkParts;
             }
             token.ThrowIfCancellationRequested();
@@ -197,30 +236,98 @@ internal sealed class FamilyCpuExecution : IFamilyInvocation
         var populations = new List<ulong>[count];
         void Partition(int part)
         {
-            int first = firstIndex + (int)((long)part * length / count);
-            int end = firstIndex + (int)((long)(part + 1) * length / count);
-            var output = new List<ulong>(Math.Min(end - first, 256));
-            ReadOnlySpan<ulong> ordinals = input.IsDense ? default : input.ExportAbi1().Span;
-            Span<byte> bytes = stackalloc byte[Beta110SeedCodec.SeedLength];
-            bool carry = _rootMode == 2 && input.IsDense;
-            if (carry) Beta110SeedCodec.WriteOrdinal(input.Batch.GlobalCandidate((ulong)first), bytes);
-            for (int i = first; i < end; i++)
+            context?.EnterCpu(token);
+            try
             {
-                token.ThrowIfCancellationRequested();
-                ulong ordinal = input.IsDense ? (ulong)i : ordinals[i];
-                ulong global = input.Batch.GlobalCandidate(ordinal);
-                ulong root;
-                if (_rootMode == 0) root = _profile.ComputeRootSeed(VisibleSeedCandidateCodec.FormatOrdinal(_profile, global));
-                else
+                int first = firstIndex + (int)((long)part * length / count);
+                int end = firstIndex + (int)((long)(part + 1) * length / count);
+                var output = new List<ulong>(Math.Min(end - first, 256));
+                ReadOnlySpan<ulong> ordinals = input.IsDense ? default : input.ExportAbi1().Span;
+                // Only an explicitly bound owner uses packed scalar roots. Keep
+                // the existing byte/profile loop below unchanged for all others.
+                if (_rootMode == 3)
                 {
-                    if (!carry) Beta110SeedCodec.WriteOrdinal(global, bytes);
-                    root = XxHash64.Hash(bytes, 0);
-                    if (carry && i + 1 < end && !Beta110SeedCodec.Advance(bytes, 1))
-                        throw new InvalidOperationException("CpuDensePartitionCarryOverflow");
+                    bool packedCarry = input.IsDense;
+                    CpuPackedSeed12 seed = packedCarry ? CpuPackedSeed12.FromOrdinal(input.Batch.GlobalCandidate((ulong)first)) : default;
+                    int i = first;
+                    if (packedCarry && _fourWayPreGate is { } preGate)
+                    {
+                        Span<ulong> roots = stackalloc ulong[4];
+                        long vectorInputs = 0, rejected = 0;
+                        for (; i + 3 < end; i += 4)
+                        {
+                            token.ThrowIfCancellationRequested();
+                            for (int lane = 0; lane < 4; lane++)
+                            {
+                                roots[lane] = seed.Hash();
+                                if (i + lane + 1 < end && !seed.Advance())
+                                    throw new InvalidOperationException("CpuDensePartitionCarryOverflow");
+                            }
+                            int passMask = preGate.PassMask(roots[0], roots[1], roots[2], roots[3]);
+                            vectorInputs += 4;
+                            for (int lane = 0; lane < 4; lane++)
+                            {
+                                token.ThrowIfCancellationRequested();
+                                if ((passMask & (1 << lane)) == 0) { rejected++; continue; }
+                                ulong ordinal = (ulong)(i + lane), global = input.Batch.GlobalCandidate(ordinal), root = roots[lane];
+                                bool passed;
+                                try { passed = matches(root); }
+                                catch (Exception error) when (error is not OutOfMemoryException &&
+                                    !(error is OperationCanceledException && token.IsCancellationRequested))
+                                { throw new FamilyCpuMatchException(_id, input.Batch, ordinal, global, root, error); }
+                                if (passed) output.Add(ordinal);
+                            }
+                        }
+                        Interlocked.Add(ref _fourWayInputs, vectorInputs);
+                        Interlocked.Add(ref _fourWayRejected, rejected);
+                    }
+                    if (_fourWayPreGate is not null) Interlocked.Add(ref _fourWayScalarInputs, end - i);
+                    for (; i < end; i++)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        ulong ordinal = input.IsDense ? (ulong)i : ordinals[i];
+                        ulong global = input.Batch.GlobalCandidate(ordinal);
+                        if (!packedCarry) seed = CpuPackedSeed12.FromOrdinal(global);
+                        ulong root = seed.Hash();
+                        if (packedCarry && i + 1 < end && !seed.Advance())
+                            throw new InvalidOperationException("CpuDensePartitionCarryOverflow");
+                        bool passed;
+                        try { passed = matches(root); }
+                        catch (Exception error) when (error is not OutOfMemoryException &&
+                            !(error is OperationCanceledException && token.IsCancellationRequested))
+                        { throw new FamilyCpuMatchException(_id, input.Batch, ordinal, global, root, error); }
+                        if (passed) output.Add(ordinal);
+                    }
+                    populations[part] = output;
+                    return;
                 }
-                if (matches(root)) output.Add(ordinal);
+                Span<byte> bytes = stackalloc byte[Beta110SeedCodec.SeedLength];
+                bool carry = _rootMode == 2 && input.IsDense;
+                if (carry) Beta110SeedCodec.WriteOrdinal(input.Batch.GlobalCandidate((ulong)first), bytes);
+                for (int i = first; i < end; i++)
+                {
+                    token.ThrowIfCancellationRequested();
+                    ulong ordinal = input.IsDense ? (ulong)i : ordinals[i];
+                    ulong global = input.Batch.GlobalCandidate(ordinal);
+                    ulong root;
+                    if (_rootMode == 0) root = _profile.ComputeRootSeed(VisibleSeedCandidateCodec.FormatOrdinal(_profile, global));
+                    else
+                    {
+                        if (!carry) Beta110SeedCodec.WriteOrdinal(global, bytes);
+                        root = XxHash64.Hash(bytes, 0);
+                        if (carry && i + 1 < end && !Beta110SeedCodec.Advance(bytes, 1))
+                            throw new InvalidOperationException("CpuDensePartitionCarryOverflow");
+                    }
+                    bool passed;
+                    try { passed = matches(root); }
+                    catch (Exception error) when (error is not OutOfMemoryException &&
+                        !(error is OperationCanceledException && token.IsCancellationRequested))
+                    { throw new FamilyCpuMatchException(_id, input.Batch, ordinal, global, root, error); }
+                    if (passed) output.Add(ordinal);
+                }
+                populations[part] = output;
             }
-            populations[part] = output;
+            finally { context?.ExitCpu(); }
         }
         if (count == 1) Partition(0);
         else Parallel.For(0, count, new ParallelOptions { MaxDegreeOfParallelism = _workers, CancellationToken = token }, Partition);
@@ -239,7 +346,7 @@ internal sealed class FamilyCpuExecution : IFamilyInvocation
     internal void WriteSummary()
     {
         RuntimeLog.TryBackgroundInfo("cpuCostObservation=true;observationJson="+RuntimeLog.SafeJson(new{family=_id,workers=_workers,best=_localPeak,pendingInputs=_sampleInputs,pendingMs=_sampleMs,eligible=!_disabled,boundary=CpuCostCalibration.Boundary,compactEvidence="OnlyFullRootBatchesWithComparableModeledOccupancy",sameRunRepricing=false}));
-        RuntimeLog.TryBackgroundInfo($"familyCpuSummary=true;family={_id};physicalRevision={Condition(_compact).PhysicalImplementationRevision};maxCpuWorkers={_workers};windowCapacity={_windowCapacity};timingBoundary=CanonicalAbi1Ready;denominator=ActualStageInput;batches={_batches};input={_inputs};survivors={_outputs};canonicalMs={_ms};recovery=False;faulted={_disabled}");
+        RuntimeLog.TryBackgroundInfo($"familyCpuSummary=true;family={_id};physicalRevision={Condition(_compact).PhysicalImplementationRevision};maxCpuWorkers={_workers};windowCapacity={_windowCapacity};timingBoundary=CanonicalAbi1Ready;denominator=ActualStageInput;batches={_batches};input={_inputs};survivors={_outputs};canonicalMs={_ms};fourWayEnabled={UsesFourWayPreGate};fourWayGroups={FourWayInputs / 4};fourWayInputs={FourWayInputs};fourWayAdmitted={FourWayInputs - FourWayRejected};fourWayRejected={FourWayRejected};fourWayScalarInputs={FourWayScalarInputs};recovery=False;faulted={_disabled}");
     }
     internal FamilyLivePerformanceSnapshot? Live() => _disabled || _batches < 2 ? null : new(_id,
         Condition(_compact).PhysicalImplementationRevision, Interlocked.Read(ref _liveInputs), Volatile.Read(ref _liveMs), _batches - 1);

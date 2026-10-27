@@ -1,40 +1,49 @@
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using Godot;
 namespace RolltheSpire2.Search.FamilyExecution;
 
 internal readonly record struct TransformationAggregateGpuMetrics(int Input, int Output, int Dispatches, long ReadbackBytes,
-    double ReadbackMs, double SortMs, double CanonicalMs, double DispatchSyncMs = 0);
+    double ReadbackMs, double SortMs, double CanonicalMs, double DispatchSyncMs = 0)
+{
+    internal int SubmissionGroups { get; init; }
+}
 internal sealed class TransformationAggregateGpuExecutor : IDisposable
 {
     private readonly RenderingDevice _rd;
     private readonly List<Rid> _owned = [];
-    private readonly Rid _batch, _input, _header, _output, _pipeline, _uniforms;
+    private readonly Rid[] _batch, _input, _header, _output, _uniforms;
+    private readonly Rid _pipeline;
+    private readonly int _groupingK;
     private readonly int _owner = System.Environment.CurrentManagedThreadId;
     private bool _disposed;
     private readonly bool _privateInput, _privateOutput;
     private readonly int _seedsPerInvocation;
     private readonly bool _tracePrivate = EwPhysicalExperiment.Mode.Length != 0 || PrivateOrdinalSelection.IsRequested || NwaePhysicalExperiment.Mode.Length != 0;
     internal int Capacity { get; }
+    internal GpuNumericalVariant NumericalVariant { get; }
     internal string Device { get; }
     internal double SetupMs { get; }
     internal long WorkspaceBytes { get; }
     internal TransformationAggregateGpuExecutor(RenderingDevice rd, TransformationAggregateGpuPlan plan,
         PrivateOrdinalBuffer? privateInput = null, PrivateOrdinalBuffer? privateOutput = null)
     {
+        if (plan.NumericalVariant == GpuNumericalVariant.IntegerRne && (privateInput is not null || privateOutput is not null))
+            throw new InvalidOperationException("T.IntegerRne.PublicTransportOnly");
         _privateInput = privateInput is not null; _privateOutput = privateOutput is not null;
         if (_privateInput && ReferenceEquals(privateInput, privateOutput)) throw new ArgumentException("T.PrivateBuffersAlias");
-        _rd = rd; Capacity = plan.Capacity; _seedsPerInvocation=plan.SeedsPerInvocation; var watch = Stopwatch.StartNew();
+        _rd = rd; Capacity = plan.Capacity; NumericalVariant = plan.NumericalVariant; _seedsPerInvocation=plan.SeedsPerInvocation; var watch = Stopwatch.StartNew();
+        // The full-target 16m window already uses 128 MiB for public ordinals.
+        // Keep it single; normal windows add at most one 8 MiB ordinal pair.
+        _groupingK = _privateOutput ? 4 : Capacity <= TransformationAggregateGpuPlan.WindowCapacity ? 2 : 1;
+        _batch=new Rid[_groupingK]; _input=new Rid[_groupingK]; _header=new Rid[_groupingK];
+        _output=new Rid[_groupingK]; _uniforms=new Rid[_groupingK];
         Rid Add(Rid r) { _owned.Add(r); return r; }
         Rid Data(uint[] data) => Add(FamilyGpuComputeUtility.CreateStorageBuffer(rd, FamilyGpuComputeUtility.ToBytesNonEmpty(data)));
         try
         {
             var buffers = new Rid[6];
-            buffers[0] = _batch = Data(new uint[8]);
             for (int i = 0; i < plan.Buffers.Length; i++) buffers[i + 1] = Data(plan.Buffers[i]);
-
-            buffers[3] = _input = privateInput?.Buffer ?? Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, Capacity * 4));
-            buffers[3 + 1] = _header = Data(Header());
-            buffers[3 + 2] = _output = privateOutput?.Buffer ?? Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, Capacity * 4));
             string source = plan.ShaderSource();
             if (_privateInput)
             {
@@ -47,8 +56,17 @@ internal sealed class TransformationAggregateGpuExecutor : IDisposable
             Rid shader = Add(FamilyGpuComputeUtility.CompileShader(rd, source, "TransformationAggregateFamily"));
             _pipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(rd, shader, "T.TransformationAggregate"));
             if (!rd.ComputePipelineIsValid(_pipeline)) throw new InvalidOperationException("T.TransformationAggregate.PipelineInvalid");
-            _uniforms = Add(FamilyGpuComputeUtility.CreateUniformSet(rd, shader, buffers, "T.TransformationAggregate"));
-            WorkspaceBytes = 64 + Capacity * 8L + plan.Buffers.Sum(b => Math.Max(4, b.Length * 4L)) + 0;
+            for(int slot=0;slot<_groupingK;slot++)
+            {
+                buffers[0]=_batch[slot]=Data(new uint[8]);
+                buffers[3]=_input[slot]=privateInput?.Buffer ?? (_privateOutput && slot>0 ? _input[0] : Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, Capacity*4)));
+                buffers[4]=_header[slot]=_privateOutput && slot>0 ? _header[0] : Data(Header());
+                buffers[5]=_output[slot]=privateOutput?.Buffer ?? Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, Capacity*4));
+                _uniforms[slot]=Add(FamilyGpuComputeUtility.CreateUniformSet(rd, shader, buffers, "T.TransformationAggregate"));
+            }
+            WorkspaceBytes = _groupingK*32L + (_privateOutput ? 32 : _groupingK*32L) +
+                (privateInput is not null ? 0 : Capacity*4L*(_privateOutput ? 1 : _groupingK)) +
+                (privateOutput is not null ? 0 : Capacity*4L*_groupingK) + plan.Buffers.Sum(b => Math.Max(4, b.Length*4L));
             Device = rd.GetDeviceName(); SetupMs = watch.Elapsed.TotalMilliseconds;
         }
         catch (Exception failure)
@@ -80,53 +98,89 @@ internal sealed class TransformationAggregateGpuExecutor : IDisposable
     private FamilyCandidateSet? ExecuteCore(FamilyCandidateSet input, int inputCount, CancellationToken token, out TransformationAggregateGpuMetrics metrics)
     {
         Check(); token.ThrowIfCancellationRequested();
-        var watch = Stopwatch.StartNew(); var survivors = new List<ulong>(); int dispatches = 0; long bytes = 0; double read = 0;
+        var watch = Stopwatch.StartNew(); var survivors = new List<ulong>(); int dispatches = 0, groups = 0; long bytes = 0; double read = 0;
         double submitSync = 0, widen = 0;
         int privateCount = 0;
-        if (_privateOutput) FamilyGpuComputeUtility.Update(_rd, _header, Header(), "T.PrivateHeader");
-        for (int offset = 0; offset < inputCount; offset += Capacity)
+        if (_privateOutput) FamilyGpuComputeUtility.Update(_rd, _header[0], Header(), "T.PrivateHeader");
+        for (int offset = 0; offset < inputCount;)
         {
-            token.ThrowIfCancellationRequested(); int count = Math.Min(Capacity, inputCount - offset);
-            FamilyGpuComputeUtility.Update(_rd, _batch, [(uint)input.Batch.BatchBase,(uint)(input.Batch.BatchBase>>32),
-                (uint)input.Batch.BatchCandidateCount,(uint)count,input.IsDense && !_privateInput?0u:1u,
-                (uint)(_privateOutput ? PrivateOrdinalBuffer.Capacity : Capacity),(uint)offset,0], "T.TransformationAggregate.Batch");
-            if (!_privateOutput) FamilyGpuComputeUtility.Update(_rd, _header, Header(), "T.TransformationAggregate.Header");
-            if (!input.IsDense && !_privateInput)
+            token.ThrowIfCancellationRequested();
+            int slots=Math.Min(_groupingK,(inputCount-offset-1)/Capacity+1);
+            for(int slot=0;slot<slots;slot++)
             {
-                var source = input.ExportAbi1().Span.Slice(offset, count); var packed = new uint[count];
-                for (int i = 0; i < count; i++) packed[i] = checked((uint)source[i]);
-                FamilyGpuComputeUtility.Update(_rd, _input, packed, "T.TransformationAggregate.Input");
+                token.ThrowIfCancellationRequested();
+                int windowOffset=offset+slot*Capacity,count=Math.Min(Capacity,inputCount-windowOffset);
+                FamilyGpuComputeUtility.Update(_rd, _batch[slot], [(uint)input.Batch.BatchBase,(uint)(input.Batch.BatchBase>>32),
+                    (uint)input.Batch.BatchCandidateCount,(uint)count,input.IsDense && !_privateInput?0u:1u,
+                    (uint)(_privateOutput ? PrivateOrdinalBuffer.Capacity : Capacity),(uint)windowOffset,0], "T.TransformationAggregate.Batch");
+                if (!_privateOutput) FamilyGpuComputeUtility.Update(_rd, _header[slot], Header(), "T.TransformationAggregate.Header");
+                if(!input.IsDense && !_privateInput)
+                    FamilyGpuComputeUtility.UpdateBytes(_rd,_input[slot],FamilyGpuComputeUtility.PackAbi1UInt32(input,windowOffset,count),"T.TransformationAggregate.Input");
             }
             token.ThrowIfCancellationRequested();
+            int processed=offset+Math.Min(inputCount-offset,slots*Capacity);
+            int headerCount=_privateOutput ? processed==inputCount ? 1 : 0 : slots;
+            var pendingHeaders=new FamilyGpuReadback.Pending[headerCount];
+            var headerData=new byte[headerCount][];
             double dispatchStart = watch.Elapsed.TotalMilliseconds;
+            Exception? recordingFailure=null;
             long list = _rd.ComputeListBegin();
             try
             {
-                _rd.ComputeListBindComputePipeline(list, _pipeline); _rd.ComputeListBindUniformSet(list, _uniforms, 0);
-                int groupRoots=64*_seedsPerInvocation;
-                _rd.ComputeListDispatch(list, (uint)((count + groupRoots - 1) / groupRoots), 1, 1);
+                _rd.ComputeListBindComputePipeline(list, _pipeline);
+                for(int slot=0;slot<slots;slot++)
+                {
+                    // Finish this bounded group before observing cancellation so
+                    // queued work cannot outlive reused/freed buffers (<=4 windows).
+                    if(slot>0)_rd.ComputeListAddBarrier(list);
+                    _rd.ComputeListBindUniformSet(list, _uniforms[slot], 0);
+                    int count=Math.Min(Capacity,inputCount-offset-slot*Capacity),groupRoots=64*_seedsPerInvocation;
+                    _rd.ComputeListDispatch(list, (uint)((count + groupRoots - 1) / groupRoots), 1, 1);
+                    dispatches++;
+                }
             }
-            finally { _rd.ComputeListEnd(); }
-            FamilyGpuComputeUtility.SubmitAndSync(_rd, "T.TransformationAggregate"); dispatches++;
+            catch(Exception failure) { recordingFailure=failure; }
+            try { _rd.ComputeListEnd(); }
+            catch(Exception failure) { recordingFailure=recordingFailure is null ? failure : new AggregateException(recordingFailure,failure); }
+            if(recordingFailure is not null)
+            {
+                FamilyGpuComputeUtility.CleanupAfterFailure(recordingFailure,
+                    ()=>FamilyGpuComputeUtility.SubmitAndSync(_rd,"T.TransformationAggregate"),"T.RecordAndDrain");
+                ExceptionDispatchInfo.Capture(recordingFailure).Throw();
+            }
+            for(int slot=0;slot<headerCount;slot++)
+                pendingHeaders[slot]=FamilyGpuReadback.Queue(_rd,_header[slot],0,32,"T.Header");
+            FamilyGpuComputeUtility.SubmitAndSync(_rd, "T.TransformationAggregate"); groups++;
+            for(int slot=0;slot<headerCount;slot++) headerData[slot]=pendingHeaders[slot].GetData();
             submitSync += watch.Elapsed.TotalMilliseconds - dispatchStart;
-            token.ThrowIfCancellationRequested(); double start = watch.Elapsed.TotalMilliseconds;
-            uint[] h = FamilyGpuComputeUtility.FromUInt32Bytes(_rd.BufferGetData(_header));
-            int processed = _privateOutput ? offset + count : count;
-            if (h.Length != 8 || h[0] != 0x5452414Eu || h[1] != 1 || h[5] != 0x5452414Eu || h[3] != 0 || h[4] != processed || h[2] > processed)
-                throw new InvalidDataException($"T.TransformationAggregate.HeaderFault:batch={input.Batch.BatchBase};offset={offset};header={string.Join(',', h)}");
-            if (_privateOutput) { privateCount = checked((int)h[2]); bytes += 32; read += watch.Elapsed.TotalMilliseconds-start; continue; }
-            uint n = h[2]; bytes += 32 + n * 4L;
-            var output = n == 0 ? [] : FamilyGpuComputeUtility.FromUInt32Bytes(_rd.BufferGetData(_output, 0, n * 4));
-            if (output.Length != n) throw new InvalidDataException("T.TransformationAggregate.PayloadMismatch");
-            read += watch.Elapsed.TotalMilliseconds - start;
-            double widenStart = watch.Elapsed.TotalMilliseconds;
-            foreach (uint ordinal in output) survivors.Add(ordinal);
-            widen += watch.Elapsed.TotalMilliseconds - widenStart;
+            token.ThrowIfCancellationRequested();
+            // Appends have no CPU dependency; sticky fault and processed counters
+            // validate all resident windows together after the final submission.
+            if(_privateOutput && processed<inputCount) { offset=processed; continue; }
+            double start = watch.Elapsed.TotalMilliseconds;
+            for(int slot=0;slot<(_privateOutput?1:slots);slot++)
+            {
+                ReadOnlySpan<uint> h = FamilyGpuComputeUtility.UInt32Span(headerData[slot]);
+                int expected = _privateOutput ? inputCount : Math.Min(Capacity,inputCount-offset-slot*Capacity);
+                if (h.Length != 8 || h[0] != 0x5452414Eu || h[1] != 1 || h[5] != 0x5452414Eu || h[3] != 0 || h[4] != expected || h[2] > expected)
+                    throw new InvalidDataException($"T.TransformationAggregate.HeaderFault:batch={input.Batch.BatchBase};offset={offset+slot*Capacity};header={string.Join(',', h.ToArray())}");
+                bytes+=32;
+                if (_privateOutput) { privateCount = checked((int)h[2]); read += watch.Elapsed.TotalMilliseconds-start; break; }
+                uint n = h[2]; bytes += n * 4L;
+                ReadOnlySpan<uint> output = n == 0 ? [] : FamilyGpuComputeUtility.UInt32Span(_rd.BufferGetData(_output[slot], 0, n * 4));
+                if (output.Length != n) throw new InvalidDataException("T.TransformationAggregate.PayloadMismatch");
+                read += watch.Elapsed.TotalMilliseconds - start;
+                double widenStart = watch.Elapsed.TotalMilliseconds;
+                foreach (uint ordinal in output) survivors.Add(ordinal);
+                widen += watch.Elapsed.TotalMilliseconds - widenStart;
+                start=watch.Elapsed.TotalMilliseconds;
+            }
+            offset=processed;
         }
         if (_privateOutput)
         {
             token.ThrowIfCancellationRequested();
-            metrics = new(inputCount, privateCount, dispatches, bytes, read, 0, watch.Elapsed.TotalMilliseconds, submitSync);
+            metrics = new(inputCount, privateCount, dispatches, bytes, read, 0, watch.Elapsed.TotalMilliseconds, submitSync) { SubmissionGroups=groups };
             return null;
         }
         token.ThrowIfCancellationRequested(); double sortStart = watch.Elapsed.TotalMilliseconds;
@@ -144,9 +198,9 @@ internal sealed class TransformationAggregateGpuExecutor : IDisposable
         }
         token.ThrowIfCancellationRequested();
         double validation = watch.Elapsed.TotalMilliseconds - validationStart;
-        metrics = new(inputCount, result.Count, dispatches, bytes, read, sort, watch.Elapsed.TotalMilliseconds, submitSync);
+        metrics = new(inputCount, result.Count, dispatches, bytes, read, sort, watch.Elapsed.TotalMilliseconds, submitSync) { SubmissionGroups=groups };
         if (_tracePrivate)
-            RolltheSpire2.Bootstrap.RuntimeLog.TryBackgroundDetail($"transformationStageTiming=true;stage=T;input={input.Count};output={result.Count};dispatches={dispatches};dispatchSyncMs={submitSync};readbackBytes={bytes};readbackMs={read};widenMs={widen};sortMs={sort};validationMs={validation};prepareOtherMs={metrics.CanonicalMs-submitSync-read-widen-sort-validation};canonicalMs={metrics.CanonicalMs}");
+            RolltheSpire2.Bootstrap.RuntimeLog.TryBackgroundDetail($"transformationStageTiming=true;stage=T;input={input.Count};output={result.Count};dispatches={dispatches};groups={groups};dispatchSyncMs={submitSync};readbackBytes={bytes};readbackMs={read};widenMs={widen};sortMs={sort};validationMs={validation};prepareOtherMs={metrics.CanonicalMs-submitSync-read-widen-sort-validation};canonicalMs={metrics.CanonicalMs}");
         return result;
     }
     public void Dispose() { if (_disposed) return; Check(); _disposed = true; FamilyGpuComputeUtility.FreeAll(_rd, _owned); }

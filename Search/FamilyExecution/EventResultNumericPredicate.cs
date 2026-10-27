@@ -17,31 +17,85 @@ internal static class EventResultNumericPredicate
     private static readonly ulong TrashHeapHash = XxHash64.Hash("TRASH_HEAP"u8, 0UL);
     private static readonly ulong FakeMerchantHash = XxHash64.Hash("FAKE_MERCHANT"u8, 0UL);
     private static readonly ulong ColorfulHash = XxHash64.Hash("COLORFUL_PHILOSOPHERS"u8, 0UL);
-    private static readonly ulong ShopsHash = XxHash64.Hash("shops"u8, 0UL);
+    private static readonly ulong TrialHash = XxHash64.Hash("TRIAL"u8, 0UL);
+    private static readonly ulong TinkerTimeHash = XxHash64.Hash("TINKER_TIME"u8, 0UL);
 
-    internal static bool RejectsEventResultForFamily(ulong rootHash, IReadOnlyList<EventResultSearchCondition> conditions,
-        Beta111EventResultAuthority? authority, int playerSlot)
+    internal readonly record struct Target(EventResultConditionKind Kind, int Index);
+
+    // E-private request metadata. Pool order and occurrences remain those of the catalog;
+    // only fixed identity mapping and group discovery move out of the per-root matcher.
+    internal sealed class Compiled
     {
-        if (authority is null || !authority.IsBeta111 || !authority.StaticCatalogAuthorityExact)
-            return false;
+        internal bool CanReject { get; }
+        internal bool ColorfulPoolKnown { get; }
+        internal bool NeedsTrashGrab { get; }
+        internal bool NeedsTrashDive { get; }
+        internal bool NeedsFake { get; }
+        internal bool NeedsColorful { get; }
+        internal EventResultSearchCondition[] CheapConditions { get; }
+        internal Target[] TrashTargets { get; }
+        internal Target[] InventoryTargets { get; }
+        internal int[] ColorfulPool { get; }
 
-        bool needsTrashGrab = false;
-        bool needsTrashDive = false;
-        bool needsFake = false;
-        bool needsColorful = false;
-        foreach (EventResultSearchCondition condition in conditions)
+        internal Compiled(IReadOnlyList<EventResultSearchCondition> conditions, Beta111EventResultAuthority? authority)
+        {
+            CanReject = authority is { IsBeta111: true, StaticCatalogAuthorityExact: true };
+            ColorfulPoolKnown = authority?.ColorfulPoolAuthorityExact == true;
+            CheapConditions = conditions.Where(c => c.Kind is EventResultConditionKind.TrialCase or
+                EventResultConditionKind.TinkerTimeTypeAndRider).ToArray();
+            var trash = new List<Target>();
+            var inventory = new List<Target>();
+            foreach (var condition in conditions)
+            {
+                switch (condition.Kind)
+                {
+                    case EventResultConditionKind.TrashHeapGrabCard:
+                        NeedsTrashGrab = true;
+                        trash.Add(new(condition.Kind, IndexOf(Beta111EventResultCatalog.TrashHeapGrabCards, condition.TargetKey)));
+                        break;
+                    case EventResultConditionKind.TrashHeapDiveRelic:
+                        NeedsTrashDive = true;
+                        trash.Add(new(condition.Kind, IndexOf(Beta111EventResultCatalog.TrashHeapDiveRelics, condition.TargetKey)));
+                        break;
+                    case EventResultConditionKind.FakeMerchantOfferedFakeRelic:
+                        NeedsFake = true;
+                        inventory.Add(new(condition.Kind, IndexOf(Beta111EventResultCatalog.FakeMerchantRelics, condition.TargetKey)));
+                        break;
+                    case EventResultConditionKind.ColorfulPhilosophersOfferedColor:
+                        NeedsColorful = true;
+                        inventory.Add(new(condition.Kind, IndexOf(Beta111EventResultCatalog.ColorfulCharacterOrder, condition.TargetKey)));
+                        break;
+                }
+            }
+            TrashTargets = trash.ToArray();
+            InventoryTargets = inventory.ToArray();
+            ColorfulPool = NeedsColorful && CanReject && ColorfulPoolKnown
+                ? Beta111EventResultCatalog.ColorfulCharacterOrder
+                    .Select((key, index) => (key, index))
+                    .Where(candidate => candidate.key != authority!.OwnerCharacterKey &&
+                        Contains(authority!.UnlockedCharacterCardPoolKeys, candidate.key))
+                    .Select(candidate => candidate.index).ToArray()
+                : [];
+        }
+    }
+
+    internal static bool RejectsEventResultForFamily(ulong rootHash, Compiled compiled, int playerSlot)
+    {
+        if (!compiled.CanReject) return false;
+
+        foreach (EventResultSearchCondition condition in compiled.CheapConditions)
         {
             switch (condition.Kind)
             {
                 case EventResultConditionKind.TrialCase:
                 {
-                    var rng = new Beta110FastRng(EventSeed(rootHash, playerSlot, false, XxHash64.HashUtf8("TRIAL", 0)));
+                    var rng = new Beta110FastRng(EventSeed(rootHash, playerSlot, false, TrialHash));
                     if (rng.NextInt(3) != (int)condition.TrialCase!) return true;
                     break;
                 }
                 case EventResultConditionKind.TinkerTimeTypeAndRider:
                 {
-                    var rng = new Beta110FastRng(EventSeed(rootHash, playerSlot, false, XxHash64.HashUtf8("TINKER_TIME", 0)));
+                    var rng = new Beta110FastRng(EventSeed(rootHash, playerSlot, false, TinkerTimeHash));
                     Span<int> types = stackalloc int[] { 0, 1, 2 };
                     rng.UnstableShuffle(types);
                     int type = (int)condition.TinkerCardType!;
@@ -54,44 +108,38 @@ internal static class EventResultNumericPredicate
                     }
                     break;
                 }
-                case EventResultConditionKind.TrashHeapGrabCard: needsTrashGrab = true; break;
-                case EventResultConditionKind.TrashHeapDiveRelic: needsTrashDive = true; break;
-                case EventResultConditionKind.FakeMerchantOfferedFakeRelic: needsFake = true; break;
-                case EventResultConditionKind.ColorfulPhilosophersOfferedColor: needsColorful = true; break;
             }
         }
 
-        ModelKey grab = default;
-        ModelKey dive = default;
+        int grab = -1, dive = -1;
         Span<int> fakeOrder = stackalloc int[9];
         Span<int> colorfulOrder = stackalloc int[5];
         int colorfulCount = 0;
 
-        if (needsTrashGrab)
+        if (compiled.NeedsTrashGrab || compiled.NeedsTrashDive)
         {
             var rng = new Beta110FastRng(EventSeed(rootHash, playerSlot, shared: false, TrashHeapHash));
-            grab = Beta111EventResultCatalog.TrashHeapGrabCards[rng.NextInt(Beta111EventResultCatalog.TrashHeapGrabCards.Count)];
+            // Both projections originally start from the same fresh checkpoint.
+            double sample = rng.NextDouble();
+            if (compiled.NeedsTrashGrab) grab = (int)(sample * Beta111EventResultCatalog.TrashHeapGrabCards.Count);
+            if (compiled.NeedsTrashDive) dive = (int)(sample * Beta111EventResultCatalog.TrashHeapDiveRelics.Count);
         }
-        if (needsTrashDive)
+        // Preserve the original cheap-group rejection before independent inventories.
+        foreach (Target target in compiled.TrashTargets)
         {
-            var rng = new Beta110FastRng(EventSeed(rootHash, playerSlot, shared: false, TrashHeapHash));
-            dive = Beta111EventResultCatalog.TrashHeapDiveRelics[rng.NextInt(Beta111EventResultCatalog.TrashHeapDiveRelics.Count)];
+            if (target.Index < 0 || (target.Kind == EventResultConditionKind.TrashHeapGrabCard ? grab : dive) != target.Index)
+                return true;
         }
-        if (needsFake)
+        if (compiled.NeedsFake)
         {
             for (int i = 0; i < fakeOrder.Length; i++) fakeOrder[i] = i;
             var rng = new Beta110FastRng(EventSeed(rootHash, playerSlot, shared: true, FakeMerchantHash));
             rng.UnstableShuffle(fakeOrder);
         }
-        if (needsColorful && authority.ColorfulPoolAuthorityExact)
+        if (compiled.NeedsColorful && compiled.ColorfulPoolKnown)
         {
-            for (int i = 0; i < Beta111EventResultCatalog.ColorfulCharacterOrder.Count; i++)
-            {
-                ModelKey candidate = Beta111EventResultCatalog.ColorfulCharacterOrder[i];
-                if (candidate == authority.OwnerCharacterKey || !Contains(authority.UnlockedCharacterCardPoolKeys, candidate))
-                    continue;
-                colorfulOrder[colorfulCount++] = i;
-            }
+            compiled.ColorfulPool.AsSpan().CopyTo(colorfulOrder);
+            colorfulCount = compiled.ColorfulPool.Length;
             var rng = ColorfulRng(rootHash, playerSlot);
             int targetCount = Math.Min(3, colorfulCount);
             while (colorfulCount > targetCount)
@@ -102,37 +150,18 @@ internal static class EventResultNumericPredicate
             }
         }
 
-        foreach (EventResultSearchCondition condition in conditions)
+        foreach (Target target in compiled.InventoryTargets)
         {
-            switch (condition.Kind)
-            {
-                case EventResultConditionKind.TrashHeapGrabCard:
-                    if (grab != condition.TargetKey) return true;
-                    break;
-                case EventResultConditionKind.TrashHeapDiveRelic:
-                    if (dive != condition.TargetKey) return true;
-                    break;
-                case EventResultConditionKind.FakeMerchantOfferedFakeRelic:
-                {
-                    int targetIndex = IndexOf(Beta111EventResultCatalog.FakeMerchantRelics, condition.TargetKey);
-                    if (targetIndex < 0) return true;
-                    bool found = false;
-                    for (int i = 0; i < 6; i++) found |= fakeOrder[i] == targetIndex;
-                    if (!found) return true;
-                    break;
-                }
-                case EventResultConditionKind.ColorfulPhilosophersOfferedColor:
-                {
-                    // Missing owner/unlock authority cannot produce a Fast rejection.
-                    if (!authority.ColorfulPoolAuthorityExact) break;
-                    int targetIndex = IndexOf(Beta111EventResultCatalog.ColorfulCharacterOrder, condition.TargetKey);
-                    if (targetIndex < 0) return true;
-                    bool found = false;
-                    for (int i = 0; i < colorfulCount; i++) found |= colorfulOrder[i] == targetIndex;
-                    if (!found) return true;
-                    break;
-                }
-            }
+            bool isColorful = target.Kind == EventResultConditionKind.ColorfulPhilosophersOfferedColor;
+            // Missing owner/unlock authority cannot produce a Fast rejection.
+            if (isColorful && !compiled.ColorfulPoolKnown) continue;
+            if (target.Index < 0) return true;
+            bool found = false;
+            if (isColorful)
+                for (int i = 0; i < colorfulCount; i++) found |= colorfulOrder[i] == target.Index;
+            else
+                for (int i = 0; i < 6; i++) found |= fakeOrder[i] == target.Index;
+            if (!found) return true;
         }
         return false;
     }

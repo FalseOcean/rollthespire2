@@ -6,14 +6,13 @@ namespace RolltheSpire2.Ui.Pages.DeveloperNotes;
 internal sealed partial class DeveloperNotesPage
 {
     private readonly VBoxContainer _contents = new() { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-    private readonly Label _contentsTitle = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta);
-    private readonly Label _progress = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta);
+    private readonly Label _contentsTitle = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta);
+    private readonly Label _progress = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta);
     private readonly Button _backToTop = new();
     private readonly HBoxContainer _chapterFooter = new() { SizeFlagsHorizontal = SizeFlags.ExpandFill };
     private readonly List<Button> _sectionButtons = [];
     private readonly Dictionary<string, int> _readingPositions = new(StringComparer.Ordinal);
     private int _highlightedSection = -2;
-    private int _readingRevision;
     private bool _restoringPosition;
 
     private string ReadingKey => _resolvedLocale + "/" + _selectedChapterId;
@@ -22,7 +21,7 @@ internal sealed partial class DeveloperNotesPage
     private void BuildReadingNavigation(VBoxContainer rail)
     {
         var divider = new HSeparator();
-        Ui1Theme.ApplySeparator(divider);
+        MainPanelTheme.ApplySeparator(divider);
         rail.AddChild(divider);
         rail.AddChild(_contentsTitle);
         var scroll = new ScrollContainer
@@ -36,7 +35,7 @@ internal sealed partial class DeveloperNotesPage
         rail.AddChild(scroll);
         rail.AddChild(_progress);
         _backToTop.CustomMinimumSize = new Vector2(0, 36);
-        _backToTop.Pressed += () => _articleScroll.ScrollVertical = 0;
+        _backToTop.Pressed += () => { _readerMoved = true; _articleScroll.ScrollVertical = 0; };
         StyleReadingLink(_backToTop, false);
         rail.AddChild(_backToTop);
         _chapterFooter.AddThemeConstantOverride("separation", 16);
@@ -57,20 +56,7 @@ internal sealed partial class DeveloperNotesPage
         _backToTop.Text = Local("回到开篇 ↑", "Back to top ↑");
         _contentsTitle.Visible = _renderer.Sections.Count > 0;
         foreach (var section in _renderer.Sections)
-        {
-            var button = new Button
-            {
-                Text = section.Title, TooltipText = section.Title,
-                Alignment = HorizontalAlignment.Left,
-                AutowrapMode = TextServer.AutowrapMode.WordSmart,
-                SizeFlagsHorizontal = SizeFlags.ExpandFill,
-                CustomMinimumSize = new Vector2(0, 40)
-            };
-            StyleReadingLink(button, false);
-            button.Pressed += () => _articleScroll.ScrollVertical = AnchorPosition(section.Anchor);
-            _contents.AddChild(button);
-            _sectionButtons.Add(button);
-        }
+            AppendReadingSection(section);
         if (_document is null) return;
         int index = _document.Chapters.ToList().FindIndex(chapter => chapter.Id == _selectedChapterId);
         foreach (int step in new[] { -1, 1 })
@@ -91,17 +77,45 @@ internal sealed partial class DeveloperNotesPage
         }
     }
 
+    private void AppendReadingSection(DeveloperNotesArticleRenderer.Section section)
+    {
+        var button = new Button
+        {
+            Text = section.Title, TooltipText = section.Title,
+            Alignment = HorizontalAlignment.Left,
+            AutowrapMode = TextServer.AutowrapMode.WordSmart,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            CustomMinimumSize = new Vector2(0, 40)
+        };
+        try
+        {
+            StyleReadingLink(button, false);
+            button.Pressed += () => { _readerMoved = true; _articleScroll.ScrollVertical = AnchorPosition(section.Anchor); };
+            _contents.AddChild(button);
+            _sectionButtons.Add(button);
+            _contentsTitle.Show();
+        }
+        catch { if (button.GetParent() is null) button.Free(); throw; }
+    }
+
     private static void StyleReadingLink(Button button, bool selected)
     {
-        Ui1Theme.ApplyButton(button, selected ? Ui1ButtonRole.NavigationSelected : Ui1ButtonRole.Ghost);
+        MainPanelTheme.ApplyButton(button, selected ? Ui1ButtonRole.NavigationSelected : Ui1ButtonRole.Ghost);
+        var palette = WorkspacePalette.MainPanel;
         var normal = new StyleBoxFlat
         {
-            BgColor = selected ? new Color("223143") : Colors.Transparent,
-            BorderColor = new Color("CDBF98"), BorderWidthLeft = selected ? 2 : 0,
+            BgColor = selected ? palette.Color(palette.SelectedSurface) : Colors.Transparent,
+            BorderColor = palette.Color(palette.Selected), BorderWidthLeft = selected ? 2 : 0,
             ContentMarginLeft = 12, ContentMarginRight = 10, ContentMarginTop = 8, ContentMarginBottom = 8
         };
         button.AddThemeStyleboxOverride("normal", normal);
-        button.AddThemeColorOverride("font_color", new Color(selected ? "E2E7EC" : "A7B8CB"));
+        foreach (string state in new[] { "hover", "pressed" })
+        {
+            var pointer = (StyleBoxFlat)normal.Duplicate();
+            pointer.BgColor = palette.Color(state == "hover" ? palette.Hover : palette.SelectedSurface);
+            button.AddThemeStyleboxOverride(state, pointer);
+        }
+        MainPanelTheme.SetColor(button, "font_color", selected ? palette.Text : palette.Secondary);
         button.AddThemeFontSizeOverride("font_size", 16);
     }
 
@@ -125,24 +139,7 @@ internal sealed partial class DeveloperNotesPage
 
     private void SaveReadingPosition()
     {
-        if (!_restoringPosition && _document is not null)
+        if ((!_restoringPosition || _readerMoved) && _document is not null)
             _readingPositions[ReadingKey] = _articleScroll.ScrollVertical;
-    }
-
-    private async void RestoreReadingPosition()
-    {
-        int revision = ++_readingRevision;
-        int position = _readingPositions.GetValueOrDefault(ReadingKey);
-        _restoringPosition = true;
-        if (IsInsideTree())
-        {
-            var tree = GetTree();
-            // Containers and wrapped paragraphs need their final width before scrolling.
-            for (int i = 0; i < 3; i++) await ToSignal(tree, SceneTree.SignalName.ProcessFrame);
-        }
-        if (!IsInstanceValid(this) || !IsInsideTree() || revision != _readingRevision) return;
-        _articleScroll.ScrollVertical = position;
-        _restoringPosition = false;
-        UpdateReadingProgress();
     }
 }

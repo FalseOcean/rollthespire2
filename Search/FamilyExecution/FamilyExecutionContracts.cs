@@ -95,9 +95,24 @@ public sealed record FamilyObservationWindow(
     SearchBatch Batch,
     ExactSearchExecutionRequest ExactRequest);
 
+[Flags]
+internal enum GpuNumericRequirements
+{
+    None = 0,
+    Int64 = 1,
+    Float64 = 2,
+    Unspecified = 4
+}
+
 public interface IFamilyInvocation
 {
     string FamilyId { get; }
+    // Describes the selected physical body, including any injected/child bodies.
+    // Unknown GPU implementations must not silently become FP64-free candidates.
+    internal GpuNumericRequirements GpuNumericRequirements => ConditionPerformance.UsesGpu
+        ? GpuNumericRequirements.Unspecified : GpuNumericRequirements.None;
+    // Execution truth is independent of optional performance observations.
+    internal bool ExecutionFaulted => false;
     IReadOnlyList<string> Coverage => [FamilyId];
     FamilyAnalyticalCostProjection AnalyticalCost { get; }
     FamilySurvivalProjection Survival { get; }
@@ -108,12 +123,6 @@ public interface IFamilyInvocation
     FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest request) => null;
     internal IEnumerable<IFamilyInvocation> CpuRealizations => [];
     internal bool CanBindPrivateSerial => false;
-    // Same-instance, same-input-role subtraction ONLY. A non-null certificate
-    // asserts the same numerical/emission body under public/private addressing.
-    // Its zero numerical term is cancelled unknown work, never an absolute quote.
-    // Setup retains its Family reference or conservative bound; allocation applies reach.
-    // Null leaves comparison unknown.
-    internal FamilyPhysicalQuote? QuoteCommonPrivateWorkCancellation(FamilyPhysicalQuoteRequest request) => null;
     internal FamilyPrivateGpuExecution BindPrivateSerial(Godot.RenderingDevice device,
         PrivateOrdinalBuffer? input, PrivateOrdinalBuffer? output) =>
         throw new InvalidOperationException("FamilyPrivate.BindingNotAdmitted:" + FamilyId);
@@ -138,26 +147,71 @@ public interface IFamilyInvocation
 
 public static class LinearFamilyPipeline
 {
-    public static async ValueTask<FamilyCandidateSet> FilterAsync(
+    public static ValueTask<FamilyCandidateSet> FilterAsync(
         FamilyExecutionContext executionContext,
         FamilyObservationWindow observationWindow,
         IReadOnlyList<IFamilyInvocation> families,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken) =>
+        FilterAsync(executionContext, observationWindow, families, null, cancellationToken);
+
+    internal static async ValueTask<FamilyCandidateSet> FilterAsync(
+        FamilyExecutionContext executionContext,
+        FamilyObservationWindow observationWindow,
+        IReadOnlyList<IFamilyInvocation> families,
+        SmallCandidateExactPolicy? smallCandidateExact,
+        CancellationToken cancellationToken,
+        PreparedFamilyBatch? preparedFirst = null)
     {
         ArgumentNullException.ThrowIfNull(executionContext);
         ArgumentNullException.ThrowIfNull(families);
 
         FamilyCandidateSet current = FamilyCandidateSet.Dense(observationWindow.Batch);
-        foreach (IFamilyInvocation family in families)
+        for (int familyIndex = 0; familyIndex < families.Count; familyIndex++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            FamilyCandidateSet next = await family.InvokeAsync(
-                executionContext, observationWindow, current, cancellationToken).ConfigureAwait(false);
-            if (family.CapturePerformanceObservation().EligibilityEvidence == "PhysicalFailureOrRecovery")
+            if (current.Count == 0 || smallCandidateExact is not null && SmallCandidateExactPolicy.ShouldHandoff(current.Count))
+            {
+                smallCandidateExact?.Observe(familyIndex == 0 ? "Dense" :
+                    string.Join(',', families.Take(familyIndex).SelectMany(item => item.Coverage)),
+                    families.Skip(familyIndex).SelectMany(item => item.Coverage).Distinct(StringComparer.Ordinal).ToArray(),
+                    current.Count);
+                return current.IsDense
+                    ? FamilyCandidateSet.FromSortedAbi1(current.Batch, current.EnumerateLogicalOrdinals().ToArray())
+                    : current;
+            }
+            IFamilyInvocation family = families[familyIndex];
+            // A failed CPU matcher has no private shared state. Stop the tail too:
+            // its numerical prerequisites may assume the missing prefix passed.
+            IReadOnlyList<string> RemainingCoverage() => families.Skip(familyIndex).SelectMany(item => item.Coverage)
+                .Distinct(StringComparer.Ordinal).ToArray();
+            if (executionContext.TryGetCpuFilterIsolation(family, out var isolated))
+            {
+                executionContext.RecordCpuFilterIsolation(family, observationWindow, current, RemainingCoverage(), isolated);
+                return current;
+            }
+            if (family.ExecutionFaulted)
+                throw new InvalidOperationException("PhysicalRecoveryRejected:" + family.FamilyId);
+            FamilyCandidateSet next;
+            try
+            {
+                next = familyIndex == 0 && preparedFirst is not null
+                    ? await preparedFirst.InvokeAsync(family, observationWindow, current, cancellationToken).ConfigureAwait(false)
+                    : await family.InvokeAsync(executionContext, observationWindow, current, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception error) when (!cancellationToken.IsCancellationRequested && FamilyCpuMatchException.IsRecoverable(error))
+            {
+                // Execute/Parallel.For has joined every partition before throwing.
+                // None of its partial staging arrays escaped the invocation.
+                executionContext.RecordCpuFilterIsolation(family, observationWindow, current, RemainingCoverage(), error);
+                return current;
+            }
+            if (family.ExecutionFaulted)
                 throw new InvalidOperationException("PhysicalRecoveryRejected:" + family.FamilyId);
             if (next.Batch != observationWindow.Batch)
                 throw new InvalidOperationException("Family changed SearchBatch identity.");
             ValidateOrderedSubsequence(current, next);
+            FamilyAuxiliaryEvidence.Read<FamilyPerformanceObservation?>(family.FamilyId, "CapturePerformanceObservation",
+                family.CapturePerformanceObservation, null, observationWindow.ExactRequest.SnapshotFingerprint);
             current = next;
         }
 

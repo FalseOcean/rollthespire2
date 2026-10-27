@@ -105,17 +105,16 @@ public sealed record TransformationAggregateCondition(
         // Fixed Bones Leafy+NewLeaf has the same Rewards continuation in bound and
         // aggregate authoring: Bones offer shuffle, then no child Rewards consumption.
         // Other aggregate openings/continuations retain their existing boundary.
-        bool rewardBlocked = condition.UsesNeow && query.HasCombatRewardConstraints && !HasFixedBonesRewardContinuation(query);
-        bool relicBlocked = condition.UsesNeow &&
-            (query.RelicSequenceConstraints.Any(c => !c.IsEmpty) || query.RelicShopSequenceConditions.Any(c => !c.IsEmpty)) &&
-            !HasFixedBonesRelicContinuation(query);
-        if (rewardBlocked && relicBlocked)
-            throw new ArgumentException("TransformationAggregate.NeowDependentRewardRelicContinuationNotSupportedInV1");
-        if (rewardBlocked)
-            throw new ArgumentException("TransformationAggregate.NeowDependentCombatRewardContinuationNotSupported");
-        if (relicBlocked)
-            throw new ArgumentException("TransformationAggregate.NeowDependentRelicContinuationNotSupported");
+        // Unimplemented continuation remains an authored obligation. The final
+        // evaluator reports it as Unknown without evaluating an initial-bag or
+        // unrelated Rewards continuation as though it satisfied that obligation.
     }
+
+    internal static bool HasUnresolvedRewardContinuation(SearchQuery query) =>
+        query.TransformationAggregate is { UsesNeow: true } && query.HasCombatRewardConstraints && !HasFixedBonesRewardContinuation(query);
+    internal static bool HasUnresolvedRelicContinuation(SearchQuery query) =>
+        query.TransformationAggregate is { UsesNeow: true } &&
+        (query.RelicSequenceConstraints.Any(c => !c.IsEmpty) || query.RelicShopSequenceConditions.Any(c => !c.IsEmpty)) && !HasFixedBonesRelicContinuation(query);
 
     internal static bool HasFixedBonesRewardContinuation(SearchQuery query) =>
         query.TransformationAggregate is { Opening: TransformationOpening.BonesLeafyNewLeaf, UsesEvents: false,

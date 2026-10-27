@@ -8,6 +8,9 @@
 #define N_AUTHORED_UPGRADES __RT2_AUTHORED_UPGRADES__
 #define N_LOCAL_RESULTS __RT2_LOCAL_RESULTS__
 #define N_TRANSFORM_META_OFFSET __RT2_N_TRANSFORM_META_OFFSET__
+#define RT2_N_LEAFY_LAZY 0
+#define RT2_PREFIX_HASH_CACHE 0
+#define N_INTERNAL_ORDER 0
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_float64 : require
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
@@ -26,10 +29,15 @@ layout(set=0,binding=10,std430) readonly restrict buffer Input { uint values[]; 
 layout(set=0,binding=11,std430) restrict buffer CurseSurvivors { uint values[]; } curse_survivors;
 layout(set=0,binding=12,std430) restrict buffer PairSurvivors { uint values[]; } pair_survivors;
 #endif
+#if RT2_PREFIX_HASH_CACHE && N_STAGE == 0
+layout(set=0,binding=13,std430) readonly restrict buffer PrefixHashTable { uint values[]; } prefix_hash_cache;
+uint prefix_hash_cache_value(uint i) { return prefix_hash_cache.values[i]; }
+#endif
 uint plan_value(uint i) { return plan_meta.values[i]; }
 uint64_t plan_u64(uint i) { return uint64_t(plan_value(i)) | (uint64_t(plan_value(i+1u)) << 32u); }
 
 /*__RT2_NEOW_LOCAL_DONOR__*/
+/*__RT2_N_INTERNAL_FILTER_ORDER__*/
 /*__RT2_N_JOINT_TRANSFORMS__*/
 /*__RT2_CAPSULE_COMPOSITE__*/
 
@@ -80,6 +88,30 @@ bool local_operator(uint source, inout RouteRngState state) {
     if (source == 22u) return execute_scroll_boxes_route(count,t0,t1,t2,flags & 0x7fffffffu,predicate,state);
     return true;
 }
+#if RT2_N_LEAFY_LAZY && N_LEAFY_PRE_GATE
+// Independently adapted from shion0528, resource.17 da82f7f:
+// https://github.com/shion0528/rollthespire2/blob/da82f7f9023c3d3598d50b8642e93f2801c37ccc/Search/FamilyExecution/Shaders/NeowSingleplayer.comp.glsl
+// Only this Boolean gate omits unobserved state; the actual route stays complete.
+bool leafy_lazy_pre_gate(uint64_t seed, uint target0, uint target1) {
+    uint strike_count = plan_value(58u), defend_count = plan_value(59u);
+    if (strike_count == 0u || defend_count == 0u) return false;
+    uint64_t mix_state = seed + make_u64(0x7f4a7c15u, 0x9e3779b9u);
+    uint64_t initial_s1 = splitmix_next(mix_state);
+    uint64_t first = rotl64(initial_s1 * uint64_t(5u), 7u) * uint64_t(9u);
+    uint strike = leafy_strike.ids[next_int_current_shortcut_from_mantissa(first >> 11u, strike_count)];
+    if (strike != target0 && strike != target1) return false;
+    // First transition sets s1 = initial_s1 ^ initial_s2 ^ initial_s0.
+    // Initial s3 contributes to neither of the first two observed words.
+    mix_state = seed;
+    uint64_t initial_s0 = splitmix_next(mix_state);
+    mix_state += make_u64(0x7f4a7c15u, 0x9e3779b9u);
+    uint64_t initial_s2 = splitmix_next(mix_state);
+    uint64_t second_s1 = initial_s1 ^ initial_s2 ^ initial_s0;
+    uint64_t second = rotl64(second_s1 * uint64_t(5u), 7u) * uint64_t(9u);
+    uint defend = leafy_defend.ids[next_int_current_shortcut_from_mantissa(second >> 11u, defend_count)];
+    return (strike == target0 && defend == target1) || (strike == target1 && defend == target0);
+}
+#endif
 #if N_LEAFY_PRE_GATE || N_TRANSFORM_META_OFFSET >= 0
 bool leafy_pre_gate(uint64_t root) {
 #if N_TRANSFORM_META_OFFSET >= 0
@@ -87,6 +119,10 @@ bool leafy_pre_gate(uint64_t root) {
 #endif
 #if N_LEAFY_PRE_GATE
     uint o = 4u * 5u;
+#if RT2_N_LEAFY_LAZY
+    if (conditions.values[o] == 2u)
+        return leafy_lazy_pre_gate(root + plan_u64(37u),conditions.values[o+1u],conditions.values[o+2u]);
+#endif
     RouteRngState state;
     state.transformations = rng_initialize(root + plan_u64(37u));
     return execute_leafy_route(conditions.values[o],conditions.values[o+1u],conditions.values[o+2u],true,state);
@@ -322,6 +358,11 @@ bool matches(uint64_t root) {
     uint a,b;
     return pair_identity(rewards,a,b) && local_matches(root,rewards,a,b);
 }
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// Adapted from shion0528, resource.17, da82f7f9023c3d3598d50b8642e93f2801c37ccc.
+// https://github.com/shion0528/rollthespire2
 void append_ordinal(uint ordinal) {
 #if BONES_K_MODE == 1
     ordinal |= bones_k_route_mask << 24u;
@@ -330,16 +371,46 @@ void append_ordinal(uint ordinal) {
     if(slot<batch.values[5u]) output_ordinals.values[slot]=ordinal;
     else atomicExchange(header.values[3u],1u);
 }
-#if N_STAGE == 1 || N_STAGE == 2
+#if N_STAGE == 4
 void main() {
     if (header.values[3u]!=0u) return;
     uint first=gl_GlobalInvocationID.x*8u;
-    uint count=min(header.values[N_STAGE==1 ? 6u : 7u],batch.values[N_STAGE==1 ? 6u : 7u]);
-    for (uint lane=0u;lane<8u && first+lane<count;lane++) {
-#if N_STAGE == 1
+    uint count=min(header.values[6u],batch.values[6u]);
+    for(uint lane=0u;lane<8u && first+lane<count;lane++) {
         uint src=(first+lane)*3u;
         uint ordinal=curse_survivors.values[src];
         uint64_t root=make_u64(curse_survivors.values[src+1u],curse_survivors.values[src+2u]);
+        if(!internal_final_curse_gate(root)) continue;
+        uint slot=atomicAdd(output_ordinals.values[0u],1u);
+        if(slot>=batch.values[6u] || slot>=(batch.values[5u]-1u)/3u) {
+            atomicExchange(header.values[3u],1u); continue;
+        }
+        uint dst=1u+slot*3u;
+        output_ordinals.values[dst]=ordinal;
+        output_ordinals.values[dst+1u]=uint(root);
+        output_ordinals.values[dst+2u]=uint(root>>32u);
+    }
+}
+#elif N_STAGE == 1 || N_STAGE == 2
+void main() {
+    if (header.values[3u]!=0u) return;
+    uint first=gl_GlobalInvocationID.x*8u;
+#if N_STAGE == 1 && N_INTERNAL_ORDER
+    uint count=min(output_ordinals.values[0u],batch.values[6u]);
+#else
+    uint count=min(header.values[N_STAGE==1 ? 6u : 7u],batch.values[N_STAGE==1 ? 6u : 7u]);
+#endif
+    for (uint lane=0u;lane<8u && first+lane<count;lane++) {
+#if N_STAGE == 1
+#if N_INTERNAL_ORDER
+        uint src=1u+(first+lane)*3u;
+        uint ordinal=output_ordinals.values[src];
+        uint64_t root=make_u64(output_ordinals.values[src+1u],output_ordinals.values[src+2u]);
+#else
+        uint src=(first+lane)*3u;
+        uint ordinal=curse_survivors.values[src];
+        uint64_t root=make_u64(curse_survivors.values[src+1u],curse_survivors.values[src+2u]);
+#endif
         RngState rewards=rng_initialize(root+plan_u64(33u));
         uint a,b;
         if (!pair_identity(rewards,a,b)) continue;
@@ -372,12 +443,26 @@ void main() {
     uint count=batch.values[3u];
     uint64_t base=uint64_t(batch.values[0u])|(uint64_t(batch.values[1u])<<32u);
     uint64_t seed_first8; uint tail;
+#if RT2_PREFIX_HASH_CACHE && N_STAGE == 0
+    uint prefix_row, suffix_ordinal;
+    uint64_t prefix_hash;
+    if(batch.values[4u]==0u && first<count &&
+        !prefix_hash_cache_initialize(first,prefix_row,suffix_ordinal,tail,prefix_hash)) {
+        atomicExchange(header.values[3u],1u);
+        return;
+    }
+#else
     if (batch.values[4u]==0u && first<count) encode_seed12_packed(base+uint64_t(first),seed_first8,tail);
+#endif
     // Donor dispatch accounting: no globally contended atomic per eight roots.
     if (first==0u) header.values[4u]=count;
     for (uint lane=0u;lane<8u && first+lane<count;lane++) {
         uint ordinal=batch.values[4u]==0u ? first+lane : input_ordinals.values[first+lane];
+#if RT2_PREFIX_HASH_CACHE && N_STAGE == 0
+        uint64_t root=batch.values[4u]==0u ? xxhash64_seed12_from_prefix(prefix_hash,tail) : root_hash_for_ordinal(base+uint64_t(ordinal));
+#else
         uint64_t root=batch.values[4u]==0u ? xxhash64_seed12_packed(seed_first8,tail) : root_hash_for_ordinal(base+uint64_t(ordinal));
+#endif
 #if N_STAGE == 0
         RngState event_rng; uint curse_ordinal,curse;
 #if N_LEAFY_PRE_GATE || N_TRANSFORM_META_OFFSET >= 0
@@ -395,7 +480,16 @@ void main() {
 #else
         if (matches(root)) append_ordinal(ordinal);
 #endif
-        if(batch.values[4u]==0u && lane<7u) advance_seed12_packed(seed_first8,tail);
+        if(batch.values[4u]==0u && lane<7u) {
+#if RT2_PREFIX_HASH_CACHE && N_STAGE == 0
+            if(first+lane+1u<count && !prefix_hash_cache_advance(prefix_row,suffix_ordinal,tail,prefix_hash)) {
+                atomicExchange(header.values[3u],1u);
+                return;
+            }
+#else
+            advance_seed12_packed(seed_first8,tail);
+#endif
+        }
     }
 }
 #endif

@@ -12,13 +12,13 @@ internal sealed partial class CapsuleRelicFamily : IFamilyInvocation
     private readonly GpuCostSamples _costSamples = new();
     IEnumerable<GpuLocalPeak> IFamilyInvocation.CostPeaks => _costSamples.Peaks;
     void IFamilyInvocation.LogExecutionEvidence() => _costSamples.WriteSummary();
-    bool IFamilyInvocation.CanBindPrivateSerial => _gpuPlan is not null && !_gpuDisabled;
+    bool IFamilyInvocation.CanBindPrivateSerial => _gpuPlan is { NumericalVariant: GpuNumericalVariant.NativeFloat64 } && !_gpuDisabled;
     public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest geometry) =>
-        RelicPhysicalPricing.QuoteCapsule(_request, _gpuPlan, geometry);
+        FamilyGpuReadback.Reference(this, RelicPhysicalPricing.QuoteCapsule(_request, _gpuPlan, geometry));
     FamilyPrivateGpuExecution IFamilyInvocation.BindPrivateSerial(Godot.RenderingDevice rd,
         PrivateOrdinalBuffer? input, PrivateOrdinalBuffer? output)
     {
-        if (_gpuPlan is null || _gpuDisabled) throw new InvalidOperationException("Rfull.PrivateSerialNotAdmitted");
+        if (_gpuPlan is not { NumericalVariant: GpuNumericalVariant.NativeFloat64 } || _gpuDisabled) throw new InvalidOperationException("Rfull.PrivateSerialNotAdmitted");
         return RelicFamilyGpuExecutor.Create(rd, _request, _gpuPlan, input, false, output).BindPrivateSerial();
     }
     private static readonly IReadOnlySet<string> Empty = new HashSet<string>();
@@ -28,6 +28,8 @@ internal sealed partial class CapsuleRelicFamily : IFamilyInvocation
     private readonly NeowFamilyProjections _models;
     private readonly FamilyCpuExecution _cpu;
     private readonly RelicFullGpuPlan? _gpuPlan;
+    internal RelicFullGpuPlan? GpuPlan => _gpuPlan;
+    internal string GpuBagCapacityRevision => _gpuPlan?.BagCapacityRevision ?? "";
     private RelicFamilyGpuExecutor? _gpu;
     private bool _gpuDisabled;
     private bool _referenceParityPassed;
@@ -42,13 +44,25 @@ internal sealed partial class CapsuleRelicFamily : IFamilyInvocation
     private double _liveMs;
     private double _peak;
 
-    private CapsuleRelicFamily(ExactSearchExecutionRequest request, NeowReplayPlan route)
+    internal string GpuPreparationFailureDetail { get; } = "";
+    private CapsuleRelicFamily(ExactSearchExecutionRequest request, NeowReplayPlan route, bool preferGpu,
+        GpuNumericalVariant numericalVariant)
     {
         _request = request;
         _replay = new(request, route);
         _models = new(request, route, true, _replay.Pool);
         _cpu = new(request, FamilyId, "R.Relic.Cpu.CapsuleAndSequenceReplay.20260905.v1");
-        RelicFullGpuPlan.TryCreate(request, route, out _gpuPlan, out string issue);
+        string issue = "CpuReferenceSelected";
+        if (preferGpu)
+        {
+            try { RelicFullGpuPlan.TryCreate(request, route, out _gpuPlan, out issue, numericalVariant); }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                issue = "GpuPlanConstructionFailed"; GpuPreparationFailureDetail = ex.ToString();
+                RuntimeLog.TryBackgroundWarning("capsuleGpuPreparationFailed=true;selected=CpuCapsuleReplay;exceptionJson=" + RuntimeLog.SafeJson(ex.ToString()));
+            }
+        }
         RuntimeLog.TryBackgroundInfo(
             $"rCapsuleFamilyReady=true;physical={(_gpuPlan is null ? "CpuCapsuleAndSequenceReplay" : "GpuRfull")};" +
             $"physicalIssue={issue};exactOnly={string.Join(',', route.ExactOnly)}");
@@ -56,6 +70,8 @@ internal sealed partial class CapsuleRelicFamily : IFamilyInvocation
 
     internal bool MatchesReference(ulong root) => _replay.Matches(root);
 
+    bool IFamilyInvocation.ExecutionFaulted => _gpuDisabled;
+    GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => _gpuPlan?.NumericRequirements ?? GpuNumericRequirements.None;
     public string FamilyId => "R.Relic";
     public FamilyAnalyticalCostProjection AnalyticalCost => _models.Full;
     public FamilySurvivalProjection Survival => ResolveSurvival(Empty);
@@ -69,9 +85,10 @@ internal sealed partial class CapsuleRelicFamily : IFamilyInvocation
         : new FamilyConditionPerformanceProjection(
             FamilyId,
             _gpuPlan.Revision(compactAbi1Input),
-            "Rfull.ConditionPerformance.Neutral.CanonicalBoundary.20260906.v4",
+            "Rfull.ConditionPerformance.Neutral.CanonicalBoundary.20260906.v4" + _gpuPlan.NumericalRevision,
             1d,
-            "NoAcceptedWithinPathCurve;timingBoundary=CanonicalAbi1Ready;independentRfullIdentity=true");
+            "NoAcceptedWithinPathCurve;timingBoundary=CanonicalAbi1Ready;independentRfullIdentity=true" +
+            (_gpuPlan.NumericalVariant == GpuNumericalVariant.IntegerRne ? ";NoAcceptedPhysicalPrice;HistoricalGlobalNextIntPreserved" : ""));
 
     public FamilyPerformanceObservation CapturePerformanceObservation() => _gpuPlan is null
         ? _cpu.Observation()
@@ -99,7 +116,7 @@ internal sealed partial class CapsuleRelicFamily : IFamilyInvocation
             throw new InvalidOperationException("RfullObservationContextMismatch");
         cancellationToken.ThrowIfCancellationRequested();
         if (_gpuPlan is null)
-            return _cpu.Execute(observationWindow, input, cancellationToken, _replay.Matches);
+            return _cpu.Execute(observationWindow, input, cancellationToken, _replay.Matches, executionContext);
         if (_gpuDisabled) throw new InvalidOperationException("Rfull.SelectedInvocationFaulted");
         if (input.Count == 0) return input;
 
@@ -158,7 +175,11 @@ internal sealed partial class CapsuleRelicFamily : IFamilyInvocation
                     await executionContext.ExecuteGpuAsync(_ => { _gpu.Dispose(); return true; }, CancellationToken.None)
                         .ConfigureAwait(false);
             }
-            catch { }
+            catch (Exception cleanupFailure)
+            {
+                executionContext.RecordGpuCleanupFailure(cleanupFailure, FamilyId,
+                    "CapsuleGpuFault.Dispose", _request.SnapshotFingerprint);
+            }
             _gpu = null;
             RuntimeLog.TryBackgroundWarning(
                 $"rfullFamilyPhysicalFault=true;failure={Sanitize(_failure)};recovery=None;" +
@@ -221,18 +242,34 @@ internal sealed partial class CapsuleRelicFamily : IFamilyInvocation
     }
 
     internal static bool TryCreate(ExactSearchExecutionRequest request, out IFamilyInvocation? family)
+        => TryCreate(request, out family, true);
+    internal static bool TryCreate(ExactSearchExecutionRequest request, out IFamilyInvocation? family, bool preferGpu,
+        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
         family = null;
         if (!NeowReplayPlan.HasCapsule(request)) return false;
         try
         {
             var route = NeowReplayPlan.Compile(request, true);
-            family = new CapsuleRelicFamily(request, route);
+            string continuationIssue = route.ContinuationIssue(capsule: true);
+            if (continuationIssue.Length > 0)
+            {
+                if (RuntimeLog.SessionId.Length > 0) Infrastructure.Diagnostics.RuntimeIssueLedger.Current.RecordDegradation("CapsuleFilterUnavailable", nameof(CapsuleRelicFamily),
+                    "Filter.Construction", "issues.filter_incomplete", $"cause={continuationIssue};predicatesRetained=true;finalValidationSkipped={request.RunOptions.SkipExactValidation};matchClaimed=false");
+                return false;
+            }
+            if (!RelicFamilyPlanCompiler.TryCompilePool(request, out _, out _, out _, out string poolIssue))
+            {
+                RuntimeLog.TryBackgroundWarning("rCapsuleFamilyUnavailable=true;cause=" + poolIssue + ";predicatesRetained=true;replacementCompleteness=NotClaimed");
+                return false;
+            }
+            family = new CapsuleRelicFamily(request, route, preferGpu, numericalVariant);
             return true;
         }
-        catch (Exception ex)
+        catch (InvalidOperationException ex) when (ex.Message is "NeowFamilyReplayAuthorityUnavailable" or "NeowFamilyUnmappedIdentity" or
+            "RFamilyUnboundCapsuleRoute_ExactOnly" or "RFamilyCapsulePredicateUnsupported_ExactOnly")
         {
-            RuntimeLog.TryBackgroundWarning("rCapsuleFamilyUnavailable=true;recovery=None;legacyFallback=false;reason=" + ex.Message);
+            RuntimeLog.TryBackgroundWarning("rCapsuleFamilyUnavailable=true;predicatesRetained=true;replacementCompleteness=NotClaimed;exceptionJson=" + RuntimeLog.SafeJson(ex.ToString()));
             return false;
         }
     }

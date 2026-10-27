@@ -2,7 +2,7 @@ using System.Numerics;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Identity;
-using RolltheSpire2.Core.Relics;
+using RolltheSpire2.Core.Rewards;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.FamilyExecution;
 using RolltheSpire2.Search.Semantics;
@@ -10,23 +10,12 @@ using RolltheSpire2.Search.Semantics;
 namespace RolltheSpire2.Search.Selectivity;
 
 /// <summary>
-/// Product-projected probability authority for the first six normal-combat card and potion rewards.
-/// Legacy any-battle rows retain their three-battle window.
-/// It prices the portion of real seed space that is compatible with the current
-/// Query-literal Search projection; it is not a complete latent-game-world rarity model.
-/// The chronological DP mirrors the accepted Beta110 reward-generation topology:
-/// potion pity, card-rarity pity, per-card-reward no-duplicate selection, Prayer Wheel,
-/// White Beast Statue, Lasting Candy and deterministic opening fixed-gold effects.
-///
-/// In the inherited solo model, latent nested outcomes for an explicit Capsule are used only to
-/// measure projection compatibility. Unsupported implicit Reward-influence branches are
-/// excluded from searchable probability instead of being re-evaluated under their own
-/// latent Reward contexts. Query-authored opening RNG consumption is a deterministic part
-/// of the projected C continuation and is replayed by the Fast evaluator; it is not a
-/// probability compatibility penalty. Bones-unspecified children are not expanded into
-/// hidden Capsule routes in that solo model. Multiplayer instead integrates the actual
-/// held reward effects of Capsule draws and unspecified Bones companions, conditioned
-/// on authored opening/bag predicates; unavailable effects retain Unknown probability.
+/// Query probability for the first six normal-combat card and potion rewards.
+/// Single-player and multiplayer use the same explicitly authored opening profile;
+/// unspecified Bones/Capsule held influences follow the Owner's neutral approximation.
+/// The chronological reward DP retains potion/card pity, group de-duplication,
+/// reward modifiers and ordered/unordered distinct-battle matching. Physical
+/// filtering and Production Exact keep their own actual continuation semantics.
 /// </summary>
 internal static partial class CombatRewardProbabilityEstimator
 {
@@ -73,8 +62,6 @@ internal static partial class CombatRewardProbabilityEstimator
             }
         }
     }
-
-    private sealed record RewardInfluenceMass(RewardInfluenceProfile Profile, double Mass, string Evidence);
 
     private readonly record struct CardPoolEntry(ModelKey Key, EffectCardRarity Rarity, EffectCardType Type, int TargetIndex);
 
@@ -129,138 +116,40 @@ internal static partial class CombatRewardProbabilityEstimator
         int ModernCardWindowCount,
         int ModernPotionWindowCount);
 
-    private readonly record struct CapsuleDrawPosition(int Lane, int Ordinal);
-    private readonly record struct CapsuleRarityChoice(int PreferredLane, double Probability, string Label);
-    private sealed record CapsuleGroup(ModelKey Source, int DrawCount, IReadOnlyList<NeowStructuredEffectSearchCondition> Constraints);
-
-    private enum CombatRewardProbabilityMode : byte
-    {
-        ProductProjected = 0,
-        PhysicalFastGate = 1
-    }
-
     public static SearchSelectivityEstimate Estimate(SearchSelectivityInput plan)
     {
         ArgumentNullException.ThrowIfNull(plan);
-        return EstimateCore(
-            plan,
-            Beta110CombatRewardExplicitContextProjector.Project(plan.CompiledSearch),
-            CombatRewardProbabilityMode.ProductProjected);
+        if (plan.CompiledSearch.NormalizedQuery.CombatCardExclusion is not { IsEmpty: false })
+            return EstimateCore(plan);
+        var positive = EstimateOptimizedConditions(plan);
+        var exclusion = EstimateCardExclusion(plan);
+        if (positive.Probability is not { } p || exclusion.Probability is not { } e)
+            return SearchSelectivityEstimate.Unpriced("Probability.CombatReward.ExclusionPartial",
+                positive.Probability.HasValue ? exclusion.EvidenceCode + ";" + exclusion.Notes : positive.EvidenceCode + ";" + positive.Notes);
+        return positive with { Probability = p * e, EstimatedSurvivalRate = p * e,
+            EvidenceCode = "Probability.CombatReward.PositiveAndExclusionIndependent",
+            Notes = $"Positive={p:G17};Exclusion={e:G17};ExclusionRemainsExactOnly",
+            Confidence = SearchSelectivityConfidence.Medium,
+            Assumptions = positive.Assumptions.Concat(exclusion.Assumptions).Append(
+                "PositiveAndExclusionDependenceUnproved=OwnerApprovedIndependentProduct").Distinct().ToArray() };
     }
 
-    /// <summary>
-    /// Analytic survival of the concrete query-literal C Fast gate. Unlike Product
-    /// Probability this does not multiply projection-compatibility mass, because the
-    /// physical C Action cannot observe hidden Capsule outcomes and therefore really
-    /// does keep/reject solely from its synthetic ExplicitRewardContext projection.
-    /// </summary>
-    public static SearchSelectivityEstimate EstimateExplicitFastProjection(SearchExecutionRequest request)
+    internal static SearchSelectivityEstimate EstimateOptimizedConditions(SearchSelectivityInput input)
     {
-        ArgumentNullException.ThrowIfNull(request);
-        return EstimateCore(
-            SearchSelectivityInput.From(request),
-            Beta110CombatRewardExplicitContextProjector.Project(request.CompiledSearch),
-            CombatRewardProbabilityMode.PhysicalFastGate);
+        var compiled = input.CompiledSearch;
+        if (compiled.NormalizedQuery.CombatCardExclusion is { IsEmpty: false })
+            compiled = SearchCompiler.CompilePlayer(compiled.NormalizedQuery with { CombatCardExclusion = null }, compiled.Context);
+        if (!compiled.NormalizedQuery.HasCombatRewardConstraints)
+            return SearchSelectivityEstimate.Exact(1, SearchSelectivityMethod.ConditionalChain,
+                SearchSelectivityCoverage.ExactRequestedPredicate, SearchSelectivityDependencyClass.AssumedIndependent,
+                "Probability.CombatReward.NoOptimizedPredicate", "No positive C predicate participates in the optimized sieve.",
+                ["ExactOnlyExclusionNotCheckedBySieve=true"]);
+        return EstimateCore(SearchSelectivityInput.From(compiled));
     }
 
-    // Bounded C2 bridge. The legacy "PhysicalFastGate" name is insufficient:
-    // its modern unordered matcher still uses distinct-battle assignment.
-    internal static SearchSelectivityEstimate EstimateFamilySieve(
-        ExactSearchExecutionRequest request, Beta110CombatRewardFastPlan fast)
-    {
-        int? prefixDraws = FixedAuthoredPrefixDrawCount(request, fast);
-        bool neutralPrefix = prefixDraws.HasValue;
-        var query = request.CompiledSearch.NormalizedQuery;
-        var cardSequence = query.CombatCardRewards;
-        bool repeatedExistential = !fast.HasDistinctBattleAssignments && (neutralPrefix || !fast.OpeningConsumption.HasReplay) &&
-            fast.PredicateCount is >= 1 and <= 6 && fast.Predicates.All(p => p.IsAnyBattle &&
-                p.CardAny.Length == 1 && p.CardAll.Length == 0 && p.CardBan.Length == 0 &&
-                !p.HasPotionDropPredicate && !p.HasPotionIdentityPredicate && !p.HasGoldPredicate) &&
-            fast.Predicates.Select(p => p.CardAny[0]).Distinct().Count() == 1 &&
-            cardSequence is { OrderMode: CombatRewardSequenceOrderMode.Unordered } &&
-            cardSequence.Slots.Where(k => k.HasValue).Select(k => k!.Value).Distinct().Count() == 1 &&
-            query.LegacyCombatRewardConstraints.Count == 0;
-        string? issue = fast.OpeningConsumption.HasReplay && !neutralPrefix ? "AuthoredPrefixDistribution" :
-            fast.Predicates.Any(p => p.IsAnyBattle) && !repeatedExistential && !fast.HasDistinctBattleAssignments ? "UnorderedFastExistentialsNotDistinctAssignment" :
-            fast.PredicateCount > 6 ? "BoundedMatcherCapacity" : null;
-        int domains = (fast.CardPredicateCount > 0 ? 1 : 0) +
-            (fast.PotionDropPredicateCount + fast.PotionIdentityPredicateCount > 0 ? 1 : 0) +
-            (fast.GoldPredicateCount > 0 ? 1 : 0);
-        int targetCount = fast.Predicates.SelectMany(p => p.CardAny.Concat(p.CardAll).Concat(p.CardBan)
-            .Concat(p.PotionAny).Concat(p.PotionAll).Concat(p.PotionBan)).Distinct().Count();
-        if (targetCount > 6) issue = "BoundedTargetDpCapacity";
-        if (domains > 1) issue = "SharedRewardsJointDistribution";
-        if ((fast.ExplicitContext.InfluenceFlags & (Beta110CombatRewardInfluenceFlags.UnknownRewardImpact |
-             Beta110CombatRewardInfluenceFlags.UnknownRewardsContinuation)) != 0)
-            issue = "UnknownImpactIsNotFamilyKeep";
-        if (issue is not null)
-            return SearchSelectivityEstimate.Unpriced("C2.SieveUnknown." + issue, issue);
-        // Ordered, single-domain predicates have the same matcher in C and this
-        // chronological DP. No latent compatibility multiplier or route union.
-        var input = SearchSelectivityInput.From(request);
-        if (repeatedExistential)
-        {
-            // C's identical existential rows collapse to one observation over
-            // all simulated battles. This is a probability-only matcher
-            // projection, NOT a change to authored Query/Exact multiplicity.
-            ModelKey target = cardSequence!.Slots.First(k => k.HasValue)!.Value;
-            var matcherQuery = query with { CombatCardRewards = new(fast.MaximumBattleOrdinal,
-                CombatRewardSequenceOrderMode.Unordered, Enumerable.Range(0, fast.MaximumBattleOrdinal).Select(i => i == 0 ? (ModelKey?)target : null).ToArray()) };
-            input = SearchSelectivityInput.From(SearchCompiler.Compile(matcherQuery, request.CompiledSearch.Context));
-        }
-        var result = EstimateCore(input, fast.ExplicitContext, CombatRewardProbabilityMode.PhysicalFastGate);
-        return result with { EvidenceCode = (neutralPrefix ? $"C.FixedAuthoredPrefixDraws={prefixDraws};" : "") +
-            (repeatedExistential ? "C.IdenticalExistentialWindowUnion;" : "") + result.EvidenceCode };
-    }
-
-    // Mirrors the donor's zero-consumption branch and its single forced-Rare
-    // SelectUnused(empty) call: exactly one NextInt for a nonempty pool. Their
-    // order cannot change the ending Rewards state. The ordinary uniform-draw
-    // probability model therefore needs no two-route union or learned offset.
-    // More involved authored generators retain Unknown. These three known
-    // reward modifiers run after the fixed prefix; EstimateCore already models
-    // their card groups, potion decision and Candy counter. They are not neutral.
-    internal static bool HasModeledRewardImpact(Beta110CombatRewardExplicitContext context) =>
-        context.AdditionalCardRewardCount <= 1 && context.FixedGoldAmount == 0 &&
-        (context.InfluenceFlags & ~(Beta110CombatRewardInfluenceFlags.PrayerWheelExtraReward |
-            Beta110CombatRewardInfluenceFlags.ForcePotionReward |
-            Beta110CombatRewardInfluenceFlags.LastingCandyPowerCard |
-            Beta110CombatRewardInfluenceFlags.DeterministicUpgradeOnly |
-            Beta110CombatRewardInfluenceFlags.DeterministicEnchantmentOnly)) == 0;
-
-    internal static int? FixedAuthoredPrefixDrawCount(ExactSearchExecutionRequest request, Beta110CombatRewardFastPlan fast)
-    {
-        // Query-literal C replays exactly three rarity rolls for fixed Small+Large,
-        // independent of pickup order. It does not execute the latent bag outputs.
-        // Subsequent reward draws use the existing disjoint-draw independence model.
-        if (request.ProfileId == RuntimeProfileId.Beta111 && request.Authority.CanUseCurrentModel &&
-            request.Authority.PlayersCount == 1 && request.Authority.NoRunModifiers == true &&
-            fast.OpeningConsumption.ReplayBonesOffer && fast.OpeningConsumption.OrderedRelicIds.Length == 2 &&
-            fast.OpeningConsumption.OrderedRelicIds.ToHashSet().SetEquals([Beta110FastRelicCatalog.SmallCapsule, Beta110FastRelicCatalog.LargeCapsule]) &&
-            HasModeledRewardImpact(fast.ExplicitContext) &&
-            request.Evaluation.StructuredNeowEffects.All(c => c.Scope == NeowStructuredEffectScope.FinalCurse || NeowReplayPlan.IsCapsule(c)))
-            return 3;
-        if (!(request.ProfileId == RuntimeProfileId.Beta111 && request.Authority.CanUseCurrentModel && request.Authority.NoRunModifiers == true &&
-        fast.OpeningConsumption.HasReplay && fast.OpeningConsumption.OrderedRelicIds.Length is 1 or 2 &&
-        fast.OpeningConsumption.OrderedRelicIds.All(id => id <= Beta110FastRelicCatalog.Pomander && id is not (
-            Beta110FastRelicCatalog.SmallCapsule or Beta110FastRelicCatalog.LargeCapsule or
-            Beta110FastRelicCatalog.HeftyTablet or
-            Beta110FastRelicCatalog.LeadPaperweight or Beta110FastRelicCatalog.LostCoffer or
-            Beta110FastRelicCatalog.Kaleidoscope or Beta110FastRelicCatalog.ScrollBoxes)) &&
-        request.Evaluation.StructuredNeowEffects.All(c => c.Scope == NeowStructuredEffectScope.FinalCurse))) return null;
-        int draws = fast.OpeningConsumption.OrderedRelicIds.Count(id => id == Beta110FastRelicCatalog.ArcaneScroll);
-        if (draws > 1 || draws == 1 && (request.Authority.EffectAuthority?.HasExactCharacterRewardPool != true ||
-            !request.Authority.EffectAuthority.CharacterRewardPool!.Any(c => c.Rarity == EffectCardRarity.Rare))) return null;
-        return draws;
-    }
-
-    private static SearchSelectivityEstimate EstimateCore(
-        SearchSelectivityInput plan,
-        Beta110CombatRewardExplicitContext explicitContext,
-        CombatRewardProbabilityMode mode)
+    private static SearchSelectivityEstimate EstimateCore(SearchSelectivityInput plan)
     {
         ArgumentNullException.ThrowIfNull(plan);
-        ArgumentNullException.ThrowIfNull(explicitContext);
         ProbabilitySemanticView semantic = ProbabilitySemanticProjection.From(plan);
         if (!semantic.NormalizedQuery.HasCombatRewardConstraints)
             return SearchSelectivityEstimate.Unpriced("Probability.CombatReward.NoPredicate", "No Combat Reward predicate to price.");
@@ -395,147 +284,97 @@ internal static partial class CombatRewardProbabilityEstimator
             }
         }
 
-        if (plan.Authority.PlayersCount > 1 && mode == CombatRewardProbabilityMode.ProductProjected)
-            return EstimateParty(plan, semantic, matcher, cards, potions);
-
-        if ((explicitContext.InfluenceFlags &
-             (Beta110CombatRewardInfluenceFlags.UnknownRewardImpact |
-              Beta110CombatRewardInfluenceFlags.UnknownRewardsContinuation)) != 0)
-        {
-            if (mode == CombatRewardProbabilityMode.PhysicalFastGate)
-            {
-                return SearchSelectivityEstimate.Exact(
-                    1d,
-                    SearchSelectivityMethod.ConditionalChain,
-                    SearchSelectivityCoverage.ExactRequestedConjunction,
-                    SearchSelectivityDependencyClass.AssumedIndependent,
-                    "PhysicalEffectiveness.Analytical.CombatRewardExplicitQueryProjection.ConservativeKeep",
-                    "ExplicitRewardContext contains an unsupported Reward influence; current Fast projection conservatively keeps every candidate and leaves truth to Production Exact/Witness.",
-                    new[] { "UnknownExplicitRewardInfluence=ConservativeKeep;Survival=1" });
-            }
-
-            return SearchSelectivityEstimate.Unpriced(
-                "Probability.CombatReward.ProductProjection.UnknownExplicitInfluence",
-                "Searchable probability is unpriced because the authored Reward context contains an unsupported influence.",
-                SearchSelectivityConfidence.Low,
-                SearchSelectivityMethod.ConditionalChain,
-                SearchSelectivityCoverage.PartialRequestedConjunction,
-                SearchSelectivityDependencyClass.RouteDependent);
-        }
-
-        Beta110CombatRewardOpeningConsumptionProjection openingConsumption =
-            Beta110CombatRewardOpeningConsumptionProjector.Project(plan.CompiledSearch);
-        RewardInfluenceProfile projectedProfile = ProfileFromExplicitFastContext(explicitContext);
+        const string openingEvidence = "OpeningRngDrawOffsetsDoNotChangeMarginalModel";
+        if (!TryResolveAuthoredProfile(plan, semantic, matcher, out var projectedProfile, out string influenceDetail, out string issue))
+            return SearchSelectivityEstimate.Unpriced("Probability.CombatReward.ProductProjection:" + issue,
+                influenceDetail, SearchSelectivityConfidence.Low, SearchSelectivityMethod.ConditionalChain,
+                SearchSelectivityCoverage.PartialRequestedConjunction, SearchSelectivityDependencyClass.RouteDependent);
+        bool pinned = semantic.Routes.CombatReward.Kind == ResolvedCombatRewardRouteKind.PinnedOpeningRoute;
+        IReadOnlyList<SearchSelectivityDomain> conditionedDomains = pinned ? [SearchSelectivityDomain.Neow] : [];
+        var dependencyClass = pinned ? SearchSelectivityDependencyClass.RouteDependent : SearchSelectivityDependencyClass.AssumedIndependent;
         double rewardSurvival = EstimateForProfile(plan.Ascension, cards, potions, matcher, projectedProfile);
-        double projectionCompatibility = 1d;
-        string influenceDetail;
-        IReadOnlyList<SearchSelectivityDomain> conditionedDomains;
-        SearchSelectivityDependencyClass dependencyClass;
+        string notes = $"ChronologicalNormalCombatReward;context={projectedProfile.Label};" +
+            $"{openingEvidence};" +
+            $"rewardSurvival={rewardSurvival:G17};Influence={influenceDetail}";
+        var estimate = SearchSelectivityEstimate.Exact(rewardSurvival, SearchSelectivityMethod.ConditionalChain,
+            SearchSelectivityCoverage.ExactRequestedConjunction, dependencyClass, "Probability.Authority.CombatRewardProductProjected", notes,
+            [
+                "ProbabilityModel=ExplicitAuthoredOpeningRewardProfile",
+                "SingleplayerAndMultiplayerShareRewardDp=true",
+                "UnspecifiedBonesRewardImpactIgnored=OwnerAcceptedApproximation",
+                "UnspecifiedCapsuleRewardImpactIgnored=OwnerAcceptedApproximation",
+                "InitialRelicBagConditionsRemainSeparateProbabilityFacts",
+                openingEvidence,
+                "ProductionExactAndSameRouteWitnessRemainRealRouteTruth=true"
+            ], conditionedOnDomains: conditionedDomains);
+        return plan.Authority.PlayersCount > 1
+            ? estimate with { Confidence = SearchSelectivityConfidence.Medium } : estimate;
+    }
 
-        if (mode == CombatRewardProbabilityMode.ProductProjected)
+    private static bool TryResolveAuthoredProfile(SearchSelectivityInput plan, ProbabilitySemanticView semantic,
+        MatcherContext matcher, out RewardInfluenceProfile projected, out string detail, out string issue)
+    {
+        issue = string.Empty;
+        projected = default;
+        foreach (ModelKey source in ExplicitOpeningRelicFacts.EnumerateGuaranteed(semantic.NormalizedQuery))
         {
-            // Owner policy: unspecified Bones grants do not add latent reward influences.
-            // Keep authored influences below; this is a probability approximation only.
-            if (!TryResolveInfluenceDistribution(plan, semantic, matcher, projectedProfile, out IReadOnlyList<RewardInfluenceMass> realProfiles,
-                    out influenceDetail, out string influenceIssue))
+            bool adapter = OpeningCombatRewardImpactAdapterRegistry.TryResolve(plan.ProfileId, source, out var descriptor);
+            if (adapter && descriptor.Operations.Any(operation => operation.Kind is not (
+                    OpeningCombatRewardImpactOperationKind.ForcePotionReward or
+                    OpeningCombatRewardImpactOperationKind.AddCardReward or
+                    OpeningCombatRewardImpactOperationKind.AddFixedGoldReward or
+                    OpeningCombatRewardImpactOperationKind.AddPowerCardEveryOtherCombat or
+                    OpeningCombatRewardImpactOperationKind.ForceUpgradeCardType or
+                    OpeningCombatRewardImpactOperationKind.UpgradeNextCardRewards or
+                    OpeningCombatRewardImpactOperationKind.EnchantFirstCardRewardWithGlam)) ||
+                !adapter && !HasSupportedAuthoredHeldImpact(plan.ProfileId, source, matcher))
             {
-                return SearchSelectivityEstimate.Unpriced(
-                    "Probability.CombatReward.ProductProjection:" + influenceIssue,
-                    influenceDetail,
-                    SearchSelectivityConfidence.Low,
-                    SearchSelectivityMethod.ConditionalChain,
-                    SearchSelectivityCoverage.PartialRequestedConjunction,
-                    SearchSelectivityDependencyClass.RouteDependent,
-                    new[]
-                    {
-                        "ProbabilityModel=ProductProjectedSearchableMass",
-                        "UnsupportedImplicitRewardInfluenceIsExcludedRatherThanIntegrated",
-                        "BonesUnspecifiedChildrenAreNotExpandedIntoLatentCapsuleRoutes"
-                    });
+                issue = "UnsupportedExplicitHeldInfluence:" + source.Serialized;
+                detail = "An explicitly acquired relic changes the requested reward observable without a supported probability adapter.";
+                return false;
             }
-
-            projectionCompatibility = Math.Clamp(
-                realProfiles.Where(item => item.Profile == projectedProfile).Sum(item => item.Mass),
-                0d,
-                1d);
-
-            bool conditionedOnNeow = semantic.Routes.CombatReward.Kind == ResolvedCombatRewardRouteKind.PinnedOpeningRoute;
-            bool conditionedOnRelic = conditionedOnNeow &&
-                                      CapsuleRelicProbabilityEstimator.HasOverlappingRelicSequenceConstraint(plan) &&
-                                      HasExplicitCapsuleRoute(semantic);
-            conditionedDomains = conditionedOnRelic
-                ? new[] { SearchSelectivityDomain.Neow, SearchSelectivityDomain.Relic }
-                : conditionedOnNeow
-                    ? new[] { SearchSelectivityDomain.Neow }
-                    : Array.Empty<SearchSelectivityDomain>();
-            dependencyClass = conditionedOnNeow
-                ? SearchSelectivityDependencyClass.RouteDependent
-                : SearchSelectivityDependencyClass.AssumedIndependent;
+            projected = projected.Add(source);
+        }
+        RewardInfluenceProfile canonical = default;
+        if (semantic.Routes.CombatReward.Kind == ResolvedCombatRewardRouteKind.NeutralNonPerturbingContinuation)
+            detail = "ResolvedRouteSemantics=NeutralNonPerturbingContinuation;UnselectedOpeningNeutral";
+        else if (semantic.Routes.CombatReward.Kind == ResolvedCombatRewardRouteKind.PinnedOpeningRoute &&
+            semantic.NormalizedQuery.OpeningRoute is { IsValid: true } route &&
+            semantic.Routes.CombatReward.PinnedOpeningRouteKey == route.RouteRelicKey)
+        {
+            foreach (var relation in semantic.Relations.Where(relation =>
+                relation.Kind == SemanticRelationKind.StateInfluence &&
+                relation.Source.Kind == SemanticFactKind.RewardInfluenceRelic &&
+                relation.Target.Kind == SemanticFactKind.CombatReward))
+                if (relation.Source.Key is { } key) canonical = canonical.Add(key);
+            detail = "PinnedAuthoredOpening;CanonicalStateInfluence=" + canonical.Label;
         }
         else
         {
-            influenceDetail = "PhysicalFastGate;ExplicitRewardContext=" +
-                              (explicitContext.SourceRelicKeys.Length == 0
-                                  ? "{}"
-                                  : "{" + string.Join(',', explicitContext.SourceRelicKeys.Select(key => key.Serialized)) + "}") +
-                              ";ProjectionCompatibilityNotAppliedToPhysicalGate=true";
-            conditionedDomains = Array.Empty<SearchSelectivityDomain>();
-            dependencyClass = SearchSelectivityDependencyClass.AssumedIndependent;
+            issue = "ResolvedCombatRewardRouteNotPriceable:" + semantic.Routes.CombatReward.Kind;
+            detail = "Combat Reward probability requires a matching canonical resolved opening route.";
+            return false;
         }
-
-        double probability = Math.Clamp(projectionCompatibility * rewardSurvival, 0d, 1d);
-        string evidenceCode = mode == CombatRewardProbabilityMode.ProductProjected
-            ? "Probability.Authority.CombatRewardProductProjected"
-            : "PhysicalEffectiveness.Analytical.CombatRewardExplicitQueryProjection";
-        string notes =
-            $"Beta110 first-three normal-combat Reward projection; context={projectedProfile.Label};" +
-            $"openingReplay={openingConsumption.Fingerprint};openingReplayRequired={openingConsumption.HasReplay};" +
-            $"compatibility={projectionCompatibility:G17};rewardSurvival={rewardSurvival:G17};" +
-            $"searchable={probability:G17};Influence={influenceDetail}";
-
-        return SearchSelectivityEstimate.Exact(
-            probability,
-            SearchSelectivityMethod.ConditionalChain,
-            SearchSelectivityCoverage.ExactRequestedConjunction,
-            dependencyClass,
-            evidenceCode,
-            notes,
-            mode == CombatRewardProbabilityMode.ProductProjected
-                ? new[]
-                {
-                    "ProbabilityModel=ProductProjectedSearchableMass",
-                    "PlayerAuthoredQueryDefinesProjection=true",
-                    "ProjectionCompatibilityMultipliesProjectedRewardSurvival=true",
-                    "QueryLiteralOpeningConsumptionReplayIsDeterministic=true",
-                    "ProjectedRewardSurvivalUsesSameOpeningReplayContract=true",
-                    "OpeningReplayFingerprint=" + openingConsumption.Fingerprint,
-                    "ProjectionCompatibilityDoesNotCompensateForRngContinuation=true",
-                    "UnsupportedImplicitRewardInfluenceBranchesExcluded=true",
-                    "BonesUnspecifiedChildrenNotExpanded=true",
-                    "UnspecifiedBonesRewardImpactIgnored=OwnerAcceptedApproximation",
-                    "UnspecifiedCapsuleRewardImpactIgnored=OwnerAcceptedApproximation",
-                    "ProductionExactAndSameRouteWitnessRemainRealRouteTruth=true"
-                }
-                : new[]
-                {
-                    "PhysicalFastGateOnly=true",
-                    "QueryLiteralExplicitInfluenceOnly=true",
-                    "QueryLiteralOpeningConsumptionReplayIsDeterministic=true",
-                    "OpeningReplayFingerprint=" + openingConsumption.Fingerprint,
-                    "ProjectionCompatibilityNotApplied=true",
-                    "ProductionExactAndSameRouteWitnessRemainRealRouteTruth=true"
-                },
-            conditionedOnDomains: conditionedDomains);
+        if (canonical == projected) return true;
+        issue = "CanonicalExplicitRewardProfileMismatch";
+        detail += ";Projected=" + projected.Label + ";Expected=" + canonical.Label;
+        return false;
     }
 
-    private static RewardInfluenceProfile ProfileFromExplicitFastContext(
-        Beta110CombatRewardExplicitContext context) => new(
-        PrayerWheel: (context.InfluenceFlags & Beta110CombatRewardInfluenceFlags.PrayerWheelExtraReward) != 0 ||
-                     context.AdditionalCardRewardCount > 0,
-        WhiteBeastStatue: (context.InfluenceFlags & Beta110CombatRewardInfluenceFlags.ForcePotionReward) != 0,
-        LastingCandy: (context.InfluenceFlags & Beta110CombatRewardInfluenceFlags.LastingCandyPowerCard) != 0,
-        AmethystAubergine: (context.InfluenceFlags & Beta110CombatRewardInfluenceFlags.AmethystAubergineFixedGold) != 0 ||
-                           context.FixedGoldAmount > 0);
+    private static bool HasSupportedAuthoredHeldImpact(RuntimeProfileId profile, ModelKey source, MatcherContext matcher)
+    {
+        if (!VanillaRelicRewardEffects.TryGet(profile, source, out var effect)) return false;
+        if (effect.IsHeldNeutralForNormalCombatReward) return true;
+        var relevant = HeldNormalCombatRewardEffects.UnknownModHook;
+        if (matcher.UsesCards) relevant |= HeldNormalCombatRewardEffects.ChangesCardRewardPool |
+            HeldNormalCombatRewardEffects.ChangesCardRewardCount | HeldNormalCombatRewardEffects.ChangesCardRewardOptions |
+            HeldNormalCombatRewardEffects.AddsRewardEntries | HeldNormalCombatRewardEffects.RemovesRewardEntries |
+            HeldNormalCombatRewardEffects.ReplacesRewardEntries | HeldNormalCombatRewardEffects.AddsCardRewardAlternative;
+        if (matcher.UsesPotions) relevant |= HeldNormalCombatRewardEffects.ForcesPotionReward |
+            HeldNormalCombatRewardEffects.ChangesPotionDropState | HeldNormalCombatRewardEffects.ChangesPotionRewardPool;
+        if (matcher.UsesGold) relevant |= HeldNormalCombatRewardEffects.ChangesGoldReward;
+        return (effect.HeldCapabilities & relevant) == 0;
+    }
 
     // Authoring-only support query. Reuses chronological generation; does not extend Search horizon.
     internal static bool CanAuthorCards(int ascension,
@@ -972,7 +811,9 @@ internal static partial class CombatRewardProbabilityEstimator
             cardAssignmentStates = AdvanceAssignmentStates(
                 existingCardAssignmentStates,
                 unorderedCards.Length,
+                Math.Max(0, matcher.ModernCardWindowCount - battleOrdinal),
                 constraintIndex => MatchesCardTarget(cardMask, unorderedCards[constraintIndex].Target, matcher.CardTargetIndex));
+            if (cardAssignmentStates == 0) return false;
         }
         ModernPotionConstraint[] unorderedPotions = matcher.ModernPotions.Where(item => !item.OrderedBattleOrdinal.HasValue).ToArray();
         if (unorderedPotions.Length > 0 && battleOrdinal <= matcher.ModernPotionWindowCount)
@@ -980,18 +821,28 @@ internal static partial class CombatRewardProbabilityEstimator
             potionAssignmentStates = AdvanceAssignmentStates(
                 existingPotionAssignmentStates,
                 unorderedPotions.Length,
+                Math.Max(0, matcher.ModernPotionWindowCount - battleOrdinal),
                 constraintIndex => MatchesPotionConstraint(potion, unorderedPotions[constraintIndex].Slot, matcher.PotionTargetIndex));
+            if (potionAssignmentStates == 0) return false;
         }
         return true;
     }
 
-    private static ulong AdvanceAssignmentStates(ulong states, int requirementCount, Func<int, bool> matches)
+    private static ulong AdvanceAssignmentStates(ulong states, int requirementCount,
+        int remainingBattles, Func<int, bool> matches)
     {
-        ulong next = states;
+        ulong next = 0;
         int maxSubset = 1 << requirementCount;
         for (int subset = 0; subset < maxSubset; subset++)
         {
             if ((states & (1UL << subset)) == 0) continue;
+            // One battle can fill at most one requirement, including repeated
+            // targets. Keep each reachable subset only if its own window can
+            // still complete it; the subsets remain alternatives, not masses.
+            int assigned = BitOperations.PopCount((uint)subset);
+            if (assigned + remainingBattles >= requirementCount)
+                next |= 1UL << subset;
+            if (assigned + 1 + remainingBattles < requirementCount) continue;
             for (int requirement = 0; requirement < requirementCount; requirement++)
             {
                 if ((subset & (1 << requirement)) != 0 || !matches(requirement)) continue;
@@ -1251,599 +1102,6 @@ internal static partial class CombatRewardProbabilityEstimator
         return true;
     }
 
-    private static bool TryResolveInfluenceDistribution(
-        SearchSelectivityInput plan,
-        ProbabilitySemanticView semantic,
-        MatcherContext matcher,
-        RewardInfluenceProfile authoredProfile,
-        out IReadOnlyList<RewardInfluenceMass> distribution,
-        out string detail,
-        out string issue)
-    {
-        distribution = Array.Empty<RewardInfluenceMass>();
-        detail = string.Empty;
-        issue = string.Empty;
-
-        if (semantic.Routes.CombatReward.Kind == ResolvedCombatRewardRouteKind.NeutralNonPerturbingContinuation)
-        {
-            distribution = new[] { new RewardInfluenceMass(default, 1d, "UnpinnedNeutralRewardRoute") };
-            detail = "ResolvedRouteSemantics=NeutralNonPerturbingContinuation;latentNeowRoutesNotEnumerated";
-            return true;
-        }
-        if (semantic.Routes.CombatReward.Kind != ResolvedCombatRewardRouteKind.PinnedOpeningRoute ||
-            semantic.NormalizedQuery.OpeningRoute is not { IsValid: true } route ||
-            semantic.Routes.CombatReward.PinnedOpeningRouteKey != route.RouteRelicKey)
-        {
-            issue = "ResolvedCombatRewardRouteNotPriceable:" + semantic.Routes.CombatReward.Kind;
-            detail = "Combat Reward probability follows ResolvedRouteSemantics and does not infer a route from the legacy execution contract.";
-            return false;
-        }
-
-        RewardInfluenceProfile deterministic = default;
-        if (IsRelevantImpactRelic(route.RouteRelicKey, matcher))
-        {
-            if (!HasExplicitRewardInfluenceRelation(semantic, route.RouteRelicKey))
-            {
-                issue = "CanonicalStateInfluenceMissing:" + route.RouteRelicKey.Serialized;
-                detail = "An explicitly selected deterministic Reward-influence relic must be registered by Canonical StateInfluence.";
-                return false;
-            }
-            deterministic = deterministic.Add(route.RouteRelicKey);
-        }
-
-        if (route.RouteRelicKey != BaseGameModelKeys.Relics.NeowsBones && !IsCapsule(route.RouteRelicKey))
-        {
-            distribution = new[] { new RewardInfluenceMass(deterministic, 1d, "PinnedDirectRoute") };
-            detail = "PinnedDirectRoute:" + deterministic.Label;
-            return true;
-        }
-
-        ModelKey[] explicitBonesRelics = ExplicitBonesRelics(semantic.NumericalFilter);
-        foreach (ModelKey relic in explicitBonesRelics)
-        {
-            if (!IsRelevantImpactRelic(relic, matcher)) continue;
-            if (!HasExplicitRewardInfluenceRelation(semantic, relic))
-            {
-                issue = "CanonicalStateInfluenceMissing:" + relic.Serialized;
-                detail = "An explicitly constrained deterministic Reward-influence relic must be registered by Canonical StateInfluence.";
-                return false;
-            }
-            deterministic = deterministic.Add(relic);
-        }
-
-        ModelKey[] capsuleSources;
-        if (IsCapsule(route.RouteRelicKey))
-        {
-            capsuleSources = new[] { route.RouteRelicKey };
-        }
-        else
-        {
-            capsuleSources = explicitBonesRelics.Where(IsCapsule).Distinct(ModelKeyComparer.Instance).ToArray();
-        }
-
-        // Product route policy boundary: Bones alone does not authorize probability
-        // to speculate that an unspecified grant may itself be a Capsule or another
-        // reward-affecting relic. Explicit Capsule results are handled below.
-        if (capsuleSources.Length == 0)
-        {
-            distribution = new[] { new RewardInfluenceMass(deterministic, 1d, "PinnedRouteNoExplicitCapsule") };
-            detail = "PinnedRouteNoExplicitCapsule:" + deterministic.Label;
-            return true;
-        }
-        if (capsuleSources.Length > 2 || capsuleSources.Distinct(ModelKeyComparer.Instance).Count() != capsuleSources.Length)
-        {
-            issue = "CapsuleSourceMultiplicityUnsupported";
-            detail = "The selected opening route contains an invalid Capsule source multiplicity.";
-            return false;
-        }
-
-        // Owner policy: empty Capsule outputs do not contribute latent influences
-        // to P(C). The canonical explicit context already includes authored nested
-        // targets (including grouped targets). R still prices those targets and bag
-        // constraints separately; this must not change actual replay or Exact.
-        distribution = new[] { new RewardInfluenceMass(authoredProfile, 1d, "AuthoredCapsuleInfluencesOnly") };
-        detail = "AuthoredCapsuleInfluencesOnly:" + authoredProfile.Label + ";UnspecifiedOutputsIgnored=true";
-        return true;
-    }
-
-    internal static bool TryEstimateCapsuleBagConjunction(SearchSelectivityInput plan,
-        IReadOnlyList<ModelKey> capsuleSources, bool includeExplicitRelicSequence,
-        out double probability, out string detail, out string issue)
-    {
-        var matcher = new MatcherContext([], [], [], new Dictionary<ModelKey, int>(),
-            new Dictionary<ModelKey, int>(), new Dictionary<int, int>(), BigInteger.Zero,
-            0, false, false, false, 0, 0, 0, 0);
-        return TryBuildCapsuleInfluenceDistribution(plan, matcher, default, capsuleSources,
-            out _, out detail, out issue, out probability, includeExplicitRelicSequence);
-    }
-
-    private static bool TryBuildCapsuleInfluenceDistribution(
-        SearchSelectivityInput plan,
-        MatcherContext matcher,
-        RewardInfluenceProfile deterministic,
-        IReadOnlyList<ModelKey> capsuleSources,
-        out IReadOnlyList<RewardInfluenceMass> distribution,
-        out string detail,
-        out string issue,
-        out double acceptedMass,
-        bool includeExplicitRelicSequence = true)
-    {
-        acceptedMass = 0;
-        distribution = Array.Empty<RewardInfluenceMass>();
-        detail = string.Empty;
-        issue = string.Empty;
-
-        if (!RelicPoolCompilation.TryCompileAuthorityPoolForSelectivity(
-                plan.ProfileId,
-                plan.Authority,
-                out CompiledRelicPoolSnapshot pool,
-                out IReadOnlyDictionary<ModelKey, ushort> denseByKey,
-                out string poolIssue))
-        {
-            issue = "RuntimeRelicBagMissing:" + poolIssue;
-            detail = "Capsule projection-compatibility pricing requires exact runtime player RelicGrabBag authority.";
-            return false;
-        }
-        if (!TryBuildPlayerLanes(pool, denseByKey, out ModelKey[][] lanes, out string laneIssue))
-        {
-            issue = "RuntimeRelicLaneMissing:" + laneIssue;
-            detail = "Capsule projection-compatibility pricing could not reconstruct the runtime Common/Uncommon/Rare lanes.";
-            return false;
-        }
-
-        NeowStructuredEffectSearchCondition[] capsuleConstraints = ProbabilitySemanticProjection.From(plan).NumericalFilter.StructuredNeowEffects
-            .Where(condition => !condition.IsEmpty && NeowReplayPlan.IsCapsule(condition) &&
-                                condition.Scope == NeowStructuredEffectScope.NestedRelics &&
-                                condition.OutputKind == NeowStructuredOutputKind.Relic)
-            .ToArray();
-        var groupsBySource = new Dictionary<ModelKey, CapsuleGroup>(ModelKeyComparer.Instance);
-        foreach (ModelKey source in capsuleSources)
-        {
-            int drawCount = source == BaseGameModelKeys.Relics.LargeCapsule ? 2 : 1;
-            groupsBySource[source] = new CapsuleGroup(source, drawCount, capsuleConstraints.Where(item => item.SourceRelicKey == source).ToArray());
-        }
-        if (capsuleConstraints.Any(condition => !NeowReplayPlan.IsGroupedCapsule(condition) && !groupsBySource.ContainsKey(condition.SourceRelicKey)))
-        {
-            detail = "A nested Capsule predicate references a Capsule identity that is not explicitly present on the selected opening route.";
-            return true;
-        }
-        var sourceFilter = ProbabilitySemanticProjection.From(plan).NumericalFilter;
-        if (sourceFilter.RequireSmallCapsule && !groupsBySource.ContainsKey(BaseGameModelKeys.Relics.SmallCapsule) ||
-            sourceFilter.RequireLargeCapsule && !groupsBySource.ContainsKey(BaseGameModelKeys.Relics.LargeCapsule) ||
-            capsuleConstraints.Any(NeowReplayPlan.IsGroupedCapsule) && groupsBySource.Count != 2)
-        { detail = "RequiredCapsuleSourceAbsent"; return true; }
-
-        CapsuleGroup[][] routeGroupings;
-        if (groupsBySource.Count <= 1)
-        {
-            routeGroupings = [groupsBySource.Values.ToArray()];
-        }
-        else
-        {
-            ModelKey[] pinnedOrder = ProbabilitySemanticProjection.From(plan).NumericalFilter.RequiredBonesAcquisitionOrder
-                .Where(groupsBySource.ContainsKey)
-                .Distinct(ModelKeyComparer.Instance)
-                .ToArray();
-            routeGroupings = pinnedOrder.Length == 2
-                ? new[] { pinnedOrder.Select(key => groupsBySource[key]).ToArray() }
-                : new[]
-                {
-                    new[] { groupsBySource[BaseGameModelKeys.Relics.LargeCapsule], groupsBySource[BaseGameModelKeys.Relics.SmallCapsule] },
-                    new[] { groupsBySource[BaseGameModelKeys.Relics.SmallCapsule], groupsBySource[BaseGameModelKeys.Relics.LargeCapsule] }
-                };
-        }
-
-        int totalDraws = groupsBySource.Values.Sum(group => group.DrawCount);
-        if (totalDraws is < 0 or > 3)
-        {
-            issue = "CapsuleDrawCountUnsupported:" + totalDraws;
-            detail = "Current opening Capsule topology supports one direct Capsule or the Bones Large+Small three-draw combination.";
-            return false;
-        }
-
-        var distinguished = new HashSet<ModelKey>(ModelKeyComparer.Instance);
-        foreach (ModelKey key in RelevantImpactRelics(matcher))
-            if (plan.Authority.PlayersCount == 1 ||
-                matcher.UsesCards && (key == PrayerWheel || key == LastingCandy) ||
-                matcher.UsesPotions && key == WhiteBeastStatue || matcher.UsesGold && key == AmethystAubergine) distinguished.Add(key);
-        foreach (NeowStructuredEffectSearchCondition constraint in capsuleConstraints)
-            foreach (ModelKey key in constraint.OutputKeys.Where(key => key.IsValid)) distinguished.Add(key);
-        var capsuleFilter = ProbabilitySemanticProjection.From(plan).NumericalFilter;
-        foreach (var key in capsuleFilter.CapsuleContainedRelics.All) distinguished.Add(key);
-        if (capsuleFilter.RequireWhetstone) distinguished.Add(BaseGameModelKeys.OrdinaryRelics.Whetstone);
-        if (capsuleFilter.RequireWarPaint) distinguished.Add(BaseGameModelKeys.OrdinaryRelics.WarPaint);
-        var unmodeled = new HashSet<ModelKey>();
-        if (capsuleSources.Count > 0 && plan.Authority.PlayersCount > 1)
-        {
-            var authored = PartyInitialQuery.CapsuleEffectPremise(plan.CompiledSearch.NormalizedQuery).Values.SelectMany(k => k).ToHashSet();
-            foreach (var key in lanes.SelectMany(l => l))
-            {
-                RewardInfluenceProfile held = default;
-                bool unsupportedObtain = authored.Contains(key) &&
-                    (!RolltheSpire2.Core.Rewards.VanillaRelicRewardEffects.TryGet(plan.ProfileId, key, out var effect) ||
-                     (effect.OnObtainCapabilities & (RolltheSpire2.Core.Rewards.RelicOnObtainRewardEffects.ChangesCardRewardPool |
-                        RolltheSpire2.Core.Rewards.RelicOnObtainRewardEffects.ChangesPotionRewardPool |
-                        RolltheSpire2.Core.Rewards.RelicOnObtainRewardEffects.ChangesPotionRewardState |
-                        RolltheSpire2.Core.Rewards.RelicOnObtainRewardEffects.NestedRelicObtain |
-                        RolltheSpire2.Core.Rewards.RelicOnObtainRewardEffects.Unknown)) != 0);
-                if ((matcher.UsesCards || matcher.UsesPotions || matcher.UsesGold) &&
-                    !TryPartyHeldProfile(plan, key, matcher, ref held) || unsupportedObtain)
-                { unmodeled.Add(key); }
-            }
-        }
-        // All and structured identities need individual categories. Any/Ban and
-        // unsupported-hook sets stay aggregate sequence constraints; their size
-        // must not turn a legal three-draw observation into an arbitrary budget failure.
-        var requiredIdentities = capsuleConstraints.SelectMany(c => c.OutputKeys)
-            .Concat(capsuleFilter.CapsuleContainedRelics.All).ToHashSet();
-        if (capsuleFilter.RequireWhetstone) requiredIdentities.Add(BaseGameModelKeys.OrdinaryRelics.Whetstone);
-        if (capsuleFilter.RequireWarPaint) requiredIdentities.Add(BaseGameModelKeys.OrdinaryRelics.WarPaint);
-        if (requiredIdentities.Count > totalDraws)
-        { detail = "CapsuleRequiredIdentitiesExceedDrawCount"; return true; }
-        distinguished.IntersectWith(lanes.SelectMany(l => l));
-
-        var laneByKey = new Dictionary<ModelKey, int>(ModelKeyComparer.Instance);
-        for (int lane = 0; lane < 3; lane++)
-            foreach (ModelKey key in lanes[lane]) laneByKey[key] = lane;
-
-        var profileMass = new Dictionary<RewardInfluenceProfile, double>();
-        int acceptedScenarioCount = 0;
-        foreach ((CapsuleRarityChoice[] rolls, double rollMass, string _) in EnumerateCapsuleRarityPatterns(totalDraws))
-        {
-            CapsuleDrawPosition?[] positions = ProjectCapsulePositions(rolls, lanes.Take(3).Select(items => items.Length).ToArray());
-            foreach (ModelKey?[] assignment in EnumerateCompressedAssignments(positions, lanes, distinguished, laneByKey))
-            {
-                if (!RouteGroupingAccepts(routeGroupings, assignment) ||
-                    capsuleConstraints.Where(NeowReplayPlan.IsGroupedCapsule).Any(c => !MatchesCapsuleConstraint(assignment, c))) continue;
-                var actualKeys = assignment.Where(k => k.HasValue).Select(k => k!.Value).ToArray();
-                if (!capsuleFilter.CapsuleContainedRelics.All.All(actualKeys.Contains) ||
-                    capsuleFilter.RequireWhetstone && !actualKeys.Contains(BaseGameModelKeys.OrdinaryRelics.Whetstone) ||
-                    capsuleFilter.RequireWarPaint && !actualKeys.Contains(BaseGameModelKeys.OrdinaryRelics.WarPaint)) continue;
-                double BagMass(IReadOnlyCollection<ModelKey> extraBan, out string solveIssue)
-                {
-                    ModelKey[] bans = capsuleFilter.CapsuleContainedRelics.Ban.Concat(extraBan).Distinct().ToArray();
-                    var explicitRelics = includeExplicitRelicSequence ? capsuleFilter.RelicSequenceConditions : [];
-                    double all = SolveCompressedAssignmentBagMass(lanes, explicitRelics, positions, assignment,
-                        distinguished, out solveIssue, bans);
-                    if (double.IsNaN(all) || all <= 0 || capsuleFilter.CapsuleContainedRelics.Any.Count == 0) return all;
-                    double none = SolveCompressedAssignmentBagMass(lanes, explicitRelics, positions, assignment,
-                        distinguished, out solveIssue, bans.Concat(capsuleFilter.CapsuleContainedRelics.Any).Distinct().ToArray());
-                    return double.IsNaN(none) ? none : Math.Max(0, all - none);
-                }
-                double bagMass = BagMass([], out string solveIssue);
-                if (double.IsNaN(bagMass))
-                {
-                    issue = "CapsuleBagSolver:" + solveIssue;
-                    detail = "Capsule projection-compatibility pricing could not normalize the shared initial RelicGrabBag constraint.";
-                    return false;
-                }
-                if (bagMass <= 0d) continue;
-                if (unmodeled.Count > 0)
-                {
-                    double knownMass = BagMass(unmodeled, out solveIssue);
-                    if (double.IsNaN(knownMass)) { issue = "CapsuleBagSolver:" + solveIssue; return false; }
-                    if (bagMass - knownMass > 1e-14)
-                    { issue = "UnmodeledHeldOrAuthoredPoolChangePositiveMass"; return false; }
-                }
-                double mass = rollMass * bagMass;
-                acceptedMass += mass;
-                acceptedScenarioCount++;
-                RewardInfluenceProfile profile = deterministic;
-                foreach (ModelKey? key in assignment)
-                    if (key.HasValue && IsRelevantImpactRelic(key.Value, matcher)) profile = profile.Add(key.Value);
-                AddMass(profileMass, profile, mass);
-            }
-        }
-
-        if (acceptedMass <= 0d)
-        {
-            distribution = new[] { new RewardInfluenceMass(deterministic, 0d, "CapsuleConstraintImpossible") };
-            detail = "ExplicitCapsuleRoute;conditionalProfileMass=0;CapsuleNestedOrRelicQueueConstraintImpossible";
-            return true;
-        }
-
-        double normalizationMass = acceptedMass;
-        distribution = profileMass
-            .Select(pair => new RewardInfluenceMass(pair.Key, pair.Value / normalizationMass, "ConditionalOnSelectedCapsuleRoute"))
-            .OrderBy(item => item.Profile.Label, StringComparer.Ordinal)
-            .ToArray();
-        detail = $"ExplicitCapsuleRoute;draws={totalDraws};acceptedScenarios={acceptedScenarioCount};conditionalMass={acceptedMass:G17};profiles={string.Join(',', distribution.Select(item => item.Profile.Label + '=' + item.Mass.ToString("G8", System.Globalization.CultureInfo.InvariantCulture)))}";
-        return true;
-    }
-
-    private static IEnumerable<ModelKey?[]> EnumerateCompressedAssignments(
-        IReadOnlyList<CapsuleDrawPosition?> positions,
-        IReadOnlyList<ModelKey[]> lanes,
-        IReadOnlySet<ModelKey> distinguished,
-        IReadOnlyDictionary<ModelKey, int> laneByKey)
-    {
-        var buffer = new ModelKey?[positions.Count];
-        var used = new HashSet<ModelKey>(ModelKeyComparer.Instance);
-        foreach (ModelKey?[] result in Walk(0)) yield return result;
-
-        IEnumerable<ModelKey?[]> Walk(int index)
-        {
-            if (index == positions.Count)
-            {
-                yield return (ModelKey?[])buffer.Clone();
-                yield break;
-            }
-            if (positions[index] is not { } position)
-            {
-                buffer[index] = BaseGameModelKeys.OrdinaryRelics.Circlet;
-                foreach (ModelKey?[] result in Walk(index + 1)) yield return result;
-                buffer[index] = null;
-                yield break;
-            }
-            int lane = position.Lane;
-            ModelKey[] candidates = distinguished.Where(key => laneByKey.TryGetValue(key, out int keyLane) && keyLane == lane && !used.Contains(key)).ToArray();
-            foreach (ModelKey key in candidates)
-            {
-                buffer[index] = key;
-                used.Add(key);
-                foreach (ModelKey?[] result in Walk(index + 1)) yield return result;
-                used.Remove(key);
-            }
-
-            int distinguishedInLane = distinguished.Count(key => laneByKey.TryGetValue(key, out int keyLane) && keyLane == lane);
-            int alreadyUsedOtherSlots = 0;
-            for (int prior = 0; prior < index; prior++)
-                if (positions[prior] is { } previous && previous.Lane == lane && !buffer[prior].HasValue) alreadyUsedOtherSlots++;
-            int otherAvailable = lanes[lane].Length - distinguishedInLane - alreadyUsedOtherSlots;
-            if (otherAvailable > 0)
-            {
-                buffer[index] = null;
-                foreach (ModelKey?[] result in Walk(index + 1)) yield return result;
-            }
-            buffer[index] = null;
-        }
-    }
-
-    private static double SolveCompressedAssignmentBagMass(
-        IReadOnlyList<ModelKey[]> lanes,
-        IReadOnlyList<RelicSequenceSearchCondition> explicitRelicConditions,
-        IReadOnlyList<CapsuleDrawPosition?> positions,
-        IReadOnlyList<ModelKey?> assignment,
-        IReadOnlySet<ModelKey> distinguished,
-        out string issue,
-        IReadOnlyCollection<ModelKey>? globalBans = null)
-    {
-        issue = string.Empty;
-        globalBans ??= [];
-        for (int draw = 0; draw < positions.Count; draw++)
-            if (positions[draw] is null && globalBans.Contains(BaseGameModelKeys.OrdinaryRelics.Circlet)) return 0;
-        double probability = 1d;
-        for (int lane = 0; lane < 3; lane++)
-        {
-            var constraints = new List<FiniteSequenceProbabilitySolver.Constraint>();
-            constraints.AddRange(explicitRelicConditions
-                .Where(condition => LaneIndex(condition.Lane) == lane)
-                .Select(condition => new FiniteSequenceProbabilitySolver.Constraint(condition.RangeMode, condition.RangeValue, condition.Keys)));
-
-            ModelKey[] distinguishedLane = distinguished.Where(key => lanes[lane].Contains(key, ModelKeyComparer.Instance)).ToArray();
-            for (int draw = 0; draw < positions.Count; draw++)
-            {
-                if (positions[draw] is not { } position || position.Lane != lane) continue;
-                int ordinal = position.Ordinal;
-                ModelKeySetFilter filter = assignment[draw].HasValue
-                    ? new ModelKeySetFilter(new[] { assignment[draw]!.Value }, [], globalBans.ToArray())
-                    : new ModelKeySetFilter([], [], distinguishedLane.Concat(globalBans).Distinct().ToArray());
-                constraints.Add(new FiniteSequenceProbabilitySolver.Constraint(SearchSequenceRangeMode.ExactSlot, ordinal, filter));
-            }
-
-            if (constraints.Count == 0) continue;
-            FiniteSequenceProbabilitySolver.Item[] items = lanes[lane].Select(key => new FiniteSequenceProbabilitySolver.Item(key)).ToArray();
-            if (!FiniteSequenceProbabilitySolver.TrySolve(items, constraints, out FiniteSequenceProbabilitySolver.Result result, out issue))
-                return double.NaN;
-            probability *= result.Probability;
-            if (probability == 0d) return 0d;
-        }
-        return Math.Clamp(probability, 0d, 1d);
-    }
-
-    private static bool RouteGroupingAccepts(IReadOnlyList<CapsuleGroup[]> groupings, IReadOnlyList<ModelKey?> assignment)
-    {
-        foreach (CapsuleGroup[] grouping in groupings)
-        {
-            int offset = 0;
-            bool accepted = true;
-            foreach (CapsuleGroup group in grouping)
-            {
-                ModelKey?[] outputs = assignment.Skip(offset).Take(group.DrawCount).ToArray();
-                offset += group.DrawCount;
-                if (group.Constraints.Any(c => !MatchesCapsuleConstraint(outputs, c)))
-                {
-                    accepted = false;
-                    break;
-                }
-            }
-            if (accepted) return true;
-        }
-        return false;
-    }
-
-    private static bool MatchesCapsuleConstraint(IReadOnlyList<ModelKey?> outputs, NeowStructuredEffectSearchCondition constraint)
-    {
-        ModelKey[] actual = outputs.Where(key => key.HasValue).Select(key => key.GetValueOrDefault()).ToArray();
-        if (NeowReplayPlan.IsGroupedCapsule(constraint))
-            return outputs.Count == 3 && constraint.OutputKeys.GroupBy(k=>k).All(g=>actual.Count(k=>k==g.Key)>=g.Count());
-        if (constraint.SourceRelicKey == BaseGameModelKeys.Relics.SmallCapsule)
-        {
-            return constraint.Kind == NeowStructuredConditionKind.ExactSingle &&
-                   constraint.OutputKeys.Count == 1 &&
-                   actual.Length == 1 && actual[0] == constraint.OutputKeys[0];
-        }
-        if (constraint.SourceRelicKey == BaseGameModelKeys.Relics.LargeCapsule)
-        {
-            return constraint.Kind == NeowStructuredConditionKind.ExactUnorderedPair &&
-                   outputs.Count == 2 &&
-                   constraint.OutputKeys.GroupBy(k => k).All(g => actual.Count(k => k == g.Key) >= g.Count());
-        }
-        return false;
-    }
-
-    private static IEnumerable<(CapsuleRarityChoice[] Rolls, double Mass, string Label)> EnumerateCapsuleRarityPatterns(int drawCount)
-    {
-        CapsuleRarityChoice[] choices =
-        {
-            new(0, 0.50d, "C"),
-            new(1, 0.33d, "U"),
-            new(2, 0.17d, "R")
-        };
-        var buffer = new CapsuleRarityChoice[drawCount];
-        foreach ((CapsuleRarityChoice[] Rolls, double Mass, string Label) result in Walk(0, 1d, string.Empty)) yield return result;
-
-        IEnumerable<(CapsuleRarityChoice[] Rolls, double Mass, string Label)> Walk(int index, double mass, string label)
-        {
-            if (index == drawCount)
-            {
-                yield return ((CapsuleRarityChoice[])buffer.Clone(), mass, label);
-                yield break;
-            }
-            foreach (CapsuleRarityChoice choice in choices)
-            {
-                buffer[index] = choice;
-                foreach ((CapsuleRarityChoice[] Rolls, double Mass, string Label) result in Walk(index + 1, mass * choice.Probability, label + choice.Label))
-                    yield return result;
-            }
-        }
-    }
-
-    private static CapsuleDrawPosition?[] ProjectCapsulePositions(IReadOnlyList<CapsuleRarityChoice> rolls, int[] initialCounts)
-    {
-        int[] remaining = (int[])initialCounts.Clone();
-        int[] consumed = new int[remaining.Length];
-        var output = new CapsuleDrawPosition?[rolls.Count];
-        for (int draw = 0; draw < rolls.Count; draw++)
-        {
-            int selectedLane = -1;
-            for (int lane = rolls[draw].PreferredLane; lane < 3; lane++)
-            {
-                if (remaining[lane] <= 0) continue;
-                selectedLane = lane;
-                break;
-            }
-            if (selectedLane < 0) continue;
-            consumed[selectedLane]++;
-            remaining[selectedLane]--;
-            output[draw] = new CapsuleDrawPosition(selectedLane, consumed[selectedLane]);
-        }
-        return output;
-    }
-
-    private static bool TryBuildPlayerLanes(
-        CompiledRelicPoolSnapshot pool,
-        IReadOnlyDictionary<ModelKey, ushort> denseByKey,
-        out ModelKey[][] lanes,
-        out string issue)
-    {
-        lanes = new ModelKey[3][];
-        issue = string.Empty;
-        var keyByDense = new Dictionary<ushort, ModelKey>();
-        foreach ((ModelKey key, ushort dense) in denseByKey)
-        {
-            if (!keyByDense.TryAdd(dense, key) && keyByDense[dense] != key)
-            {
-                issue = "DenseIdentityAmbiguous:" + dense;
-                return false;
-            }
-        }
-        for (int lane = 0; lane < 3; lane++)
-        {
-            if (lane >= pool.PlayerLaneBucketIndexes.Length)
-            {
-                issue = "PlayerLaneIndexMissing:" + lane;
-                return false;
-            }
-            short bucket = pool.PlayerLaneBucketIndexes[lane];
-            if (bucket < 0 || bucket >= pool.BucketCount)
-            {
-                issue = "PlayerLaneMissing:" + lane;
-                return false;
-            }
-            int offset = pool.BucketOffsets[bucket];
-            int length = pool.BucketLengths[bucket];
-            if (offset < 0 || length < 0 || offset + length > pool.DenseRelicIds.Length)
-            {
-                issue = "PlayerLaneBoundsInvalid:" + lane;
-                return false;
-            }
-            var keys = new List<ModelKey>(length);
-            for (int index = 0; index < length; index++)
-            {
-                ushort dense = pool.DenseRelicIds[offset + index];
-                if (!keyByDense.TryGetValue(dense, out ModelKey key))
-                {
-                    issue = "DenseIdentityMissing:" + dense;
-                    return false;
-                }
-                keys.Add(key);
-            }
-            if (keys.Distinct(ModelKeyComparer.Instance).Count() != keys.Count)
-            {
-                issue = "DuplicateIdentityInPlayerLane:" + lane;
-                return false;
-            }
-            lanes[lane] = keys.ToArray();
-        }
-        return true;
-    }
-
-    private static ModelKey[] ExplicitBonesRelics(NeowSearchFilter filter)
-    {
-        return filter.RequiredBonesCombination
-            .Concat(filter.RequiredBonesAcquisitionOrder)
-            .Concat(filter.StructuredNeowEffects
-                .Where(condition => !condition.IsEmpty && condition.SourceRelicKey == BaseGameModelKeys.Relics.NeowsBones &&
-                                    condition.Scope == NeowStructuredEffectScope.BonesOfferedRelics &&
-                                    condition.OutputKind == NeowStructuredOutputKind.Relic)
-                .SelectMany(condition => condition.OutputKeys))
-            .Concat(filter.StructuredNeowEffects
-                .Where(condition => !condition.IsEmpty && IsCapsule(condition.SourceRelicKey))
-                .Select(condition => condition.SourceRelicKey))
-            .Where(key => key.IsValid && key != BaseGameModelKeys.Relics.NeowsBones)
-            .Distinct(ModelKeyComparer.Instance)
-            .ToArray();
-    }
-
-    private static IEnumerable<ModelKey> RelevantImpactRelics(MatcherContext matcher)
-    {
-        _ = matcher;
-        // Projection compatibility is stricter than predicate-local relevance: any
-        // known latent Reward modifier can make the real continuation diverge from the
-        // query-literal synthetic context, even when the current predicate does not
-        // directly observe that modifier's primary output family.
-        yield return PrayerWheel;
-        yield return WhiteBeastStatue;
-        yield return LastingCandy;
-        yield return AmethystAubergine;
-    }
-
-    private static bool IsRelevantImpactRelic(ModelKey relic, MatcherContext matcher)
-    {
-        _ = matcher;
-        return relic == PrayerWheel || relic == WhiteBeastStatue ||
-               relic == LastingCandy || relic == AmethystAubergine;
-    }
-
-    private static bool HasExplicitCapsuleRoute(ProbabilitySemanticView semantic)
-    {
-        if (semantic.NormalizedQuery.OpeningRoute is not { IsValid: true } route) return false;
-        if (IsCapsule(route.RouteRelicKey)) return true;
-        if (route.RouteRelicKey != BaseGameModelKeys.Relics.NeowsBones) return false;
-        return ExplicitBonesRelics(semantic.NumericalFilter).Any(IsCapsule);
-    }
-
-    private static bool HasExplicitRewardInfluenceRelation(ProbabilitySemanticView semantic, ModelKey relic) =>
-        semantic.Relations.Any(relation =>
-            relation.Kind == SemanticRelationKind.StateInfluence &&
-            relation.Source.Kind == SemanticFactKind.RewardInfluenceRelic &&
-            relation.Source.Key == relic &&
-            relation.Target.Kind == SemanticFactKind.CombatReward);
-
-    private static bool IsCapsule(ModelKey key) =>
-        key == BaseGameModelKeys.Relics.SmallCapsule || key == BaseGameModelKeys.Relics.LargeCapsule;
-
     private static int RarityIndex(EffectCardRarity rarity) => rarity switch
     {
         EffectCardRarity.Common => 0,
@@ -1857,14 +1115,6 @@ internal static partial class CombatRewardProbabilityEstimator
         EffectPotionRarity.Common => 0,
         EffectPotionRarity.Uncommon => 1,
         EffectPotionRarity.Rare => 2,
-        _ => -1
-    };
-
-    private static int LaneIndex(RelicSequenceKind kind) => kind switch
-    {
-        RelicSequenceKind.Common => 0,
-        RelicSequenceKind.Uncommon => 1,
-        RelicSequenceKind.Rare => 2,
         _ => -1
     };
 

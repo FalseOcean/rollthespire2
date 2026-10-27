@@ -51,237 +51,32 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         string gameVersion = "",
         string act1OverrideRaw = "random",
         object? explicitUnlockState = null,
-        IReadOnlyList<ModelKey>? orderedCharacters = null)
+        IReadOnlyList<ModelKey>? orderedCharacters = null,
+        IReadOnlyList<ModelKey>? explicitDiscoveredActs = null)
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
-        Assembly? assembly = AppDomain.CurrentDomain.GetAssemblies()
-            .FirstOrDefault(candidate => string.Equals(candidate.GetName().Name, "sts2", StringComparison.OrdinalIgnoreCase));
-        if (assembly is null)
-        {
-            return MissingWorld(profile.ProfileId, "Sts2AssemblyNotLoaded");
-        }
-
         try
         {
-            Type? modelDb = FindType(assembly, "MegaCrit.Sts2.Core.Models.ModelDb", "ModelDb");
-            if (modelDb is null)
-            {
-                return MissingWorld(profile.ProfileId, "ModelDbNotFound");
-            }
-
-            string unlockSource = "explicit-party-slot";
-            object? unlockState = explicitUnlockState ?? TryCaptureCurrentUnlockState(assembly, out unlockSource);
-            bool unlockStateExact = unlockState is not null;
-            ModelListCapture sharedEventsCapture = ReadStaticModelsWorld(modelDb,
-                "AllSharedEvents", "SharedEvents");
-            Beta109EventCatalogAuthoritySnapshot capturedEventAuthority = CaptureBeta109EventAuthority(
-                assembly,
-                unlockState,
-                sharedEventsCapture);
-            IReadOnlyList<WorldActGroupSnapshot> groups = CaptureActGroups(
-                modelDb,
-                profile.ProfileId,
-                unlockState,
-                capturedEventAuthority);
-            ModelListCapture sharedAncientsCapture = ReadSharedAncientsWorld(modelDb, unlockState);
-            ModelListCapture unlockedCharactersCapture = ReadUnlockedCharactersWorld(modelDb, unlockState);
-            // Relic catalogs are runtime-authoritative and may legitimately contain models
-            // supplied by enabled content mods. Unlike Act/Event/Encounter authority, the
-            // option-binding catalog only needs a stable ModelKey for every returned entry;
-            // assembly ownership is not part of the identity contract.
-            ModelListCapture relicCatalogCapture = ReadStaticRuntimeModelKeysWorld(
-                modelDb,
-                "AllRelics",
-                "Relics");
-            Beta109StaticAuthorityCapture? modernStaticAuthority = RuntimeProfilePolicies.IsModernCore(profile.ProfileId)
-                ? CaptureBeta109StaticAuthority(
-                    profile.ProfileId,
-                    assembly,
-                    modelDb,
-                    unlockState,
-                    character,
-                    playersCount,
-                    playerSlotIndex,
-                    predictionGameMode,
-                    predictionGameModeAuthority,
-                    act1OverrideRaw, orderedCharacters)
-                : null;
-            IReadOnlyList<ModelKey> fallbackRelics = (effects?.SharedRelicPoolSource ?? Array.Empty<NeowEffectRelicSnapshot>())
-                .Concat(effects?.CharacterRelicPoolSource ?? Array.Empty<NeowEffectRelicSnapshot>())
-                .Select(relic => relic.RelicKey)
-                .Where(key => key.IsValid)
-                .Distinct(ModelKeyComparer.Instance)
-                .ToArray();
-            IReadOnlyList<ModelKey> ancientOptionRelicCatalog = relicCatalogCapture.Keys.Count > 0
-                ? relicCatalogCapture.Keys
-                : fallbackRelics;
-
-            IReadOnlyList<ModelKey> sharedEvents = modernStaticAuthority?.SharedEvents ?? sharedEventsCapture.Keys;
-            IReadOnlyList<ModelKey> sharedAncients = modernStaticAuthority?.UnlockedSharedAncients ?? sharedAncientsCapture.Keys;
-            IReadOnlyList<ModelKey> unlockedCharacters = unlockedCharactersCapture.Keys;
-            bool unlockedCharactersExact = unlockedCharactersCapture.Exact;
-            bool ancientOptionRelicCatalogExact = relicCatalogCapture.Exact && relicCatalogCapture.Keys.Count > 0;
-
-            bool generationInputsPresent = groups.Count > 0 &&
-                                           groups.All(group => group.Acts.Count > 0) &&
-                                           groups.SelectMany(group => group.Acts).All(act =>
-                                               act.Events.Count + sharedEvents.Count > 0 &&
-                                               act.WeakEncounters.Count > 0 &&
-                                               act.RegularEncounters.Count > 0 &&
-                                               act.EliteEncounters.Count > 0 &&
-                                               act.Bosses.Count > 0 &&
-                                               act.Ancients.Count > 0);
-            bool allActInputsExact = groups.SelectMany(group => group.Acts)
-                .All(act => act.GenerationInputsExact);
-            bool legacyCatalogOrderExact = profile.ProfileId == RuntimeProfileId.Stable107 &&
-                                           unlockStateExact &&
-                                           generationInputsPresent &&
-                                           allActInputsExact &&
-                                           sharedEventsCapture.Exact &&
-                                           sharedAncientsCapture.Exact &&
-                                           sharedAncients.Count > 0;
-            bool modernStaticFoundationExact = modernStaticAuthority is not null &&
-                                               modernStaticAuthority.ActSelectionAuthorityExact &&
-                                               modernStaticAuthority.ModeFactsExact &&
-                                               modernStaticAuthority.OrderedActs.Count > 0 &&
-                                               modernStaticAuthority.OrderedActs.All(act => act.HasExactGenerationInputs) &&
-                                               modernStaticAuthority.SharedEventCatalogExact &&
-                                               modernStaticAuthority.AllSharedAncientCatalogExact &&
-                                               modernStaticAuthority.UnlockedSharedAncientCatalogExact &&
-                                               modernStaticAuthority.UnlockFactsExact &&
-                                               modernStaticAuthority.RelicInitializationExact &&
-                                               modernStaticAuthority.IsVanilla;
-            bool catalogOrderExact = RuntimeProfilePolicies.IsModernCore(profile.ProfileId)
-                ? modernStaticFoundationExact
-                : legacyCatalogOrderExact;
-            bool relicSourceExact = RuntimeProfilePolicies.IsModernCore(profile.ProfileId)
-                ? modernStaticAuthority?.RelicInitializationExact == true
-                : effects?.HasExactRelicBagSourcePools == true;
-            bool hasCatalog = RuntimeProfilePolicies.IsModernCore(profile.ProfileId)
-                ? modernStaticAuthority?.OrderedActs.Count > 0
-                : groups.Count > 0 && groups.All(group => group.Acts.Count > 0);
-            SourceAuthority authority = hasCatalog && catalogOrderExact && relicSourceExact
-                ? SourceAuthority.OfficialRuntimeExact
-                : SourceAuthority.Incomplete;
-            SnapshotCompleteness completeness = hasCatalog && relicSourceExact
-                ? SnapshotCompleteness.Complete
-                : hasCatalog ? SnapshotCompleteness.Partial : SnapshotCompleteness.Missing;
-
-            IEnumerable<string> descriptors = groups.SelectMany(group => group.Acts.SelectMany(DescribeAct))
-                .Concat(sharedEvents.Select(key => "shared-event:" + key.Serialized))
-                .Concat(capturedEventAuthority.EpochsInFilterOrder.Select(epoch =>
-                    "event-epoch:" + epoch.EpochId + ":" + epoch.IsRevealed + ":" +
-                    epoch.MembershipExact + ":" + epoch.RevealFactExact + ":" +
-                    string.Join(",", epoch.OrderedMemberKeys.Select(key => key.Serialized))))
-                .Concat(new[]
-                {
-                    "event-shared-order-exact:" + capturedEventAuthority.SharedRawOrderExact,
-                    "event-filter-order-exact:" + capturedEventAuthority.EpochFilterOrderExact,
-                    "event-authority-evidence:" + capturedEventAuthority.EvidenceCode
-                })
-                .Concat(sharedAncients.Select(key => "shared-ancient:" + key.Serialized))
-                .Concat(unlockedCharacters.Select(key => "character:" + key.Serialized))
-                .Concat(new[] { "characters-exact:" + unlockedCharactersExact })
-                .Concat(ancientOptionRelicCatalog.Select(key => "option-relic:" + key.Serialized))
-                .Concat(new[] { "option-relic-catalog-exact:" + ancientOptionRelicCatalogExact })
-                .Concat(modernStaticAuthority is null
-                    ? Array.Empty<string>()
-                    : new[]
-                    {
-                        ModernWorldEvidencePrefix(profile.ProfileId, "static-authority:") + modernStaticAuthority.DiagnosticCode,
-                        ModernWorldEvidencePrefix(profile.ProfileId, "act-selection-exact:") + modernStaticAuthority.ActSelectionAuthorityExact,
-                        ModernWorldEvidencePrefix(profile.ProfileId, "relic-init-exact:") + modernStaticAuthority.RelicInitializationExact,
-                        ModernWorldEvidencePrefix(profile.ProfileId, "relic-shop-eligibility-exact:") + modernStaticAuthority.RelicShopEligibilityAuthorityExact
-                    });
-            string catalogFingerprint = Fingerprint("world-catalog-v2", descriptors);
-            string snapshotFingerprint = Fingerprint("world-authority-v2", new[]
-            {
-                profile.ProfileId.ToString(),
-                character.CharacterKey.Serialized,
-                catalogFingerprint,
-                effects?.RelicBagFingerprint ?? "missing-relic-sources",
-                unlockStateExact.ToString(),
-                unlockSource,
-                catalogOrderExact.ToString(),
-                relicSourceExact.ToString(),
-                completeness.ToString()
-            });
-
-            Beta109WorldGenerationSnapshot? beta109 = RuntimeProfilePolicies.IsModernCore(profile.ProfileId)
-                ? BuildBeta109WorldGenerationSnapshot(
-                    profile,
-                    rawSeed,
-                    character,
-                    ascension,
-                    playersCount,
-                    playerSlotIndex,
-                    noRunModifiers,
-                    modernStaticAuthority!,
-                    effects,
-                    ancientOptionRelicCatalog,
-                    ancientOptionRelicCatalogExact,
-                    unlockedCharacters,
-                    unlockedCharactersExact,
-                    unlockStateExact,
-                    unlockSource,
-                    catalogFingerprint,
-                    gameVersion)
-                : null;
-            if (beta109 is not null)
-            {
-                catalogFingerprint = beta109.CatalogFingerprint;
-                snapshotFingerprint = beta109.SnapshotFingerprint;
-            }
-
-            string captureDiagnostic = RuntimeProfilePolicies.IsModernCore(profile.ProfileId)
-                ? beta109?.CaptureDiagnosticCode ?? (profile.ProfileId switch
-                {
-                    RuntimeProfileId.Beta111 => "Beta111WorldSnapshotMissing",
-                    RuntimeProfileId.Beta110 => "Beta110WorldSnapshotMissing",
-                    _ => "Beta109HistoricalWorldSnapshotMissing"
-                })
-                : !unlockStateExact
-                    ? "Stable107WorldUnlockStateUnavailable:" + unlockSource
-                    : !catalogOrderExact
-                        ? "Stable107WorldGenerationInputsIncompleteOrNonVanilla"
-                        : string.Empty;
-
-            return new WorldAuthoritySnapshot(
-                profile.ProfileId,
-                groups,
-                sharedEvents,
-                sharedAncients,
-                effects?.SharedRelicPoolSource,
-                effects?.CharacterRelicPoolSource,
-                unlockedCharacters,
-                unlockedCharactersExact,
-                ancientOptionRelicCatalog,
-                ancientOptionRelicCatalogExact,
-                catalogOrderExact,
-                relicSourceExact,
-                authority,
-                completeness,
-                catalogFingerprint,
-                snapshotFingerprint,
-                DateTimeOffset.UtcNow,
-                captureDiagnostic,
-                beta109)
-            {
-                EventAuthority = beta109?.EventAuthority ?? capturedEventAuthority,
-                EncounterNumberOfRuns = unlockState is null ? null : ReadProperty(unlockState, "NumberOfRuns") as int?
-            };
+            var observed = ObserveWorld(profile, character, playersCount, playerSlotIndex,
+                predictionGameMode, predictionGameModeAuthority, explicitUnlockState, orderedCharacters,
+                explicitDiscoveredActs, new NativeObservationSchedule(), act1OverrideRaw).GetAwaiter().GetResult();
+            return DeriveWorld(profile, rawSeed, character, ascension, playersCount, playerSlotIndex,
+                noRunModifiers, effects, predictionGameMode, predictionGameModeAuthority, gameVersion, observed);
         }
         catch (Exception ex)
         {
+            Diagnostics.RuntimeIssueLedger.Current.Record(ex, "WorldReflectionCaptureFailed",
+                nameof(ReflectionNeowEffectSnapshotAdapter), "WorldCapture", "issues.capture_failed",
+                correlationId: $"profile={profile.ProfileId};character={character.CharacterKey.Serialized};slot={playerSlotIndex}");
             return MissingWorld(profile.ProfileId, "WorldReflectionCaptureFailed:" + ex.GetType().Name);
         }
     }
 
-    private static IReadOnlyList<WorldActGroupSnapshot> CaptureActGroups(
+    private static async Task<IReadOnlyList<WorldActGroupSnapshot>> ObserveActGroups(
         Type modelDb,
         RuntimeProfileId profileId,
         object? unlockState,
-        Beta109EventCatalogAuthoritySnapshot eventAuthority)
+        Beta109EventCatalogAuthoritySnapshot eventAuthority, NativeObservationSchedule schedule)
     {
         object? source = ReadStaticMemberWorld(modelDb, "ActsByIndex") ??
                          ReadStaticMemberWorld(modelDb, "Acts") ??
@@ -324,11 +119,14 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         var output = new List<WorldActGroupSnapshot>();
         foreach ((int act, List<object> models) in groups.OrderBy(group => group.Act))
         {
-            WorldActSnapshot[] acts = models
-                .Select(model => CaptureActWorld(model, act, profileId, unlockState, eventAuthority))
-                .Where(snapshot => snapshot is not null)
-                .Cast<WorldActSnapshot>()
-                .ToArray();
+            var observedActs = new List<WorldActSnapshot>();
+            foreach (object model in models)
+            {
+                await schedule.Checkpoint("LegacyActInputs:" + act).ConfigureAwait(false);
+                var captured = CaptureActWorld(model, act, profileId, unlockState, eventAuthority);
+                if (captured is not null) observedActs.Add(captured);
+            }
+            WorldActSnapshot[] acts = observedActs.ToArray();
             if (profileId == RuntimeProfileId.Stable107)
             {
                 acts = ApplyKnownActOrderWorld(acts, act);
@@ -614,8 +412,9 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             return type.GetProperty(name, PublicStatic | BindingFlags.NonPublic)?.GetValue(null) ??
                    type.GetField(name, PublicStatic | BindingFlags.NonPublic)?.GetValue(null);
         }
-        catch
+        catch (Exception ex)
         {
+            RecordCaptureFailure(ex, type.FullName + "." + name);
             return null;
         }
     }
@@ -711,9 +510,9 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         Type type = model.GetType();
         if (string.Equals(type.Name, "ModelId", StringComparison.Ordinal))
         {
-            return string.Equals(type.Assembly.GetName().Name, "sts2", StringComparison.OrdinalIgnoreCase);
+            return string.Equals(RuntimeAssemblyName(type), "sts2", StringComparison.OrdinalIgnoreCase);
         }
-        return string.Equals(type.Assembly.GetName().Name, "sts2", StringComparison.OrdinalIgnoreCase);
+        return string.Equals(RuntimeAssemblyName(type), "sts2", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string NormalizeTokenWorld(string value) =>
@@ -755,7 +554,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         bool oldSeed = !string.IsNullOrWhiteSpace(rawSeed) &&
                        rawSeed.StartsWith("old", StringComparison.OrdinalIgnoreCase);
         string canonicalSeed = string.Empty;
-        bool canonical = !oldSeed && profile.TryCanonicalizeSeed(rawSeed, out canonicalSeed, out _);
+        bool canonical = !oldSeed && ProfileSeedRules.TryCanonicalizePredictionSeed(profile, rawSeed, out canonicalSeed, out _);
         ulong actSelectionRoot = oldSeed
             ? XxHash64.HashUtf8(rawSeed, 0UL)
             : canonical ? profile.ComputeRootSeed(canonicalSeed) : 0UL;
@@ -1037,6 +836,6 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         null,
         issue);
 
-    private sealed record ModelListCapture(IReadOnlyList<ModelKey> Keys, bool Exact);
+    internal sealed record ModelListCapture(IReadOnlyList<ModelKey> Keys, bool Exact);
     private sealed record EncounterListCapture(IReadOnlyList<WorldEncounterSnapshot> Items, bool Exact);
 }

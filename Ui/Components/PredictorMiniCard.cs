@@ -47,7 +47,7 @@ internal sealed partial class PredictorMiniCard : PanelContainer
         SizeFlagsVertical = Control.SizeFlags.ShrinkBegin;
         MouseFilter = MouseFilterEnum.Stop;
         TooltipText = string.Empty;
-        Ui1Theme.ApplyPanel(this, Ui1SurfaceRole.Input, 3f, 1, 5f);
+        MainPanelTheme.ApplyPanel(this, Ui1SurfaceRole.Input, 3f, 1, 5f);
 
         var column = new VBoxContainer
         {
@@ -57,7 +57,7 @@ internal sealed partial class PredictorMiniCard : PanelContainer
         };
         column.AddThemeConstantOverride("separation", InnerGap);
 
-        _title = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta, wrap: false);
+        _title = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta, wrap: false);
         _title.MouseFilter = MouseFilterEnum.Ignore;
         _title.HorizontalAlignment = HorizontalAlignment.Center;
         _title.VerticalAlignment = VerticalAlignment.Center;
@@ -82,7 +82,7 @@ internal sealed partial class PredictorMiniCard : PanelContainer
             StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered
         };
         _artwork.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
-        _missing = Ui1Theme.Label("?", Ui1TextRole.Muted);
+        _missing = MainPanelTheme.Label("?", Ui1TextRole.Muted);
         _missing.MouseFilter = MouseFilterEnum.Ignore;
         _missing.HorizontalAlignment = HorizontalAlignment.Center;
         _missing.VerticalAlignment = VerticalAlignment.Center;

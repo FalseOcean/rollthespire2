@@ -92,5 +92,8 @@ public sealed class SeedPredictionDocument
         request.Authority.ResolutionStatus,
         request.Authority.IsVanilla,
         request.Authority.SourceModId,
-        request.Authority.SourceAssembly);
+        request.Authority.SourceAssembly)
+    {
+        SupportScope = request.Authority.SupportScope
+    };
 }

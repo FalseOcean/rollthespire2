@@ -25,7 +25,7 @@ internal sealed partial class Rt2TopLevelSubmenu : NSubmenu
 
     public event Action? TopLevelClosed;
 
-    public void Initialize(ModRuntimeSnapshot snapshot)
+    public void Initialize(ModRuntimeSnapshot snapshot, MenuWorkspaceEntryInputs? prepared = null)
     {
         if (_initialized)
         {
@@ -42,11 +42,13 @@ internal sealed partial class Rt2TopLevelSubmenu : NSubmenu
         {
             Visible = false
         };
-        _shell.Initialize(snapshot);
+        _shell.InitializeWithPersistence(snapshot, OS.GetUserDataDir(), prepared);
         AddChild(_shell);
 
         _backPointer = _shell.CloseButton;
     }
+
+    internal void ApplyPreparedEntry(MenuWorkspaceEntryInputs? prepared) => _shell?.ApplyPreparedEntry(prepared);
 
     public override void _Ready()
     {

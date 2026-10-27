@@ -9,13 +9,14 @@ internal sealed partial class WorldFamily
     {
         private readonly FamilyCpuExecution _cpu;
         internal PartyInitial(ExactSearchExecutionRequest request)
-        { _cpu = new(request, FamilyId, "W.World.PartyInitial.Cpu.v1", workers: request.WorkerCount, numericalRoots: true); }
+        { _cpu = new(request, FamilyId, "W.World.PartyInitial.Cpu.v1", workers: FamilyCpuExecution.ConfiguredWorkers(request), numericalRoots: true); }
         private bool Matches(ulong root)
         {
             // Conservative pass-through: shared W is reconstructed once at Production Exact.
             // No SP World fast plan is substituted for uncaptured MP physical inputs.
             return true;
         }
+        GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => GpuNumericRequirements.None;
         public string FamilyId => "W.World";
         public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId, FamilyCpuExecution.Capacity, [], "PartyInitialCostUncalibrated");
         public FamilySurvivalProjection Survival => FamilySurvivalProjection.Unresolved(FamilyId, "PartyCorrelationUnknown");
@@ -23,7 +24,7 @@ internal sealed partial class WorldFamily
         public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compact) => _cpu.Condition(compact);
         IEnumerable<IFamilyInvocation> IFamilyInvocation.CpuRealizations => [this];
         public ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow window, FamilyCandidateSet input, CancellationToken token) =>
-            new(_cpu.Execute(window, input, token, Matches));
+            new(_cpu.Execute(window, input, token, Matches,context));
         public FamilyPerformanceObservation CapturePerformanceObservation() => _cpu.Observation();
         public FamilyLivePerformanceSnapshot? CaptureLivePerformanceSnapshot() => _cpu.Live();
         public ValueTask DisposeAsync(FamilyExecutionContext context) { _cpu.WriteSummary(); return ValueTask.CompletedTask; }

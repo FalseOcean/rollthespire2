@@ -18,42 +18,71 @@ internal sealed class EventResultFamilyPlan
     internal EventResultSearchCondition[] Conditions { get; }
     internal Beta111EventResultAuthority Authority { get; }
     internal int PlayerSlot { get; }
+    internal bool NumericalSupported { get; }
     internal bool GpuSupported { get; }
+    internal GpuNumericalVariant NumericalVariant { get; }
+    internal GpuNumericRequirements GpuNumericRequirements => GpuSupported
+        ? GpuIntegerNumerics.Requirements(NumericalVariant) : GpuNumericRequirements.None;
+    internal string GpuPreparationFailureDetail { get; } = "";
     internal uint[][] Buffers { get; }
     internal FamilySurvivalProjection Survival { get; }
     internal bool HasMorphic => _morphic.Length > 0;
     internal bool HasNewWhitelist => Conditions.Any(c => c.Kind > EventResultConditionKind.MorphicGroveGroupInitialBasicsContains);
     private readonly MorphicGroveContainsPlan?[] _morphic;
     private readonly EventResultSearchCondition[] _ordinary;
-    internal EventResultFamilyPlan(ExactSearchExecutionRequest request)
+    private readonly EventResultNumericPredicate.Compiled _ordinaryNumeric;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<EventResultConditionKind, byte> _reportedUnresolved = new();
+    internal EventResultFamilyPlan(ExactSearchExecutionRequest request, bool prepareGpu = true,
+        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
+        NumericalVariant = numericalVariant;
         Conditions = request.Evaluation.EventResultConditions.Distinct().ToArray();
         _ordinary = Conditions.Where(c => !EventResultTransformSemantics.IsTransform(c.Kind)).ToArray();
         var morphic = Conditions.Except(_ordinary).ToArray();
         foreach (var c in morphic) MorphicGrovePredictor.ValidateAuthority(request.Detection, request.Authority, c.MorphicGroveScenario!);
         _morphic = morphic.Select(MorphicGroveContainsPlan.Compile).ToArray();
         Authority = Beta111EventResultAuthority.From(request.Authority);
+        _ordinaryNumeric = new(_ordinary, Authority);
         PlayerSlot = request.Authority.PlayerSlotIndex;
-        GpuSupported = Authority.IsBeta111 && (_ordinary.Length == 0 || Authority.StaticCatalogAuthorityExact) &&
+        bool numericalSupported = Authority.IsBeta111 && (_ordinary.Length == 0 || Authority.StaticCatalogAuthorityExact) &&
             PlayerSlot >= 0 && PlayerSlot < request.Authority.PlayersCount &&
             (!HasMorphic || _morphic.All(p => p is not null)) &&
             Conditions.All(c => Enum.IsDefined(c.Kind)) &&
             (!Conditions.Any(c => c.Kind == EventResultConditionKind.ColorfulPhilosophersOfferedColor) ||
              Authority.ColorfulPoolAuthorityExact && Authority.OwnerCharacterKey.IsValid);
-        var meta = EventResultGpuPacking.PackForFamily(Conditions, Authority, PlayerSlot, out var colors);
-        Buffers = [meta, colors];
-        var model = SearchSelectivityInput.From(request);
-        var estimate = EventResultProbabilityEstimator.EstimateBlock(model, Conditions, out string issue);
-        Survival = GpuSupported && estimate is { IsPriced: true, Probability: { } p }
-            ? FamilySurvivalProjection.Resolved("E.EventResult", p, estimate.EvidenceCode)
-            : FamilySurvivalProjection.Unresolved("E.EventResult", "EventResultJointModelUnavailable:" + issue);
+        NumericalSupported = numericalSupported;
+        Buffers = [];
+        if (prepareGpu && numericalSupported)
+        {
+            try
+            {
+                var meta = EventResultGpuPacking.PackForFamily(Conditions, Authority, PlayerSlot, out var colors);
+                Buffers = [meta, colors];
+                GpuSupported = true;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                GpuPreparationFailureDetail = ex.ToString();
+                RolltheSpire2.Bootstrap.RuntimeLog.TryBackgroundWarning("eventResultGpuPreparationFailed=true;selected=CpuEventLocal;exceptionJson=" + RolltheSpire2.Bootstrap.RuntimeLog.SafeJson(ex.ToString()));
+            }
+        }
+        Survival = FamilyAuxiliaryEvidence.Read("E.EventResult", "InitialSurvival", () =>
+        {
+            var model = SearchSelectivityInput.From(request);
+            var estimate = EventResultProbabilityEstimator.EstimateBlock(model, Conditions, out string issue);
+            return numericalSupported && estimate is { IsPriced: true, Probability: { } p }
+                ? FamilySurvivalProjection.Resolved("E.EventResult", p, estimate.EvidenceCode)
+                : FamilySurvivalProjection.Unresolved("E.EventResult", "EventResultJointModelUnavailable:" + issue);
+        }, FamilySurvivalProjection.Unresolved("E.EventResult", "AuxiliarySurvivalFailed"), request.SnapshotFingerprint);
     }
     internal bool Matches(ulong root)
     {
-        if (!HasMorphic) return GpuSupported
-            ? !EventResultNumericPredicate.RejectsEventResultForFamily(root, Conditions, Authority, PlayerSlot) : Reference(root);
+        if (!HasMorphic) return NumericalSupported
+            ? !EventResultNumericPredicate.RejectsEventResultForFamily(root, _ordinaryNumeric, PlayerSlot) : Reference(root);
         foreach (var plan in _morphic) if (plan is not null && !plan.Matches(root)) return false;
-        return _ordinary.Length == 0 || !EventResultNumericPredicate.RejectsEventResultForFamily(root, _ordinary, Authority, PlayerSlot);
+        return _ordinary.Length == 0 || (NumericalSupported
+            ? !EventResultNumericPredicate.RejectsEventResultForFamily(root, _ordinaryNumeric, PlayerSlot) : Reference(root));
     }
     internal bool Reference(ulong root)
     {
@@ -95,7 +124,14 @@ internal sealed class EventResultFamilyPlan
                 EventResultConditionKind.ColorfulPhilosophersOfferedColor => (p.ColorfulPrecision, p.ColorfulOfferedColors.Contains(c.TargetKey)),
                 _ => throw new InvalidOperationException("E.UnknownPredicate")
             };
-            if (precision != PredictionPrecision.Exact) throw new InvalidOperationException("E.ReferenceAuthorityUnavailable:" + p.EvidenceCode);
+            if (precision != PredictionPrecision.Exact)
+            {
+                if (_reportedUnresolved.TryAdd(c.Kind, 0))
+                    RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.RecordDegradation(
+                        "EventResultFilterIncomplete", nameof(EventResultFamilyPlan), "Filter." + c.Kind,
+                        "issues.filter_incomplete", $"condition={c.Kind};cause=E.ReferenceAuthorityUnavailable:{p.EvidenceCode};retained=true;filterDecision=Unknown;matchClaimed=false");
+                continue;
+            }
             if (!pass) return false;
         }
         return true;
@@ -104,6 +140,18 @@ internal sealed class EventResultFamilyPlan
     {
         string donor = FamilyGpuComputeUtility.LoadEmbeddedShader("Beta111GpuEventResult.comp.glsl");
         string numerical = donor[donor.IndexOf("uint64_t s0;", StringComparison.Ordinal)..donor.IndexOf("void append_output", StringComparison.Ordinal)];
-        return FamilyGpuComputeUtility.LoadEmbeddedShader("EventResultFamily.comp.glsl").Replace("/*__DONOR__*/", numerical, StringComparison.Ordinal);
+        string source = FamilyGpuComputeUtility.LoadEmbeddedShader("EventResultFamily.comp.glsl").Replace("/*__DONOR__*/", numerical, StringComparison.Ordinal);
+        if (NumericalVariant == GpuNumericalVariant.NativeFloat64) return source;
+        if (NumericalVariant != GpuNumericalVariant.IntegerRne) throw new InvalidOperationException("E.UnknownGpuNumericalVariant");
+        source = GpuIntegerNumerics.NormalizeLines(source);
+        const string native = "uint next_int(uint bound) {\n" +
+            "    const double unit = 1.1102230246251565e-16lf;\n" +
+            "    double unit_sample = double(next_u64() >> 11u) * unit;\n" +
+            "    return uint(unit_sample * double(bound));\n}";
+        string integer = GpuIntegerNumerics.NextIntSource + "\nuint next_int(uint bound) {\n" +
+            "    uint64_t draw = next_u64();\n" +
+            "    return rt2_next_int_rne_raw32(uint(draw), uint(draw >> 32u), bound);\n}";
+        source = GpuIntegerNumerics.ReplaceUnique(source, native, integer, "E");
+        return GpuIntegerNumerics.RequireNoFloat64(GpuIntegerNumerics.RemoveFloat64Extension(source, "E"), "E");
     }
 }

@@ -62,6 +62,8 @@ internal sealed record SearchExactTimingEvidence(
     string Source,
     DateTimeOffset LastObservedAtUtc)
 {
+    // Empty identifies the pre-optimization implementation retained in v1 stores.
+    public string ImplementationRevision { get; init; } = string.Empty;
     public bool Usable => SearchSampleCount > 0 && ExactAttempts > 0 &&
                           ExactAggregateWorkMs > 0d && double.IsFinite(ExactAggregateWorkMs) &&
                           AverageExactMsPerAttempt > 0d && double.IsFinite(AverageExactMsPerAttempt);

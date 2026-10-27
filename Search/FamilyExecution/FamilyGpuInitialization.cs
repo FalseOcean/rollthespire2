@@ -10,8 +10,10 @@ internal sealed record FamilyGpuInitializationFailure(
 internal sealed record FamilyGpuInitializationSnapshot(
     long Revision, string EnvironmentKey, bool MainDeviceAvailable,
     FamilyGpuInitializationState State, long Attempt, int ActiveOwners,
-    DateTimeOffset? AttemptedUtc, FamilyGpuInitializationFailure? LastFailure)
+    DateTimeOffset? AttemptedUtc, FamilyGpuInitializationFailure? LastFailure,
+    string RenderingBackend = "Unknown")
 {
+    internal VulkanNumericCapabilitySnapshot? VulkanCapabilities { get; init; }
     public string Status => State.ToString();
     public string Stage => State switch
     {
@@ -22,11 +24,25 @@ internal sealed record FamilyGpuInitializationSnapshot(
     };
     public bool GpuEligible => MainDeviceAvailable && State != FamilyGpuInitializationState.Failed;
     public bool CanRetry => MainDeviceAvailable && ActiveOwners == 0;
+    // Backend language boundary, not a GPU-model blacklist or a successful
+    // capability probe. Godot 4.5 translates Metal shaders through MSL, whose
+    // double type is unsupported. A queried Vulkan physical-device negative
+    // selects the compatible body; positive/unknown remain an unverified attempt.
+    // https://developer.apple.com/metal/Metal-Shading-Language-Specification.pdf
+    // Godot 4.5 thirdparty/spirv-cross/spirv_msl.cpp: SPIRType::Double.
+    public bool CanAttemptFloat64 => !string.Equals(RenderingBackend, "metal", StringComparison.OrdinalIgnoreCase) &&
+        VulkanCapabilities?.ShaderFloat64 != false;
+    public string Float64Support => string.Equals(RenderingBackend, "metal", StringComparison.OrdinalIgnoreCase)
+        ? "KnownUnsupported" : VulkanCapabilities?.ShaderFloat64 == false ? "ObservedDeviceUnsupported" : "Unverified";
+    public string Float64Reason => string.Equals(RenderingBackend, "metal", StringComparison.OrdinalIgnoreCase)
+        ? "MetalMslDoubleUnsupported" : VulkanCapabilities?.ShaderFloat64 == false
+        ? "ObservedVulkanPhysicalDeviceFloat64Unavailable" : VulkanCapabilities?.Reason ?? "NotVerified";
 }
 
 /// <summary>
-/// Process-local evidence about Local RenderingDevice creation only. Shader,
-/// dispatch, readback and resource-release failures never change this verdict.
+/// Process-local Local RenderingDevice creation evidence and separately captured
+/// backend identity. Shader, dispatch, readback and resource-release failures
+/// never change the creation verdict.
 /// Nothing here is persisted as a device ban or changes returned-result authority.
 /// </summary>
 internal sealed class FamilyGpuInitialization
@@ -38,13 +54,28 @@ internal sealed class FamilyGpuInitialization
 
     internal FamilyGpuInitializationSnapshot Capture() { lock (_gate) return _snapshot; }
 
-    internal void ObserveEnvironment(string environmentKey, bool mainDeviceAvailable)
+    internal bool ObserveVulkanCapabilities(VulkanNumericCapabilitySnapshot evidence)
     {
         lock (_gate)
         {
-            if (_snapshot.EnvironmentKey == environmentKey && _snapshot.MainDeviceAvailable == mainDeviceAvailable) return;
+            if (_snapshot.EnvironmentKey != evidence.EnvironmentKey ||
+                !string.Equals(_snapshot.RenderingBackend, "vulkan", StringComparison.OrdinalIgnoreCase)) return false;
+            // Main and local RD may choose different physical GPUs. A negative
+            // main observation selects the compatible body conservatively;
+            // positive/unknown observations never certify local execution.
+            _snapshot = _snapshot with { Revision = _snapshot.Revision + 1, VulkanCapabilities = evidence };
+            return true;
+        }
+    }
+
+    internal void ObserveEnvironment(string environmentKey, bool mainDeviceAvailable, string renderingBackend = "Unknown")
+    {
+        lock (_gate)
+        {
+            if (_snapshot.EnvironmentKey == environmentKey && _snapshot.MainDeviceAvailable == mainDeviceAvailable &&
+                _snapshot.RenderingBackend == renderingBackend) return;
             _snapshot = new(_snapshot.Revision + 1, environmentKey, mainDeviceAvailable,
-                FamilyGpuInitializationState.Unverified, ++_nextAttempt, _snapshot.ActiveOwners, null, null);
+                FamilyGpuInitializationState.Unverified, ++_nextAttempt, _snapshot.ActiveOwners, null, null, renderingBackend);
         }
     }
 

@@ -17,12 +17,12 @@ internal sealed partial class AscensionStepper : HBoxContainer
     {
         AddThemeConstantOverride("separation", 5);
         _decrement = new Button { Text = "−", CustomMinimumSize = new Vector2(34, 34) };
-        _value = Ui1Theme.Label("A0", Ui1TextRole.CardTitle);
+        _value = MainPanelTheme.Label("A0", Ui1TextRole.CardTitle);
         _value.CustomMinimumSize = new Vector2(52, 34);
         _value.HorizontalAlignment = HorizontalAlignment.Center;
         _increment = new Button { Text = "+", CustomMinimumSize = new Vector2(34, 34) };
-        Ui1Theme.ApplyButton(_decrement, Ui1ButtonRole.Secondary);
-        Ui1Theme.ApplyButton(_increment, Ui1ButtonRole.Secondary);
+        MainPanelTheme.ApplyButton(_decrement, Ui1ButtonRole.Secondary);
+        MainPanelTheme.ApplyButton(_increment, Ui1ButtonRole.Secondary);
         _decrement.Pressed += () => SetValue(_current - 1, notify: true);
         _increment.Pressed += () => SetValue(_current + 1, notify: true);
         AddChild(_decrement);

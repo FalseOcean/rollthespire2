@@ -6,7 +6,7 @@ using RolltheSpire2.Core.Rng;
 
 namespace RolltheSpire2.Core.PredictorRuntime;
 
-// Detached values shared with the Crystal Sphere donor. These are copied
+// Detached values shared by route settlement and local Crystal simulation. These are copied
 // values, never wrappers around a game Player/RunState or Search conditions.
 internal sealed record PredictorContext(
     string Seed, string GameVersion, ModelKey Character, int Ascension,
@@ -25,6 +25,8 @@ internal sealed record PredictorContext(
     public int? AccountWongoPoints { get; init; }
     // Crystal-only live snapshot policy; never inferred for route/seed callers.
     public PredictorCrystalContext? Crystal { get; init; }
+    public PredictorOperationContext? Operation { get; init; }
+    public PredictorLiveContext? Live { get; init; }
     internal bool HasRunModifier(string entry) => Modifiers.Any(m => m.Key.Entry == entry);
 }
 
@@ -112,6 +114,7 @@ internal sealed record PredictorState(
     ImmutableArray<PredictorStreamState> Streams, PredictorOdds Odds,
     PredictorRelicBag PersonalBag, PredictorRelicBag SharedBag)
 {
+    public ImmutableArray<PredictorActState> Acts { get; init; } = [];
     public ImmutableArray<ModelKey> OpeningOptions { get; init; } = [];
     public bool OpeningCompleted { get; init; }
     public bool StartedWithNeow { get; init; } = true;
@@ -125,7 +128,10 @@ internal sealed record PredictorState(
     public ImmutableArray<PredictorHealthEffect> CurrentHealthEffects { get; init; } = [];
     public ImmutableArray<long> HoarderCardsToSkip { get; init; } = [];
     public PredictorRunOutcome? Outcome { get; init; }
+    public ImmutableArray<PredictorActMap> Maps { get; init; } = [];
+    public ImmutableArray<PredictorVisit> Visits { get; init; } = [];
     public ImmutableArray<ModelKey> VisitedEvents { get; init; } = [];
+    public PredictorUnknownOdds UnknownOdds { get; init; } = new();
     internal PredictorCard Card(long id) => Cards.Single(c => c.Id == id);
     internal PredictorState WithCard(PredictorCard card)
     {
@@ -149,8 +155,8 @@ internal sealed record PredictorState(
     internal void Validate()
     {
         if (Position == null || Odds == null || PersonalBag == null || SharedBag == null ||
-            OpeningOptions.IsDefault || CombatCount < 0 || WongoPoints < 0 || CardShopRemovalsUsed < 0 ||
-            VisitedEvents.IsDefault || DetachedCardRewards.IsDefault ||
+            Acts.IsDefault || OpeningOptions.IsDefault || CombatCount < 0 || WongoPoints < 0 || CardShopRemovalsUsed < 0 ||
+            Maps.IsDefault || Visits.IsDefault || VisitedEvents.IsDefault || DetachedCardRewards.IsDefault ||
             HoarderCardsToSkip.IsDefault || CurrentHealthEffects.IsDefault ||
             NextInstanceId < 1 || GoldBudget < 0 || Position.Act < 0 || Position.Floor < 0 ||
             string.IsNullOrWhiteSpace(Position.NodeId) || PotionSlots.IsDefault || Cards.IsDefault ||
@@ -169,6 +175,13 @@ internal sealed record PredictorState(
             Streams.Select(s => s.Stream).Distinct().Count() != Streams.Length ||
             Streams.Any(s => !Enum.IsDefined(s.Stream) || s.Calls < 0 || (s.S0 | s.S1 | s.S2 | s.S3) == 0))
             throw new InvalidDataException("PredictorRngInvariant");
+        if (Acts.Any(a => a == null || a.Act is < 1 or > 3 || !a.Key.IsValid ||
+                a.NormalEncounters.IsDefault || a.EliteEncounters.IsDefault || a.Bosses.IsDefault || a.RawEvents.IsDefault ||
+                a.NormalCursor < 0 || a.EliteCursor < 0 ||
+                a.BossCursor < 0 || a.BossCursor > a.Bosses.Length || a.EventCursor < 0) ||
+            Acts.Select(a => a.Act).Distinct().Count() != Acts.Length ||
+            OpeningOptions.Any(k => k.Category != "RELIC" || !k.IsValid))
+            throw new InvalidDataException("PredictorProgressionInvariant");
         PersonalBag.Validate();
         SharedBag.Validate();
         if (DetachedCardRewards.Any(r => r == null || r.Kind != PredictorRewardKind.Card || r.Cards.IsDefault ||
@@ -208,15 +221,19 @@ internal static class PredictorSeedState
 
     internal static void ValidateContext(PredictorContext context)
     {
-        if (context == null || !Beta111Profile.Instance.TryCanonicalizeSeed(context.Seed, out string canonical, out _) || canonical != context.Seed ||
-            context.GameVersion != "0.111.0" || !context.Character.IsValid || context.Ascension is < 0 or > 10 ||
+        if (context == null || !ProfileSeedRules.TryCanonicalizePredictionSeed(Beta111Profile.Instance, context.Seed, out string canonical, out _) || canonical != context.Seed ||
+            (context.Live == null && context.Operation == null ? context.GameVersion != "0.111.0" : string.IsNullOrWhiteSpace(context.GameVersion)) ||
+            !context.Character.IsValid || context.Ascension is < 0 or > 10 ||
             string.IsNullOrWhiteSpace(context.CatalogFingerprint) || string.IsNullOrWhiteSpace(context.UnlockFingerprint) ||
             context.RevealedEpochs.IsDefault || context.SeenEncounters.IsDefault || context.DiscoveredActs.IsDefault || context.Modifiers.IsDefault ||
-            context.AccountWongoPoints < 0 || context.Modifiers.Any(m => m == null || !m.Key.IsValid || m.Key.Category != "MODIFIER" || (context.Crystal == null && !KnownModifier(m.Key.Entry)) ||
+            context.AccountWongoPoints < 0 || context.Modifiers.Any(m => m == null || !m.Key.IsValid || m.Key.Category != "MODIFIER" || (context.Crystal == null && context.Live == null && context.Operation == null && !KnownModifier(m.Key.Entry)) ||
                 m.Key.Entry == "CHARACTER_CARDS" && (m.Character == null || !m.Character.Value.IsValid)) ||
             context.PotionPool.IsDefault || context.PotionPool.Any(p => p == null || p.Key.Category != "POTION" || !p.Key.IsValid || !Enum.IsDefined(p.Rarity)) ||
             context.NumberOfRuns < 0 || context.SealOfGoldFixedDeduction < 0 ||
-            context.Crystal is { } crystal && (crystal.PlayerCount < 1 || crystal.PlayerSlot < 0 || crystal.PlayerSlot >= crystal.PlayerCount || crystal.EligibleRelics == null))
+            context.Crystal is { } crystal && (crystal.PlayerCount < 1 || crystal.PlayerSlot < 0 || crystal.PlayerSlot >= crystal.PlayerCount || crystal.EligibleRelics == null) ||
+            context.Operation is { } operation && (context.Crystal != null || context.Live != null ||
+                operation.PlayerCount < 1 || operation.PlayerSlot < 0 || operation.PlayerSlot >= operation.PlayerCount ||
+                operation.OpaqueModels.IsDefault || operation.OpaqueModels.Any(k => !k.IsValid)))
             throw new InvalidDataException("PredictorContextInvalid");
     }
 

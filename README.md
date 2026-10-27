@@ -6,7 +6,7 @@ English | [简体中文](README.zh-CN.md)
 
 RolltheSpire2 (RT2) is an in-game seed search and analysis mod for **Slay the Spire 2**. Combine your desired conditions, search for matching seeds, and inspect their predicted openings, rewards, maps and more.
 
-This source tree is version **1.3.5**. The primary tested environment is **Windows, game version 0.111.0**.
+This source tree is **1.4.0 in development**, including an in-run map route-input prototype. The primary tested environment is **Windows, game version 0.111.0**.
 
 ## What you can do
 
@@ -30,7 +30,7 @@ For a manual installation package, place its `RolltheSpire2` folder inside the g
 2. Choose single-player or multiplayer, set your characters and ascension, and add the conditions you want.
 3. Start searching. Open a result in **Seed Analysis**, or enter a seed there directly.
 
-Enable the in-run prediction shortcut in Settings to use Crystal Sphere prediction for the local player in single-player or multiplayer. It supports three, six or remaining reveals and distinguishes card upgrades. Include enchantments and the optional translucent mask are separate switches, both off by default. This is a specific live-event feature, not general prediction of the current run or a played route.
+Enable **Show tools button** in Settings to show the in-run dice entry for the Crystal Sphere assistant and current-seed information. Crystal Sphere supports the local player in single-player or multiplayer, three, six or remaining reveals, and card upgrades. Include enchantments and the translucent mask are separate switches, both off by default. Operation prediction and map route forecasting have their own enable switches; showing the tools entry does not enable all prediction features or simulate a complete run.
 
 The in-game encyclopedia explains individual conditions and prediction assumptions. Settings lets you change the language and interface colors, adjust the history limit and search starting point, and open the log folder. History defaults to 30 recent queries with 30 distinct results each; preset-linked records are retained.
 
@@ -44,7 +44,7 @@ Game updates and mods that change game rules can affect prediction accuracy. Van
 
 GPU initialization failures show their stage and reason and offer an explicit retry. Better diagnostics do not guarantee compatibility with every GPU, driver or rendering backend.
 
-Unverified-candidate output is a separate option, off by default. These candidates bypass final Exact validation and are explicitly marked; they may not satisfy every condition and can be validated individually after the search.
+The optional candidate-output mode is off by default and skips final Exact validation. With normal validation enabled, Exact can still return `Unknown` or `Unsupported` without a proven mismatch; these results are also delivered as explicitly unverified. Only a final `Match` confirms the modeled conditions. Unverified results can be checked individually later, but another check may remain inconclusive. Actual checking exceptions remain pending failures with their original cause, rather than ordinary unverified results or completed target progress.
 
 ## Feedback
 
@@ -64,4 +64,4 @@ This Source Code Form is subject to the terms of the Mozilla Public License, v. 
 
 Game and third-party materials retain their respective rights and licenses. RT2 is a community project and is not affiliated with Mega Crit.
 
-`Localization/game_content/*.json` contains game content names, which retain their respective rights and are not relicensed as original RT2 content.
+See [Third-party sources and notices](THIRD_PARTY_NOTICES.md) for algorithm references, artwork and screenshot provenance, and attribution still being confirmed.

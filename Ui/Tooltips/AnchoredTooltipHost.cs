@@ -34,6 +34,7 @@ internal sealed partial class AnchoredTooltipHost : Control
         _relicResolver = relicResolver ?? throw new ArgumentNullException(nameof(relicResolver));
         _potionResolver = potionResolver ?? throw new ArgumentNullException(nameof(potionResolver));
         _cardResolver = cardResolver ?? throw new ArgumentNullException(nameof(cardResolver));
+        Theme = MainPanelTheme.Create();
         Name = "AnchoredContentTooltipHost";
         MouseFilter = MouseFilterEnum.Ignore;
         ClipContents = false;
@@ -54,7 +55,7 @@ internal sealed partial class AnchoredTooltipHost : Control
         _panel.AnchorTop = 0f;
         _panel.AnchorRight = 0f;
         _panel.AnchorBottom = 0f;
-        Ui1Theme.ApplyPanel(_panel, Ui1SurfaceRole.CardElevated, 4f, 1, TooltipPanelMargin);
+        MainPanelTheme.ApplyPanel(_panel, Ui1SurfaceRole.CardElevated, 4f, 1, TooltipPanelMargin);
 
         var content = new VBoxContainer
         {
@@ -63,11 +64,11 @@ internal sealed partial class AnchoredTooltipHost : Control
         };
         content.AddThemeConstantOverride("separation", 4);
 
-        _title = Ui1Theme.Label(string.Empty, Ui1TextRole.CardTitle, true);
+        _title = MainPanelTheme.Label(string.Empty, Ui1TextRole.CardTitle, true);
         _title.MouseFilter = MouseFilterEnum.Ignore;
         _title.SizeFlagsHorizontal = SizeFlags.ExpandFill;
 
-        _metadata = Ui1Theme.Label(string.Empty, Ui1TextRole.Muted, true);
+        _metadata = MainPanelTheme.Label(string.Empty, Ui1TextRole.Muted, true);
         _metadata.MouseFilter = MouseFilterEnum.Ignore;
         _metadata.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         _metadata.Visible = false;
@@ -80,7 +81,7 @@ internal sealed partial class AnchoredTooltipHost : Control
         };
         _rulesMargin.AddThemeConstantOverride("margin_top", 6);
 
-        _description = Ui1Theme.Label(string.Empty, Ui1TextRole.Body, true);
+        _description = MainPanelTheme.Label(string.Empty, Ui1TextRole.Body, true);
         _description.AutowrapMode = TextServer.AutowrapMode.Arbitrary;
         _description.MouseFilter = MouseFilterEnum.Ignore;
         _description.SizeFlagsHorizontal = SizeFlags.ExpandFill;
@@ -417,6 +418,10 @@ internal sealed partial class AnchoredTooltipHost : Control
             tooltipSize = _panel.GetCombinedMinimumSize();
             _panel.Size = tooltipSize;
         }
+        // Bounds below are global. Account for the shell's inherited scale (or
+        // a detached Search layer's explicit scale) before choosing and clamping
+        // the panel's position. Layout measurements remain in local coordinates.
+        tooltipSize *= _panel.GetGlobalTransform().Scale.Abs();
 
         // The workspace shell clips its children even when the game viewport is
         // wider. Keep the tooltip within this host, not merely within the viewport.

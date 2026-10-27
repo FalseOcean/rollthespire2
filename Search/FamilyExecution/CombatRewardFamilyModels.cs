@@ -1,6 +1,5 @@
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Search.Contracts;
-using RolltheSpire2.Search.FamilyExecution;
 using RolltheSpire2.Search.Selectivity;
 
 namespace RolltheSpire2.Search.FamilyExecution;
@@ -10,20 +9,19 @@ internal sealed class CombatRewardFamilyModels
 {
     private const string Id = "C.CombatReward";
     private readonly FamilyExpectedFilteringCostSegment[] _segments;
-    private readonly bool _neutralIndependentProjection;
     internal FamilySurvivalProjection Survival { get; }
     internal FamilyAnalyticalCostProjection Analytical { get; }
 
     internal CombatRewardFamilyModels(ExactSearchExecutionRequest request, CombatRewardReplay replay, int capacity)
     {
         var plan = replay.Plan;
-        _neutralIndependentProjection = !plan.OpeningConsumption.HasReplay &&
-            plan.ExplicitContext.InfluenceFlags == Beta110CombatRewardInfluenceFlags.None ||
-            CombatRewardProbabilityEstimator.FixedAuthoredPrefixDrawCount(request, plan).HasValue;
-        var estimate = CombatRewardProbabilityEstimator.EstimateFamilySieve(request, plan);
-        Survival = replay.ConservativelyKeeps ? FamilySurvivalProjection.Unresolved(Id, replay.ConservativeOpeningReason) :
-            estimate.PricingClass == SearchSelectivityPricingClass.ExactPriced && estimate.Probability is double p
-            ? FamilySurvivalProjection.Resolved(Id, p, "C.FamilySieve;" + estimate.EvidenceCode)
+        var estimate = FamilyAuxiliaryEvidence.Read(Id, "InitialSurvival", () => CombatRewardSieveProbability.Estimate(request, replay),
+            SearchSelectivityEstimate.Unpriced("AuxiliarySurvivalFailed", "Combat probability is unavailable."), request.SnapshotFingerprint);
+        Survival = replay.ConservativelyKeeps
+            ? FamilySurvivalProjection.Resolved(Id, 1d,
+                "C.ConservativeOpeningKeepsAll;PositivePredicatesRemainExact;Cause=" + replay.ConservativeOpeningReason)
+            : estimate.PricingClass == SearchSelectivityPricingClass.ExactPriced && estimate.Probability is double p
+            ? FamilySurvivalProjection.Resolved(Id, p, "C.CompletePositiveFilter.OwnerFixedPremises;" + estimate.EvidenceCode)
             : FamilySurvivalProjection.Unresolved(Id, estimate.EvidenceCode + ";" + estimate.Notes);
 
         var catalog = replay.Catalog;
@@ -74,11 +72,17 @@ internal sealed class CombatRewardFamilyModels
         }
         foreach (var predicate in plan.Predicates)
         {
-            int battles = predicate.IsAnyBattle ? plan.MaximumBattleOrdinal : 1;
+            int battles = predicate.IsAnyBattle ? (predicate.AnyBattleWindow == 0 ? plan.MaximumBattleOrdinal : predicate.AnyBattleWindow) : 1;
             double probes = maximumCards * (predicate.CardAny.Length + predicate.CardAll.Length + predicate.CardBan.Length) +
                 predicate.PotionAny.Length + predicate.PotionAll.Length + predicate.PotionBan.Length + 3;
             Add("Predicate.FullWindow", FamilyAnalyticalOperation.PredicateProbe, replay.RouteCount * battles * probes);
         }
+        if (plan.CardAssignmentTargets.Length > 0)
+            Add("Card.DistinctBattleAssignments", FamilyAnalyticalOperation.PredicateProbe,
+                replay.RouteCount * plan.CardAssignmentWindow * plan.CardAssignmentTargets.Length * (maximumCards + 3));
+        if (plan.PotionAssignmentTargets.Length > 0)
+            Add("Potion.DistinctBattleAssignments", FamilyAnalyticalOperation.PredicateProbe,
+                replay.RouteCount * plan.PotionAssignmentWindow * plan.PotionAssignmentTargets.Length * 4);
         _segments = segments.ToArray();
         var terms = segments.Select(s => new FamilyAnalyticalWorkTerm(s.Operation, FamilyAnalyticalWorkVariability.Query,
             0, s.FullWorkUnits, 0, 0, s.Name)).ToList();
@@ -88,13 +92,10 @@ internal sealed class CombatRewardFamilyModels
         Analytical = new(Id, capacity, terms, "C2.FullReferenceOperationEnvelope.v1;NoReachDiscount;NotWallTime");
     }
 
-    // The neutral or proved fixed-consumption-prefix sieve has no known shared observation with
-    // another Family's predicate. Apply the Owner's default statistical model;
-    // merely having a passed Coverage is not dependency evidence. Authored or
-    // impacted/other authored distributions retain their conditional Unknown boundary.
-    internal FamilySurvivalProjection ResolveSurvival(IReadOnlySet<string> passed) =>
-        passed.Count == 0 || _neutralIndependentProjection ? Survival :
-            FamilySurvivalProjection.Unresolved(Id, "C.PassedCoverageAuthoredOrImpactJointUnknown");
+    // Merely passing another Family does not establish shared reward observations.
+    // The fixed declared marginal is unchanged by unrelated passed families;
+    // execution/Exact may still conservatively retain unsupported observations.
+    internal FamilySurvivalProjection ResolveSurvival(IReadOnlySet<string> passed) => Survival;
 
     internal FamilyExpectedFilteringCostProjection Expected(IReadOnlySet<string> passed) => new(Id,
         Analytical.WorkUnitsPerInput, Analytical.WorkUnitsPerInput, ResolveSurvival(passed).SurvivalProbability,

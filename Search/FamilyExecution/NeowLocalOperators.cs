@@ -142,14 +142,15 @@ internal static class NeowLocalOperators
         Beta110FastEffectCatalog catalog,
         ref Beta110FastRng rewards,
         ref Beta110FastRng niche,
-        Span<ushort> offers)
+        Span<ushort> offers,
+        int groups = 2)
     {
         int poolCount = catalog.OtherCharacterPools.Length;
-        if (!catalog.OtherCharacterCardAuthorityExact || poolCount < 3 || offers.Length < 6) return false;
+        if (!catalog.OtherCharacterCardAuthorityExact || poolCount < 3 || groups is < 1 or > 2 || offers.Length < 3 * groups) return false;
         Span<ushort> poolOrder = stackalloc ushort[poolCount];
         for (ushort index = 0; index < poolOrder.Length; index++) poolOrder[index] = index;
 
-        for (int group = 0; group < 2; group++)
+        for (int group = 0; group < groups; group++)
         {
             for (ushort index = 0; index < poolOrder.Length; index++) poolOrder[index] = index;
             niche.UnstableShuffle(poolOrder);
@@ -246,6 +247,9 @@ internal static class NeowLocalOperators
         ReadOnlySpan<ushort> used,
         ref Beta110FastRng rewards)
     {
+        if (used.IsEmpty)
+            return source.IsEmpty ? Beta110FastDenseId.Invalid : source[rewards.NextInt(source.Length)];
+
         int available = 0;
         foreach (ushort candidate in source)
         {

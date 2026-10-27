@@ -74,14 +74,24 @@ internal sealed record WorldFastActPlan(
     WorldFastEventPredicate[] EventPredicates)
 {
     internal bool FamilyVariantAllowed { get; init; } = true;
-    internal WorldFamilyBossBranch[] FamilyBossBranches { get; init; } = [];
+    private WorldFamilyBossBranch[] _familyBossBranches = [];
+    private bool _hasFamilyBossPredicate;
+    internal WorldFamilyBossBranch[] FamilyBossBranches
+    {
+        get => _familyBossBranches;
+        init
+        {
+            _familyBossBranches = value;
+            _hasFamilyBossPredicate = value.Any(b => !b.First.IsEmpty || b.First.AlwaysReject || !b.Second.IsEmpty || b.Second.AlwaysReject);
+        }
+    }
     internal ushort FamilyFirstBossOverride { get; init; } = ushort.MaxValue;
     internal bool FamilyBossBranchesConjunctive { get; init; }
     public bool HasEventPredicate => EventPredicates.Length > 0;
     public bool HasBossPredicate =>
         BossActPredicates.Length > 0 ||
         BossOrdinalOnePredicates.Length > 0 ||
-        BossOrdinalTwoPredicates.Length > 0 || FamilyBossBranches.Any(b => !b.First.IsEmpty || b.First.AlwaysReject || !b.Second.IsEmpty || b.Second.AlwaysReject);
+        BossOrdinalTwoPredicates.Length > 0 || _hasFamilyBossPredicate;
     public bool HasAncientIdentityPredicate =>
         AncientIdentityPredicates.Length > 0 || AncientBranchIdentityPredicates.Length > 0;
     public bool HasAncientOptionPredicate
@@ -599,7 +609,9 @@ internal static class Beta110WorldFastPlanCompiler
             {
                 FamilyVariantAllowed = !family || !branches.Any(b => b.Act == act.Act) || branches.Any(b => b.Act == act.Act && b.VariantKey == act.ActKey),
                 FamilyFirstBossOverride = firstBossOverride,
-                FamilyBossBranchesConjunctive = family && generation.IsMultiplayer,
+                // Shared source conjunction has already been composed into
+                // coherent rows. Rows remain OR alternatives in either mode.
+                FamilyBossBranchesConjunctive = false,
                 FamilyBossBranches = branches.Where(b => b.Act == act.Act && b.VariantKey == act.ActKey).Select(b => new WorldFamilyBossBranch(CompileSet(b.FirstBoss), CompileSet(b.SecondBoss))).ToArray()
             });
             if (branches.Any(b => b.Act == act.Act && (!b.FirstBoss.IsEmpty || !b.SecondBoss.IsEmpty)))
@@ -863,31 +875,15 @@ internal static class Beta110WorldFastStage
         selectedActCount = selectedActs.Length;
 
         var upFront = new Beta110FastRng(checkpoint);
-        Span<ushort> sharedRemaining = plan.SharedAncients.Length == 0
-            ? Span<ushort>.Empty
-            : stackalloc ushort[plan.SharedAncients.Length];
-        plan.SharedAncients.AsSpan().CopyTo(sharedRemaining);
-        upFront.UnstableShuffle(sharedRemaining);
-
         Span<ushort> assignedShared = plan.SharedAncients.Length == 0
             ? Span<ushort>.Empty
             : stackalloc ushort[plan.SharedAncients.Length];
+        plan.SharedAncients.AsSpan().CopyTo(assignedShared);
+        upFront.UnstableShuffle(assignedShared);
+
         Span<int> assignedOffsets = stackalloc int[selectedActs.Length];
         Span<int> assignedCounts = stackalloc int[selectedActs.Length];
-        if (family) { assignedOffsets.Clear(); assignedCounts.Clear(); }
-        int remainingShared = sharedRemaining.Length;
-        int assignedWrite = 0;
-        for (int selectedIndex = 1; selectedIndex < selectedActs.Length; selectedIndex++)
-        {
-            int count = upFront.NextInt(remainingShared + 1);
-            assignedOffsets[selectedIndex] = assignedWrite;
-            assignedCounts[selectedIndex] = count;
-            if (count <= 0) continue;
-            sharedRemaining[..count].CopyTo(assignedShared.Slice(assignedWrite, count));
-            assignedWrite += count;
-            sharedRemaining.Slice(count, remainingShared - count).CopyTo(sharedRemaining);
-            remainingShared -= count;
-        }
+        AssignSharedAncients(assignedShared.Length, assignedOffsets, assignedCounts, ref upFront);
 
         Span<ushort> firstBossBySelectedAct = stackalloc ushort[selectedActs.Length];
         firstBossBySelectedAct.Fill(Beta110WorldFastPlan.InvalidDenseId);
@@ -946,9 +942,7 @@ internal static class Beta110WorldFastStage
             if (family && act.FamilyFirstBossOverride != ushort.MaxValue) firstBoss = act.FamilyFirstBossOverride;
             bossDrawCalls++;
             firstBossBySelectedAct[selectedIndex] = firstBoss;
-            if (family && act.FamilyBossBranches.Length > 0 &&
-                !(act.FamilyBossBranchesConjunctive ? act.FamilyBossBranches.All(b => Matches(new[] { firstBoss }, b.First)) :
-                    act.FamilyBossBranches.Any(b => Matches(new[] { firstBoss }, b.First))))
+            if (family && !MatchesBossBranches(act, firstBoss))
                 return RejectCurrent(WorldFastStageDiagnosticCode.BossPredicateRejected);
             if (act.HasBossPredicate)
             {
@@ -1025,9 +1019,7 @@ internal static class Beta110WorldFastStage
             if (secondCount <= 0)
                 return Keep(WorldFastStageDiagnosticCode.WorldContinuationUnavailable);
             ushort secondBoss = secondPool[upFront.NextInt(secondCount)];
-            if (family && finalAct.FamilyBossBranches.Length > 0 &&
-                !(finalAct.FamilyBossBranchesConjunctive ? finalAct.FamilyBossBranches.All(b => Matches(new[] { firstBoss }, b.First) && Matches(new[] { secondBoss }, b.Second)) :
-                    finalAct.FamilyBossBranches.Any(b => Matches(new[] { firstBoss }, b.First) && Matches(new[] { secondBoss }, b.Second))))
+            if (family && !MatchesBossBranches(finalAct, firstBoss, secondBoss))
                 return RejectCurrent(WorldFastStageDiagnosticCode.BossPredicateRejected);
             bossDrawCalls++;
             bossStageInput++;
@@ -1170,6 +1162,40 @@ internal static class Beta110WorldFastStage
         foreach (WorldFastDenseSetPredicate predicate in predicates)
             if (!Matches(values, predicate)) return false;
         return true;
+    }
+
+    internal static void AssignSharedAncients(int sharedCount, Span<int> offsets, Span<int> counts, ref Beta110FastRng rng)
+    {
+        offsets.Clear();
+        counts.Clear();
+        int used = 0;
+        for (int index = 1; index < counts.Length; index++)
+        {
+            // Even an empty remainder draws NextInt(1), as the source does.
+            int count = rng.NextInt(sharedCount - used + 1);
+            offsets[index] = used;
+            counts[index] = count;
+            used += count;
+        }
+    }
+
+    internal static bool MatchesBossBranches(WorldFastActPlan act, ushort first, ushort? second = null)
+    {
+        if (act.FamilyBossBranches.Length == 0) return true;
+        foreach (var branch in act.FamilyBossBranches)
+        {
+            bool matched = MatchesSingle(first, branch.First) && (!second.HasValue || MatchesSingle(second.Value, branch.Second));
+            if (matched != act.FamilyBossBranchesConjunctive) return matched;
+        }
+        return act.FamilyBossBranchesConjunctive;
+    }
+
+    private static bool MatchesSingle(ushort value, WorldFastDenseSetPredicate predicate)
+    {
+        if (predicate.AlwaysReject) return false;
+        if (predicate.Any.Length > 0 && !predicate.Any.AsSpan().Contains(value)) return false;
+        foreach (ushort target in predicate.All) if (target != value) return false;
+        return !predicate.Ban.AsSpan().Contains(value);
     }
 
     private static bool Matches(ReadOnlySpan<ushort> values, WorldFastDenseSetPredicate predicate)

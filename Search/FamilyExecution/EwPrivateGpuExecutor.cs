@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using Godot;
 
 namespace RolltheSpire2.Search.FamilyExecution;
@@ -19,6 +20,8 @@ internal sealed class EwPrivateGpuExecutor : IDisposable
     private readonly WorldFamilyGpuExecutor? _referenceW;
     private readonly int _capacity;
     private readonly int _owner = System.Environment.CurrentManagedThreadId;
+    private readonly byte[] _batchBytes = new byte[8 * sizeof(uint)];
+    private readonly byte[] _headerResetBytes = FamilyGpuComputeUtility.ToBytes(Header());
     private bool _disposed;
     internal double SetupMs { get; }
     internal string Device { get; }
@@ -66,13 +69,16 @@ internal sealed class EwPrivateGpuExecutor : IDisposable
         if (!input.IsDense || input.Count > MaxRoots) throw new InvalidOperationException("EW.DenseBatchBoundViolation");
         token.ThrowIfCancellationRequested();
         var timer = Stopwatch.StartNew(); double dispatchMs = 0;
-        FamilyGpuComputeUtility.Update(_rd, _header, Header(), "EW.EHeader");
+        FamilyGpuComputeUtility.UpdateBytes(_rd, _header, _headerResetBytes, "EW.EHeader");
         int dispatches = 0;
         for (int offset = 0; offset < input.Count; offset += _capacity)
         {
             token.ThrowIfCancellationRequested(); int count = Math.Min(_capacity, input.Count-offset);
-            FamilyGpuComputeUtility.Update(_rd, _batch, [(uint)input.Batch.BatchBase,(uint)(input.Batch.BatchBase>>32),
-                (uint)input.Count,(uint)count,0,MaxRoots,(uint)offset,0], "EW.EBatch");
+            Span<uint> batch = FamilyGpuComputeUtility.UInt32Span(_batchBytes);
+            batch[0] = (uint)input.Batch.BatchBase; batch[1] = (uint)(input.Batch.BatchBase >> 32);
+            batch[2] = (uint)input.Count; batch[3] = (uint)count; batch[4] = 0; batch[5] = MaxRoots;
+            batch[6] = (uint)offset; batch[7] = 0;
+            FamilyGpuComputeUtility.UpdateBytes(_rd, _batch, _batchBytes, "EW.EBatch");
             double start = timer.Elapsed.TotalMilliseconds;
             long list = _rd.ComputeListBegin();
             try
@@ -86,9 +92,9 @@ internal sealed class EwPrivateGpuExecutor : IDisposable
         }
         token.ThrowIfCancellationRequested();
         double readStart = timer.Elapsed.TotalMilliseconds;
-        uint[] h = FamilyGpuComputeUtility.FromUInt32Bytes(_rd.BufferGetData(_header));
+        ReadOnlySpan<uint> h = FamilyGpuComputeUtility.UInt32Span(_rd.BufferGetData(_header));
         if (h.Length != 8 || h[0] != 0x45524652u || h[1] != 1 || h[5] != 0x45524652u || h[3] != 0 || h[4] != input.Count || h[2] > input.Count)
-            throw new InvalidDataException("EW.EHeaderFault:" + string.Join(',',h));
+            throw new InvalidDataException("EW.EHeaderFault:" + string.Join(',',h.ToArray()));
         int intermediate = checked((int)h[2]);
         _ordinals.CheckPopulation(input.Batch, intermediate);
         double readMs = timer.Elapsed.TotalMilliseconds-readStart;

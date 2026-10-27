@@ -30,10 +30,10 @@ public sealed class OrderedPartyAuthority
                 p.ProfileId != RuntimeProfileId.Beta111 || p.GameVersion != copy[0].GameVersion ||
                 p.Ascension != copy[0].Ascension || p.PredictionGameMode != WorldGameMode.Multiplayer ||
                 p.Ascension is < 0 or > 10 || !p.Character.IsValid || string.IsNullOrWhiteSpace(unlockProvenance[slot]) ||
-                !p.IsBeta111NeowIdentityAuthorityExact)
+                !p.IsBeta111Context)
                 throw new ArgumentException($"Party.InvalidSlotAuthority:P{slot + 1}");
         }
-        if (world.Beta109Generation is not { HasExactFixedParty: true } generation ||
+        if (world.Beta109Generation is not { HasExactPartyRoster: true } generation ||
             generation.PlayerCount != copy.Length || generation.Ascension != copy[0].Ascension ||
             generation.LobbyPlayers.Where((p, i) => p.CharacterKey != copy[i].Character.CharacterKey).Any())
             throw new ArgumentException("Party.InvalidSharedWorldAuthority");

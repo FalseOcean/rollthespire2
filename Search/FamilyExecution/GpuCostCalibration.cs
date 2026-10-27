@@ -19,9 +19,16 @@ internal static class GpuReferenceCostAtlas
         new("DirectCapsule|Small|3:0|rarity-serial|N.Neow.Composite.RCapsule.TargetRank.DenseCarry8.CanonicalAbi1Ready.20260906.v2|N.Neow.Composite.RCapsule.DirectExperiment.rarity-serial.CanonicalAbi1Ready.20260909.v1|DirectNr.CanonicalFullWindow.20260912.v1", 1912602624L, 1006.9712999999999, "CalibrationRecovery.20260912;small1;CanonicalNr;OneSecondPeak;RTX4060Laptop;D3D12")
     ];
     internal static double? Peak(string key) => Measurements.FirstOrDefault(x => x.Key == key)?.PeakThroughput;
+    internal static string PhysicalRevision(IFamilyInvocation family, FamilyPhysicalQuoteRequest geometry) =>
+        family.ResolveConditionPerformance(geometry.CompactInput).PhysicalImplementationRevision +
+        (geometry.PrivateOutput ? family switch {
+            NeowFamily { UsesSmallPrivateOutput: true } => NeowFamilyGpuExecutor.SmallOutputRevision,
+            EventResultFamily { UsesFinalPrivateHeader: true } => EventResultFamilyGpuExecutor.FinalPrivateHeaderRevision,
+            _ => ""
+        } : "") + FamilyGpuReadback.ObservationRevision(family, geometry);
     internal static string Key(IFamilyInvocation family, FamilyPhysicalQuote quote, FamilyPhysicalQuoteRequest geometry) =>
         string.Join("|", quote.FamilyId, quote.Shape,
-            family.ResolveConditionPerformance(geometry.CompactInput).PhysicalImplementationRevision,
+            PhysicalRevision(family, geometry),
             geometry.CompactInput ? "Compact" : "Dense", geometry.PrivateInput ? "PrivateInput" : "PublicInput",
             geometry.PrivateOutput ? "PrivateOutput" : "PublicOutput", Boundary);
 }
@@ -48,6 +55,7 @@ internal sealed class GpuCostSnapshot
     internal double Ratio(string key) => _ratios.GetValueOrDefault(key, GlobalRatio);
     internal FamilyPhysicalQuote Local(IFamilyInvocation family, FamilyPhysicalQuote quote, FamilyPhysicalQuoteRequest geometry)
     {
+        quote = FamilyGpuReadback.Reference(family, quote)!;
         if (!family.ConditionPerformance.UsesGpu) return quote;
         if (quote.LocalCostSource == "LocalMeasurement") return quote;
         string key = GpuReferenceCostAtlas.Key(family, quote, geometry);
@@ -58,8 +66,14 @@ internal sealed class GpuCostSnapshot
     }
     internal FamilyPerformanceReference Reference(IFamilyInvocation family, FamilyConditionPerformanceProjection condition, bool compact)
     {
-        var geometry = new FamilyPhysicalQuoteRequest(compact, false, PrivateOrdinalBuffer.Capacity);
-        var raw = family.QuotePhysicalWork(geometry);
+        // One static family-local reference, independent of earlier filters.
+        // Compact population does not imply its root span. Keep the existing
+        // 16Mi population and explicitly name the 16Mi reference root window.
+        const int roots = PrivateOrdinalBuffer.Capacity;
+        var geometry = new FamilyPhysicalQuoteRequest(compact, false, roots);
+        var raw = FamilyCanonicalMeasuredCost.TryQuote(family, geometry, roots) ?? family.QuotePhysicalWork(geometry);
+        if (raw is not null) raw = raw with { Evidence = raw.Evidence +
+            $";StaticFamilyLocalReference;ReferenceRootWindow={roots};ReferenceInputPopulation={geometry.MeanInputPopulation:G17}" };
         if (!condition.UsesGpu && raw is { NanosecondsPerInput: > 0 })
             return new(condition.FamilyId,condition.PhysicalImplementationRevision,1,1e9/raw.NanosecondsPerInput,
                 raw.LocalCostSource=="Condition"?FamilyPerformanceEvidenceSource.Condition:
@@ -91,6 +105,7 @@ internal sealed class GpuCostSnapshot
 // No UI publication timestamps, no observed population feeds a running quote.
 internal sealed class GpuCostSamples
 {
+    private bool _observationFailed;
     private sealed class Window { internal long Inputs; internal double Ms; internal bool Warmed; internal int CompletedWindows; }
     private readonly Dictionary<string, Window> _windows = new();
     private readonly Dictionary<(IFamilyInvocation, bool, bool, bool), FamilyPhysicalQuote?> _quotes = new();
@@ -123,6 +138,12 @@ internal sealed class GpuCostSamples
     private static string Metric(double value, bool known) => known ? value.ToString("G17",System.Globalization.CultureInfo.InvariantCulture) : "unavailable";
     internal void WriteSummary(bool calibration = true)
     {
+        FamilyAuxiliaryEvidence.Read(nameof(GpuCostSamples), "WriteSummary", () =>
+        { WriteSummaryCore(calibration); return true; }, false);
+    }
+
+    private void WriteSummaryCore(bool calibration)
+    {
         foreach(var (key,t) in _totals) {
             RuntimeLog.TryBackgroundInfo($"physicalExecutionSummary=true;key={key};device={GpuCostCalibration.DeviceKey()};batches={t.Batches};inputs={t.Inputs};outputs={t.Outputs};zeroWindows={t.Zero};fullWindows={t.Full};underfilledWindows={t.Underfilled};dispatchSyncMs={Metric(t.Dispatch,t.DispatchKnown)};canonicalMs={t.Canonical:G17};readbackMs={Metric(t.Readback,t.ReadbackKnown)};readbackBytes={Metric(t.Bytes,t.BytesKnown)};reportedReadbackScope=ExecutorMetric;unattributedCanonicalMs={Metric(Math.Max(0,t.Canonical-t.Dispatch-t.Readback),t.DispatchKnown&&t.ReadbackKnown)};observedDispatchRate={Metric(t.Dispatch>0?t.Inputs*1000/t.Dispatch:0,t.DispatchKnown)};observedCanonicalRate={(t.Canonical>0?t.Inputs*1000/t.Canonical:0):G17};timings=CompletedWorkOnly");
             RuntimeLog.TryBackgroundInfo($"physicalSteadyExecutionSummary=true;key={key};batches={t.SteadyBatches};inputs={t.SteadyInputs};outputs={t.SteadyOutputs};fullWindows={t.SteadyFull};underfilledWindows={t.SteadyUnderfilled};dispatchSyncMs={Metric(t.SteadyDispatch,t.SteadyBatches>0&&t.SteadyDispatchKnown)};canonicalMs={Metric(t.SteadyCanonical,t.SteadyBatches>0)};readbackMs={Metric(t.SteadyReadback,t.SteadyBatches>0&&t.SteadyReadbackKnown)};observedCanonicalRate={Metric(t.SteadyCanonical>0?t.SteadyInputs*1000/t.SteadyCanonical:0,t.SteadyBatches>0&&t.SteadyCanonical>0)};window=AllCompletedCallsAfterFirstForThisPhysicalKey;peakSelection=false;calibrationAuthority=false;kernelTimestamp=false");
@@ -139,9 +160,17 @@ internal sealed class GpuCostSamples
     internal void Observe(IFamilyInvocation family, FamilyPhysicalQuoteRequest geometry, int inputs, double dispatchMs,
         bool verification = false, int outputs = 0, double canonicalMs = 0, double readbackMs = 0, long readbackBytes = 0)
     {
+        if (_observationFailed) return;
+        _observationFailed = !FamilyAuxiliaryEvidence.Read(family.FamilyId, "ObserveGpuCost", () =>
+        { ObserveCore(family, geometry, inputs, dispatchMs, verification, outputs, canonicalMs, readbackMs, readbackBytes); return true; }, false);
+    }
+
+    private void ObserveCore(IFamilyInvocation family, FamilyPhysicalQuoteRequest geometry, int inputs, double dispatchMs,
+        bool verification, int outputs, double canonicalMs, double readbackMs, long readbackBytes)
+    {
         var binding = (family, geometry.CompactInput, geometry.PrivateInput, geometry.PrivateOutput);
         if (!_quotes.TryGetValue(binding, out var quote)) _quotes[binding] = quote = family.QuotePhysicalWork(geometry);
-        string physicalKey = quote is null ? family.FamilyId + "|" + family.ResolveConditionPerformance(geometry.CompactInput).PhysicalImplementationRevision + "|Unpriced|" + (geometry.CompactInput?"Compact":"Dense") + "|" + (geometry.PrivateInput?"PrivateInput":"PublicInput") + "|" + (geometry.PrivateOutput?"PrivateOutput":"PublicOutput") : GpuReferenceCostAtlas.Key(family, quote, geometry);
+        string physicalKey = quote is null ? family.FamilyId + "|" + GpuReferenceCostAtlas.PhysicalRevision(family, geometry) + "|Unpriced|" + (geometry.CompactInput?"Compact":"Dense") + "|" + (geometry.PrivateInput?"PrivateInput":"PublicInput") + "|" + (geometry.PrivateOutput?"PrivateOutput":"PublicOutput") : GpuReferenceCostAtlas.Key(family, quote, geometry);
         Record(physicalKey, quote?.WindowCapacity ?? PrivateOrdinalBuffer.Capacity, inputs, outputs, dispatchMs, canonicalMs, readbackMs, readbackBytes);
         if (quote is null || !family.ConditionPerformance.UsesGpu || verification ||
             (inputs != PrivateOrdinalBuffer.Capacity && (inputs < quote.WindowCapacity || inputs % quote.WindowCapacity != 0)) || !(dispatchMs > 0) || !double.IsFinite(dispatchMs)) return;

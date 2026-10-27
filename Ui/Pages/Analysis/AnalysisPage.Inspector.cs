@@ -43,8 +43,7 @@ internal sealed partial class AnalysisPage
     private VBoxContainer WCard(Node parent, string title, bool accented = false)
     {
         var panel = new PanelContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        panel.AddThemeStyleboxOverride("panel", _palette.Box(_palette.Surface,
-            accented ? _palette.Selected : _palette.Line, 1));
+        panel.AddThemeStyleboxOverride("panel", accented ? _palette.Box(_palette.ContentSurface, _palette.Selected, 1) : _palette.ContentBox());
         parent.AddChild(panel);
         var column = WColumn(); column.AddThemeConstantOverride("separation", 10);
         panel.AddChild(column);
@@ -65,6 +64,8 @@ internal sealed partial class AnalysisPage
         _neowChoiceStrip.Reparent(choices);
         _neowChoiceStrip.Bind(_viewModel.NeowChoices, _selectedNeowRelicKey, _preferredOpeningRouteId,
             Text(Ui1TextKey.MissingIconTooltip), Text(Ui1TextKey.AnalysisNeowPickFirst));
+        if (_viewModel.NeowIdentityStatus != SeedDomainEvaluationStatus.Evaluated)
+            choices.AddChild(WNote(Text("predictor.unavailable") + "\n" + _viewModel.NeowIdentityIssueCode));
         foreach (string warning in _viewModel.OpeningWarnings) _wbCenter.AddChild(WNote(warning));
 
         var identities = new GridContainer { Columns = 1, SizeFlagsHorizontal = SizeFlags.ExpandFill };
@@ -321,8 +322,9 @@ internal sealed partial class AnalysisPage
                 foreach (var key in results.ColorfulOfferedColors) Add(key, GameContentKind.Character);
         }
         resultItems.Visible = shown;
+        bool stableShown = RenderStableEventResults(detail, entry.EventDisplay.ModelKey.Entry);
         if (shown) detail.AddChild(WNote(Text("predictor.design.event_result_scope")));
-        else if (!RenderConditionalEventResults(detail, entry.EventDisplay.ModelKey.Entry))
+        else if (!RenderConditionalEventResults(detail, entry.EventDisplay.ModelKey.Entry) && !stableShown)
             detail.AddChild(WNote(Text("predictor.design.event_result_unavailable")));
     }
 

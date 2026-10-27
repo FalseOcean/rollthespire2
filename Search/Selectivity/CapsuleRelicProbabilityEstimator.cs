@@ -25,14 +25,6 @@ internal static class CapsuleRelicProbabilityEstimator
     private readonly record struct DrawPosition(int Lane, int Ordinal);
     private readonly record struct RarityRoll(int PreferredLane, double Mass, string Label);
 
-    // Shared extraction fact only: the caller pays the selected Neow/Bones offer
-    // once and combines other opening predicates through its existing authority.
-    internal static bool TryEstimateOpeningCapsules(SearchSelectivityInput plan,
-        IReadOnlyList<ModelKey> actualCapsuleSources, bool includeExplicitRelicSequence,
-        out double conditionalProbability, out string detail, out string issue) =>
-        CombatRewardProbabilityEstimator.TryEstimateCapsuleBagConjunction(plan, actualCapsuleSources,
-            includeExplicitRelicSequence, out conditionalProbability, out detail, out issue);
-
     public static bool HasCapsuleRelicSharedConstraint(SearchSelectivityInput plan)
     {
         ArgumentNullException.ThrowIfNull(plan);
@@ -103,7 +95,7 @@ internal static class CapsuleRelicProbabilityEstimator
 
         if (plan.Authority.PlayersCount > 1)
         {
-            if (!TryEstimateOpeningCapsules(plan, [route.RouteRelicKey], includeExplicitRelicSequence,
+            if (!CapsuleBagProbabilityEstimator.TryEstimateConjunction(plan, [route.RouteRelicKey], includeExplicitRelicSequence,
                     out double partyConditional, out string detail, out string issue))
                 return SearchSelectivityEstimate.Unpriced("Probability.Capsule.PartyBag:" + issue, detail);
             if (!NeowStructuredEffectProbabilityEstimator.TryTopLevelRouteProbability(plan, route.RouteRelicKey,

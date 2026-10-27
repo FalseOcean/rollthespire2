@@ -9,12 +9,15 @@ internal sealed class NcPrivateInvocation(ExactSearchExecutionRequest request, C
     private int _batches;
     private double _ms;
     private bool _faulted;
+    bool IFamilyInvocation.ExecutionFaulted => _faulted;
+    GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => ConditionPerformance.UsesGpu ? GpuNumericRequirements.Int64 | GpuNumericRequirements.Float64 : GpuNumericRequirements.None;
     public string FamilyId => mode.EndsWith("-nc",StringComparison.Ordinal)?"N.Neow":"C.CombatReward";
     public IReadOnlyList<string> Coverage => ["C.CombatReward","N.Neow"];
     public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId,PrivateOrdinalBuffer.Capacity,[],"NC.UnpricedEquivalentCoverage");
     public FamilySurvivalProjection Survival => FamilySurvivalProjection.Unresolved(FamilyId,"NC.JointUnpriced");
     public FamilyConditionPerformanceProjection ConditionPerformance => new(FamilyId,
-        (mode.EndsWith("-nc",StringComparison.Ordinal)?"N.Neow.Composite.C.CombatReward.":"C.CombatReward.Composite.N.Neow.")+"PrivateOrdinal.CanonicalAbi1Ready.20260908.v2", "NC.Neutral",1,"NC.UnpricedCandidate",usesGpu:true);
+        (mode.EndsWith("-nc",StringComparison.Ordinal)?"N.Neow.Composite.C.CombatReward.":"C.CombatReward.Composite.N.Neow.")+"PrivateOrdinal.CanonicalAbi1Ready.20260908.v2.C="+
+        c.Revision(mode.EndsWith("-nc",StringComparison.Ordinal)), "NC.Neutral",1,"NC.UnpricedCandidate",usesGpu:true);
     public FamilyPerformanceObservation CapturePerformanceObservation() => new(ConditionPerformance,_gpu?.Device??"",_gpu?.SetupMs??0,
         0,0,_batches,0,_input,_output,_ms,false,_faulted?"PhysicalFailureOrRecovery":"NC.CandidateNoCalibration");
     public async ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow observation, FamilyCandidateSet input, CancellationToken token)

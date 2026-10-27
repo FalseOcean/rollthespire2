@@ -1,0 +1,83 @@
+{
+  "SchemaVersion": 1,
+  "Query": {
+    "OpeningRoute": {
+      "RouteRelicKey": "RELIC:SMALL_CAPSULE",
+      "IsValid": true
+    },
+    "OpeningRouteRelicRequirement": null,
+    "StructuredOpeningEffects": [
+      {
+        "SourceRelicKey": "RELIC:SMALL_CAPSULE",
+        "Kind": "ExactSingle",
+        "Scope": "NestedRelics",
+        "OutputKind": "Relic",
+        "OutputKeys": [
+          "RELIC:ANCHOR"
+        ],
+        "SpecialOffer": "None",
+        "AllowDuplicateOutputs": false,
+        "KaleidoscopeGroupOrder": "AnyOrder",
+        "KaleidoscopePositionalSlots": [],
+        "IsEmpty": false
+      }
+    ],
+    "VariantBossBranches": [],
+    "AncientBranches": [],
+    "RelicSequenceConstraints": [],
+    "EventSequenceConstraints": [],
+    "LegacyCombatRewardConstraints": [],
+    "LegacyNeow": {
+      "NeowRelics": {
+        "Any": [],
+        "All": [],
+        "Ban": [],
+        "IsEmpty": true
+      },
+      "RequireNeowsBones": false,
+      "BonesRelics": {
+        "Any": [],
+        "All": [],
+        "Ban": [],
+        "IsEmpty": true
+      },
+      "RequiredBonesCombination": [],
+      "RequireSmallCapsule": false,
+      "RequireLargeCapsule": false,
+      "CapsuleContainedRelics": {
+        "Any": [],
+        "All": [],
+        "Ban": [],
+        "IsEmpty": true
+      },
+      "RequireWhetstone": false,
+      "RequireWarPaint": false,
+      "RequiredFinalCurse": null,
+      "BannedFinalCurses": [],
+      "Preset": "None",
+      "RequiredBonesAcquisitionOrder": [],
+      "EffectOutputConditions": []
+    },
+    "LegacyWorld": {
+      "BossFilters": [],
+      "BossOrdinalFilters": [],
+      "AncientIdentityFilters": [],
+      "AncientOptionFilters": [],
+      "AncientSeaGlassTargetFilters": []
+    },
+    "CombatCardRewards": null,
+    "CombatPotionRewards": null,
+    "EventResultConditions": [],
+    "MerchantColorlessConditions": [],
+    "MerchantColorlessSequenceConditions": [],
+    "RelicShopSequenceConditions": [],
+    "HasCombatRewardConstraints": false
+  },
+  "Options": {
+    "StartSeed": "000000000000",
+    "ScanCount": 134217728,
+    "TargetMatchCount": 2147483647,
+    "WorkerCount": 4,
+    "IncludeDiagnostics": true
+  }
+}

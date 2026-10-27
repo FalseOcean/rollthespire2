@@ -1,0 +1,136 @@
+{
+  "Version": 1,
+  "Context": "context.json",
+  "ContextSha256": "EB2847F6A20969793533BFE056000ECAE6177B0C4D7C1E80E60031E7DD708B29",
+  "ContextDescription": "Captured 0.111.0 Ironclad A10 singleplayer; immutable runtime authority",
+  "Cases": [
+    {
+      "Id": "N-entry",
+      "Workload": "cases/N-entry.json",
+      "Sha256": "D5992879F9BDA256EEF58D553677F5045429FAE90D5B86715DF8C7CE243484B8",
+      "Roots": 262144,
+      "Purpose": "Bounded high-terminal-output baseline; not saturated GPU throughput",
+      "Provenance": "New fixed baseline; condition may reuse a historical shape, not historical timing calibration"
+    },
+    {
+      "Id": "N-leafy",
+      "Workload": "cases/N-leafy.json",
+      "Sha256": "8A580569495682219A0819A749AD3A76416B1B1F72B6D0C071F4602C1DAE1BB8",
+      "Roots": 134217728,
+      "Purpose": "Full production root batch baseline",
+      "Provenance": "New fixed baseline; condition may reuse a historical shape, not historical timing calibration"
+    },
+    {
+      "Id": "S-high-output",
+      "Workload": "cases/S-high-output.json",
+      "Sha256": "A5D430D4D318E2E9F8C88533DAF4D9C646DD56CCDE19074401C941EE2565D8E4",
+      "Roots": 262144,
+      "Purpose": "Bounded high-terminal-output baseline; not saturated GPU throughput",
+      "Provenance": "New fixed baseline; condition may reuse a historical shape, not historical timing calibration"
+    },
+    {
+      "Id": "S-three-shops",
+      "Workload": "cases/S-three-shops.json",
+      "Sha256": "9671EA69A83FCD6A9D748BBDB78DBE7F422475E3A94C92DC73AB1E59D63953CD",
+      "Roots": 134217728,
+      "Purpose": "Full production root batch baseline",
+      "Provenance": "New fixed baseline; condition may reuse a historical shape, not historical timing calibration"
+    },
+    {
+      "Id": "R-common",
+      "Workload": "cases/R-common.json",
+      "Sha256": "BB6FEB5CCD07C16391B9EE48CBF5BA32E5DFA3E5B3A18AE4428369C76330BEBB",
+      "Roots": 262144,
+      "Purpose": "Bounded high-terminal-output baseline; not saturated GPU throughput",
+      "Provenance": "New fixed baseline; condition may reuse a historical shape, not historical timing calibration"
+    },
+    {
+      "Id": "R-three-common",
+      "Workload": "cases/R-three-common.json",
+      "Sha256": "DE82260FECB4DF11A8AFDC796893204D1F433BA0B573C37E3ABAFAE1EBE86322",
+      "Roots": 134217728,
+      "Purpose": "Full production root batch baseline",
+      "Provenance": "New fixed baseline; condition may reuse a historical shape, not historical timing calibration"
+    },
+    {
+      "Id": "C-three-potions",
+      "Workload": "cases/C-three-potions.json",
+      "Sha256": "6462300D4DCD3EE70D10DB6C024764C4ACA1479C0F5838F3203EE542D22B72B7",
+      "Roots": 134217728,
+      "Purpose": "Full production root batch baseline",
+      "Provenance": "New fixed baseline; condition may reuse a historical shape, not historical timing calibration"
+    },
+    {
+      "Id": "W-K4",
+      "Workload": "cases/W-K4.json",
+      "Sha256": "D7824D6955160F32A22BE8D9069D5BDF317837685B06A02ED5B4B9FD684080AE",
+      "Roots": 134217728,
+      "Purpose": "Full production root batch baseline",
+      "Provenance": "New fixed baseline; condition may reuse a historical shape, not historical timing calibration"
+    },
+    {
+      "Id": "A-pael",
+      "Workload": "cases/A-pael.json",
+      "Sha256": "E96406787701C0BD76D0D4476A46B54B35B91EA4C8FA06D0DFEBADB0AB408F37",
+      "Roots": 262144,
+      "Purpose": "Bounded high-terminal-output baseline; not saturated GPU throughput",
+      "Provenance": "New fixed baseline; condition may reuse a historical shape, not historical timing calibration"
+    },
+    {
+      "Id": "E-grab",
+      "Workload": "cases/E-grab.json",
+      "Sha256": "84B046AD52FDE35711681D70074E6532C88AA2FE362F7B4DBB5C60597B2BABC8",
+      "Roots": 262144,
+      "Purpose": "Bounded high-terminal-output baseline; not saturated GPU throughput",
+      "Provenance": "New fixed baseline; condition may reuse a historical shape, not historical timing calibration"
+    },
+    {
+      "Id": "NC-silken",
+      "Workload": "cases/NC-silken.json",
+      "Sha256": "51D5658E55D60E2D65F2FE3C4F599A06C6F503E409D90B8E11824F9B4C50D282",
+      "Roots": 262144,
+      "Purpose": "Bounded high-terminal-output baseline; not saturated GPU throughput",
+      "Provenance": "New fixed baseline; condition may reuse a historical shape, not historical timing calibration"
+    },
+    {
+      "Id": "SR-high-output",
+      "Workload": "cases/SR-high-output.json",
+      "Sha256": "323ED4CE64DD71134234168A95E6C98632011466C0427F2EEC30E8F6D1E9E23F",
+      "Roots": 134217728,
+      "Purpose": "Full production root batch baseline",
+      "Provenance": "New fixed baseline; condition may reuse a historical shape, not historical timing calibration"
+    },
+    {
+      "Id": "EW-high-output",
+      "Workload": "cases/EW-high-output.json",
+      "Sha256": "B84E1E878B17A98038785D67CAF2AF154CCC69674CC7EEDE36EE5528F79A5A55",
+      "Roots": 1677721600,
+      "Purpose": "Full production root batch baseline",
+      "Provenance": "Recovered Owner calibration interval"
+    },
+    {
+      "Id": "NR-small-capsule",
+      "Workload": "cases/NR-small-capsule.json",
+      "Sha256": "C9E3E4F108D7463B06F80D4381CAAB401399B543A3884FFB6A8B45547C9E01E9",
+      "Roots": 134217728,
+      "Purpose": "Full production root batch baseline",
+      "Provenance": "New fixed baseline; condition may reuse a historical shape, not historical timing calibration"
+    },
+    {
+      "Provenance": "New fixed baseline, not historical calibration",
+      "Purpose": "Card-replay coverage; actual physical order is Planner-owned",
+      "Id": "C-cards",
+      "Roots": 262144,
+      "Workload": "cases/C-cards.json",
+      "Sha256": "035F5660D3A7AF5EEE9C0E15D07ACC589FF3422476A9CB0CF1A72EBD081C3D69"
+    },
+    {
+      "Provenance": "New fixed baseline, not historical calibration",
+      "Purpose": "Card-replay coverage; actual physical order is Planner-owned",
+      "Id": "NC-silken-cards",
+      "Roots": 134217728,
+      "Workload": "cases/NC-silken-cards.json",
+      "Sha256": "AD15D01A882571C4BD3501BA987B7068B2492859F9E140C6B287683B133BACCF"
+    }
+  ]
+}

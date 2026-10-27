@@ -24,7 +24,8 @@ internal enum SearchProbabilityRowKind : byte
     CombatReward = 6,
     EventResult = 7,
     Shop = 8,
-    TransformationAggregate = 9
+    TransformationAggregate = 9,
+    FirstActUnknownEventPrefix = 10
 }
 
 internal sealed record SearchProbabilityQuickViewRow(
@@ -196,6 +197,10 @@ internal static class SearchProbabilityPresentationBuilder
                 SearchProbabilityRowKind.EventResult,
                 eventBlock?.IsPriced == true ? eventBlock.Probability : null));
         }
+
+        if (compiled.NormalizedQuery.FirstActUnknownEventPrefixCount > 0)
+            rows.Add(new(SearchProbabilityRowKind.FirstActUnknownEventPrefix,
+                FirstActUnknownEventProbability.EstimateComponent(input).Probability));
 
         bool hasShopColorless = filter.MerchantColorlessConditions.Any(condition => condition.IsValid) ||
                                 filter.MerchantColorlessSequenceConditions.Any(condition => !condition.IsEmpty);

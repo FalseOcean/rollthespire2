@@ -2,6 +2,7 @@ using System.IO.Compression;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.Semantics;
+using RolltheSpire2.Search.FamilyExecution;
 
 namespace RolltheSpire2.Search.Selectivity;
 
@@ -34,7 +35,9 @@ internal static partial class StandardMapProbabilityEstimator
             int family = maxima.Length == 0 ? 0 : maxima[0] + 1;
             string name = (act switch { 1 => "Overgrowth", 2 => "Hive", 3 => "Glory", _ => throw new ArgumentException("MapAct") }) +
                 (input.Ascension == 0 ? "-A0" : "-A1plus");
-            var histogram = Cache.GetOrAdd(name, Load);
+            var histogram = FamilyAuxiliaryEvidence.Read<Histogram?>(nameof(StandardMapProbabilityEstimator),
+                "LoadCorpus:" + name, () => Cache.GetOrAdd(name, Load), null, input.CompiledSearch.SemanticFingerprint);
+            if (histogram is null) return Unknown("CorpusUnavailable:" + name);
             ulong hits = 0; var distribution = new Dictionary<int,double>();
             foreach (var (key, count) in histogram.Families[family])
             {

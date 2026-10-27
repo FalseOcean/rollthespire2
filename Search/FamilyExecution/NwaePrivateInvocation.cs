@@ -10,6 +10,8 @@ internal sealed class NwaePrivateInvocation(ExactSearchExecutionRequest request,
     private int _batches;
     private double _ms;
     private bool _faulted;
+    bool IFamilyInvocation.ExecutionFaulted => _faulted;
+    GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => ConditionPerformance.UsesGpu ? GpuNumericRequirements.Int64 | GpuNumericRequirements.Float64 : GpuNumericRequirements.None;
     public string FamilyId => order[0] switch { 'N' => "N.Neow", 'A' => "A.AncientOption", 'E' => "E.EventResult", 'W' => "W.World", _ => throw new InvalidOperationException("NWAE.Entry") };
     public IReadOnlyList<string> Coverage => order.Select(c => c switch {
         'N' => "N.Neow", 'A' => "A.AncientOption", 'E' => "E.EventResult", 'W' => "W.World", _ => throw new InvalidOperationException("NWAE.Coverage") }).ToArray();

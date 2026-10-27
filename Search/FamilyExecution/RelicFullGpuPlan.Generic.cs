@@ -7,6 +7,32 @@ namespace RolltheSpire2.Search.FamilyExecution;
 
 internal sealed partial record RelicFullGpuPlan
 {
+    // Exact local capacity is enabled only by the bounded factory below.
+    internal bool UseExactGenericBagCapacity { get; init; }
+    internal int ConfiguredGenericBagCapacity
+    {
+        get
+        {
+            if (!GenericReplay || !UseExactGenericBagCapacity) return 512;
+            var pool = SequencePlan.Pool;
+            int count = pool.BucketCount;
+            if (pool.BucketLengths.Length != count || pool.BucketScopes.Length != count ||
+                pool.BucketKinds.Length != count || pool.DrawDirections.Length != count ||
+                pool.EntryFlags.Length != pool.DenseRelicIds.Length) return 512;
+            long total = 0;
+            for (int i = 0; i < count; i++)
+            {
+                int offset = pool.BucketOffsets[i], length = pool.BucketLengths[i];
+                if (offset < 0 || length < 0 || (long)offset + length > pool.DenseRelicIds.Length) return 512;
+                // Match the shader, including every repeated pool entry. Dense
+                // identity count and unique keys do not bound this local array.
+                if (pool.BucketScopes[i] != 0 && pool.BucketKinds[i] is >= 1 and <= 3) total += length;
+                if (total > 512) return 512;
+            }
+            return total is >= 1 and <= 512 ? (int)total : 512;
+        }
+    }
+
     // General R-owned arrival replay supplements the existing tracked-rank fast
     // specialization. No mutable bag or Rewards state leaves this invocation.
     private static bool TryCreateGeneric(ExactSearchExecutionRequest request, NeowReplayPlan route,
@@ -77,7 +103,10 @@ internal sealed partial record RelicFullGpuPlan
             .Where(k => !VanillaRelicRewardEffects.TryGet(request.ProfileId, k, out var e) || !e.NestedOnObtainPreservesRewardContinuation)
             .Distinct().Select(Id).ToArray();
         meta[120] = Store(unresolved); meta[121] = (uint)unresolved.Length;
-        plan = new(sequence, meta.ToArray()) { GenericReplay = true };
+        plan = new(sequence, meta.ToArray()) { GenericReplay = true,
+            UseExactGenericBagCapacity = request.ProfileId == RolltheSpire2.Compatibility.RuntimeProfileId.Beta111 &&
+                request.Authority.PlayersCount is >= 2 and <= 4 &&
+                sequence.Predicates.Length == 0 && sequence.ShopPredicates.Length == 0 };
         return true;
     }
 

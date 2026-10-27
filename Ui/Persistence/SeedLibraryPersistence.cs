@@ -1,23 +1,28 @@
+using RolltheSpire2.Ui.Workspace;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using MegaCrit.Sts2.Core.Unlocks;
 using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Authority.Runtime;
+using RolltheSpire2.Core.Authority;
+using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.World;
 using RolltheSpire2.Core.World.Snapshots;
 using RolltheSpire2.Search.Semantics;
 using RolltheSpire2.Ui.Shell;
+using RolltheSpire2.Presentation.Localization;
 
 namespace RolltheSpire2.Ui.Persistence;
 
 internal enum SeedLibrarySource { Developer, User }
-internal enum SeedQueryAssociationKind { UserAssigned, VerifiedFromSearch, LegacyUnspecified }
+internal enum SeedQueryAssociationKind { UserAssigned, VerifiedFromSearch, LegacyUnspecified, UnverifiedFromSearch }
 internal sealed record SeedQueryAssociation(string QueryKey, SeedQueryAssociationKind Kind,
     string EnvironmentFingerprint = "", string SearchRecordId = "");
 
@@ -31,6 +36,40 @@ internal sealed record SeedLibraryPlayer(int Slot, ModelKey Character, Serializa
 // document, pool, worker/session, cursor or live RunState belongs in a library item.
 internal sealed record SeedLibraryContext(string GameVersion, RuntimeProfileId Profile, WorldGameMode Mode,
     int Ascension, IReadOnlyList<SeedLibraryPlayer> Players, int SelectedSlot = 0);
+
+// A bookmark records the source attempt; reopening independently recomputes prediction.
+internal sealed record SeedLibraryResultProvenance(bool IsUnverified, bool IsUnfiltered,
+    SearchDisposition ValidationDisposition, string ValidationIssue, RequestSupportAssessment? SupportScope,
+    string SourceQueryKey, string SearchRecordId)
+{
+    public string SourceEnvironmentFingerprint { get; init; } = "";
+    public string SourceSeed { get; init; } = "";
+    public string SourceContextIdentity { get; init; } = "";
+    public bool AppliesToCurrentContext { get; init; } = true;
+    private IReadOnlyList<PersistedTreasureSource> _treasureSources = [];
+    public IReadOnlyList<PersistedTreasureSource> TreasureSources
+    {
+        get => ValidationDisposition == SearchDisposition.Match ? _treasureSources : [];
+        init => _treasureSources = value ?? [];
+    }
+    internal static SeedLibraryResultProvenance From(PersistedSearchResult result, SeedQueryAssociation? origin) => new(
+        result.IsUnverified, result.IsUnfiltered, result.EffectiveValidationDisposition, result.ValidationIssue,
+        result.SupportScope, origin?.QueryKey ?? result.QueryFingerprint, origin?.SearchRecordId ?? "")
+        { SourceSeed = result.Seed, SourceEnvironmentFingerprint = origin?.EnvironmentFingerprint ?? "",
+            SourceContextIdentity = result.Context is { } context ? SeedLibraryStore.ContextIdentity(result.Seed, context) : "",
+            TreasureSources = result.TreasureSources.ToArray() };
+    internal static SeedLibraryResultProvenance From(SearchCandidate result, SeedQueryAssociation? origin) => new(
+        result.IsUnverified, result.IsUnfiltered, result.ValidationDisposition, result.ValidationIssue,
+        result.SupportScope, origin?.QueryKey ?? "", origin?.SearchRecordId ?? "")
+        { SourceSeed = result.Seed, SourceEnvironmentFingerprint = origin?.EnvironmentFingerprint ?? "",
+            TreasureSources = SearchResultProjection.TreasureSources(result) };
+    internal SeedLibraryResultProvenance ForContext(string seed, SeedLibraryContext context) => this with
+    {
+        AppliesToCurrentContext = AppliesToCurrentContext &&
+            (SourceSeed.Length == 0 || string.Equals(SourceSeed, seed, StringComparison.OrdinalIgnoreCase)) &&
+            (SourceContextIdentity.Length == 0 || SourceContextIdentity == SeedLibraryStore.ContextIdentity(seed, context))
+    };
+}
 
 internal sealed record SeedLibraryEntry(string Id, SeedLibrarySource Source, string Seed, string Note,
     SeedLibraryContext? Context, DateTimeOffset SavedAtUtc)
@@ -48,6 +87,7 @@ internal sealed record SeedLibraryEntry(string Id, SeedLibrarySource Source, str
     }
     public IReadOnlyList<string> QueryKeys { get; init; } = [];
     public IReadOnlyList<SeedQueryAssociation> QueryAssociations { get; init; } = [];
+    public SeedLibraryResultProvenance? ResultProvenance { get; init; }
     public string RawContextJson { get; init; } = string.Empty;
     public string Issue { get; init; } = string.Empty;
     public bool CanOpen => Context is not null && string.IsNullOrEmpty(Issue);
@@ -56,7 +96,7 @@ internal sealed record SeedLibraryEntry(string Id, SeedLibrarySource Source, str
 /// <summary>Player notes and developer recommendations share one context contract.</summary>
 internal sealed class SeedLibraryStore
 {
-    internal const int SchemaVersion = 1;
+    internal const int SchemaVersion = 2;
     private readonly string _directory;
     private readonly List<SeedLibraryEntry> _user = [];
     private readonly Dictionary<string, string> _paths = new(StringComparer.Ordinal);
@@ -88,17 +128,31 @@ internal sealed class SeedLibraryStore
         return entry is not null;
     }
 
-    public SeedLibraryEntry Save(string seed, SeedLibraryContext context, string note, string? queryKey = null, SeedQueryAssociation? association = null, string? title = null)
+    public SeedLibraryEntry Save(string seed, SeedLibraryContext context, string note, string? queryKey = null, SeedQueryAssociation? association = null, string? title = null,
+        SeedLibraryResultProvenance? resultProvenance = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         SeedLibraryContext savedContext = CloneContext(context);
-        string canonical = CanonicalSeed(seed);
+        string canonical = CanonicalSeed(seed, savedContext.Profile);
+        if (resultProvenance is { } provenance)
+        {
+            provenance = provenance.ForContext(canonical, savedContext);
+            resultProvenance = provenance.SourceContextIdentity.Length == 0 && provenance.AppliesToCurrentContext
+                ? provenance with { SourceSeed = canonical, SourceContextIdentity = ContextIdentity(canonical, savedContext) }
+                : provenance;
+        }
+        // A historical source remains visible, but cannot associate a different
+        // seed/configuration with its original query as search evidence.
+        if (resultProvenance is { AppliesToCurrentContext: false }) association = null;
+        if (resultProvenance is { ValidationDisposition: not SearchDisposition.Match } && association is { Kind: SeedQueryAssociationKind.VerifiedFromSearch })
+            association = association with { Kind = SeedQueryAssociationKind.UnverifiedFromSearch };
         string key = Identity(canonical, savedContext);
         int index = _user.FindIndex(e => e.Context is not null && Identity(e.Seed, e.Context) == key);
         string id = index >= 0 ? _user[index].Id : "user:" + Guid.NewGuid().ToString("N");
         var saved = new SeedLibraryEntry(id, SeedLibrarySource.User, canonical, (note ?? string.Empty).Trim(),
             savedContext, DateTimeOffset.UtcNow) { RawContextJson = JsonSerializer.Serialize(savedContext, Json),
                 Title = title?.Trim() ?? (index >= 0 ? _user[index].Title : ""),
+                ResultProvenance = resultProvenance ?? (index >= 0 ? _user[index].ResultProvenance : null),
                 QueryKeys = (index >= 0 ? _user[index].QueryKeys : []).Concat(string.IsNullOrEmpty(queryKey) ? [] : new[] { queryKey }).Distinct().ToArray(),
                 QueryAssociations = (index >= 0 ? _user[index].QueryAssociations : [])
                     .Concat(association is not null ? new[] { association } : !string.IsNullOrEmpty(queryKey)
@@ -204,7 +258,8 @@ internal sealed class SeedLibraryStore
         string raw = !string.IsNullOrWhiteSpace(entry.RawContextJson) ? entry.RawContextJson : JsonSerializer.Serialize(entry.Context, Json);
         using JsonDocument context = JsonDocument.Parse(raw);
         var document = new PersistedEntry(SchemaVersion, entry.Id, entry.Seed, entry.Note,
-            context.RootElement.Clone(), entry.SavedAtUtc) { Title = entry.Title, QueryKeys = entry.QueryKeys, QueryAssociations = entry.QueryAssociations };
+            context.RootElement.Clone(), entry.SavedAtUtc) { Title = entry.Title, QueryKeys = entry.QueryKeys, QueryAssociations = entry.QueryAssociations,
+                ResultProvenance = entry.ResultProvenance };
         string path = PathFor(entry.Id);
         SearchPersistenceFile.WriteAtomic(path, JsonSerializer.SerializeToUtf8Bytes(document, Json));
         _paths[entry.Id] = path;
@@ -214,23 +269,24 @@ internal sealed class SeedLibraryStore
     {
         PersistedEntry document = JsonSerializer.Deserialize<PersistedEntry>(text, Json)
             ?? throw new InvalidDataException("SeedLibraryDocumentMissing");
-        if (document.SchemaVersion != SchemaVersion)
+        if (document.SchemaVersion is not (1 or SchemaVersion))
             throw new InvalidDataException("SeedLibrarySchemaUnsupported:" + document.SchemaVersion);
         string id = developerId ?? document.Id;
         string prefix = source == SeedLibrarySource.User ? "user:" : "developer:";
         if (!id.StartsWith(prefix, StringComparison.Ordinal) || id.Length <= prefix.Length)
             throw new InvalidDataException("SeedLibraryIdInvalid");
-        string seed = CanonicalSeed(document.Seed);
         if (source == SeedLibrarySource.Developer) document.DeveloperDetails?.Validate();
         if (document.Context.ValueKind is not JsonValueKind.Object)
             throw new InvalidDataException("SeedLibraryContextMissing");
         string raw = document.Context.GetRawText();
         SeedLibraryContext? context = null;
+        RuntimeProfileId seedProfile = RuntimeProfileId.Beta110;
         string issue = string.Empty;
         try
         {
             context = JsonSerializer.Deserialize<SeedLibraryContext>(raw, Json)
                 ?? throw new InvalidDataException("SeedLibraryContextMissing");
+            seedProfile = context.Profile;
             ValidateContext(context);
         }
         catch (Exception ex)
@@ -238,6 +294,7 @@ internal sealed class SeedLibraryStore
             context = null;
             issue = "SeedLibraryContextUnsupported:" + SearchPresetStore.Compact(ex.Message);
         }
+        string seed = CanonicalSeed(document.Seed, seedProfile);
         var keys = (document.QueryKeys ?? []).Where(k => !string.IsNullOrWhiteSpace(k)).Distinct().ToArray();
         var associations = (document.QueryAssociations ?? []).Where(a => a is not null && !string.IsNullOrWhiteSpace(a.QueryKey))
             .Select(a => !Enum.IsDefined(a.Kind) || a.Kind == SeedQueryAssociationKind.VerifiedFromSearch &&
@@ -247,6 +304,7 @@ internal sealed class SeedLibraryStore
             .Select(k => new SeedQueryAssociation(k, SeedQueryAssociationKind.LegacyUnspecified)));
         return new(id, source, seed, document.Note, context, document.SavedAtUtc)
         { Title = (document.Title ?? "").Trim(), RawContextJson = raw, Issue = issue, QueryKeys = keys, QueryAssociations = associations,
+            ResultProvenance = document.ResultProvenance,
             DeveloperDetails = source == SeedLibrarySource.Developer ? document.DeveloperDetails : null };
     }
 
@@ -277,9 +335,6 @@ internal sealed class SeedLibraryStore
                 throw new InvalidDataException("SeedLibraryPlayerInvalid");
             SearchPresetCompatibilityResolver.ValidateWorkbenchShape(new WorkbenchSearchDraft(player.Character,
                 context.Ascension, player.OpeningPremise, player.AncientPremises));
-            if (context.Mode == WorldGameMode.Singleplayer &&
-                JsonSerializer.Serialize(player.OpeningPremise, Json) != JsonSerializer.Serialize(SearchQuery.Empty, Json))
-                throw new InvalidDataException("SeedLibrarySoloOpeningPremiseUnsupported");
             var nonOpening = player.OpeningPremise with { OpeningRoute = null, OpeningRouteRelicRequirement = null,
                 StructuredOpeningEffects = [] };
             if (JsonSerializer.Serialize(nonOpening, Json) != JsonSerializer.Serialize(SearchQuery.Empty, Json))
@@ -296,25 +351,31 @@ internal sealed class SeedLibraryStore
                 missing.Take(6).Select(item => item.Path + "=" + item.StableIdentity + " (" + item.Reason + ")")));
     }
 
-    private static string CanonicalSeed(string seed)
+    private static string CanonicalSeed(string seed, RuntimeProfileId profile)
     {
-        if (!ProfileSeedRules.TryCanonicalize(seed, Beta110Profile.Instance.SeedLength, out string canonical, out string issue))
+        IRuntimeProfile seedRules = profile == RuntimeProfileId.Beta111 ? Beta111Profile.Instance : Beta110Profile.Instance;
+        if (!ProfileSeedRules.TryCanonicalizePredictionSeed(seedRules, seed, out string canonical, out string issue))
             throw new InvalidDataException("SeedLibrarySeedInvalid:" + issue);
         return canonical;
     }
 
     private static string Identity(string seed, SeedLibraryContext context) =>
-        CanonicalSeed(seed) + "\n" + JsonSerializer.Serialize(context with
+        CanonicalSeed(seed, context.Profile) + "\n" + JsonSerializer.Serialize(context with
         {
             SelectedSlot = 0,
             Players = context.Players.Select(player => player with
             {
                 Selection = player.Selection is { } selection
-                    ? !selection.Explicit && player.OpeningPremise.OpeningRoute is null ? null
+                    ? !selection.Explicit ? null
                         : !string.IsNullOrEmpty(selection.Route) ? selection with { ChoiceSlot = null } : selection
                     : null
             }).ToArray()
         }, Json);
+
+    // Automatic display selections are observations of the authored premise;
+    // explicit player selections are part of the prediction configuration.
+    internal static string ContextIdentity(string seed, SeedLibraryContext context) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Identity(seed, context))));
 
     internal static JsonSerializerOptions CreateJsonOptions() => new(SearchPresetStore.CreateJsonOptions())
     {
@@ -331,6 +392,8 @@ internal sealed class SeedLibraryStore
         public DeveloperSeedDetails? DeveloperDetails { get; init; }
         public IReadOnlyList<string> QueryKeys { get; init; } = [];
         public IReadOnlyList<SeedQueryAssociation> QueryAssociations { get; init; } = [];
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public SeedLibraryResultProvenance? ResultProvenance { get; init; }
     }
 }
 
@@ -349,9 +412,12 @@ internal sealed class DeveloperSeedLibraryProvider
                 ?? throw new InvalidDataException("SeedLibraryDeveloperResourceMissing");
             using var reader = new StreamReader(stream);
             return reader.ReadToEnd();
-        })))) { }
+        }))), assembly == typeof(DeveloperSeedLibraryProvider).Assembly ? JsonLocalizationCatalog.LoadEntries("seed_recommendations", "zh") : null,
+        assembly == typeof(DeveloperSeedLibraryProvider).Assembly ? JsonLocalizationCatalog.LoadEntries("seed_recommendations", "en") : null) { }
 
-    internal DeveloperSeedLibraryProvider(IEnumerable<(string Resource, Func<string> Read)> resources)
+    internal DeveloperSeedLibraryProvider(IEnumerable<(string Resource, Func<string> Read)> resources,
+        IReadOnlyDictionary<string, Dictionary<string, string>>? chineseTexts = null,
+        IReadOnlyDictionary<string, Dictionary<string, string>>? englishTexts = null)
     {
         var entries = new List<SeedLibraryEntry>();
         var issues = new List<string>();
@@ -363,7 +429,10 @@ internal sealed class DeveloperSeedLibraryProvider
                 if (!resource.StartsWith(ResourcePrefix, StringComparison.Ordinal) || !resource.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("SeedLibraryDeveloperResourceNameInvalid");
                 string id = "developer:" + resource[ResourcePrefix.Length..^5];
-                var entry = SeedLibraryStore.Read(read(), SeedLibrarySource.Developer, id);
+                string text = read();
+                if (chineseTexts is not null && englishTexts is not null)
+                    text = ApplyBundledTexts(text, id, chineseTexts, englishTexts);
+                var entry = SeedLibraryStore.Read(text, SeedLibrarySource.Developer, id);
                 if (!ids.Add(id)) throw new InvalidDataException("SeedLibraryDeveloperDuplicateId");
                 entries.Add(entry);
             }
@@ -378,4 +447,27 @@ internal sealed class DeveloperSeedLibraryProvider
         LoadIssues = issues;
     }
     public IReadOnlyList<SeedLibraryEntry> GetEntries() => _entries;
+
+    private static string ApplyBundledTexts(string text, string id,
+        IReadOnlyDictionary<string, Dictionary<string, string>> chineseTexts,
+        IReadOnlyDictionary<string, Dictionary<string, string>> englishTexts)
+    {
+        JsonObject document = JsonNode.Parse(text)?.AsObject()
+            ?? throw new InvalidDataException("SeedLibraryDocumentMissing");
+        // Recreate the ordinary persistence DTO before strict Read validation. The raw
+        // Chinese title/note and all bilingual details retain their existing values.
+        var chinese = chineseTexts[id];
+        var english = englishTexts[id];
+        document["Title"] = chinese["title"];
+        document["Note"] = chinese.GetValueOrDefault("note", "");
+        JsonObject details = document["DeveloperDetails"]?.AsObject()
+            ?? throw new InvalidDataException("SeedLibraryDeveloperDetailsMissing");
+        foreach (string field in new[] { "Title", "Description", "Instructions" })
+            details[field] = new JsonObject
+            {
+                ["Zh"] = field == "Instructions" ? chinese.GetValueOrDefault("instructions", "") : chinese[field.ToLowerInvariant()],
+                ["En"] = field == "Instructions" ? english.GetValueOrDefault("instructions", "") : english[field.ToLowerInvariant()]
+            };
+        return document.ToJsonString();
+    }
 }

@@ -8,6 +8,7 @@ using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Merchant;
 using RolltheSpire2.Core.Neow;
 using RolltheSpire2.Search.Contracts;
+using RolltheSpire2.Search.Semantics;
 
 namespace RolltheSpire2.Search.FamilyExecution;
 
@@ -287,23 +288,23 @@ internal static class NeowNumericCompilation
         pool.Common.Contains(target) || pool.Uncommon.Contains(target) || pool.Rare.Contains(target);
 
     internal static Beta110FastNeowAuthority BuildAuthority(
-        SearchExecutionRequest plan,
+        SearchContext context,
         Beta110FastEffectCatalog effectCatalog,
         bool needsBones)
     {
         bool baseIdentityExact = Beta110FastRelicCatalog.IsAbiCompatible &&
-                                 RuntimeProfilePolicies.UsesBeta110SharedAlgorithms(plan.ProfileId) &&
-                                 plan.Authority.ProfileId == plan.ProfileId &&
-                                 plan.Authority.IsProductionBetaProjectionAuthorityExact &&
-                                 plan.Authority.AllCharacterCardPoolsUnlocked.HasValue &&
-                                 plan.Authority.IsScrollBoxesAllowed.HasValue &&
-                                 plan.Authority.PlayersCount > 0 &&
-                                 plan.Authority.PlayerSlotIndex >= 0 &&
-                                 plan.Authority.PlayerSlotIndex < plan.Authority.PlayersCount;
+                                 RuntimeProfilePolicies.UsesBeta110SharedAlgorithms(context.ProfileId) &&
+                                 context.Authority.ProfileId == context.ProfileId &&
+                                 context.Authority.IsProductionBetaProjectionAuthorityExact &&
+                                 context.Authority.AllCharacterCardPoolsUnlocked.HasValue &&
+                                 context.Authority.IsScrollBoxesAllowed.HasValue &&
+                                 context.Authority.PlayersCount > 0 &&
+                                 context.Authority.PlayerSlotIndex >= 0 &&
+                                 context.Authority.PlayerSlotIndex < context.Authority.PlayersCount;
         var eligibleCurseIds = new List<byte>();
         IReadOnlyList<ModelKey> eligibleCursePool = Array.Empty<ModelKey>();
         bool curseIdentityExact = baseIdentityExact &&
-                                  ModernNeowIdentityPredictor.TryGetEligibleCursePool(plan.Authority, out eligibleCursePool);
+                                  ModernNeowIdentityPredictor.TryGetEligibleCursePool(context.Authority, out eligibleCursePool);
         if (curseIdentityExact)
         {
             foreach (ModelKey key in eligibleCursePool)
@@ -319,7 +320,7 @@ internal static class NeowNumericCompilation
             curseIdentityExact &= eligibleCurseIds.Count is > 0 and <= 32;
         }
         bool identityExact = baseIdentityExact && curseIdentityExact;
-        NeowEffectAuthoritySnapshot? effects = plan.Authority.EffectAuthority;
+        NeowEffectAuthoritySnapshot? effects = context.Authority.EffectAuthority;
         var bones = new List<byte>();
         bool bonesExact = !needsBones;
         if (needsBones)
@@ -344,15 +345,15 @@ internal static class NeowNumericCompilation
 
         string fingerprint = Fingerprint(new[]
         {
-            plan.Authority.UnlockSnapshotFingerprint,
-            plan.Authority.CatalogFingerprint,
-            plan.Authority.EffectSnapshotFingerprint,
+            context.Authority.UnlockSnapshotFingerprint,
+            context.Authority.CatalogFingerprint,
+            context.Authority.EffectSnapshotFingerprint,
             effectCatalog.Fingerprint,
-            plan.Authority.PlayerSlotIndex.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            plan.Authority.PlayersCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            plan.Ascension.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            plan.Authority.AllCharacterCardPoolsUnlocked?.ToString() ?? "null",
-            plan.Authority.IsScrollBoxesAllowed?.ToString() ?? "null",
+            context.Authority.PlayerSlotIndex.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            context.Authority.PlayersCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            context.Ascension.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            context.Authority.AllCharacterCardPoolsUnlocked?.ToString() ?? "null",
+            context.Authority.IsScrollBoxesAllowed?.ToString() ?? "null",
             curseIdentityExact.ToString(),
             identityExact.ToString(),
             bonesExact.ToString(),
@@ -360,12 +361,12 @@ internal static class NeowNumericCompilation
             string.Join(",", bones)
         });
         return new Beta110FastNeowAuthority(
-            plan.Authority.PlayerSlotIndex,
-            plan.Authority.PlayersCount,
-            plan.Ascension,
-            plan.Authority.AllCharacterCardPoolsUnlocked == true,
-            plan.Authority.IsScrollBoxesAllowed == true,
-            plan.CharacterKey == BaseGameModelKeys.Characters.Defect,
+            context.Authority.PlayerSlotIndex,
+            context.Authority.PlayersCount,
+            context.Ascension,
+            context.Authority.AllCharacterCardPoolsUnlocked == true,
+            context.Authority.IsScrollBoxesAllowed == true,
+            context.CharacterKey == BaseGameModelKeys.Characters.Defect,
             bones.ToArray(),
             eligibleCurseIds.ToArray(),
             curseIdentityExact,

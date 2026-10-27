@@ -20,7 +20,8 @@ internal static class NeowEffectRuntimeSnapshotCapture
         int ascension,
         string gameVersion,
         int playersCount,
-        int playerSlotIndex)
+        int playerSlotIndex,
+        object? frozenUnlockState = null)
     {
         ArgumentNullException.ThrowIfNull(profile);
         RuntimeSnapshotThreadGuard.RequireMainThread();
@@ -36,6 +37,9 @@ internal static class NeowEffectRuntimeSnapshotCapture
 
         try
         {
+            if (frozenUnlockState is not null)
+                return ReflectionNeowEffectSnapshotAdapter.Capture(profile, rawSeed, character, ascension,
+                    playersCount, playerSlotIndex, adapter.ProfileId, gameVersion, new(true, true), frozenUnlockState);
             return adapter.Capture(
                 profile,
                 rawSeed,
@@ -47,6 +51,9 @@ internal static class NeowEffectRuntimeSnapshotCapture
         }
         catch (Exception ex)
         {
+            Diagnostics.RuntimeIssueLedger.Current.Record(ex, "RuntimeEffectSnapshotCaptureFailed",
+                nameof(NeowEffectRuntimeSnapshotCapture), "EffectCapture", "issues.capture_failed",
+                correlationId: $"profile={profile.ProfileId};character={character.CharacterKey.Serialized};slot={playerSlotIndex}");
             return RuntimeEffectSnapshotCaptureResult.Missing(
                 profile.ProfileId,
                 $"RuntimeEffectSnapshotCaptureFailed:{ex.GetType().Name}",

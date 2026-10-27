@@ -10,6 +10,8 @@ internal static class StandardMapExactEvaluator
     {
         var conditions = request.CompiledSearch.NormalizedQuery.StandardMaps;
         if (conditions.Count == 0) return SearchQueryEvaluation.Match();
+        if (request.ProfileId != RolltheSpire2.Compatibility.RuntimeProfileId.Beta111)
+            return SearchQueryEvaluation.Unsupported("StandardMap.Beta111Required");
         var values = new Dictionary<int,MapOutcomeSignature>();
         bool match = StandardMapFamily.Matches(conditions,act =>
         {

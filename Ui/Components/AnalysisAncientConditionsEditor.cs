@@ -51,7 +51,7 @@ internal sealed partial class AnalysisAncientConditionsEditor : PanelContainer
         _tooltipHost = tooltipHost ?? throw new ArgumentNullException(nameof(tooltipHost));
         Name = "AncientConditionsSubcard";
         SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        Ui1Theme.ApplyPanel(this, Ui1SurfaceRole.Input, SubcardRadius, SubcardBorderWidth, SubcardPadding);
+        MainPanelTheme.ApplyPanel(this, Ui1SurfaceRole.Input, SubcardRadius, SubcardBorderWidth, SubcardPadding);
 
         var root = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         root.AddThemeConstantOverride("separation", 6);
@@ -65,7 +65,7 @@ internal sealed partial class AnalysisAncientConditionsEditor : PanelContainer
             CustomMinimumSize = new Vector2(0f, HeaderMinimumHeight),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
         };
-        Ui1Theme.ApplyButton(_foldout, Ui1ButtonRole.Ghost);
+        MainPanelTheme.ApplyButton(_foldout, Ui1ButtonRole.Ghost);
         root.AddChild(_foldout);
 
         _body = new VBoxContainer
@@ -104,7 +104,7 @@ internal sealed partial class AnalysisAncientConditionsEditor : PanelContainer
             SizeFlagsHorizontal = Control.SizeFlags.ShrinkEnd,
             SizeFlagsVertical = Control.SizeFlags.ShrinkBegin
         };
-        Ui1Theme.ApplyButton(_reset, Ui1ButtonRole.Ghost);
+        MainPanelTheme.ApplyButton(_reset, Ui1ButtonRole.Ghost);
         controlsRow.AddChild(_conditions);
         controlsRow.AddChild(_reset);
         _body.AddChild(controlsRow);
@@ -212,7 +212,7 @@ internal sealed partial class AnalysisAncientConditionsEditor : PanelContainer
         }
         else
         {
-            Label missing = Ui1Theme.Label("?", Ui1TextRole.Muted);
+            Label missing = MainPanelTheme.Label("?", Ui1TextRole.Muted);
             missing.MouseFilter = Control.MouseFilterEnum.Ignore;
             missing.HorizontalAlignment = HorizontalAlignment.Center;
             missing.VerticalAlignment = VerticalAlignment.Center;
@@ -266,7 +266,7 @@ internal sealed partial class AnalysisAncientConditionsEditor : PanelContainer
         foreach (Button button in Buttons())
         {
             bool expectedEligible = button.ButtonPressed;
-            Ui1Theme.ApplyButton(button, expectedEligible ? Ui1ButtonRole.Secondary : Ui1ButtonRole.Ghost);
+            MainPanelTheme.ApplyButton(button, expectedEligible ? Ui1ButtonRole.Secondary : Ui1ButtonRole.Ghost);
             button.Modulate = expectedEligible ? Colors.White : new Color(1f, 1f, 1f, 0.38f);
         }
     }

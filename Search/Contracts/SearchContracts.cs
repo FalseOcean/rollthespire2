@@ -10,25 +10,6 @@ using RolltheSpire2.Search.Semantics;
 
 namespace RolltheSpire2.Search.Contracts;
 
-public enum SearchDisposition
-{
-    Match,
-    NoMatch,
-    Unknown,
-    NotEvaluatedByPolicy,
-    Unsupported,
-    Cancelled
-}
-
-public enum SearchRunState
-{
-    Idle,
-    Running,
-    Completed,
-    Cancelled,
-    Faulted
-}
-
 public enum NeowSearchPreset
 {
     None,
@@ -346,6 +327,12 @@ public sealed record RelicShopSequenceSearchCondition(
     public bool IsEmpty => Count <= 0 || !Slots.Take(Math.Max(0, Count)).Any(key => key.HasValue);
 }
 
+/// <summary>Reject an opening continuation when an initial card reward offers any listed identity.</summary>
+public sealed record CombatCardExclusionSearchCondition(int BattleCount, IReadOnlyList<ModelKey> CardKeys)
+{
+    public bool IsEmpty => CardKeys.Count == 0;
+}
+
 public sealed record CombatCardRewardSequenceSearchCondition(
     int Count,
     CombatRewardSequenceOrderMode OrderMode,
@@ -454,6 +441,9 @@ public sealed record NeowSearchFilter(
         Array.Empty<ModelKey>(),
         NeowSearchPreset.None);
 
+    public TreasureRelicSearchCondition? TreasureRelics { get; init; }
+    public int FirstActUnknownEventPrefixCount { get; init; }
+
     /// <summary>
     /// New route-oriented Neow contract. The legacy Any/All/Ban fields above are
     /// retained only for source compatibility with pre-UI1 fixtures and are never
@@ -498,6 +488,7 @@ public sealed record NeowSearchFilter(
     /// conservative Fast compatibility predicates, not the modern semantic authority.
     /// </summary>
     public CombatCardRewardSequenceSearchCondition? CombatCardRewardSequence { get; init; }
+    public CombatCardExclusionSearchCondition? CombatCardExclusion { get; init; }
     public CombatPotionRewardSequenceSearchCondition? CombatPotionRewardSequence { get; init; }
 
     public bool HasNeowConstraints =>
@@ -528,6 +519,7 @@ public sealed record NeowSearchFilter(
         EventSequenceConditions.Any(condition => !condition.IsEmpty);
 
     public bool RequiresRelicSequenceDomain =>
+        TreasureRelics is { IsEmpty: false } ||
         RelicSequenceConditions.Any(condition => !condition.IsEmpty) ||
         RelicShopSequenceConditions.Any(condition => !condition.IsEmpty);
     public bool RequiresEventSequenceDomain => EventSequenceConditions.Any(condition => !condition.IsEmpty);
@@ -535,16 +527,17 @@ public sealed record NeowSearchFilter(
     public bool RequiresMerchantColorlessDomain =>
         MerchantColorlessConditions.Any(condition => condition.IsValid) ||
         MerchantColorlessSequenceConditions.Any(condition => !condition.IsEmpty);
-    public bool RequiresCanonicalRootLocalDomain => RequiresEventResultDomain || RequiresMerchantColorlessDomain;
+    public bool RequiresCanonicalRootLocalDomain => RequiresEventResultDomain || RequiresMerchantColorlessDomain || FirstActUnknownEventPrefixCount > 0;
     // Event Result and canonical Merchant Colorless are root-local/canonical facts.
     // They intentionally do not imply World/event occurrence or opening-route authority.
     public bool RequiresWorldAuthority => RequiresWorldDomain || RequiresRelicSequenceDomain || RequiresNormalCombatRewardDomain;
     public bool RequiresNormalCombatRewardDomain =>
         NormalCombatRewardConditions.Any(condition => !condition.IsEmpty) ||
-        CombatCardRewardSequence is { IsEmpty: false } ||
+        CombatCardRewardSequence is { IsEmpty: false } || CombatCardExclusion is { IsEmpty: false } ||
         CombatPotionRewardSequence is { IsEmpty: false };
 
     public bool RequiresEffectColdPath =>
+        (NeowRoute is { IsValid: true } && (TreasureRelics is { IsEmpty: false } || FirstActUnknownEventPrefixCount > 0)) ||
         RequireNeowsBones ||
         !BonesRelics.IsEmpty ||
         RequiredBonesCombination.Count > 0 ||
@@ -612,6 +605,8 @@ public sealed record ExactSearchEvaluationProjection(
         false, false, ModelKeySetFilter.Empty, false, false, null,
         Array.Empty<ModelKey>(), NeowSearchPreset.None);
 
+    public TreasureRelicSearchCondition? TreasureRelics { get; init; }
+    public int FirstActUnknownEventPrefixCount { get; init; }
     public NeowRouteSearchCondition? NeowRoute { get; init; }
     public IReadOnlyList<NeowStructuredEffectSearchCondition> StructuredNeowEffects { get; init; } =
         Array.Empty<NeowStructuredEffectSearchCondition>();
@@ -643,6 +638,7 @@ public sealed record ExactSearchEvaluationProjection(
     public IReadOnlyList<NormalCombatRewardSearchCondition> NormalCombatRewardConditions { get; init; } =
         Array.Empty<NormalCombatRewardSearchCondition>();
     public CombatCardRewardSequenceSearchCondition? CombatCardRewardSequence { get; init; }
+    public CombatCardExclusionSearchCondition? CombatCardExclusion { get; init; }
     public CombatPotionRewardSequenceSearchCondition? CombatPotionRewardSequence { get; init; }
 
     public bool HasNeowConstraints =>
@@ -653,25 +649,29 @@ public sealed record ExactSearchEvaluationProjection(
         EffectOutputConditions.Any(condition => !condition.IsEmpty) ||
         StructuredNeowEffects.Any(condition => !condition.IsEmpty) || Preset != NeowSearchPreset.None;
 
+    public IReadOnlyList<VariantScopedBossBranch> VariantBossBranches { get; init; } = Array.Empty<VariantScopedBossBranch>();
+
     public bool RequiresWorldDomain =>
-        BossFilters.Any(filter => !filter.IsEmpty) || BossOrdinalFilters.Any(filter => !filter.IsEmpty) ||
+        VariantBossBranches.Count > 0 || BossFilters.Any(filter => !filter.IsEmpty) || BossOrdinalFilters.Any(filter => !filter.IsEmpty) ||
         AncientBranchConditions.Any(condition => condition.IsValid) ||
         AncientIdentityFilters.Any(filter => !filter.IsEmpty) || AncientOptionFilters.Any(filter => !filter.IsEmpty) ||
         AncientSeaGlassTargetFilters.Any(filter => !filter.IsEmpty) ||
         EventSequenceConditions.Any(condition => !condition.IsEmpty);
     public bool RequiresRelicSequenceDomain =>
+        TreasureRelics is { IsEmpty: false } ||
         RelicSequenceConditions.Any(condition => !condition.IsEmpty) || RelicShopSequenceConditions.Any(condition => !condition.IsEmpty);
     public bool RequiresEventSequenceDomain => EventSequenceConditions.Any(condition => !condition.IsEmpty);
     public bool RequiresEventResultDomain => EventResultConditions.Any(condition => condition.IsValid);
     public bool RequiresMerchantColorlessDomain =>
         MerchantColorlessConditions.Any(condition => condition.IsValid) ||
         MerchantColorlessSequenceConditions.Any(condition => !condition.IsEmpty);
-    public bool RequiresCanonicalRootLocalDomain => RequiresEventResultDomain || RequiresMerchantColorlessDomain || TransformationAggregate is not null;
+    public bool RequiresCanonicalRootLocalDomain => RequiresEventResultDomain || RequiresMerchantColorlessDomain || TransformationAggregate is not null || FirstActUnknownEventPrefixCount > 0;
     public bool RequiresNormalCombatRewardDomain =>
         NormalCombatRewardConditions.Any(condition => !condition.IsEmpty) ||
-        CombatCardRewardSequence is { IsEmpty: false } || CombatPotionRewardSequence is { IsEmpty: false };
+        CombatCardRewardSequence is { IsEmpty: false } || CombatCardExclusion is { IsEmpty: false } || CombatPotionRewardSequence is { IsEmpty: false };
     public bool RequiresWorldAuthority => RequiresWorldDomain || RequiresRelicSequenceDomain || RequiresNormalCombatRewardDomain;
     public bool RequiresEffectColdPath =>
+        (NeowRoute is { IsValid: true } && (TreasureRelics is { IsEmpty: false } || FirstActUnknownEventPrefixCount > 0)) ||
         RequireNeowsBones || !BonesRelics.IsEmpty || RequiredBonesCombination.Count > 0 ||
         RequiredBonesAcquisitionOrder.Count > 0 || RequireSmallCapsule || RequireLargeCapsule ||
         !CapsuleContainedRelics.IsEmpty || RequireWhetstone || RequireWarPaint || RequiredFinalCurse.HasValue ||
@@ -708,6 +708,8 @@ public sealed record ExactSearchEvaluationProjection(
         AncientOptionFilters = AncientOptionFilters,
         AncientSeaGlassTargetFilters = AncientSeaGlassTargetFilters,
         AncientOptionConditions = AncientOptionConditions,
+        TreasureRelics = TreasureRelics,
+        FirstActUnknownEventPrefixCount = FirstActUnknownEventPrefixCount,
         RelicSequenceConditions = RelicSequenceConditions,
         RelicShopSequenceConditions = RelicShopSequenceConditions,
         EventSequenceConditions = EventSequenceConditions,
@@ -716,6 +718,7 @@ public sealed record ExactSearchEvaluationProjection(
         MerchantColorlessSequenceConditions = MerchantColorlessSequenceConditions,
         NormalCombatRewardConditions = NormalCombatRewardConditions,
         CombatCardRewardSequence = CombatCardRewardSequence,
+        CombatCardExclusion = CombatCardExclusion,
         CombatPotionRewardSequence = CombatPotionRewardSequence
     };
 
@@ -735,6 +738,8 @@ public sealed record ExactSearchEvaluationProjection(
         AncientOptionFilters = filter.AncientOptionFilters,
         AncientSeaGlassTargetFilters = filter.AncientSeaGlassTargetFilters,
         AncientOptionConditions = filter.AncientOptionConditions,
+        TreasureRelics = filter.TreasureRelics,
+        FirstActUnknownEventPrefixCount = filter.FirstActUnknownEventPrefixCount,
         RelicSequenceConditions = filter.RelicSequenceConditions,
         RelicShopSequenceConditions = filter.RelicShopSequenceConditions,
         EventSequenceConditions = filter.EventSequenceConditions,
@@ -743,210 +748,7 @@ public sealed record ExactSearchEvaluationProjection(
         MerchantColorlessSequenceConditions = filter.MerchantColorlessSequenceConditions,
         NormalCombatRewardConditions = filter.NormalCombatRewardConditions,
         CombatCardRewardSequence = filter.CombatCardRewardSequence,
+        CombatCardExclusion = filter.CombatCardExclusion,
         CombatPotionRewardSequence = filter.CombatPotionRewardSequence
     };
-}
-
-public sealed record LegacySearchInput(
-    RuntimeProfileId ProfileId,
-    ModelKey CharacterKey,
-    int Ascension,
-    string StartSeed,
-    long ScanCount,
-    int TargetMatchCount,
-    int WorkerCount,
-    NeowSearchFilter Filter,
-    RuntimeContextAuthoritySnapshot Authority,
-    GameVersionDetection Detection,
-    bool IncludeDiagnostics = true);
-
-public sealed record SearchRunOptions(
-    string StartSeed,
-    long ScanCount,
-    int TargetMatchCount,
-    int WorkerCount,
-    bool IncludeDiagnostics = true,
-    bool SkipExactValidation = false);
-
-public sealed record ExactSearchExecutionRequest(
-    CompiledSearch CompiledSearch,
-    SearchRunOptions RunOptions,
-    string CanonicalStartSeed,
-    long ResolvedScanCount,
-    ExactSearchEvaluationProjection Evaluation,
-    CombatRewardRoutePolicyContract CombatRewardRoutePolicy,
-    string SnapshotFingerprint)
-{
-    internal IReadOnlyList<RolltheSpire2.Core.Neow.NeowChoiceResult>? PartyOpeningChoices { get; init; }
-    public RuntimeProfileId ProfileId => CompiledSearch.Context.ProfileId;
-    public ModelKey CharacterKey => CompiledSearch.Context.CharacterKey;
-    public int Ascension => CompiledSearch.Context.Ascension;
-    public long ScanCount => ResolvedScanCount;
-    public int TargetMatchCount => RunOptions.TargetMatchCount;
-    public int WorkerCount => RunOptions.WorkerCount;
-    public RuntimeContextAuthoritySnapshot Authority => CompiledSearch.Context.Authority;
-    public GameVersionDetection Detection => CompiledSearch.Context.Detection;
-    public bool IncludeDiagnostics => RunOptions.IncludeDiagnostics;
-}
-
-public sealed record ExactSearchExecutionCompileResult(
-    bool Success,
-    ExactSearchExecutionRequest? Plan,
-    SearchDisposition Disposition,
-    string Issue)
-{
-    public static ExactSearchExecutionCompileResult Accepted(ExactSearchExecutionRequest plan) =>
-        new(true, plan, SearchDisposition.NoMatch, string.Empty);
-
-    public static ExactSearchExecutionCompileResult Rejected(SearchDisposition disposition, string issue) =>
-        new(false, null, disposition, issue);
-}
-public sealed record SearchExecutionRequest(
-    CompiledSearch CompiledSearch,
-    SearchRunOptions RunOptions,
-    string CanonicalStartSeed,
-    long ResolvedScanCount,
-    NeowSearchFilter Filter,
-    CombatRewardRoutePolicyContract CombatRewardRoutePolicy,
-    string SnapshotFingerprint)
-{
-
-    public RuntimeProfileId ProfileId => CompiledSearch.Context.ProfileId;
-    public ModelKey CharacterKey => CompiledSearch.Context.CharacterKey;
-    public int Ascension => CompiledSearch.Context.Ascension;
-    public long ScanCount => ResolvedScanCount;
-    public int TargetMatchCount => RunOptions.TargetMatchCount;
-    public int WorkerCount => RunOptions.WorkerCount;
-    public RuntimeContextAuthoritySnapshot Authority => CompiledSearch.Context.Authority;
-    public GameVersionDetection Detection => CompiledSearch.Context.Detection;
-    public bool IncludeDiagnostics => RunOptions.IncludeDiagnostics;
-
-
-}
-
-public sealed record SearchMatchEvidence(
-    string Code,
-    ModelKey? RelatedKey = null,
-    string? RouteId = null,
-    IReadOnlyList<ModelKey>? AcquisitionOrder = null,
-    EvidenceCode EvidenceCode = default,
-    string? ChoicePolicyId = null,
-    string? OutcomeId = null,
-    IReadOnlyList<ModelKey>? AutomaticEffectKeys = null,
-    RuntimeProfileId? ProfileId = null,
-    int? Act = null,
-    string? StreamDomain = null,
-    SourceAuthority? Authority = null,
-    string? AuthorityFingerprint = null,
-    IReadOnlyList<ModelKey>? OrderedOptionKeys = null,
-    int? Ordinal = null,
-    string? ConditionId = null);
-
-/// <summary>
-/// Stable proof that all route-related conditions were satisfied by one legal
-/// opening route. Global seed conditions may add evidence, but never manufacture
-/// or widen OpeningRouteId.
-/// </summary>
-public sealed record SearchMatchWitness(
-    string Seed,
-    string OpeningRouteId,
-    IReadOnlyList<ModelKey> AcquisitionOrder,
-    IReadOnlyList<string> MatchedConditions,
-    string RewardContinuationFingerprint,
-    int? MatchedBattleOrdinal,
-    IReadOnlyList<EvidenceCode> EvidenceCodes)
-{
-    public string RewardRouteGroupId { get; init; } = string.Empty;
-    public string ChoicePolicyId { get; init; } = string.Empty;
-    public string OutcomeId { get; init; } = string.Empty;
-}
-
-/// <summary>
-/// Search/Exact disposition plus evidence and route witness. FailureCode is a
-/// developer-facing technical reason for this Search evaluation; it is not an
-/// PredictionWarning, Planner fallback, GPU recovery result, capability status, or
-/// player-facing compatibility message.
-/// </summary>
-public sealed record SearchQueryEvaluation(
-    SearchDisposition Disposition,
-    IReadOnlyList<SearchMatchEvidence> Evidence,
-    IReadOnlyList<string> MatchedRouteIds,
-    IReadOnlyList<SearchMatchWitness> Witnesses,
-    string FailureCode = "")
-{
-    // Diagnostic only: preserve the first failed predicate for each attempted opening.
-    public IReadOnlyList<SearchRouteRejection> RouteRejections { get; init; } = Array.Empty<SearchRouteRejection>();
-    public static SearchQueryEvaluation Match(
-        IReadOnlyList<SearchMatchEvidence>? evidence = null,
-        IReadOnlyList<string>? routeIds = null,
-        IReadOnlyList<SearchMatchWitness>? witnesses = null) =>
-        new(
-            SearchDisposition.Match,
-            evidence ?? Array.Empty<SearchMatchEvidence>(),
-            routeIds ?? Array.Empty<string>(),
-            witnesses ?? Array.Empty<SearchMatchWitness>());
-
-    public static SearchQueryEvaluation NoMatch(string code) =>
-        new(SearchDisposition.NoMatch, Array.Empty<SearchMatchEvidence>(), Array.Empty<string>(), Array.Empty<SearchMatchWitness>(), code);
-
-    public static SearchQueryEvaluation Unknown(string code) =>
-        new(SearchDisposition.Unknown, Array.Empty<SearchMatchEvidence>(), Array.Empty<string>(), Array.Empty<SearchMatchWitness>(), code);
-
-    public static SearchQueryEvaluation NotEvaluatedByPolicy(string code) =>
-        new(SearchDisposition.NotEvaluatedByPolicy, Array.Empty<SearchMatchEvidence>(), Array.Empty<string>(), Array.Empty<SearchMatchWitness>(), code);
-
-    public static SearchQueryEvaluation Unsupported(string code) =>
-        new(SearchDisposition.Unsupported, Array.Empty<SearchMatchEvidence>(), Array.Empty<string>(), Array.Empty<SearchMatchWitness>(), code);
-}
-
-public sealed record SearchRouteRejection(string RouteId, IReadOnlyList<ModelKey> AcquisitionOrder,
-    SearchDisposition Disposition, string Reason);
-
-public sealed record SearchCandidate(
-    string Seed,
-    RuntimeProfileId ProfileId,
-    ModelKey CharacterKey,
-    int Ascension,
-    string SnapshotFingerprint,
-    [property: System.Text.Json.Serialization.JsonPropertyName("AnalysisRequest")] SeedPredictionRequest PredictionRequest,
-    SeedPredictionDocument? Document,
-    RuntimeContextAuthoritySnapshot Authority,
-    IReadOnlyList<SearchMatchEvidence> MatchEvidence,
-    IReadOnlyList<string> MatchedRouteIds,
-    IReadOnlyList<SearchMatchWitness> Witnesses)
-{
-    // An unverified candidate has no document, match evidence or witness. Fast is not truth.
-    public bool IsUnverified { get; init; }
-    public SearchMatchWitness? PrimaryWitness => Witnesses.FirstOrDefault();
-}
-
-public sealed record SearchProgressSnapshot(
-    SearchRunState State,
-    long ScannedCount,
-    int MatchCount,
-    long RequestedScanCount,
-    int TargetMatchCount,
-    double ElapsedSeconds,
-    double SeedsPerSecond,
-    SearchDisposition LastDisposition,
-    string FailureCode,
-    bool CancellationRequested)
-{
-    public int UnverifiedCandidateCount { get; init; }
-    // UI observation only; never a pricing/calibration denominator.
-    public double ObservedScanningSeconds { get; init; }
-    public long ObservedScanningRoots { get; init; }
-}
-
-public sealed record SearchExecutionCompileResult(
-    bool Success,
-    SearchExecutionRequest? Plan,
-    SearchDisposition Disposition,
-    string Issue)
-{
-    public static SearchExecutionCompileResult Accepted(SearchExecutionRequest plan) =>
-        new(true, plan, SearchDisposition.NoMatch, string.Empty);
-
-    public static SearchExecutionCompileResult Rejected(SearchDisposition disposition, string issue) =>
-        new(false, null, disposition, issue);
 }

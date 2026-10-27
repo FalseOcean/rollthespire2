@@ -25,14 +25,14 @@ internal sealed partial class GpuInitializationPanel : VBoxContainer
         _compact = compact;
         SizeFlagsHorizontal = SizeFlags.ExpandFill;
         AddThemeConstantOverride("separation", 8);
-        _state = Ui1Theme.Label("", Ui1TextRole.Meta, true);
+        _state = MainPanelTheme.Label("", compact ? Ui1TextRole.Meta : Ui1TextRole.Body, compact);
         _state.Name = "GpuInitializationState";
-        _detail = Ui1Theme.Label("", Ui1TextRole.Meta, true);
+        _detail = MainPanelTheme.Label("", Ui1TextRole.Meta, true);
         _detail.Name = "GpuInitializationDetails";
         _state.AutowrapMode = _detail.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         _retry = new Button { Name = "RetryGpuInitialization", Text = _text.Get("ui1.devices.retry"),
             CustomMinimumSize = new(0, 38), SizeFlagsHorizontal = SizeFlags.ShrinkBegin };
-        Ui1Theme.ApplyButton(_retry, Ui1ButtonRole.Secondary);
+        MainPanelTheme.ApplyButton(_retry, Ui1ButtonRole.Secondary);
         _retry.Pressed += Retry;
         AddChild(_state); AddChild(_detail); AddChild(_retry);
         Refresh();
@@ -60,7 +60,7 @@ internal sealed partial class GpuInitializationPanel : VBoxContainer
         _revision = state.Revision; _displayedRetry = retry; _displayedCompleted = retry?.IsCompleted ?? false;
         bool failed = state.State == FamilyGpuInitializationState.Failed;
         string retryError = retry is { IsCompletedSuccessfully: true } ? retry.Result : "";
-        Visible = !_compact || failed || pending || retryError.Length > 0;
+        Visible = !_compact || !state.MainDeviceAvailable || failed || pending || retryError.Length > 0;
         string key = !state.MainDeviceAvailable ? "ui1.devices.unavailable" : state.State switch
         {
             FamilyGpuInitializationState.Creating => "ui1.devices.creating",
@@ -69,9 +69,12 @@ internal sealed partial class GpuInitializationPanel : VBoxContainer
             _ => "ui1.devices.unverified"
         };
         _state.Text = _text.Get(key);
-        _state.AddThemeColorOverride("font_color", failed ? Ui1Theme.Palette.Warning : Ui1Theme.Palette.TextMuted);
+        _state.AddThemeColorOverride("font_color", failed ? MainPanelTheme.Palette.Warning :
+            _compact ? MainPanelTheme.Palette.TextMuted : MainPanelTheme.Palette.TextPrimary);
         var details = new List<string>();
-        if (failed)
+        if (!state.MainDeviceAvailable)
+            details.Add(_text.Get("ui1.devices.unavailable_help"));
+        else if (failed)
             details.Add(_text.Get("ui1.devices.creation_failed_help"));
         else if (!_compact)
             details.Add(_text.Get("ui1.devices.creation_scope"));

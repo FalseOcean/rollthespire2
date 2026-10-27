@@ -36,6 +36,7 @@ public sealed record RelicSequenceLaneResult(
     SnapshotCompleteness Completeness,
     EvidenceCode EvidenceCode)
 {
+    public string IssueCode { get; init; } = string.Empty;
     /// <summary>
     /// Total number of entries in this projected lane after any lane-specific
     /// eligibility filtering (for example Shop IsAllowedInShops).

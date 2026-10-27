@@ -37,8 +37,9 @@ internal sealed partial class WorkspaceShell
 
     private void RefreshNotes()
     {
-        _notesDocument = _notesProvider.Resolve(_languageCode).Document;
-        _notesPage?.ApplyLocalization(JsonUiTextProvider.Create(_languageCode), RuntimeGameContentNameResolver.Create(_languageCode));
+        DeveloperNotesResolution resolution = _notesProvider.Resolve(_languageCode);
+        _notesDocument = resolution.Document;
+        _notesPage?.ApplyLocalization(JsonUiTextProvider.Create(_languageCode), RuntimeGameContentNameResolver.Create(_languageCode), resolution);
         RefreshNotesReminder();
     }
 

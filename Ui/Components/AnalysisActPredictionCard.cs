@@ -76,7 +76,7 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
         _getNames = getNames;
         Name = $"Act{act}PredictionCard";
         SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        Ui1Theme.ApplyPanel(this, Ui1SurfaceRole.Card, OuterRadius, OuterBorderWidth, OuterPadding);
+        MainPanelTheme.ApplyPanel(this, Ui1SurfaceRole.Card, OuterRadius, OuterBorderWidth, OuterPadding);
 
         var body = new VBoxContainer
         {
@@ -84,7 +84,7 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
         };
         body.AddThemeConstantOverride("separation", SubcardGap);
 
-        _header = Ui1Theme.Label(string.Empty, Ui1TextRole.SectionTitle);
+        _header = MainPanelTheme.Label(string.Empty, Ui1TextRole.SectionTitle);
         _header.Name = "ActCardHeader";
         _header.MouseFilter = MouseFilterEnum.Ignore;
         body.AddChild(_header);
@@ -92,7 +92,7 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
         PanelContainer bossSubcard = NewSubcard("BossSubcard");
         var bossColumn = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         bossColumn.AddThemeConstantOverride("separation", 6);
-        _bossTitle = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta);
+        _bossTitle = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta);
         _bossTitle.MouseFilter = MouseFilterEnum.Ignore;
         _bossContent = new HBoxContainer
         {
@@ -102,7 +102,7 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
             Alignment = BoxContainer.AlignmentMode.Begin
         };
         _bossContent.AddThemeConstantOverride("separation", 14);
-        _bossStatus = Ui1Theme.Label(string.Empty, Ui1TextRole.Warning, true);
+        _bossStatus = MainPanelTheme.Label(string.Empty, Ui1TextRole.Warning, true);
         _bossStatus.Visible = false;
         bossColumn.AddChild(_bossTitle);
         var bossIdentityInset = new MarginContainer
@@ -118,7 +118,7 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
         bossRow.AddChild(bossColumn);
         _mapButton = new Button { Name = "MapPreviewButton", Disabled = true, ExpandIcon = true,
             CustomMinimumSize = new Vector2(48, 48), SizeFlagsVertical = SizeFlags.ShrinkCenter };
-        Ui1Theme.ApplyButton(_mapButton, Ui1ButtonRole.Ghost);
+        MainPanelTheme.ApplyButton(_mapButton, Ui1ButtonRole.Ghost);
         _mapButton.Pressed += () => MapRequested?.Invoke(_act);
         bossRow.AddChild(_mapButton);
         bossSubcard.AddChild(bossRow);
@@ -127,7 +127,7 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
         PanelContainer eventSubcard = NewSubcard("EventSubcard");
         var eventColumn = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         eventColumn.AddThemeConstantOverride("separation", 8);
-        _eventTitle = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta);
+        _eventTitle = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta);
         _eventTitle.MouseFilter = MouseFilterEnum.Ignore;
         _eventStrip = new HBoxContainer
         {
@@ -137,7 +137,7 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
             ClipContents = true
         };
         _eventStrip.AddThemeConstantOverride("separation", EventTileGap);
-        _eventStatus = Ui1Theme.Label(string.Empty, Ui1TextRole.Warning, true);
+        _eventStatus = MainPanelTheme.Label(string.Empty, Ui1TextRole.Warning, true);
         _eventStatus.Visible = false;
         eventColumn.AddChild(_eventTitle);
         eventColumn.AddChild(_eventStrip);
@@ -237,12 +237,12 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
             };
             group.AddThemeConstantOverride("separation", 3);
 
-            Label order = Ui1Theme.Label(BossOrderLabel(boss.Ordinal), Ui1TextRole.Muted, wrap: false);
+            Label order = MainPanelTheme.Label(BossOrderLabel(boss.Ordinal), Ui1TextRole.Muted, wrap: false);
             order.Name = "BossOrderLabel";
             order.MouseFilter = MouseFilterEnum.Ignore;
             group.AddChild(order);
 
-            var identity = new IconWithLabel(BossIconSize, Ui1TextRole.CardTitle)
+            var identity = new IconWithLabel(BossIconSize, Ui1TextRole.CardTitle, WorkspacePalette.MainPanel)
             {
                 SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin
             };
@@ -290,7 +290,7 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
             .ToArray();
         if (entries.Length == 0)
         {
-            Label empty = Ui1Theme.Label("—", Ui1TextRole.Muted);
+            Label empty = MainPanelTheme.Label("—", Ui1TextRole.Muted);
             empty.MouseFilter = MouseFilterEnum.Ignore;
             _eventStrip.AddChild(empty);
             return;
@@ -314,7 +314,7 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
         };
         tile.AddThemeConstantOverride("separation", 4);
 
-        Label identity = Ui1Theme.Label(
+        Label identity = MainPanelTheme.Label(
             $"{OrdinalLabel(entry.Ordinal)} {entry.EventDisplay.DisplayName}",
             Ui1TextRole.Meta,
             wrap: true);
@@ -362,13 +362,13 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
                 entry.EventDisplay.ModelKey,
                 _playersCount))
         {
-            Label conditional = Ui1Theme.Label(
+            Label conditional = MainPanelTheme.Label(
                 _uiText?.Get(Ui1TextKey.SearchEventConditionalBadge) ?? string.Empty,
                 Ui1TextRole.Meta);
             conditional.Name = "ConditionalMarker";
             conditional.MouseFilter = MouseFilterEnum.Ignore;
             conditional.HorizontalAlignment = HorizontalAlignment.Center;
-            conditional.AddThemeColorOverride("font_color", Ui1Theme.Palette.AccentFocus);
+            conditional.AddThemeColorOverride("font_color", MainPanelTheme.Palette.AccentFocus);
             footer.AddChild(conditional);
         }
 
@@ -438,7 +438,7 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
             Name = name,
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
         };
-        Ui1Theme.ApplyPanel(panel, Ui1SurfaceRole.Input, SubcardRadius, SubcardBorderWidth, SubcardPadding);
+        MainPanelTheme.ApplyPanel(panel, Ui1SurfaceRole.Input, SubcardRadius, SubcardBorderWidth, SubcardPadding);
         return panel;
     }
 

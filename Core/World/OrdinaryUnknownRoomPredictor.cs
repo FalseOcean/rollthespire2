@@ -26,6 +26,16 @@ internal static class OrdinaryUnknownRoomPredictor
         return new(false, priorDraws, Array.AsReadOnly(Enumerable.Range(0, count).Select(i => replay.Roll(i + 1, null, false)).ToArray()));
     }
 
+    // Search's standard Act 1 assumption: entered Unknown ordinal, fresh odds,
+    // no adjacent-Shop restriction, and only the committed opening's Juzu hook.
+    internal static UnknownRoomSequence ForAct1Filter(ulong rootHash, int count, bool juzuAcquired)
+    {
+        if (count is < 1 or > 3) throw new ArgumentOutOfRangeException(nameof(count));
+        var replay = new Replay(rootHash);
+        return new(false, 0, Array.AsReadOnly(Enumerable.Range(0, count)
+            .Select(i => replay.Roll(i + 1, null, false, juzuAcquired)).ToArray()));
+    }
+
     internal static int PriorDraws(MapRouteCommitment route, IReadOnlyList<MapRouteCommitment> priorActs)
     {
         if (route.Map.ActIndex is < 0 or > 2 || priorActs.Count != route.Map.ActIndex)
@@ -74,23 +84,27 @@ internal static class OrdinaryUnknownRoomPredictor
         {
             if (priorDraws < 0) throw new ArgumentOutOfRangeException(nameof(priorDraws));
             var profile = Beta111Profile.Instance;
-            if (!profile.TryCanonicalizeSeed(seed, out string canonical, out string issue)) throw new ArgumentException(issue);
+            if (!ProfileSeedRules.TryCanonicalizePredictionSeed(profile, seed, out string canonical, out string issue)) throw new ArgumentException(issue);
             _rng = new Xoshiro256StarStar(profile.DeriveNamedStreamSeed(profile.ComputeRootSeed(canonical), "unknown_map_point"));
             _rng.Advance(priorDraws);
         }
-        internal UnknownRoomObservation Roll(int ordinal, MapPosition? position, bool shopBlocked)
+        internal Replay(ulong rootHash)
+        {
+            _rng = new Xoshiro256StarStar(Beta111Profile.Instance.DeriveNamedStreamSeed(rootHash, "unknown_map_point"));
+        }
+        internal UnknownRoomObservation Roll(int ordinal, MapPosition? position, bool shopBlocked, bool monsterBlocked = false)
         {
             var before = _odds;
             float roll = _rng.NextFloat();
-            float total = before.Monster;
+            float total = monsterBlocked ? 0f : before.Monster;
             UnknownRoomCategory room;
             // Preserve float accumulation, inclusive thresholds and dictionary insertion order.
-            if (roll <= total) room = UnknownRoomCategory.Monster;
+            if (!monsterBlocked && roll <= total) room = UnknownRoomCategory.Monster;
             else if (roll <= (total += before.Treasure)) room = UnknownRoomCategory.Treasure;
             else if (!shopBlocked && roll <= total + before.Shop) room = UnknownRoomCategory.Shop;
             else room = UnknownRoomCategory.Event;
             _odds = new(
-                room == UnknownRoomCategory.Monster ? .1f : before.Monster + .1f,
+                room == UnknownRoomCategory.Monster ? .1f : monsterBlocked ? before.Monster : before.Monster + .1f,
                 before.Elite - 1f, // Negative Elite never rolls; vanilla still adds its negative base each ordinary roll.
                 room == UnknownRoomCategory.Treasure ? .02f : before.Treasure + .02f,
                 room == UnknownRoomCategory.Shop ? .03f : shopBlocked ? before.Shop : before.Shop + .03f);

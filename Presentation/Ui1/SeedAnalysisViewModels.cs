@@ -460,6 +460,8 @@ public sealed record SeedAnalysisViewModel(
 {
     public IReadOnlyList<ActEncounterSequenceViewModel> EncounterSequences { get; init; } = [];
     public IReadOnlyList<string> OpeningWarnings { get; init; } = Array.Empty<string>();
+    public SeedDomainEvaluationStatus NeowIdentityStatus { get; init; } = SeedDomainEvaluationStatus.Unknown;
+    public string NeowIdentityIssueCode { get; init; } = "NeowSectionMissing";
     public SeedDomainViewModel<BossPredictionViewModel> BossDomain { get; init; } =
         new(SeedDomainEvaluationStatus.Unknown, "BossSectionMissing", Array.Empty<BossPredictionViewModel>());
     public SeedDomainViewModel<AncientPredictionViewModel> AncientDomain { get; init; } =

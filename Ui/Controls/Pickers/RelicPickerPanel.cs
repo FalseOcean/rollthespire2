@@ -76,6 +76,7 @@ internal sealed partial class RelicPickerPanel : Control
         AnchoredTooltipHost tooltipHost)
     {
         _icons = icons;
+        Theme = MainPanelTheme.Create();
         _characterIcons = characterIcons;
         _cardFilterIcons = cardFilterIcons;
         _ownsCharacterIcons = false;
@@ -106,7 +107,7 @@ internal sealed partial class RelicPickerPanel : Control
             SizeFlagsHorizontal = SizeFlags.ShrinkCenter,
             SizeFlagsVertical = SizeFlags.ShrinkCenter
         };
-        Ui1Theme.ApplyPanel(_dialog, Ui1SurfaceRole.Drawer, 5f, 2, 16f);
+        MainPanelTheme.ApplyPanel(_dialog, Ui1SurfaceRole.Drawer, 5f, 2, 16f);
         center.AddChild(_dialog);
 
         var body = new VBoxContainer
@@ -118,10 +119,10 @@ internal sealed partial class RelicPickerPanel : Control
 
         var header = new HBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         header.AddThemeConstantOverride("separation", 8);
-        _title = Ui1Theme.Label(string.Empty, Ui1TextRole.SectionTitle);
+        _title = MainPanelTheme.Label(string.Empty, Ui1TextRole.SectionTitle);
         _title.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         _close = new Button { CustomMinimumSize = new Vector2(76, 36) };
-        Ui1Theme.ApplyButton(_close, Ui1ButtonRole.Ghost);
+        MainPanelTheme.ApplyButton(_close, Ui1ButtonRole.Ghost);
         _close.Pressed += Cancel;
         header.AddChild(_title);
         header.AddChild(_close);
@@ -132,7 +133,7 @@ internal sealed partial class RelicPickerPanel : Control
             SizeFlagsHorizontal = SizeFlags.ExpandFill,
             ClearButtonEnabled = true
         };
-        Ui1Theme.ApplyLineEdit(_search);
+        MainPanelTheme.ApplyLineEdit(_search);
         _search.TextChanged += _ => RebuildGrid();
         body.AddChild(_search);
 
@@ -155,10 +156,10 @@ internal sealed partial class RelicPickerPanel : Control
         _characterFilterButtons = FilterGroup();
         _characterFilterScroll.AddChild(_characterFilterButtons);
         _characterSeparator = new VSeparator();
-        Ui1Theme.ApplySeparator(_characterSeparator);
+        MainPanelTheme.ApplySeparator(_characterSeparator);
         _rarityFilterButtons = FilterGroup();
         _raritySeparator = new VSeparator();
-        Ui1Theme.ApplySeparator(_raritySeparator);
+        MainPanelTheme.ApplySeparator(_raritySeparator);
         _typeFilterButtons = FilterGroup();
         _cardFilterRow.AddChild(_characterFilterScroll);
         _cardFilterRow.AddChild(_characterSeparator);
@@ -196,7 +197,7 @@ internal sealed partial class RelicPickerPanel : Control
         _scroll.Resized += QueueGridColumnRefresh;
         body.AddChild(_scroll);
 
-        _empty = Ui1Theme.Label(string.Empty, Ui1TextRole.Muted, true);
+        _empty = MainPanelTheme.Label(string.Empty, Ui1TextRole.Muted, true);
         _empty.HorizontalAlignment = HorizontalAlignment.Center;
         _empty.Visible = false;
         body.AddChild(_empty);
@@ -517,7 +518,7 @@ internal sealed partial class RelicPickerPanel : Control
             ClipContents = true,
             TooltipText = string.Empty
         };
-        Ui1Theme.ApplyButton(button, selected() ? Ui1ButtonRole.NavigationSelected : Ui1ButtonRole.Ghost);
+        MainPanelTheme.ApplyButton(button, selected() ? Ui1ButtonRole.NavigationSelected : Ui1ButtonRole.Ghost);
         button.Pressed += pressed;
         button.MouseEntered += () => _tooltipHost.ShowText(button, tooltip);
         button.MouseExited += () => _tooltipHost.Dismiss(button);
@@ -553,7 +554,7 @@ internal sealed partial class RelicPickerPanel : Control
         button.AddChild(icon);
         if (usableTexture is null)
         {
-            var missing = Ui1Theme.Label("?", Ui1TextRole.Muted);
+            var missing = MainPanelTheme.Label("?", Ui1TextRole.Muted);
             missing.MouseFilter = MouseFilterEnum.Ignore;
             missing.HorizontalAlignment = HorizontalAlignment.Center;
             missing.VerticalAlignment = VerticalAlignment.Center;
@@ -598,7 +599,7 @@ internal sealed partial class RelicPickerPanel : Control
         foreach ((RelicPickerCategory category, Button button) in _categoryButtons)
         {
             bool selected = category == RelicPickerCategory.All ? !_activeCategory.HasValue : category == _activeCategory;
-            Ui1Theme.ApplyButton(button, selected ? Ui1ButtonRole.NavigationSelected : Ui1ButtonRole.Ghost);
+            MainPanelTheme.ApplyButton(button, selected ? Ui1ButtonRole.NavigationSelected : Ui1ButtonRole.Ghost);
         }
     }
 

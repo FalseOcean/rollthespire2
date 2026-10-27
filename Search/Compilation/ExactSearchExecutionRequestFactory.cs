@@ -3,9 +3,11 @@ using System.Security.Cryptography;
 using System.Text;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Prediction;
+using RolltheSpire2.Core.Rewards;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.FamilyExecution;
+using RolltheSpire2.Search.Runtime;
 using RolltheSpire2.Search.Semantics;
 
 namespace RolltheSpire2.Search.Compilation;
@@ -24,7 +26,8 @@ public static class ExactSearchExecutionRequestFactory
         if (projection.Fidelity is ProjectionFidelity.LossyButConservative or ProjectionFidelity.Unsupported)
             throw new InvalidOperationException("Party.PlayerProjection:" + string.Join(",", projection.Diagnostics));
         return new(player, parent.RunOptions, parent.CanonicalStartSeed, parent.ResolvedScanCount,
-            projection.Evaluation, BuildCombatRewardRoutePolicy(player), player.SemanticFingerprint);
+            projection.Evaluation, BuildCombatRewardRoutePolicy(player), player.SemanticFingerprint)
+        { ExactOptions = ShionExactTrialOptions.Off };
     }
 
     public static ExactSearchExecutionCompileResult Compile(CompiledSearch compiled, SearchRunOptions runOptions)
@@ -94,13 +97,9 @@ public static class ExactSearchExecutionRequestFactory
         if (compatibility.Blocks(requiredDomains))
             return Reject(SearchDisposition.Unknown,
                 $"CompatibilityDomainFailClosed:required={requiredDomains};blocked={compatibility.BlockedDomains};evidence={compatibility.EvidenceCode}");
-        if (evaluation.RequiresEffectColdPath && context.Authority.EffectAuthority is null)
-            return Reject(SearchDisposition.Unknown, "EffectAuthorityMissing");
-        if (evaluation.RequiresWorldAuthority && context.Authority.WorldAuthority is null)
-            return Reject(SearchDisposition.Unknown, "WorldAuthorityMissing");
-        if (evaluation.RequiresWorldAuthority && RuntimeProfilePolicies.IsModernCore(context.ProfileId) &&
-            context.Authority.WorldAuthority?.Beta109Generation is null)
-            return Reject(SearchDisposition.Unknown, "ModernWorldGenerationSnapshotMissing");
+        // Missing observations are evaluated as Unknown by their providers. They
+        // cannot prevent independent known predicates from participating or be
+        // mistaken for a query-wide mismatch before any seed is observed.
 
         CombatRewardRoutePolicyContract rewardPolicy = BuildCombatRewardRoutePolicy(compiled);
         string fingerprint = Fingerprint(new[]
@@ -109,8 +108,37 @@ public static class ExactSearchExecutionRequestFactory
             canonicalStart, resolvedScanCount.ToString(), runOptions.TargetMatchCount.ToString(),
             runOptions.WorkerCount.ToString(), rewardPolicy.ExactPolicy.ToString()
         });
-        return ExactSearchExecutionCompileResult.Accepted(new ExactSearchExecutionRequest(
-            compiled, runOptions, canonicalStart, resolvedScanCount, evaluation, rewardPolicy, fingerprint));
+        var request = new ExactSearchExecutionRequest(
+            compiled, runOptions, canonicalStart, resolvedScanCount, evaluation, rewardPolicy, fingerprint)
+        { ExactOptions = ShionExactTrialOptions.CaptureEnvironment() };
+        return ExactSearchExecutionCompileResult.Accepted(PrepareRewardPools(request));
+    }
+
+    private static ExactSearchExecutionRequest PrepareRewardPools(ExactSearchExecutionRequest request)
+    {
+        // Fixed-pool reuse is bounded to solo modern Exact. Party ForPlayer runs
+        // per candidate and must not allocate a new preparation on each visit.
+        if (!request.Evaluation.RequiresNormalCombatRewardDomain || request.CompiledSearch.Context.Party is not null ||
+            request.Authority.PlayersCount != 1 || request.ProfileId is not (RuntimeProfileId.Beta110 or RuntimeProfileId.Beta111))
+            return request;
+        string? mode = Environment.GetEnvironmentVariable("RT2_C_PREPARED_REWARD_POOLS")?.Trim().ToLowerInvariant();
+        if (mode is not (null or "" or "on" or "off"))
+            throw new InvalidOperationException("UnknownPreparedRewardPoolsMode:" + mode);
+        var preparation = new CombatRewardPoolPreparation(mode != "off");
+        // Preparation is auxiliary. An invalid source stays on the original
+        // predictor path with its existing guard order and original exception.
+        FamilyAuxiliaryEvidence.Read(nameof(ExactSearchExecutionRequestFactory), "PrepareRewardPools", () =>
+        {
+            preparation.Prepare(request.ProfileId, request.Authority.EffectAuthority, request.Authority.WorldAuthority);
+            return true;
+        }, false, request.SnapshotFingerprint);
+        if (preparation.Pools is not { } pools) return request with { RewardPoolPreparation = preparation };
+        var owned = request.Authority.WithEffectAuthority(pools.OwnedAuthority);
+        return request with
+        {
+            CompiledSearch = request.CompiledSearch with { Context = request.CompiledSearch.Context with { Authority = owned } },
+            RewardPoolPreparation = preparation
+        };
     }
 
     private static ExactSearchExecutionCompileResult Reject(SearchDisposition disposition, string issue) =>
@@ -132,7 +160,7 @@ public static class ExactSearchExecutionRequestFactory
         return null;
     }
 
-    private static CombatRewardRoutePolicyContract BuildCombatRewardRoutePolicy(CompiledSearch compiled) =>
+    internal static CombatRewardRoutePolicyContract BuildCombatRewardRoutePolicy(CompiledSearch compiled) =>
         compiled.ResolvedRouteSemantics.CombatReward.Kind switch
         {
             ResolvedCombatRewardRouteKind.NotApplicable => CombatRewardRoutePolicyContract.None,

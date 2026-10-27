@@ -62,11 +62,12 @@ internal static class NeowSingleplayerReplay
         NeowReplayObservation observation = Observe(root, plan);
         if (!observation.IdentityPass) return false;
         if (plan.StructuredConditions.Length == 0 && !plan.HasFinalCurseFastProjection) return true;
-        // Routes replay into independent local state. One surviving route proves
-        // this Fast OR; unused alternatives cannot invalidate that survivor.
-        foreach (var route in Routes(plan, observation))
-            if (Route(root, plan, route.First, route.Second, observation.RewardsAfterBones)) return true;
-        return false;
+        if (!plan.Bones) return Route(root, plan, plan.Selected, Beta110FastRelicCatalog.InvalidId, observation.RewardsAfterBones);
+        if (plan.First != Beta110FastRelicCatalog.InvalidId && plan.Second != Beta110FastRelicCatalog.InvalidId)
+            return Route(root, plan, plan.First, plan.Second, observation.RewardsAfterBones);
+        // Solo keeps its existing first-success route semantics.
+        return Route(root, plan, observation.BonesFirst, observation.BonesSecond, observation.RewardsAfterBones) ||
+            Route(root, plan, observation.BonesSecond, observation.BonesFirst, observation.RewardsAfterBones);
     }
 
     internal static IEnumerable<(byte First, byte Second)> Routes(NeowReplayPlan plan, NeowReplayObservation observation)
@@ -95,21 +96,26 @@ internal static class NeowSingleplayerReplay
     private static bool RouteAtArrival(ulong root, NeowReplayPlan plan, byte first, byte second,
         Beta110FastRng afterBones, int firstAdvance, int secondAdvance)
     {
-        var rewards = plan.Bones ? afterBones
-            : new Beta110FastRng(unchecked(root + RewardsHash));
-        var niche = new Beta110FastRng(unchecked(root + NicheHash));
-        var transformations = new Beta110FastRng(unchecked(root + TransformationsHash));
-        var potions = new Beta110FastRng(unchecked(root + PotionHash));
-        Span<byte> matched = stackalloc byte[plan.StructuredConditions.Length]; matched.Clear();
         bool rewardsNeeded = (plan.EnabledDomains & ~(Beta110FastDomain.FinalCurse | Beta110FastDomain.NewLeafTransform |
             Beta110FastDomain.LeafyPoulticeTransforms | Beta110FastDomain.PhialHolsterPotions)) != 0;
         bool nicheNeeded = plan.HasFinalCurseFastProjection || (plan.EnabledDomains & Beta110FastDomain.NewLeafTransform) != 0 || rewardsNeeded;
-        foreach (byte relic in new[] { first, second })
+        bool transformationsNeeded = (plan.EnabledDomains & Beta110FastDomain.LeafyPoulticeTransforms) != 0;
+        bool potionsNeeded = (plan.EnabledDomains & Beta110FastDomain.PhialHolsterPotions) != 0;
+        // Unconsumed route-local streams need no SplitMix setup. Preserve every
+        // authored burn and the observation's Rewards continuation unchanged.
+        var rewards = plan.Bones ? afterBones
+            : rewardsNeeded ? new Beta110FastRng(unchecked(root + RewardsHash)) : default;
+        var niche = nicheNeeded || firstAdvance > 0 || secondAdvance > 0
+            ? new Beta110FastRng(unchecked(root + NicheHash)) : default;
+        var transformations = transformationsNeeded ? new Beta110FastRng(unchecked(root + TransformationsHash)) : default;
+        var potions = potionsNeeded ? new Beta110FastRng(unchecked(root + PotionHash)) : default;
+        Span<byte> matched = stackalloc byte[plan.StructuredConditions.Length]; matched.Clear();
+        for (int pickup = 0; pickup < 2; pickup++)
         {
+            byte relic = pickup == 0 ? first : second;
             if (relic == Beta110FastRelicCatalog.InvalidId) continue;
             if (!NeowSingleplayerOperators.ExecuteRelic(relic, true, plan, plan.Authority.EffectCatalog, rewardsNeeded, nicheNeeded,
-                (plan.EnabledDomains & Beta110FastDomain.LeafyPoulticeTransforms) != 0,
-                (plan.EnabledDomains & Beta110FastDomain.PhialHolsterPotions) != 0,
+                transformationsNeeded, potionsNeeded,
                 ref rewards, ref niche, ref transformations, ref potions, matched))
                 throw new InvalidOperationException("NFamilyContinuationAuthorityUnavailable");
             int advance = relic == first ? firstAdvance : secondAdvance;

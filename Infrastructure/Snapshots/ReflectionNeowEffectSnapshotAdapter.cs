@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
@@ -50,388 +51,17 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                 "ProfileSpecificSnapshotAdapterMismatch",
                 PredictionWarningCode.EffectSnapshotIncomplete);
         }
-        if (!profile.TryCanonicalizeSeed(rawSeed, out string canonicalSeed, out _))
-        {
-            return RuntimeEffectSnapshotCaptureResult.Missing(
-                expectedProfile,
-                "SeedNotCanonicalizableForEffectSnapshot",
-                PredictionWarningCode.InvalidSeed);
-        }
-
-        Assembly? gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
-            .FirstOrDefault(candidate => string.Equals(candidate.GetName().Name, "sts2", StringComparison.OrdinalIgnoreCase));
-        if (gameAssembly is null)
-        {
-            return RuntimeEffectSnapshotCaptureResult.Missing(
-                expectedProfile,
-                "Sts2AssemblyNotLoaded",
-                PredictionWarningCode.EffectSnapshotIncomplete);
-        }
-
-        var warnings = new List<PredictionWarningCode>();
-        string unlockSource = "explicit-picker-seat";
-        object? unlockState = explicitUnlockState ?? TryCaptureCurrentUnlockState(gameAssembly, out unlockSource);
-        if (unlockState is null)
-        {
-            return RuntimeEffectSnapshotCaptureResult.Missing(
-                expectedProfile,
-                $"RuntimeUnlockSnapshotUnavailable:{unlockSource}",
-                PredictionWarningCode.SnapshotAuthorityIncomplete,
-                PredictionWarningCode.EffectSnapshotIncomplete);
-        }
-
-        object? characterModel = FindCharacterModel(
-            gameAssembly,
-            unlockState,
-            character.CharacterKey,
-            out bool selectedCharacterUnlocked);
-        if (characterModel is null)
-        {
-            return RuntimeEffectSnapshotCaptureResult.Missing(
-                expectedProfile,
-                "SelectedCharacterNotPresentInRuntimeUnlockSnapshot",
-                PredictionWarningCode.CharacterAuthorityUnknown,
-                PredictionWarningCode.EffectSnapshotIncomplete);
-        }
-
-        bool isAuditedVanilla = character.IsKnownVanilla && IsAuditedVanillaCharacterModel(characterModel);
-        IdentityResolutionStatus resolution = isAuditedVanilla && selectedCharacterUnlocked
-            ? IdentityResolutionStatus.Exact
-            : IdentityResolutionStatus.Unknown;
-        if (!selectedCharacterUnlocked)
-        {
-            warnings.Add(PredictionWarningCode.CharacterAuthorityUnknown);
-        }
-
-        PoolCapture selectedCards = FilterForPlayers(
-            CaptureCharacterCardPool(characterModel, unlockState, character.CharacterKey, "character", playersCount), playersCount);
-        PoolCapture colorlessCards = FilterForPlayers(
-            CaptureStaticCardPool(gameAssembly, unlockState, "ColorlessCardPool", "colorless", playersCount), playersCount);
-        PoolCapture curseCards = FilterForPlayers(
-            CaptureStaticCardPool(gameAssembly, unlockState, "CurseCardPool", "curse", playersCount), playersCount);
-        IReadOnlyList<CharacterCardPoolSnapshot>? otherCharacterPools = CaptureOtherCharacterPools(
-            unlockState,
-            character.CharacterKey,
-            playersCount,
-            rules,
-            out bool otherPoolsExact);
-
-        IReadOnlyList<NeowEffectCardSnapshot>? deck = CaptureStartingDeck(
-            characterModel,
-            character.CharacterKey,
-            isAuditedVanilla,
-            out bool deckExact);
-
-        selectedCards = StampCardCatalogProfile(selectedCards, profile.ProfileId);
-        colorlessCards = StampCardCatalogProfile(colorlessCards, profile.ProfileId);
-        curseCards = StampCardCatalogProfile(curseCards, profile.ProfileId);
-        otherCharacterPools = StampCardCatalogProfile(otherCharacterPools, profile.ProfileId);
-        deck = StampCardCatalogProfile(deck, profile.ProfileId);
-
-        IReadOnlyList<NeowEffectCardSnapshot>? transformPool = selectedCards.Cards;
-        bool transformExact = selectedCards.Exact;
-
-        PoolCapture characterPotions = FilterForPlayers(CapturePoolProperty(
-            characterModel,
-            unlockState,
-            new[] { "PotionPool", "CharacterPotionPool", "Potions" },
-            "potion-character",
-            ConvertPotionModel,
-            playersCount), playersCount);
-        PoolCapture sharedPotions = FilterForPlayers(
-            CaptureStaticPotionPool(gameAssembly, unlockState, "SharedPotionPool", "potion-shared", playersCount), playersCount);
-        IReadOnlyList<NeowEffectPotionSnapshot>? potionPool = MergePotions(characterPotions, sharedPotions);
-        bool potionExact = characterPotions.Exact && sharedPotions.Exact && potionPool is not null;
-        bool characterRewardHooksExact =
-            selectedCards.Cards is not null && selectedCards.Cards.All(IsAuditedBaseGameCardSnapshot);
-        bool colorlessRewardHooksExact =
-            colorlessCards.Cards is not null && colorlessCards.Cards.All(IsAuditedBaseGameCardSnapshot);
-        bool otherCharacterRewardHooksExact =
-            otherCharacterPools is not null &&
-            otherCharacterPools.SelectMany(pool => pool.Cards).All(IsAuditedBaseGameCardSnapshot);
-        bool cardRewardHooksExact =
-            characterRewardHooksExact && colorlessRewardHooksExact && otherCharacterRewardHooksExact;
-        bool potionProcurementHooksExact =
-            potionPool is not null && potionPool.All(IsAuditedBaseGamePotionSnapshot);
-
-        PoolCapture sharedRelics = FilterForPlayers(
-            CaptureStaticRelicPool(gameAssembly, unlockState, "SharedRelicPool", "relic-shared", playersCount), playersCount);
-        PoolCapture characterRelics = FilterForPlayers(CapturePoolProperty(
-            characterModel,
-            unlockState,
-            new[] { "RelicPool", "CharacterRelicPool", "Relics" },
-            "relic-character",
-            ConvertRelicModel,
-            playersCount), playersCount);
-        IReadOnlyList<NeowEffectRelicSnapshot>? orderedRelicBag = BuildOrderedRelicBag(
-            profile,
-            canonicalSeed,
-            sharedRelics,
-            characterRelics,
-            out bool relicBagExact,
-            out bool nestedRelicHooksExact);
-
-        IReadOnlyList<ModelKey>? generatedCursePool = BuildGeneratedCursePool(
-            curseCards,
-            rules,
-            out bool cursePoolExact);
-
-        bool? allCharacterCardPoolsUnlocked = CaptureAllCharacterCardPoolsUnlocked(
-            gameAssembly,
-            unlockState,
-            out bool allCharacterPoolsAuthorityExact);
-        IReadOnlyList<ModelKey>? bonesEligibleRelics = BuildBonesEligibleRelics(
-            profile.ProfileId,
-            playersCount,
-            allCharacterCardPoolsUnlocked,
-            unlockedCommonCards: selectedCards.Cards?.Count(card => card.Rarity == EffectCardRarity.Common),
-            unlockedUncommonCards: selectedCards.Cards?.Count(card => card.Rarity == EffectCardRarity.Uncommon),
-            out bool bonesEligibilityExact);
-        bonesEligibilityExact &= allCharacterPoolsAuthorityExact;
-
-        ModelKey[] unlockedCharacterCardPoolKeys = new[] { character.CharacterKey }
-            .Concat((otherCharacterPools ?? Array.Empty<CharacterCardPoolSnapshot>()).Select(pool => pool.CharacterKey))
-            .Where(key => key.IsValid)
-            .Distinct(ModelKeyComparer.Instance)
-            .ToArray();
-        bool eventResultStaticCatalogExact =
-            profile.ProfileId == RuntimeProfileId.Beta111 &&
-            ModelDbContainsAll(
-                gameAssembly,
-                "AllCards",
-                RolltheSpire2.Core.Events.Beta111EventResultCatalog.TrashHeapGrabCards) &&
-            ModelDbContainsAll(
-                gameAssembly,
-                "AllRelics",
-                RolltheSpire2.Core.Events.Beta111EventResultCatalog.TrashHeapDiveRelics
-                    .Concat(RolltheSpire2.Core.Events.Beta111EventResultCatalog.FakeMerchantRelics)) &&
-            ModelDbContainsAll(
-                gameAssembly,
-                "AllCharacters",
-                RolltheSpire2.Core.Events.Beta111EventResultCatalog.ColorfulCharacterOrder);
-        bool eventColorfulCharacterPoolsExact =
-            profile.ProfileId == RuntimeProfileId.Beta111 &&
-            selectedCharacterUnlocked &&
-            otherPoolsExact &&
-            unlockedCharacterCardPoolKeys.Length > 0;
-
-        IReadOnlyList<NeowEffectCardSnapshot>? merchantColorlessOrderedPool = colorlessCards.Cards?
-            .OrderBy(card => card.PoolOrder)
-            .ToArray();
-        bool merchantColorlessOrderedPoolExact =
-            profile.ProfileId == RuntimeProfileId.Beta111 &&
-            colorlessCards.Exact &&
-            merchantColorlessOrderedPool is not null &&
-            merchantColorlessOrderedPool.All(IsAuditedBaseGameCardSnapshot);
-        // Shop Colorless v1 uses observable-domain authority, not a generic Merchant-hook gate.
-        // Beta111 source audit establishes that the base ModifyMerchantCardPool path preserves
-        // Colorless identity and that the only first-party pool override (CharacterCards) is
-        // NoImpact for the Colorless pool. The base ModifyMerchantCardRarity path is identity-
-        // preserving and Beta111 has no first-party rarity override. Third-party/non-base pool
-        // authority remains Unsupported because merchantColorlessOrderedPoolExact is false.
-        bool merchantColorlessPoolIdentityHooksExact =
-            profile.ProfileId == RuntimeProfileId.Beta111 &&
-            isAuditedVanilla &&
-            merchantColorlessOrderedPoolExact;
-        bool merchantColorlessRarityIdentityHooksExact =
-            profile.ProfileId == RuntimeProfileId.Beta111 &&
-            isAuditedVanilla &&
-            merchantColorlessOrderedPoolExact;
-
-        // The canonical v1 observable is five consecutive successful normal initial inventories,
-        // not route occurrence. Prove only the fixed Shops-consumption shape needed to reach and
-        // continue past Colorless U/R. For the audited single-player Beta111 base pool, the five
-        // character slots have sufficient distinct Attack/Skill/Power candidates and Colorless
-        // U/R are non-empty; external/custom behavior never receives this authority here.
-        bool merchantInitialInventoryShapeExact =
-            profile.ProfileId == RuntimeProfileId.Beta111 &&
-            isAuditedVanilla &&
-            playersCount >= 1 &&
-            selectedCards.Exact && selectedCards.Cards is not null &&
-            selectedCards.Cards.All(IsAuditedBaseGameCardSnapshot) &&
-            selectedCards.Cards.Count(card => card.CardType == EffectCardType.Attack && !card.IsBasic) >= 2 &&
-            selectedCards.Cards.Count(card => card.CardType == EffectCardType.Skill && !card.IsBasic) >= 2 &&
-            selectedCards.Cards.Count(card => card.CardType == EffectCardType.Power && !card.IsBasic) >= 1 &&
-            merchantColorlessOrderedPool is not null &&
-            merchantColorlessOrderedPool.Any(card => card.Rarity == EffectCardRarity.Uncommon) &&
-            merchantColorlessOrderedPool.Any(card => card.Rarity == EffectCardRarity.Rare);
-
-        ModelKey? strikeKey = UniqueDeckKey(deck, card => card.IsBasic && card.IsStrike);
-        ModelKey? defendKey = UniqueDeckKey(deck, card => card.IsBasic && card.IsDefend);
-        ModelKey? clawKey = selectedCards.Cards?
-            .FirstOrDefault(card => card.CardKey == BaseGameModelKeys.Cards.Claw)?.CardKey;
-
-        int? commonCount = selectedCards.Cards?.Count(card => card.Rarity == EffectCardRarity.Common);
-        int? uncommonCount = selectedCards.Cards?.Count(card => card.Rarity == EffectCardRarity.Uncommon);
-
-        bool cardPoolExact = selectedCards.Exact && colorlessCards.Exact && otherPoolsExact;
-        bool cardInstanceIdInvariantSatisfied =
-            (selectedCards.Cards is null || NeowEffectSnapshotInvariants.HasUniqueCardInstanceIds(selectedCards.Cards)) &&
-            (colorlessCards.Cards is null || NeowEffectSnapshotInvariants.HasUniqueCardInstanceIds(colorlessCards.Cards)) &&
-            (curseCards.Cards is null || NeowEffectSnapshotInvariants.HasUniqueCardInstanceIds(curseCards.Cards)) &&
-            (otherCharacterPools is null || NeowEffectSnapshotInvariants.HasUniqueCardInstanceIds(
-                otherCharacterPools.SelectMany(pool => pool.Cards)));
-        bool anyCaptured = selectedCards.Items is not null || deck is not null || potionPool is not null || orderedRelicBag is not null;
-        bool complete = isAuditedVanilla && selectedCharacterUnlocked &&
-                        cardPoolExact && cardRewardHooksExact &&
-                        deckExact && transformExact &&
-                        potionExact && potionProcurementHooksExact &&
-                        relicBagExact && cursePoolExact && bonesEligibilityExact && nestedRelicHooksExact;
-        SnapshotCompleteness completeness = complete
-            ? SnapshotCompleteness.Complete
-            : anyCaptured ? SnapshotCompleteness.Partial : SnapshotCompleteness.Missing;
-        SourceAuthority sourceAuthority = isAuditedVanilla && selectedCharacterUnlocked && anyCaptured
-            ? SourceAuthority.OfficialRuntimeExact
-            : anyCaptured
-                ? isAuditedVanilla ? SourceAuthority.Incomplete : SourceAuthority.ModdedRuntimeBestEffort
-                : SourceAuthority.Unknown;
-
-        if (!cardPoolExact || !cardRewardHooksExact) warnings.Add(PredictionWarningCode.EffectSnapshotIncomplete);
-        if (!deckExact) warnings.Add(PredictionWarningCode.EffectSnapshotIncomplete);
-        if (!potionExact || !potionProcurementHooksExact) warnings.Add(PredictionWarningCode.EffectSnapshotIncomplete);
-        if (!relicBagExact) warnings.Add(PredictionWarningCode.EffectSnapshotIncomplete);
-        if (!cursePoolExact || !bonesEligibilityExact) warnings.Add(PredictionWarningCode.EffectSnapshotIncomplete);
-        if (!nestedRelicHooksExact) warnings.Add(PredictionWarningCode.EffectNestedObtainIncomplete);
-
-        DateTimeOffset capturedAt = DateTimeOffset.UtcNow;
-        string unlockFingerprint = Fingerprint("unlock-runtime-v1", EnumerateModelKeys(unlockState));
-        string cardPoolFingerprint = Fingerprint(
-            RuntimeProfilePolicies.CatalogFingerprintPrefix(profile.ProfileId) + "-cards-v2",
-            EnumerateCardDescriptors(selectedCards.Cards, colorlessCards.Cards, otherCharacterPools));
-        string deckFingerprint = Fingerprint("effect-deck-v1", deck?.Select(CardDescriptor));
-        string relicBagFingerprint = Fingerprint("effect-relic-bag-v1", orderedRelicBag?.Select(RelicDescriptor));
-        string potionFingerprint = Fingerprint("effect-potions-v1", potionPool?.Select(PotionDescriptor));
-        string catalogFingerprint = Fingerprint(
-            RuntimeProfilePolicies.CatalogFingerprintPrefix(profile.ProfileId) + "-v2",
-            new[]
-        {
-            RuntimeProfilePolicies.AuthorityId(profile.ProfileId),
-            RuntimeProfilePolicies.AuditFingerprint(profile.ProfileId),
-            capturedGameVersion,
-            cardPoolFingerprint,
-            potionFingerprint,
-            relicBagFingerprint,
-            Fingerprint("effect-curses-v1", generatedCursePool?.Select(key => key.Serialized)),
-            Fingerprint("effect-bones-v1", bonesEligibleRelics?.Select(key => key.Serialized))
-        });
-        string snapshotFingerprint = Fingerprint("effect-authority-v2", new[]
-        {
-            RuntimeProfilePolicies.AuthorityId(profile.ProfileId),
-            RuntimeProfilePolicies.AuditFingerprint(profile.ProfileId),
-            profile.ProfileId.ToString(), capturedGameVersion, character.CharacterKey.Serialized,
-            ascension.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            playersCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            playerSlotIndex.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            unlockFingerprint, cardPoolFingerprint, deckFingerprint, relicBagFingerprint, potionFingerprint,
-            eventResultStaticCatalogExact.ToString(), eventColorfulCharacterPoolsExact.ToString(),
-            merchantColorlessOrderedPoolExact.ToString(), merchantColorlessPoolIdentityHooksExact.ToString(),
-            merchantColorlessRarityIdentityHooksExact.ToString(), merchantInitialInventoryShapeExact.ToString(),
-            completeness.ToString(), sourceAuthority.ToString()
-        });
-
-        var effectAuthority = new NeowEffectAuthoritySnapshot(
-            deck,
-            selectedCards.Cards,
-            colorlessCards.Cards,
-            otherCharacterPools,
-            transformPool,
-            potionPool,
-            orderedRelicBag,
-            generatedCursePool,
-            bonesEligibleRelics,
-            strikeKey,
-            defendKey,
-            clawKey,
-            CardRewardPoolsExact: cardPoolExact,
-            DeckExact: deckExact,
-            TransformPoolsExact: transformExact,
-            PotionPoolExact: potionExact,
-            RelicBagExact: relicBagExact,
-            CursePoolExact: cursePoolExact,
-            BonesEligibilityExact: bonesEligibilityExact,
-            CardRewardHooksNoOpExact: isAuditedVanilla && cardPoolExact && cardRewardHooksExact,
-            PotionProcurementHooksNoOpExact: isAuditedVanilla && potionExact && potionProcurementHooksExact,
-            NestedRelicHooksExact: nestedRelicHooksExact,
-            CurrentGold: null,
-            CurrentPotionCount: null,
-            PotionCapacity: null,
-            BranchBudget: 64,
-            SourceAuthority: sourceAuthority,
-            Completeness: completeness,
-            AuthoritySource: NeowEffectAuthoritySource.RuntimeSnapshot,
-            CapturedProfileId: profile.ProfileId,
-            CatalogFingerprint: catalogFingerprint,
-            UnlockFingerprint: unlockFingerprint,
-            DeckFingerprint: deckFingerprint,
-            RelicBagFingerprint: relicBagFingerprint,
-            PotionPoolFingerprint: potionFingerprint,
-            SnapshotFingerprint: snapshotFingerprint,
-            CapturedAtUtc: capturedAt,
-            WarningCodes: warnings.Distinct().ToArray(),
-            CaptureDiagnosticCode: cardInstanceIdInvariantSatisfied
-                ? "RuntimeSnapshotCaptured"
-                : "RuntimeSnapshotCardInstanceIdInvariantFailed",
-            CharacterRewardPoolExact: selectedCards.Exact && selectedCards.Cards is not null,
-            ColorlessRewardPoolExact: colorlessCards.Exact && colorlessCards.Cards is not null,
-            OtherCharacterPoolsExact: otherPoolsExact && otherCharacterPools is not null,
-            CharacterRewardHooksNoOpExact: isAuditedVanilla && characterRewardHooksExact,
-            ColorlessRewardHooksNoOpExact: isAuditedVanilla && colorlessRewardHooksExact,
-            OtherCharacterRewardHooksNoOpExact: isAuditedVanilla && otherCharacterRewardHooksExact,
-            SharedRelicPoolSource: sharedRelics.Relics?.ToArray(),
-            CharacterRelicPoolSource: characterRelics.Relics?.ToArray(),
-            RelicBagSourcePoolsExact: sharedRelics.Exact && characterRelics.Exact,
-            CharacterRewardIdentityPoolExact: selectedCards.IdentityExact && selectedCards.Cards is not null,
-            UnlockedCharacterCardPoolKeys: unlockedCharacterCardPoolKeys,
-            EventResultStaticCatalogExact: eventResultStaticCatalogExact,
-            EventColorfulCharacterPoolsExact: eventColorfulCharacterPoolsExact,
-            MerchantColorlessOrderedPool: merchantColorlessOrderedPool,
-            MerchantColorlessOrderedPoolExact: merchantColorlessOrderedPoolExact,
-            MerchantColorlessPoolIdentityHooksExact: merchantColorlessPoolIdentityHooksExact,
-            MerchantColorlessRarityIdentityHooksExact: merchantColorlessRarityIdentityHooksExact,
-            MerchantInitialInventoryShapeExact: merchantInitialInventoryShapeExact);
-
-        return new RuntimeEffectSnapshotCaptureResult(
-            effectAuthority,
-            allCharacterCardPoolsUnlocked,
-            commonCount,
-            uncommonCount,
-            unlockFingerprint,
-            isAuditedVanilla && selectedCharacterUnlocked
-                ? SourceAuthority.OfficialRuntimeExact
-                : isAuditedVanilla ? SourceAuthority.Incomplete : SourceAuthority.ModdedRuntimeBestEffort,
-            isAuditedVanilla && selectedCharacterUnlocked
-                ? SnapshotCompleteness.Complete
-                : SnapshotCompleteness.Partial,
-            resolution,
-            warnings.Distinct().ToArray(),
-            string.Join(";", new[]
-            {
-                $"source={unlockSource}",
-                $"profile={profile.ProfileId}",
-                $"characterCards={selectedCards.Cards?.Count ?? -1}",
-                $"characterRewardIdentityExact={selectedCards.IdentityExact.ToString().ToLowerInvariant()}",
-                $"characterCardUniqueInstanceIds={NeowEffectSnapshotInvariants.CountUniqueCardInstanceIds(selectedCards.Cards)}",
-                $"colorlessCards={colorlessCards.Cards?.Count ?? -1}",
-                $"colorlessCardUniqueInstanceIds={NeowEffectSnapshotInvariants.CountUniqueCardInstanceIds(colorlessCards.Cards)}",
-                $"otherPools={otherCharacterPools?.Count ?? -1}",
-                $"otherPoolCards={otherCharacterPools?.Sum(pool => pool.Cards.Count) ?? -1}",
-                $"otherPoolCardUniqueInstanceIds={NeowEffectSnapshotInvariants.CountUniqueCardInstanceIds(otherCharacterPools?.SelectMany(pool => pool.Cards))}",
-                $"deck={deck?.Count ?? -1}",
-                $"potions={potionPool?.Count ?? -1}",
-                $"relicBag={orderedRelicBag?.Count ?? -1}",
-                $"curses={generatedCursePool?.Count ?? -1}",
-                $"eventStaticCatalogExact={eventResultStaticCatalogExact.ToString().ToLowerInvariant()}",
-                $"eventColorfulPoolsExact={eventColorfulCharacterPoolsExact.ToString().ToLowerInvariant()}",
-                $"merchantColorlessPool={merchantColorlessOrderedPool?.Count ?? -1}",
-                $"merchantColorlessPoolExact={merchantColorlessOrderedPoolExact.ToString().ToLowerInvariant()}",
-                $"merchantColorlessPoolIdentityHooksExact={merchantColorlessPoolIdentityHooksExact.ToString().ToLowerInvariant()}",
-                $"merchantColorlessRarityIdentityHooksExact={merchantColorlessRarityIdentityHooksExact.ToString().ToLowerInvariant()}",
-                $"merchantInitialShapeExact={merchantInitialInventoryShapeExact.ToString().ToLowerInvariant()}",
-                $"completeness={completeness}"
-            }));
+        // No scheduling is involved in this path: the unbounded observation
+        // completes on the current main thread, preserving the direct adapter's
+        // throwing boundary. NeowEffectRuntimeSnapshotCapture owns any fail-soft policy.
+        var observed = ObserveEffectCore(profile, rawSeed, character, ascension, playersCount,
+            playerSlotIndex, capturedGameVersion, explicitUnlockState, new NativeObservationSchedule(), rules)
+            .GetAwaiter().GetResult() with { FailSoft = false };
+        return DeriveEffect(profile, rawSeed, character, ascension, playersCount, playerSlotIndex,
+            capturedGameVersion, observed);
     }
 
-    private sealed record PoolCapture(object? Items, bool Exact, bool IdentityExact, string Source)
+    internal sealed record PoolCapture(object? Items, bool Exact, bool IdentityExact, string Source)
     {
         public IReadOnlyList<NeowEffectCardSnapshot>? Cards => Items as IReadOnlyList<NeowEffectCardSnapshot>;
         public IReadOnlyList<NeowEffectPotionSnapshot>? Potions => Items as IReadOnlyList<NeowEffectPotionSnapshot>;
@@ -466,6 +96,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         }
         catch (TargetInvocationException ex)
         {
+            RecordCaptureFailure(ex, "SaveManager.GenerateUnlockStateFromProgress");
             source = $"GenerateUnlockStateFromProgress failed:{ex.InnerException?.GetType().Name ?? ex.GetType().Name}";
             return null;
         }
@@ -511,62 +142,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             return false;
         }
         Type type = model.GetType();
-        return string.Equals(type.Assembly.GetName().Name, "sts2", StringComparison.OrdinalIgnoreCase) &&
+        return string.Equals(RuntimeAssemblyName(type), "sts2", StringComparison.OrdinalIgnoreCase) &&
                string.Equals(type.Namespace, "MegaCrit.Sts2.Core.Models.Characters", StringComparison.Ordinal);
-    }
-
-    private static PoolCapture CaptureCharacterCardPool(
-        object character,
-        object unlockState,
-        ModelKey characterKey,
-        string poolId,
-        int playersCount)
-    {
-        return CapturePoolProperty(
-            character,
-            unlockState,
-            new[] { "CardPool", "CharacterCardPool", "Cards" },
-            poolId,
-            (model, order, id) => ConvertCardModel(model, order, id),
-            playersCount);
-    }
-
-    private static PoolCapture CaptureStaticCardPool(
-        Assembly assembly,
-        object unlockState,
-        string className,
-        string poolId,
-        int playersCount)
-    {
-        object? pool = ResolveModelDbPool(assembly, "CardPool", "MegaCrit.Sts2.Core.Models.CardPools", className);
-        return CapturePoolObject(
-            pool,
-            unlockState,
-            poolId,
-            (model, order, id) => ConvertCardModel(model, order, id),
-            playersCount);
-    }
-
-    private static PoolCapture CaptureStaticPotionPool(
-        Assembly assembly,
-        object unlockState,
-        string className,
-        string poolId,
-        int playersCount)
-    {
-        object? pool = ResolveModelDbPool(assembly, "PotionPool", "MegaCrit.Sts2.Core.Models.PotionPools", className);
-        return CapturePoolObject(pool, unlockState, poolId, ConvertPotionModel, playersCount);
-    }
-
-    private static PoolCapture CaptureStaticRelicPool(
-        Assembly assembly,
-        object unlockState,
-        string className,
-        string poolId,
-        int playersCount)
-    {
-        object? pool = ResolveModelDbPool(assembly, "RelicPool", "MegaCrit.Sts2.Core.Models.RelicPools", className);
-        return CapturePoolObject(pool, unlockState, poolId, ConvertRelicModel, playersCount);
     }
 
     private static object? ResolveModelDbPool(Assembly assembly, string methodName, string namespaceName, string className)
@@ -595,76 +172,6 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             }
         }
         return null;
-    }
-
-    private static PoolCapture CapturePoolProperty(
-        object owner,
-        object unlockState,
-        IReadOnlyList<string> propertyNames,
-        string poolId,
-        Func<object, int, string, object?> converter,
-        int playersCount)
-    {
-        object? pool = propertyNames.Select(name => ReadProperty(owner, name)).FirstOrDefault(value => value is not null);
-        return CapturePoolObject(pool, unlockState, poolId, converter, playersCount);
-    }
-
-    private static PoolCapture CapturePoolObject(
-        object? pool,
-        object unlockState,
-        string poolId,
-        Func<object, int, string, object?> converter,
-        int playersCount)
-    {
-        if (pool is null)
-        {
-            return new PoolCapture(null, false, false, $"{poolId}:missing");
-        }
-        IEnumerable? models = InvokeUnlockedCollection(pool, unlockState, poolId, playersCount, out bool usedAuditedMethod);
-        if (models is null)
-        {
-            return new PoolCapture(null, false, false, $"{poolId}:unlocked-enumeration-missing");
-        }
-        var output = new List<object>();
-        bool identityExact = usedAuditedMethod;
-        bool exact = usedAuditedMethod;
-        int order = 0;
-        foreach (object model in Enumerate(models))
-        {
-            object? converted = converter(model, order, poolId);
-            if (converted is null)
-            {
-                identityExact = false;
-                exact = false;
-                continue;
-            }
-            if (converted is NeowEffectCardSnapshot card && !card.BehaviorMetadataExact)
-            {
-                // Card identity generation only needs copied key/rarity/source order.
-                // Missing deck/edit metadata must not erase an otherwise exact pool,
-                // but it still prevents full semantic authority.
-                exact = false;
-            }
-            output.Add(converted);
-            order++;
-        }
-        object typed = output.Count == 0
-            ? poolId.StartsWith("potion", StringComparison.Ordinal)
-                ? Array.Empty<NeowEffectPotionSnapshot>()
-                : poolId.StartsWith("relic", StringComparison.Ordinal)
-                    ? Array.Empty<NeowEffectRelicSnapshot>()
-                    : Array.Empty<NeowEffectCardSnapshot>()
-            : ToTypedReadOnlyList(output);
-
-        bool cardInstanceIdsUnique = typed is not IReadOnlyList<NeowEffectCardSnapshot> cards ||
-                                     NeowEffectSnapshotInvariants.HasUniqueCardInstanceIds(cards);
-        identityExact &= cardInstanceIdsUnique;
-        exact &= cardInstanceIdsUnique;
-        return new PoolCapture(
-            typed,
-            exact,
-            identityExact,
-            $"{poolId}:{pool.GetType().FullName};cardInstanceIdsUnique={cardInstanceIdsUnique.ToString().ToLowerInvariant()};identityExact={identityExact.ToString().ToLowerInvariant()}");
     }
 
     private static PoolCapture StampCardCatalogProfile(PoolCapture capture, RuntimeProfileId profileId)
@@ -708,120 +215,10 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         return values.ToArray();
     }
 
-    private static IReadOnlyList<CharacterCardPoolSnapshot>? CaptureOtherCharacterPools(
-        object unlockState,
-        ModelKey selectedCharacter,
-        int playersCount,
-        ReflectionSnapshotProfileRules rules,
-        out bool exact)
-    {
-        exact = true;
-        var output = new List<CharacterCardPoolSnapshot>();
-        object? poolsValue = ReadProperty(unlockState, "CharacterCardPools");
-        if (poolsValue is null)
-        {
-            exact = false;
-            return null;
-        }
-        var poolObjects = Enumerate(poolsValue)
-            .Where(pool => TryModelKey(pool, out _))
-            .ToList();
-        if (rules.OtherCharacterPoolsUseModelIdOrder)
-        {
-            poolObjects = poolObjects.OrderBy(pool => TryModelKey(pool, out ModelKey key) ? key.Category : string.Empty, StringComparer.Ordinal)
-                .ThenBy(pool => TryModelKey(pool, out ModelKey key) ? key.Entry : string.Empty, StringComparer.Ordinal)
-                .ToList();
-        }
-        IReadOnlyDictionary<ModelKey, ModelKey> characterByPool = CaptureCharacterByCardPool(unlockState);
-        int poolOrder = 0;
-        foreach (object pool in poolObjects)
-        {
-            if (!TryModelKey(pool, out ModelKey poolKey))
-            {
-                exact = false;
-                continue;
-            }
-            ModelKey characterKey;
-            if (!characterByPool.TryGetValue(poolKey, out characterKey))
-            {
-                // Compatibility fallback for historical/runtime shapes that expose
-                // pool identity but not CharacterModel.CardPool. It is deliberately
-                // marked non-exact: arbitrary Mod pool naming must not become semantic
-                // character authority merely because it resembles vanilla naming.
-                string characterEntry = CharacterEntryFromPool(poolKey.Entry);
-                characterKey = new ModelKey(BaseGameModelKeys.Categories.Character, characterEntry);
-                exact = false;
-            }
-            if (characterKey == selectedCharacter)
-            {
-                continue;
-            }
-            PoolCapture capture = FilterForPlayers(
-                CapturePoolObject(
-                    pool,
-                    unlockState,
-                    poolKey.Serialized,
-                    (model, order, id) => ConvertCardModel(model, order, id),
-                    playersCount),
-                playersCount);
-            if (capture.Cards is null)
-            {
-                exact = false;
-                continue;
-            }
-            exact &= capture.Exact;
-            output.Add(new CharacterCardPoolSnapshot(characterKey, poolKey.Serialized, poolOrder++, capture.Cards));
-        }
-        return output;
-    }
-
-    private static IReadOnlyList<NeowEffectCardSnapshot>? CaptureStartingDeck(
-        object character,
-        ModelKey characterKey,
-        bool auditedVanilla,
-        out bool exact)
-    {
-        exact = auditedVanilla;
-        object? deckValue;
-        try
-        {
-            deckValue = ReadProperty(character, "StartingDeck");
-        }
-        catch
-        {
-            exact = false;
-            return null;
-        }
-        if (deckValue is null)
-        {
-            exact = false;
-            return null;
-        }
-        var output = new List<NeowEffectCardSnapshot>();
-        int order = 0;
-        foreach (object card in Enumerate(deckValue))
-        {
-            NeowEffectCardSnapshot? converted = ConvertCardModel(card, order, "character", $"starter:{characterKey.Entry}:{order}");
-            if (converted is null)
-            {
-                exact = false;
-                continue;
-            }
-            output.Add(converted);
-            order++;
-        }
-        if (output.Count == 0)
-        {
-            exact = false;
-            return null;
-        }
-        return output;
-    }
-
     private static NeowEffectCardSnapshot? ConvertCardModel(object model, int order, string poolId) =>
         ConvertCardModel(model, order, poolId, $"{poolId}:{order}");
 
-    private static NeowEffectCardSnapshot? ConvertCardModel(object model, int order, string poolId, string instanceId)
+    internal static NeowEffectCardSnapshot? ConvertCardModel(object model, int order, string poolId, string instanceId)
     {
         if (!TryModelKey(model, out ModelKey key) || key.Category != BaseGameModelKeys.Categories.Card)
         {
@@ -866,7 +263,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             max,
             UpgradeTargetKey: null,
             PoolId: poolId,
-            SourceAssembly: model.GetType().Assembly.GetName().Name,
+            SourceAssembly: RuntimeAssemblyName(model.GetType()),
             SourceModId: SourceModIdFor(model),
             CanBeGeneratedByModifiers: TryReadBool(model,
                 "CanBeGeneratedByModifiers",
@@ -898,7 +295,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             order,
             rarity,
             allowed,
-            model.GetType().Assembly.GetName().Name,
+            RuntimeAssemblyName(model.GetType()),
             SourceModId: SourceModIdFor(model),
             IsMultiplayerOnly: IsMultiplayerOnly(model));
     }
@@ -918,7 +315,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             rarity,
             kind,
             classificationExact,
-            model.GetType().Assembly.GetName().Name,
+            RuntimeAssemblyName(model.GetType()),
             SourceModId: SourceModIdFor(model),
             IsMultiplayerOnly: IsMultiplayerOnly(model),
             RarityCode: ReadEnumName(model, "Rarity"),
@@ -1186,7 +583,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
 
     private static NestedRelicEffectKind ClassifyNestedRelicEffect(object model, ModelKey key, out bool exact)
     {
-        exact = string.Equals(model.GetType().Assembly.GetName().Name, "sts2", StringComparison.OrdinalIgnoreCase);
+        exact = string.Equals(RuntimeAssemblyName(model.GetType()), "sts2", StringComparison.OrdinalIgnoreCase);
         if (key == BaseGameModelKeys.OrdinaryRelics.Whetstone)
         {
             return NestedRelicEffectKind.Whetstone;
@@ -1205,7 +602,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             exact = false;
             return NestedRelicEffectKind.UnknownHook;
         }
-        bool overrides = model.GetType().GetMethods(PublicInstance | BindingFlags.NonPublic)
+        bool overrides = RuntimeMethodsFor(model.GetType(), PublicInstance | BindingFlags.NonPublic)
             .Where(method => method.DeclaringType == model.GetType())
             .Any(method => method.Name is "AfterObtained" or "OnObtained" or "OnObtain" or "AfterObtain");
         return overrides ? NestedRelicEffectKind.UnknownHook : NestedRelicEffectKind.NoTrackedImmediateEffect;
@@ -1225,7 +622,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                 ? "GetUnlockedRelics"
                 : "GetUnlockedCards";
 
-        MethodInfo[] candidates = pool.GetType().GetMethods(PublicInstance)
+        MethodInfo[] candidates = RuntimeMethodsFor(pool.GetType(), PublicInstance)
             .Where(method =>
                 string.Equals(method.Name, exactMethodName, StringComparison.Ordinal) ||
                 string.Equals(method.Name, "GetUnlockedModels", StringComparison.Ordinal) ||
@@ -1311,27 +708,42 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         assembly.GetType(fullName, throwOnError: false, ignoreCase: false) ??
         SafeGetTypes(assembly).FirstOrDefault(type => string.Equals(type.Name, simpleName, StringComparison.Ordinal));
 
+    private static void RecordCaptureFailure(Exception exception, string member) =>
+        Diagnostics.RuntimeIssueLedger.Current.Record(exception, "RuntimeCaptureMemberFailed",
+            nameof(ReflectionNeowEffectSnapshotAdapter), member, "issues.capture_failed",
+            Diagnostics.RuntimeIssueSeverity.Warning);
+
     private static IReadOnlyList<Type> SafeGetTypes(Assembly assembly)
     {
         try { return assembly.GetTypes(); }
-        catch (ReflectionTypeLoadException ex) { return ex.Types.Where(type => type is not null).Cast<Type>().ToArray(); }
-        catch { return Array.Empty<Type>(); }
+        catch (ReflectionTypeLoadException ex) { RecordCaptureFailure(ex, "Assembly.GetTypes"); return ex.Types.Where(type => type is not null).Cast<Type>().ToArray(); }
+        catch (Exception ex) { RecordCaptureFailure(ex, "Assembly.GetTypes"); return Array.Empty<Type>(); }
     }
+
+    private static readonly ConcurrentDictionary<Type, Lazy<string?>> RuntimeAssemblyNames = new();
+    private static string? RuntimeAssemblyName(Type type) => RuntimeAssemblyNames.GetOrAdd(type,
+        static key => new Lazy<string?>(() => key.Assembly.GetName().Name)).Value;
+    private sealed record RuntimeInstanceMember(PropertyInfo? Property, FieldInfo? Field);
+    private static readonly ConcurrentDictionary<(Type Type, string Name), RuntimeInstanceMember> RuntimeInstanceMembers = new();
+    private static readonly ConcurrentDictionary<(Type Type, BindingFlags Flags), MethodInfo[]> RuntimeInstanceMethods = new();
+    private static MethodInfo[] RuntimeMethodsFor(Type type, BindingFlags flags) =>
+        RuntimeInstanceMethods.GetOrAdd((type, flags), key => key.Type.GetMethods(key.Flags));
 
     private static object? ReadProperty(object? instance, string name)
     {
         if (instance is null) return null;
         try
         {
-            Type type = instance.GetType();
-            PropertyInfo? property = type.GetProperty(name, PublicInstance | BindingFlags.NonPublic);
-            if (property is not null && property.GetIndexParameters().Length == 0)
+            var member = RuntimeInstanceMembers.GetOrAdd((instance.GetType(), name), key =>
             {
-                return property.GetValue(instance);
-            }
-            return type.GetField(name, PublicInstance | BindingFlags.NonPublic)?.GetValue(instance);
+                var property = key.Type.GetProperty(key.Name, PublicInstance | BindingFlags.NonPublic);
+                return property is not null && property.GetIndexParameters().Length == 0
+                    ? new RuntimeInstanceMember(property, null)
+                    : new RuntimeInstanceMember(null, key.Type.GetField(key.Name, PublicInstance | BindingFlags.NonPublic));
+            });
+            return member.Property is not null ? member.Property.GetValue(instance) : member.Field?.GetValue(instance);
         }
-        catch { return null; }
+        catch (Exception ex) { RecordCaptureFailure(ex, instance.GetType().FullName + "." + name); return null; }
     }
 
     private static bool? TryReadBool(object instance, params string[] names)
@@ -1367,7 +779,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         {
             if (string.Equals(tag.ToString(), tagName, StringComparison.OrdinalIgnoreCase)) return true;
         }
-        foreach (MethodInfo method in model.GetType().GetMethods(PublicInstance).Where(method => string.Equals(method.Name, "HasTag", StringComparison.Ordinal)))
+        foreach (MethodInfo method in RuntimeMethodsFor(model.GetType(), PublicInstance).Where(method => string.Equals(method.Name, "HasTag", StringComparison.Ordinal)))
         {
             ParameterInfo[] parameters = method.GetParameters();
             if (parameters.Length != 1 || !parameters[0].ParameterType.IsEnum) continue;
@@ -1414,7 +826,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         {
             object? value;
             try { value = property.GetIndexParameters().Length == 0 ? property.GetValue(unlockState) : null; }
-            catch { continue; }
+            catch (Exception ex) { RecordCaptureFailure(ex, unlockState.GetType().FullName + "." + property.Name); continue; }
             foreach (object item in Enumerate(value))
             {
                 if (TryModelKey(item, out ModelKey key)) yield return $"{property.Name}:{key.Serialized}";
@@ -1496,7 +908,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
 
     private static string? SourceModIdFor(object model)
     {
-        string? assemblyName = model.GetType().Assembly.GetName().Name;
+        string? assemblyName = RuntimeAssemblyName(model.GetType());
         return string.Equals(assemblyName, "sts2", StringComparison.OrdinalIgnoreCase)
             ? null
             : assemblyName;

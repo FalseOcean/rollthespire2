@@ -1,0 +1,13 @@
+{
+  "allPass": true,
+  "batchSizeCandidateSetMismatch": 0,
+  "compactInputCandidateSetMismatch": 0,
+  "duplicateCandidateMismatch": 0,
+  "globalMismatch": 0,
+  "ordinalIntegrityMismatch": 0,
+  "tenPercentCompactReadbackBytes": 800000,
+  "tenPercentDenseReadbackBytes": 4000000,
+  "tenPercentReadbackByteReduction": 5.0,
+  "vectorCases": 77,
+  "workgroupMismatch": 0
+}

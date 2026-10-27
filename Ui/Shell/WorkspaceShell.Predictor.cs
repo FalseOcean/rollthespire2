@@ -1,3 +1,4 @@
+using RolltheSpire2.Compatibility;
 using Godot;
 using RolltheSpire2.Core.Diagnostics;
 using RolltheSpire2.Core.Identity;
@@ -39,7 +40,7 @@ internal sealed partial class WorkspaceShell
         if(_liveRun==null) _predictorController.RestorePartyConfiguration(saved, initialSeed is null);
         // Restore a valid saved seed directly into the existing reactive prediction path.
         if (initialSeed is not null ||
-            (_liveRun==null && _runtime.Profile.TryCanonicalizeSeed(_predictor.CurrentDraft.RawSeed, out _, out _)))
+            (_liveRun==null && ProfileSeedRules.TryCanonicalizePredictionSeed(_runtime.Profile, _predictor.CurrentDraft.RawSeed, out _, out _)))
             _predictorController.AnalyzeCurrentDraft();
     }
 }

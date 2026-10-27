@@ -14,6 +14,7 @@ using RolltheSpire2.Presentation.Ui1;
 using RolltheSpire2.Ui.Components;
 using RolltheSpire2.Ui.Icons;
 using RolltheSpire2.Ui.Theme;
+using RolltheSpire2.Ui.Persistence;
 
 namespace RolltheSpire2.Ui.Pages.Analysis;
 
@@ -21,9 +22,10 @@ namespace RolltheSpire2.Ui.Pages.Analysis;
 // No Query draft, route simulation or alternate prediction authority lives here.
 internal sealed partial class AnalysisPage
 {
-    private HBoxContainer? _workbenchRoot;
+    private Control? _workbenchRoot;
     private VBoxContainer _wbCenter = null!, _wbRight = null!;
-    private VSeparator _wbSeparator = null!;
+    private MarginContainer _wbMainInset = null!, _wbAuxiliaryInset = null!;
+    private ColorRect _wbAuxiliaryDivider = null!;
     private readonly List<Button> _wbTabs = [];
     private int _wbPage;
     private bool _openingSubview = true;
@@ -31,71 +33,74 @@ internal sealed partial class AnalysisPage
     private bool _wbHasResult;
     private string _wbStatusKey = "predictor.empty";
     private Label? _searchOriginNotice;
-    private string _unverifiedSearchSeed = "";
     private bool _searchOpeningUnavailable;
-    internal void SetSearchOrigin(string seed, bool unverified, bool openingUnavailable = false)
+    private SeedLibraryResultProvenance? _resultOrigin;
+    internal void SetSearchSource(SeedLibraryResultProvenance? provenance, bool openingUnavailable)
     {
-        _unverifiedSearchSeed = unverified ? seed : "";
+        _resultOrigin = provenance;
         _searchOpeningUnavailable = openingUnavailable;
         RefreshSearchOrigin();
     }
     private void RefreshSearchOrigin()
     {
-        if (_searchOriginNotice is null || _uiText is null) return;
-        _searchOriginNotice.Visible = _unverifiedSearchSeed.Length > 0 &&
-            string.Equals(CurrentDraft.RawSeed.Trim(), _unverifiedSearchSeed, StringComparison.OrdinalIgnoreCase);
-        _searchOriginNotice.Text = Text(_searchOpeningUnavailable
-            ? "workflow.predictor_unverified_opening_unavailable" : "workflow.predictor_unverified");
+        // Source/confirmation state still belongs to the controller's transport.
+        // The Owner removed this entire Analysis presentation row.
+        if (_searchOriginNotice is null) return;
+        _searchOriginNotice.Visible = false;
+        _searchOriginNotice.Text = "";
     }
-    private readonly WorkspacePalette _palette = WorkspacePalette.Canonical;
+    private readonly WorkspacePalette _palette = WorkspacePalette.MainPanel;
     private static readonly string[] PageKeys = ["predictor.act1", "predictor.act2", "predictor.act3", "predictor.shops"];
 
     private void BuildWorkbench(IReadOnlyList<ModelKey> characters)
     {
         AddChild(_encounterPortraits);
         _neowChoiceStrip.HorizontalChoices = true;
-        _workbenchRoot = new HBoxContainer { Name = "PredictorWorkbench" };
-        _workbenchRoot.AddThemeConstantOverride("separation", 12); AddChild(_workbenchRoot);
-        var rail = new VBoxContainer { Name = "PredictorContextRail", CustomMinimumSize = new Vector2(224, 0) };
-        var railScroll = WScroll(); railScroll.SizeFlagsHorizontal = SizeFlags.Fill; railScroll.CustomMinimumSize = new Vector2(224, 0);
-        _workbenchRoot.AddChild(railScroll); railScroll.AddChild(rail);
+        _workbenchRoot = new Control { Name = "PredictorWorkbench" };
+        AddChild(_workbenchRoot);
+        var rail = new VBoxContainer { Name = "PredictorContextRail", SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        var railScroll = WScroll();
+        var contextInset = WorkbenchInset("PredictorContextInset", 0, WorkspaceLayout.LeftRailWidth);
+        _workbenchRoot.AddChild(contextInset); contextInset.AddChild(railScroll); railScroll.AddChild(rail);
         _requestBar.Reparent(rail);
         _requestBar.UseRail(characters);
         BuildFavoriteSeed(rail);
-        var contextSeparatorInset = new MarginContainer { SizeFlagsVertical = SizeFlags.ExpandFill };
-        contextSeparatorInset.AddThemeConstantOverride("margin_top", 68);
-        var contextSeparator = new VSeparator();
-        contextSeparator.AddThemeStyleboxOverride("separator", new StyleBoxLine
-        {
-            Color = _palette.Color(_palette.Line), Vertical = true, Thickness = 1
-        });
-        contextSeparatorInset.AddChild(contextSeparator);
-        _workbenchRoot.AddChild(contextSeparatorInset);
-        var workspace = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        workspace.AddThemeConstantOverride("separation", 16); _workbenchRoot.AddChild(workspace);
-        var tabs = new HBoxContainer { Name = "PredictorPages" }; workspace.AddChild(tabs);
-        tabs.Resized += () => contextSeparatorInset.AddThemeConstantOverride(
-            "margin_top", Mathf.RoundToInt(tabs.Size.Y) + 24);
+        var navigationInset = WorkbenchInset("PredictorNavigationInset", WorkspaceLayout.CenterLeft,
+            WorkspaceLayout.CanvasWidth - WorkspaceLayout.CenterLeft, height: WorkspaceLayout.HeaderHeight);
+        _workbenchRoot.AddChild(navigationInset);
+        var tabs = new HBoxContainer { Name = "PredictorPages", CustomMinimumSize = new Vector2(0, WorkspaceLayout.HeaderHeight) };
+        tabs.AddThemeConstantOverride("separation", 0); navigationInset.AddChild(tabs);
         for (int i = 0; i < PageKeys.Length; i++)
         {
             int page = i;
             var button = _palette.Button(""); button.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-            button.CustomMinimumSize = new Vector2(0, 44);
+            button.CustomMinimumSize = new Vector2(0, WorkspaceLayout.HeaderHeight);
+            button.ClipContents = true;
+            button.AddThemeFontSizeOverride("font_size", 17);
             button.Pressed += () => { if (_wbPage != page) { _wbPage = page; RenderWorkbench(); } };
             tabs.AddChild(button); _wbTabs.Add(button);
         }
-        var body = new HBoxContainer { SizeFlagsVertical = SizeFlags.ExpandFill };
+        _wbMainInset = WorkbenchInset("PredictorMainInset", WorkspaceLayout.CenterLeft, WorkspaceLayout.CenterWidth,
+            WorkspaceLayout.HeaderHeight, WorkspaceLayout.CanvasHeight - WorkspaceLayout.HeaderHeight);
+        _workbenchRoot.AddChild(_wbMainInset);
+        var workspace = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        workspace.AddThemeConstantOverride("separation", 0); _wbMainInset.AddChild(workspace);
         _searchOriginNotice = WLabel("");
         _searchOriginNotice.Name = "UnverifiedSearchOrigin";
         _searchOriginNotice.Visible = false;
         workspace.AddChild(_searchOriginNotice);
-        body.AddThemeConstantOverride("separation", 16); workspace.AddChild(body);
         var centerScroll = WScroll(); centerScroll.Name = "PredictorMainScroll";
-        body.AddChild(centerScroll); _wbCenter = WColumn(); _wbCenter.AddThemeConstantOverride("separation", 14); centerScroll.AddChild(_wbCenter);
-        _wbSeparator = new VSeparator(); _wbSeparator.AddThemeStyleboxOverride("separator", new StyleBoxLine { Color = _palette.Color(_palette.Line), Vertical = true, Thickness = 1 });
-        body.AddChild(_wbSeparator);
+        workspace.AddChild(centerScroll); _wbCenter = WColumn(); _wbCenter.AddThemeConstantOverride("separation", 18); centerScroll.AddChild(_wbCenter);
+        _wbAuxiliaryInset = WorkbenchInset("PredictorAuxiliaryInset", WorkspaceLayout.RightRailLeft, WorkspaceLayout.RightRailWidth,
+            WorkspaceLayout.HeaderHeight, WorkspaceLayout.CanvasHeight - WorkspaceLayout.HeaderHeight);
+        _workbenchRoot.AddChild(_wbAuxiliaryInset);
         _wbRight = WColumn(); _wbRight.Name = "PredictorAuxiliaryRail";
-        _wbRight.SizeFlagsHorizontal = SizeFlags.Fill; _wbRight.CustomMinimumSize = new Vector2(244, 0); body.AddChild(_wbRight);
+        _wbRight.AddThemeConstantOverride("separation", 12);
+        _wbRight.SizeFlagsVertical = SizeFlags.ExpandFill; _wbAuxiliaryInset.AddChild(_wbRight);
+        WorkbenchDivider("PredictorContextDivider", WorkspaceLayout.LeftRailWidth + WorkspaceLayout.RailGap / 2,
+            WorkspaceLayout.DividerTop, WorkspaceLayout.DividerHeight);
+        _wbAuxiliaryDivider = WorkbenchDivider("PredictorAuxiliaryDivider", WorkspaceLayout.RightRailLeft - WorkspaceLayout.RailGap / 2,
+            WorkspaceLayout.HeaderHeight, WorkspaceLayout.DividerTop + WorkspaceLayout.DividerHeight - WorkspaceLayout.HeaderHeight);
         TreeExiting += ClearWorkbenchProjections;
         // Wrapped labels settle after Godot's deferred container layout. Refit to
         // the shell canvas when their transient minimum shrinks after binding.
@@ -105,19 +110,51 @@ internal sealed partial class AnalysisPage
         }).CallDeferred();
     }
 
+    private static MarginContainer WorkbenchInset(string name, float left, float width, float top = 0,
+        float height = WorkspaceLayout.CanvasHeight)
+    {
+        var inset = new MarginContainer { Name = name, Position = new(left, top), Size = new(width, height) };
+        inset.AddThemeConstantOverride("margin_left", WorkspaceLayout.ColumnInset);
+        inset.AddThemeConstantOverride("margin_right", WorkspaceLayout.ColumnInset);
+        inset.AddThemeConstantOverride("margin_top", 0);
+        inset.AddThemeConstantOverride("margin_bottom", 0);
+        return inset;
+    }
+
+    private ColorRect WorkbenchDivider(string name, float left, float top, float height)
+    {
+        var divider = new ColorRect { Name = name, Position = new(left, top), Size = new(1, height),
+            MouseFilter = MouseFilterEnum.Ignore };
+        MainPanelTheme.SetBackground(divider, _palette.Line);
+        _workbenchRoot!.AddChild(divider);
+        return divider;
+    }
+
+    private void RefreshWorkbenchColumns()
+    {
+        bool shops = _wbPage == 3;
+        _wbMainInset.Size = new(shops ? WorkspaceLayout.CanvasWidth - WorkspaceLayout.CenterLeft : WorkspaceLayout.CenterWidth,
+            WorkspaceLayout.CanvasHeight - WorkspaceLayout.HeaderHeight);
+        _wbAuxiliaryInset.Visible = _wbAuxiliaryDivider.Visible = !shops;
+    }
+
     private static VBoxContainer WColumn()
     {
         var c = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         c.AddThemeConstantOverride("separation", 14); return c;
     }
     private static ScrollContainer WScroll() => new() { SizeFlagsHorizontal = SizeFlags.ExpandFill, SizeFlagsVertical = SizeFlags.ExpandFill, HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
-    private Label WLabel(string text, bool title = false) => new()
+    private Label WLabel(string text, bool title = false, int? fontSize = null)
     {
-        Text = text, AutowrapMode = TextServer.AutowrapMode.WordSmart,
-        SizeFlagsHorizontal = SizeFlags.ExpandFill,
-        Theme = new Godot.Theme { DefaultFontSize = title ? 20 : 17 },
-        Modulate = _palette.Color(title ? _palette.Text : _palette.Secondary)
-    };
+        var label = new Label
+        {
+            Text = text, AutowrapMode = TextServer.AutowrapMode.WordSmart,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill
+        };
+        label.AddThemeFontSizeOverride("font_size", fontSize ?? (title ? 20 : 17));
+        label.AddThemeColorOverride("font_color", _palette.Color(title ? _palette.Text : _palette.Secondary));
+        return label;
+    }
     private void WTitle(Node parent, string key) => parent.AddChild(WLabel(Text(key), true));
     private void WEmpty(Node parent) => parent.AddChild(WLabel(Text("predictor.unavailable")));
     private static void WClear(Node parent)
@@ -132,6 +169,7 @@ internal sealed partial class AnalysisPage
         _wbStatusKey = status;
         ShowMapRail(false);
         DetachOpeningDonors(); WClear(_wbCenter); WClear(_wbRight);
+        RefreshWorkbenchColumns();
         _wbCenter.AddChild(WLabel(Text(status)));
     }
     private void DetachOpeningDonors()
@@ -142,6 +180,7 @@ internal sealed partial class AnalysisPage
     }
     private void RefreshWorkbenchLabels()
     {
+        RefreshWorkbenchColumns();
         RefreshSearchOrigin();
         RefreshFavoriteSeed();
         for (int i = 0; i < _wbTabs.Count; i++)
@@ -154,6 +193,9 @@ internal sealed partial class AnalysisPage
         if (!_wbHasResult || _viewModel is null) return;
         _wbStatusKey = "";
         _combatSurface = null; _ancientSurface = null; DetachOpeningDonors(); WClear(_wbCenter); WClear(_wbRight);
+        // Clear the previous page's minimum width before restoring the narrower act body.
+        RefreshWorkbenchColumns();
+        _wbRight.CustomMinimumSize = Vector2.Zero;
         ShowMapRail(true);
         // Partial/Unknown domains do not erase other known domains.
         if (_wbPage == 3) RenderShopOverview();
@@ -243,15 +285,11 @@ internal sealed partial class AnalysisPage
         };
         BindWorkbenchTooltip(icon, key, kind, label);
         tile.AddChild(icon);
-        tile.AddChild(new Label
-        {
-            Text = label, CustomMinimumSize = new Vector2(0, 50),
-            Theme = new Godot.Theme { DefaultFontSize = 16 },
-            AutowrapMode = TextServer.AutowrapMode.WordSmart,
-            VerticalAlignment = VerticalAlignment.Center,
-            SizeFlagsHorizontal = SizeFlags.ExpandFill,
-            MouseFilter = MouseFilterEnum.Ignore
-        });
+        var nameLabel = WLabel(label, title: true, fontSize: 16);
+        nameLabel.CustomMinimumSize = new Vector2(0, 50);
+        nameLabel.VerticalAlignment = VerticalAlignment.Center;
+        nameLabel.MouseFilter = MouseFilterEnum.Ignore;
+        tile.AddChild(nameLabel);
         return tile;
     }
     private Control WShopCard(ModelKey key)
@@ -339,8 +377,78 @@ internal sealed partial class AnalysisPage
             else WEmpty(col);
         }
         var bags = WResponsiveGrid(_wbCenter, "RelicBagPreviews", 560, 2);
-        RenderRelicPreviewRow(bags, "predictor.player_relic_bag", _viewModel.RelicSequenceDomain.Items);
-        RenderRelicPreviewRow(bags, "predictor.chest_shared_bag", _viewModel.TreasureRoomRelicSequenceDomain.Items);
+        var playerBag = RenderRelicPreviewRow(bags, "predictor.player_relic_bag", _viewModel.RelicSequenceDomain.Items);
+        playerBag.Name = "PlayerRelicBagPreview";
+        if (LastRequest?.PlayersCount == 1) AlignRelicPreviewRows(playerBag, RenderInitialTreasureRelicPreview(bags));
+        else RenderRelicPreviewRow(bags, "predictor.chest_shared_bag", _viewModel.TreasureRoomRelicSequenceDomain.Items);
+    }
+    private VBoxContainer RenderInitialTreasureRelicPreview(Node parent)
+    {
+        var section = WCard(parent, "");
+        section.Name = "InitialTreasureRelicPreview";
+        section.AddChild(WLabel(Text("predictor.treasure.initial_order_title"), true, 18));
+        section.AddChild(WNote(Text("predictor.treasure.initial_order_premise")));
+        var body = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        body.AddThemeConstantOverride("separation", 4);
+        body.AddChild(new Control { Name = "InitialTreasureRaritySpacer", MouseFilter = MouseFilterEnum.Ignore });
+        section.AddChild(body);
+        var sequences = LastDocument?.Sections.Select(item => item.RelicSequencePrediction).FirstOrDefault(result => result is not null);
+        if (sequences is null || !TryGetProjectionRoot(out ulong rootHash)) { WEmpty(body); return section; }
+        var profile = LastRequest!.Authority.ProfileId == RolltheSpire2.Compatibility.RuntimeProfileId.Beta111
+            ? RolltheSpire2.Compatibility.Beta111Profile.Instance : _runtime.Profile;
+        var prediction = TreasureRelicPredictor.PredictInitialOrderPreview(profile, rootHash, sequences);
+        if (prediction.Status != SeedDomainEvaluationStatus.Evaluated) { WEmpty(body); return section; }
+        var grid = new GridContainer { Name = "InitialTreasureRelicEntries", Columns = 3, SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        grid.AddThemeConstantOverride("h_separation", 10);
+        grid.AddThemeConstantOverride("v_separation", 4);
+        body.AddChild(grid);
+        foreach (var entry in prediction.Entries)
+        {
+            Control tile = entry.RelicKey is { } relic
+                ? WRelicPreviewTile(new RelicSequenceEntryViewModel(entry.EncounterOrdinal,
+                    GameContentDisplayPresentationBuilder.BuildRelic(relic, _contentNames!, false), entry.Precision,
+                    _uiText!.Get(UiTextKey.Precision(entry.Precision)), entry.EvidenceCode.ToString()))
+                : WNote(Text("predictor.treasure.none"));
+            tile.Name = "InitialTreasureRelic" + entry.EncounterOrdinal;
+            grid.AddChild(tile);
+        }
+        return section;
+    }
+    private static void AlignRelicPreviewRows(VBoxContainer playerBag, VBoxContainer chestBag)
+    {
+        var rarityGroups = playerBag.GetChild<GridContainer>(2).GetChildren().OfType<VBoxContainer>().ToArray();
+        var chestBody = chestBag.GetChild<VBoxContainer>(2);
+        var heights = new List<Control[]>
+        {
+            new[] { playerBag.GetChild<Control>(0), chestBag.GetChild<Control>(0) },
+            new[] { playerBag.GetChild<Control>(1), chestBag.GetChild<Control>(1) },
+            rarityGroups.Select(group => group.GetChild<Control>(0)).Append(chestBody.GetChild<Control>(0)).ToArray()
+        };
+        if (chestBody.GetChildren().OfType<GridContainer>().FirstOrDefault() is { } chestGrid)
+            for (int row = 0; row < 3; row++)
+                heights.Add(rarityGroups.Select(group => group.GetChild<VBoxContainer>(1))
+                    .Where(entries => entries.GetChildCount() > row).Select(entries => entries.GetChild<Control>(row))
+                    .Concat(chestGrid.GetChildren().OfType<Control>().Skip(row * 3).Take(3)).ToArray());
+        bool pending = false;
+        void QueueAlignment()
+        {
+            if (pending) return;
+            pending = true;
+            Callable.From(() =>
+            {
+                pending = false;
+                if (!IsInstanceValid(playerBag) || !IsInstanceValid(chestBag) || !playerBag.IsInsideTree() || !chestBag.IsInsideTree()) return;
+                foreach (var group in heights)
+                {
+                    float height = group.Max(control => control.GetMinimumSize().Y);
+                    foreach (var control in group) control.CustomMinimumSize = new Vector2(control.CustomMinimumSize.X, height);
+                }
+            }).CallDeferred();
+        }
+        playerBag.Resized += QueueAlignment;
+        chestBag.Resized += QueueAlignment;
+        foreach (var control in heights.SelectMany(group => group)) control.MinimumSizeChanged += QueueAlignment;
+        QueueAlignment();
     }
     private static GridContainer WResponsiveGrid(Node parent, string name, int itemWidth, int maximumColumns)
     {
@@ -359,7 +467,7 @@ internal sealed partial class AnalysisPage
         _ => _palette.Color(_palette.Secondary)
     };
 
-    private void RenderRelicPreviewRow(Node parent, string titleKey, IReadOnlyList<RelicSequenceLaneViewModel> lanes)
+    private VBoxContainer RenderRelicPreviewRow(Node parent, string titleKey, IReadOnlyList<RelicSequenceLaneViewModel> lanes)
     {
         var section = WCard(parent, "");
         var title = WLabel(Text(titleKey), true); title.AddThemeFontSizeOverride("font_size", 18);
@@ -390,6 +498,7 @@ internal sealed partial class AnalysisPage
                 entries.AddChild(WRelicPreviewTile(entry));
             if (entries.GetChildCount() == 0) WEmpty(entries);
         }
+        return section;
     }
     private Control WRelicPreviewTile(RelicSequenceEntryViewModel entry, bool showPosition = true)
     {
@@ -422,21 +531,17 @@ internal sealed partial class AnalysisPage
             Texture = _icons.Resolve(entry.RelicDisplay.ModelKey, GameContentKind.Relic, IconVariant.Small).Texture,
         };
         tile.AddChild(icon);
-        tile.AddChild(new Label
-        {
-            Text = entry.RelicDisplay.DisplayName,
-            Theme = new Godot.Theme { DefaultFontSize = 15 },
-            AutowrapMode = TextServer.AutowrapMode.WordSmart,
-            VerticalAlignment = VerticalAlignment.Center,
-            SizeFlagsHorizontal = SizeFlags.ExpandFill,
-            MouseFilter = MouseFilterEnum.Ignore
-        });
+        var name = WLabel(entry.RelicDisplay.DisplayName, title: true, fontSize: 15);
+        name.VerticalAlignment = VerticalAlignment.Center;
+        name.MouseFilter = MouseFilterEnum.Ignore;
+        tile.AddChild(name);
         return panel;
     }
     private void RenderFullRelicQueues() => RenderRelicInspector();
     private void ShowMapRail(bool visible)
     {
-        _wbRight.Visible = _wbSeparator.Visible = visible;
+        // Only the Shops & Relics page changes column width; other absent maps keep their space.
+        _wbRight.Visible = visible;
     }
     private Control WSequenceIcon(RelicSequenceEntryViewModel entry)
     {
@@ -464,18 +569,20 @@ internal sealed partial class AnalysisPage
     }
     private void RenderActOverview(int act)
     {
-        bool openingPage = act == 1 && _openingSubview;
+        bool openingPage = act == 1 && _openingSubview && !_routeSubview;
         var modes = new HBoxContainer(); modes.AddThemeConstantOverride("separation", 10); _wbCenter.AddChild(modes);
         if (act == 1)
         {
             var opening = WAction("predictor.opening_prediction"); opening.Name = "OpeningPredictionTab";
-            _palette.SetActive(opening, _openingSubview); modes.AddChild(opening);
-            opening.Pressed += () => { if (!_openingSubview) { _openingSubview = true; RenderWorkbench(); } };
+            _palette.SetActive(opening, openingPage); modes.AddChild(opening);
+            opening.Pressed += () => { if (!openingPage) { _openingSubview = true; _routeSubview = false; RenderWorkbench(); } };
         }
         var overview = WAction("predictor.overview"); overview.Name = "OverviewTab";
-        _palette.SetActive(overview, !openingPage); modes.AddChild(overview);
-        overview.Pressed += () => { if (openingPage) { _openingSubview = false; RenderWorkbench(); } };
-        modes.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill });
+        _palette.SetActive(overview, !openingPage && !_routeSubview); modes.AddChild(overview);
+        overview.Pressed += () => { if (openingPage || _routeSubview) { _openingSubview = false; _routeSubview = false; RenderWorkbench(); } };
+        // The seed-information route entry is temporarily hidden. Retain its
+        // runtime for dedicated route checks and future entry restoration.
+        if (_routeSubview) { RenderRouteRuntime(act); return; }
         var actInfo = _viewModel!.EventPoolSequenceDomain.Items.FirstOrDefault(a => a.Act == act);
         if (openingPage) RenderOpeningOverview();
         else
@@ -490,7 +597,8 @@ internal sealed partial class AnalysisPage
             RenderCombatDetails(act);
         }
         ShowMapRail(true);
-        var mapHeader = new HBoxContainer(); _wbRight.AddChild(mapHeader);
+        var mapHeader = new HBoxContainer { Name = "PredictorMapHeader", CustomMinimumSize = new Vector2(0, WorkspaceLayout.HeaderHeight) };
+        _wbRight.AddChild(mapHeader);
         mapHeader.AddChild(WLabel(_uiText!.Format("predictor.map", act), true));
         var clearRoute = WAction("ui1.map.route.clear"); clearRoute.Name = "ClearMapRoute"; clearRoute.Disabled = true;
         mapHeader.AddChild(clearRoute);
@@ -534,7 +642,9 @@ internal sealed partial class AnalysisPage
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            RolltheSpire2.Bootstrap.RuntimeLog.Warn("predictorOverviewMapUnavailable=" + ex.GetType().Name);
+            RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Record(ex,
+                "PredictionOverviewMapFailed", nameof(AnalysisPage), "OverviewMap", "issues.capture_failed",
+                correlationId: $"seed={request.OriginalSeed};act={act}");
             if (!cancellation.IsCancellationRequested && IsInstanceValid(surface) && surface.IsInsideTree())
             { _wbRight.AddChild(WLabel(Text("ui1.map.unavailable"))); }
         }

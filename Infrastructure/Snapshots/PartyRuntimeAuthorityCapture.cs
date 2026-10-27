@@ -55,9 +55,9 @@ public static class PartyRuntimeAuthorityCapture
                 string.Join("|", discovery.OrderBy(p => p.Key).Select(p => p.Key + "=" + p.Value.Serialized)))
         };
         world = world with { Beta109Generation = generation, SnapshotFingerprint = generation.SnapshotFingerprint };
-        if (!SourceAuthorityRules.SupportsExactIdentity(world.SourceAuthority) || world.Completeness != SnapshotCompleteness.Complete ||
-            !Beta109WorldSnapshotProjector.ProjectForSeed(generation, seed).AllowsBossProductionExact)
-            throw new InvalidOperationException("Party.InitialWorldAuthorityIncomplete:" + generation.CaptureDiagnosticCode);
+        // A captured roster can carry incomplete World observations. The actual
+        // requested domains decide their status; missing Boss facts must not
+        // prevent independent opening information for the same party.
         // Existing shared-W compiler projection reads Context.Authority.WorldAuthority.
         // Bind the separately captured union world there, retaining P1's personal N inputs.
         for (int slot = 0; slot < players.Length; slot++)

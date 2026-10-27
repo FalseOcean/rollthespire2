@@ -43,7 +43,6 @@ internal sealed partial class NeowEffectProjectionEngine
 
         state.Rng.Rewards.UnstableShuffle(valid);
         ModelKey[] offered = valid.Take(2).ToArray();
-        NeowEffectWorkingState postOfferState = state.Clone();
         IReadOnlyList<ModelKey>[] acquisitionOrders =
         {
             new[] { offered[0], offered[1] },
@@ -56,7 +55,8 @@ internal sealed partial class NeowEffectProjectionEngine
             IReadOnlyList<BonesAcquisitionRouteResult>? routes = EvaluateBonesAcquisitionOrder(
                 relicKey,
                 acquisitionOrders[orderIndex],
-                postOfferState.Clone(),
+                // The post-offer state stays read-only; each order owns its clone.
+                state.Clone(),
                 orderIndex,
                 recursionDepth,
                 out bool branchBudgetExceeded);
@@ -186,7 +186,8 @@ internal sealed partial class NeowEffectProjectionEngine
         var results = new List<BonesAcquisitionRouteResult>();
         foreach (BonesRouteBranchState branch in branches)
         {
-            BonesSharedContinuationResult continuation = BuildBonesSharedContinuation(bonesKey, branch);
+            BonesSharedContinuationResult continuation = BuildBonesSharedContinuation(
+                bonesKey, branch, out string finalStateFingerprint, out string finalDeckFingerprint);
             PredictionPrecision routePrecision = branch.Precision == PredictionPrecision.Exact &&
                                                continuation.Precision == PredictionPrecision.Exact
                 ? PredictionPrecision.Exact
@@ -215,7 +216,7 @@ internal sealed partial class NeowEffectProjectionEngine
                     .Concat(new[]
                     {
                         continuation.ObservableStateFingerprint,
-                        BuildWorkingStateObservableFingerprint(branch.State)
+                        finalStateFingerprint
                     }));
             string productObservable = FingerprintBonesParts(
                 "bones-route-product-observable-v2",
@@ -228,7 +229,7 @@ internal sealed partial class NeowEffectProjectionEngine
                     {
                         continuation.FinalCurseKey?.Serialized ?? "curse:none",
                         continuation.FinalCursePrecision.ToString(),
-                        BuildObservableDeckFingerprint(branch.State.Deck?.Cards ?? Array.Empty<NeowEffectCardSnapshot>())
+                        finalDeckFingerprint
                     }));
 
             RouteProjectionStatus routeStatus = ResolveRouteProjectionStatus(
@@ -258,7 +259,7 @@ internal sealed partial class NeowEffectProjectionEngine
                 productStatus,
                 branch.PlayerChoiceSelections,
                 productObservable,
-                BuildObservableDeckFingerprint(branch.State.Deck?.Cards ?? Array.Empty<NeowEffectCardSnapshot>()),
+                finalDeckFingerprint,
                 routeStatus,
                 routeEvidence,
                 BuildOpeningRewardContinuation(
@@ -784,7 +785,9 @@ internal sealed partial class NeowEffectProjectionEngine
 
     private BonesSharedContinuationResult BuildBonesSharedContinuation(
         ModelKey bonesKey,
-        BonesRouteBranchState branch)
+        BonesRouteBranchState branch,
+        out string finalStateFingerprint,
+        out string finalDeckFingerprint)
     {
         bool cursePoolPresent = branch.State.Authority.GeneratedCursePool is { Count: > 0 };
         bool policySkipped = branch.ProductRelevantProjectionStatus == ProductRelevantProjectionStatus.NotEvaluatedByPolicy ||
@@ -898,6 +901,11 @@ internal sealed partial class NeowEffectProjectionEngine
                 IsProductRelevant: true);
         }
 
+        // The final curse is now applied. All remaining terminal consumers only
+        // read this state, so retain the same hash payloads without rebuilding them.
+        finalDeckFingerprint = BuildObservableDeckFingerprint(
+            branch.State.Deck?.Cards ?? Array.Empty<NeowEffectCardSnapshot>());
+        finalStateFingerprint = BuildWorkingStateObservableFingerprint(branch.State, finalDeckFingerprint);
         PredictionWarningCode[] warningArray = warnings.Distinct().ToArray();
         string continuityFingerprint = BuildBonesContinuityFingerprint(branch.Continuity);
         string observable = FingerprintBonesParts(
@@ -907,7 +915,7 @@ internal sealed partial class NeowEffectProjectionEngine
                 curse?.Serialized ?? (policySkipped ? "curse:not-evaluated-by-policy" : "curse:indeterminate"),
                 finalCursePrecision.ToString(),
                 productStatus.ToString(),
-                BuildWorkingStateObservableFingerprint(branch.State),
+                finalStateFingerprint,
                 continuityFingerprint,
                 string.Join(",", warningArray.Where(IsProductRelevantWarning).OrderBy(code => code))
             });
@@ -920,7 +928,7 @@ internal sealed partial class NeowEffectProjectionEngine
             })
             : FingerprintBonesParts("bones-incomplete-product-continuation-v3", new[]
             {
-                BuildWorkingStateContinuationFingerprint(branch.State),
+                BuildWorkingStateContinuationFingerprint(branch.State, finalStateFingerprint),
                 continuityFingerprint,
                 productStatus.ToString()
             });
@@ -1321,13 +1329,13 @@ internal sealed partial class NeowEffectProjectionEngine
             string.Join(",", domain.WarningCodes.OrderBy(code => code)),
             string.Join(",", domain.EvidenceCodes.Select(code => code.ToString()).OrderBy(code => code, StringComparer.Ordinal)));
 
-    private static string BuildWorkingStateObservableFingerprint(NeowEffectWorkingState state) =>
+    private static string BuildWorkingStateObservableFingerprint(NeowEffectWorkingState state, string deckFingerprint) =>
         FingerprintBonesParts(
             "bones-working-observable-v1",
             new[]
             {
                 $"silken-tress:{state.HasSilkenTress}:{state.SilkenTressConsumed}",
-                state.Deck is null ? "deck:missing" : BuildObservableDeckFingerprint(state.Deck.Cards),
+                state.Deck is null ? "deck:missing" : deckFingerprint,
                 state.RelicBag is null
                     ? "bag:missing"
                     : string.Join("|", state.RelicBag
@@ -1335,7 +1343,12 @@ internal sealed partial class NeowEffectProjectionEngine
                         .Select(relic => relic.RelicKey.Serialized + ":" + relic.BagOrder))
             });
 
+    // General branch consumers have no terminal-state snapshot to reuse.
     private static string BuildWorkingStateContinuationFingerprint(NeowEffectWorkingState state) =>
+        BuildWorkingStateContinuationFingerprint(state, BuildWorkingStateObservableFingerprint(state,
+            state.Deck is null ? string.Empty : BuildObservableDeckFingerprint(state.Deck.Cards)));
+
+    private static string BuildWorkingStateContinuationFingerprint(NeowEffectWorkingState state, string observableFingerprint) =>
         FingerprintBonesParts(
             "bones-working-continuation-v1",
             new[]
@@ -1344,7 +1357,7 @@ internal sealed partial class NeowEffectProjectionEngine
                 RngFingerprint("transformations", state.Rng.Transformations),
                 RngFingerprint("niche", state.Rng.Niche),
                 RngFingerprint("combat-potion", state.Rng.CombatPotionGeneration),
-                BuildWorkingStateObservableFingerprint(state)
+                observableFingerprint
             });
 
     private static string RngFingerprint(string name, RolltheSpire2.Core.Rng.Xoshiro256StarStar rng)

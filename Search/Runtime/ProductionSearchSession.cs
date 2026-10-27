@@ -1,5 +1,4 @@
 using RolltheSpire2.Search.FamilyExecution;
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Threading.Channels;
 using RolltheSpire2.Bootstrap;
@@ -8,58 +7,52 @@ using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.Diagnostics;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.Predictability;
-using RolltheSpire2.Search.Runtime;
 
 namespace RolltheSpire2.Search.Runtime;
-
-public interface IProductionSearchSession : IAsyncDisposable
-{
-    Task Completion { get; }
-    void Cancel();
-    bool TryReadCandidate(out SearchCandidate? candidate);
-    SearchProgressSnapshot GetProgress();
-    SearchDiagnosticSummarySnapshot GetDiagnosticSummary();
-    ulong GetSafeNextOrdinal();
-    bool TryGetSafeNextOrdinal(out ulong nextOrdinal);
-}
 
 /// <summary>
 /// Complete Search lifecycle: root ranges, Filter allocation/batches, Predictor-backed
 /// Exact validation, cancellation, ordered cursor commits and result publication.
 /// </summary>
-public sealed class ProductionSearchSession : IProductionSearchSession
+public sealed partial class ProductionSearchSession : IProductionSearchSession
 {
     internal const int ExactOnlyMaximumBatchSize = 8192;
+    // Initial engineering allowance for one compact pending-record payload.
+    // Stops admission, never retention; in-flight failures may exceed it.
+    internal const long DefaultPendingPayloadLimitBytes = 8L * 1024 * 1024;
+    private readonly long _pendingPayloadLimitBytes;
+    private Exception? _recoveryCapacityFailure;
+    private readonly Action? _recoveryReceiptWaitStarted;
     private const int TerminalHandoffCapacity = 1;
     private const int TerminalOutstandingLimit = TerminalHandoffCapacity + 1;
     private const int LiveBatchStateLimit = TerminalHandoffCapacity + 2;
     private readonly ExactSearchExecutionRequest _plan;
     private readonly FamilyExecutionPlan _executionPlan;
+    internal FamilyExecutionPlan ExecutionPlan => Volatile.Read(ref _gpuCreationCpuRecovery)?.Plan ?? _executionPlan;
     private readonly FamilySearchEtaProjectionV1 _etaProjection;
     private readonly IRuntimeProfile _profile;
     private readonly IReadOnlyList<IFamilyInvocation> _families;
+    private readonly SmallCandidateExactPolicy? _smallCandidateExactPolicy;
+    private int _rootBatchPairGroups;
+    private long _rootBatchPairAdmissionWaitTicks;
     private readonly Channel<SearchCandidate> _candidates;
     private readonly Channel<FamilyTerminalBatch> _terminalHandoff;
     private readonly FamilyExecutionContext _executionContext;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly Stopwatch _clock = Stopwatch.StartNew();
-    private readonly IRuntimePredictionDiagnosticSink? _diagnosticSink;
-    private readonly string _traceSingleCandidateSeed;
     private readonly int _executionWindowSize;
-    private readonly ConcurrentDictionary<string, long> _dispositions = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, long> _failures = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, string> _representativeSeeds = new(StringComparer.Ordinal);
-    private readonly object _safeCursorGate = new();
+    private readonly SearchRecoveryLedger _recovery;
     private readonly Task _completion;
     private long _scanned;
     private int _reservedMatches;
     private int _matches;
+    private int _confirmedCandidates;
+    private int _unverifiedCandidates;
     private int _state = (int)SearchRunState.Running;
     private int _lastDisposition = (int)SearchDisposition.NoMatch;
     private int _userCancellationRequested;
     private int _targetReached;
     private int _activeExactBatchNumber;
-    private int _overlapObserved;
     private long _familyBatchesProduced;
     private long _exactBatchesStarted;
     private long _exactBatchesCompleted;
@@ -74,6 +67,7 @@ public sealed class ProductionSearchSession : IProductionSearchSession
     private long _completionTrackingCount;
     private long _zeroSurvivorFastPathCount;
     private long _exactAttempts;
+    private long _completedExactAttempts;
     private long _exactAggregateStopwatchTicks;
     private int _maxTerminalOutstanding;
     private int _maxPipelineLookahead;
@@ -81,27 +75,8 @@ public sealed class ProductionSearchSession : IProductionSearchSession
     private int _cursorContinuityViolationCount;
     private int _boundedQueueViolationCount;
     private string _failureCode = string.Empty;
-    private Exception? _exactFailure;
-    private int _loggedFault;
-    private readonly HashSet<Exception> _loggedExceptions = new(ReferenceEqualityComparer.Instance);
-    private SearchCandidate? _firstResult, _lastResult;
-    private long _rejectionSampleCount;
-    private void LogFault(Exception exception, string phase)
-    {
-        if(!_loggedExceptions.Add(exception.GetBaseException())) { RuntimeLog.TryBackgroundWarning($"searchFaultTransition=true;phase={phase};canonicalFaultAlreadyRecorded=true"); return; }
-        if(Interlocked.Exchange(ref _loggedFault, 1)!=0)
-        {
-            RuntimeLog.TryBackgroundWarning($"searchAdditionalFault=true;phase={phase};exceptionJson=" + RuntimeLog.SafeJson(exception.ToString()));
-            OperationalFileLog.Flush(); return;
-        }
-        RuntimeLog.Fault($"searchFault=true;phase={phase};plan={_executionPlan.PlanId};start={_plan.CanonicalStartSeed};safeCursor={_safeNextOrdinal};context={_plan.SnapshotFingerprint};familyRevisions={string.Join('|',_families.Select(f=>f.ConditionPerformance.PhysicalImplementationRevision))}", exception);
-    }
     private readonly Func<ExactSearchExecutionRequest, TrustedRootHashInput, ProductionExactSearchResult> _exactEvaluator;
     private readonly Func<int, CancellationToken, ValueTask>? _beforeCandidatePublish;
-    private sealed record FirstFailure(string Code, string Seed);
-    private FirstFailure? _firstFailure;
-    private ulong _safeNextOrdinal;
-    private bool _safeCursorInitialized;
 
     internal ProductionSearchSession(
         ExactSearchExecutionRequest plan,
@@ -113,14 +88,32 @@ public sealed class ProductionSearchSession : IProductionSearchSession
         string traceSingleCandidateSeed,
         bool failOnPhysicalRecovery = false,
         Func<ExactSearchExecutionRequest, TrustedRootHashInput, ProductionExactSearchResult>? exactEvaluator = null,
-        Func<int, CancellationToken, ValueTask>? beforeCandidatePublish = null)
+        Func<int, CancellationToken, ValueTask>? beforeCandidatePublish = null,
+        SearchContinuationSnapshot? continuation = null,
+        Func<FamilyExecutionContext>? executionContextFactory = null,
+        Func<Func<Task>, Task>? startRun = null,
+        long pendingPayloadLimitBytes = DefaultPendingPayloadLimitBytes,
+        Func<SearchPendingCandidate, long>? measurePendingPayload = null,
+        Action? recoveryReceiptWaitStarted = null,
+        bool allowInitialGpuCreationFallback = false)
     {
+        if (executionWindowSize <= 0) throw new ArgumentOutOfRangeException(nameof(executionWindowSize));
+        if (queueCapacity <= 0) throw new ArgumentOutOfRangeException(nameof(queueCapacity));
+        if (pendingPayloadLimitBytes <= 0) throw new ArgumentOutOfRangeException(nameof(pendingPayloadLimitBytes));
+        _pendingPayloadLimitBytes = pendingPayloadLimitBytes;
+        _recoveryReceiptWaitStarted = recoveryReceiptWaitStarted;
         _plan = plan ?? throw new ArgumentNullException(nameof(plan));
         _exactEvaluator = exactEvaluator ?? ((request, input) => ProductionExactSearchEvaluator.Evaluate(request, input, _lifetime.Token));
         _beforeCandidatePublish = beforeCandidatePublish;
         _executionPlan = executionPlan ?? throw new ArgumentNullException(nameof(executionPlan));
+        _smallCandidateExactPolicy = executionPlan.AllowSmallCandidateExact && !plan.RunOptions.SkipExactValidation
+            ? new SmallCandidateExactPolicy() : null;
+        _initialGpuCreationFallbackAllowed = allowInitialGpuCreationFallback && !failOnPhysicalRecovery &&
+            !plan.RunOptions.SkipExactValidation && executionPlan.RankingAuthority != FamilyPlannerRankingAuthority.UnpricedPhysicalTrial &&
+            !executionPlan.DecisionEvidence.Contains("ExplicitPhysicalSelection=true", StringComparer.Ordinal);
         _etaProjection = etaProjection ?? throw new ArgumentNullException(nameof(etaProjection));
         _profile = RuntimeProfileRegistry.Select(plan.Detection);
+        _recovery = new(plan, _profile, continuation, measurePendingPayload);
         _families = executionPlan.OrderedFamilies;
         var calibrationCoverage = new HashSet<string>();
         foreach(var family in _families)
@@ -128,10 +121,7 @@ public sealed class ProductionSearchSession : IProductionSearchSession
             if(family is FamilyCpuExecution cpu)cpu.BindCalibrationCoverage(calibrationCoverage);
             calibrationCoverage.UnionWith(family.Coverage);
         }
-        _executionContext = new FamilyExecutionContext(requiresGpu: _families.Any(family => family.ConditionPerformance.UsesGpu), failOnPhysicalRecovery);
-        if (executionWindowSize <= 0) throw new ArgumentOutOfRangeException(nameof(executionWindowSize));
         _executionWindowSize = executionWindowSize;
-        if (queueCapacity <= 0) throw new ArgumentOutOfRangeException(nameof(queueCapacity));
         _diagnosticSink = diagnosticSink;
         _traceSingleCandidateSeed = traceSingleCandidateSeed?.Trim() ?? string.Empty;
         _candidates = Channel.CreateBounded<SearchCandidate>(new BoundedChannelOptions(queueCapacity)
@@ -148,20 +138,32 @@ public sealed class ProductionSearchSession : IProductionSearchSession
             SingleWriter = true,
             AllowSynchronousContinuations = false
         });
-        _completion = Task.Run(RunAsync);
+        // Acquire the GPU owner only after validation and channel construction.
+        // Until RunAsync is handed off successfully, this constructor owns cleanup.
+        _executionContext = executionContextFactory is null
+            ? new FamilyExecutionContext(requiresGpu: _families.Any(family => family.ConditionPerformance.UsesGpu),
+                failOnPhysicalRecovery, cpuWorkerCount: plan.WorkerCount)
+            : executionContextFactory();
+        _executionContext.SmallCandidateExact = _smallCandidateExactPolicy;
+        try { _completion = startRun is null ? Task.Run(RunAsync) : startRun(RunAsync); }
+        catch (Exception failure)
+        {
+            try
+            {
+                FamilyGpuComputeUtility.CleanupAfterFailure(failure,
+                    () => _executionContext.DisposeAsync().AsTask().GetAwaiter().GetResult(),
+                    "ProductionSearchSession.Construction");
+            }
+            finally { _lifetime.Dispose(); }
+            throw;
+        }
     }
 
     public Task Completion => _completion;
-    public IReadOnlyList<string> FamilyIds => _families.Select(family => family.FamilyId).ToArray();
-    internal FamilyExecutionPlan ExecutionPlan => _executionPlan;
-    internal FamilySearchEtaProjectionV1 EtaProjection => _etaProjection;
-
-    // The selected plan and its offline timing/probability evidence are frozen for
-    // this session. The UI may separately project frozen rarity with its rolling
-    // completed-root wall-rate; it never changes this predicted Cost/ETA snapshot.
-    internal long GetLiveEtaEvidenceRevision() => 0;
-
-    internal FamilySearchEtaProjectionV1 GetEtaProjection(bool allowLivePerformance = true) => _etaProjection;
+    public IReadOnlyList<string> FamilyIds => ExecutionPlan.OrderedFamilies.Select(family => family.FamilyId).ToArray();
+    // Same-run timing observations never reprice the selected session evidence.
+    internal FamilySearchEtaProjectionV1 EtaProjection => Volatile.Read(ref _gpuCreationCpuRecovery)?.Eta ?? _etaProjection;
+    internal int ExecutionWindowSize => Volatile.Read(ref _gpuCreationCpuRecovery)?.WindowSize ?? _executionWindowSize;
 
     public void Cancel()
     {
@@ -177,40 +179,23 @@ public sealed class ProductionSearchSession : IProductionSearchSession
         double elapsed = _clock.Elapsed.TotalSeconds;
         long scanned = Interlocked.Read(ref _scanned);
         return new SearchProgressSnapshot(
-            (SearchRunState)Volatile.Read(ref _state), scanned, _plan.RunOptions.SkipExactValidation ? 0 : Volatile.Read(ref _matches),
+            (SearchRunState)Volatile.Read(ref _state), scanned, Volatile.Read(ref _confirmedCandidates),
             _plan.ScanCount, _plan.TargetMatchCount, elapsed, elapsed <= 0d ? 0d : scanned / elapsed,
             (SearchDisposition)Volatile.Read(ref _lastDisposition), Volatile.Read(ref _failureCode) ?? string.Empty,
             Volatile.Read(ref _userCancellationRequested) != 0)
         {
-            UnverifiedCandidateCount = _plan.RunOptions.SkipExactValidation ? Volatile.Read(ref _matches) : 0,
+            UnverifiedCandidateCount = Volatile.Read(ref _unverifiedCandidates),
+            PendingCandidateCount = _recovery.PendingCount,
+            CleanupIssue = Volatile.Read(ref _cleanupIssue),
+            ExecutionWarnings = CaptureExecutionWarnings(),
             ObservedScanningSeconds = ElapsedMilliseconds(Math.Max(0,Interlocked.Read(ref _scanLastCompletedTimestamp)-Interlocked.Read(ref _scanFirstCompletedTimestamp)))/1000,
             ObservedScanningRoots = Interlocked.Read(ref _scanAfterFirstRoots)
         };
     }
 
-    public SearchDiagnosticSummarySnapshot GetDiagnosticSummary()
-    {
-        var first = Volatile.Read(ref _firstFailure);
-        return new(
-            new Dictionary<string, long>(_dispositions, StringComparer.Ordinal),
-            new Dictionary<string, long>(_failures, StringComparer.Ordinal),
-            new Dictionary<string, string>(_representativeSeeds, StringComparer.Ordinal),
-            first?.Code ?? string.Empty, first?.Seed ?? string.Empty);
-    }
+    public ulong GetSafeNextOrdinal() => _recovery.SafeNextOrdinal;
 
-    public ulong GetSafeNextOrdinal()
-    {
-        lock (_safeCursorGate) return _safeCursorInitialized ? _safeNextOrdinal : 0UL;
-    }
-
-    public bool TryGetSafeNextOrdinal(out ulong nextOrdinal)
-    {
-        lock (_safeCursorGate)
-        {
-            nextOrdinal = _safeNextOrdinal;
-            return _safeCursorInitialized;
-        }
-    }
+    public bool TryGetSafeNextOrdinal(out ulong nextOrdinal) => _recovery.TryGetSafeNextOrdinal(out nextOrdinal);
 
     public async ValueTask DisposeAsync()
     {
@@ -228,61 +213,35 @@ public sealed class ProductionSearchSession : IProductionSearchSession
                 throw new InvalidOperationException("StartSeedOrdinalRejected:" + issue);
 
             SetSafeCursor(startOrdinal);
-            RuntimeLog.TryBackgroundInfo(
-                $"familyExecutionStarted=true;spine=FamilyExecution;families={_families.Count};" +
-                $"familyIds={string.Join(",", _families.Select(family => family.FamilyId))};abi=ABI1-BatchLocalLogicalOrdinal;" +
-                $"start={_plan.CanonicalStartSeed};count={_plan.ScanCount};workers={_plan.WorkerCount};" +
-                $"executionWindowSize={_executionWindowSize};skipExactValidation={_plan.RunOptions.SkipExactValidation}");
-            RuntimeLog.TryBackgroundInfo("familyPlannerDecision=true;" + _executionPlan.FormatSummary());
-            RuntimeLog.TryBackgroundInfo(_etaProjection.FormatSummary() + ";phase=SelectedProductionPlan");
-            var passedCoverage = new HashSet<string>(StringComparer.Ordinal);
-            foreach (FamilyExecutionPlanStage stage in _executionPlan.Stages)
-            {
-                IFamilyInvocation family = stage.Family;
-                RuntimeLog.TryBackgroundInfo(
-                    "familyAnalyticalCostProjection=true;authority=FamilyOperationLedgerV1;" +
-                    family.AnalyticalCost.FormatSummary() + ";hardwareTimingUsed=false;plannerDecision=false");
-                RuntimeLog.TryBackgroundInfo(
-                    "familySurvivalProjection=true;" + family.ResolveSurvival(passedCoverage).FormatSummary() +
-                    ";runtimeObservationUsed=false;plannerDecision=false");
-                if (family.ResolveExpectedFilteringCost(passedCoverage) is { } expectedFilteringCost)
-                    RuntimeLog.TryBackgroundInfo(
-                        "familyExpectedFilteringCost=true;" + expectedFilteringCost.FormatSummary() +
-                        ";probabilityAuthority=QueryImmutableRuntimeAuthority;runtimeObservationUsed=false;" +
-                        "hardwareTimingUsed=false;plannerDecision=false");
-                RuntimeLog.TryBackgroundInfo(
-                    "familyConditionPerformance=true;" + stage.ConditionPerformance.FormatSummary() +
-                    $";selectedInputMode={(stage.CompactAbi1Input ? "CompactAbi1" : "Dense")}" +
-                    ";runtimeRegressionUsed=false;analyticalCostUsed=false;plannerDecision=false");
-                RuntimeLog.TryBackgroundInfo(
-                    "familyPerformanceReference=true;" + stage.Performance.FormatSummary() +
-                    ";developerBootstrapIsLocalAuthority=false");
-                passedCoverage.UnionWith(stage.Coverage);
-            }
+            // Only an explicit new session retries retained failures, once each.
+            // Retry does not advance the ordinary scan frontier.
+            await RetryPendingCandidatesAsync(_lifetime.Token).ConfigureAwait(false);
+            await RecoverUnreceivedCandidatesAsync(_lifetime.Token).ConfigureAwait(false);
+            LogStartEvidence();
 
             Task exactConsumer = ConsumeExactBatchesAsync(_lifetime.Token);
             Task familyProducer = ProduceFamilyBatchesAsync(startOrdinal, _lifetime.Token);
             await Task.WhenAll(familyProducer, exactConsumer).ConfigureAwait(false);
+            if (Volatile.Read(ref _recoveryCapacityFailure) is not null)
+                throw new OperationCanceledException(_lifetime.Token);
 
             Volatile.Write(ref _state,
                 Volatile.Read(ref _userCancellationRequested) != 0
                     ? (int)SearchRunState.Cancelled
                     : (int)SearchRunState.Completed);
         }
-        // Parallel.ForEachAsync may surface cancellation when an in-flight Exact
-        // computation also failed. Cancellation must not erase a real fault.
-        catch (Exception) when (Volatile.Read(ref _exactFailure) is not null)
+        catch (OperationCanceledException) when (Volatile.Read(ref _recoveryCapacityFailure) is not null)
         {
-            Exception failure = Volatile.Read(ref _exactFailure)!;
-            Volatile.Write(ref _failureCode, "FamilyExecutionFault:" + failure.GetType().Name + ":" + failure.Message);
+            var failure = Volatile.Read(ref _recoveryCapacityFailure)!;
+            Volatile.Write(ref _failureCode, failure.Message);
             Volatile.Write(ref _state, (int)SearchRunState.Faulted);
-            LogFault(failure, "Exact");
+            LogFault(failure, "RecoveryCapacity");
         }
         catch (OperationCanceledException) when (Volatile.Read(ref _targetReached) != 0)
         {
             Volatile.Write(ref _state, (int)SearchRunState.Completed);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (Volatile.Read(ref _userCancellationRequested) != 0)
         {
             Volatile.Write(ref _state, (int)SearchRunState.Cancelled);
         }
@@ -295,19 +254,15 @@ public sealed class ProductionSearchSession : IProductionSearchSession
         finally
         {
             _terminalHandoff.Writer.TryComplete();
-            bool physicalRecoveryContaminated = false;
+            bool physicalRecoveryContaminated = Volatile.Read(ref _initialGpuCreationRecoveryAttempted) != 0;
+            bool performanceEvidenceUnavailable = false;
             foreach (IFamilyInvocation family in _families)
             {
                 try { await family.DisposeAsync(_executionContext).ConfigureAwait(false); }
                 catch (Exception ex)
                 {
-                    // Every selected allocation owns cleanup, including ordinary and new
-                    // bounded allocations. Cleanup failure cannot report a successful session.
-                    if ((SearchRunState)Volatile.Read(ref _state) != SearchRunState.Faulted)
-                        Volatile.Write(ref _failureCode, "FamilyCleanupFault:" + ex.Message);
-                    Volatile.Write(ref _state, (int)SearchRunState.Faulted);
+                    RecordCleanupFailure(ex, "FamilyCleanup:" + family.FamilyId);
                     physicalRecoveryContaminated = true;
-                    LogFault(ex, "FamilyCleanup:" + family.FamilyId);
                     RuntimeLog.TryBackgroundWarning(
                         $"familyResourceDisposeFailed=true;family={family.GetType().Name};error={ex.GetType().Name}:{ex.Message}");
                 }
@@ -321,89 +276,58 @@ public sealed class ProductionSearchSession : IProductionSearchSession
                 }
                 catch (Exception ex)
                 {
-                    RuntimeLog.TryBackgroundWarning(
-                        $"familyPerformanceObservationFailed=true;family={family.FamilyId};" +
-                        $"error={ex.GetType().Name}:{ex.Message}");
+                    performanceEvidenceUnavailable = true;
+                    RecordDiagnosticFailure(ex, "PerformanceObservation:" + family.FamilyId);
                 }
             }
             long exactAttempts = Interlocked.Read(ref _exactAttempts);
+            long completedExactAttempts = Interlocked.Read(ref _completedExactAttempts);
             double exactAggregateMs = ElapsedMilliseconds(Interlocked.Read(ref _exactAggregateStopwatchTicks));
+            string exactTimingRevision = "";
             bool exactTimingSubmitted = false;
             // Empty queries return seeds but do not measure normal Exact work.
             if (FamilyExactTimingDomains.HasQueryWork(_plan.CompiledSearch.NormalizedQuery) &&
-                !physicalRecoveryContaminated && exactAttempts > 0 && exactAggregateMs > 0d)
+                !physicalRecoveryContaminated && !performanceEvidenceUnavailable && completedExactAttempts > 0 && exactAggregateMs > 0d)
             {
-                SearchPredictabilityVerificationStore.SubmitExactTimingSample(
+                try
+                {
+                    exactTimingRevision = FamilyExactTimingDomains.ImplementationRevision(_plan);
+                    SearchPredictabilityVerificationStore.SubmitExactTimingSample(
                     FamilyExactTimingDomains.Resolve(_plan),
-                    exactAttempts,
+                    completedExactAttempts,
                     exactAggregateMs,
                     $"FamilyExecutionExactTiming;state={(SearchRunState)Volatile.Read(ref _state)};" +
-                    "acceptanceIgnored=true;runtimeSurvivalAuthority=false");
-                exactTimingSubmitted = true;
+                    "acceptanceIgnored=true;runtimeSurvivalAuthority=false;implementationRevision=" + exactTimingRevision,
+                    exactTimingRevision);
+                    exactTimingSubmitted = true;
+                }
+                catch (Exception ex) { RecordDiagnosticFailure(ex, "ExactTimingSample"); }
             }
             RuntimeLog.TryBackgroundInfo(
                 $"familyExactTimingObservation=true;submitted={exactTimingSubmitted.ToString().ToLowerInvariant()};" +
-                $"exactAttempts={exactAttempts};exactAggregateMs={F(exactAggregateMs)};" +
+                $"exactAttempts={exactAttempts};completedExactAttempts={completedExactAttempts};exactAggregateMs={F(exactAggregateMs)};" +
+                $"implementationRevision={(exactTimingRevision.Length == 0 ? "Legacy" : exactTimingRevision)};" +
                 $"physicalRecoveryContaminated={physicalRecoveryContaminated.ToString().ToLowerInvariant()};" +
                 "timingOnly=true;acceptanceIgnored=true;survivalAuthority=false;diskIoOnWorker=false");
             try { await _executionContext.DisposeAsync().ConfigureAwait(false); }
             catch (Exception ex)
             {
-                if ((SearchRunState)Volatile.Read(ref _state) != SearchRunState.Faulted)
-                    Volatile.Write(ref _failureCode, "FamilyContextCleanupFault:" + ex.Message);
-                Volatile.Write(ref _state, (int)SearchRunState.Faulted);
+                RecordCleanupFailure(ex, "OwnerCleanup");
                 RuntimeLog.TryBackgroundWarning(
                     $"familyExecutionContextDisposeFailed=true;error={ex.GetType().Name}:{ex.Message}");
-                LogFault(ex, "OwnerCleanup");
             }
             foreach(var family in _families)
-                try { family.LogExecutionEvidence(); } catch(Exception ex) { RuntimeLog.TryBackgroundWarning("executionEvidenceFailed=" + ex.GetType().Name); }
-            RuntimeLog.TryBackgroundInfo($"searchExactOutcome=true;attempts={exactAttempts};evaluatedMatch={_dispositions.GetValueOrDefault(nameof(SearchDisposition.Match))};evaluatedReject={_dispositions.GetValueOrDefault(nameof(SearchDisposition.NoMatch))};evaluatedUnknown={_dispositions.GetValueOrDefault(nameof(SearchDisposition.Unknown))};publishedMatches={(_plan.RunOptions.SkipExactValidation ? 0 : _matches)};publishedUnverified={(_plan.RunOptions.SkipExactValidation ? _matches : 0)};firstResult={_firstResult?.Seed};lastResult={_lastResult?.Seed};canonicalFaultRecorded={_loggedFault!=0}");
-            RuntimeLog.TryBackgroundInfo("searchExactDiagnostics=true;summaryJson=" + RuntimeLog.SafeJson(GetDiagnosticSummary()));
-            object? ResultEvidence(SearchCandidate? candidate) => candidate is null ? null : new { candidate.Seed, candidate.IsUnverified, candidate.MatchedRouteIds, candidate.Witnesses };
-            RuntimeLog.TryBackgroundInfo("searchResultSamples=true;scope=BoundedFirstLastPublished;resultJson=" + RuntimeLog.SafeJson(new { first=ResultEvidence(_firstResult),last=ReferenceEquals(_firstResult,_lastResult)?null:ResultEvidence(_lastResult) }));
-            if (!physicalRecoveryContaminated && (SearchRunState)Volatile.Read(ref _state) != SearchRunState.Faulted)
+                try { family.LogExecutionEvidence(); } catch(Exception ex) { RecordDiagnosticFailure(ex, "ExecutionEvidence:" + family.FamilyId); }
+            LogResultEvidence(exactAttempts);
+            if (!physicalRecoveryContaminated && !performanceEvidenceUnavailable && (SearchRunState)Volatile.Read(ref _state) != SearchRunState.Faulted)
             {
-                GpuCostCalibration.Submit(_families.SelectMany(f => f.CostPeaks));
-                CpuCostCalibration.Submit(_families.OfType<FamilyCpuExecution>().SelectMany(f=>f.LocalPeaks));
+                try { GpuCostCalibration.Submit(_families.SelectMany(f => f.CostPeaks)); }
+                catch (Exception ex) { RecordDiagnosticFailure(ex, "GpuCalibrationSample"); }
+                try { CpuCostCalibration.Submit(_families.OfType<FamilyCpuExecution>().SelectMany(f=>f.LocalPeaks)); }
+                catch (Exception ex) { RecordDiagnosticFailure(ex, "CpuCalibrationSample"); }
             }
             _candidates.Writer.TryComplete();
-            RuntimeLog.TryBackgroundInfo(
-                $"familyAsyncSummary=true;gpuOwnerStable={_executionContext.GpuOwnerStable};" +
-                $"gpuOwnerThreadId={_executionContext.GpuOwnerThreadId};" +
-                $"orderedExactConsumption={Volatile.Read(ref _orderedConsumptionViolationCount) == 0};" +
-                $"orderedCursorCommit={Volatile.Read(ref _cursorContinuityViolationCount) == 0};" +
-                $"cursorContinuityViolationCount={Volatile.Read(ref _cursorContinuityViolationCount)};" +
-                $"orderedConsumptionViolationCount={Volatile.Read(ref _orderedConsumptionViolationCount)};" +
-                $"terminalHandoffCapacity={TerminalHandoffCapacity};" +
-                $"terminalOutstandingLimit={TerminalOutstandingLimit};terminalOutstandingDefinition=QueuedPlusCurrentOffer;" +
-                $"maxTerminalOutstanding={Volatile.Read(ref _maxTerminalOutstanding)};" +
-                $"liveBatchStateLimit={LiveBatchStateLimit};" +
-                $"maxPipelineLookahead={Volatile.Read(ref _maxPipelineLookahead)};" +
-                $"boundedQueueViolationCount={Volatile.Read(ref _boundedQueueViolationCount)};" +
-                $"familyBatchesProduced={Interlocked.Read(ref _familyBatchesProduced)};" +
-                $"exactBatchesStarted={Interlocked.Read(ref _exactBatchesStarted)};" +
-                $"exactBatchesCompleted={Interlocked.Read(ref _exactBatchesCompleted)};" +
-                $"familyExactOverlapObserved={Volatile.Read(ref _overlapObserved) != 0};" +
-                $"familyExactOverlapCount={Interlocked.Read(ref _familyExactOverlapCount)};" +
-                $"sessionElapsedMs={F(_clock.Elapsed.TotalMilliseconds)};" +
-                $"searchCandidatesPerSecond={F(CandidatesPerSecond(Interlocked.Read(ref _scanned), _clock.Elapsed.TotalMilliseconds))};" +
-                $"familyPipelineWallMs={F(ElapsedMilliseconds(Interlocked.Read(ref _familyPipelineWallTicks)))};" +
-                "familyPipelineWallIncludesLazySetup=true;familyPipelineWallIncludesStageLogging=true;" +
-                $"familyToTerminalEnqueueMs={F(ElapsedMilliseconds(Interlocked.Read(ref _familyToTerminalEnqueueTicks)))};" +
-                $"terminalOfferToExactStartMs={F(ElapsedMilliseconds(Interlocked.Read(ref _terminalOfferToExactStartTicks)))};" +
-                $"exactWorkMs={F(ElapsedMilliseconds(Interlocked.Read(ref _exactWorkTicks)))};" +
-                $"cursorCommitMs={F(ElapsedMilliseconds(Interlocked.Read(ref _cursorCommitTicks)))};" +
-                $"exactTimingSamples={Interlocked.Read(ref _exactTimingSamples)};" +
-                $"terminalSurvivorCount={Interlocked.Read(ref _terminalSurvivorCount)};" +
-                $"completionTrackingCount={Interlocked.Read(ref _completionTrackingCount)};" +
-                $"zeroSurvivorFastPath={Interlocked.Read(ref _zeroSurvivorFastPathCount)};" +
-                "legacyFallback=false;unboundedAsyncState=false");
-            RuntimeLog.TryBackgroundInfo(
-                $"familyExecutionCompleted=true;state={(SearchRunState)Volatile.Read(ref _state)};" +
-                $"scanned={Interlocked.Read(ref _scanned)};matches={Volatile.Read(ref _matches)};" +
-                $"safeNextOrdinal={GetSafeNextOrdinal()}");
-            OperationalFileLog.Flush();
+            LogCompletionEvidence();
         }
     }
 
@@ -415,6 +339,7 @@ public sealed class ProductionSearchSession : IProductionSearchSession
             long remaining = _plan.ScanCount;
             ulong batchBase = startOrdinal;
             int batchNumber = 0;
+            PreparedFamilyBatch? preparedNext = null;
             while (remaining > 0 && Volatile.Read(ref _targetReached) == 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -422,7 +347,6 @@ public sealed class ProductionSearchSession : IProductionSearchSession
                 int overlappingExactBatch = Volatile.Read(ref _activeExactBatchNumber);
                 if (overlappingExactBatch != 0)
                 {
-                    Interlocked.Exchange(ref _overlapObserved, 1);
                     Interlocked.Increment(ref _familyExactOverlapCount);
                 }
                 int pipelineLookahead = checked(nextBatchNumber - (int)Interlocked.Read(ref _exactBatchesStarted));
@@ -432,23 +356,67 @@ public sealed class ProductionSearchSession : IProductionSearchSession
 
                 // Window sizing is coordinator/physical policy. SearchBatch itself
                 // remains only BatchBase + BatchCandidateCount and owns no 2^24 rule.
-                int count = (int)Math.Min(remaining, _executionWindowSize);
+                int count = (int)Math.Min(remaining, ExecutionWindowSize);
                 var batch = new SearchBatch(batchBase, count);
                 var observation = new FamilyObservationWindow(batch, _plan);
                 long familyPipelineStarted = Stopwatch.GetTimestamp();
+                long pairAdmissionWait = 0;
                 FamilyCandidateSet survivors;
                 try
                 {
-                    survivors = await LinearFamilyPipeline.FilterAsync(
-                        _executionContext, observation, _families, cancellationToken).ConfigureAwait(false);
+                    PreparedFamilyBatch? prepared = preparedNext;
+                    preparedNext = null;
+                    if (FamilyDenseBatchGroupingPolicy.Enabled && prepared is null && batchNumber > 0 && remaining > count + SmallCandidateExactPolicy.MaximumCandidates &&
+                        Volatile.Read(ref _gpuCreationCpuRecovery) is null && _families.Count > 0 &&
+                        _families[0] is IDenseFamilyBatchGrouping { CanGroupDenseBatches: true, PreferDenseBatchGrouping: true } grouping)
+                    {
+                        // Single writer: once the terminal queue can accept a
+                        // member, two physical prefixes plus the active Exact
+                        // batch fit the unchanged three-live-batch bound.
+                        long readyStarted = Stopwatch.GetTimestamp();
+                        bool ready = await _terminalHandoff.Writer.WaitToWriteAsync(cancellationToken).ConfigureAwait(false);
+                        pairAdmissionWait = Stopwatch.GetTimestamp() - readyStarted;
+                        Interlocked.Add(ref _rootBatchPairAdmissionWaitTicks, pairAdmissionWait);
+                        if (!ready) throw new InvalidOperationException("RootPair.TerminalChannelClosed");
+                        if (Volatile.Read(ref _targetReached) != 0) break;
+                        int groupedLookahead = checked(nextBatchNumber + 1 - (int)Interlocked.Read(ref _exactBatchesStarted));
+                        if (groupedLookahead <= LiveBatchStateLimit)
+                        {
+                            int secondCount = (int)Math.Min(remaining - count, ExecutionWindowSize);
+                            var secondBatch = new SearchBatch(checked(batchBase + (ulong)count), secondCount);
+                            var group = await grouping.PrepareDensePairAsync(_executionContext, observation,
+                                new FamilyObservationWindow(secondBatch, _plan), cancellationToken).ConfigureAwait(false);
+                            if (group.First.Batch != batch || group.Second.Batch != secondBatch)
+                                throw new InvalidDataException("RootPair.PreparedBatchIdentityMismatch");
+                            prepared = group.First;
+                            preparedNext = group.Second;
+                            Interlocked.Increment(ref _rootBatchPairGroups);
+                            if (_rootBatchPairGroups == 1)
+                                RuntimeLog.TryBackgroundInfo($"rootBatchPairBound=true;physicalRevision={NeowFamilyGpuExecutor.DensePairRevision};rootWindows=2;sharedWaitChargedOnce=true;localCalibration=false");
+                            UpdateMaximum(ref _maxPipelineLookahead, groupedLookahead);
+                        }
+                    }
+                    survivors = Volatile.Read(ref _gpuCreationCpuRecovery) is not null
+                        ? FamilyCandidateSet.Dense(batch)
+                        : await LinearFamilyPipeline.FilterAsync(
+                            _executionContext, observation, _families, _smallCandidateExactPolicy,
+                            cancellationToken, prepared).ConfigureAwait(false);
+                }
+                catch (Exception failure) when (!cancellationToken.IsCancellationRequested)
+                {
+                    if (!await TryRecoverInitialGpuCreationAsync(failure, batch, cancellationToken).ConfigureAwait(false)) throw;
+                    // No terminal batch escaped. Recreate this exact frontier
+                    // with the smaller CPU window, without advancing any cursor.
+                    continue;
                 }
                 finally
                 {
-                    Interlocked.Add(ref _familyPipelineWallTicks, Stopwatch.GetTimestamp() - familyPipelineStarted);
+                    Interlocked.Add(ref _familyPipelineWallTicks, Stopwatch.GetTimestamp() - familyPipelineStarted - pairAdmissionWait);
                 }
+                foreach (var warning in BatchExecutionWarnings(batch)) _executionWarnings.TryAdd(warning, 0);
 
                 long familyCompletedTimestamp = Stopwatch.GetTimestamp();
-                if(nextBatchNumber==1) RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=FirstRootBatchCompleted;ownerThreadId={_executionContext.GpuOwnerThreadId};sinceSessionMs={_clock.Elapsed.TotalMilliseconds:F4};roots={count};survivors={survivors.Count};plan={_executionPlan.PlanId}");
+                if(nextBatchNumber==1) RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=FirstRootBatchCompleted;ownerThreadId={_executionContext.GpuOwnerThreadId};sinceSessionMs={_clock.Elapsed.TotalMilliseconds:F4};roots={count};survivors={survivors.Count};plan={ExecutionPlan.PlanId}");
                 // Presentation-only interval between completed root batches: excludes lazy GPU setup
                 // and the GPU first batch. CPU may include its first completed pure scanning batch.
                 // Includes subsequent submit/handoff/backpressure elapsed time.
@@ -476,6 +444,14 @@ public sealed class ProductionSearchSession : IProductionSearchSession
                 remaining -= count;
                 batchBase = checked(batchBase + (ulong)count);
             }
+        }
+        catch (DeferredRootBatchFailure failure)
+        {
+            // GPU work is already synchronized and only this later member is
+            // untrusted. Completing with its original cause lets the ordered
+            // consumer finish every already-offered batch before seeing it.
+            completionError = failure.Original;
+            RuntimeLog.TryBackgroundWarning($"rootGroupDeferredFault=true;batch={failure.Batch.BatchBase};drainTrustedTerminal=true;cause={RuntimeLog.SafeJson(failure.Original.ToString())}");
         }
         catch (Exception ex)
         {
@@ -526,6 +502,7 @@ public sealed class ProductionSearchSession : IProductionSearchSession
                 }
                 finally
                 {
+                    _executionContext.ReleaseFilterIsolations(candidates.Batch);
                     Volatile.Write(ref _activeExactBatchNumber, 0);
                 }
 
@@ -568,9 +545,10 @@ public sealed class ProductionSearchSession : IProductionSearchSession
             return;
         }
 
-        // Family-rejected roots are already terminally complete. ABI1 is strictly
-        // ordered, so only actual survivors need completion state: the first
-        // unfinished survivor is the continuous resume boundary.
+        // ABI1 is strictly ordered. A survivor is accounted for only by its
+        // model outcome/publication or a retained pending failure. This array
+        // tracks traversal, not a proof that every check succeeded; durable
+        // continuation always includes the separate pending and delivery ledger.
         var completed = new bool[survivorCount];
         Interlocked.Add(ref _completionTrackingCount, survivorCount);
         ReadOnlyMemory<ulong> compactAbi1 = candidates.IsDense ? default : candidates.ExportAbi1();
@@ -586,8 +564,8 @@ public sealed class ProductionSearchSession : IProductionSearchSession
                     ulong logicalOrdinal = candidates.IsDense
                         ? (ulong)survivorIndex
                         : compactAbi1.Span[survivorIndex];
-                    await EvaluateCandidateAsync(candidates.Batch, logicalOrdinal, token).ConfigureAwait(false);
-                    Volatile.Write(ref completed[survivorIndex], true);
+                    if (await EvaluateCandidateAsync(candidates.Batch, logicalOrdinal, token).ConfigureAwait(false))
+                        Volatile.Write(ref completed[survivorIndex], true);
                 }).ConfigureAwait(false);
             exactWorkCompletedTimestamp = Stopwatch.GetTimestamp();
         }
@@ -605,109 +583,100 @@ public sealed class ProductionSearchSession : IProductionSearchSession
         }
     }
 
-    private async ValueTask EvaluateCandidateAsync(SearchBatch batch, ulong logicalOrdinal, CancellationToken cancellationToken)
+    private async ValueTask<bool> EvaluateCandidateAsync(SearchBatch batch, ulong logicalOrdinal, CancellationToken cancellationToken,
+        bool retrying = false)
     {
         ulong globalCandidate = batch.GlobalCandidate(logicalOrdinal);
-        string seed = VisibleSeedCandidateCodec.FormatOrdinal(_profile, globalCandidate);
-        ulong rootHash = _profile.ComputeRootSeed(seed);
+        if (!retrying && _recovery.WasAlreadyHandled(globalCandidate))
+        {
+            Interlocked.Increment(ref _scanned);
+            return true;
+        }
+        if (!retrying && !_plan.RunOptions.SkipExactValidation &&
+            !await AdmitNewCandidateAsync(cancellationToken).ConfigureAwait(false)) return false;
+        string seed;
+        TrustedRootHashInput input;
+        await _executionContext.EnterCpuAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            seed = VisibleSeedCandidateCodec.FormatOrdinal(_profile, globalCandidate);
+            ulong rootHash = _profile.ComputeRootSeed(seed);
+            if (!TrustedRootHashInput.TryBindCanonicalSeed(_profile, rootHash, seed, out input, out var issue))
+                throw new InvalidOperationException("CandidateSeedBindingRejected:" + issue);
+        }
+        finally { _executionContext.ExitCpu(); }
         if (_plan.RunOptions.SkipExactValidation)
         {
-            if (!TrustedRootHashInput.TryBindCanonicalSeed(_profile, rootHash, seed, out var unverifiedInput, out var issue))
-                throw new InvalidOperationException("CandidateSeedBindingRejected:" + issue);
-            if (!SeedPredictionRequest.TryCreateFromRootHash(unverifiedInput,
-                    RolltheSpire2.Core.Identity.CharacterIdentity.FromKey(_plan.CharacterKey), _plan.Ascension,
-                    _plan.Authority.PlayersCount, _plan.Authority.PlayerSlotIndex, _plan.Authority,
-                    _plan.Evaluation.AncientOptionConditions, SeedPredictionDomainSelection.None,
-                    SeedPredictionInputLimits.DefaultRelicSequencePreviewCount, false, out var request, out var error))
-                throw new InvalidOperationException("CandidateContextRejected:" + error);
-            Interlocked.Increment(ref _scanned);
+            var candidate = CreateCandidate(input, batch);
+            if (!retrying) Interlocked.Increment(ref _scanned);
             Volatile.Write(ref _lastDisposition, (int)SearchDisposition.NotEvaluatedByPolicy);
             RecordOutcome(seed, SearchDisposition.NotEvaluatedByPolicy, string.Empty);
-            await PublishCandidateAsync(new SearchCandidate(seed, _plan.ProfileId, _plan.CharacterKey, _plan.Ascension,
-                _plan.SnapshotFingerprint, request!, null, _plan.Authority, [], [], []) { IsUnverified = true }, cancellationToken).ConfigureAwait(false);
-            return;
+            return await PublishCandidateAsync(candidate, globalCandidate, cancellationToken).ConfigureAwait(false);
         }
         SearchQueryEvaluation evaluation;
         ProductionExactSearchResult exact;
-        if (!TrustedRootHashInput.TryBindCanonicalSeed(
-                _profile, rootHash, seed, out TrustedRootHashInput input, out string bindIssue))
+        await _executionContext.EnterCpuAsync(cancellationToken).ConfigureAwait(false);
+        Interlocked.Increment(ref _exactAttempts);
+        long exactAttemptStarted = Stopwatch.GetTimestamp();
+        bool exactCompleted = false;
+        try
         {
-            evaluation = SearchQueryEvaluation.Unknown("TrustedRootHashBindingRejected:" + bindIssue);
-            exact = new ProductionExactSearchResult(null, null, _plan.Authority, evaluation, evaluation.FailureCode);
+            exact = _exactEvaluator(_plan, input);
+            if (exact.Document is { } document)
+            {
+                ProductionExactSearchEvaluator.ThrowIfPredictionFailed(document);
+                string[] exceptions = document.Diagnostics.Where(d => d.Code == PredictionDiagnosticCodes.Exception).Select(d => d.Value).ToArray();
+                if (exceptions.Length > 0)
+                    throw new InvalidOperationException($"ProductionExact.DocumentException:{document.PredictorId}:{document.CanonicalSeed}:" + string.Join(" | ", exceptions));
+            }
+            if (exact.Evaluation.Disposition == SearchDisposition.Match && !exact.IsMatch)
+                throw new InvalidOperationException("ProductionExact.MatchPayloadMissing:" + seed);
+            evaluation = exact.Evaluation;
+            exactCompleted = true;
         }
-        else
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
-            Interlocked.Increment(ref _exactAttempts);
-            long exactAttemptStarted = Stopwatch.GetTimestamp();
-            try
+            RetainFailedCandidate(globalCandidate, seed, ex);
+            if (!retrying) Interlocked.Increment(ref _scanned);
+            // Accounted for by the continuation ledger, never completed as NoMatch.
+            return true;
+        }
+        finally
+        {
+            // A failed/aborted check did not execute the full priced work. It
+            // remains pending, but cannot teach a misleadingly cheap Exact rate.
+            if (exactCompleted)
             {
-                exact = _exactEvaluator(_plan, input);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                Interlocked.CompareExchange(ref _exactFailure, ex, null);
-                throw;
-            }
-            finally
-            {
-                Interlocked.Add(
-                    ref _exactAggregateStopwatchTicks,
+                Interlocked.Increment(ref _completedExactAttempts);
+                Interlocked.Add(ref _exactAggregateStopwatchTicks,
                     Math.Max(0L, Stopwatch.GetTimestamp() - exactAttemptStarted));
             }
-            evaluation = exact.Evaluation;
+            _executionContext.ExitCpu();
         }
 
-        Interlocked.Increment(ref _scanned);
+        if (!retrying) Interlocked.Increment(ref _scanned);
         Volatile.Write(ref _lastDisposition, (int)evaluation.Disposition);
         RecordOutcome(seed, evaluation.Disposition, evaluation.FailureCode);
         if (!exact.IsMatch)
         {
-            // Bounded evidence is emitted immediately, so an ongoing search/feedback export retains it.
-            long rejected = Interlocked.Increment(ref _rejectionSampleCount);
-            if (rejected <= 6) ExactRejectionDiagnostics.Log(_plan, seed, exact);
-            if ((rejected & (rejected - 1)) == 0)
-                RuntimeLog.TryBackgroundInfo("searchExactDiagnostics=true;phase=Progress;summaryJson=" + RuntimeLog.SafeJson(GetDiagnosticSummary()));
-            return;
+            RecordRejectedCandidate(seed, exact);
+            if (evaluation.Disposition is SearchDisposition.Unknown or SearchDisposition.Unsupported)
+            {
+                bool published = await PublishCandidateAsync(CreateCandidate(input, batch, exact),
+                    globalCandidate, cancellationToken).ConfigureAwait(false);
+                if (published) _recovery.ResolveCandidate(globalCandidate, published: true);
+                return published;
+            }
+            _recovery.ResolveCandidate(globalCandidate);
+            return true;
         }
 
-        string snapshotFingerprint = string.Join("|", new[]
-        {
-            _plan.SnapshotFingerprint,
-            exact.Authority.EffectSnapshotFingerprint,
-            exact.Authority.WorldSnapshotFingerprint
-        }.Where(value => !string.IsNullOrWhiteSpace(value)));
-        var output = new SearchCandidate(
-            seed, _plan.ProfileId, _plan.CharacterKey, _plan.Ascension, snapshotFingerprint,
-            exact.Request!, exact.Document!, exact.Authority,
-            evaluation.Evidence, evaluation.MatchedRouteIds, evaluation.Witnesses);
-        await PublishCandidateAsync(output, cancellationToken).ConfigureAwait(false);
+        var output = CreateCandidate(input, batch, exact);
+        if (!await PublishCandidateAsync(output, globalCandidate, cancellationToken).ConfigureAwait(false)) return false;
+        _recovery.ResolveCandidate(globalCandidate, published: true);
 
-        if (!string.IsNullOrWhiteSpace(_traceSingleCandidateSeed) &&
-            string.Equals(seed, _traceSingleCandidateSeed, StringComparison.OrdinalIgnoreCase) &&
-            _diagnosticSink is not null)
-        {
-            RuntimePredictionDiagnosticReporter.EmitAnalysis(
-                _diagnosticSink, exact.Request!, exact.Document!, _plan.Detection.DisplayVersion,
-                forceTrace: true, source: "FamilyExecutionExactTrace");
-        }
-
-    }
-
-    private async ValueTask PublishCandidateAsync(SearchCandidate output, CancellationToken cancellationToken)
-    {
-        int matchNumber = TryReserveMatch();
-        if (matchNumber == 0) return;
-        if (_beforeCandidatePublish is not null)
-            await _beforeCandidatePublish(matchNumber, cancellationToken).ConfigureAwait(false);
-        await _candidates.Writer.WriteAsync(output, cancellationToken).ConfigureAwait(false);
-        // Count only successfully published outputs, including in diagnostic candidate mode.
-        int published = Interlocked.Increment(ref _matches);
-        Interlocked.CompareExchange(ref _firstResult, output, null); Volatile.Write(ref _lastResult, output);
-        if (published >= _plan.TargetMatchCount)
-        {
-            Interlocked.Exchange(ref _targetReached, 1);
-            _lifetime.Cancel();
-        }
+        TraceCandidate(seed, exact);
+        return true;
     }
 
     internal static ulong DeriveSafeNextOrdinal(FamilyCandidateSet candidates, bool[] completed)
@@ -739,35 +708,14 @@ public sealed class ProductionSearchSession : IProductionSearchSession
         }
     }
 
-    private void RecordOutcome(string seed, SearchDisposition disposition, string failureCode)
-    {
-        _dispositions.AddOrUpdate(disposition.ToString(), 1, (_, count) => count + 1);
-        if (string.IsNullOrWhiteSpace(failureCode)) return;
-        _failures.AddOrUpdate(failureCode, 1, (_, count) => count + 1);
-        _representativeSeeds.TryAdd(failureCode, seed);
-        if (Volatile.Read(ref _firstFailure) is null)
-            Interlocked.CompareExchange(ref _firstFailure, new(failureCode, seed), null);
-    }
-
     private void SetSafeCursor(ulong nextOrdinal)
     {
-        lock (_safeCursorGate)
-        {
-            if (_safeCursorInitialized && nextOrdinal < _safeNextOrdinal)
-            {
-                int violationCount = Interlocked.Increment(ref _cursorContinuityViolationCount);
-                if (violationCount == 1)
-                {
-                    RuntimeLog.TryBackgroundWarning(
-                        $"familyCursorContinuityViolation=true;currentSafeNextOrdinal={_safeNextOrdinal};" +
-                        $"attemptedSafeNextOrdinal={nextOrdinal}");
-                }
-                return;
-            }
-            if (!_safeCursorInitialized || nextOrdinal > _safeNextOrdinal)
-                _safeNextOrdinal = nextOrdinal;
-            _safeCursorInitialized = true;
-        }
+        if (_recovery.TryAdvanceCursor(nextOrdinal, out ulong currentOrdinal)) return;
+        int violationCount = Interlocked.Increment(ref _cursorContinuityViolationCount);
+        if (violationCount == 1)
+            RuntimeLog.TryBackgroundWarning(
+                $"familyCursorContinuityViolation=true;currentSafeNextOrdinal={currentOrdinal};" +
+                $"attemptedSafeNextOrdinal={nextOrdinal}");
     }
 
     private void RecordBoundedQueueViolation(string issue, int observedDepth)
@@ -778,7 +726,7 @@ public sealed class ProductionSearchSession : IProductionSearchSession
             $"familyBoundedQueueViolation=true;issue={issue};observedDepth={observedDepth};" +
             $"terminalHandoffCapacity={TerminalHandoffCapacity};" +
             $"terminalOutstandingLimit={TerminalOutstandingLimit};terminalOutstandingDefinition=QueuedPlusCurrentOffer;" +
-            $"liveBatchStateLimit={LiveBatchStateLimit}");
+            $"liveBatchStateLimit={LiveBatchStateLimit};rootBatchPairGroups={_rootBatchPairGroups};rootBatchPairAdmissionWaitTicks={_rootBatchPairAdmissionWaitTicks};rootBatchPairSharedWaitChargedOnce=true");
     }
 
     private static void UpdateMaximum(ref int target, int value)

@@ -1,17 +1,18 @@
 using System.Collections.Immutable;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Effects.Snapshots;
+using RolltheSpire2.Core.Rng;
 
 namespace RolltheSpire2.Core.PredictorRuntime;
 
 internal static class PredictorSettlementEffects
 {
     internal static bool Has(PredictorState state, string entry) => state.Relics.Any(r => !r.Melted && r.Key.Entry == entry);
-
-    internal static void RequireImplementedRelic(ModelKey key, bool crystalBestEffort = false)
+    internal static void RequireImplementedRelic(ModelKey key, bool crystalBestEffort = false, PredictorContext? context = null)
     {
+        if (context?.Operation?.IgnoresBehavior(key) == true && key.IsValid && key.Category == "RELIC") return;
         if (crystalBestEffort && key.IsValid && key.Category == "RELIC") return;
-        if (key.Category != "RELIC" || key.Entry is not ("WHETSTONE" or "WAR_PAINT" or "POTION_BELT" or "EMPTY_CAGE" or "BURNING_BLOOD" or "BOWLER_HAT" or "ECTOPLASM" or "SOZU" or
+        if (key.Category != "RELIC" || key.Entry is not ("MASSIVE_SCROLL" or "WHETSTONE" or "WAR_PAINT" or "POTION_BELT" or "EMPTY_CAGE" or "BURNING_BLOOD" or "BOWLER_HAT" or "ECTOPLASM" or "SOZU" or
             "LASTING_CANDY" or "PRAYER_WHEEL" or "WHITE_STAR" or "BLACK_STAR" or "WHITE_BEAST_STATUE" or "MOLTEN_EGG" or "TOXIC_EGG" or "FROZEN_EGG" or
             "DINGY_RUG" or "AMETHYST_AUBERGINE" or "WONGOS_MYSTERY_TICKET" or "CIRCLET" or "GOLDEN_PEARL" or "PRISMATIC_GEM" or "SILVER_CRUCIBLE" or "SILKEN_TRESS" or
             "NEW_LEAF" or "NEOWS_TALISMAN" or "DELICATE_FROND" or "PETRIFIED_TOAD" or "ALCHEMICAL_COFFER" or "MINIATURE_TENT" or "GIRYA" or
@@ -50,8 +51,14 @@ internal static class PredictorSettlementEffects
             throw new NotImplementedException($"Predictor relic hooks pending: {key}");
     }
 
-    internal static void RequireImplementedCard(PredictorCard card, bool crystalBestEffort = false)
+    internal static void RequireImplementedCard(PredictorCard card, bool crystalBestEffort = false, PredictorContext? context = null)
     {
+        if (context?.Operation is { } operation)
+        {
+            if (operation.IgnoresBehavior(card.Key) && card.Key.IsValid && card.Key.Category == "CARD") return;
+            if (card.Enchantment is { } enchantment && operation.IgnoresBehavior(enchantment))
+                card = card with { Enchantment = null, EnchantmentAmount = 0 };
+        }
         if (crystalBestEffort && card.Key.IsValid && card.Key.Category == "CARD") return;
         // Source-specific lifetime and persistent fields are admitted only with
         // their handlers; ordinary identities do not need a basic-card whitelist.
@@ -63,15 +70,15 @@ internal static class PredictorSettlementEffects
             throw new NotImplementedException($"Predictor card hooks pending: {card.Key}");
     }
 
-    internal static void RequireImplementedInventory(PredictorState state, bool crystalBestEffort = false)
+    internal static void RequireImplementedInventory(PredictorState state, bool crystalBestEffort = false, PredictorContext? context = null)
     {
         foreach (var relic in state.Relics.Where(r => !r.Melted))
         {
             // Opening handlers completed these obtains before publishing state.
             if (relic.Key.Entry is "GOLDEN_PEARL" or "ARCANE_SCROLL" or "LOST_COFFER" or "PHIAL_HOLSTER" or "SMALL_CAPSULE") continue;
-            RequireImplementedRelic(relic.Key, crystalBestEffort);
+            RequireImplementedRelic(relic.Key, crystalBestEffort, context);
         }
-        foreach (long id in state.Deck) RequireImplementedCard(state.Card(id), crystalBestEffort);
+        foreach (long id in state.Deck) RequireImplementedCard(state.Card(id), crystalBestEffort, context);
     }
 
     internal static PredictorState TakeGold(PredictorState state, int gold)
@@ -84,5 +91,80 @@ internal static class PredictorSettlementEffects
         foreach (var relic in state.Relics.Where(r => !r.Melted && r.Key.Entry == "DRAGON_FRUIT"))
             state = state with { CurrentHealthEffects = state.CurrentHealthEffects.Add(new(relic.Key, relic.Id, 1, 1)) };
         return state;
+    }
+
+    internal static PredictorState AfterItemPurchased(PredictorState state, int goldSpent) => goldSpent <= 0 ? state :
+        state with { Relics = state.Relics.Select(r => !r.Melted && r.Key.Entry == "MAW_BANK"
+            ? r with { MawBankSpent = true } : r).ToImmutableArray() };
+    internal static PredictorState ObtainRelic(PredictorState state, ModelKey key, long? existingInstanceId = null)
+        => AfterRelicAdded(AddRelic(state, key, existingInstanceId), key);
+
+    internal static PredictorState AddRelic(PredictorState state, ModelKey key, long? existingInstanceId = null, PredictorContext? context = null)
+    {
+        RequireImplementedRelic(key, crystalBestEffort: context?.Crystal?.UnmodeledSources.Contains(key) == true,
+            context: context);
+        return state with { Relics = state.Relics.Add(new(existingInstanceId ?? state.NextInstanceId, key, state.Position.Floor)),
+            NextInstanceId = existingInstanceId == null ? checked(state.NextInstanceId + 1) : state.NextInstanceId };
+    }
+
+    internal static PredictorState AfterRelicAdded(PredictorState state, ModelKey key)
+    {
+        state = state with {
+            PersonalBag = key.Entry == "CIRCLET" ? state.PersonalBag : state.PersonalBag.Remove(key),
+            SharedBag = key.Entry == "CIRCLET" ? state.SharedBag : state.SharedBag.Remove(key) };
+        if (key.Entry == "GOLDEN_PEARL") return TakeGold(state, 150);
+        if (key.Entry == "SILKEN_TRESS") return state with { GoldBudget = 0 };
+        if (key.Entry == "POTION_BELT") return state with { PotionSlots = state.PotionSlots.AddRange(new PredictorPotion?[2]) };
+        if (key.Entry is not ("WHETSTONE" or "WAR_PAINT")) return state;
+        EffectCardType type = key.Entry == "WHETSTONE" ? EffectCardType.Attack : EffectCardType.Skill;
+        var candidates = state.Deck.Select(state.Card).Where(c => c.Type == type && c.UpgradeLevel < c.MaxUpgradeLevel).ToList();
+        candidates.Sort((a, b) =>
+        {
+            int n = string.Compare(a.Key.Category, b.Key.Category, StringComparison.Ordinal);
+            if (n == 0) n = string.Compare(a.Key.Entry, b.Key.Entry, StringComparison.Ordinal);
+            return n == 0 ? a.UpgradeLevel.CompareTo(b.UpgradeLevel) : n;
+        });
+        var rng = state.Streams.Single(s => s.Stream == PredictorStream.Niche).Restore();
+        rng.UnstableShuffle(candidates);
+        foreach (var card in candidates.Take(2)) state = state.WithCard(card with { UpgradeLevel = card.UpgradeLevel + 1 });
+        return state.WithRng(PredictorStream.Niche, rng);
+    }
+
+    internal static (PredictorState State, ImmutableArray<PredictorPotion> Generated) UseEntropicBrew(
+        PredictorState state, ImmutableArray<PredictorPotionOption> pool, int slot)
+    {
+        if (pool.IsDefaultOrEmpty) throw new InvalidOperationException("PredictorPotionPoolNotInitialized");
+        var rng = state.Streams.Single(s => s.Stream == PredictorStream.CombatPotionGeneration).Restore();
+        var generated = ImmutableArray.CreateBuilder<PredictorPotion>();
+        state = state with { PotionSlots = state.PotionSlots.SetItem(slot, null) };
+        int next;
+        while ((next = state.PotionSlots.FindIndex(p => p == null)) >= 0)
+        {
+            var potion = new PredictorPotion(state.NextInstanceId, GenerateEntropicPotion(pool, rng));
+            generated.Add(potion);
+            state = state with { NextInstanceId = checked(state.NextInstanceId + 1) };
+            if (Has(state, "SOZU")) break; // Generation happened before failed Procure.
+            state = state with { PotionSlots = state.PotionSlots.SetItem(next, potion) };
+            // Each native call creates one potion with a fresh source pool; repeated
+            // identities across the fill loop are legal, not a batch exclusion.
+        }
+        state = state.WithRng(PredictorStream.CombatPotionGeneration, rng);
+        state.Validate();
+        return (state, generated.ToImmutable());
+    }
+
+    // Both live-observation identity previews and detached settlement use the
+    // same native roll. Entropic always uses this unfiltered source pool,
+    // including when used in combat.
+    internal static ModelKey GenerateEntropicPotion(ImmutableArray<PredictorPotionOption> pool, Xoshiro256StarStar rng)
+    {
+        if (pool.IsDefaultOrEmpty) throw new InvalidOperationException("PredictorPotionPoolNotInitialized");
+        float roll = rng.NextFloat();
+        var rarity = roll <= .1f ? PredictorPotionRarity.Rare : roll <= .35f ? PredictorPotionRarity.Uncommon : PredictorPotionRarity.Common;
+        var options = pool.Where(p => p.Rarity == rarity).ToArray();
+        // Native NextItem(empty) returns null, then ToMutable fails. Preserve
+        // that failure instead of substituting a different rarity.
+        if (options.Length == 0) throw new InvalidOperationException("PredictorEntropicEmptyRarityBucket");
+        return options[rng.NextInt(options.Length)].Key;
     }
 }

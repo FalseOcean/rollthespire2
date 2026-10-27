@@ -48,7 +48,10 @@ internal sealed class WorldFamilyReplay
             !filter.BossFilters.Any(p => !p.IsEmpty) && !filter.BossOrdinalFilters.Any(p => !p.IsEmpty) &&
             !filter.AncientIdentityFilters.Any(p => !p.IsEmpty) && filter.AncientBranchConditions.Count == 0 &&
             !filter.EventSequenceConditions.Any(p => !p.IsEmpty);
-        return variantOnly ? CompileVariant(request) : Beta110WorldFastPlanCompiler.CompileForFamily(request, filter, branches);
+        var plan = variantOnly ? CompileVariant(request) : Beta110WorldFastPlanCompiler.CompileForFamily(request, filter, branches);
+        if (plan.Enabled && plan.MaxRequiredAct > 0 && !HasRelicAuthority(request))
+            return Beta110WorldFastPlan.Disabled("W.RootRelicInitializationAuthorityIncomplete");
+        return plan;
     }
 
     internal WorldFamilyReplay(ExactSearchExecutionRequest request, Beta110WorldFastPlan plan)
@@ -68,20 +71,25 @@ internal sealed class WorldFamilyReplay
 
     internal static void ValidateRelicAuthority(ExactSearchExecutionRequest request)
     {
-        var generation = request.Authority.WorldAuthority!.Beta109Generation!;
-        if (!(generation.RelicInitializationExact && generation.SharedRelicPoolOrderExact &&
+        if (!HasRelicAuthority(request))
+            throw new InvalidOperationException("W.RootRelicInitializationAuthorityIncomplete");
+    }
+
+    private static bool HasRelicAuthority(ExactSearchExecutionRequest request)
+    {
+        var generation = request.Authority.WorldAuthority?.Beta109Generation;
+        return generation is not null && generation.RelicInitializationExact && generation.SharedRelicPoolOrderExact &&
             generation.CharacterRelicPoolOrderExact && generation.RelicRarityAuthorityExact && generation.PlayerRelicPoolCompositionExact &&
             generation.SharedRelicBuckets.Count > 0 && generation.PlayerRelicBuckets.Count > 0 &&
             generation.SharedRelicBuckets.Concat(generation.PlayerRelicBuckets).All(b => b.OrderExact) &&
-            (!generation.IsMultiplayer || generation.HasExactFixedParty)))
-            throw new InvalidOperationException("W.RootRelicInitializationAuthorityIncomplete");
+            (!generation.IsMultiplayer || generation.HasExactFixedParty);
     }
 
     private static Beta110WorldFastPlan CompileVariant(ExactSearchExecutionRequest request)
     {
         var g = request.Authority.WorldAuthority?.Beta109Generation;
         if (g is null || !g.CanReconstructSelectedActs || g.Profile != request.ProfileId)
-            throw new InvalidOperationException("W.VariantAuthorityIncomplete");
+            return Beta110WorldFastPlan.Disabled("W.VariantAuthorityIncomplete");
         var groups = g.ActSelectionGroups.OrderBy(a => a.Act).ToArray();
         var keys = groups.SelectMany(a => a.EligibleActsInSourceOrder).Concat(
             g.Act1OverrideResolvedKey is { } key ? [key] : []).Distinct().ToArray();

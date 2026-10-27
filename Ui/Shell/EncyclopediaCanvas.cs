@@ -18,22 +18,23 @@ internal sealed partial class EncyclopediaCanvas : Control
 {
     private const string IntroductionId = "why-predictable";
     private const string ReadingGuideId = "reading-guide";
+    private const string DefaultEnvironmentId = "default-environment";
     private const string SeedHistoryId = "seed-history";
     private const string FaqId = "faq";
     private const string CrystalSphereId = "crystal-sphere";
     private const string IntroductionTitle = "为什么未来可以被预测？";
     private const string NeowOfferId = "neow-offer";
-    private const string NeowOfferTitle = "涅奥候选是怎样产生的？";
+    private const string NeowOfferTitle = "为什么骨骰需要领取顺序？";
     private const string NeowKaleidoscopeId = "neow-kaleidoscope";
-    private const string NeowKaleidoscopeTitle = "万花筒：跨角色的开局卡牌";
+    private const string NeowKaleidoscopeTitle = "为什么区分万花筒两组牌的生成顺序？";
     private const string NeowSilkenTressId = "neow-silken-tress";
     private const string NeowSilkenTressTitle = "华美发束：下一组卡牌奖励";
     private const string NeowCapsuleId = "neow-capsule";
     private const string NeowCapsuleTitle = "扭蛋：从涅奥进入遗物袋";
     private const string NeowTransformId = "neow-transform";
-    private const string NeowTransformTitle = "树叶药膏：为什么变牌结果可以提前检查";
+    private const string NeowTransformTitle = "为什么新叶默认选择初始牌？";
     private const string NeowBonesCurseId = "neow-bones-curse";
-    private const string NeowBonesCurseTitle = "骨骰最终诅咒：玩家选择为什么会影响结果";
+    private const string NeowBonesCurseTitle = "为什么最终诅咒还要结合前面的选择？";
     private const string AncientDarvId = "ancient-darv";
     private const string AncientDarvTitle = "达弗：共享池先古与先古遗物";
     private const string AncientPaelId = "ancient-pael";
@@ -59,6 +60,8 @@ internal sealed partial class EncyclopediaCanvas : Control
     private const string TransformEventResultsId = "event-transform-results";
     private const string TransformEventResultsTitle = "变牌事件：默认变化初始牌";
     private const string MultiplayerSharedId = "multiplayer-shared";
+    private const string PathPredictionId = "path-prediction";
+    private const string PathPredictionTitle = "绘线预测：沿途收益与选择";
     private const string MapRoutesId = "map-routes";
     private const string MapRoutesTitle = "地图路线：最好与最坏能到什么程度？";
     private const string MapGenerationId = "map-generation";
@@ -81,29 +84,31 @@ internal sealed partial class EncyclopediaCanvas : Control
     private const string EncyclopediaGameVersion = "0.111.0";
     private static readonly ArticleDefinition[] Articles =
     [
-        new(ReadingGuideId, "reading_guide", "阅读与适用说明", "Reading & scope", null, SeedHistoryId,
-            [SeedHistoryId, FaqId, "multiplayer", "mods"], false),
-        new(SeedHistoryId, "seed_history", "种子：我们到底在搜索什么？", "Seeds: What Are We Searching?", null, IntroductionId,
+        new(ReadingGuideId, "reading_guide", "阅读引导", "Reading guide", null, DefaultEnvironmentId,
+            [DefaultEnvironmentId, SeedHistoryId, IntroductionId, FaqId], false),
+        new(DefaultEnvironmentId, "default_environment", "默认环境", "Default environment", null, "neow",
+            [ReadingGuideId, "multiplayer", "mods"], false),
+        new(SeedHistoryId, "seed_history", "种子：我们到底在搜索什么？", "Seeds: What Are We Searching?", ReadingGuideId, IntroductionId,
             [ReadingGuideId, IntroductionId, FaqId], false),
-        new(FaqId, "faq", "常见问题与结果排查", "FAQ & result checks", null, null,
+        new(FaqId, "faq", "种子问题快查", "Seed FAQ", null, null,
             [ReadingGuideId, IntroductionId, "events", "shop", "combat", "multiplayer"], false),
         new(IntroductionId, "why_future_can_be_predicted", "为什么未来可以被预测？",
-            "Why can the future be predicted?", null, "neow", [SeedHistoryId, ReadingGuideId, FaqId, "neow", "ancient"], false),
-        new("neow", "neow", "涅奥", "Neow", null, "ancient",
+            "Why can the future be predicted?", ReadingGuideId, null, [SeedHistoryId, ReadingGuideId, FaqId, "neow", "ancient"], false),
+        new("neow", "neow", "涅奥", "Neow", DefaultEnvironmentId, null,
             [NeowOfferId, NeowKaleidoscopeId, "ancient"]),
-        new(NeowOfferId, "neow_offer", "涅奥候选与骨骰", "Offer & Bones", "neow",
+        new(NeowOfferId, "neow_offer", "骨骰的领取顺序", "Bones pickup order", "neow",
             null, [NeowBonesCurseId]),
-        new(NeowKaleidoscopeId, "neow_kaleidoscope", "万花筒", "Kaleidoscope", "neow",
+        new(NeowKaleidoscopeId, "neow_kaleidoscope", "万花筒的生成顺序", "Kaleidoscope generation order", "neow",
             null, [NeowSilkenTressId, NeowCapsuleId]),
         new(NeowSilkenTressId, "neow_silken_tress", "华美发束", "Silken Tress", "neow",
             null, [NeowKaleidoscopeId, NeowBonesCurseId]),
         new(NeowCapsuleId, "neow_capsule", "扭蛋", "Capsules", "neow",
             null, [NeowKaleidoscopeId, NeowBonesCurseId]),
-        new(NeowTransformId, "neow_transform", "树叶药膏与新叶", "Leafy Poultice & New Leaf",
+        new(NeowTransformId, "neow_transform", "新叶的初始牌约定", "New Leaf's starting-card convention",
             "neow", null, [NeowOfferId, "transform"]),
-        new(NeowBonesCurseId, "neow_bones_curse", "骨骰最终诅咒", "Bones' Final Curse",
+        new(NeowBonesCurseId, "neow_bones_curse", "最终诅咒与前面的选择", "Final curse and earlier choices",
             "neow", null, [NeowOfferId, NeowCapsuleId]),
-        new("ancient", "ancient", "先古之民", "Ancients", null, "combat",
+        new("ancient", "ancient", "先古之民", "Ancients", DefaultEnvironmentId, null,
             [AncientDarvId, AncientPaelId, AncientTezcataraId, AncientOrobasId, AncientAct3Id,
                 "neow", NeowOfferId]),
         new(AncientDarvId, "ancient_darv", "达弗", "Darv", "ancient", null,
@@ -116,17 +121,17 @@ internal sealed partial class EncyclopediaCanvas : Control
             null, ["ancient", AncientTezcataraId, AncientAct3Id]),
         new(AncientAct3Id, "ancient_act3", "第三幕先古", "Act 3 Ancients", "ancient", null,
             ["ancient", AncientOrobasId]),
-        new("shop", "shop", "商店", "Shop", null, "events",
+        new("shop", "shop", "商店", "Shop", DefaultEnvironmentId, null,
             [ShopStabilityId, ShopRelicConsumptionId, IntroductionId]),
         new(ShopStabilityId, "shop_stability", "稳定与不稳定", "Stable & unstable",
             "shop", null, ["shop", "combat"]),
-        new("combat", "combat", "战斗奖励", "Combat rewards", null, "relics",
+        new("combat", "combat", "战斗奖励", "Combat rewards", DefaultEnvironmentId, null,
             [CombatNeowId, CombatRarityRelicsId, IntroductionId, ShopStabilityId]),
         new(CombatNeowId, "combat_neow", "涅奥与战斗奖励", "Neow & combat rewards",
             "combat", null, ["combat", CombatRarityRelicsId, "neow"]),
         new(CombatRarityRelicsId, "combat_rarity_relics", "稀有牌与遗物",
             "Rare cards & relics", "combat", null, ["combat", CombatNeowId, "events"]),
-        new("events", "events", "事件", "Events", null, "boss",
+        new("events", "events", "事件", "Events", DefaultEnvironmentId, null,
             [EventAppearanceId, EventResultsId, StableEventResultsId,
                 TransformEventResultsId, CrystalSphereId, IntroductionId, "combat"]),
         new(EventAppearanceId, "event_appearance", "事件出现性", "Event appearance",
@@ -139,23 +144,25 @@ internal sealed partial class EncyclopediaCanvas : Control
             [EventResultsId, TransformEventResultsId, EventAppearanceId]),
         new(TransformEventResultsId, "event_transform_results", "变牌事件", "Transform events",
             EventResultsId, null, [EventResultsId, StableEventResultsId, "transform", MultiplayerSharedId]),
-        new(CrystalSphereId, "crystal_sphere", "水晶球", "Crystal Sphere", "events", null,
+        new(CrystalSphereId, "crystal_sphere", "水晶球", "Crystal Sphere", ReadingGuideId, null,
             ["events", FaqId, ReadingGuideId], false),
-        new("boss", "boss", "首领 / 变体", "Bosses & Act variants", null, "map",
+        new("boss", "boss", "首领 / 变体", "Bosses & Act variants", DefaultEnvironmentId, null,
             ["map", IntroductionId, "ancient", "events"]),
-        new("map", "map", "地图", "Map", null, "transform",
-            [MapRoutesId, MapGenerationId, "boss", "events", EventAppearanceId]),
+        new("map", "map", "地图节点", "Map nodes", DefaultEnvironmentId, null,
+            [PathPredictionId, MapRoutesId, MapGenerationId, "boss", "events", EventAppearanceId]),
+        new(PathPredictionId, "path_prediction", "绘线预测", "Route forecast", "map", null,
+            ["map", EventAppearanceId, "events", "combat", "shop"], ReturnToSearch: false),
         new(MapRoutesId, "map_routes", "地图路线", "Map routes", "map", null,
             ["map", MapGenerationId, EventAppearanceId]),
         new(MapGenerationId, "map_generation", "地图生成", "Map generation", "map", null,
             ["map", MapRoutesId]),
-        new("relics", "relics", "遗物", "Relics", null, "shop",
+        new("relics", "relics", "遗物序列", "Relic sequences", DefaultEnvironmentId, null,
             [ChestRelicsId, ShopRelicConsumptionId, "shop", "neow", IntroductionId]),
         new(ChestRelicsId, "relic_chests", "宝箱房", "Treasure chests",
             "relics", null, ["relics", ShopRelicConsumptionId]),
         new(ShopRelicConsumptionId, "relic_shop_consumption", "商店与遗物队列",
             "Shops & relic bags", "relics", null, ["relics", "shop", ShopStabilityId]),
-        new("transform", "transform", "变牌组合", "Combined transformations", null, "multiplayer",
+        new("transform", "transform", "变牌组合", "Combined transformations", DefaultEnvironmentId, null,
             [NeowTransformId, TransformEventResultsId, IntroductionId]),
         new("multiplayer", "multiplayer", "多人", "Multiplayer", null, "mods",
             [MultiplayerSharedId, "mods", "ancient", "map", "neow"], ReturnToSearch: false),
@@ -167,19 +174,19 @@ internal sealed partial class EncyclopediaCanvas : Control
 
     private static readonly ArticleChild[] NeowChildren =
     [
-        new(NeowOfferId, "涅奥候选与骨骰", "Offer & Bones", NeowOfferTitle,
-            "Offer 骨骰 Neow 诅咒池", [BaseGameModelKeys.Relics.NeowsBones]),
-        new(NeowKaleidoscopeId, "万花筒", "Kaleidoscope", NeowKaleidoscopeTitle,
+        new(NeowOfferId, "骨骰的领取顺序", "Bones pickup order", NeowOfferTitle,
+            "Offer 骨骰 Neow 领取 顺序 不限", [BaseGameModelKeys.Relics.NeowsBones]),
+        new(NeowKaleidoscopeId, "万花筒的生成顺序", "Kaleidoscope generation order", NeowKaleidoscopeTitle,
             "万花筒 Kaleidoscope 跨角色 金卡 Neow", [BaseGameModelKeys.Relics.Kaleidoscope]),
         new(NeowSilkenTressId, "华美发束", "Silken Tress", NeowSilkenTressTitle,
             "华美发束 丝绸发束 Silken Tress 华彩 卡牌奖励 Neow", [BaseGameModelKeys.Relics.SilkenTress]),
         new(NeowCapsuleId, "扭蛋", "Capsules", NeowCapsuleTitle,
             "扭蛋 巨大扭蛋 小扭蛋 Large Capsule Small Capsule 遗物袋 Neow",
             [BaseGameModelKeys.Relics.SmallCapsule, BaseGameModelKeys.Relics.LargeCapsule]),
-        new(NeowTransformId, "树叶药膏与新叶", "Leafy Poultice & New Leaf", NeowTransformTitle,
+        new(NeowTransformId, "新叶的初始牌约定", "New Leaf's starting-card convention", NeowTransformTitle,
             "树叶药膏 新叶 Leafy Poultice New Leaf 变牌 Transformations Niche Neow",
             [BaseGameModelKeys.Relics.LeafyPoultice, BaseGameModelKeys.Relics.NewLeaf]),
-        new(NeowBonesCurseId, "骨骰最终诅咒", "Bones' Final Curse", NeowBonesCurseTitle,
+        new(NeowBonesCurseId, "最终诅咒与前面的选择", "Final curse and earlier choices", NeowBonesCurseTitle,
             "骨骰 最终诅咒 Neow's Bones Curse Niche Whetstone War Paint 玩家选择",
             [BaseGameModelKeys.Relics.NeowsBones])
     ];
@@ -248,6 +255,8 @@ internal sealed partial class EncyclopediaCanvas : Control
 
     private static readonly ArticleChild[] MapChildren =
     [
+        new(PathPredictionId, "绘线预测", "Route forecast", PathPredictionTitle,
+            "路径预测 局内 画线 接续 历史 事件选择 Niche 当前幕 地图 path prediction live route history continuation", []),
         new(MapRoutesId, "地图路线", "Map routes", MapRoutesTitle,
             "Guaranteed Reachable Max Forced Monster Prefix 精英 火堆 问号 最好 最坏", []),
         new(MapGenerationId, "地图生成", "Map generation", MapGenerationTitle,
@@ -277,11 +286,13 @@ internal sealed partial class EncyclopediaCanvas : Control
 
     private static readonly AdditionalTopic[] GuideTopics =
     [
-        new(ReadingGuideId, "阅读与适用说明", "Reading & scope",
+        new(ReadingGuideId, "阅读引导", "Reading guide",
             "开始使用 适用 前提 解锁 版本 原版 单人 reading scope unlocks version baseline"),
+        new(DefaultEnvironmentId, "默认环境", "Default environment",
+            "默认 原版 单人 全解锁 Epoch 承诺 确认 vanilla single player baseline promise"),
         new(SeedHistoryId, "种子与搜索", "Seeds & search",
             "种子 Seed Hash 哈希 搜索 筛选 预测 字符 空间 碰撞 历史 版本 107 109 111 GPU filtering prediction history collision"),
-        new(FaqId, "常见问题与结果排查", "FAQ & result checks",
+        new(FaqId, "种子问题快查", "Seed FAQ",
             "常见问题 FAQ 结果不同 偏移 错误 反馈 bug feedback mismatch troubleshooting Developer Notes 开发者笔记")
     ];
 
@@ -295,7 +306,7 @@ internal sealed partial class EncyclopediaCanvas : Control
             "Mod 模组 兼容 运行时 候选池 随机机制 第三方")
     ];
 
-    private readonly WorkspacePalette _palette = WorkspacePalette.Canonical;
+    private readonly WorkspacePalette _palette = WorkspacePalette.MainPanel;
     private readonly IUiTextProvider _zhText = JsonUiTextProvider.CreateUi13("zh");
     private readonly IUiTextProvider _enText = JsonUiTextProvider.CreateUi13("en");
     private readonly ISearchCategoryTabIconProvider _icons =
@@ -316,6 +327,7 @@ internal sealed partial class EncyclopediaCanvas : Control
     public EncyclopediaCanvas()
     {
         Name = "EncyclopediaCanvas";
+        Theme = MainPanelTheme.Create();
         AddChild(_rail);
         AddChild(_main);
         _rail.Position = new Vector2(0, 72);
@@ -345,7 +357,6 @@ internal sealed partial class EncyclopediaCanvas : Control
     private string NameOf(Topic topic) => (_language == "zh" ? _zhText : _enText).Get(topic.TextKey);
     private string ChildName(ArticleChild child) => child.Id switch
     {
-        NeowKaleidoscopeId => _contentNames.Resolve(BaseGameModelKeys.Relics.Kaleidoscope, GameContentKind.Relic),
         NeowSilkenTressId => _contentNames.Resolve(BaseGameModelKeys.Relics.SilkenTress, GameContentKind.Relic),
         _ => T(child.ZhLabel, child.EnLabel)
     };
@@ -390,13 +401,6 @@ internal sealed partial class EncyclopediaCanvas : Control
         button.Pressed += action;
         parent.AddChild(button);
         return button;
-    }
-
-    private void Panel(Control parent, float x, float y, float width, float height, string fill)
-    {
-        var panel = new Panel { Position = new Vector2(x, y), Size = new Vector2(width, height), MouseFilter = MouseFilterEnum.Ignore };
-        panel.AddThemeStyleboxOverride("panel", _palette.Box(fill, _palette.Line, 1));
-        parent.AddChild(panel);
     }
 
     private void Rule(Control parent, float x, float y, float width, float height = 1) =>

@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "profileId": "Beta110",
+  "gameVersion": "0.110.0",
+  "status": "PendingUserRuntimeValidation",
+  "warning": "Candidate seeds are not accepted Exact evidence until recorded in an actual 0.110.0 vanilla single-player run with runtime authority and catalog fingerprints.",
+  "candidates": [
+    {
+      "fixtureId": "beta110-kaleidoscope-base-odds-candidate-001",
+      "domain": "Kaleidoscope",
+      "seed": "000000000001",
+      "character": "SILENT",
+      "ascension": 10,
+      "expectedNeowIdentity": ["ARCANE_SCROLL", "KALEIDOSCOPE", "DOWSING_ROD"],
+      "validationFocus": ["Beta110Cumulative", "Niche pool shuffle", "rarity identity upgrade RNG order", "runtime card catalog fingerprint"],
+      "candidateSource": "Pure shared Modern Neow identity replay; generator source audited unchanged 0.109.1 to 0.110.0"
+    },
+    {
+      "fixtureId": "beta110-fixed-rarity-arcane-scroll-candidate-001",
+      "domain": "ArcaneScroll",
+      "seed": "VADSEV23455G",
+      "character": "SILENT",
+      "ascension": 10,
+      "expectedNeowIdentity": ["ARCANE_SCROLL", "POMANDER", "CURSED_PEARL"],
+      "validationFocus": ["forced Rare pool", "identity RNG", "no RollWithBaseOdds application", "runtime card catalog fingerprint"],
+      "candidateSource": "Historical runtime anchor plus shared Modern Neow identity replay; not cross-profile Exact evidence"
+    },
+    {
+      "fixtureId": "beta110-neow-bones-candidate-001",
+      "domain": "NeowBones",
+      "seed": "000000000003",
+      "character": "SILENT",
+      "ascension": 10,
+      "expectedNeowIdentity": ["POMANDER", "LEAD_PAPERWEIGHT", "NEOWS_BONES"],
+      "validationFocus": ["Bones identity", "acquisition order", "final curse", "opening reward continuation"],
+      "candidateSource": "Pure shared Modern Neow identity replay"
+    },
+    {
+      "fixtureId": "beta110-boss-ancient-candidate-001",
+      "domain": "BossAncient",
+      "seed": "VADSEV23455G",
+      "character": "DEFECT",
+      "ascension": 10,
+      "validationFocus": ["selected acts", "Act bosses", "A10 second boss", "Ancient identities and options", "UpFront cursor"],
+      "candidateSource": "Existing Modern donor synthetic fixture seed; actual 0.110 output must be captured"
+    },
+    {
+      "fixtureId": "beta110-orobas-sea-glass-candidate-001",
+      "domain": "OrobasSeaGlass",
+      "seed": "000000000003",
+      "character": "SILENT",
+      "ascension": 10,
+      "historicalExpected": ["SEA_GLASS->DEFECT", "SAND_CASTLE", "ARCHAIC_TOOTH"],
+      "validationFocus": ["target draw before branch", "unlocked character source order", "option identity order"],
+      "candidateSource": "Historical 0.109 runtime anchor; candidate only for 0.110"
+    },
+    {
+      "fixtureId": "beta110-initial-relic-sequence-candidate-001",
+      "domain": "InitialRelicSequence",
+      "seed": "VADSEV23455G",
+      "character": "DEFECT",
+      "ascension": 10,
+      "validationFocus": ["shared and character rarity buckets", "source order", "UpFront shuffle", "shop pull direction", "authority fingerprint"],
+      "candidateSource": "Existing deterministic donor fixture seed; requires independent 0.110 capture"
+    },
+    {
+      "fixtureId": "beta110-initial-event-sequence-candidate-001",
+      "domain": "InitialEventCandidateSequence",
+      "seed": "VADSEV23455G",
+      "character": "DEFECT",
+      "ascension": 10,
+      "validationFocus": ["selected acts", "raw event order", "epoch authority", "opening Ancient cursor offset", "UpFront shuffle"],
+      "candidateSource": "Existing deterministic donor fixture seed; requires independent 0.110 capture"
+    },
+    {
+      "fixtureId": "beta110-normal-combat-reward-candidate-001",
+      "domain": "FirstThreeNormalCombatRewards",
+      "seed": "M14VJ04XYKR7",
+      "character": "SILENT",
+      "ascension": 10,
+      "openingRoute": "PRAYER_WHEEL",
+      "validationFocus": ["Rewards RNG initial and ending state", "potion gate and identity", "gold", "stateful pity", "rarity identity upgrade order", "runtime card catalog fingerprint"],
+      "candidateSource": "Accepted historical regression anchor; must be independently replayed on 0.110"
+    },
+    {
+      "fixtureId": "beta110-opening-neutral-route-candidate-001",
+      "domain": "OpeningRelicRewardContinuation",
+      "seed": "00000000000L",
+      "character": "SILENT",
+      "ascension": 10,
+      "historicalExpected": ["GOLDEN_PEARL", "LARGE_CAPSULE", "INTIMIDATING_HELMET", "STRIKE_DUMMY"],
+      "validationFocus": ["nested relic catalog", "opening Rewards continuation", "no 0.109 fixture promotion"],
+      "candidateSource": "Accepted historical neutral-route anchor; candidate only for 0.110"
+    }
+  ]
+}

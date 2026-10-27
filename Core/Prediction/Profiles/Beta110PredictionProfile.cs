@@ -41,7 +41,8 @@ public sealed class Beta110PredictionProfile : ISeedPredictionProfile
     internal SeedPredictionDocument PredictFromRootHash(
         SeedPredictionRequest request,
         GameVersionDetection detection,
-        TrustedRootHashInput input)
+        TrustedRootHashInput input,
+        IReadOnlyList<NeowChoiceResult>? preparedOpeningChoices = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(detection);
@@ -66,13 +67,14 @@ public sealed class Beta110PredictionProfile : ISeedPredictionProfile
                 SeedPredictionOverallStatus.Unknown,
                 new PredictionDiagnostic("trusted-root-hash-forward-validation", "failed"));
         }
-        return PredictCore(request, detection, input);
+        return PredictCore(request, detection, input, preparedOpeningChoices);
     }
 
     private SeedPredictionDocument PredictCore(
         SeedPredictionRequest request,
         GameVersionDetection detection,
-        TrustedRootHashInput input)
+        TrustedRootHashInput input,
+        IReadOnlyList<NeowChoiceResult>? preparedOpeningChoices = null)
     {
         RuntimeVersionResolution compatibility = RuntimeProfileRegistry.Resolve(detection);
         string seedIdentity = input.SeedIdentity;
@@ -85,21 +87,32 @@ public sealed class Beta110PredictionProfile : ISeedPredictionProfile
         }
 
         bool requiresNeowIdentity = request.Includes(SeedPredictionDomainSelection.Neow) || request.Includes(SeedPredictionDomainSelection.NormalCombatRewards);
-        if (request.Authority.NoRunModifiers == false || requiresNeowIdentity && request.Authority.VanillaNeowCatalogExact == false)
+        if (request.Authority.NoRunModifiers == false)
         {
             return Fail(request, detection, seedIdentity, PredictionWarningCode.NonVanillaCatalogUnsupported, SeedPredictionOverallStatus.Unsupported);
-        }
-
-        if (requiresNeowIdentity && !request.Authority.HasExactModernNeowIdentityInputs)
-        {
-            return Fail(request, detection, seedIdentity, PredictionWarningCode.SnapshotAuthorityIncomplete, SeedPredictionOverallStatus.Unknown);
         }
 
         ModernNeowIdentityResult? result = null;
         PredictionPrecision identityPrecision = PredictionPrecision.Unknown;
         NeowChoiceResult[] choices = [];
         var warnings = new List<PredictionWarning>();
-        if (requiresNeowIdentity)
+        SeedDomainEvaluationStatus neowStatus = SeedDomainEvaluationStatus.Evaluated;
+        string neowIssueCode = string.Empty;
+        // Keep a Neow prerequisite local; only the dependent reward projection
+        // inherits it. Independent World/Relic calculations remain available.
+        if (requiresNeowIdentity && request.Authority.VanillaNeowCatalogExact == false)
+        {
+            neowStatus = SeedDomainEvaluationStatus.Unsupported;
+            neowIssueCode = "NonVanillaCatalogUnsupported";
+            warnings.Add(new PredictionWarning(PredictionWarningCode.NonVanillaCatalogUnsupported));
+        }
+        else if (requiresNeowIdentity && !request.Authority.HasExactModernNeowIdentityInputs)
+        {
+            neowStatus = SeedDomainEvaluationStatus.Unknown;
+            neowIssueCode = "SnapshotAuthorityIncomplete";
+            warnings.Add(new PredictionWarning(PredictionWarningCode.SnapshotAuthorityIncomplete));
+        }
+        if (requiresNeowIdentity && neowStatus == SeedDomainEvaluationStatus.Evaluated)
         {
             try
             {
@@ -125,14 +138,14 @@ public sealed class Beta110PredictionProfile : ISeedPredictionProfile
                 : Beta110ValidationAuthority.NeowAccepted && !compatibility.IsFallback
                     ? PredictionPrecision.Exact
                     : PredictionPrecision.Partial;
-            choices = result.RelicKeys.Select((key, index) =>
+            choices = preparedOpeningChoices?.ToArray() ?? result.RelicKeys.Select((key, index) =>
             {
-                NeowEffectProjection projection = Beta110NeowEffectProjector.ProjectFromRootHash(
+                NeowEffectProjection projection = request.ShouldProjectNeowEffects(key) ? Beta110NeowEffectProjector.ProjectFromRootHash(
                     key,
                     identityPrecision,
                     request.Authority,
                     input.RootHash,
-                    request.EnableComplexBonesDeckInteractions);
+                    request.EnableComplexBonesDeckInteractions) : SeedPredictionDocumentFactory.UnrequestedNeowEffects;
                 return SeedPredictionDocumentFactory.Choice(
                     index + 1,
                     key,
@@ -194,7 +207,11 @@ public sealed class Beta110PredictionProfile : ISeedPredictionProfile
 
         NormalCombatRewardSequencePredictionResult? normalCombatRewardPrediction =
             request.Includes(SeedPredictionDomainSelection.NormalCombatRewards)
-                ? NormalCombatRewardSequencePredictor.PredictFromRootHash(
+                ? neowStatus == SeedDomainEvaluationStatus.Unsupported
+                    ? NormalCombatRewardSequencePredictionResult.Unsupported(ProfileId, "NeowPrerequisite:" + neowIssueCode, request.Authority.EffectSnapshotFingerprint)
+                    : neowStatus != SeedDomainEvaluationStatus.Evaluated
+                        ? NormalCombatRewardSequencePredictionResult.Unknown(ProfileId, "NeowPrerequisite:" + neowIssueCode, request.Authority.EffectSnapshotFingerprint)
+                        : NormalCombatRewardSequencePredictor.PredictFromRootHash(
                     Beta110Profile.Instance,
                     input.RootHash,
                     seedIdentity,
@@ -203,7 +220,7 @@ public sealed class Beta110PredictionProfile : ISeedPredictionProfile
                     choices,
                     request.Authority.EffectAuthority,
                     request.Authority.WorldAuthority,
-                    request.CombatRewardProjectionRequest)
+                    request.CombatRewardProjectionRequest, request.RewardPoolPreparation)
                 : null;
 
         return SeedPredictionDocumentFactory.Create(
@@ -224,7 +241,9 @@ public sealed class Beta110PredictionProfile : ISeedPredictionProfile
                     compatibility.IsPendingValidation),
             worldPrediction,
             relicSequencePrediction,
-            normalCombatRewardPrediction);
+            normalCombatRewardPrediction,
+            requiresNeowIdentity ? neowStatus : null,
+            neowIssueCode);
     }
 
     private IReadOnlyList<PredictionDiagnostic> BuildDiagnostics(

@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+
+    <!-- Pure profile/version selection dependencies. No Godot or game assemblies. -->
+    <Compile Include="..\..\Compatibility\GameVersionIdentity.cs" Link="Compatibility\GameVersionIdentity.cs" />
+    <Compile Include="..\..\Compatibility\RuntimeProfilePolicies.cs" Link="Compatibility\RuntimeProfilePolicies.cs" />
+    <Compile Include="..\..\Compatibility\RuntimeProfileId.cs" Link="Compatibility\RuntimeProfileId.cs" />
+    <Compile Include="..\..\Compatibility\RuntimeCapability.cs" Link="Compatibility\RuntimeCapability.cs" />
+    <Compile Include="..\..\Compatibility\IRuntimeProfile.cs" Link="Compatibility\IRuntimeProfile.cs" />
+    <Compile Include="..\..\Compatibility\ProfileSeedRules.cs" Link="Compatibility\ProfileSeedRules.cs" />
+    <Compile Include="..\..\Compatibility\Stable107Profile.cs" Link="Compatibility\Stable107Profile.cs" />
+    <Compile Include="..\..\Compatibility\Beta109Profile.cs" Link="Compatibility\Beta109Profile.cs" />
+    <Compile Include="..\..\Compatibility\Beta110Profile.cs" Link="Compatibility\Beta110Profile.cs" />
+    <Compile Include="..\..\Compatibility\UnsupportedProfile.cs" Link="Compatibility\UnsupportedProfile.cs" />
+    <Compile Include="..\..\Compatibility\RuntimeVersionCompatibility.cs" Link="Compatibility\RuntimeVersionCompatibility.cs" />
+    <Compile Include="..\..\Compatibility\GameVersionDetector.cs" Link="Compatibility\GameVersionDetector.cs" />
+
+    <Compile Include="..\..\Core\Seed\*.cs" Link="Core\Seed\%(Filename)%(Extension)" />
+    <Compile Include="..\..\Core\Rng\*.cs" Link="Core\Rng\%(Filename)%(Extension)" />
+    <Compile Include="..\..\Core\Verification\SeedRngVectorCatalog.cs" Link="Core\Verification\SeedRngVectorCatalog.cs" />
+    <Compile Include="..\..\Core\Verification\SeedRngVectorVerifier.cs" Link="Core\Verification\SeedRngVectorVerifier.cs" />
+  </ItemGroup>
+</Project>

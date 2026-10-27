@@ -14,16 +14,23 @@ internal sealed class WorldFamilyGpuPlan
     internal int GroupingK { get; } = 4;
     internal long GroupingWorkspaceBytes => (GroupingK - 1) * (Capacity * 8L + 64) + (GroupingK > 1 ? GroupingK * 32 : 0);
     internal int ScratchWords { get; }
+    internal GpuNumericalVariant NumericalVariant { get; }
+    internal GpuNumericRequirements NumericRequirements => GpuIntegerNumerics.Requirements(NumericalVariant);
     private readonly bool _soloConstants;
     internal long ScratchBytes => Math.Max(4, Capacity * ScratchWords * 4L);
     internal long WorkspaceBytes => Capacity * 8L + ScratchBytes + 64 + GroupingWorkspaceBytes +
         Buffers.Where((_, i) => i is not (0 or 12 or 16 or 17 or 18)).Sum(b => Math.Max(4, b.Length * 4L));
     internal string Revision(bool compact) => "W.World.Gpu." + (VariantOnly ? "Variant" : "Progression") +
         (compact ? ".CompactAbi1" : ".Dense") + $".K{GroupingK}." +
-        (_soloConstants ? "SoloConstants.CanonicalAbi1Ready.20260929.v3" : "CanonicalAbi1Ready.20260907.v2");
+        (_soloConstants ? "SoloConstants.CanonicalAbi1Ready.20260929.v3" : "CanonicalAbi1Ready.20260907.v2") +
+        (NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "");
     internal bool VariantOnly { get; }
-    internal WorldFamilyGpuPlan(WorldFamilyReplay replay, bool specializeSolo = false)
+    internal WorldFamilyGpuPlan(WorldFamilyReplay replay, bool specializeSolo = false,
+        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
+        if (numericalVariant is not (GpuNumericalVariant.NativeFloat64 or GpuNumericalVariant.IntegerRne))
+            throw new ArgumentOutOfRangeException(nameof(numericalVariant));
+        NumericalVariant = numericalVariant;
         var w = replay.Plan;
         VariantOnly = w.MaxRequiredAct == 0;
         _soloConstants = specializeSolo && !VariantOnly;
@@ -91,6 +98,6 @@ internal sealed class WorldFamilyGpuPlan
                 .Replace(second,
                     "bool second="+(Buffers[2][7]!=0 ? "true" : "false")+";",StringComparison.Ordinal);
         }
-        return body;
+        return NumericalVariant == GpuNumericalVariant.IntegerRne ? WorldGpuNumericalSource.IntegerRne(body) : body;
     }
 }

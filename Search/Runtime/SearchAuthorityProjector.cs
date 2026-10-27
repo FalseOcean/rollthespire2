@@ -18,27 +18,6 @@ namespace RolltheSpire2.Search.Runtime;
 /// </summary>
 public static class SearchAuthorityProjector
 {
-    internal static bool TryProjectForRootHash(
-        SearchExecutionRequest legacyPlan,
-        ulong rootHash,
-        string seedIdentity,
-        out RuntimeContextAuthoritySnapshot projected,
-        out SearchDisposition disposition,
-        out string issue) => TryProjectForRootHash(
-            new ExactSearchExecutionRequest(
-                legacyPlan.CompiledSearch,
-                legacyPlan.RunOptions,
-                legacyPlan.CanonicalStartSeed,
-                legacyPlan.ResolvedScanCount,
-                ExactSearchEvaluationProjection.FromLegacyFilter(legacyPlan.Filter),
-                legacyPlan.CombatRewardRoutePolicy,
-                legacyPlan.SnapshotFingerprint),
-            rootHash,
-            seedIdentity,
-            out projected,
-            out disposition,
-            out issue);
-
     public static bool TryProjectForSeed(
         ExactSearchExecutionRequest plan,
         string canonicalSeed,
@@ -69,7 +48,8 @@ public static class SearchAuthorityProjector
         string seedIdentity,
         out RuntimeContextAuthoritySnapshot projected,
         out SearchDisposition disposition,
-        out string issue)
+        out string issue,
+        Lazy<IReadOnlyList<NeowEffectRelicSnapshot>>? preparedRelicBag = null)
     {
         projected = plan.Authority;
         disposition = SearchDisposition.Unknown;
@@ -86,22 +66,16 @@ public static class SearchAuthorityProjector
         if (plan.Evaluation.RequiresEffectColdPath)
         {
             NeowEffectAuthoritySnapshot? source = projected.EffectAuthority;
-            if (source is null)
-            {
-                issue = "EffectAuthorityMissing";
-                return false;
-            }
 
             // A generated-card-only opening effect (for example Arcane Scroll) does
             // not consume the RelicGrabBag. Do not make an unrelated Mod relic-pool
             // uncertainty reject every Production Exact candidate. Rebuild the bag
             // only for query shapes whose exact opening route can actually consume it.
-            if (RequiresPerSeedRelicBagProjection(plan.Evaluation) && source.HasExactRelicBagSourcePools)
+            if (RequiresPerSeedRelicBagProjection(plan.Evaluation) && source is { HasExactRelicBagSourcePools: true } &&
+                (projected.PlayersCount == 1 || projected.WorldAuthority?.Beta109Generation is { HasExactPartyRelicBags: true }))
             {
-                IReadOnlyList<NeowEffectRelicSnapshot> ordered = NeowRewardGenerator.BuildOrderedRelicBag(
-                    profile,
-                    rootHash,
-                    projected);
+                IReadOnlyList<NeowEffectRelicSnapshot> ordered = preparedRelicBag?.Value ??
+                    NeowRewardGenerator.BuildOrderedRelicBag(profile, rootHash, projected);
                 string relicFingerprint = Fingerprint(ordered.Select(RelicDescriptor));
                 string snapshotFingerprint = Fingerprint(new[]
                 {
@@ -138,14 +112,11 @@ public static class SearchAuthorityProjector
         {
             WorldAuthoritySnapshot? world = projected.WorldAuthority;
             Beta109WorldGenerationSnapshot? source = world?.Beta109Generation;
-            if (world is null || source is null)
-            {
-                issue = "ModernWorldGenerationSnapshotMissing";
-                return false;
-            }
-
-            projected = projected.WithWorldAuthority(
-                Beta109WorldSnapshotProjector.ProjectAuthorityForRootHash(world, rootHash, seedIdentity));
+            // Missing World facts stay with their required observations. N and
+            // root-local predicates may still be computable from this request.
+            if (world is not null && source is not null)
+                projected = projected.WithWorldAuthority(
+                    Beta109WorldSnapshotProjector.ProjectAuthorityForRootHash(world, rootHash, seedIdentity));
         }
 
         disposition = SearchDisposition.NoMatch;
@@ -164,6 +135,9 @@ public static class SearchAuthorityProjector
 
         if (filter.RequireSmallCapsule || filter.RequireLargeCapsule || !filter.CapsuleContainedRelics.IsEmpty)
             return true;
+        if (ProductionQueryValidator.HasOpeningInitialRoomConditions(filter) &&
+            (filter.NeowRoute?.RouteRelicKey == BaseGameModelKeys.Relics.SmallCapsule ||
+             filter.NeowRoute?.RouteRelicKey == BaseGameModelKeys.Relics.LargeCapsule)) return true;
 
         return filter.StructuredNeowEffects.Any(condition =>
             condition.SourceRelicKey == BaseGameModelKeys.Relics.SmallCapsule ||

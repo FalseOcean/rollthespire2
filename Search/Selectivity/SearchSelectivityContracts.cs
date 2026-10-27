@@ -218,11 +218,3 @@ internal sealed record SearchSelectivityEstimate(
         return Math.Clamp(value, 0d, 1d);
     }
 }
-
-internal readonly record struct SearchSelectivityCombinationResult(
-    double PlanningSurvivalRate,
-    bool JointlyPriced,
-    string Reason)
-{
-    public static SearchSelectivityCombinationResult Unpriced(string reason) => new(1d, false, reason);
-}

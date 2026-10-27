@@ -22,6 +22,7 @@ internal static class PredictorCrystalGoalSearch
         ImmutableArray<CrystalRewardOption> goals,bool avoidCurse,TimeSpan budget,int stateLimit=100_000,
         CancellationToken token=default)
     {
+        if(table.IncludesSacrifices) return PredictorCrystalGoalLanguage.Solve(source,table,goals,avoidCurse,budget,stateLimit,token);
         var watch=Stopwatch.StartNew();
         // A finished reward picker needs its captured open rewards, not a new
         // board-generation query against the already advanced event stream.

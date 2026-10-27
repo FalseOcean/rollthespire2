@@ -35,10 +35,24 @@ internal sealed class RelicShopCpuPlan
 
     internal bool Matches(ulong root)
     {
-        if (_plan.AlwaysReject || (_ordinary is not null && !_ordinary.Matches(root))) return false;
+        if (_plan.AlwaysReject) return false;
         var pool = _plan.Pool;
-        var rng = new Beta110FastRng(unchecked(root + RelicCpuPlan.UpFrontHash));
-        for (int b = 0; b < _bucket; b++) rng.ConsumeUnstableShuffle(pool.BucketLengths[b]);
+        Beta110FastRng rng;
+        int nextBucket = 0;
+        if (_ordinary is not null)
+        {
+            if (!_ordinary.Matches(root, out rng)) return false;
+            nextBucket = _ordinary.NextBucket;
+            // Source bucket order is preserved by the compiler. If ordinary
+            // work already passed Shop, retain the original independent replay.
+            if (nextBucket > _bucket)
+            {
+                rng = new Beta110FastRng(unchecked(root + RelicCpuPlan.UpFrontHash));
+                nextBucket = 0;
+            }
+        }
+        else rng = new Beta110FastRng(unchecked(root + RelicCpuPlan.UpFrontHash));
+        for (int b = nextBucket; b < _bucket; b++) rng.ConsumeUnstableShuffle(pool.BucketLengths[b]);
         int length = pool.BucketLengths[_bucket], offset = pool.BucketOffsets[_bucket];
         Span<int> entries = stackalloc int[length];
         Span<int> observed = stackalloc int[_depth];

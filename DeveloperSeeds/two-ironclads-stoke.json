@@ -2,7 +2,6 @@
   "SchemaVersion": 1,
   "Id": "developer:two-ironclads-stoke",
   "Seed": "R93J1P8CQA34",
-  "Note": "这颗种子中，两位铁甲战士在变形灵林谷变化初始牌，可以得到相同的黑暗之拥与无惧疼痛。",
   "Context": {
     "GameVersion": "0.111.0",
     "Profile": 4,
@@ -981,27 +980,14 @@
     "SelectedSlot": 0
   },
   "SavedAtUtc": "2026-10-03T00:00:00+08:00",
-  "Title": "双人黑拥添柴无惧",
   "QueryKeys": [],
   "QueryAssociations": [],
   "DeveloperDetails": {
-    "Title": {
-      "Zh": "双人黑拥添柴无惧",
-      "En": "Two Ironclads: Dark Embrace, Stoke & Feel No Pain"
-    },
     "Icons": [
       {
         "Kind": "Relic",
         "StableContentIdentity": "RELIC:LEAFY_POULTICE"
       }
-    ],
-    "Instructions": {
-      "Zh": "双人铁甲战士，进阶 10。两人都选择树叶药膏，获得添柴。\n第一个问号会出现变形灵林谷，选择变化初始牌，可以得到黑暗之拥与无惧疼痛。\n这颗种子不要求两位玩家按特定先后顺序领取。\n按游戏 0.111.0、全解锁配置收录。",
-      "En": "Two Ironclads, Ascension 10. Both players choose Leafy Poultice for Stoke.\nThe first question-mark room contains Morphic Grove. Transform starter cards for Dark Embrace and Feel No Pain.\nThis seed does not require a particular pickup order between the two players.\nListed for game 0.111.0 with full unlocks."
-    },
-    "Description": {
-      "Zh": "最近发现：在这颗种子里，两位铁甲战士在变形灵林谷变化初始牌，可以得到相同的黑暗之拥与无惧疼痛。",
-      "En": "A recent discovery: on this seed, both Ironclads can transform starter cards at Morphic Grove into the same Dark Embrace and Feel No Pain."
-    }
+    ]
   }
 }

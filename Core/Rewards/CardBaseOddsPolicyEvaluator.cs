@@ -39,7 +39,9 @@ public static class CardBaseOddsPolicyEvaluator
         int ascension,
         CardBaseOddsPolicy policy)
     {
-        if (roll < 0f || roll >= 1f)
+        // Game Rng.NextFloat casts a [0, 1) double to float, which can round
+        // to 1. RollWithBaseOdds lets that endpoint fall through to Common.
+        if (roll < 0f || roll > 1f)
         {
             throw new ArgumentOutOfRangeException(nameof(roll));
         }

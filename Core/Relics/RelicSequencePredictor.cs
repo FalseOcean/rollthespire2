@@ -131,7 +131,7 @@ public static class RelicSequencePredictor
             world.Completeness != SnapshotCompleteness.Complete))
             return Unknown(world, profile.ProfileId, "MissingModernRelicSequenceSourceAuthority");
         if (!(modern.GameMode == WorldGameMode.Singleplayer && !modern.IsMultiplayer && modern.PlayerCount == 1) &&
-            !(modern.HasExactFixedParty && modern.PersonalPlayerSlot >= 0 && modern.PersonalPlayerSlot < modern.PlayerCount))
+            !(modern.HasExactPartyRelicBags && modern.PersonalPlayerSlot >= 0 && modern.PersonalPlayerSlot < modern.PlayerCount))
             return Unknown(world, profile.ProfileId, "ModernRelicSequencePartyAuthorityMissing");
         if (modern.RunSeedHashKind != Beta109RunSeedHashKind.ModernXxHash64 ||
             modern.OldSeedBranchStatus != Beta109OldSeedBranchStatus.NewSeedHashed)
@@ -144,8 +144,6 @@ public static class RelicSequencePredictor
             !modern.RelicRarityAuthorityExact ||
             !modern.PlayerRelicPoolCompositionExact)
             return Unknown(world, profile.ProfileId, "MissingModernRelicInitializationAuthority");
-        if (!modern.RelicShopEligibilityAuthorityExact)
-            return Unknown(world, profile.ProfileId, "MissingModernRelicShopEligibilityAuthority");
         if (!modern.NoUnknownHooksOrModifiers && !bestEffort)
             return Unknown(world, profile.ProfileId, "UnknownModernRelicSequenceHooksOrModifiers");
         if (modern.SharedRelicBuckets.Count == 0 || modern.PlayerRelicBuckets.Count == 0)
@@ -173,7 +171,10 @@ public static class RelicSequencePredictor
             evidenceCode,
             rootOverride: modern.RunSeedRoot,
             authorityFingerprintOverride: modern.SnapshotFingerprint,
-            productionValidated: validationAccepted);
+            productionValidated: validationAccepted,
+            shopEligibilityExact: modern.RelicShopEligibilityAuthorityExact &&
+                modern.PlayerRelicBuckets.Where(b => RarityEquals(RarityFromBucketId(b.BucketId), "Shop"))
+                    .All(b => b.HasExactShopEligibility));
     }
 
     private static RelicSequencePredictionResult Replay(
@@ -186,7 +187,8 @@ public static class RelicSequencePredictor
         string evidenceCode,
         ulong? rootOverride = null,
         string? authorityFingerprintOverride = null,
-        bool productionValidated = true)
+        bool productionValidated = true,
+        bool shopEligibilityExact = true)
     {
         ulong root = rootOverride ?? profile.ComputeRootSeed(canonicalSeed);
         var rng = new Xoshiro256StarStar(profile.DeriveNamedStreamSeed(root, UpFrontStream));
@@ -228,6 +230,16 @@ public static class RelicSequencePredictor
                 return Unknown(world, profile.ProfileId, "MissingRelicSequenceBucket:" + rarity);
 
             bool isShop = RarityEquals(rarity, "Shop");
+            if (isShop && !shopEligibilityExact)
+            {
+                // Eligibility filters the already shuffled Shop lane only.
+                // Every genuine bucket shuffle above remains part of UpFront.
+                lanes.Add(new RelicSequenceLaneResult(RelicSequenceKind.Shop, rarity,
+                    RelicSequencePullDirection.Back, [], PredictionPrecision.Unknown,
+                    SourceAuthority.Unknown, SnapshotCompleteness.Partial, evidenceCode + ".shop.unknown")
+                { IssueCode = "MissingModernRelicShopEligibilityAuthority" });
+                continue;
+            }
             RelicCatalogEntry[] effectiveEntries = isShop
                 ? bucket.Entries.Where(entry => entry.IsAllowedInShops).ToArray()
                 : bucket.Entries.ToArray();
@@ -312,7 +324,7 @@ public static class RelicSequencePredictor
             profile.ProfileId,
             SeedDomainEvaluationStatus.Evaluated,
             lanes,
-            precision,
+            shopEligibilityExact ? precision : PredictionPrecision.Partial,
             resultAuthority,
             resultCompleteness,
             string.Empty,
@@ -377,8 +389,7 @@ public static class RelicSequencePredictor
         {
             string rarity = RarityFromBucketId(bucket.BucketId);
             if (!bucket.OrderExact || string.IsNullOrWhiteSpace(rarity) ||
-                bucket.OrderedEntries.Count != bucket.OrderedRelics.Count ||
-                !bucket.HasExactShopEligibility)
+                bucket.OrderedEntries.Count != bucket.OrderedRelics.Count)
             {
                 issue = "InvalidModernRelicSequenceBucket:" + bucket.BucketId;
                 return null;

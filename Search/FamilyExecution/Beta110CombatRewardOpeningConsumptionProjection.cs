@@ -37,8 +37,8 @@ internal static class Beta110CombatRewardOpeningConsumptionProjector
     public static Beta110CombatRewardOpeningConsumptionProjection Project(CompiledSearch compiled)
     {
         ArgumentNullException.ThrowIfNull(compiled);
-        LegacySearchCriteriaProjection legacy = LegacySearchCriteriaAdapter.Project(compiled);
-        return Project(compiled.NormalizedQuery, legacy.Filter);
+        ExactSearchEvaluationProjectionResult projection = CompiledSearchEvaluationProjector.Project(compiled);
+        return Project(compiled.NormalizedQuery, projection.Evaluation.ToLegacyFilter());
     }
 
     private static Beta110CombatRewardOpeningConsumptionProjection Project(
@@ -63,36 +63,13 @@ internal static class Beta110CombatRewardOpeningConsumptionProjector
         // Bones itself consumes Rewards RNG while producing its two offered grants.
         // The grants are *not* reconstructed here. Only authored child mechanics are
         // replayed; missing children are ordinary placeholders by product policy.
-        var childKeys = new List<ModelKey>(2);
-        if (query.OpeningRouteRelicRequirement is { IsEmpty: false } requirement &&
-            requirement.ParentRouteRelicKey == BaseGameModelKeys.Relics.NeowsBones)
-        {
-            childKeys.AddRange(requirement.RequiredRelicKeys);
-        }
-
-        if (childKeys.Count == 0 && filter.RequiredBonesAcquisitionOrder.Count > 0)
-            childKeys.AddRange(filter.RequiredBonesAcquisitionOrder);
-        if (childKeys.Count == 0 && filter.RequiredBonesCombination.Count > 0)
-            childKeys.AddRange(filter.RequiredBonesCombination);
-
-        // A typed structured condition can only execute if its source relic is present.
-        // Treat that source as an authored Bones child when the parent route is Bones.
-        foreach (NeowStructuredEffectSearchCondition condition in query.StructuredOpeningEffects)
-        {
-            if (condition.IsEmpty || !condition.SourceRelicKey.IsValid ||
-                condition.SourceRelicKey == BaseGameModelKeys.Relics.NeowsBones)
-                continue;
-            if (!childKeys.Contains(condition.SourceRelicKey, ModelKeyComparer.Instance))
-                childKeys.Add(condition.SourceRelicKey);
-        }
-
-        byte[] children = childKeys
-            .Where(key => key.IsValid)
-            .Distinct(ModelKeyComparer.Instance)
-            .Take(2)
-            .Select(key => Beta110FastRelicCatalog.TryGetId(key, out byte id) ? id : Beta110FastRelicCatalog.InvalidId)
-            .Where(id => id != Beta110FastRelicCatalog.InvalidId)
-            .ToArray();
+        // Held acquisitions are a set, not a pickup script. Preserve a declared
+        // exact order first; otherwise the existing C route union handles both
+        // orders of the canonical guaranteed-child set.
+        IEnumerable<ModelKey> ordered = query.OpeningRouteRelicRequirement is
+            { IsEmpty: false, OrderMode: BonesRouteOrderMode.ExactOrder } requirement
+            ? requirement.RequiredRelicKeys : filter.RequiredBonesAcquisitionOrder;
+        byte[] children = ChildIds(ordered.Concat(ExplicitOpeningRelicFacts.EnumerateGuaranteedRouteGrants(query)));
 
         return new Beta110CombatRewardOpeningConsumptionProjection(
             true,
@@ -107,13 +84,10 @@ internal static class Beta110CombatRewardOpeningConsumptionProjector
 
         if (bones)
         {
-            IEnumerable<ModelKey> keys = filter.RequiredBonesAcquisitionOrder.Count > 0
-                ? filter.RequiredBonesAcquisitionOrder
-                : filter.RequiredBonesCombination;
-            foreach (ModelKey key in keys.Take(2))
-            {
-                if (Beta110FastRelicCatalog.TryGetId(key, out byte id)) relicIds.Add(id);
-            }
+            var query = LegacySearchQueryAdapter.FromFilter(filter);
+            relicIds.AddRange(ChildIds(filter.RequiredBonesAcquisitionOrder.Concat(
+                ExplicitOpeningRelicFacts.EnumerateGuaranteedRouteGrants(new(BaseGameModelKeys.Relics.NeowsBones),
+                    query.OpeningRouteRelicRequirement, query.StructuredOpeningEffects, query.LegacyNeow))));
         }
         else if (filter.RequireLargeCapsule)
         {
@@ -133,4 +107,12 @@ internal static class Beta110CombatRewardOpeningConsumptionProjector
             ids,
             Beta110CombatRewardOpeningConsumptionProjection.FingerprintOf(bones, ids));
     }
+
+    private static byte[] ChildIds(IEnumerable<ModelKey> keys) => keys
+        .Where(key => key.IsValid)
+        .Distinct(ModelKeyComparer.Instance)
+        // Ordinary nested held relics are not Neow consumption opcodes.
+        .Select(key => Beta110FastRelicCatalog.TryGetId(key, out byte id) ? id : Beta110FastRelicCatalog.InvalidId)
+        .Where(id => id != Beta110FastRelicCatalog.InvalidId && id != Beta110FastRelicCatalog.NeowsBones)
+        .Take(2).ToArray();
 }

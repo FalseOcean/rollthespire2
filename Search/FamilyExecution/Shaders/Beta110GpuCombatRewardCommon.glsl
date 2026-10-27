@@ -213,7 +213,23 @@ bool cr_replay_query_opening_consumption(uint64_t root_hash,inout RewardRouteSta
     return true;
 }
 
-uint cr_select_pool_excluding(uint meta,uint excluded[12],uint excluded_count,inout RngState rng){uint off=pool_meta.values[meta],len=pool_meta.values[meta+1u],available=0u;for(uint i=0u;i<len;++i){uint v=dense_ids.ids[off+i];bool hit=false;for(uint j=0u;j<excluded_count;++j)hit=hit||excluded[j]==v;if(!hit)available++;}if(available==0u)return 0xffffffffu;uint pick=cr_next_int(rng,available);for(uint i=0u;i<len;++i){uint v=dense_ids.ids[off+i];bool hit=false;for(uint j=0u;j<excluded_count;++j)hit=hit||excluded[j]==v;if(hit)continue;if(pick==0u)return v;pick--;}return 0xffffffffu;}
+uint cr_select_pool_excluding(uint meta,uint excluded[12],uint excluded_count,inout RngState rng){
+    uint off=pool_meta.values[meta],len=pool_meta.values[meta+1u];
+#ifdef RT2_CR_FAMILY
+    // With no exclusions, every original pool entry is eligible in its original
+    // order. Keep the empty-pool no-draw case and the same NextInt bound/draw.
+    if(excluded_count==0u){
+        if(len==0u)return 0xffffffffu;
+        return dense_ids.ids[off+cr_next_int(rng,len)];
+    }
+#endif
+    uint available=0u;
+    for(uint i=0u;i<len;++i){uint v=dense_ids.ids[off+i];bool hit=false;for(uint j=0u;j<excluded_count;++j)hit=hit||excluded[j]==v;if(!hit)available++;}
+    if(available==0u)return 0xffffffffu;
+    uint pick=cr_next_int(rng,available);
+    for(uint i=0u;i<len;++i){uint v=dense_ids.ids[off+i];bool hit=false;for(uint j=0u;j<excluded_count;++j)hit=hit||excluded[j]==v;if(hit)continue;if(pick==0u)return v;pick--;}
+    return 0xffffffffu;
+}
 
 bool cr_execute_non_capsule_relic(uint relic,uint64_t root_hash,inout RewardRouteState state){
     uint asc=plan_meta.values[4u];
@@ -258,11 +274,11 @@ bool cr_evaluate_rewards(inout RewardRouteState state){
     }
     uint predicate_count=plan_meta.values[11u];
     for(uint pi=0u;pi<predicate_count;++pi){uint base=pi*16u,battleOrd=predicate_meta.values[base],first=battleOrd==0u?1u:battleOrd,last=battleOrd==0u?maxBattle:battleOrd;bool matched=false;
-        for(uint bo=first;bo<=last&&bo<=maxBattle;++bo){uint bi=bo-1u,off=bi*12u,count=counts[bi];
+        for(uint bo=first;bo<=last&&bo<=maxBattle;++bo){uint window=predicate_meta.values[base+1u]>>8u;if(battleOrd==0u&&window!=0u&&bo>window)continue;uint bi=bo-1u,off=bi*12u,count=counts[bi];
             if(!cr_target_set(cards,off,count,predicate_meta.values[base+2u],predicate_meta.values[base+3u],0u))continue;
             if(!cr_target_set(cards,off,count,predicate_meta.values[base+4u],predicate_meta.values[base+5u],1u))continue;
             if(!cr_target_set(cards,off,count,predicate_meta.values[base+6u],predicate_meta.values[base+7u],2u))continue;
-            uint req=predicate_meta.values[base+1u];if(req==1u&&drops[bi]==0u)continue;if(req==2u&&drops[bi]!=0u)continue;
+            uint req=predicate_meta.values[base+1u]&255u;if(req==1u&&drops[bi]==0u)continue;if(req==2u&&drops[bi]!=0u)continue;
             uint pao=predicate_meta.values[base+8u],pac=predicate_meta.values[base+9u],plo=predicate_meta.values[base+10u],plc=predicate_meta.values[base+11u],pbo=predicate_meta.values[base+12u],pbc=predicate_meta.values[base+13u];
             if((pac+plc+pbc)>0u){if(drops[bi]==0u||potions[bi]==0xffffffffu)continue;bool any=pac==0u;for(uint i=0u;i<pac;++i)any=any||predicate_targets.ids[pao+i]==potions[bi];if(!any)continue;bool all=true;for(uint i=0u;i<plc;++i)all=all&&predicate_targets.ids[plo+i]==potions[bi];if(!all)continue;bool ban=false;for(uint i=0u;i<pbc;++i)ban=ban||predicate_targets.ids[pbo+i]==potions[bi];if(ban)continue;}
             matched=true;break;}

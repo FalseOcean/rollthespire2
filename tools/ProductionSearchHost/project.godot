@@ -1,0 +1,7 @@
+[application]
+config/name="RolltheSpire2 Production Replay"
+run/main_scene="res://Main.tscn"
+[dotnet]
+project/assembly_name="ProductionSearchHost"
+[rendering]
+renderer/rendering_method="mobile"

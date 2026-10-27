@@ -18,15 +18,29 @@ internal static class UiAppearance
 
     internal static void Initialize(UiColorPreferences? preferences)
     {
-        _current = (preferences ?? new()).Normalize(); _colors = Build(_current);
+        var normalized = (preferences ?? new()).Normalize();
+        if (_current == normalized) return;
+        _current = normalized; _colors = Build(_current);
         Ui1Theme.RefreshPalette();
     }
 
-    internal static void Apply(Control root, UiColorPreferences preferences)
+    internal static void Apply(Control root, UiColorPreferences preferences, IEnumerable<Control>? detachedViews = null)
     {
+        Control[] roots = [root, .. detachedViews ?? []];
         var previous = _colors;
         Initialize(preferences);
         var visited = new HashSet<ulong>();
+        IEnumerable<Godot.Theme> Themes(Node node)
+        {
+            var theme = node is Control control ? control.Theme : node is Window window ? window.Theme : null;
+            if (theme?.HasMeta("rt2_independent_ui") == true) yield break;
+            if (theme is not null) yield return theme;
+            foreach (Node child in node.GetChildren())
+                foreach (var nested in Themes(child)) yield return nested;
+        }
+        // Style resources can be shared by several themes, so keep all their
+        // owners blocked until the complete palette has been applied.
+        using var changes = new ThemeChangeBatch(roots.SelectMany(Themes));
         void Recolor(GodotObject target, StringName property, Color color, Action<Color> write)
         {
             if (color.A == 0) return;
@@ -34,11 +48,18 @@ internal static class UiAppearance
             var key = new StringName("rt2_color_" + property.ToString().Replace('/', '_'));
             string? token = target.HasMeta(key) ? target.GetMeta(key).AsString() : null;
             bool Same(Color a, Color b) => a.ToHtml(false).Equals(b.ToHtml(false), StringComparison.OrdinalIgnoreCase);
-            if (token is null || !previous.TryGetValue(token, out var prior) || !Same(prior, color))
+            bool matchesRole = token is not null && previous.TryGetValue(token, out var prior) && Same(prior, color);
+            // Main-panel factories stamp their source tokens at creation. Preserve
+            // unknown/semantic colors; never infer a main-panel role from its RGB.
+            if (target.HasMeta("rt2_mainpanel") && !matchesRole) return;
+            if (!matchesRole)
                 token = previous.FirstOrDefault(pair => Same(pair.Value, color)).Key;
             if (token is null || !_colors.TryGetValue(token, out var next)) return;
             target.SetMeta(key, token);
-            write(new Color(next.R, next.G, next.B, color.A));
+            var replacement = new Color(next.R, next.G, next.B, color.A);
+            if (replacement == color) return;
+            if (target is Resource) changes.MarkChanged();
+            write(replacement);
         }
         void Style(StyleBox? style)
         {
@@ -48,28 +69,37 @@ internal static class UiAppearance
         }
         void Visit(Node node)
         {
-            if (node is Control control)
+            Godot.Theme? localTheme = node is Control scopedControl ? scopedControl.Theme : node is Window scopedWindow ? scopedWindow.Theme : null;
+            if (localTheme?.HasMeta("rt2_independent_ui") == true) return;
+            if (node is Control or Window)
             {
-                foreach (var entry in control.GetPropertyList())
+                foreach (var entry in node.GetPropertyList())
                 {
                     string name = entry["name"].AsString();
                     if (name.StartsWith("theme_override_colors/", StringComparison.Ordinal))
                     {
-                        var value = control.Get(name);
+                        var value = node.Get(name);
                         if (value.VariantType == Variant.Type.Color)
-                            Recolor(control, name, value.AsColor(), c => control.Set(name, c));
+                            Recolor(node, name, value.AsColor(), c => node.Set(name, c));
                     }
                     else if (name.StartsWith("theme_override_styles/", StringComparison.Ordinal))
-                        Style(control.Get(name).AsGodotObject() as StyleBox);
+                        Style(node.Get(name).AsGodotObject() as StyleBox);
                 }
-                if (control.Theme is { } theme && visited.Add(theme.GetInstanceId()))
+                if (localTheme is { } theme && visited.Add(theme.GetInstanceId()))
+                {
                     foreach (var type in theme.GetTypeList())
+                    {
                         foreach (var name in theme.GetStyleboxList(type)) Style(theme.GetStylebox(name, type));
-                if (control is ColorRect rect) Recolor(rect, "color", rect.Color, c => rect.Color = c);
+                        if (theme.HasMeta("rt2_mainpanel"))
+                            foreach (var name in theme.GetColorList(type))
+                                Recolor(theme, "theme_color_" + type + "_" + name, theme.GetColor(name, type), c => theme.SetColor(name, type, c));
+                    }
+                }
+                if (node is ColorRect rect) Recolor(rect, "color", rect.Color, c => rect.Color = c);
             }
             foreach (Node child in node.GetChildren()) Visit(child);
         }
-        Visit(root);
+        foreach (Control view in roots) Visit(view);
     }
 
     private static Dictionary<string, Color> Build(UiColorPreferences value)
@@ -103,6 +133,20 @@ internal static class UiAppearance
                     Math.Clamp(color.G + amount, 0, 1), Math.Clamp(color.B + amount, 0, 1));
                 map.TryAdd(Shift(new Color(pair.Key)).ToHtml(false).ToUpperInvariant(), Shift(pair.Value));
             }
+        // These explicit main-panel tokens do not replace Canonical or Ui1Theme.
+        // Existing appearance preferences remain the source for custom/stars colors.
+        bool originalMain = value.Scheme == "ink";
+        void Main(string token, Color chosen) => map[token] = originalMain ? new Color(token) : chosen;
+        Main("070D1A", bg);
+        Main("0B1224", panel);
+        Main("151E32", panel.Lerp(text, .02f));
+        Main("182543", panel.Lerp(text, .08f));
+        Main("1C2A4A", panel.Lerp(text, .11f));
+        Main("3A587E", panel.Lerp(text, .22f));
+        Main("E5EDF8", text);
+        Main("AFBED4", text.Lerp(panel, .25f));
+        Main("71839C", text.Lerp(panel, .48f));
+        Main("C7B07B", accent);
         return map;
     }
 }

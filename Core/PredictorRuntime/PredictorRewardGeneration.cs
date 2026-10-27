@@ -18,7 +18,12 @@ internal sealed record PredictorRewardPlan(PredictorRewardKind Kind, int MinGold
     bool ForceRarityOddsChange = false, bool NoRarityModification = false, bool UseEventRng = false,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
     ImmutableArray<ModelKey> PrefilledCardKeys = default, PredictorRewardPlan? ManualRerollRecipe = null,
-    long? PrefilledCardInstanceId = null, bool WasGoldStolenBack = false);
+    long? PrefilledCardInstanceId = null, bool WasGoldStolenBack = false,
+    bool GoldAmountUnspecified = false, bool GoldNetRestored = false)
+{
+    // Native CardReward.AfterGenerated runs after every population, including rerolls.
+    public bool UpgradeAfterGeneration { get; init; }
+}
 internal sealed record PredictorGeneratedRewards(PredictorState State, ImmutableArray<PredictorReward> Rewards,
     ImmutableArray<PredictorRewardStage> Stages);
 
@@ -147,6 +152,18 @@ internal static class PredictorRewardGeneration
         switch (plan.Kind)
         {
             case PredictorRewardKind.Gold:
+                if (plan.GoldAmountUnspecified || plan.GoldNetRestored)
+                {
+                    if (!plan.GoldAmountUnspecified || !plan.GoldNetRestored || !plan.WasGoldStolenBack ||
+                        !original || rngOverride != null || !PredictorCombatRewardFacts.CanBalanceRecoveredGold(context, state))
+                        throw new ArgumentException("PredictorRecoveredGoldNetRestoreInvalid");
+                    // Original Heist.Populate consumes one Rewards draw even for
+                    // a fixed amount. Only its offset is needed for this declared
+                    // closed loop; zero is never exposed as an observed amount.
+                    state = state.Draw(PredictorStream.Rewards, 0, 1).State;
+                    return reward with { WasGoldStolenBack = true, GoldAmountUnspecified = true,
+                        GoldNetRestored = true, Status = PredictorRewardStatus.Taken, CanSkip = false };
+                }
                 int amount = plan.MinGold;
                 if (original || !plan.PrefilledGold)
                 {
@@ -175,11 +192,14 @@ internal static class PredictorRewardGeneration
                 if (!plan.PrefilledCardKeys.IsDefault)
                 {
                     var manual = plan.PrefilledCardKeys.Select(k => PredictorCardChanges.Definition(context, k).Prototype).ToList();
-                    return reward with { Cards = ModifyManualCardRewardOptions(context, ref state, manual), ManuallySetCards = true,
+                    var manualCards = ModifyManualCardRewardOptions(context, ref state, manual, true, out var manualScope);
+                    return reward with { Cards = manualCards, CardRewardNicheScope = manualScope, ManuallySetCards = true,
                         RelicSubscriptionActive = false, RerollRecipe = plan.ManualRerollRecipe };
                 }
                 if (subscription == 0) subscription = ReserveSubscription(ref state);
-                return reward with { Cards = GenerateCards(context, ref state, plan, isCardReward: true, rngOverride), SubscriptionOrder = subscription, RerollRecipe = plan };
+                var generatedCards = GenerateCards(context, ref state, plan, true, out var generatedScope, rngOverride);
+                return reward with { Cards = generatedCards, CardRewardNicheScope = generatedScope,
+                    SubscriptionOrder = subscription, RerollRecipe = plan };
         }
     }
 
@@ -219,11 +239,13 @@ internal static class PredictorRewardGeneration
     internal static bool RelicAllowed(PredictorContext context, PredictorState state, ModelKey key)
     {
         if (context.Crystal is { } crystal) return crystal.EligibleRelics.Contains(key);
-        if (key.Entry == "MASSIVE_SCROLL") return false;
+        if (context.Operation?.IgnoresBehavior(key) == true) return true;
+        if (key.Entry == "MASSIVE_SCROLL") return context.Operation?.PlayerCount > 1;
         if (key.Entry == "LASTING_CANDY" && context.Character.Entry == "IRONCLAD" && context.NumberOfRuns == 0) return false;
         return key.Entry is not ("AMETHYST_AUBERGINE" or "BOOK_OF_FIVE_RINGS" or "BOWLER_HAT" or "DRAGON_FRUIT" or
             "FROZEN_EGG" or "GIRYA" or "JUZU_BRACELET" or "LASTING_CANDY" or "LUCKY_FYSH" or "MEAL_TICKET" or
-            "MOLTEN_EGG" or "OLD_COIN" or "PLANISPHERE" or "SHOVEL" or "TOXIC_EGG" or "WHITE_BEAST_STATUE" or "WHITE_STAR") || state.Position.Floor < 41;
+            "MOLTEN_EGG" or "OLD_COIN" or "PLANISPHERE" or "SHOVEL" or "TOXIC_EGG" or "WHITE_BEAST_STATUE" or "WHITE_STAR") ||
+            state.Position.Floor < (context.Operation?.PlayerCount > 1 ? 38 : 41);
     }
 
     internal static ImmutableArray<NeowEffectCardSnapshot> ResolveCardPool(PredictorContext context,
@@ -266,13 +288,18 @@ internal static class PredictorRewardGeneration
                 }
             }
         var rarity = plan.Rarity;
-        pool = pool.Where(c => (context.Crystal?.PlayerCount > 1 || !c.IsMultiplayerOnly) && c.IsUnlockedInCapturedPool &&
+        pool = pool.Where(c => (context.Crystal?.PlayerCount > 1 || context.Operation?.PlayerCount > 1 || !c.IsMultiplayerOnly) && c.IsUnlockedInCapturedPool &&
             (rarity == null || c.Rarity == rarity)).ToImmutableArray();
         return pool;
     }
 
     internal static ImmutableArray<PredictorCard> GenerateCards(PredictorContext context, ref PredictorState state,
         PredictorRewardPlan plan, bool isCardReward, Xoshiro256StarStar? rngOverride = null)
+        => GenerateCards(context, ref state, plan, isCardReward, out _, rngOverride);
+
+    internal static ImmutableArray<PredictorCard> GenerateCards(PredictorContext context, ref PredictorState state,
+        PredictorRewardPlan plan, bool isCardReward, out PredictorCardRewardNicheScope? nicheScope,
+        Xoshiro256StarStar? rngOverride = null)
     {
         var pool = ResolveCardPool(context, state, ref plan, isCardReward);
         var cards = new List<PredictorCard>();
@@ -287,14 +314,24 @@ internal static class PredictorRewardGeneration
                     if (power.Length > 0) cards.Add(GenerateCard(context, ref state, plan with { EncounterSource = false }, power, rngOverride));
                 }
         }
-        return ModifyManualCardRewardOptions(context, ref state, cards, isCardReward);
+        var modified = ModifyManualCardRewardOptions(context, ref state, cards, isCardReward, out nicheScope);
+        return plan.UpgradeAfterGeneration
+            ? modified.Select(c => c.UpgradeLevel < c.MaxUpgradeLevel
+                ? PredictorCardLevelEffects.Reconcile(context, c with { UpgradeLevel = c.UpgradeLevel + 1 }) : c).ToImmutableArray()
+            : modified;
     }
 
     internal static ImmutableArray<PredictorCard> ModifyManualCardRewardOptions(PredictorContext context,
         ref PredictorState state, IEnumerable<PredictorCard> input, bool isCardReward = true)
+        => ModifyManualCardRewardOptions(context, ref state, input, isCardReward, out _);
+
+    internal static ImmutableArray<PredictorCard> ModifyManualCardRewardOptions(PredictorContext context,
+        ref PredictorState state, IEnumerable<PredictorCard> input, bool isCardReward,
+        out PredictorCardRewardNicheScope? nicheScope)
     {
             var cards = input.ToList();
             var after = new List<long>();
+            var wingCharmEligibility = new List<ImmutableArray<int>>();
             foreach (var relic in state.Relics.Where(r => !r.Melted))
             {
                 cards = cards.Select(c => UpgradeWithEgg(c, relic.Key.Entry)).ToList();
@@ -309,7 +346,8 @@ internal static class PredictorRewardGeneration
                         ? c with { Enchantment = new ModelKey("ENCHANTMENT", "GLAM"), EnchantmentAmount = 1 } : c).ToList();
                     after.Add(relic.Id);
                 }
-                (state, cards) = PredictorCardRewardRelicHooks.ApplyLate(context, state, cards, relic.Key, cloneOnChange: false, relicId: relic.Id);
+                (state, cards) = PredictorCardRewardRelicHooks.ApplyLate(context, state, cards, relic.Key,
+                    cloneOnChange: false, relicId: relic.Id, wingCharmEligibility: wingCharmEligibility);
             }
             foreach (long id in after)
             {
@@ -318,6 +356,7 @@ internal static class PredictorRewardGeneration
                 state = state with { Relics = state.Relics.SetItem(i, relic.Key.Entry == "SILVER_CRUCIBLE"
                     ? relic with { RewardUpgradeUses = relic.RewardUpgradeUses + 1 } : relic with { SilkenUsed = true }) };
             }
+        nicheScope = PredictorCardRewardNicheScope.From(wingCharmEligibility);
         return cards.Select(c => PredictorCardLevelEffects.Reconcile(context, c)).ToImmutableArray();
     }
 

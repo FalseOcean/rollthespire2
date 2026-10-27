@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
+using System.Runtime.InteropServices;
 using Godot;
 
 namespace RolltheSpire2.Search.FamilyExecution;
@@ -10,9 +12,12 @@ internal readonly record struct WorldFamilyGpuMetrics(int Input, int Output, int
 internal sealed class WorldFamilyGpuExecutor : IDisposable
 {
     internal int Capacity { get; }
+    internal GpuNumericalVariant NumericalVariant { get; }
     private readonly RenderingDevice _rd;
     private readonly List<Rid> _owned = new();
     private readonly Rid[] _batch, _header, _input, _output, _uniforms;
+    private readonly byte[][] _batchBytes;
+    private readonly byte[] _headerResetBytes = FamilyGpuComputeUtility.ToBytes(Header());
     private readonly Rid _pipeline, _headerBank;
     private readonly int _owner = System.Environment.CurrentManagedThreadId;
     private bool _disposed;
@@ -25,7 +30,7 @@ internal sealed class WorldFamilyGpuExecutor : IDisposable
 
     internal WorldFamilyGpuExecutor(RenderingDevice rd, WorldFamilyGpuPlan plan, Rid? privateInput = null, PrivateOrdinalBuffer? privateOutput = null)
     {
-        _rd = rd; Capacity = plan.Capacity; GroupingK = plan.GroupingK;
+        _rd = rd; Capacity = plan.Capacity; GroupingK = plan.GroupingK; NumericalVariant = plan.NumericalVariant;
         _privateInput = privateInput.HasValue; _privateOutput = privateOutput;
         if (privateInput.HasValue && privateOutput is not null && privateInput.Value == privateOutput.Buffer)
             throw new ArgumentException("W.PrivateBuffersAlias");
@@ -33,13 +38,14 @@ internal sealed class WorldFamilyGpuExecutor : IDisposable
         Rid Add(Rid rid) { _owned.Add(rid); return rid; }
         Rid Buffer(uint[] values) => Add(FamilyGpuComputeUtility.CreateStorageBuffer(rd, FamilyGpuComputeUtility.ToBytesNonEmpty(values)));
         _batch = new Rid[GroupingK]; _header = new Rid[GroupingK]; _input = new Rid[GroupingK];
+        _batchBytes = new byte[GroupingK][];
         _output = new Rid[GroupingK]; _uniforms = new Rid[GroupingK];
         try
         {
             Rid[] buffers = new Rid[plan.Buffers.Length];
             for (int i = 0; i < plan.Buffers.Length; i++)
                 if (i is not (0 or 12 or 16 or 17 or 18)) buffers[i] = Buffer(plan.Buffers[i]);
-            buffers[12] = Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, checked(Capacity * plan.ScratchWords * 4)));
+            buffers[12] = Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, checked(Capacity * plan.ScratchWords * 4)));
             string source = plan.ShaderSource();
             if (_privateInput)
             {
@@ -59,13 +65,14 @@ internal sealed class WorldFamilyGpuExecutor : IDisposable
             if (!rd.ComputePipelineIsValid(_pipeline)) throw new InvalidOperationException("W.GpuPipelineInvalid");
             for (int slot = 0; slot < GroupingK; slot++)
             {
+                _batchBytes[slot] = new byte[8 * sizeof(uint)];
                 buffers[0] = _batch[slot] = Buffer(new uint[8]);
                 buffers[16] = _header[slot] = privateOutput is not null && slot > 0 ? _header[0] : Buffer(Header());
-                buffers[18] = _input[slot] = privateInput ?? Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, Capacity * 4));
-                buffers[17] = _output[slot] = privateOutput?.Buffer ?? Add(FamilyGpuComputeUtility.CreateZeroedStorageBuffer(rd, Capacity * 4));
+                buffers[18] = _input[slot] = privateInput ?? Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, Capacity * 4));
+                buffers[17] = _output[slot] = privateOutput?.Buffer ?? Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, Capacity * 4));
                 _uniforms[slot] = Add(FamilyGpuComputeUtility.CreateUniformSet(rd, shader, buffers, "W.World"));
             }
-            // K1 retains its original direct header read and has no copy/bank.
+            // K1 queues its own header directly and has no copy/bank.
             _headerBank = GroupingK == 1 || privateOutput is not null ? default : Buffer(new uint[GroupingK * 8]);
             Device = rd.GetDeviceName(); SetupMs = watch.Elapsed.TotalMilliseconds;
         }
@@ -114,7 +121,7 @@ internal sealed class WorldFamilyGpuExecutor : IDisposable
         long headerBytes = 0, payloadBytes = 0;
         int privateCount = 0;
         bool resident = _privateOutput is not null;
-        if (resident) FamilyGpuComputeUtility.Update(_rd, _header[0], Header(), "W.PrivateHeader");
+        if (resident) FamilyGpuComputeUtility.UpdateBytes(_rd, _header[0], _headerResetBytes, "W.PrivateHeader");
         for (int offset = 0; offset < inputCount;)
         {
             token.ThrowIfCancellationRequested();
@@ -124,19 +131,21 @@ internal sealed class WorldFamilyGpuExecutor : IDisposable
             {
                 token.ThrowIfCancellationRequested();
                 int windowOffset = offset + slot * Capacity, count = Math.Min(Capacity, inputCount - windowOffset);
-                FamilyGpuComputeUtility.Update(_rd, _batch[slot], [(uint)input.Batch.BatchBase, (uint)(input.Batch.BatchBase >> 32),
-                    (uint)input.Batch.BatchCandidateCount, (uint)count, input.IsDense && !_privateInput ? 0u : 1u, (uint)Capacity, (uint)windowOffset, resident ? (uint)PrivateOrdinalBuffer.Capacity : 0u], "W.Batch");
-                if (!resident) FamilyGpuComputeUtility.Update(_rd, _header[slot], Header(), "W.Header");
+                Span<uint> batch = FamilyGpuComputeUtility.UInt32Span(_batchBytes[slot]);
+                batch[0] = (uint)input.Batch.BatchBase; batch[1] = (uint)(input.Batch.BatchBase >> 32);
+                batch[2] = (uint)input.Batch.BatchCandidateCount; batch[3] = (uint)count;
+                batch[4] = input.IsDense && !_privateInput ? 0u : 1u; batch[5] = (uint)Capacity;
+                batch[6] = (uint)windowOffset; batch[7] = resident ? (uint)PrivateOrdinalBuffer.Capacity : 0u;
+                FamilyGpuComputeUtility.UpdateBytes(_rd, _batch[slot], _batchBytes[slot], "W.Batch");
+                if (!resident) FamilyGpuComputeUtility.UpdateBytes(_rd, _header[slot], _headerResetBytes, "W.Header");
                 if (!input.IsDense && !_privateInput)
-                {
-                    var ordinals = input.ExportAbi1().Span.Slice(windowOffset, count);
-                    var packed = new uint[count];
-                    for (int i = 0; i < count; i++) packed[i] = checked((uint)ordinals[i]);
-                    FamilyGpuComputeUtility.Update(_rd, _input[slot], packed, "W.CompactInput");
-                }
+                    FamilyGpuComputeUtility.UpdateBytes(_rd, _input[slot],
+                        FamilyGpuComputeUtility.PackAbi1UInt32(input, windowOffset, count), "W.CompactInput");
             }
             token.ThrowIfCancellationRequested();
+            int processed = offset + Math.Min(inputCount - offset, slots * Capacity);
             start = watch.Elapsed.TotalMilliseconds;
+            Exception? recordingFailure = null;
             long list = _rd.ComputeListBegin();
             try
             {
@@ -152,30 +161,57 @@ internal sealed class WorldFamilyGpuExecutor : IDisposable
                     dispatches++;
                 }
             }
-            finally { _rd.ComputeListEnd(); }
-            if (GroupingK > 1 && !resident)
+            catch (Exception failure) { recordingFailure = failure; }
+            try { _rd.ComputeListEnd(); }
+            catch (Exception failure)
             {
-                // BufferCopy is outside the active compute list. RD tracks compute-write -> transfer-read.
-                for (int slot = 0; slot < slots; slot++)
-                    if (_rd.BufferCopy(_header[slot], _headerBank, 0, (uint)(slot * 32), 32) != Error.Ok)
-                        throw new InvalidOperationException($"W.HeaderBankCopyFailure:batch={input.Batch.BatchBase};offset={offset + slot * Capacity}");
+                recordingFailure = recordingFailure is null ? failure : new AggregateException(recordingFailure, failure);
             }
+            if (recordingFailure is null && GroupingK > 1 && !resident)
+            {
+                try
+                {
+                    // BufferCopy is outside the active compute list. RD tracks compute-write -> transfer-read.
+                    for (int slot = 0; slot < slots; slot++)
+                    {
+                        Error error = _rd.BufferCopy(_header[slot], _headerBank, 0, (uint)(slot * 32), 32);
+                        if (error != Error.Ok)
+                            throw new InvalidOperationException($"W.HeaderBankCopyFailure:batch={input.Batch.BatchBase};offset={offset + slot * Capacity};error={error}");
+                    }
+                }
+                catch (Exception failure) { recordingFailure = failure; }
+            }
+            if (recordingFailure is not null)
+            {
+                FamilyGpuComputeUtility.CleanupAfterFailure(recordingFailure,
+                    () => FamilyGpuComputeUtility.SubmitAndSync(_rd, "W.World"), "W.RecordCopyAndDrain");
+                ExceptionDispatchInfo.Capture(recordingFailure).Throw();
+            }
+            // Private output appends to one cumulative header. The shader's
+            // sticky fault bits and processed count cover every prior group;
+            // only the completed population boundary needs CPU observation.
+            FamilyGpuReadback.Pending? pendingHeader = !resident || processed == inputCount
+                ? FamilyGpuReadback.Queue(_rd, resident || GroupingK == 1 ? _header[0] : _headerBank, 0,
+                    checked((uint)(resident ? 32 : slots * 32)),
+                    $"W.Header:batch={input.Batch.BatchBase};offset={offset}")
+                : null;
             FamilyGpuComputeUtility.SubmitAndSync(_rd, "W.World"); dispatchSync += watch.Elapsed.TotalMilliseconds - start; groups++;
-            token.ThrowIfCancellationRequested();
             start = watch.Elapsed.TotalMilliseconds;
+            byte[]? headerData = pendingHeader?.GetData();
+            token.ThrowIfCancellationRequested();
             if (resident)
             {
-                uint[] h = FamilyGpuComputeUtility.FromUInt32Bytes(_rd.BufferGetData(_header[0], 0, 32));
-                int processed = offset + Math.Min(inputCount - offset, slots * Capacity);
+                if (processed < inputCount) { offset = processed; continue; }
+                ReadOnlySpan<uint> h = FamilyGpuComputeUtility.UInt32Span(headerData!);
                 if (h.Length != 8 || h[0] != 0x57464d52 || h[1] != 1 || h[5] != 0x57463031 ||
-                    h[3] != 0 || h[4] != processed || h[2] > processed)
-                    throw new InvalidDataException("W.PrivateHeaderFault:" + string.Join(',', h));
+                    h[3] != 0 || h[4] != inputCount || h[2] > inputCount)
+                    throw new InvalidDataException("W.PrivateHeaderFault:" + string.Join(',', h.ToArray()));
                 privateCount = checked((int)h[2]);
                 headerCalls++; headerBytes += 32; headerRead += watch.Elapsed.TotalMilliseconds - start;
                 offset = processed;
                 continue;
             }
-            uint[] headers = FamilyGpuComputeUtility.FromUInt32Bytes(_rd.BufferGetData(GroupingK == 1 ? _header[0] : _headerBank, 0, (uint)(slots * 32)));
+            ReadOnlySpan<uint> headers = FamilyGpuComputeUtility.UInt32Span(headerData!);
             if (headers.Length != slots * 8) throw new InvalidDataException($"W.GpuHeaderBankLength:offset={offset}");
             for (int slot = 0; slot < slots; slot++)
             {
@@ -192,14 +228,14 @@ internal sealed class WorldFamilyGpuExecutor : IDisposable
                 uint n = headers[slot * 8 + 2];
                 if (n == 0) continue;
                 double payloadStart = watch.Elapsed.TotalMilliseconds;
-                uint[] packed = FamilyGpuComputeUtility.FromUInt32Bytes(_rd.BufferGetData(_output[slot], 0, n * 4));
+                ReadOnlySpan<uint> packed = FamilyGpuComputeUtility.UInt32Span(_rd.BufferGetData(_output[slot], 0, n * 4));
                 if (packed.Length != n) throw new InvalidDataException($"W.GpuPayloadCountMismatch:offset={offset + slot * Capacity}");
                 payloadCalls++; payloadBytes += n * 4L;
                 foreach (uint ordinal in packed) survivors.Add(ordinal);
                 payloadRead += watch.Elapsed.TotalMilliseconds - payloadStart;
             }
             token.ThrowIfCancellationRequested();
-            offset += Math.Min(inputCount - offset, slots * Capacity);
+            offset = processed;
         }
         if (resident)
         {

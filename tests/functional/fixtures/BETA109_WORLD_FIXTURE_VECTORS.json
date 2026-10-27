@@ -1,0 +1,209 @@
+{
+  "schemaVersion": "beta109-world-fixture-v1",
+  "authority": "direct-source-algorithm-only",
+  "gameVersion": "0.109.0-beta",
+  "verifiedAgainstRealGame": false,
+  "warning": "Synthetic catalogs and replayed pure RNG results are not original game pools and must not be presented as runtime parity.",
+  "fixtures": [
+    {
+      "id": "boss-synthetic-act1-single",
+      "fixtureKind": "SyntheticCatalogFixture",
+      "domain": "Boss",
+      "profile": "Beta109",
+      "seed": "SYNTHETIC-109-BOSS-01",
+      "character": "SYNTH_CHARACTER_A",
+      "ascension": 0,
+      "act": 1,
+      "selectedActs": ["SYNTH_ACT_1", "SYNTH_ACT_2", "SYNTH_ACT_3"],
+      "catalog": {
+        "bossesInGenerateAllEncountersOrder": ["SYNTH_BOSS_A", "SYNTH_BOSS_B", "SYNTH_BOSS_C"],
+        "weakEncounterSlots": 3,
+        "totalNormalRooms": 15
+      },
+      "rngReplay": {
+        "stream": "up_front",
+        "priorCounter": 0,
+        "priorCalls": [],
+        "nextIntResults": [1]
+      },
+      "expected": {
+        "firstBossModelKey": "SYNTH_BOSS_B",
+        "secondBossModelKey": null,
+        "outputOrder": ["SYNTH_BOSS_B"],
+        "rngCalls": 1,
+        "authority": "PureAlgorithmFixture",
+        "precision": "ExactWithinSyntheticTrace"
+      }
+    },
+    {
+      "id": "boss-synthetic-act2-single",
+      "fixtureKind": "SyntheticCatalogFixture",
+      "domain": "Boss",
+      "profile": "Beta109",
+      "seed": "SYNTHETIC-109-BOSS-02",
+      "character": "SYNTH_CHARACTER_B",
+      "ascension": 5,
+      "act": 2,
+      "selectedActs": ["SYNTH_ACT_1", "SYNTH_ACT_2", "SYNTH_ACT_3"],
+      "catalog": {
+        "bossesInGenerateAllEncountersOrder": ["SYNTH_BOSS_D", "SYNTH_BOSS_E", "SYNTH_BOSS_F", "SYNTH_BOSS_G"],
+        "weakEncounterSlots": 2,
+        "totalNormalRooms": 14
+      },
+      "rngReplay": {
+        "stream": "up_front",
+        "priorCounter": 7,
+        "priorCalls": ["synthetic-event-shuffle", "synthetic-encounter-bag"],
+        "nextIntResults": [3]
+      },
+      "expected": {
+        "firstBossModelKey": "SYNTH_BOSS_G",
+        "secondBossModelKey": null,
+        "outputOrder": ["SYNTH_BOSS_G"],
+        "rngCalls": 1,
+        "authority": "PureAlgorithmFixture",
+        "precision": "ExactWithinSyntheticTrace"
+      }
+    },
+    {
+      "id": "boss-synthetic-act3-a10-double",
+      "fixtureKind": "SyntheticCatalogFixture",
+      "domain": "Boss",
+      "profile": "Beta109",
+      "seed": "SYNTHETIC-109-BOSS-03",
+      "character": "SYNTH_CHARACTER_A",
+      "ascension": 10,
+      "act": 3,
+      "selectedActs": ["SYNTH_ACT_1", "SYNTH_ACT_2", "SYNTH_ACT_3"],
+      "catalog": {
+        "bossesInGenerateAllEncountersOrder": ["SYNTH_BOSS_X", "SYNTH_BOSS_Y", "SYNTH_BOSS_Z"],
+        "weakEncounterSlots": 2,
+        "totalNormalRooms": 13
+      },
+      "rngReplay": {
+        "stream": "up_front",
+        "priorCounter": 19,
+        "priorCalls": ["synthetic-act1", "synthetic-act2", "synthetic-act3-prefix"],
+        "nextIntResults": [2, 0],
+        "secondPool": ["SYNTH_BOSS_X", "SYNTH_BOSS_Y"]
+      },
+      "expected": {
+        "firstBossModelKey": "SYNTH_BOSS_Z",
+        "secondBossModelKey": "SYNTH_BOSS_X",
+        "outputOrder": ["SYNTH_BOSS_Z", "SYNTH_BOSS_X"],
+        "rngCalls": 2,
+        "authority": "PureAlgorithmFixture",
+        "precision": "ExactWithinSyntheticTrace"
+      }
+    },
+    {
+      "id": "ancient-synthetic-neow-options",
+      "fixtureKind": "SyntheticCatalogFixture",
+      "domain": "AncientOptions",
+      "profile": "Beta109",
+      "seed": "SYNTHETIC-109-ANCIENT-01",
+      "character": "SYNTH_CHARACTER_A",
+      "ascension": 0,
+      "ancient": "NEOW",
+      "playerSlot": 0,
+      "isShared": false,
+      "catalog": {
+        "cursePool": ["SYNTH_CURSE_0", "SYNTH_CURSE_1"],
+        "positivePool": ["SYNTH_POS_0", "SYNTH_POS_1", "SYNTH_POS_2", "SYNTH_POS_3", "SYNTH_POS_4"],
+        "conditionalPairs": ["SYNTH_PAIR_A", "SYNTH_PAIR_B", "SYNTH_PAIR_C"]
+      },
+      "rngReplay": {
+        "stream": "event_local_ancient",
+        "eventSeedFormula": "RunSeed + playerSlot + hash(NEOW)",
+        "nextIntResults": [1],
+        "nextBoolResults": [true, false, true],
+        "shuffleOrder": [4, 1, 0, 3, 2]
+      },
+      "expected": {
+        "orderedOptions": ["SYNTH_POS_4", "SYNTH_POS_1", "SYNTH_CURSE_1"],
+        "rngCalls": 6,
+        "authority": "PureAlgorithmFixture",
+        "precision": "ExactWithinSyntheticTrace"
+      }
+    },
+    {
+      "id": "ancient-synthetic-orobas-options",
+      "fixtureKind": "SyntheticCatalogFixture",
+      "domain": "AncientOptions",
+      "profile": "Beta109",
+      "seed": "SYNTHETIC-109-ANCIENT-02",
+      "character": "SYNTH_CHARACTER_B",
+      "ascension": 3,
+      "ancient": "OROBAS",
+      "playerSlot": 0,
+      "isShared": false,
+      "dynamicFacts": {
+        "unlockedCharactersExceptCurrent": ["SYNTH_CHARACTER_A", "SYNTH_CHARACTER_C"],
+        "touchOfOrobasSetup": "synthetic-known",
+        "seaGlassCharacterIdSource": "selected-character-draw"
+      },
+      "catalog": {
+        "optionPool1": ["SYNTH_ELECTRIC", "SYNTH_GLASS"],
+        "optionPool2": ["SYNTH_COFFER", "SYNTH_DRIFTWOOD", "SYNTH_PEARL", "SYNTH_CASTLE"],
+        "optionPool3": ["SYNTH_TOUCH", "SYNTH_TOOTH"]
+      },
+      "rngReplay": {
+        "stream": "event_local_ancient",
+        "nextIntResults": [0, 1, 0, 3],
+        "nextFloatResults": [0.9]
+      },
+      "expected": {
+        "orderedOptions": ["SYNTH_GLASS_FOR_A", "SYNTH_DRIFTWOOD", "SYNTH_TOUCH"],
+        "rngCalls": 5,
+        "authority": "PureAlgorithmFixture",
+        "precision": "ExactWithinSyntheticTrace"
+      }
+    },
+    {
+      "id": "ancient-synthetic-tanx-options",
+      "fixtureKind": "SyntheticCatalogFixture",
+      "domain": "AncientOptions",
+      "profile": "Beta109",
+      "seed": "SYNTHETIC-109-ANCIENT-03",
+      "character": "SYNTH_CHARACTER_C",
+      "ascension": 7,
+      "ancient": "TANX",
+      "playerSlot": 0,
+      "isShared": false,
+      "dynamicFacts": {
+        "instinctEnchantableCount": 3
+      },
+      "catalog": {
+        "pool": ["SYNTH_TANX_0", "SYNTH_TANX_1", "SYNTH_TANX_2", "SYNTH_TANX_3", "SYNTH_TANX_4", "SYNTH_TANX_5", "SYNTH_TANX_6", "SYNTH_TANX_7", "SYNTH_TANX_8", "SYNTH_TRI_BOOMERANG"]
+      },
+      "rngReplay": {
+        "stream": "event_local_ancient",
+        "shuffleOrder": [9, 2, 0, 6, 4, 1, 7, 3, 8, 5]
+      },
+      "expected": {
+        "orderedOptions": ["SYNTH_TRI_BOOMERANG", "SYNTH_TANX_2", "SYNTH_TANX_0"],
+        "rngCalls": 9,
+        "authority": "PureAlgorithmFixture",
+        "precision": "ExactWithinSyntheticTrace"
+      }
+    },
+    {
+      "id": "pending-real-beta109-boss",
+      "fixtureKind": "PendingRealGameFixture",
+      "domain": "Boss",
+      "profile": "Beta109",
+      "verificationStatus": "NeedsRuntimeCapture",
+      "requiredCapture": ["real seed", "character", "ascension", "mode/player count", "selected ordered Acts", "unlock fingerprint", "ordered GenerateAllEncounters catalog", "UpFront counter before GenerateRooms", "first/second Boss ModelKeys", "tutorial/test flags"],
+      "expected": null
+    },
+    {
+      "id": "pending-real-beta109-ancient-options",
+      "fixtureKind": "PendingRealGameFixture",
+      "domain": "AncientOptions",
+      "profile": "Beta109",
+      "verificationStatus": "NeedsRuntimeCapture",
+      "requiredCapture": ["real seed", "Ancient identity", "player slot", "IsShared", "character", "current Act", "deck predicate facts", "unlocked characters", "event pet", "modifier/hook decision", "ordered GeneratedOptions ModelKeys and instance data", "event-local RNG evidence"],
+      "expected": null
+    }
+  ]
+}

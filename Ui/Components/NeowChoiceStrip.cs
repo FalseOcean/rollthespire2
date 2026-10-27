@@ -63,6 +63,11 @@ internal sealed partial class NeowChoiceStrip : VBoxContainer
                 enabled: !splitBonesRoutes && IsBonesPrimarySelectable(choice),
                 missingIconTooltip);
             primary.TooltipText = choice.Tooltip;
+            if (splitBonesRoutes)
+            {
+                primary.Text = string.Empty;
+                primary.AccessibilityName = choice.DisplayName;
+            }
             if (!splitBonesRoutes)
             {
                 primary.Pressed += () =>
@@ -93,7 +98,7 @@ internal sealed partial class NeowChoiceStrip : VBoxContainer
             childColumn.SizeFlagsStretchRatio = HorizontalChoices ? 1.8f : 1f;
             childColumn.SizeFlagsVertical = Control.SizeFlags.ShrinkBegin;
             childColumn.AddThemeConstantOverride("separation", HorizontalChoices ? 6 : 4);
-            Label firstPickupHeader = Ui1Theme.Label(firstPickupLabel, Ui1TextRole.Muted, wrap: false);
+            Label firstPickupHeader = MainPanelTheme.Label(firstPickupLabel, Ui1TextRole.Muted, wrap: false);
             firstPickupHeader.SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin;
             firstPickupHeader.MouseFilter = Control.MouseFilterEnum.Ignore;
             childColumn.AddChild(firstPickupHeader);
@@ -168,7 +173,7 @@ internal sealed partial class NeowChoiceStrip : VBoxContainer
                 : string.Empty
         };
         button.AddThemeConstantOverride("icon_max_width", compact ? ChildIconMaxWidth : PrimaryIconMaxWidth);
-        Ui1Theme.ApplyButton(button, selected ? Ui1ButtonRole.NavigationSelected : Ui1ButtonRole.Secondary);
+        WorkspacePalette.MainPanel.ApplyButton(button, selected: selected);
         return button;
     }
 

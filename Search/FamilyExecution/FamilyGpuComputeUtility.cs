@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.InteropServices;
 using Godot;
 using RolltheSpire2.Bootstrap;
 
@@ -112,7 +113,7 @@ internal static class FamilyGpuComputeUtility
 
     // Allocation does not upload zeros. Callers initialize counters explicitly
     // and only read payload entries written by the current dispatch.
-    public static Rid CreateZeroedStorageBuffer(RenderingDevice rd, int byteCount, string name = "Workspace")
+    public static Rid AllocateStorageBuffer(RenderingDevice rd, int byteCount, string name = "Workspace")
     {
         if (byteCount < sizeof(uint)) byteCount = sizeof(uint);
         long started=System.Diagnostics.Stopwatch.GetTimestamp();
@@ -199,6 +200,20 @@ internal static class FamilyGpuComputeUtility
         return bytes;
     }
 
+    // Compact ABI1 remains owned by the candidate set. Only this physical upload
+    // is narrowed, with the same checked conversion as the former uint[] staging.
+    internal static byte[] PackAbi1UInt32(FamilyCandidateSet input) => PackAbi1UInt32(input, 0, input.Count);
+
+    internal static byte[] PackAbi1UInt32(FamilyCandidateSet input, int offset, int count)
+    {
+        ReadOnlySpan<ulong> ordinals = input.ExportAbi1().Span.Slice(offset, count);
+        byte[] bytes = new byte[checked(ordinals.Length * sizeof(uint))];
+        Span<uint> packed = UInt32Span(bytes);
+        for (int index = 0; index < ordinals.Length; index++)
+            packed[index] = checked((uint)ordinals[index]);
+        return bytes;
+    }
+
     public static byte[] ToBytesNonEmpty(uint[] values) => values.Length == 0 ? new byte[sizeof(uint)] : ToBytes(values);
 
     public static uint[] FromUInt32Bytes(byte[] bytes)
@@ -207,6 +222,12 @@ internal static class FamilyGpuComputeUtility
         var output = new uint[bytes.Length / sizeof(uint)];
         Buffer.BlockCopy(bytes, 0, output, 0, bytes.Length);
         return output;
+    }
+
+    internal static Span<uint> UInt32Span(byte[] bytes)
+    {
+        if ((bytes.Length & 3) != 0) throw new InvalidDataException("Family GPU uint buffer is not aligned.");
+        return MemoryMarshal.Cast<byte, uint>(bytes.AsSpan());
     }
 
     public static void Update(RenderingDevice rd, Rid buffer, uint[] values, string label)

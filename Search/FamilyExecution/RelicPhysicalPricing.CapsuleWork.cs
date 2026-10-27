@@ -7,6 +7,7 @@ internal static partial class RelicPhysicalPricing
     internal static FamilyPhysicalQuote? QuoteCapsule(ExactSearchExecutionRequest request,
         RelicFullGpuPlan? plan, FamilyPhysicalQuoteRequest geometry)
     {
+        if (plan?.NumericalVariant == GpuNumericalVariant.IntegerRne) return null;
         if (QuoteSourceCapsules(request, plan, geometry) is { } measured) return measured;
         if (plan is null || !FamilyPhysicalQuote.AdmittedRequest(geometry) || !FamilyPhysicalQuote.HasReferenceBackend() ||
             request.ProfileId != Compatibility.RuntimeProfileId.Beta111 || !request.Authority.CanUseCurrentModel ||

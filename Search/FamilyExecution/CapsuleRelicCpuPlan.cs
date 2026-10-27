@@ -30,7 +30,18 @@ internal sealed class CapsuleRelicCpuPlan
         {
             var pair = route.Filter.RequiredBonesAcquisitionOrder.Count == 2
                 ? route.Filter.RequiredBonesAcquisitionOrder : route.Filter.RequiredBonesCombination;
-            if (pair.Count != 2 || !pair.ToHashSet().SetEquals(new[] { BaseGameModelKeys.Relics.SmallCapsule, BaseGameModelKeys.Relics.LargeCapsule })) return null;
+            if (pair.Count != 2) return null;
+            bool smallLarge = pair.ToHashSet().SetEquals(new[] { BaseGameModelKeys.Relics.SmallCapsule, BaseGameModelKeys.Relics.LargeCapsule });
+            if (!smallLarge)
+            {
+                // R01 is independently bounded to solo. A neutral pickup may
+                // change other state, but cannot consume Capsule Rewards/bag.
+                if (request.Authority.PlayersCount != 1 || route.Authority.PlayersCount != 1 ||
+                    !Beta110FastRelicCatalog.TryGetId(pair[0], out byte a) || !Beta110FastRelicCatalog.TryGetId(pair[1], out byte b) ||
+                    IsCapsule(a) == IsCapsule(b) || !RelicFullGpuPlan.CapsuleContinuationNeutralCompanion(IsCapsule(a) ? b : a) ||
+                    route.Filter.StructuredNeowEffects.Any(NeowReplayPlan.IsGroupedCapsule) ||
+                    route.ContinuationIssue(capsule: true).Length != 0) return null;
+            }
         }
         if (!RelicFamilyPlanCompiler.TryCompilePool(request, out var pool, out var dense, out _, out _)) return null;
         // Up to three draws cannot exhaust an admitted lane; unusual tiny/modded
@@ -76,21 +87,36 @@ internal sealed class CapsuleRelicCpuPlan
         _route.Selected == Beta110FastRelicCatalog.LargeCapsule && _targets.Length == 2 && _targets.Select(t=>t.Lane).Order().SequenceEqual(new[]{1,2}) ? "LargeUR" : null;
     internal bool Matches(ulong root)
     {
-        var observation = NeowFamilyReplay.Observe(root, _route);
-        if (!observation.IdentityPass) return false;
         Span<int> draws = stackalloc int[6];
         Span<byte> sources = stackalloc byte[6];
-        byte first = _route.Bones ? observation.BonesFirst : _route.Selected;
-        byte second = _route.Bones ? observation.BonesSecond : Beta110FastRelicCatalog.InvalidId;
-        if (_route.Bones && (!IsCapsule(first) || !IsCapsule(second))) return false;
-        bool bothOrders = _route.Bones && _route.First == Beta110FastRelicCatalog.InvalidId;
-        if (_route.Bones && !bothOrders) { first = _route.First; second = _route.Second; }
-        int count = Draw(root, observation, first, second, draws[..3], sources[..3]);
-        int count2 = bothOrders ? Draw(root, observation, second, first, draws[3..], sources[3..]) : 0;
-        // Rarity-only precheck avoids bag replay for impossible source/rarity shapes.
-        bool a = Accept(draws[..count], sources[..count], default, true);
-        bool b = count2 != 0 && Accept(draws.Slice(3, count2), sources.Slice(3, count2), default, true);
-        if (!a && !b) return false;
+        int count = 0, count2 = 0;
+        bool a = false, b = false;
+        if (!_route.Bones)
+        {
+            // Direct Capsule has its original fresh personal Rewards root. These
+            // actual rarity draws need no Neow observation or continuation, and
+            // a failed necessary conjunction can skip the unrelated offer replay.
+            var rewards = new Beta110FastRng(unchecked(root + (ulong)_route.Authority.PlayerSlotIndex + NeowFamilyReplay.RewardsHash));
+            count = Draw(rewards, _route.Selected, Beta110FastRelicCatalog.InvalidId, draws[..3], sources[..3]);
+            a = Accept(draws[..count], sources[..count], default, true);
+            if (!a) return false;
+        }
+        var observation = NeowFamilyReplay.Observe(root, _route);
+        if (!observation.IdentityPass) return false;
+        if (_route.Bones)
+        {
+            byte first = observation.BonesFirst, second = observation.BonesSecond;
+            if (!IsCapsule(first) && !IsCapsule(second)) return false;
+            bool bothOrders = _route.First == Beta110FastRelicCatalog.InvalidId;
+            if (!bothOrders) { first = _route.First; second = _route.Second; }
+            count = Draw(observation.RewardsAfterBones, first, second, draws[..3], sources[..3]);
+            count2 = bothOrders ? Draw(observation.RewardsAfterBones, second, first, draws[3..], sources[3..]) : 0;
+            // Bones rarity remains downstream of its real offered pair and
+            // post-shuffle checkpoint, with a private copy for each pickup order.
+            a = Accept(draws[..count], sources[..count], default, true);
+            b = count2 != 0 && Accept(draws.Slice(3, count2), sources.Slice(3, count2), default, true);
+            if (!a && !b) return false;
+        }
         if (_ordinary is not null && !_ordinary.Matches(root)) return false;
         Span<int> final = stackalloc int[_targets.Length];
         Span<int> positions = stackalloc int[_targets.Length];
@@ -109,17 +135,17 @@ internal sealed class CapsuleRelicCpuPlan
             (b && Accept(draws.Slice(3, count2), sources.Slice(3, count2), final, false));
     }
 
-    private int Draw(ulong root, NeowReplayObservation observation, byte first, byte second, Span<int> draws, Span<byte> sources)
+    private static int Draw(Beta110FastRng rng, byte first, byte second, Span<int> draws, Span<byte> sources)
     {
-        var rng = _route.Bones ? observation.RewardsAfterBones : new Beta110FastRng(unchecked(root +
-            (ulong)_route.Authority.PlayerSlotIndex + NeowFamilyReplay.RewardsHash));
         Span<int> consumed = stackalloc int[3]; consumed.Clear();
         int output = 0;
         for (int r = 0; r < 2; r++)
         {
             byte source = r == 0 ? first : second;
             if (source == Beta110FastRelicCatalog.InvalidId) continue;
-            if (!IsCapsule(source)) throw new InvalidOperationException("CpuCapsuleSelectedRouteUnsupported");
+            // The fixed solo companion was proven neutral at compilation; its
+            // separate stream work cannot alter these Capsule rarity/lane draws.
+            if (!IsCapsule(source)) continue;
             int count = source == Beta110FastRelicCatalog.SmallCapsule ? 1 : 2;
             for (int i = 0; i < count; i++)
             {

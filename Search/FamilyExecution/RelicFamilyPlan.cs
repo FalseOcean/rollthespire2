@@ -251,7 +251,7 @@ internal static class RelicFamilyPlanCompiler
                            generation.SharedRelicBuckets.Count > 0 && generation.PlayerRelicBuckets.Count > 0 &&
                            generation.SharedRelicBuckets.All(IsBucketExact) &&
                            generation.PlayerRelicBuckets.All(IsBucketExact);
-        bool party = generation.HasExactFixedParty && generation.PlayerCount <= 4 &&
+        bool party = generation.HasExactPartyRelicBags && generation.PlayerCount <= 4 &&
             generation.ModeFactsExact && generation.IsMultiplayerExact &&
             request.Authority.PlayersCount == generation.PlayerCount &&
             request.Authority.PlayerSlotIndex == generation.PersonalPlayerSlot && generation.PersonalPlayerSlot >= 0 &&

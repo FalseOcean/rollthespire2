@@ -1,3 +1,5 @@
+using RolltheSpire2.Ui.Pages.Search;
+using RolltheSpire2.Ui.Workspace;
 using Godot;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
@@ -60,6 +62,7 @@ internal static class AppShellHost
 
 internal sealed partial class AppShellHostRoot : Control
 {
+    private const string Rt2LauncherIconResource = "RolltheSpire2.Assets.Icons.Rt2Launcher.png";
     private const string Stable107NeowsBonesIconPath = "res://images/atlases/relic_atlas.sprites/neowsbones.tres";
 
     private ModRuntimeSnapshot _snapshot = ModRuntimeSnapshot.NotInitialized;
@@ -72,9 +75,64 @@ internal sealed partial class AppShellHostRoot : Control
     private bool _patchNotesVisibilityHooked;
     private NSubmenu? _entrySubmenu;
     private double _lobbyEntryPoll;
+    private SearchWorkspace? _menuWorkspace;
+    private MenuWorkspacePreparation? _menuPreparation;
+    private bool _preparationFailed;
+    private long _lastMenuInput = System.Diagnostics.Stopwatch.GetTimestamp();
+    internal object? MenuPreparationStatus => _menuPreparation?.Status;
+
+    public override void _Input(InputEvent input)
+    {
+        _lastMenuInput = System.Diagnostics.Stopwatch.GetTimestamp();
+    }
+
+    public override void _ExitTree()
+    {
+        MegaCrit.Sts2.Core.Saves.SaveManager.Instance.ProfileIdChanged -= HandleProfileChanged;
+        _menuPreparation?.Dispose(); _menuPreparation = null; _menuWorkspace = null;
+    }
+
+    private void HandleProfileChanged(int profile)
+    {
+        _menuPreparation?.Dispose(); _menuPreparation = null;
+        _preparationFailed = false;
+        _lastMenuInput = System.Diagnostics.Stopwatch.GetTimestamp();
+    }
+
+    private void AdvanceMenuPreparation()
+    {
+        if (!_mainMenuSurfaceVisible || _pushScheduled || _preparationFailed ||
+            _snapshot.Profile.ProfileId != RuntimeProfileId.Beta111 ||
+            _mainMenu is null || !GodotObject.IsInstanceValid(_mainMenu) || !_mainMenu.IsVisibleInTree() ||
+            NModalContainer.Instance?.OpenModal is not null ||
+            System.Diagnostics.Stopwatch.GetElapsedTime(_lastMenuInput).TotalMilliseconds < 350) return;
+        // StackModified can be delivered after this process turn. Read the native
+        // top before working instead of granting a slice from cached visibility.
+        var currentSubmenu = _mainMenu.SubmenuStack.Peek();
+        if (currentSubmenu is not null && !LobbyUnlockReadout.IsCustomMultiplayerLobby(currentSubmenu)) return;
+        try
+        {
+            _menuPreparation ??= new(_snapshot, _menuWorkspace!);
+            _menuPreparation.Advance(TimeSpan.FromMilliseconds(3));
+        }
+        catch (Exception ex)
+        {
+            RecordPreparationFailure(ex, "IdleObservation");
+            _preparationFailed = true;
+            _menuPreparation?.Dispose(); _menuPreparation = null;
+        }
+    }
+
+    private static void RecordPreparationFailure(Exception ex, string stage)
+    {
+        RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Record(ex,
+            "MenuPreparationFailed", nameof(AppShellHostRoot), stage, "issues.prediction_failed");
+        RuntimeLog.WarnException($"menuPreparationFailed=true;stage={stage};freshEntryStillAvailable=true", ex);
+    }
 
     public override void _Process(double delta)
     {
+        AdvanceMenuPreparation();
         // Lobby initialization/connect can finish after StackModified, so refresh availability as well.
         _lobbyEntryPoll -= delta;
         if (_lobbyEntryPoll > 0 || _mainMenu is null || !GodotObject.IsInstanceValid(_mainMenu)) return;
@@ -123,7 +181,9 @@ internal sealed partial class AppShellHostRoot : Control
     public void Initialize(ModRuntimeSnapshot snapshot)
     {
         _snapshot = snapshot;
-        var preferences = new SearchWorkspacePersistence(OS.GetUserDataDir(), snapshot.Profile.ProfileId, initializeSearchCursor: false).Preferences;
+        _menuWorkspace = SearchWorkspace.Open(OS.GetUserDataDir());
+        MegaCrit.Sts2.Core.Saves.SaveManager.Instance.ProfileIdChanged += HandleProfileChanged;
+        var preferences = _menuWorkspace.Preferences;
         string language = preferences.LanguageOverride is "zh" or "en"
             ? preferences.LanguageOverride
             : TranslationServer.GetLocale().StartsWith("zh", StringComparison.OrdinalIgnoreCase) ? "zh" : "en";
@@ -145,7 +205,7 @@ internal sealed partial class AppShellHostRoot : Control
             ClipContents = false,
             ZIndex = 0
         };
-        StyleNeowsBonesLauncher(_launcher, snapshot);
+        StyleMainMenuLauncher(_launcher);
         var versionLabel = new Label
         {
             Name = "RolltheSpire2_LauncherVersion",
@@ -165,6 +225,38 @@ internal sealed partial class AppShellHostRoot : Control
         RuntimeLog.Info("ui1AppShellAutoOpenSuppressed=true");
     }
 
+    private static void StyleMainMenuLauncher(Button button)
+    {
+        ApplyStable107EntryButtonStyle(button);
+        AddStable107LauncherContents(button, ResolveRt2LauncherIcon(), "RolltheSpire2_LauncherIcon");
+    }
+
+    private static Texture2D? ResolveRt2LauncherIcon()
+    {
+        try
+        {
+            using Stream stream = typeof(AppShellHostRoot).Assembly.GetManifestResourceStream(Rt2LauncherIconResource)
+                ?? throw new InvalidOperationException($"Embedded launcher icon is missing: {Rt2LauncherIconResource}");
+            using var buffer = new MemoryStream();
+            stream.CopyTo(buffer);
+            using var image = new Image();
+            // The approved SVG uses masks/filters; its verified PNG preserves
+            // the accepted art without depending on Godot's SVG renderer.
+            Error error = image.LoadPngFromBuffer(buffer.ToArray());
+            if (error != Error.Ok)
+                throw new InvalidOperationException($"Embedded launcher icon could not decode: {Rt2LauncherIconResource};error={error}");
+            Texture2D texture = ImageTexture.CreateFromImage(image);
+            RuntimeLog.Info($"mainMenuLauncherIconResolved=Rt2Launcher;missing=false;evidence=embedded-png:{Rt2LauncherIconResource}");
+            return texture;
+        }
+        catch (Exception ex)
+        {
+            RuntimeLog.WarnException($"mainMenuLauncherIconResolved=Rt2Launcher;missing=true;resource={Rt2LauncherIconResource};display=RT2-label", ex);
+            return null;
+        }
+    }
+
+    // The in-run prediction entry still uses native Neow's Bones art.
     internal static void StyleNeowsBonesLauncher(Button button, ModRuntimeSnapshot snapshot)
     {
         ApplyStable107EntryButtonStyle(button);
@@ -234,7 +326,8 @@ internal sealed partial class AppShellHostRoot : Control
         return !texture.GetType().Name.Contains("Placeholder", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static void AddStable107LauncherContents(Button launcher, Texture2D? iconTexture)
+    private static void AddStable107LauncherContents(Button launcher, Texture2D? iconTexture,
+        string iconNodeName = "RolltheSpire2_NeowsBonesLauncherIcon")
     {
         if (iconTexture is null)
         {
@@ -271,7 +364,7 @@ internal sealed partial class AppShellHostRoot : Control
 
         var icon = new TextureRect
         {
-            Name = "RolltheSpire2_NeowsBonesLauncherIcon",
+            Name = iconNodeName,
             Texture = iconTexture,
             MouseFilter = Control.MouseFilterEnum.Ignore,
             ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
@@ -387,19 +480,6 @@ internal sealed partial class AppShellHostRoot : Control
             return;
         }
 
-        // Refresh the shared runtime authority at the actual RT2 entry boundary.
-        // MainMenu._Ready captures an initial snapshot, but the same main-menu node can
-        // survive a run/profile progression change. Re-capture remains main-thread only
-        // and fail-soft; it never gates opening RT2 or Search.
-        try
-        {
-            RuntimeAuthorityEnvironment.CaptureOnMainThread(_snapshot);
-        }
-        catch (Exception ex)
-        {
-            RuntimeLog.Warn($"runtimeAuthorityRefreshFailed=true;source=rt2-launcher;failSoft=true;issue={ex.GetType().Name}:{ex.Message}");
-        }
-
         NMainMenuSubmenuStack stack = _mainMenu.SubmenuStack;
         if (stack.SubmenusOpen && !(stack.Peek() is { } lobby && LobbyUnlockReadout.IsCustomMultiplayerLobby(lobby)))
         {
@@ -407,7 +487,39 @@ internal sealed partial class AppShellHostRoot : Control
             return;
         }
 
-        Rt2TopLevelSubmenu surface = EnsureTopLevelSurface(stack);
+        long entryStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+        bool reusedSurface = _topLevelSurface is not null && GodotObject.IsInstanceValid(_topLevelSurface);
+        MenuWorkspaceEntryInputs? prepared = null;
+        if (_snapshot.Profile.ProfileId == RuntimeProfileId.Beta111)
+        {
+            try
+            {
+                _menuPreparation ??= new(_snapshot, _menuWorkspace!);
+                prepared = _menuPreparation.CompleteForEntry();
+            }
+            catch (Exception ex)
+            {
+                RecordPreparationFailure(ex, "EntryValidation");
+                _menuPreparation?.Dispose(); _menuPreparation = null; _preparationFailed = true;
+            }
+        }
+        // Refresh the shared runtime authority at the actual RT2 entry boundary.
+        // The same menu can survive progress changes. Prepared inputs were just
+        // fully reobserved; other profiles and failed preparation use the existing
+        // fresh main-thread boundary without gating the surface on diagnostics.
+        try
+        {
+            if (prepared is null) RuntimeAuthorityEnvironment.CaptureOnMainThread(_snapshot);
+        }
+        catch (Exception ex)
+        {
+            RuntimeLog.WarnException($"runtimeAuthorityRefreshFailed=true;source=rt2-launcher;failSoft=true;issue={ex.GetType().Name}:{ex.Message}", ex);
+        }
+
+        long authorityFinished = System.Diagnostics.Stopwatch.GetTimestamp();
+        Rt2TopLevelSubmenu surface = EnsureTopLevelSurface(stack, prepared);
+        long surfaceFinished = System.Diagnostics.Stopwatch.GetTimestamp();
+        RuntimeLog.Detail(FormattableString.Invariant($"panelOpenTiming=true;kind=main-menu;reusedSurface={reusedSurface};authorityMs={System.Diagnostics.Stopwatch.GetElapsedTime(entryStarted, authorityFinished).TotalMilliseconds:F3};surfaceMs={System.Diagnostics.Stopwatch.GetElapsedTime(authorityFinished, surfaceFinished).TotalMilliseconds:F3};phase=before-push"));
         if (ReferenceEquals(stack.Peek(), surface))
         {
             return;
@@ -428,15 +540,16 @@ internal sealed partial class AppShellHostRoot : Control
         Callable.From(PushTopLevelDeferred).CallDeferred();
     }
 
-    private Rt2TopLevelSubmenu EnsureTopLevelSurface(NMainMenuSubmenuStack stack)
+    private Rt2TopLevelSubmenu EnsureTopLevelSurface(NMainMenuSubmenuStack stack, MenuWorkspaceEntryInputs? prepared)
     {
         if (_topLevelSurface is not null && GodotObject.IsInstanceValid(_topLevelSurface))
         {
+            _topLevelSurface.ApplyPreparedEntry(prepared);
             return _topLevelSurface;
         }
 
         var surface = new Rt2TopLevelSubmenu();
-        surface.Initialize(_snapshot);
+        surface.Initialize(_snapshot, prepared);
         surface.TopLevelClosed += HandleTopLevelClosed;
         stack.AddChild(surface);
         _topLevelSurface = surface;

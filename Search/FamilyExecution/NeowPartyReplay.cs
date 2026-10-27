@@ -28,13 +28,21 @@ internal static class NeowPartyReplay
         positive[count++] = rng.NextBool() ? Beta110FastRelicCatalog.NutritiousOyster : Beta110FastRelicCatalog.StoneHumidifier;
         positive[count++] = rng.NextBool() ? Beta110FastRelicCatalog.NeowsTalisman : Beta110FastRelicCatalog.Pomander;
         rng.UnstableShuffle(positive[..count]);
-        ulong top = Bit(positive[0]) | Bit(positive[1]) | Bit(curse);
+        return CompleteObservation(root, plan, new(positive[0], positive[1], curse,
+            Beta110FastRelicCatalog.InvalidId, Beta110FastRelicCatalog.InvalidId, default, true));
+    }
+
+    // Reuse the same slot's initial offers. Predicates can differ, so recompute
+    // their masks and real Bones checkpoint instead of copying IdentityPass.
+    internal static NeowReplayObservation CompleteObservation(ulong root, NeowReplayPlan plan, NeowReplayObservation offers)
+    {
+        var authority = plan.Authority;
+        ulong top = Bit(offers.First) | Bit(offers.Second) | Bit(offers.Curse);
         bool pass = (plan.TopAny == 0 || (top & plan.TopAny) != 0) & ((top & plan.TopAll) == plan.TopAll) &
             ((top & plan.TopBan) == 0) & (plan.Selected == Beta110FastRelicCatalog.InvalidId || (top & Bit(plan.Selected)) != 0) &
             (!(plan.Bones || plan.RequireBones) || (top & Bit(Beta110FastRelicCatalog.NeowsBones)) != 0);
         byte first = Beta110FastRelicCatalog.InvalidId, second = first;
         var rewards = new Beta110FastRng(unchecked(root + (ulong)authority.PlayerSlotIndex + RewardsHash));
-        // One replay even when this observation is used as R's prerequisite.
         if (plan.Bones)
         {
             Span<byte> pool = stackalloc byte[authority.BonesEligibleRelicIds.Length];
@@ -46,7 +54,7 @@ internal static class NeowPartyReplay
             if (plan.First != Beta110FastRelicCatalog.InvalidId && plan.Second != Beta110FastRelicCatalog.InvalidId)
                 pass &= pair == (Bit(plan.First) | Bit(plan.Second));
         }
-        return new(positive[0], positive[1], curse, first, second, rewards, pass);
+        return new(offers.First, offers.Second, offers.Curse, first, second, rewards, pass);
     }
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
@@ -59,12 +67,20 @@ internal static class NeowPartyReplay
 
     internal static bool Matches(ulong root, NeowReplayPlan plan)
     {
-        NeowReplayObservation observation = Observe(root, plan);
+        return Matches(root, plan, Observe(root, plan));
+    }
+
+    internal static bool Matches(ulong root, NeowReplayPlan plan, NeowReplayObservation observation)
+    {
         if (!observation.IdentityPass) return false;
         if (plan.StructuredConditions.Length == 0 && !plan.HasFinalCurseFastProjection) return true;
-        bool keep = false;
-        foreach (var route in Routes(plan, observation))
-            keep |= Route(root, plan, route.First, route.Second, observation.RewardsAfterBones);
+        if (!plan.Bones) return Route(root, plan, plan.Selected, Beta110FastRelicCatalog.InvalidId, observation.RewardsAfterBones);
+        if (plan.First != Beta110FastRelicCatalog.InvalidId && plan.Second != Beta110FastRelicCatalog.InvalidId)
+            return Route(root, plan, plan.First, plan.Second, observation.RewardsAfterBones);
+        bool keep = Route(root, plan, observation.BonesFirst, observation.BonesSecond, observation.RewardsAfterBones);
+        // Both party routes still execute. A survivor must not hide a fault in
+        // the other pickup order.
+        keep |= Route(root, plan, observation.BonesSecond, observation.BonesFirst, observation.RewardsAfterBones);
         return keep;
     }
 
@@ -92,23 +108,29 @@ internal static class NeowPartyReplay
     private static bool RouteAtArrival(ulong root, NeowReplayPlan plan, byte first, byte second,
         Beta110FastRng afterBones, int nicheDraws, int potionDraws, int firstAdvance, int secondAdvance)
     {
-        var rewards = plan.Bones ? afterBones
-            : new Beta110FastRng(unchecked(root + (ulong)plan.Authority.PlayerSlotIndex + RewardsHash));
-        var niche = new Beta110FastRng(unchecked(root + NicheHash));
-        var transformations = new Beta110FastRng(unchecked(root + (ulong)plan.Authority.PlayerSlotIndex + TransformationsHash));
-        var potions = new Beta110FastRng(unchecked(root + PotionHash));
-        for (int i = 0; i < nicheDraws; i++) niche.NextInt(2);
-        for (int i = 0; i < potionDraws; i++) potions.NextInt(2);
-        Span<byte> matched = stackalloc byte[plan.StructuredConditions.Length]; matched.Clear();
         bool rewardsNeeded = (plan.EnabledDomains & ~(Beta110FastDomain.FinalCurse | Beta110FastDomain.NewLeafTransform |
             Beta110FastDomain.LeafyPoulticeTransforms | Beta110FastDomain.PhialHolsterPotions)) != 0;
         bool nicheNeeded = plan.HasFinalCurseFastProjection || (plan.EnabledDomains & Beta110FastDomain.NewLeafTransform) != 0 || rewardsNeeded;
-        foreach (byte relic in new[] { first, second })
+        bool transformationsNeeded = (plan.EnabledDomains & Beta110FastDomain.LeafyPoulticeTransforms) != 0;
+        bool potionsNeeded = (plan.EnabledDomains & Beta110FastDomain.PhialHolsterPotions) != 0;
+        // Arrival and authored burns still consume their original streams, even
+        // when no local predicate reads them. Observe's checkpoint is untouched.
+        var rewards = plan.Bones ? afterBones
+            : rewardsNeeded ? new Beta110FastRng(unchecked(root + (ulong)plan.Authority.PlayerSlotIndex + RewardsHash)) : default;
+        var niche = nicheNeeded || nicheDraws > 0 || firstAdvance > 0 || secondAdvance > 0
+            ? new Beta110FastRng(unchecked(root + NicheHash)) : default;
+        var transformations = transformationsNeeded
+            ? new Beta110FastRng(unchecked(root + (ulong)plan.Authority.PlayerSlotIndex + TransformationsHash)) : default;
+        var potions = potionsNeeded || potionDraws > 0 ? new Beta110FastRng(unchecked(root + PotionHash)) : default;
+        for (int i = 0; i < nicheDraws; i++) niche.NextInt(2);
+        for (int i = 0; i < potionDraws; i++) potions.NextInt(2);
+        Span<byte> matched = stackalloc byte[plan.StructuredConditions.Length]; matched.Clear();
+        for (int pickup = 0; pickup < 2; pickup++)
         {
+            byte relic = pickup == 0 ? first : second;
             if (relic == Beta110FastRelicCatalog.InvalidId) continue;
             if (!NeowPartyOperators.ExecuteRelic(relic, true, plan, plan.Authority.EffectCatalog, rewardsNeeded, nicheNeeded,
-                (plan.EnabledDomains & Beta110FastDomain.LeafyPoulticeTransforms) != 0,
-                (plan.EnabledDomains & Beta110FastDomain.PhialHolsterPotions) != 0,
+                transformationsNeeded, potionsNeeded,
                 ref rewards, ref niche, ref transformations, ref potions, matched))
                 throw new InvalidOperationException("NFamilyContinuationAuthorityUnavailable");
             int advance = relic == first ? firstAdvance : secondAdvance;

@@ -191,7 +191,7 @@ internal sealed partial record NeowSearchUiCatalog(
             authority.HasExactFoundation,
             authority.SnapshotFingerprint)
         {
-            CardPickerMetadata = BuildCardPickerMetadata(authority, characterKey),
+            CardPickerMetadata = CardPickerMetadataCapture.FromAuthority(authority, characterKey),
             InitialBasicTransformCards = initialBasicTransforms,
             MultiplayerOnlyCards = (authority.CharacterRewardPool ?? []).Concat(authority.ColorlessRewardPool ?? [])
                 .Concat(authority.TransformPool ?? []).Concat((authority.OtherCharacterPools ?? []).SelectMany(p => p.Cards))
@@ -233,51 +233,6 @@ internal sealed partial record NeowSearchUiCatalog(
 
     private static bool IsRegularRewardRarity(NeowEffectCardSnapshot card) =>
         card.Rarity is EffectCardRarity.Common or EffectCardRarity.Uncommon or EffectCardRarity.Rare;
-
-    private static IReadOnlyDictionary<ModelKey, CardPickerCandidateMetadata> BuildCardPickerMetadata(
-        NeowEffectAuthoritySnapshot authority,
-        ModelKey currentCharacter)
-    {
-        var cards = new Dictionary<ModelKey, (NeowEffectCardSnapshot Card, HashSet<ModelKey> Characters)>(ModelKeyComparer.Instance);
-        HashSet<ModelKey> colorlessCards = (authority.ColorlessRewardPool ?? Array.Empty<NeowEffectCardSnapshot>())
-            .Select(card => card.CardKey).ToHashSet(ModelKeyComparer.Instance);
-
-        static void Add(
-            Dictionary<ModelKey, (NeowEffectCardSnapshot Card, HashSet<ModelKey> Characters)> output,
-            IEnumerable<NeowEffectCardSnapshot> source,
-            ModelKey? character)
-        {
-            foreach (NeowEffectCardSnapshot card in source.Where(card => card.CardKey.IsValid))
-            {
-                if (!output.TryGetValue(card.CardKey, out var existing))
-                {
-                    existing = (card, new HashSet<ModelKey>(ModelKeyComparer.Instance));
-                }
-                if (character.HasValue && character.Value.IsValid) existing.Characters.Add(character.Value);
-                output[card.CardKey] = existing;
-            }
-        }
-
-        Add(cards, authority.CharacterRewardPool ?? Array.Empty<NeowEffectCardSnapshot>(), currentCharacter);
-        Add(cards, authority.TransformPool ?? Array.Empty<NeowEffectCardSnapshot>(), currentCharacter);
-        Add(cards, authority.ColorlessRewardPool ?? Array.Empty<NeowEffectCardSnapshot>(), null);
-        foreach (CharacterCardPoolSnapshot pool in authority.OtherCharacterPools ?? Array.Empty<CharacterCardPoolSnapshot>())
-        {
-            Add(cards, pool.Cards, pool.CharacterKey);
-        }
-
-        return cards.ToDictionary(
-            pair => pair.Key,
-            pair => new CardPickerCandidateMetadata(
-                pair.Key,
-                pair.Value.Characters.OrderBy(key => key.Serialized, StringComparer.Ordinal).ToArray(),
-                pair.Value.Card.Rarity,
-                pair.Value.Card.CardType)
-            {
-                IsColorlessPoolMember = colorlessCards.Contains(pair.Key)
-            },
-            ModelKeyComparer.Instance);
-    }
 
     private static IReadOnlyList<ModelKey> ApplicableSinglePlayerRoutes(RuntimeProfileId profileId) =>
         NeowEffectCoverageRegistry.GetApplicableKeys(profileId)

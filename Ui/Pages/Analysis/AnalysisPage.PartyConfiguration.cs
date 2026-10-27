@@ -1,3 +1,4 @@
+using RolltheSpire2.Ui.Workspace;
 using Godot;
 using MegaCrit.Sts2.Core.Unlocks;
 using RolltheSpire2.Core.Identity;

@@ -1,0 +1,119 @@
+{
+  "SchemaVersion": 1,
+  "Query": {
+    "OpeningRoute": {
+      "RouteRelicKey": "RELIC:NEOWS_BONES",
+      "IsValid": true
+    },
+    "OpeningRouteRelicRequirement": {
+      "OrderMode": 0,
+      "ParentRouteRelicKey": "RELIC:NEOWS_BONES",
+      "RequiredRelicKeys": [
+        "RELIC:NEW_LEAF",
+        "RELIC:LEAFY_POULTICE"
+      ]
+    },
+    "StructuredOpeningEffects": [
+      {
+        "SourceRelicKey": "RELIC:NEW_LEAF",
+        "Kind": 0,
+        "Scope": 3,
+        "OutputKind": 1,
+        "OutputKeys": [
+          "CARD:OFFERING"
+        ],
+        "SpecialOffer": 0,
+        "AllowDuplicateOutputs": false,
+        "KaleidoscopeGroupOrder": 0,
+        "KaleidoscopePositionalSlots": [],
+        "IsEmpty": false
+      },
+      {
+        "SourceRelicKey": "RELIC:LEAFY_POULTICE",
+        "Kind": 1,
+        "Scope": 3,
+        "OutputKind": 1,
+        "OutputKeys": [
+          "CARD:STOKE",
+          "CARD:DARK_EMBRACE"
+        ],
+        "SpecialOffer": 0,
+        "AllowDuplicateOutputs": true,
+        "KaleidoscopeGroupOrder": 0,
+        "KaleidoscopePositionalSlots": [],
+        "IsEmpty": false
+      },
+      {
+        "SourceRelicKey": "RELIC:NEOWS_BONES",
+        "Kind": 0,
+        "Scope": 6,
+        "OutputKind": 3,
+        "OutputKeys": [
+          "CARD:GUILTY"
+        ],
+        "SpecialOffer": 0,
+        "AllowDuplicateOutputs": false,
+        "KaleidoscopeGroupOrder": 0,
+        "KaleidoscopePositionalSlots": [],
+        "IsEmpty": false
+      }
+    ],
+    "VariantBossBranches": [],
+    "AncientBranches": [],
+    "RelicSequenceConstraints": [],
+    "EventSequenceConstraints": [],
+    "LegacyCombatRewardConstraints": [],
+    "LegacyNeow": {
+      "NeowRelics": {
+        "Any": [],
+        "All": [],
+        "Ban": [],
+        "IsEmpty": true
+      },
+      "RequireNeowsBones": false,
+      "BonesRelics": {
+        "Any": [],
+        "All": [],
+        "Ban": [],
+        "IsEmpty": true
+      },
+      "RequiredBonesCombination": [],
+      "RequireSmallCapsule": false,
+      "RequireLargeCapsule": false,
+      "CapsuleContainedRelics": {
+        "Any": [],
+        "All": [],
+        "Ban": [],
+        "IsEmpty": true
+      },
+      "RequireWhetstone": false,
+      "RequireWarPaint": false,
+      "RequiredFinalCurse": null,
+      "BannedFinalCurses": [],
+      "Preset": "None",
+      "RequiredBonesAcquisitionOrder": [],
+      "EffectOutputConditions": []
+    },
+    "LegacyWorld": {
+      "BossFilters": [],
+      "BossOrdinalFilters": [],
+      "AncientIdentityFilters": [],
+      "AncientOptionFilters": [],
+      "AncientSeaGlassTargetFilters": []
+    },
+    "CombatCardRewards": null,
+    "CombatPotionRewards": null,
+    "EventResultConditions": [],
+    "MerchantColorlessConditions": [],
+    "MerchantColorlessSequenceConditions": [],
+    "RelicShopSequenceConditions": [],
+    "HasCombatRewardConstraints": false
+  },
+  "Options": {
+    "StartSeed": "000000000000",
+    "ScanCount": 134217728,
+    "TargetMatchCount": 2147483647,
+    "WorkerCount": 4,
+    "IncludeDiagnostics": true
+  }
+}

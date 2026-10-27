@@ -19,7 +19,7 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
     private readonly DeveloperNotesDocumentProvider _provider;
     private readonly Func<DeveloperNotesChapter, bool> _needsAcknowledgement;
     private readonly HBoxContainer _acknowledgement = new() { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-    private readonly Label _acknowledgementText = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta, wrap: true);
+    private readonly Label _acknowledgementText = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta, wrap: true);
     private readonly Button _acknowledge = new() { Name = "AcknowledgeChapter", CustomMinimumSize = new Vector2(160, 44) };
     public event Action<DeveloperNotesChapter>? AcknowledgementRequested;
     private readonly Label _pageTitle;
@@ -34,6 +34,7 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
     private readonly Label _articleSummary;
     private readonly Label _articleNotice;
     private readonly HSeparator _articleDivider;
+    private readonly Label _articlePreparation;
     private readonly DeveloperNotesArticleRenderer _renderer;
     private IUiTextProvider? _uiText;
     private DeveloperNotesDocument? _document;
@@ -44,6 +45,7 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
     public DeveloperNotesPage(DeveloperNotesDocumentProvider provider, Func<DeveloperNotesChapter, bool>? needsAcknowledgement = null)
     {
         _provider = provider;
+        Theme = MainPanelTheme.Create();
         _needsAcknowledgement = needsAcknowledgement ?? (chapter => chapter.RequiresAcknowledgement);
         PageKey = AppPageKey.DeveloperNotes;
         SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
@@ -55,13 +57,13 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
             SizeFlagsVertical = Control.SizeFlags.ExpandFill
         };
         root.AddThemeConstantOverride("separation", 10);
-        _pageTitle = Ui1Theme.Label(string.Empty, Ui1TextRole.PageTitle);
-        _pageSubtitle = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta, wrap: true);
+        _pageTitle = MainPanelTheme.Label(string.Empty, Ui1TextRole.PageTitle);
+        _pageSubtitle = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta, wrap: true);
         root.AddChild(_pageTitle);
         root.AddChild(_pageSubtitle);
 
         var topDivider = new HSeparator();
-        Ui1Theme.ApplySeparator(topDivider);
+        MainPanelTheme.ApplySeparator(topDivider);
         root.AddChild(topDivider);
 
         var body = new HBoxContainer
@@ -86,7 +88,7 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
         BuildReadingNavigation(rail);
 
         var divider = new VSeparator();
-        Ui1Theme.ApplySeparator(divider);
+        MainPanelTheme.ApplySeparator(divider);
 
         _articlePane = new MarginContainer
         {
@@ -102,32 +104,37 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
         };
         _articleScroll.FocusMode = FocusModeEnum.None;
         _articleScroll.GetVScrollBar().ValueChanged += _ => UpdateReadingProgress();
+        _articleScroll.GuiInput += TrackReadingInput;
+        _articleScroll.GetVScrollBar().GuiInput += TrackReadingInput;
         _readingHost = new MarginContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         var articleColumn = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         articleColumn.AddThemeConstantOverride("separation", 18);
-        _articleTitle = Ui1Theme.Label(string.Empty, Ui1TextRole.SectionTitle, wrap: true);
+        _articleTitle = MainPanelTheme.Label(string.Empty, Ui1TextRole.SectionTitle, wrap: true);
         _articleTitle.AddThemeFontSizeOverride("font_size", 30);
-        _articleSummary = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta, wrap: true);
+        _articleSummary = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta, wrap: true);
         _articleSummary.AddThemeFontSizeOverride("font_size", 18);
-        _articleNotice = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta, wrap: true);
+        _articleNotice = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta, wrap: true);
         _articleNotice.Visible = false;
         _articleDivider = new HSeparator();
-        Ui1Theme.ApplySeparator(_articleDivider);
+        MainPanelTheme.ApplySeparator(_articleDivider);
         _renderer = new DeveloperNotesArticleRenderer();
         articleColumn.AddChild(_articleTitle);
         articleColumn.AddChild(_articleSummary);
         articleColumn.AddChild(_articleNotice);
         articleColumn.AddChild(_articleDivider);
         articleColumn.AddChild(_renderer);
+        _articlePreparation = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta, wrap: true);
+        _articlePreparation.Name = "ArticlePreparation";
+        articleColumn.AddChild(_articlePreparation);
         _acknowledgement.AddThemeConstantOverride("separation", 20);
         _acknowledgementText.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         _acknowledgementText.SizeFlagsVertical = SizeFlags.ShrinkCenter;
         _acknowledgement.AddChild(_acknowledgementText);
-        Ui1Theme.ApplyButton(_acknowledge, Ui1ButtonRole.Primary);
+        MainPanelTheme.ApplyButton(_acknowledge, Ui1ButtonRole.Primary);
         _acknowledge.Pressed += () =>
         {
             var chapter = _document?.Chapters.FirstOrDefault(c => c.Id == _selectedChapterId);
-            if (chapter is not null && _needsAcknowledgement(chapter)) AcknowledgementRequested?.Invoke(chapter);
+            if (IsPresentationReady && chapter is not null && _needsAcknowledgement(chapter)) AcknowledgementRequested?.Invoke(chapter);
         };
         _acknowledgement.AddChild(_acknowledge);
         articleColumn.AddChild(_acknowledgement);
@@ -142,6 +149,7 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
         body.AddChild(_articlePane);
         root.AddChild(body);
         AddChild(root);
+        VisibilityChanged += HandlePresentationVisibility;
     }
 
     public AppPageKey PageKey { get; }
@@ -149,35 +157,41 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
     public string SelectedChapterId => _selectedChapterId;
 
     public void ApplyLocalization(IUiTextProvider uiText, IGameContentNameResolver contentNames)
+        => ApplyLocalization(uiText, contentNames, _provider.Resolve(uiText.LanguageCode));
+
+    internal void ApplyLocalization(IUiTextProvider uiText, IGameContentNameResolver contentNames,
+        DeveloperNotesResolution resolution)
     {
-        SaveReadingPosition();
-        _uiText = uiText;
-        _pageTitle.Text = uiText.Get(Ui1TextKey.DeveloperNotesTitle);
-        _pageSubtitle.Text = uiText.Get(Ui1TextKey.DeveloperNotesSubtitle);
+        try
+        {
+            SaveReadingPosition();
+            _uiText = uiText;
+            _pageTitle.Text = uiText.Get(Ui1TextKey.DeveloperNotesTitle);
+            _pageSubtitle.Text = uiText.Get(Ui1TextKey.DeveloperNotesSubtitle);
 
-        DeveloperNotesResolution resolution = _provider.Resolve(uiText.LanguageCode);
-        _document = resolution.Document;
-        if (_document is not null)
-            _pageSubtitle.Text = uiText.Format("ui1.developer_notes.edition", _document.TargetModVersion, _document.UpdatedAt);
-        _resolvedLocale = resolution.ResolvedLocale;
-        if (resolution.UsedEnglishFallback)
-        {
-            RuntimeLog.Detail(
-                $"developerNotesLocaleFallback=true;requestedLocale={resolution.RequestedLocale};" +
-                $"resolvedLocale={resolution.ResolvedLocale};reason={resolution.Issue}");
-        }
-        if (_document is null || !_document.Chapters.Any(chapter => chapter.Id == _selectedChapterId))
-        {
-            _selectedChapterId = DeveloperNotesChapterIds.Release;
-        }
-        RebuildChapterRail();
-        RenderSelectedChapter();
-        RestoreReadingPosition();
+            _document = resolution.Document;
+            if (_document is not null)
+                _pageSubtitle.Text = uiText.Format("ui1.developer_notes.edition", _document.TargetModVersion, _document.UpdatedAt);
+            _resolvedLocale = resolution.ResolvedLocale;
+            if (resolution.UsedEnglishFallback)
+            {
+                RuntimeLog.Detail(
+                    $"developerNotesLocaleFallback=true;requestedLocale={resolution.RequestedLocale};" +
+                    $"resolvedLocale={resolution.ResolvedLocale};reason={resolution.Issue}");
+            }
+            if (_document is null || !_document.Chapters.Any(chapter => chapter.Id == _selectedChapterId))
+            {
+                _selectedChapterId = DeveloperNotesChapterIds.Release;
+            }
+            RebuildChapterRail();
+            RenderSelectedChapter();
 
-        if (!resolution.IsAvailable)
-        {
-            RuntimeLog.Warn($"developerNotesPageFailSoft=true;locale={uiText.LanguageCode};issue={resolution.Issue}");
+            if (!resolution.IsAvailable)
+            {
+                RuntimeLog.Warn($"developerNotesPageFailSoft=true;locale={uiText.LanguageCode};issue={resolution.Issue}");
+            }
         }
+        catch (Exception ex) { FailArticlePresentation(ex); }
     }
 
     public void ApplyDisplayMode(AppDisplayMode mode)
@@ -217,7 +231,6 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
                 Alignment = HorizontalAlignment.Left,
                 CustomMinimumSize = new Vector2(0, 42),
                 FocusMode = Control.FocusModeEnum.All,
-                TooltipText = chapter.Title,
                 TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis
             };
             string chapterId = chapter.Id;
@@ -239,7 +252,6 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
         _selectedChapterId = chapterId;
         RefreshChapterButtonStyles();
         RenderSelectedChapter();
-        RestoreReadingPosition();
     }
 
     private void RefreshChapterButtonStyles()
@@ -250,10 +262,9 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
             var chapter = _document!.Chapters.First(c => c.Id == id);
             bool pending = _needsAcknowledgement(chapter);
             button.Text = chapter.Title + (pending ? "  •" : "");
-            button.TooltipText = chapter.Title + (pending ? Local(" · 待确认阅读", " · Awaiting acknowledgement") : "");
             if (pending)
                 foreach (string state in new[] { "font_color", "font_hover_color", "font_pressed_color", "font_focus_color" })
-                    button.AddThemeColorOverride(state, new Color("DCC58D"));
+                    MainPanelTheme.SetColor(button, state, WorkspacePalette.MainPanel.Selected);
         }
     }
 
@@ -261,10 +272,11 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
     {
         RefreshChapterButtonStyles();
         var chapter = _document?.Chapters.FirstOrDefault(c => c.Id == _selectedChapterId);
-        _acknowledgement.Visible = chapter?.RequiresAcknowledgement == true;
+        _acknowledgement.Visible = _articleComplete && chapter?.RequiresAcknowledgement == true;
         bool pending = chapter is not null && _needsAcknowledgement(chapter);
         _acknowledge.Text = Local("已阅读", "I have read this");
         _acknowledge.Visible = pending;
+        _acknowledge.Disabled = !IsPresentationReady;
         _acknowledgementText.Text = pending
             ? Local("阅读后，请确认本篇内容。", "Please acknowledge this chapter after reading.")
             : Local("✓ 已确认阅读", "✓ Reading acknowledged");
@@ -272,39 +284,43 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
 
     private void RenderSelectedChapter()
     {
-        if (_document is null)
+        try
         {
-            _acknowledgement.Hide();
-            _articleNotice.Visible = false;
-            _articleTitle.Text = _uiText?.Get(Ui1TextKey.DeveloperNotesUnavailableTitle) ?? "Developer Notes unavailable";
-            _articleSummary.Text = _uiText?.Get(Ui1TextKey.DeveloperNotesUnavailableMessage) ?? "The bundled notes could not be loaded.";
-            _articleSummary.Visible = true;
-            _articleDivider.Visible = true;
-            _renderer.ClearBlocks();
-            RebuildReadingNavigation();
-            ResetArticleScroll();
-            return;
-        }
+            BeginArticlePresentation();
+            if (_document is null)
+            {
+                _acknowledgement.Hide();
+                _articleNotice.Visible = false;
+                _articleTitle.Text = _uiText?.Get(Ui1TextKey.DeveloperNotesUnavailableTitle) ?? "Developer Notes unavailable";
+                _articleSummary.Text = _uiText?.Get(Ui1TextKey.DeveloperNotesUnavailableMessage) ?? "The bundled notes could not be loaded.";
+                _articleSummary.Visible = true;
+                _articleDivider.Visible = true;
+                RebuildReadingNavigation();
+                ResetArticleScroll();
+                CompleteArticleBuild();
+                return;
+            }
 
-        DeveloperNotesChapter chapter = _document.Chapters.First(chapter => chapter.Id == _selectedChapterId);
-        _articleTitle.Text = chapter.Title;
-        _articleSummary.Text = chapter.Summary ?? string.Empty;
-        _articleSummary.Visible = !string.IsNullOrWhiteSpace(chapter.Summary);
-        _articleNotice.Visible = chapter.Id == DeveloperNotesChapterIds.Next;
-        _articleNotice.Text = _articleNotice.Visible
-            ? _uiText!.Format("ui1.developer_notes.plan_context", _document.UpdatedAt)
-            : string.Empty;
-        _articleDivider.Visible = true;
-        _renderer.Render(chapter);
-        RefreshAcknowledgements();
-        RebuildReadingNavigation();
-        RuntimeLog.Detail($"developerNotesChapterRendered=true;chapter={chapter.Id};locale={_resolvedLocale}");
+            DeveloperNotesChapter chapter = _document.Chapters.First(chapter => chapter.Id == _selectedChapterId);
+            _articleTitle.Text = chapter.Title;
+            _articleSummary.Text = chapter.Summary ?? string.Empty;
+            _articleSummary.Visible = !string.IsNullOrWhiteSpace(chapter.Summary);
+            _articleNotice.Visible = chapter.Id == DeveloperNotesChapterIds.Next;
+            _articleNotice.Text = _articleNotice.Visible
+                ? _uiText!.Format("ui1.developer_notes.plan_context", _document.UpdatedAt)
+                : string.Empty;
+            _articleDivider.Visible = true;
+            _buildingChapter = chapter;
+            RefreshAcknowledgements();
+            RebuildReadingNavigation();
+            _chapterFooter.Hide();
+        }
+        catch (Exception ex) { FailArticlePresentation(ex); }
     }
 
     private void ResetArticleScroll()
     {
         _articleScroll.ScrollVertical = 0;
-        _articleScroll.SetDeferred("scroll_vertical", 0);
     }
 
     private void RefreshReadingMargins()

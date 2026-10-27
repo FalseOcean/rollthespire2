@@ -1,0 +1,12 @@
+{
+  "roots": 4096,
+  "unpinnedSyntheticProjectionMismatch": 0,
+  "unpinnedSyntheticCandidateMismatch": 0,
+  "unpinnedSyntheticRouteEvidenceLeak": 0,
+  "pinnedSingleRouteProjectionMismatch": 0,
+  "pinnedSingleRouteMaskMismatch": 0,
+  "syntheticPassSentinel": "0x80000000",
+  "syntheticExposedRouteMask": 0,
+  "compactCandidateAbi": "1_LogicalOrdinalOnly",
+  "p10BImplemented": false
+}

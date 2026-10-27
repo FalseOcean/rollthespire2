@@ -1,0 +1,58 @@
+{
+  "source": "map_calibration_20260912 Phase5 Final only; vanilla reclassification Phase10",
+  "game": "0.111.0",
+  "sampling": "65536 unbiased Xoshiro rejection canonical roots, paired across contexts; contexts are not independent extra samples",
+  "files": [
+    {
+      "file": "Overgrowth-A0.hist.gz",
+      "samples": 65536,
+      "sourceSha256": "38f3b02d8bbd0fa962524749a5180d8d807bd43fd753c055aa4f5388da348bf2",
+      "finalOnlySha256": "53347d4c629b3155ea1a870ade1cf4f96999a605ee60b0e8a8e359f98a86d7ee",
+      "bytes": 13961
+    },
+    {
+      "file": "Overgrowth-A1plus.hist.gz",
+      "samples": 65536,
+      "sourceSha256": "654256006cd93a20505cbc56fab6db7e22a3daa0dc7b29e5d3114d9adcbae5ae",
+      "finalOnlySha256": "e3e2596ec28b8bacefcc251af72d4908352f455097dd8896a109736b5503b415",
+      "bytes": 16528
+    },
+    {
+      "file": "Hive-A0.hist.gz",
+      "samples": 65536,
+      "sourceSha256": "fcb72005c56946a2868001ce90dc7e21b254eb53b5196c64792367f86e2a0daa",
+      "finalOnlySha256": "9827af2d394ae435e928b312b59a2d343d0819922685a80a26fb2996246620a6",
+      "bytes": 12103
+    },
+    {
+      "file": "Hive-A1plus.hist.gz",
+      "samples": 65536,
+      "sourceSha256": "d715e1f41a2c23a1fce16008f720070ce2aad8e7b6fa082974d2b109e0901180",
+      "finalOnlySha256": "ac7b2ff3434534d06e700b71a046225ed2566e1e5901b746aedbc2bd8ada6791",
+      "bytes": 13960
+    },
+    {
+      "file": "Glory-A0.hist.gz",
+      "samples": 65536,
+      "sourceSha256": "fd66c78ecaa4d4ace2895d50f3ba6d653d258f3125b7ed3c02945415705c6a17",
+      "finalOnlySha256": "5434ee736daa603d120bc780dc944bbd49080c61ebd7a8272aba9f282cee57d6",
+      "bytes": 10220
+    },
+    {
+      "file": "Glory-A1plus.hist.gz",
+      "samples": 65536,
+      "sourceSha256": "1c6c655bd1f3647a954470e9136b1c474e0f777cbca00fa899c59d5d626e63df",
+      "finalOnlySha256": "f4668a34e8e33fdacd7fea221cea6a07203e486544b0c0f4bdf12ca778b4b115",
+      "bytes": 11407
+    }
+  ],
+  "gameDllSha256": "0861BFA1DF347538D932F22D580E75420F08082792EB914E53B4882764ACDBE9",
+  "samplingStreamSeed": "0x4d3543414c494231",
+  "canonicalOrdinalDomain": "[0, 34^12), Xoshiro rejection sampling",
+  "encoding": "gzip: uint32 LE magic 0x4d354831, uint64 sample count; six families each int32 size then repeated uint32 key + uint64 frequency; Final-only payload to EOF. Family 0 packs six 4-bit guaranteed/prefix scalars; each remaining family adds one reachable-maximum scalar.",
+  "sourceSha256Meaning": "Original compressed research histogram containing Final/Stage/Both sections; not the hash of the shipped Final-only file.",
+  "finalOnlySha256Meaning": "Compressed bytes of the current shipped Final-only histogram.",
+  "extractionEvidence": "Each current decompressed file equals the original Final-section prefix. Exact trimming command/commit unknown / not recorded; no recapture or resampling.",
+  "scope": "Model-sampled vanilla maps; A1plus is the Swarming input class, not full A10 second-Boss coverage. Phase10 reclassified scope without changing these numerical bytes. Partial independent native witnesses do not establish per-sample game acceptance.",
+  "rights": "Source traceability only; additional redistribution permission for derived game expressions remains unconfirmed."
+}

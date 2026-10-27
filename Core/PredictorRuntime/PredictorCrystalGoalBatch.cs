@@ -12,6 +12,7 @@ internal static class PredictorCrystalGoalBatch
         ImmutableArray<CrystalRewardOption> goals,bool avoidCurse,TimeSpan budget,int stateLimit=100_000,
         CancellationToken token=default,int batchSize=64)
     {
+        if(table.IncludesSacrifices) return PredictorCrystalGoalLanguage.Solve(source,table,goals,avoidCurse,budget,stateLimit,token);
         if(batchSize is <1 or >64) throw new ArgumentOutOfRangeException(nameof(batchSize));
         var watch=Stopwatch.StartNew();
         if(source.Remaining<=0 || !source.PlacedAllItems)

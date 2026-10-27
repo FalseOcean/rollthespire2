@@ -17,6 +17,9 @@ internal sealed partial class WorldFamily : IFamilyInvocation
     private readonly FamilyCpuExecution _cpu;
     private readonly ExactSearchExecutionRequest _request;
     private readonly WorldFamilyGpuPlan? _gpuPlan;
+    internal ExactSearchExecutionRequest PricingRequest => _request;
+    internal WorldFamilyGpuPlan? PricingGpuPlan => _gpuPlan;
+    internal bool PricingMeasuredBodyEligible => true;
 
     private WorldFamilyGpuExecutor? _gpu;
     private bool _compact, _parity, _faulted;
@@ -47,27 +50,43 @@ internal sealed partial class WorldFamily : IFamilyInvocation
         }
     }
     internal WorldFamilyReplay Replay { get; }
+    internal WorldFamilyGpuPlan? GpuPlan => _gpuPlan;
+    internal string GpuPreparationFailureDetail { get; } = "";
     private readonly FamilySurvivalProjection _survival;
 
-    private WorldFamily(ExactSearchExecutionRequest request, WorldFamilyReplay replay)
+    private WorldFamily(ExactSearchExecutionRequest request, WorldFamilyReplay replay, bool preferGpu,
+        GpuNumericalVariant numericalVariant)
     {
         _request = request;
         Replay = replay;
-        _survival = WorldPhysicalPricing.ResolveSurvival(request);
-        _gpuPlan = WorldFamilyGpuPlan.Supports(Replay) ? new WorldFamilyGpuPlan(Replay,
-            request.Authority.PlayersCount == 1 && request.Authority.WorldAuthority?.Beta109Generation is { IsMultiplayer: false }) : null;
-        _cpu = new(request, FamilyId, "W.World.Cpu.Progression.20260907.v1");
+        _survival = FamilyAuxiliaryEvidence.Read(FamilyId, "InitialSurvival", () => WorldPhysicalPricing.ResolveSurvival(request),
+            FamilySurvivalProjection.Unresolved(FamilyId, "AuxiliarySurvivalFailed"), request.SnapshotFingerprint);
+        _cpu = new(request, FamilyId, "W.World.Cpu.Progression.20261016.v2");
+        if (preferGpu && WorldFamilyGpuPlan.Supports(Replay))
+        {
+            try { _gpuPlan = new WorldFamilyGpuPlan(Replay,
+                request.Authority.PlayersCount == 1 && request.Authority.WorldAuthority?.Beta109Generation is { IsMultiplayer: false },
+                numericalVariant); }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                GpuPreparationFailureDetail = ex.ToString();
+                RuntimeLog.TryBackgroundWarning("worldGpuPreparationFailed=true;selected=CpuProgression;exceptionJson=" + RuntimeLog.SafeJson(ex.ToString()));
+            }
+        }
         RuntimeLog.TryBackgroundInfo($"worldFamilyReady=true;family={FamilyId};physicalRevision={ConditionPerformance.PhysicalImplementationRevision};" +
             $"actHorizon={Replay.Plan.MaxRequiredAct};finalHorizon={Replay.Plan.RequiredFarthestStage};" +
             $"groupingK={_gpuPlan?.GroupingK ?? 1};groupingWorkspaceBytes={_gpuPlan?.GroupingWorkspaceBytes ?? 0};capacity={_gpuPlan?.Capacity ?? FamilyCpuExecution.Capacity};workspaceBytes={_gpuPlan?.WorkspaceBytes ?? 0};scratchBytes={_gpuPlan?.ScratchBytes ?? 0};recovery=None");
     }
 
+    bool IFamilyInvocation.ExecutionFaulted => _faulted;
+    GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => _gpuPlan?.NumericRequirements ?? GpuNumericRequirements.None;
     public string FamilyId => "W.World";
-    bool IFamilyInvocation.CanBindPrivateSerial => _gpuPlan is not null;
+    bool IFamilyInvocation.CanBindPrivateSerial => _gpuPlan is { NumericalVariant: GpuNumericalVariant.NativeFloat64 };
     FamilyPrivateGpuExecution IFamilyInvocation.BindPrivateSerial(Godot.RenderingDevice rd,
         PrivateOrdinalBuffer? input, PrivateOrdinalBuffer? output)
     {
-        if (_gpuPlan is null) throw new InvalidOperationException("W.PrivateSerialNotAdmitted");
+        if (_gpuPlan is not { NumericalVariant: GpuNumericalVariant.NativeFloat64 }) throw new InvalidOperationException("W.PrivateSerialNotAdmitted");
         var gpu = new WorldFamilyGpuExecutor(rd, _gpuPlan, input?.Buffer, output);
         return new(gpu, gpu.Device, gpu.SetupMs, input, output, (batch, count, token) =>
         {
@@ -86,11 +105,13 @@ internal sealed partial class WorldFamily : IFamilyInvocation
     public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest geometry) =>
         _request.ProfileId == Compatibility.RuntimeProfileId.Beta111 && _request.Authority.CanUseCurrentModel &&
         _request.Authority.PlayersCount == 1 && _request.Authority.AllCharacterCardPoolsUnlocked == true
-            ? WorldPhysicalPricing.Quote(Replay, _gpuPlan, geometry) : null;
+            ? FamilyGpuReadback.Reference(this, FamilyCanonicalMeasuredCost.TryDenseQuote(this, geometry) ??
+                WorldPhysicalPricing.Quote(Replay, _gpuPlan, geometry)) : null;
     public FamilyConditionPerformanceProjection ConditionPerformance => ResolveConditionPerformance(false);
     public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compactAbi1Input) => _gpuPlan is null
         ? _cpu.Condition(compactAbi1Input) : new(FamilyId,_gpuPlan.Revision(compactAbi1Input),
-            "W.Neutral.20260907.v1",1,"NoAcceptedWithinPathCurve;CanonicalAbi1Ready",usesGpu:true);
+            _gpuPlan.NumericalVariant == GpuNumericalVariant.IntegerRne ? "W.IntegerRne.20261025.v1" : "W.Neutral.20260907.v1",1,
+            _gpuPlan.NumericalVariant == GpuNumericalVariant.IntegerRne ? "IntegerRne;NoAcceptedPhysicalPrice;CanonicalAbi1Ready" : "NoAcceptedWithinPathCurve;CanonicalAbi1Ready",usesGpu:true);
     public FamilyPerformanceObservation CapturePerformanceObservation()
     {
         if (_gpuPlan is null) return _cpu.Observation();
@@ -111,7 +132,7 @@ internal sealed partial class WorldFamily : IFamilyInvocation
     public async ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext executionContext,
         FamilyObservationWindow observationWindow, FamilyCandidateSet input, CancellationToken cancellationToken)
     {
-        if(_gpuPlan is null)return _cpu.Execute(observationWindow,input,cancellationToken,Replay.Matches);
+        if(_gpuPlan is null)return _cpu.Execute(observationWindow,input,cancellationToken,Replay.Matches,executionContext);
         cancellationToken.ThrowIfCancellationRequested();
         if(_faulted)throw new InvalidOperationException("W.GpuInvocationFaulted");
         if(observationWindow.ExactRequest.SnapshotFingerprint!=_request.SnapshotFingerprint)throw new InvalidOperationException("W.ObservationMismatch");
@@ -173,17 +194,31 @@ internal sealed partial class WorldFamily : IFamilyInvocation
     }
 
     internal static bool TryCreate(ExactSearchExecutionRequest request, out IFamilyInvocation? family)
+        => TryCreate(request, out family, true);
+    internal static bool TryCreate(ExactSearchExecutionRequest request, out IFamilyInvocation? family, bool preferGpu,
+        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
         family = null;
-        if (!WorldFamilyReplay.HasConditions(request)) return false;
-        var plan = WorldFamilyReplay.Compile(request);
-        if (!plan.Enabled && plan.DisableReason == "WorldNumericPlanCapacityExceeded")
+        InitialRoomsPlan? unknown = InitialRoomsPlan.TryCompileUnknown(request, numericalVariant);
+        if (!WorldFamilyReplay.HasConditions(request))
         {
-            WorldFamilyReplay.ValidateRelicAuthority(request);
-            RuntimeLog.TryBackgroundInfo("worldFamilyInapplicable=true;reason=WorldNumericPlanCapacityExceeded;selectionTime=true;predicatesRetainedByExact=true;recovery=None");
-            return false;
+            if (unknown is null) return false;
+            family = new InitialRoomsInvocation(request, "W.World", unknown, null, preferGpu);
+            return true;
         }
-        family = new WorldFamily(request, new WorldFamilyReplay(request, plan));
+        var plan = WorldFamilyReplay.Compile(request);
+        if (!plan.Enabled)
+        {
+            RuntimeLog.TryBackgroundInfo($"worldFamilyInapplicable=true;reason={plan.DisableReason};selectionTime=true;predicatesRetainedByExact=true;replacementCompleteness=NotClaimed");
+            if (RuntimeLog.SessionId.Length > 0) Infrastructure.Diagnostics.RuntimeIssueLedger.Current.RecordDegradation("WorldFilterUnavailable",
+                nameof(WorldFamily), "Filter.Construction", "issues.filter_incomplete",
+                $"cause={plan.DisableReason};predicatesRetained=true;finalValidationSkipped={request.RunOptions.SkipExactValidation};matchClaimed=false");
+            if (unknown is null) return false;
+            family = new InitialRoomsInvocation(request, "W.World", unknown, null, preferGpu);
+            return true;
+        }
+        family = new WorldFamily(request, new WorldFamilyReplay(request, plan), preferGpu, numericalVariant);
+        if (unknown is not null) family = new InitialRoomsInvocation(request, "W.World", unknown, family, preferGpu);
         return true;
     }
 }

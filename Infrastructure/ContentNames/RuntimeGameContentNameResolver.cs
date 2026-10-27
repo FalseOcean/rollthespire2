@@ -9,13 +9,11 @@ namespace RolltheSpire2.Infrastructure.ContentNames;
 
 /// <summary>
 /// Main-thread presentation adapter for game-localized content names. The live
-/// game's localized model text is always preferred. The embedded catalog is only
-/// an offline/unavailable-runtime fallback and must never pre-empt current game
-/// localization. No game model or localization object is retained.
+/// game's localized model text is preferred; an unavailable name is displayed as
+/// its full stable ID. No game model or localization object is retained.
 /// </summary>
 internal sealed class RuntimeGameContentNameResolver : IGameContentNameResolver
 {
-    private readonly IGameContentNameResolver _fallback;
     private readonly Dictionary<string, string> _cache = new(StringComparer.Ordinal);
     private readonly Assembly? _gameAssembly;
     private readonly Type[] _gameTypes;
@@ -26,7 +24,7 @@ internal sealed class RuntimeGameContentNameResolver : IGameContentNameResolver
 
     private RuntimeGameContentNameResolver(string languageCode)
     {
-        _fallback = JsonGameContentNameResolver.Create(languageCode);
+        LanguageCode = string.Equals(languageCode, "zh", StringComparison.OrdinalIgnoreCase) ? "zh" : "en";
         _gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
             .FirstOrDefault(assembly => string.Equals(
                 assembly.GetName().Name,
@@ -45,7 +43,7 @@ internal sealed class RuntimeGameContentNameResolver : IGameContentNameResolver
         _runtimeModelLookups = BuildRuntimeModelLookups(_gameAssembly, _modelDb, _modelIdType);
     }
 
-    public string LanguageCode => _fallback.LanguageCode;
+    public string LanguageCode { get; }
 
     public static IGameContentNameResolver Create(string languageCode) =>
         new RuntimeGameContentNameResolver(languageCode);
@@ -58,7 +56,6 @@ internal sealed class RuntimeGameContentNameResolver : IGameContentNameResolver
             return cached;
         }
 
-        string fallback = _fallback.Resolve(key, kind);
         string? runtimeName = null;
         string evidence = key.IsValid
             ? "content-name-runtime-not-resolved"
@@ -67,16 +64,13 @@ internal sealed class RuntimeGameContentNameResolver : IGameContentNameResolver
             TryResolveRuntimeName(key, kind, out runtimeName, out evidence);
         string resolved = GameContentNameResolutionPolicy.PreferRuntimeLocalizedName(
             key,
-            runtimeResolved ? runtimeName : null,
-            string.Equals(fallback, key.Entry, StringComparison.Ordinal)
-                ? HumanizeEntry(key.Entry)
-                : fallback);
+            runtimeResolved ? runtimeName : null);
 
         _cache[cacheKey] = resolved;
         if (!runtimeResolved || SearchOperationalLogPolicy.VerboseTraceEnabled)
         {
             RuntimeLog.Info(
-                $"ui1ContentNameResolved={key.Serialized};kind={kind};source={(runtimeResolved ? "game-runtime" : "embedded-fallback")};evidence={evidence}");
+                $"ui1ContentNameResolved={key.Serialized};kind={kind};source={(runtimeResolved ? "game-runtime" : "id-fallback")};evidence={evidence}");
         }
         return resolved;
     }
@@ -92,6 +86,11 @@ internal sealed class RuntimeGameContentNameResolver : IGameContentNameResolver
         try
         {
             RuntimeSnapshotThreadGuard.RequireMainThread();
+            if (!CategoryMatches(key.Category, kind))
+            {
+                evidence = "content-name-category-mismatch";
+                return false;
+            }
             if (_gameAssembly is null || _modelDb is null)
             {
                 evidence = "content-name-modeldb-unavailable";
@@ -100,6 +99,7 @@ internal sealed class RuntimeGameContentNameResolver : IGameContentNameResolver
 
             object? runtimeModel = ResolveRuntimeModelById(key, kind);
             if (runtimeModel is not null &&
+                ModelMatches(runtimeModel, key, kind) &&
                 TryReadLocalizedName(runtimeModel, key, out string? byIdName, out string byIdSource))
             {
                 displayName = byIdName;
@@ -108,7 +108,7 @@ internal sealed class RuntimeGameContentNameResolver : IGameContentNameResolver
             }
 
             if (kind == GameContentKind.Event &&
-                TryResolveCatalogModel(_modelDb, "AllEvents", key.Entry, out object? catalogEvent) &&
+                TryResolveCatalogModel(_modelDb, "AllEvents", key, kind, out object? catalogEvent) &&
                 catalogEvent is not null &&
                 TryReadLocalizedName(catalogEvent, key, out string? catalogName, out string catalogSource))
             {
@@ -134,7 +134,7 @@ internal sealed class RuntimeGameContentNameResolver : IGameContentNameResolver
             foreach (Type modelType in modelTypes)
             {
                 object? model = ResolveModel(_modelDb, modelType, kind);
-                if (model is null)
+                if (model is null || !ModelMatches(model, key, kind))
                 {
                     continue;
                 }
@@ -282,6 +282,7 @@ internal sealed class RuntimeGameContentNameResolver : IGameContentNameResolver
             [GameContentKind.Relic] = "MegaCrit.Sts2.Core.Models.RelicModel",
             [GameContentKind.Potion] = "MegaCrit.Sts2.Core.Models.PotionModel",
             [GameContentKind.Event] = "MegaCrit.Sts2.Core.Models.EventModel",
+            [GameContentKind.Ancient] = "MegaCrit.Sts2.Core.Models.AncientEventModel",
             [GameContentKind.Encounter] = "MegaCrit.Sts2.Core.Models.EncounterModel",
             [GameContentKind.Act] = "MegaCrit.Sts2.Core.Models.ActModel"
         };
@@ -307,10 +308,11 @@ internal sealed class RuntimeGameContentNameResolver : IGameContentNameResolver
         return output;
     }
 
-    private static bool TryResolveCatalogModel(
+    private bool TryResolveCatalogModel(
         Type modelDb,
         string catalogPropertyName,
-        string entry,
+        ModelKey key,
+        GameContentKind kind,
         out object? model)
     {
         model = null;
@@ -329,24 +331,9 @@ internal sealed class RuntimeGameContentNameResolver : IGameContentNameResolver
                 return false;
             }
 
-            string normalizedEntry = NormalizeIdentityToken(entry);
             foreach (object? candidate in models)
             {
-                if (candidate is null)
-                {
-                    continue;
-                }
-
-                PropertyInfo? idProperty = candidate.GetType().GetProperty(
-                    "Id",
-                    BindingFlags.Public | BindingFlags.Instance);
-                object? id = idProperty?.GetValue(candidate);
-                PropertyInfo? entryProperty = id?.GetType().GetProperty(
-                    "Entry",
-                    BindingFlags.Public | BindingFlags.Instance);
-                string? candidateEntry = entryProperty?.GetValue(id)?.ToString();
-                if (candidateEntry is not null &&
-                    string.Equals(NormalizeIdentityToken(candidateEntry), normalizedEntry, StringComparison.Ordinal))
+                if (candidate is not null && ModelMatches(candidate, key, kind))
                 {
                     model = candidate;
                     return true;
@@ -370,6 +357,7 @@ internal sealed class RuntimeGameContentNameResolver : IGameContentNameResolver
             GameContentKind.Potion => "Potion",
             GameContentKind.Card => "Card",
             GameContentKind.Event => "Event",
+            GameContentKind.Ancient => "AncientEvent",
             GameContentKind.Encounter => "Encounter",
             GameContentKind.Act => "Act",
             _ => string.Empty
@@ -426,15 +414,32 @@ internal sealed class RuntimeGameContentNameResolver : IGameContentNameResolver
         return new string(buffer[..length]);
     }
 
-    private static string HumanizeEntry(string entry)
+    private static bool CategoryMatches(string category, GameContentKind kind) => kind switch
     {
-        string[] parts = entry.Split('_', StringSplitOptions.RemoveEmptyEntries);
-        return parts.Length == 0
-            ? entry
-            : string.Join(" ", parts.Select(part =>
-                part.Length == 1
-                    ? part
-                    : char.ToUpperInvariant(part[0]) + part[1..].ToLowerInvariant()));
+        GameContentKind.Relic => category == BaseGameModelKeys.Categories.Relic,
+        GameContentKind.Card => category == BaseGameModelKeys.Categories.Card,
+        GameContentKind.Potion => category == BaseGameModelKeys.Categories.Potion,
+        GameContentKind.Character => category == BaseGameModelKeys.Categories.Character,
+        GameContentKind.Event => category == BaseGameModelKeys.Categories.Event,
+        GameContentKind.Ancient => category == BaseGameModelKeys.Categories.Event || category == BaseGameModelKeys.Categories.Ancient,
+        GameContentKind.Encounter => category == BaseGameModelKeys.Categories.Encounter,
+        GameContentKind.Act => category == BaseGameModelKeys.Categories.Act,
+        _ => false
+    };
+
+    private bool ModelMatches(object model, ModelKey key, GameContentKind kind)
+    {
+        // Type-name matching only locates compatibility candidates; it must not
+        // turn a similar spelling or a different category into the requested ID.
+        string baseName = kind == GameContentKind.Ancient ? "AncientEventModel" : kind + "Model";
+        Type? expected = _gameAssembly?.GetType("MegaCrit.Sts2.Core.Models." + baseName);
+        if (expected is null || !expected.IsInstanceOfType(model)) return false;
+        object? id = SafeGet(() => model.GetType().GetProperty("Id")?.GetValue(model));
+        if (id is null) return false;
+        string? category = SafeGet(() => id.GetType().GetProperty("Category")?.GetValue(id) as string);
+        string? entry = SafeGet(() => id.GetType().GetProperty("Entry")?.GetValue(id) as string);
+        return string.Equals(category, key.Category, StringComparison.Ordinal) &&
+            string.Equals(entry, key.Entry, StringComparison.Ordinal);
     }
 
     private static T? SafeGet<T>(Func<T?> getter)

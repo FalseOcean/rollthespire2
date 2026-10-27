@@ -87,6 +87,11 @@ public static class SeedAnalysisPresentationBuilder
             choices,
             warnings)
         {
+            NeowIdentityStatus = document.Sections.FirstOrDefault(s => s.Kind == PredictionSectionKind.NeowIdentity)?.DomainStatus ??
+                (document.Party?.Players.FirstOrDefault(p => p.Slot == document.Context.PlayerSlotIndex)?.IdentityPrecision == PredictionPrecision.Unsupported
+                    ? SeedDomainEvaluationStatus.Unsupported : SeedDomainEvaluationStatus.Unknown),
+            NeowIdentityIssueCode = document.Sections.FirstOrDefault(s => s.Kind == PredictionSectionKind.NeowIdentity)?.IssueCode is { Length: > 0 } neowIssue ? neowIssue :
+                document.Party?.Players.FirstOrDefault(p => p.Slot == document.Context.PlayerSlotIndex)?.IssueCode is { Length: > 0 } partyIssue ? partyIssue : "NeowSectionMissing",
             BossDomain = BuildBossDomain(document, uiText, contentNames, showInternalIds),
             EncounterSequences = document.Sections.SelectMany(s => s.EncounterSequences).OrderBy(a => a.Act)
                 .Select(a => new ActEncounterSequenceViewModel(a.Act, a.ActKey,
@@ -114,8 +119,8 @@ public static class SeedAnalysisPresentationBuilder
         if (section is null)
         {
             return new SeedDomainViewModel<BossPredictionViewModel>(
-                SeedDomainEvaluationStatus.Unknown,
-                "BossSectionMissing",
+                document.Party is { BossStatus: not SeedDomainEvaluationStatus.Evaluated } party ? party.BossStatus : SeedDomainEvaluationStatus.Unknown,
+                document.Party?.BossIssueCode is { Length: > 0 } issue ? issue : "BossSectionMissing",
                 Array.Empty<BossPredictionViewModel>());
         }
 

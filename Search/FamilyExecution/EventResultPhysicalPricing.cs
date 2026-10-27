@@ -29,10 +29,9 @@ internal static class EventResultPhysicalPricing
             OutputAlreadyOrdered:true,PublicTransportClass:"CpuOrderedAbi1");
     }
 
-    internal static PrivateOrdinalAllocationPricing.Work? LegacyEwWork(EventResultFamilyPlan plan) =>
-        plan.HasMorphic || plan.HasNewWhitelist ? null : new(.85, 1, 1 << 20);
     internal static FamilyPhysicalQuote? Quote(EventResultFamilyPlan plan, FamilyPhysicalQuoteRequest geometry)
-        => QuoteMeasured(plan, geometry) ?? QuoteModel(plan, geometry) ?? QuoteNew(plan, geometry);
+        => plan.NumericalVariant != GpuNumericalVariant.NativeFloat64 ? null :
+            QuoteMeasured(plan, geometry) ?? QuoteModel(plan, geometry) ?? QuoteNew(plan, geometry);
 
     private static FamilyPhysicalQuote? QuoteNew(EventResultFamilyPlan plan, FamilyPhysicalQuoteRequest g)
     {
@@ -115,8 +114,9 @@ internal static class EventResultPhysicalPricing
             k is EventResultConditionKind.TrashHeapGrabCard or EventResultConditionKind.TrashHeapDiveRelic);
         int fake = plan.Conditions.Count(c => c.Kind == EventResultConditionKind.FakeMerchantOfferedFakeRelic);
         int color = plan.Conditions.Count(c => c.Kind == EventResultConditionKind.ColorfulPhilosophersOfferedColor);
-        // CPU currently initializes both Trash projections separately. These are
-        // canonical CPU costs, including ordered output, not GPU coefficients.
+        // Trash projections now share their first sample. Retain the historical
+        // per-projection CPU work envelope, including ordered output; these are
+        // coarse CPU coefficients rather than borrowed GPU costs.
         double ns = 80 + 20 * scalar + (fake > 0 ? 120 : 0) + (color > 0 ? 360 : 0) +
             20 * (Math.Max(0, fake - 1) + Math.Max(0, color - 1));
         return new("E.EventResult", "E.OperatorGroups.20260913.v1.P1", ns, 65536, null,

@@ -35,26 +35,6 @@ internal static class CombatRewardPartyCatalog
             potions.Where(p => p.Rarity == EffectPotionRarity.Uncommon).Select(p => Id(p.PotionKey)).ToArray(),
             potions.Where(p => p.Rarity == EffectPotionRarity.Rare).Select(p => Id(p.PotionKey)).ToArray(),
             potions.Select(p => Id(p.PotionKey)).ToArray());
-        var generation = request.Authority.WorldAuthority?.Beta109Generation;
-        bool bagExact = generation is { HasExactFixedParty: true } &&
-            generation.PersonalPlayerSlot == request.Authority.PlayerSlotIndex &&
-            generation.PlayerCount == request.Authority.PlayersCount && catalog.RelicBagAuthorityExact;
-        int[] prefix = [];
-        Beta110FastRelicBucket[] buckets = [];
-        if (bagExact)
-        {
-            var indexByKey = catalog.OrdinaryRelics.Select((r, i) => (Key: catalog.KeyOf(r.DenseId), Index: checked((ushort)i)))
-                .ToDictionary(p => p.Key, p => p.Index);
-            var source = generation!.PartyRelicBuckets[request.Authority.PlayerSlotIndex];
-            bagExact = source.All(b => b.OrderExact && b.OrderedRelics.All(indexByKey.ContainsKey)) &&
-                source.Sum(b => b.OrderedRelics.Count) <= Beta110FastEffectCatalogCompiler.MaximumRelicBagEntries;
-            if (bagExact)
-            {
-                prefix = generation.SharedRelicBuckets.Concat(generation.PartyRelicBuckets
-                    .Take(request.Authority.PlayerSlotIndex).SelectMany(b => b)).Select(b => b.OrderedRelics.Count).ToArray();
-                buckets = source.Select(b => new Beta110FastRelicBucket(b.OrderedRelics.Select(k => indexByKey[k]).ToArray())).ToArray();
-            }
-        }
         return catalog with
         {
             CombatRewardCardPool = cardPool,
@@ -64,10 +44,10 @@ internal static class CombatRewardPartyCatalog
                 powerPool.TotalCount > 0 && cards.All(c => c.CatalogProfileId == authority.CapturedProfileId &&
                     RuntimeProfilePolicies.UsesBeta110SharedAlgorithms(c.CatalogProfileId) && !string.IsNullOrWhiteSpace(c.EligibilityAuthority)),
             CombatRewardPotionAuthorityExact = catalog.PotionAuthorityExact,
-            RelicBagAuthorityExact = bagExact,
-            SharedRelicConsumeShuffleLengths = prefix,
-            PlayerRelicBuckets = buckets,
-            Fingerprint = catalog.Fingerprint + ":C.MultiplayerCombatPools.v1"
+            // Query-literal C does not observe latent relic bags.
+            OrdinaryRelics = [], RelicBagAuthorityExact = false,
+            SharedRelicConsumeShuffleLengths = [], PlayerRelicBuckets = [],
+            Fingerprint = catalog.Fingerprint + ":C.MultiplayerCombatPools.QueryLiteral.20261027.v2"
         };
     }
 }

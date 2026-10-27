@@ -60,10 +60,13 @@ public static class LegacySearchQueryAdapter
                 filter.AncientSeaGlassTargetFilters))
         {
             CombatCardRewards = filter.CombatCardRewardSequence,
+            CombatCardExclusion = filter.CombatCardExclusion,
             CombatPotionRewards = filter.CombatPotionRewardSequence,
             EventResultConditions = filter.EventResultConditions,
             MerchantColorlessConditions = filter.MerchantColorlessConditions,
             MerchantColorlessSequenceConditions = filter.MerchantColorlessSequenceConditions,
+            TreasureRelics = filter.TreasureRelics,
+            FirstActUnknownEventPrefixCount = filter.FirstActUnknownEventPrefixCount,
             RelicShopSequenceConditions = filter.RelicShopSequenceConditions
         };
     }

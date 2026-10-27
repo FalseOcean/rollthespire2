@@ -9,8 +9,8 @@ internal sealed partial class UnlockSummary : PanelContainer
 
     public UnlockSummary()
     {
-        Ui1Theme.ApplyPanel(this, Ui1SurfaceRole.Input, 3f, 1, 8f);
-        _label = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta);
+        MainPanelTheme.ApplyPanel(this, Ui1SurfaceRole.Input, 3f, 1, 8f);
+        _label = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta);
         AddChild(_label);
     }
 
@@ -21,9 +21,9 @@ internal sealed partial class UnlockSummary : PanelContainer
             "font_color",
             complete switch
             {
-                true => Ui1Theme.Palette.Success,
-                false => Ui1Theme.Palette.Warning,
-                null => Ui1Theme.Palette.Unknown
+                true => MainPanelTheme.Palette.Success,
+                false => MainPanelTheme.Palette.Warning,
+                null => MainPanelTheme.Palette.Unknown
             });
         TooltipText = tooltip;
     }

@@ -1,0 +1,13 @@
+{
+  "GitHead": "bc2c4437dae2754743ee5347abab47476a5e4b5e",
+  "Worktree": "Standalone capture/host changes uncommitted; no physical changes in corpus task",
+  "AssemblySha256": "CEB8B79F5DCFC46C2A56A73D38D190E62F3DD88E74C9FCE6E3DF9F81E5F07089",
+  "RawEvidence": [
+    ".rewrite-build-evidence/production-corpus-v1-final",
+    ".rewrite-build-evidence/production-corpus-v1-cards"
+  ],
+  "Cases": 16,
+  "Sessions": 32,
+  "Driver": "d3d12",
+  "CapturedAt": "2026-09-08T14:25:27.9574834+08:00"
+}

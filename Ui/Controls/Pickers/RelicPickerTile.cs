@@ -28,9 +28,7 @@ internal sealed partial class RelicPickerTile : Button
         FocusMode = Control.FocusModeEnum.All;
         ClipContents = true;
         Disabled = candidate.IsDisabled;
-        Ui1Theme.ApplyButton(this, candidate.IsSelected
-            ? Ui1ButtonRole.NavigationSelected
-            : Ui1ButtonRole.Secondary);
+        WorkspacePalette.MainPanel.ApplyButton(this, selected: candidate.IsSelected);
         Modulate = candidate.IsDisabled
             ? new Color(1f, 1f, 1f, 0.52f)
             : Colors.White;
@@ -121,7 +119,7 @@ internal sealed partial class RelicPickerTile : Button
         content.Alignment = BoxContainer.AlignmentMode.Center;
         content.AddThemeConstantOverride("separation", 4);
 
-        var name = Ui1Theme.Label(candidate.LocalizedName, Ui1TextRole.Body);
+        var name = MainPanelTheme.Label(candidate.LocalizedName, Ui1TextRole.Body);
         name.MouseFilter = Control.MouseFilterEnum.Ignore;
         name.HorizontalAlignment = HorizontalAlignment.Center;
         name.VerticalAlignment = VerticalAlignment.Center;
@@ -151,7 +149,7 @@ internal sealed partial class RelicPickerTile : Button
     {
         CustomMinimumSize = new Vector2(142, 126);
         TooltipText = candidate.LocalizedName;
-        var label = Ui1Theme.Label(candidate.LocalizedName, Ui1TextRole.Body, true);
+        var label = MainPanelTheme.Label(candidate.LocalizedName, Ui1TextRole.Body, true);
         label.MouseFilter = Control.MouseFilterEnum.Ignore;
         label.HorizontalAlignment = HorizontalAlignment.Center;
         label.VerticalAlignment = VerticalAlignment.Center;
@@ -177,7 +175,7 @@ internal sealed partial class RelicPickerTile : Button
         };
         bool textureAssigned = TryAssignTexture(image, texture);
         image.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
-        var missing = Ui1Theme.Label(textureAssigned ? string.Empty : "?", Ui1TextRole.Muted);
+        var missing = MainPanelTheme.Label(textureAssigned ? string.Empty : "?", Ui1TextRole.Muted);
         missing.MouseFilter = Control.MouseFilterEnum.Ignore;
         missing.HorizontalAlignment = HorizontalAlignment.Center;
         missing.VerticalAlignment = VerticalAlignment.Center;
@@ -204,7 +202,7 @@ internal sealed partial class RelicPickerTile : Button
         };
         bool textureAssigned = TryAssignTexture(image, texture);
         image.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
-        var missing = Ui1Theme.Label(textureAssigned ? string.Empty : "?", Ui1TextRole.Muted);
+        var missing = MainPanelTheme.Label(textureAssigned ? string.Empty : "?", Ui1TextRole.Muted);
         missing.MouseFilter = Control.MouseFilterEnum.Ignore;
         missing.HorizontalAlignment = HorizontalAlignment.Center;
         missing.VerticalAlignment = VerticalAlignment.Center;
@@ -242,7 +240,7 @@ internal sealed partial class RelicPickerTile : Button
 
     private void AddSelectedBadge(bool selected)
     {
-        var badge = Ui1Theme.Label(selected ? "✓" : string.Empty, Ui1TextRole.Accent);
+        var badge = MainPanelTheme.Label(selected ? "✓" : string.Empty, Ui1TextRole.Accent);
         badge.MouseFilter = Control.MouseFilterEnum.Ignore;
         badge.HorizontalAlignment = HorizontalAlignment.Center;
         badge.VerticalAlignment = VerticalAlignment.Center;

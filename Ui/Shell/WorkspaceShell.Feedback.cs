@@ -10,7 +10,7 @@ namespace RolltheSpire2.Ui.Shell;
 internal sealed partial class WorkspaceShell
 {
     private const string FeedbackEmail = "rollthespire2@outlook.com";
-    private readonly Button _feedback = MakeButton();
+    private Button _feedback = null!;
     private Control _feedbackPage = null!;
     private Button _feedbackExport = null!, _feedbackFolder = null!, _feedbackCopy = null!;
     private Button _feedbackIssue = null!, _feedbackCopyIssue = null!;
@@ -33,7 +33,20 @@ internal sealed partial class WorkspaceShell
         {
             FeedbackBundleRequest request = CaptureFeedbackRequest();
             _feedbackResult = null;
-            _feedbackTask = Task.Run(() => FeedbackBundle.Export(request));
+            _feedbackTask = Task.Run(() =>
+            {
+                try { return FeedbackBundle.Export(request); }
+                catch (Exception ex)
+                {
+                    RuntimeIssueLedger.Current.Record(ex, "FeedbackExportFailed", "WorkspaceShell.Feedback", "ExportWorker",
+                        "runtime.issue.feedback_export_failed");
+                    throw;
+                }
+            });
+            // The worker records and this observer consumes task failure even if
+            // the shell is closed before its main-thread poll can show a receipt.
+            _ = _feedbackTask.ContinueWith(task => { _ = task.Exception; }, CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }
         catch (Exception ex) { _feedbackAfterExport = ""; RecordFeedbackFailure(ex); }
         RefreshFeedback();
@@ -53,19 +66,26 @@ internal sealed partial class WorkspaceShell
         void Capture(string name, Func<object?> capture)
         {
             try { environment[name] = capture(); }
-            catch (Exception ex) { warnings.Add(name + ": " + ex.GetType().Name); }
+            catch (Exception ex) { CaptureIssue(name, ex); }
+        }
+        void CaptureIssue(string name, Exception ex)
+        {
+            warnings.Add(name + ": " + ex.ToString());
+            RuntimeIssueLedger.Current.Record(ex, "FeedbackMetadataCaptureFailed", "WorkspaceShell.Feedback", name,
+                "runtime.issue.feedback_metadata_failed", RuntimeIssueSeverity.Warning);
         }
         Capture("Godot", () => Engine.GetVersionInfo()["string"].AsString());
         Capture("RenderingDriver", () => RenderingServer.GetCurrentRenderingDriverName());
         Capture("GPU", () => RenderingServer.GetVideoAdapterName());
         Capture("GpuInitialization", () => Search.FamilyExecution.FamilyDeviceProfileFoundation.Initialization.Capture());
         Capture("SearchDiagnostics", () => _references?.CaptureSearchDiagnostics());
+        Capture("OperationalLog", () => new { RuntimeLog.CurrentLogPath, RuntimeLog.LastFailureCode, RuntimeLog.LastFailureDetail });
         Capture("Mods", () => MegaCrit.Sts2.Core.Modding.ModManager.Mods.Select(m => new {
             Id = m.manifest?.id, Name = m.manifest?.name, Version = m.manifest?.version,
             State = m.state.ToString(), Source = m.modSource.ToString() }).ToArray());
         string? editor = null;
-        try { editor = JsonSerializer.Serialize(_references?.CaptureFeedbackDraft()); }
-        catch (Exception ex) { warnings.Add("CurrentEditor: " + ex.GetType().Name); }
+        try { editor = JsonSerializer.Serialize(_references?.CaptureDraft().WithoutCapturedAuthority()); }
+        catch (Exception ex) { CaptureIssue("CurrentEditor", ex); }
         string godotLog = "";
         try
         {
@@ -75,7 +95,8 @@ internal sealed partial class WorkspaceShell
             if (!fileLogging)
                 warnings.Add("Godot file logging is disabled; files may be from an earlier run.");
         }
-        catch (Exception ex) { warnings.Add("GodotLogPath: " + ex.GetType().Name); }
+        catch (Exception ex) { CaptureIssue("GodotLogPath", ex); }
+        environment["RuntimeIssues"] = RuntimeIssueLedger.Current.Snapshot();
         OperationalFileLog.Flush();
         if (RuntimeLog.LastFailureCode.Length > 0) warnings.Add(RuntimeLog.LastFailureCode);
         string userData = OS.GetUserDataDir();
@@ -104,8 +125,9 @@ internal sealed partial class WorkspaceShell
 
     private void RecordFeedbackFailure(Exception ex)
     {
-        _feedbackMessage = "feedback.failed"; _feedbackError = ex.GetType().Name;
-        RuntimeLog.Warn("feedbackExportFailed=" + ex.GetType().Name);
+        _feedbackMessage = "feedback.failed"; _feedbackError = ex.Message;
+        RuntimeIssueLedger.Current.Record(ex, "FeedbackExportFailed", "WorkspaceShell.Feedback", "CompletionOrStart",
+            "runtime.issue.feedback_export_failed");
     }
     private void OpenFeedbackFolder()
     {

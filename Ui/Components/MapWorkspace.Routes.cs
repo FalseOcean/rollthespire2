@@ -27,13 +27,13 @@ internal sealed partial class MapWorkspace
         var controls = new VBoxContainer { Name = "RouteControls" };
         controls.AddThemeConstantOverride("separation", 12);
         information.AddChild(controls);
-        _routeHint = Ui1Theme.Label(string.Empty, Ui1TextRole.Muted, true);
-        _routeState = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta, true);
+        _routeHint = MainPanelTheme.Label(string.Empty, Ui1TextRole.Muted, true);
+        _routeState = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta, true);
         controls.AddChild(_routeHint); controls.AddChild(_routeState);
         Button AddButton(HBoxContainer parent, string name, Action action)
         {
             var button = new Button { Name = name };
-            Ui1Theme.ApplyButton(button, Ui1ButtonRole.Secondary);
+            MainPanelTheme.ApplyButton(button, Ui1ButtonRole.Secondary);
             button.Pressed += action; parent.AddChild(button); return button;
         }
         var actions = new HBoxContainer(); controls.AddChild(actions);
@@ -49,7 +49,7 @@ internal sealed partial class MapWorkspace
             var button = AddButton(row, "RouteExtremum" + type, () => PreviewExtremum(type));
             _extremaButtons[type] = button;
         }
-        _routeCount = Ui1Theme.Label(string.Empty, Ui1TextRole.Muted, true); controls.AddChild(_routeCount);
+        _routeCount = MainPanelTheme.Label(string.Empty, Ui1TextRole.Muted, true); controls.AddChild(_routeCount);
         var browse = new HBoxContainer(); controls.AddChild(browse);
         _prevRoute = AddButton(browse, "PreviousRoute", () => BrowseRoute(-1));
         _nextRoute = AddButton(browse, "NextRoute", () => BrowseRoute(1));
@@ -132,7 +132,7 @@ internal sealed partial class MapWorkspace
             bool available = _extrema.TryGetValue(type, out var set);
             button.Text = string.Format(T(type == MapPointType.Monster ? "min" : "max"), _text.Get("ui1.map.type." + type), available ? set!.Value.ToString() : "—");
             button.Disabled = !available;
-            Ui1Theme.ApplyButton(button, _optimalMetric == type ? Ui1ButtonRole.NavigationSelected : Ui1ButtonRole.Ghost);
+            MainPanelTheme.ApplyButton(button, _optimalMetric == type ? Ui1ButtonRole.NavigationSelected : Ui1ButtonRole.Ghost);
         }
         _routeCount.Visible = _optimalRoutes is not null;
         _routeCount.Text = _optimalRoutes is null ? string.Empty :

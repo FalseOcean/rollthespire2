@@ -54,14 +54,12 @@ public static class SearchCompiler
     internal static CompiledSearch CompilePlayer(SearchQuery query, SearchContext context, ProductSemanticPolicy? productPolicy = null)
     {
         if (query.Players.Count != 0 || context.Party is not null) throw new ArgumentException("Party.NestedEnvelope");
+        ValidateAuthoredShape(query);
 
         if (query.StandardMaps.Count > 0)
         {
-            if (context.ProfileId != RuntimeProfileId.Beta111)
-                throw new ArgumentException("StandardMap.Beta111Required");
             if (query.StandardMaps.Any(c => !c.IsValid)) throw new ArgumentException("StandardMap.InvalidCondition");
         }
-        if (context.Authority.PlayersCount == 1) ValidateAncientModes(query);
         TransformationAggregateCondition.ValidateExclusiveOwnership(query);
         if (query.TransformationAggregate is not null && (context.ProfileId != RuntimeProfileId.Beta111 || context.Authority.PlayersCount != 1))
             throw new ArgumentException("TransformationAggregate.SinglePlayerBeta111Required");
@@ -92,18 +90,128 @@ public static class SearchCompiler
             fingerprint);
     }
 
-    private static void ValidateAncientModes(SearchQuery query)
+    // Validate before IsEmpty/normalization can discard malformed authored data.
+    // Empty predicates are neutral; invalid identities and shapes are input errors,
+    // never evidence that every seed fails the player's otherwise valid query.
+    private static void ValidateAuthoredShape(SearchQuery query)
     {
-        foreach (var act in query.AncientBranches.GroupBy(b => b.Act))
+        static void Require(bool valid, string issue)
         {
-            if (act.Select(b => b.AncientKey).Distinct().Count() > 4)
-                throw new ArgumentException("Ancient.MaximumFourAlternativeParents");
-            var filters = query.LegacyWorld.AncientOptionFilters.Where(f => f.Act == act.Key && !f.IsEmpty).ToArray();
-            if (!filters.Any(f => f.Keys.All.Count > 0)) continue;
-            if (act.Select(b => b.AncientKey).Distinct().Count() != 1 ||
-                filters.Any(f => f.Keys.Any.Count > 0 || f.Keys.Ban.Count > 0) ||
-                filters.SelectMany(f => f.Keys.All).Distinct().Count() > 3)
-                throw new ArgumentException("Ancient.AllRequiresOneParentAndAtMostThreeOptions");
+            if (!valid) throw new ArgumentException(issue);
+        }
+        static void Keys(IEnumerable<ModelKey> keys, string path, string? category = null) =>
+            Require(keys.All(k => k.IsValid && (category is null || k.Category == category)), path + ":InvalidModelKey");
+        static void Set(ModelKeySetFilter set, string path, string? category = null) =>
+            Keys(set.Any.Concat(set.All).Concat(set.Ban), path, category);
+        static void Sequence(int count, int maximum, CombatRewardSequenceOrderMode order, int slots, string path) =>
+            Require(count >= 0 && count <= maximum && slots >= count && Enum.IsDefined(order), path + ":InvalidShape");
+        Require(query.FirstActUnknownEventPrefixCount is >= 0 and <= 3, "FirstActUnknownEventPrefix:InvalidCount");
+        if (query.TreasureRelics is { } treasure) Require(treasure.IsValid, "TreasureRelics:InvalidShape");
+        if (query.OpeningRoute is { } opening) Require(opening.IsValid, "OpeningRoute:InvalidShape");
+        if (query.OpeningRouteRelicRequirement is { } route)
+        {
+            Keys([route.ParentRouteRelicKey], "OpeningRouteRelicRequirement.Parent", BaseGameModelKeys.Categories.Relic);
+            Keys(route.RequiredRelicKeys, "OpeningRouteRelicRequirement.Relics", BaseGameModelKeys.Categories.Relic);
+            Require(Enum.IsDefined(route.OrderMode), "OpeningRouteRelicRequirement:InvalidOrder");
+            if (route.OrderMode == BonesRouteOrderMode.ExactOrder && route.RequiredRelicKeys.Count > 0)
+                Require(route.ParentRouteRelicKey == BaseGameModelKeys.Relics.NeowsBones && route.RequiredRelicKeys.Count == 2 &&
+                    route.RequiredRelicKeys.Distinct().Count() == 2, "BonesExactOrderRequiresTwoDistinctRouteRelics");
+        }
+        foreach (var item in query.StructuredOpeningEffects)
+        {
+            Keys([item.SourceRelicKey], "Structured.Source", BaseGameModelKeys.Categories.Relic);
+            Require(Enum.IsDefined(item.Kind) && Enum.IsDefined(item.Scope) && Enum.IsDefined(item.OutputKind) &&
+                Enum.IsDefined(item.SpecialOffer) && Enum.IsDefined(item.KaleidoscopeGroupOrder), "Structured:InvalidShape");
+            string category = item.OutputKind switch
+            {
+                NeowStructuredOutputKind.Relic => BaseGameModelKeys.Categories.Relic,
+                NeowStructuredOutputKind.Potion => BaseGameModelKeys.Categories.Potion,
+                _ => BaseGameModelKeys.Categories.Card
+            };
+            Keys(item.OutputKeys, "Structured.Outputs", category);
+            Keys(item.KaleidoscopePositionalSlots.Where(k => k.HasValue).Select(k => k!.Value), "Structured.Positions", BaseGameModelKeys.Categories.Card);
+            bool ordered = item.SourceRelicKey == BaseGameModelKeys.Relics.Kaleidoscope &&
+                item.Kind == NeowStructuredConditionKind.IndependentOfferGroupTargets && item.KaleidoscopeGroupOrder == KaleidoscopeGroupOrderMode.ExactOrder;
+            Require(item.KaleidoscopePositionalSlots.Count == 0 || ordered && item.KaleidoscopePositionalSlots.Count == 2,
+                "KaleidoscopeExactOrderRequiresTwoPositionalSlots");
+            if (ordered) Require(item.KaleidoscopePositionalSlots.Count == 2 ? item.KaleidoscopePositionalSlots.Any(k => k.HasValue) :
+                item.OutputKeys.Count is >= 1 and <= 2, "KaleidoscopeExactOrderRequiresAtLeastOneTarget");
+        }
+        foreach (var branch in query.VariantBossBranches)
+        {
+            Require(branch.IsValid, "VariantBoss:InvalidBranch");
+            Set(branch.FirstBoss, "VariantBoss.First"); Set(branch.SecondBoss, "VariantBoss.Second");
+        }
+        foreach (var branch in query.AncientBranches)
+        {
+            Require(branch.IsValid, "Ancient:InvalidBranch");
+            Keys(branch.OptionAny, "Ancient.Options", BaseGameModelKeys.Categories.Relic);
+            Keys(branch.SeaGlassTargetAny, "Ancient.SeaGlass", BaseGameModelKeys.Categories.Character);
+        }
+        foreach (var item in query.RelicSequenceConstraints)
+        {
+            Set(item.Keys, "RelicSequence", BaseGameModelKeys.Categories.Relic);
+            Require(Enum.IsDefined(item.Lane) && Enum.IsDefined(item.RangeMode) && item.RangeValue > 0, "RelicSequence:InvalidShape");
+        }
+        foreach (var item in query.EventSequenceConstraints)
+        {
+            Set(item.Keys, "EventSequence", BaseGameModelKeys.Categories.Event);
+            Require(item.Act is >= 1 and <= 3 && Enum.IsDefined(item.RangeMode) && item.RangeValue > 0 &&
+                (item.Source is null || Enum.IsDefined(item.Source.Value)), "EventSequence:InvalidShape");
+        }
+        foreach (var item in query.EventResultConditions) Require(item.IsValid, "EventResultConditionInvalid");
+        foreach (var item in query.MerchantColorlessConditions) Require(item.IsValid, "MerchantColorlessConditionInvalid");
+        foreach (var item in query.RelicShopSequenceConditions)
+        {
+            Sequence(item.Count, 5, item.OrderMode, item.Slots.Count, "RelicShopSequence");
+            Keys(item.Slots.Take(item.Count).Where(k => k.HasValue).Select(k => k!.Value), "RelicShopSequence", BaseGameModelKeys.Categories.Relic);
+        }
+        foreach (var item in query.MerchantColorlessSequenceConditions)
+        {
+            Sequence(item.Count, 5, item.OrderMode, item.Slots.Count, "MerchantColorlessSequence");
+            Require(Enum.IsDefined(item.Slot), "MerchantColorlessSequence:InvalidSlot");
+            Keys(item.Slots.Take(item.Count).Where(k => k.HasValue).Select(k => k!.Value), "MerchantColorlessSequence", BaseGameModelKeys.Categories.Card);
+        }
+        if (query.CombatCardExclusion is { } exclusion)
+        {
+            Require(exclusion.BattleCount is >= 1 and <= 6 && exclusion.CardKeys is { Count: > 0 }, "CombatCardExclusion:InvalidShape");
+            Keys(exclusion.CardKeys!, "CombatCardExclusion", BaseGameModelKeys.Categories.Card);
+        }
+        if (query.CombatCardRewards is { } cards)
+        {
+            Sequence(cards.Count, 6, cards.OrderMode, cards.Slots.Count, "CombatCardSequence");
+            Keys(cards.Slots.Take(cards.Count).Where(k => k.HasValue).Select(k => k!.Value), "CombatCardSequence", BaseGameModelKeys.Categories.Card);
+        }
+        if (query.CombatPotionRewards is { } potions)
+        {
+            Sequence(potions.Count, 6, potions.OrderMode, potions.Slots.Count, "CombatPotionSequence");
+            Require(potions.Slots.Take(potions.Count).All(s => s.IsValid), "CombatPotionSequenceInvalid");
+        }
+        foreach (var item in query.LegacyCombatRewardConstraints)
+        {
+            Set(item.Cards, "LegacyReward.Cards", BaseGameModelKeys.Categories.Card);
+            Set(item.Potions, "LegacyReward.Potions", BaseGameModelKeys.Categories.Potion);
+            Require(item.BattleOrdinal is >= 0 and <= 6 && Enum.IsDefined(item.PotionRequirement), "LegacyReward:InvalidShape");
+        }
+        var neow = query.LegacyNeow;
+        Set(neow.NeowRelics, "LegacyNeow", BaseGameModelKeys.Categories.Relic);
+        Set(neow.BonesRelics, "LegacyBones", BaseGameModelKeys.Categories.Relic);
+        Set(neow.CapsuleContainedRelics, "LegacyCapsule", BaseGameModelKeys.Categories.Relic);
+        Keys(neow.RequiredBonesCombination.Concat(neow.RequiredBonesAcquisitionOrder), "LegacyBones", BaseGameModelKeys.Categories.Relic);
+        Keys(neow.BannedFinalCurses.Concat(neow.RequiredFinalCurse is { } curse ? [curse] : []), "LegacyCurse", BaseGameModelKeys.Categories.Card);
+        Require(Enum.IsDefined(neow.Preset), "LegacyNeow:InvalidPreset");
+        foreach (var item in neow.EffectOutputConditions)
+        {
+            Keys([item.SourceRelicKey], "LegacyEffect.Source", BaseGameModelKeys.Categories.Relic); Set(item.OutputKeys, "LegacyEffect.Output");
+        }
+        var world = query.LegacyWorld;
+        foreach (var item in world.BossFilters.Concat(world.AncientIdentityFilters).Concat(world.AncientOptionFilters).Concat(world.AncientSeaGlassTargetFilters))
+        {
+            Require(item.Act is >= 1 and <= 3, "LegacyWorld:InvalidAct"); Set(item.Keys, "LegacyWorld");
+        }
+        foreach (var item in world.BossOrdinalFilters)
+        {
+            Require(item.Act is >= 1 and <= 3 && item.Ordinal is >= 1 and <= 2, "LegacyWorld:InvalidBossOrdinal"); Set(item.Keys, "LegacyWorld.Boss");
         }
     }
 
@@ -168,6 +276,8 @@ public static class SearchCompiler
             "unlock=" + context.UnlockSnapshotFingerprint,
             "catalog=" + context.CatalogFingerprint,
             "effect=" + context.EffectSnapshotFingerprint,
+            "cardIdentityAuthority=" + (query.CombatCardExclusion is { IsEmpty: false }
+                ? context.Authority.CardIdentityFingerprint : string.Empty),
             "world=" + context.WorldSnapshotFingerprint,
             "ancientAssumptions=" + context.EvaluationAssumptions.AncientEligibilityAssumptions.Fingerprint,
             "routePolicy=" + routes.CombatReward.ProductPolicyId,
@@ -207,6 +317,8 @@ public static class SearchCompiler
             "merchantColorlessSequence=" + Sorted(query.MerchantColorlessSequenceConditions.Select(item =>
                 $"{item.Count}:{item.OrderMode}:{item.Slot}:{string.Join(">", item.Slots.Select(key => key?.Serialized ?? "*"))}")),
             "standardMaps=" + Sorted(query.StandardMaps.Select(c => $"{c.Scope}:{c.Metric}:{c.Comparison}:{c.Value}:{c.RouteObjective}")),
+            "combatCardExclusion=" + (query.CombatCardExclusion is { IsEmpty: false } exclusion
+                ? $"count={exclusion.BattleCount}:keys={StableKeys(exclusion.CardKeys)}" : string.Empty),
             "combatCards=" + (query.CombatCardRewards is { IsEmpty: false } cards
                 ? $"count={cards.Count}:order={cards.OrderMode}:slots={string.Join(">", cards.Slots.Select(key => key?.Serialized ?? "*"))}"
                 : string.Empty),
@@ -237,6 +349,9 @@ public static class SearchCompiler
         };
 
         string identity = string.Join("|", parts);
+        if (query.TreasureRelics is { } treasure) identity +=
+            $"|treasureRelics={treasure.StartOrdinal}:{treasure.Count}:{treasure.OrderMode}:{string.Join(">", treasure.Slots.Select(key => key?.Serialized ?? "*"))}";
+        if (query.FirstActUnknownEventPrefixCount > 0) identity += "|unknownEventPrefix=" + query.FirstActUnknownEventPrefixCount;
         return query.TransformationAggregate is { } aggregate
             ? identity + "|transformationAggregate=" + aggregate.SemanticIdentity : identity;
     }
@@ -244,7 +359,6 @@ public static class SearchCompiler
 
 internal static class SearchQueryNormalizer
 {
-    private static readonly ModelKey SeaGlassOptionKey = new(BaseGameModelKeys.Categories.Relic, "SEA_GLASS");
     private static readonly ModelKey PrayerWheel = new(BaseGameModelKeys.Categories.Relic, "PRAYER_WHEEL");
     private static readonly ModelKey WhiteBeastStatue = new(BaseGameModelKeys.Categories.Relic, "WHITE_BEAST_STATUE");
     private static readonly ModelKey LastingCandy = new(BaseGameModelKeys.Categories.Relic, "LASTING_CANDY");
@@ -259,7 +373,10 @@ internal static class SearchQueryNormalizer
         var relations = new List<SemanticRelation>();
         bool impossible = false;
 
-        ModelKeySetFilter NormalizeSet(ModelKeySetFilter input, string path, bool singleValue)
+        ModelKeySetFilter NormalizeSet(ModelKeySetFilter input, string path, bool singleValue) =>
+            NormalizeSetCore(input, path, singleValue, ref impossible);
+
+        ModelKeySetFilter NormalizeSetCore(ModelKeySetFilter input, string path, bool singleValue, ref bool setImpossible)
         {
             ModelKey[] any = StableKeys(input.Any);
             ModelKey[] all = StableKeys(input.All);
@@ -267,13 +384,13 @@ internal static class SearchQueryNormalizer
 
             if (all.Any(key => ban.Contains(key, ModelKeyComparer.Instance)))
             {
-                impossible = true;
+                setImpossible = true;
                 diagnostics.Add(path + ":AllConflictsWithBan");
             }
 
             if (singleValue && all.Length > 1)
             {
-                impossible = true;
+                setImpossible = true;
                 diagnostics.Add(path + ":SingleValueAllCardinalityConflict");
             }
 
@@ -286,7 +403,7 @@ internal static class SearchQueryNormalizer
             }
             if (any.Length > 0 && permittedAny.Length == 0)
             {
-                impossible = true;
+                setImpossible = true;
                 diagnostics.Add(path + ":AnyExhaustedByBan");
             }
 
@@ -299,7 +416,7 @@ internal static class SearchQueryNormalizer
             if (singleValue && all.Length == 1 && permittedAny.Length > 0 &&
                 !permittedAny.Contains(all[0], ModelKeyComparer.Instance))
             {
-                impossible = true;
+                setImpossible = true;
                 diagnostics.Add(path + ":SingleValueAnyConflictsWithAll");
             }
 
@@ -367,13 +484,37 @@ internal static class SearchQueryNormalizer
             }
         }
 
-        VariantScopedBossBranch[] variantBranches = query.VariantBossBranches
-            .Where(branch => branch.IsValid)
-            .Select(branch => branch with
+        var normalizedVariants = new List<VariantScopedBossBranch>();
+        foreach (var act in query.VariantBossBranches.Where(branch => branch.IsValid).GroupBy(branch => branch.Act))
+        {
+            var alternatives = new List<(VariantScopedBossBranch Branch, bool Impossible)>();
+            foreach (var branch in act)
             {
-                FirstBoss = NormalizeSet(branch.FirstBoss, $"Variant[{branch.Act}:{branch.VariantKey.Serialized}].Boss1", singleValue: true),
-                SecondBoss = NormalizeSet(branch.SecondBoss, $"Variant[{branch.Act}:{branch.VariantKey.Serialized}].Boss2", singleValue: true)
-            })
+                // Boss predicates are conjunctive within a row; Variant rows are
+                // alternatives. A contradiction belongs only to its own row.
+                bool branchImpossible = false;
+                ModelKeySetFilter first = NormalizeSetCore(branch.FirstBoss,
+                    $"Variant[{branch.Act}:{branch.VariantKey.Serialized}].Boss1", true, ref branchImpossible);
+                bool secondImpossible = false;
+                ModelKeySetFilter second = NormalizeSetCore(branch.SecondBoss,
+                    $"Variant[{branch.Act}:{branch.VariantKey.Serialized}].Boss2", true, ref secondImpossible);
+                branchImpossible |= branch.IncludesSecondBoss && secondImpossible;
+                alternatives.Add((branch with { FirstBoss = first, SecondBoss = second }, branchImpossible));
+            }
+            if (alternatives.All(item => item.Impossible))
+            {
+                impossible = true;
+                diagnostics.Add($"Variant[Act{act.Key}]:AllAlternativesImpossible");
+                normalizedVariants.AddRange(alternatives.Select(item => item.Branch));
+            }
+            else
+            {
+                normalizedVariants.AddRange(alternatives.Where(item => !item.Impossible).Select(item => item.Branch));
+                foreach (var item in alternatives.Where(item => item.Impossible))
+                    removed.Add($"Variant[{item.Branch.Act}:{item.Branch.VariantKey.Serialized}]:ContradictoryAlternativeRemoved");
+            }
+        }
+        VariantScopedBossBranch[] variantBranches = normalizedVariants
             .Distinct()
             .OrderBy(branch => branch.Act)
             .ThenBy(branch => branch.VariantKey.Serialized, StringComparer.Ordinal)
@@ -390,15 +531,6 @@ internal static class SearchQueryNormalizer
             .OrderBy(branch => branch.Act)
             .ThenBy(branch => branch.AncientKey.Serialized, StringComparer.Ordinal)
             .ToArray();
-
-        foreach (AncientSearchBranchCondition branch in ancientBranches)
-        {
-            if (branch.SeaGlassTargetAny.Count > 0 && !branch.OptionAny.Contains(SeaGlassOptionKey, ModelKeyComparer.Instance))
-            {
-                impossible = true;
-                diagnostics.Add($"Ancient[{branch.Act}:{branch.AncientKey.Serialized}]:SeaGlassTargetWithoutSeaGlassOption");
-            }
-        }
 
         RelicSequenceSearchCondition[] relics = query.RelicSequenceConstraints
             .Where(item => !item.IsEmpty)
@@ -492,7 +624,7 @@ internal static class SearchQueryNormalizer
             .OrderBy(item => item.BattleOrdinal)
             .ToArray();
 
-        EmitStructuralRelations(query.OpeningRoute, openingRouteRelics, structured, variantBranches, ancientBranches, query.LegacyNeow, query.LegacyWorld, relics, events, combatCards, combatPotions, legacyRewards, relations, ref impossible, diagnostics);
+        EmitStructuralRelations(query.OpeningRoute, openingRouteRelics, structured, variantBranches, ancientBranches, query.LegacyNeow, query.LegacyWorld, relics, events, combatCards, combatPotions, query.CombatCardExclusion, legacyRewards, relations, ref impossible, diagnostics);
 
         var normalized = query with
         {
@@ -500,6 +632,7 @@ internal static class SearchQueryNormalizer
             StructuredOpeningEffects = structured,
             VariantBossBranches = variantBranches,
             AncientBranches = ancientBranches,
+            TreasureRelics = query.TreasureRelics is { } treasure ? treasure with { Slots = treasure.Slots.ToArray() } : null,
             RelicSequenceConstraints = relics,
             RelicShopSequenceConditions = relicShopSequences,
             EventSequenceConstraints = events,
@@ -508,6 +641,8 @@ internal static class SearchQueryNormalizer
             MerchantColorlessSequenceConditions = merchantColorlessSequences,
             LegacyCombatRewardConstraints = legacyRewards,
             StandardMaps = query.StandardMaps.Distinct().OrderBy(c=>c.Scope).ThenBy(c=>c.Metric).ThenBy(c=>c.Comparison).ThenBy(c=>c.Value).ThenBy(c=>c.RouteObjective).ToArray(),
+            CombatCardExclusion = query.CombatCardExclusion is { IsEmpty: false } exclusion
+                ? exclusion with { CardKeys = StableKeys(exclusion.CardKeys) } : null,
             CombatCardRewards = combatCards,
             CombatPotionRewards = combatPotions
         };
@@ -701,6 +836,7 @@ internal static class SearchQueryNormalizer
         IReadOnlyList<EventSequenceSearchCondition> events,
         CombatCardRewardSequenceSearchCondition? combatCards,
         CombatPotionRewardSequenceSearchCondition? combatPotions,
+        CombatCardExclusionSearchCondition? combatCardExclusion,
         IReadOnlyList<NormalCombatRewardSearchCondition> rewards,
         ICollection<SemanticRelation> relations,
         ref bool impossible,
@@ -778,7 +914,7 @@ internal static class SearchQueryNormalizer
         foreach (AncientSearchBranchCondition branch in ancientBranches)
         {
             var parent = new SemanticFactRef($"Act{branch.Act}.Ancient:{branch.AncientKey.Serialized}", SemanticFactKind.AncientIdentity, branch.Act, null, branch.AncientKey);
-            if (branch.OptionAny.Count > 0)
+            if (branch.OptionAny.Count > 0 || branch.SeaGlassTargetAny.Count > 0)
             {
                 var option = new SemanticFactRef($"Act{branch.Act}.AncientOption:{branch.AncientKey.Serialized}", SemanticFactKind.AncientOption, branch.Act, null, branch.AncientKey);
                 relations.Add(new SemanticRelation(SemanticRelationKind.ParentScoped, parent, option, "Ancient option predicates are scoped to their Ancient identity."));
@@ -841,7 +977,7 @@ internal static class SearchQueryNormalizer
                 "Capsule pulls occupy positions only in the Common/Uncommon/Rare lane sequences exposed by overlapping Relic Queue constraints; Shop remains an independent runtime lane remainder."));
         }
 
-        if (combatCards is { IsEmpty: false } || combatPotions is { IsEmpty: false } || rewards.Count > 0)
+        if (combatCards is { IsEmpty: false } || combatPotions is { IsEmpty: false } || combatCardExclusion is { IsEmpty: false } || rewards.Count > 0)
         {
             var reward = new SemanticFactRef("CombatReward.Opening3", SemanticFactKind.CombatReward);
             relations.Add(new SemanticRelation(
@@ -870,16 +1006,11 @@ internal static class SearchQueryNormalizer
         ModelKey[] influence = { PrayerWheel, WhiteBeastStatue, LastingCandy, AmethystAubergine };
         var seen = new HashSet<ModelKey>(ModelKeyComparer.Instance);
 
-        IEnumerable<ModelKey> candidates =
-            (openingRoute is { IsValid: true } route ? new[] { route.RouteRelicKey } : Array.Empty<ModelKey>())
-            .Concat(openingRouteRelics is { IsEmpty: false } routeRelics
-                ? routeRelics.RequiredRelicKeys
-                : Array.Empty<ModelKey>())
-            .Concat(structured.SelectMany(condition => condition.OutputKeys))
-            // Compatibility-only exact Bones facts retain provenance as legacy,
-            // but their deterministic Reward influence is still a valid relation.
-            .Concat(legacyNeow.RequiredBonesCombination)
-            .Concat(legacyNeow.RequiredBonesAcquisitionOrder);
+        // Probability and canonical relations share the same legal acquisition
+        // facts: alternatives are not guaranteed held relics, and ordinary R
+        // queue identities never imply an opening Reward influence.
+        IEnumerable<ModelKey> candidates = ExplicitOpeningRelicFacts.EnumerateGuaranteed(
+            openingRoute, openingRouteRelics, structured, legacyNeow);
 
         foreach (ModelKey key in candidates)
         {

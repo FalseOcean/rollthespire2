@@ -1,0 +1,1609 @@
+{
+  "schema": "rollthespire2.beta110.g0a-relic-vectors.v1",
+  "fixture": "SyntheticAllBucketPrefixes",
+  "virtualModRelicDenseId": 900,
+  "poolTruncation": false,
+  "rootCount": 64,
+  "vectors": [
+    {
+      "rootHashHex": "0000000000000000",
+      "commonPrefix": [
+        104,
+        900
+      ],
+      "uncommonPrefix": [
+        203,
+        204
+      ],
+      "rarePrefix": [
+        303,
+        301
+      ],
+      "shopPrefix": [
+        402,
+        405
+      ],
+      "finalRngStateHex": [
+        "3dd71ee94981a231",
+        "111bb882d2622a97",
+        "190bc09871288fdb",
+        "1db54a92baecbf29"
+      ]
+    },
+    {
+      "rootHashHex": "0000000000000001",
+      "commonPrefix": [
+        105,
+        101
+      ],
+      "uncommonPrefix": [
+        200,
+        201
+      ],
+      "rarePrefix": [
+        302,
+        303
+      ],
+      "shopPrefix": [
+        402,
+        404
+      ],
+      "finalRngStateHex": [
+        "d9db462243ce10fe",
+        "fcc5887ab0a9ae84",
+        "ba2486082e9c396b",
+        "8d82d493ab7601de"
+      ]
+    },
+    {
+      "rootHashHex": "0000000000000002",
+      "commonPrefix": [
+        102,
+        105
+      ],
+      "uncommonPrefix": [
+        200,
+        204
+      ],
+      "rarePrefix": [
+        302,
+        303
+      ],
+      "shopPrefix": [
+        400,
+        405
+      ],
+      "finalRngStateHex": [
+        "9885e1cd93c8a766",
+        "3f134da99e098853",
+        "681f3c466a9984a7",
+        "a94bab36e694460d"
+      ]
+    },
+    {
+      "rootHashHex": "0000000000000003",
+      "commonPrefix": [
+        100,
+        900
+      ],
+      "uncommonPrefix": [
+        202,
+        205
+      ],
+      "rarePrefix": [
+        301,
+        304
+      ],
+      "shopPrefix": [
+        404,
+        402
+      ],
+      "finalRngStateHex": [
+        "5a1089679363df8d",
+        "cc6eb4701cc670cd",
+        "b4516fa489dea021",
+        "7ae130f51952a307"
+      ]
+    },
+    {
+      "rootHashHex": "ffffffffffffffff",
+      "commonPrefix": [
+        102,
+        104
+      ],
+      "uncommonPrefix": [
+        203,
+        202
+      ],
+      "rarePrefix": [
+        303,
+        300
+      ],
+      "shopPrefix": [
+        402,
+        405
+      ],
+      "finalRngStateHex": [
+        "8e65da6c2dab0cd2",
+        "f334625432ff877f",
+        "94f6e8946edb45cb",
+        "d7ca42a81bdad243"
+      ]
+    },
+    {
+      "rootHashHex": "fffffffffffffffe",
+      "commonPrefix": [
+        104,
+        102
+      ],
+      "uncommonPrefix": [
+        202,
+        204
+      ],
+      "rarePrefix": [
+        300,
+        301
+      ],
+      "shopPrefix": [
+        405,
+        407
+      ],
+      "finalRngStateHex": [
+        "9e862d0a8b82ffc6",
+        "1d3368ec623f9a01",
+        "7b5b7edc33b23c62",
+        "4e2d313726028fec"
+      ]
+    },
+    {
+      "rootHashHex": "0123456789abcdef",
+      "commonPrefix": [
+        101,
+        900
+      ],
+      "uncommonPrefix": [
+        201,
+        203
+      ],
+      "rarePrefix": [
+        303,
+        302
+      ],
+      "shopPrefix": [
+        402,
+        407
+      ],
+      "finalRngStateHex": [
+        "899522bdebcdef44",
+        "c2946755181d2ec9",
+        "09d21e63c0582b2e",
+        "594c0fefe4497d66"
+      ]
+    },
+    {
+      "rootHashHex": "fedcba9876543210",
+      "commonPrefix": [
+        102,
+        104
+      ],
+      "uncommonPrefix": [
+        205,
+        201
+      ],
+      "rarePrefix": [
+        304,
+        302
+      ],
+      "shopPrefix": [
+        404,
+        405
+      ],
+      "finalRngStateHex": [
+        "9aa5b4ef66e0bbb7",
+        "215c7b12d50ca6e5",
+        "e12674a771e810d6",
+        "d8086004435e7b72"
+      ]
+    },
+    {
+      "rootHashHex": "8b4cc2b2e5f3a3d1",
+      "commonPrefix": [
+        102,
+        103
+      ],
+      "uncommonPrefix": [
+        200,
+        202
+      ],
+      "rarePrefix": [
+        301,
+        303
+      ],
+      "shopPrefix": [
+        404,
+        405
+      ],
+      "finalRngStateHex": [
+        "c2e9ff86c19f47c5",
+        "7f3b08431e55d5e2",
+        "b01b306c7eb44e38",
+        "892bee42e8478152"
+      ]
+    },
+    {
+      "rootHashHex": "226b1feabe43cba6",
+      "commonPrefix": [
+        100,
+        105
+      ],
+      "uncommonPrefix": [
+        200,
+        201
+      ],
+      "rarePrefix": [
+        301,
+        303
+      ],
+      "shopPrefix": [
+        400,
+        402
+      ],
+      "finalRngStateHex": [
+        "5f032a709c44a6d7",
+        "f9a22b17f30c73c6",
+        "135c253a91ebb2ad",
+        "7049f4d4de352e61"
+      ]
+    },
+    {
+      "rootHashHex": "8000000000000000",
+      "commonPrefix": [
+        104,
+        900
+      ],
+      "uncommonPrefix": [
+        200,
+        204
+      ],
+      "rarePrefix": [
+        304,
+        302
+      ],
+      "shopPrefix": [
+        402,
+        404
+      ],
+      "finalRngStateHex": [
+        "d2aaacc0d5ab96ab",
+        "288080fecaa337df",
+        "5a8ba3fefa3ee578",
+        "d616d4ea2c0d820a"
+      ]
+    },
+    {
+      "rootHashHex": "7fffffffffffffff",
+      "commonPrefix": [
+        102,
+        103
+      ],
+      "uncommonPrefix": [
+        201,
+        200
+      ],
+      "rarePrefix": [
+        301,
+        302
+      ],
+      "shopPrefix": [
+        407,
+        400
+      ],
+      "finalRngStateHex": [
+        "7f3cef1cda387d7f",
+        "0bdb3ea7b80e67b6",
+        "5bbd6377a0fae7c5",
+        "e7b7fcb4b52d7253"
+      ]
+    },
+    {
+      "rootHashHex": "aaaaaaaaaaaaaaaa",
+      "commonPrefix": [
+        101,
+        100
+      ],
+      "uncommonPrefix": [
+        202,
+        200
+      ],
+      "rarePrefix": [
+        301,
+        302
+      ],
+      "shopPrefix": [
+        407,
+        400
+      ],
+      "finalRngStateHex": [
+        "fa9c132717d22d5e",
+        "6926db996acc0d6c",
+        "c344f8425744099b",
+        "1b95b25f0ef657ce"
+      ]
+    },
+    {
+      "rootHashHex": "5555555555555555",
+      "commonPrefix": [
+        101,
+        105
+      ],
+      "uncommonPrefix": [
+        204,
+        205
+      ],
+      "rarePrefix": [
+        301,
+        302
+      ],
+      "shopPrefix": [
+        400,
+        404
+      ],
+      "finalRngStateHex": [
+        "0ffcaeb59d9c1366",
+        "70d33251e440ab7d",
+        "ae156398f5abdfda",
+        "83642bbbdccb40ce"
+      ]
+    },
+    {
+      "rootHashHex": "00000000ffffffff",
+      "commonPrefix": [
+        104,
+        101
+      ],
+      "uncommonPrefix": [
+        203,
+        204
+      ],
+      "rarePrefix": [
+        303,
+        301
+      ],
+      "shopPrefix": [
+        404,
+        400
+      ],
+      "finalRngStateHex": [
+        "db40fa66c13d2203",
+        "dc3b8cec6e734b51",
+        "3a33a2589e758349",
+        "b02d58ec435c863d"
+      ]
+    },
+    {
+      "rootHashHex": "ffffffff00000000",
+      "commonPrefix": [
+        104,
+        100
+      ],
+      "uncommonPrefix": [
+        203,
+        202
+      ],
+      "rarePrefix": [
+        300,
+        304
+      ],
+      "shopPrefix": [
+        400,
+        407
+      ],
+      "finalRngStateHex": [
+        "d2a4d668e79b9093",
+        "61652a7213d24e87",
+        "56b54f8087c97f75",
+        "3d497c5fdf8da38e"
+      ]
+    },
+    {
+      "rootHashHex": "1020304050607080",
+      "commonPrefix": [
+        102,
+        900
+      ],
+      "uncommonPrefix": [
+        203,
+        205
+      ],
+      "rarePrefix": [
+        304,
+        302
+      ],
+      "shopPrefix": [
+        402,
+        404
+      ],
+      "finalRngStateHex": [
+        "e8f8538c25bf2cf4",
+        "9bc77cc5d5646d4b",
+        "a77e6f4621d981e1",
+        "6fb8022b8bd67ed4"
+      ]
+    },
+    {
+      "rootHashHex": "8877665544332211",
+      "commonPrefix": [
+        101,
+        105
+      ],
+      "uncommonPrefix": [
+        205,
+        203
+      ],
+      "rarePrefix": [
+        300,
+        304
+      ],
+      "shopPrefix": [
+        402,
+        407
+      ],
+      "finalRngStateHex": [
+        "5593d8290ddd6c5c",
+        "1a6ecfc8cd1c8b8e",
+        "bbea4ef874500963",
+        "77813451cdd408ea"
+      ]
+    },
+    {
+      "rootHashHex": "9e3779b97f4a7c15",
+      "commonPrefix": [
+        104,
+        105
+      ],
+      "uncommonPrefix": [
+        203,
+        200
+      ],
+      "rarePrefix": [
+        301,
+        303
+      ],
+      "shopPrefix": [
+        404,
+        402
+      ],
+      "finalRngStateHex": [
+        "fd63e4f1c21e6dc4",
+        "78eeeebc44133ffd",
+        "bb95e3604717d648",
+        "e74d2b289da435d7"
+      ]
+    },
+    {
+      "rootHashHex": "bf58476d1ce4e5b9",
+      "commonPrefix": [
+        105,
+        100
+      ],
+      "uncommonPrefix": [
+        200,
+        203
+      ],
+      "rarePrefix": [
+        301,
+        302
+      ],
+      "shopPrefix": [
+        405,
+        402
+      ],
+      "finalRngStateHex": [
+        "435de1452e413d3b",
+        "2660939620ff18c0",
+        "f93613e7f8534871",
+        "cd039aa43e5d3361"
+      ]
+    },
+    {
+      "rootHashHex": "94d049bb133111eb",
+      "commonPrefix": [
+        102,
+        100
+      ],
+      "uncommonPrefix": [
+        203,
+        204
+      ],
+      "rarePrefix": [
+        300,
+        301
+      ],
+      "shopPrefix": [
+        405,
+        400
+      ],
+      "finalRngStateHex": [
+        "87dea6b3c84a9600",
+        "7d255484e5f74f58",
+        "9162b9120908f98c",
+        "01475e0c47ff2f94"
+      ]
+    },
+    {
+      "rootHashHex": "1a8a7b60da243e80",
+      "commonPrefix": [
+        103,
+        105
+      ],
+      "uncommonPrefix": [
+        204,
+        202
+      ],
+      "rarePrefix": [
+        300,
+        301
+      ],
+      "shopPrefix": [
+        400,
+        402
+      ],
+      "finalRngStateHex": [
+        "97fd0c67b76710d9",
+        "633f908d580ad277",
+        "9197c25f07718d83",
+        "5c7c0ed76467f642"
+      ]
+    },
+    {
+      "rootHashHex": "deadbeefcafebabe",
+      "commonPrefix": [
+        105,
+        102
+      ],
+      "uncommonPrefix": [
+        204,
+        203
+      ],
+      "rarePrefix": [
+        304,
+        301
+      ],
+      "shopPrefix": [
+        402,
+        400
+      ],
+      "finalRngStateHex": [
+        "9cb412d7398d1126",
+        "ab154a9a04948950",
+        "698d4073e49ff2e0",
+        "06535b3f26e335aa"
+      ]
+    },
+    {
+      "rootHashHex": "c001d00d5eed1234",
+      "commonPrefix": [
+        900,
+        103
+      ],
+      "uncommonPrefix": [
+        204,
+        205
+      ],
+      "rarePrefix": [
+        302,
+        300
+      ],
+      "shopPrefix": [
+        405,
+        407
+      ],
+      "finalRngStateHex": [
+        "7abe71bc8bfffbfd",
+        "3b95b93bf520846e",
+        "c51c490b67d25a23",
+        "fbb5a1c0a7548c12"
+      ]
+    },
+    {
+      "rootHashHex": "1111111111111111",
+      "commonPrefix": [
+        101,
+        900
+      ],
+      "uncommonPrefix": [
+        205,
+        203
+      ],
+      "rarePrefix": [
+        300,
+        303
+      ],
+      "shopPrefix": [
+        405,
+        404
+      ],
+      "finalRngStateHex": [
+        "d815ede7f8b105dc",
+        "f749da3828da607b",
+        "08075c1284e375bc",
+        "f80a950755a6e012"
+      ]
+    },
+    {
+      "rootHashHex": "2222222222222222",
+      "commonPrefix": [
+        103,
+        900
+      ],
+      "uncommonPrefix": [
+        203,
+        201
+      ],
+      "rarePrefix": [
+        300,
+        304
+      ],
+      "shopPrefix": [
+        400,
+        404
+      ],
+      "finalRngStateHex": [
+        "4fb42db1cef3cd77",
+        "efca2705e2dd7267",
+        "e029f6b4458105a1",
+        "68e7f12e64513f20"
+      ]
+    },
+    {
+      "rootHashHex": "3333333333333333",
+      "commonPrefix": [
+        105,
+        100
+      ],
+      "uncommonPrefix": [
+        203,
+        205
+      ],
+      "rarePrefix": [
+        300,
+        304
+      ],
+      "shopPrefix": [
+        405,
+        407
+      ],
+      "finalRngStateHex": [
+        "ffcfbce337e454c6",
+        "cb9590d037423d4c",
+        "fa0d35e1acd3bba7",
+        "5238592858bed0d3"
+      ]
+    },
+    {
+      "rootHashHex": "4444444444444444",
+      "commonPrefix": [
+        101,
+        104
+      ],
+      "uncommonPrefix": [
+        201,
+        205
+      ],
+      "rarePrefix": [
+        303,
+        304
+      ],
+      "shopPrefix": [
+        407,
+        400
+      ],
+      "finalRngStateHex": [
+        "b753632179895787",
+        "ff0687154e33b915",
+        "7844f77acab46202",
+        "c0b31cc2b2fc38be"
+      ]
+    },
+    {
+      "rootHashHex": "6666666666666666",
+      "commonPrefix": [
+        100,
+        104
+      ],
+      "uncommonPrefix": [
+        205,
+        203
+      ],
+      "rarePrefix": [
+        301,
+        304
+      ],
+      "shopPrefix": [
+        402,
+        400
+      ],
+      "finalRngStateHex": [
+        "7542927f8702f220",
+        "17bc3146a518a3ae",
+        "b7d2c006907c6cd6",
+        "20e11050aac9f808"
+      ]
+    },
+    {
+      "rootHashHex": "7777777777777777",
+      "commonPrefix": [
+        104,
+        103
+      ],
+      "uncommonPrefix": [
+        200,
+        202
+      ],
+      "rarePrefix": [
+        303,
+        300
+      ],
+      "shopPrefix": [
+        407,
+        400
+      ],
+      "finalRngStateHex": [
+        "3110a244e88b1d07",
+        "ff1547db7845a4ba",
+        "db23ee2d62eabc77",
+        "4fa013d0a4099c57"
+      ]
+    },
+    {
+      "rootHashHex": "9999999999999999",
+      "commonPrefix": [
+        101,
+        103
+      ],
+      "uncommonPrefix": [
+        201,
+        203
+      ],
+      "rarePrefix": [
+        302,
+        303
+      ],
+      "shopPrefix": [
+        400,
+        405
+      ],
+      "finalRngStateHex": [
+        "aa421987cf002beb",
+        "67cf7686c1e09add",
+        "4de6af6ab1510e8d",
+        "cf0559592ea7832a"
+      ]
+    },
+    {
+      "rootHashHex": "bbbbbbbbbbbbbbbb",
+      "commonPrefix": [
+        103,
+        102
+      ],
+      "uncommonPrefix": [
+        200,
+        204
+      ],
+      "rarePrefix": [
+        300,
+        301
+      ],
+      "shopPrefix": [
+        402,
+        404
+      ],
+      "finalRngStateHex": [
+        "edfc94a9ef7bc256",
+        "238d81afe2d3b4d2",
+        "5e909a20dc80e46e",
+        "57c97f29c378f3e6"
+      ]
+    },
+    {
+      "rootHashHex": "2d0f28c7e7e786b2",
+      "commonPrefix": [
+        900,
+        100
+      ],
+      "uncommonPrefix": [
+        204,
+        202
+      ],
+      "rarePrefix": [
+        301,
+        302
+      ],
+      "shopPrefix": [
+        400,
+        407
+      ],
+      "finalRngStateHex": [
+        "270580a3fd255b3b",
+        "b63d3ff2f0441982",
+        "0d0787e882f9b872",
+        "5dd3f9431ac1b0f4"
+      ]
+    },
+    {
+      "rootHashHex": "75856f745165f252",
+      "commonPrefix": [
+        105,
+        900
+      ],
+      "uncommonPrefix": [
+        200,
+        204
+      ],
+      "rarePrefix": [
+        300,
+        302
+      ],
+      "shopPrefix": [
+        402,
+        400
+      ],
+      "finalRngStateHex": [
+        "f48193948f43e4a1",
+        "32e2da5f8d290274",
+        "57d9f2f111175846",
+        "ee75701168731965"
+      ]
+    },
+    {
+      "rootHashHex": "8674bbc2735955af",
+      "commonPrefix": [
+        104,
+        101
+      ],
+      "uncommonPrefix": [
+        204,
+        200
+      ],
+      "rarePrefix": [
+        301,
+        300
+      ],
+      "shopPrefix": [
+        404,
+        402
+      ],
+      "finalRngStateHex": [
+        "49a70346c827d87c",
+        "a380ddb7c51b58f7",
+        "2d21789fa586f746",
+        "b35a6c11598fb430"
+      ]
+    },
+    {
+      "rootHashHex": "5c1d49a70d26949a",
+      "commonPrefix": [
+        900,
+        104
+      ],
+      "uncommonPrefix": [
+        205,
+        201
+      ],
+      "rarePrefix": [
+        301,
+        302
+      ],
+      "shopPrefix": [
+        405,
+        407
+      ],
+      "finalRngStateHex": [
+        "dcdeb37337d4eeca",
+        "159f9989ee76f679",
+        "31479f5688946e86",
+        "26f2cfd988ab92a7"
+      ]
+    },
+    {
+      "rootHashHex": "8ced152ef453efd6",
+      "commonPrefix": [
+        105,
+        103
+      ],
+      "uncommonPrefix": [
+        202,
+        205
+      ],
+      "rarePrefix": [
+        300,
+        303
+      ],
+      "shopPrefix": [
+        404,
+        407
+      ],
+      "finalRngStateHex": [
+        "b8ad73db5b48d3e4",
+        "68e7728a8e051fa6",
+        "6f503d490d070d72",
+        "7dd9611dde755605"
+      ]
+    },
+    {
+      "rootHashHex": "c33b24196461329b",
+      "commonPrefix": [
+        105,
+        100
+      ],
+      "uncommonPrefix": [
+        201,
+        203
+      ],
+      "rarePrefix": [
+        304,
+        302
+      ],
+      "shopPrefix": [
+        407,
+        404
+      ],
+      "finalRngStateHex": [
+        "ff5bddd7790f8a4e",
+        "297699952e02d6d4",
+        "2075d490487ac787",
+        "e1a9fc8c5a0cacb0"
+      ]
+    },
+    {
+      "rootHashHex": "7aeb14a17076347b",
+      "commonPrefix": [
+        100,
+        102
+      ],
+      "uncommonPrefix": [
+        205,
+        203
+      ],
+      "rarePrefix": [
+        301,
+        303
+      ],
+      "shopPrefix": [
+        407,
+        402
+      ],
+      "finalRngStateHex": [
+        "de9e66052984c3a9",
+        "4213568381616ec3",
+        "c71aa5f6c076db13",
+        "1bab241e0f0c3b80"
+      ]
+    },
+    {
+      "rootHashHex": "deefd02013fb5f44",
+      "commonPrefix": [
+        900,
+        101
+      ],
+      "uncommonPrefix": [
+        200,
+        201
+      ],
+      "rarePrefix": [
+        301,
+        300
+      ],
+      "shopPrefix": [
+        400,
+        404
+      ],
+      "finalRngStateHex": [
+        "242aa96b6c8d5d6b",
+        "8c67a611d527657b",
+        "0072c84dbb725c7d",
+        "2b2e756d16a1ccdf"
+      ]
+    },
+    {
+      "rootHashHex": "637b9e6c2b782f6c",
+      "commonPrefix": [
+        105,
+        100
+      ],
+      "uncommonPrefix": [
+        204,
+        201
+      ],
+      "rarePrefix": [
+        303,
+        302
+      ],
+      "shopPrefix": [
+        404,
+        405
+      ],
+      "finalRngStateHex": [
+        "05a4a7d776633540",
+        "36ad01185f31a4c6",
+        "ecec5c588525ded2",
+        "1f42118fc57e0181"
+      ]
+    },
+    {
+      "rootHashHex": "e8a82d077e1e0c9b",
+      "commonPrefix": [
+        102,
+        105
+      ],
+      "uncommonPrefix": [
+        204,
+        202
+      ],
+      "rarePrefix": [
+        302,
+        303
+      ],
+      "shopPrefix": [
+        407,
+        404
+      ],
+      "finalRngStateHex": [
+        "bfd445539c3d115a",
+        "6b92e43b068aec56",
+        "cc7e3a3f98e26b0f",
+        "7044e60780bbb964"
+      ]
+    },
+    {
+      "rootHashHex": "4a25dd763b9bfa6a",
+      "commonPrefix": [
+        101,
+        104
+      ],
+      "uncommonPrefix": [
+        204,
+        202
+      ],
+      "rarePrefix": [
+        301,
+        304
+      ],
+      "shopPrefix": [
+        407,
+        402
+      ],
+      "finalRngStateHex": [
+        "4109b12ccd327130",
+        "04bddb341e951147",
+        "869a3f4c152b4fee",
+        "a4994d480c12fe2e"
+      ]
+    },
+    {
+      "rootHashHex": "5d0a59c78e5ad29c",
+      "commonPrefix": [
+        104,
+        900
+      ],
+      "uncommonPrefix": [
+        205,
+        202
+      ],
+      "rarePrefix": [
+        303,
+        302
+      ],
+      "shopPrefix": [
+        404,
+        405
+      ],
+      "finalRngStateHex": [
+        "a13fed012d052174",
+        "d3ef020544741939",
+        "e8dcfa38a10940bd",
+        "45ab4ffbb507af9c"
+      ]
+    },
+    {
+      "rootHashHex": "9b18140802661864",
+      "commonPrefix": [
+        102,
+        105
+      ],
+      "uncommonPrefix": [
+        200,
+        201
+      ],
+      "rarePrefix": [
+        304,
+        301
+      ],
+      "shopPrefix": [
+        404,
+        405
+      ],
+      "finalRngStateHex": [
+        "7bb3595aefa1be47",
+        "5a0001513f9c0f4c",
+        "47a06a17a7b5a686",
+        "5b9b1ac80b74d19a"
+      ]
+    },
+    {
+      "rootHashHex": "3d67df0817836f50",
+      "commonPrefix": [
+        103,
+        100
+      ],
+      "uncommonPrefix": [
+        204,
+        205
+      ],
+      "rarePrefix": [
+        303,
+        301
+      ],
+      "shopPrefix": [
+        402,
+        405
+      ],
+      "finalRngStateHex": [
+        "d5e2457323d4491e",
+        "b39c310439f41d1e",
+        "ceffaa84cf811b3b",
+        "a4c156835ae9b6a4"
+      ]
+    },
+    {
+      "rootHashHex": "a23b8a7d7d95dd21",
+      "commonPrefix": [
+        900,
+        102
+      ],
+      "uncommonPrefix": [
+        201,
+        205
+      ],
+      "rarePrefix": [
+        301,
+        302
+      ],
+      "shopPrefix": [
+        407,
+        405
+      ],
+      "finalRngStateHex": [
+        "10e231df8b3aa640",
+        "e4b0cbf617d210f1",
+        "3ef227e29081247a",
+        "17b72b80c63a8411"
+      ]
+    },
+    {
+      "rootHashHex": "1a47543e3bed8cae",
+      "commonPrefix": [
+        100,
+        101
+      ],
+      "uncommonPrefix": [
+        203,
+        200
+      ],
+      "rarePrefix": [
+        304,
+        300
+      ],
+      "shopPrefix": [
+        402,
+        407
+      ],
+      "finalRngStateHex": [
+        "635b03ccf20283a8",
+        "aedf47411f6536f8",
+        "c65a809c74c02b05",
+        "622a7aac32ea6562"
+      ]
+    },
+    {
+      "rootHashHex": "7f226d44c521e162",
+      "commonPrefix": [
+        101,
+        105
+      ],
+      "uncommonPrefix": [
+        200,
+        204
+      ],
+      "rarePrefix": [
+        304,
+        300
+      ],
+      "shopPrefix": [
+        404,
+        400
+      ],
+      "finalRngStateHex": [
+        "5bdab7104669afc6",
+        "7f3a89422e31dd64",
+        "095fae23526fb099",
+        "e34951192e04caff"
+      ]
+    },
+    {
+      "rootHashHex": "5a899ed8c6a43219",
+      "commonPrefix": [
+        104,
+        900
+      ],
+      "uncommonPrefix": [
+        205,
+        200
+      ],
+      "rarePrefix": [
+        302,
+        304
+      ],
+      "shopPrefix": [
+        407,
+        400
+      ],
+      "finalRngStateHex": [
+        "9df85c93b910b3e2",
+        "1c81b83b2aaa6a3e",
+        "1e3242a13a7b72fa",
+        "56d4719a575f5a79"
+      ]
+    },
+    {
+      "rootHashHex": "abd26a215066bc05",
+      "commonPrefix": [
+        102,
+        101
+      ],
+      "uncommonPrefix": [
+        201,
+        202
+      ],
+      "rarePrefix": [
+        304,
+        302
+      ],
+      "shopPrefix": [
+        402,
+        405
+      ],
+      "finalRngStateHex": [
+        "9fe6b0ac48d12531",
+        "6f345beef055e2c2",
+        "4fced763b7a87f12",
+        "542df6f30bc13128"
+      ]
+    },
+    {
+      "rootHashHex": "74e565da8e67a661",
+      "commonPrefix": [
+        102,
+        104
+      ],
+      "uncommonPrefix": [
+        205,
+        204
+      ],
+      "rarePrefix": [
+        304,
+        302
+      ],
+      "shopPrefix": [
+        400,
+        402
+      ],
+      "finalRngStateHex": [
+        "52ced3600d8dd516",
+        "c875e679ea068e5a",
+        "981c6bfa669d1ff4",
+        "8bcedc131fd400c1"
+      ]
+    },
+    {
+      "rootHashHex": "d34258a2caca41bc",
+      "commonPrefix": [
+        104,
+        900
+      ],
+      "uncommonPrefix": [
+        202,
+        201
+      ],
+      "rarePrefix": [
+        304,
+        303
+      ],
+      "shopPrefix": [
+        405,
+        407
+      ],
+      "finalRngStateHex": [
+        "e388dad1e3e6e2f5",
+        "e90fc6e21094772d",
+        "d8ff518c14456a9a",
+        "aade46682270bf77"
+      ]
+    },
+    {
+      "rootHashHex": "a058719f907bbf40",
+      "commonPrefix": [
+        105,
+        100
+      ],
+      "uncommonPrefix": [
+        203,
+        205
+      ],
+      "rarePrefix": [
+        302,
+        303
+      ],
+      "shopPrefix": [
+        407,
+        405
+      ],
+      "finalRngStateHex": [
+        "3f70571fa2ea63a8",
+        "73bfbd919393e47c",
+        "d2c2e34092d6d60d",
+        "e862dadf4b5c7913"
+      ]
+    },
+    {
+      "rootHashHex": "03773d7ae65206ab",
+      "commonPrefix": [
+        103,
+        101
+      ],
+      "uncommonPrefix": [
+        204,
+        205
+      ],
+      "rarePrefix": [
+        300,
+        304
+      ],
+      "shopPrefix": [
+        400,
+        405
+      ],
+      "finalRngStateHex": [
+        "fc0349b6e7fbc095",
+        "d6b7c023309a8a27",
+        "bfe9e64a8db396be",
+        "6917e5e923a0e891"
+      ]
+    },
+    {
+      "rootHashHex": "caae4a81d859b470",
+      "commonPrefix": [
+        104,
+        900
+      ],
+      "uncommonPrefix": [
+        205,
+        201
+      ],
+      "rarePrefix": [
+        301,
+        302
+      ],
+      "shopPrefix": [
+        402,
+        405
+      ],
+      "finalRngStateHex": [
+        "379fe8d6d7a1e7c2",
+        "6245367a04c5a26a",
+        "b495335da45342df",
+        "43de23102a920224"
+      ]
+    },
+    {
+      "rootHashHex": "b71cee9242f0f01f",
+      "commonPrefix": [
+        101,
+        900
+      ],
+      "uncommonPrefix": [
+        205,
+        204
+      ],
+      "rarePrefix": [
+        300,
+        304
+      ],
+      "shopPrefix": [
+        400,
+        407
+      ],
+      "finalRngStateHex": [
+        "c3f9bc17316d0b58",
+        "f85f80f43ebd21bd",
+        "ef7808133c205342",
+        "6e010e6b71ecd058"
+      ]
+    },
+    {
+      "rootHashHex": "51de032537c14b8d",
+      "commonPrefix": [
+        100,
+        101
+      ],
+      "uncommonPrefix": [
+        202,
+        201
+      ],
+      "rarePrefix": [
+        302,
+        304
+      ],
+      "shopPrefix": [
+        407,
+        404
+      ],
+      "finalRngStateHex": [
+        "2087c868ee996d4c",
+        "22eb6076e8556285",
+        "11f883eca0d87b93",
+        "728a30aec7b84ee0"
+      ]
+    },
+    {
+      "rootHashHex": "8bc55593b33b6782",
+      "commonPrefix": [
+        105,
+        104
+      ],
+      "uncommonPrefix": [
+        203,
+        205
+      ],
+      "rarePrefix": [
+        301,
+        304
+      ],
+      "shopPrefix": [
+        407,
+        404
+      ],
+      "finalRngStateHex": [
+        "1a748a224bc42842",
+        "0a1a4c76a6211aca",
+        "f232b53805299cfd",
+        "ac5fd78333c304b7"
+      ]
+    },
+    {
+      "rootHashHex": "40df4b29715e9f9e",
+      "commonPrefix": [
+        100,
+        105
+      ],
+      "uncommonPrefix": [
+        205,
+        200
+      ],
+      "rarePrefix": [
+        302,
+        303
+      ],
+      "shopPrefix": [
+        405,
+        407
+      ],
+      "finalRngStateHex": [
+        "6bc37e2cfb4c3466",
+        "11b650a908a1312b",
+        "f9db1012040daf6f",
+        "85e94a832c359eeb"
+      ]
+    },
+    {
+      "rootHashHex": "7cd1d36eb3dfc347",
+      "commonPrefix": [
+        100,
+        104
+      ],
+      "uncommonPrefix": [
+        201,
+        205
+      ],
+      "rarePrefix": [
+        303,
+        300
+      ],
+      "shopPrefix": [
+        405,
+        402
+      ],
+      "finalRngStateHex": [
+        "78a8a65527f644ac",
+        "0c9f78ffc77bca87",
+        "3e86c16cd4b241c5",
+        "8f9cdbbeeb3b1194"
+      ]
+    },
+    {
+      "rootHashHex": "f9306b8f57243cbe",
+      "commonPrefix": [
+        103,
+        104
+      ],
+      "uncommonPrefix": [
+        204,
+        202
+      ],
+      "rarePrefix": [
+        302,
+        300
+      ],
+      "shopPrefix": [
+        404,
+        407
+      ],
+      "finalRngStateHex": [
+        "aff47aec79caa12e",
+        "2c8a1eb6aa72d660",
+        "ff570cb951becc53",
+        "3c099f31b3dadedd"
+      ]
+    },
+    {
+      "rootHashHex": "3694da35ad6087cb",
+      "commonPrefix": [
+        102,
+        103
+      ],
+      "uncommonPrefix": [
+        204,
+        202
+      ],
+      "rarePrefix": [
+        303,
+        301
+      ],
+      "shopPrefix": [
+        405,
+        400
+      ],
+      "finalRngStateHex": [
+        "520c294e274a2bc6",
+        "a443e06debcc46ed",
+        "2f02d7685ddd7a40",
+        "ae9da0b7e9c17eaf"
+      ]
+    },
+    {
+      "rootHashHex": "d0178faa468b193c",
+      "commonPrefix": [
+        101,
+        103
+      ],
+      "uncommonPrefix": [
+        205,
+        200
+      ],
+      "rarePrefix": [
+        304,
+        301
+      ],
+      "shopPrefix": [
+        402,
+        407
+      ],
+      "finalRngStateHex": [
+        "a75c8b4371c6c98d",
+        "e6fdba22e8725751",
+        "e2d46f3f33094019",
+        "cf396be60c93a88b"
+      ]
+    }
+  ]
+}

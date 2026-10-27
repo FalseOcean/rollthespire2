@@ -8,23 +8,24 @@ namespace RolltheSpire2.Search.FamilyExecution;
 
 public static class FamilyPhysicalImplementationRevisions
 {
+    internal const string MerchantShopColorlessPartyPrefix = ".PartyPrefixReject.20261016.v1";
     // Shader/algorithm revisions remain the execution source identity used by the
     // executors. Planner performance identities below additionally name the actual
     // input path and the canonical ABI1-ready timing boundary.
     public const string MerchantShopColorlessAtomicAppendHostSort =
-        "S.MerchantShopColorless.Gpu.v7.Base34Carry8.ProcessedWorkgroup.ConsumeOnly.HistoricalNextInt";
+        "S.MerchantShopColorless.Gpu.v11.CanonicalIdentity.ConditionalPrefixReject.Base34Carry8.ProcessedWorkgroup.ConsumeOnly.HistoricalNextInt";
     public const string MerchantShopColorlessStableOrderedCompaction =
-        "S.MerchantShopColorless.Gpu.v8.StableOrderedCompaction.HostPrefixScatter.Base34Carry8.ProcessedWorkgroup.ConsumeOnly.HistoricalNextInt";
+        "S.MerchantShopColorless.Gpu.v12.CanonicalIdentity.ConditionalPrefixReject.StableOrderedCompaction.HostPrefixScatter.Base34Carry8.ProcessedWorkgroup.ConsumeOnly.HistoricalNextInt";
     public const string MerchantShopColorless = MerchantShopColorlessAtomicAppendHostSort;
     public const string Relic = "R.Relic.Gpu.v7.TrackedPositions.Base34Carry8.ProcessedWorkgroup.CompactFullDecode.HistoricalNextInt";
     public const string RelicFull = RelicFullGpuPlan.AlgorithmRevision;
 
     public const string MerchantShopColorlessAtomicDensePerformance =
-        "S.MerchantShopColorless.Atomic.DenseCarry8.CanonicalAbi1Ready.20260904.v1";
+        "S.MerchantShopColorless.Atomic.DenseCarry8.CanonicalIdentity.ConditionalPrefixReject.CanonicalAbi1Ready.20261015.v2";
     public const string MerchantShopColorlessStableDensePerformance =
-        "S.MerchantShopColorless.Stable.DenseCarry8.CanonicalAbi1Ready.20260904.v1";
+        "S.MerchantShopColorless.Stable.DenseCarry8.CanonicalIdentity.ConditionalPrefixReject.CanonicalAbi1Ready.20261015.v2";
     public const string MerchantShopColorlessCompactPerformance =
-        "S.MerchantShopColorless.Atomic.CompactAbi1FullDecode.CanonicalAbi1Ready.20260904.v1";
+        "S.MerchantShopColorless.Atomic.CompactAbi1FullDecode.CanonicalIdentity.ConditionalPrefixReject.CanonicalAbi1Ready.20261015.v2";
     public const string RelicDensePerformance =
         "R.Relic.DenseCarry8.CanonicalAbi1Ready.20260904.v1";
     public const string RelicCompactPerformance =
@@ -121,6 +122,9 @@ internal static class FamilyDeviceProfileFoundation
     private static readonly object RetryGate = new();
     private static Task<string>? _retry;
     private static string _retryEnvironment = "";
+    private static string _numericEnvironment = "";
+    private static Task? _numericCapture;
+    internal static Task? NumericCapabilityCapture { get { lock (RetryGate) return _numericCapture; } }
     internal static Task<string>? RetryTask
     {
         get { lock (RetryGate) return _retryEnvironment == Initialization.Capture().EnvironmentKey ? _retry : null; }
@@ -156,12 +160,33 @@ internal static class FamilyDeviceProfileFoundation
     {
         Godot.RenderingDevice? device = Godot.RenderingServer.GetRenderingDevice();
         string backend = Godot.RenderingServer.GetCurrentRenderingDriverName();
-        Initialization.ObserveEnvironment($"{backend}|{device?.GetDeviceName()}|{device?.GetInstanceId()}", device is not null);
+        Initialization.ObserveEnvironment($"{backend}|{device?.GetDeviceName()}|{device?.GetInstanceId()}", device is not null, backend);
         if (device is not null)
         {
             var known = SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity();
             SearchPerformanceProfileFoundation.ObserveGpuIdentity(device.GetDeviceName(), known.RenderingBackend);
+            if (string.Equals(backend, "vulkan", StringComparison.OrdinalIgnoreCase))
+            {
+                string environment = Initialization.Capture().EnvironmentKey;
+                lock (RetryGate)
+                    if (_numericEnvironment != environment)
+                    {
+                        _numericEnvironment = environment;
+                        _numericCapture = CaptureNumericCapabilitiesAsync(environment);
+                    }
+            }
         }
+    }
+
+    private static async Task CaptureNumericCapabilitiesAsync(string environment)
+    {
+        var evidence = await VulkanNumericCapabilities.CaptureAsync(environment).ConfigureAwait(false);
+        bool applied = Initialization.ObserveVulkanCapabilities(evidence);
+        string message = $"vulkanNumericCapabilities=true;applied={applied};scope={evidence.Scope};" +
+            $"device={evidence.DeviceName};float64={evidence.ShaderFloat64};int64={evidence.ShaderInt64};" +
+            $"reason={evidence.Reason};details={evidence.Details};cleanup={evidence.CleanupDetails}";
+        if (evidence.FeaturesKnown && evidence.CleanupDetails.Length == 0) RuntimeLog.TryBackgroundInfo(message);
+        else RuntimeLog.TryBackgroundWarning(message);
     }
 
     internal static FamilyDeviceProfile Capture()

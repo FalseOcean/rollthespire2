@@ -10,8 +10,22 @@ internal sealed class NeowCpuPreGate
     private readonly NeowIdentityCpuPlan? _pair;
     private readonly ulong _allowedCurses;
     internal bool IdentityOnly { get; }
+    internal bool DirectIdentityComplete { get; }
     internal bool FixedPair => _pair is not null;
     internal double GateSurvival { get; }
+    // First NEOW draw only. This mask is necessary even when the scalar gate
+    // also proves a Bones pair or runs subsequent local predicates.
+    internal ulong FirstDrawAllowedIndexes
+    {
+        get
+        {
+            ulong indexes = 0;
+            for (int i = 0; i < _plan.Authority.EligibleCurseRelicIds.Length; i++)
+                if ((_allowedCurses & Beta110FastRelicCatalog.Bit(_plan.Authority.EligibleCurseRelicIds[i])) != 0)
+                    indexes |= 1UL << i;
+            return indexes;
+        }
+    }
     // Donor e89849e: the fixed direct two-draw operator only. Other replay
     // bodies retain their own configuration boundary.
     internal bool BoundedLeafyWorkers => !IdentityOnly && !FixedPair && !_plan.Bones && !_plan.RequireBones &&
@@ -23,9 +37,11 @@ internal sealed class NeowCpuPreGate
         _plan.Authority.ScrollBoxesAllowed && _plan.Authority.EligibleCurseRelicIds.Length == 10 &&
         _plan.Authority.EffectCatalog.LeafyTransformAuthorityExact &&
         (_plan.AuthoredUpgrades?.Advance(_plan.Selected, 255) ?? 0) == 0;
-    private NeowCpuPreGate(NeowReplayPlan plan, NeowIdentityCpuPlan? pair, ulong allowed, bool identityOnly)
+    private NeowCpuPreGate(NeowReplayPlan plan, NeowIdentityCpuPlan? pair, ulong allowed, bool identityOnly,
+        bool directIdentityComplete)
     {
         _plan = plan; _pair = pair; _allowedCurses = allowed; IdentityOnly = identityOnly;
+        DirectIdentityComplete = directIdentityComplete;
         GateSurvival = (double)BitOperations.PopCount(allowed) / plan.Authority.EligibleCurseRelicIds.Length;
         if (pair is not null) GateSurvival *= 2d / (plan.Authority.BonesEligibleRelicIds.Length * (plan.Authority.BonesEligibleRelicIds.Length - 1));
     }
@@ -59,9 +75,17 @@ internal sealed class NeowCpuPreGate
         bool identityOnly = noInnerRequirement && p.StructuredConditions.Length == 0 &&
             p.ExactOnly.Length == 0 && p.EnabledDomains == Beta110FastDomain.None &&
             ((p.TopAny | p.TopAll | p.TopBan | selected) & ~curses) == 0;
+        // The accepted curse is the actual selected direct route, and all top
+        // obligations refer only to this mutually exclusive curse slot. Locals
+        // still run their original operators; no positive offer is their input.
+        // FinalCurse/Bones and Exact remainders retain full observation replay.
+        bool directIdentityComplete = !p.Bones && !p.RequireBones && noInnerRequirement &&
+            p.Selected != Beta110FastRelicCatalog.InvalidId && (selected & curses) != 0 &&
+            ((p.TopAny | p.TopAll | p.TopBan) & ~curses) == 0 &&
+            !p.HasFinalCurseFastProjection && p.ExactOnly.Length == 0;
         if (!identityOnly && pair is null && BitOperations.PopCount(allowed) * 2 > p.Authority.EligibleCurseRelicIds.Length)
             return null; // loose necessary checks do not justify replaying the prefix
-        return new(p, pair, allowed, identityOnly);
+        return new(p, pair, allowed, identityOnly, directIdentityComplete);
     }
 
     internal bool PassesIdentity(ulong root) => _pair is not null ? _pair.Matches(root) :
@@ -70,8 +94,17 @@ internal sealed class NeowCpuPreGate
     internal bool Matches(ulong root)
     {
         // Pure curse predicates are completely decided by the first observation.
-        // For locals, tiny surviving populations use the established replay;
-        // no hypothetical route result replaces actual N filtering.
-        return PassesIdentity(root) && (IdentityOnly || NeowFamilyReplay.Matches(root, _plan));
+        if (!PassesIdentity(root)) return false;
+        if (IdentityOnly) return true;
+        if (DirectIdentityComplete)
+        {
+            // A non-Bones Route ignores afterBones and initializes its required
+            // streams from this root. Preserve the original identity-only return
+            // when no local condition participates; otherwise keep every local
+            // predicate, authored burn and continuation fault in the pure Route.
+            return _plan.StructuredConditions.Length == 0 || NeowFamilyReplay.Route(root, _plan,
+                _plan.Selected, Beta110FastRelicCatalog.InvalidId, default);
+        }
+        return NeowFamilyReplay.Matches(root, _plan);
     }
 }

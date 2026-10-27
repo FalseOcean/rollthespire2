@@ -1,0 +1,2567 @@
+{
+  "schema": "rollthespire2.beta110.g0a-rng-vectors.v1",
+  "upFrontStreamHashHex": "1a8a7b60da243e80",
+  "rootCount": 64,
+  "vectors": [
+    {
+      "rootHashHex": "0000000000000000",
+      "upFrontSeedHex": "1a8a7b60da243e80",
+      "splitMixStateHex": [
+        "242453ba8e836a0e",
+        "29abfb7aacf99686",
+        "05b4570f5ba3b2c5",
+        "a0e7be0a50dfad85"
+      ],
+      "xoshiroOutputsHex": [
+        "9d9a4833efbacaa8",
+        "45fbbc359961c534",
+        "ced7f8e29989b885",
+        "bc092783c5670e9d",
+        "6ac681feaf9792b9",
+        "7a76372a634ebaac",
+        "9c4558478180aeff",
+        "261cdd50d4fa0b46"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        0,
+        4,
+        5,
+        6,
+        14,
+        125,
+        609
+      ]
+    },
+    {
+      "rootHashHex": "0000000000000001",
+      "upFrontSeedHex": "1a8a7b60da243e81",
+      "splitMixStateHex": [
+        "81dc7c6389d85570",
+        "f5882871a1c505cc",
+        "16b5f8d98ecbbbf3",
+        "56b2ca6c0078ce85"
+      ],
+      "xoshiroOutputsHex": [
+        "778dfcb7d102718d",
+        "d5afe629e3ae75af",
+        "fa143bf1f9b50b62",
+        "305d604d2fb23e8d",
+        "a3450aa059c4ae47",
+        "34e72f83c136a66b",
+        "595829d3319fe947",
+        "ae411148d7cb10a9"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        2,
+        4,
+        1,
+        10,
+        6,
+        71,
+        2788
+      ]
+    },
+    {
+      "rootHashHex": "0000000000000002",
+      "upFrontSeedHex": "1a8a7b60da243e82",
+      "splitMixStateHex": [
+        "303774cd52444873",
+        "944f468747e0b9be",
+        "1a1bd51653dc7a93",
+        "1228c201e4e1fdc2"
+      ],
+      "xoshiroOutputsHex": [
+        "f7b2e3d140533702",
+        "c7d59c31983fc633",
+        "0383b5e3a278105d",
+        "2248610ecd85c411",
+        "3392f6c262a54157",
+        "ea552f8992e76f8d",
+        "62c41c340cedd889",
+        "f80a679c97382faa"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        2,
+        0,
+        0,
+        3,
+        28,
+        79,
+        3968
+      ]
+    },
+    {
+      "rootHashHex": "0000000000000003",
+      "upFrontSeedHex": "1a8a7b60da243e83",
+      "splitMixStateHex": [
+        "a362fd72f06f5fa2",
+        "25b98548bbc8ba68",
+        "950aafaa0567bb6f",
+        "84813e6b7f17dab1"
+      ],
+      "xoshiroOutputsHex": [
+        "ce36e4812462274e",
+        "f1722eebe8518239",
+        "94de0a1e4fb22f79",
+        "1b972cf0e951313b",
+        "336b60358f4eefe8",
+        "0e94e0eccff0f427",
+        "3c1211be402da1f7",
+        "3beade5f1fddcb74"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        2,
+        2,
+        0,
+        3,
+        1,
+        48,
+        958
+      ]
+    },
+    {
+      "rootHashHex": "ffffffffffffffff",
+      "upFrontSeedHex": "1a8a7b60da243e7f",
+      "splitMixStateHex": [
+        "511e5ce52d4eb9e7",
+        "742de75015f431cb",
+        "e02ce4b4953332d5",
+        "630367aa673a3681"
+      ],
+      "xoshiroOutputsHex": [
+        "08d489edf66058b2",
+        "41d9a5c09aeee64c",
+        "9df6b12e699a7b2f",
+        "3a651082a9ad727e",
+        "82e0567288614c86",
+        "65316705de0258b1",
+        "ff4c2c7516ff6be5",
+        "7f9a49746e82f3c6"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        0,
+        3,
+        1,
+        8,
+        12,
+        204,
+        2041
+      ]
+    },
+    {
+      "rootHashHex": "fffffffffffffffe",
+      "upFrontSeedHex": "1a8a7b60da243e7e",
+      "splitMixStateHex": [
+        "e9cfee5564ee38ed",
+        "aa479d5cb0149d57",
+        "4d384abfad1df447",
+        "0660ec5769101c9d"
+      ],
+      "xoshiroOutputsHex": [
+        "4b54a579cfd426f1",
+        "7d1289b6d4b4bdc4",
+        "77a0cc5c8b33d8b4",
+        "a184571c5f8d9ea0",
+        "820d937811f6ae32",
+        "32f6274ce61a8583",
+        "a232b6b67d8e2f26",
+        "49bcfb500361bafe"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        1,
+        2,
+        4,
+        8,
+        6,
+        129,
+        1179
+      ]
+    },
+    {
+      "rootHashHex": "0123456789abcdef",
+      "upFrontSeedHex": "1badc0c863d00c6f",
+      "splitMixStateHex": [
+        "e66916b09f6c8cb6",
+        "3ed7f23bbe1e61f6",
+        "6a65aa29797b68fe",
+        "30a0b876dd5fdba1"
+      ],
+      "xoshiroOutputsHex": [
+        "faca4035ab9c2005",
+        "466944bcd6413537",
+        "c58b046a212789ee",
+        "692752a529950bcd",
+        "22dddf5e570d3989",
+        "81c9a2ae6ba07d25",
+        "ce63a0fa86c888c1",
+        "dbd8f7b12bc345a7"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        0,
+        3,
+        2,
+        2,
+        15,
+        165,
+        3517
+      ]
+    },
+    {
+      "rootHashHex": "fedcba9876543210",
+      "upFrontSeedHex": "196735f950787090",
+      "splitMixStateHex": [
+        "8909046211f643f8",
+        "35884931c3b2b871",
+        "2a64c9054a6092ae",
+        "392aed857ed492bf"
+      ],
+      "xoshiroOutputsHex": [
+        "7a6edfb33535eead",
+        "2c219c5f333df1c1",
+        "a9b66fca7264c07d",
+        "609f64b76a608ad4",
+        "1c8be382d41eca6b",
+        "019a10c6274005a5",
+        "1897ce1c2bbae6f2",
+        "b470506448f24b21"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        0,
+        3,
+        2,
+        1,
+        0,
+        19,
+        2887
+      ]
+    },
+    {
+      "rootHashHex": "8b4cc2b2e5f3a3d1",
+      "upFrontSeedHex": "a5d73e13c017e251",
+      "splitMixStateHex": [
+        "7a0940ce3c363e1b",
+        "dda94f261991f714",
+        "1e510cced36c4132",
+        "87631ee31389d78b"
+      ],
+      "xoshiroOutputsHex": [
+        "6174d93f5437437a",
+        "aec6ecb0e3795f50",
+        "e095cc03da072c2f",
+        "ce96da078edb0086",
+        "bac8cdef55e8ccfd",
+        "3b930b50d742101a",
+        "3a3395ad2c6c8086",
+        "d852fdba8b95072b"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        2,
+        4,
+        5,
+        11,
+        7,
+        46,
+        3461
+      ]
+    },
+    {
+      "rootHashHex": "226b1feabe43cba6",
+      "upFrontSeedHex": "3cf59b4b98680a26",
+      "splitMixStateHex": [
+        "8e5c5bd98a9a532e",
+        "57c5402c06fd97ae",
+        "deb1a1826752d6da",
+        "91b349d068755f92"
+      ],
+      "xoshiroOutputsHex": [
+        "d623de9d49d4ce33",
+        "14638a2c2a1ce999",
+        "984ed7143c9e8687",
+        "8f8156a3f48026ce",
+        "8a798e0058797c99",
+        "23007f06b79bbf60",
+        "cec21f1859553cab",
+        "bd2cb434495907ac"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        0,
+        2,
+        3,
+        8,
+        4,
+        165,
+        3026
+      ]
+    },
+    {
+      "rootHashHex": "8000000000000000",
+      "upFrontSeedHex": "9a8a7b60da243e80",
+      "splitMixStateHex": [
+        "ab763ada9cb7378c",
+        "ee36693a95d85f45",
+        "8020454478c16291",
+        "d2fb62a6a14d021d"
+      ],
+      "xoshiroOutputsHex": [
+        "c83fa62b845f936b",
+        "f1fd73fdcbe8bfd5",
+        "562d798d5cb54015",
+        "4ec406205b442883",
+        "616d570481167266",
+        "c00acf8b49c935d0",
+        "e43b23a24f938945",
+        "cdae178dfc646e6f"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        2,
+        1,
+        2,
+        6,
+        23,
+        182,
+        3290
+      ]
+    },
+    {
+      "rootHashHex": "7fffffffffffffff",
+      "upFrontSeedHex": "9a8a7b60da243e7f",
+      "splitMixStateHex": [
+        "44065c13797c6f4b",
+        "1b1d601e778f4a96",
+        "3dbeb5f5dc422894",
+        "d7e2d306ac03c99a"
+      ],
+      "xoshiroOutputsHex": [
+        "14f2ad82180e315b",
+        "8ca05e848faaeea6",
+        "8470fd275a296159",
+        "cd2125db2c3a3ffc",
+        "c69371f6d0b7245e",
+        "e8ac3fa3d06b2cb3",
+        "da46c121328d58a2",
+        "dfc1a6bc2a67b731"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        1,
+        2,
+        5,
+        12,
+        28,
+        174,
+        3580
+      ]
+    },
+    {
+      "rootHashHex": "aaaaaaaaaaaaaaaa",
+      "upFrontSeedHex": "c535260b84cee92a",
+      "splitMixStateHex": [
+        "105d453e985edc2b",
+        "9a55145e07db3db2",
+        "0e777ca457bb2cf0",
+        "23a78d5c3bb07f1a"
+      ],
+      "xoshiroOutputsHex": [
+        "7a4a43b0c4ec2509",
+        "2d85cb99850dbd23",
+        "b89035082f57d0e4",
+        "238ab3261093bb12",
+        "69c89474f53ddc64",
+        "ecfb076156f7b462",
+        "c827b78952226a6d",
+        "efc9cd5c227e84e6"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        0,
+        3,
+        0,
+        6,
+        28,
+        160,
+        3836
+      ]
+    },
+    {
+      "rootHashHex": "5555555555555555",
+      "upFrontSeedHex": "6fdfd0b62f7993d5",
+      "splitMixStateHex": [
+        "55f6fec9ec42ab42",
+        "5421efb6b30c216f",
+        "011044b2bf620216",
+        "fa32d5de9d658aaa"
+      ],
+      "xoshiroOutputsHex": [
+        "fb918ebc90f04462",
+        "850a9833e9f92f89",
+        "e145d611657ae4e1",
+        "1693a8e9e877055c",
+        "84c53d86aa8a50ee",
+        "a2c64bf5a49ca4b1",
+        "c3016b56f45ab01c",
+        "6e34c1417e7df8e6"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        1,
+        4,
+        0,
+        8,
+        19,
+        156,
+        1763
+      ]
+    },
+    {
+      "rootHashHex": "00000000ffffffff",
+      "upFrontSeedHex": "1a8a7b61da243e7f",
+      "splitMixStateHex": [
+        "6c8f544b8be91010",
+        "52a2510e1729b2c3",
+        "b772b29d38e3d45d",
+        "3f179a27b85df64a"
+      ],
+      "xoshiroOutputsHex": [
+        "441fbd092a36263e",
+        "e9a88a6d1deb7e0f",
+        "2db59113793eec33",
+        "5f05deec1290f7b7",
+        "45e18b5a0fa91f46",
+        "ccf9f22394eb6d8d",
+        "9551e7092f31f5e5",
+        "c8dc030f4d61e1de"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        2,
+        0,
+        2,
+        4,
+        24,
+        119,
+        3213
+      ]
+    },
+    {
+      "rootHashHex": "ffffffff00000000",
+      "upFrontSeedHex": "1a8a7b5fda243e80",
+      "splitMixStateHex": [
+        "4666b9b7ec1dd8e8",
+        "a30d6f67783dc1a9",
+        "9f6055c0f809186e",
+        "647c3baef28501df"
+      ],
+      "xoshiroOutputsHex": [
+        "ae4a98116d855b4f",
+        "0304f1819a9aa339",
+        "ac0daade541759b8",
+        "976593e3a0ac2afe",
+        "875dfd82edb43824",
+        "f7ece046aa3be279",
+        "3d1e5bc93288e0ac",
+        "340683f1778762e7"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        0,
+        3,
+        4,
+        8,
+        30,
+        48,
+        832
+      ]
+    },
+    {
+      "rootHashHex": "1020304050607080",
+      "upFrontSeedHex": "2aaaaba12a84af00",
+      "splitMixStateHex": [
+        "fdc7be0ecd066cb8",
+        "9d6b6493d13768ae",
+        "251f43e0bf8abf31",
+        "100271859c138e5d"
+      ],
+      "xoshiroOutputsHex": [
+        "f056fde35eb34b51",
+        "48fd8ae3fff2ef1e",
+        "e6a8abc67e7123bc",
+        "455d9fb420f8830c",
+        "c0f669b73bf8ab16",
+        "236e56ec42b2ec40",
+        "ede2d3ed42e20aad",
+        "c2c715b63382f681"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        0,
+        4,
+        1,
+        12,
+        4,
+        190,
+        3116
+      ]
+    },
+    {
+      "rootHashHex": "8877665544332211",
+      "upFrontSeedHex": "a301e1b61e576091",
+      "splitMixStateHex": [
+        "749f6b879dcbe0ad",
+        "a153f5ca5267342b",
+        "2fb43ec10df1329e",
+        "d015e4724d859fb8"
+      ],
+      "xoshiroOutputsHex": [
+        "e11a483e1215c82b",
+        "9a1c5f1540b92002",
+        "26ccbfae272b5aed",
+        "31b72a5211650e8c",
+        "23250451209de610",
+        "58f14912c93a902b",
+        "55c0ad7219c93dd1",
+        "89200192c30e7e99"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        1,
+        0,
+        1,
+        2,
+        10,
+        68,
+        2194
+      ]
+    },
+    {
+      "rootHashHex": "9e3779b97f4a7c15",
+      "upFrontSeedHex": "b8c1f51a596eba95",
+      "splitMixStateHex": [
+        "29abfb7aacf99686",
+        "05b4570f5ba3b2c5",
+        "a0e7be0a50dfad85",
+        "30bf242b4c4c7134"
+      ],
+      "xoshiroOutputsHex": [
+        "59a6d98de33650fe",
+        "cda038393c9bea60",
+        "6a25fab61ddd2791",
+        "fa5c037d65f1a460",
+        "1105cc503fe75c77",
+        "2fa54480545401e2",
+        "9927d06f806166ca",
+        "6c040dbc1412ab56"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        2,
+        2,
+        6,
+        1,
+        5,
+        122,
+        1728
+      ]
+    },
+    {
+      "rootHashHex": "bf58476d1ce4e5b9",
+      "upFrontSeedHex": "d9e2c2cdf7092439",
+      "splitMixStateHex": [
+        "61ed2949779609da",
+        "1392add7e266012e",
+        "0d9e815eb27c2436",
+        "26481d3be92270dc"
+      ],
+      "xoshiroOutputsHex": [
+        "64477965f71a8cb0",
+        "47016379d1ef0f37",
+        "f628c0ca6ea30976",
+        "972891222d682063",
+        "60a12a88607ef8ea",
+        "9e9b9aa00b815964",
+        "4a70b05e81106a6f",
+        "92029246d30febf2"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        0,
+        4,
+        4,
+        6,
+        19,
+        59,
+        2336
+      ]
+    },
+    {
+      "rootHashHex": "94d049bb133111eb",
+      "upFrontSeedHex": "af5ac51bed55506b",
+      "splitMixStateHex": [
+        "933c4e148414f8d2",
+        "4d2bcb698e8d5b9e",
+        "917f3edb7962e03a",
+        "bbad14bc59b9a19f"
+      ],
+      "xoshiroOutputsHex": [
+        "5960c7076c8d6540",
+        "b47e2131956de176",
+        "d34d2e5dc65947b3",
+        "85684ebfcf30abf2",
+        "cd4c2fd45c90e3fe",
+        "94a6798a1a626d6b",
+        "3236cd6d9691f184",
+        "5a9f38ab802fdc17"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        2,
+        4,
+        3,
+        12,
+        18,
+        40,
+        1449
+      ]
+    },
+    {
+      "rootHashHex": "1a8a7b60da243e80",
+      "upFrontSeedHex": "3514f6c1b4487d00",
+      "splitMixStateHex": [
+        "d3813630967be508",
+        "859a8213acd29244",
+        "6d3ef8f4a7652b6f",
+        "4e4a7e118e192ef3"
+      ],
+      "xoshiroOutputsHex": [
+        "146ebab081dafcbe",
+        "c740f35e7619142b",
+        "3f8a1f5aa2ed8f80",
+        "24c649b5e1a0baa8",
+        "2784e8f65ebad184",
+        "eb5260679ea0c80a",
+        "83f8309bc6d9234d",
+        "5dda24dce866daa6"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        2,
+        1,
+        1,
+        2,
+        28,
+        105,
+        1501
+      ]
+    },
+    {
+      "rootHashHex": "deadbeefcafebabe",
+      "upFrontSeedHex": "f9383a50a522f93e",
+      "splitMixStateHex": [
+        "c6a00d9818378d44",
+        "3be0ccc7882e7754",
+        "45910c0e12014355",
+        "20dd90d11cc27a46"
+      ],
+      "xoshiroOutputsHex": [
+        "41ff8978157ce2bd",
+        "708ba9ef2c48933e",
+        "d1666d194235af37",
+        "b802038b12c6db70",
+        "3411f9a4879b9ec9",
+        "518640f20682ee51",
+        "485c0b39d32f1b23",
+        "ee44b00dd1b8db13"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        1,
+        4,
+        5,
+        3,
+        9,
+        57,
+        3812
+      ]
+    },
+    {
+      "rootHashHex": "c001d00d5eed1234",
+      "upFrontSeedHex": "da8c4b6e391150b4",
+      "splitMixStateHex": [
+        "a3f877f736af8333",
+        "d4f3aa1cb125056f",
+        "c8e77f7a13062811",
+        "62cbdf5f7ddc92b9"
+      ],
+      "xoshiroOutputsHex": [
+        "6a738591c0fa4234",
+        "4c49cb8e5d51c7d7",
+        "72d4e2c5b60aa514",
+        "48c5dfccd39f3d1d",
+        "f26c55793f721fd3",
+        "7bf30568abea90a6",
+        "e241211f89118b4a",
+        "f459ef3dc48c99d8"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        0,
+        2,
+        1,
+        15,
+        15,
+        181,
+        3909
+      ]
+    },
+    {
+      "rootHashHex": "1111111111111111",
+      "upFrontSeedHex": "2b9b8c71eb354f91",
+      "splitMixStateHex": [
+        "d4b4e91a65c8c144",
+        "9d242ef0c698d48e",
+        "d4c6e52301be8bd2",
+        "878e65053d816517"
+      ],
+      "xoshiroOutputsHex": [
+        "ae2029746eae7b48",
+        "120eb8d1f8e51c51",
+        "3f9aa03606f14ccd",
+        "444322358bc2362a",
+        "4f21dfdf3400a62f",
+        "cced8cbb0e8c0a50",
+        "213c509f9a8698e0",
+        "151d81fa500f472c"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        0,
+        1,
+        1,
+        4,
+        24,
+        26,
+        337
+      ]
+    },
+    {
+      "rootHashHex": "2222222222222222",
+      "upFrontSeedHex": "3cac9d82fc4660a2",
+      "splitMixStateHex": [
+        "ff4d55b28add173f",
+        "2c282283bd2cf329",
+        "0648bd3c07b679b8",
+        "e0e101a7138767ac"
+      ],
+      "xoshiroOutputsHex": [
+        "87089420735f1e5e",
+        "864228be4b5bcbb4",
+        "0b91b92a3de4eef2",
+        "ca6cc5365cf8c234",
+        "d7a5aba9975091e8",
+        "aba224b59759645d",
+        "014f68cf48909a78",
+        "2f22d49c62c3abbf"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        1,
+        0,
+        5,
+        13,
+        20,
+        1,
+        754
+      ]
+    },
+    {
+      "rootHashHex": "3333333333333333",
+      "upFrontSeedHex": "4dbdae940d5771b3",
+      "splitMixStateHex": [
+        "baf031bc629ffc1c",
+        "b71c7fca62982878",
+        "6a6181a301cc4204",
+        "79fd2b26d15fca6a"
+      ],
+      "xoshiroOutputsHex": [
+        "013b49aa5f8e8e91",
+        "f6c438a864b77012",
+        "862884f7bcc95fcf",
+        "680bf265fc7e6113",
+        "f75ca8cd18ba69b1",
+        "e93ca3491446146d",
+        "8cb43bc9a02bc2c1",
+        "c38d8ee4b91c291e"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        2,
+        2,
+        2,
+        15,
+        28,
+        112,
+        3128
+      ]
+    },
+    {
+      "rootHashHex": "4444444444444444",
+      "upFrontSeedHex": "5ecebfa51e6882c4",
+      "splitMixStateHex": [
+        "fcea55461344d4a8",
+        "41be07798658eb16",
+        "15989ea609e6e40d",
+        "a344edec1c6b31be"
+      ],
+      "xoshiroOutputsHex": [
+        "33a82e4ed0a97044",
+        "fffb804c0c4f3ccd",
+        "bc547292d7a271a3",
+        "6c93ab397422ab2f",
+        "191616c0b843e14d",
+        "c7f81483b6cd6c16",
+        "70b7f2b685373e7a",
+        "88622c73612c2fba"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        2,
+        3,
+        2,
+        1,
+        24,
+        90,
+        2182
+      ]
+    },
+    {
+      "rootHashHex": "6666666666666666",
+      "upFrontSeedHex": "80f0e1c7408aa4e6",
+      "splitMixStateHex": [
+        "d5ade3d03a9953ad",
+        "36d91d19c0248565",
+        "c0384301a8a7300b",
+        "a15ce0aef43b5ea5"
+      ],
+      "xoshiroOutputsHex": [
+        "150ec36335b960d1",
+        "3eae1b375d482698",
+        "188866c325253664",
+        "eed247f608bfee96",
+        "d289141179a5de7f",
+        "39cdc4d1393328d2",
+        "74805962f152c307",
+        "6f0e2a357dc2ec59"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        0,
+        0,
+        6,
+        13,
+        6,
+        93,
+        1776
+      ]
+    },
+    {
+      "rootHashHex": "7777777777777777",
+      "upFrontSeedHex": "9201f2d8519bb5f7",
+      "splitMixStateHex": [
+        "895b45400828a730",
+        "a8ba03ea2be1c680",
+        "ba5f969a2882f045",
+        "2baeb6ca5a714269"
+      ],
+      "xoshiroOutputsHex": [
+        "595814db57f2414d",
+        "454c38fe245408ad",
+        "74f07e2166a8537c",
+        "b7dc2a83a3092a62",
+        "a5eda7ca168fd419",
+        "d49288c9863fa90e",
+        "7230d375e3010f61",
+        "63ae26ede5c0f37e"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        0,
+        2,
+        5,
+        10,
+        25,
+        91,
+        1594
+      ]
+    },
+    {
+      "rootHashHex": "9999999999999999",
+      "upFrontSeedHex": "b42414fa73bdd819",
+      "splitMixStateHex": [
+        "adca93511a0ff525",
+        "44c20ead213cd154",
+        "42ecded7af478757",
+        "34f70a602c42b418"
+      ],
+      "xoshiroOutputsHex": [
+        "0e4a376bd865e383",
+        "8fe7548c4056d895",
+        "20c5e116263bdf23",
+        "9ad8b0bcee5feb41",
+        "0d665721e81cfe27",
+        "4c1492c9f11c65b9",
+        "06a52193254b3b56",
+        "2227f53c6f167736"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        1,
+        0,
+        4,
+        0,
+        9,
+        5,
+        546
+      ]
+    },
+    {
+      "rootHashHex": "bbbbbbbbbbbbbbbb",
+      "upFrontSeedHex": "d646371c95dffa3b",
+      "splitMixStateHex": [
+        "377c21310a7dae39",
+        "76da5c5a9968c8eb",
+        "7b22b3db988cf442",
+        "22a7341902f693af"
+      ],
+      "xoshiroOutputsHex": [
+        "311df67bb5a8a8f1",
+        "ac2a7904ff61a8a2",
+        "2e836ffab1e9b0b9",
+        "5d341d4463483b24",
+        "82c8524d2636afc2",
+        "8d0d1a92d66d49d7",
+        "6946f6b8c0db11d7",
+        "f195e1dae235fdd6"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        2,
+        0,
+        2,
+        8,
+        17,
+        84,
+        3865
+      ]
+    },
+    {
+      "rootHashHex": "2d0f28c7e7e786b2",
+      "upFrontSeedHex": "4799a428c20bc532",
+      "splitMixStateHex": [
+        "93248f795787ea4c",
+        "a179a299f8ff467e",
+        "71eb92d420781758",
+        "d74c02f8435a878d"
+      ],
+      "xoshiroOutputsHex": [
+        "30ca88626fb213ab",
+        "8fce1e919078d271",
+        "8a7136def025769b",
+        "af6d1da0fb87da98",
+        "a211947be8c0e183",
+        "0916021d6f324dab",
+        "db5211da667a2a9e",
+        "2f95237af45aed94"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        1,
+        2,
+        4,
+        10,
+        1,
+        175,
+        761
+      ]
+    },
+    {
+      "rootHashHex": "75856f745165f252",
+      "upFrontSeedHex": "900fead52b8a30d2",
+      "splitMixStateHex": [
+        "1a2beea87fcaee6e",
+        "571187d72f645732",
+        "82252ace00c60589",
+        "412d466a41f1468c"
+      ],
+      "xoshiroOutputsHex": [
+        "0a7069aa51a9e821",
+        "3f7315913498b8ad",
+        "d99fedb06857dfeb",
+        "53c4d8a91435309f",
+        "69be2ff095e8d6bd",
+        "ed2a88d309c5bc38",
+        "c42cc43162b97be6",
+        "3c00d1af87925388"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        0,
+        4,
+        2,
+        6,
+        28,
+        157,
+        960
+      ]
+    },
+    {
+      "rootHashHex": "8674bbc2735955af",
+      "upFrontSeedHex": "a0ff37234d7d942f",
+      "splitMixStateHex": [
+        "efe9ab07794daa2e",
+        "17011f46afff1a9f",
+        "92a371d675c7a5e8",
+        "fe2edd49426adb48"
+      ],
+      "xoshiroOutputsHex": [
+        "993fb677ebd6fb81",
+        "a8ddd3ddca6052d1",
+        "04a9f93d3c777b26",
+        "1e0683aad4b597b6",
+        "c5e6e7e5d09e3452",
+        "1863d550ebea7eaa",
+        "6109ad4f236ec7a3",
+        "978ab085bc44f91d"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        1,
+        0,
+        0,
+        12,
+        2,
+        77,
+        2424
+      ]
+    },
+    {
+      "rootHashHex": "5c1d49a70d26949a",
+      "upFrontSeedHex": "76a7c507e74ad31a",
+      "splitMixStateHex": [
+        "e131169644f2a087",
+        "24739d1e6c4785d6",
+        "80f4d8a6e20aac02",
+        "f1a9d5233ba50255"
+      ],
+      "xoshiroOutputsHex": [
+        "294f2c8449435233",
+        "864f9cd1d591cd1e",
+        "6c64a3481dcf78ba",
+        "369847e39afa4f8d",
+        "a8ee87ed82e557b9",
+        "2f5ad8fed924d7ff",
+        "add0020e76b90a10",
+        "c099581194ac822a"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        1,
+        2,
+        1,
+        10,
+        5,
+        139,
+        3081
+      ]
+    },
+    {
+      "rootHashHex": "8ced152ef453efd6",
+      "upFrontSeedHex": "a777908fce782e56",
+      "splitMixStateHex": [
+        "e58637f1ff75d542",
+        "a0ed621d68edd64a",
+        "1da8db33d47c86a6",
+        "ca669bb6ad9ddb23"
+      ],
+      "xoshiroOutputsHex": [
+        "dd1f95b8e75581a2",
+        "300e9f7795bfce45",
+        "b40a4c5de7438935",
+        "2bdb13e48c1bb467",
+        "068928a4216c9027",
+        "5340fe9402373f8e",
+        "86046552a5aac5b7",
+        "61060c7f2aafa0bc"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        0,
+        3,
+        1,
+        0,
+        10,
+        107,
+        1552
+      ]
+    },
+    {
+      "rootHashHex": "c33b24196461329b",
+      "upFrontSeedHex": "ddc59f7a3e85711b",
+      "splitMixStateHex": [
+        "693a3d5bbc957ec1",
+        "9df09680b15d5401",
+        "1aed78bed52b4524",
+        "1026710db4fba363"
+      ],
+      "xoshiroOutputsHex": [
+        "a53a4f96b3e216da",
+        "8014738ffd558ceb",
+        "909fcc19917abfe2",
+        "dca80159e49c85bf",
+        "c4b4b4e481a0eec8",
+        "66f8222c68093a93",
+        "7d89d97df5b65129",
+        "5d9e05c7e7b039cf"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        1,
+        2,
+        6,
+        12,
+        12,
+        100,
+        1497
+      ]
+    },
+    {
+      "rootHashHex": "7aeb14a17076347b",
+      "upFrontSeedHex": "957590024a9a72fb",
+      "splitMixStateHex": [
+        "10417349fef5c797",
+        "0889b3a7ce4b0e5f",
+        "6c72f90883c456d9",
+        "0fb9bb75061409ed"
+      ],
+      "xoshiroOutputsHex": [
+        "1a4a3fa198c35a3d",
+        "5e16c6c646faffbb",
+        "1cf105126ba5ba95",
+        "893874d762768d9a",
+        "14eb41c824721fee",
+        "eccc73b0844477d8",
+        "5c16ba26be981e29",
+        "560f0ab003f754b5"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        1,
+        0,
+        3,
+        1,
+        28,
+        73,
+        1376
+      ]
+    },
+    {
+      "rootHashHex": "deefd02013fb5f44",
+      "upFrontSeedHex": "f97a4b80ee1f9dc4",
+      "splitMixStateHex": [
+        "bf9c70c303b2dcb8",
+        "ffb5d3d40d4b1462",
+        "b738e6c54d25a980",
+        "35a9e15727eee31b"
+      ],
+      "xoshiroOutputsHex": [
+        "7b1e232b194aa177",
+        "04a2faf6de8e6cb1",
+        "58b7ae1b6197d782",
+        "edb67929e26819a9",
+        "247e8b1cf3909483",
+        "b453dfaf32b88996",
+        "af5e53f48a1af9f5",
+        "a21b3936213df17b"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        0,
+        1,
+        6,
+        2,
+        21,
+        140,
+        2593
+      ]
+    },
+    {
+      "rootHashHex": "637b9e6c2b782f6c",
+      "upFrontSeedHex": "7e0619cd059c6dec",
+      "splitMixStateHex": [
+        "44f6a26ba1fb4f6e",
+        "44f09db3f8e4f6de",
+        "299111ae44eafdfa",
+        "754d51929dfcc34b"
+      ],
+      "xoshiroOutputsHex": [
+        "25dc51601fb2848c",
+        "c99561a20e80849f",
+        "56314a6efbd14173",
+        "6de8db1de316c01d",
+        "1d7d6dbccb64b717",
+        "9f6c027d6ae66459",
+        "66bc749148b3d0a7",
+        "360f8ce9fc1976a5"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        2,
+        1,
+        3,
+        1,
+        19,
+        82,
+        864
+      ]
+    },
+    {
+      "rootHashHex": "e8a82d077e1e0c9b",
+      "upFrontSeedHex": "0332a86858424b1b",
+      "splitMixStateHex": [
+        "be1c54fc43a7b336",
+        "d7b1e19f0d310f6f",
+        "f830caf15b97e067",
+        "982ee4d38a551f79"
+      ],
+      "xoshiroOutputsHex": [
+        "22547aa8cfdb4273",
+        "57b656d89e9b76cc",
+        "9cf7d7696d24f39c",
+        "902ac437f38d7157",
+        "0d8d9d7e89a4bf5d",
+        "982b2d72c7071224",
+        "34be4dda53b02a5f",
+        "7877197757998597"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        1,
+        3,
+        3,
+        0,
+        18,
+        42,
+        1927
+      ]
+    },
+    {
+      "rootHashHex": "4a25dd763b9bfa6a",
+      "upFrontSeedHex": "64b058d715c038ea",
+      "splitMixStateHex": [
+        "b68f1a49f620c784",
+        "f3005354aa277733",
+        "abfa5c5bd651d681",
+        "5a1e944f546aa3f0"
+      ],
+      "xoshiroOutputsHex": [
+        "8752f0f477f9fed7",
+        "4a5eb32897fbc1f4",
+        "ff2f5ab1e6d43401",
+        "2a996f09e68a7e96",
+        "9dc6ca785424eea8",
+        "84fb12c6dd99e68d",
+        "a0dc4da0828e739c",
+        "bf75276d63054a1f"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        0,
+        4,
+        1,
+        9,
+        16,
+        128,
+        3063
+      ]
+    },
+    {
+      "rootHashHex": "5d0a59c78e5ad29c",
+      "upFrontSeedHex": "7794d528687f111c",
+      "splitMixStateHex": [
+        "ff65e6cb77add917",
+        "f91d476e0c442306",
+        "1f2e85ea7f8a34b6",
+        "5b7c09f6cb54dc0d"
+      ],
+      "xoshiroOutputsHex": [
+        "12c72c13fd140ade",
+        "1230f1e2c5a9afb7",
+        "66457e8e88f2ccba",
+        "e234fc5cd58953ea",
+        "773e09018fad834b",
+        "62708cfd7959a82b",
+        "03b2f31ca474707f",
+        "b7ac5bc6d9fb35dc"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        0,
+        1,
+        6,
+        7,
+        11,
+        2,
+        2938
+      ]
+    },
+    {
+      "rootHashHex": "9b18140802661864",
+      "upFrontSeedHex": "b5a28f68dc8a56e4",
+      "splitMixStateHex": [
+        "a6e984401602c83a",
+        "1ce35e178db42149",
+        "9baea9f53ccd7568",
+        "36d6259e25b5520f"
+      ],
+      "xoshiroOutputsHex": [
+        "fbc511f454eced08",
+        "f429cbb85d386274",
+        "786908f1ce0dac5e",
+        "b8bc8fa08685e79e",
+        "eb4efb52d67477d8",
+        "6f8389479c17a25c",
+        "acead1b3c89b99bb",
+        "018ec142ea058d2c"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        2,
+        2,
+        5,
+        14,
+        13,
+        138,
+        24
+      ]
+    },
+    {
+      "rootHashHex": "3d67df0817836f50",
+      "upFrontSeedHex": "57f25a68f1a7add0",
+      "splitMixStateHex": [
+        "4ca624ac55332e56",
+        "f7684632e5029acf",
+        "cf9ffc64e43b9160",
+        "5b3fa3867dfe5fa2"
+      ],
+      "xoshiroOutputsHex": [
+        "aa2b7920ba9b353a",
+        "2c790062e45663b2",
+        "acc8a413d583f22d",
+        "5761d1c5420f2b9e",
+        "92ab9ed90ee5c109",
+        "b17453baebb6044b",
+        "2a214bff763abee7",
+        "5d076d45e1875dd0"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        0,
+        3,
+        2,
+        9,
+        21,
+        33,
+        1488
+      ]
+    },
+    {
+      "rootHashHex": "a23b8a7d7d95dd21",
+      "upFrontSeedHex": "bcc605de57ba1ba1",
+      "splitMixStateHex": [
+        "186a860c414c03c0",
+        "5fc0c70bf3d60939",
+        "c79b1f1060698c67",
+        "358ad111ba7d8a75"
+      ],
+      "xoshiroOutputsHex": [
+        "717e8cee4fcf8667",
+        "56c5180a6754e540",
+        "4507a3006f9a6961",
+        "073c323fadbac5bc",
+        "0012c6d15ccf6a8b",
+        "f03d91ae6f962fd6",
+        "31b5f81b6fccbf10",
+        "381f3a90777dec67"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        1,
+        1,
+        0,
+        0,
+        29,
+        39,
+        897
+      ]
+    },
+    {
+      "rootHashHex": "1a47543e3bed8cae",
+      "upFrontSeedHex": "34d1cf9f1611cb2e",
+      "splitMixStateHex": [
+        "dd43bf592d3d514b",
+        "71ea43c37b04bea2",
+        "bb68507eff2933d8",
+        "57a8c6c8f892841b"
+      ],
+      "xoshiroOutputsHex": [
+        "16f4ae4feac13dfc",
+        "85b218dbfb5a5093",
+        "211eead8ba3f8929",
+        "803e75b0266ac46e",
+        "9882f36ed147dd92",
+        "d512fab3a1a19268",
+        "a2e01776a8e0ef97",
+        "8cd3fed7867f7555"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        1,
+        0,
+        3,
+        9,
+        25,
+        130,
+        2253
+      ]
+    },
+    {
+      "rootHashHex": "7f226d44c521e162",
+      "upFrontSeedHex": "99ace8a59f461fe2",
+      "splitMixStateHex": [
+        "ac5e3db1795be07d",
+        "b471e218d6e29a2e",
+        "dead70903b496d76",
+        "0872202ef6dec809"
+      ],
+      "xoshiroOutputsHex": [
+        "025f2ee2ea8d0d5b",
+        "7c668f971a08c470",
+        "9bfff982960e35f0",
+        "53facedaf1e73043",
+        "8e74460f132aed37",
+        "2a0e627cd1a48392",
+        "578480731713a464",
+        "bc59f71f85c443bc"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        1,
+        3,
+        2,
+        8,
+        5,
+        70,
+        3013
+      ]
+    },
+    {
+      "rootHashHex": "5a899ed8c6a43219",
+      "upFrontSeedHex": "75141a39a0c87099",
+      "splitMixStateHex": [
+        "da8608f1f83423b5",
+        "0516486cdb9d5d69",
+        "6df56cb5d2d5159c",
+        "4dd76a1bd1b52e2b"
+      ],
+      "xoshiroOutputsHex": [
+        "755d914d54b5baec",
+        "e46199396f6d2225",
+        "86cad4f2ccb263a2",
+        "1e5f7712849e28c3",
+        "1b0fcb37e2e762ab",
+        "dde4aa0b1d159305",
+        "af8b6b8e465ada9c",
+        "0978e0559415a5b3"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        2,
+        2,
+        0,
+        1,
+        26,
+        140,
+        151
+      ]
+    },
+    {
+      "rootHashHex": "abd26a215066bc05",
+      "upFrontSeedHex": "c65ce5822a8afa85",
+      "splitMixStateHex": [
+        "7d9725ef32c8c002",
+        "cd0786b22c100b25",
+        "dd28066dfc501e86",
+        "c38626d8f2222d48"
+      ],
+      "xoshiroOutputsHex": [
+        "2956a8df68fac080",
+        "ba84cbe906c6a722",
+        "d081985d24db0340",
+        "eccc842b792b5c8a",
+        "d1ab66aa7f97ffb1",
+        "33e47012de95f8e3",
+        "221ea720dc5406dd",
+        "f8a2768ea78ed37b"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        2,
+        4,
+        6,
+        13,
+        6,
+        27,
+        3978
+      ]
+    },
+    {
+      "rootHashHex": "74e565da8e67a661",
+      "upFrontSeedHex": "8f6fe13b688be4e1",
+      "splitMixStateHex": [
+        "15dada10e4b923a3",
+        "3632790c757bca0a",
+        "e7fcb10fa77edf0d",
+        "73ffbd7b5c6ea41a"
+      ],
+      "xoshiroOutputsHex": [
+        "6fa398536141e13f",
+        "c396b04f8acd6dba",
+        "68f239ef2f6dc682",
+        "e65e19255fd0bfa0",
+        "1731e4a1d4c6dd15",
+        "5deefcfe0028ad29",
+        "4cc3e9befe5ad95b",
+        "7aeffe442c51491e"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        2,
+        2,
+        6,
+        1,
+        11,
+        61,
+        1966
+      ]
+    },
+    {
+      "rootHashHex": "d34258a2caca41bc",
+      "upFrontSeedHex": "edccd403a4ee803c",
+      "splitMixStateHex": [
+        "ec8080ba2f55c1d1",
+        "6ab483cdcf5d744a",
+        "7ce5ce6323f2eb6f",
+        "ac75421c57aa9ea4"
+      ],
+      "xoshiroOutputsHex": [
+        "dd9596b9b6b8815a",
+        "708653398158760b",
+        "331882b16fe3ca42",
+        "2b2941eeda1ee8c9",
+        "6f1d49dc61a1b8dc",
+        "4a45992e44b56d48",
+        "eb8958c5173ce49e",
+        "c305fad7fe7ffca5"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        1,
+        0,
+        1,
+        6,
+        8,
+        188,
+        3120
+      ]
+    },
+    {
+      "rootHashHex": "a058719f907bbf40",
+      "upFrontSeedHex": "bae2ed006a9ffdc0",
+      "splitMixStateHex": [
+        "af4a08823b1f9f07",
+        "7a26999c01dc1718",
+        "cf59f9805abd5592",
+        "674a5cf386907b7a"
+      ],
+      "xoshiroOutputsHex": [
+        "64803629d8079db9",
+        "b1b1eb7b2678e6c9",
+        "73b7377c5d950094",
+        "35ebaa8d8a4fd0f4",
+        "97531ddd0428e28f",
+        "0b1782a8c3fc1e54",
+        "a3d65e3b606b156b",
+        "5c7a6bb482ecc25a"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        2,
+        2,
+        1,
+        9,
+        1,
+        131,
+        1479
+      ]
+    },
+    {
+      "rootHashHex": "03773d7ae65206ab",
+      "upFrontSeedHex": "1e01b8dbc076452b",
+      "splitMixStateHex": [
+        "ea45593e4e7ce866",
+        "061e8cd9ce611c53",
+        "0b8e555db6cac97f",
+        "8c070dfed4e4e6cd"
+      ],
+      "xoshiroOutputsHex": [
+        "af6124a388fd4c07",
+        "43d05dd1eae3035b",
+        "c0143b42744a09b7",
+        "d85f74a97fbd458c",
+        "01d359b948434687",
+        "2843598f91eec5da",
+        "f1c3d054d11b7c2a",
+        "73fbdf53e690d382"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        0,
+        3,
+        5,
+        0,
+        4,
+        193,
+        1855
+      ]
+    },
+    {
+      "rootHashHex": "caae4a81d859b470",
+      "upFrontSeedHex": "e538c5e2b27df2f0",
+      "splitMixStateHex": [
+        "8e13ba49f1ff54fa",
+        "2bf16904797fd029",
+        "56d859fd5a6fcc4f",
+        "cf2104a9c884a898"
+      ],
+      "xoshiroOutputsHex": [
+        "b7bae4adbbcb9e55",
+        "a5308a8a07e1b960",
+        "9fb0c6f630aea0f0",
+        "d8e9236218133371",
+        "dcd23136e58ac7ca",
+        "221631c25f1fb609",
+        "f017c7d91bb05e7c",
+        "9e2fa341759b9c07"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        1,
+        3,
+        5,
+        13,
+        4,
+        192,
+        2530
+      ]
+    },
+    {
+      "rootHashHex": "b71cee9242f0f01f",
+      "upFrontSeedHex": "d1a769f31d152e9f",
+      "splitMixStateHex": [
+        "462f0a3eeaefdd34",
+        "c2bfec9f3e5078c8",
+        "3384ed20485b9aed",
+        "14c5521a38a22a3b"
+      ],
+      "xoshiroOutputsHex": [
+        "de4bfefa129d9796",
+        "4302e44a0f8b0111",
+        "25359d270236d4c5",
+        "49c6176585a3b280",
+        "7610d96034b42da3",
+        "56ff52edadff1c3e",
+        "81fa7c7882ed89b8",
+        "e2c770fc7a2e172a"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        0,
+        0,
+        2,
+        7,
+        10,
+        104,
+        3628
+      ]
+    },
+    {
+      "rootHashHex": "51de032537c14b8d",
+      "upFrontSeedHex": "6c687e8611e58a0d",
+      "splitMixStateHex": [
+        "286fa6fdd737561f",
+        "b4bfb35721e56ccc",
+        "554111fa1ec82d55",
+        "acf782e50b495849"
+      ],
+      "xoshiroOutputsHex": [
+        "d943287aaa0ff05b",
+        "3ee11c664b114b2f",
+        "c81ff584b84290dd",
+        "031417b029ffb4b3",
+        "033a1e449930ceab",
+        "02827c51e3269130",
+        "8dd3abd11d015dc2",
+        "602adc9c7c0ef1ec"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        0,
+        3,
+        0,
+        0,
+        0,
+        113,
+        1538
+      ]
+    },
+    {
+      "rootHashHex": "8bc55593b33b6782",
+      "upFrontSeedHex": "a64fd0f48d5fa602",
+      "splitMixStateHex": [
+        "2d5cb2b660ea7896",
+        "838f74089bcba491",
+        "0a0db805a933a030",
+        "751097441a763614"
+      ],
+      "xoshiroOutputsHex": [
+        "1bb2c1b165f6c108",
+        "8e2376b69fead67c",
+        "2e1de50c39e66ef8",
+        "2718b8a792bc2e14",
+        "b2f78a64423eda02",
+        "724a71d60763884a",
+        "78efcf6ddf990e5c",
+        "cde2e5d8934b8296"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        1,
+        0,
+        1,
+        11,
+        13,
+        96,
+        3294
+      ]
+    },
+    {
+      "rootHashHex": "40df4b29715e9f9e",
+      "upFrontSeedHex": "5b69c68a4b82de1e",
+      "splitMixStateHex": [
+        "e29e6acef9a8d0b1",
+        "a814402848c4cda6",
+        "bb8b9e27bb8f8f93",
+        "7f7745dbd83e8e9a"
+      ],
+      "xoshiroOutputsHex": [
+        "c7a38a654c131844",
+        "a662f77500609d2a",
+        "d340c66c3146ca1a",
+        "2fb1f2f21dd356c2",
+        "146f7ec6c98b2ed2",
+        "7fd8aa37399e9a30",
+        "2f6775dda6109f1a",
+        "7d64f4100435b5a5"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        1,
+        4,
+        1,
+        1,
+        15,
+        37,
+        2006
+      ]
+    },
+    {
+      "rootHashHex": "7cd1d36eb3dfc347",
+      "upFrontSeedHex": "975c4ecf8e0401c7",
+      "splitMixStateHex": [
+        "07b03ed34d394f98",
+        "00df89e9b3b4c18a",
+        "1ada7653c3d5a5bb",
+        "93d842eb37248da0"
+      ],
+      "xoshiroOutputsHex": [
+        "a59f0a4b6302a112",
+        "797fbfe43fd65d1a",
+        "f1e6b4635b91eeeb",
+        "436c9f9b26ce52c7",
+        "7925d22ac5a13dc7",
+        "bde98f3d0eb18130",
+        "416a4cf9077841ec",
+        "cf1aa3bd5f512785"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        1,
+        4,
+        1,
+        7,
+        22,
+        52,
+        3313
+      ]
+    },
+    {
+      "rootHashHex": "f9306b8f57243cbe",
+      "upFrontSeedHex": "13bae6f031487b3e",
+      "splitMixStateHex": [
+        "2c24a873b138ed97",
+        "52362dca6802936e",
+        "189ea0f17d390242",
+        "651d702870300ca8"
+      ],
+      "xoshiroOutputsHex": [
+        "c3064a2439f52db5",
+        "5146e26a4e766f80",
+        "353c576035cc0b1e",
+        "01d98a40645625b6",
+        "d9aeb47cc874608e",
+        "6872d139cc500899",
+        "4fb0c8015e183e65",
+        "4faa09ccddac5cf2"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        0,
+        1,
+        0,
+        13,
+        12,
+        63,
+        1274
+      ]
+    },
+    {
+      "rootHashHex": "3694da35ad6087cb",
+      "upFrontSeedHex": "511f55968784c64b",
+      "splitMixStateHex": [
+        "ca81581c80b1aa3b",
+        "0957d75b3e9aa581",
+        "7bd965eca50d177b",
+        "8b62413e3c7d0d9b"
+      ],
+      "xoshiroOutputsHex": [
+        "386d8500978bd74f",
+        "662009e2d92cf92c",
+        "014c1b47a9bb9306",
+        "d54e1b98aa47fcb6",
+        "9e73d969a7dcd692",
+        "18907257bc4e7f16",
+        "d616d6bb0ea48247",
+        "1757867157dc8bc8"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        0,
+        1,
+        0,
+        5,
+        9,
+        2,
+        171,
+        373
+      ]
+    },
+    {
+      "rootHashHex": "d0178faa468b193c",
+      "upFrontSeedHex": "eaa20b0b20af57bc",
+      "splitMixStateHex": [
+        "e19b9c743f5ded2f",
+        "3c38215e518a0318",
+        "a8c67099c604645b",
+        "512b0ae1fd4e16ec"
+      ],
+      "xoshiroOutputsHex": [
+        "eeeeca2aa1459cc6",
+        "72944a5697aa7f4d",
+        "12b3e7bd29a0a6c5",
+        "a7f9aee1c02a679d",
+        "decf8806d340a007",
+        "8f7f95b209fb587f",
+        "76cb11aa3d81b356",
+        "01afc7ccb6bd2aec"
+      ],
+      "nextIntBounds": [
+        2,
+        3,
+        5,
+        7,
+        16,
+        31,
+        205,
+        4096
+      ],
+      "nextIntOutputs": [
+        1,
+        1,
+        0,
+        4,
+        13,
+        17,
+        95,
+        26
+      ]
+    }
+  ]
+}

@@ -55,7 +55,7 @@ internal static partial class NeowStructuredEffectProbabilityEstimator
             if (!TryTopLevelRouteProbability(plan, source, out double parent, out _))
                 return SearchSelectivityEstimate.Unpriced("Probability.Neow.PartyOfferAuthorityMissing", "Opening offer pools unavailable.");
             if (parent == 0) return OpeningImpossible("Selected Capsule is not offered.");
-            if (!CapsuleRelicProbabilityEstimator.TryEstimateOpeningCapsules(plan, [source], false,
+            if (!CapsuleBagProbabilityEstimator.TryEstimateConjunction(plan, [source], false,
                     out double child, out string detail, out string issue))
                 return SearchSelectivityEstimate.Unpriced("Probability.Neow.PartyCapsule:" + issue, detail);
             return SearchSelectivityEstimate.Exact(parent * child, SearchSelectivityMethod.WithoutReplacement,

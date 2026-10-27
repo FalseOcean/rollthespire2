@@ -64,7 +64,7 @@ internal sealed partial class SearchPresetSaveTransactionOverlay : Control
             SizeFlagsHorizontal = SizeFlags.ShrinkCenter,
             SizeFlagsVertical = SizeFlags.ShrinkCenter
         };
-        Ui1Theme.ApplyPanel(dialog, Ui1SurfaceRole.Drawer, 10f, 1, 24f);
+        MainPanelTheme.ApplyPanel(dialog, Ui1SurfaceRole.Drawer, 10f, 1, 24f);
         center.AddChild(dialog);
 
         var root = new VBoxContainer
@@ -75,17 +75,17 @@ internal sealed partial class SearchPresetSaveTransactionOverlay : Control
         root.AddThemeConstantOverride("separation", 14);
 
         var header = new HBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        _title = Ui1Theme.Label(string.Empty, Ui1TextRole.SectionTitle);
+        _title = MainPanelTheme.Label(string.Empty, Ui1TextRole.SectionTitle);
         _title.AddThemeFontSizeOverride("font_size", 26);
         _title.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         var close = new Button { Text = "×", CustomMinimumSize = new Vector2(42f, 44f) };
-        Ui1Theme.ApplyButton(close, Ui1ButtonRole.Ghost);
+        MainPanelTheme.ApplyButton(close, Ui1ButtonRole.Ghost);
         close.Pressed += Cancel;
         header.AddChild(_title);
         header.AddChild(close);
         root.AddChild(header);
 
-        _titleLabel = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta);
+        _titleLabel = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta);
         root.AddChild(_titleLabel);
         _titleInput = new LineEdit
         {
@@ -93,21 +93,21 @@ internal sealed partial class SearchPresetSaveTransactionOverlay : Control
             SizeFlagsHorizontal = SizeFlags.ExpandFill,
             ClearButtonEnabled = true
         };
-        Ui1Theme.ApplyLineEdit(_titleInput);
+        MainPanelTheme.ApplyLineEdit(_titleInput);
         _titleInput.TextChanged += _ => RefreshSaveEnabled();
         root.AddChild(_titleInput);
 
-        _descriptionLabel = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta);
+        _descriptionLabel = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta);
         root.AddChild(_descriptionLabel);
         _descriptionInput = new TextEdit
         {
             CustomMinimumSize = new Vector2(0f, 110f),
             SizeFlagsHorizontal = SizeFlags.ExpandFill
         };
-        Ui1Theme.ApplyTextEdit(_descriptionInput);
+        MainPanelTheme.ApplyTextEdit(_descriptionInput);
         root.AddChild(_descriptionInput);
 
-        _visualMarkLabel = Ui1Theme.Label(string.Empty, Ui1TextRole.Meta);
+        _visualMarkLabel = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta);
         root.AddChild(_visualMarkLabel);
 
         var iconRow = new HBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
@@ -128,7 +128,7 @@ internal sealed partial class SearchPresetSaveTransactionOverlay : Control
             slotColumn.AddChild(slot);
 
             var clear = new Button { CustomMinimumSize = new Vector2(0f, 28f) };
-            Ui1Theme.ApplyButton(clear, Ui1ButtonRole.Ghost);
+            MainPanelTheme.ApplyButton(clear, Ui1ButtonRole.Ghost);
             clear.Pressed += () => slot.SetSelection(null, notify: false);
             _visualIconClear[index] = clear;
             slotColumn.AddChild(clear);
@@ -136,7 +136,7 @@ internal sealed partial class SearchPresetSaveTransactionOverlay : Control
         }
         root.AddChild(iconRow);
 
-        _validation = Ui1Theme.Label(string.Empty, Ui1TextRole.Warning, true);
+        _validation = MainPanelTheme.Label(string.Empty, Ui1TextRole.Warning, true);
         _validation.Visible = false;
         root.AddChild(_validation);
         root.AddChild(new Control { SizeFlagsVertical = SizeFlags.ExpandFill });
@@ -145,8 +145,8 @@ internal sealed partial class SearchPresetSaveTransactionOverlay : Control
         footer.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill });
         _cancel = new Button { CustomMinimumSize = new Vector2(92f, 44f) };
         _save = new Button { CustomMinimumSize = new Vector2(104f, 44f), Disabled = true };
-        Ui1Theme.ApplyButton(_cancel, Ui1ButtonRole.Ghost);
-        Ui1Theme.ApplyButton(_save, Ui1ButtonRole.Primary);
+        MainPanelTheme.ApplyButton(_cancel, Ui1ButtonRole.Ghost);
+        MainPanelTheme.ApplyButton(_save, Ui1ButtonRole.Primary);
         _cancel.Pressed += Cancel;
         _save.Pressed += () =>
         {

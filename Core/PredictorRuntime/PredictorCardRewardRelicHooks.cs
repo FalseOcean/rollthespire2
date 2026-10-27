@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using RolltheSpire2.Core.Identity;
 
 namespace RolltheSpire2.Core.PredictorRuntime;
@@ -9,7 +10,8 @@ internal static class PredictorCardRewardRelicHooks
     // options, after the newly acquired relic has joined the inventory.
     internal static (PredictorState State, List<PredictorCard> Cards) ApplyLate(
         PredictorContext context, PredictorState entry, List<PredictorCard> cards,
-        ModelKey relic, bool cloneOnChange, long? relicId = null)
+        ModelKey relic, bool cloneOnChange, long? relicId = null,
+        List<ImmutableArray<int>>? wingCharmEligibility = null)
     {
         var state = entry;
         switch (relic.Entry)
@@ -18,6 +20,7 @@ internal static class PredictorCardRewardRelicHooks
             {
                 var eligible = Enumerable.Range(0, cards.Count)
                     .Where(i => PredictorObtainSources.CanEnchant(context, cards[i])).ToArray();
+                wingCharmEligibility?.Add(eligible.ToImmutableArray());
                 if (eligible.Length == 0) break;
                 (int selected, state) = state.Draw(PredictorStream.Niche, 0, eligible.Length);
                 int index = eligible[selected];

@@ -41,8 +41,11 @@ public sealed class RuntimeContextAuthoritySnapshot
         NeowEffectAuthoritySnapshot? effectAuthority = null,
         WorldAuthoritySnapshot? worldAuthority = null,
         WorldGameMode predictionGameMode = WorldGameMode.Unknown,
-        PredictionGameModeAuthority predictionGameModeAuthority = PredictionGameModeAuthority.Unknown)
+        PredictionGameModeAuthority predictionGameModeAuthority = PredictionGameModeAuthority.Unknown,
+        RequestSupportEvidence? supportEvidence = null,
+        IReadOnlyList<ModelKey>? availableCardIdentities = null)
     {
+        AvailableCardIdentities = CopyCardIdentities(availableCardIdentities);
         Character = character;
         Ascension = ascension;
         PlayerSlotIndex = playerSlotIndex;
@@ -64,6 +67,8 @@ public sealed class RuntimeContextAuthoritySnapshot
         WorldAuthority = worldAuthority;
         PredictionGameMode = predictionGameMode;
         PredictionGameModeAuthority = predictionGameModeAuthority;
+        SupportEvidence = supportEvidence ?? RequestSupportEvidence.Unknown;
+        SupportScope = RequestSupportAssessment.Assess(this);
         UnlockSnapshotFingerprint = SnapshotFingerprint.BuildUnlockSnapshot(
             character,
             ascension,
@@ -108,56 +113,67 @@ public sealed class RuntimeContextAuthoritySnapshot
     public WorldAuthoritySnapshot? WorldAuthority { get; }
     public WorldGameMode PredictionGameMode { get; }
     public PredictionGameModeAuthority PredictionGameModeAuthority { get; }
+    public RequestSupportEvidence SupportEvidence { get; }
+    public RequestSupportAssessment SupportScope { get; }
+    // null means no complete global identity observation, never an empty catalogue.
+    // This contains all registered cards, independently of character/unlock/reward eligibility.
+    public IReadOnlyList<ModelKey>? AvailableCardIdentities { get; }
+    public string CardIdentityFingerprint => AvailableCardIdentities is null ? "Unknown" :
+        OrderedPartyAuthority.Hash(string.Join("|", AvailableCardIdentities.Select(k => k.Serialized)));
+    private static IReadOnlyList<ModelKey>? CopyCardIdentities(IReadOnlyList<ModelKey>? keys)
+    {
+        if (keys is null) return null;
+        if (keys.Any(k => !k.IsValid || k.Category != BaseGameModelKeys.Categories.Card))
+            throw new ArgumentException("CardIdentityAuthorityInvalid");
+        return Array.AsReadOnly(keys.Distinct(ModelKeyComparer.Instance).OrderBy(k => k.Serialized, StringComparer.Ordinal).ToArray());
+    }
     public string UnlockSnapshotFingerprint { get; }
     public string CatalogFingerprint { get; }
     public string EffectSnapshotFingerprint => EffectAuthority?.SnapshotFingerprint ?? string.Empty;
     public string WorldSnapshotFingerprint => WorldAuthority?.SnapshotFingerprint ?? string.Empty;
 
-    public RuntimeContextAuthoritySnapshot WithEffectAuthority(NeowEffectAuthoritySnapshot? effectAuthority) => new(
-        Character,
-        Ascension,
-        PlayerSlotIndex,
-        PlayersCount,
-        NoRunModifiers,
-        VanillaNeowCatalogExact,
-        AllCharacterCardPoolsUnlocked,
-        UnlockedCommonCards,
-        UnlockedUncommonCards,
-        GameVersion,
-        ProfileId,
-        IsVanilla,
-        SourceModId,
-        SourceAssembly,
-        SourceAuthority,
-        Completeness,
-        ResolutionStatus,
-        effectAuthority,
-        WorldAuthority,
-        PredictionGameMode,
-        PredictionGameModeAuthority);
+    // Only simulation DTOs differ in these copies. Request facts and their assessment
+    // are shared internally; a public constructor cannot inject a different assessment.
+    private RuntimeContextAuthoritySnapshot(RuntimeContextAuthoritySnapshot source,
+        NeowEffectAuthoritySnapshot? effects, WorldAuthoritySnapshot? world,
+        IReadOnlyList<ModelKey>? availableCardIdentities = null, bool replaceCardIdentities = false)
+    {
+        AvailableCardIdentities = replaceCardIdentities ? CopyCardIdentities(availableCardIdentities) : source.AvailableCardIdentities;
+        Character = source.Character;
+        Ascension = source.Ascension;
+        PlayerSlotIndex = source.PlayerSlotIndex;
+        PlayersCount = source.PlayersCount;
+        NoRunModifiers = source.NoRunModifiers;
+        VanillaNeowCatalogExact = source.VanillaNeowCatalogExact;
+        AllCharacterCardPoolsUnlocked = source.AllCharacterCardPoolsUnlocked;
+        UnlockedCommonCards = source.UnlockedCommonCards;
+        UnlockedUncommonCards = source.UnlockedUncommonCards;
+        GameVersion = source.GameVersion;
+        ProfileId = source.ProfileId;
+        IsVanilla = source.IsVanilla;
+        SourceModId = source.SourceModId;
+        SourceAssembly = source.SourceAssembly;
+        SourceAuthority = source.SourceAuthority;
+        Completeness = source.Completeness;
+        ResolutionStatus = source.ResolutionStatus;
+        EffectAuthority = effects;
+        WorldAuthority = world;
+        PredictionGameMode = source.PredictionGameMode;
+        PredictionGameModeAuthority = source.PredictionGameModeAuthority;
+        SupportEvidence = source.SupportEvidence;
+        SupportScope = source.SupportScope;
+        UnlockSnapshotFingerprint = source.UnlockSnapshotFingerprint;
+        CatalogFingerprint = source.CatalogFingerprint;
+    }
 
-    public RuntimeContextAuthoritySnapshot WithWorldAuthority(WorldAuthoritySnapshot? worldAuthority) => new(
-        Character,
-        Ascension,
-        PlayerSlotIndex,
-        PlayersCount,
-        NoRunModifiers,
-        VanillaNeowCatalogExact,
-        AllCharacterCardPoolsUnlocked,
-        UnlockedCommonCards,
-        UnlockedUncommonCards,
-        GameVersion,
-        ProfileId,
-        IsVanilla,
-        SourceModId,
-        SourceAssembly,
-        SourceAuthority,
-        Completeness,
-        ResolutionStatus,
-        EffectAuthority,
-        worldAuthority,
-        PredictionGameMode,
-        PredictionGameModeAuthority);
+    public RuntimeContextAuthoritySnapshot WithAvailableCardIdentities(IReadOnlyList<ModelKey>? identities) =>
+        new(this, EffectAuthority, WorldAuthority, identities, replaceCardIdentities: true);
+
+    public RuntimeContextAuthoritySnapshot WithEffectAuthority(NeowEffectAuthoritySnapshot? effectAuthority) =>
+        new(this, effectAuthority, WorldAuthority);
+
+    public RuntimeContextAuthoritySnapshot WithWorldAuthority(WorldAuthoritySnapshot? worldAuthority) =>
+        new(this, EffectAuthority, worldAuthority);
 
     public bool HasCoreNoModifierCatalogAuthority =>
         (ResolutionStatus == IdentityResolutionStatus.Exact || UsesBestEffortModel) &&

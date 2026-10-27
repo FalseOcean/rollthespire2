@@ -15,6 +15,8 @@ internal static class RuntimeAuthorityEnvironment
     private static RuntimeAuthorityEnvironmentSnapshot _current =
         RuntimeAuthorityEnvironmentSnapshot.Unavailable(string.Empty, "RuntimeAuthorityNotCaptured");
 
+    private static string _interpretationKey = string.Empty;
+
     public static RuntimeAuthorityEnvironmentSnapshot Current => Volatile.Read(ref _current);
 
     public static RuntimeAuthorityEnvironmentSnapshot CaptureOnMainThread(ModRuntimeSnapshot runtime)
@@ -23,12 +25,44 @@ internal static class RuntimeAuthorityEnvironment
         RuntimeSnapshotThreadGuard.BindCurrentThread();
         RuntimeSnapshotThreadGuard.RequireMainThread();
 
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
         RuntimeAuthoritySnapshot authority = RuntimeAuthoritySnapshotCapture.Capture(runtime.Detection.DisplayVersion);
-        RuntimeAuthorityInterpretation interpretation = RuntimeAuthorityInterpreter.Interpret(authority);
+        long captured = System.Diagnostics.Stopwatch.GetTimestamp();
+        return PublishVerifiedObservation(runtime, authority, captureMilliseconds:
+            System.Diagnostics.Stopwatch.GetElapsedTime(started, captured).TotalMilliseconds);
+    }
+
+    // The caller owns freshness: menu candidates reach this boundary only after
+    // a new full same-frame native observation compares equal to their frozen inputs.
+    // Formal search capture continues to use CaptureOnMainThread's independent read.
+    public static RuntimeAuthorityEnvironmentSnapshot PublishVerifiedObservation(
+        ModRuntimeSnapshot runtime, RuntimeAuthoritySnapshot authority,
+        RuntimeAuthorityInterpretation? preparedInterpretation = null, double captureMilliseconds = 0)
+    {
+        ArgumentNullException.ThrowIfNull(runtime);
+        ArgumentNullException.ThrowIfNull(authority);
+        RuntimeSnapshotThreadGuard.RequireMainThread();
+        long captured = System.Diagnostics.Stopwatch.GetTimestamp();
+        // A fresh native observation is mandatory: dynamic Mod definitions and
+        // account progress have no reliable common mutation revision. Reuse only
+        // the pure interpretation/log projection after comparing all of its inputs.
+        string interpretationKey = JsonSerializer.Serialize(new {
+            authority.GameVersion, authority.FingerprintSchemaVersion, authority.Fingerprint,
+            authority.CurrentUnlockState, authority.CaptureIssues });
+        bool alreadyLogged = authority.Fingerprint.Complete && _interpretationKey == interpretationKey;
+        bool reusedInterpretation = preparedInterpretation is not null || alreadyLogged;
+        RuntimeAuthorityInterpretation interpretation = preparedInterpretation ?? (reusedInterpretation
+            ? Current.Interpretation : RuntimeAuthorityInterpreter.Interpret(authority));
+        _interpretationKey = authority.Fingerprint.Complete ? interpretationKey : string.Empty;
+        long interpreted = System.Diagnostics.Stopwatch.GetTimestamp();
         string candidatePath = RuntimeAuthorityBaselineCandidateWriter.TryWrite(authority);
+        long exported = System.Diagnostics.Stopwatch.GetTimestamp();
         var environment = new RuntimeAuthorityEnvironmentSnapshot(authority, interpretation, candidatePath);
         Volatile.Write(ref _current, environment);
-        Log(environment, runtime);
+        if (alreadyLogged)
+            RuntimeLog.Info($"runtimeAuthorityObservation=true;interpretationReused=true;overall={authority.Fingerprint.OverallSemanticHash};freshNativeCapture=true");
+        else Log(environment, runtime);
+        RuntimeLog.Detail(FormattableString.Invariant($"runtimeAuthorityTiming=true;captureMs={captureMilliseconds:F3};interpretMs={System.Diagnostics.Stopwatch.GetElapsedTime(captured, interpreted).TotalMilliseconds:F3};exportMs={System.Diagnostics.Stopwatch.GetElapsedTime(interpreted, exported).TotalMilliseconds:F3}"));
         return environment;
     }
 
@@ -87,13 +121,27 @@ internal static class RuntimeAuthorityEnvironment
 
 internal static class RuntimeAuthorityBaselineCandidateWriter
 {
+    // Capture still reads current facts on every entry. Only this auxiliary
+    // export is reused; its timestamp remains the time those bytes were written.
+    // One successful export is retained, never a failed write or native objects.
+    private static BaselineCandidateExport? _lastExport;
+    private static string? _lastPath;
+    private static long _lastLength;
+    private static DateTime _lastWriteTimeUtc;
+
     public static string TryWrite(RuntimeAuthoritySnapshot snapshot)
     {
         try
         {
             string directory = Path.Combine(OS.GetUserDataDir(), "RolltheSpire2", "authority");
-            Directory.CreateDirectory(directory);
             string path = Path.Combine(directory, "runtime_authority_baseline_candidate.json");
+            if (path == _lastPath && _lastExport?.Matches(snapshot) == true)
+            {
+                var existing = new FileInfo(path);
+                if (existing.Exists && existing.Length == _lastLength && existing.LastWriteTimeUtc == _lastWriteTimeUtc)
+                    return path;
+            }
+            Directory.CreateDirectory(directory);
             string temp = path + ".tmp";
             var export = new BaselineCandidateExport
             {
@@ -113,6 +161,11 @@ internal static class RuntimeAuthorityBaselineCandidateWriter
             string json = JsonSerializer.Serialize(export, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(temp, json);
             File.Move(temp, path, overwrite: true);
+            var written = new FileInfo(path);
+            _lastExport = export;
+            _lastPath = path;
+            _lastLength = written.Length;
+            _lastWriteTimeUtc = written.LastWriteTimeUtc;
             return path;
         }
         catch (Exception ex)
@@ -133,5 +186,14 @@ internal static class RuntimeAuthorityBaselineCandidateWriter
         public Dictionary<string, string[]> RuntimeUnlockUniverse { get; set; } = new(StringComparer.Ordinal);
         public DateTimeOffset CapturedAtUtc { get; set; }
         public string[] CaptureIssues { get; set; } = Array.Empty<string>();
+
+        internal bool Matches(RuntimeAuthoritySnapshot snapshot) =>
+            GameVersion == snapshot.GameVersion && FingerprintSchemaVersion == snapshot.FingerprintSchemaVersion &&
+            UnlockUniverseHash == snapshot.Fingerprint.UnlockUniverseHash && OverallSemanticHash == snapshot.Fingerprint.OverallSemanticHash &&
+            FingerprintComplete == snapshot.Fingerprint.Complete && DomainHashes.Count == snapshot.Fingerprint.DomainHashes.Count &&
+            DomainHashes.All(pair => snapshot.Fingerprint.DomainHashes.TryGetValue(pair.Key, out var hash) && hash == pair.Value) &&
+            RuntimeUnlockUniverse.Count == snapshot.UnlockAuthority.Count && snapshot.UnlockAuthority.All(domain =>
+                RuntimeUnlockUniverse.TryGetValue(domain.Domain, out var universe) && universe.SequenceEqual(domain.UnlockUniverse)) &&
+            CaptureIssues.SequenceEqual(snapshot.CaptureIssues);
     }
 }

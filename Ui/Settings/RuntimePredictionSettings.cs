@@ -1,10 +1,11 @@
+using RolltheSpire2.Ui.Workspace;
 using RolltheSpire2.Core.Diagnostics;
 using RolltheSpire2.Search.Runtime;
 
 namespace RolltheSpire2.Ui.Settings;
 
 /// <summary>
-/// Live UI settings; mode/worker preferences are restored by SearchWorkspacePersistence.
+/// Live UI settings; mode/worker preferences are restored by SearchWorkspace.
 /// No session/request/result state. Each search captures current values.
 /// </summary>
 internal sealed class RuntimePredictionSettings

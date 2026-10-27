@@ -16,7 +16,6 @@ internal sealed partial class PredictorCrystalReachability
     private readonly Dictionary<string,CrystalReachabilityUpdate> _finished=[]; // _sync owned
     private readonly ConcurrentDictionary<(string Path,string Selection),Lazy<PredictorCrystalSolution?>> _takeProofs=new();
     private readonly ConditionalWeakTable<CrystalRewardRoute,string> _pathKeys=new();
-    private readonly ConcurrentDictionary<(string Path,string Selection,bool Reshape),Lazy<CrystalOptionProjection>> _goldFinishes=new();
     private long _useClock,_proofReplays,_proofHits;
     internal long ProofReplays=>Interlocked.Read(ref _proofReplays);
     internal long ProofCacheHits=>Interlocked.Read(ref _proofHits);
@@ -24,29 +23,28 @@ internal sealed partial class PredictorCrystalReachability
     internal CrystalOptionProjection PeekKnown(ImmutableArray<CrystalRewardOption> selected) =>
         _published.TryGetValue(SelectionKey(selected),out var result)?result:new(ImmutableDictionary<CrystalRewardOption,PredictorCrystalSolution>.Empty,null,0);
 
-    private CrystalOptionProjection PublishKnown(string key,CrystalOptionProjection incoming,ImmutableArray<CrystalRewardOption> selected,bool reshape=false)
+    private CrystalOptionProjection PublishKnown(string key,CrystalOptionProjection incoming,ImmutableArray<CrystalRewardOption> selected)
     {
-        // Publish conditional positives first. Expanded suffix validation may be
-        // expensive; its optional currency refinement belongs to Advance, not
-        // the immediate cached response after selecting another reward.
-        if((!includeRerolls || reshape) && !selected.IsEmpty && incoming.SelectedPlan is { } plan)
+        // Discovery publishes positives only. The retained gold frontier owns
+        // its separate certificate; ordinary candidate projection cannot clear
+        // that certificate or attach a new authority to a bounded improvement.
+        return _published.AddOrUpdate(key,incoming,(_,prior)=>
         {
-            var finishKey=(string.Join(';',plan.Steps.Select(s=>$"{s.X},{s.Y},{s.Tool}")),key,reshape);
-            if(!_goldFinishes.TryGetValue(finishKey,out var finish))
-            {
-                // Cache only the improved plan/value, not another full candidate
-                // projection. Concurrent lanes never run this publication code.
-                var input=new CrystalOptionProjection(ImmutableDictionary<CrystalRewardOption,PredictorCrystalSolution>.Empty,plan,incoming.Gold);
-                // Immediate retarget projection keeps the original cheap tail
-                // work. Whole-board currency reshaping runs on search updates.
-                finish=new(()=>PredictorCrystalGoldFinish.Improve(source,input,selected,avoidCurse,reshape,includeRerolls:includeRerolls));
-                if(_goldFinishes.Count<2048) finish=_goldFinishes.GetOrAdd(finishKey,finish);
-            }
-            incoming=incoming with { SelectedPlan=finish.Value.SelectedPlan,Gold=finish.Value.Gold };
-        }
-        return _published.AddOrUpdate(key,incoming,(_,prior)=>new(prior.Available.SetItems(incoming.Available),
-            incoming.SelectedPlan!=null && (prior.SelectedPlan==null || incoming.Gold>prior.Gold)?incoming.SelectedPlan:prior.SelectedPlan,
-            Math.Max(prior.Gold,incoming.Gold)));
+            // Both inputs claim truth for this exact frozen ordered selection.
+            // An optimum/absence certificate and a contradicting typed witness
+            // cannot be merged into a confident but internally inconsistent row.
+            if(prior.GoldComplete && incoming.SelectedPlan!=null &&
+                (prior.SelectedPlan==null || incoming.Gold>prior.Gold) ||
+                incoming.GoldComplete && prior.SelectedPlan!=null &&
+                (incoming.SelectedPlan==null || prior.Gold>incoming.Gold))
+                throw new InvalidOperationException("CrystalGoldConflictingPublishedProof");
+            return new(prior.Available.SetItems(incoming.Available),
+                incoming.SelectedPlan!=null && (prior.SelectedPlan==null || incoming.Gold>prior.Gold)?incoming.SelectedPlan:prior.SelectedPlan,
+                Math.Max(prior.Gold,incoming.Gold)) {
+                GoldComplete=prior.GoldComplete || incoming.GoldComplete,
+                SacrificeRelics=prior.SacrificeRelics.Union(incoming.SacrificeRelics),
+                GoldUpperBound=prior.GoldComplete?prior.GoldUpperBound:incoming.GoldUpperBound??prior.GoldUpperBound };
+        });
     }
 
     private PredictorCrystalSolution? VerifyCached(CrystalRewardRoute row,ImmutableArray<CrystalRewardOption> selected)

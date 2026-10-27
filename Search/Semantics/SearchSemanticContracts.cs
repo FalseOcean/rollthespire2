@@ -206,9 +206,12 @@ public sealed record SearchQuery(
         LegacyNeowSemanticConstraints.Empty,
         LegacyWorldSemanticConstraints.Empty);
 
+    public TreasureRelicSearchCondition? TreasureRelics { get; init; }
+    public int FirstActUnknownEventPrefixCount { get; init; }
     public IReadOnlyList<StandardMapSearchCondition> StandardMaps { get; init; } = Array.Empty<StandardMapSearchCondition>();
 
     public CombatCardRewardSequenceSearchCondition? CombatCardRewards { get; init; }
+    public CombatCardExclusionSearchCondition? CombatCardExclusion { get; init; }
     public TransformationAggregateCondition? TransformationAggregate { get; init; }
     public CombatPotionRewardSequenceSearchCondition? CombatPotionRewards { get; init; }
     public IReadOnlyList<EventResultSearchCondition> EventResultConditions { get; init; } =
@@ -221,7 +224,7 @@ public sealed record SearchQuery(
         Array.Empty<RelicShopSequenceSearchCondition>();
 
     public bool HasCombatRewardConstraints =>
-        CombatCardRewards is { IsEmpty: false } ||
+        CombatCardRewards is { IsEmpty: false } || CombatCardExclusion is { IsEmpty: false } ||
         CombatPotionRewards is { IsEmpty: false } ||
         LegacyCombatRewardConstraints.Any(condition => !condition.IsEmpty);
 }
@@ -270,11 +273,6 @@ public sealed record ResolvedCombatRewardRouteSemantics(
 
 public sealed record ResolvedRouteSemantics(
     ResolvedCombatRewardRouteSemantics CombatReward);
-
-public sealed record LegacySearchCriteriaProjection(
-    NeowSearchFilter Filter,
-    ProjectionFidelity Fidelity,
-    IReadOnlyList<string> Diagnostics);
 
 public sealed record ExactSearchEvaluationProjectionResult(
     ExactSearchEvaluationProjection Evaluation,

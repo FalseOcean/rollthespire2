@@ -11,28 +11,52 @@ internal static class Beta110CombatRewardFastPlanCompiler
     internal static Beta110CombatRewardFastPlan CompileForFamily(
         ExactSearchExecutionRequest request, Beta110FastEffectCatalog catalog)
     {
+        var cards = request.Evaluation.CombatCardRewardSequence;
+        var potions = request.Evaluation.CombatPotionRewardSequence;
+        // The compatibility projection preserves row order: legacy, cards, potions.
+        // Keep each typed domain's window rather than borrowing the longest domain.
+        int[] windows = request.CompiledSearch.NormalizedQuery.LegacyCombatRewardConstraints.Where(c => !c.IsEmpty)
+            .Select(c => c.BattleOrdinal == 0 ? 3 : c.BattleOrdinal)
+            .Concat(cards?.Slots.Where(k => k.HasValue).Select(_ => cards!.Count) ?? [])
+            .Concat(potions?.Slots.Where(p => !p.IsNeutral).Select(_ => potions!.Count) ?? []).ToArray();
         var plan = CompileCore(
-            request.Evaluation.NormalCombatRewardConditions.Where(c => !c.IsEmpty).ToArray(),
+            request.Evaluation.NormalCombatRewardConditions.Where(c => !c.IsEmpty).ToArray(), windows,
             CombatRewardFastRoutePolicy.UnpinnedAssumeUnperturbed,
             Beta110CombatRewardExplicitContextProjector.Project(request.CompiledSearch),
             Beta110CombatRewardOpeningConsumptionProjector.Project(request.CompiledSearch), catalog, false,
             Math.Max(request.Evaluation.CombatCardRewardSequence?.Count ?? 0, request.Evaluation.CombatPotionRewardSequence?.Count ?? 0));
-        if (!plan.Enabled || request.Authority.PlayersCount == 1) return plan;
-        var cards = request.Evaluation.CombatCardRewardSequence;
-        var potions = request.Evaluation.CombatPotionRewardSequence;
-        bool cardAssignment = cards is { IsEmpty: false, OrderMode: CombatRewardSequenceOrderMode.Unordered };
-        bool potionAssignment = potions is { IsEmpty: false, OrderMode: CombatRewardSequenceOrderMode.Unordered };
+        if (!plan.Enabled) return plan;
+        bool cardUnordered = cards is { IsEmpty: false, OrderMode: CombatRewardSequenceOrderMode.Unordered };
+        bool potionUnordered = potions is { IsEmpty: false, OrderMode: CombatRewardSequenceOrderMode.Unordered };
         ushort Id(ModelKey key) => catalog.TryGetDenseId(key, out ushort id) ? id : Beta110FastDenseId.Invalid;
-        ushort[] cardTargets = cardAssignment ? cards!.Slots.Where(k => k.HasValue).Select(k => Id(k!.Value)).ToArray() : [];
-        var potionSlots = potionAssignment ? potions!.Slots.Where(p => !p.IsNeutral).ToArray() : [];
+        ushort[] allCardTargets = cardUnordered ? cards!.Slots.Where(k => k.HasValue).Select(k => Id(k!.Value)).ToArray() : [];
+        var allPotionSlots = potionUnordered ? potions!.Slots.Where(p => !p.IsNeutral).ToArray() : [];
+        if (allCardTargets.Length > 6 || allPotionSlots.Length > 6)
+            return Beta110CombatRewardFastPlan.Disabled("DistinctBattleAssignmentCapacity6", plan.Fingerprint);
+        bool multiplayer = request.Authority.PlayersCount > 1;
+        // A single target needs only its window predicate. Preserve the already
+        // equivalent solo body/measurement; retain the established party arrays.
+        bool cardAssignment = cardUnordered && (multiplayer || allCardTargets.Length > 1);
+        bool potionAssignment = potionUnordered && (multiplayer || allPotionSlots.Length > 1);
+        ushort[] cardTargets = cardAssignment ? allCardTargets : [];
+        var potionSlots = potionAssignment ? allPotionSlots : [];
+        int oldAnyWindow = Math.Max(3, plan.MaximumBattleOrdinal);
+        bool changedSoloWindow = !multiplayer && plan.Predicates.Any(p => p.IsAnyBattle &&
+            (p.AnyBattleWindow == 0 ? plan.MaximumBattleOrdinal : p.AnyBattleWindow) != oldAnyWindow);
+        bool changedLegacyWindow = plan.MaximumBattleOrdinal > 3 &&
+            request.CompiledSearch.NormalizedQuery.LegacyCombatRewardConstraints.Any(c => c.BattleOrdinal == 0);
+        bool newReference = !multiplayer && (cardAssignment || potionAssignment || changedSoloWindow) || changedLegacyWindow;
+        if (!multiplayer && !cardAssignment && !potionAssignment)
+            return plan with { NeedsCompleteMatchingReference = newReference };
         return plan with
         {
+            NeedsCompleteMatchingReference = newReference,
             CardAssignmentWindow = cardAssignment ? checked((byte)cards!.Count) : (byte)0,
             CardAssignmentTargets = cardTargets,
             PotionAssignmentWindow = potionAssignment ? checked((byte)potions!.Count) : (byte)0,
             PotionAssignmentRequirements = potionSlots.Select(p => checked((byte)p.Requirement)).ToArray(),
             PotionAssignmentTargets = potionSlots.Select(p => p.PotionKey is { } key ? Id(key) : Beta110FastDenseId.Invalid).ToArray(),
-            Fingerprint = plan.Fingerprint + ":PartyDistinctBattleAssignments:" +
+            Fingerprint = plan.Fingerprint + (multiplayer ? ":PartyDistinctBattleAssignments:" : ":DistinctBattleAssignments:") +
                 (cardAssignment ? cards!.Count : 0) + ":" + string.Join(',', cardTargets) + ":" +
                 (potionAssignment ? potions!.Count : 0) + ":" +
                 string.Join(',', potionSlots.Select(p => $"{(byte)p.Requirement}/{p.PotionKey?.Serialized}"))
@@ -40,11 +64,12 @@ internal static class Beta110CombatRewardFastPlanCompiler
     }
 
     private static Beta110CombatRewardFastPlan CompileCore(
-        NormalCombatRewardSearchCondition[] requested, CombatRewardFastRoutePolicy routePolicy,
+        NormalCombatRewardSearchCondition[] requested, int[] windows, CombatRewardFastRoutePolicy routePolicy,
         Beta110CombatRewardExplicitContext explicitContext,
         Beta110CombatRewardOpeningConsumptionProjection openingConsumption,
         Beta110FastEffectCatalog catalog, bool requireAuthority, int authoredHorizon)
     {
+        if (requested.Length != windows.Length) throw new InvalidOperationException("C.PredicateWindowProjectionMismatch");
         if (requested.Length == 0)
             return Beta110CombatRewardFastPlan.Disabled("NoCombatRewardConditions", "disabled");
         if (routePolicy is CombatRewardFastRoutePolicy.NotApplicable)
@@ -58,8 +83,11 @@ internal static class Beta110CombatRewardFastPlanCompiler
         int goldPredicates = 0;
         int maximumBattleOrdinal = Math.Max(1, authoredHorizon);
 
-        foreach (NormalCombatRewardSearchCondition condition in requested)
+        for (int row = 0; row < requested.Length; row++)
         {
+            var condition = requested[row];
+            int window = windows[row];
+            if (window is < 1 or > 6) return Beta110CombatRewardFastPlan.Disabled("BattleWindowOutsideSupportedRange:" + window);
             if (condition.BattleOrdinal is < 0 or > 6)
             {
                 disableReason = "BattleOrdinalOutsideSupportedRange:" + condition.BattleOrdinal;
@@ -93,7 +121,7 @@ internal static class Beta110CombatRewardFastPlanCompiler
             if (condition.PotionRequirement != NormalCombatPotionRequirement.Any) potionDropPredicates++;
             if (hasPotionIdentity) potionIdentityPredicates++;
             if (condition.MinimumGold.HasValue || condition.MaximumGold.HasValue) goldPredicates++;
-            maximumBattleOrdinal = Math.Max(maximumBattleOrdinal, condition.BattleOrdinal == 0 ? 3 : condition.BattleOrdinal);
+            maximumBattleOrdinal = Math.Max(maximumBattleOrdinal, condition.BattleOrdinal == 0 ? window : condition.BattleOrdinal);
 
             predicates.Add(new Beta110CombatRewardFastPredicate(
                 checked((byte)condition.BattleOrdinal),
@@ -107,9 +135,14 @@ internal static class Beta110CombatRewardFastPlanCompiler
                 condition.MinimumGold ?? 0,
                 condition.MaximumGold ?? 0,
                 condition.MinimumGold.HasValue,
-                condition.MaximumGold.HasValue));
+                condition.MaximumGold.HasValue) { AnyBattleWindow = condition.BattleOrdinal == 0 ? checked((byte)window) : (byte)0 });
         }
 
+        // Zero is the original full-window encoding; avoid changing metadata or
+        // cost identity when the per-domain window adds no restriction.
+        for (int i = 0; i < predicates.Count; i++)
+            if (predicates[i].AnyBattleWindow == maximumBattleOrdinal)
+                predicates[i] = predicates[i] with { AnyBattleWindow = 0 };
         string fingerprint = Fingerprint(new[]
         {
             "combat-reward-fast-plan-v4-query-literal-opening-replay",
@@ -178,7 +211,7 @@ internal static class Beta110CombatRewardFastPlanCompiler
     }
 
     private static string Descriptor(Beta110CombatRewardFastPredicate predicate) =>
-        $"{predicate.BattleOrdinal}:" +
+        $"{predicate.BattleOrdinal}:" + (predicate.AnyBattleWindow == 0 ? "" : $"window={predicate.AnyBattleWindow}:") +
         $"ca={string.Join(',', predicate.CardAny)}:cl={string.Join(',', predicate.CardAll)}:cb={string.Join(',', predicate.CardBan)}:" +
         $"pr={predicate.PotionRequirement}:pa={string.Join(',', predicate.PotionAny)}:pl={string.Join(',', predicate.PotionAll)}:pb={string.Join(',', predicate.PotionBan)}:" +
         $"min={predicate.HasMinimumGold}:{predicate.MinimumGold}:max={predicate.HasMaximumGold}:{predicate.MaximumGold}";
