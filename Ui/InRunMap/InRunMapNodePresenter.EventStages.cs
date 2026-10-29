@@ -169,7 +169,9 @@ internal sealed partial class InRunMapNodePresenter
                 int required = liveCards ? node.CardsRequired : preview.CardsRequired;
                 EventInlineCards(c, parts, "event-stage-cards-" + actionIndex, offered, candidates, required,
                     (context, child) => SetEventStageOption(context, node, adopted, actionIndex, child),
-                    adopted.Enabled != false && adopted.IdentityPendingCauses.IsEmpty, accepted);
+                    adopted.Enabled != false && adopted.IdentityPendingCauses.IsEmpty, accepted,
+                    liveCards ? node.OfferedCardBinding : preview.OfferedCardBinding,
+                    liveCards ? node.OfferedCardOptions : preview.OfferedCardOptions);
                 inlineChild |= currentChild;
             }
             if (!premisesOnly && preview.NeededInput == PredictorEventNeededInput.Obtain &&
@@ -246,10 +248,10 @@ internal sealed partial class InRunMapNodePresenter
             boundary = actions.FindIndex(action => SameRewardChoice(action.RewardChoice ?? action.Obtain?.Reward, selected));
         if (boundary >= 0)
             return stages.Where(stage => stage.ActionIndex < boundary).Select(stage => stage.ActionIndex).DefaultIfEmpty(latest).Max();
-        if (reward.Value is { } value)
+        if (RewardOffer(reward) is { } value)
             foreach (var stage in stages.Where(stage => stage.ActionIndex <= latest && stage.CurrentSource))
                 if (stage.Options.Where(option => option.Value == actions[stage.ActionIndex].ExpectedOption)
-                    .Any(option => option.ResultPreview?.Rewards.Any(candidate => candidate.Value is { } other &&
+                    .Any(option => option.ResultPreview?.Rewards.Any(candidate => RewardOffer(candidate) is { } other &&
                     SameReward(value, other) && (reward.Occurrence < 0 || candidate.Occurrence == reward.Occurrence)) == true))
                     return stage.ActionIndex;
         return latest;
@@ -304,8 +306,8 @@ internal sealed partial class InRunMapNodePresenter
                     (item.live.Value == null || knowledge.Value == null || SameReward(item.live.Value, knowledge.Value));
             });
             if (liveMatch) continue;
-            bool defaultCardChoice = knowledge.IsKnown && knowledge.DefaultSkipped &&
-                knowledge.Value is { Kind: PredictorRewardKind.Card or PredictorRewardKind.SpecialCard, CanSkip: true, Mandatory: false };
+            bool defaultCardChoice = knowledge.DefaultSkipped &&
+                RewardOffer(knowledge) is { Kind: PredictorRewardKind.Card or PredictorRewardKind.SpecialCard, CanSkip: true, Mandatory: false };
             bool editable = option.Enabled != false && option.IdentityPendingCauses.IsEmpty &&
                 (preview.NeededInput == PredictorEventNeededInput.Rewards || defaultCardChoice);
             var rebased = knowledge.CompletedEdit is { } edit ? RebaseEventOptionRewardEdit(authored, option, edit) : null;
@@ -353,7 +355,8 @@ internal sealed partial class InRunMapNodePresenter
             (detailed || !node.Advanced || node.InputPolicy.SpecificCardTargetRequired))
         {
             EventInlineCards(c, parts, "event-cards-" + node.AppliedActions, node.OfferedCards, node.DeckCardCandidates,
-                node.CardsRequired, AddEvent, node.OfferedCardPendingCauses.IsEmpty);
+                node.CardsRequired, AddEvent, node.OfferedCardPendingCauses.IsEmpty || node.OfferedCardBinding != null,
+                offerBinding: node.OfferedCardBinding, offeredOptions: node.OfferedCardOptions);
         }
         if (!inlineChild && node.NeededInput == PredictorEventNeededInput.Obtain)
             foreach (var child in node.RequiredChoices) ObtainEditor(c, parts, child);

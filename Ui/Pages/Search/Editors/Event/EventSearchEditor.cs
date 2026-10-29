@@ -80,6 +80,12 @@ internal sealed partial class EventSearchEditor : Control
     public event Action? QueueChanged;
     public event Action<string>? TransformationRequested;
     internal Func<int, string, bool>? TransformTakenOver { get; set; }
+    internal IEnumerable<string> DeclaredTransformationSourceIds(int seat) =>
+        _drafts.TryGetValue(seat, out var draft)
+            ? draft.QueueConditions.Where(condition => !condition.Excluded && condition.Event.Entry is
+                "MORPHIC_GROVE" or "AROMA_OF_CHAOS" or "WHISPERING_HOLLOW" or "SYMBIOTE" or "TRIAL")
+                .Select(condition => "E." + condition.Event.Entry).Distinct(StringComparer.Ordinal)
+            : [];
     internal IReadOnlyList<TransformationSearchSource> TransformationSources(int seat)
     {
         if (!_drafts.TryGetValue(seat, out var draft)) return [];

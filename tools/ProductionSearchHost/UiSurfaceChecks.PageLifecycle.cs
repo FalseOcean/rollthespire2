@@ -69,14 +69,11 @@ internal static partial class UiSurfaceChecks
             var palette = WorkspacePalette.MainPanel;
             var pendingStyle = palette.Box(palette.Surface);
             pendingPanel.AddThemeStyleboxOverride("panel", pendingStyle);
-            var priorAppearance = UiAppearance.Current;
-            try
-            {
-                UiAppearance.Apply(shell, priorAppearance with { Scheme = "custom", Panel = "21384C" }, [pendingPanel]);
-                Check(pendingStyle.BgColor == palette.Color(palette.Surface),
-                    "an explicitly owned detached group receives the same actual palette change as mounted controls");
-            }
-            finally { UiAppearance.Apply(shell, priorAppearance, [pendingPanel]); pendingPanel.Free(); }
+            Check(pendingStyle.BgColor == new Color("0B1224"), "a detached group is created with the fixed blue ink surface");
+            shell.AddChild(pendingPanel);
+            Check(pendingStyle.BgColor == palette.Color(palette.Surface),
+                "mounting an owned group preserves its authored default surface");
+            pendingPanel.Free();
             // Actual native cache identity, independent of a page's scheduling.
             string[] corpus = ["问题反馈", "导出诊断包", "Report a problem", "Export diagnostics"];
             using (var prepare = new MainPanelFontPreparation(MainPanelTheme.Regular, MainPanelTheme.Medium, corpus))

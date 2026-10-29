@@ -716,6 +716,7 @@ internal sealed partial class PredictorRun
         _fakeStock = [];
         _fakeInventoryOpen = false;
         _eventOfferedCards = [];
+        _eventOfferedCardNicheScope = null;
         _conveyorEntryHealthPending = false;
         _conveyorRewardEmptySlotsBefore = null;
         // Retain the accepted arrival premises/current missing HP for the

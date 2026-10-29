@@ -179,7 +179,12 @@ internal static class FamilyGpuComputeUtility
         using Stream stream = assembly.GetManifestResourceStream(resource) ??
                               throw new InvalidOperationException("Embedded Family shader missing: " + suffix);
         using var reader = new StreamReader(stream);
-        return reader.ReadToEnd();
+        string source = reader.ReadToEnd();
+        // Expand at resource load so donor slicing, numerical adapters and source
+        // exports all observe the same implementation that reaches compilation.
+        if (!source.Contains(GpuRngRotation.SourceMarker, StringComparison.Ordinal)) return source;
+        return source.Replace(GpuRngRotation.SourceMarker,
+            LoadEmbeddedShader(GpuRngRotation.ShaderResourceSuffix), StringComparison.Ordinal);
     }
 
     public static string LoadFamilyShaderWithVisibleSeedRootHash(string suffix)

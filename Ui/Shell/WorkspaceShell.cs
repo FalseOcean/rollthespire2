@@ -75,7 +75,6 @@ internal sealed partial class WorkspaceShell : Control
         _persistence = SearchWorkspace.Open(persistenceDirectory);
         _persistenceDirectory = persistenceDirectory;
         MainPanelTheme.SelectFont(_persistence.Preferences.FontChoice);
-        UiAppearance.Initialize(_persistence.Preferences.Appearance);
         _appliedFontChoice = MainPanelTheme.FontChoice;
         if (_liveRun is null && !_persistence.Runtime.HasSearchInFlight)
             _persistence.EnsureEnvironment(prepared?.Environment ?? SearchEnvironmentSignatureBuilder.Capture(snapshot));
@@ -296,8 +295,6 @@ internal sealed partial class WorkspaceShell : Control
     public override void _Ready() => FitCanvas();
     public override void _Process(double delta)
     {
-        _appearanceDelay -= delta;
-        if (_appearancePending && _appearanceDelay <= 0) ApplyPendingAppearance();
         RuntimeLog.PumpOnMainThread();
         RefreshIssues();
         PollFeedbackExport();

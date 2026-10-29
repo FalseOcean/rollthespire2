@@ -22,6 +22,7 @@ internal sealed partial class TransformationSearchEditor : Control
     private IUiTextProvider _text = JsonUiTextProvider.CreateUi13("zh");
     private IGameContentNameResolver _names = RuntimeGameContentNameResolver.Create("zh");
     private IReadOnlyList<TransformationSearchSource> _sources = [];
+    private IReadOnlySet<string>? _declaredSourceIds;
     private IReadOnlyList<ModelKey> _cards = [];
     private int _seat;
     private bool _guideExpanded;
@@ -50,7 +51,8 @@ internal sealed partial class TransformationSearchEditor : Control
         _drafts.TryGetValue(seat, out SeatDraft? draft) && draft.TakenOver.Contains(sourceId);
 
     public void Refresh(string language, IUiTextProvider text, int seat,
-        IReadOnlyList<TransformationSearchSource> sources, IReadOnlyList<ModelKey> cards, bool render = true)
+        IReadOnlyList<TransformationSearchSource> sources, IReadOnlyList<ModelKey> cards, bool render = true,
+        IReadOnlySet<string>? declaredSourceIds = null)
     {
         _text = text;
         _names = RuntimeGameContentNameResolver.Create(language);
@@ -58,6 +60,7 @@ internal sealed partial class TransformationSearchEditor : Control
         if (!_drafts.TryGetValue(seat, out SeatDraft? draft)) _drafts[seat] = draft = new SeatDraft();
         _draft = draft;
         _sources = sources;
+        _declaredSourceIds = declaredSourceIds;
         foreach (var source in sources) _draft.KnownSources[source.Id] = source;
         _cards = cards.Distinct(ModelKeyComparer.Instance).ToArray();
         // Availability does not own authored takeover identities or targets.
@@ -108,7 +111,7 @@ internal sealed partial class TransformationSearchEditor : Control
         resultCount.HorizontalAlignment = HorizontalAlignment.Right;
         Text(content, _text.Get("query.transform.sources.hint"), 16, 32, width - 32, 14, true);
         float y = RenderSources(content, 64);
-        if (_draft.TakenOver.Count == 0)
+        if (!ActiveTakeovers().Any())
         {
             Text(content, _text.Get("query.transform.none_managed"), 16, y + 14, width - 32, 16, true);
             float inactiveBottom = RenderDormantTargets(content, width, y + 54);
@@ -122,32 +125,31 @@ internal sealed partial class TransformationSearchEditor : Control
         Text(content, _text.Get("query.transform.objective"), 16, y, width - 32, 20);
         y += 36;
         string[] objectives = ["query.transform.objective.rare", "query.transform.objective.cards", "query.transform.objective.cards_rare"];
-        float[] objectiveWidths = [154, 154, 236];
         float x = 16;
         for (int index = 0; index < objectives.Length; index++)
         {
             int captured = index;
-            Button button = ModeButton(content, _text.Get(objectives[index]), x, y, objectiveWidths[index],
-                () => { _draft.Objective = captured; Render(); }, _draft.Objective == index, 40);
+            string title = _text.Get(objectives[index]);
+            float segmentWidth = Math.Min(width - 32, Math.Max(120,
+                Mathf.Ceil(content.GetThemeFont("font", "Button").GetStringSize(title, fontSize: 14).X) + 24));
+            if (x > 16 && x + segmentWidth > width - 16) { x = 16; y += 44; }
+            Button button = ModeButton(content, title, x, y, segmentWidth,
+                () => { _draft.Objective = captured; Render(); }, _draft.Objective == index, 36);
+            button.Name = "TransformationObjective" + index;
             button.AddThemeFontSizeOverride("font_size", 14);
             SearchTooltip.Set(button, _text.Get(objectives[index] + "_tooltip"));
-            x += objectiveWidths[index] + 12;
+            x += segmentWidth + 8;
         }
-        y += 52;
+        y += 46;
         if (_draft.Objective == 0)
         {
-            if (_draft.RareCount > 0)
-            {
-                var targetSurface = new Panel { Position = new(8, y - 4), Size = new(166, 74), MouseFilter = MouseFilterEnum.Ignore };
-                targetSurface.AddThemeStyleboxOverride("panel", _p.Box(_p.Surface, _p.Selected, 1));
-                content.AddChild(targetSurface); content.MoveChild(targetSurface, 0);
-            }
-            Text(content, _text.Get("query.transform.rare_count"), 16, y, 150, 15, true);
-            int[] counts = Enumerable.Range(1, Math.Max(1, _draft.ResultCount)).Append(_draft.RareCount).Distinct().Order().ToArray();
-            Options(content, counts.Select(value => value.ToString()).ToArray(),
-                Array.IndexOf(counts, _draft.RareCount), 16, y + 24, 150,
-                selected => { _draft.RareCount = counts[selected]; Render(); });
-            y += 84;
+            var label = Text(content, _text.Get("query.transform.rare_count"), 16, y + 8, 150, 15, true);
+            label.Size = new(150, 30);
+            var quantity = new MapQuantityInput(_p, _draft.RareCount, true)
+            { Name = "TransformationRareCount", Position = new(174, y), Size = new(136, 38) };
+            quantity.ValueChanged += value => _draft.RareCount = value;
+            content.AddChild(quantity);
+            y += 50;
         }
         else
         {
@@ -210,10 +212,11 @@ internal sealed partial class TransformationSearchEditor : Control
 
     private float RenderDormantTargets(Control host, float width, float y)
     {
-        if (_draft.Cards.Count == 0) return y + 8;
+        if (_draft.Cards.Count == 0 && (_draft.TakenOver.Count == 0 || _draft.Objective != 0)) return y + 8;
         Text(host, _text.Get("query.transform.retained.inactive"), 16, y, width - 32, 15, true);
         y += 36;
-        string targets = string.Join(" · ", _draft.Cards.Select(key => _names.Resolve(key, GameContentKind.Card)));
+        string targets = _draft.Objective == 0 ? _text.Get("query.transform.rare_count") + " · " + _draft.RareCount :
+            string.Join(" · ", _draft.Cards.Select(key => _names.Resolve(key, GameContentKind.Card)));
         var label = Text(host, targets, 16, y, width - 32, 16);
         label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         label.Size = new(width - 32, 56);
@@ -230,7 +233,7 @@ internal sealed partial class TransformationSearchEditor : Control
             bool available = _sources.Any(current => current.Id == source.Id);
             bool takenOver = _draft.TakenOver.Contains(source.Id);
             string name = SourceName(source);
-            bool participates = takenOver && (_draft.Objective == 0 ? _draft.RareCount > 0 : _draft.Cards.Count > 0);
+            bool participates = takenOver && IsSourceDeclared(source.Id) && (_draft.Objective == 0 ? _draft.RareCount > 0 : _draft.Cards.Count > 0);
             var button = ModeButton(content, takenOver ? "✓" : "○", 16, y + 4, 36,
                 () => SetSourceTakenOver(source.Id, !takenOver), takenOver, 36);
             button.Name = "TransformationSourceToggle_" + source.Id.Replace('.', '_');
@@ -255,16 +258,17 @@ internal sealed partial class TransformationSearchEditor : Control
             caption.AccessibilityName = name;
             caption.MouseFilter = MouseFilterEnum.Ignore;
             if (participates) MainPanelTheme.SetColor(caption, "font_color", _p.Selected);
-            var count = Text(content, "×" + source.ResultCount, width - 224, y + 8, 64, 16, true);
+            var count = Text(content, "×" + source.ResultCount, width - 272, y + 8, 64, 16, true);
             count.HorizontalAlignment = HorizontalAlignment.Center;
             count.AccessibilityName = _text.Get("query.transform.result_count") + " · " + source.ResultCount;
-            Button(content, _text.Get("query.transform.sources.edit"), width - 144, y + 4, 128,
+            Button(content, _text.Get("query.transform.sources.edit"), width - 192, y + 4, 176,
                 () => { if (available) SourceEditorRequested?.Invoke(source);
                     else SourcePageRequested?.Invoke(source.Id.StartsWith("E.", StringComparison.Ordinal) ? "events" : "neow"); }, false, 36);
             y += 44;
             if (!available)
             {
-                var conflict = Text(content, _text.Get("query.transform.retained.source_missing"), 108, y + 4, width - 124, 15, true);
+                var conflict = Text(content, _text.Get(IsSourceDeclared(source.Id)
+                    ? "query.transform.retained.source_missing" : "query.transform.retained.source_inactive"), 108, y + 4, width - 124, 15, true);
                 conflict.AutowrapMode = TextServer.AutowrapMode.WordSmart;
                 conflict.ClipText = false;
                 conflict.Size = new(width - 124, 40);

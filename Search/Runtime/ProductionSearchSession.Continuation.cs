@@ -5,7 +5,14 @@ namespace RolltheSpire2.Search.Runtime;
 
 public sealed partial class ProductionSearchSession
 {
-    public SearchContinuationSnapshot? CaptureContinuation() => _recovery.CaptureContinuation();
+    public SearchContinuationSnapshot? CaptureContinuation()
+    {
+        var snapshot = _recovery.CaptureContinuation();
+        if (snapshot is null) return null;
+        if (!VisibleSeedCandidateCodec.TryParseOrdinal(_profile, _plan.CanonicalStartSeed, out ulong start, out _, out _))
+            return snapshot;
+        return snapshot with { MapSearch = CaptureMapSearch(start, snapshot.NextOrdinal) };
+    }
 
     public void AcknowledgeCandidate(string seed) => _recovery.AcknowledgeCandidate(seed);
 

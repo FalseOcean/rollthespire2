@@ -74,6 +74,10 @@ internal static class NeowPhysicalPricing
         ("N.LocalRequestedSide", .92, 1.20)
     ];
 
+    // Historical numerical anchors may initialize an explicitly estimated body;
+    // this accessor does not change TryResolve's measured applicability.
+    internal static (string Shape, double DenseNs, double CompactNs) ReferenceWork(int row) => Rows[row];
+
     internal static bool TryResolve(NeowFamily family, out Work work, out string shape)
     {
         work = default; shape = "Unknown";

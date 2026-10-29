@@ -41,11 +41,7 @@ internal sealed partial class CombatRewardSearchEditor
         if (state.ExclusionBattleCount is < 1 or > 6) throw new InvalidOperationException("integration.load_shape");
         if (state.ExcludedCollection is { } snapshot)
         {
-            if (string.IsNullOrWhiteSpace(snapshot.Id) || string.IsNullOrWhiteSpace(snapshot.Name) || snapshot.Revision < 1 ||
-                snapshot.Cards is not { Count: > 0 } || snapshot.Cards.Any(k => !k.IsValid || k.Category != BaseGameModelKeys.Categories.Card) ||
-                snapshot.Cards.Distinct(ModelKeyComparer.Instance).Count() != snapshot.Cards.Count ||
-                _draft.Exclusion is not { } exclusion || exclusion.CardKeys is null || exclusion.BattleCount != state.ExclusionBattleCount ||
-                !new HashSet<ModelKey>(exclusion.CardKeys, ModelKeyComparer.Instance).SetEquals(snapshot.Cards))
+            if (!state.HasMatchingExclusionSnapshot(_draft.Exclusion))
                 throw new InvalidOperationException("integration.load_shape");
             _draft.ExcludedCollection = snapshot.Copy();
         }

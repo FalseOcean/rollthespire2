@@ -40,7 +40,7 @@ internal static class PredictorLiveCaptureChecks
         .Append(run.Map.StartingMapPoint).Append(run.Map.BossMapPoint).DistinctBy(p => p.coord)
         .Select(p => new { p.coord, p.PointType, Children = p.Children.Select(c => c.coord).ToArray() }).ToArray();
 
-    internal static void Run(PredictorRun baseline)
+    internal static void Run(PredictorRun baseline, bool featurePreferencesOnly = false)
     {
         _checks = 0;
         if (int.TryParse(Environment.GetEnvironmentVariable("RT2_LIVE_CAPTURE_COST_SAMPLES"), out int costSamples))
@@ -58,6 +58,12 @@ internal static class PredictorLiveCaptureChecks
         ulong? priorLocal = LocalContext.NetId;
         try
         {
+            if (featurePreferencesOnly)
+            {
+                NodeEntryFeaturePreferenceLifecycle(baseline);
+                Console.WriteLine($"LIVE_CAPTURE_FEATURE_PREFERENCES_PASS checks={_checks}");
+                return;
+            }
             var player = Player.CreateForNewRun<Ironclad>(UnlockState.all, 1);
             var native = RunState.CreateForTest([player], baseline.Working.Acts
                 .Select(a => ModelDb.GetById<ActModel>(new(a.Key.Category, a.Key.Entry))).ToArray(),
@@ -720,13 +726,18 @@ internal static class PredictorLiveCaptureChecks
             runtimeDirectory.SetValue(null, null);
             Check(RolltheSpire2.Ui.Settings.InRunFeaturePreferences.CachedMapPredictionEnabled == null,
                 "uninitialized preference cache is explicitly unknown");
+            RolltheSpire2.Ui.Settings.InRunFeaturePreferences.SetMap(directory, false);
             observer(manager, points[0], out bool captured);
-            Check(captured && runtimeDirectory.GetValue(null) == null && NativeFacts(native) == before,
-                "unknown cache preserves capture without lazy runtime preference initialization or native mutation");
-            runtimeDirectory.SetValue(null, activeDirectory);
+            Check(!captured && Equals(runtimeDirectory.GetValue(null), activeDirectory) && NativeFacts(native) == before,
+                "cold runtime resolves the default-off preference before any capture without native mutation");
+            RolltheSpire2.Ui.Settings.InRunFeaturePreferences.SetMap(directory, true);
+            runtimeDirectory.SetValue(null, null);
+            observer(manager, points[0], out captured);
+            Check(captured && Equals(runtimeDirectory.GetValue(null), activeDirectory) && NativeFacts(native) == before,
+                "cold runtime preserves an explicit saved opt-in and captures the genuine boundary");
             Enter(points[0]);
             var entry = PredictorLiveRunCapture.CurrentNodeEntry(native, version);
-            Check(entry != null, "unknown-cache observer produces a valid completed entry receipt");
+            Check(entry != null, "enabled cold-runtime observer produces a valid completed entry receipt");
             RolltheSpire2.Ui.Settings.InRunFeaturePreferences.SetMap(directory, false);
             before = NativeFacts(native);
             observer(manager, points[0], out captured);

@@ -69,7 +69,9 @@ internal static class DirectCapsuleAllocation
             _ => (0, 0) };
         if (serial == 0) return null;
         double reference = GpuReferenceCostAtlas.Peak(key) is double peak ? 1e9 / peak : mode == "fused" ? fused : serial;
-        return reference * GpuCostCalibration.Capture().Ratio(key);
+        // This is a whole public coupled-call reference. A numerical-only
+        // device ratio cannot rescale its host transport/control component.
+        return reference;
     }
 
     internal static bool TrySelect(ExactSearchExecutionRequest request, IReadOnlyList<IFamilyInvocation> registered,
@@ -119,7 +121,7 @@ internal static class DirectCapsuleAllocation
 internal sealed class DirectCapsuleInvocation(ExactSearchExecutionRequest request, NeowReplayPlan replay,
     NeowFamilyGpuPlan plan, NeowCapsuleComposite composite, string mode, bool verify, FamilySurvivalProjection? modeledSurvival = null) : IFamilyInvocation
 {
-    internal static string PhysicalRevision(string mode) => "N.Neow.Composite.RCapsule.DirectExperiment."+mode+".CanonicalAbi1Ready.20260909.v1";
+    internal static string PhysicalRevision(string mode) => "N.Neow.Composite.RCapsule.DirectExperiment."+mode+".CanonicalAbi1Ready.20260909.v1" + GpuRngRotation.Revision;
     private readonly GpuCostSamples _costSamples=new();
     IEnumerable<GpuLocalPeak> IFamilyInvocation.CostPeaks=>_costSamples.Peaks;
     void IFamilyInvocation.LogExecutionEvidence() { _costSamples.WriteSummary(); _gpu?.LogEvidence(); }
@@ -136,7 +138,7 @@ internal sealed class DirectCapsuleInvocation(ExactSearchExecutionRequest reques
     public FamilySurvivalProjection Survival => modeledSurvival ?? FamilySurvivalProjection.Unresolved(FamilyId,"DirectCapsule.Experiment");
     public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest geometry)
     {
-        if (geometry.CompactInput || geometry.PrivateInput || geometry.PrivateOutput ||
+        if (geometry.ComputationOnly || geometry.CompactInput || geometry.PrivateInput || geometry.PrivateOutput ||
             !FamilyPhysicalQuote.AdmittedRequest(geometry) ||
             DirectCapsuleAllocation.DenseReferenceNanoseconds(replay, composite, mode) is not double ns) return null;
         return FamilyGpuReadback.Reference(this, new(FamilyId, "DirectCapsule.CoupledDenseUnit", ns, PrivateOrdinalBuffer.Capacity, null,

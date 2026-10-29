@@ -13,7 +13,8 @@ namespace RolltheSpire2.Ui.Persistence;
 
 internal sealed class UserPreferencesDocument
 {
-    public UiColorPreferences Appearance { get; set; } = new();
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public UiColorPreferences? Appearance { get; set; }
     public string FontChoice { get; set; } = "game-serif";
     public Dictionary<string, bool> WorkbenchFlags { get; set; } = new();
     public string WorkbenchPage { get; set; } = "neow";
@@ -35,14 +36,16 @@ internal sealed class UserPreferencesDocument
     public bool CrystalSphereIncludeDriftwood { get; set; } = true;
     public bool CrystalSphereIncludeEnchantments { get; set; }
     public bool CrystalSphereTransparentMask { get; set; }
-    // Missing values retain the prediction behavior from before feature management.
-    public bool OperationPredictionEnabled { get; set; } = true;
+    // In-run features are opt-in; explicit saved choices still take precedence.
+    public bool OperationPredictionEnabled { get; set; }
     public OperationPredictionPreferences OperationPredictionModes { get; set; } = new();
-    public bool MapPredictionEnabled { get; set; } = true;
-    public bool ShowInRunConsole { get; set; } = true;
+    public bool MapPredictionEnabled { get; set; }
+    public bool ShowInRunConsole { get; set; }
     public double InRunConsoleVerticalPercent { get; set; } = 50;
     public double InRunConsoleScalePercent { get; set; } = 100;
     public bool SkipExactValidation { get; set; }
+    public bool MapLossyEnabled { get; set; }
+    public int MapLossyGpuBatchSize { get; set; } = MapLossyOptions.DefaultGpuBatchSize;
     public string ReadReleaseNotesVersion { get; set; } = string.Empty;
     public Dictionary<string, string> ReadNotesVersions { get; set; } = new();
     public string LastPage { get; set; } = "Analysis";
@@ -117,6 +120,7 @@ internal sealed record PersistedTreasureSource(string RelicKey, int TargetSlot, 
 
 internal sealed class PersistedSearchResult
 {
+    public MapSearchProvenance? MapSearch { get; set; }
     public SeedQueryAssociation? SourceAssociation { get; set; }
     private bool _legacyIsUnverified;
     public SeedLibraryContext? Context { get; set; }
@@ -140,6 +144,7 @@ internal sealed class PersistedSearchResult
     public int Ascension { get; set; }
     public string QueryFingerprint { get; set; } = string.Empty;
     public string WitnessOpeningRouteId { get; set; } = string.Empty;
+    public IReadOnlyList<PersistedMapRouteWitness> MapRouteWitnesses { get; set; } = [];
     private IReadOnlyList<PersistedTreasureSource> _treasureSources = [];
     public IReadOnlyList<PersistedTreasureSource> TreasureSources
     {

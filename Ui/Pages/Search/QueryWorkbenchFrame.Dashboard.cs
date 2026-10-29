@@ -44,6 +44,7 @@ internal sealed partial class QueryWorkbenchFrame
         _planSelector.AddItem(_text.Get("workflow.plan.auto")); _planSelector.AddItem(_text.Get("workflow.plan.cpu"));
         _planSelector.Select(_persistence.Preferences.SearchMode == "CPU" ? 1 : 0);
         _planSelector.ItemSelected += index => { _persistence.SetWorkbenchSearchMode(index == 1 ? "CPU" : "Auto"); _analysisKey = ""; };
+        BuildExecutionOrder(sidebar);
         _start = _p.Button(_text.Get("query.action.start"), primary: true); _start.CustomMinimumSize = new(0, 46);
         _start.Name = "StartSearch";
         // The main action uses a blue surface; gold remains authored-condition ink.
@@ -60,11 +61,6 @@ internal sealed partial class QueryWorkbenchFrame
             notice.AutowrapMode = TextServer.AutowrapMode.WordSmart; sidebar.AddChild(notice);
         }
 
-        _liveReadingsHeading = _p.Label(_text.Get("layout.runtime"), 17, heading: true);
-        _liveReadingsHeading.Name = "SearchLiveHeading"; sidebar.AddChild(_liveReadingsHeading);
-        _liveReadings = new GridContainer { Name = "SearchLiveReadings", Columns = 2, SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        _liveReadings.AddThemeConstantOverride("h_separation", 8); _liveReadings.AddThemeConstantOverride("v_separation", 8);
-        sidebar.AddChild(_liveReadings);
         var scroll = new ScrollContainer { Name = "SearchInformationScroll", SizeFlagsVertical = SizeFlags.ExpandFill,
             HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
         sidebar.AddChild(scroll);
@@ -133,7 +129,7 @@ internal sealed partial class QueryWorkbenchFrame
                 : _text.Get("workflow.conditions.empty"), 15, true);
             empty.AutowrapMode = TextServer.AutowrapMode.WordSmart; _familyRows.AddChild(empty);
         }
-        foreach(var entry in _familyEntries.OrderBy(e=>"NACERTMWS".IndexOf(e.Id[0])))
+        foreach(var entry in _familyEntries.OrderBy(e=>"NACERTMVWS".IndexOf(e.Id[0])))
         {
             var row = new VBoxContainer
             {

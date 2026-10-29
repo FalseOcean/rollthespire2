@@ -46,7 +46,9 @@ internal static partial class CompatibilityChecks
             Require(integer.Progress.UnverifiedCandidateCount == 0, "InitialRoomsCompleteTruthNotUnverified:" + item.Name);
             foreach (var result in new[] { native, integer })
             {
-                var initial = Flatten(result.Invocations).Where(row => row.Type.EndsWith(".InitialRoomsInvocation", StringComparison.Ordinal)).ToArray();
+                var initial = Flatten(result.Invocations).Where(row =>
+                    row.Type.EndsWith(".InitialRoomsInvocation", StringComparison.Ordinal) ||
+                    row.FamilyId == VariantOpeningFamily.Id).ToArray();
                 Require(initial.Length > 0 && initial.All(row => row.UsesGpu) &&
                     initial.Any(row => row.Inputs > 0 && row.Batches > 0),
                     "InitialRoomsSelectedGpuAndActualInvocation:" + item.Name + ":" + result.Label);

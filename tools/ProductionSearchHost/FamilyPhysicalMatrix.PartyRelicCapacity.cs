@@ -196,7 +196,9 @@ internal static partial class FamilyPhysicalMatrix
                 Check(bodyRevisions.All(r => gpu.ResolveConditionPerformance(false).PhysicalImplementationRevision.Contains(r, StringComparison.Ordinal) &&
                     gpu.ResolveConditionPerformance(true).PhysicalImplementationRevision.Contains(r, StringComparison.Ordinal)) &&
                     !cpu.ConditionPerformance.PhysicalImplementationRevision.Contains(".GenericBagCapacity.", StringComparison.Ordinal), "ActualWrapperBagCapacityRevision");
-                var quote = gpu.QuoteUnit(257, false, new HashSet<string>(StringComparer.Ordinal));
+                var quote = FamilyPhysicalQuote.CompleteCall(gpu, new(false, false, 257), null, 1,
+                    new HashSet<string>(StringComparer.Ordinal));
+                if (quote?.Origin != FamilyUnitCostOrigin.FamilyCompleteReference) quote = null;
                 if (quote is not null) Check(quote.Evidence.Contains("HistoricalGpuReferenceEnvelope;", StringComparison.Ordinal) &&
                     quote.Evidence.Contains("CurrentPartyRelicBody=", StringComparison.Ordinal) && quote.Evidence.Contains("NotCurrentBodyMeasurement", StringComparison.Ordinal),
                     "AvailableQuoteMarksHistoricalCoefficients");

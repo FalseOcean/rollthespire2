@@ -69,7 +69,12 @@ internal static partial class UiSurfaceChecks
             MethodInfo method = shell.GetType().GetMethod("SelectTask", flags)!;
             method.Invoke(shell, [Enum.Parse(method.GetParameters()[0].ParameterType, name), null, null]);
         }
-        void RefreshTheme() => UiAppearance.Apply(shell, store.Preferences.Appearance);
+        void RefreshTheme()
+        {
+            MainPanelTheme.RefreshFonts(shell);
+            Check(Field<ColorRect>(shell, "_background").Color == new Color("070D1A") &&
+                shell.Theme!.GetColor("font_color", "Label") == new Color("E5EDF8"), "theme refresh retains fixed blue ink colors");
+        }
         string Draft() => JsonSerializer.Serialize(frame.CaptureDraft().WithoutCapturedAuthority());
         string Preferences() => JsonSerializer.Serialize(store.Preferences);
         bool Fits(Control control)

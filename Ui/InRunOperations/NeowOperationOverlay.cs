@@ -238,6 +238,8 @@ internal sealed partial class NeowOperationOverlay : Control
                 {
                     var group = section.CardGroups[groupIndex];
                     if (group.Cards.IsDefaultOrEmpty) continue;
+                    bool potionOrderCaption = !group.PotionUseOrder.IsDefaultOrEmpty &&
+                        group.Label?.StartsWith("PotionUseStep:", StringComparison.Ordinal) == true;
                     string groupName = LocalizedLabel(section.Source, group.Label);
                     if (groupName.Length == 0) groupName = UiText.Format("operation.group", groupIndex + 1);
                     if (text)
@@ -261,13 +263,15 @@ internal sealed partial class NeowOperationOverlay : Control
                         else sectionBlock.AddChild(WrappedText(qualifier + groupName + UiText.Get("operation.labelSeparator") +
                             string.Join("／", group.Cards.Select(CardName))));
                     }
+                    bool rerollGroup = group.Label?.StartsWith("RewardRerollStep:", StringComparison.Ordinal) == true;
                     if (!suppressBranchCards) AddCardGroup(group.Cards,
-                        string.IsNullOrEmpty(group.Label) ? artCaption : JoinCaption(artCaption, groupName), branchIndex,
+                        rerollGroup ? groupName : string.IsNullOrEmpty(group.Label) || potionOrderCaption ? artCaption : JoinCaption(artCaption, groupName), branchIndex,
                         style.Cards is OperationCardLayout.Stack or OperationCardLayout.Groups or OperationCardLayout.Branches,
                         style.Cards == OperationCardLayout.Spread, group.Possible && !group.SuppressPossiblePrefix,
                         group.Highlighted, group.EarliestFirst, group.ForceSingleRow || section.Source.Entry == "DREAM_CATCHER" ||
                         preview.Source.Entry == "SLIPPERY_BRIDGE" && style.Cards == OperationCardLayout.Parallel,
-                        dimmed: ordinalFocus && !group.Highlighted, compact: ordinalFocus);
+                        dimmed: ordinalFocus && !group.Highlighted, compact: ordinalFocus,
+                        potionUseOrder: group.PotionUseOrder);
                 }
             }
             if (block.GetChildCount() > 0) details.AddChild(block); else block.QueueFree();

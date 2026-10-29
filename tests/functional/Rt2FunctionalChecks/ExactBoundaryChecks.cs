@@ -22,6 +22,24 @@ using System.Text.Json;
 
 internal static class ExactBoundaryChecks
 {
+    internal static int RunCancellation()
+    {
+        int checks = 0;
+        void Check(bool value, string name) { checks++; if (!value) throw new InvalidOperationException(name); }
+        var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>(Path.Combine(
+            Environment.CurrentDirectory, "tools/ProductionSearchHost/Corpus/v1/context.json")).Context;
+        var plan = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(SearchQuery.Empty, context),
+            new("000000000000", 2, 1, 2)).Plan!;
+        var positive = ProductionExactSearchEvaluator.Evaluate(plan,
+            TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, plan.CanonicalStartSeed));
+        Check(positive.IsMatch, "Cancellation fixture uses a real Exact Match");
+        CheckExactCancellationWindow(plan, Check);
+        CheckStoppedExact(plan, positive, Check);
+        CheckCandidatePublication(plan, positive, 0, Check);
+        Console.WriteLine($"ExactCancellation checks={checks};PASS");
+        return 0;
+    }
+
     internal static int Run()
     {
         int checks = 0;
@@ -116,6 +134,7 @@ internal static class ExactBoundaryChecks
         foreach(string mode in new[]{"unknown","nomatch","fatal","cancel","cancel-fatal"})
         {
             using var later=new ManualResetEventSlim(); using var entered=new ManualResetEventSlim(); using var release=new ManualResetEventSlim();
+            CancellationToken exactToken = default;
             ProductionExactSearchResult Evaluate(ExactSearchExecutionRequest p,TrustedRootHashInput input)
             {
                 ulong ordinal=0; foreach(char c in input.CanonicalSeed) ordinal=checked(ordinal*34+(uint)"0123456789ABCDEFGHJKLMNPQRSTUVWXYZ".IndexOf(c));
@@ -128,13 +147,14 @@ internal static class ExactBoundaryChecks
                     entered.Set();
                     if(!release.Wait(10000)) throw new TimeoutException("Release");
                     if(mode=="fatal" && !later.Wait(10000)) throw new TimeoutException("Later worker");
-                    if(mode=="cancel") throw new OperationCanceledException();
+                    if(mode=="cancel") throw new OperationCanceledException(exactToken);
                     ProductionExactSearchEvaluator.ThrowIfPredictionFailed(failed);
                 }
                 later.Set(); return unknown;
             }
             var execution=FamilyPlanner.InOrder([]);
-            var session=new ProductionSearchSession(plan,execution,FamilySearchEtaProjectorV1.Project(plan,execution),8,32,null,"",exactEvaluator:Evaluate);
+            var session=new ProductionSearchSession(plan,execution,FamilySearchEtaProjectorV1.Project(plan,execution),8,32,null,"",exactEvaluator:Evaluate,
+                beforeExactEvaluate: token => exactToken = token);
             var emitted=new List<SearchCandidate>();
             if(mode is not ("unknown" or "nomatch"))
             {
@@ -280,13 +300,14 @@ internal static class ExactBoundaryChecks
         using(var resume=new ManualResetEventSlim())
         {
             var serial=only with {RunOptions=only.RunOptions with {WorkerCount=1}};
+            CancellationToken exactToken = default;
             var cancelSession=new ProductionSearchSession(serial,selected,FamilySearchEtaProjectorV1.Project(serial,selected),8,128,null,"",
                 exactEvaluator:(p,i)=>{
                     if(i.CanonicalSeed==RolltheSpire2.Search.FamilyExecution.Beta110SeedCodec.FormatOrdinal(wStart+8)) {
-                        stopped.Set();if(!resume.Wait(10000))throw new TimeoutException();throw new OperationCanceledException();
+                        stopped.Set();if(!resume.Wait(10000))throw new TimeoutException();throw new OperationCanceledException(exactToken);
                     }
                     return ProductionExactSearchEvaluator.Evaluate(p,i);
-                });
+                }, beforeExactEvaluate: token => exactToken = token);
             Check(stopped.Wait(10000),"W cancellation at next batch");cancelSession.Cancel();resume.Set();
             Check(cancelSession.Completion.Wait(10000) && cancelSession.GetProgress().State==SearchRunState.Cancelled && cancelSession.GetSafeNextOrdinal()==wStart+8,"W cancellation preserves committed prefix");
             var combined=new List<string>();while(cancelSession.TryReadCandidate(out var candidate))combined.Add(System.Text.Json.JsonSerializer.Serialize(candidate!.Witnesses));
@@ -947,6 +968,171 @@ internal static class ExactBoundaryChecks
                 "Acknowledged unresolved output advances the durable cursor once");
         }
         finally { session.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+    }
+
+    private static void CheckExactCancellationWindow(ExactSearchExecutionRequest request, Action<bool, string> check)
+    {
+        using var heldEntered = new ManualResetEventSlim();
+        using var targetEntered = new ManualResetEventSlim();
+        using var releaseHeld = new ManualResetEventSlim();
+        using var releaseTarget = new ManualResetEventSlim();
+        int entered = 0;
+        CancellationToken heldToken = default;
+        void BeforeExact(CancellationToken token)
+        {
+            if (Interlocked.Increment(ref entered) == 1)
+            {
+                heldToken = token;
+                heldEntered.Set();
+                if (!releaseHeld.Wait(10000)) throw new TimeoutException("Held Exact release");
+            }
+            else
+            {
+                targetEntered.Set();
+                if (!releaseTarget.Wait(10000)) throw new TimeoutException("Target Exact release");
+            }
+        }
+        var execution = FamilyPlanner.InOrder([]);
+        var session = new ProductionSearchSession(request, execution,
+            FamilySearchEtaProjectorV1.Project(request, execution), 2, 2, null, "", beforeExactEvaluate: BeforeExact);
+        try
+        {
+            check(heldEntered.Wait(10000) && targetEntered.Wait(10000), "Both real Exact workers reach the synchronous boundary");
+            const System.Reflection.BindingFlags fields = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            var lifetime = (CancellationTokenSource)typeof(ProductionSearchSession).GetField("_lifetime", fields)!.GetValue(session)!;
+            var completed = typeof(ProductionSearchSession).GetField("_completedExactAttempts", fields)!;
+            bool observedWindow = false;
+            // CTS callbacks run LIFO. Register after ForEach has linked its child,
+            // so target completion cannot propagate to that child until this exits.
+            using var registration = lifetime.Token.Register(() =>
+            {
+                observedWindow = lifetime.IsCancellationRequested && !heldToken.IsCancellationRequested;
+                releaseHeld.Set();
+                if (!SpinWait.SpinUntil(() => (long)completed.GetValue(session)! == 2 ||
+                        session.GetProgress().PendingCandidateCount != 0, 10000))
+                    throw new TimeoutException("Held Exact did not finish inside the propagation window");
+            });
+            releaseTarget.Set();
+            check(session.Completion.Wait(15000), "Target cancellation finishes after deterministic propagation window");
+            check(observedWindow, "Parent is cancelled while the actual candidate token remains uncancelled");
+            var progress = session.GetProgress();
+            check(progress.State == SearchRunState.Completed && progress.MatchCount == 1 &&
+                progress.PendingCandidateCount == 0 && !progress.CancellationRequested && string.IsNullOrEmpty(progress.FailureCode),
+                "Target stop does not manufacture a candidate failure or a user cancellation");
+            var results = new List<SearchCandidate>();
+            while (session.TryReadCandidate(out var candidate)) results.Add(candidate!);
+            check(results.Count == 1 && results[0].ValidationDisposition == SearchDisposition.Match,
+                "Only the real target publication is delivered");
+            ulong delivered = results[0].Seed == Beta110SeedCodec.FormatOrdinal(0) ? 0UL : 1UL;
+            ulong unfinished = 1UL - delivered;
+            check(session.GetSafeNextOrdinal() == unfinished, "Unpublished candidate remains at the safe scan frontier");
+            var beforeAck = session.CaptureContinuation()!;
+            var saved = JsonSerializer.Deserialize<SearchContinuationSnapshot>(JsonSerializer.Serialize(beforeAck))!;
+            check(saved.PendingCandidates.Count == 0 && saved.NextOrdinal == Math.Min(delivered, unfinished) &&
+                saved.UnreceivedOrdinals!.SequenceEqual(new[] { delivered }) &&
+                saved.ContinuationFingerprint == beforeAck.ContinuationFingerprint,
+                "Saved continuation preserves the unreceived result, identity and unfinished work");
+            session.AcknowledgeCandidate(results[0].Seed);
+            var received = JsonSerializer.Deserialize<SearchContinuationSnapshot>(JsonSerializer.Serialize(session.CaptureContinuation()))!;
+            check(received.NextOrdinal == unfinished && received.UnreceivedOrdinals!.Count == 0 &&
+                received.PendingCandidates.Count == 0, "ACK advances only the received result and retains the unfinished candidate");
+
+            var remaining = ExactSearchExecutionRequestFactory.Compile(request.CompiledSearch, request.RunOptions with
+            { StartSeed = Beta110SeedCodec.FormatOrdinal(received.NextOrdinal), ScanCount = 2 - (long)received.NextOrdinal,
+                TargetMatchCount = 2, WorkerCount = 1 }).Plan!;
+            var resumed = new ProductionSearchSession(remaining, execution,
+                FamilySearchEtaProjectorV1.Project(remaining, execution), 2, 2, null, "", continuation: received);
+            try
+            {
+                check(resumed.Completion.Wait(10000), "Saved target cancellation resumes to completion");
+                var resumedResults = new List<SearchCandidate>();
+                while (resumed.TryReadCandidate(out var candidate)) resumedResults.Add(candidate!);
+                check(resumedResults.Count == 1 && resumedResults[0].Seed == Beta110SeedCodec.FormatOrdinal(unfinished) &&
+                    results.Concat(resumedResults).Select(c => c.Seed).Distinct().Count() == 2,
+                    "Resume checks the unfinished candidate without duplicating the acknowledged result");
+                foreach (var result in resumedResults) resumed.AcknowledgeCandidate(result.Seed);
+                var final = resumed.CaptureContinuation()!;
+                check(resumed.GetProgress().State == SearchRunState.Completed && final.NextOrdinal == 2 &&
+                    final.PendingCandidates.Count == 0 && final.UnreceivedOrdinals!.Count == 0,
+                    "Resumed ACK commits the full prefix without losing pending or delivery obligations");
+            }
+            finally { resumed.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+        }
+        finally
+        {
+            releaseHeld.Set();
+            releaseTarget.Set();
+            session.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+    }
+
+    private static void CheckStoppedExact(ExactSearchExecutionRequest fixture, ProductionExactSearchResult positive,
+        Action<bool, string> check)
+    {
+        // A cancelled session does not make an unrelated OCE a normal stop.
+        foreach (string mode in new[] { "normal", "tokenless", "foreign", "unsignalled" })
+        {
+            using var entered = new ManualResetEventSlim();
+            using var release = new ManualResetEventSlim();
+            using var foreign = new CancellationTokenSource();
+            foreign.Cancel();
+            CancellationToken candidateToken = default;
+            var original = mode == "foreign"
+                ? new OperationCanceledException("InjectedForeignCancellation", new IOException("OriginalCancellationCause"), foreign.Token)
+                : new OperationCanceledException("InjectedTokenlessCancellation", new IOException("OriginalCancellationCause"));
+            var request = fixture with { RunOptions = fixture.RunOptions with { WorkerCount = 1, TargetMatchCount = 3 } };
+            var execution = FamilyPlanner.InOrder([]);
+            int attempts = 0;
+            void BeforeExact(CancellationToken token)
+            {
+                candidateToken = token;
+                if (Interlocked.Increment(ref attempts) != 1) return;
+                entered.Set();
+                if (!release.Wait(10000)) throw new TimeoutException("Stopped Exact release");
+            }
+            ProductionExactSearchResult Evaluate(ExactSearchExecutionRequest _, TrustedRootHashInput input)
+            {
+                if (input.CanonicalSeed != request.CanonicalStartSeed) return positive;
+                if (mode == "unsignalled")
+                    throw new OperationCanceledException("InjectedCandidateCancellation", new IOException("OriginalCancellationCause"), candidateToken);
+                throw original;
+            }
+            var session = new ProductionSearchSession(request, execution,
+                FamilySearchEtaProjectorV1.Project(request, execution), 2, 2, null, "", exactEvaluator: mode == "normal" ? null : Evaluate,
+                beforeExactEvaluate: BeforeExact);
+            try
+            {
+                check(entered.Wait(10000), "Stopped Exact entered: " + mode);
+                if (mode != "unsignalled") session.Cancel();
+                release.Set();
+                check(session.Completion.Wait(10000), "Stopped Exact finishes: " + mode);
+                var progress = session.GetProgress();
+                var saved = JsonSerializer.Deserialize<SearchContinuationSnapshot>(JsonSerializer.Serialize(session.CaptureContinuation()))!;
+                check(progress.State == (mode == "unsignalled" ? SearchRunState.Completed : SearchRunState.Cancelled) &&
+                    string.IsNullOrEmpty(progress.FailureCode), "Only requested stops classify the session as cancelled: " + mode);
+                if (mode == "normal")
+                    check(saved.NextOrdinal == 0 && saved.PendingCandidates.Count == 0 && progress.ScannedCount == 0 &&
+                        !session.TryReadCandidate(out _), "Same requested token leaves cancelled Exact unfinished without an error");
+                else
+                {
+                    var pending = saved.PendingCandidates.Single();
+                    check(progress.PendingCandidateCount == 1 && pending.Ordinal == 0 && pending.Stage == "CandidateCheck" &&
+                        pending.Attempts == 1 && pending.ExceptionText.Contains("OriginalCancellationCause", StringComparison.Ordinal) &&
+                        pending.ExceptionText.Contains(mode == "foreign" ? "InjectedForeignCancellation" :
+                            mode == "tokenless" ? "InjectedTokenlessCancellation" : "InjectedCandidateCancellation", StringComparison.Ordinal) &&
+                        pending.QueryFingerprint == request.CompiledSearch.SemanticFingerprint &&
+                        pending.SnapshotFingerprint == request.SnapshotFingerprint,
+                        "Unexpected cancellation retains original cause and candidate identity as pending: " + mode);
+                    check(session.GetDiagnosticSummary().DispositionCounts.Values.Sum() == progress.ScannedCount - 1,
+                        "Unexpected cancellation is never a semantic disposition: " + mode);
+                }
+            }
+            finally
+            {
+                release.Set();
+                session.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            }
+        }
     }
 
     private static void CheckCandidatePublication(

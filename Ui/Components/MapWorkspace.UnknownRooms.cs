@@ -34,6 +34,8 @@ internal sealed partial class MapWorkspace
         _unknownTitle.Text = T("title");
         _unknownPremise.Text = T("premise");
         _unknownPrecision.Text = string.Empty;
+        ((Control)_unknownTitle.GetParent()).Visible = !_witnessMapMode;
+        if (_witnessMapMode) { _map.SetUnknownRooms(null); return; }
         if (_routeMap is null) { _map.SetUnknownRooms(null); return; }
         var prior = Enumerable.Range(1, SelectedAct - 1).Select(act => _commitments.GetValueOrDefault(act)).ToArray();
         bool priorKnown = prior.All(p => p is not null && p.Map.Seed == _routeMap.Seed);

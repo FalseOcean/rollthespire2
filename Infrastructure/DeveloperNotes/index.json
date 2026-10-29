@@ -2,7 +2,7 @@
   "SchemaVersion": 2,
   "ContentVersion": "1.4.0",
   "TargetModVersion": "1.4.0",
-  "UpdatedAt": "2026-10-09",
+  "UpdatedAt": "2026-10-28",
   "Chapters": [
     {
       "Id": "release",
@@ -21,6 +21,11 @@
     },
     {
       "Id": "devlog",
+      "AcknowledgementVersion": "1",
+      "RequiresAcknowledgement": false
+    },
+    {
+      "Id": "contributors",
       "AcknowledgementVersion": "1",
       "RequiresAcknowledgement": false
     }

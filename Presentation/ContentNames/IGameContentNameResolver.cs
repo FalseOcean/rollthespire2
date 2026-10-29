@@ -11,7 +11,8 @@ public enum GameContentKind
     Event,
     Encounter,
     Ancient,
-    Act
+    Act,
+    Enchantment
 }
 
 public interface IGameContentNameResolver

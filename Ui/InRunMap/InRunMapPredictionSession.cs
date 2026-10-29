@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Text.Json;
 using MegaCrit.Sts2.Core.Runs;
+using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Core.Prediction.Maps;
 using RolltheSpire2.Core.PredictorRuntime;
 using RolltheSpire2.Infrastructure.Snapshots;
@@ -32,6 +33,9 @@ internal sealed partial class InRunMapPredictionSession
     internal bool WaitingForBoundary { get; private set; }
     internal bool IsCurrentNodeReplay => Snapshot?.EntryPoint != null;
     internal long Revision { get; private set; }
+    internal (int ActIndex, MapPosition Point)? FaultLocation => Forecast?.Fault is { } fault &&
+        PredictorMapNodeIdentity.TryParse(fault.Position.NodeId, out var identity)
+        ? (identity.Act - 1, identity.Point) : null;
     internal ImmutableArray<PredictorPlannedNode> Plans => _plans.Values.OrderBy(p => p.NodeId, StringComparer.Ordinal).ToImmutableArray();
 
     internal void ForgetRedrawUndo() => _redrawUndo = null;
@@ -224,7 +228,22 @@ internal sealed partial class InRunMapPredictionSession
     {
         if (Snapshot == null) return;
         Revision++;
-        var source = Snapshot.Run;
+        try { RecomputeCore(); }
+        catch
+        {
+            // A failed attempt must not leave a new capture/fingerprint paired
+            // with old results, or make an identical explicit refresh a no-op.
+            _draftFingerprint = null;
+            Forecast = null;
+            Nodes = ImmutableDictionary<(int, MapPosition), PredictorRouteNodeKnowledge>.Empty;
+            TerminalBoundaries = ImmutableDictionary<(int, MapPosition), PredictorRouteTerminalBoundary>.Empty;
+            throw;
+        }
+    }
+
+    private void RecomputeCore()
+    {
+        var source = Snapshot!.Run;
         var run = new PredictorRun(source.Context, source.Working)
         { CombatDefaults = source.CombatDefaults, AutomaticRewardPickup = source.AutomaticRewardPickup };
         int currentAct = source.Working.Position.Act;
@@ -255,7 +274,7 @@ internal sealed partial class InRunMapPredictionSession
             run.RestorePlannedNodes(Plans);
             forecast = run.PreviewRouteContinuation(run.PlannedNodes, maximumNodes: maximumNodes,
                 scope: PredictorRoutePreviewScope.AllModeledNodes, policy: PredictorRoutePreviewPolicy.LiveMapDefaults,
-                allowSelectedPrefixes: true);
+                allowSelectedPrefixes: true, isolateNodeFailures: true);
             // Stopping at the authored current-Act prefix is ordinary route
             // completion, and prevents even a private next-Act entry attempt.
             if (draft.ReadyPrefix.Length <= 64 && forecast.ReachedLimit) forecast = forecast with { ReachedLimit = false };
@@ -278,6 +297,13 @@ internal sealed partial class InRunMapPredictionSession
         Forecast = forecast;
         Nodes = nodes;
         TerminalBoundaries = TerminalLocations(forecast);
+        LogForecastFault(forecast);
+    }
+
+    private static void LogForecastFault(PredictorRouteContinuation forecast)
+    {
+        if (forecast.Fault is { } fault)
+            RuntimeLog.Fault($"inRunRouteNodePredictionFailed=true;node={fault.Position.NodeId};stage={fault.Stage}", fault.Error);
     }
 
     internal static ImmutableDictionary<(int ActIndex, MapPosition Point), PredictorRouteTerminalBoundary> TerminalLocations(

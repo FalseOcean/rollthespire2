@@ -53,15 +53,21 @@ internal sealed partial class WorldFamily : IFamilyInvocation
     internal WorldFamilyGpuPlan? GpuPlan => _gpuPlan;
     internal string GpuPreparationFailureDetail { get; } = "";
     private readonly FamilySurvivalProjection _survival;
+    private readonly VariantOpeningWorldSurvival? _variantSurvival;
 
     private WorldFamily(ExactSearchExecutionRequest request, WorldFamilyReplay replay, bool preferGpu,
-        GpuNumericalVariant numericalVariant)
+        GpuNumericalVariant numericalVariant, VariantOpeningPreparation? checkedVariants)
     {
         _request = request;
         Replay = replay;
         _survival = FamilyAuxiliaryEvidence.Read(FamilyId, "InitialSurvival", () => WorldPhysicalPricing.ResolveSurvival(request),
             FamilySurvivalProjection.Unresolved(FamilyId, "AuxiliarySurvivalFailed"), request.SnapshotFingerprint);
-        _cpu = new(request, FamilyId, "W.World.Cpu.Progression.20261016.v2");
+        var prepared = request.VariantOpening ?? VariantOpeningPreparation.Prepare(request.CompiledSearch);
+        if (prepared.HasConditions)
+            _variantSurvival = FamilyAuxiliaryEvidence.Read<VariantOpeningWorldSurvival?>(FamilyId, "VariantConditionalSurvival",
+                () => VariantOpeningWorldSurvival.Create(request, checkedVariants ?? prepared with { Acts = [] }, replay.Plan),
+                new(null, null, null, false, "W.ActualConditionalProjectionFailed"), request.SnapshotFingerprint);
+        _cpu = new(request, FamilyId, "W.World.Cpu.Progression.20261028.v3");
         if (preferGpu && WorldFamilyGpuPlan.Supports(Replay))
         {
             try { _gpuPlan = new WorldFamilyGpuPlan(Replay,
@@ -101,12 +107,14 @@ internal sealed partial class WorldFamily : IFamilyInvocation
     public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId,_gpuPlan?.Capacity??FamilyCpuExecution.Capacity,[],"W.ProgressionCostUnresolved");
     // No accepted World joint cost model: null is unavailable, never a zero-cost quote.
     public FamilyExpectedFilteringCostProjection? ExpectedFilteringCost => null;
-    public FamilySurvivalProjection Survival => _survival;
+    public bool HasConditionalProjections => _variantSurvival is not null;
+    public FamilySurvivalProjection Survival => ResolveSurvival(new HashSet<string>(StringComparer.Ordinal));
+    public FamilySurvivalProjection ResolveSurvival(IReadOnlySet<string> passedCoverage) =>
+        _variantSurvival?.ResolveWorld(passedCoverage) ?? _survival;
     public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest geometry) =>
-        _request.ProfileId == Compatibility.RuntimeProfileId.Beta111 && _request.Authority.CanUseCurrentModel &&
-        _request.Authority.PlayersCount == 1 && _request.Authority.AllCharacterCardPoolsUnlocked == true
-            ? FamilyGpuReadback.Reference(this, FamilyCanonicalMeasuredCost.TryDenseQuote(this, geometry) ??
-                WorldPhysicalPricing.Quote(Replay, _gpuPlan, geometry)) : null;
+        FamilyGpuReadback.Reference(this, FamilyCanonicalMeasuredCost.TryDenseQuote(this, geometry) ??
+            (_gpuPlan is null ? WorldWorkEstimate.Cpu(Replay, _cpu.Workers, geometry, _cpu.WindowCapacity) :
+                WorldPhysicalPricing.Quote(Replay, _gpuPlan, geometry) ?? WorldWorkEstimate.Gpu(Replay, _gpuPlan, geometry)));
     public FamilyConditionPerformanceProjection ConditionPerformance => ResolveConditionPerformance(false);
     public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compactAbi1Input) => _gpuPlan is null
         ? _cpu.Condition(compactAbi1Input) : new(FamilyId,_gpuPlan.Revision(compactAbi1Input),
@@ -196,16 +204,11 @@ internal sealed partial class WorldFamily : IFamilyInvocation
     internal static bool TryCreate(ExactSearchExecutionRequest request, out IFamilyInvocation? family)
         => TryCreate(request, out family, true);
     internal static bool TryCreate(ExactSearchExecutionRequest request, out IFamilyInvocation? family, bool preferGpu,
-        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
+        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64,
+        VariantOpeningPreparation? checkedVariants = null)
     {
         family = null;
-        InitialRoomsPlan? unknown = InitialRoomsPlan.TryCompileUnknown(request, numericalVariant);
-        if (!WorldFamilyReplay.HasConditions(request))
-        {
-            if (unknown is null) return false;
-            family = new InitialRoomsInvocation(request, "W.World", unknown, null, preferGpu);
-            return true;
-        }
+        if (!WorldFamilyReplay.HasConditions(request)) return false;
         var plan = WorldFamilyReplay.Compile(request);
         if (!plan.Enabled)
         {
@@ -213,12 +216,9 @@ internal sealed partial class WorldFamily : IFamilyInvocation
             if (RuntimeLog.SessionId.Length > 0) Infrastructure.Diagnostics.RuntimeIssueLedger.Current.RecordDegradation("WorldFilterUnavailable",
                 nameof(WorldFamily), "Filter.Construction", "issues.filter_incomplete",
                 $"cause={plan.DisableReason};predicatesRetained=true;finalValidationSkipped={request.RunOptions.SkipExactValidation};matchClaimed=false");
-            if (unknown is null) return false;
-            family = new InitialRoomsInvocation(request, "W.World", unknown, null, preferGpu);
-            return true;
+            return false;
         }
-        family = new WorldFamily(request, new WorldFamilyReplay(request, plan), preferGpu, numericalVariant);
-        if (unknown is not null) family = new InitialRoomsInvocation(request, "W.World", unknown, family, preferGpu);
+        family = new WorldFamily(request, new WorldFamilyReplay(request, plan), preferGpu, numericalVariant, checkedVariants);
         return true;
     }
 }

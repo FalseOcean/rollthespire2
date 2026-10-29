@@ -9,25 +9,55 @@ internal static class FamilyGpuReadback
 {
     internal const string Revision = ".QueuedReadback.20261027.v1";
     internal const string HostTransferRevision = ".HostTransfer.DirectPackingAndReadback.20261027.v1";
+    // Current public T Invoke includes context dispatch, queued 32-byte headers,
+    // synchronous compact payload readback, uint-to-ABI1 widening, sorting and
+    // subset validation plus family bookkeeping. First-call setup/parity are
+    // excluded by the complete-Invoke collector's warmup boundary. Physical
+    // revision still separates numerical variants, prefix and FullTarget bodies.
+    internal const string TransformationPublicBoundaryRevision =
+        ".TransformationPublicInvoke.QueuedHeader32SyncPayloadWidenSortValidate.20261027.v1";
 
     internal static string ObservationRevision(IFamilyInvocation family, FamilyPhysicalQuoteRequest geometry) =>
         !family.ConditionPerformance.UsesGpu ? "" : HostTransferRevision +
-        (family is NeowFamily && !geometry.PrivateOutput ? NeowFamilyGpuExecutor.PublicBoundaryRevision : "");
+        (family switch {
+            NeowFamily when !geometry.PrivateOutput => NeowFamilyGpuExecutor.PublicBoundaryRevision,
+            TransformationAggregateFamily when !geometry.PrivateInput && !geometry.PrivateOutput => TransformationPublicBoundaryRevision,
+            _ => ""
+        });
 
     internal static FamilyPhysicalQuote? Reference(IFamilyInvocation family, FamilyPhysicalQuote? quote)
     {
         if (quote is null || !family.ConditionPerformance.UsesGpu) return quote;
-        // Only a complete public N measurement with explicit matching transport
-        // identities closes this boundary. Historical canonical calls and
-        // numerical/private quotes retain their original scope and disclaimer.
-        if (family is NeowFamily && quote.FamilyId == family.FamilyId &&
+        // Legacy shader coefficients remain useful estimates after the equivalent
+        // rotation rewrite. Exact canonical keys retain their measured authority;
+        // inherited numerical references do not become measurements of this body.
+        if (!FamilyCanonicalMeasuredCost.IsCanonicalQuote(quote) &&
+            !quote.Evidence.Contains("CurrentGpuRotationRevision=", StringComparison.Ordinal))
+            quote = quote with
+            {
+                LocalCostSource = quote.LocalCostSource == "LocalMeasurement" ? "HistoricalLocalReference" : quote.LocalCostSource,
+                Evidence = quote.Evidence + ";PriceQuality=Estimate;HistoricalGpuCoefficientsRemainCoarseReference;" +
+                    "NotCurrentBodyMeasurement;CurrentGpuRotationRevision=" + GpuRngRotation.Revision
+            };
+        // Complete public N and T measurements each need their own explicit
+        // matching boundary identity. Neither family borrows the other's token.
+        // Historical canonical calls and numerical/private quotes keep their
+        // original scope and disclaimer.
+        (string boundaryToken, string measuredMarker) = family switch {
+            NeowFamily => ("MeasuredNeowPublicBoundaryRevision=" + NeowFamilyGpuExecutor.PublicBoundaryRevision,
+                "CurrentNeowPublicInvokeHostTransportMeasured"),
+            TransformationAggregateFamily => ("MeasuredTransformationPublicBoundaryRevision=" + TransformationPublicBoundaryRevision,
+                "CurrentTransformationPublicInvokeHostTransportMeasured"),
+            _ => ("", "")
+        };
+        if (boundaryToken.Length > 0 && quote.FamilyId == family.FamilyId &&
             quote.PublicTransportClass == "CompleteCanonicalAbi1")
         {
             string[] tokens = quote.Evidence.Split(';', StringSplitOptions.RemoveEmptyEntries);
             if (tokens.Contains("MeasuredHostTransferRevision=" + HostTransferRevision, StringComparer.Ordinal) &&
-                tokens.Contains("MeasuredNeowPublicBoundaryRevision=" + NeowFamilyGpuExecutor.PublicBoundaryRevision, StringComparer.Ordinal))
-                return tokens.Contains("CurrentNeowPublicInvokeHostTransportMeasured", StringComparer.Ordinal) ? quote :
-                    quote with { Evidence = quote.Evidence + ";CurrentNeowPublicInvokeHostTransportMeasured;RootGroupSharedWaitNotLocalQuote" };
+                tokens.Contains(boundaryToken, StringComparer.Ordinal))
+                return tokens.Contains(measuredMarker, StringComparer.Ordinal) ? quote :
+                    quote with { Evidence = quote.Evidence + ";" + measuredMarker + ";RootGroupSharedWaitNotLocalQuote" };
         }
         if (quote.Evidence.Contains("CurrentHostTransportUnmeasured", StringComparison.Ordinal)) return quote;
         return quote with { Evidence = quote.Evidence + ";RetainedHistoricalCallEstimate;CurrentHostTransportUnmeasured;HostTransferRevision=" +

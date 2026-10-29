@@ -284,7 +284,8 @@ internal sealed class RuntimeGameContentNameResolver : IGameContentNameResolver
             [GameContentKind.Event] = "MegaCrit.Sts2.Core.Models.EventModel",
             [GameContentKind.Ancient] = "MegaCrit.Sts2.Core.Models.AncientEventModel",
             [GameContentKind.Encounter] = "MegaCrit.Sts2.Core.Models.EncounterModel",
-            [GameContentKind.Act] = "MegaCrit.Sts2.Core.Models.ActModel"
+            [GameContentKind.Act] = "MegaCrit.Sts2.Core.Models.ActModel",
+            [GameContentKind.Enchantment] = "MegaCrit.Sts2.Core.Models.EnchantmentModel"
         };
         MethodInfo[] candidates = modelDb.GetMethods(BindingFlags.Public | BindingFlags.Static)
             .Where(method =>
@@ -360,6 +361,7 @@ internal sealed class RuntimeGameContentNameResolver : IGameContentNameResolver
             GameContentKind.Ancient => "AncientEvent",
             GameContentKind.Encounter => "Encounter",
             GameContentKind.Act => "Act",
+            GameContentKind.Enchantment => "Enchantment",
             _ => string.Empty
         };
         MethodInfo[] candidates = modelDb.GetMethods(BindingFlags.Public | BindingFlags.Static)
@@ -424,6 +426,7 @@ internal sealed class RuntimeGameContentNameResolver : IGameContentNameResolver
         GameContentKind.Ancient => category == BaseGameModelKeys.Categories.Event || category == BaseGameModelKeys.Categories.Ancient,
         GameContentKind.Encounter => category == BaseGameModelKeys.Categories.Encounter,
         GameContentKind.Act => category == BaseGameModelKeys.Categories.Act,
+        GameContentKind.Enchantment => category == "ENCHANTMENT",
         _ => false
     };
 

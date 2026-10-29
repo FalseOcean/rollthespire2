@@ -10,7 +10,9 @@ public static partial class FamilyExecutionCoordinator
     private delegate bool CreateFamily(ExactSearchExecutionRequest request, out IFamilyInvocation? family);
 
     private static FamilyExecutionPlan PlanParty(ExactSearchExecutionRequest request,
-        IReadOnlyList<IFamilyInvocation> registered) => FamilyPlanner.PlanSimple(registered, includeCpuAlternatives: true);
+        IReadOnlyList<IFamilyInvocation> registered) => request.RunOptions.ManualFamilyOrder is { Count: > 0 } manual
+            ? FamilyPlanner.InManualOrder(registered, registered, manual)
+            : FamilyPlanner.PlanSimple(registered, includeCpuAlternatives: true);
 
     private static IReadOnlyList<IFamilyInvocation> CreatePartyFamilies(ExactSearchExecutionRequest request, bool gpu, bool gpuFloat64)
     {
@@ -43,16 +45,10 @@ public static partial class FamilyExecutionCoordinator
             }
         }
         Add(CreateCombat);
+        VariantOpeningFamily.TryCreate(request, out var variant, gpu,
+            gpuFloat64 ? GpuNumericalVariant.NativeFloat64 : GpuNumericalVariant.IntegerRne);
+        if (variant is not null) result.Add(variant);
         Add(CreateWorld, sharedOnly: true);
-        if (InitialRoomsPlan.TryCompileUnknown(request,
-            gpuFloat64 ? GpuNumericalVariant.NativeFloat64 : GpuNumericalVariant.IntegerRne) is { } initialUnknown)
-        {
-            int worldIndex = result.FindIndex(family => family.FamilyId == "W.World");
-            var ordinary = worldIndex >= 0 ? result[worldIndex] : null;
-            var world = new InitialRoomsInvocation(request, "W.World", initialUnknown, ordinary, gpu);
-            if (worldIndex >= 0) result[worldIndex] = world;
-            else result.Add(world);
-        }
         Add(CreateAncient);
         Add(CreateEvents);
         // M continues at whole-table Exact. The single-player bounded map sieve
@@ -67,7 +63,8 @@ public static partial class FamilyExecutionCoordinator
         bool CreateAncient(ExactSearchExecutionRequest child, out IFamilyInvocation? family) =>
             AncientOptionFamily.TryCreate(child, out family, gpu, gpuFloat64 ? GpuNumericalVariant.NativeFloat64 : GpuNumericalVariant.IntegerRne);
         bool CreateWorld(ExactSearchExecutionRequest child, out IFamilyInvocation? family) =>
-            WorldFamily.TryCreate(child, out family, gpu, gpuFloat64 ? GpuNumericalVariant.NativeFloat64 : GpuNumericalVariant.IntegerRne);
+            WorldFamily.TryCreate(child, out family, gpu, gpuFloat64 ? GpuNumericalVariant.NativeFloat64 : GpuNumericalVariant.IntegerRne,
+                (variant as VariantOpeningFamily)?.Plan.CheckedPreparation);
         bool CreateEvents(ExactSearchExecutionRequest child, out IFamilyInvocation? family) =>
             EventResultFamily.TryCreate(child, out family, gpu, gpuFloat64 ? GpuNumericalVariant.NativeFloat64 : GpuNumericalVariant.IntegerRne);
 

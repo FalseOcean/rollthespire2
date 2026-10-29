@@ -20,7 +20,8 @@ internal sealed partial class NeowFamily
             Func<ulong,bool> matcher = local is not null ? local.Matches : plan is not null ? plan.Matches : gate is not null ? gate.Matches : _cpuMatcher;
             foreach (int workers in FamilyCpuExecution.WorkerConfigurations(_request))
                 yield return new FamilyCpuExecution(_request, this, local is not null ? local.Revision : gate is not null ? "N.Neow.Cpu.IdentityPreGate.20261015.v3" : plan is null ? "N.Neow.Cpu.LocalReplay.20261015.v3" : "N.Neow.Cpu.IdentityPair.20260912.v1",
-                    matcher, workers, g => fourWay is not null || workers != 1 ? null : gate is not null ? NeowPhysicalPricing.QuoteCpuPreGate(this,gate,g) : (plan is null || _plan.Authority.BonesEligibleRelicIds.Length!=28 || _plan.Authority.EligibleCurseRelicIds.Length!=10 ? null : FamilyCpuReferenceCost.Quote(_request,g,FamilyId,"N.BonesIdentityTwoSource",1,"28.306-28.612",equivalentIdentityWork:true)) ?? NeowPhysicalPricing.QuoteCpuIdentity(this,g) ?? NeowPhysicalPricing.QuoteCpuLocal(this,g),
+                    matcher, workers, g => NeowWorkEstimate.Cpu(this, _workEstimate, g, workers,
+                        gate, fixedPair: plan is not null, directLocal: local is not null, fourWay: fourWay),
                     packedSeedRoots: fourWay is not null, fourWayPreGate: fourWay is { Enabled: true } ? fourWay : null);
         }
     }

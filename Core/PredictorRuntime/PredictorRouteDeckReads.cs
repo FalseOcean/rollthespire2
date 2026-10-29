@@ -77,6 +77,37 @@ internal sealed partial class PredictorRun
         return run._preview.Partial?.Deck ?? PredictorDeckKnowledge.Create(run.Context, run.Working);
     }
 
+    private static ImmutableArray<PredictorRouteCardKnowledge> ObserveRouteEventTargetCards(PredictorRun run,
+        List<RouteDependency> dependencies, HashSet<long> knownInstanceIds)
+    {
+        var read = RouteEventDeckRead(run._eventKey?.Entry, run._eventBranch);
+        return run.EventCardCandidates.Select(run.Working.Card).Select(card =>
+        {
+            var target = new PredictorPlannedCard(card.Id, card.Key, card.FloorAdded);
+            return new PredictorRouteCardKnowledge(card,
+                IsKnownRouteDeckTarget(run, target, dependencies, knownInstanceIds, read.Scope, read.Execution) ? [] :
+                    RouteDeckTargetCauses(run, [target], dependencies, knownInstanceIds, read.Scope, read.Execution))
+            { FullCardKnown = IsKnownRouteDeckTarget(run, target, dependencies, knownInstanceIds) };
+        }).ToImmutableArray();
+    }
+
+    private static ImmutableArray<PredictorCombatPendingCause> RouteBridgeIdentityCauses(PredictorRun run,
+        List<RouteDependency> dependencies, HashSet<long> knownInstanceIds)
+    {
+        // The local draw reads ordered removable identities, model rarity and
+        // the previously skipped identities. Card upgrade/enchantment payloads
+        // do not choose that population or advance the public Niche stream.
+        var deck = RouteDeckKnowledge(run);
+        var projection = deck.Project(PredictorDeckProjectionScope.Removable);
+        var gaps = projection.Gaps.AddRange(projection.KnownCandidates.SelectMany(card =>
+            deck.TargetGaps(card.Id, PredictorDeckProjectionScope.Removable, PredictorDeckUncertainFact.Definition)))
+            .Distinct().ToImmutableArray();
+        var identity = projection.KnownCandidates.Any(card => !knownInstanceIds.Contains(card.Id))
+            ? CausesFor(dependencies, PredictorCombatDomain.InstanceIds) : [];
+        return PredictorRouteCauseEvidence.Normalize(identity.AddRange(
+            RouteDeckProjectionCauses(run, projection with { Gaps = gaps }, dependencies)));
+    }
+
     private static ImmutableArray<PredictorCombatPendingCause> RouteDeckProjectionCauses(PredictorRun run,
         PredictorDeckProjection projection, List<RouteDependency> dependencies) => run._preview.Partial != null
         ? run._preview.Partial.ProjectionCauses(projection, count: false)

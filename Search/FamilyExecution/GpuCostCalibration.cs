@@ -19,6 +19,10 @@ internal static class GpuReferenceCostAtlas
         new("DirectCapsule|Small|3:0|rarity-serial|N.Neow.Composite.RCapsule.TargetRank.DenseCarry8.CanonicalAbi1Ready.20260906.v2|N.Neow.Composite.RCapsule.DirectExperiment.rarity-serial.CanonicalAbi1Ready.20260909.v1|DirectNr.CanonicalFullWindow.20260912.v1", 1912602624L, 1006.9712999999999, "CalibrationRecovery.20260912;small1;CanonicalNr;OneSecondPeak;RTX4060Laptop;D3D12")
     ];
     internal static double? Peak(string key) => Measurements.FirstOrDefault(x => x.Key == key)?.PeakThroughput;
+    // Canonical coupled-call rows remain evidence for that whole invocation,
+    // never a GPU-body calibration anchor or part of its global device ratio.
+    internal static double? ComputationPeak(string key) => key.EndsWith("|" + Boundary, StringComparison.Ordinal)
+        ? Peak(key) : null;
     internal static string PhysicalRevision(IFamilyInvocation family, FamilyPhysicalQuoteRequest geometry) =>
         family.ResolveConditionPerformance(geometry.CompactInput).PhysicalImplementationRevision +
         (geometry.PrivateOutput ? family switch {
@@ -43,7 +47,7 @@ internal sealed class GpuCostSnapshot
     internal int ConditionCount => _ratios.Count;
     internal GpuCostSnapshot(IEnumerable<GpuLocalPeak> peaks, Func<string, double?>? reference = null)
     {
-        reference ??= GpuReferenceCostAtlas.Peak;
+        reference ??= GpuReferenceCostAtlas.ComputationPeak;
         _ratios = peaks.Where(p => p.ExecutionClass == "GPU" && p.PeakThroughput > 0 && double.IsFinite(p.PeakThroughput))
             .Select(p => (p.Key, Ratio: reference(p.Key) / p.PeakThroughput))
             .Where(p => p.Ratio is > 0 && double.IsFinite(p.Ratio.Value))
@@ -55,49 +59,75 @@ internal sealed class GpuCostSnapshot
     internal double Ratio(string key) => _ratios.GetValueOrDefault(key, GlobalRatio);
     internal FamilyPhysicalQuote Local(IFamilyInvocation family, FamilyPhysicalQuote quote, FamilyPhysicalQuoteRequest geometry)
     {
-        quote = FamilyGpuReadback.Reference(family, quote)!;
+        if (!geometry.ComputationOnly) quote = FamilyGpuReadback.Reference(family, quote)!;
         if (!family.ConditionPerformance.UsesGpu) return quote;
-        if (quote.LocalCostSource == "LocalMeasurement") return quote;
+        if (quote.LocalCostSource == "ComponentComposition") return quote;
+        if (quote.PublicTransportClass == "CompleteCanonicalAbi1") return quote;
+        // A retained absolute local reference keeps its original coefficients;
+        // downgrading its evidence must not silently add a device-ratio reprice.
+        if (quote.LocalCostSource is "LocalMeasurement" or "HistoricalLocalReference") return quote;
         string key = GpuReferenceCostAtlas.Key(family, quote, geometry);
-        double referencePeak = GpuReferenceCostAtlas.Peak(key) ?? quote.ReferencePeakThroughput;
+        double referencePeak = GpuReferenceCostAtlas.ComputationPeak(key) ?? quote.ReferencePeakThroughput;
         double ratio = Ratio(key);
         return quote with { ReferencePeakThroughput = referencePeak, NanosecondsPerInput = (referencePeak > 0 ? 1e9 / referencePeak : quote.NanosecondsPerInput) * ratio,
             GpuCostRatio = ratio, LocalExecutorCostRatio = ratio, LocalCostSource = _ratios.ContainsKey(key) ? "Condition" : _ratios.Count > 0 ? "Global" : "ReferenceDefault", Evidence = quote.Evidence + $";GpuCostRatio={ratio:G17};RatioSource={(_ratios.ContainsKey(key) ? "Condition" : _ratios.Count > 0 ? "GlobalMedian" : "ReferenceDefault")};ReferenceQuality={(GpuReferenceCostAtlas.Peak(key).HasValue ? "EligiblePeak" : "BoundedLegacy")};Provenance={GpuReferenceCostAtlas.Provenance}" };
     }
-    internal FamilyPerformanceReference Reference(IFamilyInvocation family, FamilyConditionPerformanceProjection condition, bool compact)
+    internal static FamilyPerformanceReference ComputationReference(GpuCostSnapshot? costs, IFamilyInvocation family,
+        FamilyConditionPerformanceProjection condition, bool compact, IReadOnlySet<string>? passedCoverage = null,
+        int? referenceRootWindow = null, double? referencePopulation = null)
     {
+        // General references require the captured device snapshot. CPU/Party
+        // callers with an explicit local population retain their prior nullable
+        // snapshot behavior instead of losing independent CPU/composed work.
+        if (costs is null && !referencePopulation.HasValue) return GpuCostCalibration.ResolveReference(condition);
         // One static family-local reference, independent of earlier filters.
         // Compact population does not imply its root span. Keep the existing
         // 16Mi population and explicitly name the 16Mi reference root window.
-        const int roots = PrivateOrdinalBuffer.Capacity;
-        var geometry = new FamilyPhysicalQuoteRequest(compact, false, roots);
-        var raw = FamilyCanonicalMeasuredCost.TryQuote(family, geometry, roots) ?? family.QuotePhysicalWork(geometry);
+        int roots = referenceRootWindow ?? PrivateOrdinalBuffer.Capacity;
+        var geometry = new FamilyPhysicalQuoteRequest(compact, false, referencePopulation ?? PrivateOrdinalBuffer.Capacity);
+        var raw = FamilyPhysicalQuote.Computation(family, geometry, costs, passedCoverage,
+            referenceRootWindow ?? (family is FamilyCpuExecution && referencePopulation.HasValue ? null : roots));
         if (raw is not null) raw = raw with { Evidence = raw.Evidence +
             $";StaticFamilyLocalReference;ReferenceRootWindow={roots};ReferenceInputPopulation={geometry.MeanInputPopulation:G17}" };
+        if (referencePopulation.HasValue && family is FamilyCpuExecution cpu)
+        {
+            if (raw is null || raw.NanosecondsPerInput is not (> 0d) || !double.IsFinite(raw.NanosecondsPerInput) ||
+                raw.WindowCapacity <= 0 || raw.FixedWindowMilliseconds < 0d || !double.IsFinite(raw.FixedWindowMilliseconds))
+                return GpuCostCalibration.ResolveReference(condition);
+            double perInputMs = raw.NanosecondsPerInput / 1e6 +
+                raw.FixedWindowMilliseconds / Math.Min(cpu.WindowCapacity, raw.WindowCapacity);
+            return new(condition.FamilyId, condition.PhysicalImplementationRevision, 1, 1000d / perInputMs,
+                raw.LocalCostSource == "Condition" ? FamilyPerformanceEvidenceSource.Condition :
+                    raw.LocalCostSource == "Global" ? FamilyPerformanceEvidenceSource.Global : FamilyPerformanceEvidenceSource.Reference,
+                "CPU", "CPU", raw.Evidence);
+        }
+        if (referencePopulation.HasValue && family is PartyFamily)
+        {
+            double? milliseconds = raw is null ? null : FamilyCoarsePricing.ComputationMilliseconds(raw, geometry);
+            if (milliseconds is not (> 0d) || !double.IsFinite(milliseconds.Value))
+                return GpuCostCalibration.ResolveReference(condition);
+            return new(condition.FamilyId, condition.PhysicalImplementationRevision, 1,
+                geometry.MeanInputPopulation * 1000d / milliseconds.Value,
+                FamilyCoarsePricing.IsEstimate(raw) ? FamilyPerformanceEvidenceSource.Reference : FamilyPerformanceEvidenceSource.Condition,
+                condition.UsesGpu ? "GPU" : "CPU", condition.UsesGpu
+                    ? SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity().RenderingBackend : "CPU", raw!.Evidence);
+        }
         if (!condition.UsesGpu && raw is { NanosecondsPerInput: > 0 })
             return new(condition.FamilyId,condition.PhysicalImplementationRevision,1,1e9/raw.NanosecondsPerInput,
                 raw.LocalCostSource=="Condition"?FamilyPerformanceEvidenceSource.Condition:
                     raw.LocalCostSource=="Global"?FamilyPerformanceEvidenceSource.Global:FamilyPerformanceEvidenceSource.Reference,"CPU","CPU",raw.Evidence);
-        if (condition.UsesGpu && raw is { NanosecondsPerInput: > 0, PublicTransportClass: "CompleteCanonicalAbi1" })
-            return new(condition.FamilyId, condition.PhysicalImplementationRevision, 1,
-                1e9 / raw.NanosecondsPerInput, FamilyPerformanceEvidenceSource.Condition,
-                SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity().GpuIdentity,
-                SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity().RenderingBackend, raw.Evidence);
         if (raw is null || !condition.UsesGpu) return GpuCostCalibration.ResolveReference(condition);
-        var local = Local(family, raw, geometry);
-        double? survival = family.ResolveSurvival(new HashSet<string>()).SurvivalProbability;
-        if (survival is not (>= 0 and <= 1)) return GpuCostCalibration.ResolveReference(condition);
-        // Same numerical + output boundary composition as a single ordinary stage.
-        double input = PrivateOrdinalBuffer.Capacity, output = input * survival.Value;
-        double windows = Math.Ceiling(input / local.WindowCapacity);
-        bool large = local.PublicTransportClass == "LargeResidentAppend32";
-        double materialization = windows * (.15 + local.FixedWindowMilliseconds) + windows * (1 - Math.Exp(-output / windows)) * (large ? 4 : .15) +
-            output * (local.OutputAlreadyOrdered ? 6 : large ? 38 : 25) / 1e6;
-        double ms = input * local.NanosecondsPerInput / 1e6 + (materialization + .6) * local.GpuCostRatio;
+        var local = raw;
+        // Ordering consumes family work only. Full public-call composition is
+        // an explicit timing consumer; it never flows back into elimination c.
+        double input = geometry.MeanInputPopulation;
+        double ms = FamilyCoarsePricing.ComputationMilliseconds(local, geometry) ?? double.NaN;
         double cps = input * 1000 / ms;
+        if (!(cps > 0) || !double.IsFinite(cps)) return GpuCostCalibration.ResolveReference(condition);
         return new(condition.FamilyId, condition.PhysicalImplementationRevision, 1, cps,
-            _ratios.ContainsKey(GpuReferenceCostAtlas.Key(family, raw, geometry)) ? FamilyPerformanceEvidenceSource.Condition :
-                ConditionCount > 0 ? FamilyPerformanceEvidenceSource.Global : FamilyPerformanceEvidenceSource.Reference, "GPU", SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity().RenderingBackend, local.Evidence);
+            costs?._ratios.ContainsKey(GpuReferenceCostAtlas.Key(family, raw, geometry)) == true ? FamilyPerformanceEvidenceSource.Condition :
+                (costs?.ConditionCount ?? 0) > 0 ? FamilyPerformanceEvidenceSource.Global : FamilyPerformanceEvidenceSource.Reference, "GPU", SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity().RenderingBackend,
+                local.Evidence + ";CostBoundary=FamilyComputationAndDeviceEmission;HostReadbackExcluded;InterFamilyTransferExcluded;GpuFixedCallAllowanceExcluded");
     }
 }
 
@@ -169,10 +199,10 @@ internal sealed class GpuCostSamples
         bool verification, int outputs, double canonicalMs, double readbackMs, long readbackBytes)
     {
         var binding = (family, geometry.CompactInput, geometry.PrivateInput, geometry.PrivateOutput);
-        if (!_quotes.TryGetValue(binding, out var quote)) _quotes[binding] = quote = family.QuotePhysicalWork(geometry);
+        if (!_quotes.TryGetValue(binding, out var quote)) _quotes[binding] = quote = family.QuotePhysicalWork(geometry with { ComputationOnly = true });
         string physicalKey = quote is null ? family.FamilyId + "|" + GpuReferenceCostAtlas.PhysicalRevision(family, geometry) + "|Unpriced|" + (geometry.CompactInput?"Compact":"Dense") + "|" + (geometry.PrivateInput?"PrivateInput":"PublicInput") + "|" + (geometry.PrivateOutput?"PrivateOutput":"PublicOutput") : GpuReferenceCostAtlas.Key(family, quote, geometry);
         Record(physicalKey, quote?.WindowCapacity ?? PrivateOrdinalBuffer.Capacity, inputs, outputs, dispatchMs, canonicalMs, readbackMs, readbackBytes);
-        if (quote is null || !family.ConditionPerformance.UsesGpu || verification ||
+        if (quote is null || quote.PublicTransportClass == "CompleteCanonicalAbi1" || !family.ConditionPerformance.UsesGpu || verification ||
             (inputs != PrivateOrdinalBuffer.Capacity && (inputs < quote.WindowCapacity || inputs % quote.WindowCapacity != 0)) || !(dispatchMs > 0) || !double.IsFinite(dispatchMs)) return;
         string key = GpuReferenceCostAtlas.Key(family, quote, geometry);
         Observe(key, inputs, dispatchMs, GpuCostCalibration.DeviceKey());
@@ -254,7 +284,7 @@ internal static class GpuCostCalibration
                 var key = (peak.Device, peak.Key);
                 bool updated = !Peaks.TryGetValue(key, out var old) || peak.PeakThroughput > old.PeakThroughput;
                 if (updated) { Peaks[key] = peak; _dirty = true; }
-                RuntimeLog.TryBackgroundInfo("gpuCostPeakDecision=true;decisionJson=" + RuntimeLog.SafeJson(new { peak.Key, peak.Device, previousPeak=old?.PeakThroughput, observedPeak=peak.PeakThroughput, updated, finalPeak=Peaks[key].PeakThroughput, derivedRatio=GpuReferenceCostAtlas.Peak(peak.Key)/Peaks[key].PeakThroughput, persistence=updated?"PendingMainThreadFlush":"Unchanged",sameRunRepricing=false }));
+                RuntimeLog.TryBackgroundInfo("gpuCostPeakDecision=true;decisionJson=" + RuntimeLog.SafeJson(new { peak.Key, peak.Device, previousPeak=old?.PeakThroughput, observedPeak=peak.PeakThroughput, updated, finalPeak=Peaks[key].PeakThroughput, derivedRatio=GpuReferenceCostAtlas.ComputationPeak(peak.Key)/Peaks[key].PeakThroughput, persistence=updated?"PendingMainThreadFlush":"Unchanged",sameRunRepricing=false }));
             }
         }
     }

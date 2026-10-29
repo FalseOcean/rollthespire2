@@ -1,5 +1,6 @@
 using RolltheSpire2.Ui.Persistence;
 using RolltheSpire2.Search.Runtime;
+using RolltheSpire2.Search.Contracts;
 using Godot;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Prediction;
@@ -54,6 +55,28 @@ internal sealed partial class SearchWorkspace
         MarkPreferencesDirty(); FlushPreferences();
     }
 
+    internal MapLossyOptions MapLossyPreferences =>
+        new MapLossyOptions(_preferences.MapLossyEnabled, _preferences.MapLossyGpuBatchSize).Normalize();
+
+    public void SetMapLossyEnabled(bool enabled)
+    {
+        _preferences.MapLossyEnabled = enabled;
+        MarkPreferencesDirty(); FlushPreferences();
+    }
+
+    public void SetMapLossyGpuBatchSize(int size)
+    {
+        _preferences.MapLossyGpuBatchSize = new MapLossyOptions(GpuBatchSize: size).Normalize().GpuBatchSize;
+        MarkPreferencesDirty(); FlushPreferences();
+    }
+
+    public void ResetMapLossyPreferences()
+    {
+        _preferences.MapLossyEnabled = false;
+        _preferences.MapLossyGpuBatchSize = MapLossyOptions.DefaultGpuBatchSize;
+        MarkPreferencesDirty(); FlushPreferences();
+    }
+
     public bool NeedsNotesAcknowledgement(RolltheSpire2.Presentation.DeveloperNotes.DeveloperNotesChapter chapter) =>
         chapter.RequiresAcknowledgement &&
         _preferences.ReadNotesVersions.GetValueOrDefault(chapter.Id) != chapter.AcknowledgementVersion;
@@ -104,13 +127,6 @@ internal sealed partial class SearchWorkspace
         InRunFeaturePreferences.SetLanguage(_directory, _preferences.LanguageOverride);
         MarkPreferencesDirty();
         FlushPreferences();
-    }
-
-    internal void SetAppearance(UiColorPreferences appearance, bool flush = true)
-    {
-        _preferences.Appearance = appearance.Normalize();
-        MarkPreferencesDirty();
-        if (flush) FlushPreferences();
     }
 
     internal static string NormalizeFontChoice(string? choice) => choice is "game-serif" or "game-sans" ? choice : "game-serif";
@@ -238,11 +254,13 @@ internal sealed partial class SearchWorkspace
 
     private void NormalizePreferences()
     {
+        _preferences.Appearance = null;
         _preferences.FontChoice = NormalizeFontChoice(_preferences.FontChoice);
         _preferences.SchemaVersion = SchemaVersion;
         _preferences.Language = string.Equals(_preferences.Language, "zh", StringComparison.OrdinalIgnoreCase) ? "zh" :
             string.Equals(_preferences.Language, "en", StringComparison.OrdinalIgnoreCase) ? "en" : string.Empty;
         _preferences.SearchMode = string.Equals(_preferences.SearchMode, "CPU", StringComparison.OrdinalIgnoreCase) ? "CPU" : "Auto";
+        _preferences.MapLossyGpuBatchSize = MapLossyPreferences.GpuBatchSize;
         _preferences.WorkbenchFlags ??= new();
         _preferences.InRunConsoleVerticalPercent = double.IsFinite(_preferences.InRunConsoleVerticalPercent)
             ? Math.Clamp(_preferences.InRunConsoleVerticalPercent, 10, 90) : 50;
@@ -257,6 +275,27 @@ internal sealed partial class SearchWorkspace
         _preferences.LastPage = string.IsNullOrWhiteSpace(_preferences.LastPage)
             ? "Analysis"
             : _preferences.LastPage.Trim();
+    }
+
+    private void ClearLegacyAppearance()
+    {
+        const string fileName = "user_preferences.json";
+        if (_unreadableDocuments.Contains(fileName)) return;
+        string path = Path.Combine(_directory, fileName);
+        if (!File.Exists(path)) return;
+        try
+        {
+            // Retire only this field, preserving all other JSON, including unknown
+            // preferences which are not represented by the current typed document.
+            var document = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))?.AsObject()
+                ?? throw new InvalidDataException("PersistenceDocumentNull");
+            string[] fields = document.Select(field => field.Key)
+                .Where(key => key.Equals("Appearance", StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (fields.Length == 0) return;
+            foreach (string field in fields) document.Remove(field);
+            SearchPersistenceFile.WriteAtomic(path, System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(document, _json));
+        }
+        catch (Exception exception) { RememberDocumentFailure(fileName, exception); }
     }
 
     private void NormalizePredictorContext()

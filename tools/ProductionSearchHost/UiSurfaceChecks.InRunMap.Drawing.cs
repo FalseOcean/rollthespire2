@@ -12,10 +12,12 @@ using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.World.Beta109;
 using RolltheSpire2.Search.FamilyExecution;
 using RolltheSpire2.Presentation.ContentNames;
+using RolltheSpire2.Infrastructure.ContentNames;
 using RolltheSpire2.Presentation.Localization;
 using RolltheSpire2.Ui.Icons;
 using RolltheSpire2.Ui.InRunMap;
 using RolltheSpire2.Ui.InRunOperations;
+using RolltheSpire2.Ui.Persistence;
 using RolltheSpire2.Ui.Settings;
 
 internal static partial class UiSurfaceChecks
@@ -394,6 +396,847 @@ internal static partial class UiSurfaceChecks
                 typeof(InRunMapPredictionPanel).GetMethod("RefreshLocalization", overviewMembers)!.Invoke(panel, null);
                 renderMethod.Invoke(panel, null);
                 panel.SetProcess(wasProcessing); product.SetProcess(detailProcessing);
+            }
+        }
+        async Task CheckDrawingCardOperations(bool dependenciesOnly = false)
+        {
+            const BindingFlags members = BindingFlags.Instance | BindingFlags.NonPublic;
+            const int act = 2;
+            int checks = 0;
+            var screenshots = new List<string>();
+            void Require(bool value, string message) { checks++; check(value, (dependenciesOnly ? "DrawingDependencies: " : "DrawingCardOperations: ") + message); }
+            ModelKey Relic(string entry) => new("RELIC", entry);
+            var treasureLocation = (act - 1, new MapPosition(3, 1));
+            var combatLocation = (act - 1, new MapPosition(3, 2));
+            var source = captured.Run;
+            var catalog = source.Context.Catalog!;
+            var candidates = catalog.CharacterCards.Where(card => PredictorObtainSources.CanEnchant(source.Context,
+                PredictorCardChanges.Definition(source.Context, card.CardKey).Prototype)).ToArray();
+            bool Block(RolltheSpire2.Core.Effects.Snapshots.NeowEffectCardSnapshot card) =>
+                PredictorObtainSources.GainsBlockForFresnel(source.Context,
+                    PredictorCardChanges.Definition(source.Context, card.CardKey).Prototype);
+            var pool = candidates.Where(card => !Block(card)).Take(2).Concat(candidates.Where(Block).Take(1)).ToImmutableArray();
+            Require(pool.Length == 3, "native catalog supplies two enchantable non-block cards and one block card");
+            ImmutableArray<PredictorCombatPendingCause> dependencyCutoff = [];
+            InRunMapPredictionSession Create(int sacrifices = -1, string? directEvent = null, bool observeCutoffProducer = false)
+            {
+                // Controlled detached inventory, map geometry and bounded native
+                // pool; no natural-gameplay claim or fabricated reward DTO.
+                // Actual generators, live listener order and obtain handlers run.
+                var points = new[]
+                {
+                    new MapPredictionPoint(new(3, 0), MapPointType.Ancient, true, [new(3, 1)]),
+                    new MapPredictionPoint(new(3, 1), directEvent == null ? MapPointType.Treasure : MapPointType.Unknown, true, [new(3, 2)]),
+                    new MapPredictionPoint(new(3, 2), MapPointType.Monster, true, [new(3, 3)]),
+                    new MapPredictionPoint(new(3, 3), MapPointType.Boss, true, [])
+                };
+                var map = source.RouteMap(act) with { Points = points };
+                var held = ImmutableArray.CreateBuilder<PredictorRelic>();
+                if (directEvent == null) held.Add(new(10100, Relic("FRESNEL_LENS"), 1));
+                held.Add(new(10101, Relic("WING_CHARM"), 1));
+                if (sacrifices >= 0) held.Add(new(10102, Relic("PAELS_WING"), 1) { RewardsSacrificed = sacrifices });
+                var context = source.Context with
+                {
+                    NumberOfRuns = Math.Max(1, source.Context.NumberOfRuns),
+                    Catalog = directEvent == null ? catalog with { CharacterCards = pool } : catalog, Operation = null, Modifiers = [],
+                    Live = new(2, true, dependenciesOnly ? observeCutoffProducer ? [] : dependencyCutoff :
+                        [PredictorRouteCauseEvidence.CreateExplicit("UnobservedNiche", "capture:draw",
+                        PredictorCombatDomain.NicheRng, PredictorPendingReasonKind.MissingObservation,
+                        "The incoming Niche cursor was not observed.", ["rng.Niche.state"])])
+                };
+                var state = source.Working with
+                {
+                    OpeningCompleted = true, Position = new(act, 1, "card-operations-ui:entry"), GoldBudget = 1000,
+                    Relics = held.ToImmutable(), NextInstanceId = 11000,
+                    Maps = [new(act, map, [points[0].Position])],
+                    Visits = [new(act, points[0].Position, MapPointType.Ancient, PredictorRoomKind.Ancient, null, 1)],
+                    VisitedEvents = [], UnknownOdds = new(0, -1, 0, 0),
+                    SharedBag = new(false, [], [new("Rare", [Relic(observeCutoffProducer ? "WHETSTONE" : "ORRERY"), Relic("GORGET")])], []),
+                    PersonalBag = new(false, [], [new("Rare", [Relic("MANGO")])], []),
+                    Acts = source.Working.Acts.Select(value => value.Act != act ? value : value with
+                    { NormalEncounters = [new("ENCOUNTER", "FUZZY_WURM_CRAWLER_WEAK")], NormalCursor = 0,
+                        RawEvents = directEvent == null ? value.RawEvents : [new("EVENT", directEvent)],
+                        EventCursor = directEvent == null ? value.EventCursor : 0 }).ToImmutableArray()
+                };
+                var selected = points.Skip(1).Take(2).Select(point => point.Position).ToImmutableArray();
+                var draftType = typeof(InRunMapPredictionSession).GetNestedType("DraftSnapshot", BindingFlags.NonPublic)!;
+                var draft = Activator.CreateInstance(draftType, members | BindingFlags.Public, null,
+                    [map, points[0].Position, selected, selected], null)!;
+                var session = new InRunMapPredictionSession();
+                var drafts = DiagnosticField(session, "_drafts");
+                typeof(InRunMapPredictionSession).GetProperty(nameof(InRunMapPredictionSession.Snapshot), members)!
+                    .SetValue(session, captured with { Run = new(context, state) });
+                typeof(InRunMapPredictionSession).GetField("_drafts", members)!
+                    .SetValue(session, drafts.GetType().GetMethod("SetItem")!.Invoke(drafts, [act - 1, draft]));
+                session.Recompute();
+                Require(session.Forecast is { Fault: null } && (directEvent == null ?
+                    session.Forecast.Nodes.Length == 2 && session.Forecast.Nodes.All(node => node.Advanced) :
+                    session.Nodes[treasureLocation].Event?.Event?.Entry == directEvent),
+                    "real detached entry/default settlement completes without hidden projection failure");
+                return session;
+            }
+            if (dependenciesOnly)
+            {
+                // Reuse the actual producer's classified, correlated cause.
+                // A fabricated MissingObservation would incorrectly describe an
+                // approved random-obtain cutoff as missing arrival information.
+                var producer = Create(observeCutoffProducer: true);
+                dependencyCutoff = PredictorRouteCauseEvidence.OriginalCauses(producer.Forecast!.Nodes.SelectMany(node => node.PendingCauses))
+                    .Where(cause => cause.Code == "RouteRelicDeckRandomnessCutoff").ToImmutableArray();
+                Require(dependencyCutoff.Length == 1 && dependencyCutoff[0].ReasonKind == PredictorPendingReasonKind.FlowGate,
+                    "partial UI fixture uses the real Whetstone random-obtain cutoff cause");
+            }
+            PredictorCombatRewardKnowledge Child(InRunMapPredictionSession session) => session.Nodes[treasureLocation].Rewards
+                .Single(reward => reward.CompletedEdit?.Source == Relic("ORRERY") && reward.Occurrence == 0);
+            InRunMapDetailChoice[] Cards(InRunMapNodeDetailData data, int occurrence = 0) => data.Sections
+                .Where(section => section.LargeCardResults).ElementAt(occurrence).Choices
+                .Where(choice => choice.Object?.Kind == GameContentKind.Card).ToArray();
+            string[] VisibleText(Node node) => Descendants(node).OfType<Label>().Where(label => label.IsVisibleInTree())
+                .Select(label => label.Text).ToArray();
+            bool NoRawDiagnostics(IEnumerable<string> lines) => lines.All(line =>
+                !new[] { "UnobservedNiche", "capture:draw", "rng.Niche", "The incoming Niche cursor", "MissingObservation",
+                    "RouteRelicDeckRandomnessCutoff", "live-obtain:", "Approved current-Act path policy" }
+                    .Any(raw => line.Contains(raw, StringComparison.Ordinal)));
+            async Task Render(InRunMapNodeDetailData data)
+            {
+                details.CloseHover();
+                details.ShowNode(data with { IsCurrent = null }, new(120, 230, 56, 56), screen.GetGlobalRect());
+                await Layout();
+            }
+            async Task Click(InRunMapNodeDetailData data, InRunMapDetailChoice choice, InRunMapNodePresenter presenter)
+            {
+                await Render(data);
+                if (VisibleChoice(choice.Id) == null && data.Premises != null)
+                {
+                    ((Button)details.FindChild("PremisesExpansion", true, false)!).EmitSignal(Button.SignalName.Pressed);
+                    await Layout();
+                }
+                bool applied = false;
+                void Apply(string node, string id) => applied = presenter.ApplyChoice(node, id);
+                details.ChoiceRequested += Apply;
+                try
+                {
+                    Require(VisibleChoice(choice.Id) is { Disabled: false }, "real selected action has an enabled visible control");
+                    VisibleChoice(choice.Id)!.EmitSignal(Button.SignalName.Pressed);
+                    await Layout();
+                    Require(applied, "rendered button uses the actual presenter authoring callback");
+                }
+                finally { details.ChoiceRequested -= Apply; }
+            }
+            async Task Hover(InRunMapNodeDetailData data, InRunMapDetailChoice choice, bool pending,
+                InRunMapPredictionSession session, string label, bool requireComplete = true)
+            {
+                string plans = JsonSerializer.Serialize(session.Plans), snapshot = JsonSerializer.Serialize(session.Snapshot!.Run.Working);
+                var preview = choice.Preview ?? choice.PreviewFactory?.Invoke();
+                var hoverText = JsonUiTextProvider.CreatePredictorUi13(InRunFeaturePreferences.LanguageOverride);
+                var enchantmentPending = InRunMapPrerequisiteProjection.Pending(session.Nodes.Values.SelectMany(node => node.Rewards)
+                    .SelectMany(reward => reward.CardOptions).SelectMany(option => option.EnchantmentPendingCauses), hoverText);
+                Require(preview != null && preview.Faults.IsEmpty && (!requireComplete ||
+                    preview.Branches.All(branch => branch.FullyEnumerated != pending)) &&
+                    NoRawDiagnostics(preview.Notices.Concat(preview.PendingReasons)) &&
+                    preview.Notices.Any(line => enchantmentPending.Contains(line)) == pending,
+                    "hover scopes completeness and localized pending to this operation/" + label);
+                await Render(data);
+                var button = VisibleChoice(choice.Id)!;
+                string previewKey = choice.PreviewKey ?? choice.Preview?.OptionKey ?? choice.Id;
+                var registeredChoices = (Dictionary<string, (Control Anchor, Func<OperationPreview?> Preview)>)DiagnosticField(details, "_previewChoices");
+                bool registered = registeredChoices.TryGetValue(previewKey, out var binding);
+                long generationBefore = (long)DiagnosticField(details, "_hoverGeneration");
+                var dataBefore = typeof(InRunMapNodeDetails).GetField("_data", members)!.GetValue(details);
+                int hoverConnections = button.GetSignalConnectionList(Control.SignalName.MouseEntered).Count;
+                button.EmitSignal(Control.SignalName.MouseEntered);
+                var overlay = (NeowOperationOverlay)DiagnosticField(details, "_optionPreview");
+                var cardOverlay = (NeowOperationOverlay)DiagnosticField(details, "_optionCardPreview");
+                bool shownAfterSignal = overlay.IsVisibleInTree();
+                await Layout();
+                var visibleText = VisibleText(details);
+                string currentPlans = JsonSerializer.Serialize(session.Plans), currentSnapshot = JsonSerializer.Serialize(session.Snapshot.Run.Working);
+                var expectedCards = preview!.Branches.SelectMany(branch => branch.Sections).SelectMany(section =>
+                    section.Rows.Where(row => row.ShowCards).SelectMany(row => row.Cards)
+                        .Concat(section.CardGroups.SelectMany(group => group.Cards)))
+                    .Where(NeowOperationOverlay.MapUsesCardFace).ToArray();
+                var actualCards = ((System.Collections.IEnumerable)DiagnosticField(cardOverlay, "_stacks")).Cast<object>()
+                    .SelectMany(stack => (ImmutableArray<PredictorCard>)stack.GetType().GetField("Cards")!.GetValue(stack)!).ToArray();
+                bool BoundToPreview(NeowOperationOverlay surface) =>
+                    typeof(NeowOperationOverlay).GetField("_preview", members)!.GetValue(surface) is OperationPreview actual &&
+                    JsonSerializer.Serialize(actual) == JsonSerializer.Serialize(preview);
+                // Summary and card art are separate actual surfaces. A pure-card
+                // Take intentionally hides the empty summary viewport; it must
+                // still display the full, correctly bound native card payload.
+                bool expectsCards = expectedCards.Length > 0;
+                bool expectsSummary = overlay.SummaryDesiredSize.Y > 0 || !expectsCards || pending ||
+                    !string.IsNullOrWhiteSpace(preview.Heading) || !preview.Notices.IsEmpty || !preview.PendingReasons.IsEmpty;
+                bool cardsMatch = expectedCards.Select(card => JsonSerializer.Serialize(card)).Order(StringComparer.Ordinal)
+                    .SequenceEqual(actualCards.Select(card => JsonSerializer.Serialize(card)).Order(StringComparer.Ordinal));
+                bool summaryShown = overlay.IsVisibleInTree() && VisibleText(overlay).Length > 0 && BoundToPreview(overlay);
+                bool cardsShown = cardOverlay.IsVisibleInTree() && cardOverlay.MapCardCount > 0 && BoundToPreview(cardOverlay) && cardsMatch;
+                bool shown = (!expectsSummary || summaryShown) && (!expectsCards || cardsShown) && (expectsSummary || expectsCards);
+                bool clean = NoRawDiagnostics(visibleText),
+                    plansUnchanged = currentPlans == plans, snapshotUnchanged = currentSnapshot == snapshot;
+                bool valid = shown && clean && plansUnchanged && snapshotUnchanged;
+                string diagnostic = "";
+                if (!valid)
+                {
+                    static object? Difference(string before, string after)
+                    {
+                        if (before == after) return null;
+                        int index = 0;
+                        while (index < Math.Min(before.Length, after.Length) && before[index] == after[index]) index++;
+                        int start = Math.Max(0, index - 60);
+                        return new { index, beforeLength = before.Length, afterLength = after.Length,
+                            before = before.Substring(start, Math.Min(200, before.Length - start)),
+                            after = after.Substring(start, Math.Min(200, after.Length - start)) };
+                    }
+                    diagnostic = ";hoverDiagnostic=" + JsonSerializer.Serialize(new {
+                        shownAfterSignal, shownAfterLayout = shown, localizedTextClean = clean, plansUnchanged, snapshotUnchanged,
+                        expectsSummary, summaryShown, expectsCards, cardsShown, cardsMatch, expectedCardCount = expectedCards.Length,
+                        choiceId = choice.Id, previewKey, hoverConnections, registeredPreview = registered,
+                        registeredAnchorMatches = registered && ReferenceEquals(binding.Anchor, button),
+                        buttonPath = button.GetPath().ToString(), hoverOpen = details.HoverOpen,
+                        generationBefore, generationAfter = (long)DiagnosticField(details, "_hoverGeneration"),
+                        currentDataUnchanged = ReferenceEquals(dataBefore, typeof(InRunMapNodeDetails).GetField("_data", members)!.GetValue(details)),
+                        actualSummaryVisible = overlay.Visible, actualSummaryDesired = overlay.SummaryDesiredSize.ToString(),
+                        actualCardsVisible = cardOverlay.IsVisibleInTree(), actualCardCount = cardOverlay.MapCardCount,
+                        actualCardsDesired = cardOverlay.CardsDesiredSize.ToString(),
+                        summaryViewportVisible = ((Control)DiagnosticField(details, "_previewViewport")).Visible,
+                        cardsViewportVisible = ((Control)DiagnosticField(details, "_previewCardsViewport")).Visible,
+                        rawVisibleLines = visibleText.Where(line => !NoRawDiagnostics([line])).ToArray(),
+                        overlayText = VisibleText(overlay), anchorVisible = button.IsVisibleInTree(),
+                        anchorRect = button.GetGlobalRect().ToString(), mousePosition = details.GetGlobalMousePosition().ToString(),
+                        detailsProcessing = details.IsProcessing(), planChange = Difference(plans, currentPlans),
+                        snapshotChange = Difference(snapshot, currentSnapshot) });
+                }
+                Require(valid, "real hover renders localized results without authoring plans or changing detached state/RNG/" + label + diagnostic);
+            }
+            string oldLanguage = InRunFeaturePreferences.LanguageOverride;
+            string oldNativeLanguage = MegaCrit.Sts2.Core.Localization.LocManager.Instance.Language;
+            string languageDirectory = Path.Combine(OS.GetUserDataDir(), "RolltheSpire2", "state");
+            bool panelProcessing = panel.IsProcessing(), productProcessing = product.IsProcessing();
+            panel.SetProcess(false); product.SetProcess(false); product.CloseHover(); product.CloseEditor();
+            try
+            {
+                foreach (string language in new[] { "zh", "en" })
+                {
+                    MegaCrit.Sts2.Core.Localization.LocManager.Instance.SetLanguage(language == "zh" ? "zhs" : "eng");
+                    InRunFeaturePreferences.SetLanguage(languageDirectory, language);
+                    var text = JsonUiTextProvider.CreatePredictorUi13(language);
+                    var localizedNames = RuntimeGameContentNameResolver.Create(language);
+                    details.RebindLocalization(localizedNames);
+                    if (dependenciesOnly)
+                    {
+                        var rootSession = Create();
+                        var rootPresenter = new InRunMapNodePresenter(rootSession, localizedNames, text);
+                        string rootSnapshot = JsonSerializer.Serialize(rootSession.Snapshot!.Run.Working);
+                        var rootOffer = rootSession.Nodes[combatLocation].Rewards.Single(reward => reward.Kind == PredictorRewardKind.Card);
+                        int uncertain = rootOffer.CardOptions.FindIndex(option => !option.IsKnown);
+                        Require(uncertain >= 0 && rootOffer.CompletedEdit == null,
+                            "actual root combat has an unresolved offered enchantment/" + language);
+                        var battleData = rootPresenter.Detail(combatLocation)!;
+                        await Click(battleData, Cards(battleData)[uncertain], rootPresenter);
+                        battleData = rootPresenter.Detail(combatLocation)!;
+                        var cancelRoot = Cards(battleData).Single(choice => choice.Selected && choice.Label == text.Get("predictor.runtime.cancel"));
+                        var cancelPreview = cancelRoot.PreviewFactory?.Invoke();
+                        Require(cancelPreview is { OptionKey: "CANCEL_TAKE" } &&
+                            !cancelPreview.PendingReasons.Contains(text.Get("predictor.map.preview_unavailable")) &&
+                            cancelPreview.Notices.Any(line => line.Contains(text.Get("predictor.runtime.default_skip"), StringComparison.Ordinal)),
+                            "root CancelTake replay confirms default Skip without preview_unavailable/" + language);
+                        await Hover(battleData, cancelRoot, pending: false, rootSession, "root CancelTake/" + language);
+                        Require(!VisibleText(details).Any(line => line.Contains(text.Get("predictor.map.prerequisite.kind.MissingObservation"), StringComparison.Ordinal)),
+                            "a real random-obtain cutoff is not described as missing arrival information/" + language);
+                        string cancelImage = "drawing-dependencies-cancel-" + language + ".png";
+                        using (var image = root.GetViewport().GetTexture().GetImage()) image.SavePng(Path.Combine(output, cancelImage));
+                        screenshots.Add(cancelImage);
+                        await Click(battleData, cancelRoot, rootPresenter);
+                        var cancelled = rootSession.Nodes[combatLocation].Rewards.Single(reward => reward.Kind == PredictorRewardKind.Card);
+                        Require(cancelled is { DefaultSkipped: true, AppliedChoice: null } &&
+                            cancelled.OfferBinding?.Value.Status == PredictorRewardStatus.Skipped &&
+                            JsonSerializer.Serialize(rootSession.Snapshot.Run.Working) == rootSnapshot,
+                            "root cancellation click agrees with its hover and preserves caller state/RNG/" + language);
+
+                        foreach (var (entry, branch, required, count) in new[]
+                        { ("BRAIN_LEECH", "SHARE_KNOWLEDGE", 1, 5), ("ROOM_FULL_OF_CHEESE", "GORGE", 2, 8) })
+                        {
+                            var gridSession = Create(directEvent: entry);
+                            string gridSnapshot = JsonSerializer.Serialize(gridSession.Snapshot!.Run.Working);
+                            var gridPresenter = new InRunMapNodePresenter(gridSession, localizedNames, text);
+                            var gridData = gridPresenter.Detail(treasureLocation)!;
+                            var option = AllChoices(gridData.Sections.Concat(gridData.Premises?.Sections ?? []))
+                                .First(choice => choice.Enabled && choice.Preview?.OptionKey == branch);
+                            await Click(gridData, option, gridPresenter);
+                            var eventNode = gridSession.Nodes[treasureLocation];
+                            var eventOffer = eventNode.Event!;
+                            var binding = eventOffer.OfferedCardBinding;
+                            Require(binding != null && binding.Value.Cards.Length == count &&
+                                binding.UnresolvedEnchantmentIndices.Length >= required && eventNode.Advanced &&
+                                gridSession.Nodes[combatLocation].Advanced,
+                                "adopted " + entry + " keeps its partial card grid while default continuation completes/" + language);
+                            var selectedIndices = binding!.UnresolvedEnchantmentIndices.Take(required).ToArray();
+                            InRunMapDetailSection Grid(InRunMapNodeDetailData gridDetail) => NestedSections(gridDetail.Sections.Concat(gridDetail.Premises?.Sections ?? []))
+                                .First(section => section.Choices.Count(choice => choice.Object?.Kind == GameContentKind.Card) == count);
+                            foreach (int index in selectedIndices)
+                            {
+                                gridData = gridPresenter.Detail(treasureLocation)!;
+                                Require(!Grid(gridData).LargeCardResults,
+                                    "partial " + entry + " grid uses compact identity/level choices without requesting full card artwork/" + language);
+                                var cardChoice = Grid(gridData).Choices.Where(choice => choice.Object?.Kind == GameContentKind.Card).ElementAt(index);
+                                Require(cardChoice.Enabled && cardChoice.Object is { CardSnapshot: null } masked &&
+                                    masked.DisplayName?.Contains(text.Get("predictor.map.card_enchantments_unresolved"), StringComparison.Ordinal) == true,
+                                    "actual " + entry + " card control carries known identity and no private full snapshot/" + language);
+                                await Click(gridData, cardChoice, gridPresenter);
+                                Require(!VisibleText(details).Contains(JsonUiTextProvider.CreateUi13(language).Get("operation.card.artwork.unavailable")),
+                                    "rendered partial " + entry + " grid has no unavailable card-dock placeholder/" + language);
+                            }
+                            if (required > 1)
+                            {
+                                gridData = gridPresenter.Detail(treasureLocation)!;
+                                var confirm = Grid(gridData).Choices.Single(choice => choice.Label == text.Get("predictor.runtime.confirm"));
+                                await Click(gridData, confirm, gridPresenter);
+                            }
+                            var saved = gridSession.GetPlan(act - 1, treasureLocation.Item2)!.Event!.Actions
+                                .Single(action => action.Action == PredictorEventActionKind.Cards);
+                            var savedAgain = JsonSerializer.Deserialize<PredictorPlannedEventAction>(JsonSerializer.Serialize(saved))!;
+                            Require(savedAgain.CardIndices.SequenceEqual(selectedIndices) &&
+                                savedAgain.UnresolvedEnchantmentIndices.SequenceEqual(binding.UnresolvedEnchantmentIndices) &&
+                                savedAgain.UnresolvedEnchantmentIndices.All(index => savedAgain.ExpectedCards[index] is
+                                    { Enchantment: null, EnchantmentAmount: 0 }) &&
+                                gridSession.Nodes[treasureLocation].Advanced && gridSession.Nodes[combatLocation].Advanced &&
+                                JsonSerializer.Serialize(gridSession.Snapshot.Run.Working) == gridSnapshot,
+                                "actual " + entry + " click saves the explicit mask and continues without changing caller state/RNG/" + language);
+                            if (required > 1)
+                            {
+                                gridData = gridPresenter.Detail(treasureLocation)!;
+                                await Render(gridData);
+                                if (gridData.Premises != null)
+                                {
+                                    ((Button)details.FindChild("PremisesExpansion", true, false)!).EmitSignal(Button.SignalName.Pressed);
+                                    await Layout();
+                                }
+                                Require(!VisibleText(details).Contains(JsonUiTextProvider.CreateUi13(language).Get("operation.card.artwork.unavailable")),
+                                    "selected partial event grid retains compact rendering without a false artwork failure/" + language);
+                                string gridImage = "drawing-dependencies-grid-" + language + ".png";
+                                using (var image = root.GetViewport().GetTexture().GetImage()) image.SavePng(Path.Combine(output, gridImage));
+                                screenshots.Add(gridImage);
+                            }
+                        }
+                        continue;
+                    }
+                    var session = Create();
+                    string snapshot = JsonSerializer.Serialize(session.Snapshot!.Run.Working);
+                    var presenter = new InRunMapNodePresenter(session, localizedNames, text);
+                    var offer = Child(session);
+                    Require(!offer.IsKnown && offer.OfferBinding?.UnresolvedEnchantmentIndices.Length == 2 &&
+                        offer.CardOptions.Count(option => option.IsKnown) == 1 && offer.DefaultSkipped &&
+                        offer.Alternatives.Single(alternative => alternative.Key == "SKIP").PendingCauses.IsEmpty,
+                        "actual Fresnel-before-Wing partial offer has one known card and independent default Skip/" + language);
+                    int known = offer.CardOptions.FindIndex(option => option.IsKnown);
+                    int unknown = offer.CardOptions.FindIndex(option => !option.IsKnown);
+                    var data = presenter.Detail(treasureLocation)!;
+                    var cards = Cards(data);
+                    Require(cards.Length == 3 && cards.All(choice => choice.Enabled) && cards[known].Object!.CardSnapshot != null &&
+                        cards[unknown].Object is { CardSnapshot: null } item &&
+                        item.DisplayName?.Contains(text.Get("predictor.map.card_enchantments_unresolved"), StringComparison.Ordinal) == true,
+                        "partial group exposes identity-based choices while uncertain cards carry no invented full snapshot/" + language);
+                    await Hover(data, cards[known], pending: false, session, "known Take/" + language);
+                    await Click(data, cards[known], presenter);
+                    Require(Child(session).AppliedChoice?.CardIndex == known && session.Nodes[combatLocation].Advanced,
+                        "known Take is accepted independently of the other offered enchantments/" + language);
+                    data = presenter.Detail(treasureLocation)!;
+                    var cancel = Cards(data).Single(choice => choice.Selected && choice.Label == text.Get("predictor.runtime.cancel"));
+                    await Hover(data, cancel, pending: false, session, "known Take cancellation/" + language);
+                    await Click(data, cancel, presenter);
+                    Require(Child(session) is { DefaultSkipped: true, AppliedChoice: null } && session.Nodes[combatLocation].Advanced,
+                        "selected-card cancellation restores default Skip and its real suffix/" + language);
+                    data = presenter.Detail(treasureLocation)!;
+                    await Hover(data, Cards(data)[unknown], pending: true, session, "own-unknown Take/" + language);
+                    string imageName = "drawing-card-operations-" + language + ".png";
+                    using (var image = root.GetViewport().GetTexture().GetImage()) image.SavePng(Path.Combine(output, imageName));
+                    screenshots.Add(imageName);
+                    await Click(data, Cards(data)[unknown], presenter);
+                    var selected = Child(session);
+                    Require(selected.AppliedChoice?.CardIndex == unknown && !selected.CardOptions[unknown].IsKnown &&
+                        session.Nodes[treasureLocation].Cards.Any(card => !card.IsKnown && card.Value.Key == offer.CardOptions[unknown].Value.Key) &&
+                        session.Nodes[combatLocation].Advanced && session.Nodes[combatLocation].Rewards.Any(reward => reward.Kind == PredictorRewardKind.Gold && reward.IsKnown),
+                        "own-unknown Take keeps its payload uncertainty while actual obtain and independent rewards continue/" + language);
+                    data = presenter.Detail(treasureLocation)!;
+                    cancel = Cards(data).Single(choice => choice.Selected && choice.Label == text.Get("predictor.runtime.cancel"));
+                    await Hover(data, cancel, pending: false, session, "own-unknown Take cancellation/" + language);
+                    await Click(data, cancel, presenter);
+                    Require(Child(session) is { DefaultSkipped: true, AppliedChoice: null } &&
+                        JsonSerializer.Serialize(session.Snapshot.Run.Working) == snapshot,
+                        "own-unknown cancellation restores default Skip without altering the caller snapshot/RNG/" + language);
+
+                    foreach (int counter in new[] { 0, 1 })
+                    {
+                        var pael = Create(counter);
+                        var paelPresenter = new InRunMapNodePresenter(pael, localizedNames, text);
+                        var battle = paelPresenter.Detail(combatLocation)!;
+                        var sacrifice = AllChoices(battle.Sections).Single(choice => choice.Label == text.Get("predictor.runtime.alternative.SACRIFICE"));
+                        Require(sacrifice.Enabled, "actual sacrifice stays actionable with unresolved discarded enchantments/" + counter + "/" + language);
+                        // A relic obtain may have further effects outside this
+                        // preview's enumeration. Its own completeness is separate
+                        // from the discarded card enchantment's pending cause.
+                        await Hover(battle, sacrifice, pending: false, pael, "sacrifice " + (counter + 1) + "/" + language,
+                            requireComplete: counter == 0);
+                        await Click(battle, sacrifice, paelPresenter);
+                        var result = pael.Nodes[combatLocation];
+                        var receipt = result.Rewards.Single(reward => reward.AppliedChoice?.SacrificeRelicId != null);
+                        Require(result.Advanced && receipt.SacrificeCount == counter + 1 &&
+                            result.Inventory!.Relics.Single(relic => relic.Value.Key == Relic("PAELS_WING")).Value.RewardsSacrificed == counter + 1 &&
+                            (counter == 0 ? receipt.SacrificeRelic == null : receipt.SacrificeRelic == Relic("MANGO") &&
+                                result.Inventory.Relics.Any(relic => relic.IsKnown && relic.Value.Key == Relic("MANGO"))),
+                            "real odd/even sacrifice updates its counter and grants only the actual even gift/" + language);
+                    }
+                }
+                Require(signature() == before && JsonSerializer.Serialize(production.Plans) == productionPlans,
+                    "focused native/UI checks leave the actual native run/RNG and production plans unchanged");
+                File.WriteAllText(Path.Combine(output, dependenciesOnly ? "drawing-dependencies-result.json" : "drawing-card-operations-result.json"), JsonSerializer.Serialize(new
+                {
+                    passed = true, checks, screenshots, nativeRunUnchanged = true,
+                    scope = dependenciesOnly ? "zh+en;root-CancelTake-click+hover;BrainLeech+Cheese-partial-grid-click+saved-mask;controlled-detached-inventory+geometry+native-catalog" :
+                        "zh+en;actual-presenter-click+hover;known+own-unknown-Take;cancel-to-default-Skip;Pael-odd+even;controlled-detached-inventory+geometry+bounded-native-pool",
+                    naturalGameplayReachability = "not asserted", ownerRuntimeAcceptance = "pending"
+                }, new JsonSerializerOptions { WriteIndented = true }));
+                GD.Print($"{(dependenciesOnly ? "DRAWING_DEPENDENCIES_UI_PASS" : "DRAWING_CARD_OPERATIONS_UI_PASS")} checks={checks};nativeRunUnchanged=true");
+            }
+            finally
+            {
+                details.CloseHover();
+                MegaCrit.Sts2.Core.Localization.LocManager.Instance.SetLanguage(oldNativeLanguage);
+                InRunFeaturePreferences.SetLanguage(languageDirectory, oldLanguage);
+                details.RebindLocalization(names);
+                panel.SetProcess(panelProcessing); product.SetProcess(productProcessing);
+            }
+        }
+        async Task CheckDrawingOverblocks()
+        {
+            const BindingFlags members = BindingFlags.Instance | BindingFlags.NonPublic;
+            int checks = 0, act = captured.Run.Working.Position.Act;
+            void Require(bool value, string message) { checks++; check(value, "DrawingOverblocks: " + message); }
+            InRunMapPredictionSession Create(string entry, bool hatch = false, bool hammer = false, bool bridge = false)
+            {
+                // Controlled map geometry and inventory, actual captured
+                // catalogs and detached entry/settlement/presenter pipeline.
+                var source = captured.Run;
+                var types = hatch ? new[] { MapPointType.Ancient, MapPointType.RestSite, MapPointType.Monster, MapPointType.Boss } :
+                    hammer ? new[] { MapPointType.Ancient, MapPointType.Unknown, MapPointType.Shop, MapPointType.Monster, MapPointType.Boss } :
+                    new[] { MapPointType.Ancient, MapPointType.RestSite, MapPointType.Unknown, MapPointType.Monster, MapPointType.Boss };
+                var points = types.Select((type, row) => new MapPredictionPoint(new(3, row), type, true,
+                    row == types.Length - 1 ? [] : [new(3, row + 1)])).ToArray();
+                var map = source.RouteMap(act) with { Points = points };
+                var state = source.Working with
+                {
+                    OpeningCompleted = true, Relics = [], GoldBudget = 5000,
+                    Position = new(act, bridge ? 7 : 1, "overblock-ui:entry"),
+                    Maps = [new(act, map, [points[0].Position])],
+                    Visits = [new(act, points[0].Position, MapPointType.Ancient, PredictorRoomKind.Ancient, null, bridge ? 7 : 1)],
+                    VisitedEvents = [], UnknownOdds = new(0, -1, 0, 0),
+                    PersonalBag = PredictorRelicBag.Empty(false) with
+                        { Buckets = hammer ? [new("Shop", [new("RELIC", "GNARLED_HAMMER")])] : [] },
+                    Acts = source.Working.Acts.Select(value => value.Act != act ? value : value with
+                    { RawEvents = [new("EVENT", entry)], EventCursor = 0,
+                        NormalEncounters = [new("ENCOUNTER", "FUZZY_WURM_CRAWLER_WEAK")], NormalCursor = 0 }).ToImmutableArray()
+                };
+                if (hatch)
+                {
+                    state = PredictorObtainSources.AddCard(source.Context, state, new ModelKey("CARD", "BYRDONIS_EGG"));
+                    state = PredictorSettlementEffects.ObtainRelic(state, new("RELIC", "MINIATURE_TENT"));
+                }
+                var selected = points.Skip(1).Take(types.Length - 2).Select(point => point.Position).ToImmutableArray();
+                var draftType = typeof(InRunMapPredictionSession).GetNestedType("DraftSnapshot", BindingFlags.NonPublic)!;
+                var draft = Activator.CreateInstance(draftType, members | BindingFlags.Public, null,
+                    [map, points[0].Position, selected, selected], null)!;
+                var session = new InRunMapPredictionSession();
+                var drafts = DiagnosticField(session, "_drafts");
+                drafts = drafts.GetType().GetMethod("SetItem")!.Invoke(drafts, [act - 1, draft])!;
+                typeof(InRunMapPredictionSession).GetProperty(nameof(InRunMapPredictionSession.Snapshot), members)!
+                    .SetValue(session, captured with { Run = new(source.Context, state) });
+                typeof(InRunMapPredictionSession).GetField("_drafts", members)!.SetValue(session, drafts);
+                session.Recompute();
+                Require(session.Forecast?.Fault == null, "controlled fixture has no hidden projection fault/" + entry);
+                return session;
+            }
+            foreach (string language in new[] { "zh", "en" })
+            {
+                var text = JsonUiTextProvider.CreatePredictorUi13(language);
+                var currentNames = RuntimeGameContentNameResolver.Create(language);
+                details.RebindLocalization(currentNames);
+                var session = Create("ABYSSAL_BATHS", hatch: true);
+                var presenter = new InRunMapNodePresenter(session, currentNames, text);
+                var fireLocation = (act - 1, new MapPosition(3, 1));
+                var fire = session.Nodes[fireLocation];
+                Require(session.SetPlan(act - 1, fireLocation.Item2, new(fire.Position.NodeId)
+                    { RestActions = [new(PredictorRestAction.Smith)] }), "unselected Smith is retained/" + language);
+                var detail = presenter.Detail(fireLocation)!;
+                var hatchChoice = AllChoices(detail.Sections).SingleOrDefault(choice =>
+                    choice.Label.StartsWith(text.Get("predictor.runtime.rest.Hatch"), StringComparison.Ordinal));
+                Require(hatchChoice is { Enabled: true } && presenter.ApplyChoice(detail.NodeId, hatchChoice.Id) &&
+                    session.Nodes[fireLocation].AppliedRestActions == 2 && session.Nodes.ContainsKey((act - 1, new MapPosition(3, 2))),
+                    "actual main Hatch choice survives targetless Smith and continues the route/" + language +
+                    ";choices=" + string.Join('|', AllChoices(detail.Sections).Select(choice => choice.Label + ":" + choice.Enabled)));
+
+                session = Create("ZEN_WEAVER");
+                presenter = new(session, currentNames, text);
+                var eventLocation = (act - 1, new MapPosition(3, 2));
+                var occurrence = session.Nodes[eventLocation];
+                var remove = occurrence.Event!.EntryOptions.Single(option => option.Key == "EMOTIONAL_AWARENESS").Value!;
+                Require(session.SetPlan(act - 1, eventLocation.Item2, new(occurrence.Position.NodeId)
+                { Event = new(occurrence.Event.Event!.Value) {
+                    Actions = [new(PredictorEventActionKind.Option) { ExpectedOption = remove }] } }), "adopt actual removal option/" + language);
+                detail = presenter.Detail(eventLocation)!;
+                var targetChoices = AllChoices(detail.Sections.Concat(detail.Premises?.Sections ?? []))
+                    .Where(choice => choice.Enabled && choice.Object?.Kind == GameContentKind.Card).ToArray();
+                Require(targetChoices.Length > 0 && targetChoices.Any(choice => choice.Object!.CardSnapshot == null &&
+                    choice.Object.DisplayName?.Contains(text.Get("predictor.map.target_card_details_pending"), StringComparison.Ordinal) == true),
+                    "removal keeps known identities selectable without displaying an invented upgrade/" + language);
+                details.ShowNode(detail, new(new(120, 230), new(56, 56)), screen.GetGlobalRect());
+                if (detail.Premises != null)
+                    ((Button)details.FindChild("PremisesExpansion", true, false)!).EmitSignal(Button.SignalName.Pressed);
+                await Layout();
+                using (var shot = root.GetViewport().GetTexture().GetImage())
+                    shot.SavePng(Path.Combine(output, "drawing-overblock-targets-" + language + ".png"));
+                Require(presenter.ApplyChoice(detail.NodeId, targetChoices[0].Id) &&
+                    session.GetPlan(act - 1, eventLocation.Item2)!.Event!.Actions.Any(action => !action.DeckCards.IsEmpty),
+                    "visible removal target follows its real authoring callback/" + language);
+                details.CloseHover();
+
+                session = Create("SLIPPERY_BRIDGE", bridge: true);
+                presenter = new(session, currentNames, text);
+                occurrence = session.Nodes[eventLocation];
+                detail = presenter.Detail(eventLocation)!;
+                Require(occurrence.Event!.EntryOptions.All(option => option.Value != null && option.IdentityPendingCauses.IsEmpty) &&
+                    AllChoices(detail.Sections).Count(choice => choice.Enabled && choice.Preview != null) >= 2,
+                    "bridge keeps its actual branches actionable after ordinary uncertain upgrades/" + language);
+
+                session = Create("BUGSLAYER", hammer: true);
+                presenter = new(session, currentNames, text);
+                var shopLocation = (act - 1, new MapPosition(3, 2));
+                var merchant = session.Nodes[shopLocation];
+                var hammerOffer = merchant.Shop!.Offers.Single(offer => offer.Value?.Key?.Entry == "GNARLED_HAMMER").Value!;
+                Require(session.SetPlan(act - 1, shopLocation.Item2, new(merchant.Position.NodeId)
+                    { Shop = new() { Actions = [new(PredictorShopActionKind.Buy) { ExpectedOffer = hammerOffer }] } }),
+                    "buy actual Hammer stock after an unselected additive event/" + language);
+                detail = presenter.Detail(shopLocation)!;
+                Require(session.Nodes[shopLocation].OptionalObtainInputs.Any(optional => optional.Choice.Source.Entry == "GNARLED_HAMMER" &&
+                        optional.Choice.DeckCards.Any(card => card.IsKnown)) &&
+                    AllChoices(detail.Premises!.Sections).Any(choice => choice.Enabled && choice.Object?.Kind == GameContentKind.Card),
+                    "optional Hammer editor retains fixed known targets despite unknown additions/" + language);
+                details.ShowNode(detail, new(new(120, 230), new(56, 56)), screen.GetGlobalRect());
+                ((Button)details.FindChild("PremisesExpansion", true, false)!).EmitSignal(Button.SignalName.Pressed);
+                await Layout();
+                using (var shot = root.GetViewport().GetTexture().GetImage())
+                    shot.SavePng(Path.Combine(output, "drawing-overblock-hammer-" + language + ".png"));
+                details.CloseHover();
+            }
+            Require(signature() == before && JsonSerializer.Serialize(production.Plans) == productionPlans,
+                "focused authoring leaves actual native run/RNG and production plans unchanged");
+            File.WriteAllText(Path.Combine(output, "drawing-overblocks-result.json"), JsonSerializer.Serialize(new
+            { passed = true, checks, scope = "Hatch;event-targets;Bridge;Hammer;zh+en;controlled-geometry/native-catalog", nativeRunUnchanged = true }));
+            GD.Print($"DRAWING_OVERBLOCKS_UI_PASS checks={checks};nativeRunUnchanged=true");
+        }
+        async Task CheckDrawingBoundaries()
+        {
+            const BindingFlags members = BindingFlags.Instance | BindingFlags.NonPublic;
+            var oldSession = DiagnosticField(panel, "_prediction");
+            var oldPresenter = DiagnosticField(panel, "_presenter");
+            var oldFault = DiagnosticField(panel, "_predictionFault");
+            bool processing = panel.IsProcessing();
+            int focusedChecks = 0, act = captured.Run.Working.Position.Act - 1;
+            void Require(bool value, string message) { focusedChecks++; check(value, "DrawingBoundaries: " + message); }
+            void Bind(InRunMapPredictionSession session, InRunMapNodePresenter presenter)
+            {
+                typeof(InRunMapPredictionPanel).GetField("_prediction", members)!.SetValue(panel, session);
+                typeof(InRunMapPredictionPanel).GetField("_presenter", members)!.SetValue(panel, presenter);
+                typeof(InRunMapPredictionPanel).GetField("_predictionFault", members)!.SetValue(panel, null);
+            }
+            var render = typeof(InRunMapPredictionPanel).GetMethod("RenderInformation", members)!;
+            panel.SetProcess(false);
+            try
+            {
+                foreach (string language in new[] { "zh", "en" })
+                {
+                    var text = JsonUiTextProvider.CreatePredictorUi13(language);
+                    var localizedNames = RuntimeGameContentNameResolver.Create(language);
+                    details.RebindLocalization(localizedNames);
+                    var session = Fixture("ABYSSAL_BATHS", extraCards: true);
+                    var presenter = new InRunMapNodePresenter(session, localizedNames, text);
+                    Bind(session, presenter);
+                    var combat = session.Nodes[(act, suffix)];
+                    var hunt = combat.CombatCards.Single(card => card.Value.Key.Entry == "THE_HUNT").Value;
+                    Require(session.SetPlan(act, suffix, new(combat.Position.NodeId)
+                    { Combat = new() { CardTriggers = [new(hunt.Id, int.MaxValue)] } }), "retain a large authored input/" + language);
+                    var forecast = session.Forecast!;
+                    Require(session.Nodes.ContainsKey((act, first)) && !session.Nodes.ContainsKey((act, suffix)) &&
+                        forecast.Fault is { Error: PredictorDrawingWorkLimitException }, "publish only this attempt's successful prefix/" + language);
+                    var failed = presenter.Detail((act, suffix))!;
+                    Require(failed.Information.SequenceEqual([text.Get("predictor.map.node_prediction_work_limit")]) && failed.Premises == null,
+                        "fault has localized feedback without internal exception code or empty premises/" + language);
+                    render.Invoke(panel, null);
+                    Require(((Dictionary<MapPosition, Control>)DiagnosticField(panel, "_annotations")).ContainsKey(suffix),
+                        "actual map retains a visible failed-node receipt/" + language);
+                    details.ShowNode(failed, new(new(120, 230), new(56, 56)), screen.GetGlobalRect());
+                    await Layout();
+                    using (var shot = root.GetViewport().GetTexture().GetImage())
+                        shot.SavePng(Path.Combine(output, "drawing-boundary-fault-" + language + ".png"));
+                    var reset = AllChoices(failed.Sections).Single(choice => choice.Label == text.Get("predictor.runtime.plan.clear"));
+                    Require(presenter.ApplyChoice(failed.NodeId, reset.Id) && session.Forecast!.Fault == null &&
+                        session.Nodes.ContainsKey((act, suffix)) && !presenter.ApplyChoice(failed.NodeId, reset.Id),
+                        "clear failed-node intent recomputes, and stale recovery callbacks expire/" + language);
+                    details.CloseHover();
+
+                    const string internalMessage = "CONTROLLED_INTERNAL_DIAGNOSTIC_NOT_FOR_UI";
+                    typeof(InRunMapPredictionPanel).GetMethod("NodeInformationFailure", members)!.Invoke(panel,
+                        [ (act, first), session.Nodes[(act, first)].Position.NodeId, "controlled-boundary-check", new InvalidOperationException(internalMessage) ]);
+                    var annotation = ((Dictionary<MapPosition, Control>)DiagnosticField(panel, "_annotations"))[first];
+                    Require(!Descendants(annotation).OfType<Label>().Any(label => label.Text.Contains(internalMessage, StringComparison.Ordinal)),
+                        "controlled node-presentation exception is logged, never copied into ordinary annotation/" + language);
+                    typeof(InRunMapPredictionPanel).GetMethod("InformationFailure", members)!.Invoke(panel, [new InvalidOperationException(internalMessage)]);
+                    Require(!((Label)DiagnosticField(panel, "_forecastStatus")).Text.Contains(internalMessage, StringComparison.Ordinal),
+                        "controlled session exception does not expose internal text/" + language);
+
+                    session = Fixture("ABYSSAL_BATHS", rest: true);
+                    var capturedRest = session.Snapshot!;
+                    var restState = capturedRest.Run.Working;
+                    restState = restState with { PersonalBag = PredictorRelicBag.Empty(false),
+                        Relics = restState.Relics.Add(new(restState.NextInstanceId, new("RELIC", "SHOVEL"), 1)),
+                        NextInstanceId = restState.NextInstanceId + 1 };
+                    typeof(InRunMapPredictionSession).GetProperty(nameof(InRunMapPredictionSession.Snapshot), members)!
+                        .SetValue(session, capturedRest with { Run = new(capturedRest.Run.Context, restState) });
+                    session.Recompute();
+                    presenter = new(session, localizedNames, text);
+                    Bind(session, presenter);
+                    var fire = session.Nodes[(act, first)];
+                    Require(session.SetPlan(act, first, new(fire.Position.NodeId)
+                    { RestActions = [new(PredictorRestAction.Dig)], LeaveRest = true }), "dig uses the existing real action pipeline/" + language);
+                    var dig = presenter.Detail((act, first))!;
+                    var receipt = session.Nodes[(act, first)].RestActionKnowledge.Single(action => action.Action == PredictorRestAction.Dig);
+                    Require(receipt.ObtainedRelics.Length == 1 && dig.Sections.SelectMany(section => section.Objects)
+                        .Any(item => item.Key == receipt.ObtainedRelics[0]), "main action row shows its actual obtained relic/" + language);
+                    details.ShowNode(dig, new(new(120, 230), new(56, 56)), screen.GetGlobalRect());
+                    await Layout();
+                    using (var shot = root.GetViewport().GetTexture().GetImage())
+                        shot.SavePng(Path.Combine(output, "drawing-boundary-dig-" + language + ".png"));
+                    details.CloseHover();
+                }
+                Require(signature() == before && JsonSerializer.Serialize(production.Plans) == productionPlans,
+                    "focused checks preserve actual native run/RNG and production plans");
+                File.WriteAllText(Path.Combine(output, "drawing-boundaries-result.json"), JsonSerializer.Serialize(new
+                { passed = true, checks = focusedChecks, scope = "fault-prefix+recovery;controlled-exception-privacy;real-dig-receipt;zh+en", nativeRunUnchanged = true }));
+                GD.Print($"DRAWING_BOUNDARIES_UI_PASS checks={focusedChecks};nativeRunUnchanged=true");
+            }
+            finally
+            {
+                details.CloseHover(); product.CloseHover(); product.CloseEditor();
+                typeof(InRunMapPredictionPanel).GetField("_prediction", members)!.SetValue(panel, oldSession);
+                typeof(InRunMapPredictionPanel).GetField("_presenter", members)!.SetValue(panel, oldPresenter);
+                typeof(InRunMapPredictionPanel).GetField("_predictionFault", members)!.SetValue(panel, oldFault);
+                panel.SetProcess(processing);
+                render.Invoke(panel, null);
+            }
+        }
+        async Task CheckCollectionPicker()
+        {
+            const BindingFlags members = BindingFlags.Instance | BindingFlags.NonPublic;
+            var type = typeof(InRunMapPredictionPanel);
+            void Invoke(string name) => type.GetMethod(name, members)!.Invoke(panel, null);
+            void Set(string name, object? value) => type.GetField(name, members)!.SetValue(panel, value);
+            var oldStore = DiagnosticField(panel, "_collectionPreferenceStore");
+            var oldLibrary = DiagnosticField(panel, "_collectionLibrary");
+            var oldPreferenceIssue = type.GetField("_collectionPreferenceIssue", members)!.GetValue(panel);
+            bool oldDefault = panel.UsesDefaultOverviewCardCollection, oldProcessing = panel.IsProcessing();
+            bool oldDetailProcessing = product.IsProcessing();
+            bool oldFeatureEnabled = (bool)DiagnosticField(panel, "_featureEnabled");
+            var oldSelection = panel.OverviewCardCollection;
+            var oldSize = root.GetWindow().Size;
+            string oldLanguage = InRunFeaturePreferences.LanguageOverride;
+            string oldNativeLanguage = MegaCrit.Sts2.Core.Localization.LocManager.Instance.Language;
+            string languageDirectory = Path.Combine(OS.GetUserDataDir(), "RolltheSpire2", "state");
+            string isolated = Path.Combine(Path.GetTempPath(), "rt2-collection-picker-" + Guid.NewGuid().ToString("N"));
+            var store = new DrawingCardCollectionPreferenceStore(isolated);
+            var library = new CardCollectionStore(isolated);
+            var picker = (OptionButton)DiagnosticField(panel, "_collectionPicker");
+            var popup = picker.GetPopup();
+            var screenshots = new List<string>();
+            var geometry = new List<object>();
+            int focusedChecks = 0;
+            void Require(bool value, string message) { focusedChecks++; check(value, "CollectionPicker: " + message); }
+            string PickerLabel(string name) => ((IUiTextProvider)DiagnosticField(panel, "_text"))
+                .Format("predictor.map.card_collection.current", name);
+            bool Same(CardCollectionSnapshot? left, CardCollectionSnapshot? right) => left is null ? right is null :
+                right != null && left.Id == right.Id && left.Name == right.Name && left.Revision == right.Revision && left.Cards.SequenceEqual(right.Cards);
+            var currentSession = (InRunMapPredictionSession)DiagnosticField(panel, "_prediction");
+            string plans = JsonSerializer.Serialize(currentSession.Plans);
+            var forecast = currentSession.Forecast;
+            var nodes = currentSession.Nodes;
+            long revision = currentSession.Revision;
+            int history = currentSession.HistoryCount;
+            string draft = JsonSerializer.Serialize(panel.DisplayedDraft);
+            async Task Open()
+            {
+                popup.Hide();
+                Invoke("UpdateCollectionPicker");
+                await DiagnosticFrame(root);
+                await root.ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+                var point = picker.GetGlobalTransformWithCanvas() * (picker.Size * .5f);
+                var viewport = root.GetViewport();
+                void Receipt(string stage) => File.AppendAllText(Path.Combine(output, "collection-picker-input.jsonl"),
+                    JsonSerializer.Serialize(new { stage, point = point.ToString(), rect = picker.GetGlobalRect().ToString(),
+                        visible = picker.IsVisibleInTree(), picker.Disabled, canProcess = picker.CanProcess(),
+                        hovered = viewport.GuiGetHoveredControl()?.GetPath().ToString(), popup = popup.Visible,
+                        mouseMask = Input.GetMouseButtonMask().ToString(), embedded = viewport.GuiEmbedSubwindows }) + System.Environment.NewLine);
+                viewport.NotifyMouseEntered();
+                Receipt("before-motion");
+                // PopupMenu samples Input's button mask when opening. A direct
+                // Viewport push dispatches GUI events without updating that
+                // state, so use the engine input entry for this native gesture.
+                Input.ParseInputEvent(new InputEventMouseMotion { Position = point, GlobalPosition = point, ButtonMask = 0 });
+                Input.FlushBufferedEvents();
+                Receipt("after-motion");
+                Input.ParseInputEvent(new InputEventMouseButton { Position = point, GlobalPosition = point,
+                    ButtonIndex = MouseButton.Left, Pressed = true, ButtonMask = MouseButtonMask.Left });
+                Input.FlushBufferedEvents();
+                Receipt("after-press");
+                Input.ParseInputEvent(new InputEventMouseButton { Position = point, GlobalPosition = point,
+                    ButtonIndex = MouseButton.Left, Pressed = false, ButtonMask = 0 });
+                Input.FlushBufferedEvents();
+                Receipt("after-release");
+                await DiagnosticFrame(root);
+                Receipt("settled");
+                Require(popup.Visible, "actual native OptionButton click opens the saved-collection menu");
+            }
+            async Task Select(CardCollectionSnapshot? selection)
+            {
+                await Open();
+                var choices = (List<CardCollectionSnapshot?>)DiagnosticField(panel, "_collectionChoices");
+                int index = choices.FindIndex(candidate => Same(candidate, selection));
+                Require(index >= 0, "menu exposes the requested exact captured selection");
+                // OptionButton consumes PopupMenu's index signal, not its item ID signal.
+                popup.EmitSignal(PopupMenu.SignalName.IndexPressed, index);
+                popup.Hide();
+                await DiagnosticFrame(root);
+                Require(selection is null ? panel.UsesDefaultOverviewCardCollection :
+                    !panel.UsesDefaultOverviewCardCollection && Same(panel.OverviewCardCollection, selection),
+                    "native menu activation changes the runtime selection without replacing membership");
+                Require(Same(new DrawingCardCollectionPreferenceStore(isolated).Load(), selection),
+                    "menu activation persists the same selection in an independently reopened store");
+            }
+            panel.SetProcess(false); product.SetProcess(false);
+            try
+            {
+                Set("_collectionPreferenceStore", store); Set("_collectionLibrary", library);
+                product.CloseHover(); product.CloseEditor();
+                Invoke("ReloadOverviewCollectionPreference"); Invoke("PopulateOverviewCollections");
+                Require(panel.UsesDefaultOverviewCardCollection && picker.Text == PickerLabel(
+                    ((IUiTextProvider)DiagnosticField(panel, "_text")).Get("predictor.map.card_collection.all_rare")),
+                    "a fresh preference uses the built-in all-rare selection and shows its current name");
+                var card = captured.Run.Context.Catalog!.CardDefinitions.First(definition => definition.Rarity == "Common").Prototype.Key;
+                var custom = library.Save(null, "Picker saved common", [card]);
+                var empty = library.Save(null, "Picker saved empty", []);
+                await Select(custom);
+                Require(picker.Text == PickerLabel(custom.Name), "closed control displays the selected saved name");
+                panel.UseDefaultOverviewCardCollection();
+                Invoke("ReloadOverviewCollectionPreference");
+                Require(Same(panel.OverviewCardCollection, custom), "preference reload restores the chosen snapshot after runtime reset");
+                var edited = library.Save(custom.Id, "Picker source edited", []);
+                await Open(); popup.Hide();
+                Require(Same(panel.OverviewCardCollection, custom) && Same(store.Load(), custom) &&
+                    ((List<CardCollectionSnapshot?>)DiagnosticField(panel, "_collectionChoices")).Any(candidate => Same(candidate, edited)),
+                    "opening the menu refreshes saved assets while retaining the chosen captured snapshot after a source edit");
+                library.Delete(custom.Id);
+                await Open(); popup.Hide();
+                Require(Same(panel.OverviewCardCollection, custom) && picker.Text.Contains(custom.Name, StringComparison.Ordinal) &&
+                    ((List<CardCollectionSnapshot?>)DiagnosticField(panel, "_collectionChoices")).Any(candidate => Same(candidate, custom)),
+                    "source deletion retains and visibly represents the current captured selection");
+                await Select(empty);
+                Require(panel.OverviewCardCollection!.Cards.Count == 0 && picker.Text == PickerLabel(empty.Name),
+                    "a saved empty collection remains empty and displays its name");
+                Invoke("ReloadOverviewCollectionPreference");
+                Require(Same(panel.OverviewCardCollection, empty), "empty collection survives preference reload without default substitution");
+                byte[] preferenceBeforeFailure = File.ReadAllBytes(Path.Combine(isolated, DrawingCardCollectionPreferenceStore.FileName));
+                await Open();
+                int previousIndex = picker.Selected;
+                using (var held = new FileStream(Path.Combine(isolated, DrawingCardCollectionPreferenceStore.FileName),
+                    FileMode.Open, System.IO.FileAccess.ReadWrite, FileShare.None))
+                {
+                    popup.EmitSignal(PopupMenu.SignalName.IndexPressed, 0);
+                    popup.Hide(); await DiagnosticFrame(root);
+                    Require(!panel.UsesDefaultOverviewCardCollection && Same(panel.OverviewCardCollection, empty) &&
+                        picker.Selected == previousIndex && picker.Text == PickerLabel(empty.Name),
+                        "actual failed save restores the native selected row and retains runtime membership/name");
+                    var issue = (Label)DiagnosticField(panel, "_collectionPickerIssue");
+                    Require(issue.IsVisibleInTree() && issue.Text == ((IUiTextProvider)DiagnosticField(panel, "_text"))
+                        .Get("predictor.map.card_collection.save_failed"), "failed persistence has a visible localized cause");
+                }
+                Require(File.ReadAllBytes(Path.Combine(isolated, DrawingCardCollectionPreferenceStore.FileName)).SequenceEqual(preferenceBeforeFailure) &&
+                    Same(store.Load(), empty), "failed menu save preserves the exact last committed preference");
+                await Select(null);
+                Invoke("ReloadOverviewCollectionPreference");
+                Require(panel.UsesDefaultOverviewCardCollection, "explicit default reset survives preference reload");
+                foreach (string language in new[] { "zh", "en" })
+                {
+                    MegaCrit.Sts2.Core.Localization.LocManager.Instance.SetLanguage(language == "zh" ? "zhs" : "eng");
+                    InRunFeaturePreferences.SetLanguage(languageDirectory, language);
+                    Set("_language", ""); Invoke("RefreshLocalization");
+                    Require(picker.Text == PickerLabel(JsonUiTextProvider.CreatePredictorUi13(language).Get("predictor.map.card_collection.all_rare")),
+                        "default selection name follows the current UI language/" + language);
+                    foreach (int width in new[] { 1680, 800 })
+                    {
+                        root.GetWindow().Size = new(width, width == 1680 ? 1080 : 720);
+                        await DiagnosticFrame(root); Invoke("UpdateCollectionPicker"); await DiagnosticFrame(root);
+                        var tools = screen.GetNode<Control>("%DrawingTools").GetGlobalRect();
+                        var rect = picker.GetGlobalRect();
+                        var viewport = screen.GetGlobalRect();
+                        bool beside = rect.Position.X >= tools.End.X && Math.Abs(rect.End.Y - tools.End.Y) < 32;
+                        bool above = rect.End.Y <= tools.Position.Y && rect.Position.X < tools.End.X + 32;
+                        Require(picker.Name == "OverviewCardCollectionPicker" && picker.IsVisibleInTree() && rect.HasArea() &&
+                            viewport.Encloses(rect) && !rect.Intersects(tools) && (beside || above),
+                            "current selection sits beside native DrawingTools or directly above in a narrow viewport/" + language + "/" + width +
+                            "; picker=" + rect + "; tools=" + tools + "; viewport=" + viewport);
+                        Require(!(bool)type.GetMethod("IsMapArea", members)!.Invoke(panel, [rect.GetCenter()])!,
+                            "picker owns its pointer region instead of starting a map gesture/" + language + "/" + width);
+                        await Open();
+                        var popupPoint = new Vector2(popup.Position.X, popup.Position.Y) + new Vector2(popup.Size.X, popup.Size.Y) * .5f;
+                        Require(!(bool)type.GetMethod("IsMapArea", members)!.Invoke(panel, [popupPoint])!,
+                            "open native popup owns its pointer region instead of map drawing/" + language + "/" + width);
+                        string name = "collection-picker-" + language + "-" + width + ".png";
+                        using (var image = root.GetViewport().GetTexture().GetImage()) image.SavePng(Path.Combine(output, name));
+                        screenshots.Add(name);
+                        geometry.Add(new { language, width, picker = rect.ToString(), tools = tools.ToString(), popup = popupPoint.ToString() });
+                        popup.Hide();
+                    }
+                }
+                await Open(); Invoke("CloseInformation");
+                Require(!popup.Visible, "closing information hides the native popup");
+                await Open(); Set("_featureEnabled", false); Invoke("UpdateCollectionPicker");
+                Require(!popup.Visible && !picker.IsVisibleInTree(), "disabled visibility hides both native popup and picker");
+                Set("_featureEnabled", oldFeatureEnabled); Invoke("UpdateCollectionPicker");
+                Require(signature() == before && JsonSerializer.Serialize(currentSession.Plans) == plans &&
+                    ReferenceEquals(forecast, currentSession.Forecast) && ReferenceEquals(nodes, currentSession.Nodes) &&
+                    revision == currentSession.Revision && history == currentSession.HistoryCount && JsonSerializer.Serialize(panel.DisplayedDraft) == draft,
+                    "native picker interactions preserve run/RNG, route draft, plans, forecast nodes, revision and history");
+                File.WriteAllText(Path.Combine(output, "collection-picker-result.json"), JsonSerializer.Serialize(new {
+                    passed = true, checks = focusedChecks, scope = "native-button+menu;isolated-assets+preference;default+custom+empty+reset;reload+source-edit+delete;zh+en;1680+800;input-exclusion",
+                    screenshots, geometry, nativeRunUnchanged = true, ownerRuntimeAcceptance = "pending"
+                }, new JsonSerializerOptions { WriteIndented = true }));
+                GD.Print($"COLLECTION_PICKER_UI_PASS checks={focusedChecks};screenshots={screenshots.Count};nativeRunUnchanged=true");
+            }
+            finally
+            {
+                popup.Hide(); Set("_featureEnabled", oldFeatureEnabled);
+                Set("_collectionPreferenceStore", oldStore); Set("_collectionLibrary", oldLibrary);
+                Set("_collectionPreferenceIssue", oldPreferenceIssue);
+                if (oldDefault) panel.UseDefaultOverviewCardCollection(); else panel.UseOverviewCardCollection(oldSelection!);
+                MegaCrit.Sts2.Core.Localization.LocManager.Instance.SetLanguage(oldNativeLanguage);
+                InRunFeaturePreferences.SetLanguage(languageDirectory, oldLanguage);
+                Set("_language", ""); Invoke("RefreshLocalization"); Invoke("PopulateOverviewCollections");
+                root.GetWindow().Size = oldSize; Invoke("UpdateCollectionPicker");
+                panel.SetProcess(oldProcessing); product.SetProcess(oldDetailProcessing);
+                // Only this invocation's freshly generated temporary directory is removed.
+                string cleanup = Path.GetFullPath(isolated);
+                string tempRoot = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                if (!cleanup.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase) ||
+                    !Path.GetFileName(cleanup).StartsWith("rt2-collection-picker-", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Collection picker cleanup escaped its isolated temporary directory.");
+                if (Directory.Exists(cleanup)) Directory.Delete(cleanup, true);
             }
         }
         async Task CheckCardCollectionOverview()
@@ -1100,6 +1943,31 @@ internal static partial class UiSurfaceChecks
         }
         try
         {
+            if (OS.GetCmdlineUserArgs().Contains("--drawing-dependencies-ui"))
+            {
+                await CheckDrawingCardOperations(dependenciesOnly: true);
+                return;
+            }
+            if (OS.GetCmdlineUserArgs().Contains("--drawing-card-operations-ui"))
+            {
+                await CheckDrawingCardOperations();
+                return;
+            }
+            if (OS.GetCmdlineUserArgs().Contains("--drawing-overblocks-ui"))
+            {
+                await CheckDrawingOverblocks();
+                return;
+            }
+            if (OS.GetCmdlineUserArgs().Contains("--drawing-boundaries-ui"))
+            {
+                await CheckDrawingBoundaries();
+                return;
+            }
+            if (OS.GetCmdlineUserArgs().Contains("--collection-picker-ui"))
+            {
+                await CheckCollectionPicker();
+                return;
+            }
             if (OS.GetCmdlineUserArgs().Contains("--drawing-notices-ui"))
             {
                 await CheckNoticeCleanup();

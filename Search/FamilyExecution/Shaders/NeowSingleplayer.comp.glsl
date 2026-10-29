@@ -10,6 +10,7 @@
 #define N_TRANSFORM_META_OFFSET __RT2_N_TRANSFORM_META_OFFSET__
 #define RT2_N_LEAFY_LAZY 0
 #define RT2_PREFIX_HASH_CACHE 0
+#define RT2_N_LEAFY_LOCAL_PREFIX 0
 #define N_INTERNAL_ORDER 0
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_float64 : require
@@ -454,12 +455,18 @@ void main() {
 #else
     if (batch.values[4u]==0u && first<count) encode_seed12_packed(base+uint64_t(first),seed_first8,tail);
 #endif
+#if RT2_N_LEAFY_LOCAL_PREFIX && N_STAGE == 3
+    uint64_t local_prefix_hash=uint64_t(0u);
+    if(batch.values[4u]==0u && first<count) local_prefix_hash=xxhash64_seed12_prefix(seed_first8);
+#endif
     // Donor dispatch accounting: no globally contended atomic per eight roots.
     if (first==0u) header.values[4u]=count;
     for (uint lane=0u;lane<8u && first+lane<count;lane++) {
         uint ordinal=batch.values[4u]==0u ? first+lane : input_ordinals.values[first+lane];
 #if RT2_PREFIX_HASH_CACHE && N_STAGE == 0
         uint64_t root=batch.values[4u]==0u ? xxhash64_seed12_from_prefix(prefix_hash,tail) : root_hash_for_ordinal(base+uint64_t(ordinal));
+#elif RT2_N_LEAFY_LOCAL_PREFIX && N_STAGE == 3
+        uint64_t root=batch.values[4u]==0u ? xxhash64_seed12_from_prefix(local_prefix_hash,tail) : root_hash_for_ordinal(base+uint64_t(ordinal));
 #else
         uint64_t root=batch.values[4u]==0u ? xxhash64_seed12_packed(seed_first8,tail) : root_hash_for_ordinal(base+uint64_t(ordinal));
 #endif
@@ -487,7 +494,13 @@ void main() {
                 return;
             }
 #else
+#if RT2_N_LEAFY_LOCAL_PREFIX && N_STAGE == 3
+            bool prefix_carry=tail==0x5a5a5a5au; // ZZZZ: only this advance changes first8.
+#endif
             advance_seed12_packed(seed_first8,tail);
+#if RT2_N_LEAFY_LOCAL_PREFIX && N_STAGE == 3
+            if(prefix_carry) local_prefix_hash=xxhash64_seed12_prefix(seed_first8);
+#endif
 #endif
         }
     }

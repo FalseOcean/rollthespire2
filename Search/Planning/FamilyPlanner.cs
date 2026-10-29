@@ -48,6 +48,10 @@ internal sealed record FamilyExecutionPlan(
     // may have a different terminal rate for the same logical Coverage.
     internal double? EstimatedTerminalSurvival { get; init; }
     internal IReadOnlyList<IFamilyInvocation> OrderedFamilies => Stages.Select(stage => stage.Family).ToArray();
+    // Private ordinal transport is one runtime invocation, but preserves the
+    // selected public units and their exact order internally.
+    internal IReadOnlyList<IFamilyInvocation> ExecutionOrderUnits => OrderedFamilies.SelectMany(family =>
+        family is AutomaticPrivateSerialInvocation serial ? serial.PhysicalFamilies : [family]).ToArray();
 
     internal string FormatSummary()
     {
@@ -92,9 +96,59 @@ internal static class FamilyPlanner
 
     // Fixed construction is reserved for explicit physical trials and transport
     // wrappers. It does not compare complete plans or enable early Exact.
-    internal static FamilyExecutionPlan InOrder(IReadOnlyList<IFamilyInvocation> families) =>
-        BuildPlan(BuildCandidates(families), FamilyPlannerRankingAuthority.FixedExecutionOrder,
+    internal static FamilyExecutionPlan InOrder(IReadOnlyList<IFamilyInvocation> families)
+    {
+        var costs = FamilyAuxiliaryEvidence.Read<GpuCostSnapshot?>(nameof(FamilyPlanner), "CostSnapshot", GpuCostCalibration.Capture, null);
+        return BuildPlan(BuildCandidates(families, costs), FamilyPlannerRankingAuthority.FixedExecutionOrder,
             ["SpecifiedExecutionOrder"]);
+    }
+
+    internal static FamilyExecutionPlan InManualOrder(IReadOnlyList<IFamilyInvocation> available,
+        IReadOnlyList<IFamilyInvocation> required, IReadOnlyList<string> requested,
+        IFamilyInvocation? denseOnlyEntry = null)
+    {
+        if (requested.Any(string.IsNullOrWhiteSpace) || requested.Distinct(StringComparer.Ordinal).Count() != requested.Count)
+            throw new InvalidOperationException("ManualFamilyOrder.InvalidOrDuplicateUnit");
+        var authoredCoverage = requested.SelectMany(key => key.Split('+')).ToArray();
+        if (authoredCoverage.Distinct(StringComparer.Ordinal).Count() != authoredCoverage.Length)
+            throw new InvalidOperationException("ManualFamilyOrder.OverlappingUnits");
+        var expected = required.SelectMany(family => family.Coverage).ToHashSet(StringComparer.Ordinal);
+        var remaining = new HashSet<string>(expected, StringComparer.Ordinal);
+        var current = new List<IFamilyInvocation>();
+        // Retain still available authored groups without invoking greedy cost
+        // selection. Changed predicates can remove a group or split its body;
+        // ordinary current units fill the remaining obligations below.
+        foreach (string key in requested)
+        {
+            var unit = available.FirstOrDefault(family => FamilyExecutionCoordinator.FamilyOrderKey(family) == key &&
+                family.Coverage.All(remaining.Contains));
+            if (unit is null) continue;
+            current.Add(unit);
+            remaining.ExceptWith(unit.Coverage);
+        }
+        foreach (var unit in required)
+        {
+            if (!unit.Coverage.All(remaining.Contains)) continue;
+            current.Add(unit);
+            remaining.ExceptWith(unit.Coverage);
+        }
+        var reconciled = FamilyExecutionCoordinator.ReconcileFamilyOrder(requested, current);
+        var ordered = reconciled.Select(key => current.Single(family => FamilyExecutionCoordinator.FamilyOrderKey(family) == key)).ToArray();
+        var actual = ordered.SelectMany(family => family.Coverage).ToArray();
+        if (actual.Distinct(StringComparer.Ordinal).Count() != actual.Length || !expected.SetEquals(actual))
+            throw new InvalidOperationException("ManualFamilyOrder.CoverageChanged:expected=" + string.Join(',', expected.Order(StringComparer.Ordinal)) +
+                ";requested=" + string.Join(',', actual));
+        if (denseOnlyEntry is not null && Array.IndexOf(ordered, denseOnlyEntry) > 0)
+            throw new InvalidOperationException("ManualFamilyOrder.DenseOnlyUnitMustBeFirst:" +
+                FamilyExecutionCoordinator.FamilyOrderKey(denseOnlyEntry));
+        var costs = FamilyAuxiliaryEvidence.Read<GpuCostSnapshot?>(nameof(FamilyPlanner), "CostSnapshot", GpuCostCalibration.Capture, null);
+        var selected = BuildPlan(BuildCandidates(ordered, costs), FamilyPlannerRankingAuthority.FixedExecutionOrder,
+            ["ManualFamilyOrder;NoAutomaticReordering;WholeCoverageUnits;MissingCostDoesNotBlockExecution",
+                "EffectiveManualFamilyOrder=" + string.Join('>', reconciled)], resolveInputReferences: true, costs: costs);
+        return selected with { SelectionPolicyId = "FamilyPlanner.ManualOrder.20261027.v1", AllowSmallCandidateExact = true,
+            EstimatedTerminalSurvival = selected.Stages.All(stage => stage.Survival.HasValue)
+                ? selected.Stages.Aggregate(1d, (fraction, stage) => fraction * stage.Survival!.Value) : null };
+    }
 
     internal static FamilyExecutionPlan Plan(IReadOnlyList<IFamilyInvocation> families) => PlanSimple(families);
 
@@ -122,7 +176,8 @@ internal static class FamilyPlanner
         IFamilyInvocation? denseEntry = null)
     {
         ArgumentNullException.ThrowIfNull(registeredFamilies);
-        Candidate[] registered = BuildCandidates(registeredFamilies);
+        var costSnapshot = FamilyAuxiliaryEvidence.Read<GpuCostSnapshot?>(nameof(FamilyPlanner), "CostSnapshot", GpuCostCalibration.Capture, null);
+        Candidate[] registered = BuildCandidates(registeredFamilies, costSnapshot);
         var required = registered.SelectMany(candidate => candidate.Coverage).ToHashSet(StringComparer.Ordinal);
         fusedUnits ??= [];
         foreach (var unit in fusedUnits)
@@ -139,7 +194,7 @@ internal static class FamilyPlanner
                     return alternatives;
                 }, [])).ToArray() : [];
         Candidate[] candidates = fusedUnits.Count == 0 && cpuAlternatives.Length == 0 ? registered :
-            BuildCandidates([..registeredFamilies, ..fusedUnits, ..cpuAlternatives], allowEquivalentCoverage: true);
+            BuildCandidates([..registeredFamilies, ..fusedUnits, ..cpuAlternatives], costSnapshot, allowEquivalentCoverage: true);
         var remaining = new HashSet<string>(required, StringComparer.Ordinal);
         var passed = new HashSet<string>(StringComparer.Ordinal);
         var ordered = new List<Candidate>();
@@ -148,7 +203,7 @@ internal static class FamilyPlanner
             // These existing coupled numerical bodies accept Dense input only.
             // Their physical constraint fixes one entry unit, while every
             // independent remainder still uses the same local greedy rule.
-            Candidate entry = BuildCandidates([denseEntry])[0] with { RegistrationIndex = -1 };
+            Candidate entry = BuildCandidates([denseEntry], costSnapshot)[0] with { RegistrationIndex = -1 };
             if (!entry.Coverage.All(required.Contains))
                 throw new InvalidOperationException("SimplePlanning.DenseEntryCoverageMismatch");
             ordered.Add(entry);
@@ -172,20 +227,10 @@ internal static class FamilyPlanner
                         Rejection = survival.HasValue ? 1d - survival.Value : null,
                         DenseWorkPerInput = expected?.ExpectedFilteringWorkUnitsPerInput,
                         CompactWorkPerInput = expected?.ExpectedFilteringWorkUnitsPerInput + expected?.CompactInputWorkUnitsPerInput };
-                    if (candidate.Family is PartyFamily party)
+                    if (candidate.Family is PartyFamily or FamilyCpuExecution)
                     {
-                        var performance = ReadPartyReference(party, compact, passed);
-                        double? perInputMs = FamilyPerformanceProjectionMath.PerInputMilliseconds(performance);
-                        candidate = compact
-                            ? candidate with { CompactPerformance = performance, CompactPerInputMs = perInputMs }
-                            : candidate with { DensePerformance = performance, DensePerInputMs = perInputMs };
-                    }
-                    else if (candidate.Family is FamilyCpuExecution cpu)
-                    {
-                        // Quote the actual selected input role through the CPU
-                        // owner's passed-Coverage contract. A Dense quote may
-                        // not certify a Compact or conditional realization.
-                        var performance = ReadSimpleCpuReference(cpu, compact, passed);
+                        var performance = ReadReference(costSnapshot, candidate.Family,
+                            candidate.Family.ResolveConditionPerformance(compact), compact, passed);
                         double? perInputMs = FamilyPerformanceProjectionMath.PerInputMilliseconds(performance);
                         candidate = compact
                             ? candidate with { CompactPerformance = performance, CompactPerInputMs = perInputMs }
@@ -198,13 +243,19 @@ internal static class FamilyPlanner
             // executable unpriced integer GPU body into an infinitely costly one.
             Candidate[] available = resolved.Where(candidate => candidate.RegistrationIndex < registered.Length + fusedUnits.Count ||
                 HardwareScore(candidate).HasValue && resolved.Any(original => original.RegistrationIndex < registered.Length &&
-                    original.Coverage.SequenceEqual(candidate.Coverage) && HardwareScore(original).HasValue)).ToArray();
+                    original.Coverage.SequenceEqual(candidate.Coverage) && HardwareScore(original).HasValue))
+                // Unpriced optional fusions do not create a new barrier among
+                // the original obligations; manual selection still retains them.
+                .OrderBy(candidate => candidate.RegistrationIndex >= registered.Length && !HardwareScore(candidate).HasValue
+                    ? int.MaxValue : registered.Where(original => original.Coverage.Any(candidate.Coverage.Contains))
+                        .Select(original => original.RegistrationIndex).DefaultIfEmpty(candidate.RegistrationIndex).Min())
+                .ThenBy(candidate => candidate.RegistrationIndex).ToArray();
             if (available.Length == 0) throw new InvalidOperationException("SimplePlanning.RegisteredCoverageLost");
             double? AnalyticalCost(Candidate c) => compact ? c.CompactWorkPerInput : c.DenseWorkPerInput;
             var selected = GreedyUnitOrder.Select(available, HardwareCost, c => c.Survival, AnalyticalCost);
             string basis = available.Any(candidate => HardwareScore(candidate).HasValue)
-                ? "HardwareTimePerRejectedCandidate"
-                : available.Any(candidate => GreedyUnitOrder.Score(AnalyticalCost(candidate), candidate.Survival).HasValue)
+                ? HardwareScore(selected).HasValue ? "HardwareTimePerRejectedCandidate" : "RegistrationOrderUnknownCostOrSurvival"
+                : GreedyUnitOrder.Score(AnalyticalCost(selected), selected.Survival).HasValue
                     ? "AnalyticalWorkPerRejectedCandidate" : "RegistrationOrderEvidenceUnavailable";
             double? selectedScore = basis == "HardwareTimePerRejectedCandidate"
                 ? HardwareScore(selected) : GreedyUnitOrder.Score(AnalyticalCost(selected), selected.Survival);
@@ -227,53 +278,9 @@ internal static class FamilyPlanner
 
     private static string SimpleScoreText(double? score) => score == double.PositiveInfinity ? "NoPredictedRejection" : Maybe(score);
 
-    private static FamilyPerformanceReference ReadPartyReference(PartyFamily family, bool compact,
-        IReadOnlySet<string> passed)
+    private static Candidate[] BuildCandidates(IReadOnlyList<IFamilyInvocation> registeredFamilies,
+        GpuCostSnapshot? costSnapshot, bool allowEquivalentCoverage = false)
     {
-        var condition = family.ResolveConditionPerformance(compact);
-        return FamilyAuxiliaryEvidence.Read(family.FamilyId, "SimplePlanner.PartyUnitQuote", () =>
-        {
-            const int inputs = FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize;
-            var unit = family.QuoteUnit(inputs, compact, passed);
-            if (unit is null || unit.Milliseconds is not (> 0d) || !double.IsFinite(unit.Milliseconds))
-                return UnavailableReference(family, condition);
-            return new FamilyPerformanceReference(family.FamilyId, condition.PhysicalImplementationRevision,
-                1, inputs * 1000d / unit.Milliseconds, FamilyPerformanceEvidenceSource.Condition,
-                condition.UsesGpu ? "GPU" : "CPU", condition.UsesGpu
-                    ? Runtime.SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity().RenderingBackend : "CPU", unit.Evidence);
-        }, UnavailableReference(family, condition));
-    }
-
-    private static FamilyPerformanceReference ReadSimpleCpuReference(FamilyCpuExecution cpu, bool compact,
-        IReadOnlySet<string> passed)
-    {
-        IFamilyInvocation family = cpu;
-        var condition = family.ResolveConditionPerformance(compact);
-        return FamilyAuxiliaryEvidence.Read(family.FamilyId, "SimplePlanner.CpuPhysicalQuote", () =>
-        {
-            // Static single-family reference, independent of preceding filters.
-            // Compact keeps the 65536 CPU input population but explicitly uses
-            // a 16Mi root window: S P16 has that measured endpoint. Its 65536
-            // root curve ends at 32768 inputs and must not lend a 65536 price.
-            var geometry = new FamilyPhysicalQuoteRequest(compact, false, cpu.WindowCapacity);
-            int roots = compact ? PrivateOrdinalBuffer.Capacity : cpu.WindowCapacity;
-            var quote = FamilyCanonicalMeasuredCost.TryQuote(cpu, geometry, roots, passed) ?? cpu.Quote(geometry, passed);
-            if (quote is null || quote.NanosecondsPerInput is not (> 0d) || !double.IsFinite(quote.NanosecondsPerInput) ||
-                quote.WindowCapacity <= 0 || quote.FixedWindowMilliseconds < 0d || !double.IsFinite(quote.FixedWindowMilliseconds))
-                return UnavailableReference(family, condition);
-            double perInputMs = quote.NanosecondsPerInput / 1e6 +
-                quote.FixedWindowMilliseconds / Math.Min(cpu.WindowCapacity, quote.WindowCapacity);
-            return new FamilyPerformanceReference(family.FamilyId, condition.PhysicalImplementationRevision, 1,
-                1000d / perInputMs, quote.LocalCostSource == "Condition" ? FamilyPerformanceEvidenceSource.Condition :
-                    quote.LocalCostSource == "Global" ? FamilyPerformanceEvidenceSource.Global : FamilyPerformanceEvidenceSource.Reference,
-                "CPU", "CPU", quote.Evidence +
-                    $";StaticFamilyLocalReference;ReferenceRootWindow={roots};ReferenceInputPopulation={geometry.MeanInputPopulation:G17}");
-        }, UnavailableReference(family, condition));
-    }
-
-    private static Candidate[] BuildCandidates(IReadOnlyList<IFamilyInvocation> registeredFamilies, bool allowEquivalentCoverage = false)
-    {
-        var costSnapshot = FamilyAuxiliaryEvidence.Read<GpuCostSnapshot?>(nameof(FamilyPlanner), "CostSnapshot", GpuCostCalibration.Capture, null);
         var candidates = new Candidate[registeredFamilies.Count];
         var covered = new HashSet<string>(StringComparer.Ordinal);
         for (int index = 0; index < registeredFamilies.Count; index++)
@@ -316,7 +323,7 @@ internal static class FamilyPlanner
     private static FamilyExecutionPlan BuildPlan(
         Candidate[] ordered,
         FamilyPlannerRankingAuthority authority,
-        IReadOnlyList<string> decision)
+        IReadOnlyList<string> decision, bool resolveInputReferences = false, GpuCostSnapshot? costs = null)
     {
         var missing = new List<string>();
         var stages = new FamilyExecutionPlanStage[ordered.Length];
@@ -340,6 +347,14 @@ internal static class FamilyPlanner
             FamilyConditionPerformanceProjection condition = compact ? candidate.CompactCondition : candidate.DenseCondition;
             FamilyPerformanceReference performance = compact ? candidate.CompactPerformance : candidate.DensePerformance;
             double? perInputMs = compact ? candidate.CompactPerInputMs : candidate.DensePerInputMs;
+            if (resolveInputReferences)
+            {
+                // Conditional CPU and party prices belong to the actual
+                // prefix/input role; an absent quote remains unknown.
+                if (candidate.Family is FamilyCpuExecution or PartyFamily)
+                    performance = ReadReference(costs, candidate.Family, condition, compact, passedCoverage);
+                perInputMs = FamilyPerformanceProjectionMath.PerInputMilliseconds(performance);
+            }
             double? expectedWork = compact ? candidate.CompactWorkPerInput : candidate.DenseWorkPerInput;
             double? expectedStageMs = perInputMs.HasValue && double.IsFinite(inputFraction)
                 ? inputFraction * perInputMs.Value
@@ -380,9 +395,13 @@ internal static class FamilyPlanner
             () => passed is null ? family.ExpectedFilteringCost : family.ResolveExpectedFilteringCost(passed), null);
 
     private static FamilyPerformanceReference ReadReference(GpuCostSnapshot? costs, IFamilyInvocation family,
-        FamilyConditionPerformanceProjection condition, bool compact) =>
+        FamilyConditionPerformanceProjection condition, bool compact, IReadOnlySet<string>? passed = null) =>
         FamilyAuxiliaryEvidence.Read(family.FamilyId, "Planner.PhysicalQuote",
-            () => costs?.Reference(family, condition, compact) ?? UnavailableReference(family, condition),
+            () => GpuCostSnapshot.ComputationReference(costs, family, condition, compact, passed,
+                referenceRootWindow: passed is not null && family is FamilyCpuExecution cpu
+                    ? compact ? PrivateOrdinalBuffer.Capacity : cpu.WindowCapacity : null,
+                referencePopulation: passed is null ? null : family is FamilyCpuExecution cpuFamily
+                    ? cpuFamily.WindowCapacity : FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize),
             UnavailableReference(family, condition));
 
     private static FamilyPerformanceReference UnavailableReference(IFamilyInvocation family, FamilyConditionPerformanceProjection condition) =>

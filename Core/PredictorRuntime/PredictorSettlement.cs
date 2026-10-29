@@ -413,15 +413,13 @@ internal sealed partial class PredictorRun
             case PredictorRewardKind.Card:
                 var card = selected.Cards.FirstOrDefault(c => c.Id == take.CardId);
                 if (card == null || !selected.CardSelectionEntered) return PredictorInputResult.Invalid;
-                if (!Working.Cards.Any(c => c.Id == card.Id)) Working = Working with { Cards = Working.Cards.Add(card) };
-                Working = PredictorObtainSources.AddExistingCard(Context, Working, card);
+                Working = ReceiveRewardCard(selected, card);
                 MarkTaken(selected.Id);
                 _cardSelection = null;
                 break;
             case PredictorRewardKind.SpecialCard:
                 if (selected.Cards.Length != 1) throw new InvalidOperationException("PredictorSpecialCardPayloadInvalid");
-                if (!Working.Cards.Any(c => c.Id == selected.Cards[0].Id)) Working = Working with { Cards = Working.Cards.Add(selected.Cards[0]) };
-                Working = PredictorObtainSources.AddExistingCard(Context, Working, selected.Cards[0]);
+                Working = ReceiveRewardCard(selected, selected.Cards[0]);
                 MarkTaken(selected.Id);
                 break;
             case PredictorRewardKind.RemoveCard:

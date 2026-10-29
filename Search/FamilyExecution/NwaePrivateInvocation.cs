@@ -18,7 +18,7 @@ internal sealed class NwaePrivateInvocation(ExactSearchExecutionRequest request,
     public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId, PrivateOrdinalBuffer.Capacity, [], "NWAE.ExperimentalUnpriced");
     public FamilySurvivalProjection Survival => FamilySurvivalProjection.Unresolved(FamilyId, "NWAE.ExperimentalJointUnpriced");
     public FamilyConditionPerformanceProjection ConditionPerformance => new(FamilyId,
-        "NWAE." + order + ".PrivateSerial.CanonicalAbi1Ready.20260908.v1", "NWAE.Neutral", 1, "ExplicitExperiment", usesGpu: true);
+        "NWAE." + order + ".PrivateSerial.CanonicalAbi1Ready.20260908.v1" + GpuRngRotation.Revision, "NWAE.Neutral", 1, "ExplicitExperiment", usesGpu: true);
     public FamilyPerformanceObservation CapturePerformanceObservation() => new(ConditionPerformance, _gpu?.Device ?? "", _gpu?.SetupMs ?? 0,
         0, 0, _batches, 0, _input, _output, _ms, false, _faulted ? "PhysicalFailure" : "NWAE.ExperimentNoCalibration");
     public async ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow observation, FamilyCandidateSet input, CancellationToken token)

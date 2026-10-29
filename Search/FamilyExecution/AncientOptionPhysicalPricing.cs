@@ -13,8 +13,8 @@ internal static class AncientOptionPhysicalPricing
 
     internal static FamilyPhysicalQuote? Quote(ExactSearchExecutionRequest request,
         AncientOptionFamilyPlan plan, FamilyPhysicalQuoteRequest geometry) =>
-        plan.NumericalVariant != GpuNumericalVariant.NativeFloat64 ? null :
-            QuoteSeaGlass(request, plan, geometry) ?? QuoteMeasured(request, plan, geometry) ?? QuoteGeneratorEnvelope(request, plan, geometry, false);
+        (plan.NumericalVariant == GpuNumericalVariant.NativeFloat64 ? QuoteMeasured(request, plan, geometry) : null) ??
+            AncientOptionWorkEstimate.Quote(request, plan, geometry, cpu: false);
 
     private static FamilyPhysicalQuote? QuoteSeaGlass(ExactSearchExecutionRequest request,
         AncientOptionFamilyPlan plan, FamilyPhysicalQuoteRequest geometry)
@@ -79,8 +79,8 @@ internal static class AncientOptionPhysicalPricing
         };
 
     internal static FamilyPhysicalQuote? QuoteCpu(ExactSearchExecutionRequest request,
-        AncientOptionFamilyPlan plan, FamilyPhysicalQuoteRequest g) =>
-        QuoteCpuMeasured(request, plan, g) ?? QuoteGeneratorEnvelope(request, plan, g, true);
+        AncientOptionFamilyPlan plan, FamilyPhysicalQuoteRequest g, int workers = 1) =>
+        AncientOptionWorkEstimate.Quote(request, plan, g, cpu: true, workers: workers);
 
     private static FamilyPhysicalQuote? QuoteGeneratorEnvelope(ExactSearchExecutionRequest request,
         AncientOptionFamilyPlan plan, FamilyPhysicalQuoteRequest g, bool cpu)

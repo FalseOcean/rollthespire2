@@ -13,7 +13,15 @@ internal static class PrivateOrdinalChecks
         Type Type(string name) => assembly.GetType("RolltheSpire2.Search.FamilyExecution." + name, true)!;
         object New(string name, params object?[] args)
         {
-            var constructor = Type(name).GetConstructors(Members).Single();
+            var constructor = Type(name).GetConstructors(Members).Single(candidate =>
+            {
+                var signature = candidate.GetParameters();
+                return args.Length <= signature.Length && signature.Skip(args.Length).All(parameter => parameter.HasDefaultValue) &&
+                    args.Select((argument, index) => argument is null
+                        ? !signature[index].ParameterType.IsValueType || Nullable.GetUnderlyingType(signature[index].ParameterType) is not null
+                        : signature[index].ParameterType.IsInstanceOfType(argument) ||
+                            Nullable.GetUnderlyingType(signature[index].ParameterType)?.IsInstanceOfType(argument) == true).All(matches => matches);
+            });
             var parameters = constructor.GetParameters();
             if (args.Length > parameters.Length) throw new TargetParameterCountException(name);
             // Reflection does not supply C# optional arguments. Use the declared

@@ -158,7 +158,9 @@ internal static class TransformationAggregateChecks
             IFamilyInvocation[] nt = [curseN, curseT];
             Check(jointOwner.QuotePhysicalWork(new(false,false,1<<24)) is {NanosecondsPerInput: >0}, "Joint physical owns its dense quote");
             Check(jointOwner.QuotePhysicalWork(new(true,false,100)) is null, "Unmeasured joint compact remains unpriced");
-            Check(curseT.QuotePhysicalWork(new(true,false,100)) is {FixedWindowMilliseconds: >0}, "Sparse compact T work charged by window");
+            Check(curseT.GpuPlan.PrefixReuse ? curseT.QuotePhysicalWork(new(true,false,100)) is null :
+                curseT.QuotePhysicalWork(new(true,false,100)) is {FixedWindowMilliseconds: >0},
+                "Sparse compact T baseline work charged by window; prefix body remains unpriced");
             Check(curseT.QuotePhysicalWork(new(true,false,1<<20)) is null, "Sparse T quote does not extrapolate to full compact");
             var selectedUnits = FamilyPlanner.PlanSimple(nt, [jointOwner]);
             Check(selectedUnits.Stages.SelectMany(stage => stage.Coverage).ToHashSet().SetEquals(["N.Neow", TransformationAggregateFamily.Id]),
@@ -342,6 +344,7 @@ internal static class TransformationAggregateChecks
         double actualJoint=TransformationAggregateProbability.WithNeowConditions(mixedLeafyPlan,[bound])!.Value;
         Check(Math.Abs(actualJoint-mixedJoint*TransformationAggregateProbability.Build(mixedLeafyPlan).IdentityProbability)<1e-12,"Mixed T/N same-draw joint mass");
         var gpuFixtures = new List<object>();
+        bool prefixBoundariesChecked = false;
         var fingerprints = new HashSet<string>();
         Directory.CreateDirectory(output);
         int checkedCases = 0;
@@ -396,9 +399,7 @@ internal static class TransformationAggregateChecks
             var sparse = FamilyCandidateSet.FromAbi1(batch, expected.Where((_,i) => i % 2 == 0).ToArray());
             Check(owner.InvokeAsync(execution, new(batch, request), sparse, default).Result.Count == sparse.Count, "Resume sparse survivors");
             owner.DisposeAsync(execution).GetAwaiter().GetResult(); execution.DisposeAsync().GetAwaiter().GetResult();
-            var gpuPlan = new TransformationAggregateGpuPlan(numerical);
-            string shader = $"T-{index}.glsl";
-            File.WriteAllText(output+"/"+shader,gpuPlan.ShaderSource());
+            ulong? additionalWitness = null;
             if(accepted==0 && (higherFullTargets.Contains(c) || c.Opening==TransformationOpening.BonesLeafyOther)) {
                 ulong witness=0;
                 for(ulong i=(ulong)options.ScanCount;i<262144;i++) {
@@ -407,14 +408,79 @@ internal static class TransformationAggregateChecks
                     Check(ProductionExactSearchEvaluator.Evaluate(request,root).IsMatch,"Additional positive agrees with Exact"); witness=i;break;
                 }
                 Check(witness!=0,"Additional positive found outside fixed main interval");
-                gpuFixtures.Add(new {name=$"T-{index}-positive",family="T",shader,buffers=gpuPlan.Buffers,fullTarget=gpuPlan.FullTarget,
-                    batchMeta=new uint[]{(uint)witness,(uint)(witness>>32),1,1,0},ordinals=new uint[]{0},expected=new ulong[]{0}});
+                additionalWitness = witness;
             }
-            foreach(bool compact in new[]{false,true}) {
-                uint[] ordinals=Enumerable.Range(0,(int)options.ScanCount).Where(i=>!compact||i%3==0).Select(i=>(uint)i).ToArray();
-                gpuFixtures.Add(new {name=$"T-{index}",family="T",shader,buffers=gpuPlan.Buffers,fullTarget=gpuPlan.FullTarget,
-                    batchMeta=new uint[]{0,0,(uint)options.ScanCount,(uint)ordinals.Length,compact?1u:0u},ordinals,
-                    expected=expected.Where(i=>!compact||i%3==0).ToArray()});
+            // All physical bodies use the same full-population Exact oracle.
+            // Native fixture execution must check dense/compact and duplicates
+            // for each body, rather than comparing only shader text.
+            foreach(bool prefix in new[]{false,true}) {
+                var gpuPlan = new TransformationAggregateGpuPlan(numerical, prefixReuse: prefix);
+                if (prefix && gpuPlan.FullTarget) continue; // existing Carry8 is a separate body
+                Check(gpuPlan.PrefixReuse == prefix, "T explicit prefix-reuse selection");
+                Check(gpuPlan.Revision(false).EndsWith(TransformationAggregateGpuPlan.PrefixReuseRevision, StringComparison.Ordinal) == prefix &&
+                    gpuPlan.Revision(true).EndsWith(TransformationAggregateGpuPlan.PrefixReuseRevision, StringComparison.Ordinal) == prefix,
+                    "T prefix physical identity isolated for Dense and Compact");
+                if (prefix) Check(FamilyCoarsePricing.IsEstimate(TransformationAggregatePricing.Gpu(numerical, probability, gpuPlan, new(false,false,4096))),
+                    "T prefix body can use declared work estimates without borrowing a baseline measurement identity");
+                string name = $"T-{index}" + (prefix ? "-prefix" : "");
+                string shader = name + ".glsl";
+                File.WriteAllText(output+"/"+shader,gpuPlan.ShaderSource());
+                uint[]? prefixTable = prefix ? NeowPrefixHashCache.BuildTable(0, (int)options.ScanCount) : null;
+                if(additionalWitness is { } witness)
+                    gpuFixtures.Add(new {name=name+"-positive",family="T",shader,buffers=gpuPlan.Buffers,fullTarget=gpuPlan.FullTarget,
+                        prefixTable = prefix ? NeowPrefixHashCache.BuildTable(witness, 1) : null,
+                        batchMeta=new uint[]{(uint)witness,(uint)(witness>>32),1,1,0},ordinals=new uint[]{0},expected=new ulong[]{0}});
+                foreach(bool compact in new[]{false,true}) {
+                    uint[] ordinals=Enumerable.Range(0,(int)options.ScanCount).Where(i=>!compact||i%3==0).Select(i=>(uint)i).ToArray();
+                    gpuFixtures.Add(new {name,family="T",shader,buffers=gpuPlan.Buffers,fullTarget=gpuPlan.FullTarget,
+                        prefixTable,
+                        batchMeta=new uint[]{0,0,(uint)options.ScanCount,(uint)ordinals.Length,compact?1u:0u},ordinals,
+                        expected=expected.Where(i=>!compact||i%3==0).ToArray()});
+                }
+                if (prefix && !prefixBoundariesChecked)
+                {
+                    prefixBoundariesChecked = true;
+                    foreach (ulong start in new[] { 123456789UL, NeowPrefixHashCache.BlockSize - 7UL,
+                        NeowPrefixHashCache.SpaceSize - (1UL << 24) })
+                    {
+                        uint[] table = NeowPrefixHashCache.BuildTable(start, 1 << 24);
+                        foreach (int prefixOffset in new[] { 0, 1, (1 << 20) - 1, 1 << 20, (1 << 20) + 1,
+                            1_336_335, 1_336_336, (1 << 24) - 1 })
+                        {
+                            uint position = table[0] + (uint)prefixOffset;
+                            int at = 4 + (int)(position / NeowPrefixHashCache.BlockSize) * 4;
+                            ulong hash = NeowPrefixHashCache.ComputeRootHashFromPrefix(table[at] | ((ulong)table[at + 1] << 32),
+                                NeowPrefixHashCache.EncodeTail4(position % NeowPrefixHashCache.BlockSize));
+                            Check(hash == Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(start + (uint)prefixOffset)),
+                                "T prefix complete-batch/slot-boundary canonical root parity");
+                        }
+                    }
+                    Check(NeowPrefixHashCache.BuildTable(NeowPrefixHashCache.SpaceSize, 0).Length == 4, "T prefix empty seed-space endpoint");
+                    try { NeowPrefixHashCache.BuildTable(0, (1 << 24) + 1); throw new Exception("T prefix count cap missing"); }
+                    catch (ArgumentOutOfRangeException) { checks++; }
+                    try { NeowPrefixHashCache.BuildTable(NeowPrefixHashCache.SpaceSize - 1, 2); throw new Exception("T prefix seed-space cap missing"); }
+                    catch (ArgumentOutOfRangeException) { checks++; }
+                    foreach (var boundary in new[] {
+                        (Base:123456789UL, Span:257, Offset:0),
+                        (Base:NeowPrefixHashCache.BlockSize-7UL, Span:257, Offset:0),
+                        (Base:NeowPrefixHashCache.SpaceSize-257UL, Span:257, Offset:0),
+                        (Base:NeowPrefixHashCache.BlockSize-7UL, Span:(1<<20)+262, Offset:(1<<20)+5) })
+                    {
+                        uint[] ordinals = Enumerable.Range(boundary.Offset, 257).Select(i => (uint)i).ToArray();
+                        var positive = new List<ulong>();
+                        foreach (uint ordinal in ordinals)
+                        {
+                            var root = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, Beta110SeedCodec.FormatOrdinal(boundary.Base + ordinal));
+                            bool match = numerical.MatchesCollected(root.RootHash);
+                            Check(match == ProductionExactSearchEvaluator.Evaluate(request, root).IsMatch, "T prefix boundary semantic oracle");
+                            if (match) positive.Add(ordinal);
+                        }
+                        gpuFixtures.Add(new { name=name+"-boundary-"+boundary.Base+"-"+boundary.Offset, family="T", shader,
+                            buffers=gpuPlan.Buffers, fullTarget=false, prefixTable=NeowPrefixHashCache.BuildTable(boundary.Base,boundary.Span),
+                            batchMeta=new uint[]{(uint)boundary.Base,(uint)(boundary.Base>>32),(uint)boundary.Span,257,0,0,(uint)boundary.Offset},
+                            ordinals,expected=positive.ToArray() });
+                    }
+                }
             }
             File.WriteAllText($"{output}/case-{index}.json", JsonSerializer.Serialize(new ProductionSearchReplayWorkload(1, query, options), json));
             File.WriteAllText($"{output}/case-{index}.expected.json", JsonSerializer.Serialize(expected.Select(i => Beta110SeedCodec.FormatOrdinal(i)), json));

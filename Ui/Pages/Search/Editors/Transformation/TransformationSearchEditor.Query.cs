@@ -12,28 +12,37 @@ namespace RolltheSpire2.Ui.Pages.Search.Editors;
 
 internal sealed partial class TransformationSearchEditor
 {
+    // A source explicitly removed from its owning editor suspends its takeover
+    // draft. Missing observations for a still-declared source remain an error.
+    private bool IsSourceDeclared(string id) => _declaredSourceIds is null ||
+        _declaredSourceIds.Contains(id) || id is not ("N.LeafyPoultice" or "N.NewLeaf" or
+        "N.BonesLeafyNewLeaf" or "N.BonesLeafyOther" or "E.MORPHIC_GROVE" or
+        "E.AROMA_OF_CHAOS" or "E.WHISPERING_HOLLOW" or "E.SYMBIOTE" or "E.TRIAL");
+    private IEnumerable<string> ActiveTakeovers() => _draft.TakenOver.Where(IsSourceDeclared);
+
     internal TransformationAggregateCondition? ExportCondition(SearchQuery q)
     {
-        if (_draft.TakenOver.Count == 0)
+        var active = ActiveTakeovers().ToHashSet(StringComparer.Ordinal);
+        if (active.Count == 0)
         {
             return q.TransformationAggregate;
         }
-        string[] missing = _draft.TakenOver.Where(id => !_sources.Any(source => source.Id == id)).Order(StringComparer.Ordinal).ToArray();
+        string[] missing = active.Where(id => !_sources.Any(source => source.Id == id)).Order(StringComparer.Ordinal).ToArray();
         if (missing.Length > 0)
             throw new InvalidOperationException("TransformationDeclaredSourcesUnavailable:" + string.Join(",", missing));
-        var opening = _draft.TakenOver.Contains("N.LeafyPoultice") ? TransformationOpening.LeafyPoultice :
-            _draft.TakenOver.Contains("N.NewLeaf") ? TransformationOpening.NewLeaf :
-            _draft.TakenOver.Contains("N.BonesLeafyNewLeaf") ? TransformationOpening.BonesLeafyNewLeaf :
-            _draft.TakenOver.Contains("N.BonesLeafyOther") ? TransformationOpening.BonesLeafyOther : TransformationOpening.None;
+        var opening = active.Contains("N.LeafyPoultice") ? TransformationOpening.LeafyPoultice :
+            active.Contains("N.NewLeaf") ? TransformationOpening.NewLeaf :
+            active.Contains("N.BonesLeafyNewLeaf") ? TransformationOpening.BonesLeafyNewLeaf :
+            active.Contains("N.BonesLeafyOther") ? TransformationOpening.BonesLeafyOther : TransformationOpening.None;
         var order = opening is not (TransformationOpening.BonesLeafyNewLeaf or TransformationOpening.BonesLeafyOther) || q.OpeningRouteRelicRequirement?.OrderMode != BonesRouteOrderMode.ExactOrder
             ? TransformationPickupOrder.Any : q.OpeningRouteRelicRequirement.RequiredRelicKeys[0] == BaseGameModelKeys.Relics.LeafyPoultice
                 ? (opening==TransformationOpening.BonesLeafyOther ? TransformationPickupOrder.LeafyThenCompanion : TransformationPickupOrder.LeafyThenNewLeaf) :
                 (opening==TransformationOpening.BonesLeafyOther ? TransformationPickupOrder.CompanionThenLeafy : TransformationPickupOrder.NewLeafThenLeafy);
-        var result = new TransformationAggregateCondition(opening, order, _draft.TakenOver.Contains("E.MORPHIC_GROVE"),
-            _draft.TakenOver.Contains("E.AROMA_OF_CHAOS"), _draft.TakenOver.Contains("E.WHISPERING_HOLLOW"),
+        var result = new TransformationAggregateCondition(opening, order, active.Contains("E.MORPHIC_GROVE"),
+            active.Contains("E.AROMA_OF_CHAOS"), active.Contains("E.WHISPERING_HOLLOW"),
             _draft.Objective switch { 0 => TransformationAggregatePredicate.RareCountAtLeast,
                 2 => TransformationAggregatePredicate.ContainsMultisetAndRemainingRare, _ => TransformationAggregatePredicate.ContainsMultiset },
-            _draft.Objective == 0 ? _draft.RareCount : 0, _draft.Objective == 0 ? [] : _draft.Cards.ToArray()) { CompanionRelic=opening==TransformationOpening.BonesLeafyOther ? q.OpeningRouteRelicRequirement?.RequiredRelicKeys.FirstOrDefault(k=>k!=BaseGameModelKeys.Relics.LeafyPoultice) : null, Symbiote = _draft.TakenOver.Contains("E.SYMBIOTE"), TrialNondescript = _draft.TakenOver.Contains("E.TRIAL") };
+            _draft.Objective == 0 ? _draft.RareCount : 0, _draft.Objective == 0 ? [] : _draft.Cards.ToArray()) { CompanionRelic=opening==TransformationOpening.BonesLeafyOther ? q.OpeningRouteRelicRequirement?.RequiredRelicKeys.FirstOrDefault(k=>k!=BaseGameModelKeys.Relics.LeafyPoultice) : null, Symbiote = active.Contains("E.SYMBIOTE"), TrialNondescript = active.Contains("E.TRIAL") };
         // ResultCount is display capacity, never a user-created RNG opportunity.
         if ((_draft.Objective == 0 ? result.MinimumRareCount : result.TargetMultiset.Count) is < 1 ||
             (_draft.Objective == 0 ? result.MinimumRareCount : result.TargetMultiset.Count) > result.OpportunityCount)

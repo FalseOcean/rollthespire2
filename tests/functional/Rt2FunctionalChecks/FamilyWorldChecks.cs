@@ -73,10 +73,20 @@ internal static class FamilyWorldChecks
             var compiled=SearchCompiler.Compile(q,context);
             var request=new ExactSearchExecutionRequest(compiled,new("000000000000",10000,30,1),"000000000000",10000,
                 CompiledSearchEvaluationProjector.Project(compiled).Evaluation,CombatRewardRoutePolicyContract.None,compiled.SemanticFingerprint);
+            if (!WorldFamilyReplay.HasConditions(request))
+            {
+                bool created = VariantOpeningFamily.TryCreate(request, out var variant, false);
+                if (WorldFamily.TryCreate(request, out _) ||
+                    created != VariantOpeningPreparation.Prepare(compiled).HasConditions ||
+                    created && variant is not VariantOpeningFamily)
+                    throw new Exception("Pure variants migrate to V without an empty W");
+                checks++;
+                continue; // V numerical oracle/transport is checked by its focused entry.
+            }
             var replay=new WorldFamilyReplay(request);var gpu=new WorldFamilyGpuPlan(replay, specializeSolo: true);
             if(!WorldFamily.TryCreate(request,out var family)||family!.Coverage.Single()!="W.World")throw new Exception("W registration");
             var executionPlan=FamilyExecutionCoordinator.Plan(request);
-            if(executionPlan.OrderedFamilies.Count!=1||executionPlan.OrderedFamilies[0].FamilyId!="W.World")throw new Exception("Production W-only registration");
+            if(!executionPlan.ExecutionOrderUnits.Any(f=>f.FamilyId=="W.World") || executionPlan.ExecutionOrderUnits.Any(f=>f.FamilyId is not ("W.World" or "V.VariantOpening")))throw new Exception("Production residual W/V registration");
             if (gpu.GroupingK != 4 || !gpu.Revision(false).Contains(".Dense.K4.") || !gpu.Revision(true).Contains(".CompactAbi1.K4."))
                 throw new Exception("W Production physical default/identity");
             if(name=="Boss1")
@@ -110,18 +120,10 @@ internal static class FamilyWorldChecks
                 var mixedRequest=new ExactSearchExecutionRequest(mixedQuery,request.RunOptions,"000000000000",10000,
                     CompiledSearchEvaluationProjector.Project(mixedQuery).Evaluation,CombatRewardRoutePolicyContract.None,mixedQuery.SemanticFingerprint);
                 var mixed=FamilyExecutionCoordinator.Plan(mixedRequest);
-                if(!mixed.OrderedFamilies.Any(f=>f.FamilyId=="N.Neow")||!mixed.OrderedFamilies.Any(f=>f.FamilyId=="W.World")||
-                    FamilyExecutionCoordinator.ResolveExecutionWindowSize(mixedRequest,mixed.OrderedFamilies)!=(1<<24))throw new Exception("N/W registration or root geometry");
-            }
-            if(name=="Variant1")
-            {
-                var isolated=world with {Beta109Generation=g with {Act1OverrideResolvedKey=alternate.ActKey,
-                    Act1OverrideRaw=alternate.ActKey.Entry, RelicInitializationExact=false, SharedRelicBuckets=[], PlayerRelicBuckets=[], WorldGenerationHooksExact=false}};
-                var isolatedQuery=SearchCompiler.Compile(q,context with {Authority=authority.WithWorldAuthority(isolated)});
-                var isolatedRequest=new ExactSearchExecutionRequest(isolatedQuery,request.RunOptions,"000000000000",10000,
-                    CompiledSearchEvaluationProjector.Project(isolatedQuery).Evaluation,CombatRewardRoutePolicyContract.None,isolatedQuery.SemanticFingerprint);
-                var variant=new WorldFamilyReplay(isolatedRequest);
-                if(variant.BucketLengths.Length!=0||variant.Matches(1)||variant.Matches(98765))throw new Exception("Variant explicit override without World prefix authority");
+                if(!mixed.ExecutionOrderUnits.Any(f=>f.FamilyId=="N.Neow")||!mixed.ExecutionOrderUnits.Any(f=>f.FamilyId=="W.World")||
+                    FamilyExecutionCoordinator.ResolveExecutionWindowSize(mixedRequest,mixed.OrderedFamilies)!=
+                        (mixed.OrderedFamilies.Any(f=>f.ConditionPerformance.UsesGpu) ? 1<<24 : FamilyCpuExecution.Capacity))
+                    throw new Exception("N/W registration or selected CPU/GPU root geometry");
             }
             if(name=="OversizedFirstN")
             {
@@ -139,7 +141,6 @@ internal static class FamilyWorldChecks
                 catch(OperationCanceledException){}
                 cpu.DisposeAsync(execution).GetAwaiter().GetResult();execution.DisposeAsync().GetAwaiter().GetResult();
             }
-            if(name.StartsWith("Variant")&&name!="VariantUnion"&&(replay.Plan.MaxRequiredAct!=0||replay.BucketLengths.Length!=0))throw new Exception("Variant prefix");
             string shader=name+".glsl";File.WriteAllText(Path.Combine(dir,shader),gpu.ShaderSource());
             foreach(ulong start in new[]{0UL,1564445371644820290UL})
             {
@@ -155,7 +156,7 @@ internal static class FamilyWorldChecks
                         q.LegacyWorld.AncientIdentityFilters.All(p=>Matches(core.Ancients.Where(b=>b.Act==p.Act).Select(b=>b.AncientKey),p.Keys));
                     foreach(var p in q.EventSequenceConstraints){var entries=core.EventPoolSequencePrediction!.Acts.Single(a=>a.Act==p.Act).Entries.Where(e=>(p.RangeMode==SearchSequenceRangeMode.FirstN?e.Ordinal<=p.RangeValue:e.Ordinal==p.RangeValue)&&(!p.Source.HasValue||p.Source==e.Source)).ToArray();truth&=(p.RangeMode!=SearchSequenceRangeMode.ExactSlot||entries.Length>0)&&Matches(entries.Select(e=>e.EventKey),p.Keys);}
                     var projected=Beta109WorldSnapshotProjector.ProjectForSeed(g,seed);
-                    foreach(var group in q.VariantBossBranches.GroupBy(b=>b.Act))truth&=group.Any(b=>projected.SelectedActs[b.Act-1]==b.VariantKey&&
+                    foreach(var group in q.VariantBossBranches.GroupBy(b=>b.Act))truth&=!group.Any(b=>projected.SelectedActs[b.Act-1]==b.VariantKey)||group.Any(b=>projected.SelectedActs[b.Act-1]==b.VariantKey&&
                         Matches(core.Bosses.Where(p=>p.Act==b.Act&&p.Ordinal==1).Select(p=>p.BossKey),b.FirstBoss)&&
                         Matches(core.Bosses.Where(p=>p.Act==b.Act&&p.Ordinal==2).Select(p=>p.BossKey),b.SecondBoss));
                     bool actual=replay.Matches(root);if(truth!=actual)throw new Exception($"W CPU/Core parity {name} {seed} core={truth} W={actual}");

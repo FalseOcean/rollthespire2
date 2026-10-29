@@ -93,7 +93,7 @@ internal static class JointSelectivityEstimator
                 dependencyCoverage: "CompleteSemanticImpossibleProof");
         }
 
-        if (plan.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0)
+        if (plan.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0 || plan.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count > 0)
             return StandardMapProbabilityEstimator.Compose(plan, EstimateQuery);
 
         if (WorldVariantQueryProbability.Needed(plan))

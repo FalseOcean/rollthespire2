@@ -8,9 +8,9 @@ namespace RolltheSpire2.Search.FamilyExecution;
 
 // Absolute, finite complete-Invoke references. They never enter the historical
 // peak/ratio stores, learn from a running search, or supply numerical-only work.
-// Key budgets follow the producer: CPU wrappers record their actual Workers
-// (currently capped at 32), while GPU keys retain the legal request budget up to
-// 64. Reader admission does not change either execution budget or scale prices.
+// Stored budgets follow the producer: CPU wrappers record actual Workers and
+// GPU keys retain the legal request budget. The reviewed solo N GPU lookup can
+// group that unrelated CPU budget; it never scales price or execution workers.
 internal sealed record FamilyCanonicalCostReference(int SchemaVersion, string Boundary,
     IReadOnlyList<FamilyCanonicalCostReferenceRow> Rows, JsonElement? CompleteCallCurves = null);
 
@@ -51,7 +51,7 @@ internal sealed class FamilyCanonicalCostSnapshot
         // Godot main loop. CPU collection has no GPU cadence requirement.
         var admitted = described.Where(row => row.Key.ExecutionClass == "CPU" ||
             row.MeasurementCadence == FamilyCanonicalMeasuredCost.LiveMainLoopCadence).ToArray();
-        _byKey = Index(admitted.Where(row => row.RootSpanMode == "Exact"), key => key.StableKey);
+        _byKey = Index(admitted.Where(row => row.RootSpanMode == "Exact"), key => key.PriceKey);
         _denseByShape = Index(admitted.Where(row => row.RootSpanMode == "DenseEqualsInputRange"), DenseShapeKey);
         _referencedShapes = admitted.Select(row => DenseShapeKey(row.Key)).ToHashSet(StringComparer.Ordinal);
         _completeCalls = FamilyCompleteCallSnapshot.Parse(completeCallCurves);
@@ -59,8 +59,9 @@ internal sealed class FamilyCanonicalCostSnapshot
 
     // Only the price index omits RootWindow. Stored keys and runtime batch/RNG
     // geometry remain the actual measured/requested spans. Every other field,
-    // including body, children, workers, device and work shape, remains exact.
-    private static string DenseShapeKey(FamilyCanonicalCostKey key) => (key with { RootWindow = 0 }).StableKey;
+    // including body, children, device and work shape, remains exact. Reviewed
+    // current solo N GPU calls additionally omit the unrelated CPU budget.
+    private static string DenseShapeKey(FamilyCanonicalCostKey key) => (key with { RootWindow = 0 }).PriceKey;
 
     // Existence only: a known finite body may lack this population/span. This
     // never returns a price or relaxes the finite Quote admission contract.
@@ -68,6 +69,8 @@ internal sealed class FamilyCanonicalCostSnapshot
         key is not null && (_referencedShapes.Contains(DenseShapeKey(key)) || _completeCalls.HasShapeReference(key, sourceSurvival));
     internal bool RequiresSourceSurvival(FamilyCanonicalCostKey? key) =>
         key is not null && _completeCalls.RequiresSourceSurvival(key);
+    internal (double Ratio, string Evidence) CpuWorkerRatio(string family, int workers, bool compact) =>
+        _completeCalls.CpuWorkerRatio(family, workers, compact);
 
     private static IReadOnlyDictionary<string, FamilyCanonicalCostReferenceRow[]> Index(
         IEnumerable<FamilyCanonicalCostReferenceRow> rows, Func<FamilyCanonicalCostKey, string> identity)
@@ -110,11 +113,12 @@ internal sealed class FamilyCanonicalCostSnapshot
 
     internal FamilyPhysicalQuote? Quote(FamilyCanonicalCostKey? key, FamilyPhysicalQuoteRequest geometry, double? sourceSurvival = null)
     {
-        if (key is null || !FamilyPhysicalQuote.AdmittedRequest(geometry) || geometry.PrivateInput || geometry.PrivateOutput ||
+        if (key is null || geometry.ComputationOnly && key.ExecutionClass == "GPU" ||
+            !FamilyPhysicalQuote.AdmittedRequest(geometry) || geometry.PrivateInput || geometry.PrivateOutput ||
             geometry.CompactInput != key.CompactInput || geometry.MeanInputPopulation < 1) return null;
         if (_completeCalls.Quote(key, geometry, sourceSurvival, out string? selectorGap) is { } complete)
             return complete with { Evidence = complete.Evidence + AssetEvidence };
-        var row = Find(_byKey, key.StableKey, geometry.MeanInputPopulation);
+        var row = Find(_byKey, key.PriceKey, geometry.MeanInputPopulation);
         // A Dense interval is an explicit finite fit over measured N=span
         // endpoints, not permission to infer span from Compact mean population.
         // Exact rows win even when an interval also covers this geometry.
@@ -131,6 +135,7 @@ internal sealed class FamilyCanonicalCostSnapshot
             row.SetupMilliseconds, FamilyCanonicalMeasuredCost.Boundary + ";AbsoluteFiniteReference;" + row.Evidence +
             $";ActualMeasurementCadence={row.MeasurementCadence};CurrentCadenceAdmission={(key.ExecutionClass == "CPU" ? "CpuCadenceUnrestricted" : "ExplicitLiveMainLoop")}" +
             $";RootSpanMode={row.RootSpanMode};ActualRootWindow={key.RootWindow};MeasuredInputRange={row.MinimumInputs:G17}..{row.MaximumInputs:G17};FitMethod={row.FitMethod};TrainingRowsSha256={row.TrainingRowsSha256};NoPeakRatio;NoSameRunRepricing" +
+            BudgetEvidence(key, row.Key) +
             (selectorGap is null ? "" : ";NewCompleteCallCurveUnavailable=" + selectorGap + ";LegacyFiniteReferenceFallback") + AssetEvidence,
             OutputElementBytes: 8, OutputAlreadyOrdered: true,
             PublicTransportClass: key.ExecutionClass == "CPU" ? "CpuOrderedAbi1" : "CompleteCanonicalAbi1")
@@ -139,6 +144,11 @@ internal sealed class FamilyCanonicalCostSnapshot
             ReferencePeakThroughput = 0, GpuCostRatio = 1, LocalExecutorCostRatio = 1
         };
     }
+
+    internal static string BudgetEvidence(FamilyCanonicalCostKey requested, FamilyCanonicalCostKey measured) =>
+        requested.HasBudgetIndependentGpuWork
+            ? $";WorkerBudgetScope=IndependentSoloNGpuInvoke;MeasuredRequestWorkers={measured.ConfiguredWorkers};RequestedWorkers={requested.ConfiguredWorkers};CpuAndExactExcluded;"
+            : "";
 
     private static FamilyCanonicalCostReferenceRow? Find(
         IReadOnlyDictionary<string, FamilyCanonicalCostReferenceRow[]> index, string key, double inputs) =>
@@ -159,6 +169,11 @@ internal static class FamilyCanonicalMeasuredCost
     private static readonly Lazy<FamilyCanonicalCostSnapshot> Reference = new(() =>
         FamilyAuxiliaryEvidence.Read(nameof(FamilyCanonicalMeasuredCost), "LoadFiniteCanonicalReference",
             LoadReference, new FamilyCanonicalCostSnapshot([])));
+
+    internal static (double Ratio, string Evidence) CpuWorkerRatio(string family, int workers, bool compact) =>
+        FamilyAuxiliaryEvidence.Read(nameof(FamilyCanonicalMeasuredCost), "CpuWorkerReferenceRatio",
+            () => Reference.Value.CpuWorkerRatio(family, workers, compact),
+            (Ratio: 1d, Evidence: "WorkerScale=UnavailableConservativeP1"));
 
     private static FamilyCanonicalCostSnapshot LoadReference()
     {
@@ -194,6 +209,7 @@ internal static class FamilyCanonicalMeasuredCost
         NeowFamily neow => neow.PricingRequest,
         MerchantShopColorlessFamily shop => shop.PricingRequest,
         RelicFamily relic => relic.PricingRequest,
+        CapsuleRelicFamily capsule => capsule.PricingRequest,
         CombatRewardFamily combat => combat.PricingRequest,
         WorldFamily world => world.PricingRequest,
         AncientOptionFamily ancient => ancient.PricingRequest,
@@ -205,8 +221,7 @@ internal static class FamilyCanonicalMeasuredCost
     // separate ordinary E/W and additional initial-room R/W calls.
     internal static bool InScope(ExactSearchExecutionRequest request, IFamilyInvocation family)
     {
-        if (request.Authority.PlayersCount != 1 || request.CompiledSearch.Context.Party is not null ||
-            request.CompiledSearch.NormalizedQuery.StandardMaps.Count != 0)
+        if (request.Authority.PlayersCount != 1 || request.CompiledSearch.Context.Party is not null)
             return false;
         IFamilyInvocation owner = family is FamilyCpuExecution cpu ? cpu.PricingOwner ?? family : family;
         return owner switch
@@ -214,6 +229,7 @@ internal static class FamilyCanonicalMeasuredCost
             NeowFamily n => n.Coverage.Count == 1,
             MerchantShopColorlessFamily => true,
             RelicFamily => true,
+            CapsuleRelicFamily => true,
             CombatRewardFamily => true,
             TransformationAggregateFamily => true,
             AncientOptionFamily => true,
@@ -227,7 +243,8 @@ internal static class FamilyCanonicalMeasuredCost
         int rootPopulation, IReadOnlySet<string>? passedCoverage = null)
     {
         var request = SourceRequest(family);
-        if (request is null || !InScope(request, family) || geometry.PrivateInput || geometry.PrivateOutput) return null;
+        if (request is null || !InScope(request, family) || geometry.PrivateInput || geometry.PrivateOutput ||
+            geometry.ComputationOnly && family.ConditionPerformance.UsesGpu) return null;
         if (family is FamilyCpuExecution { RequiredPassedCoverage: { } required } &&
             (passedCoverage is null || !required.SetEquals(passedCoverage))) return null;
         if (Reference.Value.IsEmpty) return null;
@@ -276,6 +293,7 @@ internal static class FamilyCanonicalMeasuredCost
     // own root count; Compact callers must use the explicit rootPopulation API.
     internal static FamilyPhysicalQuote? TryDenseQuote(IFamilyInvocation family, FamilyPhysicalQuoteRequest geometry)
     {
+        if (geometry.ComputationOnly && family.ConditionPerformance.UsesGpu) return null;
         double n = geometry.MeanInputPopulation;
         return geometry.CompactInput || !double.IsFinite(n) || n < 1 || n > 16777216 || n != Math.Truncate(n)
             ? null : TryQuote(family, geometry, (int)n);

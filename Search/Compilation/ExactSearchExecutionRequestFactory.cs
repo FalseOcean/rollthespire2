@@ -18,6 +18,16 @@ namespace RolltheSpire2.Search.Compilation;
 /// </summary>
 public static class ExactSearchExecutionRequestFactory
 {
+    // Party ForPlayer is also used during per-candidate Exact evaluation. The
+    // necessary-condition preparation belongs to the immutable compiled input,
+    // rather than being rebuilt for each seed or copied from another player.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<CompiledSearch,
+        Lazy<VariantOpeningPreparation>> VariantOpeningPreparations = new();
+
+    private static VariantOpeningPreparation PrepareVariantOpening(CompiledSearch compiled) =>
+        VariantOpeningPreparations.GetValue(compiled, static source => new Lazy<VariantOpeningPreparation>(
+            () => VariantOpeningPreparation.Prepare(source), LazyThreadSafetyMode.ExecutionAndPublication)).Value;
+
     internal static ExactSearchExecutionRequest ForPlayer(ExactSearchExecutionRequest parent, CompiledSearch player)
     {
         var projection = CompiledSearchEvaluationProjector.Project(player);
@@ -27,13 +37,14 @@ public static class ExactSearchExecutionRequestFactory
             throw new InvalidOperationException("Party.PlayerProjection:" + string.Join(",", projection.Diagnostics));
         return new(player, parent.RunOptions, parent.CanonicalStartSeed, parent.ResolvedScanCount,
             projection.Evaluation, BuildCombatRewardRoutePolicy(player), player.SemanticFingerprint)
-        { ExactOptions = ShionExactTrialOptions.Off };
+        { ExactOptions = ShionExactTrialOptions.Off, VariantOpening = PrepareVariantOpening(player) };
     }
 
     public static ExactSearchExecutionCompileResult Compile(CompiledSearch compiled, SearchRunOptions runOptions)
     {
         ArgumentNullException.ThrowIfNull(compiled);
         ArgumentNullException.ThrowIfNull(runOptions);
+        runOptions = runOptions with { MapLossy = (runOptions.MapLossy ?? MapLossyOptions.Default).Normalize() };
 
         SearchContext context = compiled.Context;
         RuntimeVersionResolution compatibility = RuntimeProfileRegistry.Resolve(context.Detection);
@@ -72,6 +83,16 @@ public static class ExactSearchExecutionRequestFactory
         if (runOptions.ScanCount <= 0) return Reject(SearchDisposition.Unsupported, "ScanCountMustBePositive");
         if (runOptions.TargetMatchCount <= 0) return Reject(SearchDisposition.Unsupported, "TargetMatchCountMustBePositive");
         if (runOptions.WorkerCount is < 1 or > 64) return Reject(SearchDisposition.Unsupported, "WorkerCountOutsideSupportedRange");
+        if (runOptions.ManualFamilyOrder is { Count: > 0 } manualOrder)
+        {
+            if (manualOrder.Any(string.IsNullOrWhiteSpace) ||
+                manualOrder.Distinct(StringComparer.Ordinal).Count() != manualOrder.Count)
+                return Reject(SearchDisposition.Unsupported, "ManualFamilyOrder.InvalidOrDuplicateUnit");
+            // The request owns its order: subsequent draft edits cannot change a
+            // compiled attempt, its replay workload, or startup planning.
+            runOptions = runOptions with { ManualFamilyOrder = Array.AsReadOnly(manualOrder.ToArray()) };
+        }
+        else runOptions = runOptions with { ManualFamilyOrder = null };
         if (!profile.TryCanonicalizeSeed(runOptions.StartSeed, out string canonicalStart, out string seedIssue))
             return Reject(SearchDisposition.Unsupported, "InvalidStartSeed:" + seedIssue);
 
@@ -102,15 +123,20 @@ public static class ExactSearchExecutionRequestFactory
         // mistaken for a query-wide mismatch before any seed is observed.
 
         CombatRewardRoutePolicyContract rewardPolicy = BuildCombatRewardRoutePolicy(compiled);
-        string fingerprint = Fingerprint(new[]
+        string[] fingerprintParts =
         {
             "family-execution-s0", compiled.SemanticFingerprint, compatibility.EvidenceCode,
             canonicalStart, resolvedScanCount.ToString(), runOptions.TargetMatchCount.ToString(),
             runOptions.WorkerCount.ToString(), rewardPolicy.ExactPolicy.ToString()
-        });
+        };
+        if (runOptions.ManualFamilyOrder is { } order)
+            fingerprintParts = [..fingerprintParts, "ManualFamilyOrder:" + string.Join('|', order)];
+        if (runOptions.MapLossy.Enabled)
+            fingerprintParts = [..fingerprintParts, "MapLossy:" + runOptions.MapLossy.Identity];
+        string fingerprint = Fingerprint(fingerprintParts);
         var request = new ExactSearchExecutionRequest(
             compiled, runOptions, canonicalStart, resolvedScanCount, evaluation, rewardPolicy, fingerprint)
-        { ExactOptions = ShionExactTrialOptions.CaptureEnvironment() };
+        { ExactOptions = ShionExactTrialOptions.CaptureEnvironment(), VariantOpening = PrepareVariantOpening(compiled) };
         return ExactSearchExecutionCompileResult.Accepted(PrepareRewardPools(request));
     }
 

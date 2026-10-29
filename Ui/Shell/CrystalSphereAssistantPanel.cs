@@ -49,7 +49,6 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
         _preferences=SearchWorkspace.Open(OS.GetUserDataDir());
         var preferences=_preferences.Preferences;
         MainPanelTheme.SelectFont(preferences.FontChoice);
-        UiAppearance.Initialize(preferences.Appearance);
         Theme=MainPanelTheme.Create();
         _language=RolltheSpire2.Ui.Settings.UiLanguagePreferences.Resolve(preferences.LanguageOverride);
         _text=JsonUiTextProvider.CreatePredictorUi13(_language); _names=RuntimeGameContentNameResolver.Create(_language);

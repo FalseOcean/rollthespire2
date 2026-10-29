@@ -60,7 +60,7 @@ internal sealed partial class InRunMapNodePresenter
     {
         Synchronize();
         if (_details.TryGetValue(location, out var cached)) return cached;
-        if (Current(location) is not { } context) return TerminalDetail(location);
+        if (Current(location) is not { } context) return FaultDetail(location) ?? TerminalDetail(location);
         var node = context.Node;
         var sections = node.Event != null ? new List<InRunMapDetailSection>() :
             RewardSections(context, node.Rewards, RewardWriter(context)).ToList();
@@ -206,6 +206,7 @@ internal sealed partial class InRunMapNodePresenter
 
     internal bool ApplyChoice(string nodeId, string choiceId)
     {
+        if (_faultChoices.ContainsKey(choiceId)) return ApplyFaultChoice(nodeId, choiceId);
         if (_terminalDiagnosticChoices.TryGetValue(choiceId, out var terminal))
         {
             if (terminal.Revision != _session.Revision || terminal.RequestNodeId != nodeId ||
@@ -248,7 +249,7 @@ internal sealed partial class InRunMapNodePresenter
         foreach (var key in _eventPotionDrafts.Keys.Where(k => k.Seed != seed || !liveIds.Contains(k.NodeId + "|")).ToArray())
             _eventPotionDrafts.Remove(key);
     }
-    private void Invalidate() { _details.Clear(); _editors.Clear(); _choices.Clear(); _fields.Clear(); _terminalDiagnosticChoices.Clear(); }
+    private void Invalidate() { _details.Clear(); _editors.Clear(); _choices.Clear(); _fields.Clear(); _terminalDiagnosticChoices.Clear(); _faultChoices.Clear(); }
     internal void DiscardNodeProjection((int ActIndex, MapPosition Point) location)
     {
         _details.Remove(location); _editors.Remove(location);
@@ -298,6 +299,15 @@ internal sealed partial class InRunMapNodePresenter
         result = (int)number; return true;
     }
     private static bool SameReward(PredictorReward a, PredictorReward b) => a.Kind == b.Kind && a.Origin == b.Origin && a.Key == b.Key;
+    // An offer binding proves the opportunity and its card identities. It does
+    // not promote its explicitly masked enchantments to complete card facts.
+    private static PredictorReward? RewardOffer(PredictorCombatRewardKnowledge knowledge) =>
+        knowledge.OfferBinding?.Value ?? (knowledge.IsKnown ? knowledge.Value : null);
+    private InRunMapDetailObject RewardCardObject(PredictorCombatRewardKnowledge knowledge, PredictorCard card, int index) =>
+        knowledge.CardOptions.ElementAtOrDefault(index) is { IsKnown: false }
+            ? new(card.Key, GameContentKind.Card, card.UpgradeLevel,
+                _names.Resolve(card.Key, GameContentKind.Card) + " · " + M("card_enchantments_unresolved"))
+            : Object(card);
     private static bool SameRewardChoice(PredictorPlannedRewardChoice? saved, PredictorPlannedRewardChoice current) =>
         saved != null && SameReward(saved.ExpectedReward, current.ExpectedReward) && saved.Occurrence == current.Occurrence;
     private static PredictorPlannedNode WithReward(PredictorPlannedNode plan, PredictorPlannedRewardChoice choice)
@@ -317,7 +327,7 @@ internal sealed partial class InRunMapNodePresenter
                 var plan = c.Plan.Event!;
                 int index = plan.Actions.FindIndex(action => SameRewardChoice(action.RewardChoice ?? action.Obtain?.Reward, choice));
                 if (index >= 0 || c.Node.Event?.NeededInput == PredictorEventNeededInput.Rewards ||
-                    c.Node.Event?.Rewards.Any(reward => reward.Value is { } value && SameReward(value, choice.ExpectedReward) &&
+                    c.Node.Event?.Rewards.Any(reward => RewardOffer(reward) is { } value && SameReward(value, choice.ExpectedReward) &&
                         reward.Occurrence == choice.Occurrence && (reward.DefaultSkipped || reward.AppliedChoice != null)) == true)
                     return Set(c, EventRewardPlan(c, choice));
                 return RequiredRoomChild(c.Node)?.Phase == PredictorPhase.Rewards && AddObtain(c,
@@ -366,14 +376,14 @@ internal sealed partial class InRunMapNodePresenter
             var knowledge = rewards[r];
             Func<Context, PredictorPlannedRewardChoice, bool>? writeReward = knowledge.CompletedEdit is { } completed
                 ? (c, choice) => Set(c, PredictorRun.ApplyCompletedRewardChoice(c.Plan, completed, choice)) : write;
-            if (!knowledge.IsKnown || knowledge.Value is not { } reward)
+            if (RewardOffer(knowledge) is not { } reward)
             {
                 if (!knowledge.CardOptions.IsEmpty)
                 {
                     string pending = M("card_enchantments_unresolved");
                     if (detailed) pending += "\n" + string.Join("\n", DiagnosticPendingLines(knowledge.PendingCauses));
                     yield return new(R("reward." + knowledge.Kind), pending,
-                        knowledge.CardOptions.Select(option => Object(option.Value)).ToArray(), [])
+                        knowledge.CardOptions.Select((option, index) => RewardCardObject(knowledge, option.Value, index)).ToArray(), [])
                     { StableId = RewardSectionId(context, knowledge, r), LargeCardResults = knowledge.Kind == PredictorRewardKind.Card };
                     continue;
                 }
@@ -384,10 +394,11 @@ internal sealed partial class InRunMapNodePresenter
                 continue;
             }
             int occurrence = knowledge.Occurrence >= 0 ? knowledge.Occurrence :
-                rewards.Take(r).Count(k => k.Value is { } prior && SameReward(prior, reward));
+                rewards.Take(r).Count(k => RewardOffer(k) is { } prior && SameReward(prior, reward));
             // Only the core's replay receipt can style a choice as accepted.
             var old = knowledge.AppliedChoice;
-            var objects = reward.Kind is PredictorRewardKind.Card or PredictorRewardKind.SpecialCard ? reward.Cards.Select(Object).ToArray() :
+            var objects = reward.Kind is PredictorRewardKind.Card or PredictorRewardKind.SpecialCard ?
+                reward.Cards.Select((card, index) => RewardCardObject(knowledge, card, index)).ToArray() :
                 reward.Kind is PredictorRewardKind.Relic or PredictorRewardKind.Potion ? new[] { Object(reward.Key) } : [];
             string text = reward.Kind == PredictorRewardKind.Gold ? "+" +
                 (reward.GoldAmountUnspecified ? R("gold_recovered_unexpanded") : reward.GoldAmount.ToString()) : "";
@@ -399,6 +410,8 @@ internal sealed partial class InRunMapNodePresenter
                 text += " · " + M("planned_choice");
             else if (reward.Status == PredictorRewardStatus.Skipped) text += " · " + R("skip");
             else if (old == null && reward.Kind is PredictorRewardKind.Card or PredictorRewardKind.SpecialCard) text += " · " + M("unselected");
+            if (!knowledge.IsKnown && !knowledge.CardOptions.IsEmpty)
+                text += "\n" + M("card_enchantments_unresolved");
             var alternativeCauses = PendingLines(knowledge.Alternatives.SelectMany(alternative => alternative.PendingCauses)).ToArray();
             if (alternativeCauses.Length != 0) text += "\n" + string.Join("\n", alternativeCauses);
             var choices = new List<InRunMapDetailChoice>();
@@ -414,8 +427,9 @@ internal sealed partial class InRunMapNodePresenter
                         bool selected = old is { Skip: false, SacrificeRelicId: null } && old.CardIndex == index;
                         bool cancelTake = selected && reward.CanSkip && !reward.Mandatory;
                         choices.Add(RewardChoice(context, R(cancelTake ? "cancel" : "plan.take"), knowledge,
-                            CardRewardChoice(reward, occurrence, old, index), writeReward, cancelTake ? "CANCEL_TAKE" : "TAKE",
-                            Object(reward.Cards[card]), selected: selected, cancelTake: cancelTake));
+                            CardRewardChoice(reward, occurrence, old, knowledge.OfferBinding, index), writeReward, cancelTake ? "CANCEL_TAKE" : "TAKE",
+                            RewardCardObject(knowledge, reward.Cards[card], card),
+                            enabled: cancelTake || knowledge.IsKnown || knowledge.CanChooseCard(index), selected: selected, cancelTake: cancelTake));
                     }
                 else if (detailed && reward.Kind == PredictorRewardKind.Relic)
                     choices.Add(Choice(context, M("take_reward"), c => writeReward(c, new(reward, occurrence)), selected: old is { Skip: false }));
@@ -425,14 +439,15 @@ internal sealed partial class InRunMapNodePresenter
                 if (detailed && reward.Kind is not (PredictorRewardKind.Gold or PredictorRewardKind.Card or PredictorRewardKind.SpecialCard) &&
                     reward.CanSkip && !reward.Mandatory && rootReward)
                     choices.Add(RewardChoice(context, R("plan.skip"), knowledge,
-                        CardRewardChoice(reward, occurrence, old, skip: true), writeReward, "SKIP", selected: old?.Skip == true));
+                        CardRewardChoice(reward, occurrence, old, knowledge.OfferBinding, skip: true), writeReward, "SKIP", selected: old?.Skip == true));
                 foreach (var alternative in knowledge.Alternatives.Where(alternative => alternative.Key is "REROLL" or "SACRIFICE"))
                 {
                     bool reroll = alternative.Key == "REROLL";
                     bool chosen = reroll ? old?.Reroll == true : old?.SacrificeRelicId == alternative.RelicId;
                     choices.Add(RewardChoice(context, R("alternative." + alternative.Key), knowledge,
                         chosen ? new(old!.ExpectedReward, occurrence) : new(old?.ExpectedReward ?? reward, occurrence)
-                        { Reroll = reroll, SacrificeRelicId = reroll ? null : alternative.RelicId }, writeReward, alternative.Key,
+                        { Reroll = reroll, SacrificeRelicId = reroll ? null : alternative.RelicId,
+                            UnresolvedEnchantmentIndices = old?.UnresolvedEnchantmentIndices ?? knowledge.OfferBinding?.UnresolvedEnchantmentIndices ?? [] }, writeReward, alternative.Key,
                         enabled: alternative.IsKnown, selected: chosen, cancelAlternative: chosen));
                 }
                 if (old?.Reroll == true && !knowledge.Alternatives.Any(alternative => alternative.Key == "REROLL"))
@@ -449,13 +464,15 @@ internal sealed partial class InRunMapNodePresenter
         }
     }
     private static string RewardSectionId(Context context, PredictorCombatRewardKnowledge knowledge, int occurrence) =>
-        context.Node.Position.NodeId + "|reward|" + knowledge.Kind + "|" + knowledge.Value?.Origin + "|" +
-        knowledge.Value?.Key + "|" + occurrence + "|" + knowledge.CompletedEdit?.Source;
+        context.Node.Position.NodeId + "|reward|" + knowledge.Kind + "|" + RewardOffer(knowledge)?.Origin + "|" +
+        RewardOffer(knowledge)?.Key + "|" + occurrence + "|" + knowledge.CompletedEdit?.Source;
     private static PredictorPlannedRewardChoice CardRewardChoice(PredictorReward displayed, int occurrence,
-        PredictorPlannedRewardChoice? applied, int? card = null, bool skip = false) =>
+        PredictorPlannedRewardChoice? applied, PredictorRewardOfferBinding? binding, int? card = null, bool skip = false) =>
         applied?.Reroll == true ? new(applied.ExpectedReward, occurrence, card, skip)
-        { Reroll = true, ExpectedRerolledReward = displayed } :
-        new(applied?.ExpectedReward ?? displayed, occurrence, card, skip);
+        { Reroll = true, ExpectedRerolledReward = displayed,
+            UnresolvedEnchantmentIndices = applied.UnresolvedEnchantmentIndices } :
+        new(applied?.ExpectedReward ?? displayed, occurrence, card, skip)
+        { UnresolvedEnchantmentIndices = applied?.UnresolvedEnchantmentIndices ?? binding?.UnresolvedEnchantmentIndices ?? [] };
     private HealthDraft Health(Context c, string role, PredictorEventHealthFact? initial = null)
     {
         string key = c.Node.Position.NodeId + "|" + role + "|" + c.Node.Model;
@@ -472,12 +489,13 @@ internal sealed partial class InRunMapNodePresenter
     }
     private void CardSelection(Context c, EditorParts parts, string role, ImmutableArray<PredictorCard> cards,
         int minimum, int maximum, Func<Context, ImmutableArray<int>, bool> apply, bool enabled = true,
-        ImmutableArray<int> selectedIndices = default, bool largeCardResults = false)
+        ImmutableArray<int> selectedIndices = default, bool largeCardResults = false,
+        Func<PredictorCard, InRunMapDetailObject>? display = null)
     {
         if (maximum == 1)
         {
             var direct = cards.Select((card, index) => Choice(c, R("plan.take"), context => apply(context, [index]),
-                Object(card), enabled, !selectedIndices.IsDefault && selectedIndices.Contains(index))).ToList();
+                display?.Invoke(card) ?? Object(card), enabled, !selectedIndices.IsDefault && selectedIndices.Contains(index))).ToList();
             if (minimum == 0) direct.Add(Choice(c, R("plan.skip"), context => apply(context, []), enabled: enabled,
                 selected: !selectedIndices.IsDefault && selectedIndices.IsEmpty));
             parts.Sections.Add(new(minimum == 1 ? M("select_one_card") : _text.Format("predictor.runtime.select_cards", minimum, maximum), "", [], direct)
@@ -493,7 +511,7 @@ internal sealed partial class InRunMapNodePresenter
             _selections[key] = draft = new(selectedIndices);
         var selected = draft.Selected;
         var options = cards.Select((card, index) => Choice(c, "", _ => { if (!selected.Add(index)) selected.Remove(index); return true; },
-            Object(card), enabled, selected.Contains(index))).ToList();
+            display?.Invoke(card) ?? Object(card), enabled, selected.Contains(index))).ToList();
         options.Add(Choice(c, R("confirm"), context => apply(context, selected.Order().ToImmutableArray()),
             enabled: enabled && selected.Count >= minimum && selected.Count <= maximum));
         parts.Sections.Add(new(_text.Format("predictor.runtime.select_cards", minimum, maximum), "", [], options)

@@ -82,7 +82,7 @@ internal sealed record FamilySearchEtaProjectionV1(
                $"targetStages={stages};missingEvidence={(MissingEvidence.Count == 0 ? "none" : string.Join('|', MissingEvidence.Select(San)))};" +
                "steadyStateComposition=max(FamilyPipeline,ExactTail)+min(FamilyPipeline,ExactTail)/ExpectedWindowCount;sameBatchFamiliesOrdered=true;" +
                "crossBatchFamilyExactOverlap=true;startupIncluded=false;" +
-               "costBasis=SelectedSingleUnitReferenceOrObservation;geometryFallback=ExplicitReferenceApproximation;" +
+               "costBasis=FamilyComputationPlusSeparateTransportOrApplicableCompleteCall;geometryFallback=ExplicitReferenceApproximation;" +
                "earlyExactEstimate=ExpectedPopulationPerRootWindow;runtimeSurvivalLearning=false;searchAdmissionAffected=false";
     }
 
@@ -253,6 +253,8 @@ internal static class FamilySearchEtaProjectorV1
         int executionWindow = FamilyExecutionCoordinator.ResolveExecutionWindowSize(request, plan.OrderedFamilies);
         var selectedStages = EstimationStages(plan);
         bool privateReference = plan.Stages.Any(stage => stage.Family is AutomaticPrivateSerialInvocation { EstimationStages.Count: > 0 });
+        var costSnapshot = FamilyAuxiliaryEvidence.Read<GpuCostSnapshot?>(nameof(FamilySearchEtaProjectorV1),
+            "TimingCostSnapshot", GpuCostCalibration.Capture, null);
         var totals = selectedStages.Select(stage => new StageTotal(stage,
             stage.Survival ?? (selectedStages.Count == 1 ? plan.EstimatedTerminalSurvival : null))).ToArray();
         bool earlyExact = plan.AllowSmallCandidateExact && !request.RunOptions.SkipExactValidation;
@@ -299,38 +301,18 @@ internal static class FamilySearchEtaProjectorV1
                 }
                 else
                 {
-                    var price = FamilyCanonicalMeasuredCost.TryStage(stage.Family, rootPopulation, inputFraction,
-                        stage.CompactAbi1Input, rootPopulation, passedCoverage);
-                    FamilyUnitCost? partyPrice = null;
-                    if (price is null && stage.Family is PartyFamily or NeowFamily.PartyInitial)
-                    {
-                        double reach = SearchPredictabilityMath.ProbabilityAtLeastOne(inputFraction, rootPopulation);
-                        double inputs = population / reach;
-                        partyPrice = stage.Family is PartyFamily party
-                            ? party.QuoteUnit(inputs, stage.CompactAbi1Input, passedCoverage)
-                            : ((NeowFamily.PartyInitial)stage.Family).QuoteUnit(inputs, stage.CompactAbi1Input);
-                        if (partyPrice is not null) partyPrice = partyPrice with { Milliseconds = partyPrice.Milliseconds * reach };
-                    }
-                    if (price is not null || partyPrice is not null)
-                    {
-                        time = price?.Milliseconds ?? partyPrice!.Milliseconds;
-                        total.Source = FamilyPerformanceEvidenceSource.Condition;
-                        costEvidence = price?.Evidence ?? partyPrice!.Evidence;
-                    }
-                    else
-                    {
-                        double reference = stage.Performance.CurrentQueryReference;
-                        bool referenceApplies = stage.Performance.PhysicalImplementationRevision ==
-                            stage.Family.ResolveConditionPerformance(stage.CompactAbi1Input).PhysicalImplementationRevision &&
-                            (stage.Family is not FamilyCpuExecution { RequiredPassedCoverage: { } required } ||
-                                required.SetEquals(passedCoverage));
-                        time = referenceApplies && reference > 0d && double.IsFinite(reference)
-                            ? FamilyPerformanceProjectionMath.ExpectedMilliseconds(population, reference) : null;
-                        costEvidence = time.HasValue
-                            ? "ReferenceGeometryApproximation;SelectedUnitReferenceScaledByExpectedInputs;NotMeasuredAtThisGeometry;" + stage.Performance.Evidence
-                            : "SelectedUnitReferenceUnavailable;NoBodyWorkerOrDeviceSubstitution;ReferenceScopeMatched=" + referenceApplies + ";PhysicalRevision=" +
-                                stage.Performance.PhysicalImplementationRevision + ";" + stage.ConditionPerformance.Evidence + ";" + stage.Performance.Evidence;
-                    }
+                    double reach = SearchPredictabilityMath.ProbabilityAtLeastOne(inputFraction, rootPopulation);
+                    double inputs = population / reach;
+                    var geometry = new FamilyPhysicalQuoteRequest(stage.CompactAbi1Input,
+                        privateReference && index < selectedStages.Count - 1, inputs,
+                        PrivateInput: privateReference && index > 0);
+                    var price = FamilyPhysicalQuote.CompleteCall(stage.Family, geometry, costSnapshot, survival,
+                        passedCoverage, rootPopulation, inputFraction, includeInvokeOverhead: !privateReference || index == 0,
+                        privateInvocation: privateReference, correlationId: request.SnapshotFingerprint);
+                    time = price?.Milliseconds;
+                    total.Source = price?.Source ?? FamilyPerformanceEvidenceSource.Reference;
+                    costEvidence = price?.Evidence ??
+                        "SelectedUnitComputationUnavailable;NoBodyWorkerOrDeviceSubstitution;NoCompleteCallSubstitution";
                 }
                 if (!time.HasValue || !double.IsFinite(time.Value) || time.Value < 0)
                 {
@@ -347,7 +329,7 @@ internal static class FamilySearchEtaProjectorV1
                 total.Inputs += repetitions * population;
                 total.Outputs += repetitions * output;
                 total.Evidence.Add(fragment + (privateReference
-                    ? "SelectedPublicUnitReferenceForPrivateTransport;PrivateTransportOverheadNotMeasured;NoPrivateChainQuote;" : "") + costEvidence);
+                    ? "SelectedFamilyComputationWithSeparatePrivateTransferEnvelope;PrivateTransportOverheadNotMeasured;NoPrivateChainQuote;" : "") + costEvidence);
                 population = output;
                 inputFraction *= survival;
                 passedCoverage.UnionWith(stage.Coverage);
@@ -470,10 +452,10 @@ internal static class FamilyExactTimingDomains
 
     private static bool MapOnly(SearchQuery query)
     {
-        if (query.StandardMaps.Count == 0 || query.Players.Count is not (0 or 2 or 3 or 4) ||
+        if ((query.StandardMaps.Count == 0 && query.StandardMapRoutes.Count == 0) || query.Players.Count is not (0 or 2 or 3 or 4) ||
             query.Players.Any(p => !p.Offers.IsEmpty || p.SelectedOption is not null || p.Results.Count > 0 ||
                 JsonSerializer.Serialize(p.Conditions) != JsonSerializer.Serialize(SearchQuery.Empty))) return false;
-        SearchQuery withoutMap = query with { StandardMaps = [], Players = [] };
+        SearchQuery withoutMap = query with { StandardMaps = [], StandardMapRoutes = [], Players = [] };
         return JsonSerializer.Serialize(withoutMap) == JsonSerializer.Serialize(SearchQuery.Empty);
     }
 
@@ -490,7 +472,7 @@ internal static class FamilyExactTimingDomains
     {
         if (request.CompiledSearch.Context.Party is not { } party)
         {
-            if (request.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0)
+            if (request.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0 || request.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count > 0)
                 return MapOnly(request.CompiledSearch.NormalizedQuery)
                     ? SearchVerificationFamily.MapOnly
                     : request.Evaluation.RequiresNormalCombatRewardDomain
@@ -498,7 +480,7 @@ internal static class FamilyExactTimingDomains
                         : SearchVerificationFamily.MapMixedWithoutReward;
             return SearchPredictabilityVerificationStore.ResolveFamily(QueryDomains(request));
         }
-        bool map = request.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0;
+        bool map = request.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0 || request.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count > 0;
         bool reward = request.CompiledSearch.NormalizedQuery.Players.Any(p => p.Conditions.HasCombatRewardConstraints);
         return (party.Players.Count, map, reward) switch
         {

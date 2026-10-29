@@ -71,6 +71,7 @@ internal sealed partial class InRunMapPredictionPanel : Control
         _map.AddChild(_ink);
         GetWindow().FocusExited += CancelStroke;
         InitializeInformation();
+        InitializeCollectionPicker();
         _forecastStatus.AddThemeColorOverride("font_outline_color", Colors.Black);
         _forecastStatus.AddThemeConstantOverride("outline_size", 4);
         UpdateStatus(); AlignStatus();
@@ -98,6 +99,7 @@ internal sealed partial class InRunMapPredictionPanel : Control
     {
         if (!_featureEnabled) return;
         RefreshLocalization();
+        UpdateCollectionPicker();
         AlignStatus();
         if (!_screen.IsOpen || !IsVisibleInTree()) return;
         if (!ActiveScreenContext.Instance.IsCurrent(_screen))
@@ -213,7 +215,7 @@ internal sealed partial class InRunMapPredictionPanel : Control
     {
         if (_forecastStatus == null) return;
         var draft = DisplayedDraft;
-        _forecastStatus.Text = _predictionFault != null ? _text.Get("predictor.map.information_failed") + " · " + _predictionFault :
+        _forecastStatus.Text = _predictionFault != null ? _text.Get(_predictionFault) :
             _message != null ? _text.Get(_message) : draft?.IsCompatible == false ? _text.Get("predictor.map.incompatible") :
             _prediction.WaitingForBoundary && _prediction.Snapshot == null ? _text.Get("predictor.map.waiting_boundary") : "";
         _forecastStatus.Visible = _forecastStatus.Text.Length > 0 && _featureEnabled && _screen.IsOpen;
@@ -228,6 +230,7 @@ internal sealed partial class InRunMapPredictionPanel : Control
 
     private bool IsMapArea(Vector2 global)
     {
+        if (CollectionPickerBlocksMap(global)) return false;
         if (!_screen.GetGlobalRect().HasPoint(global) || _details?.BlocksMapInput(global) == true) return false;
         foreach (string path in new[] { "%DrawingTools", "%MapLegend", "Back", "%ShareButton" })
             if (_screen.GetNodeOrNull<Control>(path) is { } control && control.IsVisibleInTree() && control.GetGlobalRect().HasPoint(global)) return false;

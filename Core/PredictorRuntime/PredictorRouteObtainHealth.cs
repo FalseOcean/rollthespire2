@@ -118,7 +118,8 @@ internal sealed partial class PredictorRun
             PredictorObtainHealthEffectKind kind, int amount)
         {
             AddDependency(_dependencies, new(cause)
-            { ChangedRelicEntries = [], ChangedRelicStateEntries = (cause.AffectedDomains & PredictorCombatDomain.Relics) != 0 ? ["LIZARD_TAIL"] : [] });
+            { ChangedRelicEntries = [], ChangedRelicStateEntries = (cause.AffectedDomains & PredictorCombatDomain.Relics) != 0 ? ["LIZARD_TAIL"] : [],
+                ChangesPersonalRelicBag = false, ChangesSharedRelicBag = false });
             Facts.RecordUnknown("health.obtain.outcome." + occurrence, cause.NodeId!, PredictorRouteFactPhase.After,
                 [cause], origin: PredictorKnowledgeOrigin.ApprovedDefault, operation: source.Serialized + ":" + kind + ":" + amount);
         }

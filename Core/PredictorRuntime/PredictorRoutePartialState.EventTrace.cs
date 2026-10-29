@@ -20,6 +20,7 @@ internal sealed partial class PredictorRun
         {
             if (source == null) return;
             Deck = source.Deck;
+            _knownRewardCardIds.UnionWith(source._knownRewardCardIds);
             // These values are immutable provenance. Copy their dictionaries,
             // so inherited deck alternatives retain their real causes without
             // allowing this branch to register choices on the parent owner.

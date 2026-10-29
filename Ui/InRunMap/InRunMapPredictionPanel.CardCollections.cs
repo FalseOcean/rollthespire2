@@ -46,6 +46,7 @@ internal sealed partial class InRunMapPredictionPanel
 
     private void RefreshOverviewCardCollection()
     {
+        UpdateCollectionPicker();
         // Reproject published observations only. Neither this preference nor
         // its future picker owns route plans, forecast execution or real RNG.
         if (_overview != null && IsInstanceValid(_overview) && _featureEnabled && PredictionEnabled && _screen.IsOpen)

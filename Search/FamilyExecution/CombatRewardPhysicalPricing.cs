@@ -91,6 +91,9 @@ internal static class CombatRewardPhysicalPricing
         bool localD3d12 = !cpu && device.RenderingBackend == "d3d12" &&
             device.GpuIdentity.Contains("RTX 4060 Laptop GPU", StringComparison.OrdinalIgnoreCase);
         bool vulkan = device.RenderingBackend == "vulkan";
+        // The historical Vulkan slope includes a sync allowance; it cannot
+        // establish numerical/device c. Its full-call reference stays readable.
+        if (!cpu && geometry.ComputationOnly && !localD3d12) return null;
         if(cpu ? geometry.PrivateInput || geometry.PrivateOutput || geometry.CompactInput || geometry.MeanInputPopulation<65536 :
             !(localD3d12 || vulkan) || gpu is not {UsesHotLoop:true,Routes:1} ||
             (!localD3d12 && (geometry.PrivateInput || geometry.PrivateOutput || geometry.CompactInput || geometry.MeanInputPopulation<262144)) ||

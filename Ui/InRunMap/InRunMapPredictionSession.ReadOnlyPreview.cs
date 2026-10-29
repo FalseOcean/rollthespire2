@@ -33,7 +33,8 @@ internal sealed partial class InRunMapPredictionSession
         else run.SetRoutePreviewPrefix(act, path);
         var projection = run.PreviewRouteContinuation(plans, maximumNodes: target + 1,
             scope: PredictorRoutePreviewScope.AllModeledNodes, policy: PredictorRoutePreviewPolicy.LiveMapDefaults,
-            allowSelectedPrefixes: true);
+            allowSelectedPrefixes: true, isolateNodeFailures: true);
+        LogForecastFault(projection);
         return projection.Nodes.FirstOrDefault(node => node.Position.NodeId == plan.NodeId);
     }
 }

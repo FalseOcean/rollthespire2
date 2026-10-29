@@ -15,17 +15,20 @@ internal sealed partial class PredictorCrystalReachability
     private sealed class LanguageQuery(ImmutableArray<CrystalRewardOption> selected,ImmutableArray<CrystalRewardOption> candidates)
     {
         internal readonly ImmutableArray<CrystalRewardOption> Selected=selected,Candidates=candidates;
-        internal readonly HashSet<CrystalRewardOption> Attempted=[],Excluded=[];
-        internal readonly ConcurrentQueue<(CrystalRewardOption? Target,CrystalGoalSearchResult Result)> Results=new();
+        internal readonly HashSet<CrystalRewardOption> Attempted=[],Refined=[],Excluded=[];
+        internal readonly ConcurrentQueue<(CrystalRewardOption? Target,CrystalGoalSearchResult Result,bool Refined)> Results=new();
         internal Task? Worker;
         internal CancellationTokenSource? Cancel;
         internal ExceptionDispatchInfo? Failure;
-        internal bool SelectedAttempted,SelectedImpossible;
+        internal bool SelectedAttempted,SelectedImpossible,RootSlotsPrepared;
         internal double Seconds;
         internal long Work,Pruned,Queries,Positives;
     }
     private readonly Dictionary<string,LanguageQuery> _languageQueries=[];
     private LanguageQuery? _activeLanguage;
+    private bool _emptyLanguageTail;
+    private ImmutableArray<CrystalRewardOption> _emptyLanguageExcluded=[];
+    private CrystalDiscoveryProgress _emptyLegacyProgress;
 
     // Observe the task even if its query is cancelled, retargeted or never polled
     // again. Reporting is auxiliary; the original failure remains on the worker.
@@ -73,6 +76,44 @@ internal sealed partial class PredictorCrystalReachability
                 if(focus==null && _table.Candidates.Contains(CrystalRewardOption.AnyRelic) && !selected.Contains(CrystalRewardOption.AnyRelic))
                     candidates=candidates.Add(CrystalRewardOption.AnyRelic);
                 query=new(selected,candidates);_languageQueries.Add(key,query);
+                if(focus==null && selected.IsEmpty && _emptyLanguageTail)
+                {
+                    // These include ordered replay/probe negatives. They belong
+                    // to this exact empty query, never the global conflict set.
+                    query.Excluded.UnionWith(_emptyLanguageExcluded);
+                    query.Work=_emptyLegacyProgress.Examined;query.Pruned=_emptyLegacyProgress.Pruned;
+                    query.Seconds=_emptyLegacyProgress.Seconds;
+                }
+            }
+            if(!query.RootSlotsPrepared)
+            {
+                // Publish every cheap slot contradiction before a queued
+                // candidate or replay projection can consume the first slice.
+                // This pure view never waits for an old compiler's bound lock.
+                if(rootCardSlots)
+                {
+                    if(_offsetBound.RootCardSlotsConflict(selected))
+                    {
+                        RememberConflict(selected.Where(g=>g.Kind==PredictorRewardKind.Card).ToImmutableArray(),"root-card-slots");
+                        query.SelectedAttempted=true;query.SelectedImpossible=true;
+                        query.Excluded.UnionWith(query.Candidates);
+                    }
+                    foreach(var candidate in query.Candidates)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        var goals=selected.Add(candidate);
+                        if(!ConflictsWith(goals) && _offsetBound.RootCardSlotsConflict(goals))
+                        {
+                            RememberConflict(goals.Where(g=>g.Kind==PredictorRewardKind.Card).ToImmutableArray(),"root-card-slots");
+                            // The optional shared conflict cache may be full;
+                            // this completed query-local proof still applies.
+                            query.Excluded.Add(candidate);
+                        }
+                    }
+                }
+                query.Excluded.UnionWith(query.Candidates.Where(c=>ConflictsWith(selected.Add(c))));
+                query.RootSlotsPrepared=true;
+                if(query.Excluded.Count>0) publishExcluded?.Invoke(query.Excluded.ToImmutableArray());
             }
             if(_activeLanguage!=query)
             {
@@ -88,6 +129,7 @@ internal sealed partial class PredictorCrystalReachability
                     var result=item.Result;owner.Queries++;owner.Work+=result.RewardStates+result.GeometryNodes;owner.Pruned+=result.LanguagePruned;
                     var goals=item.Target==null?owner.Selected:owner.Selected.Add(item.Target);
                     if(item.Target==null) owner.SelectedAttempted=true;else owner.Attempted.Add(item.Target);
+                    if(item.Refined && item.Target!=null) owner.Refined.Add(item.Target);
                     if(result.Verdict==CrystalOffsetVerdict.Impossible)
                     {
                         // Replay-order failures are exact ordered-query facts;
@@ -132,11 +174,19 @@ internal sealed partial class PredictorCrystalReachability
             // retained failure is rethrown. A failure is never a retry request.
             Volatile.Read(ref query.Failure)?.Throw();
             var remaining=query.Candidates.Where(c=>!query.Excluded.Contains(c) && !projection.Available.ContainsKey(c)).ToImmutableArray();
+            bool needSelected=!query.SelectedAttempted && projection.SelectedPlan==null;
+            var targets=remaining.Where(c=>!query.Attempted.Contains(c)).ToImmutableArray();
+            // Cheap conclusions get a complete first pass. A two-second cutoff
+            // is not evidence that the retained legacy search is cheaper: some
+            // legal language witnesses need a few more seconds of geometry.
+            // Give each remaining question one bounded refinement before that
+            // fallback. Only completed attempts are remembered, so retargeting
+            // and cancellation cannot silently discard the unfinished question.
+            bool refine=!needSelected && targets.IsEmpty;
+            if(refine) targets=remaining.Where(c=>!query.Refined.Contains(c)).ToImmutableArray();
             if(query.Worker==null && budget>TimeSpan.Zero &&
-                ((!query.SelectedAttempted && projection.SelectedPlan==null) || remaining.Any(c=>!query.Attempted.Contains(c))))
+                (needSelected || !targets.IsEmpty))
             {
-                var targets=remaining.Where(c=>!query.Attempted.Contains(c)).ToImmutableArray();
-                bool needSelected=!query.SelectedAttempted && projection.SelectedPlan==null;
                 query.Cancel=CancellationTokenSource.CreateLinkedTokenSource(token);var workerToken=query.Cancel.Token;
                 string targetContext="selected";
                 string queryContext=$"seed={source.Context.Seed};query={key};selected={string.Join('|',selected)}";
@@ -146,10 +196,10 @@ internal sealed partial class PredictorCrystalReachability
                     {
                         targetContext=target?.ToString()??"selected";
                         var goals=target==null?selected:selected.Add(target);
-                        var result=PredictorCrystalGoalLanguage.Solve(source,_table,goals,avoidCurse,TimeSpan.FromSeconds(2),
+                        var result=PredictorCrystalGoalLanguage.Solve(source,_table,goals,avoidCurse,TimeSpan.FromSeconds(refine?8:2),
                             token:workerToken,sharedBound:_offsetBound,rootCardSlots:rootCardSlots,profileCompilation:ProfileLanguageCompilation);
                         LanguageResultObserved?.Invoke(selected,target,result);
-                        query.Results.Enqueue((target,result));return result.Verdict==CrystalOffsetVerdict.Impossible;
+                        query.Results.Enqueue((target,result,refine));return result.Verdict==CrystalOffsetVerdict.Impossible;
                     }
                     if(needSelected && Solve(null)) return;
                     foreach(var target in targets)
@@ -184,10 +234,25 @@ internal sealed partial class PredictorCrystalReachability
             {
                 // A work limit is not a negative. Preserve the original legal
                 // search frontier for the first still-unresolved ordered query.
-                var target=remaining[0];var fallback=AdvanceFocusedLegacy(selected,target,budget-watch.Elapsed,token);
-                projection=fallback.Projection;
-                if(fallback.Verdict==CrystalFocusVerdict.Unreachable) changed|=query.Excluded.Add(target);
-                query.Work=Math.Max(query.Work,fallback.Progress.Examined);
+                if(focus==null && selected.IsEmpty && _emptyLanguageTail)
+                {
+                    // Failed bounded attempts resume the already retained broad
+                    // cursor and probes, rather than restarting their geometry.
+                    var fallback=AdvanceLegacy(selected,budget-watch.Elapsed,token,publishExcluded);
+                    projection=fallback.Projection;
+                    int prior=query.Excluded.Count;query.Excluded.UnionWith(fallback.ExcludedCandidates);
+                    changed|=query.Excluded.Count!=prior;
+                    query.Work+=Math.Max(0,fallback.Progress.Examined-_emptyLegacyProgress.Examined);
+                    query.Pruned+=Math.Max(0,fallback.Progress.Pruned-_emptyLegacyProgress.Pruned);
+                    _emptyLegacyProgress=fallback.Progress;
+                }
+                else
+                {
+                    var target=remaining[0];var fallback=AdvanceFocusedLegacy(selected,target,budget-watch.Elapsed,token);
+                    projection=fallback.Projection;
+                    if(fallback.Verdict==CrystalFocusVerdict.Unreachable) changed|=query.Excluded.Add(target);
+                    query.Work=Math.Max(query.Work,fallback.Progress.Examined);
+                }
             }
             else if(budget>watch.Elapsed && projection.SelectedPlan==null && !query.SelectedImpossible)
             {

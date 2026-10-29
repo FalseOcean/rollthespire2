@@ -37,7 +37,7 @@ internal static partial class PredictorLiveRunCapture
         if (NativeState.GetValue(__instance) is not RunState run) return;
         try
         {
-            if (InRunFeaturePreferences.CachedMapPredictionEnabled == false)
+            if (!(InRunFeaturePreferences.CachedMapPredictionEnabled ?? InRunFeaturePreferences.MapPredictionEnabled))
             {
                 RuntimeSnapshotThreadGuard.RequireMainThread();
                 // A genuine off-feature entry invalidates the old room's

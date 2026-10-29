@@ -224,7 +224,8 @@ internal static partial class CompatibilityChecks
         Require(n.GenericReplay == generic && i.GenericReplay == generic &&
             i.NumericalVariant == GpuNumericalVariant.IntegerRne &&
             integer!.GpuNumericRequirements == GpuNumericRequirements.Int64 &&
-            integer.QuotePhysicalWork(new(false, false, 4099)) is null, "ExtendedRfullActualVariantAndPrice");
+            (integer.QuotePhysicalWork(new(false, false, 4099)) is not { } rQuote || FamilyCoarsePricing.IsEstimate(rQuote)),
+            "ExtendedRfullActualVariantAndHonestEstimateOrUnknownPrice");
         return new { Family = native!.FamilyId, GenericReplay = generic, NativeRevision = n.Revision(false),
             IntegerRevision = i.Revision(false), i.ConfiguredGenericBagCapacity,
             HistoricalGlobalNextIntPreserved = true, ActualGpuExecutionReceipt = "public-family-parity.json" };
@@ -244,7 +245,8 @@ internal static partial class CompatibilityChecks
             "ExtendedTRequiresNewLeafGenericAndLeafyBonesFullTarget;BaselineExperimentControlsNotApplicable");
         Require(i.NumericalVariant == GpuNumericalVariant.IntegerRne &&
             integer!.GpuNumericRequirements == GpuNumericRequirements.Int64 &&
-            integer.QuotePhysicalWork(new(false, false, 4099)) is null, "ExtendedTActualVariantAndPrice");
+            (integer.QuotePhysicalWork(new(false, false, 4099)) is not { } tQuote || FamilyCoarsePricing.IsEstimate(tQuote)),
+            "ExtendedTActualVariantAndHonestEstimateOrUnknownPrice");
         return new { Family = native!.FamilyId, request.Evaluation.TransformationAggregate!.Opening,
             n.FullTarget, n.BonesOptimized, NativeRevision = n.Revision(false), IntegerRevision = i.Revision(false),
             ActualGpuExecutionReceipt = "public-family-parity.json" };

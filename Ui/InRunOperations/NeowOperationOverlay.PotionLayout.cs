@@ -4,7 +4,7 @@ namespace RolltheSpire2.Ui.InRunOperations;
 
 internal sealed partial class NeowOperationOverlay
 {
-    private readonly record struct PotionGroupLayoutKey(int Count, string Caption, bool Stacked, bool SingleRow, bool HasPrice);
+    private readonly record struct PotionGroupLayoutKey(int Count, string Caption, bool Stacked, bool SingleRow, bool HasPrice, string PotionUseOrder);
     private sealed record PotionGroupLayoutCache(Rect2 Viewport, Rect2 Anchor, Rect2? NativeTip,
         Rect2[] Occupied, PotionGroupLayoutKey[] Groups, float Scale, float Factor, Rect2[]? Regions);
     // One current UI layout only, including an impossible-layout decision.
@@ -13,9 +13,9 @@ internal sealed partial class NeowOperationOverlay
     private float _potionGroupScale = 1f;
 
     // A centered reward can divide the usable screen into several regions.
-    // First retain the viewport's native card size. When all groups cannot fit,
-    // uniformly reduce card size for this potion preview and retry the complete
-    // group plan. A null result explicitly means no attempted plan can fit.
+    // Prefer one complete horizontal row, uniformly shrinking cards as needed.
+    // Only use multiple rows if no single-row plan fits around native controls.
+    // A null result explicitly means no attempted plan can fit.
     internal Rect2[]? PlanPotionGroupRegions(Rect2 viewport, Rect2 anchor,
         IReadOnlyList<Rect2> occupied, Rect2? nativeTextTip)
     {
@@ -31,7 +31,8 @@ internal sealed partial class NeowOperationOverlay
     }
 
     private static PotionGroupLayoutKey PotionGroupKey(CardStack stack) => new(stack.Cards.Length, stack.Caption,
-        stack.Stacked, stack.ForceSingleRow, stack.Price.HasValue);
+        stack.Stacked, stack.ForceSingleRow, stack.Price.HasValue,
+        stack.PotionUseOrder.IsDefaultOrEmpty ? "" : string.Join("|", stack.PotionUseOrder.Select(key => key.Serialized)));
 
     private bool PotionGroupLayoutMatches(Rect2 viewport, Rect2 anchor, IReadOnlyList<Rect2> occupied,
         Rect2? nativeTextTip, float scale)
@@ -52,11 +53,54 @@ internal sealed partial class NeowOperationOverlay
         for (int attempt = 0; attempt < 20; attempt++)
         {
             _potionGroupScale = (20 - attempt) / 20f;
+            var regions = TrySingleRow(scale * _potionGroupScale);
+            if (regions != null) return Remember(regions);
+        }
+        for (int attempt = 0; attempt < 20; attempt++)
+        {
+            _potionGroupScale = (20 - attempt) / 20f;
             var regions = TryAtScale(scale * _potionGroupScale);
             if (regions != null) return Remember(regions);
         }
         _potionGroupScale = 1f;
         return Remember(null);
+
+        Rect2[]? TrySingleRow(float cardScale)
+        {
+            var sizes = _stacks.Select(stack => GroupMetrics(stack, float.PositiveInfinity, cardScale).Size).ToArray();
+            var rowSize = new Vector2(sizes.Sum(size => size.X) + GroupGap * (sizes.Length - 1),
+                sizes.Max(size => size.Y));
+            var safe = new Rect2(viewport.Position + new Vector2(18, 18), viewport.Size - new Vector2(36, 36));
+            if (rowSize.X > safe.Size.X || rowSize.Y > safe.Size.Y) return null;
+            var blockers = occupied.Append(anchor).Concat(nativeTextTip is { } tip ? [tip] : Array.Empty<Rect2>())
+                .Where(rect => rect.Size.X > 0 && rect.Size.Y > 0).Select(rect => rect.Grow(12))
+                .Where(rect => rect.Intersects(safe)).Distinct().ToArray();
+            var xs = blockers.SelectMany(rect => new[] { rect.Position.X - rowSize.X, rect.End.X })
+                .Append(anchor.GetCenter().X - rowSize.X / 2).Append(safe.Position.X).Append(safe.End.X - rowSize.X)
+                .Select(x => Math.Clamp(x, safe.Position.X, safe.End.X - rowSize.X)).Distinct();
+            var ys = blockers.SelectMany(rect => new[] { rect.Position.Y - rowSize.Y, rect.End.Y })
+                .Append(safe.Position.Y).Append(safe.End.Y - rowSize.Y)
+                .Select(y => Math.Clamp(y, safe.Position.Y, safe.End.Y - rowSize.Y)).Distinct().ToArray();
+            Rect2? best = null;
+            float bestScore = float.PositiveInfinity;
+            foreach (float x in xs)
+            foreach (float y in ys)
+            {
+                var row = new Rect2(new Vector2(x, y), rowSize);
+                if (blockers.Any(blocker => blocker.Intersects(row))) continue;
+                float score = row.GetCenter().DistanceSquaredTo(anchor.GetCenter());
+                if (score >= bestScore) continue;
+                best = row; bestScore = score;
+            }
+            if (best is not { } placement) return null;
+            float left = placement.Position.X;
+            return sizes.Select(size =>
+            {
+                var rect = new Rect2(new Vector2(left, placement.Position.Y), size);
+                left += size.X + GroupGap;
+                return rect;
+            }).ToArray();
+        }
 
         Rect2[]? TryAtScale(float cardScale)
         {

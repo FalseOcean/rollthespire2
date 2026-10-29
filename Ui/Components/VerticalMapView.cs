@@ -106,9 +106,7 @@ internal sealed partial class VerticalMapView : Control
             else if (p.Type == MapPointType.Ancient) icon = _ancientIcon;
             else
             {
-                string name = (string?)IconName?.Invoke(null, new object[] { (GamePointType)(int)p.Type })
-                    ?? throw new InvalidOperationException("Vanilla map icon resolver unavailable");
-                icon = ResourceLoader.Load<Texture2D>("res://images/atlases/ui_atlas.sprites/map/icons/" + name + ".tres");
+                icon = ResolveRoomIcon(p.Type);
             }
             if (selected.Contains(p.Position))
             {
@@ -146,7 +144,14 @@ internal sealed partial class VerticalMapView : Control
         AddChild(_strokeLine);
         UpdateStrokeLine();
     }
-    private static ShaderMaterial CreateIconMaterial(Color backgroundColor)
+    internal static Texture2D? ResolveRoomIcon(MapPointType type)
+    {
+        string name = (string?)IconName?.Invoke(null, new object[] { (GamePointType)(int)type })
+            ?? throw new InvalidOperationException("Vanilla map icon resolver unavailable");
+        return ResourceLoader.Load<Texture2D>("res://images/atlases/ui_atlas.sprites/map/icons/" + name + ".tres");
+    }
+
+    internal static ShaderMaterial CreateIconMaterial(Color backgroundColor)
     {
         // Preserve the official initial_color mask. A fresh ShaderMaterial defaults it to
         // black, which recolors the ink instead of the map-paper fill. Do not mutate the

@@ -49,6 +49,7 @@ internal sealed record PredictorShopNodeKnowledge(ImmutableArray<PredictorShopOf
     public ImmutableArray<PredictorPlannedShopAction> ResolvedActions { get; init; } = [];
     public bool AutomaticPurchasesActive { get; init; }
     public ImmutableArray<PredictorObtainChoiceKnowledge> RequiredChoices { get; init; } = [];
+    public ImmutableArray<PredictorRouteCardKnowledge> RemovalCards { get; init; } = [];
     public int? GoldBalance { get; init; }
     public ImmutableArray<PredictorCombatPendingCause> GoldPendingCauses { get; init; } = [];
 }

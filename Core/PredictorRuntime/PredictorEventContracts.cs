@@ -109,7 +109,21 @@ internal sealed partial class PredictorRun
             inputs.Read("potions.localHypothesis", potionInput.OrderedSlots.IsDefault ?
                 "emptySlots=" + potionInput.EmptySlots : string.Join(" | ", potionInput.OrderedSlots.Select(key => key?.Serialized ?? "empty")),
                 origin: PredictorKnowledgeOrigin.PlayerInput, operation: "Event-local potion hypothesis; no route inventory identity is asserted");
-        var identity = CausesFor(dependencies, RouteEventOptionIdentityDomains(run, option));
+        var identityDomains = RouteEventOptionIdentityDomains(run, option);
+        // A future allocation cursor does not rename an already carried object.
+        // Inventory/membership reads below still prove that the bound object is
+        // present and is the one selected by this event.
+        if ((option.PotionId != null || option.RelicId != null) &&
+            new[] { option.PotionId, option.RelicId, option.CardTargetId }
+                .All(id => id == null || knownInstanceIds.Contains(id.Value)))
+            identityDomains &= ~PredictorCombatDomain.InstanceIds;
+        if (run._eventKey?.Entry == "SLIPPERY_BRIDGE" && option.CardTargetId is { } knownBridgeTarget &&
+            knownInstanceIds.Contains(knownBridgeTarget))
+            identityDomains &= ~PredictorCombatDomain.InstanceIds;
+        var identity = CausesFor(dependencies, identityDomains);
+        if (run._eventKey?.Entry == "SLIPPERY_BRIDGE")
+            identity = PredictorRouteCauseEvidence.Normalize(identity.AddRange(
+                RouteBridgeIdentityCauses(run, dependencies, knownInstanceIds)));
         var identityInput = inputs.Read("options." + option.Key + ".identity",
             option.Key + "; goldCost=" + option.GoldCost + "; goldGain=" + option.GoldGain +
             "; card=" + option.CardTargetId + "; potion=" + option.PotionId + "; localPotion=" + option.LocalPotionOrdinal + ":" + option.LocalPotionKey?.Serialized + "; relic=" + option.RelicId +
@@ -184,7 +198,6 @@ internal sealed partial class PredictorRun
     {
         var reads = run._eventKey?.Entry switch
         {
-            "SLIPPERY_BRIDGE" => PredictorCombatDomain.Deck,
             "THE_FUTURE_OF_POTIONS" => PredictorCombatDomain.PotionInventory,
             "STONE_OF_ALL_TIME" when option.Key == "LIFT" => PredictorCombatDomain.PotionInventory,
             "RANWID_THE_ELDER" when option.Key == "POTION" => PredictorCombatDomain.PotionInventory,
@@ -386,6 +399,15 @@ internal sealed partial class PredictorRun
         var reads = RouteEventActionReadDomains(run, option, dependencies, knownInstanceIds, resolvingHealth);
         var pickerCauses = RouteEventPicker(run, key, branch) == null ? ImmutableArray<PredictorCombatPendingCause>.Empty :
             RouteEventPickerReadCauses(run, key, branch, dependencies, knownInstanceIds);
+        if ((key, branch) == ("SLIPPERY_BRIDGE", "OVERCOME") && option.CardTargetId is { } bridgeTarget)
+        {
+            var target = run.Working.Card(bridgeTarget);
+            // Identity projection does not read a card's payload. Actual
+            // removal still owns its persistent Spoils Map coordinates/hook.
+            pickerCauses = pickerCauses.AddRange(RouteDeckTargetCauses(run,
+                [new(target.Id, target.Key, target.FloorAdded)], dependencies, knownInstanceIds,
+                PredictorDeckProjectionScope.Removable, PredictorDeckUncertainFact.Definition));
+        }
         // The picker owns its actual qualification and automatic execution
         // reads. Broad Deck causes would reintroduce unrelated property gaps.
         if (RouteEventPicker(run, key, branch) != null) reads &= ~PredictorCombatDomain.Deck;

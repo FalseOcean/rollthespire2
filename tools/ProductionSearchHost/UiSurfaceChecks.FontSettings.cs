@@ -177,7 +177,7 @@ internal static partial class UiSurfaceChecks
         {
             Check(ReferenceEquals(Field("_references"), frame) && ReferenceEquals(store.Runtime, runtime) &&
                 origin.Text == "000000000789" && store.CurrentPersistentOriginSeed == initialCursor,
-                "appearance switches preserve editor, runtime and unsubmitted settings");
+                "font changes preserve editor, runtime and unsubmitted settings");
             Check(independentLabel.GetThemeFont("font").GetInstanceId() == nativeFont.GetInstanceId() &&
                 independentLabel.GetThemeFont("font").GetRids().SequenceEqual(independentRids) &&
                 independentLabel.GetThemeColor("font_color") == independentColor,
@@ -235,66 +235,33 @@ internal static partial class UiSurfaceChecks
                 }
             }
         }
-        var colorChoice = (OptionButton)Field("_colorScheme");
-        UiColorPreferences savedAppearance = store.Preferences.Appearance;
-        var custom = new UiColorPreferences { Scheme = "custom", Background = "17202A", Panel = "243448", Accent = "D4AB63", Text = "F0E2C8" };
-        try
-        {
-            foreach (var appearance in new[] { new UiColorPreferences(), new UiColorPreferences { Scheme = "stars" }, custom })
-            {
-                bool unchanged = store.Preferences.Appearance == appearance; ResetNotifications();
-                if (appearance.Scheme == "custom")
-                {
-                    var pickers = (List<ColorPickerButton>)Field("_colorPickers");
-                    string[] values = [appearance.Background, appearance.Panel, appearance.Accent, appearance.Text];
-                    for (int i = 0; i < pickers.Count; i++)
-                    {
-                        pickers[i].Color = new Color(values[i]);
-                        pickers[i].EmitSignal(ColorPickerButton.SignalName.ColorChanged, pickers[i].Color);
-                    }
-                    pickers[0].EmitSignal(ColorPickerButton.SignalName.PopupClosed);
-                }
-                else
-                {
-                    int index = appearance.Scheme == "ink" ? 0 : 1;
-                    colorChoice.Select(index); colorChoice.EmitSignal(OptionButton.SignalName.ItemSelected, (long)index);
-                }
-                CheckNotifications(unchanged, "actual color selection"); await Frames();
-                Color expectedText = new(appearance.Scheme == "ink" ? "E5EDF8" : appearance.Text);
-                Color expectedBackground = new(appearance.Scheme == "ink" ? "070D1A" : appearance.Background);
-                Check(sample.GetThemeColor("font_color") == expectedText && ((ColorRect)Field("_background")).Color == expectedBackground,
-                    "actual color selection updates existing text and background: " + appearance.Scheme);
-                Check(new SearchWorkspace(state, false).Preferences.Appearance == appearance,
-                    "actual color selection persists all saved colors: " + appearance.Scheme);
-                CheckRetainedState();
-                ResetNotifications(); UiAppearance.Apply(shell, store.Preferences.Appearance);
-                CheckNotifications(true, "repeated appearance application");
-                ResetNotifications(); MainPanelTheme.RefreshFonts(shell);
-                CheckNotifications(true, "repeated font application");
-                if (appearance.Scheme == "custom")
-                {
-                    ((Button)Field("_seeds")).EmitSignal(Button.SignalName.Pressed);
-                    await AwaitPageReady(root, shell);
-                    var library = (SeedLibraryCanvas)Field("_seedLibrary");
-                    var libraryTitle = (Label)typeof(SeedLibraryCanvas).GetField("_title", flags)!.GetValue(library)!;
-                    var libraryFilter = (LineEdit)typeof(SeedLibraryCanvas).GetField("_filter", flags)!.GetValue(library)!;
-                    Check(library.IsVisibleInTree() && libraryTitle.Text == "Library" &&
-                        libraryTitle.GetThemeFont("font").GetInstanceId() == MainPanelTheme.Regular.GetInstanceId() &&
-                        libraryTitle.GetThemeColor("font_color") == expectedText && Field("_feedbackPage") is null,
-                        "first Library visit uses the current English, sans and custom palette without constructing Feedback");
-                    libraryFilter.Text = "retained-library-filter";
-                    ((Button)Field("_settings")).EmitSignal(Button.SignalName.Pressed);
-                    await AwaitPageReady(root, shell);
-                    ((Button)Field("_seeds")).EmitSignal(Button.SignalName.Pressed);
-                    Check(ReferenceEquals(library, Field("_seedLibrary")) && libraryFilter.Text == "retained-library-filter" &&
-                        Nodes(shell).Count(n => n.Name == "SeedLibraryCanvas") == 1,
-                        "repeated Library navigation retains its page and filter without duplicates");
-                    ((Button)Field("_settings")).EmitSignal(Button.SignalName.Pressed);
-                    await AwaitPageReady(root, shell);
-                }
-            }
-        }
-        finally { Call("ChangeAppearance", savedAppearance); }
+        Check(shell.FindChild("SettingsColorScheme", true, false) is null &&
+            shell.FindChildren("Appearance*", "ColorPickerButton", true, false).Count == 0,
+            "font settings remain available without a retired color-editing entry");
+        Check(sample.GetThemeColor("font_color") == new Color("E5EDF8") &&
+            ((ColorRect)Field("_background")).Color == new Color("070D1A") && store.Preferences.Appearance is null,
+            "live text and background use the fixed current blue ink palette");
+        CheckRetainedState();
+        ResetNotifications(); MainPanelTheme.RefreshFonts(shell);
+        CheckNotifications(true, "repeated font application");
+        ((Button)Field("_seeds")).EmitSignal(Button.SignalName.Pressed);
+        await AwaitPageReady(root, shell);
+        var library = (SeedLibraryCanvas)Field("_seedLibrary");
+        var libraryTitle = (Label)typeof(SeedLibraryCanvas).GetField("_title", flags)!.GetValue(library)!;
+        var libraryFilter = (LineEdit)typeof(SeedLibraryCanvas).GetField("_filter", flags)!.GetValue(library)!;
+        Check(library.IsVisibleInTree() && libraryTitle.Text == "Library" &&
+            libraryTitle.GetThemeFont("font").GetInstanceId() == MainPanelTheme.Regular.GetInstanceId() &&
+            libraryTitle.GetThemeColor("font_color") == new Color("E5EDF8") && Field("_feedbackPage") is null,
+            "first Library visit uses current English, sans and default colors without constructing Feedback");
+        libraryFilter.Text = "retained-library-filter";
+        ((Button)Field("_settings")).EmitSignal(Button.SignalName.Pressed);
+        await AwaitPageReady(root, shell);
+        ((Button)Field("_seeds")).EmitSignal(Button.SignalName.Pressed);
+        Check(ReferenceEquals(library, Field("_seedLibrary")) && libraryFilter.Text == "retained-library-filter" &&
+            Nodes(shell).Count(n => n.Name == "SeedLibraryCanvas") == 1,
+            "repeated Library navigation retains its page and filter without duplicates");
+        ((Button)Field("_settings")).EmitSignal(Button.SignalName.Pressed);
+        await AwaitPageReady(root, shell);
         choice.Select(1); choice.EmitSignal(OptionButton.SignalName.ItemSelected, 1L);
         Call("CloseSettings"); shell.Open(); Call("OpenSettings"); await AwaitPageReady(root, shell); await Frames();
         Check(choice.Selected == 1 && sample.GetThemeFont("font").GetFontName().Contains(names[1]), "closing and reopening retains the chosen font");
@@ -338,14 +305,14 @@ internal static partial class UiSurfaceChecks
             }
         }
         foreach (var subscription in subscriptions) subscription.Theme.Changed -= subscription.Handler;
-        // Saved configuration must be correct during construction; Open must not
-        // be required to repair a theme built with a different global palette.
-        foreach (var (font, appearance) in new[] { ("game-serif", new UiColorPreferences()),
-            ("game-sans", new UiColorPreferences { Scheme = "stars" }), ("game-serif", custom) })
+        // Saved font and language must be correct during construction, while
+        // the fixed default palette is already correct before the first Open.
+        foreach (var (font, scenario, initialLanguage) in new[] { ("game-serif", "early-presets", "en"),
+            ("game-sans", "idle", "zh"), ("game-serif", "mid-build-change", "en") })
         {
-            string savedState = Path.Combine(output, "saved-theme-" + appearance.Scheme);
-            var saved = new SearchWorkspace(savedState, false); saved.SetFontChoice(font); saved.SetAppearance(appearance);
-            string savedLanguage = appearance.Scheme == "stars" ? "zh" : "en";
+            string savedState = Path.Combine(output, "saved-theme-" + scenario);
+            var saved = new SearchWorkspace(savedState, false); saved.SetFontChoice(font);
+            string savedLanguage = initialLanguage;
             string expectedFinalFont = font;
             saved.SetLanguageOverride(savedLanguage);
             var initialized = new WorkspaceShell();
@@ -354,18 +321,18 @@ internal static partial class UiSurfaceChecks
                 initialized.InitializeWithPersistence((RolltheSpire2.Bootstrap.ModRuntimeSnapshot)Field("_runtime"), savedState);
                 var initializedTitle = (Label)typeof(WorkspaceShell).GetField("_title", flags)!.GetValue(initialized)!;
                 var initializedBackground = (ColorRect)typeof(WorkspaceShell).GetField("_background", flags)!.GetValue(initialized)!;
-                Color expectedText = new(appearance.Scheme == "ink" ? "E5EDF8" : appearance.Text);
-                Color expectedBackground = new(appearance.Scheme == "ink" ? "070D1A" : appearance.Background);
+                Color expectedText = new("E5EDF8");
+                Color expectedBackground = new("070D1A");
                 Check(MainPanelTheme.FontChoice == font && initializedTitle.GetThemeFont("font").GetInstanceId() == MainPanelTheme.Medium.GetInstanceId() &&
                     initialized.CloseButton.GetThemeFont("font").GetInstanceId() == MainPanelTheme.Medium.GetInstanceId(),
                     "saved font is applied before the first Open: " + font);
                 Check(initializedTitle.GetThemeColor("font_color") == expectedText && initializedBackground.Color == expectedBackground &&
                     initialized.Theme.GetColor("font_color", "Label") == expectedText,
-                    "saved palette is applied before the first Open: " + appearance.Scheme);
+                    "default palette is correct before the first Open: " + scenario);
                 Check(typeof(WorkspaceShell).GetField("_settingsPage", flags)!.GetValue(initialized) is null,
                     "saved preferences do not eagerly create Settings");
                 host.AddChild(initialized); initialized.Open();
-                if (appearance.Scheme == "stars")
+                if (scenario == "idle")
                 {
                     var idle = System.Diagnostics.Stopwatch.StartNew();
                     while (idle.Elapsed < TimeSpan.FromMilliseconds(1200))
@@ -377,7 +344,7 @@ internal static partial class UiSurfaceChecks
                         typeof(WorkspaceShell).GetField("_feedbackPage", flags)!.GetValue(initialized) is null,
                         "idle keeps the current page ready without constructing or speculatively warming unvisited pages");
                 }
-                if (appearance.Scheme == "ink")
+                if (scenario == "early-presets")
                 {
                     var initializedWorkbench = (QueryWorkbenchFrame)typeof(WorkspaceShell).GetField("_references", flags)!.GetValue(initialized)!;
                     ((Button)initializedWorkbench.FindChild("OpenPresets", true, false)).EmitSignal(Button.SignalName.Pressed);
@@ -387,9 +354,9 @@ internal static partial class UiSurfaceChecks
                         "an early workbench Presets action creates the requested Library before any Settings visit");
                 }
                 ((Button)typeof(WorkspaceShell).GetField("_settings", flags)!.GetValue(initialized)!).EmitSignal(Button.SignalName.Pressed);
-                if (appearance.Scheme == "custom")
+                if (scenario == "mid-build-change")
                 {
-                    Check(!initialized.IsCurrentPageReady, "saved custom fixture changes preferences during unfinished Settings preparation");
+                    Check(!initialized.IsCurrentPageReady, "saved font fixture changes preferences during unfinished Settings preparation");
                     expectedFinalFont = "game-sans"; savedLanguage = "zh";
                     var activeStore = (SearchWorkspace)typeof(WorkspaceShell).GetField("_persistence", flags)!.GetValue(initialized)!;
                     activeStore.SetFontChoice(expectedFinalFont); activeStore.SetLanguageOverride(savedLanguage);
@@ -408,8 +375,8 @@ internal static partial class UiSurfaceChecks
             }
             finally { initialized.Free(); }
         }
-        MainPanelTheme.SelectFont(store.Preferences.FontChoice); UiAppearance.Initialize(savedAppearance);
+        MainPanelTheme.SelectFont(store.Preferences.FontChoice);
         independent.QueueFree(); nativeCard.QueueFree();
-        GD.Print($"FONT_SETTINGS_PASS checks={checks};fonts=2;languages=zh,en;sizes=1600,1280,2560;live+persist+sharedResource+nativeRid+msdf+nativeCard+independentBoundary+savedPalettes+batchedChanges+silentNoOps+lazyPages");
+        GD.Print($"FONT_SETTINGS_PASS checks={checks};fonts=2;languages=zh,en;sizes=1600,1280,2560;live+persist+sharedResource+nativeRid+msdf+nativeCard+independentBoundary+fixedDefaultPalette+savedFonts+batchedChanges+silentNoOps+lazyPages");
     }
 }

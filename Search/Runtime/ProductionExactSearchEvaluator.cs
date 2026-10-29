@@ -128,7 +128,7 @@ internal static class ProductionExactSearchEvaluator
                 canonicalEvaluation.FailureCode);
         }
 
-        var mapEvaluation = StandardMapExactEvaluator.Evaluate(plan, input.SeedIdentity);
+        var mapEvaluation = StandardMapExactEvaluator.Evaluate(plan, input.SeedIdentity, cancellationToken);
         if (mapEvaluation.Disposition == SearchDisposition.NoMatch)
             return new(null,null,authority,mapEvaluation,mapEvaluation.FailureCode);
         canonicalEvaluation = CombineIndependentEvaluations(canonicalEvaluation, mapEvaluation, continuationEvaluation);
@@ -168,7 +168,8 @@ internal static class ProductionExactSearchEvaluator
         // unrelated Neow/World analysis here would let non-observable state or invariant
         // failures reacquire rejection authority. A minimal document is retained only
         // because SearchCandidate currently carries the shared analysis payload contract.
-        if ((plan.Evaluation.RequiresCanonicalRootLocalDomain || plan.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0) &&
+        if ((plan.Evaluation.RequiresCanonicalRootLocalDomain || plan.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0 ||
+            plan.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count > 0) &&
             plan.Evaluation.CheapPredictionDomains == SeedPredictionDomainSelection.None &&
             !plan.Evaluation.RequiresNormalCombatRewardDomain)
         {
@@ -509,7 +510,8 @@ internal static class ProductionExactSearchEvaluator
     private static bool HasPartyChildObservations(ExactSearchExecutionRequest child) =>
         child.Evaluation.HasNeowConstraints || child.Evaluation.RequiresWorldDomain ||
         child.Evaluation.RequiresRelicSequenceDomain || child.Evaluation.RequiresNormalCombatRewardDomain ||
-        child.Evaluation.RequiresCanonicalRootLocalDomain || child.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0;
+        child.Evaluation.RequiresCanonicalRootLocalDomain || child.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0 ||
+        child.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count > 0;
 
     private static bool RequiresPartyInitialOffers(Semantics.PlayerOfferQuery player)
     {

@@ -70,12 +70,12 @@ internal sealed partial class PredictorRun
         var projection = _preview.Partial!.Deck.Project(effect.Scope);
         var cards = projection.KnownCandidates.Where(card => source.Entry != "ROYAL_STAMP" ||
             card.Type is RolltheSpire2.Core.Effects.Snapshots.EffectCardType.Attack or RolltheSpire2.Core.Effects.Snapshots.EffectCardType.Skill)
-            .Select(card => new PredictorRouteCardKnowledge(card, _preview.Partial.ProjectionCauses(projection with
-            {
-                Gaps = _preview.Partial.Deck.TargetGaps(card.Id, effect.Scope, RouteTargetRequiredFacts(card,
-                    effect.AddsCards || effect.Facts == PredictorDeckUncertainFact.Membership
-                        ? PredictorDeckUncertainFact.Definition : RouteLevelEditFacts))
-            }, count: false))).ToImmutableArray();
+            .Select(card => new PredictorRouteCardKnowledge(card, _preview.Partial.ProjectionCauses(
+                new PredictorDeckProjection(effect.Scope, null, [], false, [],
+                    _preview.Partial.Deck.TargetGaps(card.Id, effect.Scope, RouteTargetRequiredFacts(card,
+                        effect.AddsCards || effect.Facts == PredictorDeckUncertainFact.Membership
+                            ? PredictorDeckUncertainFact.Definition : RouteLevelEditFacts))), count: false))
+            { FullCardKnown = _preview.Partial.Deck.ReadTarget(card.Id, PredictorDeckProjectionScope.All) != null }).ToImmutableArray();
         bool optional = source.Entry is "GNARLED_HAMMER" or "KIFUDA";
         int maximum = projection.KnownCount is { } count ? (int)Math.Min(count, effect.Count) : effect.Count;
         if (source.Entry == "ROYAL_STAMP" && projection.OrderedCandidatesKnown) maximum = Math.Min(effect.Count, cards.Length);

@@ -14,7 +14,7 @@ internal static class SearchQueryProjection
         (q.CombatCardExclusion is null ? 0 : 1) +
         q.AncientBranches.Count + q.LegacyNeow.NeowRelics.Any.Count + q.LegacyNeow.NeowRelics.All.Count +
         q.LegacyWorld.AncientIdentityFilters.Count + q.LegacyWorld.AncientOptionFilters.Count + q.EventResultConditions.Count +
-        q.EventSequenceConstraints.Count + q.VariantBossBranches.Count + q.LegacyWorld.BossOrdinalFilters.Count + q.StandardMaps.Count +
+        q.EventSequenceConstraints.Count + q.VariantBossBranches.Count + q.LegacyWorld.BossOrdinalFilters.Count + q.StandardMaps.Count + q.StandardMapRoutes.Count +
         q.MerchantColorlessSequenceConditions.Count + q.RelicShopSequenceConditions.Count + (q.TransformationAggregate is null ? 0 : 1) +
         q.Players.Sum(p => CountConditions(p.Conditions) + (p.Offers.IsEmpty ? 0 : 1));
 

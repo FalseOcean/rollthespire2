@@ -60,10 +60,12 @@ internal sealed partial class PredictorCrystalOffsetBound
         var placed=source.Items.Select((item,index)=>(item,index)).Where(x=>x.item.X>=0 &&
             x.item.Kind!="CURSE" && x.item.Subscriptions>0 && !source.Revealed.Contains(x.index)).ToArray();
         // A large failed-placement workload retains the existing legal solver.
-        // Incomplete means unknown, never a negative certificate. A newly
-        // revealed curse can modify state; this arithmetic relaxation does not
-        // try to reconstruct its obtain hooks.
-        _admitted=placed.Length<=18 && (avoidCurse || !source.Items.Any(i=>i.Kind=="CURSE" && i.X>=0 && !i.Revealed));
+        // Incomplete means unknown, never a negative certificate. Revealing
+        // Doubt changes the deck but currently changes none of Event/Rewards/
+        // Niche, relic bags or reward groups. It is not a reward block; geometry
+        // and typed replay retain its physical completion. Revisit this bound
+        // and its negative reuse if a curse obtain handler changes those inputs.
+        _admitted=placed.Length<=18;
         UInt128 Need(PredictorCrystalItem item)
         {
             UInt128 mask=0;

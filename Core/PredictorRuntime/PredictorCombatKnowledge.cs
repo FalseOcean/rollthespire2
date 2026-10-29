@@ -67,6 +67,10 @@ internal sealed record PredictorCombatRewardKnowledge(PredictorRewardKind Kind,
     // Identities/levels can be proven while only Wing Charm's enchantment
     // target remains pending. Value/IsKnown still describe the whole result.
     public ImmutableArray<PredictorCardRewardOptionKnowledge> CardOptions { get; init; } = [];
+    public PredictorRewardOfferBinding? PartialOfferBinding { get; init; }
+    internal PredictorRewardOfferBinding? OfferBinding => IsKnown ? new(Value!, []) : PartialOfferBinding;
+    internal bool CanChooseCard(int index) => OfferBinding is { } binding &&
+        index >= 0 && index < binding.Value.Cards.Length;
     // Route projection ordinal among same Kind/Origin/Key, including entries
     // whose values are masked (for example an unknown-amount Heist).
     public int Occurrence { get; init; } = -1;

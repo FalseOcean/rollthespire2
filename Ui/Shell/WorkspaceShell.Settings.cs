@@ -162,9 +162,6 @@ internal sealed partial class WorkspaceShell
 
         BuildFontSettings(SettingsSection(general, "settings.font.title", "settings.font.help"));
         yield return null;
-        foreach (var step in BuildAppearanceSettings(SettingsSection(general, "settings.appearance.title", "settings.appearance.help")))
-            yield return step;
-
         var history = SettingsSection(general, "settings.history.title", "settings.history.help");
         history.AddChild(_queryHistoryLimit);
         _queryHistoryLimit.ValueChanged += value =>
@@ -191,6 +188,9 @@ internal sealed partial class WorkspaceShell
         _workerStatus = _palette.Label("", 17, true); _workerStatus.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         workers.AddChild(_workerStatus);
         _workerBudget.ValueChanged += value => { if (!_bindingSettings) SetSettingsWorkerBudget((int)value); };
+        yield return null;
+
+        BuildMapLossySettings(advanced);
         yield return null;
 
         var experimental = SettingsSection(advanced, "settings.candidates.title", "settings.candidates.help");
@@ -335,7 +335,7 @@ internal sealed partial class WorkspaceShell
     {
         if (_settingsPage is null) return;
         _settingsText = text;
-        RefreshAppearanceSettings();
+        RefreshFontSettings();
         foreach (var (label, key) in _settingsLabels) label.Text = text.Get(key);
         foreach (var (button, key) in _settingsButtons) button.Text = text.Get(key);
         if (_language is not null)
@@ -374,6 +374,7 @@ internal sealed partial class WorkspaceShell
                 ? "settings.workers.custom" : "settings.workers.auto", System.Environment.ProcessorCount, workers);
             _skipExact.SetPressedNoSignal(persistence.Preferences.SkipExactValidation);
             _skipExact.Disabled = SettingsSearchBusy;
+            RefreshMapLossySettings(persistence);
         }
         _queryHistoryLimit?.SetValueNoSignal(persistence.Preferences.QueryHistoryLimit);
         if (_builtPageViews.Contains(2))

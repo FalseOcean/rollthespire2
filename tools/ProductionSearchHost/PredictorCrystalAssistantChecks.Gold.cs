@@ -116,11 +116,12 @@ internal static partial class PredictorCrystalAssistantChecks
             Check(result.GoldComplete,"Tiny exact gold frontier closes within the focused check budget");return result;
         }
         CrystalOptionProjection Compare(string name,PredictorCrystalSnapshot board,bool avoid,ImmutableArray<CrystalRewardOption> targets,
-            CrystalOptionProjection? known=null)
+            CrystalOptionProjection? known=null,bool rewardTable=false)
         {
             var raw=Oracle(board,avoid);var compatible=raw.Where(row=>Compatible(board,row,targets)).ToArray();
             int expected=compatible.Length==0?0:compatible.Max(row=>row.Rewards.Where(r=>r.Kind==PredictorRewardKind.Gold).Sum(r=>r.GoldAmount));
             var search=new PredictorCrystalGoldSearch(board,targets,avoid);
+            if(rewardTable) search.UseRewardTable(new CrystalReachabilityTable(board));
             var early=search.Advance(TimeSpan.Zero,known);
             Check(early.GoldUpperBound is { } bound && bound>=expected,"Gold upper bound covers all independently exhaustive legal paths: "+name);
             if(early.SelectedPlan==null && raw.Count>0) Check(!early.GoldComplete,"A zero-work stop cannot claim a witnessed optimum: "+name);
@@ -136,18 +137,22 @@ internal static partial class PredictorCrystalAssistantChecks
                 Check(!avoid || !geometry.Items.Select((item,i)=>(item,i)).Any(p=>p.item.Kind=="CURSE" && p.item.Revealed && !board.Items[p.i].Revealed),
                     "Gold witness respects new-curse avoidance: "+name);
             }
-            Console.WriteLine($"CRYSTAL_GOLD_ORACLE_PASS case={name};rawPaths={raw.Count};compatible={compatible.Length};gold={expected};complete={result.GoldComplete};upper={result.GoldUpperBound}");
+            Console.WriteLine($"CRYSTAL_GOLD_ORACLE_PASS case={name};rawPaths={raw.Count};compatible={compatible.Length};gold={expected};complete={result.GoldComplete};upper={result.GoldUpperBound};rewardTable={rewardTable}");
             return result;
         }
         void CompareGoldLanguage(string name,PredictorCrystalSnapshot board,ImmutableArray<CrystalRewardOption> targets,params int[] thresholds)
+            =>CompareGoldLanguageForPolicy(name,board,targets,true,thresholds);
+        void CompareGoldLanguageForPolicy(string name,PredictorCrystalSnapshot board,ImmutableArray<CrystalRewardOption> targets,
+            bool avoid,params int[] thresholds)
         {
-            var raw=Oracle(board,true);var compatible=raw.Where(row=>Compatible(board,row,targets)).ToArray();
+            var raw=Oracle(board,avoid);var compatible=raw.Where(row=>Compatible(board,row,targets)).ToArray();
             var table=new CrystalReachabilityTable(board);
-            var owner=new PredictorCrystalOffsetBound(board,table,true);
+            var owner=new PredictorCrystalOffsetBound(board,table,avoid);
             foreach(int minimum in thresholds)
             {
+                var priorNegative=owner.KnownLanguageNegative(targets);
                 bool expected=compatible.Any(row=>row.Rewards.Where(r=>r.Kind==PredictorRewardKind.Gold).Sum(r=>r.GoldAmount)>=minimum);
-                var result=PredictorCrystalGoalLanguage.Solve(board,table,targets,true,TimeSpan.FromSeconds(5),sharedBound:owner,minimumGold:minimum);
+                var result=PredictorCrystalGoalLanguage.Solve(board,table,targets,avoid,TimeSpan.FromSeconds(5),sharedBound:owner,minimumGold:minimum);
                 Check(result.Verdict!=CrystalOffsetVerdict.Incomplete && (result.Plan!=null)==expected &&
                     (result.Verdict==CrystalOffsetVerdict.Possible)==expected,"Gold threshold language agrees with independent raw paths: "+name+"/"+minimum);
                 if(result.Plan is { } plan)
@@ -160,20 +165,20 @@ internal static partial class PredictorCrystalAssistantChecks
                 // or contaminate a weaker reward threshold on the frozen owner.
                 if(minimum>0 && !expected)
                 {
-                    Check(owner.KnownLanguageNegative(targets)==CrystalLanguageNegativeKind.None,
+                    Check(owner.KnownLanguageNegative(targets)==priorNegative,
                         "Gold-threshold negative never becomes a target-only negative: "+name);
-                    var zero=PredictorCrystalGoalLanguage.Solve(board,table,targets,true,TimeSpan.FromSeconds(5),sharedBound:owner);
-                    Check((zero.Plan!=null)==(compatible.Length>0) && !zero.NegativeCacheHit,
+                    var zero=PredictorCrystalGoalLanguage.Solve(board,table,targets,avoid,TimeSpan.FromSeconds(5),sharedBound:owner);
+                    Check((zero.Plan!=null)==(compatible.Length>0) && zero.NegativeCacheHit==(priorNegative!=CrystalLanguageNegativeKind.None),
                         "Removing a gold threshold restores the original supported target query: "+name);
                 }
-                Console.WriteLine($"CRYSTAL_GOLD_LANGUAGE_ORACLE_PASS case={name};minimum={minimum};rawPaths={raw.Count};compatible={compatible.Length};verdict={result.Verdict};cacheHit={result.NegativeCacheHit}");
+                Console.WriteLine($"CRYSTAL_GOLD_LANGUAGE_ORACLE_PASS case={name};avoidCurse={avoid};minimum={minimum};rawPaths={raw.Count};compatible={compatible.Length};verdict={result.Verdict};cacheHit={result.NegativeCacheHit}");
             }
-            var fresh=new PredictorCrystalOffsetBound(board,table,true);
+            var fresh=new PredictorCrystalOffsetBound(board,table,avoid);
             int positive=thresholds.FirstOrDefault(n=>n>0);
-            var stopped=PredictorCrystalGoalLanguage.Solve(board,table,targets,true,TimeSpan.Zero,sharedBound:fresh,minimumGold:positive);
+            var stopped=PredictorCrystalGoalLanguage.Solve(board,table,targets,avoid,TimeSpan.Zero,sharedBound:fresh,minimumGold:positive);
             Check(stopped.Verdict==CrystalOffsetVerdict.Incomplete && !stopped.NegativeCacheHit,
                 "Zero-time threshold compilation remains unknown: "+name);
-            var limited=PredictorCrystalGoalLanguage.Solve(board,table,targets,true,TimeSpan.FromSeconds(1),stateLimit:0,sharedBound:fresh,minimumGold:positive);
+            var limited=PredictorCrystalGoalLanguage.Solve(board,table,targets,avoid,TimeSpan.FromSeconds(1),stateLimit:0,sharedBound:fresh,minimumGold:positive);
             Check(limited.Verdict==CrystalOffsetVerdict.Incomplete && fresh.KnownLanguageNegative(targets)==CrystalLanguageNegativeKind.None,
                 "Threshold state cutoff cannot acquire target-negative authority: "+name);
         }
@@ -231,6 +236,7 @@ internal static partial class PredictorCrystalAssistantChecks
         var known=new CrystalOptionProjection(ImmutableDictionary<CrystalRewardOption,PredictorCrystalSolution>.Empty,lowProof,10);
         var prefixResult=Compare("target-compatible-different-prefix",prefix,true,[target!],known);
         Check(prefixResult.Gold==40 && prefixResult.SelectedPlan!.Steps[0]!=low[0],"Exact global maximum replaces the earlier target witness prefix");
+        Compare("target-compatible-different-prefix-with-table",prefix,true,[target!],known,rewardTable:true);
         CompareGoldLanguage("target-changed-prefix",prefix,[target!],0,10,30,40,41);
         foreach(var option in Oracle(prefix,true).SelectMany(PredictorCrystalExplorer.Options).Distinct().Where(o=>o.Kind==PredictorRewardKind.Card))
             Compare("callback-sensitive-card-"+option.Key.Entry,prefix,true,[option]);
@@ -271,6 +277,70 @@ internal static partial class PredictorCrystalAssistantChecks
         Check(lostGoal!=null,"Gold-first callback shifts a real rare-card target out of the maximum-gold offer");
         CompareGoldLanguage("gold-callback-target-conflict",shifted,[lostGoal!],0,10,11);
 
+        // Every legal Big click here also uncovers the curse. The optimistic
+        // geometric upper is forty, while independent raw paths earn at most
+        // thirty without the curse; taking the card instead earns zero.
+        var reuseBoard=Board(1,[Item("CARD_COMMON",5,5),Item("GOLD_SMALL",5,6),
+            Item("GOLD_BIG",6,5),Item("CURSE",6,6)],(5,5),(5,6),(6,5),(6,6));
+        ImmutableArray<PredictorCrystalStep> cursedGoldPath=[new(5,5,PredictorCrystalTool.Big)];
+        foreach(int subscriptions in new[]{1,0})
+        {
+            var cursedGoldBoard=reuseBoard with { Items=reuseBoard.Items.SetItem(3,reuseBoard.Items[3] with {Subscriptions=subscriptions}) };
+            var cursedGoldRun=RawReplay(cursedGoldBoard,cursedGoldPath);
+            var cursedGoldTarget=CrystalRewardOption.ForCard(cursedGoldRun.Rewards.First(r=>r.Kind==PredictorRewardKind.Card).Cards[0],false);
+            int Doubts(PredictorState state)=>state.Deck.Count(id=>state.Card(id).Key.Entry=="DOUBT");
+            Check(Gold(cursedGoldRun)==40 && Doubts(cursedGoldRun.Working)==Doubts(cursedGoldBoard.State)+1,
+                "A real Big reveal obtains forty gold and one physical Doubt independently of curse subscriptions");
+            CompareGoldLanguageForPolicy("curse-gold-card-subscriptions-"+subscriptions+"-allowed",cursedGoldBoard,[cursedGoldTarget],false,0,10,30,40,41);
+            CompareGoldLanguageForPolicy("curse-gold-card-subscriptions-"+subscriptions+"-avoided",cursedGoldBoard,[cursedGoldTarget],true,0,10,30,40,41);
+            Check(Compare("curse-gold-card-subscriptions-"+subscriptions,cursedGoldBoard,false,[cursedGoldTarget],rewardTable:true).Gold==40,
+                "Allow-curse gold frontier and its threshold worker preserve the raw forty-gold selected optimum");
+        }
+        ImmutableArray<PredictorCrystalStep> reusePath=[new(5,5,PredictorCrystalTool.Small)];
+        var reuseRun=RawReplay(reuseBoard,reusePath);
+        var reuseGoal=CrystalRewardOption.ForCard(reuseRun.Rewards.First(r=>r.Kind==PredictorRewardKind.Card).Cards[0],false);
+        var reuseProof=PredictorCrystalExplorer.VerifySelection(reuseBoard,new(reusePath,reuseRun.Rewards),[reuseGoal])!;
+        var reuseKnown=new CrystalOptionProjection(ImmutableDictionary<CrystalRewardOption,PredictorCrystalSolution>.Empty,reuseProof,0);
+        var reuseRaw=Oracle(reuseBoard,true);
+        int reuseMaximum=reuseRaw.Max(row=>row.Rewards.Where(r=>r.Kind==PredictorRewardKind.Gold).Sum(r=>r.GoldAmount));
+        int selectedMaximum=reuseRaw.Where(row=>Compatible(reuseBoard,row,[reuseGoal]))
+            .Max(row=>row.Rewards.Where(r=>r.Kind==PredictorRewardKind.Gold).Sum(r=>r.GoldAmount));
+        Check(reuseMaximum==30 && selectedMaximum==0,"Raw legal inputs separate the unconditional and selected optima for upper-bound reuse");
+        var unconditional=new PredictorCrystalGoldSearch(reuseBoard,[],true);
+        var inherited=new PredictorCrystalGoldSearch(reuseBoard,[reuseGoal],true);
+        Check(inherited.Advance(TimeSpan.Zero).GoldUpperBound==40,"Reuse fixture begins with a genuinely loose geometric upper bound");
+        inherited.UseUnconditionalUpperBound(unconditional);
+        Check(inherited.Advance(TimeSpan.Zero).GoldUpperBound==40,"An unfinished empty query supplies no optimum certificate");
+        Check(Finish(unconditional).Gold==reuseMaximum,"Empty donor optimum agrees with independent exhaustive raw inputs");
+        inherited.UseUnconditionalUpperBound(unconditional);
+        var inheritedCutoff=inherited.Advance(TimeSpan.Zero,reuseKnown);
+        Check(inheritedCutoff.GoldUpperBound==reuseMaximum && inheritedCutoff.Gold==0 && !inheritedCutoff.GoldComplete &&
+            inherited.Progress.Examined==0,"An empty donor tightens the selected upper without replacing its own witness or proving it optimal");
+        Check(Finish(inherited).Gold==selectedMaximum,"Inherited upper preserves the independently enumerated selected optimum");
+        var changedSource=new PredictorCrystalGoldSearch(reuseBoard with { },[reuseGoal],true);
+        changedSource.UseUnconditionalUpperBound(unconditional);
+        Check(changedSource.Advance(TimeSpan.Zero).GoldUpperBound==40,"Another source identity cannot inherit even a numerically compatible donor bound");
+        var changedCurse=new PredictorCrystalGoldSearch(reuseBoard,[reuseGoal],false);
+        changedCurse.UseUnconditionalUpperBound(unconditional);
+        Check(changedCurse.Advance(TimeSpan.Zero).GoldUpperBound==40,"A changed curse policy cannot inherit the smaller avoidance bound");
+        Check(Finish(changedCurse).Gold==Oracle(reuseBoard,false).Where(row=>Compatible(reuseBoard,row,[reuseGoal]))
+            .Max(row=>row.Rewards.Where(r=>r.Kind==PredictorRewardKind.Gold).Sum(r=>r.GoldAmount)),
+            "Changed-curse query still agrees with its own raw legal domain");
+        var conditionalDonor=new PredictorCrystalGoldSearch(reuseBoard,[reuseGoal],true);
+        Check(Finish(conditionalDonor).Gold==selectedMaximum,"Conditional donor has a real but narrower optimum");
+        var unconditionalRecipient=new PredictorCrystalGoldSearch(reuseBoard,[],true);
+        unconditionalRecipient.UseUnconditionalUpperBound(conditionalDonor);
+        Check(unconditionalRecipient.Advance(TimeSpan.Zero).GoldUpperBound==40,"A selected donor never narrows the unconditional domain");
+        var driftReuse=reuseBoard with { State=reuseBoard.State with {
+            Relics=[new(reuseBoard.State.NextInstanceId,new("RELIC","DRIFTWOOD"),0)],
+            NextInstanceId=checked(reuseBoard.State.NextInstanceId+1) } };
+        var noRerollDonor=new PredictorCrystalGoldSearch(driftReuse,[],true,includeRerolls:false);
+        Check(Finish(noRerollDonor).Gold==reuseMaximum,"Real Driftwood state retains the physical empty-target optimum");
+        var changedRerolls=new PredictorCrystalGoldSearch(driftReuse,[reuseGoal],true,includeRerolls:true);
+        changedRerolls.UseUnconditionalUpperBound(noRerollDonor);
+        Check(changedRerolls.Advance(TimeSpan.Zero).GoldUpperBound==40,"A changed actual reroll domain cannot inherit the donor certificate");
+        Console.WriteLine($"CRYSTAL_GOLD_UPPER_REUSE_PASS rawUnconditional={reuseMaximum};rawSelected={selectedMaximum};looseUpper=40;inheritedUpper={inheritedCutoff.GoldUpperBound};unfinishedAndConditionalDonorsIgnored=true;sourceCurseAndRerollDomainChecked=true;selectedProofIndependent=true");
+
         var paused=new PredictorCrystalGoldSearch(prefix,[target!],true);
         var cutoff=paused.Advance(TimeSpan.Zero,known);
         Check(cutoff.SelectedPlan!=null && cutoff.Gold==10 && !cutoff.GoldComplete && cutoff.GoldUpperBound>=40,
@@ -282,6 +352,98 @@ internal static partial class PredictorCrystalAssistantChecks
             Check(caught,"Gold cancellation remains explicit");
         }
         Check(Finish(paused).Gold==40,"Gold frontier resumes after cancellation without losing work or its bound");
+        const System.Reflection.BindingFlags privateFields=System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic;
+        void AttachThreshold(PredictorCrystalGoldSearch search,Task<CrystalGoalSearchResult> task,CancellationTokenSource cancel,int threshold)
+        {
+            typeof(PredictorCrystalGoldSearch).GetField("_languageTask",privateFields)!.SetValue(search,task);
+            typeof(PredictorCrystalGoldSearch).GetField("_languageCancel",privateFields)!.SetValue(search,cancel);
+            typeof(PredictorCrystalGoldSearch).GetField("_languageThreshold",privateFields)!.SetValue(search,threshold);
+        }
+        var lateBoundBoard=Board(1,[Item("CARD_COMMON",5,5),Item("GOLD_SMALL",5,6),
+            Item("GOLD_BIG",6,5),Item("CURSE",6,6),Item("GOLD_SMALL",4,5)],(5,5),(5,6),(6,5),(6,6),(4,5));
+        var lateBoundRun=RawReplay(lateBoundBoard,reusePath);
+        var lateBoundGoal=CrystalRewardOption.ForCard(lateBoundRun.Rewards.First(r=>r.Kind==PredictorRewardKind.Card).Cards[0],false);
+        var lateBoundRaw=Oracle(lateBoundBoard,true);
+        int lateBoundMaximum=lateBoundRaw.Max(row=>row.Rewards.Where(r=>r.Kind==PredictorRewardKind.Gold).Sum(r=>r.GoldAmount));
+        int lateBoundSelected=lateBoundRaw.Where(row=>Compatible(lateBoundBoard,row,[lateBoundGoal]))
+            .Max(row=>row.Rewards.Where(r=>r.Kind==PredictorRewardKind.Gold).Sum(r=>r.GoldAmount));
+        var lateBoundDonor=new PredictorCrystalGoldSearch(lateBoundBoard,[],true);
+        Check(Finish(lateBoundDonor).Gold==lateBoundMaximum && lateBoundMaximum==30,
+            "Late-threshold fixture's unconditional optimum is independently thirty despite a loose fifty-gold geometric bound");
+        var lateBoundSearch=new PredictorCrystalGoldSearch(lateBoundBoard,[lateBoundGoal],true);
+        lateBoundSearch.UseRewardTable(new CrystalReachabilityTable(lateBoundBoard));
+        Check(lateBoundSearch.Advance(TimeSpan.Zero).GoldUpperBound==50,"Late-threshold query begins at the actual fifty-gold threshold");
+        AttachThreshold(lateBoundSearch,Task.FromResult(new CrystalGoalSearchResult(CrystalOffsetVerdict.Impossible,null,0,0,0,0,0,0)),new(),50);
+        lateBoundSearch.UseUnconditionalUpperBound(lateBoundDonor);
+        var lateBoundCutoff=lateBoundSearch.Advance(TimeSpan.Zero);
+        Check(lateBoundCutoff.GoldUpperBound==lateBoundMaximum && !lateBoundCutoff.GoldComplete,
+            "A late fifty-gold negative cannot raise the inherited thirty-gold upper back to the next forty-gold level");
+        Check(Finish(lateBoundSearch).Gold==lateBoundSelected,
+            "Consuming an older threshold preserves the independent raw selected optimum");
+        Console.WriteLine($"CRYSTAL_GOLD_LATE_UPPER_REUSE_PASS oldThreshold=50;nextLevel=40;inheritedUpper={lateBoundMaximum};retainedUpper={lateBoundCutoff.GoldUpperBound};rawSelected={lateBoundSelected}");
+        var overlapping=new PredictorCrystalGoldSearch(prefix,[target!],true);
+        var overlapDonor=new PredictorCrystalGoldSearch(prefix,[],true);
+        Check(Finish(overlapDonor).Gold==40,"Overlap donor independently proves the same raw forty-gold maximum");
+        overlapping.UseUnconditionalUpperBound(overlapDonor);
+        overlapping.UseRewardTable(new CrystalReachabilityTable(prefix));
+        var heldThreshold=new TaskCompletionSource<CrystalGoalSearchResult>();
+        var heldCancel=new CancellationTokenSource();var heldToken=heldCancel.Token;
+        AttachThreshold(overlapping,heldThreshold.Task,heldCancel,40);
+        try
+        {
+            var overlapCutoff=overlapping.Advance(TimeSpan.Zero,known);
+            Check(!overlapCutoff.GoldComplete && overlapCutoff.Gold==10 && overlapping.Progress.Examined==0,
+                "A pending threshold and zero budget preserve the unchanged geometry frontier");
+            var overlapResult=overlapping.Advance(TimeSpan.FromSeconds(1));
+            Check(!overlapResult.GoldComplete && overlapResult.Gold==40 && overlapResult.GoldUpperBound==40 &&
+                overlapping.Progress.Examined>0 && !heldThreshold.Task.IsCompleted && heldToken.IsCancellationRequested,
+                "Geometry reaches the independent oracle optimum and cancels redundant work while certainty awaits the threshold's end receipt");
+            long geometryNodes=overlapping.Progress.Examined;
+            Check(!overlapping.Advance(TimeSpan.Zero).GoldComplete && overlapping.Progress.Examined==geometryNodes,
+                "Completed geometry never advances its disposed cursor or restarts a threshold while awaiting cancellation acknowledgement");
+        }
+        finally {heldThreshold.TrySetCanceled(heldToken);}
+        var acknowledged=overlapping.Advance(TimeSpan.Zero);
+        Check(acknowledged.GoldComplete && acknowledged.Gold==40 && acknowledged.GoldUpperBound==40,
+            "The cancellation acknowledgement closes the independent optimum without another geometry or compilation budget");
+        bool retiredDisposed=false;
+        try {_=heldCancel.Token;} catch(ObjectDisposedException) {retiredDisposed=true;}
+        Check(retiredDisposed,"A retired threshold releases its cancellation source after its task actually completes");
+        var faulted=new PredictorCrystalGoldSearch(prefix,[target!],true);
+        faulted.UseRewardTable(new CrystalReachabilityTable(prefix));
+        var originalFailure=new InvalidOperationException("InjectedGoldThresholdFailure");
+        AttachThreshold(faulted,Task.FromException<CrystalGoalSearchResult>(originalFailure),new(),40);
+        bool originalCaught=false,retainedCaught=false;
+        try {faulted.Advance(TimeSpan.Zero,known);} catch(Exception ex) {originalCaught=ReferenceEquals(ex,originalFailure);}
+        try {faulted.Advance(TimeSpan.Zero);} catch(InvalidOperationException ex) {retainedCaught=ReferenceEquals(ex.InnerException,originalFailure);}
+        Check(originalCaught && retainedCaught,"A threshold task failure keeps its original exception and remains a failure on later slices");
+        var conflicted=new PredictorCrystalGoldSearch(prefix,[target!],true);
+        conflicted.UseRewardTable(new CrystalReachabilityTable(prefix));
+        var lateNegative=new TaskCompletionSource<CrystalGoalSearchResult>();
+        AttachThreshold(conflicted,lateNegative.Task,new(),40);
+        var conflictPending=conflicted.Advance(TimeSpan.FromSeconds(1),known);
+        Check(conflictPending.Gold==40 && !conflictPending.GoldComplete,"Geometry retains forty gold while the pending threshold prevents final certainty");
+        lateNegative.SetResult(new(CrystalOffsetVerdict.Impossible,null,0,0,0,0,0,0));
+        bool conflictCaught=false;
+        try {conflicted.Advance(TimeSpan.Zero);} catch(InvalidOperationException ex)
+        {conflictCaught=ex.Message=="CrystalGoldConflictingThresholdProof";}
+        Check(conflictCaught && !conflicted.Complete,"A late contradictory negative throws before the optimum can become final");
+        var higherPositive=new PredictorCrystalGoldSearch(prefix,[target!],true);
+        higherPositive.UseRewardTable(new CrystalReachabilityTable(prefix));
+        var latePositive=new TaskCompletionSource<CrystalGoalSearchResult>();
+        AttachThreshold(higherPositive,latePositive.Task,new(),10);
+        Check(higherPositive.Advance(TimeSpan.FromSeconds(1),known).Gold==40,"The late positive uses the independently checked forty-gold fixture");
+        // Deliberately corrupt only the pending completion's claimed incumbent.
+        // The returned path is still a real, oracle-checked forty-gold take; a
+        // threshold of ten cannot stand in for checking its actual amount.
+        typeof(PredictorCrystalGoldSearch).GetField("_bestGold",privateFields)!.SetValue(higherPositive,10);
+        typeof(PredictorCrystalGoldSearch).GetField("_best",privateFields)!.SetValue(higherPositive,lowProof);
+        latePositive.SetResult(new(CrystalOffsetVerdict.Possible,prefixResult.SelectedPlan,0,0,0,0,0,0));
+        bool higherCaught=false;
+        try {higherPositive.Advance(TimeSpan.Zero);} catch(InvalidOperationException ex)
+        {higherCaught=ex.Message=="CrystalGoldConflictingThresholdProof";}
+        Check(higherCaught && !higherPositive.Complete,"A late real higher-gold positive is checked by replay, even when its requested threshold equals the claimed incumbent");
+        Console.WriteLine("CRYSTAL_GOLD_OVERLAP_PASS pendingThresholdDoesNotSuspendGeometry=true;oracleGold=40;certaintyWaitsForCancellationAck=true;retiredTaskCancelledAndDisposed=true;originalFailureRetained=true;lateProofConflictsThrow=true");
         var session=new PredictorCrystalReachability(prefix,true);
         session.AddWitnesses([new(low,lowRun.Rewards)]);
         session.ProjectKnown([target!]);
@@ -317,12 +479,17 @@ internal static partial class PredictorCrystalAssistantChecks
         while(!below.GoldComplete && belowWatch.Elapsed<TimeSpan.FromSeconds(5))
             below=belowSession.AdvanceGold([belowAllGold.Option!],TimeSpan.FromMilliseconds(10));
         Check(below.GoldComplete && below.Gold==30 && below.GoldUpperBound==30,
-            "Async threshold absence closes the lower target-compatible optimum and tightens its bound");
-        var goldQueries=(Dictionary<string,PredictorCrystalGoldSearch>)typeof(PredictorCrystalReachability)
-            .GetField("_goldQueries",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic)!.GetValue(belowSession)!;
-        int tightened=(int)typeof(PredictorCrystalGoldSearch).GetField("_upper",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic)!
-            .GetValue(goldQueries.Values.Single())!;
-        Check(tightened==30,"Threshold lane consumed its completed negative instead of merely exhausting raw geometry");
+            "Independent geometry or threshold absence closes the lower target-compatible optimum with a tight bound");
+        var thresholdTable=new CrystalReachabilityTable(prefix);
+        var impossibleThreshold=PredictorCrystalGoalLanguage.Solve(prefix,thresholdTable,[belowAllGold.Option!],true,
+            TimeSpan.FromSeconds(5),minimumGold:40);
+        Check(impossibleThreshold.Verdict==CrystalOffsetVerdict.Impossible,"The independently enumerated thirty-gold target has a complete forty-gold threshold negative");
+        var thresholdOnly=new PredictorCrystalGoldSearch(prefix,[belowAllGold.Option!],true);
+        thresholdOnly.UseRewardTable(thresholdTable);
+        AttachThreshold(thresholdOnly,Task.FromResult(impossibleThreshold),new(),40);
+        var thresholdClosed=thresholdOnly.Advance(TimeSpan.Zero,belowSession.PeekKnown([belowAllGold.Option!]));
+        Check(thresholdClosed.GoldComplete && thresholdClosed.Gold==30 && thresholdClosed.GoldUpperBound==30,
+            "A completed threshold negative alone tightens the bound and closes the independently verified optimum with zero geometry budget");
         var relaxed=belowSession.Advance([],TimeSpan.Zero);
         var focus=belowSession.AdvanceFocused([],belowAllGold.Option!,TimeSpan.FromSeconds(1));
         var reselected=belowSession.Advance([belowAllGold.Option!],TimeSpan.Zero);

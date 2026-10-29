@@ -1,0 +1,759 @@
+{
+  "BaselineRevision": "04ff2beb69742e19cc0f5e9b9c6ca600aece989b",
+  "Values": {
+    "calibration-S": {
+      "Shape": "FamilyLocalWorkEstimate.20261028.v1.S.Atomic",
+      "NanosecondsPerInput": 1.0102839367919954,
+      "WindowCapacity": 4194304,
+      "SetupMilliseconds": 100,
+      "FixedWindowMilliseconds": 0,
+      "PublicTransportClass": "Counted32",
+      "OutputElementBytes": 8,
+      "OutputAlreadyOrdered": false,
+      "LocalCostSource": "Global",
+      "GpuCostRatio": 2,
+      "LocalExecutorCostRatio": 2,
+      "Source": [
+        "Basis=S.FamilyCostClosure.20260913",
+        "PriceQuality=Estimate",
+        "Provenance=RTX4060Laptop",
+        "ReferenceQuality=BoundedLegacy"
+      ],
+      "CanonicalMeasurement": false,
+      "Estimate": true
+    },
+    "canonical-C": {
+      "FamilyId": "C.CombatReward",
+      "Coverage": [
+        "C.CombatReward"
+      ],
+      "Revision": "C.CombatReward.Gpu.NeutralHotLoop.Dense.CanonicalAbi1Ready.20260907.v1",
+      "CompactInput": false,
+      "PrivateInput": false,
+      "PrivateOutput": false,
+      "MeanInputPopulation": 16777216,
+      "Computation": {
+        "Shape": "FamilyLocalWorkEstimate.20261028.v1.C.HotLoop",
+        "NanosecondsPerInput": 1.3,
+        "WindowCapacity": 1048576,
+        "SetupMilliseconds": 120,
+        "FixedWindowMilliseconds": 0,
+        "PublicTransportClass": "Counted32",
+        "OutputElementBytes": 4,
+        "OutputAlreadyOrdered": false,
+        "LocalCostSource": "ReferenceDefault",
+        "GpuCostRatio": 1,
+        "LocalExecutorCostRatio": 1,
+        "Source": [
+          "Basis=C.NeutralHorizonAndGenericStreamingAnchors",
+          "PriceQuality=Estimate",
+          "Provenance=RTX4060Laptop",
+          "ReferenceQuality=BoundedLegacy"
+        ],
+        "CanonicalMeasurement": false,
+        "Estimate": true
+      },
+      "Complete": {
+        "Shape": "CompleteCallCurve.C.CombatReward.CanonicalStructure.20261021.v1:{\u0022RouteCount\u0022:1,\u0022PrecedingNicheDraws\u0022:0,\u0022CapsuleNicheAdvances\u0022:[0,0,0,0],\u0022KaleidoscopeCountOnly\u0022:true,\u0022ReplayActualBonesPair\u0022:false,\u0022DynamicCapsuleNicheUnknown\u0022:false,\u0022CapsuleHeldReplay\u0022:false,\u0022ConservativelyKeeps\u0022:false,\u0022MaximumBattleOrdinal\u0022:6,\u0022RoutePolicy\u0022:2,\u0022Opening\u0022:{\u0022ReplayBonesOffer\u0022:false,\u0022SourceOpcodes\u0022:\u0022\u0022},\u0022Influence\u0022:{\u0022InfluenceFlags\u0022:0,\u0022AdditionalCardRewardCount\u0022:0,\u0022FixedGold\u0022:false},\u0022Predicates\u0022:[{\u0022BattleOrdinal\u0022:6,\u0022CardAny\u0022:[0],\u0022CardAll\u0022:[],\u0022CardBan\u0022:[],\u0022PotionRequirement\u0022:0,\u0022PotionAny\u0022:[],\u0022PotionAll\u0022:[],\u0022PotionBan\u0022:[],\u0022HasMinimumGold\u0022:false,\u0022HasMaximumGold\u0022:false}],\u0022CardAssignmentWindow\u0022:0,\u0022CardTargets\u0022:[],\u0022PotionAssignmentWindow\u0022:0,\u0022PotionAssignmentRequirements\u0022:\u0022\u0022,\u0022PotionTargets\u0022:[],\u0022TargetRarities\u0022:[1],\u0022CardPools\u0022:{\u0022Common\u0022:{\u0022Count\u0022:20,\u0022Multiplicities\u0022:[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],\u0022TargetMembership\u0022:[1]},\u0022Uncommon\u0022:{\u0022Count\u0022:35,\u0022Multiplicities\u0022:[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],\u0022TargetMembership\u0022:[0]},\u0022Rare\u0022:{\u0022Count\u0022:25,\u0022Multiplicities\u0022:[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],\u0022TargetMembership\u0022:[0]}},\u0022PowerPools\u0022:{\u0022Common\u0022:{\u0022Count\u0022:0,\u0022Multiplicities\u0022:[],\u0022TargetMembership\u0022:[0]},\u0022Uncommon\u0022:{\u0022Count\u0022:9,\u0022Multiplicities\u0022:[1,1,1,1,1,1,1,1,1],\u0022TargetMembership\u0022:[0]},\u0022Rare\u0022:{\u0022Count\u0022:9,\u0022Multiplicities\u0022:[1,1,1,1,1,1,1,1,1],\u0022TargetMembership\u0022:[0]}},\u0022Potions\u0022:{\u0022Common\u0022:{\u0022Count\u0022:16,\u0022Multiplicities\u0022:[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],\u0022TargetMembership\u0022:[0]},\u0022Uncommon\u0022:{\u0022Count\u0022:16,\u0022Multiplicities\u0022:[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],\u0022TargetMembership\u0022:[0]},\u0022Rare\u0022:{\u0022Count\u0022:16,\u0022Multiplicities\u0022:[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],\u0022TargetMembership\u0022:[0]},\u0022All\u0022:{\u0022Count\u0022:48,\u0022Multiplicities\u0022:[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],\u0022TargetMembership\u0022:[0]}},\u0022Gpu\u0022:{\u0022UsesHotLoop\u0022:true,\u0022Routes\u0022:1,\u0022BagCapacity\u0022:512,\u0022UsesTerminalCardGate\u0022:false}}",
+        "NanosecondsPerInput": 4.233190347982006,
+        "WindowCapacity": 16777216,
+        "SetupMilliseconds": null,
+        "FixedWindowMilliseconds": 0,
+        "PublicTransportClass": "CompleteCanonicalAbi1",
+        "OutputElementBytes": 8,
+        "OutputAlreadyOrdered": true,
+        "LocalCostSource": "LocalMeasurement",
+        "GpuCostRatio": 1,
+        "LocalExecutorCostRatio": 1,
+        "Source": [
+          "CanonicalAssetSha256=6A8C6E4E10E1AE0FA663C27DDC9ABC9502B6276830A4A5D8BE1EB8EE4E82C99F",
+          "CanonicalAssetSource=Embedded:RolltheSpire2.Search.FamilyExecution.CanonicalCostReference.json",
+          "TrainingRowsSha256=8CB6DDDCFAD1DBABFD783E64E4D5D4C0476648022142147D77FFDABC47E82FBD"
+        ],
+        "CanonicalMeasurement": true,
+        "Estimate": false
+      },
+      "ComputationMs": 21.8103808,
+      "CompleteMs": 71.02114883720928
+    },
+    "canonical-C-plan": {
+      "Order": [
+        "C.CombatReward"
+      ],
+      "Stages": [
+        {
+          "FamilyId": "C.CombatReward",
+          "Coverage": [
+            "C.CombatReward"
+          ],
+          "CompactAbi1Input": false,
+          "ExpectedInputFraction": 1,
+          "Survival": 0.08947865785906017,
+          "PerInputTimeMs": 1.3E-06,
+          "EvidenceSource": 1,
+          "PhysicalImplementationRevision": "C.CombatReward.Gpu.NeutralHotLoop.Dense.CanonicalAbi1Ready.20260907.v1"
+        }
+      ],
+      "ExpectedFamilyPipelineMsPerRoot": 1.3E-06,
+      "FilterRemainders": [],
+      "Eta": {
+        "Status": 0,
+        "AcceptedResultProbability": 0.08947865785906017,
+        "FixedScanRangeMs": 164.84632198043118,
+        "TargetMeanMs": 0.27800783546688373,
+        "TargetFamilyPipelineMs": 0.27612878365184346,
+        "TargetExactTailMs": 0.0018790518150402639,
+        "ExactTimingImplementationRevision": "ProductionExact.SoloReward.20261027.v1.Beta111.FixedPools1.IdentityReuse1",
+        "Stages": [
+          {
+            "FamilyId": "C.CombatReward",
+            "CompactAbi1Input": false,
+            "InputPopulation": 336,
+            "OutputPopulation": 30.06482904064422,
+            "SteadyStateMs": 0.27612878365184346,
+            "EvidenceSource": 2,
+            "Source": [
+              "CanonicalAssetSha256=6A8C6E4E10E1AE0FA663C27DDC9ABC9502B6276830A4A5D8BE1EB8EE4E82C99F",
+              "CanonicalAssetSource=Embedded:RolltheSpire2.Search.FamilyExecution.CanonicalCostReference.json",
+              "TrainingRowsSha256=8CB6DDDCFAD1DBABFD783E64E4D5D4C0476648022142147D77FFDABC47E82FBD"
+            ]
+          }
+        ]
+      }
+    },
+    "configured-S-CPU-Compact": {
+      "FamilyId": "S.MerchantShopColorless",
+      "Coverage": [
+        "S.MerchantShopColorless"
+      ],
+      "Revision": "S.MerchantShopColorless.Cpu.Sequence.20261013.v2.RootMode2.P4.B65536.CompactAbi1.CanonicalAbi1Ready",
+      "CompactInput": true,
+      "PrivateInput": false,
+      "PrivateOutput": false,
+      "MeanInputPopulation": 65536,
+      "Computation": {
+        "Shape": "FamilyLocalWorkEstimate.20261028.v1.S.Sequences.P4",
+        "NanosecondsPerInput": 53.7085021583393,
+        "WindowCapacity": 65536,
+        "SetupMilliseconds": null,
+        "FixedWindowMilliseconds": 0,
+        "PublicTransportClass": "CpuOrderedAbi1",
+        "OutputElementBytes": 8,
+        "OutputAlreadyOrdered": true,
+        "LocalCostSource": "ReferenceDefault",
+        "GpuCostRatio": 1,
+        "LocalExecutorCostRatio": 1,
+        "Source": [
+          "Basis=S.FamilyCostClosure.20260913",
+          "PriceQuality=Estimate"
+        ],
+        "CanonicalMeasurement": false,
+        "Estimate": true
+      },
+      "Complete": {
+        "Shape": "FamilyLocalWorkEstimate.20261028.v1.S.Sequences.P4",
+        "NanosecondsPerInput": 53.7085021583393,
+        "WindowCapacity": 65536,
+        "SetupMilliseconds": null,
+        "FixedWindowMilliseconds": 0,
+        "PublicTransportClass": "CpuOrderedAbi1",
+        "OutputElementBytes": 8,
+        "OutputAlreadyOrdered": true,
+        "LocalCostSource": "ReferenceDefault",
+        "GpuCostRatio": 1,
+        "LocalExecutorCostRatio": 1,
+        "Source": [
+          "Basis=S.FamilyCostClosure.20260913",
+          "PriceQuality=Estimate"
+        ],
+        "CanonicalMeasurement": false,
+        "Estimate": true
+      },
+      "ComputationMs": 3.5198403974489243,
+      "CompleteMs": 3.5198403974489243
+    },
+    "configured-S-CPU-plan": {
+      "Order": [
+        "S.MerchantShopColorless"
+      ],
+      "Stages": [
+        {
+          "FamilyId": "S.MerchantShopColorless",
+          "Coverage": [
+            "S.MerchantShopColorless"
+          ],
+          "CompactAbi1Input": false,
+          "ExpectedInputFraction": 1,
+          "Survival": 5.7220458984375E-06,
+          "PerInputTimeMs": 0.0001352146288177911,
+          "EvidenceSource": 1,
+          "PhysicalImplementationRevision": "S.MerchantShopColorless.Cpu.Sequence.20261013.v2.RootMode2.P4.B65536.Dense.CanonicalAbi1Ready"
+        }
+      ],
+      "ExpectedFamilyPipelineMsPerRoot": 0.0001352146288177911,
+      "FilterRemainders": [],
+      "Eta": {
+        "Status": 0,
+        "AcceptedResultProbability": 5.7220458984375E-06,
+        "FixedScanRangeMs": 2268.5251277859056,
+        "TargetMeanMs": 708.9141668862205,
+        "TargetFamilyPipelineMs": 708.9140731362205,
+        "TargetExactTailMs": 0.0075,
+        "ExactTimingImplementationRevision": "",
+        "Stages": [
+          {
+            "FamilyId": "S.MerchantShopColorless",
+            "CompactAbi1Input": false,
+            "InputPopulation": 5242880,
+            "OutputPopulation": 30,
+            "SteadyStateMs": 708.9140731362205,
+            "EvidenceSource": 1,
+            "Source": [
+              "Basis=S.FamilyCostClosure.20260913",
+              "PriceQuality=Estimate"
+            ]
+          }
+        ]
+      }
+    },
+    "identity": {
+      "CpuIdentity": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+      "GpuIdentity": "NVIDIA GeForce RTX 4060 Laptop GPU",
+      "RenderingBackend": "d3d12"
+    },
+    "initial-R-Compact": {
+      "FamilyId": "R.Relic",
+      "Coverage": [
+        "R.Relic",
+        "R.Relic.InitialTreasure"
+      ],
+      "Revision": "R.Relic.InitialTreasure.WithOrdinary.Public.20261024.v1.Gpu.CompactAbi1.CanonicalAbi1Ready",
+      "CompactInput": true,
+      "PrivateInput": false,
+      "PrivateOutput": false,
+      "MeanInputPopulation": 65536,
+      "Computation": {
+        "Shape": "InitialRooms.OwnedComputationWorkEstimate.20261028.v1",
+        "NanosecondsPerInput": 2.5006499692307695,
+        "WindowCapacity": 1048576,
+        "SetupMilliseconds": null,
+        "FixedWindowMilliseconds": 0,
+        "PublicTransportClass": "DeviceFamilyWork",
+        "OutputElementBytes": 8,
+        "OutputAlreadyOrdered": true,
+        "LocalCostSource": "ComponentComposition",
+        "GpuCostRatio": 1,
+        "LocalExecutorCostRatio": 1,
+        "Source": [
+          "Basis=I.TrackedSharedFront.20261020",
+          "PriceQuality=Estimate",
+          "Provenance=RTX4060Laptop",
+          "ReferenceQuality=BoundedLegacy"
+        ],
+        "CanonicalMeasurement": false,
+        "Estimate": true
+      },
+      "Complete": {
+        "Shape": "InitialRooms.OwnedPublicWorkEstimate.20261028.v1",
+        "NanosecondsPerInput": 28.59375149503813,
+        "WindowCapacity": 1048576,
+        "SetupMilliseconds": null,
+        "FixedWindowMilliseconds": 0,
+        "PublicTransportClass": "CompleteCanonicalAbi1",
+        "OutputElementBytes": 8,
+        "OutputAlreadyOrdered": true,
+        "LocalCostSource": "ReferenceEstimate",
+        "GpuCostRatio": 1,
+        "LocalExecutorCostRatio": 1,
+        "Source": [
+          "Basis=I.TrackedSharedFront.20261020",
+          "PriceQuality=Estimate"
+        ],
+        "CanonicalMeasurement": false,
+        "Estimate": true
+      },
+      "ComputationMs": 0.16388259638350772,
+      "CompleteMs": 1.8739200979788189
+    },
+    "initial-R-plan": {
+      "Order": [
+        "R.Relic\u002BR.Relic.InitialTreasure"
+      ],
+      "Stages": [
+        {
+          "FamilyId": "R.Relic",
+          "Coverage": [
+            "R.Relic",
+            "R.Relic.InitialTreasure"
+          ],
+          "CompactAbi1Input": false,
+          "ExpectedInputFraction": 1,
+          "Survival": 7.692307692307692E-06,
+          "PerInputTimeMs": 1.9506499692307694E-06,
+          "EvidenceSource": 1,
+          "PhysicalImplementationRevision": "R.Relic.InitialTreasure.WithOrdinary.Public.20261024.v1.Gpu.Dense.CanonicalAbi1Ready"
+        }
+      ],
+      "ExpectedFamilyPipelineMsPerRoot": 1.9506499692307694E-06,
+      "FilterRemainders": [],
+      "Eta": {
+        "Status": 0,
+        "AcceptedResultProbability": 7.692307692307692E-06,
+        "FixedScanRangeMs": 34.72328552340874,
+        "TargetMeanMs": 9.453284879999988,
+        "TargetFamilyPipelineMs": 9.445784879999987,
+        "TargetExactTailMs": 0.0075,
+        "ExactTimingImplementationRevision": "",
+        "Stages": [
+          {
+            "FamilyId": "R.Relic",
+            "CompactAbi1Input": false,
+            "InputPopulation": 3900000,
+            "OutputPopulation": 30,
+            "SteadyStateMs": 9.445784879999987,
+            "EvidenceSource": 1,
+            "Source": [
+              "Basis=I.TrackedSharedFront.20261020",
+              "PriceQuality=Estimate"
+            ]
+          }
+        ]
+      }
+    },
+    "M-plan": {
+      "Order": [
+        "M.StandardMap"
+      ],
+      "Stages": [
+        {
+          "FamilyId": "M.StandardMap",
+          "Coverage": [
+            "M.StandardMap"
+          ],
+          "CompactAbi1Input": false,
+          "ExpectedInputFraction": 1,
+          "Survival": 1,
+          "PerInputTimeMs": null,
+          "EvidenceSource": 0,
+          "PhysicalImplementationRevision": "M.StandardMap.Cpu.Final.EndpointReach.20261028.v2.RootMode2.P4.B8192.Dense.CanonicalAbi1Ready"
+        }
+      ],
+      "ExpectedFamilyPipelineMsPerRoot": null,
+      "FilterRemainders": [],
+      "Eta": {
+        "Status": 2,
+        "AcceptedResultProbability": 1,
+        "FixedScanRangeMs": null,
+        "TargetMeanMs": null,
+        "TargetFamilyPipelineMs": null,
+        "TargetExactTailMs": 0.0075,
+        "ExactTimingImplementationRevision": "",
+        "Stages": [
+          {
+            "FamilyId": "M.StandardMap",
+            "CompactAbi1Input": false,
+            "InputPopulation": 30,
+            "OutputPopulation": 30,
+            "SteadyStateMs": null,
+            "EvidenceSource": 1,
+            "Source": []
+          }
+        ]
+      }
+    },
+    "M-unpriced": {
+      "FamilyId": "M.StandardMap",
+      "Coverage": [
+        "M.StandardMap"
+      ],
+      "Revision": "M.StandardMap.Cpu.Final.EndpointReach.20261028.v2.RootMode2.P4.B8192.Dense.CanonicalAbi1Ready",
+      "CompactInput": false,
+      "PrivateInput": false,
+      "PrivateOutput": false,
+      "MeanInputPopulation": 65536,
+      "Computation": null,
+      "Complete": null,
+      "ComputationMs": null,
+      "CompleteMs": null
+    },
+    "ordinary-S-GPU": {
+      "FamilyId": "S.MerchantShopColorless",
+      "Coverage": [
+        "S.MerchantShopColorless"
+      ],
+      "Revision": "S.MerchantShopColorless.Atomic.DenseCarry8.CanonicalIdentity.ConditionalPrefixReject.CanonicalAbi1Ready.20261015.v2",
+      "CompactInput": false,
+      "PrivateInput": false,
+      "PrivateOutput": false,
+      "MeanInputPopulation": 16777216,
+      "Computation": {
+        "Shape": "FamilyLocalWorkEstimate.20261028.v1.S.Atomic",
+        "NanosecondsPerInput": 0.5051419683959977,
+        "WindowCapacity": 4194304,
+        "SetupMilliseconds": 100,
+        "FixedWindowMilliseconds": 0,
+        "PublicTransportClass": "Counted32",
+        "OutputElementBytes": 8,
+        "OutputAlreadyOrdered": false,
+        "LocalCostSource": "ReferenceDefault",
+        "GpuCostRatio": 1,
+        "LocalExecutorCostRatio": 1,
+        "Source": [
+          "Basis=S.FamilyCostClosure.20260913",
+          "PriceQuality=Estimate",
+          "Provenance=RTX4060Laptop",
+          "ReferenceQuality=BoundedLegacy"
+        ],
+        "CanonicalMeasurement": false,
+        "Estimate": true
+      },
+      "Complete": {
+        "Shape": "FamilyLocalWorkEstimate.20261028.v1.S.Atomic",
+        "NanosecondsPerInput": 0.5051419683959977,
+        "WindowCapacity": 4194304,
+        "SetupMilliseconds": 100,
+        "FixedWindowMilliseconds": 0,
+        "PublicTransportClass": "Counted32",
+        "OutputElementBytes": 8,
+        "OutputAlreadyOrdered": false,
+        "LocalCostSource": "ReferenceDefault",
+        "GpuCostRatio": 1,
+        "LocalExecutorCostRatio": 1,
+        "Source": [
+          "Basis=S.FamilyCostClosure.20260913",
+          "PriceQuality=Estimate"
+        ],
+        "CanonicalMeasurement": false,
+        "Estimate": true
+      },
+      "ComputationMs": 8.474875914444826,
+      "CompleteMs": 10.277275914422177
+    },
+    "ordinary-S-plan": {
+      "Order": [
+        "S.MerchantShopColorless"
+      ],
+      "Stages": [
+        {
+          "FamilyId": "S.MerchantShopColorless",
+          "Coverage": [
+            "S.MerchantShopColorless"
+          ],
+          "CompactAbi1Input": false,
+          "ExpectedInputFraction": 1,
+          "Survival": 5.7220458984375E-06,
+          "PerInputTimeMs": 5.051419683959977E-07,
+          "EvidenceSource": 1,
+          "PhysicalImplementationRevision": "S.MerchantShopColorless.Atomic.DenseCarry8.CanonicalIdentity.ConditionalPrefixReject.CanonicalAbi1Ready.20261015.v2"
+        }
+      ],
+      "ExpectedFamilyPipelineMsPerRoot": 5.051419683959977E-07,
+      "FilterRemainders": [],
+      "Eta": {
+        "Status": 0,
+        "AcceptedResultProbability": 5.7220458984375E-06,
+        "FixedScanRangeMs": 10.301275914422176,
+        "TargetMeanMs": 3.856648631493312,
+        "TargetFamilyPipelineMs": 3.8491486314933123,
+        "TargetExactTailMs": 0.0075,
+        "ExactTimingImplementationRevision": "",
+        "Stages": [
+          {
+            "FamilyId": "S.MerchantShopColorless",
+            "CompactAbi1Input": false,
+            "InputPopulation": 5242880,
+            "OutputPopulation": 30,
+            "SteadyStateMs": 3.8491486314933123,
+            "EvidenceSource": 1,
+            "Source": [
+              "Basis=S.FamilyCostClosure.20260913",
+              "PriceQuality=Estimate",
+              "Provenance=RTX4060Laptop",
+              "ReferenceQuality=BoundedLegacy"
+            ]
+          }
+        ]
+      }
+    },
+    "party-N-Compact": {
+      "FamilyId": "N.Neow",
+      "Coverage": [
+        "N.Neow"
+      ],
+      "Revision": "N.Neow.PartyEffects.Gpu.v6.Fused.CompactAbi1.DirectCompactCast.20261016.v1",
+      "CompactInput": true,
+      "PrivateInput": false,
+      "PrivateOutput": false,
+      "MeanInputPopulation": 65536,
+      "Computation": {
+        "Shape": "PartyNComputationReference",
+        "NanosecondsPerInput": 6.4,
+        "WindowCapacity": 16777216,
+        "SetupMilliseconds": 4800,
+        "FixedWindowMilliseconds": 0,
+        "PublicTransportClass": "DeviceFamilyWork",
+        "OutputElementBytes": 8,
+        "OutputAlreadyOrdered": true,
+        "LocalCostSource": "ComponentComposition",
+        "GpuCostRatio": 1,
+        "LocalExecutorCostRatio": 1,
+        "Source": [
+          "Basis=N.WorkEstimate.20261028.v1",
+          "PriceQuality=Estimate",
+          "Provenance=RTX4060Laptop",
+          "ReferenceQuality=BoundedLegacy",
+          "SharedArrivalWitnessUnchanged"
+        ],
+        "CanonicalMeasurement": false,
+        "Estimate": true
+      },
+      "Complete": {
+        "Shape": "PartyNCompleteReference",
+        "NanosecondsPerInput": 48.202246093750006,
+        "WindowCapacity": 16777216,
+        "SetupMilliseconds": 325,
+        "FixedWindowMilliseconds": 0,
+        "PublicTransportClass": "CompleteCanonicalAbi1",
+        "OutputElementBytes": 8,
+        "OutputAlreadyOrdered": true,
+        "LocalCostSource": "ReferenceDefault",
+        "GpuCostRatio": 1,
+        "LocalExecutorCostRatio": 1,
+        "Source": [
+          "PriceQuality=Estimate",
+          "SharedArrivalWitnessUnchanged"
+        ],
+        "CanonicalMeasurement": false,
+        "Estimate": true
+      },
+      "ComputationMs": 0.41943040000000004,
+      "CompleteMs": 3.1589824
+    },
+    "party-plan": {
+      "Order": [
+        "S.MerchantShopColorless",
+        "N.Neow"
+      ],
+      "Stages": [
+        {
+          "FamilyId": "S.MerchantShopColorless",
+          "Coverage": [
+            "S.MerchantShopColorless"
+          ],
+          "CompactAbi1Input": false,
+          "ExpectedInputFraction": 1,
+          "Survival": 3.2741809263825417E-11,
+          "PerInputTimeMs": 5.051465754552956E-07,
+          "EvidenceSource": 1,
+          "PhysicalImplementationRevision": "S.MerchantShopColorless.Party.20260922.v1.PrivateOrdinal.Dense.PartyPrefixReject.20261016.v1.GreedyPlayers.20261026.v1"
+        },
+        {
+          "FamilyId": "N.Neow",
+          "Coverage": [
+            "N.Neow"
+          ],
+          "CompactAbi1Input": true,
+          "ExpectedInputFraction": 3.2741809263825417E-11,
+          "Survival": 2.7994736989445986E-07,
+          "PerInputTimeMs": 6.4E-06,
+          "EvidenceSource": 1,
+          "PhysicalImplementationRevision": "N.Neow.PartyEffects.Gpu.v6.Fused.CompactAbi1.DirectCompactCast.20261016.v1"
+        }
+      ],
+      "ExpectedFamilyPipelineMsPerRoot": 5.051465756648432E-07,
+      "FilterRemainders": [
+        "Party:OnlySelectedBoundedFiltersParticipate;SlotAndSharedRemaindersRetainedByQuery"
+      ],
+      "Eta": {
+        "Status": 0,
+        "AcceptedResultProbability": 9.165983388993986E-18,
+        "FixedScanRangeMs": 40.238550217887834,
+        "TargetMeanMs": 40.238550217887834,
+        "TargetFamilyPipelineMs": 40.23854966857143,
+        "TargetExactTailMs": 5.493164062500001E-07,
+        "ExactTimingImplementationRevision": "",
+        "Stages": [
+          {
+            "FamilyId": "S.MerchantShopColorless",
+            "CompactAbi1Input": false,
+            "InputPopulation": 16777216,
+            "OutputPopulation": 0.00054931640625,
+            "SteadyStateMs": 40.23854966857143,
+            "EvidenceSource": 1,
+            "Source": [
+              "HistoricalWrapperCoefficients",
+              "PriceQuality=Estimate"
+            ]
+          },
+          {
+            "FamilyId": "N.Neow",
+            "CompactAbi1Input": true,
+            "InputPopulation": 0,
+            "OutputPopulation": 0,
+            "SteadyStateMs": 0,
+            "EvidenceSource": 1,
+            "Source": []
+          }
+        ]
+      }
+    },
+    "party-S": {
+      "FamilyId": "S.MerchantShopColorless",
+      "Coverage": [
+        "S.MerchantShopColorless"
+      ],
+      "Revision": "S.MerchantShopColorless.Party.20260922.v1.PrivateOrdinal.Dense.PartyPrefixReject.20261016.v1.GreedyPlayers.20261026.v1",
+      "CompactInput": false,
+      "PrivateInput": false,
+      "PrivateOutput": false,
+      "MeanInputPopulation": 65536,
+      "Computation": {
+        "Shape": "PartyFamilyComputationEnvelope",
+        "NanosecondsPerInput": 0.5051465754552956,
+        "WindowCapacity": 16777216,
+        "SetupMilliseconds": 200,
+        "FixedWindowMilliseconds": 0,
+        "PublicTransportClass": "DeviceFamilyWork",
+        "OutputElementBytes": 8,
+        "OutputAlreadyOrdered": true,
+        "LocalCostSource": "ComponentComposition",
+        "GpuCostRatio": 1,
+        "LocalExecutorCostRatio": 1,
+        "Source": [
+          "Basis=S.FamilyCostClosure.20260913",
+          "PriceQuality=Estimate",
+          "Provenance=RTX4060Laptop",
+          "ReferenceQuality=BoundedLegacy"
+        ],
+        "CanonicalMeasurement": false,
+        "Estimate": true
+      },
+      "Complete": {
+        "Shape": "PartyFamilyReferenceEnvelope",
+        "NanosecondsPerInput": 80.67420421055385,
+        "WindowCapacity": 16777216,
+        "SetupMilliseconds": 150,
+        "FixedWindowMilliseconds": 0,
+        "PublicTransportClass": "CompleteCanonicalAbi1",
+        "OutputElementBytes": 8,
+        "OutputAlreadyOrdered": true,
+        "LocalCostSource": "Condition",
+        "GpuCostRatio": 1,
+        "LocalExecutorCostRatio": 1,
+        "Source": [
+          "HistoricalWrapperCoefficients",
+          "PriceQuality=Estimate"
+        ],
+        "CanonicalMeasurement": false,
+        "Estimate": true
+      },
+      "ComputationMs": 0.03310528596903825,
+      "CompleteMs": 5.2870646471428575
+    },
+    "preview-S": {
+      "Cpu": 135.2146288177911,
+      "Gpu": 0.5051419683959977,
+      "Source": [
+        "Basis=S.FamilyCostClosure.20260913",
+        "PriceQuality=Estimate",
+        "Provenance=RTX4060Laptop",
+        "ReferenceQuality=BoundedLegacy"
+      ]
+    },
+    "V-CPU": {
+      "FamilyId": "V.VariantOpening",
+      "Coverage": [
+        "V.VariantOpening"
+      ],
+      "Revision": "V.VariantOpening.Cpu.20261028.v1.RootMode2.P4.B65536.Dense.CanonicalAbi1Ready",
+      "CompactInput": false,
+      "PrivateInput": false,
+      "PrivateOutput": false,
+      "MeanInputPopulation": 65536,
+      "Computation": {
+        "Shape": "FamilyLocalWorkEstimate.20261028.v1.V.ShortSelectionUnknown.P4",
+        "NanosecondsPerInput": 66,
+        "WindowCapacity": 65536,
+        "SetupMilliseconds": null,
+        "FixedWindowMilliseconds": 0,
+        "PublicTransportClass": "CpuOrderedAbi1",
+        "OutputElementBytes": 8,
+        "OutputAlreadyOrdered": true,
+        "LocalCostSource": "ReferenceDefault",
+        "GpuCostRatio": 1,
+        "LocalExecutorCostRatio": 1,
+        "Source": [
+          "Basis=V.ShortWork",
+          "PriceQuality=Estimate"
+        ],
+        "CanonicalMeasurement": false,
+        "Estimate": true
+      },
+      "Complete": {
+        "Shape": "FamilyLocalWorkEstimate.20261028.v1.V.ShortSelectionUnknown.P4",
+        "NanosecondsPerInput": 66,
+        "WindowCapacity": 65536,
+        "SetupMilliseconds": null,
+        "FixedWindowMilliseconds": 0,
+        "PublicTransportClass": "CpuOrderedAbi1",
+        "OutputElementBytes": 8,
+        "OutputAlreadyOrdered": true,
+        "LocalCostSource": "ReferenceDefault",
+        "GpuCostRatio": 1,
+        "LocalExecutorCostRatio": 1,
+        "Source": [
+          "Basis=V.ShortWork",
+          "PriceQuality=Estimate"
+        ],
+        "CanonicalMeasurement": false,
+        "Estimate": true
+      },
+      "ComputationMs": 4.325376,
+      "CompleteMs": 4.325376
+    },
+    "V-plan": {
+      "Order": [
+        "V.VariantOpening"
+      ],
+      "Stages": [
+        {
+          "FamilyId": "V.VariantOpening",
+          "Coverage": [
+            "V.VariantOpening"
+          ],
+          "CompactAbi1Input": false,
+          "ExpectedInputFraction": 1,
+          "Survival": 0.3272499814927581,
+          "PerInputTimeMs": 6.6E-05,
+          "EvidenceSource": 1,
+          "PhysicalImplementationRevision": "V.VariantOpening.Cpu.20261028.v1.RootMode2.P4.B65536.Dense.CanonicalAbi1Ready"
+        }
+      ],
+      "ExpectedFamilyPipelineMsPerRoot": 6.6E-05,
+      "FilterRemainders": [],
+      "Eta": {
+        "Status": 0,
+        "AcceptedResultProbability": 0.3272499814927581,
+        "FixedScanRangeMs": 1376.9112823750013,
+        "TargetMeanMs": 0.013598749574333435,
+        "TargetFamilyPipelineMs": 0.006072,
+        "TargetExactTailMs": 0.007526749574333436,
+        "ExactTimingImplementationRevision": "",
+        "Stages": [
+          {
+            "FamilyId": "V.VariantOpening",
+            "CompactAbi1Input": false,
+            "InputPopulation": 92,
+            "OutputPopulation": 30.106998297333742,
+            "SteadyStateMs": 0.006072,
+            "EvidenceSource": 1,
+            "Source": [
+              "Basis=V.ShortWork",
+              "PriceQuality=Estimate"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

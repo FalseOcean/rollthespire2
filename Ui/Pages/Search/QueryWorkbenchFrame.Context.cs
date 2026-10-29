@@ -64,12 +64,10 @@ internal sealed partial class QueryWorkbenchFrame
             picker.AddIconItem(_characterIcons.Resolve(key).Texture, names.Resolve(key, GameContentKind.Character));
             if (key == character) picker.Select(i);
         }
+        RolltheSpire2.Ui.Components.CharacterDropdownVisuals.Apply(picker);
         picker.ItemSelected += index =>
         {
-            if (_multiplayer) _seatCharacters[_seat] = _characters[(int)index];
-            else _soloCharacter = _characters[(int)index];
-            UpdateSeatReadLabels();
-            RefreshEditorContexts();
+            ChangeCharacter(_characters[(int)index]);
         };
         Text(_multiplayer ? (_language == "zh" ? "共享进阶" : "Shared asc.") : _text.Get("query.context.ascension"), 18, 8, characterTop + 44, true).Name = "SearchAscensionCaption";
         var ascension = ContextOptions(ColumnInset + SelectorColumnStride, characterTop + 40, SelectorWidth);
@@ -242,7 +240,7 @@ internal sealed partial class QueryWorkbenchFrame
         // Text and theme padding must not enlarge a manually positioned rail cell.
         button.ClipText = true;
         button.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
-        foreach (string state in new[] { "normal", "hover", "pressed", "disabled", "focus" })
+        foreach (string state in new[] { "normal", "hover", "pressed", "hover_pressed", "disabled", "focus" })
         {
             var style = (StyleBox)button.GetThemeStylebox(state).Duplicate();
             style.ContentMarginLeft = style.ContentMarginRight = horizontalPadding;
@@ -258,7 +256,7 @@ internal sealed partial class QueryWorkbenchFrame
         var option = new OptionButton { FitToLongestItem = false, ClipText = true };
         option.AddThemeFontSizeOverride("font_size", 18);
         using var donor = _p.Button(string.Empty);
-        foreach (string style in new[] { "normal", "hover", "pressed", "disabled", "focus" })
+        foreach (string style in new[] { "normal", "hover", "pressed", "hover_pressed", "disabled", "focus" })
         {
             if (style == "focus") { option.AddThemeStyleboxOverride(style, _p.FocusRing()); continue; }
             var box = (StyleBoxFlat)donor.GetThemeStylebox(style).Duplicate();

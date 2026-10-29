@@ -14,7 +14,10 @@ internal sealed partial class CapsuleRelicFamily : IFamilyInvocation
     void IFamilyInvocation.LogExecutionEvidence() => _costSamples.WriteSummary();
     bool IFamilyInvocation.CanBindPrivateSerial => _gpuPlan is { NumericalVariant: GpuNumericalVariant.NativeFloat64 } && !_gpuDisabled;
     public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest geometry) =>
-        FamilyGpuReadback.Reference(this, RelicPhysicalPricing.QuoteCapsule(_request, _gpuPlan, geometry));
+        FamilyGpuReadback.Reference(this, FamilyCanonicalMeasuredCost.TryDenseQuote(this, geometry) ??
+            (_gpuPlan is not null ? RelicPhysicalPricing.QuoteSourceCapsules(_request, _gpuPlan, geometry) : null) ??
+            RelicWorkEstimate.Capsule(_request, _pricingRoute, _replay.Pool, _gpuPlan, geometry,
+                cpu: _gpuPlan is null, workers: _cpu.Workers, compiledMatcher: _gpuPlan is not null));
     FamilyPrivateGpuExecution IFamilyInvocation.BindPrivateSerial(Godot.RenderingDevice rd,
         PrivateOrdinalBuffer? input, PrivateOrdinalBuffer? output)
     {
@@ -25,6 +28,10 @@ internal sealed partial class CapsuleRelicFamily : IFamilyInvocation
     private const int ReferenceSampleCapacity = 256;
     private readonly ExactSearchExecutionRequest _request;
     private readonly CapsuleRelicReplay _replay;
+    private readonly NeowReplayPlan _pricingRoute;
+    internal ExactSearchExecutionRequest PricingRequest => _request;
+    internal NeowReplayPlan PricingReplayPlan => _pricingRoute;
+    internal RelicFamilyPool PricingPool => _replay.Pool;
     private readonly NeowFamilyProjections _models;
     private readonly FamilyCpuExecution _cpu;
     private readonly RelicFullGpuPlan? _gpuPlan;
@@ -49,6 +56,7 @@ internal sealed partial class CapsuleRelicFamily : IFamilyInvocation
         GpuNumericalVariant numericalVariant)
     {
         _request = request;
+        _pricingRoute = route;
         _replay = new(request, route);
         _models = new(request, route, true, _replay.Pool);
         _cpu = new(request, FamilyId, "R.Relic.Cpu.CapsuleAndSequenceReplay.20260905.v1");
@@ -88,7 +96,7 @@ internal sealed partial class CapsuleRelicFamily : IFamilyInvocation
             "Rfull.ConditionPerformance.Neutral.CanonicalBoundary.20260906.v4" + _gpuPlan.NumericalRevision,
             1d,
             "NoAcceptedWithinPathCurve;timingBoundary=CanonicalAbi1Ready;independentRfullIdentity=true" +
-            (_gpuPlan.NumericalVariant == GpuNumericalVariant.IntegerRne ? ";NoAcceptedPhysicalPrice;HistoricalGlobalNextIntPreserved" : ""));
+            (_gpuPlan.NumericalVariant == GpuNumericalVariant.IntegerRne ? ";OperationEstimateAvailable;NoIntegerBodyMeasurement;HistoricalGlobalNextIntPreserved" : ""));
 
     public FamilyPerformanceObservation CapturePerformanceObservation() => _gpuPlan is null
         ? _cpu.Observation()

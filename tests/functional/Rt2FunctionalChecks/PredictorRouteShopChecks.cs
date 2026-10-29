@@ -68,6 +68,78 @@ internal static class PredictorRouteShopChecks
             entry.BaseCost, run.ShopOffers[slot].Cost, entry.IsOnSale, entry.Stocked)
         { StockRevisionIsOccurrence = true };
     }
+
+    internal static void RunDependencyScopeBoundaries(PredictorRun captured)
+    {
+        PredictorRun UpgradeShop(string upgrade, string shopRelic)
+        {
+            const int act = 2;
+            MapPointType[] types = [MapPointType.Ancient, MapPointType.Treasure, MapPointType.Shop,
+                MapPointType.Monster, MapPointType.Boss];
+            var points = types.Select((type, row) => new MapPredictionPoint(new(3, row), type, true,
+                row == types.Length - 1 ? [] : [new(3, row + 1)])).ToArray();
+            var source = captured.Checkpoints[0].State;
+            var state = source with
+            {
+                OpeningCompleted = true, Position = new(act, 1, "shop-dependency:entry"), Relics = [],
+                GoldBudget = 5000, PotionSlots = [null, null, null],
+                Maps = [new(act, captured.RouteMap(act) with { Points = points }, [points[0].Position])],
+                Visits = [new(act, points[0].Position, MapPointType.Ancient, PredictorRoomKind.Ancient, null, 1)],
+                SharedBag = new(false, [], [new("Rare", [new("RELIC", upgrade)])], []),
+                PersonalBag = new(false, [], [new("Shop", [new("RELIC", shopRelic)])], [])
+            };
+            var run = new PredictorRun(captured.Context with { Live = null, Operation = null }, state);
+            run.SetRoute(act, points.Select(point => point.Position).ToImmutableArray());
+            run.AdvanceRoute();
+            return run;
+        }
+        PredictorPlannedNode TakeUpgrade(PredictorRun run) => new(run.Working.Position.NodeId)
+        { Treasure = new() { Actions = [new(PredictorTreasureActionKind.Open),
+            new(PredictorTreasureActionKind.TakeRelic) { ExpectedRelic = run.TreasureRelic!.Key }] } };
+        foreach (string upgrade in new[] { "WHETSTONE", "WAR_PAINT" })
+        {
+            var run = UpgradeShop(upgrade, "WING_CHARM");
+            var first = TakeUpgrade(run);
+            var shopNode = Pure(run, [first], 2, PredictorRoutePreviewPolicy.LiveMapDefaults).Nodes[1];
+            var offer = shopNode.Shop!.Offers.Single(offer => offer.Value?.Key?.Entry == "WING_CHARM").Value!;
+            var buy = new PredictorPlannedShopAction(PredictorShopActionKind.Buy) { ExpectedOffer = offer };
+            var result = Pure(run, [first, Plan(shopNode.Position.NodeId, buy)], 2,
+                PredictorRoutePreviewPolicy.LiveMapDefaults).Nodes[1];
+            Check(result.Advanced && result.Shop!.AppliedActions == 1 && result.Inventory!.Relics.Any(relic =>
+                relic.Value.Key.Entry == "WING_CHARM") && result.PendingCauses.Any(cause => cause.Code == "RouteRelicDeckRandomnessCutoff"),
+                upgrade + " leaves Niche unresolved without blocking Wing Charm's effect-free receipt at a shop");
+        }
+        var mirror = UpgradeShop("WAR_PAINT", "DOLLYS_MIRROR");
+        var treasure = TakeUpgrade(mirror);
+        var initial = Pure(mirror, [treasure], 2, PredictorRoutePreviewPolicy.LiveMapDefaults).Nodes[1];
+        var mirrorOffer = initial.Shop!.Offers.Single(offer => offer.Value?.Key?.Entry == "DOLLYS_MIRROR").Value!;
+        var purchase = new PredictorPlannedShopAction(PredictorShopActionKind.Buy) { ExpectedOffer = mirrorOffer };
+        var opened = Pure(mirror, [treasure, Plan(initial.Position.NodeId, purchase)], 2,
+            PredictorRoutePreviewPolicy.LiveMapDefaults).Nodes[1];
+        Check(opened.Phase == PredictorPhase.ObtainDeckCards && opened.Shop!.AppliedActions == 1 &&
+            opened.Shop.RequiredChoices.Single().Source.Entry == "DOLLYS_MIRROR" && !opened.Advanced,
+            "Known nonquest candidates can open Mirror while unrelated Skill upgrades remain unknown; target is still required");
+        var attack = mirror.Working.Deck.Select(mirror.Working.Card).First(card => card.Type == EffectCardType.Attack &&
+            !PredictorCardChanges.Definition(mirror.Context, card.Key).IsQuest);
+        var choose = new PredictorPlannedShopAction(PredictorShopActionKind.Obtain)
+        { Obtain = new(PredictorObtainChildAction.ChooseDeckCards, new("RELIC", "DOLLYS_MIRROR"))
+            { DeckCards = [new(attack.Id, attack.Key, attack.FloorAdded)] } };
+        var copied = Pure(mirror, [treasure, Plan(initial.Position.NodeId, purchase, choose)], 2,
+            PredictorRoutePreviewPolicy.LiveMapDefaults).Nodes[1];
+        Check(copied.Advanced && copied.Shop!.AppliedActions == 2 && copied.Cards.Length == mirror.Working.Deck.Length + 1 &&
+            copied.Cards.Count(card => card.IsKnown && card.Value.Key == attack.Key &&
+                card.Value.UpgradeLevel == attack.UpgradeLevel && card.Value.Enchantment == attack.Enchantment) >= 2,
+            "Mirror copies the selected known Attack's full payload while retaining unrelated Skill uncertainty");
+        var skill = mirror.Working.Deck.Select(mirror.Working.Card).First(card => card.Type == EffectCardType.Skill &&
+            card.UpgradeLevel < card.MaxUpgradeLevel);
+        var unsafeChoice = choose with { Obtain = choose.Obtain! with
+            { DeckCards = [new(skill.Id, skill.Key, skill.FloorAdded)] } };
+        var blocked = Pure(mirror, [treasure, Plan(initial.Position.NodeId, purchase, unsafeChoice)], 2,
+            PredictorRoutePreviewPolicy.LiveMapDefaults).Nodes[1];
+        Check(!blocked.Advanced && blocked.Shop!.AppliedActions == 1,
+            "Mirror still rejects copying the genuinely unknown selected Skill payload");
+        Console.WriteLine("RUNTIME_SHOP_DEPENDENCY_SCOPES_PASS W/WP Wing receipt; Mirror known entry/full payload; unknown target protection");
+    }
     private static PredictorPlannedShopAction Buy(PredictorRun run, int slot)
         => new(PredictorShopActionKind.Buy) { ExpectedOffer = Offer(run, slot) };
     private static PredictorPlannedCard Target(PredictorRun run, long id)

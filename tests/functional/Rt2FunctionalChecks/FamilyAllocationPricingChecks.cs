@@ -14,6 +14,83 @@ using RolltheSpire2.Presentation.Localization;
 
 internal static class FamilyAllocationPricingChecks
 {
+    internal static int RunManualOrder()
+    {
+        int checks = 0;
+        void Check(bool ok, string name) { checks++; if (!ok) throw new InvalidOperationException("ManualFamilyOrder: " + name); }
+        void Reject(Action action, string code)
+        {
+            try { action(); }
+            catch (InvalidOperationException error) when (error.Message.StartsWith(code, StringComparison.Ordinal))
+            { checks++; return; }
+            throw new InvalidOperationException("ManualFamilyOrder: expected " + code);
+        }
+        var calls = new List<(string Id, bool Compact)>();
+        var n = new SimplePlannerFixture("N.Neow", null, null, _ => .5, onInvoke: (id, compact) => calls.Add((id, compact)));
+        var w = new SimplePlannerFixture("W.World", null, null, _ => .25, onInvoke: (id, compact) => calls.Add((id, compact)));
+        var r = new SimplePlannerFixture("R.Relic", null, null, _ => .2);
+        var fused = new SimplePlannerFixture("N.Neow", null, null, _ => .1, coverage: ["N.Neow", "R.Relic"]);
+        var manual = FamilyPlanner.InManualOrder([n, w], [n, w], ["W.World", "N.Neow"]);
+        Check(manual.ExecutionOrderUnits.SequenceEqual([w, n]) && manual.ExpectedFamilyPipelineMsPerRoot is null,
+            "unpriced units follow manual order with unknown estimate");
+        Check(manual.Stages[0].CompactAbi1Input == false && manual.Stages[1].CompactAbi1Input &&
+            manual.Stages[1].ExpectedInputFraction == .25 && n.PassedCoverage.Last().SetEquals(["W.World"]),
+            "manual projections use the actual Dense/Compact role and passed coverage");
+        Check(FamilyPlanner.PlanSimple([n, w]).ExecutionOrderUnits.SequenceEqual([n, w]),
+            "automatic planning keeps its existing unknown-evidence registration order");
+        Check(FamilyExecutionCoordinator.ReconcileFamilyOrder(["W.World", "N.Neow+R.Relic", "Gone"], [n, r, w])
+            .SequenceEqual(["W.World", "N.Neow", "R.Relic"]), "changed groups split without losing authored relative order");
+        Check(FamilyPlanner.InManualOrder([n, r, w], [n, r, w], ["W.World", "Gone", "N.Neow"])
+            .ExecutionOrderUnits.SequenceEqual([w, n, r]), "removed units disappear and newly participating units append");
+        var v = new SimplePlannerFixture("V.VariantOpening", null, null, _ => .4);
+        Check(FamilyExecutionCoordinator.ReconcileFamilyOrder(["W.World", "N.Neow"], [n, v])
+            .SequenceEqual(["V.VariantOpening", "N.Neow"]), "old variant-only W position transfers to V");
+        Check(FamilyExecutionCoordinator.ReconcileFamilyOrder(["N.Neow", "W.World.InitialUnknown", "R.Relic"], [r, v, n])
+            .SequenceEqual(["N.Neow", "V.VariantOpening", "R.Relic"]), "old unknown-only W position transfers to V");
+        Check(FamilyExecutionCoordinator.ReconcileFamilyOrder(["W.World.InitialUnknown", "N.Neow", "W.World"], [w, n, v])
+            .SequenceEqual(["V.VariantOpening", "N.Neow", "W.World"]), "legacy W components transfer their earliest rank to V");
+        Check(FamilyExecutionCoordinator.ReconcileFamilyOrder(["W.World", "N.Neow", "V.VariantOpening"], [v, w, n])
+            .SequenceEqual(["W.World", "N.Neow", "V.VariantOpening"]), "explicit V position is preserved instead of inheriting W");
+        Check(FamilyPlanner.InManualOrder([v, w, n], [v, w, n], ["W.World", "N.Neow"])
+            .ExecutionOrderUnits.SequenceEqual([v, w, n]), "legacy combined W expands to adjacent V/W without moving later authored units");
+        Check(FamilyPlanner.InManualOrder([v, w, n], [v, w, n], ["W.World", "N.Neow", "V.VariantOpening"])
+            .ExecutionOrderUnits.SequenceEqual([w, n, v]), "explicit manual W-before-V remains effective");
+        var grouped = FamilyPlanner.InManualOrder([fused, n, r, w], [n, r, w], ["N.Neow+R.Relic", "W.World"], fused);
+        Check(grouped.ExecutionOrderUnits.SequenceEqual([fused, w]), "coupled units remain indivisible");
+        Reject(() => FamilyPlanner.InManualOrder([fused, n, r, w], [n, r, w], ["W.World", "N.Neow+R.Relic"], fused),
+            "ManualFamilyOrder.DenseOnlyUnitMustBeFirst");
+        Reject(() => FamilyPlanner.InManualOrder([n, r], [n, r], ["N.Neow+R.Relic", "N.Neow"]),
+            "ManualFamilyOrder.OverlappingUnits");
+
+        var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/owner-nwae-v1/context.json");
+        var workload = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/owner-nwae-v1/NWAE_01.json");
+        var compiled = SearchCompiler.Compile(workload.Query, context.Context);
+        var options = workload.Options with { ScanCount = 3, TargetMatchCount = 1, WorkerCount = 1, ManualFamilyOrder = null };
+        var automaticRequest = ExactSearchExecutionRequestFactory.Compile(compiled, options).Plan!;
+        var automatic = FamilyExecutionCoordinator.Plan(automaticRequest, false);
+        var authored = automatic.ExecutionOrderUnits.Select(FamilyExecutionCoordinator.FamilyOrderKey).Reverse().ToArray();
+        var request = ExactSearchExecutionRequestFactory.Compile(compiled, options with { ManualFamilyOrder = authored }).Plan!;
+        var requested = authored.ToArray();
+        authored[0] = "ChangedAfterCompile";
+        Check(request.RunOptions.ManualFamilyOrder!.SequenceEqual(requested) && request.SnapshotFingerprint != automaticRequest.SnapshotFingerprint,
+            "compiled request freezes and identifies its authored order");
+        var selected = FamilyExecutionCoordinator.Plan(request, false);
+        Check(selected.ExecutionOrderUnits.Select(FamilyExecutionCoordinator.FamilyOrderKey).SequenceEqual(requested),
+            "production planning consumes request order instead of rerunning greedy sorting");
+        var executionContext = new FamilyExecutionContext(false);
+        try
+        {
+            var batch = new SearchBatch(0, 3);
+            var output = LinearFamilyPipeline.FilterAsync(executionContext, new(batch, request), manual.OrderedFamilies, default)
+                .GetAwaiter().GetResult();
+            Check(calls.SequenceEqual([("W.World", false), ("N.Neow", true)]) && output.Count == 3,
+                "runtime pipeline invokes the manual order with canonical compact transport");
+        }
+        finally { executionContext.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+        Console.WriteLine($"ManualFamilyOrder checks={checks};PASS");
+        return 0;
+    }
+
     internal static int Run()
     {
         int checks = 0;
@@ -238,6 +315,13 @@ internal static class FamilyAllocationPricingChecks
             unknownPlan.ExpectedFamilyPipelineMsPerRoot is null && unknownPlan.EstimatedTerminalSurvival is null,
             "Unresolved units retain every original filter and preserve Unknown");
         var analyticalSlow = new SimplePlannerFixture("AnalyticalSlow", null, null, _ => .5, expectedWork: 10);
+        var pricedLater = new SimplePlannerFixture("PricedLater", .01, .01, _ => .1);
+        Check(FamilyPlanner.PlanSimple([unknown, pricedLater]).OrderedFamilies.First() == unknown,
+            "Missing evidence retains its stable boundary instead of becoming an infinite cost");
+        var knownBefore = new SimplePlannerFixture("KnownBefore", 10, 10, _ => .5);
+        Check(FamilyPlanner.PlanSimple([knownBefore, unknown, pricedLater]).OrderedFamilies.SequenceEqual(
+            new IFamilyInvocation[] { knownBefore, unknown, pricedLater }),
+            "Known units do not jump an unresolved original obligation; no time or survival is invented");
         var analyticalFast = new SimplePlannerFixture("AnalyticalFast", null, null, _ => .1, expectedWork: 1);
         Check(FamilyPlanner.PlanSimple([analyticalSlow, analyticalFast]).OrderedFamilies.First() == analyticalFast,
             "Unpriced hardware may use same-unit analytical work without inventing milliseconds");
@@ -394,7 +478,7 @@ internal static class FamilyAllocationPricingChecks
 
     private sealed class SimplePlannerFixture(string id, double? denseNs, double? compactNs,
         Func<IReadOnlySet<string>, double?> survival, double? expectedWork = null, string[]? coverage = null, bool gpu = false,
-        GpuNumericRequirements? numericRequirements = null) : IFamilyInvocation
+        GpuNumericRequirements? numericRequirements = null, Action<string, bool>? onInvoke = null) : IFamilyInvocation
     {
         internal readonly List<double> QuotedPopulations = [];
         internal readonly List<HashSet<string>> PassedCoverage = [];
@@ -425,9 +509,16 @@ internal static class FamilyAllocationPricingChecks
                 ? new(id, "SimplePlannerFixture", ns, PrivateOrdinalBuffer.Capacity, null, "SimplePlannerFixture")
                     { PublicTransportClass = "CpuOrderedAbi1" } : null;
         }
-        public FamilyPerformanceObservation CapturePerformanceObservation() => throw new InvalidOperationException("PlanningFixtureMustNotExecute");
+        public FamilyPerformanceObservation CapturePerformanceObservation() => onInvoke is null
+            ? throw new InvalidOperationException("PlanningFixtureMustNotExecute")
+            : new(ConditionPerformance, "", 0, 0, 0, 0, 0, 0, 0, 0, false, "ManualOrderFixture");
         public ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow window,
-            FamilyCandidateSet input, CancellationToken token) => throw new InvalidOperationException("PlanningFixtureMustNotExecute");
+            FamilyCandidateSet input, CancellationToken token)
+        {
+            if (onInvoke is null) throw new InvalidOperationException("PlanningFixtureMustNotExecute");
+            onInvoke(id, !input.IsDense);
+            return ValueTask.FromResult(FamilyCandidateSet.FromSortedAbi1(input.Batch, input.EnumerateLogicalOrdinals().ToArray()));
+        }
     }
 
     private static int CheckPartyFilterRemainders()
@@ -532,24 +623,24 @@ internal static class FamilyAllocationPricingChecks
         Check(bounded.Evaluation.RequiresRelicSequenceDomain && !bounded.Evaluation.HasNeowConstraints &&
             boundedPlan.Stages.Count == 2 && !boundedPlan.AllConditionsUnfiltered &&
             boundedPlan.Stages.SelectMany(stage => stage.Coverage).ToHashSet(StringComparer.Ordinal)
-                .SetEquals([InitialRoomsInvocation.TreasureCoverage, InitialRoomsInvocation.UnknownCoverage]) &&
+                .SetEquals([InitialRoomsInvocation.TreasureCoverage, VariantOpeningFamily.Id]) &&
             boundedPlan.FilterRemainders.Count == 0,
-            "Initial treasure and Unknown filters retain their separate R/W ownership without invented N authority");
+            "Initial treasure and Unknown filters retain their separate R/V ownership without invented N authority");
         var prefix = Request(SearchQuery.Empty with { FirstActUnknownEventPrefixCount = 3 }, captured.Context);
         var prefixPlan = FamilyExecutionCoordinator.Plan(prefix, false);
         Check(prefix.Evaluation.CheapPredictionDomains == RolltheSpire2.Core.Prediction.SeedPredictionDomainSelection.None &&
             prefix.Evaluation.RequiresCanonicalRootLocalDomain && !prefix.Evaluation.HasNeowConstraints &&
             !prefixPlan.AllConditionsUnfiltered && prefixPlan.Stages.Count == 1 &&
-            prefixPlan.OrderedFamilies.Single().FamilyId == "W.World" &&
-            prefixPlan.Stages.Single().Coverage.SequenceEqual([InitialRoomsInvocation.UnknownCoverage]),
-            "Unknown prefix alone keeps root-local Exact and gains only its W filter");
+            prefixPlan.OrderedFamilies.Single().FamilyId == VariantOpeningFamily.Id &&
+            prefixPlan.Stages.Single().Coverage.SequenceEqual([VariantOpeningFamily.Id]),
+            "Unknown prefix alone keeps root-local Exact and gains only its V filter");
         var missingBag = Request(authored, captured.Context with { Authority = captured.Context.Authority.WithWorldAuthority(null) });
         var missingBagPlan = FamilyExecutionCoordinator.Plan(missingBag, false);
         Check(!missingBagPlan.AllConditionsUnfiltered &&
-            missingBagPlan.Stages.SelectMany(stage => stage.Coverage).SequenceEqual([InitialRoomsInvocation.UnknownCoverage]) &&
+            missingBagPlan.Stages.SelectMany(stage => stage.Coverage).SequenceEqual([VariantOpeningFamily.Id]) &&
             missingBagPlan.FilterRemainders.SequenceEqual(["TreasureRelics:ProductionExactOnly"]) &&
             missingBag.Evaluation.TreasureRelics!.Slots.SequenceEqual(treasure.Slots),
-            "Missing shared-bag authority retains the treasure remainder while independent W filtering continues");
+            "Missing shared-bag authority retains the treasure remainder while independent V filtering continues");
         var projected = bounded.Evaluation.ToLegacyFilter();
         var roundtrip = SearchCompiler.Compile(LegacySearchQueryAdapter.FromFilter(projected), captured.Context);
         Check(roundtrip.NormalizedQuery.TreasureRelics!.Slots.SequenceEqual(treasure.Slots) &&
@@ -627,7 +718,7 @@ internal static class FamilyAllocationPricingChecks
             Check(plan.FilterRemainders.Contains(obligation + ":ProductionExactOnly") == !available &&
                 plan.AllConditionsUnfiltered == (!available && !mixed) && plan.FinalValidationSkipped == skip &&
                 plan.Stages.SelectMany(stage => stage.Coverage).Contains(obligation == "TreasureRelics"
-                    ? InitialRoomsInvocation.TreasureCoverage : InitialRoomsInvocation.UnknownCoverage) == available,
+                    ? InitialRoomsInvocation.TreasureCoverage : VariantOpeningFamily.Id) == available,
                 "Startup discloses the actual initial-room coverage beside independent filters:" + obligation);
             var result = Start(request);
             Check(result.Progress.State == SearchRunState.Completed && result.Progress.PendingCandidateCount == 0,
@@ -658,9 +749,9 @@ internal static class FamilyAllocationPricingChecks
             var request = Request(Table(mixed ? treasure with { EventResultConditions = [events] } : treasure, prefix), party, skip);
             var plan = FamilyExecutionCoordinator.Plan(request, false);
             Check(plan.FilterRemainders.Contains("TreasureRelics:slot=0:ProductionExactOnly") &&
-                plan.Stages.SelectMany(stage => stage.Coverage).Contains(InitialRoomsInvocation.UnknownCoverage) &&
-                !plan.FilterRemainders.Any(item => item.StartsWith(InitialRoomsInvocation.UnknownCoverage, StringComparison.Ordinal)),
-                "Party retains the personal treasure remainder while W covers the shared Unknown stream");
+                plan.Stages.SelectMany(stage => stage.Coverage).Contains(VariantOpeningFamily.Id) &&
+                !plan.FilterRemainders.Any(item => item.StartsWith(VariantOpeningFamily.Id, StringComparison.Ordinal)),
+                "Party retains the personal treasure remainder while V covers the shared Unknown stream");
             var notices = Start(request).Issues.Where(issue => issue.Code == "SearchFilterIncomplete").ToArray();
             Check(skip ? notices.Length == 1 && notices[0].MessageKey == "issues.conditions_unchecked" &&
                     notices[0].ExceptionDetail.Split(";finalValidationSkipped=", 2)[0].Contains("TreasureRelics:slot=0:ProductionExactOnly", StringComparison.Ordinal) &&

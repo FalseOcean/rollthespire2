@@ -55,6 +55,8 @@ public partial class Main : Node
                 int i = Array.IndexOf(args, key);
                 return i >= 0 && i + 1 < args.Length ? args[i + 1] : fallback ?? throw new ArgumentException("Missing " + key);
             }
+            if (args.Contains("--canonical-family", StringComparer.Ordinal) && !args.Contains("--neow-canonical-cost", StringComparer.Ordinal))
+                throw new ArgumentException("--canonical-family requires --neow-canonical-cost (the dedicated N/T collector)");
             if (args.Contains("--panel-open-performance"))
             {
                 await UiSurfaceChecks.RunPanelOpenPerformanceAsync(this, Path.GetFullPath(Arg("--output")),
@@ -64,6 +66,12 @@ public partial class Main : Node
             if (args.Contains("--predictor-surface-checks"))
             {
                 await UiSurfaceChecks.RunPredictorAsync(this, Path.GetFullPath(Arg("--output")), Arg("--game-pck"));
+                return;
+            }
+            if (args.Contains("--card-collection-flow-phase"))
+            {
+                await UiSurfaceChecks.RunCardCollectionFlowAsync(this, Path.GetFullPath(Arg("--output")),
+                    Arg("--card-collection-flow-phase"));
                 return;
             }
             if (args.Contains("--preset-library-surface-checks"))
@@ -136,6 +144,12 @@ public partial class Main : Node
                 _session = null;
                 return;
             }
+            if (args.Contains("--map-lossy-gpu"))
+            {
+                var compiled = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(workload.Query, context.Context), workload.Options);
+                await MapLossyChecks.RunAsync(compiled.Plan ?? throw new InvalidDataException(compiled.Issue), output);
+                return;
+            }
             if (args.Contains("--compatibility-checks"))
             {
                 await CompatibilityChecks.RunAsync(context, workload, output, session => _session = session);
@@ -153,8 +167,11 @@ public partial class Main : Node
                 var rewardPoolPreparationBefore = result.Plan.RewardPoolPreparation?.Capture();
                 if (args.Contains("--neow-canonical-cost", StringComparer.Ordinal))
                 {
+                    string canonicalFamily = Arg("--canonical-family", "N");
+                    if (canonicalFamily is not ("N" or "T")) throw new ArgumentException("FamilyCanonical.InvalidFamily;expected=N|T");
                     await RunMeasurementCollectorAsync([..args, "--measurement-live-main-loop"], output,
-                        "NeowCanonicalPublicInvoke", () => FamilyPhysicalMatrix.MeasureNeowCanonical(result.Plan, args, output));
+                        canonicalFamily == "N" ? "NeowCanonicalPublicInvoke" : "FamilyCanonicalPublicInvoke.T",
+                        () => FamilyPhysicalMatrix.MeasureNeowCanonical(result.Plan, args, output));
                     return;
                 }
                 if (Array.IndexOf(args, "--family-pricing-inventory") >= 0)

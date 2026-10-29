@@ -64,22 +64,30 @@ internal sealed class PartyFamily : IFamilyInvocation
     IEnumerable<IFamilyInvocation> IFamilyInvocation.CpuRealizations =>
         ConfiguredCpuAlternative() is { } alternative ? [alternative] : [];
     public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId, FamilyCpuExecution.Capacity, [], "PartyFamilyAnalyticalWorkUnavailable;PhysicalQuoteBounded");
-    public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest geometry)
+    public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest geometry) =>
+        QuotePhysicalWork(geometry, NoPassedPersonalCoverage);
+    internal FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest geometry, IReadOnlySet<string> passedCoverage)
     {
         if (!FamilyPhysicalQuote.AdmittedRequest(geometry) || geometry.PrivateInput || geometry.PrivateOutput ||
             geometry.MeanInputPopulation <= 0) return null;
         int window = ConditionPerformance.UsesGpu ? FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize : FamilyCpuExecution.Capacity;
         var price = QuoteUnit(geometry.MeanInputPopulation, geometry.CompactInput,
-            new HashSet<string>(StringComparer.Ordinal));
-        return FamilyGpuReadback.Reference(this, price is null ? null : new(FamilyId, "PartyFamilyMeasuredEnvelope",
+            passedCoverage, geometry.ComputationOnly, geometry.CostSnapshot);
+        var quote = price is null ? null : new FamilyPhysicalQuote(FamilyId,
+            geometry.ComputationOnly ? "PartyFamilyComputationEnvelope" : "PartyFamilyReferenceEnvelope",
             price.Milliseconds * 1e6 / geometry.MeanInputPopulation, window, price.SetupMilliseconds,
-            price.Evidence + ";CompleteCanonicalAbi1;PlannerRankingReference")
-        { LocalCostSource = "Condition", OutputAlreadyOrdered = true, PublicTransportClass = "CompleteCanonicalAbi1" });
+            price.Evidence + (geometry.ComputationOnly ? ";FamilyComputationBoundary" : ";CompleteCanonicalAbi1;PlannerRankingReference"), OutputElementBytes: 8)
+        { LocalCostSource = geometry.ComputationOnly ? "ComponentComposition" : "Condition",
+            OutputAlreadyOrdered = true, PublicTransportClass = geometry.ComputationOnly
+            ? (ConditionPerformance.UsesGpu ? "DeviceFamilyWork" : "CpuOrderedAbi1") : "CompleteCanonicalAbi1" };
+        return geometry.ComputationOnly ? quote : FamilyGpuReadback.Reference(this, quote);
     }
     public FamilySurvivalProjection Survival => ResolveSurvival(new HashSet<string>(StringComparer.Ordinal));
     public bool HasConditionalProjections => _stages.Any(s => s.Family.HasConditionalProjections);
     public FamilySurvivalProjection ResolveSurvival(IReadOnlySet<string> passedCoverage)
     {
+        if (FamilyId == "W.World" && _stages.Length == 1)
+            return _stages[0].Family.ResolveSurvival(passedCoverage);
         if (FamilyId is "W.World" or "E.EventResult")
             return PartyStageSurvival.Project(_request, FamilyId);
         double probability = 1;
@@ -109,14 +117,9 @@ internal sealed class PartyFamily : IFamilyInvocation
             double? Hardware(IFamilyInvocation family) => FamilyAuxiliaryEvidence.Read<double?>(FamilyId,
                 "PersonalUnitHardwareCost", () =>
                 {
-                    if (family is FamilyCpuExecution cpu)
-                    {
-                        var quote = cpu.Quote(new(compact, false, cpu.WindowCapacity), passedCoverage);
-                        return quote is null ? null : quote.NanosecondsPerInput / 1e6 +
-                            quote.FixedWindowMilliseconds / Math.Min(cpu.WindowCapacity, quote.WindowCapacity);
-                    }
-                    return _costs is null ? null : FamilyPerformanceProjectionMath.PerInputMilliseconds(
-                        _costs.Reference(family, family.ResolveConditionPerformance(compact), compact));
+                    return FamilyPerformanceProjectionMath.PerInputMilliseconds(
+                        GpuCostSnapshot.ComputationReference(_costs, family, family.ResolveConditionPerformance(compact), compact,
+                            passedCoverage, referencePopulation: family is FamilyCpuExecution cpu ? cpu.WindowCapacity : null));
                 }, null, _request.SnapshotFingerprint);
             double? Probability(IFamilyInvocation family) => FamilyAuxiliaryEvidence.Read<double?>(FamilyId,
                 "PersonalUnitSurvival", () => family.ResolveSurvival(passedCoverage).SurvivalProbability,
@@ -137,9 +140,14 @@ internal sealed class PartyFamily : IFamilyInvocation
         return ordered.ToArray();
     }
 
-    internal FamilyUnitCost? QuoteUnit(double inputs, bool compact, IReadOnlySet<string> passedCoverage)
+    internal FamilyUnitCost? QuoteUnit(double inputs, bool compact, IReadOnlySet<string> passedCoverage,
+        bool computationOnly = false, GpuCostSnapshot? costs = null)
     {
-        if (NeedsCompleteCombatMatchingReference() || NeedsQueryLiteralCombatOpeningReference()) return null;
+        // The retained wrapper envelope predates these integer numerical bodies.
+        // One personal stage (and the shared W stage) still executes publicly,
+        // so the multi-stage private-chain restriction cannot enforce this scope.
+        // Keep that execution legal without promoting NativeFloat64 timings.
+        bool legacyBody = !UsesUnmeasuredIntegerGpuBody() && !NeedsCompleteCombatMatchingReference() && !NeedsQueryLiteralCombatOpeningReference();
         // Runtime replays independent immutable player requests; the local order
         // uses the same unconditional player facts in pricing and execution.
         // Upstream whole-table coverage may refine expected work below without
@@ -147,7 +155,7 @@ internal sealed class PartyFamily : IFamilyInvocation
         IFamilyInvocation[] children = OrderPersonalStages(compact, NoPassedPersonalCoverage).Select(s => s.Family).ToArray();
         bool gpu = children.All(child => child.ConditionPerformance.UsesGpu);
         bool cpuOnly = children.All(child => !child.ConditionPerformance.UsesGpu);
-        if (gpu || cpuOnly)
+        if (!computationOnly && legacyBody && (gpu || cpuOnly))
         {
             double weightedWork = 0, reach = 1;
             foreach (IFamilyInvocation child in children)
@@ -194,11 +202,14 @@ internal sealed class PartyFamily : IFamilyInvocation
                 string relicBody = gpu ? RelicBagCapacityRevision() : "";
                 if (relicBody.Length != 0) evidence = evidence.Replace("LocalMeasuredGPU;", "HistoricalGpuReferenceEnvelope;", StringComparison.Ordinal) +
                     ";CurrentPartyRelicBody=" + relicBody + ";HistoricalCoefficientsAppliedAsCoarseEnvelope;NotCurrentBodyMeasurement;NoSameRunFitting";
+                evidence = evidence.Replace("LocalMeasuredGPU;", "HistoricalGpuReferenceEnvelope;", StringComparison.Ordinal)
+                    .Replace("LocalMeasuredCPU;", "HistoricalCpuReferenceEnvelope;", StringComparison.Ordinal) +
+                    ";PriceQuality=Estimate;HistoricalWrapperCoefficients;NotCurrentWrapperMeasurement";
                 return new(local.Ms, local.SetupMs,
                     evidence + $";WeightedSourceWork={weightedWork:G9};InnerUnknownPass=ConservativeOne;SingleFamilyWrapper");
             }
         }
-        return null;
+        return EstimateUnit(inputs, compact, children, computationOnly, UsesPrivate, costs);
 
         double WorldWork(int act, int events)
         {
@@ -209,12 +220,57 @@ internal sealed class PartyFamily : IFamilyInvocation
                 (1 + Math.Max(0, act - 2) * .5 + events * .25);
         }
     }
+
+    private static FamilyUnitCost? EstimateUnit(double inputs, bool compact, IReadOnlyList<IFamilyInvocation> children,
+        bool computationOnly, bool privateEdges, GpuCostSnapshot? costs)
+    {
+        if (!double.IsFinite(inputs) || inputs is <= 0 or > PrivateOrdinalBuffer.Capacity) return null;
+        double milliseconds = 0, reach = 1;
+        double? setup = 0;
+        var evidence = new List<string>();
+        for (int index = 0; index < children.Count; index++)
+        {
+            var child = children[index];
+            if (reach == 0) break;
+            bool privateRole = computationOnly && privateEdges;
+            var geometry = new FamilyPhysicalQuoteRequest(compact || index > 0,
+                privateRole && index < children.Count - 1, inputs * reach, PrivateInput: privateRole && (compact || index > 0))
+                { ComputationOnly = computationOnly, CostSnapshot = costs };
+            var quote = computationOnly ? FamilyPhysicalQuote.Computation(child, geometry, costs, NoPassedPersonalCoverage) :
+                child is FamilyCpuExecution cpu ? cpu.Quote(geometry, NoPassedPersonalCoverage) : child.QuotePhysicalWork(geometry);
+            if (quote is null) return null;
+            if (computationOnly && costs is null) quote = FamilyCoarsePricing.LocalComputation(child, quote, geometry);
+            double? survival = child.ResolveSurvival(NoPassedPersonalCoverage).SurvivalProbability;
+            double bound = survival is >= 0 and <= 1 ? survival.Value : 1;
+            var time = computationOnly ? FamilyCoarsePricing.ComputationMilliseconds(quote, geometry)
+                : FamilyCoarsePricing.PublicMilliseconds(quote, geometry, bound);
+            if (time is null) return null;
+            milliseconds += time.Value;
+            setup = setup.HasValue && quote.SetupMilliseconds.HasValue ? setup + quote.SetupMilliseconds : null;
+            evidence.Add($"Child{index}={quote.Shape};InputReach={reach:G17};OwnOutputEnvelope={bound:G17};" + quote.Evidence);
+            reach *= bound;
+        }
+        return new(milliseconds, setup, FamilyCoarsePricing.Revision +
+            ";PriceQuality=Estimate;SingleFamilyWrapper;WeightedOwnChildren;UnknownChildReachIsCostUpperBoundOnly;" +
+            "PersonalStagesUseTheirOwnUnconditionalS;" +
+            (computationOnly ? "ComputationOnly;NumericalAndDeviceEmission;NoSubmitOrHostReadback;NoCrossFamilyHandoffCost;"
+                : "PublicCallEnvelopeAlsoBoundsPrivate;NoCrossFamilyConnectionQuote;") + string.Join('|', evidence));
+    }
     private bool NeedsCompleteCombatMatchingReference() => FamilyId == "C.CombatReward" &&
         _stages.Any(s => (s.Family is FamilyCpuExecution cpu ? cpu.RealizationOwner : s.Family)
             is CombatRewardFamily { Replay.Plan.NeedsCompleteMatchingReference: true });
     private bool NeedsQueryLiteralCombatOpeningReference() => FamilyId == "C.CombatReward" &&
         _stages.Any(s => (s.Family is FamilyCpuExecution cpu ? cpu.RealizationOwner : s.Family)
             is CombatRewardFamily { Replay.UsesQueryLiteralPartyOpening: true });
+    private bool UsesUnmeasuredIntegerGpuBody() => _stages.Any(stage => stage.Family switch
+    {
+        CombatRewardFamily { GpuPlan.NumericalVariant: GpuNumericalVariant.IntegerRne } => true,
+        CapsuleRelicFamily { GpuPlan.NumericalVariant: GpuNumericalVariant.IntegerRne } => true,
+        WorldFamily { GpuPlan.NumericalVariant: GpuNumericalVariant.IntegerRne } => true,
+        AncientOptionFamily { Plan.NumericalVariant: GpuNumericalVariant.IntegerRne, Plan.GpuSupported: true } => true,
+        EventResultFamily { Plan.NumericalVariant: GpuNumericalVariant.IntegerRne, Plan.GpuSupported: true } => true,
+        _ => false
+    });
     private string CombatBagCapacityRevision() => FamilyId == "C.CombatReward"
         ? string.Concat(_stages.Select(s => s.Family is CombatRewardFamily c ? c.GpuPlan?.BagCapacityRevision ?? "" : "")) : "";
     private string RelicBagCapacityRevision() => FamilyId == "R.Relic"
@@ -225,6 +281,8 @@ internal sealed class PartyFamily : IFamilyInvocation
         string numericalRevision = usesGpu && FamilyId == "S.MerchantShopColorless" && _stages.Any(s =>
             MerchantShopColorlessGpuExecutor.PartyEarlyRejectionRevision(s.Request.Evaluation, s.Request.Authority.PlayersCount).Length != 0)
             ? FamilyPhysicalImplementationRevisions.MerchantShopColorlessPartyPrefix : "";
+        bool unmeasuredInteger = UsesUnmeasuredIntegerGpuBody();
+        if (unmeasuredInteger) numericalRevision += ".IntegerRne.20261025.v1";
         string transportRevision = UsesPrivate && compact ? ".DirectCompactCast.20261016.v1" : "";
         string combatBodyRevision = usesGpu ? CombatBagCapacityRevision() : "";
         string matchingRevision = NeedsCompleteCombatMatchingReference() ? ".CompletePositiveMatching.20261026.v1" : "";
@@ -232,8 +290,10 @@ internal sealed class PartyFamily : IFamilyInvocation
         string relicBodyRevision = usesGpu ? RelicBagCapacityRevision() : "";
         return new(FamilyId,
             FamilyId + (usesGpu ? ".Party.20260922.v1." : ".Party.20261013.v2.") +
-                (UsesPrivate ? "PrivateOrdinal" : "Public") + (compact ? ".CompactAbi1" : ".Dense") + numericalRevision + transportRevision + combatBodyRevision + matchingRevision + openingRevision + relicBodyRevision + ".GreedyPlayers.20261026.v1",
+                (UsesPrivate ? "PrivateOrdinal" : "Public") + (compact ? ".CompactAbi1" : ".Dense") + numericalRevision + transportRevision + combatBodyRevision + matchingRevision + openingRevision + relicBodyRevision + ".GreedyPlayers.20261026.v1" +
+                (usesGpu ? GpuRngRotation.Revision : ""),
             "PartyFamilyConjunction", 1, "OneFamily;PersonalAndSharedPredicates;WholeTableExactFinal;BoundedLocalPhysicalQuote" +
+                (unmeasuredInteger ? ";GpuNumericalVariant=IntegerRne;PhysicalQuoteUnavailable=UnmeasuredIntegerRneWrapper;ExecutionRemainsAvailable" : "") +
                 (combatBodyRevision.Length != 0 ? ";CurrentCombatBagCapacityBody;HistoricalGpuCoefficientsRemainCoarseReference;NotCurrentBodyCalibration" : "") +
                 (matchingRevision.Length != 0 ? ";CompleteCombatMatchingBody;NoHistoricalMatchingQuote" : "") +
                 (openingRevision.Length != 0 ? ";PartyQueryLiteralOpeningBody;NoHistoricalOpeningQuote" : "") +

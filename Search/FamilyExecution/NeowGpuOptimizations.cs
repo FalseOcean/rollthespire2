@@ -4,9 +4,10 @@ namespace RolltheSpire2.Search.FamilyExecution;
 // Independently adapted from the
 // methods in shion0528 (Egoistic今宵) resource.17, commit da82f7f9023c3d3598d50b8642e93f2801c37ccc.
 internal readonly record struct NeowGpuOptimizations(bool LeafyLazy = false, bool DrawIntervals = false,
-    bool GpuPrefix = false, bool CurseFirst = false)
+    bool GpuPrefix = false, bool CurseFirst = false, bool LeafyLocalPrefix = false)
 {
-    internal static NeowGpuOptimizations Production => new(true, true, true, true);
+    // Owner's current local trial must be available through normal Steam launch.
+    internal static NeowGpuOptimizations Production => new(true, true, true, true, LeafyLocalPrefix: true);
     internal static NeowGpuOptimizations Capture() => Parse(Environment.GetEnvironmentVariable("RT2_SHION_GPU_TRIAL"));
     internal static NeowGpuOptimizations Parse(string? value)
     {
@@ -15,10 +16,12 @@ internal readonly record struct NeowGpuOptimizations(bool LeafyLazy = false, boo
         foreach (string token in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             result = token switch {
                 "off" => result,
+                "on" => Production,
                 "leafy-lazy" => result with { LeafyLazy = true },
                 "draw-intervals" => result with { DrawIntervals = true },
                 "gpu-prefix" => result with { GpuPrefix = true },
                 "n-curse-first" => result with { CurseFirst = true },
+                "leafy-local-prefix" => result with { LeafyLocalPrefix = true },
                 _ => throw new InvalidOperationException("N.UnknownShionGpuTrial:" + token)
             };
         return result;
@@ -29,11 +32,13 @@ internal readonly record struct NeowGpuOptimizations(bool LeafyLazy = false, boo
             LeafyLazy = LeafyLazy && plan.UsesLeafyPreGate,
             DrawIntervals = DrawIntervals && NeowFamilyGpuExecutor.SupportsDrawIntervals(plan, compact),
             GpuPrefix = GpuPrefix && !compact && plan.UsesStagedDense,
-            CurseFirst = CurseFirst && !compact && NeowInternalFilterOrder.Compile(plan).Enabled
+            CurseFirst = CurseFirst && !compact && NeowInternalFilterOrder.Compile(plan).Enabled,
+            LeafyLocalPrefix = LeafyLocalPrefix && !compact && plan.UsesLeafyPreGate && !plan.UsesStagedDense
         };
     internal string Revision => (LeafyLazy ? ".ShionLeafyLazy.v1" : "") +
         (DrawIntervals ? ".ShionDrawIntervals53.v1" : "") + (GpuPrefix ? ".ShionGpuPrefix.v1" : "") +
-        (CurseFirst ? ".ShionCurseFirst.v1" : "");
+        (CurseFirst ? ".ShionCurseFirst.v1" : "") +
+        (LeafyLocalPrefix ? ".LeafyDenseLocalPrefix.20261027.v1" : "");
 
     // Generated operation structure, not target IDs or bucket positions. Old
     // pool membership alone cannot distinguish one interval from two intervals.

@@ -32,6 +32,25 @@ internal static class MapRouteSequenceChecks
         return 0;
     }
 
+    internal static void RunSemantics()
+    {
+        var cases = new List<string>();
+        Adversarial(cases);
+        SnapshotAdversarial(cases);
+        var start = Node(0, MapPointType.Ancient); var boss = Node(2, MapPointType.Boss);
+        Link(start, Node(1, MapPointType.Elite, 1), boss);
+        Link(start, Node(1, MapPointType.Unknown, 5), boss);
+        var signature = MapBasisScalars.Evaluate(start, boss);
+        var drawing = MapRouteSequenceEvaluator.Evaluate(start, boss, new([MapPointType.Unknown]));
+        Require(drawing.Matches && !drawing.Path.Contains(new MapPosition(1, 1)) && StandardMapFamily.Matches(
+            [new(1, RolltheSpire2.Search.Semantics.StandardMapMetric.ReachableMaxElite,
+                RolltheSpire2.Search.Semantics.StandardMapComparison.AtLeast, 1),
+             new(0, RolltheSpire2.Search.Semantics.StandardMapMetric.ReachableMaxElite,
+                RolltheSpire2.Search.Semantics.StandardMapComparison.AtLeast, 3, true)], _ => signature),
+            "Independent property/total maxima must not require the drawing witness");
+        Console.WriteLine($"MAP_ROUTE_SEMANTICS_PASS cases={cases.Count};naturalGenerationMatrix=false");
+    }
+
     private static void CheckNatural(ActContext context, ulong ordinal, ref int queries, ref long completePaths)
     {
         string seed = VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance, ordinal);

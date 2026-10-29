@@ -77,13 +77,13 @@ internal sealed partial class InRunPredictionLauncher : Button
             TooltipText = "",
             CustomMinimumSize = new Vector2(56, 56), Size = new Vector2(56, 56), FocusMode = FocusModeEnum.None };
         entry.AccessibilityName = JsonUiTextProvider.CreatePredictorUi13(language).Get("predictor.crystal.hover");
-        AppShellHostRoot.StyleNeowsBonesLauncher(entry, runtime);
+        AppShellHostRoot.StyleRt2Launcher(entry);
         parent.AddChild(entry);
         entry.AddToGroup(EntryGroup);
         entry.SetProcess(entry._enabledByPreference);
         entry.AlignBelowRunInformation();
         entry.Pressed += entry.OpenPrediction;
-        RuntimeLog.Info($"runPredictionLauncherAttached=true;enabled={entry._enabledByPreference};allRunModes=true;placement=BelowDebugInfo;icon=NeowsBones");
+        RuntimeLog.Info($"runPredictionLauncherAttached=true;enabled={entry._enabledByPreference};allRunModes=true;placement=BelowDebugInfo;icon=Rt2Launcher");
     }
 
     internal static void ApplyPreference(SceneTree tree, bool enabled)

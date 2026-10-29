@@ -10,9 +10,10 @@ internal static class PredictorCrystalGoalLanguage
     internal static CrystalGoalSearchResult Solve(PredictorCrystalSnapshot source,CrystalReachabilityTable table,
         ImmutableArray<CrystalRewardOption> goals,bool avoidCurse,TimeSpan budget,int stateLimit=100_000,
         CancellationToken token=default,PredictorCrystalOffsetBound? sharedBound=null,bool rootCardSlots=false,bool profileCompilation=false,
-        int minimumGold=0)
+        int minimumGold=0,int geometryMemoLimit=1_000_000)
     {
         if(minimumGold<0) throw new ArgumentOutOfRangeException(nameof(minimumGold));
+        if(geometryMemoLimit<0) throw new ArgumentOutOfRangeException(nameof(geometryMemoLimit));
         // Identity checks reject stale boards and changed table/configuration.
         // Completed negatives live on the optional frozen bound. Language node
         // ids and local dead states still belong to this one compilation.
@@ -39,6 +40,7 @@ internal static class PredictorCrystalGoalLanguage
         }).ToArray();
         UInt128 initial=0;for(int i=0;i<121;i++) if(source.Hidden[i]) initial|=(UInt128)1<<i;
         UInt128 occupied=items.Aggregate((UInt128)0,(m,i)=>m|i);
+        UInt128 curseCells=0;for(int i=0;i<items.Length;i++) if(source.Items[i].Kind=="CURSE") curseCells|=items[i];
         var moves=(from i in Enumerable.Range(0,121) where source.Hidden[i]
             from tool in new[]{PredictorCrystalTool.Big,PredictorCrystalTool.Small}
             let cells=PredictorCrystalSearch.Cells(i/11,i%11,tool).Select(c=>c.X*11+c.Y).ToArray()
@@ -50,8 +52,9 @@ internal static class PredictorCrystalGoalLanguage
         // rewards and the detached suffix. Different legal click geometries
         // must not repeatedly replay an already exhausted reward word. This
         // exact query-local fact is never a negative for abstract (fog,p,c).
-        var failedWords=table.IncludesSacrifices?new HashSet<int>():null;
-        var wordEdges=table.IncludesSacrifices?new Dictionary<(int Prefix,int Item),int>():null;
+        bool exactWordReuse=table.IncludesSacrifices || table.IncludesRerolls;
+        var failedWords=exactWordReuse?new HashSet<int>():null;
+        var wordEdges=exactWordReuse?new Dictionary<(int Prefix,int Item),int>():null;
         int blanks=0;for(UInt128 cells=initial&~occupied;cells!=0;cells &= cells-1) blanks++;
         // Prefix padding: B>=R initially hidden blanks leave B-K>=R-K blank
         // centers after excluding K productive centers. Prepending those Small
@@ -59,14 +62,17 @@ internal static class PredictorCrystalGoalLanguage
         // even if later Big clicks cleared the same blanks. Exact history plus
         // fog/language state then determines the suffix and typed settlement.
         // Without that proof retain the original geometry-only memo.
-        var wordDead=table.IncludesSacrifices && blanks>=source.Remaining?
+        var wordDead=exactWordReuse && blanks>=source.Remaining?
             new Dictionary<(UInt128 Fog,int P,int C,int Word),int>():null;
         var dead=new Dictionary<(UInt128 Fog,int P,int C),int>();
+        long deadHits=0,deadCapacityMisses=0,wordHits=0,wordCapacityMisses=0;
+        long abstractMemoSuppressedByWordHits=0;
         bool Visit(UInt128 fog,int p,int c,int left,UInt128 centers,ImmutableArray<PredictorCrystalStep> path,
             int word)
         {
             if(!Continue()) return false;
-            var potion=language.Nodes[p];var core=language.Nodes[c];long before=endpoints,beforePadding=paddingUnknown;
+            var potion=language.Nodes[p];var core=language.Nodes[c];
+            long before=endpoints,beforePadding=paddingUnknown,beforeWordHits=wordHits;
             if(potion.Terminal && core.Terminal)
             {
                 endpoints++;
@@ -78,10 +84,12 @@ internal static class PredictorCrystalGoalLanguage
                     {
                         verified++;var run=PredictorCrystalExplorer.Replay(source,padded);
                         var row=new CrystalRewardRoute(padded,run.Rewards) { EnchantmentTargets=CrystalRewardOption.UsesEnchantments(source.State) };
-                        if(table.IncludesRerolls) row=PredictorCrystalExplorer.WithRerolls(row,run);
                         if(run.Rewards.Where(r=>r.Kind==PredictorRewardKind.Gold).Sum(r=>r.GoldAmount)>=minimumGold)
-                            plan=PredictorCrystalExplorer.VerifySelection(source,row,goals);
+                            plan=table.IncludesRerolls
+                                ?PredictorCrystalExplorer.VerifyRerollSelection(run,row,goals,Continue)
+                                :PredictorCrystalExplorer.VerifySelection(source,row,goals);
                         if(plan!=null) return true;
+                        if(interrupted) return false;
                         // Padding failure, exceptions and interrupted work never
                         // enter this cache; only a completed typed rejection.
                         if(failedWords is {Count:<100_000}) failedWords.Add(word);
@@ -90,27 +98,41 @@ internal static class PredictorCrystalGoalLanguage
             }
             if(left==0) return false;
             var key=(fog,p,c);
-            if(dead.TryGetValue(key,out int known) && left<=known) return false;
+            if(dead.TryGetValue(key,out int known) && left<=known)
+            {if(profileCompilation) deadHits++;return false;}
             var exactKey=(fog,p,c,word);
-            if(wordDead!=null && wordDead.TryGetValue(exactKey,out int exactLeft) && left<=exactLeft) return false;
+            if(wordDead!=null && wordDead.TryGetValue(exactKey,out int exactLeft) && left<=exactLeft)
+            {wordHits++;return false;}
             nodes++;
             void Reject()
             {
-                // Exact word prefixes may retain fully exhausted typed suffixes
-                // when padding is guaranteed. The abstract memo below still
-                // requires NO geometric endpoint; cutoff never proves absence.
+                // No geometric endpoint is already a word-independent fact.
+                // Its dead entry subsumes the finer exact-word fact, so do not
+                // duplicate it there. Cutoff never proves either kind of absence.
                 if(interrupted) return;
+                // An exact-word memo hit hides its rejecting endpoints. It
+                // cannot be promoted to word-independent geometric absence.
+                if(endpoints==before && wordHits==beforeWordHits)
+                {
+                    if(dead.TryGetValue(key,out int prior)) dead[key]=Math.Max(prior,left);
+                    else if(dead.Count<geometryMemoLimit) dead.Add(key,left);
+                    else if(profileCompilation) deadCapacityMisses++;
+                    return;
+                }
+                if(profileCompilation && endpoints==before && wordHits!=beforeWordHits) abstractMemoSuppressedByWordHits++;
+                // Only exhausted rejecting endpoints need the exact word.
+                // Preserve the original guaranteed-padding/unknown safeguards.
                 if(wordDead!=null && paddingUnknown==beforePadding)
                 {
                     if(wordDead.TryGetValue(exactKey,out int priorLeft)) wordDead[exactKey]=Math.Max(priorLeft,left);
-                    else if(wordDead.Count<100_000) wordDead.Add(exactKey,left);
+                    else if(wordDead.Count<geometryMemoLimit) wordDead.Add(exactKey,left);
+                    else if(profileCompilation) wordCapacityMisses++;
                 }
-                if(endpoints!=before) return;
-                if(dead.TryGetValue(key,out int prior)) dead[key]=Math.Max(prior,left);
-                else if(dead.Count<100_000) dead.Add(key,left);
             }
             if(!core.Completions.Any(cells=>bound.MayCover((potion.Required|cells)&fog,left))) {Reject();return false;}
-            UInt128 relevant=(potion.Future|core.Future)&fog;
+            // Curse completion is RNG-transparent, but its added Doubt can
+            // affect typed obtain/child choices. Keep optional pure-curse moves.
+            UInt128 relevant=(potion.Future|core.Future|(avoidCurse?0:curseCells))&fog;
             foreach(var move in moves)
             {
                 if((fog&((UInt128)1<<move.Center))==0 || (move.Mask&relevant)==0) continue;
@@ -120,7 +142,13 @@ internal static class PredictorCrystalGoalLanguage
                     UInt128 bit=(UInt128)1<<cell;if((next&bit)==0) continue;
                     next &= ~bit;int item=source.Occupancy[cell];
                     if(item<0 || (next&items[item])!=0) continue;
-                    if(source.Items[item].Kind=="CURSE") {invalid=true;break;}
+                    if(source.Items[item].Kind=="CURSE")
+                    {
+                        if(avoidCurse) {invalid=true;break;}
+                        // One physical reveal adds one Doubt, even with zero
+                        // subscriptions. Exact words must retain that difference.
+                        completed.Add(item);continue;
+                    }
                     if(source.Items[item].Subscriptions>0) completed.Add(item);
                 }
                 if(invalid) continue;
@@ -136,6 +164,7 @@ internal static class PredictorCrystalGoalLanguage
                     if(index==completed.Count) return Visit(next,pp,cc,left-1,centers|((UInt128)1<<move.Center),path.Add(move.Step),
                         nextWord);
                     int item=completed[index];bool isPotion=source.Items[item].Kind.StartsWith("POTION_",StringComparison.Ordinal);
+                    if(source.Items[item].Kind=="CURSE") return Advance(index+1,pp,cc);
                     foreach(var edge in language.Nodes[isPotion?pp:cc].Edges)
                         if(edge.Item==item && Advance(index+1,isPotion?edge.Next:pp,isPotion?cc:edge.Next)) return true;
                     return false;
@@ -161,11 +190,13 @@ internal static class PredictorCrystalGoalLanguage
             interrupted || paddingUnknown>0 || !language.Complete?CrystalOffsetVerdict.Incomplete:CrystalOffsetVerdict.Impossible;
         var negative=verdict!=CrystalOffsetVerdict.Impossible?CrystalLanguageNegativeKind.None:
             language.Roots.IsEmpty?CrystalLanguageNegativeKind.RewardDomain:
-            endpoints==0?CrystalLanguageNegativeKind.Geometry:CrystalLanguageNegativeKind.OrderedQuery;
+            endpoints==0 && wordHits==0?CrystalLanguageNegativeKind.Geometry:CrystalLanguageNegativeKind.OrderedQuery;
         if(minimumGold==0 && negative!=CrystalLanguageNegativeKind.None) bound.RememberLanguageNegative(goals,negative);
         return new(verdict,plan,language.States,0,nodes,verified,paddingUnknown,watch.Elapsed.TotalSeconds,
             LanguageNodes:language.Nodes.Length,LanguageRoots:language.Roots.Length,CompileSeconds:compiled,LanguagePruned:language.Pruned,
-            NegativeKind:negative) {CompilationProfile=compilationProfile?.Snapshot()};
+            NegativeKind:negative) {CompilationProfile=compilationProfile?.Snapshot(),GeometryMemoProfile=profileCompilation
+                ?new(dead.Count,deadHits,deadCapacityMisses,wordDead?.Count??0,wordHits,wordCapacityMisses)
+                {AbstractMemoSuppressedByWordHits=abstractMemoSuppressedByWordHits}:null};
 
         ImmutableArray<PredictorCrystalStep> Pad(ImmutableArray<PredictorCrystalStep> path,UInt128 fog,UInt128 centers)
         {

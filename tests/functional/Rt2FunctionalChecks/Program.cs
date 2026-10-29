@@ -27,6 +27,15 @@ if (args.Contains("--prepared-combat-pools", StringComparer.Ordinal)) return Pre
 if (args.Contains("--c-complete-matching", StringComparer.Ordinal)) return CCompleteMatchingChecks.Run(
     ReadInt(args, "--count", 128), args.Contains("--export-c-complete", StringComparer.Ordinal));
 if (args.Contains("--simple-probability-principles", StringComparer.Ordinal)) return SimpleProbabilityPrinciplesChecks.Run();
+if (args.Contains("--manual-family-order", StringComparer.Ordinal)) return FamilyAllocationPricingChecks.RunManualOrder();
+if (args.Contains("--variant-opening-preparation", StringComparer.Ordinal)) return VariantOpeningPreparationChecks.Run();
+if (args.Contains("--variant-opening-survival", StringComparer.Ordinal)) return VariantOpeningSurvivalChecks.Run();
+if (args.Contains("--variant-opening-execution", StringComparer.Ordinal)) return VariantOpeningExecutionChecks.Run();
+if (args.Contains("--variant-opening-integration", StringComparer.Ordinal)) return VariantOpeningIntegrationChecks.Run();
+if (args.Contains("--family-work-estimates", StringComparer.Ordinal)) return FamilyWorkEstimateChecks.Run();
+if (args.Contains("--family-quote-entry", StringComparer.Ordinal))
+    return FamilyQuoteEntryChecks.Run(args.Contains("--quote-baseline", StringComparer.Ordinal)
+        ? args[Array.IndexOf(args, "--quote-baseline") + 1] : null);
 if (args.Contains("--eta-cost-closure", StringComparer.Ordinal)) return EtaCostClosureChecks.Run();
 if (args.Contains("--combat-probability-bench", StringComparer.Ordinal)) return PredictabilityMathChecks.RunCombatProbabilityBench();
 if (args.Contains("--small-candidate-exact", StringComparer.Ordinal)) return SmallCandidateExactChecks.Run();
@@ -65,8 +74,13 @@ if (args.Contains("--predictor-runtime-route", StringComparer.Ordinal)) return P
 if (args.Contains("--predictor-runtime-events", StringComparer.Ordinal)) return PredictorEventChecks.Run();
 if (args.Contains("--predictor-runtime-initialization", StringComparer.Ordinal)) return PredictorRuntimeSourceChecks.Run(domain: "initialization");
 if (args.Contains("--predictor-runtime-live-capture", StringComparer.Ordinal)) return PredictorRuntimeSourceChecks.Run(domain: "live-capture");
+if (args.Contains("--predictor-feature-preferences", StringComparer.Ordinal)) return PredictorRuntimeSourceChecks.Run(domain: "feature-preferences");
 if (args.Contains("--predictor-runtime-live-policy", StringComparer.Ordinal)) return PredictorRuntimeSourceChecks.Run(domain: "live-policy");
 if (args.Contains("--predictor-runtime-drawing", StringComparer.Ordinal)) return PredictorRuntimeSourceChecks.Run(domain: "drawing");
+if (args.Contains("--predictor-runtime-drawing-boundaries", StringComparer.Ordinal)) return PredictorRuntimeSourceChecks.Run(domain: "drawing-boundaries");
+if (args.Contains("--predictor-runtime-drawing-overblocks", StringComparer.Ordinal)) return PredictorRuntimeSourceChecks.Run(domain: "drawing-overblocks");
+if (args.Contains("--predictor-runtime-card-operations", StringComparer.Ordinal)) return PredictorRuntimeSourceChecks.Run(domain: "card-operations");
+if (args.Contains("--predictor-runtime-dependency-boundaries", StringComparer.Ordinal)) return PredictorRuntimeSourceChecks.Run(domain: "dependency-boundaries");
 if (args.Contains("--predictor-runtime-repy", StringComparer.Ordinal)) return PredictorRuntimeSourceChecks.Run(domain: "repy");
 if (args.Contains("--predictor-runtime-tablet", StringComparer.Ordinal)) return PredictorRuntimeSourceChecks.Run(domain: "tablet");
 if (args.Contains("--predictor-runtime-combat-facts", StringComparer.Ordinal)) return PredictorRuntimeSourceChecks.Run(domain: "combat-facts");
@@ -86,6 +100,12 @@ if (args.Contains("--silken-tress-order")) return FamilyCombatRewardChecks.Check
 if (args.Contains("--capsule-obtain-policy")) return FamilyNeowChecks.CheckCapsuleObtainPolicy();
 if (args.Contains("--combination-regressions", StringComparer.Ordinal)) return CombinationRegressionChecks.Run();
 if (args.Contains("--persistence", StringComparer.Ordinal)) return PersistenceChecks.Run();
+if (args.Contains("--in-run-feature-defaults", StringComparer.Ordinal)) return PersistenceChecks.Run(featurePreferencesOnly: true);
+if (args.Contains("--developer-notes-document", StringComparer.Ordinal))
+{
+    int archive = DeveloperNotesArchiveChecks.Run();
+    return archive == 0 ? PersistenceChecks.Run(notesOnly: true) : archive;
+}
 if (args.Contains("--feedback-export", StringComparer.Ordinal)) return FeedbackBundleChecks.Run();
 if (args.Contains("--preset-workbench", StringComparer.Ordinal)) return PresetWorkbenchChecks.Run();
 if (args.Contains("--seed-library-workflow", StringComparer.Ordinal)) return SeedLibraryWorkflowChecks.Run();
@@ -102,9 +122,14 @@ if (args.Contains("--unknown-room", StringComparer.Ordinal)) return UnknownRoomC
 if (args.Contains("--treasure-room", StringComparer.Ordinal)) { Console.WriteLine("TREASURE_ROOM_PASS " + RelicCpuChecks.CheckTreasureProjection()); return 0; }
 if (args.Contains("--initial-room-exact", StringComparer.Ordinal)) return InitialRoomExactChecks.Run();
 if (args.Contains("--map-route", StringComparer.Ordinal)) return MapRouteChecks.Run();
+if (args.Contains("--map-drawing-integration", StringComparer.Ordinal)) return MapDrawingIntegrationChecks.Run();
+if (args.Contains("--map-lossy-integration", StringComparer.Ordinal)) return MapLossyIntegrationChecks.Run();
 if (args.Contains("--map-route-sequence", StringComparer.Ordinal)) return MapRouteSequenceChecks.Run();
 if (args.Contains("--map-cost-measure", StringComparer.Ordinal)) return MapRouteChecks.MeasureCost();
 if (args.Contains("--map-preview", StringComparer.Ordinal)) return MapPreviewChecks.Run();
+if (args.Contains("--map-full-integration", StringComparer.Ordinal))
+    return MapFullIntegrationChecks.Run(args.Contains("--map-full-baseline", StringComparer.Ordinal)
+        ? args[Array.IndexOf(args, "--map-full-baseline") + 1] : null);
 if (args.Contains("--transformation-aggregate"))
 {
     int openingAt=Array.IndexOf(args,"--opening-filter");
@@ -130,6 +155,7 @@ if (args.Contains("--compatibility-reference", StringComparer.Ordinal)) return C
 if (args.Contains("--shop-ordered", StringComparer.Ordinal)) return ShopOrderedChecks.Run();
 if (args.Contains("--wwp-commitment", StringComparer.Ordinal)) return WwpCommitmentChecks.Run();
 if (args.Contains("--exact-boundary", StringComparer.Ordinal)) return ExactBoundaryChecks.Run();
+if (args.Contains("--exact-cancellation", StringComparer.Ordinal)) return ExactBoundaryChecks.RunCancellation();
 if (args.Contains("--party-exact-independent", StringComparer.Ordinal)) return ExactBoundaryChecks.RunPartyIndependentMismatch();
 if (args.Contains("--predictor-closure", StringComparer.Ordinal)) return PredictorClosureChecks.Run();
 if (args.Contains("--production-replay", StringComparer.Ordinal)) return ProductionReplayChecks.Run();

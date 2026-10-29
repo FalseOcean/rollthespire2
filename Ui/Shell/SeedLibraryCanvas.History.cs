@@ -142,6 +142,10 @@ internal sealed partial class SeedLibraryCanvas
         results.Name = "HistoryResults"; _palette.SetActive(results, _historyResults);
         if (!canUse) _detail.AddChild(Text(issue, 17, true));
         if (selected is not null) AddEnvironmentNotice(selected);
+        if (selected is not null)
+            foreach (var scan in selected.MapScans)
+                MapSearchProvenanceDisplay.Add(_detail, scan, _palette,
+                    RolltheSpire2.Presentation.Localization.JsonUiTextProvider.CreateUi13(_language));
         // Conditions/results are consumed separately by the presentation iterator.
         return _historyResults ? null : definition;
     }

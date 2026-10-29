@@ -50,13 +50,35 @@ internal sealed partial class PredictorRun
 
     private static PredictorCombatDomain RerollReadDomains(PredictorRun run, PredictorReward reward) =>
         PredictorCombatDomain.RewardsRng | PredictorCombatDomain.Relics | PredictorCombatDomain.CardRewardHookState |
-        (CombatCardReadsRarityOffset(run.Context, reward) ? PredictorCombatDomain.CardRarityOdds : PredictorCombatDomain.None) |
-        (PredictorSettlementEffects.Has(run.Working, "WING_CHARM") ? PredictorCombatDomain.NicheRng : PredictorCombatDomain.None);
+        (CombatCardReadsRarityOffset(run.Context, reward) ? PredictorCombatDomain.CardRarityOdds : PredictorCombatDomain.None);
 
     private static ImmutableArray<PredictorCombatPendingCause> RerollReadCauses(PredictorRun run, PredictorReward reward,
-        List<RouteDependency> dependencies) => PredictorRouteCauseEvidence.Normalize(
-        CausesFor(dependencies, RerollReadDomains(run, reward)).AddRange(CombatCardReadsRarityOffset(run.Context, reward)
-            ? dependencies.Select(d => d.Cause).Where(cause => CombatOddsCauseApplies(cause, "odds.cardRarity")) : []));
+        List<RouteDependency> dependencies)
+    {
+        var causes = CausesFor(dependencies, RerollReadDomains(run, reward)).AddRange(CombatCardReadsRarityOffset(run.Context, reward)
+            ? dependencies.Select(d => d.Cause).Where(cause => CombatOddsCauseApplies(cause, "odds.cardRarity")) : []);
+        var niche = CausesFor(dependencies, PredictorCombatDomain.NicheRng);
+        if (!niche.IsEmpty && PredictorSettlementEffects.Has(run.Working, "WING_CHARM"))
+        {
+            // Only a new population can establish the reroll's actual targets.
+            // The old offer's scope and possession of Wing Charm prove neither.
+            // Inspect a detached generation only after its other inputs are known;
+            // its private enchantments never become the published offer.
+            bool readsNiche = true;
+            if (causes.IsEmpty)
+            {
+                var witness = RewardAlternativeWitness(run, reward);
+                var state = witness.Working;
+                var recipe = reward.RerollRecipe ?? throw new NotImplementedException("PredictorCardRewardRerollRecipeMissing");
+                _ = PredictorRewardGeneration.GenerateCards(run.Context, ref state, recipe, reward.RerollIsCardReward,
+                    out var scope, recipe.UseEventRng ? witness._eventRng ??
+                        throw new InvalidOperationException("PredictorEventRewardRngMissing") : null);
+                readsNiche = scope?.EligibleIndices.IsEmpty != true;
+            }
+            if (readsNiche) causes = causes.AddRange(niche);
+        }
+        return PredictorRouteCauseEvidence.Normalize(causes);
+    }
 
     private static ImmutableArray<PredictorCombatPendingCause> SacrificeReadCauses(PredictorRun run,
         PredictorRelic wing, List<RouteDependency> dependencies)
@@ -78,9 +100,12 @@ internal sealed partial class PredictorRun
     private static PredictorCombatRewardKnowledge WithRouteRewardResult(PredictorRun run,
         PredictorReward reward, PredictorCombatRewardKnowledge knowledge, List<RouteDependency> dependencies)
     {
+        if (knowledge.PartialOfferBinding is { } binding)
+            knowledge = knowledge with { PartialOfferBinding = binding with { Value = binding.Value with
+                { Status = reward.Status, CardSelectionEntered = reward.CardSelectionEntered } } };
         if (!run._preview.Rewards.Results.TryGetValue(reward.Id, out var result))
             return WithRouteRewardDisposition(run, reward, knowledge with
-                { Alternatives = ObserveRouteRewardAlternatives(run, reward, dependencies, knowledge.PendingCauses) });
+                { Alternatives = ObserveRouteRewardAlternatives(run, reward, dependencies, RewardOfferReadCauses(knowledge)) });
         return WithRouteRewardDisposition(run, reward, knowledge with { Alternatives = result.Alternatives, AppliedChoice = result.Choice,
             AppliedChildren = result.AppliedChildren, SacrificeCount = result.SacrificeCount, SacrificeRelic = result.SacrificeRelic });
     }
@@ -155,7 +180,7 @@ internal sealed partial class PredictorRun
             return false;
         }
         var options = ObserveRouteRewardAlternatives(run, reward, dependencies,
-            ObserveRouteRewards(run, dependencies)[run.Rewards.IndexOf(reward)].PendingCauses);
+            RewardOfferReadCauses(ObserveRouteRewards(run, dependencies)[run.Rewards.IndexOf(reward)]));
         var alternative = options.FirstOrDefault(option => choice.Reroll ? option.Key == "REROLL" :
             option.Key == "SACRIFICE" && option.RelicId == choice.SacrificeRelicId);
         if (alternative == null) return Pending("PlannedRewardAlternativeUnavailable");
@@ -175,6 +200,7 @@ internal sealed partial class PredictorRun
         }
         var sourceRewards = run.Rewards;
         var sourceKnowledge = ObserveRouteRewards(run, dependencies);
+        int sourceObtainDepth = run._obtainFrames.Length;
         var accepted = new RouteRewardResult(run.Working.Position.NodeId, reward, choice, options);
         if (run.Submit(run.Request!, input, token) != PredictorInputResult.Accepted)
             return Pending("PlannedRewardPending");
@@ -187,7 +213,7 @@ internal sealed partial class PredictorRun
             if (choice.ExpectedRerolledReward == null) return true;
             if (!SameOffer(current, choice.ExpectedRerolledReward)) return Pending("PlannedRerolledRewardChanged");
             followup = choice with { ExpectedReward = choice.ExpectedRerolledReward, Reroll = false,
-                ExpectedRerolledReward = null };
+                ExpectedRerolledReward = null, UnresolvedEnchantmentIndices = [] };
             return null;
         }
         if (run._sacrificePendingRewardId == reward.Id)
@@ -200,7 +226,7 @@ internal sealed partial class PredictorRun
             if (!ApplyRouteObtainChild(run, choice.Children[index], dependencies, knownInstanceIds, local, token)) return false;
             run._preview.Rewards.Results[reward.Id] = run._preview.Rewards.Results[reward.Id] with { AppliedChildren = index + 1 };
         }
-        ContinueLiveDefaultCardRewardChildren(run, dependencies, token);
+        ContinueLiveDefaultCardRewardChildren(run, dependencies, token, sourceObtainDepth);
         if (run._sacrificePendingRewardId == reward.Id)
         {
             // The source is suspended inside the ordinary obtain transaction;
@@ -253,8 +279,9 @@ internal sealed partial class PredictorRun
         _ = ObserveRouteRewardAlternatives(run, reward, dependencies, []);
         if (reward.CanReroll)
         {
-            parents.AddRange(RerollReadCauses(run, reward, dependencies));
-            if (RerollReadCauses(run, reward, dependencies).IsEmpty)
+            var rerollCauses = RerollReadCauses(run, reward, dependencies);
+            parents.AddRange(rerollCauses);
+            if (rerollCauses.IsEmpty)
             {
                 var witness = RewardAlternativeWitness(run, reward with { CardSelectionEntered = true });
                 witness.Rewards = witness.Rewards.Select(r => r.Id == reward.Id ? r with { CardSelectionEntered = true } : r).ToImmutableArray();

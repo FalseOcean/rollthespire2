@@ -12,6 +12,15 @@ namespace RolltheSpire2.Ui.Pages.Search.Editors;
 
 internal sealed partial class EventSearchEditor
 {
+    // Result slots cover both stable single-target outcomes and authored transforms.
+    private static int ResultSlotCount(EventResultConditionKind kind) => kind switch
+    {
+        EventResultConditionKind.TrashHeapGrabCard or EventResultConditionKind.TrashHeapDiveRelic or
+            EventResultConditionKind.FakeMerchantOfferedFakeRelic => 1,
+        _ when EventResultTransformSemantics.IsTransform(kind) => EventResultTransformSemantics.DrawCount(kind),
+        _ => throw new InvalidOperationException("integration.load_shape")
+    };
+
     internal SearchQuery ExportSharedPartyQuery(SearchQuery query) => query with
     {
         EventSequenceConstraints = _partyQueue.Select(c => new EventSequenceSearchCondition(c.Act, null,
@@ -97,7 +106,7 @@ internal sealed partial class EventSearchEditor
             else if (c.Kind == EventResultConditionKind.TinkerTimeTypeAndRider) {
                 _draft.TinkerType = (int)c.TinkerCardType!; _draft.TinkerEffect = c.TinkerRider?.ToString().ToLowerInvariant();
             }
-            else _draft.Results[c.Kind] = EventResultTransformSemantics.DrawCount(c.Kind) == 2
+            else _draft.Results[c.Kind] = ResultSlotCount(c.Kind) == 2
                 ? [c.TargetKey,c.MorphicGroveSecondCard] : [c.TargetKey];
         }
         if (_draft.Results.ContainsKey(EventResultConditionKind.TrialNondescriptInitialBasicsContains)) _draft.TrialCase = 2;

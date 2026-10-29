@@ -7,6 +7,35 @@ using RolltheSpire2.Infrastructure.Snapshots;
 
 internal static partial class PredictorCrystalAssistantChecks
 {
+    private static void CheckRerollStreamParity(PredictorCrystalSnapshot source,CrystalRewardRoute initial,string label)
+    {
+        string frozen=JsonSerializer.Serialize(source,ProductionSearchReplay.JsonOptions);
+        var entry=PredictorCrystalExplorer.Replay(source,initial.Steps);
+        var eager=PredictorCrystalExplorer.WithRerolls(initial,entry,includeEnchantments:initial.EnchantmentTargets);
+        var options=PredictorCrystalExplorer.Options(eager).Where(o=>o.Kind==PredictorRewardKind.Card).ToArray();
+        Check(options.Length>0,"Stream parity has card predicates");
+        var cases=options.Select(o=>ImmutableArray.Create(o)).Concat(options.Skip(1).Select(o=>ImmutableArray.Create(options[0],o))).ToArray();
+        int negatives=0,deep=0;ImmutableArray<CrystalRewardOption> interruptedGoals=[];PredictorCrystalSolution? interruptedPlan=null;
+        foreach(var goals in cases)
+        {
+            var expected=PredictorCrystalExplorer.VerifySelection(source,eager,goals);
+            var actual=PredictorCrystalExplorer.VerifyRerollSelection(entry,initial,goals,()=>true);
+            Check(JsonSerializer.Serialize(expected,ProductionSearchReplay.JsonOptions)==JsonSerializer.Serialize(actual,ProductionSearchReplay.JsonOptions),
+                "Stream preserves eager verdict and complete shortest ordered plan: "+label);
+            if(expected==null) negatives++;
+            else if(expected.RerollActions.Length>0)
+            {deep++;if(interruptedPlan==null || expected.RerollActions.Length>interruptedPlan.RerollActions.Length) {interruptedGoals=goals;interruptedPlan=expected;}}
+        }
+        Check(interruptedPlan!=null,"Stream parity exercises a reroll-only target: "+label);
+        int checks=0,rootChecks=1+entry.Rewards.Count(r=>r.Kind==PredictorRewardKind.Card && r.Status==PredictorRewardStatus.Open && r.CanReroll);
+        var stopped=PredictorCrystalExplorer.VerifyRerollSelection(entry,initial,interruptedGoals,()=>++checks<=rootChecks);
+        Check(stopped==null && checks>rootChecks,"Suffix cutoff occurs after real reroll states were generated");
+        var resumed=PredictorCrystalExplorer.VerifyRerollSelection(entry,initial,interruptedGoals,()=>true);
+        Check(JsonSerializer.Serialize(interruptedPlan,ProductionSearchReplay.JsonOptions)==JsonSerializer.Serialize(resumed,ProductionSearchReplay.JsonOptions),
+            "Suffix cutoff does not poison subsequent full verification");
+        Check(frozen==JsonSerializer.Serialize(source,ProductionSearchReplay.JsonOptions),"Stream parity preserves frozen source");
+        Console.WriteLine($"CRYSTAL_REROLL_STREAM_PARITY_PASS label={label};exact={initial.EnchantmentTargets};queries={cases.Length};negative={negatives};rerollPositive={deep};interruptedThenRecovered=true;completePlanEquality=true");
+    }
     private static void CheckDriftwoodProductionQueries(PredictorCrystalSnapshot source,
         Action<ImmutableArray<PredictorCrystalStep>,CrystalSuffixNode> native,string output)
     {
@@ -115,19 +144,42 @@ internal static partial class PredictorCrystalAssistantChecks
     private static void CheckRerollFrontier(PredictorCrystalSnapshot source,ImmutableArray<PredictorCrystalStep> nativePath,
         ImmutableArray<CrystalRewardOption> observedGoals,Action<ImmutableArray<PredictorCrystalStep>,CrystalSuffixNode> checkNative,string output)
     {
+        if(!PredictorCrystalWing.Active(source.State) && source.Items.Any(i=>i.Kind=="CURSE" && i.X>=0 && !i.Revealed))
+        {
+            var legacyTable=new CrystalReachabilityTable(source,includeRerolls:true);
+            var single=PredictorCrystalGoalSearch.Solve(source,legacyTable,[],false,TimeSpan.FromSeconds(1));
+            var batch=PredictorCrystalGoalBatch.Solve(source,legacyTable,[],false,TimeSpan.FromSeconds(1));
+            Check(single.Verdict==CrystalOffsetVerdict.Incomplete && batch.Verdict==CrystalOffsetVerdict.Incomplete &&
+                single.RewardStates==0 && batch.RewardStates==0 && single.GeometryNodes==0 && batch.GeometryNodes==0,
+                "Retained legacy geometry declines unenumerated allow-Curse input before shared-bound work");
+            Console.WriteLine("CRYSTAL_LEGACY_CURSE_ADMISSION_PASS single=Incomplete;batch=Incomplete;productionLanguageSeparate=true");
+        }
+        if(Environment.GetEnvironmentVariable("RT2_CRYSTAL_REROLL_STREAM_ORACLE")=="1")
+        {
+            var streamEntry=PredictorCrystalExplorer.Replay(source,nativePath);
+            CheckRerollStreamParity(source,new(nativePath,streamEntry.Rewards),"ordinary-natural");
+        }
         // Raw click enumeration keeps blank/preparatory moves and hidden centers.
         // Suffix reference uses raw Enter/Exit/Reroll/Take, not the new offset DP.
         bool languageExperiment=Environment.GetEnvironmentVariable("RT2_CRYSTAL_GOAL_LANGUAGE")=="1";
+        bool memoProfile=Environment.GetEnvironmentVariable("RT2_CRYSTAL_LANGUAGE_MEMO_PROFILE")=="1";
+        long memoWordHits=0,memoAbstractSuppressed=0;
         CrystalGoalSearchResult SolveGoal(PredictorCrystalSnapshot board,CrystalReachabilityTable table,
-            ImmutableArray<CrystalRewardOption> goals,TimeSpan budget,int stateLimit=100_000)=>languageExperiment
-            ?PredictorCrystalGoalLanguage.Solve(board,table,goals,true,budget,stateLimit,
-                sharedBound:new(board,table,true,packingCover:PackingCoverEnabled),rootCardSlots:RootCardSlotsEnabled)
-            :PredictorCrystalGoalBatch.Solve(board,table,goals,true,budget,stateLimit);
+            ImmutableArray<CrystalRewardOption> goals,TimeSpan budget,int stateLimit=100_000)
+        {
+            var result=languageExperiment?PredictorCrystalGoalLanguage.Solve(board,table,goals,true,budget,stateLimit,
+                sharedBound:new(board,table,true,packingCover:PackingCoverEnabled),rootCardSlots:RootCardSlotsEnabled,profileCompilation:memoProfile)
+                :PredictorCrystalGoalBatch.Solve(board,table,goals,true,budget,stateLimit);
+            if(result.GeometryMemoProfile is {} memo)
+            {memoWordHits+=memo.WordHits;memoAbstractSuppressed+=memo.AbstractMemoSuppressedByWordHits;}
+            return result;
+        }
         CheckCurrentCenterProof(source);
         if(PackingCoverEnabled) CheckPackingCoverOracle(source);
         if(RootCardSlotsEnabled) CheckRootCardSlotGuards(source);
         var shapes=new[]{"one","three","repeat","potion","tail","ordered-tail"};
         if(Environment.GetEnvironmentVariable("RT2_CRYSTAL_RELIC_ORACLE")=="1") shapes=[..shapes,"relic-tail","revealed-relic-tail","repeat-relic-tail"];
+        if(Environment.GetEnvironmentVariable("RT2_CRYSTAL_LANGUAGE_PADDING_ORACLE")=="1") shapes=[..shapes,"blank-tail","scarce-tail"];
         foreach(string shape in shapes)
         {
             var specs=shape switch {
@@ -141,6 +193,8 @@ internal static partial class PredictorCrystalAssistantChecks
             for(int i=0;i<specs.Length;i++) for(int x=specs[i].X;x<specs[i].X+specs[i].Width;x++) for(int y=specs[i].Y;y<specs[i].Y+specs[i].Height;y++)
             { hidden[x*11+y]=true;occupancy[x*11+y]=i; }
             hidden[0]=hidden[120]=true;
+            if(shape=="blank-tail") foreach(int cell in new[]{1,11,109,119}) hidden[cell]=true;
+            if(shape=="scarce-tail") hidden[0]=hidden[120]=false;
             // Two adjacent partial groups must complete together to leave a
             // click for the distant third group; it cannot settle between them.
             if(shape=="ordered-tail") foreach(int x in new[]{1,4}) foreach(int y in new[]{3,4}) hidden[x*11+y]=false;
@@ -306,15 +360,12 @@ internal static partial class PredictorCrystalAssistantChecks
             Close([selected]);
             long prior=reach.ProofReplays;var known=reach.ProjectKnown([selected]);long afterFirst=reach.ProofReplays;reach.ProjectKnown([selected]);
             long cacheDelta=reach.ProofReplays-prior;
-            if(shape.Contains("relic",StringComparison.Ordinal))
-            {
-                // New mixed relic fixtures also request options skipped during
-                // root filtering. Measure first projection work separately;
-                // subsequent identical projections must reuse its take proofs.
-                Console.WriteLine($"CRYSTAL_RELIC_RETARGET shape={shape};firstReplays={afterFirst-prior};repeatReplays={reach.ProofReplays-afterFirst}");
-                Check(reach.ProofReplays==afterFirst && known.SelectedPlan!=null,"Repeated relic projection reuses take cache: "+shape);
-            }
-            else Check(cacheDelta==0 && known.SelectedPlan!=null,"Retarget projection reuses expanded endpoint/take cache: "+shape);
+            // Complete candidate answers no longer require exhausting every
+            // route. First reprojection may consume unprojected cached rows;
+            // repeating it must reuse all actual take proofs. Raw equality above
+            // independently checks that early completion lost no candidates.
+            Console.WriteLine($"CRYSTAL_RETARGET_CACHE shape={shape};firstReplays={afterFirst-prior};repeatReplays={reach.ProofReplays-afterFirst}");
+            Check(reach.ProofReplays==afterFirst && known.SelectedPlan!=null,"Repeated projection reuses expanded endpoint/take cache: "+shape);
             if(shape=="one")
             {
                 var legacy=new CrystalReachabilityTable(board);var target=options.First(o=>!legacy.Candidates.Contains(o));
@@ -326,6 +377,7 @@ internal static partial class PredictorCrystalAssistantChecks
             }
             Console.WriteLine($"DRIFT_FRONTIER_ORACLE shape={shape};rawPaths={paths};endpoints={rows.Count};rawGoalSets={truth.Count};candidates={options.Count};seconds={timer.Elapsed.TotalSeconds:F3};fullCandidateEquality=true;prefixChecks={prefixChecks};retargetReplayDelta={cacheDelta};proofCacheHits={reach.ProofCacheHits}");
         }
+        if(memoProfile) Console.WriteLine($"CRYSTAL_LANGUAGE_MEMO_DEPENDENCY raw=driftwood;wordHits={memoWordHits};abstractSuppressed={memoAbstractSuppressed}");
         if(Environment.GetEnvironmentVariable("RT2_CRYSTAL_SUPPORT_TRANSFER")=="oracle") return;
         // Natural captured board, actual final-click continuation, original source
         // native check callback. This is not the artificial geometry above.

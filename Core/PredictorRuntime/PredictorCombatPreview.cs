@@ -41,6 +41,14 @@ internal sealed partial class PredictorRun
         var entry = _eventCombatEntry ?? _combatEntry;
         if (resolution == null || entry == null) return null;
         cancellationToken.ThrowIfCancellationRequested();
+        if (_preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults)
+        {
+            long operations = resolution.Facts.CardTriggers.Sum(trigger => (long)trigger.EffectiveTriggers) +
+                resolution.Facts.TemporaryCardTriggers.Sum(trigger => (long)trigger.EffectiveTriggers) +
+                resolution.Facts.EnemyCreations.Sum(creation => (long)creation.Count);
+            if (operations > PredictorDrawingWorkLimitException.MaximumOperations)
+                throw new PredictorDrawingWorkLimitException(operations);
+        }
         var missing = resolution.MissingFacts;
         var pending = ImmutableArray.CreateBuilder<PredictorCombatPendingCause>();
         bool Has(string relic) => Working.Relics.Any(r => !r.Melted && r.Key.Entry == relic);

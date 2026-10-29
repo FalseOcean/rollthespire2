@@ -24,4 +24,5 @@ public sealed record SearchContinuationSnapshot(
     // only by NextOrdinal. New snapshots retain every delivery independently of
     // the ordinary scan frontier, including after an explicit origin change.
     public IReadOnlyList<ulong>? UnreceivedOrdinals { get; init; }
+    public MapSearchProvenance? MapSearch { get; init; }
 }

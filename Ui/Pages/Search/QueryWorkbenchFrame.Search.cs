@@ -49,7 +49,7 @@ internal sealed partial class QueryWorkbenchFrame
 
     internal WorkbenchSearchDraft CaptureDraft()
     {
-        if (_multiplayer) return CapturePartyDraft();
+        if (_multiplayer) return CapturePartyDraft() with { ManualFamilyOrder = _manualFamilyOrder?.ToArray() };
         SearchQuery q = _neowEditor.ExportQuery();
         q = q with { RelicSequenceConstraints = _relicEditor.BuildConditions(), TreasureRelics = _relicEditor.BuildTreasureCondition(), CombatCardRewards = _combatEditor.ExportCondition(), CombatPotionRewards = _combatEditor.ExportPotionCondition(), CombatCardExclusion = _combatEditor.ExportExclusionCondition() };
         q = _ancientEditor.ExportQuery(q);
@@ -58,15 +58,16 @@ internal sealed partial class QueryWorkbenchFrame
         q = _shopEditor.ExportQuery(q);
         q = q with { TransformationAggregate = _transformationEditor.ExportCondition(q) };
         return new(_soloCharacter, _soloAscension, q, _ancientEditor.OptionConditions)
-        { AncientEditor = _ancientEditor.ExportEditorState(), NeowEditor = _neowEditor.ExportEditorState(),
+        { ManualFamilyOrder = _manualFamilyOrder?.ToArray(), AncientEditor = _ancientEditor.ExportEditorState(), NeowEditor = _neowEditor.ExportEditorState(),
             EventEditor = _eventEditor.ExportEditorState(), TransformationEditor = _transformationEditor.ExportEditorState(),
-            CombatRewardEditor = _combatEditor.ExportEditorState() };
+            CombatRewardEditor = _combatEditor.ExportEditorState(), MapEditor = _actInformationEditor.ExportMapState() };
     }
 
     internal void RestoreDraft(WorkbenchSearchDraft draft, bool render = true)
     {
         using var observation = _editorInputs.Observe(_runtime);
         if (draft.Version is not (1 or 2 or 3 or 4)) throw new InvalidOperationException("integration.load_version");
+        _manualFamilyOrder = draft.ManualFamilyOrder?.ToArray();
         if (draft.Players.Count > 0) { RestorePartyDraft(draft, render); return; }
         ValidateRepresentable(draft.Query);
         _multiplayer = false; _seat = 0; _soloCharacter = draft.Character; _soloAscension = draft.Ascension;
@@ -79,7 +80,7 @@ internal sealed partial class QueryWorkbenchFrame
         _ancientEditor.ImportQuery(draft.Query, draft.AncientPremises, draft.AncientEditor);
         _eventEditor.ImportQuery(draft.Query);
         if (draft.EventEditor is { } eventState) _eventEditor.ImportEditorState(eventState);
-        _actInformationEditor.ImportQuery(draft.Query);
+        _actInformationEditor.ImportQuery(draft.Query, draft.MapEditor);
         _shopEditor.ImportQuery(draft.Query);
         _transformationEditor.ImportQuery(draft.Query);
         if (draft.TransformationEditor is { } transformState) _transformationEditor.ImportEditorState(transformState);
@@ -92,8 +93,9 @@ internal sealed partial class QueryWorkbenchFrame
     // This UI has a narrower grammar than the backend. Never truncate foreign/older drafts.
     private static void ValidateRepresentable(SearchQuery q, bool allowSharedAncientIdentity = false)
     {
-        bool unsupported = q.StandardMaps.Any(c=>!c.IsValid) || q.StandardMaps.Any(c=>c.RouteObjective && c.Scope==0) && q.StandardMaps.Any(c=>c.RouteObjective && c.Scope>0) || q.StandardMaps.Where(c=>c.RouteObjective).GroupBy(c=>c.Scope).Any(g=>g.Count()>1) || q.CombatCardRewards is { Count: > 6 or < 1 } || q.CombatPotionRewards is { Count: > 6 or < 1 } ||
-            q.CombatCardExclusion is { } exclusion && (exclusion.BattleCount is < 1 or > 6 || exclusion.CardKeys is not { Count: > 0 } || exclusion.CardKeys.Any(k => !k.IsValid || k.Category != "CARD")) ||
+        bool unsupported = !Pages.Search.Editors.ActInformationSearchEditor.CanImportMapConditions(q) ||
+            q.CombatCardRewards is { Count: > 6 or < 1 } || q.CombatPotionRewards is { Count: > 6 or < 1 } ||
+            q.CombatCardExclusion is { } exclusion && (!exclusion.HasValidShape() || !exclusion.HasValidCardKeys()) ||
             q.CombatPotionRewards is { } potionSequence && (potionSequence.Slots.Count != potionSequence.Count || potionSequence.Slots.Any(p=>!p.IsValid)) ||
             q.CombatCardRewards is { } cardSequence && cardSequence.Slots.Count != cardSequence.Count ||
             q.LegacyCombatRewardConstraints.Count != 0 || q.LegacyWorld.BossFilters.Count != 0 ||
@@ -200,11 +202,11 @@ internal sealed partial class QueryWorkbenchFrame
         LockForRun(_persistence.Runtime.Receiving);
     }
 
-    private string Explain(Exception ex)
+    private string Explain(Exception ex, string stage = "QueryAdmission")
     {
         // An unfinished local transformation condition is actionable editor
         // state. It must still block export, but is not a system/save failure.
-        if (!IsUnfinishedTransformation(ex)) _persistence.RecordPresentationFailure(ex, "QueryAdmission");
+        if (!IsUnfinishedTransformation(ex)) _persistence.RecordPresentationFailure(ex, stage);
         if (ex.Message.StartsWith(RolltheSpire2.Compatibility.ProfileSeedGenerator.UnavailableCode, StringComparison.Ordinal))
             return SeedProfileUnavailableMessage();
         if (TransformationContinuationIssueKey(ex.Message) is { } continuationKey) return _text.Get(continuationKey);
@@ -219,6 +221,10 @@ internal sealed partial class QueryWorkbenchFrame
     }
     private static bool IsUnfinishedTransformation(Exception exception) =>
         exception is InvalidOperationException { Message: "integration.transform.capacity" };
+    private static bool LegacyCaptureFailureFrom(string detail, string outerOperation) =>
+        detail.Contains("\n   at RolltheSpire2.Ui.Pages.Search.QueryWorkbenchFrame.CaptureDraft(", StringComparison.Ordinal) &&
+        detail.TrimEnd().Split('\n').Last().Contains(
+            " at RolltheSpire2.Ui.Pages.Search.QueryWorkbenchFrame." + outerOperation + "()", StringComparison.Ordinal);
     private string SeedProfileUnavailableMessage() => _runtime.Detection.IsExact
         ? _text.Format("integration.seed_profile_unavailable", _runtime.Detection.DisplayVersion, _runtime.Profile.ProfileId)
         : _text.Get("integration.game_version_unavailable");
@@ -229,11 +235,13 @@ internal sealed partial class QueryWorkbenchFrame
     private void SaveDraft()
     {
         if (_loadFailed) return;
+        string stage = "DraftCapture";
         try
         {
             // Unavailable catalogs must not replace the saved intent on panel closure.
             _ = RolltheSpire2.Compatibility.ProfileSeedGenerator.CreateProbeSeed(_runtime.Profile);
             var draft=CaptureDraft().WithoutCapturedAuthority();
+            stage = "DraftSave";
             string serialized = JsonSerializer.Serialize(draft);
             if (_restoredCaptureStamp == serialized || _lastSaved == serialized) return;
             _persistence.SaveWorkbench(draft); _lastSaved = serialized;
@@ -242,7 +250,7 @@ internal sealed partial class QueryWorkbenchFrame
         }
         catch (Exception ex) when (IsUnfinishedTransformation(ex))
         { if (_status is not null) _status.Text = Explain(ex); }
-        catch(Exception ex) { AuxiliaryFailure(ex, "DraftSave"); }
+        catch(Exception ex) { AuxiliaryFailure(ex, stage); }
     }
     private void RecoverDraft()
     {
@@ -277,9 +285,17 @@ internal sealed partial class QueryWorkbenchFrame
         {
             _lastIssue = exception.Message;
             if (_start is not null) _start.Disabled = true;
-            if (_status is not null) _status.Text = Explain(exception);
+            if (_status is not null) _status.Text = Explain(exception, "DraftCapture");
             return;
         }
+        bool recoveredCapture = _persistence.ResolvePresentationFailure("DraftCapture", _ => true);
+        // Older versions recorded this read-only capture under QueryAdmission.
+        // Its original outer call site proves which operation has recovered;
+        // a genuine compile/start failure must await a successful Search start.
+        recoveredCapture |= _persistence.ResolvePresentationFailure("QueryAdmission", detail =>
+            LegacyCaptureFailureFrom(detail, "UpdateDraftStatus"));
+        recoveredCapture |= _persistence.ResolvePresentationFailure("DraftSave", detail =>
+            LegacyCaptureFailureFrom(detail, "SaveDraft"));
         if (_start is not null) _start.Disabled = _presetBlocked.Count > 0 || _persistence.Runtime.HasSearchInFlight;
         TryAuxiliary(() =>
         {
@@ -292,7 +308,7 @@ internal sealed partial class QueryWorkbenchFrame
                 TryAuxiliary(UpdateResultNavigation, "ResultNavigation");
             }
         }, "DraftPresentation");
-        if (_persistence.Workspace.AuxiliaryIssues.Count > 0 || _lastIssue.Length > 0) PresentSearchStatus(null);
+        if (recoveredCapture || _persistence.Workspace.AuxiliaryIssues.Count > 0 || _lastIssue.Length > 0) PresentSearchStatus(null);
         _lastIssue = "";
     }
 

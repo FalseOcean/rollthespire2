@@ -331,6 +331,11 @@ public sealed record RelicShopSequenceSearchCondition(
 public sealed record CombatCardExclusionSearchCondition(int BattleCount, IReadOnlyList<ModelKey> CardKeys)
 {
     public bool IsEmpty => CardKeys.Count == 0;
+
+    // Keep these as methods so validation does not add serialized Query fields.
+    internal bool HasValidShape() => BattleCount is >= 1 and <= 6 && CardKeys is { Count: > 0 };
+    internal bool HasValidCardKeys() => CardKeys is not null &&
+        CardKeys.All(k => k.IsValid && k.Category == BaseGameModelKeys.Categories.Card);
 }
 
 public sealed record CombatCardRewardSequenceSearchCondition(

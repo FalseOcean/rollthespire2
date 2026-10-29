@@ -16,10 +16,12 @@ internal sealed partial class NeowFamily : IFamilyInvocation, IDenseFamilyBatchG
     private readonly NeowGpuOptimizations _gpuOptimizations = NeowGpuOptimizations.Capture();
     private NeowGpuOptimizations OptimizationsFor(bool compact) => _gpuPlan is null ? default : _gpuOptimizations.Applicable(_gpuPlan, compact,
         _composite is null && _transformations is null && _gpuPlan.DirectNestedMode == 0 && _gpuPlan.JointTransformMetaOffset < 0);
+    internal NeowGpuOptimizations WorkEstimateOptimizations(bool compact) => OptimizationsFor(compact);
     internal string PricingOptimizationShape(bool compact) => _gpuPlan is null ? "" : OptimizationsFor(compact).DescribeWork(_gpuPlan, compact);
     IEnumerable<GpuLocalPeak> IFamilyInvocation.CostPeaks => _costSamples.Peaks;
     void IFamilyInvocation.LogExecutionEvidence() => _costSamples.WriteSummary();
     private readonly NeowReplayPlan _plan;
+    private readonly NeowWorkEstimate.Work _workEstimate;
     private readonly Func<ulong, bool> _cpuMatcher;
     private readonly NeowFamilyProjections _models;
     private readonly FamilyCpuExecution _physical;
@@ -38,12 +40,21 @@ internal sealed partial class NeowFamily : IFamilyInvocation, IDenseFamilyBatchG
     internal bool UsesSmallPrivateOutput => _composite is null && _transformations is null && NeowFamilyGpuExecutor.SupportsSmallOutput(_gpuPlan);
     public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest request)
     {
-        // A new body may consume its own complete-call measurements; it never
-        // falls through to the former arithmetic/transport estimate.
-        if (OptimizationsFor(request.CompactInput).Revision.Length != 0)
-            return FamilyCanonicalMeasuredCost.TryDenseQuote(this, request);
-        var quote = UsesCompatibilityGpu ? null : FamilyCanonicalMeasuredCost.TryDenseQuote(this, request) ?? (_transformations is null
-            ? NeowPhysicalPricing.Quote(this, request) : NeowTransformationPricing.Joint(_transformations, request));
+        // Exact finite evidence keeps its original identity. A new ordinary body
+        // may instead consume a clearly estimated N-only work reference. Joint
+        // owners retain their own existing boundary, never an ordinary N price.
+        var quote = FamilyCanonicalMeasuredCost.TryDenseQuote(this, request);
+        if (quote is null)
+        {
+            if (Coverage.Count != 1)
+                quote = _transformations is null ? NeowPhysicalPricing.Quote(this, request) :
+                    NeowTransformationPricing.Joint(_transformations, request);
+            else if (_gpuPlan is null)
+                quote = NeowWorkEstimate.Cpu(this, _workEstimate, request, 1, capacity: FamilyCpuExecution.Capacity);
+            else
+                quote = (UsesCompatibilityGpu || OptimizationsFor(request.CompactInput).Revision.Length != 0 ? null :
+                    NeowPhysicalPricing.Quote(this, request)) ?? NeowWorkEstimate.Gpu(this, _workEstimate, request);
+        }
         return FamilyGpuReadback.Reference(this, request.PrivateOutput && UsesSmallPrivateOutput && quote is not null
             ? quote with { Evidence = quote.Evidence + ";RetainedNumericalEstimate;PrivateSmallHeader8TransportUnmeasured" } : quote);
     }
@@ -80,6 +91,7 @@ internal sealed partial class NeowFamily : IFamilyInvocation, IDenseFamilyBatchG
         NeowTransformationComposite? transformations = null, GpuPlanFactory? gpuPlanFactory = null)
     {
         _request = request; _plan = plan; _transformations = transformations;
+        _workEstimate = NeowWorkEstimate.Describe(plan);
         var neowMatcher = NeowFamilyReplay.Bind(plan);
         _cpuMatcher = transformations is null ? neowMatcher : root => neowMatcher(root) && transformations.Numerical.Matches(root);
         string physicalIssue = "CpuReferenceSelected";
@@ -116,7 +128,7 @@ internal sealed partial class NeowFamily : IFamilyInvocation, IDenseFamilyBatchG
         _conditional = NeowReplayPlan.HasCapsule(request);
         if (plan.AuthoredUpgrades is { } upgrades)
             RuntimeLog.TryBackgroundInfo($"nAuthoredUpgradeContinuation=true;scope=AuthoredOnly;hiddenWwpReplay=false;constants={string.Join(',', upgrades.Advances)};unknownConstant=-1;unknownRoute={(plan.CapsuleUpgradeUpperBound >= 0 ? "BoundedDrawUnion" : "IdentityOnlyExactRemainder")};choicePolicy=AuthoredTakeOtherwiseSkip");
-        if (_gpuOptimizations != default) RuntimeLog.TryBackgroundInfo($"nOptimizationsRequested=true;requested={_gpuOptimizations.Revision};dense={OptimizationsFor(false).Revision};compact={OptimizationsFor(true).Revision};productionDefaults=true;quote=MatchingCurrentBodyReferenceOnly");
+        if (_gpuOptimizations != default) RuntimeLog.TryBackgroundInfo($"nOptimizationsRequested=true;requested={_gpuOptimizations.Revision};dense={OptimizationsFor(false).Revision};compact={OptimizationsFor(true).Revision};productionDefaults=true;quote=MatchingCurrentBodyReferenceOrEstimatedOwnWork");
         RuntimeLog.TryBackgroundInfo($"nFamilyReady=true;coverage={string.Join(',', Coverage)};physical={(_composite is not null ? "NrTargetRankComposite" : _gpuPlan is null ? "CpuLocalReplay" : "GpuLocalDonor")};physicalIssue={physicalIssue};capsuleBagScratch=false;capsuleSemanticOwner=R;boundedBonesNr={_composite?.UsesBonesCheckpoint == true};exactOnly={string.Join(',', plan.ExactOnly)}");
     }
     bool IFamilyInvocation.ExecutionFaulted => _disabled;
@@ -174,6 +186,7 @@ internal sealed partial class NeowFamily : IFamilyInvocation, IDenseFamilyBatchG
             revision += PartyOrderedKRevision;
         if (UsesCompatibilityGpu) revision += ".IntegerUnitFloat.Rne.20261025.v1";
         revision += OptimizationsFor(compactAbi1Input).Revision;
+        revision += GpuRngRotation.Revision;
         return new(FamilyId, revision, "N.Neutral.20260905.v1", 1, UsesCompatibilityGpu
             ? "NoAcceptedWithinPathCurve;GpuNumericalVariant=IntegerUnitFloat;PhysicalQuoteUnavailable=UnmeasuredVariant"
             : "NoAcceptedWithinPathCurve");

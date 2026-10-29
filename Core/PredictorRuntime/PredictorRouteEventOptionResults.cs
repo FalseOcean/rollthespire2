@@ -183,10 +183,9 @@ internal sealed partial class PredictorRun
                     PredictorCombatDomain.Continuation, RouteEventCombatContinuationCauses(branch, combat)));
             var child = ObserveRouteObtainChoice(branch, branchDependencies, knownInstanceIds);
             var offeredPending = RouteEventOfferedCardCauses(branch, branchDependencies);
-            var candidates = branch.EventOfferedCards.IsEmpty ? branch.EventCardCandidates.Select(branch.Working.Card)
-                .Select(c => new PredictorRouteCardKnowledge(c, IsKnownRouteDeckTarget(branch, new(c.Id, c.Key, c.FloorAdded),
-                    branchDependencies, knownInstanceIds) ? [] : RouteDeckTargetCauses(branch, [new(c.Id, c.Key, c.FloorAdded)], branchDependencies, knownInstanceIds)))
-                .ToImmutableArray() : [];
+            var offeredKnowledge = ObserveRouteEventOfferedCards(branch, branchDependencies);
+            var candidates = branch.EventOfferedCards.IsEmpty
+                ? ObserveRouteEventTargetCards(branch, branchDependencies, knownInstanceIds) : [];
             // These additions were produced after the option's actual reads
             // passed. Their model/level is known even when a prior unresolved
             // allocation makes the private numerical instance ID uncertain.
@@ -224,10 +223,12 @@ internal sealed partial class PredictorRun
                 changed.Add(new(action, DisplayObtainCard(before), DisplayObtainCard(after)));
             }
             var result = new PredictorEventOptionResultKnowledge(RouteEventNeededInput(branch),
-                offeredPending.IsEmpty ? branch.EventOfferedCards.Select(DisplayObtainCard).ToImmutableArray() : [],
+                offeredKnowledge?.OfferBinding?.Value.Cards ?? [],
                 candidates, child == null ? [] : [child], combat?.Rewards ?? ObserveRouteRewards(branch, branchDependencies),
                 branchDependencies.Select(d => d.Cause).Concat(local).Distinct().ToImmutableArray())
             {
+                OfferedCardOptions = offeredKnowledge?.CardOptions ?? [],
+                OfferedCardBinding = offeredKnowledge?.OfferBinding,
                 Options = nestedOptions, ChangedCards = changed.ToImmutable(),
                 LocalPendingCauses = PredictorRouteCauseEvidence.Normalize(local
                     .Concat(offeredPending)
@@ -267,14 +268,17 @@ internal sealed partial class PredictorRun
     }
 
     private static ImmutableArray<PredictorCombatPendingCause> RouteEventOfferedCardCauses(PredictorRun run,
+        List<RouteDependency> dependencies) => ObserveRouteEventOfferedCards(run, dependencies)?.PendingCauses ?? [];
+
+    private static PredictorCombatRewardKnowledge? ObserveRouteEventOfferedCards(PredictorRun run,
         List<RouteDependency> dependencies)
     {
-        if (run.EventOfferedCards.IsEmpty) return [];
+        if (run.EventOfferedCards.IsEmpty) return null;
         // Both grids use noncombat odds. Eggs and late card modifiers still
         // apply to these generated cards; Wing Charm reads actual Niche RNG.
-        var domains = PredictorCombatDomain.RewardsRng | PredictorCombatDomain.Relics;
-        if (PredictorSettlementEffects.Has(run.Working, "WING_CHARM")) domains |= PredictorCombatDomain.NicheRng;
-        return CausesFor(dependencies, domains);
+        return CardRewardKnowledge(run.EventCardOffer(),
+            CausesFor(dependencies, PredictorCombatDomain.RewardsRng | PredictorCombatDomain.Relics),
+            CausesFor(dependencies, PredictorCombatDomain.NicheRng));
     }
 
     private static ImmutableArray<PredictorEventHealthDelta> RouteEventHealthConsequences(PredictorRun run)

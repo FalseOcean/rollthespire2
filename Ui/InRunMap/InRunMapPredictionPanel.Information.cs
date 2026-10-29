@@ -49,6 +49,7 @@ internal sealed partial class InRunMapPredictionPanel
         _language = language;
         _text = JsonUiTextProvider.CreatePredictorUi13(language);
         _names = RuntimeGameContentNameResolver.Create(language);
+        UpdateCollectionPicker();
         if (_presenter == null) return;
         _presenter.RebindLocalization(_names, _text);
         _details.RebindLocalization(_names);
@@ -56,7 +57,7 @@ internal sealed partial class InRunMapPredictionPanel
         // Reproject existing observations only. Translation must not capture
         // the live run, recompute the forecast or clear local route/edit state.
         if (_predictionFault != null)
-            _forecastStatus.Text = _text.Get("predictor.map.information_failed") + " · " + _predictionFault;
+            _forecastStatus.Text = _text.Get(_predictionFault);
         else if (_featureEnabled && PredictionEnabled && _screen.IsOpen) RenderInformation();
     }
 
@@ -133,8 +134,9 @@ internal sealed partial class InRunMapPredictionPanel
     private void InformationFailure(Exception ex)
     {
         RuntimeLog.WarnException("inRunRouteInformationFailed=true", ex);
-        _predictionFault = ex.Message; ClearAnnotations(); _details.CloseHover(); _details.CloseEditor();
-        _forecastStatus.Text = _text.Get("predictor.map.information_failed") + " · " + ex.Message;
+        _predictionFault = "predictor.map.information_failed";
+        ClearAnnotations(); _details.CloseHover(); _details.CloseEditor();
+        _forecastStatus.Text = _text.Get(_predictionFault);
         _forecastStatus.Show();
         AlignStatus();
     }
@@ -355,6 +357,7 @@ internal sealed partial class InRunMapPredictionPanel
     }
     private void CloseInformation()
     {
+        _collectionPicker?.GetPopup().Hide();
         if (_details == null) return;
         _details.CloseHover(); _details.CloseEditor(); _overview.Hide(); _forecastStatus.Hide();
     }

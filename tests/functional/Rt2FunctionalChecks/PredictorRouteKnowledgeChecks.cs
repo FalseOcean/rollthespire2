@@ -65,6 +65,202 @@ internal static class PredictorRouteKnowledgeChecks
 
     private static string RestNode => "map:1:2:3:3";
 
+    internal static void RunHatchOverblockBoundaries(PredictorRun captured)
+    {
+        const string first = "map:1:1:3:2", second = "map:1:2:3:3";
+        PredictorRun Fixture(int eggCount = 1, bool removableEgg = false, bool futureEgg = false,
+            ImmutableArray<PredictorCombatPendingCause> incoming = default)
+        {
+            var types = new[] { MapPointType.Ancient, futureEgg ? MapPointType.Unknown : MapPointType.RestSite, MapPointType.RestSite, MapPointType.Boss };
+            var points = types.Select((type, row) => new MapPredictionPoint(new(3, row), type, true,
+                row == types.Length - 1 ? [] : new[] { new MapPosition(3, row + 1) })).ToArray();
+            var state = captured.Working with
+            {
+                OpeningCompleted = true, Relics = [], Position = new(1, 1, "hatch-boundaries:entry"),
+                Maps = [new(1, captured.RouteMap(1) with { Points = points }, [points[0].Position])],
+                Visits = [new(1, points[0].Position, MapPointType.Ancient, PredictorRoomKind.Opening, null, 1)],
+                VisitedEvents = [], UnknownOdds = new(0, -1, 0, 0),
+                Acts = captured.Working.Acts.Select(act => act.Act == 1 ? act with
+                    { RawEvents = [new("EVENT", "BYRDONIS_NEST")], EventCursor = 0 } : act).ToImmutableArray()
+            };
+            foreach (string relic in new[] { "MINIATURE_TENT", "MEAT_CLEAVER", "PAELS_GROWTH" })
+                state = PredictorSettlementEffects.ObtainRelic(state, new("RELIC", relic));
+            for (int i = 0; i < eggCount; i++)
+                state = PredictorObtainSources.AddCard(captured.Context, state, new ModelKey("CARD", "BYRDONIS_EGG"));
+            // A removable Egg is an explicit altered-state negative case, not
+            // an assertion that the vanilla Quest card can normally be cooked.
+            if (removableEgg) state = state with { Cards = state.Cards.Select(card => card.Key.Entry == "BYRDONIS_EGG"
+                ? card with { Removable = true } : card).ToImmutableArray() };
+            var context = captured.Context with { Live = incoming.IsDefault ? null : new(1, true, incoming), Operation = null };
+            var run = new PredictorRun(context, state);
+            run.SetRoute(1, points.Select(point => point.Position).ToImmutableArray());
+            run.AdvanceRoute();
+            return run;
+        }
+        PredictorRouteContinuation Preview(PredictorRun run, PredictorRoutePreviewPolicy policy,
+            params PredictorPlannedNode[] plans)
+        {
+            string state = JsonSerializer.Serialize(run.Working), checkpoints = JsonSerializer.Serialize(run.Checkpoints);
+            var result = run.PreviewRouteContinuation(plans.ToImmutableArray(), 2,
+                scope: PredictorRoutePreviewScope.AllModeledNodes, policy: policy);
+            Check(state == JsonSerializer.Serialize(run.Working) && checkpoints == JsonSerializer.Serialize(run.Checkpoints),
+                "Hatch qualification/replay preserves actual state and accepted checkpoints");
+            return result;
+        }
+        const PredictorRoutePreviewPolicy live = PredictorRoutePreviewPolicy.LiveMapDefaults;
+        var run = Fixture();
+        var smith = new PredictorPlannedNode(first) { RestActions = [new(PredictorRestAction.Smith)], LeaveRest = true };
+        var options = Preview(run, live, smith).Nodes[0];
+        Check(options.AppliedRestActions == 1 && options.RestOfferPendingCauses.IsEmpty &&
+            options.RestOffers.Any(offer => offer.Action == PredictorRestAction.Hatch && offer.Enabled),
+            "Tent keeps Hatch selectable after unspecified Smith without hiding its real Egg supplier");
+        var together = Preview(run, live, smith with { RestActions = [new(PredictorRestAction.Smith), new(PredictorRestAction.Hatch)] });
+        Check(together.Nodes.Length == 2 && together.Nodes[0].Advanced && together.Nodes[0].AppliedRestActions == 2 &&
+            together.Nodes[0].RestActionKnowledge[1].ObtainedRelics is [{ Entry: "BYRDPIP" }] &&
+            !together.Nodes[0].Cards.Any(card => card.Value.Key.Entry == "BYRDONIS_EGG") &&
+            !together.PendingCauses.Any(cause => cause.Code == "RestDeckDependentAction"),
+            "Tent Smith then Hatch obtains the actual pet and preserves following independent nodes");
+        var hatch = new PredictorPlannedNode(second) { RestActions = [new(PredictorRestAction.Hatch)], LeaveRest = true };
+        var downstream = Preview(run, live, hatch);
+        Check(downstream.Nodes.Length == 2 && downstream.Nodes[0].RestDefaultApplied && downstream.Nodes[1].Advanced &&
+            downstream.Nodes[1].RestActionKnowledge.Single().ObtainedRelics is [{ Entry: "BYRDPIP" }],
+            "A retained later Hatch plan still executes when an upstream explicit target is cleared back to default Smith");
+        var exact = Preview(run, PredictorRoutePreviewPolicy.AuthoredChoices,
+            smith with { RestActions = [new(PredictorRestAction.Smith), new(PredictorRestAction.Hatch)] });
+        Check(!exact.Nodes[0].Advanced && exact.Nodes[0].AppliedRestActions == 0,
+            "Authored choices still require the actual Smith target before executing Hatch");
+        var clone = Preview(run, live, smith with { RestActions = [new(PredictorRestAction.Smith), new(PredictorRestAction.Clone)] });
+        Check(!clone.Nodes[0].Advanced && clone.Nodes[0].PendingCauses.Any(cause => cause.Code == "RestDeckDependentAction"),
+            "Clone's full persistent-card copy boundary is not loosened by Hatch's fixed-model qualification");
+
+        var unresolvedCook = Preview(run, live, new PredictorPlannedNode(first)
+            { RestActions = [new(PredictorRestAction.Cook), new(PredictorRestAction.Hatch)], LeaveRest = true });
+        Check(!unresolvedCook.Nodes[0].Advanced && !unresolvedCook.Nodes[0].RestOfferPendingCauses.IsEmpty &&
+            unresolvedCook.Nodes[0].PendingCauses.Any(cause => cause.Code == "RestDeckDependentAction"),
+            "Unresolved membership-changing Cook retains the actual Egg membership blocker");
+        var unknownEgg = PredictorRouteCauseEvidence.CreateExplicit("HatchTestEggMembership", "capture:egg",
+            PredictorCombatDomain.Deck, PredictorPendingReasonKind.MissingObservation,
+            "The captured Egg membership is not established.", ["deck.BYRDONIS_EGG.membership"]);
+        var unknown = Preview(Fixture(incoming: [unknownEgg]), live, new PredictorPlannedNode(first)
+            { RestActions = [new(PredictorRestAction.Hatch)], LeaveRest = true });
+        Check(!unknown.Nodes[0].Advanced && unknown.Nodes[0].RestOfferPendingCauses.Any(cause => cause.Code == unknownEgg.Code) &&
+            unknown.Nodes[0].RestOffers.All(offer => offer.Action != PredictorRestAction.Hatch),
+            "Unknown Egg membership preserves its original cause and does not publish a certain Hatch option");
+        var unknownId = PredictorRouteCauseEvidence.CreateExplicit("HatchTestNextId", "capture:next-id",
+            PredictorCombatDomain.InstanceIds, PredictorPendingReasonKind.MissingObservation,
+            "The allocation identity of a future Egg is not established.", ["instances.nextId"]);
+        var future = Fixture(eggCount: 0, futureEgg: true, incoming: [unknownId]);
+        var eventNode = Preview(future, live).Nodes[0];
+        var take = eventNode.Event!.EntryOptions.Single(option => option.Key == "TAKE").Value!;
+        var sourcePending = Preview(future, live, new PredictorPlannedNode(first)
+            { Event = new(eventNode.Event.Event!.Value) { Actions = [new(PredictorEventActionKind.Option) { ExpectedOption = take }] } }, hatch);
+        Check(sourcePending.Nodes.Length == 2 && !sourcePending.Nodes[1].Advanced &&
+            sourcePending.Nodes[1].RestOfferPendingCauses.Any(cause => cause.Code == unknownId.Code) &&
+            sourcePending.Nodes[1].PendingCauses.Any(cause => cause.Code == "RestDeckDependentAction"),
+            "A newly predicted Egg with unknown source allocation keeps the original InstanceIds blocker");
+        var removable = Fixture(removableEgg: true);
+        var egg = removable.Working.Deck.Select(removable.Working.Card).Single(card => card.Key.Entry == "BYRDONIS_EGG");
+        var other = removable.Working.Deck.Select(removable.Working.Card).First(card => card.Id != egg.Id && card.Removable);
+        var cooked = Preview(removable, live, new PredictorPlannedNode(first) { RestActions = [new(PredictorRestAction.Cook)
+            { CookCards = [new(egg.Id, egg.Key, egg.FloorAdded), new(other.Id, other.Key, other.FloorAdded)] }], LeaveRest = true }, hatch);
+        Check(cooked.Nodes.Length == 2 && cooked.Nodes[0].Advanced && !cooked.Nodes[1].Advanced &&
+            cooked.Nodes[1].RestOffers.All(offer => offer.Action != PredictorRestAction.Hatch) &&
+            cooked.Nodes[1].PendingCauses.Any(cause => cause.Code == "PlannedRestActionUnavailable"),
+            "A real earlier Egg removal cannot invent a supplier for an existing later Hatch plan");
+        var multiple = Preview(Fixture(eggCount: 2), live, smith with
+            { RestActions = [new(PredictorRestAction.Smith), new(PredictorRestAction.Hatch), new(PredictorRestAction.Hatch)] });
+        Check(multiple.Nodes[0].Advanced && multiple.Nodes[0].AppliedRestActions == 3 &&
+            multiple.Nodes[0].RestActionKnowledge.Count(action => action.ObtainedRelics.Any(relic => relic.Entry == "BYRDPIP")) == 2,
+            "Two entry-time Egg suppliers remain two native Hatch instances after the first transforms all Eggs");
+        Console.WriteLine("RUNTIME_HATCH_OVERBLOCK_BOUNDARIES_PASS Tent Smith/Hatch; retained later plan; membership/remove negatives; repeated suppliers; exact and Clone boundaries; pure replay");
+    }
+
+    internal static void RunTargetBoundaries(PredictorRun captured)
+    {
+        const string fire = "map:1:1:3:2", merchant = "map:1:2:3:3";
+        PredictorRun Fixture(params string[] relics)
+        {
+            var original = captured.RouteMap(1);
+            var types = new[] { MapPointType.Ancient, MapPointType.RestSite, MapPointType.Shop, MapPointType.Boss };
+            var points = types.Select((type, row) => new MapPredictionPoint(new(3, row), type, true,
+                row == types.Length - 1 ? [] : new[] { new MapPosition(3, row + 1) })).ToArray();
+            var state = captured.Working with
+            {
+                OpeningCompleted = true, Relics = [], GoldBudget = 5000, Position = new(1, 1, "target-boundaries:entry"),
+                PersonalBag = PredictorRelicBag.Empty(false),
+                Maps = [new(1, original with { Points = points }, [points[0].Position])],
+                Visits = [new(1, points[0].Position, MapPointType.Ancient, PredictorRoomKind.Opening, null, 1)]
+            };
+            foreach (string relic in relics) state = PredictorSettlementEffects.ObtainRelic(state, new("RELIC", relic));
+            var run = new PredictorRun(captured.Context with { NumberOfRuns = Math.Max(1, captured.Context.NumberOfRuns) }, state);
+            run.SetRoute(1, points.Select(point => point.Position).ToImmutableArray());
+            run.AdvanceRoute();
+            return run;
+        }
+        PredictorRouteContinuation Preview(PredictorRun run, params PredictorPlannedNode[] plans)
+        {
+            string before = JsonSerializer.Serialize(run.Working);
+            var result = run.PreviewRouteContinuation(plans.ToImmutableArray(), 2,
+                scope: PredictorRoutePreviewScope.AllModeledNodes, policy: PredictorRoutePreviewPolicy.LiveMapDefaults);
+            Check(before == JsonSerializer.Serialize(run.Working), "Target boundary observations preserve the source run");
+            return result;
+        }
+        static PredictorPlannedCard Target(PredictorCard card) => new(card.Id, card.Key, card.FloorAdded);
+
+        var ordinary = Fixture();
+        var initial = Preview(ordinary);
+        var shop = initial.Nodes[1].Shop!;
+        Check(initial.Nodes[0].DefaultRestAction?.Action == PredictorRestAction.Smith &&
+            shop.RemovalCards.Any(card => card.IsKnown && !card.FullCardKnown),
+            "Default Smith uncertainty preserves removable targets without claiming their upgrade details");
+        var target = shop.RemovalCards.First(card => card.IsKnown).Value;
+        var remove = shop.Offers.Single(offer => offer.Kind == PredictorShopEntryKind.CardRemoval).Value!;
+        var removed = Preview(ordinary, new PredictorPlannedNode(merchant) { Shop = new() { Actions =
+            [new(PredictorShopActionKind.BeginRemoval) { ExpectedOffer = remove },
+             new(PredictorShopActionKind.ChooseRemoval) { Card = Target(target) }] } });
+        Check(removed.Nodes[1].Advanced && removed.Nodes[1].Shop!.AppliedActions == 2 &&
+            removed.Nodes[1].Inventory!.Cards.All(card => card.Value.Id != target.Id) &&
+            !removed.Nodes[1].PendingCauses.Any(cause => cause.Code == "PlannedShopTargetPending"),
+            "Merchant executes the same field-sensitive removal target offered after a default Smith");
+
+        var tent = Fixture("MINIATURE_TENT", "MEAT_CLEAVER");
+        var cards = tent.Working.Deck.Select(tent.Working.Card).Where(card => card.Removable && card.UpgradeLevel < card.MaxUpgradeLevel).Take(3).ToArray();
+        Check(cards.Length == 3, "Target boundary fixture has three removable upgrade targets");
+        var cook = new PredictorPlannedRestAction(PredictorRestAction.Cook) { CookCards = cards.Take(2).Select(Target).ToImmutableArray() };
+        var smith = new PredictorPlannedRestAction(PredictorRestAction.Smith) { SmithCard = Target(cards[2]) };
+        var ordered = Preview(tent, new PredictorPlannedNode(fire) { RestActions = [cook, smith], LeaveRest = true });
+        var steps = ordered.Nodes[0].RestActionKnowledge;
+        Check(ordered.Nodes[0].AppliedRestActions == 2 && steps[0].Candidates.Any(card => card.Value.Id == cards[0].Id) &&
+            steps[1].Candidates.All(card => card.Value.Id != cards[0].Id && card.Value.Id != cards[1].Id) &&
+            steps[1].Candidates.Any(card => card.IsKnown && card.Value.Id == cards[2].Id),
+            "Tent retains Cook's own entry targets and offers Smith only its post-Cook members");
+        var missing = Preview(tent, new PredictorPlannedNode(fire) { RestActions = [cook, new(PredictorRestAction.Smith)], LeaveRest = true });
+        Check(missing.Nodes[0].RestActionKnowledge.Single(action => action.ActionIndex == 1).Candidates
+            .All(card => card.Value.Id != cards[0].Id && card.Value.Id != cards[1].Id),
+            "An unspecified later action still exposes its actual boundary candidates");
+        var projectedCook = Preview(tent, new PredictorPlannedNode(fire) { RestActions = [new(PredictorRestAction.Smith), cook], LeaveRest = true });
+        Check(projectedCook.Nodes[0].AppliedRestActions == 2 && projectedCook.Nodes[0].RestActionKnowledge[1].Candidates.Any(card => card.IsKnown),
+            "Cook execution and its selectable targets do not demand unrelated known upgrade fields");
+
+        var dig = Fixture("SHOVEL");
+        var dug = Preview(dig, new PredictorPlannedNode(fire) { RestActions = [new(PredictorRestAction.Dig)], LeaveRest = true });
+        Check(dug.Nodes[0].RestActionKnowledge.Single().ObtainedRelics is [{ Entry: "CIRCLET" }] &&
+            dug.Nodes[0].Inventory!.Relics.Any(relic => relic.Value.Key.Entry == "CIRCLET"),
+            "Dig's actual obtain receipt preserves its result independently of reward rows");
+        Check(Preview(dig, new PredictorPlannedNode(fire) { LeaveRest = true }).Nodes[0].RestActionKnowledge.IsEmpty,
+            "Removing Dig cannot retain its old obtain receipt");
+
+        // Accepted active prefixes are reconstructed at their own boundaries.
+        Check(tent.Submit(tent.Request!, new SelectRestAction(PredictorRestAction.Cook)) == PredictorInputResult.Accepted &&
+            tent.Submit(tent.Request!, new SelectCookCards(cards.Take(2).Select(card => card.Id).ToImmutableArray())) == PredictorInputResult.Accepted,
+            "Active target fixture performs its real detached Cook prefix");
+        var active = Preview(tent, new PredictorPlannedNode(fire) { RestActions = [cook, smith], LeaveRest = true });
+        Check(active.Nodes[0].AppliedRestActions == 2 && active.Nodes[0].RestActionKnowledge[0].Candidates.Any(card => card.Value.Id == cards[0].Id) &&
+            active.Nodes[0].RestActionKnowledge[1].Candidates.All(card => card.Value.Id != cards[0].Id && card.Value.Id != cards[1].Id),
+            "Active Cook replay preserves both original and following action target boundaries");
+        Console.WriteLine("RUNTIME_DRAWING_TARGET_BOUNDARIES_PASS scoped removal; per-action rest targets; actual Dig receipt; active accepted prefix; pure replay");
+    }
+
     private static void StaleCombatPlan(PredictorRun captured)
     {
         var run = Route(captured);

@@ -20,7 +20,7 @@ internal sealed partial class PredictorRun
         bool requireKnownContinuation = false)
     {
         var afterGeneration = new List<RouteDependency>();
-        PropagateDeckCombatReaders(run, dependencies, afterGeneration);
+        PropagateDeckCombatReaders(run, step.Combat, dependencies, afterGeneration);
         PredictorCombatProjection? projection;
         try { projection = run.ProjectCurrentCombat(step.Combat, token); }
         catch (ArgumentException ex) when (IsRouteEventCombatBindingError(ex))

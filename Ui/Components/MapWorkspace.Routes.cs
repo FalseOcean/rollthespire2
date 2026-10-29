@@ -38,9 +38,11 @@ internal sealed partial class MapWorkspace
         }
         var actions = new HBoxContainer(); controls.AddChild(actions);
         _confirmRoute = AddButton(actions, "ConfirmRoute", CommitRoute);
-        _redrawRoute = AddButton(actions, "RedrawRoute", () => { _suppressUnknownOverlay = true; _preview = null; PresentRoute(true); });
+        _redrawRoute = AddButton(actions, "RedrawRoute", () => { if (_witnessMapMode) return; ClearResultWitness(); _suppressUnknownOverlay = true; _preview = null; PresentRoute(true); });
         _clearRoute = AddButton(actions, "ClearRoute", () =>
         {
+            if (_witnessMapMode) return;
+            ClearResultWitness();
             _commitments.Remove(SelectedAct); _preview = null; _optimalRoutes = null; _optimalMetric = null; PresentRoute(true);
         });
         foreach (var type in new[] { MapPointType.Unknown, MapPointType.Elite, MapPointType.RestSite, MapPointType.Shop, MapPointType.Monster })
@@ -55,6 +57,8 @@ internal sealed partial class MapWorkspace
         _nextRoute = AddButton(browse, "NextRoute", () => BrowseRoute(1));
         _allRouteMode = AddButton(browse, "AllRoutes", () =>
         {
+            if (_witnessMapMode) return;
+            ClearResultWitness();
             _optimalRoutes = null; _optimalMetric = null; _preview = null; PresentRoute(true);
         });
     }
@@ -66,24 +70,28 @@ internal sealed partial class MapWorkspace
         _routeMap = map;
         _allRoutes = new MapRouteSet(map);
         foreach (var type in _extremaButtons.Keys) _extrema[type] = new MapRouteSet(map, type, type == MapPointType.Monster);
-        if (CurrentCommitment is { } saved && (saved.Map.Seed != map.Seed || saved.Map.Act != map.Act || !_allRoutes.IsLegal(saved.Coordinates)))
+        if (!_witnessMapMode && CurrentCommitment is { } saved && (saved.Map.Seed != map.Seed || saved.Map.Act != map.Act || !_allRoutes.IsLegal(saved.Coordinates)))
             _commitments.Remove(SelectedAct);
         PresentRoute(true);
+        ApplyResultWitness();
     }
     private void ClearRouteView()
     {
         _routeMap = null; _allRoutes = null; _optimalRoutes = null; _optimalMetric = null; _preview = null;
+        _isWitnessPreview = false; _witnessIssue = "";
         _extrema.Clear(); _routeRank = 0; RefreshRouteControls();
         RefreshUnknownRooms();
     }
     public void ResetRouteContext()
     {
+        ClearResultWitness();
         _commitments.Clear(); _routeSeed = string.Empty; ClearRouteView();
         _map.SetRoute(null, false, true);
     }
     private void PreviewStroke(IReadOnlyList<MapStrokePoint> stroke)
     {
-        if (_allRoutes is null) return;
+        if (_allRoutes is null || _witnessMapMode) return;
+        ClearResultWitness();
         var set = _optimalRoutes ?? _allRoutes;
         _preview = set.Match(stroke);
         _routeRank = set.Rank(_preview);
@@ -91,27 +99,29 @@ internal sealed partial class MapWorkspace
     }
     private void PreviewExtremum(MapPointType type)
     {
-        if (!_extrema.TryGetValue(type, out var set)) return;
+        if (_witnessMapMode || !_extrema.TryGetValue(type, out var set)) return;
+        ClearResultWitness();
         _suppressUnknownOverlay = true;
         _optimalRoutes = set; _optimalMetric = type; _routeRank = 0; _preview = set.At(0);
         PresentRoute(true);
     }
     private void BrowseRoute(int delta)
     {
-        if (_optimalRoutes is null) return;
+        if (_witnessMapMode || _optimalRoutes is null) return;
         _routeRank = (_routeRank + delta + _optimalRoutes.Count) % _optimalRoutes.Count;
         _preview = _optimalRoutes.At(_routeRank); PresentRoute(true);
     }
     private void CommitRoute()
     {
-        if (_routeMap is null || _preview is null) return;
+        if (_routeMap is null || _preview is null || _isWitnessPreview || _witnessMapMode) return;
         _suppressUnknownOverlay = false;
         _commitments[SelectedAct] = new MapRouteCommitment(_routeMap, _preview);
         _preview = null; _optimalRoutes = null; _optimalMetric = null; PresentRoute(true);
     }
     private void PresentRoute(bool clearStroke)
     {
-        _map.SetRoute(_preview ?? CurrentCommitment?.Coordinates, _preview is null && CurrentCommitment is not null, clearStroke);
+        _map.SetRoute(_preview ?? (_witnessMapMode ? null : CurrentCommitment?.Coordinates),
+            !_witnessMapMode && _preview is null && CurrentCommitment is not null, clearStroke);
         RefreshRouteControls();
         RefreshUnknownRooms();
     }
@@ -119,12 +129,16 @@ internal sealed partial class MapWorkspace
     {
         if (_text is null) return;
         string T(string key) => _text.Get("ui1.map.route." + key);
-        _routeHint.Text = T("hint");
-        _routeState.Text = T(_preview is not null ? CurrentCommitment is not null ? "preview_saved" : "preview"
+        foreach (Control child in _routeHint.GetParent().GetChildren().Skip(2)) child.Visible = !_witnessMapMode;
+        _routeHint.Text = _text.Get(_witnessMapMode ? "ui1.map.witness.hint" : "ui1.map.route.hint");
+        _routeState.Text = _isWitnessPreview ? _text.Get("ui1.map.witness.preview") :
+            _witnessIssue.Length > 0 ? _text.Get("ui1.map.witness.failed") + " · " + _witnessIssue :
+            _witnessMapMode ? _text.Get("ui1.map.witness.missing") :
+            T(_preview is not null ? CurrentCommitment is not null ? "preview_saved" : "preview"
             : CurrentCommitment is not null ? "committed" : "none");
         _confirmRoute.Text = T("confirm"); _redrawRoute.Text = T("redraw"); _clearRoute.Text = T("clear");
         _prevRoute.Text = T("previous"); _nextRoute.Text = T("next"); _allRouteMode.Text = T("all");
-        _confirmRoute.Disabled = _preview is null;
+        _confirmRoute.Disabled = _preview is null || _isWitnessPreview || _witnessMapMode;
         _redrawRoute.Disabled = _allRoutes is null;
         _clearRoute.Disabled = _allRoutes is null || (_preview is null && CurrentCommitment is null && _optimalRoutes is null);
         foreach (var (type, button) in _extremaButtons)

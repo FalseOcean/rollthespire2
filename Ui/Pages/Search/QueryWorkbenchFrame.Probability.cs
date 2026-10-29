@@ -46,6 +46,7 @@ internal sealed partial class QueryWorkbenchFrame
         _probabilityPending = true;
         _expectationText = _conditionText = "";
         _familyEntries.Clear(); RenderFamilyDashboard();
+        _executionOrderPending = true; _executionOrderIssue = ""; RenderExecutionOrder();
         _expectationContext = awaitingRefresh
             ? (_language == "zh" ? "环境已变化，等待更新条件估算…" : "Environment changed; awaiting updated estimates…")
             : (_language == "zh" ? "正在计算当前条件…" : "Calculating current conditions…");
@@ -93,7 +94,7 @@ internal sealed partial class QueryWorkbenchFrame
     private int SearchWorkers => SearchWorkspace.ResolveSearchWorkers(
         _persistence.Preferences.SearchWorkerBudget, System.Environment.ProcessorCount);
     private string AnalysisKey(string query) => query+_editorInputs.Freshness+_language+":"+_target+":"+_persistence.Preferences.SearchMode+":"+SearchWorkers+
-        ":gpu="+FamilyDeviceProfileFoundation.Initialization.Capture().Revision;
+        ":gpu="+FamilyDeviceProfileFoundation.Initialization.Capture().Revision+":map="+_persistence.MapLossyPreferences.Identity;
     private string _draftCompileIssue="";
     private bool UpdateProbabilityPanel(WorkbenchSearchDraft draft,string serialized)
     {
@@ -107,21 +108,25 @@ internal sealed partial class QueryWorkbenchFrame
         try { compiled=_editorInputs.Compile(draft, _runtime); }
         catch(Exception ex) {
             _draftCompileIssue=Explain(ex);
+            PresentExecutionOrderFailure(_draftCompileIssue);
             _previewEta=null;_familyEntries.Clear();
             var q=draft.Query;
             void Pending(string id,bool present) {if(present)_familyEntries.Add(new(id,FamilyTitle(id),null,"—",""));}
             Pending("N",q.OpeningRoute is not null || q.StructuredOpeningEffects.Count>0);
             Pending("T",q.TransformationAggregate is not null);Pending("C",q.HasCombatRewardConstraints);
             Pending("A",q.AncientBranches.Any(b=>b.OptionAny.Count>0||b.SeaGlassTargetAny.Count>0)||q.LegacyWorld.AncientOptionFilters.Count>0);
-            Pending("W",q.AncientBranches.Count>0||q.EventSequenceConstraints.Count>0||q.VariantBossBranches.Count>0);
+            Pending("V",q.VariantBossBranches.Count>0||q.FirstActUnknownEventPrefixCount>0||
+                q.Players.Any(p=>p.Conditions.FirstActUnknownEventPrefixCount>0));
+            Pending("W",HasWorldObservations(q));
             Pending("R",q.TreasureRelics is { IsEmpty: false }||q.RelicSequenceConstraints.Count>0||q.RelicShopSequenceConditions.Count>0||q.StructuredOpeningEffects.Any(NeowReplayPlan.IsCapsule));
-            Pending("E",q.EventResultConditions.Count>0||q.FirstActUnknownEventPrefixCount>0);
-            Pending("M",q.StandardMaps.Count>0);Pending("S",q.MerchantColorlessSequenceConditions.Count>0);
+            Pending("E",q.EventResultConditions.Count>0);
+            Pending("M",q.StandardMaps.Count>0 || q.StandardMapRoutes.Count>0);Pending("S",q.MerchantColorlessSequenceConditions.Count>0);
             ApplyFamilySources(q); RenderFamilyDashboard();PresentExpectations(null,null,null);
             return false;
         }
         PresentPendingProbabilityPreview();
-        _probabilityPreview.Submit(new(_analysisKey, compiled, _target, SearchWorkers, _persistence.Preferences.SearchMode == "CPU"));
+        _probabilityPreview.Submit(new(_analysisKey, compiled, _target, SearchWorkers, _persistence.Preferences.SearchMode == "CPU",
+            _manualFamilyOrder?.ToArray(), _persistence.MapLossyPreferences));
         // Estimate failures do not change admission; canonical compile failures do.
         return true;
     }
@@ -133,6 +138,7 @@ internal sealed partial class QueryWorkbenchFrame
         _probabilityPending = false;
         if (completed.Error is not null)
         {
+            PresentExecutionOrderFailure(completed.Error.Message);
             // The worker records the complete failure even when this page is gone.
             _familyEntries.Clear(); RenderFamilyDashboard();
             _expectationContext = _language == "zh" ? "当前条件的估算不可用。" : "Estimate unavailable for these conditions.";
@@ -156,10 +162,11 @@ internal sealed partial class QueryWorkbenchFrame
     }
 
     internal string DescribeProbability(CompiledSearch compiled) => DescribeProbability(compiled,
-        WorkbenchProbabilityPreview.Compute(compiled, _target, SearchWorkers, _persistence.Preferences.SearchMode == "CPU"));
+        WorkbenchProbabilityPreview.Compute(compiled, _target, SearchWorkers, _persistence.Preferences.SearchMode == "CPU", _manualFamilyOrder));
 
     internal string DescribeProbability(CompiledSearch compiled, WorkbenchProbabilityPreview preview)
     {
+        ApplyExecutionOrderPreview(preview);
         foreach (string issue in preview.Issues) RuntimeLog.Warn(issue);
         if (compiled.Context.Party is { } party)
         {
@@ -170,8 +177,7 @@ internal sealed partial class QueryWorkbenchFrame
                 var entry = preview.Costs.FirstOrDefault(pair => pair.Key.StartsWith(id + ".", StringComparison.Ordinal));
                 return entry.Key is null ? "—" : BestQuotedSpeed(entry.Value.Cpu, entry.Value.Gpu);
             }
-            if (PartyInitialQuery.HasWorld(compiled.NormalizedQuery) || compiled.NormalizedQuery.EventSequenceConstraints.Count > 0 ||
-                compiled.NormalizedQuery.LegacyWorld.AncientIdentityFilters.Count > 0)
+            if (HasWorldObservations(compiled.NormalizedQuery))
                 _familyEntries.Add(new("W", FamilyTitle("W"), null, PartyCost("W"), _language == "zh" ? "整桌共用条件；概率只计一次。" : "Shared table conditions; probability counted once."));
             if (compiled.NormalizedQuery.Players.Any(p => !p.Offers.IsEmpty || p.SelectedOption is not null || p.Conditions.OpeningRoute is not null))
                 _familyEntries.Add(new("N", FamilyTitle("N"), null, PartyCost("N"), string.Join("\n", compiled.NormalizedQuery.Players.Where(p => !p.Offers.IsEmpty || p.SelectedOption is not null || p.Conditions.OpeningRoute is not null)
@@ -211,9 +217,11 @@ internal sealed partial class QueryWorkbenchFrame
                         string.Join(" / ", owners.Select(p => $"P{p.Slot + 1}"))));
                 }
             }
-            if (compiled.NormalizedQuery.StandardMaps.Count > 0)
+            if (compiled.NormalizedQuery.StandardMaps.Count > 0 || compiled.NormalizedQuery.StandardMapRoutes.Count > 0)
                 _familyEntries.Add(new("M", FamilyTitle("M"), partyProbability.KnownComponents.FirstOrDefault(c => c.Id == "party:map")?.Probability,
-                    PartyCost("M"), _language == "zh" ? "共用开局地图" : "Shared initial maps"));
+                    PartyCost("M"), compiled.NormalizedQuery.StandardMapRoutes.Count > 0
+                        ? (_language == "zh" ? "共用地图；绘画路线概率未知" : "Shared maps; drawn route probability unknown")
+                        : (_language == "zh" ? "共用开局地图" : "Shared initial maps")));
             string premise = _language == "zh" ? "共享事实只计一次；个人条件采用独立近似。" : "Shared facts counted once; personal conditions use an independence approximation.";
             double? partyRate = EtaRate(_previewEta);
             _expectationText = ExpectationText(_previewEta?.FirstResultSearchMeanMs, partyProbability.Probability, partyRate) + "\n" + premise;
@@ -224,6 +232,7 @@ internal sealed partial class QueryWorkbenchFrame
             PresentExpectations(_previewEta?.FirstResultSearchMeanMs, partyProbability.Probability, partyRate);
             _conditionText = premise + "\n" + string.Join("\n", partyProbability.KnownComponents.Select(c => c.Condition + " · " + Rarity(c.Probability))) +
                 "\n" + string.Join("\n", partyProbability.UnknownComponents);
+            ApplyVariantOpeningPreview(preview);
             ApplyFamilySources(compiled.NormalizedQuery, partyProbability.JointlyPriced);
             return _expectationText + "\n" + _conditionText;
         }
@@ -246,6 +255,7 @@ internal sealed partial class QueryWorkbenchFrame
         string Cost(params string[] ids) {
             string FamilyName(string id)=>_text.Get(id switch {
                 "N.Neow"=>"query.domain.neow","R.Relic"=>"query.domain.relics","W.World"=>"coverage.world",
+                "V.VariantOpening"=>"workflow.family.v",
                 "A.AncientOption"=>"query.domain.ancients",_=>"query.domain.events"});
             var found=ids.Where(costs.ContainsKey).Select(id=>ids.Length>1?FamilyName(id)+" · "+costs[id]:costs[id]).ToArray();
             return found.Length==0?"—":string.Join("\n",found.Distinct());
@@ -278,11 +288,12 @@ internal sealed partial class QueryWorkbenchFrame
                 SearchProbabilityRowKind.Neow=>"N",SearchProbabilityRowKind.Relic=>"R",SearchProbabilityRowKind.CapsuleRelicJoint=>"N/R",
                 SearchProbabilityRowKind.Ancient=>"A",SearchProbabilityRowKind.WorldEvent=>"W",SearchProbabilityRowKind.CombatReward=>"C",
                 SearchProbabilityRowKind.TransformationAggregate=>"T",_=>"S"};
-            _familyEntries.Add(new(id,FamilyTitle(id),row.Probability,id == "N/R" ? Cost("N.Neow", "R.Relic") :
-                costs.FirstOrDefault(k=>k.Key.StartsWith(id+".")).Value??"—",detail));
+            if (row.Kind != SearchProbabilityRowKind.WorldEvent || HasWorldObservations(q))
+                _familyEntries.Add(new(id,FamilyTitle(id),row.Probability,id == "N/R" ? Cost("N.Neow", "R.Relic") :
+                    costs.FirstOrDefault(k=>k.Key.StartsWith(id+".")).Value??"—",detail));
             output.Add(title+(detail.Length>0?"\n"+detail:"")+"\n"+_text.Get("workflow.rarity")+" "+Probability(row.Probability)+"\n"+cost);
         }
-        if(q.StandardMaps.Count>0)
+        if(q.StandardMaps.Count>0 || q.StandardMapRoutes.Count>0)
         {
             var mapEstimate = preview.Map!;
             string detail = MapProbabilityExplanation(mapEstimate.EvidenceCode, mapEstimate.Probability.HasValue, _language=="zh");
@@ -315,18 +326,15 @@ internal sealed partial class QueryWorkbenchFrame
                 _text.Get("query.event.unknown.option_" + q.FirstActUnknownEventPrefixCount) + "\n" +
                 Probability(view.Rows.FirstOrDefault(row => row.Kind == SearchProbabilityRowKind.FirstActUnknownEventPrefix)?.Probability) +
                 "\n" + _text.Get("query.event.unknown.probability_assumption");
-            eventDetails.Add(detail);
             output.Add(detail);
         }
         if(eventDetails.Count>0)
         {
-            double? eventProbability = q.EventResultConditions.Count == 0 ? 1d :
-                view.Rows.FirstOrDefault(row => row.Kind == SearchProbabilityRowKind.EventResult)?.Probability;
-            if (q.FirstActUnknownEventPrefixCount > 0)
-                eventProbability *= view.Rows.FirstOrDefault(row => row.Kind == SearchProbabilityRowKind.FirstActUnknownEventPrefix)?.Probability;
+            double? eventProbability = view.Rows.FirstOrDefault(row => row.Kind == SearchProbabilityRowKind.EventResult)?.Probability;
             _familyEntries.Add(new("E",_text.Get("query.domain.events"),eventProbability,
                 Cost("E.EventResult"),string.Join("\n\n",eventDetails)));
         }
+        ApplyVariantOpeningPreview(preview);
         // Execution Families remain visible even when their probability is priced in a shared block.
         foreach(var id in costs.Keys.Select(k=>k.Split('.')[0]))
             if(!_familyEntries.Any(e=>e.Id.Split('/').Contains(id))) _familyEntries.Add(new(id,FamilyTitle(id),null,costs.First(k=>k.Key.StartsWith(id+".")).Value,_text.Get("workflow.shared")));
@@ -341,6 +349,45 @@ internal sealed partial class QueryWorkbenchFrame
         ApplyFamilySources(q);
         return _expectationText+"\n\n"+_conditionText;
     }
+
+    private static bool HasWorldObservations(SearchQuery query) =>
+        query.VariantBossBranches.Any(branch => !branch.FirstBoss.IsEmpty || branch.IncludesSecondBoss && !branch.SecondBoss.IsEmpty) ||
+        query.LegacyWorld.BossFilters.Any(filter => !filter.IsEmpty) || query.LegacyWorld.BossOrdinalFilters.Any(filter => !filter.IsEmpty) ||
+        query.AncientBranches.Count > 0 || query.LegacyWorld.AncientIdentityFilters.Any(filter => !filter.IsEmpty) ||
+        query.EventSequenceConstraints.Any(condition => !condition.IsEmpty);
+
+    private void ApplyVariantOpeningPreview(WorkbenchProbabilityPreview preview)
+    {
+        IReadOnlyList<FamilyExecutionPlanStage> stages = preview.Eta is { } eta
+            ? FamilySearchEtaProjectorV1.EstimationStages(eta.Plan) : [];
+        var stage = stages.FirstOrDefault(item => item.Family.FamilyId == VariantOpeningFamily.Id);
+        if (stage is null && !preview.Costs.ContainsKey(VariantOpeningFamily.Id)) return;
+        IFamilyInvocation? owner = stage?.Family is FamilyCpuExecution cpu ? cpu.RealizationOwner : stage?.Family;
+        var plan = (owner as VariantOpeningFamily)?.Plan;
+        var sources = new List<string>();
+        if (plan?.CoversVariants == true)
+        {
+            if (plan.CheckedPreparation.Acts.Any(row => row.ExplicitAllowed.Count > 0))
+                sources.Add(_text.Get("workflow.source.acts"));
+            if (plan.CheckedPreparation.Acts.Any(row => row.Evidence.Any(evidence =>
+                evidence.Contains("PositiveEventMembershipImpossible", StringComparison.Ordinal))))
+                sources.Add(_text.Get("workflow.source.events"));
+        }
+        if (plan?.UnknownPrefixCount > 0) sources.Add(_text.Get("workflow.source.unknown"));
+        double? survival = stage?.Survival;
+        string pass = survival is { } value && double.IsFinite(value) && value is >= 0 and <= 1
+            ? (value > 0 && value < .0001 ? (value * 100).ToString("0.###E+0", CultureInfo.InvariantCulture) + "%" :
+                value.ToString("0.##%", CultureInfo.InvariantCulture))
+            : (_language == "zh" ? "未知" : "Unknown");
+        sources.Add(_text.Format("workflow.variant.survival", pass));
+        string speed = preview.Costs.TryGetValue(VariantOpeningFamily.Id, out var cost)
+            ? BestQuotedSpeed(cost.Cpu, cost.Gpu) : "—";
+        // V is an execution split of existing conditions. Its conditional sieve
+        // survival is displayed separately and never becomes a query-q factor.
+        _familyEntries.RemoveAll(entry => entry.Id == "V");
+        _familyEntries.Add(new("V", FamilyTitle("V"), null, speed, "", string.Join(" / ", sources), true));
+    }
+
     // Labels connect an existing probability projection to its authored sources.
     // They do not price, split or combine any terms, nor select execution Families.
     private void ApplyFamilySources(SearchQuery query, bool jointlyAttributed = false)
@@ -364,7 +411,8 @@ internal sealed partial class QueryWorkbenchFrame
         string WorldSources()
         {
             var labels = new List<string>();
-            if (sources.Any(q => q.VariantBossBranches.Count > 0 || q.LegacyWorld.BossFilters.Count > 0 || q.LegacyWorld.BossOrdinalFilters.Count > 0))
+            if (sources.Any(q => q.VariantBossBranches.Any(branch => !branch.FirstBoss.IsEmpty || branch.IncludesSecondBoss && !branch.SecondBoss.IsEmpty) ||
+                q.LegacyWorld.BossFilters.Count > 0 || q.LegacyWorld.BossOrdinalFilters.Count > 0))
                 labels.Add(Source("acts"));
             if (sources.Any(q => q.AncientBranches.Count > 0 || q.LegacyWorld.AncientIdentityFilters.Count > 0))
                 labels.Add(Source("ancients"));
@@ -384,16 +432,15 @@ internal sealed partial class QueryWorkbenchFrame
             string source = entry.Id switch
             {
                 "N" => Source("neow"), "R" or "N/R" => RelicSources(),
-                "W" => WorldSources(), "A" => Source("ancients"), "E" => query.FirstActUnknownEventPrefixCount > 0
-                    ? (query.EventResultConditions.Count > 0 ? Source("events") + " / " : "") + Source("unknown") : Source("events"),
+                "W" => WorldSources(), "A" => Source("ancients"), "E" => Source("events"),
                 "C" => Source("combat"), "S" => Source("shop"), "M" => Source("map"),
                 "T" => TransformationSources(), _ => ""
             };
             _familyEntries[i] = entry with
             {
                 Title = FamilyTitle(entry.Id),
-                Source = source + (entry.Source.Length == 0 ? "" : " · " + entry.Source),
-                JointlyAttributed = jointlyAttributed && entry.Probability is null
+                Source = string.Join(" · ", new[] { source, entry.Source }.Where(value => value.Length > 0)),
+                JointlyAttributed = entry.Id == "V" || jointlyAttributed && entry.Probability is null
             };
         }
     }
@@ -412,6 +459,8 @@ internal sealed partial class QueryWorkbenchFrame
     }
     internal static string MapProbabilityExplanation(string evidence, bool known, bool zh) => known
         ? (zh ? "依据已有地图样本估计。" : "Estimated from the existing map sample corpus.")
+        : evidence.Contains("RouteSequence", StringComparison.Ordinal)
+            ? (zh ? "概率未知：现有样本未记录绘画路线的序列与组合。" : "Probability unknown: the existing samples do not record drawn route sequences and combinations.")
         : evidence.Contains("NoObserved",StringComparison.Ordinal)
             ? (zh ? "概率未知：已有样本中没有命中，不能据此认定条件不可能。" : "Probability unknown: no hits in the existing samples; this does not prove impossibility.")
             : evidence.Contains("ContextMismatch",StringComparison.Ordinal)

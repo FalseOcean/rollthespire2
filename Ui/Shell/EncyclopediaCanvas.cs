@@ -20,6 +20,7 @@ internal sealed partial class EncyclopediaCanvas : Control
     private const string ReadingGuideId = "reading-guide";
     private const string DefaultEnvironmentId = "default-environment";
     private const string SeedHistoryId = "seed-history";
+    private const string FamiliesId = "families";
     private const string FaqId = "faq";
     private const string CrystalSphereId = "crystal-sphere";
     private const string IntroductionTitle = "为什么未来可以被预测？";
@@ -85,7 +86,7 @@ internal sealed partial class EncyclopediaCanvas : Control
     private static readonly ArticleDefinition[] Articles =
     [
         new(ReadingGuideId, "reading_guide", "阅读引导", "Reading guide", null, DefaultEnvironmentId,
-            [DefaultEnvironmentId, SeedHistoryId, IntroductionId, FaqId], false),
+            [DefaultEnvironmentId, SeedHistoryId, IntroductionId, FamiliesId, FaqId], false),
         new(DefaultEnvironmentId, "default_environment", "默认环境", "Default environment", null, "neow",
             [ReadingGuideId, "multiplayer", "mods"], false),
         new(SeedHistoryId, "seed_history", "种子：我们到底在搜索什么？", "Seeds: What Are We Searching?", ReadingGuideId, IntroductionId,
@@ -93,7 +94,9 @@ internal sealed partial class EncyclopediaCanvas : Control
         new(FaqId, "faq", "种子问题快查", "Seed FAQ", null, null,
             [ReadingGuideId, IntroductionId, "events", "shop", "combat", "multiplayer"], false),
         new(IntroductionId, "why_future_can_be_predicted", "为什么未来可以被预测？",
-            "Why can the future be predicted?", ReadingGuideId, null, [SeedHistoryId, ReadingGuideId, FaqId, "neow", "ancient"], false),
+            "Why can the future be predicted?", ReadingGuideId, FamiliesId, [SeedHistoryId, FamiliesId, ReadingGuideId, FaqId, "neow", "ancient"], false),
+        new(FamiliesId, "families", "家族", "Families", ReadingGuideId, null,
+            [ReadingGuideId, SeedHistoryId, IntroductionId, CombatRarityRelicsId, NeowCapsuleId], false),
         new("neow", "neow", "涅奥", "Neow", DefaultEnvironmentId, null,
             [NeowOfferId, NeowKaleidoscopeId, "ancient"]),
         new(NeowOfferId, "neow_offer", "骨骰的领取顺序", "Bones pickup order", "neow",
@@ -292,6 +295,8 @@ internal sealed partial class EncyclopediaCanvas : Control
             "默认 原版 单人 全解锁 Epoch 承诺 确认 vanilla single player baseline promise"),
         new(SeedHistoryId, "种子与搜索", "Seeds & search",
             "种子 Seed Hash 哈希 搜索 筛选 预测 字符 空间 碰撞 历史 版本 107 109 111 GPU filtering prediction history collision"),
+        new(FamiliesId, "家族", "Families",
+            "家族 计算 优化 筛选 排序 成本 排除 生存率 前提 未指定 校验 估计 漏种 概率 family families computation optimization filtering ordering cost survival premises unspecified verification estimation Planner CPU GPU ETA"),
         new(FaqId, "种子问题快查", "Seed FAQ",
             "常见问题 FAQ 结果不同 偏移 错误 反馈 bug feedback mismatch troubleshooting Developer Notes 开发者笔记")
     ];

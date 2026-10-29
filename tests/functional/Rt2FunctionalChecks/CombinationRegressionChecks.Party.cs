@@ -96,15 +96,34 @@ internal static partial class CombinationRegressionChecks
         var shared = RolltheSpire2.Search.Compilation.ExactSearchExecutionRequestFactory.ForPlayer(whole, compiled.PlayerSearches.Last());
         var replay = new WorldFamilyReplay(shared);
         Check(replay.Plan.Acts.All(a => !a.FamilyBossBranchesConjunctive), "MP W consumes composed OR rows");
+        var variant = VariantOpeningPlan.TryCompile(shared, shared.VariantOpening!, GpuNumericalVariant.NativeFloat64);
+        Check(variant is { CoversVariants: true }, "MP V owns the explicit Variant restriction");
         var gpu = new WorldFamilyGpuPlan(replay, specializeSolo: false);
         var expected = new List<uint>();
+        bool reportedResidual = false;
         for (uint ordinal = 0; ordinal < count; ordinal++)
         {
             string seed = Beta110SeedCodec.FormatOrdinal(ordinal);
             var observation = PartySeedInformation.Project(seed, context.Party!);
             bool truth = PartyInitialQuery.MatchesWorld(compiled.NormalizedQuery, observation);
-            Check(replay.Matches(Beta111Profile.Instance.ComputeRootSeed(seed)) == truth, "MP W same-Variant OR matches source observation");
-            if (truth) expected.Add(ordinal);
+            bool variantTruth = observation.Acts[0] == initial.Acts[0];
+            // V rejects unrequested variants. W's associated Boss rows are
+            // vacuous outside that set; together they retain the complete query.
+            bool worldTruth = !variantTruth || truth;
+            ulong root = Beta111Profile.Instance.ComputeRootSeed(seed);
+            bool variantMatch = variant!.Matches(root), worldMatch = replay.Matches(root);
+            var exact = ProductionExactSearchEvaluator.EvaluatePartyObservations(compiled.NormalizedQuery, observation);
+            if (!reportedResidual && worldMatch != truth)
+            {
+                Console.WriteLine($"COMBINATION_PARTY_WORLD seed={seed};variant={observation.Acts[0]};V={variantMatch};W={worldMatch};source={truth};Exact={exact.Disposition};cause={exact.FailureCode}");
+                reportedResidual = true;
+            }
+            Check(variantMatch == variantTruth, "MP V matches source Variant observation");
+            Check(worldMatch == worldTruth, "MP W residual same-Variant OR matches source observation");
+            Check((variantMatch && worldMatch) == truth, "MP V and W preserve complete same-Variant OR truth");
+            Check(exact.Disposition == (truth ? SearchDisposition.Match : SearchDisposition.NoMatch),
+                "MP Exact retains complete Variant and Boss OR responsibility");
+            if (worldTruth) expected.Add(ordinal);
         }
         string directory = Path.Combine(Environment.CurrentDirectory, ".build-evidence", "w-gpu-party-or");
         Directory.CreateDirectory(directory);

@@ -125,6 +125,7 @@ internal sealed partial class AnalysisRequestBar : PanelContainer
         }
         Move(_characterLabel, column);
         _railKeys = keys.ToArray(); _railCharacter = new OptionButton { CustomMinimumSize = new Vector2(0, 40), FitToLongestItem = false };
+        CharacterDropdownVisuals.Apply(_railCharacter);
         _railCharacter.ExpandIcon = true;
         _railCharacter.ClipText = true;
         _railCharacter.AddThemeConstantOverride("icon_max_width", 28);

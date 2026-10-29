@@ -142,7 +142,7 @@ internal sealed record WorkspacePalette(string Canvas, string Surface, string Ho
     {
         if (IsMainPanel)
         {
-            foreach (string state in new[] { "normal", "hover", "pressed" })
+            foreach (string state in new[] { "normal", "hover", "pressed", "hover_pressed" })
             {
                 var box = Box(state == "normal" ? OptionSurface : state == "hover" ? Hover : SelectedSurface);
                 // Transparent at rest still needs a visible pointer response.
@@ -158,7 +158,7 @@ internal sealed record WorkspacePalette(string Canvas, string Surface, string Ho
             button.AddThemeStyleboxOverride("focus", FocusRing());
             return;
         }
-        foreach (var (state, fill) in new[] { ("normal", Canvas), ("hover", Hover), ("pressed", Line) })
+        foreach (var (state, fill) in new[] { ("normal", Canvas), ("hover", Hover), ("pressed", Line), ("hover_pressed", Line) })
         {
             var box = Box(fill);
             box.ContentMarginLeft = box.ContentMarginRight = horizontalPadding;
@@ -179,7 +179,7 @@ internal sealed record WorkspacePalette(string Canvas, string Surface, string Ho
             MainPanelTheme.SetColor(button, name, selected ? Selected : Text);
         MainPanelTheme.SetColor(button, "font_disabled_color", Disabled);
         foreach (var (state, fill) in new[] { ("normal", selected ? SelectedSurface : OptionSurface),
-            ("hover", Hover), ("pressed", SelectedSurface), ("disabled", Surface) })
+            ("hover", Hover), ("pressed", SelectedSurface), ("hover_pressed", SelectedSurface), ("disabled", Surface) })
             button.AddThemeStyleboxOverride(state, Box(fill, selected && state != "disabled" ? Selected : Line,
                 selected && state != "disabled" ? 2 : state == "hover" || primary ? 1 : 0));
         button.AddThemeStyleboxOverride("focus", FocusRing());
@@ -187,7 +187,7 @@ internal sealed record WorkspacePalette(string Canvas, string Surface, string Ho
 
     public void SetModeActive(Button button, bool active, int horizontalPadding = 8)
     {
-        foreach (string state in new[] { "normal", "hover", "pressed", "disabled" })
+        foreach (string state in new[] { "normal", "hover", "pressed", "hover_pressed", "disabled" })
         {
             StyleBoxFlat box = button.GetThemeStylebox(state) is StyleBoxFlat existing
                 ? (StyleBoxFlat)existing.Duplicate() : Box(OptionSurface);
@@ -213,7 +213,7 @@ internal sealed record WorkspacePalette(string Canvas, string Surface, string Ho
         button.ClipText = true;
         button.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
         button.TooltipText = text;
-        foreach (string state in new[] { "normal", "hover", "pressed", "disabled" })
+        foreach (string state in new[] { "normal", "hover", "pressed", "hover_pressed", "disabled" })
         {
             var style = (StyleBox)button.GetThemeStylebox(state).Duplicate();
             style.ContentMarginLeft = style.ContentMarginRight = 8;

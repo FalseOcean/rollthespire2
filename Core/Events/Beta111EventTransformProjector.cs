@@ -22,10 +22,20 @@ internal static class Beta111EventTransformProjector
         int count = DrawCount(entry);
         if (slot < 0) throw new ArgumentOutOfRangeException(nameof(slot));
         if (pool.Count == 0) throw new ArgumentException("EventTransform.EmptySourcePool", nameof(pool));
+        if (count == 1) return [DrawSingle(root, slot, entry, pool)];
         var rng = Beta109WorldRng.CreateEventLocal(root, slot, entry == "MORPHIC_GROVE", entry);
-        if (entry == "WHISPERING_HOLLOW") rng.NextInt(19, "CalculateVars:gold-minus-nine");
         if (entry == "TRIAL" && rng.NextInt(3, "Accept:case") != 2) return [];
         var first = pool[rng.NextInt(pool.Count, "transform:0")];
-        return count == 1 ? [first] : [first, pool[rng.NextInt(pool.Count, "transform:1")]];
+        return [first, pool[rng.NextInt(pool.Count, "transform:1")]];
+    }
+
+    // Single-draw entries only; callers retain their own target/pool admission and precision.
+    internal static MorphicGroveCard DrawSingle(ulong root, int slot,
+        string entry, IReadOnlyList<MorphicGroveCard> pool)
+    {
+        var rng = Beta109WorldRng.CreateEventLocal(root, slot, false, entry);
+        // Whisper.CalculateVars always precedes GenerateInitialOptions/Hug.
+        if (entry == "WHISPERING_HOLLOW") rng.NextInt(19, "CalculateVars:gold-minus-nine");
+        return pool[rng.NextInt(pool.Count, "transform:0")];
     }
 }

@@ -121,7 +121,7 @@ internal static partial class UiSurfaceChecks
             render.Invoke(panel, null);
             failedReceipt = data[failedPair.Key.Point];
             check(failures.SetEquals([failedPair.Key.Point]) &&
-                failedReceipt.Information.Any(line => line.Contains(error.Message, StringComparison.Ordinal)) &&
+                failedReceipt.Information.Count > 0 && failedReceipt.Information.All(line => !line.Contains(error.Message, StringComparison.Ordinal)) &&
                 failedReceipt.Sections.Count == 0 && failedReceipt.EditorActions.Count == 0 && failedReceipt.Premises == null &&
                 !ReferenceEquals(failedReceipt, previousBad) && failedReceipt.IsCurrent?.Invoke() == true &&
                 annotations[failedPair.Key.Point].Name.ToString().StartsWith("FailedObservation_", StringComparison.Ordinal),

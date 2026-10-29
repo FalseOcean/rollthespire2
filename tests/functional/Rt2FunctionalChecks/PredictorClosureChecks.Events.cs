@@ -45,7 +45,9 @@ internal static partial class PredictorClosureChecks
                 foreach (var kind in kinds)
                 {
                     string entry = EventResultTransformSemantics.Entry(kind);
-                    int count = EventResultTransformSemantics.DrawCount(kind);
+                    int count = kind is EventResultConditionKind.MorphicGroveGroupInitialBasicsContains or
+                        EventResultConditionKind.TrialNondescriptInitialBasicsContains ? 2 : 1;
+                    Check(EventResultTransformSemantics.DrawCount(kind) == count, "Committed event draw count: " + entry);
                     foreach (int poolSize in new[] { 1, 7, targets[0].OrderedSourceCandidates!.Count })
                     {
                         var pool = targets[0].OrderedSourceCandidates!.Take(poolSize).ToArray();
@@ -58,6 +60,21 @@ internal static partial class PredictorClosureChecks
                         bool transform = entry != "TRIAL" || rng.NextInt(3) == 2;
                         var expected = transform ? Enumerable.Range(0, count).Select(_ => pool[rng.NextInt(pool.Length)]).ToArray() : [];
                         Check(observed.SequenceEqual(expected), "Information transforms vs native RNG: " + entry);
+                        if (slot == 0 && kind is EventResultConditionKind.AromaOfChaosInitialBasicTransform or
+                            EventResultConditionKind.WhisperingHollowInitialBasicTransform)
+                        {
+                            var source = kind == EventResultConditionKind.AromaOfChaosInitialBasicTransform
+                                ? SingleBasicTransformEvent.AromaOfChaos : SingleBasicTransformEvent.WhisperingHollow;
+                            var target = targets[0] with { OrderedSourceCandidates = pool };
+                            var raw = Beta111SingleBasicTransformProjector.Project(root, slot, source, premises, target);
+                            Check(raw.RawReplacement == expected[0] && raw.RawPrecision == PredictionPrecision.Exact &&
+                                raw.FinalReplacement is null && raw.FloorAddedToDeck is null && raw.FinalPrecision == PredictionPrecision.Unknown,
+                                "Single transform raw/native RNG with final hook uncertainty: " + entry);
+                            var final = Beta111SingleBasicTransformProjector.Project(root, slot, source,
+                                premises with { NoDeckMutationHooks = true, EntryFloor = 17 }, target);
+                            Check(final.FinalReplacement == expected[0] && final.FinalPrecision == PredictionPrecision.Exact &&
+                                final.FloorAddedToDeck == 17, "Single transform final metadata with closed hooks: " + entry);
+                        }
                         Check(observed.SequenceEqual(EventResultTransformSemantics.Project(root, query)!), "E/information observations: " + entry);
                         foreach (var target in pool.Select(c => c.CardKey))
                             Check(EventResultTransformSemantics.Evaluate(root, query with { TargetKey = target }) ==
@@ -91,6 +108,26 @@ internal static partial class PredictorClosureChecks
             }
         }
         Check(trialCases.Count == 3, "All Trial branches exercised");
+        foreach (var source in Enum.GetValues<SingleBasicTransformEvent>())
+        {
+            foreach (bool missingPool in new[] { false, true })
+            {
+                var unknown = Beta111SingleBasicTransformProjector.Project(0, 0, source,
+                    premises with { VanillaLocalDependenciesBound = missingPool, NoDeckMutationHooks = true, EntryFloor = 17 },
+                    missingPool ? targets[0] with { OrderedSourceCandidates = null } : targets[0]);
+                Check(unknown.RawReplacement is null && unknown.FinalReplacement is null && unknown.FloorAddedToDeck is null &&
+                    unknown.RawPrecision == PredictionPrecision.Unknown && unknown.FinalPrecision == PredictionPrecision.Unknown,
+                    "Single transform missing pool/local dependencies remain Unknown: " + source);
+            }
+            bool emptyRejected = false;
+            try
+            {
+                Beta111SingleBasicTransformProjector.Project(0, 0, source, premises,
+                    targets[0] with { OrderedSourceCandidates = [] });
+            }
+            catch (InvalidOperationException ex) when (ex.Message == "SingleBasicTransform.EmptySourcePool") { emptyRejected = true; }
+            Check(emptyRejected, "Single transform retains its empty-pool failure: " + source);
+        }
         foreach (string language in new[] { "zh", "en" })
         {
             var text = JsonUiTextProvider.CreatePredictorUi13(language);

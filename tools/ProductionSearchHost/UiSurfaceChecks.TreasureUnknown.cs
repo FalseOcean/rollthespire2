@@ -93,7 +93,7 @@ internal static partial class UiSurfaceChecks
                 treasure = frame.CaptureDraft().Query.TreasureRelics!;
                 Check(treasure.StartOrdinal == 1 && treasure.Count == 1 && treasure.OrderMode == TreasureRelicOrderMode.Unordered &&
                     treasure.Slots.SequenceEqual(new ModelKey?[] { first, second }), "unordered preserves range and dormant target");
-                Check(Find<Button>(relics, "TreasureChooseTarget2").Disabled, "out-of-window target is inactive");
+                Check(relics.FindChild("TreasureChooseTarget2", true, false) is null, "out-of-window target is hidden");
                 var dormant = frame.CaptureDraft();
                 frame.RestoreDraft(dormant, render: false); frame.Refresh(locale, text); Call(frame, "SelectDomain", "relics"); await Frames();
                 Check(frame.CaptureDraft().Query.TreasureRelics!.Slots[1] == second, "dormant slot survives restore");
@@ -136,20 +136,29 @@ internal static partial class UiSurfaceChecks
                 Find<Button>(relics, "TreasureChooseTarget1").EmitSignal(BaseButton.SignalName.Pressed); await Frames();
                 var picker = Field<ObjectPickerPanel>(relics, "_picker");
                 Check(picker.Visible, "add target opens the actual relic picker");
-                Nodes(picker).OfType<Button>().Single(button => button.GetChildren().OfType<Label>().Any(label => label.Text == secondName))
+                Check(!Nodes(picker).OfType<Button>().Any(button => button.GetChildren().OfType<Label>().Any(label => label.Text == secondName)),
+                    "picker excludes the relic already assigned to the other chest");
+                string firstName = RolltheSpire2.Infrastructure.ContentNames.RuntimeGameContentNameResolver.Create(locale)
+                    .Resolve(first, RolltheSpire2.Presentation.ContentNames.GameContentKind.Relic);
+                Nodes(picker).OfType<Button>().Single(button => button.GetChildren().OfType<Label>().Any(label => label.Text == firstName))
                     .EmitSignal(BaseButton.SignalName.Pressed); await Frames();
                 treasure = frame.CaptureDraft().Query.TreasureRelics!;
-                Check(!picker.Visible && treasure.Slots.SequenceEqual(new ModelKey?[] { second, second }),
-                    "picker permits duplicate relic targets without deduplicating authored slots");
+                Check(!picker.Visible && treasure.Slots.SequenceEqual(new ModelKey?[] { first, second }),
+                    "picker assigns a distinct relic without modifying the other slot");
+                frame.RestoreDraft(empty with { Query = SearchQuery.Empty with
+                { TreasureRelics = new(1, 2, TreasureRelicOrderMode.Unordered, [second, second]) } }, render: false);
+                frame.Refresh(locale, text); Call(frame, "SelectDomain", "relics"); await Frames();
                 Find<Button>(relics, "TreasureOrderMode").EmitSignal(BaseButton.SignalName.Pressed); await Frames();
-                Check(frame.CaptureDraft().Query.TreasureRelics!.Slots.SequenceEqual(new ModelKey?[] { second, second }),
-                    "ordered mode preserves duplicate targets");
+                Check(frame.CaptureDraft().Query.TreasureRelics!.Slots.SequenceEqual(new ModelKey?[] { second, second }) &&
+                    relics.FindChild("TreasureDuplicateTargets", true, false) is not null,
+                    "existing duplicate stays authored with an explicit warning");
                 Find<Button>(relics, "TreasureWindowFirst").EmitSignal(BaseButton.SignalName.Pressed); await Frames();
-                Check(Find<Button>(relics, "TreasureChooseTarget2").Disabled, "retained duplicate is inactive outside the window");
+                Check(relics.FindChild("TreasureChooseTarget2", true, false) is null, "retained duplicate is hidden outside the window");
+                Find<Button>(relics, "TreasureWindowBoth").EmitSignal(BaseButton.SignalName.Pressed); await Frames();
                 Find<Button>(relics, "TreasureClearTarget2").EmitSignal(BaseButton.SignalName.Pressed); await Frames();
                 treasure = frame.CaptureDraft().Query.TreasureRelics!;
                 Check(treasure.Slots[0] == second && treasure.Slots[1] is null && relics.FindChild("TreasureRetainedTargets", true, false) is null,
-                    "clearing retained target preserves the active identical relic");
+                    "explicitly clearing a duplicate after returning to both chests preserves the other relic");
                 frame.RestoreDraft(empty with { Query = SearchQuery.Empty with
                 {
                     TreasureRelics = new(1, 2, TreasureRelicOrderMode.Ordered, [first, second]),

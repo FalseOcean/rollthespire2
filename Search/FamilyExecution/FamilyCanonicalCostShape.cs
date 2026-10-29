@@ -16,6 +16,16 @@ internal sealed record FamilyCanonicalCostKey(int SchemaVersion, string FamilyId
     int RootWindow, string WorkShape, string OrderedChildBodies)
 {
     [JsonIgnore] internal string StableKey => JsonSerializer.Serialize(this);
+    // Current ordinary N GPU Invoke submits the same shaders, groups, ABI1
+    // transfers and serial first-call parity irrespective of the request's CPU
+    // worker budget. Exact and CPU partitions are outside this local boundary.
+    // Keep the measured budget in the stored key; omit it only from the price
+    // index for these reviewed bodies. CPU, Party and composed owners stay exact.
+    [JsonIgnore] internal bool HasBudgetIndependentGpuWork => FamilyId == "N.Neow" &&
+        ExecutionClass == "GPU" && Players == 1 && ConfiguredWorkers is >= 1 and <= 64 && OrderedChildBodies == "" &&
+        PhysicalRevision.StartsWith("N.Neow.Gpu.LocalDonor.", StringComparison.Ordinal);
+    [JsonIgnore] internal string PriceKey => HasBudgetIndependentGpuWork
+        ? (this with { ConfiguredWorkers = 1 }).StableKey : StableKey;
 }
 
 internal static partial class FamilyCanonicalCostShape

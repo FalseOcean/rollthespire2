@@ -75,7 +75,8 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
     private int _cursorContinuityViolationCount;
     private int _boundedQueueViolationCount;
     private string _failureCode = string.Empty;
-    private readonly Func<ExactSearchExecutionRequest, TrustedRootHashInput, ProductionExactSearchResult> _exactEvaluator;
+    private readonly Func<ExactSearchExecutionRequest, TrustedRootHashInput, ProductionExactSearchResult>? _exactEvaluator;
+    private readonly Action<CancellationToken>? _beforeExactEvaluate;
     private readonly Func<int, CancellationToken, ValueTask>? _beforeCandidatePublish;
 
     internal ProductionSearchSession(
@@ -95,7 +96,8 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
         long pendingPayloadLimitBytes = DefaultPendingPayloadLimitBytes,
         Func<SearchPendingCandidate, long>? measurePendingPayload = null,
         Action? recoveryReceiptWaitStarted = null,
-        bool allowInitialGpuCreationFallback = false)
+        bool allowInitialGpuCreationFallback = false,
+        Action<CancellationToken>? beforeExactEvaluate = null)
     {
         if (executionWindowSize <= 0) throw new ArgumentOutOfRangeException(nameof(executionWindowSize));
         if (queueCapacity <= 0) throw new ArgumentOutOfRangeException(nameof(queueCapacity));
@@ -103,7 +105,8 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
         _pendingPayloadLimitBytes = pendingPayloadLimitBytes;
         _recoveryReceiptWaitStarted = recoveryReceiptWaitStarted;
         _plan = plan ?? throw new ArgumentNullException(nameof(plan));
-        _exactEvaluator = exactEvaluator ?? ((request, input) => ProductionExactSearchEvaluator.Evaluate(request, input, _lifetime.Token));
+        _exactEvaluator = exactEvaluator;
+        _beforeExactEvaluate = beforeExactEvaluate;
         _beforeCandidatePublish = beforeCandidatePublish;
         _executionPlan = executionPlan ?? throw new ArgumentNullException(nameof(executionPlan));
         _smallCandidateExactPolicy = executionPlan.AllowSmallCandidateExact && !plan.RunOptions.SkipExactValidation
@@ -621,7 +624,12 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
         bool exactCompleted = false;
         try
         {
-            exact = _exactEvaluator(_plan, input);
+            _beforeExactEvaluate?.Invoke(cancellationToken);
+            // Parallel.ForEachAsync owns a child token whose propagation may lag
+            // session cancellation. Exact and its consumer must use the same token.
+            exact = _exactEvaluator is null
+                ? ProductionExactSearchEvaluator.Evaluate(_plan, input, cancellationToken)
+                : _exactEvaluator(_plan, input);
             if (exact.Document is { } document)
             {
                 ProductionExactSearchEvaluator.ThrowIfPredictionFailed(document);
@@ -634,7 +642,8 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
             evaluation = exact.Evaluation;
             exactCompleted = true;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        catch (Exception ex) when (ex is not OperationCanceledException cancelled ||
+            !cancellationToken.IsCancellationRequested || cancelled.CancellationToken != cancellationToken)
         {
             RetainFailedCandidate(globalCandidate, seed, ex);
             if (!retrying) Interlocked.Increment(ref _scanned);

@@ -283,6 +283,9 @@ internal sealed partial class AnalysisAncientConditionsEditor : PanelContainer
             button,
             optionName,
             _uiText.Get(Ui1TextKey.SearchAncientOptionConditionTooltipTitle),
-            _uiText.Get(binding.ConditionTextKey));
+            binding.ConditionTextKey == Ui1TextKey.AncientConditionNonupeipeSwift
+                ? string.Format(_uiText.Get(binding.ConditionTextKey),
+                    _contentNames.Resolve(new("ENCHANTMENT", "SWIFT"), GameContentKind.Enchantment))
+                : _uiText.Get(binding.ConditionTextKey));
     }
 }

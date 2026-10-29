@@ -137,14 +137,25 @@ internal sealed partial class WorkspaceShell
     }
     private void OpenFeedbackUrl(string url)
     {
-        _feedbackMessage = TryOpenFeedbackUrl(url) ? "" : "feedback.open_failed";
+        _feedbackMessage = TryOpenExternalUrl(url) ? "" : "feedback.open_failed";
         RefreshFeedback();
     }
 
-    private static bool TryOpenFeedbackUrl(string url)
+    private static bool TryOpenExternalUrl(string url, string? diagnosticContext = null)
     {
-        try { return OS.ShellOpen(url) == Error.Ok; }
-        catch { return false; }
+        try
+        {
+            Error error = OS.ShellOpen(url);
+            if (error != Error.Ok && diagnosticContext is not null)
+                RuntimeLog.Warn($"externalUrlOpenFailed=true;stage={diagnosticContext};url={url};error={error}");
+            return error == Error.Ok;
+        }
+        catch (Exception ex)
+        {
+            if (diagnosticContext is not null)
+                RuntimeLog.WarnException($"externalUrlOpenFailed=true;stage={diagnosticContext};url={url}", ex);
+            return false;
+        }
     }
 
     private void RequestFeedbackIssue(string action)
@@ -166,14 +177,14 @@ internal sealed partial class WorkspaceShell
             return;
         }
         string? url = FeedbackIssueTemplate.PrefillUrl(issue);
-        if (url is not null && TryOpenFeedbackUrl(url))
+        if (url is not null && TryOpenExternalUrl(url))
             _feedbackMessage = "feedback.issue_opened";
         else
         {
             DisplayServer.ClipboardSet(issue.Body);
             // Also covers launchers that reject a URL below our bound. Never truncate the report.
             url = FeedbackIssueTemplate.NewIssueUrl + "?title=" + Uri.EscapeDataString(issue.Title);
-            _feedbackMessage = TryOpenFeedbackUrl(url) ? "feedback.issue_paste" : "feedback.issue_open_failed";
+            _feedbackMessage = TryOpenExternalUrl(url) ? "feedback.issue_paste" : "feedback.issue_open_failed";
         }
         RefreshFeedback();
     }

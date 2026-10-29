@@ -130,8 +130,16 @@ internal static partial class PredictorClosureChecks
             });
         Check(faultSession.Completion.Wait(15000),"Predictor fault session completes");
         Check(RolltheSpire2.Search.FamilyExecution.Beta110SeedCodec.TryParseOrdinal(faultPlan.CanonicalStartSeed,out ulong faultStart,out _,out _),"Fault cursor input");
-        Check(faultSession.GetProgress().State==SearchRunState.Faulted && faultSession.GetSafeNextOrdinal()==faultStart &&
-            !faultSession.TryReadCandidate(out _),"Real Predictor fault preserves safe cursor and publishes no match");
+        var faultProgress = faultSession.GetProgress();
+        var faultContinuation = faultSession.CaptureContinuation();
+        Check(faultProgress.State == SearchRunState.Completed && faultProgress.PendingCandidateCount == 8 &&
+            faultProgress.MatchCount == 0 && faultProgress.UnverifiedCandidateCount == 0 &&
+            faultSession.GetSafeNextOrdinal() == faultStart + 8 && faultContinuation?.NextOrdinal == faultStart + 8 &&
+            faultContinuation.PendingCandidates.Select(p => p.Ordinal).Order().SequenceEqual(Enumerable.Range(0,8).Select(i => faultStart + (ulong)i)) &&
+            faultContinuation.PendingCandidates.All(p => p.Stage == "CandidateCheck" && p.Attempts == 1 &&
+                p.ExceptionText.Contains(nameof(InjectedPredictionFailure),StringComparison.Ordinal)) &&
+            !faultSession.TryReadCandidate(out _),
+            "Real Predictor faults remain pending with their original cause after scanning, without publishing a semantic result");
         faultSession.DisposeAsync().AsTask().GetAwaiter().GetResult();
 
         // Profiles must not activate Neow for an independent World/Relic horizon.

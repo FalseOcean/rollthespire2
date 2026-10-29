@@ -71,6 +71,18 @@ internal static partial class CompatibilityChecks
             DeviceInitialization = ownerInitialization ?? FamilyDeviceProfileFoundation.Initialization.Capture(),
             plan.PlanId, RankingAuthority = plan.RankingAuthority.ToString(), plan.DecisionEvidence, plan.MissingEvidence,
             plan.FilterRemainders, plan.FinalValidationSkipped, plan.ExpectedFamilyPipelineMsPerRoot,
+            // Already selected public units, including those later bound into
+            // private transport. This receipt performs no quoting or execution.
+            PublicUnitReferences = FamilySearchEtaProjectorV1.EstimationStages(plan).Select(stage => new {
+                stage.Family.FamilyId, stage.Coverage, stage.CompactAbi1Input,
+                ExpectedInputFraction = double.IsFinite(stage.ExpectedInputFraction) ? (double?)stage.ExpectedInputFraction : null,
+                Survival = stage.Survival is { } survival && double.IsFinite(survival) ? (double?)survival : null,
+                PerInputTimeMs = stage.PerInputTimeMs is { } time && double.IsFinite(time) ? (double?)time : null,
+                PhysicalRevision = stage.Performance.PhysicalImplementationRevision,
+                PerformanceEvidence = stage.Performance.Evidence,
+                Scope = "SelectedPublicUnitReference;NotPrivateTransportMeasurement",
+                NonFiniteValuesReportedAsNull = true
+            }).ToArray(),
             Invocations = rows, RequirementEvidence = "Declared requirements of actual selected bodies; assembled-source and SPIR-V hashes recorded separately by CompileShader; no bytecode capability inspection",
             TargetMetalExecutionClaimed = false, ThroughputClaimed = false
         });

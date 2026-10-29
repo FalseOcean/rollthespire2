@@ -41,7 +41,7 @@ internal sealed partial class InRunMapPredictionPanel
         _nodeInformationFailures.Add(location.Point);
         if (_details.HoverNodeId == nodeId) _details.CloseHover();
         if (_details.EditorNodeId == nodeId) _details.CloseEditor();
-        string message = _text.Format("predictor.map.node_information_failed", error.Message);
+        string message = _text.Get("predictor.map.node_information_failed");
         long revision = _prediction.Revision;
         _nodeDetails[location.Point] = new(nodeId, _text.Get("predictor.map.information_failed"), "", [message], [], [])
         {

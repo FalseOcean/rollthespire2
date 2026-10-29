@@ -15,7 +15,7 @@ internal sealed partial record RelicFullGpuPlan(RelicFamilyPlan SequencePlan, ui
     internal string NumericalRevision => NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "";
     internal string ActualAlgorithmRevision => AlgorithmRevision + NumericalRevision;
     internal const string AlgorithmRevision =
-        "R.Relic.Gpu.Rfull.v4.TrackedSequence.CapsuleRarityTrackedRank.EmptySequenceElided.LastTargetBucket";
+        "R.Relic.Gpu.Rfull.v4.TrackedSequence.CapsuleRarityTrackedRank.EmptySequenceElided.LastTargetBucket" + GpuRngRotation.Revision;
     internal const string DenseRevision =
         "R.Relic.Rfull.DenseCarry8.CanonicalAbi1Ready.20260906.v4";
     internal const string CompactRevision =
@@ -28,7 +28,7 @@ internal sealed partial record RelicFullGpuPlan(RelicFamilyPlan SequencePlan, ui
     internal bool SourceConstrainedCapsules => CapsuleMetadata[0] == SourceConstrainedBonesArrival;
     internal string BagCapacityRevision => GenericReplay && UseExactGenericBagCapacity && ConfiguredGenericBagCapacity < 512
         ? $".GenericBagCapacity.Slot{CapsuleMetadata[14]}.B{ConfiguredGenericBagCapacity}.20261016.v1" : "";
-    internal string Revision(bool compact) => NativeRevision(compact) + NumericalRevision;
+    internal string Revision(bool compact) => NativeRevision(compact) + NumericalRevision + GpuRngRotation.Revision;
     private string NativeRevision(bool compact) => GenericReplay ? "R.Relic.Gpu.GenericCapsule.20260922." + (compact ? "Compact" : "Dense") + BagCapacityRevision : SourceConstrainedCapsules
         ? $"R.Relic.Rfull.SourceConstrainedSmallLarge.{(compact ? "Compact" : "Dense")}.CanonicalAbi1Ready.20260913.v2"
         : CapsuleMetadata[0] == FixedBonesArrival

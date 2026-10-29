@@ -106,17 +106,18 @@ internal static class PredictorCombatConsequences
                     t.UpgradeLevel <= d.Prototype.MaxUpgradeLevel) ?? false)))
             throw new PredictorCombatPlanBindingException(PredictorCombatPlanBindingReason.TemporaryCardFactsInvalid,
                 "PredictorTemporaryCombatCardFactsInvalid");
-        ImmutableArray<PredictorCombatCardSourceRef> sourceOrder;
+        IEnumerable<PredictorCombatCardSourceRef> sourceOrder;
         if (temporary.IsEmpty)
         {
             if (!facts.CombatCardSourceOrder.IsEmpty) throw new ArgumentException("PredictorCombatCardSourceOrderWithoutTemporary");
             sourceOrder = triggers.SelectMany(t => Enumerable.Repeat(new PredictorCombatCardSourceRef(DeckCardId: t.InstanceId),
-                t.EffectiveTriggers)).ToImmutableArray();
+                t.EffectiveTriggers));
         }
         else
         {
-            sourceOrder = facts.CombatCardSourceOrder;
-            if (sourceOrder.Length != triggers.Sum(t => t.EffectiveTriggers) + temporary.Sum(t => t.EffectiveTriggers) ||
+            var declaredOrder = facts.CombatCardSourceOrder;
+            sourceOrder = declaredOrder;
+            if (declaredOrder.Length != triggers.Sum(t => t.EffectiveTriggers) + temporary.Sum(t => t.EffectiveTriggers) ||
                 sourceOrder.Any(r => r == null || r.DeckCardId.HasValue == r.TemporarySourceIndex.HasValue ||
                     r.DeckCardId is { } deckId && !triggers.Any(t => t.InstanceId == deckId) ||
                     r.TemporarySourceIndex is { } i && (i < 0 || i >= temporary.Length)) ||

@@ -34,6 +34,9 @@ internal static class QueryHistoryIdentity
             // identity; normalization failure here must never discard user intent.
             catch (ArgumentException) { }
         }
+        if (query.StandardMapRoutes.All(route => route is { IsValid: true }) &&
+            query.StandardMapRoutes.Select(route => route.Act).Distinct().Count() == query.StandardMapRoutes.Count)
+            query = query with { StandardMapRoutes = query.StandardMapRoutes.Select(route => route.Normalize()).OrderBy(route => route.Act).ToArray() };
         return Hash(new { IntentVersion = 2, clean.Character, clean.Ascension, clean.Mode, Query = query, clean.AncientPremises,
             Players = clean.Players.Select(p => new { p.Slot, p.Character, UnlockPolicy = p.UnlockSource }).ToArray() });
     }
@@ -66,7 +69,8 @@ internal static class QueryHistoryIdentity
     private static string Canonical(JsonNode? node, string name)
     {
         if (node is JsonObject obj)
-            return "{" + string.Join(",", obj.OrderBy(p => p.Key, StringComparer.Ordinal)
+            return "{" + string.Join(",", obj.Where(p => p.Key != "StandardMapRoutes" || p.Value is not JsonArray { Count: 0 })
+                .OrderBy(p => p.Key, StringComparer.Ordinal)
                 .Select(p => JsonSerializer.Serialize(p.Key) + ":" + Canonical(p.Value, p.Key))) + "}";
         if (node is JsonArray array)
         {

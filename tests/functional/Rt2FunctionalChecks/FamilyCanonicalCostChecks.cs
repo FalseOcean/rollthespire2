@@ -25,7 +25,7 @@ internal static class FamilyCanonicalCostChecks
         IFamilyInvocation family, FamilyPhysicalQuote quote, int inputs, out string reason)
     {
         reason = "CanonicalEnvelopeOrEmbeddedProvenanceMismatch";
-        const string sha = "0B9A8C7831F015B92D6847FC57EF6933F95D713F2D5D09B6307DD53FB0F6C4FB";
+        const string sha = "6A8C6E4E10E1AE0FA663C27DDC9ABC9502B6276830A4A5D8BE1EB8EE4E82C99F";
         if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("RT2_CANONICAL_COST_REFERENCE_PATH")) ||
             !FamilyCanonicalMeasuredCost.IsCanonicalQuote(quote) || quote.GpuCostRatio != 1 ||
             !quote.OutputAlreadyOrdered || quote.OutputElementBytes != 8 || quote.FixedWindowMilliseconds != 0 ||
@@ -353,6 +353,7 @@ internal static class FamilyCanonicalCostChecks
                 continuationSuffix, StringComparison.Ordinal) == true,
             "GPU numeric plan gets the same authored operation-vector suffix without invoking GPU");
         CheckMeasuredNeowTransportEvidence(gpuN, authoredOwner, context, Check);
+        CheckMeasuredTransformationTransportEvidence(gpuN, context, Check);
         foreach (string initialCoverage in new[] { InitialRoomsInvocation.TreasureCoverage, InitialRoomsInvocation.UnknownCoverage })
         {
             var passed = new HashSet<string>(StringComparer.Ordinal) { "R.Relic", initialCoverage };
@@ -369,7 +370,7 @@ internal static class FamilyCanonicalCostChecks
     // embedded asset. The reference key below is produced by the real owner.
     private static void CheckIntegratedConsumers(Action<bool, string> check)
     {
-        const string expectedSha = "0B9A8C7831F015B92D6847FC57EF6933F95D713F2D5D09B6307DD53FB0F6C4FB";
+        const string expectedSha = "6A8C6E4E10E1AE0FA663C27DDC9ABC9502B6276830A4A5D8BE1EB8EE4E82C99F";
         check(string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("RT2_CANONICAL_COST_REFERENCE_PATH")),
             "integrated consumer proof must use the actual embedded asset");
         using var stream = typeof(FamilyExecutionCoordinator).Assembly.GetManifestResourceStream(FamilyCanonicalMeasuredCost.ResourceName)
@@ -480,12 +481,13 @@ internal static class FamilyCanonicalCostChecks
                     "legacy solo shape retains only constant-false historical fields without a new-body selector");
                 var knot = curve.Points.Single(point => point.N == roots);
                 var quote = FamilyCanonicalMeasuredCost.TryQuote(family, new(compact, false, roots), roots);
-                var ranking = new GpuCostSnapshot([]).Reference(family, family.ResolveConditionPerformance(compact), compact);
+                var publicReference = FamilyPhysicalQuote.CompleteCall(family, new(compact, false, roots),
+                    new GpuCostSnapshot([]), 1, rootPopulation: roots)!;
                 check(FamilyCanonicalMeasuredCost.IsCanonicalQuote(quote) &&
                     Math.Abs(quote!.NanosecondsPerInput * roots / 1e6 - knot.CallMilliseconds) < 1e-9 &&
-                    ranking.Evidence.Contains("TrainingRowsSha256=" + curve.TrainingRowsSha256, StringComparison.Ordinal) &&
-                    Math.Abs(ranking.CurrentQueryReference - roots * 1000d / knot.CallMilliseconds) < 1e-6,
-                    "unchanged C Dense/Compact quote and ranking still consume the original measured source");
+                    publicReference.Evidence.Contains("TrainingRowsSha256=" + curve.TrainingRowsSha256, StringComparison.Ordinal) &&
+                    Math.Abs(publicReference.Milliseconds - knot.CallMilliseconds) < 1e-9,
+                    "unchanged C Dense/Compact public-call reference still consumes the original measured source");
             }
         }
         finally
@@ -521,7 +523,20 @@ internal static class FamilyCanonicalCostChecks
             {
                 var request = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context),
                     new("000000000000", 65536, 30, 16)).Plan ?? throw new InvalidDataException("CanonicalInitialRooms.Compile");
-                var native = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, true, true).OfType<InitialRoomsInvocation>().Single();
+                var registered = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, true, true);
+                if (query.FirstActUnknownEventPrefixCount > 0)
+                {
+                    // V now owns ordinary opening Unknown/variant checks. The
+                    // retained W.InitialUnknown rows describe the former body.
+                    var opening = registered.OfType<VariantOpeningFamily>().Single();
+                    check(!registered.OfType<InitialRoomsInvocation>().Any() &&
+                        FamilyCanonicalMeasuredCost.TryQuote(opening, new(false, false, 65536), 65536) is null &&
+                        FamilyCoarsePricing.IsEstimate(FamilyPhysicalQuote.Computation(opening,
+                            new(false, false, 65536), new GpuCostSnapshot([]))),
+                        "current V keeps its work estimate and does not borrow historical W InitialUnknown measurements");
+                    continue;
+                }
+                var native = registered.OfType<InitialRoomsInvocation>().Single();
                 var integer = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, true, false).OfType<InitialRoomsInvocation>().Single();
                 foreach (bool compact in new[] { false, true })
                 {
@@ -538,19 +553,20 @@ internal static class FamilyCanonicalCostChecks
                     if (compact && nativeKey.PhysicalRevision.Contains(".InitialTreasure.", StringComparison.Ordinal))
                     {
                         var fullKnot = curve.Points.Single(p => p.N == roots);
-                        var ordinary = new GpuCostSnapshot([]).Reference(native, native.ResolveConditionPerformance(true), true);
-                        check(Math.Abs(ordinary.CurrentQueryReference - roots * 1000d / fullKnot.CallMilliseconds) < 1e-6 &&
+                        var ordinary = FamilyPhysicalQuote.CompleteCall(native, new(true, false, roots),
+                            new GpuCostSnapshot([]), 1, rootPopulation: roots)!;
+                        check(Math.Abs(ordinary.Milliseconds - fullKnot.CallMilliseconds) < 1e-9 &&
                             ordinary.Evidence.Contains("TrainingRowsSha256=" + curve.TrainingRowsSha256, StringComparison.Ordinal) &&
-                            ordinary.Evidence.Contains("ReferenceRootWindow=16777216;ReferenceInputPopulation=16777216", StringComparison.Ordinal),
-                            "ordinary Compact treasure reference consumes its real 16Mi root/population measured knot");
+                            ordinary.Evidence.Contains("RootFragment=16777216;Windows=1;Reach=1;", StringComparison.Ordinal),
+                            "public Compact treasure reference consumes its real 16Mi root/population measured knot");
                         check(FamilyCanonicalMeasuredCost.TryDenseQuote(native, new(true, false, roots)) is null &&
                             FamilyCanonicalMeasuredCost.TryQuote(native, new(true, false, roots), 65536) is null,
                             "Compact treasure still needs the actual root window and never derives it from its mean");
                     }
                     check(nativeKey.PhysicalRevision != integerKey.PhysicalRevision && nativeKey.WorkShape != integerKey.WorkShape &&
                         FamilyCanonicalMeasuredCost.TryQuote(integer, new(compact, false, 65536), roots) is null &&
-                        integer.QuotePhysicalWork(new(false, false, 65536)) is null,
-                        "integer InitialRooms actual body/shape cannot borrow native price");
+                        FamilyCoarsePricing.IsEstimate(integer.QuotePhysicalWork(new(false, false, 65536))),
+                        "integer InitialRooms keeps the native measured identity closed and receives an explicit work estimate");
                     if (native.Ordinary is not null)
                     {
                         check(nativeKey.OrderedChildBodies.Length > 0 && nativeKey.OrderedChildBodies != integerKey.OrderedChildBodies ||
@@ -572,8 +588,9 @@ internal static class FamilyCanonicalCostChecks
                 var fallback = FamilyCpuExecution.ConfiguredRealizations(integer).Single();
                 check(cpu.ConditionPerformance.PhysicalImplementationRevision == fallback.ConditionPerformance.PhysicalImplementationRevision &&
                     !cpu.ConditionPerformance.PhysicalImplementationRevision.Contains("IntegerRne", StringComparison.Ordinal) &&
-                    cpu.QuotePhysicalWork(new(false, false, 65536)) is null && fallback.QuotePhysicalWork(new(false, false, 65536)) is null,
-                    "unchanged CPU realization retains its identity and existing unpriced boundary");
+                    FamilyCoarsePricing.IsEstimate(cpu.QuotePhysicalWork(new(false, false, 65536))) &&
+                    FamilyCoarsePricing.IsEstimate(fallback.QuotePhysicalWork(new(false, false, 65536))),
+                    "unchanged CPU realization retains its identity and obtains the same honest local estimate");
             }
         }
         finally
@@ -608,17 +625,28 @@ internal static class FamilyCanonicalCostChecks
             {
                 var request = Request(query);
                 var family = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, true, true).Single();
+                if (family is VariantOpeningFamily)
+                {
+                    var current = FamilyPhysicalQuote.CompleteCall(family, new(false, false, roots),
+                        new GpuCostSnapshot([]), 1, rootPopulation: roots);
+                    check(FamilyCanonicalCostShape.Describe(request, family, false, roots) is null &&
+                        FamilyCanonicalMeasuredCost.TryQuote(family, new(false, false, roots), roots) is null &&
+                        current is { Source: FamilyPerformanceEvidenceSource.Reference },
+                        "migrated V variant work keeps an estimated complete time without borrowing former W canonical identity");
+                    continue;
+                }
                 var key = FamilyCanonicalCostShape.Describe(request, family, false, roots)!;
                 var curve = curves.Single(c => !c.Key.CompactInput &&
                     (c.Key with { RootWindow = roots }).StableKey == key.StableKey);
                 var knot = curve.Points.Single(p => p.N == roots);
                 var quote = family.QuotePhysicalWork(new(false, false, roots));
-                var ordinary = new GpuCostSnapshot([]).Reference(family, family.ResolveConditionPerformance(false), false);
+                var ordinary = FamilyPhysicalQuote.CompleteCall(family, new(false, false, roots),
+                    new GpuCostSnapshot([]), 1, rootPopulation: roots)!;
                 check(FamilyCanonicalMeasuredCost.IsCanonicalQuote(quote) &&
                     Math.Abs(quote!.NanosecondsPerInput * roots / 1e6 - knot.CallMilliseconds) < 1e-9 &&
-                    Math.Abs(ordinary.CurrentQueryReference - roots * 1000d / knot.CallMilliseconds) < 1e-6 &&
+                    Math.Abs(ordinary.Milliseconds - knot.CallMilliseconds) < 1e-9 &&
                     ordinary.Evidence.Contains("TrainingRowsSha256=" + curve.TrainingRowsSha256, StringComparison.Ordinal),
-                    "ordinary E/W Dense quote and ranking reference prefer the current measured complete call:" + family.FamilyId);
+                    "ordinary E/W Dense public reference retains the current measured complete call:" + family.FamilyId);
                 var geometry = new FamilyPhysicalQuoteRequest(false, false, roots);
                 var frozen = new FamilyCanonicalCostSnapshot([], JsonSerializer.SerializeToElement(new[] { curve }))
                     .Quote(key, geometry)!;
@@ -627,7 +655,7 @@ internal static class FamilyCanonicalCostChecks
                 check((retained with { Evidence = frozen.Evidence }) == frozen &&
                     HasTransportProvenance(retained.Evidence) && HasTransportProvenance(ordinary.Evidence) &&
                     local == retained,
-                    "GPU canonical lookup, Local and ranking preserve every frozen numeric/geometry field and disclose unmeasured current transport once:" + family.FamilyId);
+                    "GPU canonical lookup, Local and public reference preserve every frozen numeric/geometry field and disclose unmeasured current transport once:" + family.FamilyId);
 
                 // Feed only this test-local accumulator, never the calibration
                 // store. Exercise the ordinary Observe entry and cold exclusion
@@ -637,13 +665,14 @@ internal static class FamilyCanonicalCostChecks
                 check(samples.Peaks.Count == 0, "GPU normal observation still excludes its cold call:" + family.FamilyId);
                 samples.Observe(family, geometry, roots, 1000);
                 string observedKey = samples.Peaks.Single().Key;
+                var computationQuote = family.QuotePhysicalWork(geometry with { ComputationOnly = true })!;
                 string legacyKey = string.Join("|", quote!.FamilyId, quote.Shape,
                     family.ResolveConditionPerformance(false).PhysicalImplementationRevision,
                     "Dense", "PublicInput", "PublicOutput", GpuReferenceCostAtlas.Boundary);
-                check(observedKey == GpuReferenceCostAtlas.Key(family, quote, geometry) && observedKey != legacyKey &&
+                check(observedKey == GpuReferenceCostAtlas.Key(family, computationQuote, geometry) && observedKey != legacyKey &&
                     observedKey.Contains(FamilyGpuReadback.HostTransferRevision, StringComparison.Ordinal) &&
                     GpuReferenceCostAtlas.Peak(observedKey) is null,
-                    "GPU normal observations use the new transport identity without aliasing historical local/reference keys:" + family.FamilyId);
+                    "GPU dispatch observations use the computation shape and current transport identity without aliasing complete-call references:" + family.FamilyId);
 
                 var compactGeometry = new FamilyPhysicalQuoteRequest(true, false, 65536);
                 var fallback = family.QuotePhysicalWork(compactGeometry)!;
@@ -699,8 +728,10 @@ internal static class FamilyCanonicalCostChecks
                 MerchantShopColorlessFamily.TryCreate(missingRequest, out var missingShop);
                 var missingCpu = FamilyCpuExecution.ConfiguredRealizations(missingShop!).Single();
                 var missingPlan = FamilyPlanner.PlanSimple([entry, missingCpu], denseEntry: entry);
-                check(missingPlan.Stages.Single(s => ReferenceEquals(s.Family, missingCpu)).PerInputTimeMs is null,
-                    "ordinary S Compact remains Unknown when the actual configured worker has no data");
+                var estimatedStage = missingPlan.Stages.Single(s => ReferenceEquals(s.Family, missingCpu));
+                check(estimatedStage.PerInputTimeMs is > 0 && estimatedStage.Performance.Evidence.Contains("PriceQuality=Estimate", StringComparison.Ordinal) &&
+                    FamilyCanonicalMeasuredCost.TryQuote(missingCpu, new(true, false, cpuInputs), roots) is null,
+                    "ordinary S Compact can estimate an unmeasured worker without borrowing a measured worker identity");
             }
         }
         finally
@@ -754,6 +785,60 @@ internal static class FamilyCanonicalCostChecks
         check(HasTransportProvenance(FamilyGpuReadback.Reference(events,
             measured with { FamilyId = events.FamilyId })!.Evidence),
             "current N transport markers cannot exempt another actual GPU family");
+    }
+
+    private static void CheckMeasuredTransformationTransportEvidence(NeowFamily gpuN,
+        SearchContext context, Action<bool, string> check)
+    {
+        var query = SearchQuery.Empty with { TransformationAggregate = new(
+            TransformationOpening.LeafyPoultice, TransformationPickupOrder.Any, false, false, false,
+            TransformationAggregatePredicate.RareCountAtLeast, 1, []) };
+        var request = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context),
+            new("000000000000", 65536, 30, 1)).Plan ?? throw new InvalidDataException("MeasuredTransportFixture.TransformationCompile");
+        var gpuT = new TransformationAggregateFamily(request);
+        var cpuT = new TransformationAggregateFamily(request, preferGpu: false);
+        if (!gpuT.ConditionPerformance.UsesGpu) throw new InvalidDataException("MeasuredTransportFixture.TransformationGpuFamily");
+        string host = "MeasuredHostTransferRevision=" + FamilyGpuReadback.HostTransferRevision;
+        string boundary = "MeasuredTransformationPublicBoundaryRevision=" + FamilyGpuReadback.TransformationPublicBoundaryRevision;
+        var measured = new FamilyPhysicalQuote(TransformationAggregateFamily.Id, "FixtureCurrentPublicT", 123, 65536, null,
+            FamilyCanonicalMeasuredCost.Boundary + ";FixtureOnly;" + host + ";" + boundary + ";",
+            OutputElementBytes: 8, OutputAlreadyOrdered: true, PublicTransportClass: "CompleteCanonicalAbi1") {
+            LocalCostSource = "LocalMeasurement", ReferencePeakThroughput = 0, FixedWindowMilliseconds = 0
+        };
+        var current = FamilyGpuReadback.Reference(gpuT, measured)!;
+        check((current with { Evidence = measured.Evidence }) == measured &&
+            current.Evidence.Contains("CurrentTransformationPublicInvokeHostTransportMeasured", StringComparison.Ordinal) &&
+            current.Evidence.Contains("RootGroupSharedWaitNotLocalQuote", StringComparison.Ordinal) &&
+            !current.Evidence.Contains("CurrentNeowPublicInvokeHostTransportMeasured", StringComparison.Ordinal) &&
+            !current.Evidence.Contains("CurrentHostTransportUnmeasured", StringComparison.Ordinal) &&
+            !current.Evidence.Contains("RetainedHistoricalCallEstimate", StringComparison.Ordinal),
+            "current complete public T transport has its own measured marker and preserves all quote numbers");
+        check(FamilyGpuReadback.Reference(gpuT, current) == current,
+            "measured T marker is appended only once");
+        foreach (string evidence in new[] {
+            measured.Evidence.Replace(host, "MeasuredHostTransferRevision=stale", StringComparison.Ordinal),
+            measured.Evidence.Replace(boundary, "MeasuredTransformationPublicBoundaryRevision=stale", StringComparison.Ordinal),
+            measured.Evidence.Replace(boundary, boundary + ".Other", StringComparison.Ordinal),
+            FamilyCanonicalMeasuredCost.Boundary + ";HistoricalCompleteCallWithoutTransportMarkers",
+            host + ";MeasuredNeowPublicBoundaryRevision=" + NeowFamilyGpuExecutor.PublicBoundaryRevision
+        })
+            check(HasTransportProvenance(FamilyGpuReadback.Reference(gpuT, measured with { Evidence = evidence })!.Evidence),
+                "old, stale, prefix-only and N-only evidence cannot claim measured T public transport");
+        check(HasTransportProvenance(FamilyGpuReadback.Reference(gpuT,
+            measured with { PublicTransportClass = "LargeResidentAppend32" })!.Evidence),
+            "T public measurement does not exempt private resident output");
+        check(HasTransportProvenance(FamilyGpuReadback.Reference(gpuN,
+            measured with { FamilyId = gpuN.FamilyId })!.Evidence),
+            "T boundary token cannot be borrowed by N");
+        string publicRevision = FamilyGpuReadback.HostTransferRevision + FamilyGpuReadback.TransformationPublicBoundaryRevision;
+        check(FamilyGpuReadback.ObservationRevision(gpuT, new(false, false, 65536)) == publicRevision &&
+            FamilyGpuReadback.ObservationRevision(gpuT, new(true, false, 32)) == publicRevision &&
+            FamilyGpuReadback.ObservationRevision(gpuT, new(false, true, 65536)) == FamilyGpuReadback.HostTransferRevision &&
+            FamilyGpuReadback.ObservationRevision(gpuT, new(true, false, 32, true)) == FamilyGpuReadback.HostTransferRevision,
+            "T public Dense/Compact observation identity stays distinct from both private input and private output");
+        check(FamilyGpuReadback.ObservationRevision(cpuT, new(false, false, 65536)) == "" &&
+            FamilyGpuReadback.Reference(cpuT, measured) == measured,
+            "T GPU boundary does not modify a CPU realization or its observation identity");
     }
 
     private static bool HasTransportProvenance(string evidence) =>
@@ -880,6 +965,46 @@ internal static class FamilyCanonicalCostChecks
         check(nSnapshot.Quote(nKey with { GpuIdentity = "other" }, new(false, false, 100), .125) is null &&
             nSnapshot.Quote(nKey with { PhysicalRevision = "other" }, new(false, false, 100), .125) is null,
             "N probability selector does not relax existing device or physical body identity");
+
+        var currentN = nKey with { PhysicalRevision = "N.Neow.Gpu.LocalDonor.Current.ShionGpuPrefix.v1", ConfiguredWorkers = 4 };
+        var budgetCurve = nCurve with { Key = currentN };
+        var budgetSnapshot = new FamilyCanonicalCostSnapshot([], JsonSerializer.SerializeToElement(new[] { budgetCurve }));
+        foreach (int budget in new[] { 1, 4, 16, 64 })
+        {
+            var requested = currentN with { ConfiguredWorkers = budget };
+            var price = budgetSnapshot.Quote(requested, new(false, false, 100), .125);
+            check(Ms(price, 100) == 10 && price!.Evidence.Contains(
+                $"MeasuredRequestWorkers=4;RequestedWorkers={budget};CpuAndExactExcluded", StringComparison.Ordinal),
+                "reviewed current solo GPU N local work reuses measured cost across unrelated CPU budgets with provenance");
+            check(requested.ConfiguredWorkers == budget && requested.StableKey !=
+                (requested with { ConfiguredWorkers = budget == 1 ? 4 : 1 }).StableKey,
+                "measurement key retains actual configured workers despite price-only grouping");
+        }
+        foreach (var changed in new[] { currentN with { ExecutionClass = "CPU" }, currentN with { Players = 2 },
+            currentN with { OrderedChildBodies = "child" }, currentN with { FamilyId = "R.Relic" },
+            currentN with { PhysicalRevision = "HistoricalBody" } })
+            check(changed.PriceKey != (changed with { ConfiguredWorkers = 16 }).PriceKey,
+                "CPU, Party, composed, other-family and unreviewed bodies keep exact budget identities");
+        check(budgetSnapshot.Quote(currentN with { ConfiguredWorkers = 16 }, new(false, false, 100), .25) is null &&
+            budgetSnapshot.Quote(currentN with { WorkShape = "other", ConfiguredWorkers = 16 }, new(false, false, 100), .125) is null,
+            "GPU budget grouping preserves work shape and modeled source selector boundaries");
+        var budgetDuplicates = new FamilyCanonicalCostSnapshot([], JsonSerializer.SerializeToElement(new[] {
+            budgetCurve, budgetCurve with { Key = currentN with { ConfiguredWorkers = 16 } } }));
+        check(budgetDuplicates.Quote(currentN, new(false, false, 100), .125) is null,
+            "duplicate measured budget aliases require offline resolution and never choose an arbitrary price");
+        var scalarCompact = currentN with { CompactInput = true, PhysicalRevision = NeowFamilyGpuPlan.CompactRevision };
+        var compactBudget = new FamilyCanonicalCostSnapshot([], JsonSerializer.SerializeToElement(new[] {
+            budgetCurve with { Key = scalarCompact } }));
+        check(Ms(compactBudget.Quote(scalarCompact with { ConfiguredWorkers = 16 }, new(true, false, 100), .125), 100) == 10,
+            "ordinary LocalDonor Compact also excludes CPU budget even without a Shion suffix");
+        check(compactBudget.Quote(scalarCompact with { ConfiguredWorkers = 16, RootWindow = 101 }, new(true, false, 100), .125) is null &&
+            budgetSnapshot.Quote(currentN with { ConfiguredWorkers = 0 }, new(false, false, 100), .125) is null &&
+            budgetSnapshot.Quote(currentN with { PhysicalRevision = currentN.PhysicalRevision + ".IntegerUnitFloat.Rne.20261025.v1" },
+                new(false, false, 100), .125) is null,
+            "budget grouping retains compact root geometry, legal budgets and numerical variant identity");
+        var legacyBudget = new FamilyCanonicalCostSnapshot([nLegacy with { Key = currentN }]);
+        check(Ms(legacyBudget.Quote(currentN with { ConfiguredWorkers = 16 }, new(false, false, 100)), 100) == 99,
+            "reviewed same-body legacy single-call rows use the same budget boundary without changing their stored values");
     }
 
 }

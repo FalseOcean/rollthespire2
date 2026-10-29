@@ -7,6 +7,7 @@ using RolltheSpire2.Infrastructure.Snapshots;
 using RolltheSpire2.Search.Compilation;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.FamilyExecution;
+using RolltheSpire2.Search.Runtime;
 using RolltheSpire2.Search.Semantics;
 
 internal static class FamilyCpuOnlyChecks
@@ -419,6 +420,73 @@ internal static class FamilyCpuOnlyChecks
             const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic;
             var partyContext = (SearchContext)typeof(CombinationRegressionChecks).GetMethod("PartyContext", flags)!
                 .Invoke(null, [captured.Context, 2, null, null])!;
+            // These are actual registered single-family wrappers. With only
+            // one personal condition, the public integer path remains legal;
+            // it cannot borrow the historical NativeFloat64 wrapper envelope.
+            string? previousCpuIdentity = Environment.GetEnvironmentVariable("PROCESSOR_IDENTIFIER");
+            var previousDevice = SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity();
+            try
+            {
+                Environment.SetEnvironmentVariable("PROCESSOR_IDENTIFIER", "Intel64 Family 6 Model 183 TestFixture");
+                SearchPerformanceProfileFoundation.ObserveGpuIdentity("RTX 4060 Laptop GPU", "d3d12");
+                var card = captured.Context.Authority.EffectAuthority!.CharacterRewardPool!
+                    .First(c => c.IsUnlockedInCapturedPool).CardKey;
+                var combat = SearchQuery.Empty with { CombatCardRewards = new(6, CombatRewardSequenceOrderMode.Ordered,
+                    [null, null, null, null, null, card]) };
+                var events = SearchQuery.Empty with { EventResultConditions = [new(EventResultConditionKind.TrashHeapGrabCard,
+                    RolltheSpire2.Core.Events.Beta111EventResultCatalog.TrashHeapGrabCards[0])] };
+                var ordinaryRelics = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>(
+                    "tools/ProductionSearchHost/Corpus/family-pricing-matrix-v1/R-three-common.json").Query;
+                var families = new[] { ("C.CombatReward", combat, false), ("R.Relic", cases[6], false),
+                    ("W.World", cases[4], true), ("A.AncientOption", cases[3], false), ("E.EventResult", events, false),
+                    ("S.MerchantShopColorless", donor.Query, false), ("R.Relic", ordinaryRelics, false) };
+                int retainedNativeQuotes = 0;
+                foreach (var (familyId, conditions, shared) in families)
+                {
+                    var players = new[] { new PlayerOfferQuery(0, ModelKeySetFilter.Empty) {
+                        Conditions = shared ? SearchQuery.Empty : conditions }, new PlayerOfferQuery(1, ModelKeySetFilter.Empty) };
+                    var query = (shared ? conditions : SearchQuery.Empty) with { Players = players };
+                    var request = Request(query, partyContext);
+                    var native = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, true, true)
+                        .OfType<PartyFamily>().Single(f => f.FamilyId == familyId);
+                    var integer = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, true, false)
+                        .OfType<PartyFamily>().Single(f => f.FamilyId == familyId);
+                    bool changedNumerics = familyId is not "S.MerchantShopColorless" && conditions != ordinaryRelics;
+                    check(integer.PersonalStages.Count() == 1 && integer.ConditionPerformance.UsesGpu &&
+                        ((IFamilyInvocation)integer).GpuNumericRequirements == GpuNumericRequirements.Int64,
+                        "single personal/shared " + familyId + " remains an executable public integer GPU wrapper");
+                    foreach (bool compact in new[] { false, true })
+                    {
+                        var nativeQuote = native.QuoteUnit(1048576, compact, new HashSet<string>());
+                        var integerQuote = integer.QuoteUnit(1048576, compact, new HashSet<string>());
+                        if (nativeQuote is not null) retainedNativeQuotes++;
+                        if (changedNumerics)
+                        {
+                            var performance = GpuCostSnapshot.ComputationReference(GpuCostCalibration.Capture(), integer,
+                                integer.ResolveConditionPerformance(compact), compact);
+                            check(integerQuote is null && integer.QuotePhysicalWork(new(compact, false, 1048576)) is null &&
+                                performance.CurrentQueryReference == 0 && performance.EvidenceSource == FamilyPerformanceEvidenceSource.Unavailable &&
+                                integer.ResolveConditionPerformance(compact).PhysicalImplementationRevision.Contains(".IntegerRne.20261025.v1", StringComparison.Ordinal) &&
+                                integer.ResolveConditionPerformance(compact).Evidence.Contains("UnmeasuredIntegerRneWrapper", StringComparison.Ordinal) &&
+                                !native.ResolveConditionPerformance(compact).PhysicalImplementationRevision.Contains(".IntegerRne.", StringComparison.Ordinal),
+                                familyId + " integer wrapper keeps independent revision and disclosed missing price in both input modes");
+                        }
+                        else
+                            check(nativeQuote == integerQuote && native.ResolveConditionPerformance(compact) == integer.ResolveConditionPerformance(compact),
+                                "ordinary Int64-only R/S retain the same body and existing quote");
+                    }
+                    var selected = FamilyExecutionCoordinator.Plan(request, true, gpuFloat64Available: false);
+                    check(!HasFloat64Gpu(selected) && selected.Stages.Count > 0 && !selected.FinalValidationSkipped,
+                        "missing wrapper quote does not reject compatible " + familyId + " execution or skip Exact");
+                }
+                check(retainedNativeQuotes > 0, "reference-device native wrapper evidence remains usable");
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("PROCESSOR_IDENTIFIER", previousCpuIdentity);
+                SearchPerformanceProfileFoundation.ObserveGpuIdentity(previousDevice.GpuIdentity.Length == 0 ? "Unknown" : previousDevice.GpuIdentity,
+                    previousDevice.RenderingBackend.Length == 0 ? "unknown" : previousDevice.RenderingBackend);
+            }
             var partyQuery = SearchQuery.Empty with { Players = [new(0, ModelKeySetFilter.Empty) { Conditions = cases[0] },
                 new(1, ModelKeySetFilter.Empty) { Conditions = donor.Query }] };
             var partyRequest = Request(partyQuery, partyContext);

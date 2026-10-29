@@ -13,6 +13,7 @@ struct RewardRouteState {
     bool influence_exact;
 };
 
+/*__RT2_XOSHIRO_ROTATE45__*/
 uint64_t cr_make_u64(uint low, uint high) { return uint64_t(low) | (uint64_t(high) << 32u); }
 uint64_t cr_rotl64(uint64_t value, uint amount) { return (value << amount) | (value >> (64u - amount)); }
 uint64_t cr_splitmix_next(inout uint64_t state) {
@@ -32,7 +33,7 @@ uint64_t cr_next_u64(inout RngState rng) {
     uint64_t result = cr_rotl64(rng.s1 * uint64_t(5u), 7u) * uint64_t(9u);
     uint64_t temporary = rng.s1 << 17u;
     rng.s2 ^= rng.s0; rng.s3 ^= rng.s1; rng.s1 ^= rng.s2; rng.s0 ^= rng.s3;
-    rng.s2 ^= temporary; rng.s3 = cr_rotl64(rng.s3, 45u); return result;
+    rng.s2 ^= temporary; rng.s3 = rt2_rotate_left45_split32(rng.s3); return result;
 }
 uint cr_next_int_current_shortcut_from_mantissa(uint64_t x, uint bound) {
     uint low = uint(x); uint high = uint(x >> 32u);

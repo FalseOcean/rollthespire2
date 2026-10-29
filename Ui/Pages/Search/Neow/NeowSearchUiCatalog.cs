@@ -51,6 +51,10 @@ internal sealed partial record NeowSearchUiCatalog(
     public IReadOnlyList<ModelKey> InitialBasicTransformCards { get; init; } = Array.Empty<ModelKey>();
     public IReadOnlySet<ModelKey> MultiplayerOnlyCards { get; init; } = new HashSet<ModelKey>();
     public IReadOnlyList<ModelKey> MassiveScrollCards { get; init; } = Array.Empty<ModelKey>();
+    // Negative membership proofs for explicit character edits only. Picker
+    // discovery and best-effort model admission do not grant this authority.
+    public IReadOnlySet<NeowCandidatePoolKind> CompleteCandidatePools { get; init; } = new HashSet<NeowCandidatePoolKind>();
+    public bool RouteEligibilityComplete { get; init; }
 
     public CardPickerContext CreateCardPickerContext(
         IReadOnlyList<ModelKey> allowed,
@@ -197,8 +201,33 @@ internal sealed partial record NeowSearchUiCatalog(
                 .Concat(authority.TransformPool ?? []).Concat((authority.OtherCharacterPools ?? []).SelectMany(p => p.Cards))
                 .Where(c => c.IsMultiplayerOnly).Select(c => c.CardKey).ToHashSet(ModelKeyComparer.Instance),
             MassiveScrollCards = Keys(characterRewardCandidates.Concat(colorlessRewardCandidates)
-                .Where(c => c.IsMultiplayerOnly).Select(c => c.CardKey))
+                .Where(c => c.IsMultiplayerOnly).Select(c => c.CardKey)),
+            CompleteCandidatePools = CompletePools(authority)
         };
+    }
+
+    private static IReadOnlySet<NeowCandidatePoolKind> CompletePools(NeowEffectAuthoritySnapshot authority)
+    {
+        var pools = new HashSet<NeowCandidatePoolKind>();
+        if (!authority.HasCapturedIdentityFoundation) return pools;
+        if (authority.CharacterRewardPool is not null && authority.CharacterRewardPoolExact && authority.CharacterRewardHooksNoOpExact)
+            pools.UnionWith([NeowCandidatePoolKind.CharacterCards, NeowCandidatePoolKind.RareCharacterCards,
+                NeowCandidatePoolKind.CommonCharacterCards, NeowCandidatePoolKind.UncommonCharacterCards]);
+        if (authority.ColorlessRewardPool is not null && authority.ColorlessRewardPoolExact && authority.ColorlessRewardHooksNoOpExact)
+            pools.Add(NeowCandidatePoolKind.ColorlessCards);
+        if (pools.Contains(NeowCandidatePoolKind.CharacterCards) && pools.Contains(NeowCandidatePoolKind.ColorlessCards))
+            pools.Add(NeowCandidatePoolKind.MultiplayerCards);
+        if (authority.OtherCharacterPools is not null && authority.OtherCharacterPoolsExact && authority.OtherCharacterRewardHooksNoOpExact)
+            pools.Add(NeowCandidatePoolKind.OtherCharacterCards);
+        if (authority.TransformPool is not null && authority.TransformPoolsExact && authority.OrderedDeck is not null && authority.DeckExact)
+            pools.UnionWith([NeowCandidatePoolKind.TransformCards, NeowCandidatePoolKind.NewLeafTransformCards]);
+        if (authority.OrderedRelicBag is not null && authority.RelicBagExact && authority.NestedRelicHooksExact)
+            pools.Add(NeowCandidatePoolKind.OrdinaryRelics);
+        if (authority.PotionPool is not null && authority.PotionPoolExact && authority.PotionProcurementHooksNoOpExact)
+            pools.Add(NeowCandidatePoolKind.Potions);
+        if (authority.GeneratedCursePool is not null && authority.CursePoolExact) pools.Add(NeowCandidatePoolKind.Curses);
+        if (authority.BonesEligibleRelics is not null && authority.BonesEligibilityExact) pools.Add(NeowCandidatePoolKind.BonesNeowRelics);
+        return pools;
     }
 
     public EffectRelicRarity RelicRarity(ModelKey key) =>

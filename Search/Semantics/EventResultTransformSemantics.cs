@@ -14,8 +14,7 @@ internal static class EventResultTransformSemantics
         EventResultConditionKind.AromaOfChaosInitialBasicTransform or
         EventResultConditionKind.WhisperingHollowInitialBasicTransform or
         EventResultConditionKind.TrialNondescriptInitialBasicsContains;
-    internal static int DrawCount(EventResultConditionKind kind) => kind is
-        EventResultConditionKind.MorphicGroveGroupInitialBasicsContains or EventResultConditionKind.TrialNondescriptInitialBasicsContains ? 2 : 1;
+    internal static int DrawCount(EventResultConditionKind kind) => Beta111EventTransformProjector.DrawCount(Entry(kind));
     internal static string Entry(EventResultConditionKind kind) => kind switch {
         EventResultConditionKind.MorphicGroveGroupInitialBasicsContains => "MORPHIC_GROVE",
         EventResultConditionKind.SymbioteInitialBasicTransform => "SYMBIOTE",

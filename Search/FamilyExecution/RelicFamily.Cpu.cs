@@ -25,13 +25,12 @@ internal sealed partial class RelicFamily
                     matcher,workers,g =>
                     {
                         string revision = cpu!.Condition(g.CompactInput).PhysicalImplementationRevision;
-                        if (!FamilyCpuReferenceCost.RelicIdentitySupported(revision, cpu.WindowCapacity, workers, g.CompactInput)) return null;
                         return (common && workers == 1 ? FamilyCpuReferenceCost.Quote(_request,g,FamilyId,"R.CommonFirst3All3",1,"254.912-257.253",
                             cpuPhysicalRevision: revision, cpuWindowCapacity: cpu.WindowCapacity) :
                             threeShop && workers is 1 or 8 ? FamilyCpuReferenceCost.Quote(_request,g,FamilyId,"R.ShopOrdered3",workers,workers==1?"232.418-232.635":"52.627-53.505",
                                 cpuPhysicalRevision: revision, cpuWindowCapacity: cpu.WindowCapacity) : null) ??
-                            (workers == 1 && ordinary is not null ? RelicPhysicalPricing.QuoteOrdinaryModel(_request,_plan,_expectedFilteringCost,g,cpu:true) : null) ??
-                            (workers == 1 && shop is not null ? RelicPhysicalPricing.QuoteShopModel(_request,_plan,g,cpu:true) : null);
+                            RelicWorkEstimate.Ordinary(_request, _plan, g, _expectedFilteringCost,
+                                cpu: true, workers: workers, referenceMatcher: ordinary is null && shop is null);
                     });
                 yield return cpu;
             }

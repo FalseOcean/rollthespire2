@@ -145,8 +145,8 @@ internal static class NeowSmallReadbackChecks
     private static Rid InstallSynthetic(RenderingDevice rd, NeowFamilyGpuExecutor gpu)
     {
         var type=typeof(NeowFamilyGpuExecutor);
-        type.GetMethod("EnsureModules",Members)!.Invoke(gpu,[true]);
-        string source=(string)type.GetMethod("ModuleSource",Members)!.Invoke(gpu,[2])!;
+        type.GetMethod("EnsureModules",Members)!.Invoke(gpu,[true,false]);
+        string source=(string)type.GetMethod("ModuleSource",Members)!.Invoke(gpu,[2,false])!;
         source=source.Replace("void main()","void numerical_main()",StringComparison.Ordinal)+"""
 
             void main() {

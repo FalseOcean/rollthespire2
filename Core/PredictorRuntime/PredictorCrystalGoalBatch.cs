@@ -15,6 +15,10 @@ internal static class PredictorCrystalGoalBatch
         if(table.IncludesSacrifices) return PredictorCrystalGoalLanguage.Solve(source,table,goals,avoidCurse,budget,stateLimit,token);
         if(batchSize is <1 or >64) throw new ArgumentOutOfRangeException(nameof(batchSize));
         var watch=Stopwatch.StartNew();
+        // This retained experiment does not enumerate optional Curse actions.
+        // Do not inherit the broader admission of the shared reward bound.
+        if(!avoidCurse && source.Items.Any(i=>i.Kind=="CURSE" && i.X>=0 && !i.Revealed))
+            return new(CrystalOffsetVerdict.Incomplete,null,0,0,0,0,0,watch.Elapsed.TotalSeconds);
         if(source.Remaining<=0 || !source.PlacedAllItems)
             return new(CrystalOffsetVerdict.Incomplete,null,0,0,0,0,0,watch.Elapsed.TotalSeconds);
         var bound=new PredictorCrystalOffsetBound(source,table,avoidCurse);

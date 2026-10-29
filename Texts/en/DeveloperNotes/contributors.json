@@ -1,0 +1,39 @@
+{
+  "Id": "contributors",
+  "Title": "Contributors & acknowledgements",
+  "Summary": "Thank you to the contributors who share ideas, implementations and validation for Roll the Spire 2.",
+  "Blocks": [
+    {
+      "Type": "Heading",
+      "Text": "James Zhou"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[font_size=18]@JamesZhou233[/font_size]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Shared ideas, implementations and comparison evidence for GPU execution and data transfer, helping improve batch submission, buffer reuse and candidate data transfer."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[url=https://github.com/FalseOcean/rollthespire2/pull/4]Optimization proposal and contribution[/url]"
+    },
+    {
+      "Type": "Heading",
+      "Text": "Egoistic今宵"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[font_size=18]@shion0528[/font_size]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Shared CPU/GPU filtering and opening-simulation optimizations with validation material, helping improve CPU batch prescreening, computation reuse, reward-pool preparation and candidate-state reuse."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[url=https://github.com/shion0528/rollthespire2/releases/tag/v1.3.5-resource.17]Research version and implementation[/url]"
+    }
+  ]
+}

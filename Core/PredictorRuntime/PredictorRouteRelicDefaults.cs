@@ -26,6 +26,11 @@ internal sealed partial class PredictorRun
         // Called only after actual detached acquisition. Keep the inventory and
         // bag effects, without choosing representative upgrades/transforms.
         Working = Working with { PersonalBag = Working.PersonalBag.Remove(relic), SharedBag = Working.SharedBag.Remove(relic) };
+        if (relic.Entry == "PANDORAS_BOX")
+        {
+            Working = _preview.Partial.RecordLivePandoraObtain(Working);
+            return true;
+        }
         if (LiveTargetObtainEffect(relic) is { } targetEffect)
         {
             _preview.Obtains.Projected.Add((_routeNode?.NodeId ?? Working.Position.NodeId, relic));

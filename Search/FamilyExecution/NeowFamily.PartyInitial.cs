@@ -382,11 +382,15 @@ internal sealed partial class NeowFamily
             if (!FamilyPhysicalQuote.AdmittedRequest(geometry) || geometry.PrivateInput || geometry.PrivateOutput ||
                 geometry.MeanInputPopulation <= 0) return null;
             int window = ConditionPerformance.UsesGpu ? FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize : _cpu.WindowCapacity;
-            var price = QuoteUnit(geometry.MeanInputPopulation, geometry.CompactInput);
-            return FamilyGpuReadback.Reference(this, price is null ? null : new(FamilyId, "PartyNMeasuredEnvelope",
+            var price = QuoteUnit(geometry.MeanInputPopulation, geometry.CompactInput, geometry.ComputationOnly, geometry.CostSnapshot);
+            var quote = price is null ? null : new FamilyPhysicalQuote(FamilyId,
+                geometry.ComputationOnly ? "PartyNComputationReference" : "PartyNCompleteReference",
                 price.Milliseconds * 1e6 / geometry.MeanInputPopulation, window, price.SetupMilliseconds,
-                price.Evidence + ";CompleteCanonicalAbi1;PlannerRankingReference")
-            { LocalCostSource = "Condition", OutputAlreadyOrdered = true, PublicTransportClass = "CompleteCanonicalAbi1" });
+                price.Evidence + (geometry.ComputationOnly ? ";FamilyComputationBoundary" : ";CompleteCanonicalAbi1;PlannerRankingReference"), OutputElementBytes: 8)
+            { LocalCostSource = geometry.ComputationOnly ? "ComponentComposition" : "ReferenceDefault",
+                OutputAlreadyOrdered = true, PublicTransportClass = geometry.ComputationOnly
+                ? (ConditionPerformance.UsesGpu ? "DeviceFamilyWork" : "CpuOrderedAbi1") : "CompleteCanonicalAbi1" };
+            return geometry.ComputationOnly ? quote : FamilyGpuReadback.Reference(this, quote);
         }
         // The offer-only projection is an explicit envelope for this necessary
         // gate. Missing base offer evidence stays missing; it is not probability 1.
@@ -403,10 +407,10 @@ internal sealed partial class NeowFamily
             }
         }
         public FamilyConditionPerformanceProjection ConditionPerformance => ResolveConditionPerformance(false);
-        internal FamilyUnitCost? QuoteUnit(double inputs, bool compact)
+        internal FamilyUnitCost? QuoteUnit(double inputs, bool compact, bool computationOnly = false, GpuCostSnapshot? costs = null)
         {
-            if (UsesCompatibilityGpu) return null;
             double outputRate = Survival.SurvivalProbability ?? 1;
+            if (computationOnly) return QuoteCoarseUnit(inputs, compact, outputRate, computationOnly: true, costs);
             if (_gpuStages.Count == 0)
             {
                 double work = _request.CompiledSearch.NormalizedQuery.Players.Count +
@@ -418,12 +422,13 @@ internal sealed partial class NeowFamily
                     cpuPhysicalRevision: _cpu.Condition(compact).PhysicalImplementationRevision);
                 return cpuMeasured is { } cpuPrice
                     ? new(cpuPrice.Ms, cpuPrice.SetupMs,
-                        cpuPrice.Evidence + $";CpuNPlans={_cpuPlans.Count};Work={work:G9};SingleFamilyWrapper")
-                    : null;
+                        cpuPrice.Evidence.Replace("LocalMeasuredCPU;", "HistoricalCpuWrapperReference;", StringComparison.Ordinal) +
+                        $";CpuNPlans={_cpuPlans.Count};Work={work:G9};SingleFamilyWrapper;PriceQuality=Estimate;CurrentWrapperNotMeasured;SharedArrivalWitnessUnchanged")
+                    : QuoteCoarseUnit(inputs, compact, outputRate);
             }
             IFamilyInvocation[] children = _gpuStages.Select(s => s.Family).ToArray();
             bool privateEdges = UsesPrivate || UsesFused;
-            if (privateEdges)
+            if (!UsesCompatibilityGpu && privateEdges)
             {
                 double work = children.Sum(child => child is NeowFamily n
                     ? 1 + n.PricingReplayPlan.StructuredConditions.Length * 3 +
@@ -432,23 +437,24 @@ internal sealed partial class NeowFamily
                     true, true, NeowFamilyGpuExecutor.Capacity, work, outputRate);
                 if (gpuMeasured is { } gpuPrice)
                 {
-                    string evidence = HasOrderedKBody ? gpuPrice.Evidence.Replace("LocalMeasuredGPU;", "HistoricalGpuReferenceEnvelope;", StringComparison.Ordinal) +
-                        ";CurrentPartyOrderedKBody=20261016.v1;HistoricalCoefficientsAppliedAsCoarseEnvelope;NotCurrentBodyMeasurement;NoSameRunFitting" : gpuPrice.Evidence;
+                    string evidence = gpuPrice.Evidence.Replace("LocalMeasuredGPU;", "HistoricalGpuReferenceEnvelope;", StringComparison.Ordinal) +
+                        ";HistoricalCoefficientsAppliedAsCoarseEnvelope;PriceQuality=Estimate;CurrentWrapperBoundaryUnmeasured;NoSameRunFitting;SharedArrivalWitnessUnchanged" +
+                        (HasOrderedKBody ? ";CurrentPartyOrderedKBody=20261016.v1" : "");
                     return new(gpuPrice.Ms, gpuPrice.SetupMs,
                         evidence + $";GpuNStages={children.Length};Work={work:G9};SingleFamilyWrapper;" +
                             (UsesFused ? "ExistingFusedHomogeneous" : "PrivateOrdinalChain"));
                 }
             }
-            // Shared arrival unions belong to this complete N unit. Missing
-            // measured wrapper evidence does not authorize composing child prices.
-            return null;
+            // Same-family stages are a cost envelope, never an independent-player
+            // probability product or a replacement for the shared arrival witness.
+            return QuoteCoarseUnit(inputs, compact, outputRate);
         }
         private bool HasOrderedKBody => _gpuStages.Any(s => s.Family is NeowFamily n &&
             n.PricingReplayPlan.StructuredConditions.Any(c => c.OrderedKaleidoscope));
         public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compact) => _gpuStages.Count == 0 ? _cpu.Condition(compact) :
             new(FamilyId, "N.Neow.PartyEffects.Gpu.v6." + (UsesFused ? "Fused." : UsesPrivate ? "PrivateOrdinal." : "Public.") + (compact ? "CompactAbi1" : "Dense") +
                 (UsesPrivate && compact ? ".DirectCompactCast.20261016.v1" : "") + (HasOrderedKBody ? PartyOrderedKRevision : "") +
-                (UsesCompatibilityGpu ? ".IntegerUnitFloat.Rne.20261025.v1" : ""),
+                (UsesCompatibilityGpu ? ".IntegerUnitFloat.Rne.20261025.v1" : "") + GpuRngRotation.Revision,
                 "OrderedSlotInitialOffers", 1, "InitialOffersAndResolvedEffects;SharedArrival=AuthoredDrawUnion;Remainder=WholeTableExact;" +
                     (UsesCompatibilityGpu ? "GpuNumericalVariant=IntegerUnitFloat;PhysicalQuoteUnavailable=UnmeasuredVariant" : "BoundedLocalPhysicalQuote"),
                 usesGpu: _gpuStages.Any(s => s.Family.ConditionPerformance.UsesGpu));

@@ -183,6 +183,7 @@ internal sealed partial class SearchWorkspace
                 throw new InvalidDataException("QueryHistory.UnsupportedRecord");
             SearchPresetCompatibilityResolver.ValidateWorkbenchShape(record.Draft);
             record.Results ??= [];
+            record.MapScans ??= [];
             record.RetainedContinuations ??= [];
             record.ManualValidationSources ??= [];
             record.ManualValidationCandidates ??= [];

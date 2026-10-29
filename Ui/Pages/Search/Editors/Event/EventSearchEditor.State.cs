@@ -77,7 +77,7 @@ internal sealed partial class EventSearchEditor
     {
         if (state.CharacterColor is < -1 or > 4 || state.TrialCase is < -1 or > 2 ||
             state.TinkerType is < -1 or > 2 || state.Results.Any(pair =>
-                pair.Value.Length != EventResultTransformSemantics.DrawCount(pair.Key)))
+                pair.Value.Length != ResultSlotCount(pair.Key)))
             throw new InvalidOperationException("integration.load_shape");
         _draft.Results.Clear();
         foreach (var (kind, slots) in state.Results) _draft.Results[kind] = slots.ToArray();

@@ -257,8 +257,29 @@ internal sealed partial class PredictorCrystalReachability(PredictorCrystalSnaps
     internal CrystalReachabilityUpdate Advance(ImmutableArray<CrystalRewardOption> selected,TimeSpan budget,CancellationToken token=default,
         Action<ImmutableArray<CrystalRewardOption>>? publishExcluded=null)
     {
-        if(goalLanguageProof && !selected.IsEmpty) return AdvanceLanguage(selected,budget,token,publishExcluded);
-        return AdvanceLegacy(selected,budget,token,publishExcluded);
+        if(goalLanguageProof && (!selected.IsEmpty || Volatile.Read(ref _emptyLanguageTail)))
+            return AdvanceLanguage(selected,budget,token,publishExcluded);
+        var update=AdvanceLegacy(selected,budget,token,publishExcluded);
+        if(goalLanguageProof && selected.IsEmpty && budget>TimeSpan.Zero && !update.Complete &&
+            update.Projection.SelectedPlan!=null && source.Remaining>3)
+            lock(_sync)
+            {
+                // Broad discovery first supplies useful options. A large tail
+                // can contain cheap reward-language contradictions too; waiting
+                // for the four resident probes to reduce it can stall forever.
+                // After a bounded amount of broad work, give every unresolved
+                // candidate its existing language question. This only changes
+                // scheduling: unknowns retain the original broad cursor.
+                int pending=_table!.Candidates.Count(candidate=>!update.Projection.Available.ContainsKey(candidate) &&
+                    !update.ExcludedCandidates.Contains(candidate));
+                if(pending>0 && (pending<=4 || update.Progress.Seconds>=0.75))
+                {
+                    _emptyLanguageExcluded=update.ExcludedCandidates;
+                    _emptyLegacyProgress=update.Progress;
+                    Volatile.Write(ref _emptyLanguageTail,true);
+                }
+            }
+        return update;
     }
     private CrystalReachabilityUpdate AdvanceLegacy(ImmutableArray<CrystalRewardOption> selected,TimeSpan budget,CancellationToken token,
         Action<ImmutableArray<CrystalRewardOption>>? publishExcluded=null)
@@ -362,7 +383,11 @@ internal sealed partial class PredictorCrystalReachability(PredictorCrystalSnaps
             // query frontier/finished entry retains them; do not generalize them.
             // This closes the candidate question, not every route or gold optimum.
             // Each extra reward needs its own positive witness or negative proof.
-            bool complete=explorers.All(e=>e.Complete) || individual && projection.SelectedPlan!=null &&
+            // Independent focused/probe negatives also finish an empty-target
+            // discovery. Lanes need not exhaust paths for already answered
+            // candidates; the full frozen domain and a legal selected witness
+            // still participate, including the hidden AnyRelic predicate.
+            bool complete=explorers.All(e=>e.Complete) || projection.SelectedPlan!=null &&
                 _table.Candidates.Where(c=>!selected.Contains(c)).All(c=>projection.Available.ContainsKey(c) || excluded.Contains(c));
             var phase=complete?CrystalDiscoveryPhase.Complete:explorers.Any(e=>!e.Complete && e.Phase==CrystalDiscoveryPhase.FindingPlans)
                 ?CrystalDiscoveryPhase.FindingPlans:CrystalDiscoveryPhase.Exhaustive;

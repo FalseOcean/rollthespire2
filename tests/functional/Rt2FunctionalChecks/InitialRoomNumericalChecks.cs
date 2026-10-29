@@ -133,8 +133,12 @@ internal static class InitialRoomNumericalChecks
             var cover = selected.Stages.SelectMany(stage => stage.Coverage).ToHashSet(StringComparer.Ordinal);
             bool hasTreasure = fixture.Query.TreasureRelics is { IsEmpty: false };
             bool hasUnknown = fixture.Query.FirstActUnknownEventPrefixCount > 0;
+            var variant = selected.ExecutionOrderUnits.Select(family => family is FamilyCpuExecution cpu
+                ? cpu.RealizationOwner ?? family : family).OfType<VariantOpeningFamily>().SingleOrDefault();
             check(cover.Contains(InitialRoomsInvocation.TreasureCoverage) == hasTreasure &&
-                cover.Contains(InitialRoomsInvocation.UnknownCoverage) == hasUnknown, fixture.Name + ":DefaultRegistrationCoverage");
+                cover.Contains(VariantOpeningFamily.Id) == hasUnknown &&
+                (variant?.Plan.UnknownPrefixCount ?? 0) == fixture.Query.FirstActUnknownEventPrefixCount &&
+                !cover.Contains(InitialRoomsInvocation.UnknownCoverage), fixture.Name + ":DefaultRegistrationCoverage");
             check(selected.OrderedFamilies.All(family => !family.FamilyId.StartsWith("I.", StringComparison.Ordinal)), fixture.Name + ":NoIndependentIFamily");
             if (fixture.Name == "UnknownMissingWorld")
                 check(!cover.Contains("W.World") && selected.FilterRemainders.Contains("W.World:NoSelectedFilter"),
@@ -206,9 +210,12 @@ internal static class InitialRoomNumericalChecks
             var plan = InitialRoomsPlan.TryCompile(request);
             check(plan is { UnknownPrefixCount: 3, CoversTreasure: false }, "PartySharedMaximum:" + count);
             var selected = FamilyExecutionCoordinator.Plan(request, false);
-            check(selected.Stages.SelectMany(stage => stage.Coverage).Count(atom => atom == InitialRoomsInvocation.UnknownCoverage) == 1 &&
-                selected.OrderedFamilies.Count(family => family.FamilyId == "W.World") == 1,
-                "PartyDefaultOneWOwnsWholeTableMaximum:" + count);
+            check(selected.Stages.SelectMany(stage => stage.Coverage).Count(atom => atom == VariantOpeningFamily.Id) == 1 &&
+                selected.ExecutionOrderUnits.Count(family => family.FamilyId == VariantOpeningFamily.Id) == 1 &&
+                selected.ExecutionOrderUnits.All(family => family.FamilyId != "W.World") &&
+                selected.ExecutionOrderUnits.Select(family => family is FamilyCpuExecution cpu ? cpu.RealizationOwner ?? family : family)
+                    .OfType<VariantOpeningFamily>().Single().Plan.UnknownPrefixCount == 3,
+                "PartyDefaultOneVOwnsWholeTableMaximum:" + count);
             var execution = new FamilyExecutionContext(requiresGpu: false, cpuWorkerCount: request.WorkerCount);
             try
             {
@@ -218,7 +225,7 @@ internal static class InitialRoomNumericalChecks
                     actual = family.InvokeAsync(execution, new(batch, request), actual, default).GetAwaiter().GetResult();
                 var expected = Enumerable.Range(0, 128).Select(i => (ulong)i).Where(i => InitialRoomsPlan.MatchesUnknown(
                     profile.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(i)), 3));
-                check(actual.EnumerateLogicalOrdinals().SequenceEqual(expected), "PartyActualWPublicCpuPopulation:" + count);
+                check(actual.EnumerateLogicalOrdinals().SequenceEqual(expected), "PartyActualVPublicCpuPopulation:" + count);
                 foreach (var family in selected.OrderedFamilies) family.DisposeAsync(execution).GetAwaiter().GetResult();
             }
             finally { execution.DisposeAsync().GetAwaiter().GetResult(); }

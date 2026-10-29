@@ -11,6 +11,10 @@ internal static partial class StandardMapProbabilityEstimator
 
     internal static JointSelectivityResult EstimateParty(SearchSelectivityInput input)
     {
+        if (input.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count > 0)
+            return JointSelectivityResult.Unpriced("Probability.StandardMap.Party.RouteSequenceJointMissing",
+                "The paired scalar corpus does not observe ordered route groups.",
+                "No scalar frequency substituted for the route predicate.", ["M.StandardMap:RouteSequenceJointMissing"]);
         var conditions = input.CompiledSearch.NormalizedQuery.StandardMaps;
         if (conditions.Count == 0) return JointSelectivityResult.Exact(1,
             JointSelectivityCombinationMethod.SingleAuthorityTerm, "Probability.StandardMap.Party.Empty", "No map predicates.", "1");

@@ -39,7 +39,7 @@ internal sealed partial class QueryWorkbenchFrame
         }
     }
 
-    private void RefreshEditorContexts(bool render = true)
+    private bool RefreshEditorContexts(bool render = true)
     {
         // A full refresh already owns the final C/T projections. Notifications
         // from intermediate Neow/party/event bindings must not render them again.
@@ -54,7 +54,9 @@ internal sealed partial class QueryWorkbenchFrame
             {
                 if (render) RenderEditorDomain(_selectedDomain);
                 _boundEditorFreshness = _editorInputs.Freshness;
+                return true;
             }
+            return false;
         }
         finally { _refreshingEditorContexts = false; }
     }
@@ -194,7 +196,9 @@ internal sealed partial class QueryWorkbenchFrame
         TransformationSearchSource[] sources = _neowEditor.TransformationSources(seat)
             .Concat(_eventEditor.TransformationSources(seat)).ToArray();
         _transformationEditor.Refresh(_language, _text, seat, sources,
-            _neowEditor.TransformationCardCandidates(seat).Concat(_eventEditor.TransformationCardCandidates).ToArray(), render);
+            _neowEditor.TransformationCardCandidates(seat).Concat(_eventEditor.TransformationCardCandidates).ToArray(), render,
+            _neowEditor.TransformationSources(seat).Select(source => source.Id)
+                .Concat(_eventEditor.DeclaredTransformationSourceIds(seat)).ToHashSet(StringComparer.Ordinal));
     }
 
 }

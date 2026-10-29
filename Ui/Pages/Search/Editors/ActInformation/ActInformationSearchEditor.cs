@@ -55,10 +55,9 @@ internal sealed partial class ActInformationSearchEditor : Control
         public int Scope;
         public Dictionary<int, List<PropertyCondition>> Properties { get; } = [];
         public Dictionary<int, RouteCondition> Routes { get; } = [];
-        public MapMetricKind PropertyMetric = MapMetricKind.GuaranteedElite;
-        public int PropertyOptionIndex;
-        public MapMetricKind RouteMetric = MapMetricKind.ReachableMaxElite;
-        public int RouteValue = 5;
+        public bool[] DrawingModes { get; } = new bool[4];
+        public Dictionary<int, List<MapDrawingNodeSnapshot>> Drawings { get; } = [];
+        public Dictionary<int, MapMetricKind> DailyMetrics { get; } = [];
     }
 
     public ActInformationSearchEditor(ModRuntimeSnapshot runtime, SearchWorkspace persistence)
@@ -190,7 +189,7 @@ internal sealed partial class ActInformationSearchEditor : Control
 
     private float RenderIdentity(Control content, float width, float top)
     {
-        const float inset = 16, choicesLeft = 120, tileWidth = 104, tileHeight = 84, tileGap = 10;
+        const float inset = 16, choicesLeft = 120, tileWidth = 104, tileHeight = 76, tileGap = 8;
         int columns = Math.Max(1, (int)((width - choicesLeft - inset + tileGap) / (tileWidth + tileGap)));
         float y = top;
         for (int act = 1; act <= 3; act++)
@@ -210,7 +209,7 @@ internal sealed partial class ActInformationSearchEditor : Control
             const float variantWidth = 208, variantLeft = choicesLeft + 112;
             int variantColumns = Math.Max(1, (int)((width - variantLeft - inset + 12) / (variantWidth + 12)));
             int variantRows = Math.Max(1, (variants.Length + variantColumns - 1) / variantColumns);
-            float bossTop = y + (variants.Length == 1 ? 64 : 20 + variantRows * 56);
+            float bossTop = y + (variants.Length == 1 ? 44 : 10 + variantRows * 44);
             int bossRows = Math.Max(1, (bosses.Length + columns - 1) / columns);
             float sectionHeight = bossTop - y + bossRows * (tileHeight + tileGap) + 2;
             float secondTop = y + sectionHeight + 8;
@@ -220,17 +219,17 @@ internal sealed partial class ActInformationSearchEditor : Control
                 Size = new(width, sectionHeight), MouseFilter = MouseFilterEnum.Ignore };
             sectionPanel.AddThemeStyleboxOverride("panel", _p.ContentBox());
             content.AddChild(sectionPanel);
-            Text(content, _text.Format("query.act_info.act", act), inset, y + 16, 92, 20);
-            Text(content, _text.Get("query.act_info.variant"), choicesLeft, y + 18, 100, 15, true);
+            Text(content, _text.Format("query.act_info.act", act), inset, y + 10, 92, 20);
+            Text(content, _text.Get("query.act_info.variant"), choicesLeft, y + 12, 100, 15, true);
             HashSet<ModelKey> selectedVariants = _draft.SelectedVariants[actIndex];
             if (variants.Length == 1)
-                Text(content, _names.Resolve(variants[0], GameContentKind.Act), variantLeft, y + 18, width - variantLeft - inset, 16);
+                Text(content, _names.Resolve(variants[0], GameContentKind.Act), variantLeft, y + 12, width - variantLeft - inset, 16);
             else
                 for (int index = 0; index < variants.Length; index++)
                 {
                     ModelKey key = variants[index];
                     IdentityButton(content, key, GameContentKind.Act, IconVariant.Small,
-                        variantLeft + index % variantColumns * (variantWidth + 12), y + 8 + index / variantColumns * 56, variantWidth,
+                        variantLeft + index % variantColumns * (variantWidth + 12), y + 6 + index / variantColumns * 44, variantWidth,
                         selectedVariants.Contains(key), () =>
                         {
                             ToggleSelected(selectedVariants, key);
@@ -288,9 +287,9 @@ internal sealed partial class ActInformationSearchEditor : Control
                         }, showTooltip: false).Name = $"SecondBoss{act}_{index}";
                 }
             }
-            y += sectionHeight + 12;
+            y += sectionHeight + 8;
         }
-        return y - 12;
+        return y - 8;
     }
 
     private ModelKey[] BossesForAct(int act)
@@ -305,358 +304,22 @@ internal sealed partial class ActInformationSearchEditor : Control
         if (!selected.Add(key)) selected.Remove(key);
     }
 
-    private float RenderMap(Control content, float width, float top)
-    {
-        Text(content, _text.Get("query.map.scope.current_label"), 0, top, width, 14, true);
-        string[] scopes = ["query.map.scope.total", "query.map.scope.act1", "query.map.scope.act2", "query.map.scope.act3"];
-        float scopeWidth = (width - 24) / scopes.Length;
-        for (int index = 0; index < scopes.Length; index++)
-        {
-            int captured = index;
-            int count = (_draft.Routes.ContainsKey(index) ? 1 : 0) +
-                (_draft.Properties.GetValueOrDefault(index)?.Count ?? 0);
-            Button scope = ModeButton(content, string.Empty, index * (scopeWidth + 8), top + 28, scopeWidth,
-                () => SetMapScope(captured), _draft.Scope == index, 66);
-            scope.Name = $"MapScope{index}";
-            Label name = Text(scope, _text.Get(scopes[index]), 12, 7, scopeWidth - 24, 18);
-            name.MouseFilter = MouseFilterEnum.Ignore;
-            Label summary = Text(scope, count == 0 ? _text.Get("query.map.scope.empty") : _text.Format("query.map.scope.count", count),
-                12, 35, scopeWidth - 24, 14, true);
-            summary.MouseFilter = MouseFilterEnum.Ignore;
-        }
-
-        float y = RenderRoute(content, width, top + 114);
-        if (_draft.Scope == 0 && (_draft.Properties.GetValueOrDefault(0)?.Count ?? 0) == 0) return y + 16;
-        AddLine(content, 0, y + 6, width);
-        return RenderMapProperties(content, width, y + 26);
-    }
-
-    private float RenderMapProperties(Control content, float width, float top)
-    {
-        Text(content, _text.Get("query.map.property.filter"), 0, top, width, 18);
-        MapHint(content, _text.Get("query.map.property.hint"), 0, top + 30, width);
-        float y = top + 76;
-        int scope = _draft.Scope;
-        List<PropertyCondition> scopeConditions = PropertiesForScope(scope);
-        float valueLeft = width * .49f;
-        float valueWidth = width - valueLeft - 54;
-        if (scopeConditions.Count == 0)
-        {
-            Text(content, _text.Get("query.map.property.empty"), 0, y, width, 14, true);
-            y += 34;
-        }
-        for (int row = 0; row < scopeConditions.Count; row++)
-        {
-            int conditionIndex = row;
-            PropertyCondition condition = scopeConditions[row];
-            PropertyCondition captured = condition;
-            var conditionSurface = new Panel { Position = new(-4, y - 2), Size = new(width + 8, 44), MouseFilter = MouseFilterEnum.Ignore };
-            conditionSurface.AddThemeStyleboxOverride("panel", _p.Box(_p.Surface, _p.Selected, 1));
-            content.AddChild(conditionSurface); content.MoveChild(conditionSurface, 0);
-            Label name = Text(content, PropertyLabel(condition.Metric), 0, y + 5, valueLeft - 16, 16);
-            SearchTooltip.Set(name, name.Text);
-            MapMetricOption[] options = PropertyOptions(scope, condition);
-            int selected = Array.FindIndex(options, option => !option.IsAny &&
-                option.Comparison == condition.Comparison && option.Value == condition.Value);
-            OptionButton threshold = Options(content, options.Select(OptionLabel).ToArray(), selected, valueLeft, y, valueWidth, index =>
-            {
-                List<PropertyCondition> conditions = PropertiesForScope(scope);
-                if (conditionIndex >= conditions.Count || conditions[conditionIndex] != captured) return;
-                MapMetricOption option = options[index];
-                if (option.IsAny) conditions.RemoveAt(conditionIndex);
-                else conditions[conditionIndex] = new(captured.Metric, option.Comparison, option.Value);
-                Render();
-            });
-            threshold.Name = $"MapPropertyValue{row}";
-            Button remove = Button(content, "×", width - 40, y, 40, () =>
-            {
-                List<PropertyCondition> conditions = PropertiesForScope(scope);
-                if (conditionIndex < conditions.Count && conditions[conditionIndex] == captured)
-                    conditions.RemoveAt(conditionIndex);
-                Render();
-            }, false, 38);
-            remove.Name = $"RemoveMapProperty{row}";
-            SearchTooltip.Set(remove, _text.Format("common.remove_named", PropertyLabel(condition.Metric)));
-            y += 48;
-        }
-        // Imported conditions remain visible and removable, even if their scope no longer offers a builder.
-        if (scope == 0) return y + 8;
-
-        MapMetricKind[] metrics = PropertyMetrics(scope)
-            .Where(metric => scopeConditions.All(condition => condition.Metric != metric)).ToArray();
-        if (metrics.Length == 0)
-        {
-            Text(content, _text.Get("query.map.property.all_added"), 0, y + 6, width, 14, true);
-            return y + 42;
-        }
-        if (!metrics.Contains(_draft.PropertyMetric))
-        {
-            _draft.PropertyMetric = metrics[0];
-            _draft.PropertyOptionIndex = 0;
-        }
-        if (scopeConditions.Count > 0)
-        {
-            AddLine(content, 0, y + 3, width);
-            y += 20;
-        }
-        float metricWidth = width * .45f;
-        float optionLeft = metricWidth + 12;
-        float optionWidth = width - optionLeft - 154;
-        Text(content, _text.Get("query.map.property.add"), 0, y, metricWidth, 14, true);
-        Text(content, _text.Get("query.map.route.quantity"), optionLeft, y, optionWidth, 14, true);
-        float controlsTop = y + 28;
-        OptionButton metricPicker = Options(content, metrics.Select(PropertyLabel).ToArray(), Array.IndexOf(metrics, _draft.PropertyMetric),
-            0, controlsTop, metricWidth, index =>
-            {
-                _draft.PropertyMetric = metrics[index];
-                _draft.PropertyOptionIndex = 0;
-                Render();
-            });
-        metricPicker.Name = "MapPropertyMetric";
-        MapMetricKind selectedMetric = _draft.PropertyMetric;
-        MapMetricOption[] builderOptions = Descriptor(scope, selectedMetric).Options.ToArray();
-        _draft.PropertyOptionIndex = Math.Clamp(_draft.PropertyOptionIndex, 0, builderOptions.Length - 1);
-        OptionButton optionPicker = Options(content, builderOptions.Select(OptionLabel).ToArray(), _draft.PropertyOptionIndex,
-            optionLeft, controlsTop, optionWidth, index => { _draft.PropertyOptionIndex = index; Render(); });
-        optionPicker.Name = "MapPropertyValue";
-        MapMetricOption selectedOption = builderOptions[_draft.PropertyOptionIndex];
-        Button add = Button(content, _text.Get("query.map.property.confirm"), width - 142, controlsTop, 142, () =>
-        {
-            if (selectedOption.IsAny) return;
-            List<PropertyCondition> conditions = PropertiesForScope(scope);
-            if (conditions.Any(condition => condition.Metric == selectedMetric)) return;
-            conditions.Add(new(selectedMetric, selectedOption.Comparison, selectedOption.Value));
-            ResetPropertyBuilderSelection();
-            Render();
-        }, false, 38);
-        add.Name = "AddMapProperty";
-        add.Disabled = selectedOption.IsAny;
-        add.AddThemeFontSizeOverride("font_size", 15);
-        return controlsTop + 52;
-    }
-
-    private MapMetricOption[] PropertyOptions(int scope, PropertyCondition condition)
-    {
-        MapMetricOption[] options = MapMetricCapabilityCatalog.Find(_draft.Players, _draft.Ascension, scope, condition.Metric)
-            ?.Options.ToArray() ?? [MapMetricOption.Any];
-        if (!options.Any(option => !option.IsAny && option.Comparison == condition.Comparison && option.Value == condition.Value))
-            options = options.Append(new MapMetricOption(false, condition.Comparison, condition.Value)).ToArray();
-        return options;
-    }
-
-    private void SetMapScope(int scope)
-    {
-        if (_mapScroll is not null && GodotObject.IsInstanceValid(_mapScroll)) _mapScroll.ScrollVertical = 0;
-        _draft.Scope = scope;
-        ResetPropertyBuilderSelection();
-        LoadRouteEditor();
-        Render();
-    }
-
-    private float RenderRoute(Control content, float width, float top)
-    {
-        int scope = _draft.Scope;
-        Text(content, _text.Get("query.map.route"), 0, top, width, 18);
-        MapHint(content, _text.Get(scope == 0 ? "query.map.route.hint.total" : "query.map.route.hint.act"),
-            0, top + 30, width);
-        bool blockedByTotal = scope > 0 && _draft.Routes.ContainsKey(0);
-        bool blockedByAct = scope == 0 && _draft.Routes.Keys.Any(value => value > 0);
-        if (blockedByTotal || blockedByAct)
-        {
-            string key = blockedByTotal ? "query.map.route.total_active" : "query.map.route.act_active";
-            Text(content, _text.Get(key), 0, top + 82, width - 198, 15, true);
-            int activeScope = blockedByTotal ? 0 : _draft.Routes.Keys.Where(value => value > 0).Min();
-            Button manage = Button(content, _text.Get("query.map.route.manage"), width - 190, top + 76, 190,
-                () => SetMapScope(activeScope), false, 38);
-            manage.Name = "ManageMapRoute";
-            manage.AddThemeFontSizeOverride("font_size", 15);
-            return top + 132;
-        }
-        RouteCondition? active = _draft.Routes.GetValueOrDefault(scope);
-        MapMetricKind[] metrics = RouteMetrics(scope);
-        if (metrics.Length == 0) return top + 76;
-        if (active is not null) _draft.RouteMetric = active.Metric;
-        if (!metrics.Contains(_draft.RouteMetric)) _draft.RouteMetric = metrics[0];
-        if (active is not null)
-        {
-            var conditionSurface = new Panel { Position = new(-4, top + 70), Size = new(width + 8, 106), MouseFilter = MouseFilterEnum.Ignore };
-            conditionSurface.AddThemeStyleboxOverride("panel", _p.Box(_p.Surface, _p.Selected, 1));
-            content.AddChild(conditionSurface); content.MoveChild(conditionSurface, 0);
-        }
-        float nodeWidth = width * .45f;
-        float valueLeft = nodeWidth + 12;
-        float valueWidth = width - valueLeft - 54;
-        Text(content, _text.Get("query.map.route.node_type"), 0, top + 76, nodeWidth, 14, true);
-        Text(content, _text.Get("query.map.route.target"), valueLeft, top + 76, valueWidth, 14, true);
-        float controlsTop = top + 104;
-        OptionButton nodePicker = Options(content, metrics.Select(metric => NodeName(NodeKind(metric))).ToArray(),
-            Array.IndexOf(metrics, _draft.RouteMetric), 0, controlsTop, nodeWidth, index =>
-            {
-                _draft.RouteMetric = metrics[index];
-                // Changing the node is explicit; keep the authored threshold instead of replacing it with 1.
-                if (active is not null) SetRoute(_draft.RouteMetric, active.Value);
-                Render();
-            });
-        nodePicker.Name = "MapRouteNode";
-        MapMetricOption[] routeOptions = RouteOptions(scope, _draft.RouteMetric);
-        int selected = active is null ? 0 : Array.FindIndex(routeOptions,
-            option => !option.IsAny && option.Value == active.Value);
-        if (selected < 0 && active is not null)
-        {
-            routeOptions = routeOptions.Append(new MapMetricOption(false, MapMetricComparison.AtLeast, active.Value)).ToArray();
-            selected = routeOptions.Length - 1;
-        }
-        OptionButton targetPicker = Options(content, routeOptions.Select(OptionLabel).ToArray(), Math.Max(0, selected), valueLeft, controlsTop, valueWidth, index =>
-        {
-            MapMetricOption option = routeOptions[index];
-            if (option.IsAny) _draft.Routes.Remove(scope);
-            else SetRoute(_draft.RouteMetric, option.Value);
-            Render();
-        });
-        targetPicker.Name = "MapRouteTarget";
-        Button remove = Button(content, "×", width - 40, controlsTop, 40,
-            () => { _draft.Routes.Remove(scope); Render(); }, false, 38);
-        remove.Name = "RemoveMapRoute";
-        remove.Disabled = active is null;
-        SearchTooltip.Set(remove, _text.Format("common.remove_named", _text.Get("query.map.route")));
-        return controlsTop + 52;
-    }
-
-    private void MapHint(Control content, string value, float x, float y, float width)
-    {
-        Label hint = Text(content, value, x, y, width, 14, true);
-        hint.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        hint.Size = new(width, 42);
-        hint.MaxLinesVisible = 2;
-        hint.MouseFilter = MouseFilterEnum.Pass;
-        SearchTooltip.Set(hint, value);
-    }
-
-    private void LoadRouteEditor()
-    {
-        if (!_draft.Routes.TryGetValue(_draft.Scope, out RouteCondition? route)) return;
-        _draft.RouteMetric = route.Metric;
-        _draft.RouteValue = route.Value;
-    }
-
-    private void SetRoute(MapMetricKind metric, int value)
-    {
-        bool cleared;
-        if (_draft.Scope == 0)
-        {
-            cleared = _draft.Routes.Keys.Any(scope => scope > 0);
-            _draft.Routes.Remove(1); _draft.Routes.Remove(2); _draft.Routes.Remove(3);
-        }
-        else
-        {
-            cleared = _draft.Routes.Remove(0);
-        }
-        _draft.RouteMetric = metric;
-        _draft.RouteValue = value;
-        _draft.Routes[_draft.Scope] = new RouteCondition(metric, value);
-        if (cleared) ShowToast(_text.Get("query.map.route.scope_toast"));
-    }
-
-    private List<PropertyCondition> PropertiesForScope(int scope)
-    {
-        if (!_draft.Properties.TryGetValue(scope, out List<PropertyCondition>? values))
-            _draft.Properties[scope] = values = [];
-        return values;
-    }
-
-    private void RevalidateMapCapabilities()
-    {
-        // Observed extrema only supply browsing suggestions, never legality or hard bounds.
-        // Canonical validation owns supported scopes/metrics; do not discard a saved threshold
-        // merely because a newer/older observational catalog does not list it.
-        ResetPropertyBuilderSelection();
-        LoadRouteEditor();
-    }
-
-    private void ResetPropertyBuilderSelection()
-    {
-        MapMetricKind[] metrics = PropertyMetrics(_draft.Scope);
-        if (metrics.Length > 0) _draft.PropertyMetric = metrics[0];
-        _draft.PropertyOptionIndex = 0;
-    }
-
-    private MapMetricDescriptor Descriptor(int scope, MapMetricKind metric) =>
-        MapMetricCapabilityCatalog.Find(_draft.Players, _draft.Ascension, scope, metric)
-        ?? throw new InvalidOperationException($"Missing map metric descriptor for players={_draft.Players}, scope={scope}, metric={metric}.");
-
-    private MapMetricKind[] PropertyMetrics(int scope)
-    {
-        MapMetricKind[] ordered =
-        [
-            MapMetricKind.GuaranteedMonster, MapMetricKind.GuaranteedElite,
-            MapMetricKind.GuaranteedRest, MapMetricKind.GuaranteedUnknown,
-            MapMetricKind.ReachableMaxMonster, MapMetricKind.ReachableMaxElite,
-            MapMetricKind.ReachableMaxRest, MapMetricKind.ReachableMaxUnknown,
-            MapMetricKind.ForcedMonsterPrefix
-        ];
-        return ordered.Where(metric => MapMetricCapabilityCatalog.Find(_draft.Players, _draft.Ascension, scope, metric) is not null).ToArray();
-    }
-
-    private MapMetricKind[] RouteMetrics(int scope)
-    {
-        MapMetricKind[] ordered = [MapMetricKind.ReachableMaxElite, MapMetricKind.ReachableMaxRest,
-            MapMetricKind.ReachableMaxUnknown];
-        return ordered.Where(metric => MapMetricCapabilityCatalog.Find(_draft.Players, _draft.Ascension, scope, metric) is not null).ToArray();
-    }
-
-    private MapMetricOption[] RouteOptions(int scope, MapMetricKind metric) => Descriptor(scope, metric).Options
-        .Where(option => option.IsAny || option.Comparison == MapMetricComparison.AtLeast)
-        .ToArray();
-
-    private string OptionLabel(MapMetricOption option) => option.IsAny
-        ? _text.Get("query.map.option.any")
-        : _text.Format(option.Comparison == MapMetricComparison.AtLeast
-            ? "query.map.option.at_least"
-            : "query.map.option.at_most", option.Value);
-
-    private string PropertyLabel(MapMetricKind metric) => _text.Get(metric switch
-    {
-        MapMetricKind.GuaranteedMonster => "query.map.property.monster",
-        MapMetricKind.GuaranteedElite => "query.map.property.elite",
-        MapMetricKind.GuaranteedRest => "query.map.property.rest",
-        MapMetricKind.GuaranteedUnknown => "query.map.property.unknown",
-        MapMetricKind.ForcedMonsterPrefix => "query.map.property.prefix",
-        MapMetricKind.ReachableMaxMonster => "query.map.property.max_monster",
-        MapMetricKind.ReachableMaxElite => "query.map.property.max_elite",
-        MapMetricKind.ReachableMaxRest => "query.map.property.max_rest",
-        _ => "query.map.property.max_unknown"
-    });
-
-    private static int NodeKind(MapMetricKind metric) => metric switch
-    {
-        MapMetricKind.GuaranteedMonster or MapMetricKind.ReachableMaxMonster => 0,
-        MapMetricKind.GuaranteedElite or MapMetricKind.ReachableMaxElite => 1,
-        MapMetricKind.GuaranteedRest or MapMetricKind.ReachableMaxRest => 2,
-        _ => 4
-    };
-
-    private string NodeName(int kind) => _text.Get(kind switch
-    {
-        0 => "query.map.node.monster", 1 => "query.map.node.elite", 2 => "query.map.node.rest",
-        3 => "query.map.node.shop", _ => "query.map.node.unknown"
-    });
-
     private void IdentityButton(Control parent, ModelKey key, GameContentKind kind, IconVariant variant,
         float x, float y, float width, bool selected, Action action)
     {
-        Button button = Button(parent, string.Empty, x, y, width, action, selected, 50);
+        Button button = Button(parent, string.Empty, x, y, width, action, selected, 38);
         _p.ApplyCandidateSurface(button, selected);
         SearchTooltip.Set(button, _names.Resolve(key, kind));
         Texture2D? texture = _icons.Resolve(key, kind, variant).Texture;
         if (texture is not null)
             button.AddChild(new TextureRect
             {
-                Position = new(6, 5), Size = new(40, 40), Texture = texture,
+                Position = new(6, 4), Size = new(30, 30), Texture = texture,
                 ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
                 StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
                 MouseFilter = MouseFilterEnum.Ignore
             });
-        Label name = Text(button, _names.Resolve(key, kind), 50, 10, width - 56, 16);
+        Label name = Text(button, _names.Resolve(key, kind), 42, 5, width - 48, 16);
         name.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
         name.MouseFilter = MouseFilterEnum.Ignore;
     }
@@ -667,8 +330,8 @@ internal sealed partial class ActInformationSearchEditor : Control
         Button button = Button(parent, string.Empty, x, y, width, action, selected, height);
         _p.ApplyCandidateSurface(button, selected);
         if (showTooltip) SearchTooltip.Set(button, _names.Resolve(key, GameContentKind.Encounter));
-        Label name = Text(button, _names.Resolve(key, GameContentKind.Encounter), 8, 44, width - 16, 15);
-        name.Size = new(width - 16, height - 48);
+        Label name = Text(button, _names.Resolve(key, GameContentKind.Encounter), 6, 36, width - 12, 15);
+        name.Size = new(width - 12, height - 38);
         name.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         name.MaxLinesVisible = 2;
         name.HorizontalAlignment = HorizontalAlignment.Center;
@@ -681,7 +344,7 @@ internal sealed partial class ActInformationSearchEditor : Control
         {
             ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
             StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
-            Texture = texture, Position = new((width - 36) / 2, 6), Size = new(36, 36),
+            Texture = texture, Position = new((width - 30) / 2, 4), Size = new(30, 30),
             MouseFilter = MouseFilterEnum.Ignore
         });
         return button;

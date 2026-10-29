@@ -127,19 +127,7 @@ internal static class MapPreviewChecks
             try {fast.ReplayRoot(0,cancelled.Token);throw new Exception("M ignored cancellation");}
             catch(OperationCanceledException){checks++;}
         }
-        var replay=new BoundedActMap(StandardMapFamily.Context(1,10));
-        long generationTicks=0,metricTicks=0;
-        int survivors=0; var watch=System.Diagnostics.Stopwatch.StartNew();
-        for(ulong ordinal=0;ordinal<8192;ordinal++)
-        {
-            long started=System.Diagnostics.Stopwatch.GetTimestamp();
-            replay.ReplayRoot(Beta111Profile.Instance.ComputeRootSeed(VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance,ordinal)));
-            long generated=System.Diagnostics.Stopwatch.GetTimestamp();generationTicks+=generated-started;
-            if(replay.EvaluateFinalScalars().Guarantee(1)>=3)survivors++;
-            metricTicks+=System.Diagnostics.Stopwatch.GetTimestamp()-generated;
-        }
-        watch.Stop();
-        Console.WriteLine($"MAP_FINAL_SEARCH_PARITY checks={checks};roots=8192;survivors={survivors};cpu1Ms={watch.Elapsed.TotalMilliseconds};generationMs={1000d*generationTicks/System.Diagnostics.Stopwatch.Frequency};metricMs={1000d*metricTicks/System.Diagnostics.Stopwatch.Frequency};evidence=FullFinalPlusScalar;notProductionE2E");
+        Console.WriteLine($"MAP_FINAL_SEARCH_PARITY checks={checks};evidence=FullFinalPlusScalarAndRngCalls;timing=false");
         return checks;
     }
     private static void Set(object target, string name, object value)

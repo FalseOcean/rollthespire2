@@ -55,7 +55,7 @@ internal sealed partial class PredictorCrystalReachability
         // Root slot contradictions cover every path and take order. Reprojection
         // must not redo skipped take checks for these now-retired candidates.
         // Do not broaden ordered replay failures into this all-path shortcut.
-        if(rootCardSlots && IsRootCardConflict(selected)) return null;
+        if(rootCardSlots && (IsRootCardConflict(selected) || _offsetBound?.PreparedRootCardSlotsConflict(selected)==true)) return null;
         PredictorCrystalSolution? Verify()
         {
             Interlocked.Increment(ref _proofReplays);

@@ -915,16 +915,23 @@ internal static partial class PartyPhase1Checks
             double clickMs=retargetTimer.Elapsed.TotalMilliseconds;
             Check(((RolltheSpire2.Core.PredictorRuntime.CrystalOptionProjection)typeof(CrystalSphereAssistantPanel).GetField("_projection",flags)!.GetValue(panel)!).SelectedPlan!=null,
                 "mid-search click switches query and keeps its executable witness immediately");
-            while(((RolltheSpire2.Core.PredictorRuntime.CrystalOptionProjection)typeof(CrystalSphereAssistantPanel).GetField("_projection",flags)!.GetValue(panel)!).Available.IsEmpty
-                && retargetTimer.Elapsed<TimeSpan.FromSeconds(5))
+            double firstReceiptMs=-1,firstVisibleMs=-1,maxRetargetFrameMs=0,lastRetargetFrameMs=retargetTimer.Elapsed.TotalMilliseconds;
+            int retargetFrames=0;
+            while(firstVisibleMs<0 && retargetTimer.Elapsed<TimeSpan.FromSeconds(5))
             {
                 await host.ToSignal(host.GetTree(),SceneTree.SignalName.ProcessFrame);
-                var retargetQueue=(System.Collections.Concurrent.ConcurrentQueue<CrystalSphereAssistantPanel.Update>)typeof(CrystalSphereAssistantPanel).GetField("_updates",flags)!.GetValue(panel)!;
-                while(retargetQueue.TryDequeue(out var update)) ApplyPanelUpdate(update);
+                double now=retargetTimer.Elapsed.TotalMilliseconds;
+                maxRetargetFrameMs=Math.Max(maxRetargetFrameMs,now-lastRetargetFrameMs);lastRetargetFrameMs=now;retargetFrames++;
+                var actual=(CrystalOptionProjection)typeof(CrystalSphereAssistantPanel).GetField("_projection",flags)!.GetValue(panel)!;
+                if(!actual.Available.IsEmpty && firstReceiptMs<0) firstReceiptMs=now;
+                // Observe the real bounded consumer and rendered tile state;
+                // manually draining its queue would hide presentation latency.
+                if(actual.Available.Keys.Any(option=>option!=liveChoice && tiles.TryGetValue(option,out var visible) &&
+                    visible.IsVisibleInTree() && visible.Modulate.A>.99f)) firstVisibleMs=now;
             }
             var firstCompatible=(RolltheSpire2.Core.PredictorRuntime.CrystalOptionProjection)typeof(CrystalSphereAssistantPanel).GetField("_projection",flags)!.GetValue(panel)!;
-            Check(!firstCompatible.Available.IsEmpty,"active retarget publishes compatible candidates promptly");
-            GD.Print($"CRYSTAL_UI_RETARGET clickMs={clickMs:F2};firstCompatibleMs={retargetTimer.Elapsed.TotalMilliseconds:F2};options={firstCompatible.Available.Count};actualWorker=true");
+            Check(!firstCompatible.Available.IsEmpty && firstVisibleMs>=0,"active retarget visibly presents compatible candidates through the production queue promptly");
+            GD.Print($"CRYSTAL_UI_RETARGET clickMs={clickMs:F2};firstReceiptMs={firstReceiptMs:F2};firstVisibleMs={firstVisibleMs:F2};maxFrameMs={maxRetargetFrameMs:F2};frames={retargetFrames};options={firstCompatible.Available.Count};actualWorker=true;manualDrain=false");
             while(retargetTimer.Elapsed<TimeSpan.FromSeconds(11))
             {
                 await host.ToSignal(host.GetTree(),SceneTree.SignalName.ProcessFrame);

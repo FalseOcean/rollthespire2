@@ -4,295 +4,310 @@
   "Blocks": [
     {
       "Type": "Heading",
-      "Text": "RolltheSpire2 1.4.0 · In development"
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "Adds an in-run map route-input prototype. Switch acts and route prediction from the upper-right panel; use the existing pen, eraser and clear tools to select nodes. Draw disconnected segments and undo individual edits. A stroke that cannot fit a single legal route is rejected. This prototype is for route input; full live-state reconciliation and node details remain in development."
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "The route backend connects combat, rest, shops, Ancients, events and treasures through explicit choices. Changes to earlier choices recompute dependent observations while retaining applicable later intent. Missing inputs identify the affected information. Prediction never advances the real run state or its random streams."
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "The encyclopedia has been reorganized around the author’s original explanations of choices and agreements while preserving its navigation. Search execution availability and result confirmation are handled separately: candidates without a proven mismatch may be displayed and saved as unverified when checking is incomplete."
-    },
-    {
-      "Type": "Heading",
-      "Text": "RolltheSpire2 1.3.5"
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "This update fixes some combinations of Bones transformation targets and relic conditions, improves game version detection at startup, and adds bilingual display for developer presets."
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "Fixed transformation targets for Leafy Poultice and New Leaf inside Neow’s Bones can now be combined with supported relic conditions, including shop relics. Filtering checks transformation and relic outcomes under the same pickup order. Other unsupported transformation combinations remain restricted."
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "Fixed incorrect rejection of some multiplayer Boss conditions, shared-world authority handling for parties with mixed unlocks, and Ancient options being lost when restoring older configurations without editor metadata."
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "Startup now prefers version information supplied by the game and falls back to files when needed. If a usable seed and RNG profile is unavailable, RT2 explains the problem and preserves saved search configurations, avoiding some startup and pre-search index errors. This is a bounded fix for reported issues, not a claim of full Android support or a general device compatibility fix."
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "Developer preset titles and descriptions now follow the interface language and can be searched with Chinese or English keywords. Your own preset text remains unchanged."
-    },
-    {
-      "Type": "Heading",
-      "Text": "RolltheSpire2 1.3.4"
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "This update focuses on the Seed Library and search interface, expands event predictions and the encyclopedia, and improves Crystal Sphere prediction and GPU initialization diagnostics."
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "The Seed Library brings favorite seeds, search presets and search history into a shared list-and-details layout. Favorite seeds support titles and notes, and presets link to their historical results. Queries with the same conditions and environment merge into one record. By default, history keeps the latest 30 queries, each with its latest 30 distinct results; the query limit is adjustable in Settings. Preset-linked records are retained, and favorite seeds are saved independently. Results remain available after closing the panel or restarting. Developer picks also provide ready-to-use seeds."
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "Search has a more visible results entry and per-category clearing. Switching between joint and separate targets for Leafy Poultice, New Leaf and Capsules preserves and reuses existing targets. Buttons and icons have clearer hierarchy, and interface colors are adjustable. Multiplayer event occurrence conditions are edited once for the party, while personal outcomes remain separate."
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "Click an event in Seed Analysis to inspect its currently supported filterable outcomes; event queue tooltips also show concise text results. Transform predictions follow the stated starter-card and other assumptions. The event picker can filter events with configurable outcomes. The encyclopedia has reorganized navigation and articles, including seed principles and shared multiplayer conditions; frequently asked questions now live there."
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "Crystal Sphere supports the local player in single-player and multiplayer, adds Driftwood reroll plans, and improves target-combination solving, target changes and reopening the same event. A new Include enchantments switch is off by default. When enabled, it distinguishes explicitly unenchanted cards and specific enchantment types and amounts; card upgrades remain distinct. Custom effects from other mods and complex multiplayer interactions may affect results."
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "GPU initialization now distinguishes unverified, successful and failed creation, retains the failure stage and reason, avoids repeatedly hitting the same initialization failure, and offers an explicit retry. Feedback bundles include these diagnostics. This does not mean that every driver or D3D12 device compatibility issue has been resolved."
-    },
-    {
-      "Type": "Heading",
-      "Text": "RolltheSpire2 1.3.3"
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "This update adds in-run Crystal Sphere prediction, improves parts of single-player GPU search, and adds rejection diagnostics, optional unverified candidates and unread release-note reminders."
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "Enable the in-run prediction shortcut in Settings. At Crystal Sphere, read the current board, explore compatible rewards and choose targets for reveal guidance. Cards and their upgraded variants appear as separate targets and are verified separately. Prediction supports the three-reveal and six-reveal choices as well as remaining reveals. You can keep interacting while it computes; a combination not yet found is not treated as unreachable. The optional translucent mask is off by default."
+      "Text": "RolltheSpire2 1.4.0"
     },
     {
       "Type": "Callout",
-      "Text": "Unverified candidates: enable this option in Settings; it is off by default. These candidates may fail some search conditions and can be validated individually after the search. Use Feedback to export a diagnostic bundle when reporting problems."
+      "Text": "This page summarizes the main changes and scope of version 1.4.0."
     },
     {
       "Type": "Paragraph",
-      "Text": "About now includes a separate Project Philosophy chapter. Pending acknowledgements give About a gold reminder; confirm each chapter after reading. Reminders never redirect you or interrupt other tools."
+      "Text": "This version gives RT2 a thorough round of refinement: a reorganized interface and encyclopedia, more search conditions, and prediction that starts to follow the actions and routes of an actual run."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "After upgrading from 1.3.5, setting conditions, finding seeds, viewing results and saving them will still feel familiar. What has changed is the interface you open, the ways you can express what you want, and the help available for understanding conditions and results."
     },
     {
       "Type": "Heading",
-      "Text": "RolltheSpire2 1.3.2"
+      "Text": "A refined night-blue interface"
     },
     {
       "Type": "Paragraph",
-      "Text": "1.3.2 fixes multiplayer Neow filtering and prediction issues, and adds an optional in-run prediction shortcut."
+      "Text": "The main panel now uses a consistent night-blue palette, with reworked fonts, object images and text, selection states, spacing and page hierarchy."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Page preparation and long lists have also been adjusted to reduce the burden of repeated creation and concentrated refreshes."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "I hope it can accommodate more complex needs while making everyday use more comfortable."
     },
     {
       "Type": "Heading",
-      "Text": "Multiplayer Neow Fixes"
+      "Text": "Encyclopedia: explaining the thinking behind the design"
     },
     {
       "Type": "Paragraph",
-      "Text": "Fixed the multiplayer Neow’s Bones relic pool differing from the game. Filtering, prediction and probability estimates now use the corrected pool."
+      "Text": "Several encyclopedia articles have been rewritten in this round."
     },
     {
       "Type": "Paragraph",
-      "Text": "Fixed some multiplayer Bones queries containing Capsules failing to start searching, and Massive Scroll card targets being omitted from filtering and rarity estimates."
+      "Text": "The existing explanations of mechanics remain, with more concrete player needs, situations and trade-offs. For example:"
+    },
+    {
+      "Type": "BulletList",
+      "Items": [
+        "Why are the rewards specified in a search treated as choices you intend to make?",
+        "Why can taking one extra card sometimes change the final curse from Neow’s Bones?",
+        "Why does an event’s position in the queue not guarantee which question-mark room will contain it?",
+        "Why does map search use different properties and route requirements instead of one universal “good map score”?",
+        "Which needs suit high-speed seed search, and which processes are better handed to a predictor after you see the actual map?"
+      ]
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "These questions concern both what RT2 is trying to solve and how its results should be used. I hope the encyclopedia can do more than help you fill in conditions: it should explain where they come from and the balance between freedom of expression, correct results, required input and computation cost."
     },
     {
       "Type": "Heading",
-      "Text": "Combined Transformations"
+      "Text": "Library and reusable card collections"
     },
     {
       "Type": "Paragraph",
-      "Text": "Added the specified-cards + remaining-Rare objective. Each specified card occupies one result slot, and every remaining result must be Rare. It works across managed sources, including Symbiote and Trial, with filtering, probability estimates and saved conditions using the same requirement."
+      "Text": "The Seed Library has become the [b]Library[/b], adding independently saved card collections alongside favorites, presets and history."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "You can create a collection spanning multiple characters, filter cards by name or ID, character/card pool, rarity and type, add or remove cards continuously, and save, edit, copy or delete collections."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Card collections currently serve two purposes:"
+    },
+    {
+      "Type": "BulletList",
+      "Items": [
+        "[b]Search exclusions[/b]: require the initial card rewards from the first 1–6 normal combats checked after the opening to contain no collection members.",
+        "[b]Route highlights[/b]: choose collections you care about in the in-run route overview to find relevant cards along the way."
+      ]
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "A query saves a snapshot of the collection’s members when you select it. Editing or deleting the source collection later does not silently change saved queries. You can explicitly update them when you want the newer version."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Route prediction also remembers your chosen collections. It highlights all Rare cards by default, while retaining the complete rewards. Changing highlights does not change your route or take rewards for you."
     },
     {
       "Type": "Heading",
-      "Text": "In-run Prediction Shortcut"
+      "Text": "More specific search conditions"
     },
     {
       "Type": "Paragraph",
-      "Text": "Settings now includes “Show in-run prediction shortcut”, off by default. When enabled, a Bones icon appears below the run information at the top right in all runs. It opens the current seed’s opening prediction using the run’s characters, ascension and unlock context. Choices and pickup order must still match actual play; this does not predict the current game state or a played path."
+      "Text": "Standard single-player searches can now target relics in the first chest, second chest, or either of the first two chests."
     },
     {
       "Type": "Paragraph",
-      "Text": "The RT2 entry in multiplayer lobbies is now shown only in Custom mode."
+      "Text": "Chests are counted in the order actually encountered, including those generated by question-mark rooms. The corresponding single-player Seed Information display now shows chest relics in a nine-slot sequence."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Ordinary Act 1 question-mark rooms also have a prefix condition: require the first few ordinary question-mark rolls to produce events."
     },
     {
       "Type": "Heading",
-      "Text": "RolltheSpire2 1.3.1"
+      "Text": "Map search: arrange the route you want"
     },
     {
       "Type": "Paragraph",
-      "Text": "1.3.1 improves search performance and stability for some queries, fixes several Neow combinations, and adds a dedicated feedback page."
-    },
-    {
-      "Type": "Heading",
-      "Text": "Search Performance and Stability"
+      "Text": "The map page retains the three-Act total and per-Act entries. Common count objectives and independent map properties have been rearranged, with direct number input and plus/minus controls."
     },
     {
       "Type": "Paragraph",
-      "Text": "Further separated key single-player and multiplayer search calculations to reduce the extra work imposed on single-player filtering, while retaining existing Neow-specific optimizations."
+      "Text": "Each Act now has a [b]drawing mode[/b]. Drag or append Monster, Unknown, Shop, Elite and Rest nodes to the axis in the order you want to encounter them. Box-select nodes into a group when their internal order does not matter."
     },
     {
       "Type": "Paragraph",
-      "Text": "Fixed some Capsule combinations missing the GPU filtering path and searching more slowly as a result. Improved capacity handling, initialization, and resource cleanup in several GPU paths, and added diagnostic logs to help investigate device compatibility issues."
-    },
-    {
-      "Type": "Heading",
-      "Text": "Neow Combinations and Prediction Fixes"
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "Fixed some Capsule combinations producing candidates that the final check could not confirm, preventing matching seeds from being returned."
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "Added pickup-order handling for Silken Tress paired with Lost Coffer or Kaleidoscope inside Neow’s Bones. Picking up Tress first enchants the Coffer card reward or the first Kaleidoscope reward with Glam. Picking it up afterward saves the effect for the first combat card reward."
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "You can switch between these pickup orders in Seed Analysis. Opening card results and subsequent combat rewards update together. Skipping the opening card reward still consumes Tress’s effect."
-    },
-    {
-      "Type": "Heading",
-      "Text": "Clear Search Conditions"
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "Search now has a Clear all action with Undo until you start editing again. It clears the current mode’s conditions while preserving characters, ascension, multiplayer configuration, and search settings."
-    },
-    {
-      "Type": "Heading",
-      "Text": "Bug Reports"
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "A new top-level Feedback page can package recent RT2 and game logs, environment information, and the current search configuration into a ZIP, then open its folder automatically."
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "The current interface language selects a Chinese or English report and a GitHub Issue page prefilled with environment details. Add a problem description and reproduction steps, attach the ZIP manually, and submit. You can also copy the report and send it by email."
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "A description alone is often not enough to diagnose a problem. RT2 is a personal hobby project, so a timely reply or fix cannot be guaranteed for every report. Thank you for understanding."
+      "Text": "For example, you can ask for:"
     },
     {
       "Type": "Callout",
-      "Text": "Some previously reported GPU errors have not been retested on the affected devices. These improvements do not mean that every device has been verified."
+      "Text": "Visit an Elite and a Rest Site in either order, then a Shop, then another Elite."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "These requirements must all be satisfied by [b]one complete route[/b], with extra rooms allowed along the way. Fixed opening Monsters, fixed chests and the pre-Boss Rest Site do not automatically count toward the manually drawn requirements."
     },
     {
       "Type": "Heading",
-      "Text": "RolltheSpire2 1.3.0"
+      "Text": "Faster complete generation and an optional lossy prefilter"
     },
     {
       "Type": "Paragraph",
-      "Text": "Version 1.3.0 expands RT2's prediction and filtering capabilities and redesigns the interface. It adds multiplayer seed search and prediction, map features, an encyclopedia, and seed favorites, while also improving condition setup and the overall workflow."
+      "Text": "Map search continues to use complete evaluation by default, with less repeated exploration and temporary workspace use during complete map generation."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "There is also a [b]lossy prefilter, off by default[/b], using the CPU or GPU for supported vanilla standard single-player conditions."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[b]The lossy prefilter can miss seeds that meet your requirements.[/b] Remaining candidates still undergo complete map evaluation. Broad conditions may not benefit from prefiltering; choose according to your needs."
     },
     {
       "Type": "Heading",
-      "Text": "Redesigned Interface"
+      "Text": "In-run operation prediction: compare the consequences of choices"
     },
     {
       "Type": "Paragraph",
-      "Text": "Seed search and seed information prediction both have new interfaces."
+      "Text": "Supported native options, rewards, relics, shops, transformations and potions can show predicted outcomes from the current state."
     },
     {
       "Type": "Paragraph",
-      "Text": "Search conditions are grouped by content, with clearer selection of cards, relics, and other objects. Condition counts, rarity, and search progress have also been reorganized."
+      "Text": "This also explores deeper sequences of choices:"
+    },
+    {
+      "Type": "BulletList",
+      "Items": [
+        "[b]Reroll groups and order previews[/b]: inspect subsequent rerolls in the current reward set, including different reroll orders in situations such as Colorful Philosophers.",
+        "[b]Multiple sacrifice previews[/b]: use your current Pael’s Wing progress to see relics obtainable by continuing to sacrifice these rewards.",
+        "[b]Effects after acquisition[/b]: distinguish intermediate choices, automatic acquisition and later outcomes in supported situations.",
+        "[b]Complex shop restocks[/b]: when a purchase also requires card selection or another transaction, continue inspecting restocks and some related effects under the stated assumptions.",
+        "[b]Post-combat rewards in specific events[/b]: preview rewards after choosing combat, under explicit combat-resolution assumptions."
+      ]
     },
     {
       "Type": "Paragraph",
-      "Text": "Seed information is organized by opening, Act, and Shops & Relics, making it easier to inspect Neow results, combat rewards, encounters, maps, and the complete initial relic bags."
+      "Text": "Potion previews now show use order, letting you compare what a potion will do after other potions are used first. They usually expand through the third use. If more than eight groups would be shown, the entire preview returns to two layers. Potion icons retain the order while keeping the display manageable."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Each prediction has its own supported sources, stages and assumptions. Operation prediction has an independent switch and per-source display controls. When RandomForeseer is also installed, Auto mode yields some duplicate basic displays while retaining RT2’s additional information."
     },
     {
       "Type": "Heading",
-      "Text": "Multiplayer Seed Search and Prediction"
+      "Text": "Route prediction for the current Act"
     },
     {
       "Type": "Paragraph",
-      "Text": "You can now configure 2–4 players, choose each player's character and personal conditions, and apply shared conditions to the whole party."
+      "Text": "On the map during an actual run, use the native pen, right-click drawing and eraser tools to express the route you want through the current Act, then inspect encounters, events, shops and rewards along it."
     },
     {
       "Type": "Paragraph",
-      "Text": "Multiplayer configuration assumes full unlocks for everyone by default. You can also explicitly read the actual lobby context, so entering a multiplayer lobby is not required every time."
+      "Text": "Card selections, skips, event branches and purchases at nodes feed into later predictions. Change a choice and the subsequent outcomes are recalculated. As you advance in the real run, predictions continue from the actual progress and state."
     },
     {
       "Type": "Paragraph",
-      "Text": "Information prediction has its own multiplayer configuration. Each player can choose their Neow option, with pickups executed in [b]P1 → P2 → P3 → P4[/b] order. The options displayed by default also count as chosen. Modeled random consumption from earlier choices affects predictions for later players."
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "The main multiplayer conditions also support CPU/GPU fast filtering. Multiplayer transformation combinations are not currently included."
+      "Text": "Route prediction currently focuses on [b]the actual current Act in single-player[/b]. Combat outcomes still have stated assumptions; it does not simulate the sequence of card plays in a whole battle. Your actual choices and additional random consumption during normal play can also change later outcomes."
     },
     {
       "Type": "Heading",
-      "Text": "Map Preview and Filtering"
+      "Text": "Further improvements to the Crystal Sphere assistant"
     },
     {
       "Type": "Paragraph",
-      "Text": "Seed information now includes map previews. You can draw routes and browse routes tied for the best value of a selected metric."
+      "Text": "The existing Crystal Sphere assistant has further refinements to target combinations, gold plans and reveal guidance:"
+    },
+    {
+      "Type": "BulletList",
+      "Items": [
+        "Find gold-oriented plans even when no card or other reward targets are selected.",
+        "Continue considering compatible gold gains when reward targets are retained.",
+        "Distinguish the completion states of candidate evaluation, feasible plans and proof of maximum gold.",
+        "Keep verified plans while continuing to search unresolved questions.",
+        "Reduce repeated computation and display work with complex relic states."
+      ]
     },
     {
       "Type": "Paragraph",
-      "Text": "Seed searches can require supported route metrics and map properties, such as Elites, Shops, Rest Sites, and certain node counts and distribution conditions."
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "These features focus on map structure and existing prediction assumptions. Simulation of complete runs and later outcomes along a route remains under research. Map filtering does not currently have a GPU implementation."
+      "Text": "Proof of optimal gold and completion of the candidate list are handled separately. Finishing one does not mark the other complete."
     },
     {
       "Type": "Heading",
-      "Text": "More Ways to Express Conditions"
+      "Text": "Search execution, compatibility and saved results"
     },
     {
       "Type": "Paragraph",
-      "Text": "Ancient option requirements are more detailed. You can require several specified options to be offered together, or accept any one of several candidates."
+      "Text": "CPU batch prescreening, opening random calculations, reward-pool preparation, candidate-identity reuse, GPU batch submission and data transfer have received targeted optimizations to reduce repeated work on applicable paths."
     },
     {
       "Type": "Paragraph",
-      "Text": "Combat reward conditions can cover cards and potions in the first [b]1–6 battles[/b]. Each can target a specific battle or match anywhere within the range, regardless of order."
-    },
-    {
-      "Type": "Paragraph",
-      "Text": "Event result coverage has expanded, with conditions placed directly under the corresponding event. Transformation combinations include more event sources and can combine results from multiple sources within the supported scope."
+      "Text": "Automatic execution order uses clearer computation-cost references, with transfer time and complete-call time handled separately. Benefits vary with the query, device and startup state. Rarity and predicted time remain estimates."
     },
     {
       "Type": "Heading",
-      "Text": "Encyclopedia, Presets, and Seed Favorites"
+      "Text": "Manual adjustment of family execution order"
     },
     {
       "Type": "Paragraph",
-      "Text": "The new encyclopedia brings together filtering rules, prediction assumptions, and game mechanics documented during development, so you can consult them while using RT2."
+      "Text": "Before starting, you can inspect the automatic order or switch to manual mode and move filter families up or down. The search then runs in the order you selected."
     },
     {
       "Type": "Paragraph",
-      "Text": "Presets can save complete search configurations, including multiplayer conditions. The seed library stores favorite seeds, character context, and notes, allowing you to revisit predictions using the saved configuration."
+      "Text": "If you know these families, or simply want to try how different orders affect search performance, you can adjust them, inspect actual runtime readings, and switch back to automatic ordering. Missing time estimates do not prevent manual execution."
     },
     {
       "Type": "Heading",
-      "Text": "Probability, Performance, and Other Improvements"
+      "Text": "Result handling is also clearer"
+    },
+    {
+      "Type": "BulletList",
+      "Items": [
+        "[b]Confirmed results[/b] satisfy the conditions in the final model check.",
+        "[b]Unverified candidates[/b] retain the scope and reasons the model cannot yet confirm. They can be saved and checked again later.",
+        "[b]Actual execution failures[/b] retain their original causes and pending work instead of being treated as conditions not matching."
+      ]
     },
     {
       "Type": "Paragraph",
-      "Text": "This release adds probability models and fast filtering for new conditions and multiplayer queries, and adjusts how some searches with multiple conditions are executed."
+      "Text": "Within trustworthy recovery boundaries, independent seeds can continue to be processed. Auxiliary problems in saving, estimates, display and cleanup are kept separate from search computation where possible. Favorites, history, condition restoration and reuse after restart have also received further workflow validation."
     },
     {
       "Type": "Paragraph",
-      "Text": "Some combinations in multiplayer and modded environments have not yet been fully validated. Performance and ETA estimates for complex queries also need further improvement. Current support does not mean arbitrary mod changes can be predicted accurately."
+      "Text": "Fixed incorrect random-state rotation calculations in some GPU environments by using an equivalent rotation implementation with two 32-bit halves. This may improve some Neow’s Bones searches that return no usable candidates or miss matching seeds."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "The GPU has additional applicable numerical compatibility paths, while retaining initialization causes and an explicit retry entry. Devices, operating systems, game updates and rule-changing mods can still affect execution or accuracy. Concrete feedback and logs remain important."
+    },
+    {
+      "Type": "Heading",
+      "Text": "Other changes"
+    },
+    {
+      "Type": "BulletList",
+      "Items": [
+        "Settings are organized into Features, Preferences, Advanced and Diagnostics. In-run tool entry points, operation prediction and map routes have separate controls.",
+        "A new explicit single-player in-run Test Console supports finding and adding objects, adjusting decks or potions, and entering events and encounters for experiments and issue reproduction.",
+        "Improved registered content names, external card art and presentation alongside some other mods.",
+        "Consolidated repeated internal checks and mechanic facts to reduce the risk of inconsistent maintenance changes.",
+        "About now includes a permanent Contributors & acknowledgements chapter."
+      ]
+    },
+    {
+      "Type": "Heading",
+      "Text": "Acknowledgements"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Thank you, [b]James Zhou (@JamesZhou233)[/b]."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "James shared and discussed GPU execution and data-transfer optimizations with me earlier, providing concrete implementations and comparison material. This work helped RT2 improve batch submission, buffer reuse and candidate data transfer. The ideas were then independently adapted to the current version’s execution and recovery behavior."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[url=https://github.com/FalseOcean/rollthespire2/pull/4]See James’s optimization proposal and PR[/url]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Thank you, [b]Egoistic今宵 (@shion0528)[/b]."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "His CPU/GPU filtering and opening-simulation optimizations, benchmarks and validation material provided valuable references for batch prescreening, random-computation reuse, reward-pool preparation and candidate-state reuse. After adaptation and validation for the current version, these methods entered applicable search paths."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[url=https://github.com/shion0528/rollthespire2/releases/tag/v1.3.5-resource.17]See shion’s research version and implementation[/url]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Both started from the public 1.3.5, studied it carefully, and returned to discuss their own implementations, giving RT2 opportunities to keep improving. I am grateful for that help, and for the players who shared real experiences, seeds, saves and logs during this round."
     }
   ]
 }

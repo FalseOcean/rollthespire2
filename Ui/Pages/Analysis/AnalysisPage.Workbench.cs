@@ -40,6 +40,7 @@ internal sealed partial class AnalysisPage
         _resultOrigin = provenance;
         _searchOpeningUnavailable = openingUnavailable;
         RefreshSearchOrigin();
+        RefreshMapWitnessEntries();
     }
     private void RefreshSearchOrigin()
     {
@@ -599,6 +600,7 @@ internal sealed partial class AnalysisPage
         ShowMapRail(true);
         var mapHeader = new HBoxContainer { Name = "PredictorMapHeader", CustomMinimumSize = new Vector2(0, WorkspaceLayout.HeaderHeight) };
         _wbRight.AddChild(mapHeader);
+        AddMapWitnessEntry(_wbRight, act);
         mapHeader.AddChild(WLabel(_uiText!.Format("predictor.map", act), true));
         var clearRoute = WAction("ui1.map.route.clear"); clearRoute.Name = "ClearMapRoute"; clearRoute.Disabled = true;
         mapHeader.AddChild(clearRoute);

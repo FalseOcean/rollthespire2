@@ -14,7 +14,7 @@ using RolltheSpire2.Search.Runtime;
 internal static partial class FamilyPhysicalMatrix
 {
     // Bounded adaptation of the existing R43/R44 MeasurePartySustained public
-    // collector. Uses current registered N and complete InvokeAsync wall time;
+    // collector. Uses current registered ordinary N/T and complete InvokeAsync wall time;
     // private transport, Exact, output hashing and setup are outside this price.
     internal static void MeasureNeowCanonical(ExactSearchExecutionRequest request, string[] args, string output)
     {
@@ -28,6 +28,10 @@ internal static partial class FamilyPhysicalMatrix
         int warmups = int.Parse(Arg("--canonical-warmups", "2"));
         int minMs = int.Parse(Arg("--canonical-sample-ms", "3000"));
         int minBatches = int.Parse(Arg("--canonical-min-batches", "16"));
+        string canonicalFamily = Arg("--canonical-family", "N");
+        if (canonicalFamily is not ("N" or "T")) throw new ArgumentException("FamilyCanonical.InvalidFamily;expected=N|T");
+        string ownerTag = canonicalFamily == "N" ? "NeowCanonical" : "FamilyCanonical.T";
+        string requestedTPlanExperiment = System.Environment.GetEnvironmentVariable("RT2_T_GPU_PLAN_EXPERIMENT") ?? "off";
         string mode = Arg("--canonical-mode", "both");
         bool integer = args.Contains("--canonical-integer", StringComparer.Ordinal);
         string split = Arg("--canonical-split", "training");
@@ -37,13 +41,14 @@ internal static partial class FamilyPhysicalMatrix
             repeats is < 1 or > 20 || warmups is < 2 or > 1024 || minMs is < 1 or > 60000 ||
             minBatches is < 1 or > 65536 || mode is not ("both" or "dense" or "compact") ||
             split is not ("training" or "validation"))
-            throw new ArgumentException("NeowCanonical.InvalidSoloGeometryOrMeasurementConfiguration");
-        string summaryPath = Path.Combine(output, "neow-canonical-summary.json");
-        string recordsPath = Path.Combine(output, "neow-canonical-batches.jsonl");
-        if (File.Exists(summaryPath) || File.Exists(recordsPath)) throw new IOException("NeowCanonical.ImmutableOutputExists");
+            throw new ArgumentException(ownerTag + ".InvalidSoloGeometryOrMeasurementConfiguration");
+        string filePrefix = canonicalFamily == "N" ? "neow-canonical" : "family-canonical";
+        string summaryPath = Path.Combine(output, filePrefix + "-summary.json");
+        string recordsPath = Path.Combine(output, filePrefix + "-batches.jsonl");
+        if (File.Exists(summaryPath) || File.Exists(recordsPath)) throw new IOException(ownerTag + ".ImmutableOutputExists");
         var profile = RuntimeProfileRegistry.Select(request.Detection);
         if (!VisibleSeedCandidateCodec.TryParseOrdinal(profile, request.CanonicalStartSeed, out ulong nextBase, out _, out string issue))
-            throw new ArgumentException("NeowCanonical.StartSeed:" + issue);
+            throw new ArgumentException(ownerTag + ".StartSeed:" + issue);
         ulong space = VisibleSeedCandidateCodec.SpaceSize(profile);
         var rows = new List<object>();
         var modes = mode == "both" ? new[] { false, true } : new[] { mode == "compact" };
@@ -63,11 +68,39 @@ internal static partial class FamilyPhysicalMatrix
             try
             {
                 owners = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, gpuAvailable: true, gpuFloat64Available: !integer);
-                var family = owners.OfType<NeowFamily>().SingleOrDefault(f => f.Coverage.Count == 1 && f.GpuPlan is not null)
-                    ?? throw new InvalidOperationException("NeowCanonical.OrdinaryRegisteredGpuNRequired");
+                IFamilyInvocation family = canonicalFamily == "N"
+                    ? owners.OfType<NeowFamily>().SingleOrDefault(f => f.Coverage.Count == 1 && f.GpuPlan is not null)
+                        ?? throw new InvalidOperationException("NeowCanonical.OrdinaryRegisteredGpuNRequired")
+                    : owners.OfType<TransformationAggregateFamily>().SingleOrDefault(f => ((IFamilyInvocation)f).Coverage.Count == 1 && f.GpuPlan.Supported)
+                        ?? throw new InvalidOperationException("FamilyCanonical.T.OrdinaryRegisteredGpuTRequired");
                 FamilyCanonicalCostKey? key = null;
-                double? survival = family.ResolveSurvival(new HashSet<string>()).SurvivalProbability;
-                if (survival is not (>= 0 and <= 1)) throw new InvalidOperationException("NeowCanonical.SourceSurvivalUnavailable");
+                // Only N currently owns a source-survival selector in the
+                // canonical lookup. T model q/s is observation metadata, never
+                // a terminal/joint survival selector or a quote prerequisite.
+                double? survival = canonicalFamily == "N"
+                    ? family.ResolveSurvival(new HashSet<string>()).SurvivalProbability : null;
+                if (canonicalFamily == "N" && survival is not (>= 0 and <= 1))
+                    throw new InvalidOperationException("NeowCanonical.SourceSurvivalUnavailable");
+                string numericalVariant = family switch {
+                    NeowFamily n => n.GpuPlan!.NumericalVariant.ToString(),
+                    TransformationAggregateFamily t => t.GpuPlan.NumericalVariant.ToString(),
+                    _ => throw new InvalidOperationException(ownerTag + ".UnexpectedFamilyType")
+                };
+                bool actualInteger = family switch {
+                    NeowFamily n => n.UsesCompatibilityGpu,
+                    TransformationAggregateFamily t => t.GpuPlan.NumericalVariant == GpuNumericalVariant.IntegerRne,
+                    _ => false
+                };
+                if (actualInteger != integer || !family.ConditionPerformance.UsesGpu)
+                    throw new InvalidOperationException(ownerTag + ".ActualNumericalVariantOrGpuMismatch");
+                bool? tPrefixReuse = family is TransformationAggregateFamily transform ? transform.GpuPlan.PrefixReuse : null;
+                bool? tFullTarget = family is TransformationAggregateFamily full ? full.GpuPlan.FullTarget : null;
+                static double? Finite(double? value) => value is { } v && double.IsFinite(v) ? v : null;
+                object? modelObservation = family is TransformationAggregateFamily model ? new {
+                    QueryHitProbability = Finite(model.Probability.QueryHitProbability), StageSurvival = Finite(model.Probability.StageSurvival),
+                    IdentityProbability = Finite(model.Probability.IdentityProbability), model.Probability.Evidence,
+                    PriceSelector = false, NonFiniteValuesReportedAsNull = true
+                } : null;
                 using var aggregate = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
                 int batches = 0;
                 long outputs = 0;
@@ -75,7 +108,7 @@ internal static partial class FamilyPhysicalMatrix
                 for (int index = -warmups; index < minBatches || measuredMs < minMs; index++)
                 {
                     if (index >= 65536 || nextBase > space || (ulong)window > space - nextBase)
-                        throw new InvalidOperationException("NeowCanonical.DurationOrSeedSpaceBoundReached;partialEvidenceRetained=true");
+                        throw new InvalidOperationException(ownerTag + ".DurationOrSeedSpaceBoundReached;partialEvidenceRetained=true");
                     var batch = new SearchBatch(nextBase, window);
                     nextBase = checked(nextBase + (uint)window);
                     var input = compact ? FamilyCandidateSet.FromSortedAbi1(batch, compactOrdinals!) : FamilyCandidateSet.Dense(batch);
@@ -86,16 +119,16 @@ internal static partial class FamilyPhysicalMatrix
                     // Device identity is captured by the actual executor, after
                     // creation; never freeze an uninitialized GPU identity.
                     key ??= FamilyCanonicalCostShape.Describe(request, family, compact, window)
-                        ?? throw new InvalidOperationException("NeowCanonical.StructuralPricingKeyUnavailable");
+                        ?? throw new InvalidOperationException(ownerTag + ".StructuralPricingKeyUnavailable");
                     if (result.Batch != batch || result.Count > population || !double.IsFinite(ms) || ms <= 0 ||
-                        ((IFamilyInvocation)family).ExecutionFaulted || execution.CaptureFilterIsolations(batch).Count != 0)
-                        throw new InvalidDataException("NeowCanonical.InvocationInvalidOrIsolated");
+                        family.ExecutionFaulted || execution.CaptureFilterIsolations(batch).Count != 0)
+                        throw new InvalidDataException(ownerTag + ".InvocationInvalidOrIsolated");
                     // Hash the entire ordered ABI1 outside Invoke timing. This
                     // checks the stored evidence, not an independent CPU oracle.
                     var ordinals = result.ExportAbi1();
                     for (int i = 0; i < ordinals.Length; i++)
                         if (ordinals.Span[i] >= (ulong)window || i > 0 && ordinals.Span[i] <= ordinals.Span[i - 1])
-                            throw new InvalidDataException("NeowCanonical.OrderedAbi1Invalid");
+                            throw new InvalidDataException(ownerTag + ".OrderedAbi1Invalid");
                     byte[] digest = SHA256.HashData(MemoryMarshal.AsBytes(ordinals.Span));
                     if (index < 0) warmupMs += ms;
                     else
@@ -112,13 +145,19 @@ internal static partial class FamilyPhysicalMatrix
                     records.WriteLine(JsonSerializer.Serialize(new { Repeat = repeat, CompactInput = compact, Warmup = index < 0,
                         BatchIndex = index, batch.BatchBase, BatchCandidateCount = window, Input = population, Output = result.Count,
                         InvokeWallMs = ms, Digest = Convert.ToHexString(digest), Key = key,
+                        CanonicalFamily = canonicalFamily, ActualNumericalVariant = numericalVariant,
+                        ActualIntegerVariant = actualInteger, ActualTPrefixReuse = tPrefixReuse, ActualTFullTarget = tFullTarget,
                         Boundary = FamilyCanonicalMeasuredCost.Boundary, VerificationOutsideTiming = true }, json));
                 }
-                rows.Add(new { Key = key, SourceSurvival = survival, Split = split, Role = "PublicAbi1Canonical", Repeat = repeat,
+                rows.Add(new { Key = key, Coverage = family.Coverage, SourceSurvival = survival, Split = split, Role = "PublicAbi1Canonical", Repeat = repeat,
                     InputPerBatch = population, MeasuredBatches = batches, Input = (long)batches * population, Output = outputs,
                     InvokeWallMs = measuredMs, CallMilliseconds = measuredMs / batches, WarmupBatches = warmups, WarmupInvokeWallMs = warmupMs,
                     FirstBatchBaseIncludingWarmup = first, EndBatchBaseExclusive = nextBase,
-                    Digest = Convert.ToHexString(aggregate.GetHashAndReset()), SourceSurvivalBasis = "Family.ResolveSurvival;NotObserved",
+                    Digest = Convert.ToHexString(aggregate.GetHashAndReset()),
+                    SourceSurvivalBasis = canonicalFamily == "N" ? "Family.ResolveSurvival;NotObserved" : "NotApplicableToT;NoSourceSurvivalSelector",
+                    CanonicalFamily = canonicalFamily, ActualNumericalVariant = numericalVariant,
+                    ActualIntegerVariant = actualInteger, ActualTPrefixReuse = tPrefixReuse, ActualTFullTarget = tFullTarget,
+                    ModelProbabilityObservation = modelObservation,
                     Boundary = FamilyCanonicalMeasuredCost.Boundary, FirstAndWarmupsExcluded = true, FullCpuOracle = false,
                     SameRunRepricing = false, ProductionE2E = false });
             }
@@ -131,7 +170,7 @@ internal static partial class FamilyPhysicalMatrix
                 try { execution.DisposeAsync().GetAwaiter().GetResult(); } catch (Exception error) { cleanup.Add(error); }
                 if (cleanup.Count > 0)
                 {
-                    var failure = new AggregateException("NeowCanonical.CleanupFailed", cleanup);
+                    var failure = new AggregateException(ownerTag + ".CleanupFailed", cleanup);
                     if (primary is null) throw failure;
                     Console.Error.WriteLine(failure);
                 }
@@ -144,12 +183,18 @@ internal static partial class FamilyPhysicalMatrix
             return Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)));
         }
         File.WriteAllText(summaryPath, JsonSerializer.Serialize(new { SchemaVersion = 1,
-            Collector = "R43R44.PublicInvoke.BoundedNeowAdaptation.20261027.v1", RuntimeAssemblySha256 = AssemblySha(typeof(IFamilyInvocation).Assembly),
+            Collector = canonicalFamily == "N" ? "R43R44.PublicInvoke.BoundedNeowAdaptation.20261027.v1" : "R43R44.PublicInvoke.BoundedFamilyAdaptation.20261027.v1",
+            CanonicalFamily = canonicalFamily, RequestedTPlanExperiment = requestedTPlanExperiment,
+            RuntimeAssemblySha256 = AssemblySha(typeof(IFamilyInvocation).Assembly),
             HostAssemblySha256 = AssemblySha(typeof(Main).Assembly), Boundary = FamilyCanonicalMeasuredCost.Boundary,
             IntegerVariant = integer, Split = split, TrainingProhibited = split != "training", MinimumInvokeWallMs = minMs,
             MinimumBatches = minBatches, Warmups = warmups, Repeats = repeats, Populations = populations,
-            Rows = rows, ExactExecuted = false, PrivateTransportMeasured = false, PriceUpdated = false,
+            Rows = rows, SingleFamilyBoundary = canonicalFamily == "N"
+                ? "OrdinaryN.InvokeOnly;Coverage=N.Neow;NoOtherFamilyOrExactTiming"
+                : "OrdinaryT.InvokeOnly;Coverage=T.TransformationAggregate;NoOtherFamilyOrExactTiming;SourceSelector=null",
+            ExactExecuted = false, PrivateTransportMeasured = false, PriceUpdated = false,
             CadenceReceipt = "measurement-host-cadence.json", Complete = true }, ProductionSearchReplay.JsonOptions));
-        Console.WriteLine("NEOW_CANONICAL_PASS rows=" + rows.Count + ";exact=false;priceUpdated=false");
+        Console.WriteLine((canonicalFamily == "N" ? "NEOW_CANONICAL_PASS" : "FAMILY_CANONICAL_PASS family=T") +
+            " rows=" + rows.Count + ";exact=false;priceUpdated=false");
     }
 }

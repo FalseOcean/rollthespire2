@@ -109,6 +109,7 @@ internal sealed partial class PredictorRun
             state = state with { Relics = state.Relics.RemoveAt(state.Relics.Length - 1).Insert(index, inserted) };
         }
         Working = state;
+        RecordRouteRestObtain(destination, sourceId, obtainedId);
         // RelicObtained notification precedes bag removal and AfterObtained.
         NotifyOpenCardRewards(key, obtainedId);
         if (Context.Operation?.IgnoresBehavior(key) == true || Context.Crystal?.UnmodeledSources.Contains(key) == true)
@@ -539,6 +540,14 @@ internal sealed partial class PredictorRun
                  key.Entry == "SILKEN_TRESS" && !r.SilkenUsed));
             bool silverAvailable = key.Entry == "SILVER_CRUCIBLE" && modifierIndex >= 0;
             bool silkenAvailable = key.Entry == "SILKEN_TRESS" && modifierIndex >= 0;
+            var enchantmentAlternatives = reward.CardRewardNicheScope != null || key.Entry == "WING_CHARM"
+                ? PredictorCardRewardNicheScope.BeginAlternatives(reward.Cards, reward.CardRewardNicheScope) : null;
+            var lateInstances = enchantmentAlternatives != null
+                ? PredictorCardRewardNicheScope.LateInstanceUncertainty(Context, reward.Cards, key.Entry,
+                    enchantmentAlternatives, silkenAvailable) : (Indices: ImmutableArray<int>.Empty, AllocationCountVaries: false);
+            if (enchantmentAlternatives != null)
+                PredictorCardRewardNicheScope.AdvanceAlternatives(Context, reward.Cards, key.Entry,
+                    enchantmentAlternatives, silkenAvailable);
             var changed = ImmutableArray.CreateBuilder<PredictorCard>();
             foreach (var candidate in reward.Cards)
             {
@@ -559,8 +568,16 @@ internal sealed partial class PredictorRun
             var late = PredictorCardRewardRelicHooks.ApplyLate(Context, Working, changed.ToList(), key,
                 cloneOnChange: true, relicId: relicId, wingCharmEligibility: wingCharmEligibility);
             Working = late.State;
+            var scope = PredictorCardRewardNicheScope.From(wingCharmEligibility, reward.CardRewardNicheScope,
+                enchantmentAlternatives);
+            var inheritedInstanceIndices = _preview.Partial?.UncertainLateRewardSourceIds(reward, late.Cards) ?? [];
+            if (!inheritedInstanceIndices.IsEmpty) scope ??= new([], []);
+            if (scope != null) scope = scope with { UnresolvedCardInstanceIndices = scope.UnresolvedCardInstanceIndices
+                .Concat(lateInstances.Indices).Concat(inheritedInstanceIndices).Distinct().Order().ToImmutableArray() };
             rewards = rewards.SetItem(i, reward with { Cards = late.Cards.ToImmutableArray(),
-                CardRewardNicheScope = PredictorCardRewardNicheScope.From(wingCharmEligibility, reward.CardRewardNicheScope) });
+                CardRewardNicheScope = scope });
+            if (lateInstances.AllocationCountVaries)
+                _preview.Partial?.LateRewardInstanceAllocation(reward, key.Entry);
         }
         return rewards;
     }
@@ -679,7 +696,9 @@ internal sealed partial class PredictorRun
     {
         if (_obtainFrames.Length == 0) return;
         var frame = _obtainFrames[^1];
-        if (frame.Relic.Entry == "NEOWS_BONES") Working = PredictorObtainSources.BonesCurse(Context, Working);
+        if (frame.Relic.Entry == "NEOWS_BONES") Working = CanProjectLiveBonesCurse() && !_preview.Partial!.StreamKnown(PredictorStream.Niche)
+            ? _preview.Partial.RecordLiveBonesCurse(Working, frame.SourceId)
+            : PredictorObtainSources.BonesCurse(Context, Working);
         RestoreParentFrame();
         if (_obtainFrames.Length > 0 && _obtainFrames[^1].Relic.Entry == "LARGE_CAPSULE") ContinueLargeCapsule(token);
     }

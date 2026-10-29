@@ -55,10 +55,10 @@ internal sealed partial class QueryWorkbenchFrame
         _configButton = null;
         var names = RuntimeGameContentNameResolver.Create(language);
         const float presetWidth = (RailContentWidth - 8) / 2;
-        var back = _p.CompactButton(_text.Get("preset.title")); back.Name = "OpenPresets";
+        var back = _p.CompactButton(_text.Get("preset.title"), AuthoringHeaderHeight); back.Name = "OpenPresets";
         Place(back, ColumnInset, PresetActionsTop, presetWidth, AuthoringHeaderHeight);
         back.Pressed += OpenPresets;
-        var savePreset = _p.CompactButton(_language == "zh" ? "保存预设" : "Save"); savePreset.Name = "SavePreset";
+        var savePreset = _p.CompactButton(_language == "zh" ? "保存预设" : "Save", AuthoringHeaderHeight); savePreset.Name = "SavePreset";
         SearchTooltip.Set(savePreset, _language == "zh" ? "保存当前条件为预设" : "Save current conditions as a preset");
         Place(savePreset, ColumnInset + presetWidth + 8, PresetActionsTop, presetWidth, AuthoringHeaderHeight);
         savePreset.Pressed += () => OpenPresetSave(Components.SearchPresetSaveIntentKind.CreateCurrentQuery, "");

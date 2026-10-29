@@ -28,7 +28,7 @@ internal sealed partial class EncyclopediaCanvas
             if (match.Groups["bold"].Success)
             {
                 view.PushBold();
-                view.PushColor(_palette.Color(_palette.Text));
+                view.PushColor(_palette.Color(_palette.Selected));
                 RenderInline(view, match.Groups["bold"].Value, firstRelicIcons);
                 view.Pop();
                 view.Pop();

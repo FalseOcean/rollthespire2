@@ -110,9 +110,13 @@ $env:RT2_NATIVE_GAME_PCK = '<absolute path to matching SlayTheSpire2.pck>'
   -LocalizationSource '<directory containing eng/ and completion.json>'
 ```
 
-This native command builds Debug without deployment and runs the selected checks;
-it is not part of the small managed smoke. The optional PCK supplies matching game
-resources; the current wrapper still requires the localization directory.
+This native command builds Release without deployment and prepares the editor's
+Debug lookup directory from that output. It is not part of the small managed smoke.
+Supply either `-GamePck` for matching game resources or `-LocalizationSource` for
+extracted strings; a supplied missing PCK does not fall back to local strings.
+The editor loader's own runtime configuration can select a newer CLR than the
+project target. Use a compatible .NET 9 loader for checks that patch the current
+game's Harmony methods; targeting `net9.0` alone does not constrain that loader.
 
 The installed game executable supports ordinary in-game acceptance, but has not
 been validated as a substitute for these editor hosts. Upstream [Godot 4.5.1 assembly

@@ -332,9 +332,15 @@ internal static class PredictorRewardGeneration
             var cards = input.ToList();
             var after = new List<long>();
             var wingCharmEligibility = new List<ImmutableArray<int>>();
+            List<ImmutableArray<PredictorCardEnchantment>>? enchantmentAlternatives = null;
             foreach (var relic in state.Relics.Where(r => !r.Melted))
             {
                 cards = cards.Select(c => UpgradeWithEgg(c, relic.Key.Entry)).ToList();
+                if (relic.Key.Entry == "WING_CHARM")
+                    enchantmentAlternatives ??= PredictorCardRewardNicheScope.BeginAlternatives(cards);
+                if (enchantmentAlternatives != null)
+                    PredictorCardRewardNicheScope.AdvanceAlternatives(context, cards, relic.Key.Entry,
+                        enchantmentAlternatives, isCardReward && !relic.SilkenUsed);
                 if (isCardReward && relic.Key.Entry == "SILVER_CRUCIBLE" && relic.RewardUpgradeUses < 3)
                 {
                     cards = cards.Select(c => c.UpgradeLevel < c.MaxUpgradeLevel ? c with { UpgradeLevel = c.UpgradeLevel + 1 } : c).ToList();
@@ -356,7 +362,7 @@ internal static class PredictorRewardGeneration
                 state = state with { Relics = state.Relics.SetItem(i, relic.Key.Entry == "SILVER_CRUCIBLE"
                     ? relic with { RewardUpgradeUses = relic.RewardUpgradeUses + 1 } : relic with { SilkenUsed = true }) };
             }
-        nicheScope = PredictorCardRewardNicheScope.From(wingCharmEligibility);
+        nicheScope = PredictorCardRewardNicheScope.From(wingCharmEligibility, alternatives: enchantmentAlternatives);
         return cards.Select(c => PredictorCardLevelEffects.Reconcile(context, c)).ToImmutableArray();
     }
 

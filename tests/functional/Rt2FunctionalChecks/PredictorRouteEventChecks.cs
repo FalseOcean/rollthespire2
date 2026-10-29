@@ -3,6 +3,7 @@ using System.Text.Json;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Prediction.Maps;
 using RolltheSpire2.Core.PredictorRuntime;
+using RolltheSpire2.Infrastructure.Persistence;
 
 internal static class PredictorRouteEventChecks
 {
@@ -45,10 +46,11 @@ internal static class PredictorRouteEventChecks
     // event queue alone fix the node whose authored choice is under test.
     private static PredictorRun Fixture(PredictorRun captured, string entry, bool previousCombat = false,
         string firstEncounter = "FABRICATOR_NORMAL", bool visited = false, PredictorContext? context = null,
-        Func<PredictorState, PredictorState>? configure = null, string[]? followingEvents = null)
+        Func<PredictorState, PredictorState>? configure = null, string[]? followingEvents = null,
+        bool restBeforeEvent = false, int act = 2)
     {
-        const int act = 2;
-        var types = followingEvents != null ? new[] { MapPointType.Monster }.Concat(
+        var types = restBeforeEvent ? new[] { MapPointType.Monster, MapPointType.RestSite, MapPointType.Unknown, MapPointType.Monster, MapPointType.Boss } :
+            followingEvents != null ? new[] { MapPointType.Monster }.Concat(
             Enumerable.Repeat(MapPointType.Unknown, followingEvents.Length + 1)).Concat([MapPointType.Monster, MapPointType.Boss]).ToArray() :
             previousCombat ? new[] { MapPointType.Monster, MapPointType.Monster, MapPointType.Unknown, MapPointType.Monster, MapPointType.Boss } :
             new[] { MapPointType.Monster, MapPointType.Unknown, MapPointType.Monster, MapPointType.Boss };
@@ -685,6 +687,196 @@ internal static class PredictorRouteEventChecks
             else Check(reward.SacrificeCount == 2 && reward.SacrificeRelic?.Entry == "CIRCLET" &&
                 result.Nodes[0].Cards.Length == run.Working.Deck.Length,
                 "event sacrifice must share the counter, obtain a relic, and never take a displayed card");
+        }
+    }
+
+    internal static void RunPartialCardOperations(PredictorRun captured)
+    {
+        var pending = PredictorRouteCauseEvidence.CreateExplicit("EventRewardNicheUnobserved", "capture:event-reward",
+            PredictorCombatDomain.NicheRng, PredictorPendingReasonKind.MissingObservation,
+            "The incoming Niche cursor is unobserved.", ["rng.Niche.state"]);
+        var run = Fixture(captured, "BRAIN_LEECH", context: captured.Context with
+            { Live = new(2, true, [pending]), Operation = null }, configure: state => state with
+            {
+                Relics = [new(10100, new("RELIC", "WING_CHARM"), 1),
+                    new(10101, new("RELIC", "PAELS_WING"), 1) { RewardsSacrificed = 1 }],
+                NextInstanceId = Math.Max(state.NextInstanceId, 11000),
+                PersonalBag = new(false, [], [new("Rare", [new("RELIC", "ORRERY")])], [])
+            });
+        const PredictorRoutePreviewPolicy live = PredictorRoutePreviewPolicy.LiveMapDefaults;
+        var initial = Pure(run, [], policy: live).Nodes[0].Event!;
+        var branch = new PredictorPlannedNode(run.Working.Position.NodeId) { Event = new(E("BRAIN_LEECH"))
+        {
+            Actions = [new(PredictorEventActionKind.Option)
+                { ExpectedOption = initial.EntryOptions.Single(option => option.Key == "RIP").Value }]
+        } };
+        var offer = Pure(run, [branch], policy: live).Nodes[0].Event!.Rewards.Single(reward => reward.Kind == PredictorRewardKind.Card);
+        var binding = offer.OfferBinding!;
+        Check(!offer.IsKnown && binding != null && binding.UnresolvedEnchantmentIndices.Length > 1,
+            "actual RIP offers retain multi-target Wing uncertainty in the direct event owner");
+        var choice = new PredictorPlannedRewardChoice(binding!.Value, offer.Occurrence)
+            { UnresolvedEnchantmentIndices = binding.UnresolvedEnchantmentIndices };
+        foreach (bool skip in new[] { true, false })
+        {
+            var receipt = Add(branch, new(PredictorEventActionKind.Reward)
+                { RewardChoice = choice with { Skip = skip, CardIndex = skip ? null : 0 } });
+            var result = Pure(run, [receipt], 2, live);
+            Check(result.Nodes.Length == 2 && result.Nodes[0].Advanced && result.Nodes[0].Event!.AppliedActions == 2 &&
+                result.Nodes[0].Event!.Rewards.Single().AppliedChoice is { } applied && applied.Skip == skip &&
+                result.Nodes[0].Cards.Length == run.Working.Deck.Length + (skip ? 0 : 1) &&
+                !result.Nodes[0].PendingCauses.Any(cause => cause.Code.StartsWith("Planned", StringComparison.Ordinal)),
+                "direct event partial-offer Skip/Take uses its actual operation inputs and preserves independent continuation");
+        }
+        var sacrifice = Add(branch, new(PredictorEventActionKind.Reward)
+            { RewardChoice = choice with { SacrificeRelicId = 10101 } });
+        var nested = Pure(run, [sacrifice], 2, live);
+        var child = nested.Nodes[0].Event!.Rewards.First(reward => reward.CompletedEdit?.Source == new ModelKey("RELIC", "ORRERY"));
+        var childBinding = child.OfferBinding!;
+        var edited = PredictorRun.ApplyCompletedRewardChoice(sacrifice, child.CompletedEdit!,
+            new(childBinding.Value, child.Occurrence, Skip: true)
+                { UnresolvedEnchantmentIndices = childBinding.UnresolvedEnchantmentIndices });
+        var completed = Pure(run, [edited], 2, live);
+        Check(completed.Nodes.Length == 2 && completed.Nodes[0].Advanced &&
+            completed.Nodes[0].Event!.Rewards.Any(reward => reward.CompletedEdit?.Source.Entry == "ORRERY" &&
+                reward.Occurrence == child.Occurrence && reward.AppliedChoice?.Skip == true && !reward.DefaultSkipped),
+            "an event sacrifice's real Orrery child accepts an addressed partial-offer Skip without sacrificing twice");
+        Console.WriteLine("RUNTIME_EVENT_CARD_OPERATIONS_PASS real RIP partial Skip/Take; Pael -> Orrery nested partial child edit; caller/RNG/checkpoint purity");
+    }
+
+    internal static void RunDefaultDependencyFixes(PredictorRun captured)
+    {
+        const PredictorRoutePreviewPolicy live = PredictorRoutePreviewPolicy.LiveMapDefaults;
+        // Actual Smith produces the prior upgrade gap; Conveyor retains its
+        // real local menu/health premises and only summarizes the final chef.
+        var chef = Fixture(captured, "ENDLESS_CONVEYOR", restBeforeEvent: true,
+            configure: state => state with { PotionSlots = [null, null] });
+        var chefEntry = Pure(chef, [], 2, live).Nodes[1];
+        var chefPlan = new PredictorPlannedNode(chefEntry.Position.NodeId) { Event = new(E("ENDLESS_CONVEYOR"))
+        { Actions = [new(PredictorEventActionKind.ConveyorInputs) { Conveyor = new(2, 20) }] } };
+        var menu = Pure(chef, [chefPlan], 2, live).Nodes[1].Event!;
+        chefPlan = Add(chefPlan, new(PredictorEventActionKind.Option)
+            { ExpectedOption = menu.Options.Single(option => option.Key == "OBSERVE_CHEF").Value });
+        var chefResult = Pure(chef, [chefPlan], 3, live);
+        Check(chefResult.Nodes.Length == 3 && chefResult.Nodes.Take(2).All(node => node.Advanced) &&
+            chefResult.Nodes[1].Event!.AppliedActions == 2 &&
+            chefResult.Nodes[1].DeckPendingCauses.Any() &&
+            StateFact(chefResult.Nodes[1], "rng.Niche.state", true).DisplayValue ==
+                StateFact(chefResult.Nodes[1], "rng.Niche.state").DisplayValue,
+            "default Smith -> Chef finishes its terminal local upgrade without consuming a public stream");
+        var withoutPremises = Pure(chef, [], 2, live).Nodes[1].Event!;
+        Check(!withoutPremises.Advanced && withoutPremises.ConveyorInput == null,
+            "Chef continuation does not invent the Conveyor menu premises");
+
+        // Both an explicit unresolved target and the joined unselected options
+        // may change Book's counter, but do not rename carried bottles or alter
+        // Juzu membership/the relic bags used by the following question mark.
+        foreach (bool explicitTransform in new[] { true, false })
+        {
+            var symbiote = Fixture(captured, "SYMBIOTE", followingEvents: ["STONE_OF_ALL_TIME"], configure: state => state with
+            {
+                Relics = [new(18000, new("RELIC", "BOOK_OF_FIVE_RINGS"), 1),
+                    new(18001, new("RELIC", "JUZU_BRACELET"), 1)],
+                PotionSlots = [new(18002, new("POTION", "ENERGY_POTION")), null],
+                NextInstanceId = Math.Max(state.NextInstanceId, 18003)
+            });
+            var start = Pure(symbiote, [], policy: live).Nodes[0];
+            var prefix = explicitTransform ? ImmutableArray.Create(LiveOption(start, "KILL_WITH_FIRE")) : [];
+            var after = Pure(symbiote, prefix, 2, live);
+            Check(after.Nodes.Length == 2 && after.Nodes[0].Advanced && after.Nodes[1].Event?.Event == E("STONE_OF_ALL_TIME"),
+                "Book-only state uncertainty preserves the next event's actual membership reads: " + ChainEvidence(after) +
+                "; boundary=" + string.Join(',', after.TerminalBoundary?.PendingCauses.Select(cause => cause.Code) ?? []));
+            var stone = after.Nodes[1];
+            var lift = stone.Event!.Options.Single(option => option.Key == "LIFT");
+            Check(lift.IsKnown && lift.Value!.PotionId == 18002 &&
+                after.Nodes[0].PendingCauses.Any(cause => (cause.AffectedDomains & PredictorCombatDomain.InstanceIds) != 0),
+                "future allocation uncertainty preserves an existing bottle's event identity");
+            var liftPlan = new PredictorPlannedNode(stone.Position.NodeId) { Event = new(E("STONE_OF_ALL_TIME"))
+                { Actions = [new(PredictorEventActionKind.Option) { ExpectedOption = lift.Value }] } };
+            var taken = Pure(symbiote, prefix.Add(liftPlan), 2, live).Nodes[1];
+            Check(taken.Event!.AppliedActions == 1 && taken.Inventory!.PotionSlots.All(slot => slot.Value == null),
+                "the stable bottle is really discarded; the future allocation gap remains local");
+        }
+
+        var repy = Fixture(captured, "WAR_HISTORIAN_REPY", restBeforeEvent: true, act: 3, configure: state =>
+        {
+            var key = captured.Context.Catalog!.CardDefinitions.Single(definition => definition.Prototype.Key.Entry == "LANTERN_KEY")
+                .Prototype with { Id = state.NextInstanceId, FloorAdded = 1 };
+            return state with { Cards = state.Cards.Add(key), Deck = state.Deck.Add(key.Id),
+                NextInstanceId = key.Id + 3, Relics = [new(key.Id + 2, new("RELIC", "JUZU_BRACELET"), 1)] };
+        });
+        var repyEntry = Pure(repy, [], 2, live).Nodes[1];
+        var repyPlan = LiveOption(repyEntry, "INITIAL_UNLOCK_CHEST");
+        var repyResult = Pure(repy, [repyPlan], 2, live).Nodes[1];
+        Check(repyResult.Event!.AppliedActions == 1 && repyResult.Cards.All(card => card.Value.Key.Entry != "LANTERN_KEY") &&
+            !repyResult.PendingCauses.Any(cause => cause.Code == "PlannedEventActionDependent"),
+            "default Smith -> Repy consumes ordered key membership without reading unrelated full card payloads");
+
+        PartialGeneratedEventGrids(captured);
+        Console.WriteLine("RUNTIME_EVENT_DEFAULT_DEPENDENCY_FIXES_PASS Chef terminal local upgrades; Book scoped branch joins; stable carried IDs; Repy membership; partial event grids and receipts");
+    }
+
+    private static void PartialGeneratedEventGrids(PredictorRun captured)
+    {
+        const PredictorRoutePreviewPolicy live = PredictorRoutePreviewPolicy.LiveMapDefaults;
+        var pending = PredictorRouteCauseEvidence.CreateExplicit("EventGridNicheUnobserved", "capture:event-grid",
+            PredictorCombatDomain.NicheRng, PredictorPendingReasonKind.MissingObservation,
+            "The incoming Niche cursor is unobserved.", ["rng.Niche.state"]);
+        foreach (var (entry, branch, required, count) in new[]
+        { ("BRAIN_LEECH", "SHARE_KNOWLEDGE", 1, 5), ("ROOM_FULL_OF_CHEESE", "GORGE", 2, 8) })
+        {
+            var run = Fixture(captured, entry, context: captured.Context with { Live = new(2, true, [pending]), Operation = null },
+                configure: state => state with
+                {
+                    Relics = [new(19000, new("RELIC", "WING_CHARM"), 1),
+                        new(19001, new("RELIC", "BOOK_OF_FIVE_RINGS"), 1) { BookOfFiveRingsCardsAdded = 4 },
+                        new(19002, new("RELIC", "LUCKY_FYSH"), 1), new(19003, new("RELIC", "BING_BONG"), 1)],
+                    NextInstanceId = Math.Max(state.NextInstanceId, 19004)
+                });
+            var initial = Pure(run, [], policy: live).Nodes[0];
+            var branchPreview = initial.Event!.Options.Single(option => option.Key == branch).ResultPreview!;
+            Check(branchPreview.OfferedCards.Length == count && branchPreview.OfferedCardBinding != null &&
+                branchPreview.OfferedCardOptions.Any(option => !option.IsKnown),
+                "the option preview exposes generated identities with explicit unresolved enchantments");
+            var plan = LiveOption(initial, branch);
+            var offers = Pure(run, [plan], policy: live).Nodes[0].Event!;
+            var binding = offers.OfferedCardBinding!;
+            Check(binding != null && offers.OfferedCards.Length == count &&
+                binding.UnresolvedEnchantmentIndices.Length > 1 && offers.OfferedCardOptions.All(option =>
+                    option.IsKnown || option.Value.Enchantment == null && option.Value.EnchantmentAmount == 0),
+                "generated event grids retain identity/level and never export witness enchantments");
+            var selected = binding!.UnresolvedEnchantmentIndices.Take(required).ToImmutableArray();
+            var choice = new PredictorPlannedEventAction(PredictorEventActionKind.Cards)
+            { ExpectedCards = binding.Value.Cards, UnresolvedEnchantmentIndices = binding.UnresolvedEnchantmentIndices,
+                CardIndices = selected };
+            var receiptPlan = Add(plan, choice);
+            // Saving/reloading keeps authored masks and the original source.
+            run.RestorePlannedNodes([receiptPlan]);
+            var restored = PredictorRunStore.Deserialize(PredictorRunStore.Serialize(run),
+                run.Context.CatalogFingerprint, run.Context.UnlockFingerprint);
+            Check(restored.PlannedNodes.Single().Event!.Actions.Last().UnresolvedEnchantmentIndices
+                    .SequenceEqual(binding.UnresolvedEnchantmentIndices),
+                "the production save format retains the authored grid enchantment mask");
+            var result = Pure(restored, restored.PlannedNodes, 2, live);
+            var receipt = result.Nodes[0];
+            Check(result.Nodes.Length == 2 && receipt.Advanced && receipt.Event!.AppliedActions == 2 &&
+                receipt.Cards.Length == run.Working.Deck.Length + required * 2 &&
+                receipt.Cards.Where(card => !run.Working.Deck.Contains(card.Value.Id)).All(card => !card.IsKnown) &&
+                receipt.Inventory!.Relics.Single(relic => relic.Value.Key.Entry == "BOOK_OF_FIVE_RINGS") is
+                    { IsKnown: true } book && book.Value.BookOfFiveRingsCardsAdded == 4 + required * 2 &&
+                receipt.Event.GoldBalance > run.Working.GoldBudget,
+                "partial grid Take executes real copy/Lucky/Book hooks, keeps unknown payloads and continues independently");
+            var wrong = Add(plan, choice with { ExpectedCards = choice.ExpectedCards.SetItem(0,
+                choice.ExpectedCards[0] with { UpgradeLevel = choice.ExpectedCards[0].UpgradeLevel + 1 }) });
+            Check(Pure(run, [wrong], policy: live).Nodes[0].PendingCauses.Any(cause => cause.Code == "PlannedEventOfferedCardsChanged"),
+                "the partial grid binding still checks every known field, including an unselected sibling");
+            // AuthoredChoices requires the real appearance selection that the
+            // live policy supplied automatically in the positive cases.
+            var authoredPlan = receiptPlan with { Event = receiptPlan.Event! with
+                { Occurrence = Plan(run, entry).Event!.Occurrence } };
+            var authored = Pure(run, [authoredPlan]).Nodes[0];
+            Check(!authored.Advanced && authored.Event is { AppliedActions: 1, NeededInput: PredictorEventNeededInput.Cards } &&
+                authored.PendingCauses.Any(cause => cause.Code == "PlannedEventOfferedCardsPending"),
+                "Authored grid execution retains its full payload requirement");
         }
     }
 

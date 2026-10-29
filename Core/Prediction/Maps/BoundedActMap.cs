@@ -28,11 +28,14 @@ internal sealed partial class BoundedActMap
     private readonly int[] _grid = new int[Slots], _candidates = new int[Slots];
     private readonly byte[] _queue = new byte[64];
     private readonly int[] _targets = new int[9], _endpointRank = new int[Slots * Slots];
-    private Group[] _groups = new Group[GroupCapacity];
-    private Member[] _members = new Member[MemberCapacity];
-    private int[] _duplicates = new int[GroupCapacity];
-    private readonly Dictionary<GroupKey, int> _groupIndex = new(GroupCapacity);
+    // Most per-start discoveries are small; retain grown storage across roots,
+    // while keeping the same explicit upper memory bounds as the eager replay.
+    private Group[] _groups = new Group[256];
+    private Member[] _members = new Member[512];
+    private int[] _duplicates = new int[256];
+    private readonly Dictionary<GroupKey, int> _groupIndex = new(256);
     private readonly IComparer<int> _groupComparer;
+    private readonly int[] _discoveryStartOrder;
     private readonly ulong[] _suffix = new ulong[Slots], _prefix = new ulong[Slots];
     private UInt128 _active, _modifiable;
     private BoundedMapRng _rng;
@@ -63,6 +66,10 @@ internal sealed partial class BoundedActMap
                 endpoints.Add((a / 7 == 0 ? $"0-{b % 7},{b / 7}-" : $"{a % 7},{a / 7}-{b % 7},{b / 7}-", a * Slots + b));
         endpoints.Sort((a, b) => StringComparer.Ordinal.Compare(a.Key, b.Key));
         for (int i = 0; i < endpoints.Count; i++) _endpointRank[endpoints[i].Index] = i;
+        // Source keys for one start are contiguous (their start prefixes are
+        // prefix-free). Row zero has only the real Start, not seven identities.
+        _discoveryStartOrder = endpoints.Select(e => e.Index / Slots)
+            .Where(s => s >= 7 || s == Start).Distinct().ToArray();
         _groupComparer = Comparer<int>.Create((a, b) =>
         {
             int c = _groups[a].Key.Endpoint.CompareTo(_groups[b].Key.Endpoint);
@@ -92,7 +99,8 @@ internal sealed partial class BoundedActMap
         + _groups.Length * (long)System.Runtime.CompilerServices.Unsafe.SizeOf<Group>()
         + _members.Length * (long)System.Runtime.CompilerServices.Unsafe.SizeOf<Member>()
         + _duplicates.Length * sizeof(int) + 2L * Slots * sizeof(ulong)
-        + Slots * sizeof(ulong);
+        + Slots * sizeof(ulong) + _discoveryStartOrder.Length * sizeof(int)
+        + 16L * ((_endpointPairs?.Length ?? 0) + (_endpointStarts?.Length ?? 0) + (_endpointReach?.Length ?? 0));
 
     internal void ReplayRoot(ulong rootHash, CancellationToken cancellationToken = default, bool measureWork = false)
     {
@@ -117,12 +125,11 @@ internal sealed partial class BoundedActMap
         for (int pass = 0; pass < 3; pass++)
         {
             long stamp = measureWork ? Stopwatch.GetTimestamp() : 0;
+            BuildEndpointCertificate();
             int mutations = 0;
-            Discover(measureWork);
-            while (Prune())
+            while (DiscoverAndPrune(measureWork))
             {
                 Mutations++; if (++mutations > 50) throw new InvalidOperationException("Unable to prune matching segments in 51 iterations");
-                Discover(measureWork);
             }
             if (measureWork) PruneTicks += Stopwatch.GetTimestamp() - stamp;
             bool repaired = Repair(2) | Repair(6) | Repair(4) | Repair(1);
@@ -198,7 +205,7 @@ internal sealed partial class BoundedActMap
         }
         throw new InvalidOperationException("Cannot find next node");
     }
-    private void Assignment()
+    private void Assignment(bool stopAfterFirstRound = false)
     {
         for (int col = 0; col < 7; col++)
         {
@@ -223,6 +230,7 @@ internal sealed partial class BoundedActMap
                 }
             }
             rounds = pass + 1;
+            if (stopAfterFirstRound) return;
         }
         for (int node = 7; node < _boss; node++) if (Active(node) && _type[node] == 0) _type[node] = 5;
         _type[Start] = 8; _type[_boss] = 7;
@@ -285,69 +293,28 @@ internal sealed partial class BoundedActMap
         return changed;
     }
 
-    // For fixed endpoints, source first-occurrence order equals a DFS from the
-    // start endpoint. Every suffix can follow the earliest prefix reaching it.
-    // Other source paths only repeat the same concrete segment. Groups with
-    // different endpoints cannot affect overlap suppression. Sort duplicate
-    // groups by exact source key only after retaining each group's members.
-    private void Discover(bool measure)
+    private bool DiscoverAndPrune(bool measure)
     {
         _token.ThrowIfCancellationRequested(); Discoveries++;
-        _groupIndex.Clear(); _groupCount = _memberCount = _duplicateCount = 0;
-        if (measure) CountPaths();
-        for (int start = 0; start < Slots; start++)
-            if (Active(start) && (_degree[start] > 1 || start == Start))
-                DiscoverSuffix(start, start, 1, (UInt128)(uint)start, _type[start], 0, measure);
-        if (measure)
+        if (measure) { CountPaths(); CompletePathVisits += (long)_suffix[Start]; }
+        // Discover consumes no RNG. Finish all groups belonging to one start,
+        // preserving its DFS member order, then visit them in source key order.
+        // On mutation, later starts were never needed by the eager Prune loop.
+        // A failed Prune can consume RNG; do not skip it or reorder its groups.
+        foreach (int start in _discoveryStartOrder)
         {
-            CompletePathVisits += (long)_suffix[Start]; RetainedSegments += _memberCount; GroupVisits += _groupCount;
+            if (!Active(start) || (_degree[start] <= 1 && start != Start)) continue;
+            _token.ThrowIfCancellationRequested();
+            _groupIndex.Clear(); _groupCount = _memberCount = _duplicateCount = 0;
+            UInt128 ends = _endpointStarts![start];
+            if (ends != 0)
+                DiscoverSuffixEndpointReach(start, start, 1, (UInt128)(uint)start, _type[start], 0, measure, ends);
+            if (measure) { RetainedSegments += _memberCount; GroupVisits += _groupCount; }
+            PeakGroups = Math.Max(PeakGroups, _groupCount); PeakMembers = Math.Max(PeakMembers, _memberCount);
+            Array.Sort(_duplicates, 0, _duplicateCount, _groupComparer);
+            if (Prune()) return true;
         }
-        PeakGroups = Math.Max(PeakGroups, _groupCount); PeakMembers = Math.Max(PeakMembers, _memberCount);
-        Array.Sort(_duplicates, 0, _duplicateCount, _groupComparer);
-    }
-    private void DiscoverSuffix(int start, int node, int length, UInt128 sequence, UInt128 word, UInt128 interior, bool measure)
-    {
-        if (length >= 3 && Pop(_parents[node]) >= 2)
-        {
-            if (measure) { UniqueSegments++; SegmentOccurrences += checked((long)(_prefix[start] * _suffix[node])); }
-            var key = new GroupKey(_endpointRank[start * Slots + node], word);
-            if (!_groupIndex.TryGetValue(key, out int groupId))
-            {
-                if (_groupCount == _groups.Length)
-                {
-                    if (_groups.Length >= GroupCapacity * 8) throw new InvalidOperationException("Map group workspace exhausted at research memory ceiling");
-                    Array.Resize(ref _groups, _groups.Length * 2);
-                    Array.Resize(ref _duplicates, _groups.Length);
-                }
-                groupId = _groupCount++; _groupIndex.Add(key, groupId);
-                _groups[groupId] = new Group { Key = key, First = -1, Last = -1 };
-            }
-            ref Group g = ref _groups[groupId]; bool overlaps = false;
-            for (int m = g.First; m >= 0; m = _members[m].Next)
-                if ((_members[m].Interior & interior) != 0) { overlaps = true; break; }
-            if (!overlaps)
-            {
-                if (g.Count == 7) throw new InvalidOperationException("Map segment disjoint-width invariant exceeded");
-                if (_memberCount == _members.Length)
-                {
-                    if (_members.Length >= MemberCapacity * 8) throw new InvalidOperationException("Map segment workspace exhausted at research memory ceiling");
-                    Array.Resize(ref _members, _members.Length * 2);
-                }
-                int member = _memberCount++;
-                // Sentinel encodes segment length without an extra field.
-                _members[member] = new Member { Sequence = sequence | ((UInt128)1 << (7 * length)), Interior = interior, Next = -1 };
-                if (g.First < 0) g.First = member; else _members[g.Last].Next = member;
-                g.Last = member; if (++g.Count == 2) _duplicates[_duplicateCount++] = groupId;
-            }
-        }
-        if (node == _boss) return;
-        UInt128 nextInterior = length > 1 ? interior | Bit(node) : interior;
-        for (int i = 0; i < _degree[node]; i++)
-        {
-            int child = _children[node * 7 + i];
-            DiscoverSuffix(start, child, length + 1, sequence | ((UInt128)(uint)child << (7 * length)),
-                (word << 4) | _type[child], nextInterior, measure);
-        }
+        return false;
     }
     private void CountPaths()
     {

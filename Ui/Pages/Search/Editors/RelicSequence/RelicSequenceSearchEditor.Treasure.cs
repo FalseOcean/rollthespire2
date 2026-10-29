@@ -86,15 +86,17 @@ internal sealed partial class RelicSequenceSearchEditor
                 AddTreasureSlot(content, emptySlot, inset + visualSlot * stride, targetTop, active: true);
         }
         y = targetTop + WorkspaceResultTile.CompactHeight + 24;
-        var retained = Enumerable.Range(_draft.TreasureCount, TreasureRelicSearchCondition.MaximumOrdinal - _draft.TreasureCount)
-            .Where(slot => _draft.TreasureSlots[slot].HasValue).ToArray();
-        if (retained.Length > 0)
+        // Dormant targets stay in the saved draft and return with the range;
+        // they are not part of the current editor surface.
+        if (HasDuplicateTreasureTargets(_draft))
         {
-            Text(content, _text.Get("query.treasure.retained"), inset, y, width - 32, 15, true).Name = "TreasureRetainedTargets";
-            y += 32;
-            for (int index = 0; index < retained.Length; index++)
-                AddTreasureSlot(content, retained[index], inset + index * stride, y, active: false);
-            y += WorkspaceResultTile.CompactHeight + 24;
+            Label duplicate = Text(content, _text.Get("query.treasure.duplicate_targets"), inset, y, width - 32, 15);
+            duplicate.Name = "TreasureDuplicateTargets";
+            duplicate.ClipText = false;
+            duplicate.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+            duplicate.Size = new(width - 32, 54);
+            duplicate.AddThemeColorOverride("font_color", _p.Error);
+            y += 62;
         }
         var premise = Text(content, _text.Get("query.treasure.premise"), 16, y, width - 32, 15, true);
         premise.ClipText = false;
@@ -146,9 +148,21 @@ internal sealed partial class RelicSequenceSearchEditor
     {
         if (_draft.Catalog is null || !_draft.Catalog.CatalogAvailable) return;
         ModelKey[] candidates = new[] { RelicSequenceKind.Common, RelicSequenceKind.Uncommon, RelicSequenceKind.Rare }
-            .SelectMany(_draft.Catalog.CandidatesFor).Distinct(ModelKeyComparer.Instance).ToArray();
+            .SelectMany(_draft.Catalog.CandidatesFor).Distinct(ModelKeyComparer.Instance)
+            .Where(key => !TreasureTargetUsedElsewhere(_draft, slot, key)).ToArray();
         SeatDraft draft = _draft;
-        _picker.Open(new(candidates, key => { draft.TreasureSlots[slot] = key; Render(); }, _names, _text, _icons,
+        _picker.Open(new(candidates, key =>
+        {
+            // Recheck on acceptance in case the draft changed while the picker was open.
+            if (!TreasureTargetUsedElsewhere(draft, slot, key)) draft.TreasureSlots[slot] = key;
+            Render();
+        }, _names, _text, _icons,
             key => draft.Catalog.Categories.GetValueOrDefault(key).ToString()));
     }
+
+    private static bool TreasureTargetUsedElsewhere(SeatDraft draft, int slot, ModelKey key) =>
+        draft.TreasureSlots.Where((_, index) => index != slot).Any(other => other is { } value && ModelKeyComparer.Instance.Equals(value, key));
+
+    private static bool HasDuplicateTreasureTargets(SeatDraft draft) => draft.TreasureSlots
+        .Where(key => key.HasValue).Select(key => key!.Value).GroupBy(key => key, ModelKeyComparer.Instance).Any(group => group.Count() > 1);
 }

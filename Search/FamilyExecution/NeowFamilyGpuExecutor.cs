@@ -55,6 +55,7 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
     private readonly List<Rid> _owned = new();
     private readonly Rid _meta, _header, _input, _output, _projectionMetadata;
     private Rid _pipeline, _uniforms, _shader;
+    private Rid _leafyPrefixPipeline, _leafyPrefixUniforms, _leafyPrefixShader;
     private readonly Rid[] _stageShaders = new Rid[5];
     private readonly Rid[] _buffers;
     private Rid[]? _stagedBuffers;
@@ -188,7 +189,8 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
             // Private bindings have a fixed role. Build only that role while the
             // chain's shader-reuse scope is active. Public input is known at Execute.
             if (_privateInput || _privateOutput)
-                EnsureModules(plan.UsesStagedDense && !_privateInput);
+                EnsureModules(plan.UsesStagedDense && !_privateInput,
+                    !_privateInput && _optimizations.LeafyLocalPrefix);
             SetupMs = timer.Elapsed.TotalMilliseconds;
         }
         catch (Exception ex)
@@ -208,7 +210,7 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
         _plan.Defend.AsSpan().SequenceEqual(other._plan.Defend) && _plan.Bones.AsSpan().SequenceEqual(other._plan.Bones) &&
         _plan.Conditions.AsSpan().SequenceEqual(other._plan.Conditions);
 
-    private string ModuleSource(int stage)
+    private string ModuleSource(int stage, bool leafyLocalPrefix = false)
     {
         string source = stage == 3 && _partySource is not null ? _partySource : ShaderSource(stage,
             capsuleComposite: stage == 3 && _composite is not null,
@@ -220,6 +222,8 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
             jointTransformMetaOffset: _plan.JointTransformMetaOffset, numericalVariant: _plan.NumericalVariant,
             leafyLazy: UsesLeafyLazy);
         source = ApplyOptimizations(source, stage);
+        if (leafyLocalPrefix)
+            source = source.Replace("#define RT2_N_LEAFY_LOCAL_PREFIX 0", "#define RT2_N_LEAFY_LOCAL_PREFIX 1", StringComparison.Ordinal);
         if (_smallOutput)
         {
             const string append = "if(slot<batch.values[5u]) output_ordinals.values[slot]=ordinal;";
@@ -237,12 +241,13 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
         return source;
     }
 
-    private void EnsureModules(bool staged)
+    private void EnsureModules(bool staged, bool leafyLocalPrefix = false)
     {
         if (_initializationFaulted) throw new InvalidOperationException("NFamilyGpuInitializationFaulted");
-        if (staged ? _stages.Count == StagedDispatchCount : _pipeline.IsValid) return;
+        if (staged ? _stages.Count == StagedDispatchCount :
+            leafyLocalPrefix ? _leafyPrefixPipeline.IsValid : _pipeline.IsValid) return;
         var timer = Stopwatch.StartNew();
-        string name = staged ? "NeowFamilyPreBones0" : "NeowFamilyLocalDonor";
+        string name = staged ? "NeowFamilyPreBones0" : leafyLocalPrefix ? "NeowFamilyLeafyLocalPrefix" : "NeowFamilyLocalDonor";
         bool checkpointMetadata = _composite?.UsesBonesCheckpoint == true || _bonesKMode == 2;
         try
         {
@@ -286,25 +291,27 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
             }
             else
             {
-                if (_optimizations != default) RolltheSpire2.Bootstrap.RuntimeLog.TryBackgroundInfo($"nOptimizationModule=true;stage=3;revision={OptimizationRevisionFor(true)};numeric={_plan.NumericalVariant};privateInput={_privateInput};privateOutput={_privateOutput};dispatches=1");
+                if (_optimizations != default) RolltheSpire2.Bootstrap.RuntimeLog.TryBackgroundInfo($"nOptimizationModule=true;stage=3;revision={OptimizationRevisionFor(!leafyLocalPrefix)};numeric={_plan.NumericalVariant};privateInput={_privateInput};privateOutput={_privateOutput};leafyLocalPrefix={leafyLocalPrefix};dispatches=1");
                 Rid[] buffers = _buffers;
                 if (checkpointMetadata)
                     buffers = _stagedBuffers ?? [..buffers,
                         Add(FamilyGpuComputeUtility.AllocateStorageBuffer(_rd, 4, "N.UnusedCurseBinding")),
                         Add(FamilyGpuComputeUtility.AllocateStorageBuffer(_rd, 4, "N.UnusedPairBinding")), _projectionMetadata];
                 else if (_composite is not null) buffers = [..buffers, _projectionMetadata];
-                _sharedDenseScratch?.EnsureModules(false);
+                _sharedDenseScratch?.EnsureModules(false, leafyLocalPrefix);
                 Rid shader = _sharedDenseScratch is null
-                    ? Add(FamilyGpuComputeUtility.CompileShader(_rd, ModuleSource(3), name))
-                    : _sharedDenseScratch._shader;
+                    ? Add(FamilyGpuComputeUtility.CompileShader(_rd, ModuleSource(3, leafyLocalPrefix), name))
+                    : leafyLocalPrefix ? _sharedDenseScratch._leafyPrefixShader : _sharedDenseScratch._shader;
                 if (!shader.IsValid) throw new InvalidOperationException("N.SharedDenseShaderMissing:ordinary");
-                _shader = shader;
+                if (leafyLocalPrefix) _leafyPrefixShader = shader;
+                else _shader = shader;
                 if (_sharedDenseScratch is not null)
                     RolltheSpire2.Bootstrap.RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=ShaderModuleReused;name={name};stage=Compute;ownerThreadId={_owner};cache=DensePairDonor;shaderOwner=EarlierRootSlot");
                 Rid pipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(_rd, shader, name));
                 if (!_rd.ComputePipelineIsValid(pipeline)) throw new InvalidOperationException("NFamilyGpuPipelineInvalid:" + name);
                 Rid uniforms = Add(FamilyGpuComputeUtility.CreateUniformSet(_rd, shader, buffers, name));
-                _pipeline = pipeline; _uniforms = uniforms;
+                if (leafyLocalPrefix) { _leafyPrefixPipeline = pipeline; _leafyPrefixUniforms = uniforms; }
+                else { _pipeline = pipeline; _uniforms = uniforms; }
             }
         }
         catch (Exception ex)
@@ -359,6 +366,7 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
         internal required uint[] InitialHeader;
         internal double UploadMs;
         internal int PrefixCount;
+        internal bool LeafyLocalPrefix;
         internal FamilyGpuReadback.Pending? Pending;
         internal byte[]? Readback;
         internal Exception? QueueFailure;
@@ -374,9 +382,11 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
         _sharedDenseScratch?.AssertOwner();
         if (_sharedDenseScratch?._initializationFaulted == true) throw new InvalidOperationException("N.SharedDenseScratchFaulted");
         bool dense = input.IsDense && !_privateInput, staged = dense && _plan.UsesStagedDense;
+        bool leafyLocalPrefix = dense && _optimizations.LeafyLocalPrefix;
         // Complete all lazy allocation/compilation before any list is recorded.
-        if (inputCount > 0) EnsureModules(staged);
-        if (inputCount > 0 && !staged && !_pipeline.IsValid) throw new InvalidOperationException("N.UnboundCompactModule");
+        if (inputCount > 0) EnsureModules(staged, leafyLocalPrefix);
+        if (inputCount > 0 && !staged && !(leafyLocalPrefix ? _leafyPrefixPipeline : _pipeline).IsValid)
+            throw new InvalidOperationException("N.UnboundOrdinaryModule");
         if (inputCount > 0 && !_privateOutput && !_readbackBank.IsValid)
         {
             var setupTimer=Stopwatch.StartNew();
@@ -387,7 +397,7 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
         var timer = Stopwatch.StartNew();
         var prepared=new Prepared { Input=input, InputCount=inputCount, Staged=staged,
             Groups=(uint)((inputCount+511)/512), InitialHeader=Header(),
-            PrefixCount=_privateOutput ? 0 : Math.Min(inputCount,_publicPrefixCount) };
+            PrefixCount=_privateOutput ? 0 : Math.Min(inputCount,_publicPrefixCount), LeafyLocalPrefix=leafyLocalPrefix };
         // Empty work has no device or previous-header dependency.
         if(inputCount>0)
         {
@@ -422,8 +432,8 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
         }
         else
         {
-            _rd.ComputeListBindComputePipeline(list,_pipeline);
-            _rd.ComputeListBindUniformSet(list,_uniforms,0);
+            _rd.ComputeListBindComputePipeline(list,prepared.LeafyLocalPrefix ? _leafyPrefixPipeline : _pipeline);
+            _rd.ComputeListBindUniformSet(list,prepared.LeafyLocalPrefix ? _leafyPrefixUniforms : _uniforms,0);
             _rd.ComputeListDispatch(list,prepared.Groups,1,1);
         }
     }

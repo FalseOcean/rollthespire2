@@ -81,11 +81,14 @@ internal static class DirectNeowChecks
         inputs.Add(("tail",FamilyCandidateSet.Dense(new SearchBatch((1UL<<24)-31,67))));
         inputs.Add(("zero",FamilyCandidateSet.FromAbi1(new SearchBatch(0,67),Array.Empty<ulong>())));
         inputs.Add(("compact",FamilyCandidateSet.FromAbi1(new SearchBatch(12345,1<<19),Enumerable.Range(0,1<<17).Select(i=>(ulong)i*3).ToArray())));
+        if (!VisibleSeedCandidateCodec.TryParseOrdinal(Beta111Profile.Instance, request.CanonicalStartSeed,
+            out ulong requestBase, out _, out string startIssue)) throw new Exception("DirectNStart:" + startIssue);
+        inputs.Add(("request-start", FamilyCandidateSet.Dense(new SearchBatch(requestBase, 4096))));
         // Compare complete GPU populations across the workload's whole closed interval.
         // CPU checks remain bounded, with exact witness neighborhoods added below.
         for(ulong start=0;start<(ulong)request.ScanCount;start+=1UL<<24)
             inputs.Add(("interval"+start,FamilyCandidateSet.Dense(new SearchBatch(start,(int)Math.Min(1UL<<24,(ulong)request.ScanCount-start)))));
-        var expectedCpu=inputs.Where(x=>x.Name is "cpu" or "compact" or "tail" or "zero").ToDictionary(x=>x.Name,
+        var expectedCpu=inputs.Where(x=>x.Name is "cpu" or "compact" or "tail" or "zero" or "request-start").ToDictionary(x=>x.Name,
             x=>x.Input.EnumerateLogicalOrdinals().Where(i=>cpu(Beta111Profile.Instance.ComputeRootSeed(format(x.Input.Batch.BatchBase+i)))).ToArray());
         if(Convert.ToByte(Get(replay,"Selected"))==14)
         {
@@ -135,7 +138,10 @@ internal static class DirectNeowChecks
                 object?[] packed=[replay,null,""];
                 if(!(bool)T("NeowFamilyGpuPlan").GetMethod("TryCreate",Flags)!.Invoke(null,packed)!) throw new Exception("DirectNPlan:"+packed[2]);
                 var plan=packed[1]!;
-                using var executor=(IDisposable)T("NeowFamilyGpuExecutor").GetConstructors(Flags).Single().Invoke([rd,plan,73u,null,null,null,0,0,null,null,null]);
+                var constructor = T("NeowFamilyGpuExecutor").GetConstructors(Flags).Single();
+                object?[] arguments = constructor.GetParameters().Select(p => p.HasDefaultValue ? p.DefaultValue : null).ToArray();
+                arguments[0] = rd; arguments[1] = plan; arguments[2] = 73u;
+                using var executor = (IDisposable)constructor.Invoke(arguments);
                 var execute=executor.GetType().GetMethod("Execute",Flags)!;
                 for(int inputIndex=0;inputIndex<inputs.Count;inputIndex++)
                 {
@@ -157,7 +163,9 @@ internal static class DirectNeowChecks
                     }
                     if(!ordinals.SequenceEqual(baseline[item.Name])) throw new Exception("DirectNGpuParity:"+mode+":"+item.Name);
                     if(expectedCpu.TryGetValue(item.Name,out var expected) && !ordinals.SequenceEqual(expected)) throw new Exception("DirectNCpuParity:"+mode+":"+item.Name);
-                    rows.Add(new{mode,selected=Get(plan,"DirectNestedMode"),shape=item.Name,input=item.Input.Count,output=ordinals.Length,parity=true,metrics=values[2]});
+                    rows.Add(new{mode,selected=Get(plan,"DirectNestedMode"),shape=item.Name,input=item.Input.Count,output=ordinals.Length,parity=true,
+                        digest=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Runtime.InteropServices.MemoryMarshal.AsBytes(ordinals.AsSpan()))),
+                        rotation=GpuRngRotation.Revision,metrics=values[2]});
                 }
                 using var cancelled=new CancellationTokenSource(); cancelled.Cancel();
                 try { execute.Invoke(executor,[inputs[2].Input,cancelled.Token,null]); throw new Exception("CancelledNExecuted"); }

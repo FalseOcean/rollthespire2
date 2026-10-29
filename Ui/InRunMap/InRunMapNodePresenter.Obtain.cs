@@ -122,7 +122,8 @@ internal sealed partial class InRunMapNodePresenter
             case PredictorPhase.TransformCards:
             case PredictorPhase.RewardRemoveCards:
             {
-                var cards = child.DeckCards.Where(card => card.IsKnown && card.Value.Id > 0).Select(card => card.Value).ToImmutableArray();
+                var targets = child.DeckCards.Where(card => card.IsKnown && card.Value.Id > 0).ToImmutableArray();
+                var cards = targets.Select(card => card.Value).ToImmutableArray();
                 bool one = child.Phase is PredictorPhase.TransformCards or PredictorPhase.RewardRemoveCards;
                 var action = child.Phase == PredictorPhase.TransformCards ? PredictorObtainChildAction.TransformCard :
                     child.Phase == PredictorPhase.RewardRemoveCards ? PredictorObtainChildAction.RemoveRewardCards : PredictorObtainChildAction.ChooseDeckCards;
@@ -134,7 +135,7 @@ internal sealed partial class InRunMapNodePresenter
                     .Select(item => item.index).ToImmutableArray();
                 CardSelection(c, parts, role, cards, one ? 1 : child.MinimumCards, one ? 1 : child.MaximumCards,
                     (context, indices) => Save(context, new(action, child.Source) { DeckCards = indices.Select(i => Target(cards[i])).ToImmutableArray() }),
-                    selectedIndices: selected);
+                    selectedIndices: selected, display: card => TargetObject(targets.First(target => target.Value.Id == card.Id)));
                 break;
             }
             case PredictorPhase.ChooseBundle:

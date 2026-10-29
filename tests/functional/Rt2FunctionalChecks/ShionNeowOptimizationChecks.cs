@@ -9,7 +9,16 @@ internal static class ShionNeowOptimizationChecks
         void Require(bool condition, string name) { checks++; if (!condition) throw new InvalidDataException("ShionN." + name); }
         Require(NeowGpuOptimizations.Parse(null) == NeowGpuOptimizations.Production, "DefaultOn");
         Require(NeowGpuOptimizations.Parse("off") == default, "ExplicitOff");
-        foreach (string mode in new[] { "leafy-lazy", "draw-intervals", "gpu-prefix", "n-curse-first" })
+        Require(NeowGpuOptimizations.Production.LeafyLocalPrefix, "LocalPrefixOwnerTrialDefaultOn");
+        Require(NeowGpuOptimizations.Parse("on").LeafyLocalPrefix && NeowGpuOptimizations.Parse("").LeafyLocalPrefix &&
+            NeowGpuOptimizations.Parse(" ").LeafyLocalPrefix, "LocalPrefixNormalLaunchDefaultOn");
+        var localPrefix = NeowGpuOptimizations.Parse("leafy-local-prefix");
+        Require(localPrefix.LeafyLocalPrefix && !localPrefix.LeafyLazy && !localPrefix.DrawIntervals &&
+            !localPrefix.GpuPrefix && !localPrefix.CurseFirst, "LocalPrefixIsolatedOption");
+        var combinedPrefix = NeowGpuOptimizations.Parse("on,leafy-local-prefix");
+        Require(combinedPrefix == (NeowGpuOptimizations.Production with { LeafyLocalPrefix = true }), "LocalPrefixProductionComparison");
+        Require(NeowGpuOptimizations.Parse("leafy-local-prefix,on") == NeowGpuOptimizations.Production, "OnRestoresProduction");
+        foreach (string mode in new[] { "leafy-lazy", "draw-intervals", "gpu-prefix", "n-curse-first", "leafy-local-prefix" })
             Require(NeowGpuOptimizations.Parse(mode).Revision.Length > 0, "Identity." + mode);
         try { NeowGpuOptimizations.Parse("missing"); throw new InvalidDataException("ShionN.UnknownAccepted"); }
         catch (InvalidOperationException) { checks++; }
@@ -63,6 +72,28 @@ internal static class ShionNeowOptimizationChecks
         pools[26] = 0; pools[27] = 1; pools[28] = 0; pools[29] = 0;
         pools[32] = 0; pools[33] = 2;
         var plan = new NeowFamilyGpuPlan(meta, pools, [101, 202], [], [], [meta[27], meta[28]], new uint[226]);
+        var ordinaryLeafy = plan with { Meta = (uint[])meta.Clone() };
+        ordinaryLeafy.Meta[56] = ordinaryLeafy.Meta[66] = 0;
+        ordinaryLeafy.Meta[70] = 1;
+        foreach (var numeric in new[] { NeowGpuNumericalVariant.NativeFloat64, NeowGpuNumericalVariant.IntegerUnitFloat })
+        {
+            var numericLeafy = ordinaryLeafy with { NumericalVariant = numeric };
+            Require(localPrefix.Applicable(numericLeafy, false).Revision == ".LeafyDenseLocalPrefix.20261027.v1", "LocalPrefixDenseIdentity." + numeric);
+            Require(combinedPrefix.Applicable(numericLeafy, false) ==
+                (NeowGpuOptimizations.Production.Applicable(numericLeafy, false) with { LeafyLocalPrefix = true }), "LocalPrefixRetainsProduction." + numeric);
+            Require(localPrefix.Applicable(numericLeafy, true) == default, "LocalPrefixCompactOff." + numeric);
+            Require(combinedPrefix.Applicable(numericLeafy, true) == NeowGpuOptimizations.Production.Applicable(numericLeafy, true), "LocalPrefixCompactIdentity." + numeric);
+            Require(localPrefix.Applicable(numericLeafy, false, ordinary: false) == default, "LocalPrefixCompositeOff." + numeric);
+        }
+        foreach (string excluded in new[] { "staged", "party", "non-leafy" })
+        {
+            var excludedPlan = ordinaryLeafy with { Meta = (uint[])ordinaryLeafy.Meta.Clone() };
+            if (excluded == "staged") excludedPlan.Meta[66] = 1;
+            if (excluded == "party") excludedPlan.Meta[6] = 2;
+            if (excluded == "non-leafy") excludedPlan.Meta[70] = 0;
+            Require(localPrefix.Applicable(excludedPlan, false) == default, "LocalPrefixExcluded." + excluded);
+            Require(combinedPrefix.Applicable(excludedPlan, false) == NeowGpuOptimizations.Production.Applicable(excludedPlan, false), "LocalPrefixExcludedIdentity." + excluded);
+        }
         var order = NeowInternalFilterOrder.Compile(plan);
         Require(order.Enabled && order.NicheAdvances.SequenceEqual(new uint[] { 1 }), "FinalCurseFixedFootprint");
         Require(order.Source.Contains("final_curse_matches", StringComparison.Ordinal), "CanonicalFinalPredicate");

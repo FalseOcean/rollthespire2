@@ -93,6 +93,7 @@ internal sealed partial class QueryWorkbenchFrame
         var q = _eventEditor.ExportSharedPartyQuery(_ancientEditor.ExportSharedPartyQuery(_actInformationEditor.ExportQuery(SearchQuery.Empty))) with { Players = queries };
         return new(players[0].Character, _partyAscension, q, AncientOptionConditionProfile.BroadDefault)
         { Version = 4, Players = players, PartyAncientEditor = _ancientEditor.ExportSharedPartyEditorState(),
+            MapEditor = _actInformationEditor.ExportMapState(),
             Mode = Core.World.Snapshots.WorldGameMode.Multiplayer, GameVersion = _runtime.Detection.NormalizedVersion,
             Profile = _runtime.Profile.ProfileId, ObservationVersion = PartyNeowQuery.HasTransactions(q) ? Core.Effects.PartyNeowAdmission.ObservationVersion : OrderedPartyAuthority.ObservationVersion };
     }
@@ -103,7 +104,12 @@ internal sealed partial class QueryWorkbenchFrame
             throw new InvalidOperationException("Party.InvalidDraftSlots");
         // Validate the entire authored grammar before touching editor state.
         _editorInputs.Compile(draft, _runtime);
-        ValidateRepresentable(draft.Query with { Players = [] }, allowSharedAncientIdentity: true);
+        // Map predicates on a saved player are shared facts at compilation too.
+        // Import that same bound map intent instead of losing it in personal editors.
+        var boundMaps = PartyInitialQuery.BindSharedConditions(draft.Query);
+        var mapQuery = draft.Query with { StandardMaps = boundMaps.StandardMaps,
+            StandardMapRoutes = boundMaps.StandardMapRoutes };
+        ValidateRepresentable(mapQuery with { Players = [] }, allowSharedAncientIdentity: true);
         foreach (var p in draft.Query.Players) ValidateRepresentable(p.Offers.IsEmpty ? p.Conditions :
             p.Conditions with { LegacyNeow = p.Conditions.LegacyNeow with { NeowRelics = p.Offers } });
         _readLobby = null; _readRoster = "";
@@ -140,6 +146,6 @@ internal sealed partial class QueryWorkbenchFrame
         }
         _seat = 0;
         _ancientEditor.ImportSharedPartyQuery(draft.Query, draft.PartyAncientEditor, draft.Players);
-        _actInformationEditor.ImportQuery(draft.Query); RefreshEditorContexts(render);
+        _actInformationEditor.ImportQuery(mapQuery, draft.MapEditor); RefreshEditorContexts(render);
     }
 }

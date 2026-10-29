@@ -52,6 +52,45 @@ internal static partial class PredictorCrystalAssistantChecks
         Check(fresh.Check([cards[0]]).MaySupport,"Removing a necessary card does not retain the pair conflict");
         Check(!new PredictorCrystalOffsetBound(one,table,true,rootCardSlots:false).Check(cards).RootCardSlotsRejected,
             "Audit control retains the old production proof path");
+        var language=new PredictorCrystalReachability(one,true,includeRerolls:true,goalLanguageProof:true);
+        Check(language.RootCardExclusions([cards[0]],table.Candidates).IsEmpty,
+            "Synchronous root lookup never initializes an unprepared table");
+        int languageSolves=0;language.LanguageResultObserved=(_,_,_)=>languageSolves++;
+        ImmutableArray<CrystalRewardOption> early=[];
+        var initial=language.Advance([cards[0]],TimeSpan.Zero,publishExcluded:excluded=>early=excluded);
+        var expected=table.Candidates.Where(candidate=>candidate!=cards[0] &&
+            bound.RootCardSlotsConflict([cards[0],candidate])).ToImmutableArray();
+        Check(!expected.IsEmpty && expected.All(early.Contains) && expected.All(initial.ExcludedCandidates.Contains),
+            "Production language publishes all slot exclusions before any candidate solve or projection");
+        Check(languageSolves==0 && language.ProofReplays==0 && initial.Progress.Examined==0,
+            "Language root publication performs no solving, click traversal or take replay");
+        Check(language.RootCardExclusions([cards[0]],table.Candidates).ToHashSet().SetEquals(expected),
+            "Synchronous prepared root view matches worker root exclusions");
+        Check(!language.RootCardExclusions([],table.Candidates).Contains(cards[1]) &&
+            !language.RootCardExclusions([cards[0],cards[0]],table.Candidates).Contains(cards[0]),
+            "Deselect and duplicate goals cannot become singleton denials");
+        var absent=cards[1] with {Key=new("CARD","RT2_UNPREPARED_ROOT_TARGET")};
+        Check(language.RootCardExclusions([cards[0]],[absent]).IsEmpty,
+            "An unprepared UI target is left unknown without lazy offset lookups");
+        var repeatedLanguage=language.Advance([cards[0]],TimeSpan.Zero);
+        Check(expected.All(repeatedLanguage.ExcludedCandidates.Contains) && language.IsCertifiedConflict(cards.Reverse().ToImmutableArray()),
+            "Language root denials persist for repeated and reordered selections");
+        foreach(var board in new[]{twice,revealed})
+        {
+            var multi=new PredictorCrystalReachability(board,true,includeRerolls:true,goalLanguageProof:true);
+            var multiResult=multi.Advance([cards[0]],TimeSpan.Zero);
+            Check(!multiResult.ExcludedCandidates.Contains(cards[1]) &&
+                !multi.RootCardExclusions([cards[0]],[cards[1]]).Contains(cards[1]),
+                "Production language and synchronous view retain repeated/revealed callback capacity");
+        }
+        using(var cancelled=new CancellationTokenSource())
+        {
+            cancelled.Cancel();bool stopped=false;
+            try {language.Advance([cards[1]],TimeSpan.Zero,cancelled.Token);}
+            catch(OperationCanceledException) {stopped=true;}
+            Check(stopped && language.RootCardExclusions([cards[0]],table.Candidates).ToHashSet().SetEquals(expected),
+                "Cancelled retargeting does not corrupt the prepared root proof");
+        }
         Console.WriteLine($"CRYSTAL_ROOT_SLOT_GUARDS_PASS subscriptions=2;revealedEntries=2;duplicateNormalized=true;variantPairs={variantPairs};controlledCountsNotNativePaths=true");
     }
 
@@ -76,6 +115,20 @@ internal static partial class PredictorCrystalAssistantChecks
         Check(focus.AdvanceFocused(selected,goal,TimeSpan.Zero).ProofSource=="learned-conflict","Focused repeated negative is retained");
 
         var receipts=new List<object>();CrystalReachabilityUpdate? baseline=null,enabled=null;
+        var languageSession=new PredictorCrystalReachability(source,true,potionScenarioBound:true,workers:4,targetDirected:true,
+            includeRerolls:true,goalLanguageProof:true);
+        var languageWatch=Stopwatch.StartNew();double? languageEarlyMs=null;ImmutableArray<CrystalRewardOption> languageEarly=[];
+        var languageResult=languageSession.Advance(selected,TimeSpan.Zero,publishExcluded:denials=>
+            {languageEarlyMs=languageWatch.Elapsed.TotalMilliseconds;languageEarly=denials;});
+        double languageInitialMs=languageWatch.Elapsed.TotalMilliseconds;
+        Check(slotNegatives.All(languageEarly.Contains) && slotNegatives.All(languageResult.ExcludedCandidates.Contains) &&
+            languageEarlyMs<languageInitialMs && languageResult.Progress.Examined==0 && languageSession.ProofReplays==0,
+            "Real production language publishes every cheap root denial without candidate solving/reprojection");
+        var synchronousWatch=Stopwatch.StartNew();var synchronous=languageSession.RootCardExclusions(selected,table.Candidates);
+        double synchronousMs=synchronousWatch.Elapsed.TotalMilliseconds;
+        Check(synchronous.ToHashSet().SetEquals(slotNegatives),"Prepared synchronous root exclusions match frozen native slot oracle");
+        receipts.Add(new {mode="goal-language",languageEarlyMs,languageInitialMs,synchronousMs,excluded=languageEarly.Length});
+        Console.WriteLine($"CRYSTAL_ROOT_LANGUAGE seed={source.Context.Seed};earlyMs={languageEarlyMs:F3};initialMs={languageInitialMs:F3};synchronousMs={synchronousMs:F3};excluded={languageEarly.Length};noCandidateSolve=true;noReprojection=true");
         foreach(bool root in Environment.GetEnvironmentVariable("RT2_CRYSTAL_GOAL_BATCH_FIRST")=="1"?new[]{true,false}:new[]{false,true})
         {
             var session=new PredictorCrystalReachability(source,true,potionScenarioBound:true,workers:4,targetDirected:true,

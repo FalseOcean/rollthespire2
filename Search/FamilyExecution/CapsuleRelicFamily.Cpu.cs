@@ -24,12 +24,12 @@ internal sealed partial class CapsuleRelicFamily
                 cpu = new FamilyCpuExecution(_request,this,plan is null ? "R.Relic.Cpu.CapsuleAndSequenceReplay.20260905.v1" :
                     compiledRevision,
                     plan is null ? _replay.Matches : plan.Matches,workers,g =>
-                    band is null || Math.Abs(g.MeanInputPopulation - (band=="SmallC" ? 65536d/17 : 65536d/10)) > .01 ? null :
-                    FamilyCpuReferenceCost.Quote(_request,g,FamilyId,"R.Direct"+band,workers,
-                        band=="SmallC"?"260.131-267.567":workers==1?"128.035-129.343":"53.902-55.005",compact:true,
-                        cpuPhysicalRevision: cpu!.Condition(g.CompactInput).PhysicalImplementationRevision, cpuWindowCapacity: cpu.WindowCapacity));
+                    RelicWorkEstimate.Capsule(_request, route, _replay.Pool, _gpuPlan, g,
+                        cpu: true, workers: workers, compiledMatcher: plan is not null));
+                // Retain only the historical acquisition mean as diagnostic
+                // calibration metadata. The estimate is not that measured band
+                // and does not require an upstream N pass to own a valid quote.
                 cpu.CalibrationMeanInput = band is null ? null : band=="SmallC" ? 65536d/17 : 65536d/10;
-                cpu.RequiredPassedCoverage = new HashSet<string>{"N.Neow"};
                 yield return cpu;
             }
         }

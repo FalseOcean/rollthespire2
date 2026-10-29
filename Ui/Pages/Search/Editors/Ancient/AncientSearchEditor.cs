@@ -283,11 +283,31 @@ internal sealed partial class AncientSearchEditor : Control
             choice.MouseEntered += () => _eligibilityTooltip.ShowStructuredText(choice,
                 _names.Resolve(option, GameContentKind.Relic),
                 _text.Get(eligible ? "query.ancient.eligibility.met" : "query.ancient.eligibility.not_met"),
-                _text.Get("query.ancient.eligibility." + option.Entry));
+                EligibilityDescription(option));
             choice.MouseExited += () => DismissEligibilityTooltip(choice);
             choice.TreeExiting += () => DismissEligibilityTooltip(choice);
         }
         return top + 88;
+    }
+
+    private string EligibilityDescription(ModelKey option)
+    {
+        string template = _text.Get("query.ancient.eligibility." + option.Entry);
+        string? ancientEntry = option.Entry switch
+        {
+            "PAELS_CLAW" or "PAELS_LEGION" or "PAELS_TOOTH" => "PAEL",
+            "ARCHAIC_TOOTH" or "TOUCH_OF_OROBAS" => "OROBAS",
+            "NUTRITIOUS_SOUP" => "TEZCATARA",
+            "BEAUTIFUL_BRACELET" => "NONUPEIPE",
+            "TRI_BOOMERANG" => "TANX",
+            "PANDORAS_BOX" => "DARV",
+            _ => null
+        };
+        if (ancientEntry is null) return template;
+        string ancient = _names.Resolve(new(BaseGameModelKeys.Categories.Event, ancientEntry), GameContentKind.Ancient);
+        return option.Entry == "BEAUTIFUL_BRACELET"
+            ? string.Format(template, ancient, _names.Resolve(new("ENCHANTMENT", "SWIFT"), GameContentKind.Enchantment))
+            : string.Format(template, ancient);
     }
 
     private VBoxContainer FamilyGuide(Control host, float width)

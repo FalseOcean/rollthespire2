@@ -18,8 +18,11 @@ internal sealed partial class ActInformationSearchEditor
         if (map)
         {
             var routes = draft.Routes.ToArray(); var properties = draft.Properties.ToArray();
+            var drawings = draft.Drawings.ToArray();
             draft.Routes.Clear(); draft.Properties.Clear();
-            return () => { foreach (var p in routes) draft.Routes[p.Key] = p.Value; foreach (var p in properties) draft.Properties[p.Key] = p.Value; };
+            draft.Drawings.Clear();
+            return () => { foreach (var p in routes) draft.Routes[p.Key] = p.Value; foreach (var p in properties) draft.Properties[p.Key] = p.Value;
+                foreach (var p in drawings) draft.Drawings[p.Key] = p.Value; };
         }
         var variants = draft.SelectedVariants.Select(s => s.ToArray()).ToArray();
         var bosses = draft.SelectedBosses.Select(s => s.ToArray()).ToArray();
@@ -33,7 +36,7 @@ internal sealed partial class ActInformationSearchEditor
     }
 
     internal bool HasConditions(bool party) => _drafts.TryGetValue(party ? -1 : 0, out var d) &&
-        (d.Routes.Count > 0 || d.Properties.Values.Any(rows => rows.Count > 0) ||
+        (Enumerable.Range(0, 4).Any(scope => ScopeConditionCount(d, scope) > 0) ||
          d.SelectedVariants.Concat(d.SelectedBosses).Concat(d.SelectedSecondBosses).Any(keys => keys.Count > 0) ||
          d.IncludesSecondBoss.Any(required => required));
     internal Action ClearConditions(bool party)
@@ -48,5 +51,5 @@ internal sealed partial class ActInformationSearchEditor
         (_draft.SelectedVariants[act].Count > 0 ? 1 : 0) + (_draft.SelectedBosses[act].Count > 0 ? 1 : 0) +
         (_draft.IncludesSecondBoss[act] ? 1 : 0));
 
-    internal int MapConditionCount() => _draft.Routes.Count + _draft.Properties.Values.Sum(conditions => conditions.Count);
+    internal int MapConditionCount() => Enumerable.Range(0, 4).Sum(scope => ScopeConditionCount(_draft, scope));
 }

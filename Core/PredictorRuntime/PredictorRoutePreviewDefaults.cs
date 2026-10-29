@@ -126,7 +126,8 @@ internal sealed partial class PredictorRun
             }
         }
         local[0] = cause with { AffectedDomains = domains };
-        bool simpleDeckEdits = actions.All(action => action is PredictorRestAction.Smith or PredictorRestAction.Cook or PredictorRestAction.Heal) &&
+        bool simpleDeckEdits = actions.All(action => action is PredictorRestAction.Smith or PredictorRestAction.Cook or PredictorRestAction.Heal or
+            PredictorRestAction.Lift or PredictorRestAction.Kindle) &&
             !(actions.Contains(PredictorRestAction.Heal) && PredictorSettlementEffects.Has(run.Working, "DREAM_CATCHER"));
         var deckFacts = PredictorDeckUncertainFact.All;
         if (simpleDeckEdits)
@@ -139,8 +140,28 @@ internal sealed partial class PredictorRun
                     .Select(level => level.Eternal).Distinct().Count() > 1)) deckFacts |= PredictorDeckUncertainFact.Removable;
             }
         }
+        bool smithOnlyDeck = simpleDeckEdits && !actions.Contains(PredictorRestAction.Cook);
+        if (smithOnlyDeck) cards = cards.Where(card => card.MaxUpgradeLevel > 0).ToImmutableArray();
+        bool scopedRelicState = actions.All(action => action is PredictorRestAction.Smith or PredictorRestAction.Cook or
+            PredictorRestAction.Heal or PredictorRestAction.Lift or PredictorRestAction.Kindle) &&
+            !(actions.Contains(PredictorRestAction.Heal) && (PredictorSettlementEffects.Has(run.Working, "DREAM_CATCHER") ||
+                PredictorSettlementEffects.Has(run.Working, "TINY_MAILBOX")));
         AddDependency(dependencies, new(local[0], cards, editsExisting)
-        { DeckFacts = deckFacts, ChangedCardMembershipEntries = simpleDeckEdits && !actions.Contains(PredictorRestAction.Cook) ? [] : default });
+        {
+            DeckFacts = deckFacts,
+            AffectedCardIds = smithOnlyDeck ? cards.Select(card => card.Id).ToImmutableArray() : default,
+            ChangedCardMembershipEntries = smithOnlyDeck ? [] : default,
+            ChangedCardStateEntries = smithOnlyDeck ? [] : default,
+            ChangedRelicEntries = scopedRelicState ? [] : default,
+            ChangedRelicStateEntries = scopedRelicState ? actions.Select(action => action switch
+                { PredictorRestAction.Lift => "GIRYA", PredictorRestAction.Kindle => "PUMPKIN_CANDLE", _ => null })
+                .Where(entry => entry != null).Select(entry => entry!).ToImmutableArray() : default,
+            ChangesPersonalRelicBag = scopedRelicState ? false : null,
+            ChangesSharedRelicBag = scopedRelicState ? false : null
+        });
+        // The retained dependency now owns the effect scope. Republishing the
+        // same local cause as an unscoped dependency would erase that contract.
+        local.Clear();
         // A previously entered Smith picker can only occur on an active draft.
         // Cancellation here is private witness navigation, never a user choice.
         if (run.Phase == PredictorPhase.SmithCards)

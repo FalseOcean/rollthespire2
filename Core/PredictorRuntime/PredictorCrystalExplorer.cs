@@ -1181,10 +1181,49 @@ internal sealed partial class PredictorCrystalExplorer
     private static PredictorCrystalSolution? VerifyVariant(PredictorRun entry,CrystalRewardRoute row,
         ImmutableArray<CrystalRewardOption> selected,ImmutableArray<PredictorInput> rerolls)
     {
-        var cards=selected.Where(o=>o.Kind==PredictorRewardKind.Card).ToImmutableArray();
         if(entry.Phase!=PredictorPhase.Rewards) return null;
         var run=entry.ForkCrystalRewards();
         foreach(var action in rerolls) if(run.Submit(run.Request!,action)!=PredictorInputResult.Accepted) return null;
+        return VerifyCurrentVariant(entry,run,row,selected,rerolls);
+    }
+    // A directed question needs one verified suffix, rather than the complete
+    // reroll catalog used by broad candidate discovery. Breadth-first order
+    // retains the existing shortest-reroll preference and its stable tie order.
+    internal static PredictorCrystalSolution? VerifyRerollSelection(PredictorRun entry,CrystalRewardRoute row,
+        ImmutableArray<CrystalRewardOption> selected,Func<bool> keepGoing)
+    {
+        row=row with { EnchantmentTargets=row.EnchantmentTargets || CrystalRewardOption.UsesEnchantments(entry.Working) || selected.Any(g=>g.Enchantment!=null) };
+        if(entry.CrystalSelectedReward!=null) throw new InvalidOperationException("CrystalSuffixRequiresClosedSelector");
+        if(entry.Phase!=PredictorPhase.Rewards) return null;
+        if(PredictorCrystalWing.Active(entry.Working)) return PredictorCrystalWing.Verify(entry,row,selected);
+        var queue=new Queue<CrystalSuffixNode>();queue.Enqueue(new(entry.ForkCrystalRewards(),[]));
+        while(queue.TryDequeue(out var node))
+        {
+            if(!keepGoing()) return null;
+            var proof=VerifyCurrentVariant(entry,node.Run,row,selected,node.Actions);
+            if(proof!=null) return proof;
+            // Prefixes visits siblings in reverse reward order before the old
+            // stable length sort. Preserve that order without materializing
+            // deeper suffixes before a shallow witness has been tried.
+            for(int i=node.Run.Rewards.Length-1;i>=0;i--)
+            {
+                var reward=node.Run.Rewards[i];
+                if(reward.Kind!=PredictorRewardKind.Card || reward.Status!=PredictorRewardStatus.Open || !reward.CanReroll) continue;
+                if(!keepGoing()) return null;
+                var run=node.Run.ForkCrystalRewards();
+                ImmutableArray<PredictorInput> actions=[new EnterCardSelection(reward.Id),new RerollCardReward(reward.Id),new ExitCardSelection()];
+                foreach(var action in actions)
+                    if(run.Submit(run.Request!,action)!=PredictorInputResult.Accepted)
+                        throw new InvalidOperationException("CrystalSuffixTransitionRejected");
+                queue.Enqueue(new(run,node.Actions.AddRange(actions)));
+            }
+        }
+        return null;
+    }
+    private static PredictorCrystalSolution? VerifyCurrentVariant(PredictorRun entry,PredictorRun run,CrystalRewardRoute row,
+        ImmutableArray<CrystalRewardOption> selected,ImmutableArray<PredictorInput> rerolls)
+    {
+        var cards=selected.Where(o=>o.Kind==PredictorRewardKind.Card).ToImmutableArray();
         if(selected.Any(o=>o.Kind==PredictorRewardKind.Potion) && PredictorSettlementEffects.Has(run.Working,"SOZU")) return null;
         if(MatchCardOptions(run.Rewards,cards)==null || selected.Any(o=>!Options(new(row.Steps,run.Rewards) { EnchantmentTargets=row.EnchantmentTargets }).Any(o.Accepts))) return null;
         var takes=TakeCards(run,cards);

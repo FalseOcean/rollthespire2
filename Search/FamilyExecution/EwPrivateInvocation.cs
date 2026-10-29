@@ -16,7 +16,7 @@ internal sealed class EwPrivateInvocation(ExactSearchExecutionRequest request, E
     public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId,EwPrivateGpuExecutor.MaxRoots,[],"EW.UnpricedEquivalentCoverage");
     public FamilySurvivalProjection Survival => FamilySurvivalProjection.Unresolved(FamilyId,"EW.JointUnpriced");
     public FamilyConditionPerformanceProjection ConditionPerformance => new(FamilyId,
-        "E.EventResult.Composite.W.World.PrivateOrdinal.CanonicalAbi1Ready.20260908.v2", "EW.Neutral",1,"EW.UnpricedCandidate",usesGpu:true);
+        "E.EventResult.Composite.W.World.PrivateOrdinal.CanonicalAbi1Ready.20260908.v2" + GpuRngRotation.Revision, "EW.Neutral",1,"EW.UnpricedCandidate",usesGpu:true);
     public FamilyPerformanceObservation CapturePerformanceObservation() => new(ConditionPerformance,_gpu?.Device??"",_gpu?.SetupMs??0,
         0,0,_batches,0,_input,_output,_ms,false,_faulted?"PhysicalFailureOrRecovery":"EW.CandidateNoCalibration");
     public async ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow observation, FamilyCandidateSet input, CancellationToken token)

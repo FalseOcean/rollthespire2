@@ -1,5 +1,4 @@
 using Godot;
-using RolltheSpire2.Ui.Persistence;
 
 namespace RolltheSpire2.Ui.Theme;
 
@@ -8,15 +7,13 @@ internal static partial class MainPanelTheme
 {
     private static FontVariation? _regular, _medium;
     private static Ui1Palette? _palette;
-    private static UiColorPreferences? _palettePreferences;
     public static Font Regular { get { EnsureFonts(); return _regular!; } }
     public static Font Medium { get { EnsureFonts(); return _medium!; } }
     public static Ui1Palette Palette
     {
         get
         {
-            if (_palette is not null && ReferenceEquals(_palettePreferences, UiAppearance.Current)) return _palette;
-            _palettePreferences = UiAppearance.Current;
+            if (_palette is not null) return _palette;
             var p = WorkspacePalette.MainPanel;
             return _palette = new Ui1Palette
             {

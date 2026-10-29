@@ -43,6 +43,7 @@ internal sealed class AncientOptionFamilyPlan
     internal delegate uint[][] GpuPacker(IReadOnlyList<Beta110GpuAncientOptionPreGateGate> gates, int scratchWords, int capacity);
     internal int Capacity { get; }
     internal int ScratchWords { get; }
+    internal int PricingReferenceRows => _acts.Where(a => !a.Exact).Sum(a => a.Keys.Length);
     internal WorldFastAncientOptionPlan? SingleOptionPlan { get; }
     internal IReadOnlyList<WorldFastAncientOptionPlan> OptionPlans { get; }
     internal bool UsesNumericalAct(int act) => _acts.Any(a => a.Act == act && a.Exact);

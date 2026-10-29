@@ -469,8 +469,9 @@ internal static partial class PartyPhase1Checks
         if (!invocation.ConditionPerformance.UsesGpu || invocation.GpuNumericRequirements != GpuNumericRequirements.Int64 ||
             !invocation.ConditionPerformance.PhysicalImplementationRevision.Contains(".Public.", StringComparison.Ordinal) ||
             !invocation.ConditionPerformance.PhysicalImplementationRevision.Contains("IntegerUnitFloat", StringComparison.Ordinal) ||
-            invocation.CanBindPrivateSerial || invocation.QuotePhysicalWork(new(false, false, 16384)) is not null ||
-            invocation.QuotePhysicalWork(new(true, false, 8192)) is not null)
+            invocation.CanBindPrivateSerial ||
+            (invocation.QuotePhysicalWork(new(false, false, 16384)) is { } denseQuote && !FamilyCoarsePricing.IsEstimate(denseQuote)) ||
+            (invocation.QuotePhysicalWork(new(true, false, 8192)) is { } compactQuote && !FamilyCoarsePricing.IsEstimate(compactQuote)))
             throw new InvalidDataException("PartyN.CompatibilityShapeOrPrice:" + name);
         var stages = (List<(ExactSearchExecutionRequest Request, IFamilyInvocation Family)>)typeof(NeowFamily.PartyInitial)
             .GetField("_gpuStages", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(compatible)!;
@@ -483,7 +484,8 @@ internal static partial class PartyPhase1Checks
         foreach (var child in stages.Select(s => s.Family).Where(f => f.ConditionPerformance.UsesGpu))
         {
             if (child is not NeowFamily { GpuPlan: { NumericalVariant: NeowGpuNumericalVariant.IntegerUnitFloat } packed } ||
-                child.CanBindPrivateSerial || child.QuotePhysicalWork(new(false, false, 16384)) is not null)
+                child.CanBindPrivateSerial ||
+                (child.QuotePhysicalWork(new(false, false, 16384)) is { } childQuote && !FamilyCoarsePricing.IsEstimate(childQuote)))
                 throw new InvalidDataException("PartyN.CompatibilityChildOrPrice:" + name);
             for (int stage = 0; stage < 4; stage++)
             {

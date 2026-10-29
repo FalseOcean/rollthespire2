@@ -6,13 +6,15 @@ public static class DeveloperNotesChapterIds
     public const string Next = "next";
     public const string Positioning = "positioning";
     public const string Devlog = "devlog";
+    public const string Contributors = "contributors";
 
     public static IReadOnlyList<string> All { get; } = new[]
     {
         Release,
         Next,
         Positioning,
-        Devlog
+        Devlog,
+        Contributors
     };
 }
 

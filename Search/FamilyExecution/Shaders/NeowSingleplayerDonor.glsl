@@ -33,6 +33,7 @@ uint next_int_current_shortcut_from_mantissa(uint64_t x, uint bound) {
     return uint(upper_limb >> 21u);
 }
 
+/*__RT2_XOSHIRO_ROTATE45__*/
 uint64_t rotl64(uint64_t value, uint amount) {
     return (value << amount) | (value >> (64u - amount));
 }
@@ -45,7 +46,7 @@ uint64_t next_u64(inout RngState rng) {
     rng.s1 ^= rng.s2;
     rng.s0 ^= rng.s3;
     rng.s2 ^= temporary;
-    rng.s3 = rotl64(rng.s3, 45u);
+    rng.s3 = rt2_rotate_left45_split32(rng.s3);
     return result;
 }
 
@@ -297,6 +298,14 @@ uint64_t xxhash64_seed12_from_prefix(uint64_t prefix_hash, uint tail4) {
     hash ^= hash >> 32u;
     return hash;
 }
+
+#if RT2_N_LEAFY_LOCAL_PREFIX
+// Local form of shion0528's stable-prefix reuse: no extra buffers or RNG state.
+uint64_t xxhash64_seed12_prefix(uint64_t first8) {
+    uint64_t hash = (prime5() + uint64_t(12u)) ^ xxh_round(uint64_t(0u), first8);
+    return rotl64(hash, 27u) * prime1() + prime4();
+}
+#endif
 
 uint64_t root_hash_for_ordinal(uint64_t ordinal) {
     uint64_t first8;

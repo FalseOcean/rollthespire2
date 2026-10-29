@@ -22,6 +22,7 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
     private readonly Label _acknowledgementText = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta, wrap: true);
     private readonly Button _acknowledge = new() { Name = "AcknowledgeChapter", CustomMinimumSize = new Vector2(160, 44) };
     public event Action<DeveloperNotesChapter>? AcknowledgementRequested;
+    public event Action<string>? ExternalLinkRequested;
     private readonly Label _pageTitle;
     private readonly Label _pageSubtitle;
     private readonly PanelContainer _railPanel;
@@ -118,6 +119,7 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
         _articleDivider = new HSeparator();
         MainPanelTheme.ApplySeparator(_articleDivider);
         _renderer = new DeveloperNotesArticleRenderer();
+        _renderer.ExternalLinkRequested += url => ExternalLinkRequested?.Invoke(url);
         articleColumn.AddChild(_articleTitle);
         articleColumn.AddChild(_articleSummary);
         articleColumn.AddChild(_articleNotice);
@@ -200,6 +202,21 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
 
     public void OpenChapter(string chapterId) => SelectChapter(chapterId);
 
+    internal void ShowExternalLinkResult(string url, bool opened)
+    {
+        if (opened)
+        {
+            _articleNotice.Visible = _selectedChapterId == DeveloperNotesChapterIds.Next;
+            _articleNotice.Text = _articleNotice.Visible
+                ? _uiText!.Format("ui1.developer_notes.plan_context", _document!.UpdatedAt) : string.Empty;
+        }
+        else
+        {
+            _articleNotice.Text = Local("未能打开浏览器，可自行访问：", "Could not open the browser. Visit: ") + url;
+            _articleNotice.Show();
+        }
+    }
+
     public void SetCompact(bool compact)
     {
         _compact = compact;
@@ -231,6 +248,7 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
                 Alignment = HorizontalAlignment.Left,
                 CustomMinimumSize = new Vector2(0, 42),
                 FocusMode = Control.FocusModeEnum.All,
+                AutowrapMode = TextServer.AutowrapMode.WordSmart,
                 TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis
             };
             string chapterId = chapter.Id;

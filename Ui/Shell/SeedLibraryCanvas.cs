@@ -335,7 +335,7 @@ internal sealed partial class SeedLibraryCanvas : Control
     private void EmptyDetail(string message) => _detail.AddChild(Text(string.IsNullOrWhiteSpace(_filter.Text) ? message : T("没有找到匹配的记录。", "No matching entries."), 19, true));
     private void AddListItem(string id, string title, string context, bool selected, Action action, IReadOnlyList<SearchPresetVisualIconRef>? icons = null)
     {
-        var button = _palette.Button(""); _palette.SetActive(button, selected); button.Name = "LibraryItem" + _entries.GetChildCount();
+        var button = _palette.Button(""); ApplyListItemState(button, selected); button.Name = "LibraryItem" + _entries.GetChildCount();
         button.SetMeta("entry_id", id); button.SetMeta("selected", selected);
         button.CustomMinimumSize = new(0, 76); button.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         var row = new HBoxContainer { MouseFilter = MouseFilterEnum.Ignore };
@@ -362,6 +362,18 @@ internal sealed partial class SeedLibraryCanvas : Control
         _entries.AddChild(button);
         _listButtons[id] = button;
         if (selected) _activeListButton = button;
+    }
+
+    private void ApplyListItemState(Button button, bool selected)
+    {
+        _palette.SetActive(button, selected);
+        foreach (string state in new[] { "normal", "hover", "pressed", "hover_pressed" })
+        {
+            var style = (StyleBoxFlat)button.GetThemeStylebox(state).Duplicate();
+            style.BorderWidthBottom = 0;
+            style.BorderWidthLeft = selected ? 2 : 0;
+            button.AddThemeStyleboxOverride(state, style);
+        }
     }
 
     private Label Text(string text, int size, bool secondary = false)

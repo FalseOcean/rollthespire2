@@ -7,7 +7,8 @@ internal static class MerchantShopColorlessPhysicalPricing
 {
     internal static FamilyPhysicalQuote? Quote(ExactSearchExecutionRequest request,
         MerchantShopColorlessCompactionDecision publicDecision, FamilyPhysicalQuoteRequest geometry,
-        FamilyExpectedFilteringCostProjection expected) => QuoteMeasured(request,publicDecision,geometry) ?? QuoteModel(request,publicDecision,geometry,expected);
+        FamilyExpectedFilteringCostProjection expected) => QuoteMeasured(request,publicDecision,geometry) ??
+            MerchantShopColorlessWorkEstimate.Quote(request, publicDecision, expected, geometry, cpu: false);
 
     private static FamilyPhysicalQuote? QuoteMeasured(ExactSearchExecutionRequest request,
         MerchantShopColorlessCompactionDecision publicDecision, FamilyPhysicalQuoteRequest geometry)

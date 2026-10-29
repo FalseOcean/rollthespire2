@@ -122,18 +122,13 @@ internal static class SearchPresetCompatibilityResolver
     private static void ValidateExclusion(SearchQuery query, CombatRewardSearchDraft? state)
     {
         var exclusion = query.CombatCardExclusion;
-        if (exclusion is not null && (exclusion.BattleCount is < 1 or > 6 || exclusion.CardKeys is not { Count: > 0 } ||
-            exclusion.CardKeys.Any(k => !k.IsValid || k.Category != BaseGameModelKeys.Categories.Card)))
+        if (exclusion is not null && (!exclusion.HasValidShape() || !exclusion.HasValidCardKeys()))
             throw new InvalidDataException("PresetCardExclusionInvalid");
         if (state is null) return;
         if (state.ExclusionBattleCount is < 1 or > 6 || exclusion is not null && exclusion.BattleCount != state.ExclusionBattleCount)
             throw new InvalidDataException("PresetCardExclusionRangeInvalid");
-        if (state.ExcludedCollection is not { } snapshot) return;
-        if (string.IsNullOrWhiteSpace(snapshot.Id) || string.IsNullOrWhiteSpace(snapshot.Name) || snapshot.Revision < 1 ||
-            snapshot.Cards is not { Count: > 0 } || snapshot.Cards.Any(k => !k.IsValid || k.Category != BaseGameModelKeys.Categories.Card) ||
-            snapshot.Cards.Distinct(ModelKeyComparer.Instance).Count() != snapshot.Cards.Count ||
-            exclusion is null || exclusion.BattleCount != state.ExclusionBattleCount ||
-            !new HashSet<ModelKey>(exclusion.CardKeys, ModelKeyComparer.Instance).SetEquals(snapshot.Cards))
+        if (state.ExcludedCollection is null) return;
+        if (!state.HasMatchingExclusionSnapshot(exclusion))
             throw new InvalidDataException("PresetCardExclusionSnapshotMismatch");
     }
 

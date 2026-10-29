@@ -50,6 +50,7 @@ internal static class OperationDisplayPolicy
         "PANDORAS_BOX" or "ROOM_FULL_OF_CHEESE" => D5,
         "COLORFUL_PHILOSOPHERS" or "ORRERY" => new(OperationTextMode.GroupRows, OperationCardLayout.Groups),
         "TOY_BOX" or "ALCHEMICAL_COFFER" => new(OperationTextMode.CardRows, OperationCardLayout.Parallel),
+        "ENTROPIC_BREW" => A1,
         "TRIAL" => option is "NONDESCRIPT_INNOCENT" or "NONDESCRIPT_GUILTY" ? D3 : A1,
         "WHISPERING_HOLLOW" => option == "HUG" ? D2 : A1,
         "TRASH_HEAP" => option == "GRAB" ? D1 : A1,
@@ -59,7 +60,7 @@ internal static class OperationDisplayPolicy
         "SILKEN_TRESS" or "DISTINGUISHED_CAPE" or "LEAFY_POULTICE" or "BEAUTIFUL_BRACELET" or
         "SAND_CASTLE" or "FRAGRANT_MUSHROOM" or "WAR_PAINT" or "WHETSTONE" or
         "ATTACK_POTION" or "SKILL_POTION" or "POWER_POTION" or "COLORLESS_POTION" or
-        "COSMIC_CONCOCTION" or "OROBIC_ACID" or "ENTROPIC_BREW" or
+        "COSMIC_CONCOCTION" or "OROBIC_ACID" or
         "BRAIN_LEECH" or "INFESTED_AUTOMATON" or "THE_FUTURE_OF_POTIONS" or "TINKER_TIME" or
         "DOORS_OF_LIGHT_AND_DARK" or "TABLET_OF_TRUTH" or "SLIPPERY_BRIDGE" or
         "DREAM_CATCHER" or "DRIFTWOOD" => D1,

@@ -2,6 +2,102 @@
 
 # Standalone Production Search
 
+## Focused Owner interface polish
+
+`Run.ps1 -OwnerUiPolish -Godot <Godot .NET console exe> -GamePck <matching game PCK> -Output <isolated directory>` uses the existing native workspace initialization and returns before the general UI or replay suites. `-OwnerUiPolishScope chrome|editors|content|state|map` selects an affected slice when repairing a failure. Supply an isolated `APPDATA` as for other standalone runs; workspace data is also scoped beneath the output directory.
+
+`-OwnerUiPolishScope followup` selects only draft-capture recovery, the current bilingual About chapters and the shared main-menu/in-run icon fixture. It replays the original saved notice, proves recovery without a search, preserves unrelated failures, tests a real blocked write and its successful retry, and checks history remains unchanged. The launcher screenshot is a native control fixture, not a complete game screenshot. `--developer-notes-document` in the existing functional checks covers document loading, acknowledgement state and the embedded resource set; inspect a ZIP from `tools/package_mod.ps1` separately for player-package membership.
+
+`-OwnerUiPolishScope release-copy` renders only the bilingual release chapter and exercises its existing table-of-contents navigation to the manual-order section and credits. It captures the opening, those sections and the scrollable ending without replaying search, recovery, icon, numerical or GPU checks.
+
+`-OwnerUiPolishScope reference-copy` checks existing Ancient eligibility tooltips against each owning Ancient's current native title, then renders the bilingual family article, its formula and its scrollable ending. This content snapshot fixture uses isolated state, the controls' existing enter/exit signals and a frozen pointer-dismissal monitor; physical hover remains covered by the regular content suite. It skips the other content fixtures, search and GPU checks.
+
+`-OwnerUiPolishScope candidate-defaults` checks the four default-off in-run switches, retained explicit opt-ins and bilingual settings after retirement of the color editor. It captures the fixed theme and retained font controls without running search or GPU checks. The functional `--in-run-feature-defaults` and native `--predictor-feature-preferences` slices cover preference migration and the cold map-capture gate respectively.
+
+The bilingual receipts cover visible bounds and state changes, native artwork/drag presentation, treasure draft persistence, source takeover suspension/restoration, explicit character edits and actual map-witness provenance. Enchantment names are compared with native model titles. Reroll groups are presentation fixtures, with no RNG or reward-generation claim. Content hover checks briefly move the host's native pointer; the entry point restores its original desktop position in `finally`. This is scoped UI evidence, followed by Owner game validation.
+
+## Card collection creation, search and restart
+
+After a no-deploy Release build of this host, run `Run.ps1 -CardCollectionFlow -Godot <Godot .NET console exe> -GamePck <matching game PCK> -Output <fresh directory> -SkipBuild`. This dedicated branch starts two separate native processes, sharing only the fixture files under that output directory. It creates a collection through the Library editor, selects it in Search, runs a target-one CPU production search with Exact enabled, and saves the real result through history and the Favorite transaction. The second process reloads the saved identities and confidence, uses the History action to restore the conditions, and starts another real search.
+
+The receipts record the isolated account premises, process IDs, prepared DLL hashes and their agreement with the loaded module MVIDs, scan progress, and collection/query/history/favorite identities. A 45-second or observed 4,096-scanned-root bound cancels and fails the fixture; it does not change the product's search request. This is one representative integration flow, not a full UI suite, GPU check or natural game playthrough. Reusing an existing output directory for the creation phase is rejected.
+
+## Crystal cold discovery and target-change latency
+
+`RT2_CRYSTAL_OVERALL_LATENCY=1` selects the existing `-RunEntryChecks` host's
+isolated Crystal experiment before ordinary catalog initialization. Set
+`RT2_CRYSTAL_WATCHER_PACKAGE` to an installed Watcher package; the host copies it
+into a fresh output directory, loads its real initializer and dynamic pools, and
+records file hashes, runtime, Harmony registrations and model ownership. Inspect
+those receipts: a package reporting Loaded alone does not prove its patches ran.
+Use a runtime supported by that package; the October 28 fixture used .NET 9.0.16
+after a .NET 10 host rejected Watcher's Harmony patches. Do not alter the user's
+installed game or Godot runtime to prepare a comparison.
+
+Optional `RT2_CRYSTAL_OVERALL_SEED`, `RT2_CRYSTAL_OVERALL_ACT_INDEX` (0–2), and
+`RT2_CRYSTAL_OVERALL_QUERY_MS` (1–10000) select the native board and per-query
+wall budget. Ironclad and Watcher each exercise three/six reveals with natural
+zero-through-three target selections, no injected witnesses and no added
+solver-affecting relics. `RT2_CRYSTAL_OVERALL_CHOICES` writes those choices when
+absent; reuse that file for the comparison. An unavailable frozen next choice is
+reported rather than forced into the picker. Run fresh processes serially with
+the same host, package and choices and each fixed product DLL through
+`-SkipBuild -ReleaseBinaryDirectory`; preserve both incomplete and slower cases.
+
+`overall-latency.json` separates new picker exclusions, positive publication,
+candidate closure and gold closure, includes pending identities, and verifies
+published plans and unchanged native state. These are fresh-run solver receipts,
+not a reconstruction of a post-event save or rendered-frame latency. The regular
+rendered UI-only run-entry check records `CRYSTAL_UI_RETARGET` through the actual
+bounded presentation consumer. Optional `RT2_CRYSTAL_OVERALL_TAIL_LANGUAGE=1`
+runs at most three independent pending-target diagnostics after all normal
+measurements and worker joins; those results never feed the timed sessions.
+
+### Cumulative random interaction checks
+
+Add `RT2_CRYSTAL_INTERACTION=1` and `RT2_CRYSTAL_INTERACTION_RENDERED=1` to
+`RT2_CRYSTAL_OVERALL_LATENCY=1`, then use the same `-RunEntryChecks` command,
+a fresh output directory and a frozen Release directory. Omit `-Headless`.
+The existing host generates ten random seeds and captures both reveal modes
+before solving. Cases alternate Ironclad/Watcher and curse avoidance, and cover
+Driftwood, Pael's Wing and enchantment relics without combining Wing/Driftwood.
+Target counts come from the captured reward-instance domain, not reveal count;
+selection stops early only after every remaining target is classified and none
+is selectable. No witnesses are injected.
+
+The panel uses its actual worker, normal Process/FramePostDraw and button
+signals. Timing runs from panel initialization through selections, pending
+focus, removal/reselection, complete candidate/Gold display and close/join.
+Native fixture reconstruction, snapshot comparison, process/package startup
+and receipt IO are outside that interval. This does not measure opening the
+in-run launcher. The same operations are also replayed by the pure solver;
+these are separate timings, not interchangeable acceptance evidence.
+
+`interaction-manifest.json`, each `*-ui-sequence.json`, `*-ui-latency.json`
+and aggregate `interaction-latency.json` retain inputs, actual coverage,
+pending identities, original failures and completion. The configured cumulative
+limits are 20 seconds for Three and 60 for Six, including Gold optimality;
+the daily targets remain 10/30 seconds. An incomplete sequence cannot pass.
+Inspect all twenty UI and solver receipts and actual focus/selection coverage,
+not only an aggregate flag.
+
+`RT2_CRYSTAL_INTERACTION_CAPTURE_ONLY=1` freezes inputs without solving;
+`RT2_CRYSTAL_INTERACTION_USE_CAPTURE=<directory>` generates natural operations
+against those inputs. `RT2_CRYSTAL_INTERACTION_REPLAY=<directory>` repeats the
+recorded operations for a same-input comparison. `COUNT`, `SEED`, `INVENTORY`,
+`CASE` and `ENCHANTMENTS` under the same prefix are diagnostic controls; a
+partial or manually selected cohort is not ten-seed acceptance.
+
+Focused correctness remains in this host, using separate clean environments:
+`RT2_CRYSTAL_PAELS_WING=<output>` with `RT2_CRYSTAL_PAELS_WING_ALLOW_CURSE_RAW=1`
+checks full small-board take/sacrifice truth and physical Curse effects;
+`RT2_CRYSTAL_GOLD_FOCUS=1` checks raw Gold thresholds and completion;
+`RT2_CRYSTAL_DRIFTWOOD_EXPERIMENT=<output>` with `RT2_CRYSTAL_DRIFTWOOD_FRONTIER=1`,
+`RT2_CRYSTAL_GOAL_LANGUAGE=1`, `RT2_CRYSTAL_LANGUAGE_DISPATCH=1` and
+`RT2_CRYSTAL_LANGUAGE_PADDING_ORACLE=1` checks the language, continuation and
+padding domain. `RT2_CRYSTAL_LANGUAGE_MEMO_PROFILE=1` records actual typed-word
+cache coverage; zero observed hits must not be presented as a reproduced case.
+
 ## Resident warm replay desk (opt-in prototype)
 
 `Resident.ps1` keeps one rendering-enabled Godot window and one frozen candidate

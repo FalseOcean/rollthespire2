@@ -91,6 +91,7 @@ internal sealed partial class PredictorRun
         _conveyorHadGrab = scene.ConveyorHadGrab;
         _eventLayoutEncounter = scene.LayoutEncounter;
         _eventOfferedCards = scene.OfferedCards;
+        _eventOfferedCardNicheScope = null;
         _eventCardCandidates = scene.CardCandidates;
         _eventCardsRequired = scene.CardsRequired;
         _eventRewardContinuation = scene.RewardScene != null && !scene.MimicRestRewards;

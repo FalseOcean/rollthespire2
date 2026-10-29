@@ -10,6 +10,158 @@ internal static class PredictorDrawingEventChecks
     private static void Check(bool condition, string message)
     { if (!condition) throw new InvalidOperationException("Drawing event: " + message); }
 
+    internal static void RunOverblockBoundaries(PredictorRun captured)
+    {
+        var source = new PredictorRun(captured.Context with { Live = null, Operation = null, Modifiers = [],
+            AccountWongoPoints = 0, NumberOfRuns = Math.Max(1, captured.Context.NumberOfRuns) }, captured.Checkpoints[0].State);
+        PredictorRun AfterRest(string entry, bool cleaver = false) => Fixture(source, entry, startFloor: 7,
+            configure: state => cleaver ? PredictorSettlementEffects.ObtainRelic(state, new("RELIC", "MEAT_CLEAVER")) : state,
+            routeRooms: [MapPointType.Monster, MapPointType.RestSite, MapPointType.Unknown, MapPointType.Monster, MapPointType.Boss]);
+        PredictorRouteContinuation Forecast(PredictorRun run, ImmutableArray<PredictorPlannedNode> plans,
+            PredictorRoutePreviewPolicy policy = PredictorRoutePreviewPolicy.LiveMapDefaults)
+        {
+            string before = JsonSerializer.Serialize(run.Working), authored = JsonSerializer.Serialize(plans);
+            var result = run.PreviewRouteContinuation(plans, 3, scope: PredictorRoutePreviewScope.AllModeledNodes, policy: policy);
+            Check(before == JsonSerializer.Serialize(run.Working) && authored == JsonSerializer.Serialize(plans),
+                "scoped event checks preserve the source and authored inputs");
+            return result;
+        }
+        void IndependentRewards(PredictorRouteContinuation route, string operation) => Check(route.Nodes.Length == 3 &&
+            route.Nodes[1].Advanced && route.Nodes[2].Rewards.Any(reward => reward.Kind == PredictorRewardKind.Card && reward.IsKnown),
+            operation + " retains independent following Rewards");
+
+        foreach (var (entry, option) in new[] { ("ZEN_WEAVER", "EMOTIONAL_AWARENESS"), ("WHISPERING_HOLLOW", "HUG") })
+        {
+            var run = AfterRest(entry);
+            var initial = Forecast(run, []);
+            Check(initial.Nodes[0].RestDefaultApplied, "the real default Smith supplies unresolved upgrade targets");
+            var candidatePreview = initial.Nodes[1].Event!.EntryOptions.Single(value => value.Key == option).ResultPreview!;
+            var targets = candidatePreview.DeckCardCandidates.Where(card => card.IsKnown).ToArray();
+            Check(targets.Length > 1 && targets.Any(card => !card.FullCardKnown),
+                entry + " publishes known operation targets without claiming their unresolved upgrade details");
+            var plan = Choose(initial.Nodes[1], option);
+            var target = targets[0].Value;
+            plan = plan with { Event = plan.Event! with { Actions = plan.Event.Actions.Add(new(PredictorEventActionKind.Cards)
+                { DeckCards = [new(target.Id, target.Key, target.FloorAdded)] }) } };
+            var explicitTarget = Forecast(run, [plan]);
+            IndependentRewards(explicitTarget, entry + " explicit target");
+            Check(explicitTarget.Nodes[1].Event!.AppliedActions == 2, entry + " executes the same scoped target accepted by its UI");
+            if (entry == "ZEN_WEAVER") Check(explicitTarget.Nodes[1].Event!.GoldBalance == 875,
+                "the chosen removal still spends its real fee");
+        }
+        var upgradeRun = AfterRest("AROMA_OF_CHAOS");
+        var upgrade = Forecast(upgradeRun, []).Nodes[1].Event!.EntryOptions.Single(option => option.Key == "MAINTAIN_CONTROL").ResultPreview!;
+        Check(upgrade.DeckCardCandidates.All(card => !card.IsKnown) && upgrade.ChangedCards.IsEmpty &&
+            upgrade.PendingCauses.Any(cause => (cause.AffectedDomains & PredictorCombatDomain.Deck) != 0),
+            "a second upgrade retains its unresolved deck cause without publishing witness targets or exact card changes");
+
+        var bridgeRun = AfterRest("SLIPPERY_BRIDGE");
+        var bridge = Forecast(bridgeRun, []);
+        Check(bridge.Nodes[1].Event!.EntryOptions.Length == 2 && bridge.Nodes[1].Event!.EntryOptions.All(option =>
+            option.Value != null && option.IdentityPendingCauses.IsEmpty),
+            "ordinary Smith uncertainty does not hide Bridge's known local target/option identities");
+        var overcome = Forecast(bridgeRun, [Choose(bridge.Nodes[1], "OVERCOME")]);
+        IndependentRewards(overcome, "Bridge Overcome");
+        Check(overcome.Nodes[1].Event!.AppliedActions == 1, "Bridge's explicit removal remains executable after unresolved Smith");
+        BridgeWithoutKnownTargets(source);
+
+        var wongoRun = AfterRest("WELCOME_TO_WONGOS");
+        var wongo = Forecast(wongoRun, []);
+        var leave = Choose(wongo.Nodes[1], "LEAVE");
+        var left = Forecast(wongoRun, [leave]);
+        IndependentRewards(left, "Wongo Leave");
+        var mixedRun = AfterRest("WELCOME_TO_WONGOS", cleaver: true);
+        var mixedEntry = Forecast(mixedRun, []);
+        var cook = new PredictorPlannedNode(mixedEntry.Nodes[0].Position.NodeId)
+        { RestActions = [new(PredictorRestAction.Cook)], LeaveRest = true };
+        var mixed = Forecast(mixedRun, [cook, Choose(mixedEntry.Nodes[1], "LEAVE")]);
+        Check(mixed.Nodes[0].PendingCauses.Any(cause =>
+            (cause.AffectedDomains & (PredictorCombatDomain.Deck | PredictorCombatDomain.Health)) ==
+                (PredictorCombatDomain.Deck | PredictorCombatDomain.Health)),
+            "Cook supplies a real shared Deck/Health parent for the Wongo boundary");
+        IndependentRewards(mixed, "Wongo Leave with mixed-domain parent");
+        Check(mixed.Nodes[1].PendingCauses.Any(cause => (cause.AffectedDomains & PredictorCombatDomain.Health) != 0),
+            "local Wongo continuation keeps the earlier Health cause instead of clearing its parent");
+        Check(left.Nodes[1].Event!.AppliedActions == 1 && left.Nodes[1].DeckPendingCauses.Any(cause => cause.Code == "EventLocalDeckEffectPending") &&
+            left.Nodes[2].DeckPendingCauses.Any(cause => cause.Code == "EventLocalDeckEffectPending"),
+            "Wongo keeps its real unresolved downgrade and its original upstream upgrade causes on later consumers");
+        var diagnostics = left.Nodes[1].Diagnostics!;
+        foreach (string property in new[] { "rng.Rewards.state", "rng.Niche.state" })
+        {
+            var before = diagnostics.Before.Select(diagnostics.Snapshot.Fact).Single(fact => fact.PropertyKey == property);
+            var after = diagnostics.After.Select(diagnostics.Snapshot.Fact).Single(fact => fact.PropertyKey == property);
+            Check(before.Status == PredictorKnowledgeStatus.Known && after.Status == PredictorKnowledgeStatus.Known && before.DisplayValue == after.DisplayValue,
+                "Wongo's discarded event-local downgrade does not consume " + property);
+        }
+        Check(!Forecast(wongoRun, [leave], PredictorRoutePreviewPolicy.AuthoredChoices).Nodes[0].Advanced,
+            "AuthoredChoices still requires the actual earlier Smith action/target");
+        var smithTarget = wongoRun.Working.Deck.Select(wongoRun.Working.Card).First(card => card.UpgradeLevel < card.MaxUpgradeLevel);
+        var smith = new PredictorPlannedNode(wongoRun.Working.Position.NodeId)
+        { RestActions = [new(PredictorRestAction.Smith) { SmithCard = new(smithTarget.Id, smithTarget.Key, smithTarget.FloorAdded) }], LeaveRest = true };
+        var authoredEntry = Forecast(wongoRun, [smith], PredictorRoutePreviewPolicy.AuthoredChoices);
+        var occurrence = authoredEntry.Nodes[1].Event!.Occurrence!;
+        var selected = occurrence.Candidates.First(candidate => candidate.Event.Entry == "WELCOME_TO_WONGOS" && !candidate.ExcludedByPlayer);
+        var selectEvent = new PredictorPlannedNode(authoredEntry.Nodes[1].Position.NodeId)
+        { Event = new(selected.Event) { Occurrence = new(selected.Event, selected.QueueEvent, selected.RawOrdinal,
+            occurrence.Cursor, selected.Cursor) } };
+        var authoredOption = Forecast(wongoRun, [smith, selectEvent], PredictorRoutePreviewPolicy.AuthoredChoices).Nodes[1];
+        var authoredLeave = selectEvent with { Event = selectEvent.Event! with
+        { Actions = [new(PredictorEventActionKind.Option)
+            { ExpectedOption = authoredOption.Event!.Options.Single(option => option.Key == "LEAVE").Value! }] } };
+        var exact = Forecast(wongoRun, [smith, authoredLeave], PredictorRoutePreviewPolicy.AuthoredChoices);
+        Check(exact.Nodes.Length >= 2 && exact.Nodes[1].Advanced && exact.Nodes[1].DeckPendingCauses.IsEmpty,
+            "fully authored Smith and Wongo Leave retain the exact downgrade path; nodes=" + exact.Nodes.Length +
+            ";causes=" + string.Join(',', exact.Nodes.SelectMany(node => node.PendingCauses).Select(cause => cause.Code)));
+        Console.WriteLine("DRAWING_EVENT_OVERBLOCK_BOUNDARIES_PASS scoped target availability/details; genuine upgrade reads; Bridge identity/population; Wongo local downgrade/independent Rewards; authored isolation");
+    }
+
+    internal static void RunFaultBoundaries(PredictorRun captured)
+    {
+        var run = Fixture(captured, "ABYSSAL_BATHS", configure: state =>
+            PredictorObtainSources.AddCard(captured.Context, state, new ModelKey("CARD", "THE_HUNT")),
+            routeRooms: [MapPointType.Monster, MapPointType.Monster, MapPointType.Monster, MapPointType.Boss]);
+        var baseline = run.PreviewRouteContinuation([], 2, scope: PredictorRoutePreviewScope.AllModeledNodes,
+            policy: PredictorRoutePreviewPolicy.LiveMapDefaults);
+        Check(baseline.Nodes.Length == 2 && baseline.Nodes.All(node => node.Advanced), "fault fixture has a real two-fight prefix");
+        var hunt = run.Working.Deck.Select(run.Working.Card).Single(card => card.Key.Entry == "THE_HUNT");
+        var plan = new PredictorPlannedNode(baseline.Nodes[1].Position.NodeId)
+        { Combat = new() { CardTriggers = [new(hunt.Id, int.MaxValue)] } };
+        PredictorRun.ValidatePlannedNodes([plan]);
+        string before = JsonSerializer.Serialize(run.Working);
+        var partial = run.PreviewRouteContinuation([plan], 2, scope: PredictorRoutePreviewScope.AllModeledNodes,
+            policy: PredictorRoutePreviewPolicy.LiveMapDefaults, isolateNodeFailures: true);
+        Check(partial.Nodes.Length == 1 && partial.Nodes[0].Advanced && partial.Nodes[0].Rewards.Any(reward => reward.IsKnown) &&
+            partial.Fault is { Error: PredictorDrawingWorkLimitException, Stage: "node" } fault &&
+            fault.Position == baseline.Nodes[1].Position && partial.TerminalBoundary == null && !partial.ReachedLimit,
+            "large valid input stops only the affected node, preserving this attempt's successful prefix and real fault");
+        Check(JsonSerializer.Serialize(run.Working) == before && plan.Combat.CardTriggers[0].EffectiveTriggers == int.MaxValue,
+            "failed projection retains authored input and never mutates its source run");
+        bool propagated = false;
+        try
+        {
+            run.PreviewRouteContinuation([plan], 2, scope: PredictorRoutePreviewScope.AllModeledNodes,
+                policy: PredictorRoutePreviewPolicy.LiveMapDefaults);
+        }
+        catch (PredictorDrawingWorkLimitException) { propagated = true; }
+        Check(propagated, "node fault isolation is explicit; existing callers retain exception propagation");
+        var corrected = plan with { Combat = plan.Combat with { CardTriggers = [new(hunt.Id, 2)] } };
+        var recovered = run.PreviewRouteContinuation([corrected], 2, scope: PredictorRoutePreviewScope.AllModeledNodes,
+            policy: PredictorRoutePreviewPolicy.LiveMapDefaults, isolateNodeFailures: true);
+        Check(recovered.Fault == null && recovered.Nodes.Length == 2 && recovered.Nodes.All(node => node.Advanced),
+            "corrected inputs recompute the actual full prefix without retaining failed results");
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        bool cancellationObserved = false;
+        try
+        {
+            run.PreviewRouteContinuation([], 2, token: cancelled.Token, scope: PredictorRoutePreviewScope.AllModeledNodes,
+                policy: PredictorRoutePreviewPolicy.LiveMapDefaults, isolateNodeFailures: true);
+        }
+        catch (OperationCanceledException) { cancellationObserved = true; }
+        Check(cancellationObserved, "cancellation never becomes a node fault or a completed forecast");
+        Console.WriteLine("DRAWING_FAULT_BOUNDARIES_PASS scoped failure; retained input; correction; cancellation; source purity");
+    }
+
     internal static void Run(PredictorRun captured)
     {
         foreach (string entry in new[] { "ABYSSAL_BATHS", "TABLET_OF_TRUTH", "AROMA_OF_CHAOS", "SELF_HELP_BOOK" })

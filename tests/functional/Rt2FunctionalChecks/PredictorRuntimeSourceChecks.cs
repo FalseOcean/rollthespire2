@@ -54,6 +54,7 @@ internal static class PredictorRuntimeSourceChecks
             {
                 case "initialization": FiveCharacterInitialization(context); break;
                 case "live-capture": PredictorLiveCaptureChecks.Run(PredictorSeedCapture.CreateRun(context, authority)); break;
+                case "feature-preferences": PredictorLiveCaptureChecks.Run(PredictorSeedCapture.CreateRun(context, authority), featurePreferencesOnly: true); break;
                 case "live-policy": PredictorRouteLivePolicyChecks.Run(PredictorSeedCapture.CreateRun(context, authority)); break;
                 case "repy": PredictorDrawingEventChecks.RepyReadsOnlyKeyMembership(PredictorSeedCapture.CreateRun(context, authority)); break;
                 case "tablet": PredictorRouteEventChecks.TabletHealthScope(PredictorSeedCapture.CreateRun(context, authority)); break;
@@ -61,6 +62,31 @@ internal static class PredictorRuntimeSourceChecks
                     PredictorRouteKnowledgeChecks.RunLiveRestDefaults(PredictorSeedCapture.CreateRun(context, authority));
                     PredictorDrawingEventChecks.Run(PredictorSeedCapture.CreateRun(context, authority));
                     PredictorDrawRewardContinuationChecks.Run(PredictorSeedCapture.CreateRun(context, authority));
+                    break;
+                case "drawing-boundaries":
+                    var drawingBoundary = PredictorSeedCapture.CreateRun(context, authority);
+                    PredictorRouteLivePolicyChecks.RunPandoraBoundaries(drawingBoundary);
+                    PredictorRouteKnowledgeChecks.RunTargetBoundaries(drawingBoundary);
+                    PredictorDrawingEventChecks.RunFaultBoundaries(drawingBoundary);
+                    break;
+                case "drawing-overblocks":
+                    var overblockBoundary = PredictorSeedCapture.CreateRun(context, authority);
+                    PredictorDrawingEventChecks.RunOverblockBoundaries(overblockBoundary);
+                    PredictorRouteKnowledgeChecks.RunHatchOverblockBoundaries(overblockBoundary);
+                    PredictorRouteLivePolicyChecks.RunObtainOverblockBoundaries(overblockBoundary);
+                    break;
+                case "card-operations":
+                    var cardOperations = PredictorSeedCapture.CreateRun(context, authority);
+                    PredictorCardRewardNicheKnowledgeChecks.Run(cardOperations);
+                    PredictorDrawRewardContinuationChecks.RunCardOperations(cardOperations);
+                    PredictorRouteEventChecks.RunPartialCardOperations(cardOperations);
+                    break;
+                case "dependency-boundaries":
+                    var dependencyBoundary = PredictorSeedCapture.CreateRun(context, authority);
+                    PredictorDrawRewardContinuationChecks.RunDependencyBoundaries(dependencyBoundary);
+                    PredictorRouteLivePolicyChecks.RunDependencyScopeBoundaries(dependencyBoundary);
+                    PredictorRouteShopChecks.RunDependencyScopeBoundaries(dependencyBoundary);
+                    PredictorRouteEventChecks.RunDefaultDependencyFixes(dependencyBoundary);
                     break;
                 case "combat-facts":
                     PredictorCombatRewardFactsChecks.Run(PredictorSeedCapture.CreateRun(context, authority));

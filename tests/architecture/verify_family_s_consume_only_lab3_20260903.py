@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,7 +23,7 @@ cost = read("Search/FamilyExecution/FamilyAnalyticalCost.cs")
 require("void consume_rng()" in s_shader, "S consume-only helper missing")
 for transition in (
     "uint64_t temporary = s1 << 17u;",
-    "s2 ^= s0; s3 ^= s1; s1 ^= s2; s0 ^= s3; s2 ^= temporary; s3 = rotl64(s3, 45u);",
+    "s2 ^= s0; s3 ^= s1; s1 ^= s2; s0 ^= s3; s2 ^= temporary; s3 = rt2_rotate_left45_split32(s3);",
 ):
     require(s_shader.count(transition) == 2,
             f"S next_u64 and consume_rng transition must remain identical: {transition}")
@@ -32,7 +33,9 @@ require("float64" not in s_shader and "double(" not in s_shader,
         "S still requires FP64 for discarded RNG burns")
 require("for (uint call = 0u; call < 12u; ++call) consume_rng();" in s_shader,
         "S pre-colorless burn count changed")
-require("uncommon[ordinal - 1u] = next_int(uncommon_pool_count);\n        consume_rng();\n        rare[ordinal - 1u]" in s_shader,
+between_draws = s_shader.split("uncommon[ordinal - 1u] = next_int(uncommon_pool_count);", 1)[1].split(
+    "rare[ordinal - 1u] = next_int(rare_pool_count);", 1)[0]
+require(between_draws.count("consume_rng();") == 1 and "next_u64(" not in between_draws and "next_int(" not in between_draws,
         "S colorless price burn/order changed")
 require("for (uint call = 0u; call < 13u; ++call) consume_rng();" in s_shader,
         "S post-colorless burn count changed")
@@ -43,7 +46,7 @@ require("rngBurnImplementation=StateAdvanceOnly26PerMerchant" in s_family,
         "S consume-only runtime diagnostic missing")
 require("maximumMerchantOrdinal=" in s_family,
         "S runtime diagnostics cannot distinguish replay horizon")
-require("S.MerchantShopColorless.Gpu.v7.Base34Carry8.ProcessedWorkgroup.ConsumeOnly.HistoricalNextInt" in foundation,
+require(re.search(r'"S\.MerchantShopColorless\.Gpu\.v\d+\.[^"\n]*ConsumeOnly\.HistoricalNextInt"', foundation) is not None,
         "S consume-only physical revision missing")
 require("R.Relic.Gpu.v7.TrackedPositions.Base34Carry8.ProcessedWorkgroup.CompactFullDecode.HistoricalNextInt" in foundation,
         "R physical revision no longer preserves the accepted pre-Lab4 identity")

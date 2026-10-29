@@ -65,6 +65,12 @@ internal sealed partial class SearchWorkspace
         if (targetBatch is null || ReferenceEquals(targetBatch, _resultBatch)) _workspace.ResultContinuation = continuation;
         if (history is not null)
         {
+            if (continuation.MapSearch is { } scan)
+            {
+                int index = history.MapScans.FindIndex(old => old.AttemptFingerprint == scan.AttemptFingerprint);
+                if (index < 0) history.MapScans.Add(scan);
+                else history.MapScans[index] = scan;
+            }
             if (history.Continuation is { } old && !SearchContinuationIdentity.SameSource(old, continuation) &&
                 (old.PendingCandidates.Count > 0 || old.PublishedOrdinals.Count > 0 || old.UnreceivedOrdinals?.Count > 0))
                 history.RetainedContinuations.Add(old);

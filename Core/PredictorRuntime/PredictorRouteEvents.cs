@@ -147,18 +147,19 @@ internal sealed partial class PredictorRun
                 PredictorRouteCauseEvidence.Key("event-stage", eventKey?.Serialized ?? "", run._eventBranch ?? "", applied.ToString(), needed.ToString())));
         var child = advanced ? null : ObserveRouteObtainChoice(run, dependencies, knownInstanceIds);
         var offeredPending = RouteEventOfferedCardCauses(run, dependencies);
-        var candidates = run.EventOfferedCards.IsEmpty ? run.EventCardCandidates.Select(run.Working.Card)
-            .Select(c => new PredictorRouteCardKnowledge(c, IsKnownRouteDeckTarget(run, new(c.Id, c.Key, c.FloorAdded),
-                dependencies, knownInstanceIds) ? [] : RouteDeckTargetCauses(run, [new(c.Id, c.Key, c.FloorAdded)], dependencies, knownInstanceIds)))
-            .ToImmutableArray() : [];
+        var offeredKnowledge = ObserveRouteEventOfferedCards(run, dependencies);
+        var candidates = run.EventOfferedCards.IsEmpty
+            ? ObserveRouteEventTargetCards(run, dependencies, knownInstanceIds) : [];
         var options = ObserveRouteEventOptions(run, dependencies, knownInstanceIds);
         if (run._preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults)
             options = ObserveRouteEventOptionResults(run, options, dependencies, knownInstanceIds, token);
         var result = new PredictorEventNodeKnowledge(eventKey, options, candidates,
-            offeredPending.IsEmpty ? run.EventOfferedCards.Select(DisplayObtainCard).ToImmutableArray() : [],
+            offeredKnowledge?.OfferBinding?.Value.Cards ?? [],
             child == null ? [] : [child], ObserveRouteRewards(run, dependencies),
             dependencies.Select(d => d.Cause).Concat(local).Distinct().ToImmutableArray())
         {
+            OfferedCardOptions = offeredKnowledge?.CardOptions ?? [],
+            OfferedCardBinding = offeredKnowledge?.OfferBinding,
             PotionInputRequirement = EventPotionRequirement(eventKey ?? occurrence?.Candidates.FirstOrDefault()?.Event),
             PotionInput = eventKey is { } potionEvent ? run.RouteEventPotionInput(potionEvent) : null,
             ConveyorInput = run._conveyorInput, ConveyorLostHp = run._conveyorLostHp,
@@ -269,9 +270,13 @@ internal sealed partial class PredictorRun
                 if (run.Phase != PredictorPhase.EventCards) return Pending("PlannedEventCardPending");
                 if (!run.EventOfferedCards.IsEmpty)
                 {
-                    if (!RouteEventOfferedCardCauses(run, dependencies).IsEmpty)
-                        return Pending("PlannedEventOfferedCardsPending", RouteEventOfferedCardCauses(run, dependencies));
-                    if (!run.EventOfferedCards.Select(DisplayObtainCard).SequenceEqual(step.ExpectedCards.Select(DisplayObtainCard)) ||
+                    var knowledge = ObserveRouteEventOfferedCards(run, dependencies)!;
+                    if (knowledge.OfferBinding == null || !knowledge.IsKnown &&
+                        run._preview.Settings.Policy != PredictorRoutePreviewPolicy.LiveMapDefaults)
+                        return Pending("PlannedEventOfferedCardsPending", knowledge.PendingCauses);
+                    var expectedOffer = run.EventCardOffer() with { Cards = step.ExpectedCards };
+                    if (!SameBoundRewardOffer(run.EventCardOffer(), new(expectedOffer, 0)
+                        { UnresolvedEnchantmentIndices = step.UnresolvedEnchantmentIndices }, knowledge.OfferBinding) ||
                         step.CardIndices.Length != run.EventCardsRequired || step.CardIndices.Any(i => i < 0 || i >= run.EventOfferedCards.Length))
                         return Pending("PlannedEventOfferedCardsChanged");
                     input = new SelectEventCards(step.CardIndices.Select(i => run.EventOfferedCards[i].Id).ToImmutableArray());
@@ -462,7 +467,7 @@ internal sealed partial class PredictorRun
         List<RouteDependency> dependencies)
     {
         dependencies = [.. dependencies];
-        PropagateDeckCombatReaders(run, dependencies, []);
+        PropagateDeckCombatReaders(run, step?.Combat, dependencies, []);
         PredictorCombatProjection? projection;
         try { projection = run.ProjectCurrentCombat(step?.Combat); }
         catch (ArgumentException ex) when (IsRouteEventCombatBindingError(ex)) { return null; }
@@ -643,6 +648,11 @@ internal sealed partial class PredictorRun
         foreach (var step in plan.Actions)
         {
             RequirePlan(step != null && Enum.IsDefined(step.Action) && !step.DeckCards.IsDefault && !step.ExpectedCards.IsDefault && !step.CardIndices.IsDefault);
+            RequirePlan(!step.UnresolvedEnchantmentIndices.IsDefault &&
+                (step.Action == PredictorEventActionKind.Cards || step.UnresolvedEnchantmentIndices.IsEmpty));
+            if (!step.UnresolvedEnchantmentIndices.IsEmpty)
+                ValidateRewardEnchantmentMask(new(0, PredictorRewardKind.Card, PredictorRewardOrigin.Event,
+                    plan.ExpectedEvent, step.ExpectedCards), step.UnresolvedEnchantmentIndices);
             RequirePlan((step.Action == PredictorEventActionKind.Option) == (step.ExpectedOption != null));
             RequirePlan((step.Action == PredictorEventActionKind.Health) == (step.Health != null));
             RequirePlan((step.Action == PredictorEventActionKind.ConveyorInputs) == (step.Conveyor != null));

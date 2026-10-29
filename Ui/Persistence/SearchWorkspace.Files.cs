@@ -182,14 +182,16 @@ internal sealed partial class SearchWorkspace
     }
     private readonly List<string> _auxiliaryFailures = [];
     internal IReadOnlyList<string> AuxiliaryFailures => _auxiliaryFailures;
-    internal void ResolvePresentationFailure(string stage)
+    internal void ResolvePresentationFailure(string stage) => ResolvePresentationFailure(stage, _ => true);
+    internal bool ResolvePresentationFailure(string stage, Predicate<string> recoveredByThisOperation)
     {
-        if (_workspace is not { } workspace) return;
+        if (_workspace is not { } workspace) return false;
         // AuxiliaryIssues is the saved unresolved notice, not an error history.
         // Recovery of one responsibility does not resolve another stage, pending
         // candidate, execution failure or an unsuccessful write.
         string prefix = stage + ": ";
-        var recovered = workspace.AuxiliaryIssues.Where(detail => detail.StartsWith(prefix, StringComparison.Ordinal)).ToArray();
+        var recovered = workspace.AuxiliaryIssues.Where(detail => detail.StartsWith(prefix, StringComparison.Ordinal) &&
+            recoveredByThisOperation(detail)).ToArray();
         foreach (string detail in recovered)
         {
             if (!_auxiliaryFailures.Contains(detail, StringComparer.Ordinal)) _auxiliaryFailures.Add(detail);
@@ -199,12 +201,13 @@ internal sealed partial class SearchWorkspace
             try { RuntimeLog.TryBackgroundInfo("searchWorkspaceAuxiliaryRecovered=true;stage=" + stage + ";originalJson=" + RuntimeLog.SafeJson(detail)); }
             catch { /* Original evidence remains in memory and its originating log. */ }
         }
-        if (recovered.Length == 0) return;
-        workspace.AuxiliaryIssues.RemoveAll(detail => detail.StartsWith(prefix, StringComparison.Ordinal));
+        if (recovered.Length == 0) return false;
+        foreach (string detail in recovered) workspace.AuxiliaryIssues.Remove(detail);
         // A successful render may have included the old notice just before it
         // recovered. Give the existing projection poll a revision to withdraw it.
         ResultsRevision++;
         MarkWorkspaceDirty();
+        return true;
     }
     internal sealed class ModelKeyJsonConverter : JsonConverter<ModelKey>
     {

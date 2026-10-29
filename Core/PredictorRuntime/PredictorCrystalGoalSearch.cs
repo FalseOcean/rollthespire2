@@ -4,6 +4,11 @@ using System.Diagnostics;
 namespace RolltheSpire2.Core.PredictorRuntime;
 
 internal enum CrystalLanguageNegativeKind { None, RewardDomain, Geometry, OrderedQuery }
+internal sealed record CrystalGeometryMemoProfile(int DeadEntries,long DeadHits,long DeadCapacityMisses,
+    int WordEntries,long WordHits,long WordCapacityMisses)
+{
+    public long AbstractMemoSuppressedByWordHits { get; init; }
+}
 internal sealed record CrystalGoalSearchResult(CrystalOffsetVerdict Verdict,PredictorCrystalSolution? Plan,
     int RewardStates,long Recipes,long GeometryNodes,long VerifiedWords,long PaddingUnknown,double Seconds,int Batches=0,
     int LanguageNodes=0,int LanguageRoots=0,double CompileSeconds=0,int LanguagePruned=0,
@@ -11,6 +16,7 @@ internal sealed record CrystalGoalSearchResult(CrystalOffsetVerdict Verdict,Pred
     bool RootCardSlotsRejected=false)
 {
     public CrystalLanguageCompilationProfile? CompilationProfile { get; init; }
+    public CrystalGeometryMemoProfile? GeometryMemoProfile { get; init; }
 }
 
 // Independent experiment: reward-word enumeration drives targeted geometry.
@@ -24,6 +30,11 @@ internal static class PredictorCrystalGoalSearch
     {
         if(table.IncludesSacrifices) return PredictorCrystalGoalLanguage.Solve(source,table,goals,avoidCurse,budget,stateLimit,token);
         var watch=Stopwatch.StartNew();
+        // This retained experiment still omits optional Curse completion.
+        // The shared bound now admits it; this older geometry must not claim
+        // a complete negative outside its own enumeration domain.
+        if(!avoidCurse && source.Items.Any(i=>i.Kind=="CURSE" && i.X>=0 && !i.Revealed))
+            return new(CrystalOffsetVerdict.Incomplete,null,0,0,0,0,0,watch.Elapsed.TotalSeconds);
         // A finished reward picker needs its captured open rewards, not a new
         // board-generation query against the already advanced event stream.
         if(source.Remaining<=0 || !source.PlacedAllItems)

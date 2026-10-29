@@ -105,7 +105,13 @@ internal sealed partial class AnalysisPage
             Size = new Vector2(18, 20), MouseFilter = MouseFilterEnum.Ignore };
         number.AddThemeFontSizeOverride("font_size", 12);
         tile.AddChild(number);
-        tile.TooltipText = $"{ordinal}. {name}";
+        if (elite)
+        {
+            tile.MouseEntered += () => _tooltipHost.ShowText(tile, $"{ordinal}. {name}");
+            tile.MouseExited += () => _tooltipHost.Dismiss(tile);
+            tile.TreeExiting += () => _tooltipHost.Dismiss(tile);
+        }
+        else tile.TooltipText = $"{ordinal}. {name}";
         tile.Ready += async () =>
         {
             var texture = await _encounterPortraits.Get(encounter);

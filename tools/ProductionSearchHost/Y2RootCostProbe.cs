@@ -17,7 +17,20 @@ internal static class Y2RootCostProbe
     private const BindingFlags Instance = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
     private const BindingFlags Static = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     private static Type T(string name) => typeof(FamilyCandidateSet).Assembly.GetType("RolltheSpire2.Search.FamilyExecution." + name, true)!;
-    private static object New(string name, params object?[] args) => T(name).GetConstructors(Instance).Single().Invoke(args);
+    private static object New(string name, params object?[] args)
+    {
+        var constructor = T(name).GetConstructors(Instance).Single(candidate =>
+        {
+            var signature = candidate.GetParameters();
+            return args.Length <= signature.Length && signature.Skip(args.Length).All(parameter => parameter.HasDefaultValue) &&
+                args.Select((argument, index) => argument is null
+                    ? !signature[index].ParameterType.IsValueType || Nullable.GetUnderlyingType(signature[index].ParameterType) is not null
+                    : signature[index].ParameterType.IsInstanceOfType(argument) ||
+                        Nullable.GetUnderlyingType(signature[index].ParameterType)?.IsInstanceOfType(argument) == true).All(matches => matches);
+        });
+        var parameters = constructor.GetParameters();
+        return constructor.Invoke(parameters.Select((parameter, index) => index < args.Length ? args[index] : parameter.DefaultValue).ToArray());
+    }
     private static object Get(object o, string name) => o.GetType().GetProperty(name, Instance)?.GetValue(o)
         ?? o.GetType().GetField(name, Instance)!.GetValue(o)!;
     private static object? Call(object o, string name, params object?[] args) => o.GetType().GetMethod(name, Instance)!.Invoke(o, args);

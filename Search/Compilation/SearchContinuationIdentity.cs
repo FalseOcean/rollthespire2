@@ -12,8 +12,13 @@ namespace RolltheSpire2.Search.Compilation;
 // execution SnapshotFingerprint remains the identity of each actual attempt.
 internal static class SearchContinuationIdentity
 {
-    internal static string For(ExactSearchExecutionRequest plan) =>
-        For(plan.CompiledSearch, plan.CombatRewardRoutePolicy);
+    internal static string For(ExactSearchExecutionRequest plan)
+    {
+        string model = For(plan.CompiledSearch, plan.CombatRewardRoutePolicy);
+        // Preserve legacy full-search identities; an opt-in lossy frontier must
+        // never be resumed as an exhaustively checked full-search frontier.
+        return plan.MapLossy.Enabled ? model + ":MapLossy:" + plan.MapLossy.Identity : model;
+    }
 
     internal static string For(CompiledSearch compiled) =>
         For(compiled, ExactSearchExecutionRequestFactory.BuildCombatRewardRoutePolicy(compiled));

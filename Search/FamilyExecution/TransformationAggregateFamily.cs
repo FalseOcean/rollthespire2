@@ -13,6 +13,7 @@ internal sealed class TransformationAggregateFamily : IFamilyInvocation
     internal TransformationAggregateNumericalPlan Plan { get; }
     internal TransformationAggregateGpuPlan GpuPlan { get; }
     internal TransformationAggregateProbability Probability { get; }
+    private readonly TransformationAggregateWorkEstimate.Work _workEstimate;
     internal string GpuPreparationFailureDetail { get; } = "";
     private readonly double? _givenNeow;
     private readonly FamilyCpuExecution _cpu;
@@ -25,6 +26,7 @@ internal sealed class TransformationAggregateFamily : IFamilyInvocation
         GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
         _request=request;Plan=new(request);
+        _workEstimate = TransformationAggregateWorkEstimate.Describe(Plan);
         Probability = FamilyAuxiliaryEvidence.Read(Id, "InitialProbability", () => TransformationAggregateProbability.Build(Plan),
             new TransformationAggregateProbability(null, null, double.NaN, double.NaN, [], "AuxiliaryProbabilityFailed"), request.SnapshotFingerprint);
         if (Plan.Closed && Plan.Neow is not null && HasConditionalProjections)
@@ -33,7 +35,7 @@ internal sealed class TransformationAggregateFamily : IFamilyInvocation
                 new NeowFamilyProjections(request, NeowReplayPlan.Compile(request, false), false, null).Survival(new HashSet<string>()).SurvivalProbability),
                 null, request.SnapshotFingerprint);
         _cpu=new(request,this,CpuRevision,Plan.Matches,FamilyCpuExecution.ConfiguredWorkers(request),
-            g=>request.WorkerCount==1 ? TransformationAggregatePricing.Cpu(Plan,Probability,g) : null,
+            g=>TransformationAggregateWorkEstimate.Cpu(Plan,Probability,_workEstimate,g,FamilyCpuExecution.ConfiguredWorkers(request)),
             packedSeedRoots: request.ProfileId == Compatibility.RuntimeProfileId.Beta111);
         GpuPlan = new();
         if (preferGpu)
@@ -75,14 +77,15 @@ internal sealed class TransformationAggregateFamily : IFamilyInvocation
     public FamilyAnalyticalCostProjection AnalyticalCost=>new(Id,GpuPlan.Capacity,[],"T.OwnedNumericalWork");
     public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest g)=>
         FamilyGpuReadback.Reference(this, FamilyCanonicalMeasuredCost.TryDenseQuote(this,g) ?? (GpuPlan.Supported
-            ? TransformationAggregatePricing.Gpu(Plan,Probability,GpuPlan,g):TransformationAggregatePricing.Cpu(Plan,Probability,g)));
+            ? TransformationAggregateWorkEstimate.Gpu(Plan,Probability,GpuPlan,_workEstimate,g)
+            : TransformationAggregateWorkEstimate.Cpu(Plan,Probability,_workEstimate,g,FamilyCpuExecution.ConfiguredWorkers(_request))));
     public FamilyConditionPerformanceProjection ConditionPerformance=>ResolveConditionPerformance(false);
     public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compact)=>!GpuPlan.Supported?_cpu.Condition(compact):
         new(Id,GpuPlan.Revision(compact),
             "T.Gpu.Neutral.20260914.v1" + GpuPlan.NumericalRevision,1,"FamilyOwned;LocalAggregate;NoLeafPredicate" +
-            (GpuPlan.NumericalVariant == GpuNumericalVariant.IntegerRne ? ";NoAcceptedPhysicalPrice;IntegerRne" : ""),usesGpu:true);
+            (GpuPlan.NumericalVariant == GpuNumericalVariant.IntegerRne ? ";IntegerRne;NoNativeFloat64PriceReuse" : ""),usesGpu:true);
     IEnumerable<IFamilyInvocation> IFamilyInvocation.CpuRealizations=>FamilyCpuExecution.WorkerConfigurations(_request).Select(workers =>
-        new FamilyCpuExecution(_request,this,CpuRevision,Plan.Matches,workers,g=>workers==1 ? TransformationAggregatePricing.Cpu(Plan,Probability,g) : null,
+        new FamilyCpuExecution(_request,this,CpuRevision,Plan.Matches,workers,g=>TransformationAggregateWorkEstimate.Cpu(Plan,Probability,_workEstimate,g,workers),
             packedSeedRoots: _request.ProfileId == Compatibility.RuntimeProfileId.Beta111));
     IEnumerable<GpuLocalPeak> IFamilyInvocation.CostPeaks=>_costSamples.Peaks;
     bool IFamilyInvocation.CanBindPrivateSerial=>GpuPlan.Supported && GpuPlan.NumericalVariant == GpuNumericalVariant.NativeFloat64;

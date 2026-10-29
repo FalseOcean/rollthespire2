@@ -515,18 +515,26 @@ internal static class WorkbenchContractChecks
                 var configured = FamilyCpuExecution.ConfiguredRealizations(family).ToArray();
                 check(configured.Length > 0 && configured.All(f => f is FamilyCpuExecution cpu && cpu.Workers == workers),
                     $"Preview fixture follows actual CPU budget: {familyId}/P{workers}");
-                var expected = configured.Select(f => f.QuotePhysicalWork(geometry))
+                var calibration = GpuCostCalibration.Capture();
+                var quotes = configured.Select(f => FamilyPhysicalQuote.Computation(f, geometry, calibration)).ToArray();
+                var expected = quotes
                     .Where(q => q is { NanosecondsPerInput: > 0 }).Min(q => (double?)q!.NanosecondsPerInput);
-                // The P1 anchor deliberately exists. Missing P3/P7 therefore
-                // tests that preview cannot borrow it or extrapolate workers.
+                // P1/S-P16 retain their references. Other supported budgets use
+                // the family's explicit coarse model, not another budget's price.
                 if (workers == 1 || familyId == "S.MerchantShopColorless" && workers == 16)
                     check(expected is > 0, $"Known configured CPU reference remains available: {familyId}/P{workers}");
                 if (workers is 3 or 7)
-                    check(expected is null, $"Unmeasured configured CPU budget remains Unknown: {familyId}/P{workers}");
+                    check(quotes.All(q => q is { NanosecondsPerInput: > 0 } && double.IsFinite(q.NanosecondsPerInput) &&
+                        q.FamilyId == familyId && q.Shape.StartsWith(FamilyCoarsePricing.Revision + ".", StringComparison.Ordinal) &&
+                        q.Shape.EndsWith(".P" + workers, StringComparison.Ordinal) && FamilyCoarsePricing.IsEstimate(q) &&
+                        q.Evidence.Contains($"Workers={workers};", StringComparison.Ordinal) &&
+                        q.Evidence.Contains("ExecutionClass=CPU", StringComparison.Ordinal) &&
+                        q.Evidence.Contains("NotCurrentDeviceOrBodyMeasurement", StringComparison.Ordinal)),
+                        $"Unmeasured configured CPU budget carries its own explicit coarse estimate: {familyId}/P{workers}");
 
                 var preview = WorkbenchProbabilityPreview.Compute(compiled, 30, workers, true);
                 check(preview.Issues.Count == 0 && preview.Costs.TryGetValue(familyId, out var cost) && cost.Cpu == expected,
-                    $"CPU preview consumes only its actual configured reference: {familyId}/P{workers}");
+                    $"CPU preview consumes only its actual configured quote: {familyId}/P{workers}");
                 check(preview.Costs[familyId].Gpu is null, "CPU-only preview does not display a GPU quote");
                 if (workers == 1) probability = preview.Joint.Probability;
                 else check(preview.Joint.Probability == probability, "CPU budget does not change query probability");
@@ -536,9 +544,9 @@ internal static class WorkbenchContractChecks
                 if (workers == 7)
                 {
                     var mixed = WorkbenchProbabilityPreview.Compute(compiled, 30, workers, false);
-                    check(mixed.Issues.Count == 0 && mixed.Costs[familyId].Cpu is null &&
-                        (familyId != "E.EventResult" || mixed.Events[color].Cpu is null),
-                        "Enabling GPU alternatives cannot lend P1 prices to a P7 CPU preview");
+                    check(mixed.Issues.Count == 0 && mixed.Costs[familyId].Cpu == expected &&
+                        (familyId != "E.EventResult" || mixed.Events[color].Cpu == expected),
+                        "Enabling GPU alternatives preserves the same configured P7 CPU quote");
                 }
             }
         }
@@ -578,6 +586,8 @@ internal static class WorkbenchContractChecks
             frame.Refresh("zh", RolltheSpire2.Presentation.Localization.JsonUiTextProvider.CreateUi13("zh"));
             // Disclosure preserves selected builder parameters and committed predicates.
             {
+                string builderReturnDomain = (string)Field("_selectedDomain");
+                Call("SelectDomain", "events"); // Hidden editor pages are built only when selected.
                 var queueEditor = (EventSearchEditor)Field("_eventEditor");
                 object queueDraft = typeof(EventSearchEditor).GetField("_draft", flags)!.GetValue(queueEditor)!;
                 void CallQueue(string name, params object[] values) => typeof(EventSearchEditor).GetMethod(name, flags)!.Invoke(queueEditor, values);
@@ -654,6 +664,7 @@ internal static class WorkbenchContractChecks
                 finally { queueEditor.CloseQueuePicker(); picker.Reparent(pickerParent); }
                 frame.RestoreDraft(draft, false);
                 frame.Refresh("zh", RolltheSpire2.Presentation.Localization.JsonUiTextProvider.CreateUi13("zh"));
+                Call("SelectDomain", builderReturnDomain);
             }
             Check(ResultsButton().Visible && !ResultsButton().Disabled && ResultsButton().CustomMinimumSize.Y >= 44 &&
                 ResultsButton().GetParent().Name == "SearchInformationRail", "Saved results have a full-size action in the Search sidebar even when empty");
@@ -1376,33 +1387,60 @@ internal static class WorkbenchContractChecks
         Check(inlineEvents.ExportQuery(SearchQuery.Empty).EventResultConditions.Count == 1,
             "Removing an exclusion does not erase an independent legacy result");
         var transformEditor = (TransformationSearchEditor)Private(frame, "_transformationEditor");
-        void CheckUnavailableTransform(string sourceId, TransformationEditorStateSnapshot before, string reason)
+        string TransformIntent(TransformationAggregateCondition? condition) => JsonSerializer.Serialize(condition is null ? null :
+            condition with { EventScenario = null, TargetMultiset = condition.TargetMultiset.OrderBy(k => k.Serialized, StringComparer.Ordinal).ToArray() });
+        bool RetainsTransformState(TransformationEditorStateSnapshot before)
         {
-            string? issue = null;
-            try { frame.CaptureDraft(); }
-            catch (InvalidOperationException exception) { issue = exception.Message; }
-            Check(issue is not null && issue.StartsWith("TransformationDeclaredSourcesUnavailable:", StringComparison.Ordinal) &&
-                issue.Contains(sourceId, StringComparison.Ordinal) &&
-                JsonSerializer.Serialize(transformEditor.ExportEditorState()) == JsonSerializer.Serialize(before), reason);
+            var after = transformEditor.ExportEditorState();
+            return after.TakenOver.SequenceEqual(before.TakenOver) && after.Objective == before.Objective &&
+                after.RareCount == before.RareCount && after.Cards.SequenceEqual(before.Cards) &&
+                (before.KnownSources ?? []).All(source => (after.KnownSources ?? []).Contains(source));
+        }
+        void CheckSuspendedTransform(string sourceId, TransformationEditorStateSnapshot before, string reason,
+            TransformationAggregateCondition? expectedActive = null)
+        {
+            var captured = frame.CaptureDraft();
+            Check(before.TakenOver.Contains(sourceId) && RetainsTransformState(before) &&
+                TransformIntent(captured.Query.TransformationAggregate) == TransformIntent(expectedActive), reason);
+            Check(TransformIntent(captured.Compile(runtime, out _).NormalizedQuery.TransformationAggregate) == TransformIntent(expectedActive),
+                "Execution compilation preserves the explicitly active T sources and all their targets");
         }
         frame.RestoreDraft(empty with { Query = cases["T.event"] }, render: false);
         var eventTakeover = transformEditor.ExportEditorState();
         removeQueue.Invoke(inlineEvents, [0]);
-        CheckUnavailableTransform("E.MORPHIC_GROVE", eventTakeover,
-            "Removing a queued T source retains its aggregate requirement and identifies the unavailable event source");
+        CheckSuspendedTransform("E.MORPHIC_GROVE", eventTakeover,
+            "Explicitly removing a queued T source suspends its predicate and retains its complete draft");
+        typeof(EventSearchEditor).GetMethod("AddQueueCondition", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(inlineEvents, [new ModelKey("EVENT", "MORPHIC_GROVE")]);
+        Check(RetainsTransformState(eventTakeover) &&
+            TransformIntent(frame.CaptureDraft().Query.TransformationAggregate) == TransformIntent(cases["T.event"].TransformationAggregate),
+            "Re-adding the event source restores the same T requirement and retained source snapshot");
+        transformEditor.Refresh("zh", RolltheSpire2.Presentation.Localization.JsonUiTextProvider.CreateUi13("zh"), 0,
+            [], [], false, new HashSet<string> { "E.MORPHIC_GROVE" });
+        string? missingTransformIssue = null;
+        try { frame.CaptureDraft(); }
+        catch (InvalidOperationException exception) { missingTransformIssue = exception.Message; }
+        finally { typeof(QueryWorkbenchFrame).GetMethod("RefreshTransformationContext", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(frame, [null, false]); }
+        Check(missingTransformIssue == "TransformationDeclaredSourcesUnavailable:E.MORPHIC_GROVE" && RetainsTransformState(eventTakeover),
+            "A still-declared source with missing observations cannot be silently omitted from execution capture");
         var neowEditor = (NeowSearchEditor)Private(frame, "_neowEditor");
         var sourcePressed = typeof(NeowSearchEditor).GetMethod("OnSourceRelicPressed", BindingFlags.Instance | BindingFlags.NonPublic)!;
         frame.RestoreDraft(empty with { Query = cases["T.Leafy"] }, render: false);
         var openingTakeover = transformEditor.ExportEditorState();
         sourcePressed.Invoke(neowEditor, [BaseGameModelKeys.Relics.LeafyPoultice]);
         Check(neowEditor.ExportQuery().OpeningRoute is null, "Explicitly removing N's parent source updates that selected opening");
-        CheckUnavailableTransform("N.LeafyPoultice", openingTakeover,
-            "Removing N's parent source keeps T's authored requirement and identifies the unavailable opening source");
+        CheckSuspendedTransform("N.LeafyPoultice", openingTakeover,
+            "Explicitly removing N's parent source suspends T and retains its authored requirement");
+        sourcePressed.Invoke(neowEditor, [BaseGameModelKeys.Relics.LeafyPoultice]);
+        Check(RetainsTransformState(openingTakeover) &&
+            TransformIntent(frame.CaptureDraft().Query.TransformationAggregate) == TransformIntent(cases["T.Leafy"].TransformationAggregate),
+            "Re-selecting the N source restores the same T requirement and retained source snapshot");
         frame.RestoreDraft(empty with { Query = cases["T.Leafy"] }, render: false);
         openingTakeover = transformEditor.ExportEditorState();
         typeof(NeowSearchEditor).GetMethod("ToggleBonesMode", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(neowEditor, []);
-        CheckUnavailableTransform("N.LeafyPoultice", openingTakeover,
-            "Switching N to Bones keeps the old T requirement and identifies its unavailable opening source");
+        CheckSuspendedTransform("N.LeafyPoultice", openingTakeover,
+            "Switching N to Bones suspends the old T source while preserving its authored requirement");
         var clearTakeoverQuery = cases["T.event"] with
         {
             OpeningRoute = new(BaseGameModelKeys.Relics.LeafyPoultice),
@@ -1419,8 +1457,9 @@ internal static class WorkbenchContractChecks
         typeof(QueryWorkbenchFrame).GetField("_selectedDomain", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(frame, "neow");
         frame.ClearCategoryConditions();
         var incompleteAfterClear = transformEditor.ExportEditorState();
-        CheckUnavailableTransform("N.LeafyPoultice", incompleteAfterClear,
-            "Clearing N retains both N/E takeovers and targets while missing-source execution remains guarded");
+        CheckSuspendedTransform("N.LeafyPoultice", incompleteAfterClear,
+            "Clearing N retains both N/E drafts and all targets while the independent E source stays active",
+            clearTakeoverQuery.TransformationAggregate! with { Opening = TransformationOpening.None });
         Check(Private(frame, "_restoreClearedConditions") is Action, "Incomplete T state retains ordinary clear undo");
         frame.UndoClearConditions();
         Check(frame.CaptureDraft().Query.OpeningRoute?.RouteRelicKey == BaseGameModelKeys.Relics.LeafyPoultice &&
@@ -1431,8 +1470,10 @@ internal static class WorkbenchContractChecks
         incompleteAfterClear = transformEditor.ExportEditorState();
         var editedIncomplete = incompleteAfterClear with { Objective = 2, Cards = [eventCard] };
         transformEditor.ImportEditorState(editedIncomplete);
-        CheckUnavailableTransform("N.LeafyPoultice", editedIncomplete,
-            "T target/mode edits remain authored while the same cleared source is unavailable");
+        CheckSuspendedTransform("N.LeafyPoultice", editedIncomplete,
+            "T target/mode edits remain authored while N is suspended and E stays active",
+            clearTakeoverQuery.TransformationAggregate! with { Opening = TransformationOpening.None,
+                Predicate = TransformationAggregatePredicate.ContainsMultisetAndRemainingRare, TargetMultiset = [eventCard] });
         frame.UndoClearConditions();
         Check(neowEditor.ExportQuery().OpeningRoute is null &&
             transformEditor.ExportEditorState().Objective == 2 &&
@@ -1520,11 +1561,23 @@ internal static class WorkbenchContractChecks
                 Check(probability.JointlyPriced,"C4-6 chronological probability is connected");
                 var combatFamily = (CombatRewardFamily)FamilyExecutionCoordinator.CreateRegisteredFamilies(plan).Single(f=>f.FamilyId=="C.CombatReward");
                 var pool = combatFamily.Replay.Catalog.CombatRewardCardPool;
-                // Native fresh profiles may have partial unlocks. H4–6 reference
-                // pricing covers the measured full pool, while Unknown still admits Exact.
+                // Native fresh profiles may have partial unlocks. A full-pool
+                // reference is distinct from the explicitly pool-independent CPU envelope.
                 bool measuredPool = pool.Common.Length == 20 && pool.Uncommon.Length == 35 && pool.Rare.Length == 25;
-                Check(((IFamilyInvocation)combatFamily).CpuRealizations.Any(c=>c.QuotePhysicalWork(new(false,false,1<<20)) is not null) == measuredPool,
-                    $"C4-6 pricing respects measured domain;pool={pool.Common.Length}/{pool.Uncommon.Length}/{pool.Rare.Length}");
+                var calibration = GpuCostCalibration.Capture();
+                var quotes = ((IFamilyInvocation)combatFamily).CpuRealizations.Select(cpu =>
+                    FamilyPhysicalQuote.Computation(cpu, new(false, false, 1 << 20), calibration)).OfType<FamilyPhysicalQuote>().ToArray();
+                Check(quotes.Length > 0 && quotes.All(q => q is { NanosecondsPerInput: > 0 } &&
+                    double.IsFinite(q.NanosecondsPerInput) && q.FamilyId == "C.CombatReward"),
+                    $"C4-6 has an applicable finite CPU quote;pool={pool.Common.Length}/{pool.Uncommon.Length}/{pool.Rare.Length}");
+                if (!measuredPool)
+                    Check(quotes.All(q => FamilyCoarsePricing.IsEstimate(q) &&
+                        q.Shape.StartsWith(FamilyCoarsePricing.Revision + ".C.FullReward.P", StringComparison.Ordinal) &&
+                        q.Evidence.Contains("NotCurrentDeviceOrBodyMeasurement", StringComparison.Ordinal) &&
+                        q.Evidence.Contains($"H={combatFamily.Replay.Plan.MaximumBattleOrdinal};Routes={combatFamily.Replay.RouteCount};", StringComparison.Ordinal) &&
+                        q.Evidence.Contains("NoTargetOrPoolFingerprintKey;FullGenerationEnvelope", StringComparison.Ordinal)),
+                        "Partial-pool C4-6 quotes declare the actual horizon/routes and a coarse CPU envelope, never a full-pool measurement");
+                Console.WriteLine($"WORKBENCH_C_HORIZON_QUOTE name={name};pool={pool.Common.Length}/{pool.Uncommon.Length}/{pool.Rare.Length};fullReferencePool={measuredPool};evidence={quotes[0].Evidence}");
             }
             if(name.StartsWith("M.",StringComparison.Ordinal))
             {
@@ -1768,7 +1821,7 @@ internal static class WorkbenchContractChecks
         string savedDraftBeforeIncomplete = File.ReadAllText(savedDraftPath);
         int auxiliaryBeforeIncomplete = store.Workspace.AuxiliaryIssues.Count;
         var explain = typeof(QueryWorkbenchFrame).GetMethod("Explain", BindingFlags.Instance | BindingFlags.NonPublic)!;
-        string conditionMessage = (string)explain.Invoke(frame, [new InvalidOperationException("integration.transform.capacity")])!;
+        string conditionMessage = (string)explain.Invoke(frame, [new InvalidOperationException("integration.transform.capacity"), "QueryAdmission"])!;
         typeof(QueryWorkbenchFrame).GetMethod("SaveDraft", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(frame, null);
         Check(conditionMessage == RolltheSpire2.Presentation.Localization.JsonUiTextProvider.CreateUi13("zh").Get("integration.transform.capacity") &&
             store.Workspace.AuxiliaryIssues.Count == auxiliaryBeforeIncomplete && File.ReadAllText(savedDraftPath) == savedDraftBeforeIncomplete,

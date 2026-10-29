@@ -28,15 +28,10 @@ internal static partial class FamilyPhysicalMatrix
         var create = T("MerchantShopColorlessGpuExecutor").GetMethods(statics).Single(m =>
             m.Name == "Create" && m.GetParameters().Length == 3);
         var configureEarly = T("MerchantShopColorlessGpuExecutor").GetMethod("ConfigureEarlyRejection", statics)!;
-        string shaderResource = assembly.GetManifestResourceNames().Single(n => n.EndsWith(".MerchantShopColorless.comp.glsl", StringComparison.Ordinal));
-        string rawShader;
-        using (var reader = new StreamReader(assembly.GetManifestResourceStream(shaderResource)!))
-        {
-            rawShader = reader.ReadToEnd();
-            SrCheck(rawShader.Contains("#ifndef RT2_S_EARLY_REJECTION\n#define RT2_S_EARLY_REJECTION 0", StringComparison.Ordinal) ||
-                rawShader.Contains("#ifndef RT2_S_EARLY_REJECTION\r\n#define RT2_S_EARLY_REJECTION 0", StringComparison.Ordinal),
-                "SIdentity.RawEarlyRejectionDisabled");
-        }
+        string rawShader = FamilyGpuComputeUtility.LoadEmbeddedShader("MerchantShopColorless.comp.glsl");
+        SrCheck(rawShader.Contains("#ifndef RT2_S_EARLY_REJECTION\n#define RT2_S_EARLY_REJECTION 0", StringComparison.Ordinal) ||
+            rawShader.Contains("#ifndef RT2_S_EARLY_REJECTION\r\n#define RT2_S_EARLY_REJECTION 0", StringComparison.Ordinal),
+            "SIdentity.RawEarlyRejectionDisabled");
         var pathType = T("MerchantShopColorlessCompactionPath");
         var format = T("VisibleSeedCandidateCodec").GetMethod("FormatOrdinal", statics)!;
         var effects = basis.Authority.EffectAuthority ?? throw new InvalidDataException("SIdentity.EffectsMissing");

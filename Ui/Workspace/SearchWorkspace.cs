@@ -63,6 +63,7 @@ internal sealed partial class SearchWorkspace
         if (_workspace.CommittedCursor is { } committed)
             _cursor = CopyCursor(committed);
         NormalizeDocuments();
+        ClearLegacyAppearance();
         InitializeFeaturePreferences();
         LoadQueryHistory();
         if (initializeSearchCursor)

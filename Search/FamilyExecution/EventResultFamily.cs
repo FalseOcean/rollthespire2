@@ -48,7 +48,8 @@ internal sealed partial class EventResultFamily : IFamilyInvocation
     public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest geometry)
     {
         var quote = FamilyCanonicalMeasuredCost.TryDenseQuote(this, geometry) ??
-            EventResultPhysicalPricing.Quote(Plan, geometry);
+            (Plan.GpuSupported ? EventResultPhysicalPricing.Quote(Plan, geometry) ?? EventResultWorkEstimate.Gpu(Plan, geometry) :
+                EventResultWorkEstimate.Cpu(Plan, _cpu.Workers, geometry, capacity: _cpu.WindowCapacity));
         return FamilyGpuReadback.Reference(this, geometry.PrivateOutput && UsesFinalPrivateHeader && quote is not null
             ? quote with { Evidence = quote.Evidence + ";RetainedNumericalEstimate;PrivateFinalHeaderTransportUnmeasured" } : quote);
     }
@@ -58,7 +59,7 @@ internal sealed partial class EventResultFamily : IFamilyInvocation
     public FamilyConditionPerformanceProjection ConditionPerformance => ResolveConditionPerformance(false);
     public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compact) => !Plan.GpuSupported ? _cpu.Condition(compact) :
         new(FamilyId, $"E.EventResult.Gpu.Whitelist.{(compact ? "CompactAbi1" : "Dense")}.CanonicalAbi1Ready.20260919.v1" +
-            (Plan.NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : ""),
+            (Plan.NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "") + GpuRngRotation.Revision,
             "E.EventResult.Neutral.20260907.v1", 1, Plan.NumericalVariant == GpuNumericalVariant.IntegerRne
                 ? "NoAcceptedWithinPathCurve;CanonicalAbi1Ready;PhysicalQuoteUnavailable=UnmeasuredIntegerRneVariant"
                 : "NoAcceptedWithinPathCurve;CanonicalAbi1Ready", usesGpu: true);

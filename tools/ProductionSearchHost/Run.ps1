@@ -18,6 +18,7 @@ param(
     [switch]$FamilyPricingInventory,
     [string]$FamilyPhysicalMatrix,
     [switch]$NeowCanonicalCost,
+    [ValidateSet('N','T')][string]$CanonicalFamily = 'N',
     [string]$CanonicalInputs = '16777216',
     [ValidateSet('both','dense','compact')][string]$CanonicalMode = 'both',
     [int]$CanonicalWarmups = 2,
@@ -39,8 +40,21 @@ param(
     [switch]$NeowInitializationChecks,
     [switch]$GpuResourceFailureChecks,
     [switch]$UiSurfaceChecks,
+    [switch]$OwnerUiPolish,
+    [ValidateSet('all','chrome','editors','content','state','map','followup','release-copy','reference-copy','candidate-defaults')][string]$OwnerUiPolishScope = 'all',
     [switch]$DrawingNoticesUi,
+    [switch]$DrawingBoundariesUi,
+    [switch]$DrawingOverblocksUi,
+    [switch]$DrawingCardOperationsUi,
+    [switch]$DrawingDependenciesUi,
+    [switch]$CollectionPickerUi,
+    [switch]$ManualFamilyOrderUi,
+    [switch]$MapEditorUi,
+    [switch]$MapWitnessUi,
+    [switch]$MapLossyPersistence,
+    [switch]$MapLossyGpu,
     [switch]$CardCollectionEditorUi,
+    [switch]$CardCollectionFlow,
     [switch]$StartupChecks,
     [string]$ResourceBaseline,
     [ValidateSet('N','N-readback','N-trials','E-readback','N-readyT','S','S-stable','R','C','W','NC')][string]$Y2Probe,
@@ -63,16 +77,17 @@ param(
 $ErrorActionPreference = 'Stop'
 if ($ReleaseBinaryDirectory -and -not $SkipBuild) { throw '-ReleaseBinaryDirectory requires -SkipBuild for an immutable comparison.' }
 if ($CpuOnly -and ($CompatNoFp64 -or $CompatibilityChecks)) { throw 'Compatibility GPU validation and CPU Only are separate controls.' }
-if ($NeowCanonicalCost -and ($CpuOnly -or $Headless -or $CompatNoFp64 -or $CompatibilityChecks -or $CpuFamilyWorkers -or $FamilyPhysicalMatrix -or $FamilyPricingInventory -or $Y2Probe)) { throw 'Neow canonical collection requires a rendering-enabled dedicated invocation; use -CanonicalInteger for integer N.' }
+if ($PSBoundParameters.ContainsKey('CanonicalFamily') -and -not $NeowCanonicalCost) { throw '-CanonicalFamily requires -NeowCanonicalCost (the existing dedicated N/T collector entry).' }
+if ($NeowCanonicalCost -and ($CpuOnly -or $Headless -or $CompatNoFp64 -or $CompatibilityChecks -or $CpuFamilyWorkers -or $FamilyPhysicalMatrix -or $FamilyPricingInventory -or $Y2Probe)) { throw 'N/T canonical collection requires a rendering-enabled dedicated invocation; use -CanonicalInteger for IntegerUnitFloat N / IntegerRne T.' }
 if (($CompatNoFp64 -or $CompatibilityChecks) -and ($CpuFamilyWorkers -or $Headless)) { throw 'Compatibility validation requires a rendering-enabled host and normal worker selection.' }
 # This editor slice uses a separate process, mock saves and its own state root;
 # it neither measures throughput nor reads the running game's RunState.
-if (-not $CardCollectionEditorUi -and (Get-Process -Name SlayTheSpire2 -ErrorAction SilentlyContinue)) { throw 'Close SlayTheSpire2 before standalone measurements.' }
+if ($OwnerUiPolish -or $DrawingNoticesUi -or $DrawingBoundariesUi -or $DrawingOverblocksUi -or $DrawingCardOperationsUi -or $DrawingDependenciesUi -or $CollectionPickerUi -or $ManualFamilyOrderUi -or $MapEditorUi -or $MapWitnessUi -or $MapLossyPersistence) { $UiSurfaceChecks = $true }
+if (-not $CardCollectionFlow -and -not $CardCollectionEditorUi -and -not $UiSurfaceChecks -and (Get-Process -Name SlayTheSpire2 -ErrorAction SilentlyContinue)) { throw 'Close SlayTheSpire2 before standalone measurements.' }
 $hostRoot = $PSScriptRoot
-if ($DrawingNoticesUi) { $UiSurfaceChecks = $true }
 # These native branches return before reading a replay in Main. All other
 # branches still require both inputs; no default or substitute corpus is used.
-$nativeOnly = $CardCollectionEditorUi -or $UiSurfaceChecks -or $StartupChecks -or $CompatibilityPartyChecks -or
+$nativeOnly = $CardCollectionFlow -or $CardCollectionEditorUi -or $UiSurfaceChecks -or $StartupChecks -or $CompatibilityPartyChecks -or
     $PartyBonesPoolChecks -or $PartyNeowAuthoringChecks -or $PartyCpuCorpus -or
     $PartyKaleidoscopeOrderChecks -or $PartyNeowOrderedKernelChecks -or $PartyNeowGpuChecks -or $PartyNeowDensePairChecks -or
     $PartyFamilyChecks -or $PartyFastChecks -or $RunEntryChecks
@@ -120,7 +135,7 @@ if ($CpuFamilyWorkers) { $arguments += @('--cpu-family-workers', (Quote-Argument
 if ($FamilyPricingInventory) { $arguments += '--family-pricing-inventory' }
 if ($FamilyPhysicalMatrix) { $arguments += @('--family-physical-matrix',$FamilyPhysicalMatrix) }
 if ($NeowCanonicalCost) {
-    $arguments += @('--neow-canonical-cost','--canonical-inputs',$CanonicalInputs,'--canonical-mode',$CanonicalMode,
+    $arguments += @('--neow-canonical-cost','--canonical-family',$CanonicalFamily.ToUpperInvariant(),'--canonical-inputs',$CanonicalInputs,'--canonical-mode',$CanonicalMode,
         '--canonical-warmups',$CanonicalWarmups,'--canonical-sample-ms',$CanonicalSampleMs,
         '--canonical-min-batches',$CanonicalMinBatches,'--canonical-split',$CanonicalSplit)
     if ($CanonicalInteger) { $arguments += '--canonical-integer' }
@@ -139,8 +154,20 @@ if ($PartyBonesPoolChecks) { $arguments += '--party-bones-pool' }
 if ($NeowInitializationChecks) { $arguments += '--n-initialization-checks' }
 if ($GpuResourceFailureChecks) { $arguments += '--gpu-resource-failure-checks' }
 if ($UiSurfaceChecks) { $arguments += '--ui-surface-checks' }
+if ($OwnerUiPolish) { $arguments += @('--owner-ui-polish', '--owner-ui-polish-scope', $OwnerUiPolishScope) }
 if ($DrawingNoticesUi) { $arguments += @('--in-run-map-drawing-ui', '--drawing-notices-ui') }
+if ($DrawingBoundariesUi) { $arguments += @('--in-run-map-drawing-ui', '--drawing-boundaries-ui') }
+if ($DrawingOverblocksUi) { $arguments += @('--in-run-map-drawing-ui', '--drawing-overblocks-ui') }
+if ($DrawingCardOperationsUi) { $arguments += @('--in-run-map-drawing-ui', '--drawing-card-operations-ui') }
+if ($DrawingDependenciesUi) { $arguments += @('--in-run-map-drawing-ui', '--drawing-dependencies-ui') }
+if ($CollectionPickerUi) { $arguments += @('--in-run-map-drawing-ui', '--collection-picker-ui') }
+if ($ManualFamilyOrderUi) { $arguments += '--manual-family-order-ui' }
+if ($MapEditorUi) { $arguments += '--map-editor-ui-only' }
+if ($MapWitnessUi) { $arguments += '--map-witness-ui-only' }
+if ($MapLossyPersistence) { $arguments += '--map-lossy-persistence-only' }
+if ($MapLossyGpu) { $arguments += '--map-lossy-gpu' }
 if ($CardCollectionEditorUi) { $arguments += @('--preset-library-surface-checks', '--card-collections-only', '--card-collection-editor-only') }
+if ($CardCollectionFlow -and (-not $GamePck -or $Headless)) { throw '-CardCollectionFlow requires -GamePck and a rendering-enabled native host.' }
 if ($StartupChecks) { $arguments += '--startup-checks' }
 if ($ResourceBaseline) { $arguments += @('--resource-baseline',(Quote-Argument (Resolve-Path -LiteralPath $ResourceBaseline).Path)) }
 if ($Y2Probe) { $arguments += @('--y2-probe',$Y2Probe) }
@@ -172,19 +199,42 @@ try {
     $env:RT2_EW_EXPERIMENT = $EwExperiment
     $env:RT2_NC_EXPERIMENT = $NcExperiment
     $env:RT2_NWAE_EXPERIMENT = $NwaeExperiment
-    $process = Start-Process -FilePath $godotPath -ArgumentList $arguments -WindowStyle Hidden -PassThru `
-        -RedirectStandardOutput (Join-Path $outputPath 'runtime.log') -RedirectStandardError (Join-Path $outputPath 'stderr.log')
-} finally { $env:RT2_CPU_COST_EVIDENCE_PATH = $previousCpuEvidence; $env:RT2_PRIVATE_SERIAL_EXPERIMENT = $previousPrivateSerialExperiment; $env:RT2_RSW_EXPERIMENT = $previousRswExperiment; $env:RT2_EW_EXPERIMENT = $previousExperiment; $env:RT2_NC_EXPERIMENT = $previousNcExperiment; $env:RT2_NWAE_EXPERIMENT = $previousNwaeExperiment; $env:RT2_PRIVATE_ORDINAL_SELECTION = $previousCandidate }
-try {
-    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) { throw 'Standalone timeout; run is invalid.' }
-    $hostExitCode = $process.ExitCode
-    if ($hostExitCode -ne 0) {
-        Write-Host "Standalone failed ($hostExitCode); inspect $outputPath/stderr.log"
-        exit $hostExitCode
+    $phases = if ($CardCollectionFlow) { @('create', 'reuse') } else { @('normal') }
+    foreach ($phase in $phases) {
+        $phaseArguments = $arguments
+        $logPrefix = ''
+        if ($CardCollectionFlow) {
+            $phaseArguments += @('--card-collection-flow-phase', $phase)
+            $logPrefix = 'card-collection-flow-' + $phase + '-'
+        }
+        $process = Start-Process -FilePath $godotPath -ArgumentList $phaseArguments -WindowStyle Hidden -PassThru `
+            -RedirectStandardOutput (Join-Path $outputPath ($logPrefix + 'runtime.log')) -RedirectStandardError (Join-Path $outputPath ($logPrefix + 'stderr.log'))
+        try {
+            if (-not $process.WaitForExit($TimeoutSeconds * 1000)) { throw "Standalone timeout ($phase); run is invalid." }
+            $hostExitCode = $process.ExitCode
+            if ($hostExitCode -ne 0) {
+                if (-not $CardCollectionFlow) {
+                    Write-Host "Standalone failed ($hostExitCode); inspect $outputPath/stderr.log"
+                    exit $hostExitCode
+                }
+                throw "Standalone failed ($phase, exit $hostExitCode); inspect $outputPath/$($logPrefix)stderr.log"
+            }
+        } finally {
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id }
+            $process.Dispose()
+        }
     }
-    Write-Output "Standalone completed: $outputPath"
-} finally {
-    if (-not $process.HasExited) { Stop-Process -Id $process.Id }
-    $process.Dispose()
-}
+    if ($CardCollectionFlow) {
+        $created = Get-Content -LiteralPath (Join-Path $outputPath 'card-collection-flow-create.json') -Raw | ConvertFrom-Json
+        $reused = Get-Content -LiteralPath (Join-Path $outputPath 'card-collection-flow-reuse.json') -Raw | ConvertFrom-Json
+        if (-not $created.Passed -or -not $reused.Passed -or $created.ProcessId -eq $reused.ProcessId -or
+            $created.ModBinary.PreparedSha256 -ne $reused.ModBinary.PreparedSha256 -or
+            $created.HostBinary.PreparedSha256 -ne $reused.HostBinary.PreparedSha256 -or
+            $created.ModBinary.LoadedMvid -ne $reused.ModBinary.LoadedMvid -or
+            $created.HostBinary.LoadedMvid -ne $reused.HostBinary.LoadedMvid) {
+            throw 'Card collection flow requires two successful different processes using identical binaries.'
+        }
+        Write-Output "Card collection production/restart flow passed: create PID $($created.ProcessId), reuse PID $($reused.ProcessId); $outputPath"
+    } else { Write-Output "Standalone completed: $outputPath" }
+} finally { $env:RT2_CPU_COST_EVIDENCE_PATH = $previousCpuEvidence; $env:RT2_PRIVATE_SERIAL_EXPERIMENT = $previousPrivateSerialExperiment; $env:RT2_RSW_EXPERIMENT = $previousRswExperiment; $env:RT2_EW_EXPERIMENT = $previousExperiment; $env:RT2_NC_EXPERIMENT = $previousNcExperiment; $env:RT2_NWAE_EXPERIMENT = $previousNwaeExperiment; $env:RT2_PRIVATE_ORDINAL_SELECTION = $previousCandidate }
 exit 0

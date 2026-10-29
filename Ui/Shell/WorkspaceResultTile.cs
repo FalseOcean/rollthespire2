@@ -94,10 +94,9 @@ internal sealed partial class WorkspaceResultTile : Control
         if (!allowClear) return;
         var removeHost = new Control
         {
-            Position = new(width - 22, 2),
-            Size = new(20, 20),
-            CustomMinimumSize = new(20, 20),
-            ClipContents = true,
+            Position = new(width - 28, 4),
+            Size = new(24, 24),
+            CustomMinimumSize = new(24, 24),
             MouseFilter = MouseFilterEnum.Pass
         };
         AddChild(removeHost);
@@ -105,8 +104,8 @@ internal sealed partial class WorkspaceResultTile : Control
         {
             Text = "×",
             Position = Vector2.Zero,
-            Size = new(20, 20),
-            CustomMinimumSize = new(20, 20),
+            Size = new(24, 24),
+            CustomMinimumSize = new(24, 24),
             ClipText = true
         };
         remove.AddThemeFontSizeOverride("font_size", 14);
@@ -120,6 +119,7 @@ internal sealed partial class WorkspaceResultTile : Control
             ("normal", palette.Surface, palette.Line, 0),
             ("hover", palette.Hover, palette.Line, 1),
             ("pressed", palette.Line, palette.Line, 0),
+            ("hover_pressed", palette.Line, palette.Line, 0),
             ("disabled", palette.Canvas, palette.Line, 0)
         })
         {
@@ -130,8 +130,14 @@ internal sealed partial class WorkspaceResultTile : Control
         }
         remove.AddThemeStyleboxOverride("focus", palette.FocusRing());
         removeHost.AddChild(remove);
-        remove.CustomMinimumSize = new(20, 20);
-        remove.Size = new(20, 20);
+        remove.Resized += () => removeHost.Size = remove.Size;
+        remove.Ready += () => Callable.From(() =>
+        {
+            remove.Size = remove.GetCombinedMinimumSize().Max(new Vector2(24, 24));
+            removeHost.Size = remove.Size;
+        }).CallDeferred();
+        remove.CustomMinimumSize = new(24, 24);
+        remove.Size = new(24, 24);
         removeHost.Hide();
 
         void UpdateRemove()

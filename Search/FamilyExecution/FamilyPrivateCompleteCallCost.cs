@@ -211,6 +211,7 @@ internal static class FamilyPrivateCompleteCallCost
             FamilyCanonicalMeasuredCost.SourceRequest(family) is not { } request ||
             request.Authority.PlayersCount != 1 || request.CompiledSearch.Context.Party is not null ||
             request.CompiledSearch.NormalizedQuery.StandardMaps.Count != 0 ||
+            request.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count != 0 ||
             family is NeowFamily n && n.Coverage.Count != 1) return null;
         var invocation = FamilyCanonicalCostShape.Describe(request, family, privateInput, rootSpan);
         if (invocation is null) return null;

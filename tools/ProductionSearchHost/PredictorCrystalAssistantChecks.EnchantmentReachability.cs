@@ -275,6 +275,8 @@ internal static partial class PredictorCrystalAssistantChecks
                 foreach(var tool in new[]{PredictorCrystalTool.Small,PredictorCrystalTool.Big}) Visit(steps.Add(new(cell/11,cell%11,tool)));
         }
         Visit([]);
+        if(Environment.GetEnvironmentVariable("RT2_CRYSTAL_REROLL_STREAM_ORACLE")=="1")
+            CheckRerollStreamParity(board,rows.Values.OrderByDescending(r=>r.Rewards.Count(x=>x.Kind==PredictorRewardKind.Card)).First(),"enchanted-"+shape);
         var truth=new HashSet<string>();
         foreach(var row in rows.Values)
             truth.UnionWith(CheckNormalization(PredictorCrystalExplorer.Replay(board,row.Steps),enchanted:true));

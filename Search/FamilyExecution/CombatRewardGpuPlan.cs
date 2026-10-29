@@ -29,7 +29,7 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
         (UsesQueryLiteralPartyOpening ? ".PartyQueryLiteralOpening.20261027.v1" : "") +
         BagCapacityRevision +
         (compact ? ".CompactAbi1" : ".Dense") + ".CanonicalAbi1Ready.20260907.v1" +
-        (NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "");
+        (NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "") + GpuRngRotation.Revision;
 
     internal static CombatRewardGpuPlan? TryCreate(ExactSearchExecutionRequest request, CombatRewardReplay replay, out string issue)
     {

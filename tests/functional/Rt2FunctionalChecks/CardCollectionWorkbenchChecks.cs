@@ -122,6 +122,18 @@ internal static class CardCollectionWorkbenchChecks
                 catch (InvalidDataException) { rejected = true; }
                 Check(rejected, message);
             }
+            var noSnapshotRangeConflict = Draft(saved, 6) with
+            {
+                CombatRewardEditor = CombatRewardSearchDraft.Empty with { ExclusionBattleCount = 2 }
+            };
+            frame.RestoreDraft(noSnapshotRangeConflict, render: false);
+            var restoredWithoutSnapshot = frame.CaptureDraft();
+            Check(restoredWithoutSnapshot.Query.CombatCardExclusion is { BattleCount: 6 } restoredExclusion &&
+                restoredExclusion.CardKeys.SequenceEqual(saved.Cards, ModelKeyComparer.Instance) &&
+                restoredWithoutSnapshot.CombatRewardEditor is { ExcludedCollection: null, ExclusionBattleCount: 6 },
+                "ordinary restore without a snapshot keeps Query members and range over the sidecar range");
+            Reject(noSnapshotRangeConflict, "preset without a snapshot still rejects a sidecar range different from Query");
+
             Reject(Draft(saved with { Cards = Array.Empty<ModelKey>() }), "empty collection cannot become an enabled preset condition");
             Reject(Draft(saved) with { Query = SearchQuery.Empty }, "snapshot cannot silently replace or restore an absent query condition");
             Reject(Draft(saved with { Cards = new[] { BaseGameModelKeys.Characters.Ironclad } }), "non-card members are rejected");

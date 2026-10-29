@@ -51,9 +51,10 @@ internal static class InRunMapOptionPreview
         ImmutableArray<string> notices, ImmutableArray<string> pending, bool cancelledAlternative = false)
     {
         var sections = ImmutableArray.CreateBuilder<OperationPreviewSection>();
-        if (cancelledAlternative && result is { IsKnown: true, DefaultSkipped: true, AppliedChoice: null, Value: { } original })
+        var offer = result?.OfferBinding?.Value ?? (result?.IsKnown == true ? result.Value : null);
+        if (cancelledAlternative && result is { DefaultSkipped: true, AppliedChoice: null } && offer is { } original)
             sections.Add(new(source, [], [new(0, original.Cards, 1, 1, original.CanSkip, false)]));
-        else if (result is { IsKnown: true, Value: { } reward, AppliedChoice: { } choice })
+        else if (result is { AppliedChoice: { } choice } && offer is { } reward)
         {
             if (choice.SacrificeRelicId != null)
             {

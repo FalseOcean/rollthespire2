@@ -15,7 +15,7 @@ internal sealed class EcwPrivateClosureProbe(ExactSearchExecutionRequest request
     public IReadOnlyList<string> Coverage => ["E.EventResult","C.CombatReward","W.World"];
     public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId,PrivateOrdinalBuffer.Capacity,[],"ECW.ClosureProbe.Unpriced");
     public FamilySurvivalProjection Survival => FamilySurvivalProjection.Unresolved(FamilyId,"ECW.ClosureProbe");
-    public FamilyConditionPerformanceProjection ConditionPerformance => new(FamilyId,"ECW.PrivateConnectivity.Probe.20260910.v1","Neutral",1,"ClosureProbe",usesGpu:true);
+    public FamilyConditionPerformanceProjection ConditionPerformance => new(FamilyId,"ECW.PrivateConnectivity.Probe.20260910.v1" + GpuRngRotation.Revision,"Neutral",1,"ClosureProbe",usesGpu:true);
     public FamilyPerformanceObservation CapturePerformanceObservation() => new(ConditionPerformance,"",_gpu?.SetupMs??0,0,0,0,0,0,0,0,false,_faulted?"PhysicalFailure":"ClosureProbeNoCalibration");
     public async ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context,FamilyObservationWindow window,FamilyCandidateSet input,CancellationToken token)
     {

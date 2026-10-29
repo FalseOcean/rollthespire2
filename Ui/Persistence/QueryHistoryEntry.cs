@@ -31,6 +31,7 @@ internal sealed class QueryHistoryEntry
     public List<ManualValidationSourceIdentity> ManualValidationSources { get; set; } = [];
     public List<ManualValidationRecovery> ManualValidationCandidates { get; set; } = [];
     public SearchProgressSnapshot? Progress { get; set; }
+    public List<MapSearchProvenance> MapScans { get; set; } = [];
 
     internal SearchPresetDefinition AsPreset(string title) => new("history:" + Id, SearchPresetSource.Temporary,
         title, "", Draft.Character, Draft.Ascension, Draft.ToPresetIntent(), SearchQueryProjection.CountConditions(Draft.Query), [],

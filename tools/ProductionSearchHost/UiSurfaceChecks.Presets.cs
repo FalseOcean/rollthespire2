@@ -378,19 +378,20 @@ internal static partial class UiSurfaceChecks
                     "Deleting a personal copy leaves developer recommendation intact");
                 library.RefreshEntries();
 
-                // Palette remains live after replacing the old modal with this workspace.
+                // Library and Settings share the fixed default theme.
                 Navigate("Settings");
                 await AwaitPageReady(host, shell);
                 Call(shell, "SelectSettingsCategory", 1);
                 await AwaitPageReady(host, shell);
-                var scheme = Field<OptionButton>(shell, "_colorScheme");
-                scheme.Select(1); scheme.EmitSignal(OptionButton.SignalName.ItemSelected, 1L);
+                Check(shell.FindChild("SettingsColorScheme", true, false) is null &&
+                    shell.FindChildren("Appearance*", "ColorPickerButton", true, false).Count == 0,
+                    "Settings has no retired color scheme or custom-color entry");
                 Navigate("Seeds"); library.ShowSection(SeedLibraryCanvas.LibrarySection.Presets); await SelectEntry(soloSaved.Id);
-                await Render("library-starfield-" + language);
-                Check(persistence.Preferences.Appearance.Scheme == "stars", "Library inherits the selected palette");
+                await Render("library-default-colors-" + language);
+                Check(persistence.Preferences.Appearance is null &&
+                    library.GetThemeColor("font_color", "Label") == new Color("E5EDF8"), "Library retains the fixed default palette");
                 Navigate("Settings");
                 await AwaitPageReady(host, shell);
-                scheme.Select(0); scheme.EmitSignal(OptionButton.SignalName.ItemSelected, 0L);
             }
             // A preset can retain the source search beyond the recent-history limit.
             history.LastUsedAtUtc = DateTimeOffset.UtcNow.AddDays(-1);

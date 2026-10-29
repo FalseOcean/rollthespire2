@@ -8,6 +8,12 @@ public partial class Runner : Node
 {
     public override void _Ready()
     {
+        // Checks may attach controls to SceneTree.Root after scene setup ends.
+        Callable.From(RunChecks).CallDeferred();
+    }
+
+    private void RunChecks()
+    {
         int result = 1;
         try
         {

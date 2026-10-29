@@ -14,6 +14,7 @@ internal sealed class TransformationAggregateGpuExecutor : IDisposable
     private readonly List<Rid> _owned = [];
     private readonly Rid[] _batch, _input, _header, _output, _uniforms;
     private readonly Rid _pipeline;
+    private readonly Rid _prefixHashTable;
     private readonly int _groupingK;
     private readonly int _owner = System.Environment.CurrentManagedThreadId;
     private bool _disposed;
@@ -42,8 +43,10 @@ internal sealed class TransformationAggregateGpuExecutor : IDisposable
         Rid Data(uint[] data) => Add(FamilyGpuComputeUtility.CreateStorageBuffer(rd, FamilyGpuComputeUtility.ToBytesNonEmpty(data)));
         try
         {
-            var buffers = new Rid[6];
+            var buffers = new Rid[plan.PrefixReuse ? 7 : 6];
             for (int i = 0; i < plan.Buffers.Length; i++) buffers[i + 1] = Data(plan.Buffers[i]);
+            if (plan.PrefixReuse)
+                buffers[6] = _prefixHashTable = Add(FamilyGpuComputeUtility.AllocateStorageBuffer(rd, NeowPrefixHashCache.MaximumTableWords * 4));
             string source = plan.ShaderSource();
             if (_privateInput)
             {
@@ -66,7 +69,8 @@ internal sealed class TransformationAggregateGpuExecutor : IDisposable
             }
             WorkspaceBytes = _groupingK*32L + (_privateOutput ? 32 : _groupingK*32L) +
                 (privateInput is not null ? 0 : Capacity*4L*(_privateOutput ? 1 : _groupingK)) +
-                (privateOutput is not null ? 0 : Capacity*4L*_groupingK) + plan.Buffers.Sum(b => Math.Max(4, b.Length*4L));
+                (privateOutput is not null ? 0 : Capacity*4L*_groupingK) + plan.Buffers.Sum(b => Math.Max(4, b.Length*4L)) +
+                (plan.PrefixReuse ? NeowPrefixHashCache.MaximumTableWords * 4L : 0);
             Device = rd.GetDeviceName(); SetupMs = watch.Elapsed.TotalMilliseconds;
         }
         catch (Exception failure)
@@ -99,6 +103,12 @@ internal sealed class TransformationAggregateGpuExecutor : IDisposable
     {
         Check(); token.ThrowIfCancellationRequested();
         var watch = Stopwatch.StartNew(); var survivors = new List<ulong>(); int dispatches = 0, groups = 0; long bytes = 0; double read = 0;
+        // One table owns the complete logical batch, including every slot's
+        // batch.v[6] offset. It is immutable until all these submissions drain.
+        // Compact/private input always hashes its actual ABI1 ordinal directly.
+        if (_prefixHashTable.IsValid && input.IsDense && !_privateInput && inputCount > 0)
+            FamilyGpuComputeUtility.Update(_rd, _prefixHashTable,
+                NeowPrefixHashCache.BuildTable(input.Batch.BatchBase, input.Batch.BatchCandidateCount), "T.PrefixHash");
         double submitSync = 0, widen = 0;
         int privateCount = 0;
         if (_privateOutput) FamilyGpuComputeUtility.Update(_rd, _header[0], Header(), "T.PrivateHeader");

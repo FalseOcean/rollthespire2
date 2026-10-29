@@ -6,6 +6,39 @@ internal static class PredictorCardRewardNicheKnowledgeChecks
     private static void Check(bool value, string message)
     { if (!value) throw new InvalidOperationException(message); }
 
+    internal static void RunRerollScopes(PredictorRun captured)
+    {
+        var catalog = captured.Context.Catalog!;
+        var pool = catalog.CharacterCards.Where(card => card.IsUnlockedInCapturedPool &&
+            !card.IsMultiplayerOnly && card.Rarity is (RolltheSpire2.Core.Effects.Snapshots.EffectCardRarity.Common or
+                RolltheSpire2.Core.Effects.Snapshots.EffectCardRarity.Uncommon or
+                RolltheSpire2.Core.Effects.Snapshots.EffectCardRarity.Rare) && PredictorObtainSources.CanEnchant(captured.Context,
+                PredictorCardChanges.Definition(captured.Context, card.CardKey).Prototype)).Take(3).ToImmutableArray();
+        Check(pool.Length == 3, "reroll scope fixture requires three native enchantable definitions");
+        var context = captured.Context with { Catalog = catalog with { CharacterCards = pool } };
+        var plan = new PredictorRewardPlan(PredictorRewardKind.Card, CardCount: 3, CardPoolOverride: pool.Select(card => card.CardKey).ToImmutableArray());
+        foreach (bool glitterFirst in new[] { true, false })
+        {
+            var state = captured.Working with { Relics = [] };
+            foreach (string relic in glitterFirst ? new[] { "GLITTER", "WING_CHARM" } : ["WING_CHARM", "GLITTER"])
+                state = PredictorSettlementEffects.ObtainRelic(state, new("RELIC", relic));
+            int calls = state.Streams.Single(stream => stream.Stream == PredictorStream.Niche).Calls;
+            var generated = PredictorRewardGeneration.GenerateCards(context, ref state, plan, true, out var scope);
+            Check(scope != null && scope.EligibleIndices.IsEmpty == glitterFirst &&
+                state.Streams.Single(stream => stream.Stream == PredictorStream.Niche).Calls - calls == (glitterFirst ? 0 : 1),
+                "actual new generation records zero targets/no Niche before Wing, and real targets/one draw in the reverse order");
+            var pending = PredictorRouteCauseEvidence.CreateExplicit("RerollNicheUnavailable", "capture:reroll-scope",
+                PredictorCombatDomain.NicheRng, PredictorPendingReasonKind.MissingObservation,
+                "The incoming Niche cursor is unknown.", ["rng.Niche.state"]);
+            var reward = new PredictorReward(1, PredictorRewardKind.Card, PredictorRewardOrigin.Combat, default, generated)
+                { CardRewardNicheScope = scope };
+            var observation = PredictorRun.CardRewardKnowledge(reward, [], [pending]);
+            Check(observation.IsKnown == glitterFirst && (glitterFirst || observation.CardOptions.All(card =>
+                !card.IsKnown && card.Value.Enchantment == null)),
+                "only a proven independent new scope publishes full enchantments; reverse-order witness enchantments remain masked");
+        }
+    }
+
     internal static void Run(PredictorRun captured)
     {
         var context = captured.Context;

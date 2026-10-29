@@ -56,10 +56,7 @@ public static class SearchCompiler
         if (query.Players.Count != 0 || context.Party is not null) throw new ArgumentException("Party.NestedEnvelope");
         ValidateAuthoredShape(query);
 
-        if (query.StandardMaps.Count > 0)
-        {
-            if (query.StandardMaps.Any(c => !c.IsValid)) throw new ArgumentException("StandardMap.InvalidCondition");
-        }
+        ValidateStandardMapConditions(query);
         TransformationAggregateCondition.ValidateExclusiveOwnership(query);
         if (query.TransformationAggregate is not null && (context.ProfileId != RuntimeProfileId.Beta111 || context.Authority.PlayersCount != 1))
             throw new ArgumentException("TransformationAggregate.SinglePlayerBeta111Required");
@@ -88,6 +85,19 @@ public static class SearchCompiler
             routeSemantics,
             requiresComplexBonesDeckInteractionEvaluation,
             fingerprint);
+    }
+
+    internal static void ValidateStandardMapConditions(SearchQuery query)
+    {
+        if (query.StandardMaps is null || query.StandardMaps.Any(c => c is null || !c.IsValid))
+            throw new ArgumentException("StandardMap.InvalidCondition");
+        if (query.StandardMapRoutes is null || query.StandardMapRoutes.Any(c => c is null || !c.IsValid))
+            throw new ArgumentException("StandardMap.InvalidRouteCondition");
+        var activeMapRoutes = query.StandardMapRoutes.Where(c => !c.IsEmpty).ToArray();
+        if (activeMapRoutes.GroupBy(c => c.Act).Any(g => g.Count() > 1))
+            throw new ArgumentException("StandardMap.OneRouteConditionPerAct");
+        if (activeMapRoutes.Any(route => query.StandardMaps.Any(c => c.Scope == route.Act && c.RouteObjective)))
+            throw new ArgumentException("StandardMap.DailyAndDrawingRouteConflict");
     }
 
     // Validate before IsEmpty/normalization can discard malformed authored data.
@@ -174,8 +184,8 @@ public static class SearchCompiler
         }
         if (query.CombatCardExclusion is { } exclusion)
         {
-            Require(exclusion.BattleCount is >= 1 and <= 6 && exclusion.CardKeys is { Count: > 0 }, "CombatCardExclusion:InvalidShape");
-            Keys(exclusion.CardKeys!, "CombatCardExclusion", BaseGameModelKeys.Categories.Card);
+            Require(exclusion.HasValidShape(), "CombatCardExclusion:InvalidShape");
+            Require(exclusion.HasValidCardKeys(), "CombatCardExclusion:InvalidModelKey");
         }
         if (query.CombatCardRewards is { } cards)
         {
@@ -349,6 +359,7 @@ public static class SearchCompiler
         };
 
         string identity = string.Join("|", parts);
+        if (query.StandardMapRoutes.Count > 0) identity += "|standardMapRoutes=" + Sorted(query.StandardMapRoutes.Select(c => c.Fingerprint));
         if (query.TreasureRelics is { } treasure) identity +=
             $"|treasureRelics={treasure.StartOrdinal}:{treasure.Count}:{treasure.OrderMode}:{string.Join(">", treasure.Slots.Select(key => key?.Serialized ?? "*"))}";
         if (query.FirstActUnknownEventPrefixCount > 0) identity += "|unknownEventPrefix=" + query.FirstActUnknownEventPrefixCount;
@@ -641,6 +652,7 @@ internal static class SearchQueryNormalizer
             MerchantColorlessSequenceConditions = merchantColorlessSequences,
             LegacyCombatRewardConstraints = legacyRewards,
             StandardMaps = query.StandardMaps.Distinct().OrderBy(c=>c.Scope).ThenBy(c=>c.Metric).ThenBy(c=>c.Comparison).ThenBy(c=>c.Value).ThenBy(c=>c.RouteObjective).ToArray(),
+            StandardMapRoutes = query.StandardMapRoutes.Where(c => !c.IsEmpty).Select(c => c.Normalize()).OrderBy(c => c.Act).ToArray(),
             CombatCardExclusion = query.CombatCardExclusion is { IsEmpty: false } exclusion
                 ? exclusion with { CardKeys = StableKeys(exclusion.CardKeys) } : null,
             CombatCardRewards = combatCards,

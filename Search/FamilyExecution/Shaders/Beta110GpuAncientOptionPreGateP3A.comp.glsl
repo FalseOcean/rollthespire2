@@ -28,11 +28,12 @@ layout(set=0,binding=13,std430) restrict buffer OutputOrdinals{uint values[];} o
 layout(set=0,binding=14,std430) restrict buffer Parity{uint values[];} parity;
 
 struct RngState{uint64_t s0;uint64_t s1;uint64_t s2;uint64_t s3;};
+/*__RT2_XOSHIRO_ROTATE45__*/
 uint64_t make_u64(uint low,uint high){return uint64_t(low)|(uint64_t(high)<<32u);} 
 uint64_t rotl64(uint64_t v,uint a){return(v<<a)|(v>>(64u-a));}
 uint64_t splitmix_next(inout uint64_t state){state+=make_u64(0x7f4a7c15u,0x9e3779b9u);uint64_t v=state;v=(v^(v>>30u))*make_u64(0x1ce4e5b9u,0xbf58476du);v=(v^(v>>27u))*make_u64(0x133111ebu,0x94d049bbu);return v^(v>>31u);} 
 RngState rng_initialize(uint64_t seed){uint64_t state=seed;RngState r;r.s0=splitmix_next(state);r.s1=splitmix_next(state);r.s2=splitmix_next(state);r.s3=splitmix_next(state);return r;}
-uint64_t next_u64(inout RngState r){uint64_t outv=rotl64(r.s1*uint64_t(5u),7u)*uint64_t(9u);uint64_t t=r.s1<<17u;r.s2^=r.s0;r.s3^=r.s1;r.s1^=r.s2;r.s0^=r.s3;r.s2^=t;r.s3=rotl64(r.s3,45u);return outv;}
+uint64_t next_u64(inout RngState r){uint64_t outv=rotl64(r.s1*uint64_t(5u),7u)*uint64_t(9u);uint64_t t=r.s1<<17u;r.s2^=r.s0;r.s3^=r.s1;r.s1^=r.s2;r.s0^=r.s3;r.s2^=t;r.s3=rt2_rotate_left45_split32(r.s3);return outv;}
 double next_double(inout RngState r){return double(next_u64(r)>>11u)*1.1102230246251565e-16lf;}
 float next_float(inout RngState r){return float(next_double(r));}
 uint next_int(inout RngState r,uint bound){return uint(next_double(r)*double(bound));}

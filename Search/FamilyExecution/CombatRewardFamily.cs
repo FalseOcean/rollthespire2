@@ -70,7 +70,9 @@ internal sealed partial class CombatRewardFamily : IFamilyInvocation
     public string FamilyId => "C.CombatReward";
     public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest request) =>
         FamilyGpuReadback.Reference(this, FamilyCanonicalMeasuredCost.TryDenseQuote(this, request) ??
-            CombatRewardPhysicalPricing.Quote(_request, Replay, _gpuPlan, request));
+            CombatRewardPhysicalPricing.Quote(_request, Replay, _gpuPlan, request) ??
+            (_gpuPlan is null ? CombatRewardWorkEstimate.Cpu(Replay, _cpu.Workers, request, capacity: _cpu.WindowCapacity) :
+                CombatRewardWorkEstimate.Gpu(Replay, _gpuPlan, request)));
     bool IFamilyInvocation.CanBindPrivateSerial => _gpuPlan is { NumericalVariant: GpuNumericalVariant.NativeFloat64 };
     FamilyPrivateGpuExecution IFamilyInvocation.BindPrivateSerial(Godot.RenderingDevice rd,
         PrivateOrdinalBuffer? input, PrivateOrdinalBuffer? output)

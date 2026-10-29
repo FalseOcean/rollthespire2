@@ -61,10 +61,10 @@ internal static partial class FamilyPhysicalMatrix
                     var survival = family.ResolveSurvival(passed);
                     double reached = RolltheSpire2.Search.Predictability.SearchPredictabilityMath.ProbabilityAtLeastOne(prefix, population);
                     double? conditional = reached > 0 ? Finite(population * prefix / reached) : null;
-                    var quote = conditional.HasValue ? family switch {
-                        PartyFamily p => p.QuoteUnit(conditional.Value, stages.Count > 0, passed),
-                        NeowFamily.PartyInitial p => p.QuoteUnit(conditional.Value, stages.Count > 0),
-                        _ => null } : null;
+                    var quote = conditional.HasValue && family is (PartyFamily or NeowFamily.PartyInitial)
+                        ? FamilyPhysicalQuote.CompleteCall(family, new(stages.Count > 0, false, conditional.Value),
+                            null, survival.SurvivalProbability ?? 1, passed) : null;
+                    if (quote?.Origin != FamilyUnitCostOrigin.FamilyCompleteReference) quote = null;
                     stages.Add(new { family.FamilyId, stage.CompactAbi1Input,
                         stage.ConditionPerformance.UsesGpu, stage.ConditionPerformance.PhysicalImplementationRevision,
                         PrefixFastPass = Finite(prefix), WindowReachProbability = Finite(reached),

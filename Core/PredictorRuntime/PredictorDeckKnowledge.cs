@@ -64,7 +64,8 @@ internal sealed record PredictorDeckProjection(PredictorDeckProjectionScope Scop
 internal sealed class PredictorDeckKnowledge
 {
     private sealed record Segment(ImmutableArray<PredictorCard> FixedCards, PredictorDeckRewardChoice? Choice,
-        PredictorDeckKnowledgeGap? UnknownAddition = null);
+        PredictorDeckKnowledgeGap? UnknownAddition = null, bool ReceiptEffectsSettled = false, bool ExcludesBasicCards = false,
+        int? KnownAdditionCount = null);
     private sealed record PossiblyPresentCard(int SegmentIndex, PredictorCard Card);
     private sealed record ScopedGap(PredictorDeckKnowledgeGap Value, int SegmentLimit, bool OnlyUpgradable = false);
     private sealed record CountMutation(PredictorDeckProjectionScope Scope, int SegmentLimit,
@@ -102,17 +103,30 @@ internal sealed class PredictorDeckKnowledge
     // implementation of card obtain hooks or independent per-card ranges.
     internal PredictorDeckKnowledge AddStateChoice(string choiceId, string nodeId,
         PredictorState before, PredictorState witness,
-        ImmutableArray<(string Key, PredictorState State)> outcomes)
+        ImmutableArray<(string Key, PredictorState State)> outcomes, bool preserveCommonAdditionIds = false)
     {
         if (outcomes.IsDefaultOrEmpty || Choices.Any(c => c.ChoiceId == choiceId))
             throw new ArgumentException("PredictorEventDeckChoiceInvalid");
         var decks = outcomes.Select(o => o.State.Deck.Select(o.State.Card).ToImmutableArray()).ToArray();
         var beforeIds = before.Deck.ToHashSet();
+        // A receipt can prove its newly added instance IDs even while their
+        // enchantments differ. Preserve those identity carriers for independent
+        // removal/upgrade reads; variable allocations remain conditional.
+        var stable = preserveCommonAdditionIds ? decks[0].Where(card => !beforeIds.Contains(card.Id) &&
+            decks.All(deck => deck.FirstOrDefault(other => other.Id == card.Id) is { } other &&
+                (ChangedFacts(card, other) & ~PredictorDeckUncertainFact.Enchantment) == PredictorDeckUncertainFact.None))
+            .Select(card => decks.All(deck => deck.Single(other => other.Id == card.Id) == card)
+                ? card : card with { Enchantment = null, EnchantmentAmount = 0 }).ToImmutableArray() : [];
+        var stableIds = stable.Select(card => card.Id).ToHashSet();
+        var uncertainStableIds = stable.Where(card => decks.Any(deck =>
+            PredictorCardEnchantment.From(deck.Single(other => other.Id == card.Id)) != PredictorCardEnchantment.From(card)))
+            .Select(card => card.Id).ToImmutableArray();
         var alternatives = outcomes.Select(o => new PredictorDeckRewardAlternative(o.Key, null)).ToImmutableArray();
         var effects = outcomes.Select((o, i) => new PredictorDeckRewardEffect(o.Key, true,
             // Existing witness cards belong to their original source. Moving
             // them into this independent choice invents cross-source decks.
-            decks[i].Where(c => !beforeIds.Contains(c.Id)).Select(c => c with { Id = 0 }).ToImmutableArray(),
+            decks[i].Where(c => !beforeIds.Contains(c.Id) && !stableIds.Contains(c.Id))
+                .Select(c => c with { Id = 0 }).ToImmutableArray(),
             checked(o.State.GoldBudget - witness.GoldBudget),
             o.State.Relics.Where(r => r.Key.Entry == "BOOK_OF_FIVE_RINGS").Select(r => new PredictorDeckBookCounterDelta(r.Id,
                 r.BookOfFiveRingsCardsAdded - (witness.Relics.FirstOrDefault(w => w.Id == r.Id)?.BookOfFiveRingsCardsAdded ?? 0)))
@@ -155,7 +169,10 @@ internal sealed class PredictorDeckKnowledge
             if (!ids.IsEmpty) deck = deck.MarkExistingChangePending(nodeId, "EventCardOrderNotProjected",
                 PredictorDeckUncertainFact.Membership, ids, choiceId: choiceId);
         }
-        deck = new(_context, deck._segments.Add(new([], choice)), deck._gaps, deck._countMutations, deck._possiblyPresent);
+        deck = new(_context, deck._segments.Add(new(stable, choice)), deck._gaps, deck._countMutations, deck._possiblyPresent);
+        if (!uncertainStableIds.IsEmpty)
+            deck = deck.MarkExistingChangePending(nodeId, "CardRewardEnchantmentPending", PredictorDeckUncertainFact.Enchantment,
+                instanceIds: uncertainStableIds, choiceId: choiceId);
         // Existing-card effects and additions share the event's choice root.
         // A delta is valid only when its required old-card reads were known;
         // an upgrade witness cannot establish a removed card's upgrade count.
@@ -177,7 +194,9 @@ internal sealed class PredictorDeckKnowledge
                     { supported = false; break; }
                     values[option] += (next != null && Matches(next, scope) ? 1 : 0) - (Matches(card, scope) ? 1 : 0);
                 }
-                foreach (var card in effects[option].AddedCards)
+                // Include promoted fixed additions exactly once in the final
+                // count boundary; choice effects contain only the remainder.
+                foreach (var card in decks[option].Where(card => !beforeIds.Contains(card.Id)))
                 {
                     if (MetadataMissing(card, scope)) { supported = false; break; }
                     if (Matches(card, scope)) values[option]++;
@@ -374,10 +393,11 @@ internal sealed class PredictorDeckKnowledge
     // instance. CardTypes is an explicit possible-type contract, never a
     // representative card value; an empty contract permits every type.
     internal PredictorDeckKnowledge MarkUnknownAddition(string nodeId, string reason,
-        string? choiceId = null, ImmutableArray<EffectCardType> cardTypes = default)
+        string? choiceId = null, ImmutableArray<EffectCardType> cardTypes = default, bool receiptEffectsSettled = false,
+        bool excludesBasicCards = false, int? knownCount = null)
     {
         if (string.IsNullOrWhiteSpace(nodeId) || string.IsNullOrWhiteSpace(reason) ||
-            choiceId != null && string.IsNullOrWhiteSpace(choiceId))
+            choiceId != null && string.IsNullOrWhiteSpace(choiceId) || knownCount is < 0)
             throw new ArgumentException("PredictorDeckUnknownAdditionInvalid");
         var types = cardTypes.IsDefault ? [] : cardTypes;
         if (types.Any(t => !Enum.IsDefined(t)) || types.Distinct().Count() != types.Length)
@@ -386,7 +406,13 @@ internal sealed class PredictorDeckKnowledge
             _segments.Any(s => s.UnknownAddition?.ChoiceId == choiceId)))
             throw new ArgumentException("PredictorDeckChoiceAlreadyPresent:" + choiceId);
         var gap = new PredictorDeckKnowledgeGap(nodeId, choiceId, reason, PredictorDeckUncertainFact.All, [], types);
-        return new(_context, _segments.Add(new([], null, gap)), _gaps, _countMutations, _possiblyPresent);
+        // This explicit producer contract concerns additive Gold/Book effects
+        // only. Card identities and their qualification remain unknown. A
+        // settled receipt must not execute those hooks a second time here.
+        // A producer can separately establish a real receipt count (including
+        // copies). It proves only All cardinality, never target identities or
+        // any attribute-based eligibility. Hook settlement remains independent.
+        return new(_context, _segments.Add(new([], null, gap, receiptEffectsSettled, excludesBasicCards, knownCount)), _gaps, _countMutations, _possiblyPresent);
     }
 
     internal PredictorDeckKnowledge MarkChoiceAdditionPending(string nodeId, string choiceId,
@@ -582,10 +608,13 @@ internal sealed class PredictorDeckKnowledge
         for (int index = 0; index < _segments.Length; index++)
         {
             var segment = _segments[index];
-            if (segment.UnknownAddition is { } addition && AdditionMayMatch(addition, scope))
+            if (segment.UnknownAddition is { } addition && AdditionMayMatch(segment, scope))
             {
-                countSupported = false; complete = false;
-                gaps.Add(addition); countGaps.Add(addition);
+                if (scope == PredictorDeckProjectionScope.All && segment.KnownAdditionCount is { } received)
+                    count += received;
+                else { countSupported = false; countGaps.Add(addition); }
+                complete = false;
+                gaps.Add(addition);
             }
             foreach (var possible in _possiblyPresent.Where(c => c.SegmentIndex == index))
             {
@@ -689,15 +718,19 @@ internal sealed class PredictorDeckKnowledge
         for (int index = 0; index < segmentLimit; index++)
         {
             var segment = _segments[index];
-            if (segment.UnknownAddition is { } addition && AdditionMayMatch(addition, scope) ||
+            if (segment.UnknownAddition != null && AdditionMayMatch(segment, scope) ||
                 segment.FixedCards.Any(c => MayMatch(index, c)) || segment.Choice is { } choice &&
                 choice.Effects.Any(e => !e.AdditionsKnown || e.AddedCards.Any(c => MayMatch(index, c)))) return false;
         }
         return true;
     }
 
-    private static bool AdditionMayMatch(PredictorDeckKnowledgeGap addition, PredictorDeckProjectionScope scope) =>
-        RequiredType(scope) is not { } type || addition.CardTypes.IsEmpty || addition.CardTypes.Contains(type);
+    private static bool AdditionMayMatch(Segment segment, PredictorDeckProjectionScope scope) =>
+        // A producer may prove this static exclusion from the complete source
+        // pool without knowing a particular replacement card or its attributes.
+        !(segment.ExcludesBasicCards && scope is (PredictorDeckProjectionScope.Basic or
+            PredictorDeckProjectionScope.BasicStrike or PredictorDeckProjectionScope.BasicDefend)) &&
+        (RequiredType(scope) is not { } type || segment.UnknownAddition!.CardTypes.IsEmpty || segment.UnknownAddition.CardTypes.Contains(type));
 
     internal bool HasFixedMember(long id) => _segments.Any(s => s.FixedCards.Any(c => c.Id == id));
 
@@ -749,7 +782,7 @@ internal sealed class PredictorDeckKnowledge
 
     private PredictorChoiceInt? ProjectEffect(Func<PredictorDeckRewardEffect, int?> read, int startAt = 0)
     {
-        if (_segments.Skip(startAt).Any(s => s.UnknownAddition != null)) return null;
+        if (_segments.Skip(startAt).Any(s => s.UnknownAddition != null && !s.ReceiptEffectsSettled)) return null;
         var result = PredictorChoiceInt.Constant(0);
         foreach (var choice in _segments.Skip(startAt).Where(s => s.Choice != null).Select(s => s.Choice!))
         {

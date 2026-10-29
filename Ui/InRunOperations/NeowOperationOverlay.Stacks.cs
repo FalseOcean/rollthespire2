@@ -12,18 +12,22 @@ internal sealed partial class NeowOperationOverlay
 {
     private const float CardWidth = 350, CardHeight = 470, CardGap = 18, GroupGap = 22;
     private const float OrdinalGap = 8;
+    private const int PotionOrderIconSize = 28;
+    private const float PotionOrderHeight = 34, PotionOrderGap = 5, PotionOrderArrowWidth = 18;
     // One viewport-level size for every option. Placement may wrap groups,
     // but never changes card scale according to the hovered option's height.
     internal float? CardScaleOverride { get; set; }
     internal float CardDisplayScale => _potionGroupScale *
         (CardScaleOverride ?? OperationNativeCardDisplay.ScaleForViewport(GetViewportRect().Size));
     private const int StackLayers = 6;
-    private sealed class CardStack(ImmutableArray<PredictorCard> cards, string caption, int branch, bool stacked, bool spread, bool highlighted, bool earliestFirst, bool forceSingleRow, bool dimmed, bool compact, int? price, bool singleStack)
+    private sealed class CardStack(ImmutableArray<PredictorCard> cards, string caption, int branch, bool stacked, bool spread, bool highlighted, bool earliestFirst, bool forceSingleRow, bool dimmed, bool compact, int? price, bool singleStack, ImmutableArray<ModelKey> potionUseOrder)
     {
         public readonly ImmutableArray<PredictorCard> Cards = cards;
         public string Caption = caption;
         public readonly int? Price = price;
         public Control? PriceView;
+        public readonly ImmutableArray<ModelKey> PotionUseOrder = potionUseOrder;
+        public Control? PotionOrderView;
         public readonly int Branch = branch;
         public bool Stacked = stacked;
         public readonly bool Spread = spread;
@@ -48,7 +52,7 @@ internal sealed partial class NeowOperationOverlay
 
     private void AddCardGroup(ImmutableArray<PredictorCard> cards, string caption, int branch,
         bool stacked, bool spread, bool possible, bool highlighted = false, bool earliestFirst = false, bool forceSingleRow = false,
-        bool dimmed = false, bool compact = false, int? price = null)
+        bool dimmed = false, bool compact = false, int? price = null, ImmutableArray<ModelKey> potionUseOrder = default)
     {
         if (MapCardPresentation && MapSummaryOnly) return;
         if (MapCardPresentation)
@@ -58,7 +62,7 @@ internal sealed partial class NeowOperationOverlay
         }
         _stacks.Add(new(cards, (possible ? UiText.Get("operation.possiblePrefix") : "") + caption, branch,
             MapCardPresentation || stacked, !MapCardPresentation && spread, highlighted,
-            earliestFirst, MapCardPresentation || forceSingleRow, dimmed, compact, price, MapCardPresentation));
+            earliestFirst, MapCardPresentation || forceSingleRow, dimmed, compact, price, MapCardPresentation, potionUseOrder));
     }
 
     private void AddIconGroup(ImmutableArray<ModelKey> models, string caption, bool possible) =>
@@ -66,6 +70,13 @@ internal sealed partial class NeowOperationOverlay
 
     private static float CaptionHeight(string caption, float width) => caption.Length == 0 ? 0 :
         Math.Max(1, Mathf.Ceil(MainPanelTheme.Regular.GetStringSize(caption, fontSize: 18).X / Math.Max(1, width))) * 26 + 4;
+
+    private static float PotionOrderWidth(CardStack stack) => stack.PotionUseOrder.IsDefaultOrEmpty ? 0 :
+        stack.PotionUseOrder.Length * PotionOrderIconSize +
+        (stack.PotionUseOrder.Length - 1) * (PotionOrderArrowWidth + 2 * PotionOrderGap);
+
+    private static float StackHeaderHeight(CardStack stack, float width) =>
+        (stack.PotionUseOrder.IsDefaultOrEmpty ? 0 : PotionOrderHeight) + CaptionHeight(stack.Caption, width);
 
     private static (Vector2 Size, float Scale, int Columns) GroupMetrics(CardStack stack, float width, float scale)
     {
@@ -78,16 +89,16 @@ internal sealed partial class NeowOperationOverlay
             int groups = (count + layers - 1) / layers;
             int stackColumns = float.IsPositiveInfinity(width) ? groups : Math.Clamp((int)((width + GroupGap + .1f) / (columnWidth + GroupGap)), 1, groups);
             int stackRows = (groups + stackColumns - 1) / stackColumns;
-            float measuredWidth = stackColumns * columnWidth + (stackColumns - 1) * GroupGap;
+            float measuredWidth = Math.Max(PotionOrderWidth(stack), stackColumns * columnWidth + (stackColumns - 1) * GroupGap);
             float columnHeight = (CardHeight + (layers - 1) * 45) * scale;
-            return (new(measuredWidth, CaptionHeight(stack.Caption, measuredWidth) + stackRows * columnHeight + (stackRows - 1) * GroupGap + footer), scale, stackColumns);
+            return (new(measuredWidth, StackHeaderHeight(stack, measuredWidth) + stackRows * columnHeight + (stackRows - 1) * GroupGap + footer), scale, stackColumns);
         }
         float cardWidth = CardWidth * scale, gap = CardGap * scale;
         int columns = stack.ForceSingleRow || float.IsPositiveInfinity(width) ? count : Math.Clamp((int)((width + gap + .1f) / (cardWidth + gap)), 1, count);
         float fitScale = scale;
         int rows = (count + columns - 1) / columns;
-        float gridWidth = columns * CardWidth * fitScale + (columns - 1) * CardGap * fitScale;
-        return (new(gridWidth, CaptionHeight(stack.Caption, gridWidth) + rows * CardHeight * fitScale +
+        float gridWidth = Math.Max(PotionOrderWidth(stack), columns * CardWidth * fitScale + (columns - 1) * CardGap * fitScale);
+        return (new(gridWidth, StackHeaderHeight(stack, gridWidth) + rows * CardHeight * fitScale +
             (rows - 1) * CardGap * fitScale + footer), fitScale, columns);
     }
 
@@ -132,6 +143,11 @@ internal sealed partial class NeowOperationOverlay
             stack.Host.SetMeta("rt2_highlighted", stack.Highlighted);
             stack.Host.SetMeta("rt2_single_row", stack.ForceSingleRow);
             _cardsArea.AddChild(stack.Host); _visibleCardRegions.Add(stack.Host);
+            if (!stack.PotionUseOrder.IsDefaultOrEmpty)
+            {
+                stack.PotionOrderView = PotionOrderStrip(stack.PotionUseOrder);
+                stack.Host.AddChild(stack.PotionOrderView);
+            }
             stack.Label = ArtLabel(stack.Caption); stack.Host.AddChild(stack.Label);
             if (stack.Highlighted) stack.Label.AddThemeColorOverride("font_color", GoldInk);
             foreach (var snapshot in stack.Cards)
@@ -169,6 +185,28 @@ internal sealed partial class NeowOperationOverlay
         return label;
     }
 
+    private Control PotionOrderStrip(ImmutableArray<ModelKey> order)
+    {
+        var strip = new HBoxContainer { Name = "Rt2PotionUseOrder", MouseFilter = MouseFilterEnum.Ignore };
+        strip.AddThemeConstantOverride("separation", (int)PotionOrderGap);
+        for (int i = 0; i < order.Length; i++)
+        {
+            if (i > 0)
+            {
+                var arrow = Text("→", 18);
+                arrow.CustomMinimumSize = new(PotionOrderArrowWidth, PotionOrderIconSize);
+                arrow.HorizontalAlignment = HorizontalAlignment.Center;
+                arrow.VerticalAlignment = VerticalAlignment.Center;
+                strip.AddChild(arrow);
+            }
+            var icon = ModelIcon(order[i], PotionOrderIconSize);
+            icon.Name = "Rt2PotionUseStep_" + (i + 1);
+            icon.SetMeta("rt2_model", order[i].Serialized);
+            strip.AddChild(icon);
+        }
+        return strip;
+    }
+
     private Control ModelIcon(ModelKey key, int size)
     {
         var kind = key.Category == "POTION" ? GameContentKind.Potion : GameContentKind.Relic;
@@ -199,8 +237,15 @@ internal sealed partial class NeowOperationOverlay
                 ? regions[stackIndex].Position - _cardsBounds.Position : NextPosition(size, stack.Gap);
             stack.Host.Size = size;
             stackIndex++;
-            float caption = CaptionHeight(stack.Caption, size.X);
-            stack.Label.Size = new(size.X, caption);
+            float orderHeight = stack.PotionUseOrder.IsDefaultOrEmpty ? 0 : PotionOrderHeight;
+            if (stack.PotionOrderView is { } orderView)
+            {
+                orderView.Position = Vector2.Zero;
+                orderView.Size = new(PotionOrderWidth(stack), PotionOrderIconSize);
+            }
+            float caption = StackHeaderHeight(stack, size.X);
+            stack.Label.Position = new(0, orderHeight);
+            stack.Label.Size = new(size.X, caption - orderHeight);
             int layers = stack.SingleStack ? stack.Cards.Length : Math.Min(stack.Cards.Length, StackLayers);
             for (int i = 0; i < stack.Tiles.Count; i++)
             {

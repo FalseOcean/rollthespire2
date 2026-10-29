@@ -24,7 +24,7 @@ internal static partial class PotionOperationPreview
         var cards = query.Cards.OrderBy(c => c.Group).ThenBy(c => c.Ordinal).Select(c => c.Card).ToImmutableArray();
         ImmutableArray<OperationPreviewSection> sections = cards.IsEmpty ? [] :
             [new(potion, [], [new(0, cards, query.RequiresCardChoice ? 1 : cards.Length,
-                query.RequiresCardChoice ? 1 : cards.Length, false, false)])
+                query.RequiresCardChoice ? 1 : cards.Length, false, false) { PotionUseOrder = [potion] }])
                 { Label = "PotionCombatUse", FeatureId = PotionFeature(potion) }];
         return new(potion, [], [], false,
             [new([], sections, query.MissingInputs, 1, query.IdentitiesComputed)], [])
@@ -73,7 +73,7 @@ internal static partial class PotionOperationPreview
                 [new([], rows.IsEmpty ? [] : [new(potion, rows, [])
                     { FeatureId = demand.IncludeInventory ? "extra:potion-inventory" : PotionFeature(potion) }], [], 1, true)], [])
             {
-                Style = new(OperationTextMode.None, OperationCardLayout.Parallel)
+                Style = OperationDisplayPolicy.A1
             };
         }
         catch (Exception error) when (error is not OperationCanceledException)

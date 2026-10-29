@@ -59,9 +59,7 @@ internal static partial class FamilyPhysicalMatrix
             : SearchQuery.Empty with { MerchantColorlessConditions = [new(5,
                 MerchantColorlessSlot.Uncommon, observed[slot][4])] };
         var assembly = typeof(FamilyCandidateSet).Assembly;
-        string resource = assembly.GetManifestResourceNames().Single(n => n.EndsWith(".MerchantShopColorless.comp.glsl", StringComparison.Ordinal));
-        string rawShader;
-        using (var reader = new StreamReader(assembly.GetManifestResourceStream(resource)!)) rawShader = reader.ReadToEnd();
+        string rawShader = FamilyGpuComputeUtility.LoadEmbeddedShader("MerchantShopColorless.comp.glsl");
         string SourceDigest(string source) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
             System.Text.Encoding.UTF8.GetBytes(source)));
         var oracleRows = new List<object>();
@@ -172,8 +170,10 @@ internal static partial class FamilyPhysicalMatrix
                             string? reason = null;
                             try
                             {
-                                price = variant.Family.QuoteUnit(measuredInput.Count, !measuredInput.IsDense,
+                                price = FamilyPhysicalQuote.CompleteCall(variant.Family,
+                                    new(!measuredInput.IsDense, false, measuredInput.Count), null, 1,
                                     new HashSet<string>(StringComparer.Ordinal));
+                                if (price?.Origin != FamilyUnitCostOrigin.FamilyCompleteReference) price = null;
                                 if (price is null) reason = "WholeWrapperQuoteUnavailable;NoSoloChildQuoteSubstitution";
                                 else if (!double.IsFinite(price.Milliseconds) || price.Milliseconds < 0)
                                 { reason = "WholeWrapperQuoteInvalid"; price = null; }
@@ -287,9 +287,7 @@ internal static partial class FamilyPhysicalMatrix
         var chainRows = new List<object>();
         var rootZero = new Beta111ShopColorlessProjection[players];
         var assembly = typeof(FamilyCandidateSet).Assembly;
-        string resource = assembly.GetManifestResourceNames().Single(n => n.EndsWith(".MerchantShopColorless.comp.glsl", StringComparison.Ordinal));
-        string rawShader;
-        using (var reader = new StreamReader(assembly.GetManifestResourceStream(resource)!)) rawShader = reader.ReadToEnd();
+        string rawShader = FamilyGpuComputeUtility.LoadEmbeddedShader("MerchantShopColorless.comp.glsl");
         using (var rd = RenderingServer.CreateLocalRenderingDevice() ?? throw new InvalidOperationException("MpS1.DeviceUnavailable"))
         for (int slot = 0; slot < players; slot++)
         {

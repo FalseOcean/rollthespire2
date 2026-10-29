@@ -152,6 +152,7 @@ internal sealed partial class PredictorCrystalOffsetBound
                 return new(slots);
             }
             var terminalMemo=new Dictionary<(int Offset,int Niche,int Groups,LanguageSlots Slots,int Matched,int Bag),bool>();
+            var singleCardRerolls=new Dictionary<(string Kind,int Offset,int Slots),bool>();
             bool Finish(int offset,int niche,int groups,ImmutableArray<RerollSlot> input,int matched,int bag)
             {
                 using var measurement=profile?.MeasureFinish();
@@ -169,6 +170,28 @@ internal sealed partial class PredictorCrystalOffsetBound
                 if(cards==0) return true;
                 if(input.Length<BitOperations.PopCount((uint)cards)) return false;
                 if(input.Length>16) {limited=true;return false;}
+                // One ordinary card needs no permutation search. A chosen
+                // slot can occupy any of the N reroll positions: the other
+                // N-1 slots provide its preceding rerolls. They need not be
+                // claimed, but each still occupies its own physical slot.
+                // Exact enchantments retain the ordered Niche/group machine.
+                if(cardCount==1 && !exactEnchantments)
+                {
+                    foreach(var slot in input) if((slot.InitialHits&cards)!=0) return true;
+                    if(!_table.IncludesRerolls) return false;
+                    foreach(var slot in input)
+                    {
+                        var rerollKey=(slot.Kind,offset,input.Length);
+                        if(!singleCardRerolls.TryGetValue(rerollKey,out bool possible))
+                        {
+                            for(int n=0;n<input.Length && !possible;n++)
+                                possible=(CardHits(slot.Kind,offset+6*n)&cards)!=0;
+                            singleCardRerolls.Add(rerollKey,possible);
+                        }
+                        if(possible) return true;
+                    }
+                    return false;
+                }
                 var key=(offset,niche,groups,Summary(input),_table.IncludesSacrifices?matched:0,_table.IncludesSacrifices?bag:0);if(terminalMemo.TryGetValue(key,out bool known))
                 {if(profile!=null) profile.FinishCacheHits++;return known;}
                 var slots=input.ToArray();
@@ -352,11 +375,18 @@ internal sealed partial class PredictorCrystalOffsetBound
                 }
                 var potionRoots=prefixMatches.Select(m=>Potion(0,m)).Where(id=>id>=0).Distinct().ToArray();
                 if(potionRoots.Length==0 || limited) continue;
-                var coreMemo=new Dictionary<(int Used,int Matched,int Bag,int Niche,int Groups,LanguageSlots Cards),int>();
+                var coreMemo=new Dictionary<(int Used,int Matched,int Bag,int Niche,int Groups,bool CardSatisfied,LanguageSlots Cards),int>();
                 int Core(int used,int matched,int bag,int niche,int groups,ImmutableArray<RerollSlot> slots)
                 {
                     if(profile!=null) profile.CoreCalls++;
-                    var key=(used,matched,bag,niche,groups,Summary(slots));if(coreMemo.TryGetValue(key,out int known))
+                    // With no sacrifices, one initially offered ordinary goal
+                    // can always be kept. Its other slots cease to affect any
+                    // future accepting suffix. Keep physical used-items, bag
+                    // and non-card matches exact while merging this exhausted
+                    // card obligation across reward orders.
+                    bool cardSatisfied=cardCount==1 && !exactEnchantments && !_table.IncludesSacrifices &&
+                        slots.Any(slot=>(slot.InitialHits&cards)!=0);
+                    var key=(used,matched,bag,niche,groups,cardSatisfied,Summary(cardSatisfied?[]:slots));if(coreMemo.TryGetValue(key,out int known))
                     {if(profile!=null) profile.CoreCacheHits++;return known;}
                     if(limited || !Admit()) return -1;
                     if(minimumGold>0)

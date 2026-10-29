@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using RolltheSpire2.Core.Collections;
 using RolltheSpire2.Core.Identity;
@@ -109,6 +110,7 @@ internal static class CardCollectionStoreChecks
             Reject(() => blockedStore.Save(null, "cannot create", [unknown]), "Directory creation failures retain their actual exception");
             Check(blockedStore.GetAll().Count == 0 && File.ReadAllText(blockedRoot) == "occupied by a file",
                 "Failed initial writes create no in-memory success and preserve the blocking file");
+            RunDrawingPreferenceChecks(Path.Combine(root, "drawing-preference"), Check);
             Console.WriteLine($"CARD_COLLECTION_STORE checks={count};failures=0;isolation=passed;frozenInputs=preserved");
             return 0;
         }
@@ -116,5 +118,89 @@ internal static class CardCollectionStoreChecks
         {
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
+    }
+
+    private static void RunDrawingPreferenceChecks(string root, Action<bool, string> check)
+    {
+        var preference = new DrawingCardCollectionPreferenceStore(root);
+        string path = Path.Combine(root, DrawingCardCollectionPreferenceStore.FileName);
+        check(preference.Load() is null && !Directory.Exists(root),
+            "A missing drawing preference uses the built-in default without creating state");
+        preference.Save(null);
+        check(new DrawingCardCollectionPreferenceStore(root).Load() is null,
+            "An explicit built-in drawing selection survives reopening");
+
+        var card = new ModelKey("CARD", "UNKNOWN_MOD_CARD");
+        var other = new ModelKey("CARD", "OTHER_CARD");
+        var cards = new List<ModelKey> { card };
+        var selected = new CardCollectionSnapshot("collection:selected", "绘线关注", 7, cards)
+        { UpdatedAtUtc = new DateTimeOffset(2026, 10, 27, 0, 0, 0, TimeSpan.Zero) };
+        preference.Save(selected);
+        cards.Add(other);
+        CardCollectionSnapshot? loaded = new DrawingCardCollectionPreferenceStore(root).Load();
+        check(loaded is not null && loaded.Id == selected.Id && loaded.Name == selected.Name &&
+            loaded.Revision == 7 && loaded.UpdatedAtUtc == selected.UpdatedAtUtc && loaded.Cards.SequenceEqual(new[] { card }),
+            "Drawing selection roundtrips captured metadata and exact unknown identities, detached from caller mutations");
+        check(loaded is not null && !ReferenceEquals(loaded.Cards, preference.Load()!.Cards) &&
+            ((IList<ModelKey>)loaded.Cards).IsReadOnly,
+            "Each drawing preference load returns a detached immutable member list");
+
+        var assets = new CardCollectionStore(root);
+        CardCollectionSnapshot asset = assets.Save(null, "original asset", [card]);
+        preference.Save(asset);
+        assets.Save(asset.Id, "new revision", [other]);
+        assets.Delete(asset.Id);
+        loaded = preference.Load();
+        check(loaded is not null && loaded.Id == asset.Id && loaded.Name == asset.Name && loaded.Revision == 1 &&
+            loaded.Cards.SequenceEqual(new[] { card }),
+            "Drawing retains the selected revision after its independent asset is edited and deleted");
+        preference.Save(new CardCollectionSnapshot("collection:empty", "empty", 2, []));
+        loaded = preference.Load();
+        check(loaded is not null && loaded.Id == "collection:empty" && loaded.Cards.Count == 0,
+            "An empty custom drawing collection remains a custom selection");
+        preference.Save(null);
+        check(preference.Load() is null, "Selecting built-in drawing default replaces a previous custom selection");
+
+        void RejectLoad(string content, Func<Exception, bool> expected, string message)
+        {
+            File.WriteAllText(path, content);
+            byte[] before = File.ReadAllBytes(path);
+            Exception? failure = null;
+            try { _ = preference.Load(); }
+            catch (Exception exception) { failure = exception; }
+            check(failure is not null && expected(failure) && File.ReadAllBytes(path).SequenceEqual(before), message);
+        }
+        RejectLoad("{invalid json", exception => exception is JsonException,
+            "Malformed drawing preference retains its bytes and original JSON failure");
+        RejectLoad("{\"SchemaVersion\":999,\"FutureField\":true}",
+            exception => exception is InvalidDataException && exception.Message.Contains("999", StringComparison.Ordinal),
+            "Future drawing preference retains bytes and reports its unsupported schema before unknown fields");
+        RejectLoad("{\"SchemaVersion\":1}", exception => exception is JsonException,
+            "A missing drawing selection field is invalid rather than an implicit default");
+        RejectLoad("{\"SchemaVersion\":1,\"Selection\":{\"Id\":\"selected\",\"Name\":\"invalid\",\"Revision\":0,\"Cards\":[]}}",
+            exception => exception is InvalidDataException,
+            "Invalid drawing snapshot metadata cannot become the built-in default");
+        RejectLoad("{\"SchemaVersion\":1,\"Selection\":{\"Id\":\"selected\",\"Name\":\"invalid\",\"Revision\":1,\"Cards\":[\"RELIC:UNKNOWN\"]}}",
+            exception => exception is InvalidDataException,
+            "Drawing preference rejects non-card identities without changing original data");
+
+        preference.Save(asset);
+        byte[] validBytes = File.ReadAllBytes(path);
+        using (var held = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            Exception? failure = null;
+            try { _ = preference.Load(); }
+            catch (Exception exception) { failure = exception; }
+            check(failure is IOException, "Drawing preference read access failure reaches its caller without fallback");
+            failure = null;
+            try { preference.Save(null); }
+            catch (Exception exception) { failure = exception; }
+            Console.WriteLine($"DRAWING_PREFERENCE_EXPECTED_SAVE_FAILURE type={failure?.GetType().FullName};cause={failure?.Message}");
+            check(failure is IOException or UnauthorizedAccessException,
+                "Drawing preference atomic write failure reaches its caller with the original filesystem cause: " + failure?.GetType().FullName);
+        }
+        check(File.ReadAllBytes(path).SequenceEqual(validBytes) && preference.Load()!.Id == asset.Id &&
+            Directory.GetFiles(root, "*.tmp-*").Length == 0,
+            "Failed drawing preference writes preserve the last committed selection and clean temporary files");
     }
 }

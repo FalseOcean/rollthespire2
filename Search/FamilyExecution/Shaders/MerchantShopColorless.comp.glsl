@@ -35,6 +35,7 @@ uint64_t s1;
 uint64_t s2;
 uint64_t s3;
 
+/*__RT2_XOSHIRO_ROTATE45__*/
 uint64_t make_u64(uint low, uint high) { return uint64_t(low) | (uint64_t(high) << 32u); }
 uint64_t rotl64(uint64_t value, uint amount) { return (value << amount) | (value >> (64u - amount)); }
 uint64_t splitmix_next(inout uint64_t state) {
@@ -51,12 +52,12 @@ void rng_initialize(uint64_t seed) {
 uint64_t next_u64() {
     uint64_t result = rotl64(s1 * uint64_t(5u), 7u) * uint64_t(9u);
     uint64_t temporary = s1 << 17u;
-    s2 ^= s0; s3 ^= s1; s1 ^= s2; s0 ^= s3; s2 ^= temporary; s3 = rotl64(s3, 45u);
+    s2 ^= s0; s3 ^= s1; s1 ^= s2; s0 ^= s3; s2 ^= temporary; s3 = rt2_rotate_left45_split32(s3);
     return result;
 }
 void consume_rng() {
     uint64_t temporary = s1 << 17u;
-    s2 ^= s0; s3 ^= s1; s1 ^= s2; s0 ^= s3; s2 ^= temporary; s3 = rotl64(s3, 45u);
+    s2 ^= s0; s3 ^= s1; s1 ^= s2; s0 ^= s3; s2 ^= temporary; s3 = rt2_rotate_left45_split32(s3);
 }
 uint next_int(uint bound) {
     // Owner-approved Family Fast primitive: floor((NextUInt64 >> 11) * bound / 2^53).

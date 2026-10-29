@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Text.Json;
 using Godot;
 using HarmonyLib;
@@ -19,6 +20,7 @@ using MegaCrit.Sts2.Core.Random;
 using MegaCrit.Sts2.Core.Rewards;
 using MegaCrit.Sts2.Core.Runs;
 using RolltheSpire2.Bootstrap;
+using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.PredictorRuntime;
 using RolltheSpire2.Infrastructure.Snapshots;
 using RolltheSpire2.Ui.InRunOperations;
@@ -149,29 +151,55 @@ internal static partial class UiSurfaceChecks
                 slots[replace] = ModelDb.GetById<PotionModel>(new(source.Potion.Key.Category, source.Potion.Key.Entry));
                 inventories.Add(slots);
             }
-            var expected = new Dictionary<int, HashSet<string>>();
+            var recipes = new Dictionary<string, string[]>(StringComparer.Ordinal);
+            void Recipe(params string[] preceding)
+            {
+                string[] order = [.. preceding.Order(StringComparer.Ordinal), source.Potion.Key.Entry];
+                recipes.TryAdd(string.Join("|", order.Select(key => "POTION:" + key)), order);
+            }
+            Recipe();
             foreach (var slots in inventories)
             {
                 int selectedSlot = source.HeldSlot ?? Array.FindIndex(slots, p => p != null && p.Id.Entry == source.Potion.Key.Entry &&
                     !player.PotionSlots.Contains(p));
                 var others = slots.Where((p, index) => index != selectedSlot && p != null && p.Id.Entry != "ENTROPIC_BREW" &&
                     keys.Contains(p.Id.Entry)).Select(p => p!).ToArray();
-                for (int mask = 0; mask < 1 << others.Length; mask++)
+                foreach (var predecessor in others.DistinctBy(p => p.Id)) Recipe(predecessor.Id.Entry);
+                // Pair actual bottle indices before canonicalizing their type
+                // order: a repeated type requires two captured bottles.
+                for (int first = 0; first < others.Length; first++)
+                for (int second = first + 1; second < others.Length; second++)
+                    Recipe(others[first].Id.Entry, others[second].Id.Entry);
+            }
+            // Decide the depth from recipe identities alone. Equal generated
+            // cards never collapse two different potion conditions.
+            bool thirdUse = recipes.Count <= 8;
+            var expected = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+            foreach (var (sequence, order) in recipes.Where(recipe => thirdUse || recipe.Value.Length < 3))
+            {
+                var rng = new Rng(run.Rng.CombatCardGeneration.ToSerializable());
+                foreach (string predecessor in order.SkipLast(1)) NativeCards(predecessor, rng);
+                string value = CardSignature(NativeCards(source.Potion.Key.Entry, rng), source.Potion.Key.Entry);
+                expected.Add(sequence, [value]);
+                if (order.Length == 3)
                 {
-                    var rng = new Rng(run.Rng.CombatCardGeneration.ToSerializable());
-                    int ordinal = 1;
-                    for (int i = 0; i < others.Length; i++) if ((mask & (1 << i)) != 0)
-                    { NativeCards(others[i].Id.Entry, rng); ordinal++; }
-                    string value = CardSignature(NativeCards(source.Potion.Key.Entry, rng), source.Potion.Key.Entry);
-                    if (!expected.TryGetValue(ordinal, out var values)) expected[ordinal] = values = [];
-                    values.Add(value);
+                    var reversed = new Rng(run.Rng.CombatCardGeneration.ToSerializable());
+                    foreach (string predecessor in order.Take(2).Reverse()) NativeCards(predecessor, reversed);
+                    string reverseValue = CardSignature(NativeCards(source.Potion.Key.Entry, reversed), source.Potion.Key.Entry);
+                    check(reverseValue == value && JsonSerializer.Serialize(reversed.ToSerializable()) ==
+                        JsonSerializer.Serialize(rng.ToSerializable()),
+                        "native fixed pools give both predecessor orders the same hovered cards and RNG cursor");
                 }
             }
-            var actual = Groups(preview).GroupBy(g => g.Label == null ? 1 : int.Parse(g.Label.Split(':')[1]))
+            var groups = Groups(preview);
+            var actual = groups.GroupBy(g => string.Join("|", g.PotionUseOrder.Select(key => key.Serialized)))
                 .ToDictionary(g => g.Key, g => g.Select(GroupSignature).ToHashSet());
-            check(preview.Faults.IsEmpty && actual.Count == expected.Count && expected.All(pair =>
+            check(preview.Faults.IsEmpty && groups.Length == expected.Sum(pair => pair.Value.Count) &&
+                groups.All(group => !group.Possible && group.PotionUseOrder.Length is >= 1 and <= 3 && group.PotionUseOrder[^1] == source.Potion.Key &&
+                    (group.Label == null || group.Label == "PotionUseStep:" + group.PotionUseOrder.Length)) &&
+                actual.Count == expected.Count && expected.All(pair =>
                 actual.TryGetValue(pair.Key, out var values) && values.SetEquals(pair.Value)),
-                "native cloned CardFactory oracle covers each current-bottle ordinal and every mixed-recipe alternative: " + source.Potion.Key.Entry);
+                "native cloned CardFactory oracle covers distinct recipes through use three when at most eight groups, otherwise use two: " + source.Potion.Key.Entry);
             check(signature() == before && ObservationSignature(observation) == detachedBefore,
                 "native identity oracle and forecast leave live and captured input unchanged");
         }
@@ -184,6 +212,29 @@ internal static partial class UiSurfaceChecks
                 "native potion artwork is flat for one group and stacked separately for multiple bottle ordinals");
             check(Descendants(view).OfType<NCard>().Count() == Groups(preview).Sum(g => g.Cards.Length),
                 "native potion renderer retains every candidate card");
+            var groups = Groups(preview);
+            check(stacks.Select((stack, index) =>
+            {
+                var strips = Descendants(stack).OfType<Control>().Where(control => control.Name == "Rt2PotionUseOrder").ToArray();
+                if (strips.Length != 1) return false;
+                var icons = strips[0].GetChildren().OfType<Control>().Where(control => control.HasMeta("rt2_model")).ToArray();
+                return icons.Select(icon => icon.GetMeta("rt2_model").AsString())
+                    .SequenceEqual(groups[index].PotionUseOrder.Select(key => key.Serialized)) &&
+                    icons.All(icon => icon.CustomMinimumSize.IsEqualApprox(new(28, 28))) &&
+                    view.GetViewportRect().Grow(.2f).Encloses(strips[0].GetGlobalRect());
+            }).All(value => value), "each native card group shows its actual one-to-three-bottle order as small icons inside the viewport");
+            if (grouped)
+                check(stacks.Select((stack, index) =>
+                {
+                    var faces = Descendants(stack).OfType<NCard>().ToArray();
+                    var front = faces.OrderByDescending(face => face.GetParent<Control>().ZIndex).First();
+                    var tile = front.GetParent<Control>();
+                    return front.Model?.Id.Entry == groups[index].Cards[0].Key.Entry &&
+                        tile.Modulate.IsEqualApprox(Colors.White) &&
+                        faces.All(face => tile.Position.X <= face.GetParent<Control>().Position.X &&
+                            tile.Position.Y >= face.GetParent<Control>().Position.Y);
+                }).All(value => value),
+                    "each potion stack puts the native first/leftmost candidate bright and foremost at lower-left");
         }
         void CheckBrew(OperationPreview preview, PredictorOperationPotionObservation observation)
         {
@@ -196,16 +247,34 @@ internal static partial class UiSurfaceChecks
                 (observation.Source.RewardId != null ? 1 : 0);
             var rng = new Rng(run.Rng.CombatPotionGeneration.ToSerializable());
             var expected = new List<string[]>();
-            for (int i = 0; i < brews; i++)
+            for (int i = 0; i < Math.Min(2, brews); i++)
             {
                 int count = i == 0 ? empty : 1;
                 expected.Add(Enumerable.Range(0, count).Select(_ => PotionFactory.CreateRandomPotionOutOfCombat(player, rng).Id.Entry).ToArray());
             }
             check(preview.Faults.IsEmpty && rows.Length == expected.Count && rows.Select((row, index) =>
                 row.Models.Select(key => key.Entry).SequenceEqual(expected[index])).All(value => value),
-                "Entropic uses native out-of-combat factory per actual empty slot and original bottle ordinal");
+                "Entropic uses native out-of-combat factory per actual empty slot for at most two original bottle ordinals");
             check(rows.All(row => row.Label != null && !row.Label.Contains("OtherSlotsEmpty", StringComparison.Ordinal)),
                 "Entropic current inventory never carries the superseded all-other-slots-empty hypothetical");
+        }
+        void InspectBrew(NeowOperationOverlay view, OperationPreview preview)
+        {
+            var panel = Descendants(view).OfType<Control>().SingleOrDefault(control => control.Name == "Rt2OperationPrimaryPanel");
+            check(panel is { Visible: true } && panel.IsVisibleInTree() &&
+                panel.GetChildren().OfType<NinePatchRect>().Any(backdrop =>
+                    backdrop.Modulate.IsEqualApprox(new Color(.48f, .67f, .94f, 1))) &&
+                preview.Branches.SelectMany(branch => branch.Sections).SelectMany(section => section.Rows)
+                    .SelectMany(row => row.Models).GroupBy(key => key).All(models =>
+                    {
+                        string name = (string)AccessTools.Method(typeof(NeowOperationOverlay), "NameOf").Invoke(null, [models.Key])!;
+                        return Descendants(panel).OfType<Label>().Count(label => label.IsVisibleInTree() && label.Text == name) >= models.Count();
+                    }),
+                "Entropic renders its generated potion names in the night-blue primary text panel");
+            check(!Descendants(view).OfType<Control>().Any(control => control.Name.ToString().StartsWith("Rt2OperationIconGroup_", StringComparison.Ordinal)),
+                "Entropic result has no free-standing icon groups");
+            check(preview.Style?.Text == OperationTextMode.GroupRows && Groups(preview).Length == 0,
+                "Entropic explicitly requests text rows rather than card or icon artwork");
         }
         try
         {
@@ -239,13 +308,13 @@ internal static partial class UiSurfaceChecks
                         "seven-potion live capture and pure projection retain source/target identity and combat admission");
                     await exercise("potion-" + (battle ? "battle-" : "outside-") + key.ToLowerInvariant(), holder, holder, key, null,
                         preview => JsonSerializer.Serialize(preview) == JsonSerializer.Serialize(expected),
-                        key == "ENTROPIC_BREW" ? null : InspectCards, false);
+                        key == "ENTROPIC_BREW" ? InspectBrew : InspectCards, false);
                     evidence.Add(new { source = "NPotionHolder", key, battle, groups = Groups(expected).Length });
                 }
             }
 
-            // A heterogeneous current inventory keeps both same-ordinal
-            // alternatives. Three identical bottles collapse to one per step.
+            // A heterogeneous current inventory keeps distinct recipes.
+            // Three identical bottles collapse to one recipe per use position.
             foreach (bool mixed in new[] { true, false })
             {
                 await Leave(); ClearInventory(); Combat(false);
@@ -253,57 +322,98 @@ internal static partial class UiSurfaceChecks
                 Add(mixed ? "SKILL_POTION" : "ATTACK_POTION"); Add(mixed ? "POWER_POTION" : "ATTACK_POTION");
                 var holder = await Mount(potion); var observation = Capture(potion);
                 var expected = PotionOperationPreview.Build(observation); CheckCardOracle(expected, observation);
-                check(Groups(expected).Select(g => g.Label).Distinct().Count() == 3 &&
-                    (mixed || Groups(expected).Length == 3), "current actual bottles bound potion ordinals and equivalent predecessors coalesce");
+                check(Groups(expected).Select(g => g.PotionUseOrder.Length).Distinct().Order().SequenceEqual([1, 2, 3]) &&
+                    Groups(expected).Length == (mixed ? 4 : 3), "three actual bottles retain all first-to-third-use recipes and equivalent predecessor identities coalesce");
+                if (mixed)
+                {
+                    // A valid reduced detached pool makes both predecessor
+                    // recipes consume no RNG and the hovered result identical.
+                    // Their visible order must still preserve recipe identity.
+                    var operation = observation.Context.Operation!;
+                    var pools = operation.CombatCardPools!;
+                    var reduced = observation with { Context = observation.Context with { Operation = operation with
+                    {
+                        CombatCardPools = pools with { CharacterCards = pools.CharacterCards
+                            .Where(card => card.Card.Type == EffectCardType.Attack &&
+                                card.CanGenerate && card.Rarity is not ("Basic" or "Ancient" or "Event"))
+                            .Where(card => operation.PlayerCount > 1 ? card.MultiplayerConstraint != "SingleplayerOnly" :
+                                card.MultiplayerConstraint != "MultiplayerOnly")
+                            .Take(1).ToImmutableArray() }
+                    } } };
+                    var collisions = Groups(PotionOperationPreview.Build(reduced));
+                    check(collisions.Length == 4 && collisions.All(group => group.Cards.Length == 1) &&
+                        collisions.Select(GroupSignature).Distinct().Count() == 1 &&
+                        collisions.Where(group => group.PotionUseOrder.Length == 2).Select(group => group.PotionUseOrder[0].Entry)
+                            .Order().SequenceEqual(new[] { "POWER_POTION", "SKILL_POTION" }) &&
+                        collisions.Single(group => group.PotionUseOrder.Length == 3).PotionUseOrder.Select(key => key.Entry)
+                            .SequenceEqual(new[] { "POWER_POTION", "SKILL_POTION", "ATTACK_POTION" }),
+                        "different recipes remain distinct even when RNG cursor and visible card results coincide");
+                }
                 await exercise("potion-sequence-" + (mixed ? "mixed" : "equal"), holder, holder, "ATTACK_POTION", null,
                     preview => JsonSerializer.Serialize(preview) == JsonSerializer.Serialize(expected), InspectCards, false);
             }
 
-            // Five actual slots exercise the dense layout without adding a
-            // synthetic preview or truncating predecessor alternatives.
-            await Leave(); ClearInventory(); Combat(false);
-            check(player.MaxPotionCount == 3, "dense potion fixture begins with three original native slots");
-            player.AddToMaxPotionCount(2);
-            try
+            // Exercise both sides of the eight-recipe threshold, including
+            // exact equality and duplicate bottle types in actual inventory.
+            foreach (var scenario in new[]
             {
-                check(player.MaxPotionCount == 5, "native capacity API provides five actual potion slots");
-                var potion = Add("ATTACK_POTION");
-                foreach (string key in new[] { "SKILL_POTION", "POWER_POTION", "COLORLESS_POTION", "OROBIC_ACID" }) Add(key);
-                var holder = await Mount(potion); var observation = Capture(potion);
-                var expected = PotionOperationPreview.Build(observation); CheckCardOracle(expected, observation);
-                check(Groups(expected).Length > 12 && Groups(expected).Select(group => group.Label).Distinct().Count() == 5,
-                    "five actual mixed bottles retain more than twelve candidate groups across five ordinals");
-                await exercise("potion-sequence-dense-five-slots", holder, holder, "ATTACK_POTION", null,
-                    preview => JsonSerializer.Serialize(preview) == JsonSerializer.Serialize(expected),
-                    (view, preview) =>
-                    {
-                        InspectCards(view, preview);
-                        float baselineScale = .6f * Math.Min(view.GetViewportRect().Size.X / 1920f,
-                            view.GetViewportRect().Size.Y / 1080f);
-                        var faces = Descendants(view).OfType<NCard>().ToArray();
-                        check(view.CardDisplayScale > 0 && view.CardDisplayScale <= baselineScale + .0001f &&
-                            faces.All(face => face.GetParent<Control>().Scale.IsEqualApprox(Vector2.One * view.CardDisplayScale)),
-                            "dense potion candidates share one positive card scale no larger than the viewport baseline");
-                        check(faces.Length == Groups(preview).Sum(group => group.Cards.Length) &&
-                            faces.All(face => view.GetViewportRect().Grow(.2f).Encloses(face.GetParent<Control>().GetGlobalRect())),
-                            "dense potion layout displays every predicted native face inside the screen bounds");
-                        evidence.Add(new { source = "NPotionHolder", key = "ATTACK_POTION", slots = player.MaxPotionCount,
-                            groups = Groups(preview).Length, nativeFaces = faces.Length, scale = view.CardDisplayScale, baselineScale });
-                    }, false);
-            }
-            finally
+                (Name: "four-distinct", Others: new[] { "SKILL_POTION", "POWER_POTION", "COLORLESS_POTION" }, Groups: 7, Depth: 3),
+                (Name: "exact-eight", Others: new[] { "SKILL_POTION", "SKILL_POTION", "POWER_POTION", "COLORLESS_POTION" }, Groups: 8, Depth: 3),
+                (Name: "five-distinct", Others: new[] { "SKILL_POTION", "POWER_POTION", "COLORLESS_POTION", "OROBIC_ACID" }, Groups: 5, Depth: 2),
+                (Name: "seven-slots", Others: new[] { "SKILL_POTION", "POWER_POTION", "COLORLESS_POTION", "OROBIC_ACID", "COSMIC_CONCOCTION", "ATTACK_POTION" }, Groups: 7, Depth: 2)
+            })
             {
-                await Leave(); ClearInventory();
-                player.SubtractFromMaxPotionCount(player.MaxPotionCount - originalSlots.Length);
-                check(player.MaxPotionCount == originalSlots.Length, "dense potion fixture restores original capacity after clearing added slots");
+                await Leave(); ClearInventory(); Combat(false);
+                check(player.MaxPotionCount == 3, "dense potion fixture begins with three original native slots");
+                int slotCount = scenario.Others.Length + 1;
+                player.AddToMaxPotionCount(slotCount - 3);
+                try
+                {
+                    check(player.MaxPotionCount == slotCount, "native capacity API provides expanded actual potion slots");
+                    var potion = Add("ATTACK_POTION");
+                    foreach (string key in scenario.Others) Add(key);
+                    var holder = await Mount(potion); var observation = Capture(potion);
+                    var expected = PotionOperationPreview.Build(observation); CheckCardOracle(expected, observation);
+                    check(Groups(expected).Length == scenario.Groups && Groups(expected).Count(group => group.PotionUseOrder.Length == 1) == 1 &&
+                        Groups(expected).Max(group => group.PotionUseOrder.Length) == scenario.Depth,
+                        "expanded actual bottles select the expected recipe count/depth at the eight-group boundary: " + scenario.Name);
+                    await exercise("potion-sequence-dense-" + scenario.Name, holder, holder, "ATTACK_POTION", null,
+                        preview => JsonSerializer.Serialize(preview) == JsonSerializer.Serialize(expected),
+                        (view, preview) =>
+                        {
+                            InspectCards(view, preview);
+                            var stacks = Descendants(view).OfType<Control>().Where(control =>
+                                control.Name.ToString().StartsWith("Rt2NeowCardStack_", StringComparison.Ordinal)).ToArray();
+                            check(stacks.All(stack => Math.Abs(stack.GlobalPosition.Y - stacks[0].GlobalPosition.Y) < .2f) &&
+                                stacks.Zip(stacks.Skip(1)).All(pair => pair.First.GetGlobalRect().End.X <= pair.Second.GlobalPosition.X),
+                                "all potion possibility groups occupy one left-to-right row, including exactly eight recipe groups");
+                            float baselineScale = .6f * Math.Min(view.GetViewportRect().Size.X / 1920f,
+                                view.GetViewportRect().Size.Y / 1080f);
+                            var faces = Descendants(view).OfType<NCard>().ToArray();
+                            check(view.CardDisplayScale > 0 && view.CardDisplayScale <= baselineScale + .0001f &&
+                                faces.All(face => face.GetParent<Control>().Scale.IsEqualApprox(Vector2.One * view.CardDisplayScale)),
+                                "dense potion candidates share one positive card scale no larger than the viewport baseline");
+                            check(faces.Length == Groups(preview).Sum(group => group.Cards.Length) &&
+                                faces.All(face => view.GetViewportRect().Grow(.2f).Encloses(face.GetParent<Control>().GetGlobalRect())),
+                                "dense potion layout displays every predicted native face inside the screen bounds");
+                            evidence.Add(new { source = "NPotionHolder", key = "ATTACK_POTION", slots = player.MaxPotionCount,
+                                groups = Groups(preview).Length, nativeFaces = faces.Length, scale = view.CardDisplayScale, baselineScale });
+                        }, false);
+                }
+                finally
+                {
+                    await Leave(); ClearInventory();
+                    player.SubtractFromMaxPotionCount(player.MaxPotionCount - originalSlots.Length);
+                    check(player.MaxPotionCount == originalSlots.Length, "dense potion fixture restores original capacity after clearing added slots");
+                }
             }
 
             await Leave(); ClearInventory();
-            var brew = Add("ENTROPIC_BREW"); Add("ENTROPIC_BREW");
+            var brew = Add("ENTROPIC_BREW"); Add("ENTROPIC_BREW"); Add("ENTROPIC_BREW");
             var brewHolder = await Mount(brew); var brewObservation = Capture(brew);
             var brewExpected = PotionOperationPreview.Build(brewObservation); CheckBrew(brewExpected, brewObservation);
             await exercise("potion-sequence-entropic", brewHolder, brewHolder, "ENTROPIC_BREW", null,
-                preview => JsonSerializer.Serialize(preview) == JsonSerializer.Serialize(brewExpected), null, false);
+                preview => JsonSerializer.Serialize(preview) == JsonSerializer.Serialize(brewExpected), InspectBrew, false);
 
             // Advance the shared run stream in place while the true native
             // holder remains focused. Such a consumer can belong to this
@@ -369,7 +479,7 @@ internal static partial class UiSurfaceChecks
                         "native potion reward keeps actual acquisition/replacement obligations");
                     await exercise("potion-reward-" + (full ? "full-" : "open-") + key.ToLowerInvariant(), button, button, key, null,
                         preview => JsonSerializer.Serialize(preview) == JsonSerializer.Serialize(expected),
-                        key == "ENTROPIC_BREW" ? null : InspectCards, false);
+                        key == "ENTROPIC_BREW" ? InspectBrew : InspectCards, false);
                     check(!reward.SuccessfullySelected && !player.PotionSlots.Contains(potion),
                         "potion reward hover does not claim offer or replace an actual bottle");
                     evidence.Add(new { source = "NRewardButton", key, battle = false, fullInventory = full, groups = Groups(expected).Length });

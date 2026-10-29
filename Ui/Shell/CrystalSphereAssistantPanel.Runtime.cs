@@ -33,7 +33,7 @@ internal sealed partial class CrystalSphereAssistantPanel
     private CrystalDiscoveryProgress _progress;
     private CrystalDiscoveryProgress _goldProgress;
     internal sealed record Update(ImmutableArray<CrystalRewardRoute> Rows, DiscoveryStop? Stop=null,
-        CrystalDiscoveryPhase Phase=CrystalDiscoveryPhase.FindingPlans, Exception? Error=null, CrystalDiscoveryProgress? Progress=null,
+        CrystalDiscoveryPhase? Phase=null, Exception? Error=null, CrystalDiscoveryProgress? Progress=null,
         CrystalOptionProjection? Projection=null,ImmutableArray<CrystalRewardOption> ExcludedCandidates=default,CrystalFocusUpdate? Focus=null,
         bool? CandidatesComplete=null,CrystalDiscoveryProgress? GoldProgress=null);
     private ConcurrentQueue<Update> _updates = new();
@@ -231,9 +231,10 @@ internal sealed partial class CrystalSphereAssistantPanel
         // This option already carries a verified plan for the enlarged selection.
         // It remains usable while compatible additions are reprojected off-thread.
         _switching=true;
-        var knownOptions=_projection.Available.Keys.Concat(_pendingOptions).Where(o=>!_selected.Contains(o)).ToArray();
+        var knownOptions=_projection.Available.Keys.Concat(_pendingOptions).Where(o=>!_selected.Contains(o)).ToImmutableArray();
         _pendingOptions.Clear();_pendingOptions.UnionWith(knownOptions);
-        if(_reachability!=null) _pendingOptions.RemoveWhere(o=>_reachability.IsCertifiedConflict(_selected.Add(o)));
+        if(_reachability!=null)
+            _pendingOptions.ExceptWith(_reachability.RootCardExclusions(_selected,knownOptions));
         var cached=_reachability?.PeekKnown(_selected);
         _projection=cached==null?new(ImmutableDictionary<CrystalRewardOption,PredictorCrystalSolution>.Empty,selectedProof,0)
             :cached with { SelectedPlan=cached.SelectedPlan??selectedProof };
@@ -327,7 +328,9 @@ internal sealed partial class CrystalSphereAssistantPanel
             // slice. Never erase already verified options or the clicked plan.
             _projection=MergeProjection(_projection,projection);
         }
-        _phase=update.Phase;
+        // Projection/gold receipts do not report a candidate phase transition.
+        // Keep the last actual candidate stage instead of flashing FindingPlans.
+        if(update.Phase is { } phase) _phase=phase;
         if(update.Progress is { } progress) _progress=progress;
         if(update.GoldProgress is { } goldProgress) _goldProgress=goldProgress;
         if(update.CandidatesComplete is { } candidatesComplete) _candidatesComplete=candidatesComplete;

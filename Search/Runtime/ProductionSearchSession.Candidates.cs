@@ -25,7 +25,8 @@ public sealed partial class ProductionSearchSession
             ValidationDisposition = disposition,
             ValidationIssue = exact is null ? "CandidateValidationSkipped" : match ? "" : ValidationIssue(exact),
             IsUnfiltered = exact is null && (ExecutionPlan.AllConditionsUnfiltered || BatchHasNoFilters(batch)),
-            ExecutionWarnings = BatchExecutionWarnings(batch)
+            ExecutionWarnings = BatchExecutionWarnings(batch),
+            MapSearch = CaptureMapSearch(batch.BatchBase, checked(batch.BatchBase + (ulong)batch.BatchCandidateCount))
         };
     }
 

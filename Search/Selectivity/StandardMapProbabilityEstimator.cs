@@ -14,11 +14,12 @@ internal static partial class StandardMapProbabilityEstimator
     internal static JointSelectivityResult Compose(SearchSelectivityInput input, Func<SearchSelectivityInput, JointSelectivityResult> estimate)
     {
         var query = input.CompiledSearch.NormalizedQuery;
-        var baseline = estimate(SearchSelectivityInput.From(SearchCompiler.Compile(query with { StandardMaps = [] }, input.CompiledSearch.Context)));
+        var baseline = estimate(SearchSelectivityInput.From(SearchCompiler.Compile(query with { StandardMaps = [], StandardMapRoutes = [] }, input.CompiledSearch.Context)));
         if (baseline.ExactlyImpossible) return baseline;
         JointSelectivityResult Unknown(string why) => JointSelectivityResult.Partial("Probability.StandardMap." + why,
             "The available empirical joint projection cannot price this map query.", "No product of same-map marginals.",
             baseline.KnownComponents, baseline.UnknownComponents.Append("M.StandardMap:" + why).ToArray(), assumptions: baseline.Assumptions);
+        if (query.StandardMapRoutes.Count > 0) return Unknown("RouteSequenceJointMissing");
         if (input.ProfileId != RuntimeProfileId.Beta111 || input.CompiledSearch.Context.Detection.NormalizedVersion != "0.111.0" || input.Authority.PlayersCount != 1 || !input.Authority.IsVanilla)
             return Unknown("CorpusContextMismatch");
         var totals = query.StandardMaps.Where(c => c.Scope == 0).ToArray();

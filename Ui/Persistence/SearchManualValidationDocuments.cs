@@ -36,7 +36,7 @@ internal sealed record ManualValidationSourceIdentity(int Version, string Semant
 {
     internal static ManualValidationSourceIdentity Capture(ExactSearchExecutionRequest plan, string queryKey) =>
         new(2, plan.CompiledSearch.SemanticFingerprint, plan.SnapshotFingerprint, queryKey,
-            SearchContinuationIdentity.For(plan), AuthorityIdentities(plan.CompiledSearch));
+            SearchContinuationIdentity.For(plan.CompiledSearch, plan.CombatRewardRoutePolicy), AuthorityIdentities(plan.CompiledSearch));
 
     internal bool Proves(CompiledSearch compiled, string queryKey, CombatRewardRoutePolicyContract? policy = null) =>
         QueryKey == queryKey && (Version == 2 ?

@@ -75,6 +75,7 @@ internal sealed partial class AnalysisPage
             picker.AddThemeConstantOverride("icon_max_width", 28);
             foreach (var key in _partyCharacters)
                 picker.AddIconItem(icons.Resolve(key).Texture, _contentNames!.Resolve(key, GameContentKind.Character));
+            RolltheSpire2.Ui.Components.CharacterDropdownVisuals.Apply(picker);
             row.AddChild(picker);
             sources[slot] = _palette.Label("", 17, true);
             sources[slot].CustomMinimumSize = new Vector2(176, 0); row.AddChild(sources[slot]);

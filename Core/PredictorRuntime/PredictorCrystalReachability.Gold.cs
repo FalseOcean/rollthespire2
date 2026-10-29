@@ -21,6 +21,8 @@ internal sealed partial class PredictorCrystalReachability
             string key=SelectionKey(selected);
             if(!_goldQueries.TryGetValue(key,out var query))
                 _goldQueries.Add(key,query=new(source,selected,avoidCurse,includeRerolls,GoldFailureObserved));
+            if(_goldQueries.TryGetValue(SelectionKey([]),out var unconditional))
+                query.UseUnconditionalUpperBound(unconditional);
             if(_table!=null) query.UseRewardTable(_table);
             var projection=query.Advance(budget,PeekKnown(selected),token);
             _goldProgress=query.Progress;

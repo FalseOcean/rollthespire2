@@ -19,6 +19,16 @@ internal static partial class FamilyCanonicalCostShape
                 actual.ConditionPerformance.UsesGpu ? neow.GpuPlan : null),
             MerchantShopColorlessFamily => ShopStructure(request),
             RelicFamily relic => RelicStructure(relic.PricingPlan),
+            // Distinct owner identity: no ordinary-R or old conditional-call
+            // measurement is silently admitted as a Capsule invocation.
+            CapsuleRelicFamily capsule => new {
+                Owner = "CapsuleRelicFamily",
+                Arrival = NeowStructure(capsule.PricingReplayPlan, null),
+                Sequence = capsule.GpuPlan is { } full ? RelicStructure(full.SequencePlan) : null,
+                BagLengths = capsule.PricingPool.BucketLengths,
+                Targets = request.Evaluation.StructuredNeowEffects.Where(NeowReplayPlan.IsCapsule)
+                    .Select(c => new { c.SourceRelicKey, c.Scope, Count = c.OutputKeys.Count }).ToArray()
+            },
             CombatRewardFamily combat => CombatStructure(combat, actual.ConditionPerformance.UsesGpu),
             WorldFamily world => WorldStructure(world, actual.ConditionPerformance.UsesGpu),
             AncientOptionFamily ancient => AncientStructure(request, ancient.Plan),

@@ -270,11 +270,11 @@ internal sealed partial class SeedLibraryCanvas
         string selected = _section switch { LibrarySection.History => _selectedHistory,
             LibrarySection.Presets => _selectedPreset, LibrarySection.CardCollections => _selectedCollection, _ => _selectedSeed };
         if (_activeListButton is { } previous && IsInstanceValid(previous))
-        { previous.SetMeta("selected", false); _palette.SetActive(previous, false); }
+        { previous.SetMeta("selected", false); ApplyListItemState(previous, false); }
         // Detail changes keep list instances and touch only old/new selection.
         _activeListButton = _listButtons.GetValueOrDefault(selected);
         if (_activeListButton is { } current)
-        { current.SetMeta("selected", true); _palette.SetActive(current, true); }
+        { current.SetMeta("selected", true); ApplyListItemState(current, true); }
     }
 
     public override void _ExitTree()

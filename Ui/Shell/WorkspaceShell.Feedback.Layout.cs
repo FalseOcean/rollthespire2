@@ -45,7 +45,10 @@ internal sealed partial class WorkspaceShell
             var row = new HFlowContainer(); row.AddThemeConstantOverride("h_separation", 12);
             row.AddThemeConstantOverride("v_separation", 8); AttachPageBuildGroup(parent, row); return row;
         }
-        var heading = new VBoxContainer(); heading.AddThemeConstantOverride("separation", 14); AttachPageBuildGroup(page, heading);
+        // Reserve the first layout position before deferred font preparation
+        // mounts the complete heading group.
+        var headingHost = new VBoxContainer { Name = "FeedbackHeading" }; page.AddChild(headingHost);
+        var heading = new VBoxContainer(); heading.AddThemeConstantOverride("separation", 14); AttachPageBuildGroup(headingHost, heading);
         var titleRow = new HBoxContainer(); heading.AddChild(titleRow);
         var title = Text("feedback.title", 30); title.SizeFlagsHorizontal = SizeFlags.ExpandFill; titleRow.AddChild(title);
         var tag = Text("feedback.tag", 15, true); tag.AutowrapMode = TextServer.AutowrapMode.Off;
@@ -155,7 +158,7 @@ internal sealed partial class WorkspaceShell
         versions.AddChild(Text("feedback.versions.help", 16, true));
         versions.AddChild(Action("feedback.versions.open", () =>
         {
-            _feedbackMessage = TryOpenFeedbackUrl("https://github.com/FalseOcean/rollthespire2/releases")
+            _feedbackMessage = TryOpenExternalUrl("https://github.com/FalseOcean/rollthespire2/releases")
                 ? "" : "feedback.versions.open_failed";
             RefreshFeedback();
         }));

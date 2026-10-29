@@ -79,6 +79,7 @@ internal sealed partial class PredictorRun
                     !reward.Cards.IsDefault && reward.Id >= 0 && reward.ContentInstanceId is not < 1 &&
                     reward.GoldMinimum >= 0 && reward.GoldMaximum >= reward.GoldMinimum && reward.GoldAmount >= 0 &&
                     reward.HasValidGoldDisposition);
+                ValidateRewardEnchantmentMask(reward, choice.UnresolvedEnchantmentIndices);
                 RequirePlan(reward.Kind != PredictorRewardKind.Relic || reward.Key.IsValid && reward.Key.Category == "RELIC");
                 RequirePlan(reward.Kind != PredictorRewardKind.Potion || reward.Key.IsValid && reward.Key.Category == "POTION");
                 ValidatePlannedRewardAlternatives(choice);

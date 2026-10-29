@@ -29,6 +29,26 @@
     {
       "Type": "Paragraph",
       "Text": "请根据自己的游玩偏好使用。如果不喜欢，可以关闭相关功能或停用 Mod，也可以前往公开 GitHub 的 Releases 页面下载旧版本。作者只维护最新版，旧版本的修复与后续兼容性不作保证。"
+    },
+    {
+      "Type": "Heading",
+      "Text": "当前工具与适用范围"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "当前版本为 RT2 1.4.0。工具包括筛种、种子分析、资料库与牌集、水晶球、局内操作预测和当前幕地图绘线；各项能力的前提与开关分别说明。预测与搜索使用模型推演，不会推进真实对局；测试台中的显式游戏操作则会修改真实对局。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "主要开发与测试环境为 Windows、游戏 Beta 0.111.0。版本兼容层保留 0.110.1 已审查语义与 0.111.0 已接受兼容状态；这不代表所有新增功能同时覆盖两个版本。更高版本若临时沿用已知模型，会明确标为未验证。不同设备、解锁状态和模组组合的适用范围，以实际功能说明与结果确认状态为准。"
+    },
+    {
+      "Type": "Heading",
+      "Text": "开源、贡献与旧版本"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[url=https://github.com/FalseOcean/rollthespire2]公开源码[/url]用于查看实现、提出建议或参与贡献；[url=https://github.com/FalseOcean/rollthespire2/issues]问题反馈[/url]可附复现步骤与诊断包。源码 main 为当前开发状态，稳定版本以对应标签与 Releases 为准。贡献者与实际来源见本页“贡献者与致谢”，授权和第三方来源见随包 LICENSE 与 THIRD_PARTY_NOTICES.md。"
     }
   ]
 }

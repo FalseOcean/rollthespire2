@@ -65,7 +65,7 @@ internal sealed partial class InRunMapNodePresenter
         // though the replacement plan deliberately has no alternative ID.
         ModelKey model = default;
         if (operation is "TAKE" or "CANCEL_TAKE")
-            model = source.Value!.Cards.ElementAtOrDefault(choice.CardIndex ?? 0)?.Key ?? source.Value.Key;
+            model = RewardOffer(source)?.Cards.ElementAtOrDefault(choice.CardIndex ?? 0)?.Key ?? RewardOffer(source)?.Key ?? default;
         else if (operation is "SACRIFICE" or "REROLL")
         {
             long? relicId = choice.SacrificeRelicId ?? source.AppliedChoice?.SacrificeRelicId ??
@@ -80,12 +80,12 @@ internal sealed partial class InRunMapNodePresenter
                 cancelTake ? CancelRewardTakePlan(context, source, choice) : RewardPreviewPlan(context, source, choice);
             var node = _session.PreviewPlan(context.Location.ActIndex, context.Location.Point, plan, context.Revision);
             var result = node?.Rewards.FirstOrDefault(candidate => candidate.Occurrence == choice.Occurrence &&
-                candidate.Value is { } reward && SameReward(reward, choice.ExpectedReward) &&
+                RewardOffer(candidate) is { } reward && SameReward(reward, choice.ExpectedReward) &&
                 candidate.CompletedEdit?.Source == source.CompletedEdit?.Source);
-            bool applied = cancelTake ? result is { IsKnown: true, DefaultSkipped: true, Value.Status: PredictorRewardStatus.Skipped } &&
+            bool applied = cancelTake ? result is { DefaultSkipped: true } && RewardOffer(result)?.Status == PredictorRewardStatus.Skipped &&
                     (choice.Reroll ? result.AppliedChoice is { Reroll: true, CardIndex: null, Skip: false } : result.AppliedChoice == null) :
-                cancelAlternative ? result is { IsKnown: true, DefaultSkipped: true, AppliedChoice: null,
-                    SacrificeCount: null, Value: { HasRerolled: false, Status: PredictorRewardStatus.Skipped } } :
+                cancelAlternative ? result is { DefaultSkipped: true, AppliedChoice: null, SacrificeCount: null } &&
+                    RewardOffer(result) is { HasRerolled: false, Status: PredictorRewardStatus.Skipped } :
                 result?.AppliedChoice is { } receipt && receipt.Reroll == choice.Reroll &&
                 receipt.SacrificeRelicId == choice.SacrificeRelicId && receipt.CardIndex == choice.CardIndex && receipt.Skip == choice.Skip;
             var notices = ImmutableArray.CreateBuilder<string>();
@@ -99,11 +99,13 @@ internal sealed partial class InRunMapNodePresenter
             // Only observations used by this operation own its pending text.
             // Route-local inventory/HP annotations are not evidence that this
             // reward operation read them, and cannot create an empty Skip box.
-            var relevantCauses = RewardPreviewCauses(applied ? result : source);
+            var relevantCauses = RewardPreviewCauses(applied ? result : source,
+                includeOffer: !applied || operation is "TAKE" or "REROLL",
+                selectedCard: applied && operation == "TAKE" ? choice.CardIndex : null);
             if (applied && choice.SacrificeRelicId != null && node != null)
                 relevantCauses = relevantCauses.Concat(node.Rewards.Where(candidate => candidate.CompletedEdit?.RewardParents.Any(parent =>
                     parent.Choice.SacrificeRelicId == choice.SacrificeRelicId &&
-                    SameRewardChoice(parent.Choice, choice)) == true).SelectMany(RewardPreviewCauses));
+                    SameRewardChoice(parent.Choice, choice)) == true).SelectMany(candidate => RewardPreviewCauses(candidate)));
             ImmutableArray<string> pending = PendingLines(relevantCauses).ToImmutableArray();
             if (!applied) pending = pending.Add(M("preview_unavailable"));
             // A plain skip with no transaction or unresolved output has no
@@ -159,10 +161,13 @@ internal sealed partial class InRunMapNodePresenter
         }
     }
 
-    private static IEnumerable<PredictorCombatPendingCause> RewardPreviewCauses(PredictorCombatRewardKnowledge? reward)
+    private static IEnumerable<PredictorCombatPendingCause> RewardPreviewCauses(PredictorCombatRewardKnowledge? reward,
+        bool includeOffer = true, int? selectedCard = null)
     {
         if (reward == null) yield break;
-        foreach (var cause in reward.PendingCauses) yield return cause;
+        if (includeOffer)
+            foreach (var cause in selectedCard is { } index && !reward.CardOptions.IsEmpty && index >= 0 && index < reward.CardOptions.Length
+                ? reward.CardOptions[index].EnchantmentPendingCauses : reward.PendingCauses) yield return cause;
         if (reward.RequiredChoices is not { } child) yield break;
         foreach (var cause in child.PendingCauses) yield return cause;
         foreach (var nested in child.Rewards)

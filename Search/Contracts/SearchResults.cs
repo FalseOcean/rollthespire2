@@ -116,6 +116,7 @@ public sealed record SearchCandidate(
         init => _validationDisposition = value;
     }
     public string ValidationIssue { get; init; } = "";
+    public MapSearchProvenance? MapSearch { get; init; }
     public IReadOnlyList<string> ExecutionWarnings { get; init; } = [];
     // Model validation and the conditional product support scope are separate.
     // This metadata never changes candidate admission or validation disposition.

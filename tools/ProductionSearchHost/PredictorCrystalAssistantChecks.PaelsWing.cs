@@ -47,6 +47,31 @@ internal static partial class PredictorCrystalAssistantChecks
         bool performanceOnly=Environment.GetEnvironmentVariable("RT2_CRYSTAL_PAELS_WING_PERF_ONLY")=="1";
         try
         {
+            if(Environment.GetEnvironmentVariable("RT2_CRYSTAL_PAELS_WING_ALLOW_CURSE_RAW")=="1")
+            {
+                foreach(int subscriptions in new[]{0,2}) foreach(bool avoid in new[]{true,false})
+                    CheckPaelsWingSmallOracle(Create("000000000000",1).Source,output,label:$"curse-{subscriptions}-avoid-{avoid}",
+                        includeCurse:true,avoidCurse:avoid,curseSubscriptions:subscriptions);
+                return 0;
+            }
+            if(Environment.GetEnvironmentVariable("RT2_CRYSTAL_PAELS_WING_GIFT_SCOPE")=="1")
+            {
+                var scoped=Create("000000000000",0).Source;
+                CheckWingModeledGiftScope(scoped);
+                if(Environment.GetEnvironmentVariable("RT2_CRYSTAL_PAELS_WING_GIFT_SCOPE_RAW")=="1")
+                {
+                    foreach(int scopeCounter in new[]{0,1})
+                    {
+                        var raw=scopeCounter==0?scoped:Create("000000000000",scopeCounter).Source;
+                        raw=raw with {Context=raw.Context with {Crystal=raw.Context.Crystal! with {
+                            UnmodeledSources=raw.Context.Crystal!.UnmodeledSources.Add(new("CARD","CRYSTAL_UNRELATED_CATALOG_CARD"))}}};
+                        CheckPaelsWingSmallOracle(raw,output,label:"unrelated-catalog-"+scopeCounter);
+                        if(scopeCounter==1) CheckPaelsWingSmallOracle(raw,output,includeBoardRelic:false,
+                            label:"unrelated-catalog-two-gifts",includeThirdCard:true);
+                    }
+                }
+                return 0;
+            }
             if(performanceOnly)
             {
                 foreach(string seed in new[]{"000000000000","9TW7Y8N6663H"})

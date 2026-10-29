@@ -21,8 +21,8 @@ internal sealed partial class MerchantShopColorlessFamily
                 yield return new FamilyCpuExecution(_plan,this,plan is null ? "S.MerchantShopColorless.Cpu.Reference.20260912.v1" : sequence ? "S.MerchantShopColorless.Cpu.Sequence.20261013.v2" : "S.MerchantShopColorless.Cpu.Slot.20261013.v2",
                     plan is null ? root => MerchantShopColorlessQueryEvaluator.Evaluate(_plan.Evaluation,root,_plan.Authority).Disposition != SearchDisposition.NoMatch : plan.Matches,
                     workers,g => (priced && workers is 1 or 16 ? FamilyCpuReferenceCost.Quote(_plan,g,FamilyId,"S.ThreeUncommonSlots",workers,workers==1?"23.197-23.656":"4.976-5.592",equivalentIdentityWork:true) : null) ??
-                    (plan is not null && workers==1 ? sequence ? MerchantShopColorlessPhysicalPricing.QuoteCpuSequence(_plan,g,ExpectedFilteringCost) :
-                        MerchantShopColorlessPhysicalPricing.QuoteCpuSlots(_plan,g) : null));
+                    MerchantShopColorlessWorkEstimate.Quote(_plan, _compactionDecision, ExpectedFilteringCost,
+                        g, cpu: true, workers: workers, compiledMatcher: plan is not null));
         }
     }
 }

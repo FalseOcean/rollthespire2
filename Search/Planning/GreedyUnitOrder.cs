@@ -14,11 +14,19 @@ internal static class GreedyUnitOrder
         if (available.Count == 0) throw new ArgumentException("At least one scheduling unit is required.", nameof(available));
         foreach (var cost in new[] { hardwareCost, analyticalCost })
         {
+            var scores = available.Select(item => Score(cost(item), survival(item))).ToArray();
+            if (!scores.Any(score => score.HasValue)) continue;
+            // Missing evidence is not an infinite price. Keep its stable
+            // registration boundary and compare only the preceding known block.
+            // Fully priced blocks retain the same greedy rejection rule.
+            int unknown = Array.FindIndex(scores, score => !score.HasValue);
+            if (unknown == 0) return available[0];
+            int limit = unknown < 0 ? available.Count : unknown;
             int best = -1;
             double bestScore = double.PositiveInfinity;
-            for (int index = 0; index < available.Count; index++)
+            for (int index = 0; index < limit; index++)
             {
-                double? score = Score(cost(available[index]), survival(available[index]));
+                double? score = scores[index];
                 if (score.HasValue && (best < 0 || score.Value < bestScore))
                 {
                     best = index;

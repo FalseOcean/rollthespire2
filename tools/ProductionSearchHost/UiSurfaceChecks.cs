@@ -65,9 +65,35 @@ internal static partial class UiSurfaceChecks
         var runtime = ModRuntimeSnapshot.NotInitialized with { Profile = Beta111Profile.Instance,
             Detection = new("0.111.0", "0.111.0", "beta", "WorkspaceSurface", true, "") };
 
+        if (args.Contains("--owner-ui-polish"))
+        {
+            await RunOwnerPolishAsync(root, output, runtime);
+            return;
+        }
+
         if (args.Contains("--launcher-icon-ui"))
         {
             await RunLauncherIconChecks(root, output, runtime);
+            return;
+        }
+        if (args.Contains("--contributors-ui-only"))
+        {
+            await RunContributorsChecksAsync(root, output);
+            return;
+        }
+        if (args.Contains("--map-editor-ui-only"))
+        {
+            await RunMapEditorChecksAsync(root, output, runtime);
+            return;
+        }
+        if (args.Contains("--map-witness-ui-only"))
+        {
+            await RunMapWitnessChecksAsync(root, output, runtime);
+            return;
+        }
+        if (args.Contains("--map-lossy-persistence-only"))
+        {
+            await RunMapLossyPersistenceChecksAsync(root, output, runtime);
             return;
         }
         if (args.Contains("--menu-preparation-only"))
@@ -144,6 +170,11 @@ internal static partial class UiSurfaceChecks
         {
             var persistence = (SearchWorkspace)Field(shell, "_persistence");
             var workbench = (QueryWorkbenchFrame)Field(shell, "_references");
+            if (args.Contains("--manual-family-order-ui"))
+            {
+                await RunManualFamilyOrderUi(root, output, shell, persistence, workbench);
+                return;
+            }
             if (args.Contains("--font-settings-only"))
             {
                 await RunFontSettingsChecks(root, host, shell, persistence, workbench, state, output);

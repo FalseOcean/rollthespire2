@@ -13,7 +13,7 @@ namespace RolltheSpire2.Search.FamilyExecution;
 // No new logical Family or automatic multi-stage pricing.
 internal static class BonesCapsuleAllocation
 {
-    internal const string LocalRevision = "N.Neow.Composite.RCapsule.BonesK.LocalSameRoute.DensePreBones.CanonicalAbi1Ready.20260909.v1";
+    internal const string LocalRevision = "N.Neow.Composite.RCapsule.BonesK.LocalSameRoute.DensePreBones.CanonicalAbi1Ready.20260909.v1" + GpuRngRotation.Revision;
     internal static bool TryCreateDefaultUnit(ExactSearchExecutionRequest request,
         IReadOnlyList<IFamilyInvocation> registered, out IFamilyInvocation? unit)
     {
@@ -105,7 +105,7 @@ internal sealed class BonesCapsuleBoundaryInvocation(ExactSearchExecutionRequest
     public FamilySurvivalProjection Survival => FamilySurvivalProjection.Unresolved(FamilyId, "BoundedSameRouteProjectionUnpriced");
     public FamilyConditionPerformanceProjection ConditionPerformance => new(FamilyId,
         mode=="local" ? BonesCapsuleAllocation.LocalRevision :
-        "N.Neow.Composite.RCapsule.Bones" + (rp.UsesBonesKBoundary ? "K" : "Leafy") + $".{mode}.CanonicalAbi1Ready.20260909.v2",
+        "N.Neow.Composite.RCapsule.Bones" + (rp.UsesBonesKBoundary ? "K" : "Leafy") + $".{mode}.CanonicalAbi1Ready.20260909.v2" + GpuRngRotation.Revision,
         "Neutral", 1, defaultSelection ? "OwnerAcceptedBoundedDefault_Unpriced" : "Explicit", usesGpu:true);
     public FamilyPerformanceObservation CapturePerformanceObservation() => new(ConditionPerformance, _gpu?.Device ?? "", _gpu?.SetupMs ?? 0,
         0, 0, _batches, 0, _input, _output, _ms, false, _faulted ? "PhysicalFailure" : defaultSelection ? "CoupledDenseOnlyUnitTimeUnavailable" : "ExplicitExperimentNoCalibration");

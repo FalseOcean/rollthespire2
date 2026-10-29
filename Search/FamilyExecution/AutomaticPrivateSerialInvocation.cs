@@ -59,7 +59,7 @@ internal sealed partial class AutomaticPrivateSerialInvocation : IFamilyInvocati
         EstimationStages = estimationStages?.ToArray() ?? [];
         _smallCandidateExact = enableSmallCandidateExact && !verify && !request.RunOptions.SkipExactValidation
             ? new SmallCandidateExactPolicy() : null;
-        if (_families.Length is < 2 or > 7 || _families.Select(f => f.FamilyId).Distinct().Count() != _families.Length ||
+        if (_families.Length is < 2 or > 8 || _families.Select(f => f.FamilyId).Distinct().Count() != _families.Length ||
             _families.Any(f => !f.CanBindPrivateSerial || f.Coverage.Count != 1 || f.Coverage[0] != f.FamilyId))
             throw new ArgumentException("AutomaticPrivateSerial.WholeFamilyApplicability");
         Order = string.Concat(_families.Select(f => f.FamilyId[0]));
@@ -71,7 +71,7 @@ internal sealed partial class AutomaticPrivateSerialInvocation : IFamilyInvocati
     public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId, PrivateOrdinalBuffer.Capacity, [], "AutomaticPrivateSerial.CompleteAllocation");
     public FamilySurvivalProjection Survival => FamilySurvivalProjection.Unresolved(FamilyId, "CompletePlanOwnsStagePopulationProjection");
     public FamilyConditionPerformanceProjection ConditionPerformance => new(FamilyId,
-        "AutomaticPrivateSerial." + Order + ".CanonicalAbi1Ready.20260910.v1", "AutomaticPrivateSerial.Neutral", 1,
+        "AutomaticPrivateSerial." + Order + ".CanonicalAbi1Ready.20260910.v1" + GpuRngRotation.Revision, "AutomaticPrivateSerial.Neutral", 1,
         "WholeFamilyOrdinalComposition", usesGpu: true);
     void IFamilyInvocation.LogExecutionEvidence()
     {

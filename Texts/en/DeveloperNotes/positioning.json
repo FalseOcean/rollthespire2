@@ -29,6 +29,26 @@
     {
       "Type": "Paragraph",
       "Text": "Use these tools according to your own preferences. You can turn features off, disable the mod, or download an older version from the public GitHub Releases page. Only the latest version is maintained; fixes and future compatibility for older versions are not guaranteed."
+    },
+    {
+      "Type": "Heading",
+      "Text": "Current tools and scope"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "This is RT2 1.4.0. It includes seed search, analysis, the Library and card collections, Crystal Sphere, in-run operation prediction and current-Act map routes. Each capability has its own assumptions and settings. Prediction and search use model simulation without advancing the real run; explicit game actions in the Test Console do modify the real run."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "The main development and test environment is Windows with game Beta 0.111.0. The compatibility layer retains audited 0.110.1 semantics and accepted compatibility for 0.111.0; individual new features do not necessarily cover both. Newer versions that provisionally reuse a known model are marked unverified. Consult each feature’s explanation and result confirmation state for device, unlock and mod scope."
+    },
+    {
+      "Type": "Heading",
+      "Text": "Source, contributions and older versions"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Use the [url=https://github.com/FalseOcean/rollthespire2]public source[/url] to inspect the implementation, suggest changes or contribute. [url=https://github.com/FalseOcean/rollthespire2/issues]Issue reports[/url] can include reproduction steps and a diagnostic bundle. Source main tracks current development; tags and Releases identify stable versions. See Contributors & acknowledgements for contributors and actual sources, and the bundled LICENSE and THIRD_PARTY_NOTICES.md for licensing and third-party attribution."
     }
   ]
 }

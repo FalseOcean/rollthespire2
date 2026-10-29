@@ -63,7 +63,6 @@ internal static class AppShellHost
 internal sealed partial class AppShellHostRoot : Control
 {
     private const string Rt2LauncherIconResource = "RolltheSpire2.Assets.Icons.Rt2Launcher.png";
-    private const string Stable107NeowsBonesIconPath = "res://images/atlases/relic_atlas.sprites/neowsbones.tres";
 
     private ModRuntimeSnapshot _snapshot = ModRuntimeSnapshot.NotInitialized;
     private Button? _launcher;
@@ -205,7 +204,7 @@ internal sealed partial class AppShellHostRoot : Control
             ClipContents = false,
             ZIndex = 0
         };
-        StyleMainMenuLauncher(_launcher);
+        StyleRt2Launcher(_launcher);
         var versionLabel = new Label
         {
             Name = "RolltheSpire2_LauncherVersion",
@@ -225,7 +224,7 @@ internal sealed partial class AppShellHostRoot : Control
         RuntimeLog.Info("ui1AppShellAutoOpenSuppressed=true");
     }
 
-    private static void StyleMainMenuLauncher(Button button)
+    internal static void StyleRt2Launcher(Button button)
     {
         ApplyStable107EntryButtonStyle(button);
         AddStable107LauncherContents(button, ResolveRt2LauncherIcon(), "RolltheSpire2_LauncherIcon");
@@ -246,88 +245,18 @@ internal sealed partial class AppShellHostRoot : Control
             if (error != Error.Ok)
                 throw new InvalidOperationException($"Embedded launcher icon could not decode: {Rt2LauncherIconResource};error={error}");
             Texture2D texture = ImageTexture.CreateFromImage(image);
-            RuntimeLog.Info($"mainMenuLauncherIconResolved=Rt2Launcher;missing=false;evidence=embedded-png:{Rt2LauncherIconResource}");
+            RuntimeLog.Info($"launcherIconResolved=Rt2Launcher;missing=false;evidence=embedded-png:{Rt2LauncherIconResource}");
             return texture;
         }
         catch (Exception ex)
         {
-            RuntimeLog.WarnException($"mainMenuLauncherIconResolved=Rt2Launcher;missing=true;resource={Rt2LauncherIconResource};display=RT2-label", ex);
+            RuntimeLog.WarnException($"launcherIconResolved=Rt2Launcher;missing=true;resource={Rt2LauncherIconResource};display=RT2-label", ex);
             return null;
         }
     }
 
-    // The in-run prediction entry still uses native Neow's Bones art.
-    internal static void StyleNeowsBonesLauncher(Button button, ModRuntimeSnapshot snapshot)
-    {
-        ApplyStable107EntryButtonStyle(button);
-        AddStable107LauncherContents(button, ResolveStable107NeowsBonesLauncherIcon(snapshot));
-    }
-
-    private static Texture2D? ResolveStable107NeowsBonesLauncherIcon(ModRuntimeSnapshot snapshot)
-    {
-        try
-        {
-            // Match the accepted Stable107 donor order: ask the active game's
-            // ModelDb-backed icon authority first. The historical resource path
-            // still resolves in Beta110, but it resolves to Godot's red NOPE
-            // placeholder rather than the relic art.
-            var resolver = new ReflectionGameIconResolver(
-                $"{snapshot.Profile.ProfileId}:{snapshot.Detection.DisplayVersion}:main-menu-launcher-primary");
-            IconDescriptor descriptor = resolver.Resolve(
-                BaseGameModelKeys.Relics.NeowsBones,
-                GameContentKind.Relic,
-                IconVariant.RelicLarge);
-            if (!descriptor.IsMissing &&
-                descriptor.Texture is { } runtimeTexture &&
-                IsUsableLauncherTexture(runtimeTexture))
-            {
-                RuntimeLog.Info(
-                    $"mainMenuLauncherIconResolved=NeowsBones;missing=false;evidence=runtime-model-primary:{descriptor.EvidenceCode};textureType={runtimeTexture.GetType().Name}");
-                return runtimeTexture;
-            }
-
-            // Keep the exact 0.107 donor path only as a Stable107 fallback. Never
-            // use it for Beta110, where the path is a misleading placeholder.
-            if (snapshot.Profile.ProfileId == RuntimeProfileId.Stable107)
-            {
-                Texture2D? donorTexture = ResourceLoader.Load<Texture2D>(
-                    Stable107NeowsBonesIconPath,
-                    string.Empty,
-                    ResourceLoader.CacheMode.Reuse);
-                if (donorTexture is not null && IsUsableLauncherTexture(donorTexture))
-                {
-                    RuntimeLog.Info(
-                        $"mainMenuLauncherIconResolved=NeowsBones;missing=false;evidence=stable107-resource-fallback:{Stable107NeowsBonesIconPath};textureType={donorTexture.GetType().Name}");
-                    return donorTexture;
-                }
-
-                RuntimeLog.Info(
-                    $"mainMenuLauncherLegacyResourceRejected=true;path={Stable107NeowsBonesIconPath};textureType={donorTexture?.GetType().Name ?? "null"}");
-            }
-
-            RuntimeLog.Info(
-                $"mainMenuLauncherIconResolved=NeowsBones;missing=true;evidence=runtime-model-missing:{descriptor.EvidenceCode};profile={snapshot.Profile.ProfileId}");
-        }
-        catch (Exception ex)
-        {
-            RuntimeLog.Info($"mainMenuLauncherIconResolved=NeowsBones;missing=true;evidence={ex.GetType().Name}");
-        }
-
-        return null;
-    }
-
-    private static bool IsUsableLauncherTexture(Texture2D texture)
-    {
-        if (!GodotObject.IsInstanceValid(texture))
-        {
-            return false;
-        }
-
-        return !texture.GetType().Name.Contains("Placeholder", StringComparison.OrdinalIgnoreCase);
-    }
-
     private static void AddStable107LauncherContents(Button launcher, Texture2D? iconTexture,
-        string iconNodeName = "RolltheSpire2_NeowsBonesLauncherIcon")
+        string iconNodeName)
     {
         if (iconTexture is null)
         {

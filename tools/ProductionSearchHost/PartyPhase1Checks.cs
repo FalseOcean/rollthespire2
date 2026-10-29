@@ -45,6 +45,11 @@ internal static partial class PartyPhase1Checks
         Check(Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(dll))) == "0861BFA1DF347538D932F22D580E75420F08082792EB914E53B4882764ACDBE9", "pinned Beta111");
         Check(typeof(RunState).Module.ModuleVersionId == Guid.Parse("73b63ee0-6c0a-47bb-b0d1-b21f6d94222e"), "loaded Beta111 MVID");
         Check(ProjectSettings.LoadResourcePack(pck, false), "resources");
+        if (System.Environment.GetEnvironmentVariable("RT2_CRYSTAL_OVERALL_LATENCY") == "1")
+        {
+            await PredictorCrystalAssistantChecks.RunOverallLatencyAsync(output, pck);
+            return;
+        }
         TestMode.IsOn = true; LocalContext.NetId = null;
         MegaCrit.Sts2.Core.Modding.AssemblyInfo.Init();
         await MegaCrit.Sts2.Core.Modding.ModManager.Initialize(new MegaCrit.Sts2.Core.Modding.ModManagerFileIo(), null, null);

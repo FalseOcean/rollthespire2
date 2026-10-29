@@ -65,7 +65,8 @@ internal sealed partial class SearchWorkspaceRuntime(SearchWorkspace store)
         if (feasibility.IsImpossible) return feasibility;
         store.InitializeWorkbenchCursor();
         var execution = ExactSearchExecutionRequestFactory.Compile(compiled,
-            new(store.CurrentNextCursorSeed, long.MaxValue, target, workers, SkipExactValidation: store.Preferences.SkipExactValidation));
+            new(store.CurrentNextCursorSeed, long.MaxValue, target, workers, SkipExactValidation: store.Preferences.SkipExactValidation,
+                ManualFamilyOrder: draft.ManualFamilyOrder, MapLossy: store.MapLossyPreferences));
         if (!execution.Success || execution.Plan is null) throw new InvalidOperationException(execution.Issue);
         Auxiliary(() => store.EnsureEnvironment(SearchEnvironmentSignatureBuilder.Capture(runtime)), "EnvironmentSave");
         Auxiliary(() => store.SaveWorkbench(draft), "DraftSave");

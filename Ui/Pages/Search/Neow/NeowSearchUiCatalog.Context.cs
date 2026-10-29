@@ -45,6 +45,6 @@ internal sealed partial record NeowSearchUiCatalog
             .Select(o => new ModelKey("RELIC", o.Relic!.Id.Entry)).Distinct().ToArray();
         var relics = catalog.OrdinaryRelics.Where(k => ModelDb.GetById<RelicModel>(new ModelId(k.Category, k.Entry)).IsAllowed(run)).ToArray();
         return catalog with { RouteRelics = allowed, OrdinaryRelics = relics,
-            BonesNeowRelics = allowed.Where(k => k != BaseGameModelKeys.Relics.NeowsBones).ToArray() };
+            BonesNeowRelics = allowed.Where(k => k != BaseGameModelKeys.Relics.NeowsBones).ToArray(), RouteEligibilityComplete = true };
     }
 }

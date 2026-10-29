@@ -78,6 +78,7 @@ uint64_t s1;
 uint64_t s2;
 uint64_t s3;
 
+/*__RT2_XOSHIRO_ROTATE45__*/
 uint64_t make_u64(uint low, uint high) {
     return uint64_t(low) | (uint64_t(high) << 32u);
 }
@@ -108,7 +109,7 @@ uint64_t next_u64() {
     s1 ^= s2;
     s0 ^= s3;
     s2 ^= temporary;
-    s3 = rotl64(s3, 45u);
+    s3 = rt2_rotate_left45_split32(s3);
     return result;
 }
 double next_double() {

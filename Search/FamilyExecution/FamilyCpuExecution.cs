@@ -43,7 +43,7 @@ internal sealed class FamilyCpuExecution : IFamilyInvocation
     internal IEnumerable<CpuLocalPeak> LocalPeaks => !_disabled && _localPeak is not null ? new[]{_localPeak} : [];
     private FamilyPhysicalQuote? LocalQuote(FamilyPhysicalQuoteRequest g) =>
         FamilyCanonicalMeasuredCost.TryDenseQuote(this, g) ?? (_quote?.Invoke(g) is {} raw
-            ? _cost?.Local(raw,Condition(g.CompactInput).PhysicalImplementationRevision,_workers,g.CompactInput) : null);
+            ? _cost?.Local(raw,Condition(g.CompactInput).PhysicalImplementationRevision,_workers,g.CompactInput) ?? raw : null);
     internal int WindowCapacity => _windowCapacity;
     internal IReadOnlySet<string>? RequiredPassedCoverage { get; set; }
     internal FamilyPhysicalQuote? Quote(FamilyPhysicalQuoteRequest g, IReadOnlySet<string> passed) =>

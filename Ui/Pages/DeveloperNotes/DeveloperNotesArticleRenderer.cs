@@ -9,6 +9,7 @@ internal sealed partial class DeveloperNotesArticleRenderer : VBoxContainer
     internal sealed record Section(string Title, Control Anchor);
     public IReadOnlyList<Section> Sections => _sections;
     private readonly List<Section> _sections = [];
+    public event Action<string>? ExternalLinkRequested;
 
     public DeveloperNotesArticleRenderer()
     {
@@ -87,6 +88,9 @@ internal sealed partial class DeveloperNotesArticleRenderer : VBoxContainer
             label.AddThemeFontSizeOverride("bold_font_size", fontSize);
             label.AddThemeFontSizeOverride("italics_font_size", fontSize);
             label.AddThemeConstantOverride("line_separation", 5);
+            label.MetaClicked += target => ExternalLinkRequested?.Invoke(target.AsString());
+            label.MetaHoverStarted += _ => label.MouseDefaultCursorShape = CursorShape.PointingHand;
+            label.MetaHoverEnded += _ => label.MouseDefaultCursorShape = CursorShape.Arrow;
             // Apply the final font and size before native shaping sees content.
             label.Text = bbcode;
             return label;

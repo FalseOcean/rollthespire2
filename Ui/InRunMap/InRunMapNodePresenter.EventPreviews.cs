@@ -71,7 +71,9 @@ internal sealed partial class InRunMapNodePresenter
             var candidates = currentChild && node.NeededInput == PredictorEventNeededInput.Cards ? node.DeckCardCandidates : preview.DeckCardCandidates;
             int required = currentChild && node.NeededInput == PredictorEventNeededInput.Cards ? node.CardsRequired : preview.CardsRequired;
             EventInlineCards(c, parts, "event-option-" + initial + "-" + option.Key, offered, candidates, required,
-                (context, action) => SetEventOption(context, node, option, initial, action), enabled, acceptedChild);
+                (context, action) => SetEventOption(context, node, option, initial, action), enabled, acceptedChild,
+                currentChild && node.NeededInput == PredictorEventNeededInput.Cards ? node.OfferedCardBinding : preview.OfferedCardBinding,
+                currentChild && node.NeededInput == PredictorEventNeededInput.Cards ? node.OfferedCardOptions : preview.OfferedCardOptions);
             return currentChild && node.NeededInput == PredictorEventNeededInput.Cards;
         }
         if (preview.NeededInput == PredictorEventNeededInput.Obtain)
@@ -124,6 +126,8 @@ internal sealed partial class InRunMapNodePresenter
             causes = PredictorRouteCauseEvidence.OriginalCauses(causes.Concat(combat.PendingCauses))
                 .Where(cause => cause.Code != "EventCombatChoice");
         var notices = EventLocalPendingLines(causes).Concat(EventOptionTransactionLines(option)).ToList();
+        if (option.ResultPreview?.OfferedCardOptions.Any(card => !card.IsKnown) == true)
+            notices.Add(M("card_enchantments_unresolved"));
         if (option.ResultPreview?.Combat is { } battle)
         {
             var gold = battle.Rewards.Where(reward => reward.IsKnown && reward.Kind == PredictorRewardKind.Gold)
@@ -185,8 +189,8 @@ internal sealed partial class InRunMapNodePresenter
             var knowledge = preview.Rewards[index];
             int occurrence = knowledge.Occurrence >= 0 ? knowledge.Occurrence : preview.Rewards.Take(index)
                 .Count(prior => prior.Value is { } value && knowledge.Value is { } reward && SameReward(value, reward));
-            bool defaultCardChoice = knowledge.IsKnown && knowledge.DefaultSkipped &&
-                knowledge.Value is { Kind: PredictorRewardKind.Card or PredictorRewardKind.SpecialCard, CanSkip: true, Mandatory: false };
+            bool defaultCardChoice = knowledge.DefaultSkipped &&
+                RewardOffer(knowledge) is { Kind: PredictorRewardKind.Card or PredictorRewardKind.SpecialCard, CanSkip: true, Mandatory: false };
             // Only a real reward picker completed by the approved default is editable
             // here. Automatically generated cards above have no reward action.
             var display = knowledge with { Occurrence = occurrence, CompletedEdit = null };
@@ -234,8 +238,15 @@ internal sealed partial class InRunMapNodePresenter
     }
 
     private static ImmutableArray<int> EventSelectedOffers(ImmutableArray<PredictorCard> displayed,
-        ImmutableArray<PredictorCard> expected, ImmutableArray<int> indices) =>
-        displayed.SequenceEqual(expected) && indices.All(index => index >= 0 && index < displayed.Length) ? indices : default;
+        ImmutableArray<PredictorCard> expected, ImmutableArray<int> indices, ImmutableArray<int> enchantmentMask = default)
+    {
+        var masked = enchantmentMask.IsDefault ? [] : enchantmentMask;
+        PredictorCard Mask(PredictorCard card, int index) => masked.Contains(index)
+            ? card with { Enchantment = null, EnchantmentAmount = 0 } : card;
+        return displayed.Length == expected.Length && masked.All(index => index >= 0 && index < displayed.Length) &&
+            displayed.Select(Mask).SequenceEqual(expected.Select(Mask)) &&
+            indices.All(index => index >= 0 && index < displayed.Length) ? indices : default;
+    }
 
     private static ImmutableArray<int> EventSelectedDeckTargets(ImmutableArray<PredictorCard> displayed,
         ImmutableArray<PredictorPlannedCard> targets)
@@ -286,23 +297,34 @@ internal sealed partial class InRunMapNodePresenter
 
     private void EventInlineCards(Context c, EditorParts parts, string role, ImmutableArray<PredictorCard> offered,
         ImmutableArray<PredictorRouteCardKnowledge> candidates, int required,
-        Func<Context, PredictorPlannedEventAction, bool> apply, bool enabled, PredictorPlannedEventAction? accepted = null)
+        Func<Context, PredictorPlannedEventAction, bool> apply, bool enabled, PredictorPlannedEventAction? accepted = null,
+        PredictorRewardOfferBinding? offerBinding = null,
+        ImmutableArray<PredictorCardRewardOptionKnowledge> offeredOptions = default)
     {
         // No accepted child is an observed empty saved selection. In
         // particular, reselecting the parent removes its prior child while
         // retaining the same candidates and picker identity.
         if (!offered.IsEmpty)
             CardSelection(c, parts, role, offered, required, required, (context, indices) => apply(context,
-                new(PredictorEventActionKind.Cards) { ExpectedCards = offered, CardIndices = indices }), enabled,
+                new(PredictorEventActionKind.Cards) { ExpectedCards = offered, CardIndices = indices,
+                    UnresolvedEnchantmentIndices = offerBinding?.UnresolvedEnchantmentIndices ?? [] }), enabled,
                 selectedIndices: accepted?.Action == PredictorEventActionKind.Cards && accepted.CardIndices.Length == required ?
-                    EventSelectedOffers(offered, accepted.ExpectedCards, accepted.CardIndices) : [], largeCardResults: true);
+                    EventSelectedOffers(offered, accepted.ExpectedCards, accepted.CardIndices,
+                        accepted.UnresolvedEnchantmentIndices.AddRange(offerBinding?.UnresolvedEnchantmentIndices ?? [])) : [],
+                largeCardResults: offeredOptions.IsDefaultOrEmpty || offeredOptions.All(option => option.IsKnown),
+                display: card => !offeredOptions.IsDefaultOrEmpty && offeredOptions.Any(option => option.Value == card && !option.IsKnown)
+                    ? new(card.Key, GameContentKind.Card, card.UpgradeLevel,
+                        _names.Resolve(card.Key, GameContentKind.Card) + " · " + M("card_enchantments_unresolved"))
+                    : Object(card));
         else
         {
-            var cards = candidates.Where(card => card.IsKnown && card.Value.Id > 0).Select(card => card.Value).ToImmutableArray();
+            var observations = candidates.Where(card => card.IsKnown && card.Value.Id > 0).ToImmutableArray();
+            var cards = observations.Select(card => card.Value).ToImmutableArray();
             CardSelection(c, parts, role, cards, required, required, (context, indices) => apply(context,
                 new(PredictorEventActionKind.Cards) { DeckCards = indices.Select(i => Target(cards[i])).ToImmutableArray() }), enabled && !cards.IsEmpty,
                 selectedIndices: accepted?.Action == PredictorEventActionKind.Cards && accepted.DeckCards.Length == required ?
-                    EventSelectedDeckTargets(cards, accepted.DeckCards) : []);
+                    EventSelectedDeckTargets(cards, accepted.DeckCards) : [],
+                display: card => TargetObject(observations.Single(observation => observation.Value.Id == card.Id)));
         }
     }
 

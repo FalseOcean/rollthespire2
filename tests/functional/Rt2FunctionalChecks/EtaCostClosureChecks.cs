@@ -41,12 +41,15 @@ internal static class EtaCostClosureChecks
         var wrapped = FamilySearchEtaProjectorV1.Project(request, transport, liveExactMsPerAttempt: .01);
         Check(wrapped.Status == FamilySearchEtaStatus.Ready && wrapped.TargetStages.Count == 2,
             "private metadata exposes the selected units without needing a private chain price");
-        Check(wrapped.TargetFamilyPipelineMs == direct.TargetFamilyPipelineMs &&
+        Check(wrapped.TargetFamilyPipelineMs < direct.TargetFamilyPipelineMs &&
             wrapped.TargetExactTailMs == direct.TargetExactTailMs &&
             wrapped.TargetStages.Select(s => s.InputPopulation).SequenceEqual(direct.TargetStages.Select(s => s.InputPopulation)),
-            "private ETA follows the same selected public-unit reference model");
-        Check(wrapped.TargetStages.All(s => s.CostEvidence.Contains("PrivateTransportOverheadNotMeasured", StringComparison.Ordinal)),
-            "public-unit approximation does not claim measured private transport");
+            "private ETA preserves populations and Exact while excluding intermediate public payload transport");
+        Check(wrapped.TargetStages.All(s => s.CostEvidence.Contains("PrivateTransportOverheadNotMeasured", StringComparison.Ordinal) &&
+            s.CostEvidence.Contains("FamilyComputationMs=", StringComparison.Ordinal) &&
+            s.CostEvidence.Contains("HostTransferEstimateMs=", StringComparison.Ordinal) &&
+            s.CostEvidence.Contains("PublicCompleteCallNotReused", StringComparison.Ordinal)),
+            "private ETA composes computation and a separate disclosed transport estimate");
         Check(wrapper.PhysicalFamilies.SequenceEqual(units.OrderedFamilies) &&
             wrapper.EstimationStages.SequenceEqual(units.Stages), "metadata cannot select a different execution order");
         Check(prefix.Calls == 0 && suffix.Calls == 0, "ETA does not execute a physical family");
@@ -143,11 +146,13 @@ internal static class EtaCostClosureChecks
             var fullReference = tinyFamily.QuotePhysicalWork(new(false, false, 65536));
             Check(tinyPlan.Stages.Single().PerInputTimeMs is > 0 && FamilyCanonicalMeasuredCost.IsCanonicalQuote(fullReference),
                 "the actual configured CPU body has an existing canonical full-unit reference");
-            Check(tinyFamily.QuotePhysicalWork(new(false, false, 128)) is null,
-                "tiny CPU input remains absent from canonical pricing while its actual configured body has a full-unit reference");
+            Check(FamilyCoarsePricing.IsEstimate(tinyFamily.QuotePhysicalWork(new(false, false, 128))) &&
+                FamilyCanonicalMeasuredCost.TryQuote(tinyFamily, new(false, false, 128), 128) is null,
+                "tiny CPU input has an honest work estimate without manufacturing a new canonical knot");
             Check(tinyEta.Status == FamilySearchEtaStatus.Ready && tinyEta.TargetStages.Single().CostEvidence.Contains(
-                "ReferenceGeometryApproximation", StringComparison.Ordinal),
-                "ETA may explicitly scale that same body and worker reference without inventing a new measured knot");
+                "FamilyComputationMs=", StringComparison.Ordinal) && tinyEta.TargetStages.Single().CostEvidence.Contains(
+                "PriceQuality=Estimate", StringComparison.Ordinal),
+                "tiny CPU ETA uses that same body's explicit work estimate without inventing a measured knot");
 
             var ns = shop with { LegacyNeow = LegacyNeowSemanticConstraints.Empty with {
                 NeowRelics = new([new("RELIC", "GOLDEN_PEARL")], [], []) } };
@@ -158,8 +163,10 @@ internal static class EtaCostClosureChecks
                     ["N.Neow", "S.MerchantShopColorless"]),
                 "ordinary real N+S planning attaches the selected child references to its private transport");
             var nsEta = FamilySearchEtaProjectorV1.Project(nsRequest, nsPlan, liveExactMsPerAttempt: .01);
-            Check(nsEta.Status == FamilySearchEtaStatus.Ready && nsEta.TargetStages.Count == 2,
-                "ordinary real private plan reaches ETA through its existing child-unit references");
+            Check(nsEta.Status == FamilySearchEtaStatus.Ready && nsEta.TargetStages.Count == 2 &&
+                nsEta.TargetStages.All(s => s.CostEvidence.Contains("HostTransferOutsideFamilyCost", StringComparison.Ordinal) &&
+                    s.CostEvidence.Contains("ActualPrivateInputOutputRoles", StringComparison.Ordinal)),
+                "real N+S private ETA uses each child's computation and separately names its actual transport roles");
 
             const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic;
             foreach (int players in new[] { 2, 4 })
@@ -174,10 +181,10 @@ internal static class EtaCostClosureChecks
                 var partyRequest = Request(query, window, workers: 16, source: party);
                 var partyPlan = FamilyExecutionCoordinator.Plan(partyRequest, gpuAvailable: true, gpuFloat64Available: true);
                 Check(partyPlan.OrderedFamilies.Single() is PartyFamily && partyPlan.Stages.Single().PerInputTimeMs is > 0,
-                    "real multiplayer shop wrapper retains its existing measured single-unit reference");
+                    "real multiplayer shop wrapper has a whole-unit historical reference estimate");
                 var partyEta = FamilySearchEtaProjectorV1.Project(partyRequest, partyPlan, liveExactMsPerAttempt: .01);
                 Check(partyEta.Status == FamilySearchEtaStatus.Ready && partyEta.TargetStages.Single().CostEvidence.Contains(
-                    "LocalMeasuredGPU", StringComparison.Ordinal), "ETA consumes the existing whole-table unit quote");
+                    "PriceQuality=Estimate", StringComparison.Ordinal), "ETA consumes the whole-table estimate without claiming a wrapper measurement");
                 var preview = WorkbenchProbabilityPreview.Compute(compiled, int.MaxValue, 16, cpuOnly: true);
                 Check(preview.Eta is not null && preview.Costs.ContainsKey("S.MerchantShopColorless") && preview.Issues.Count == 0,
                     "multiplayer preview reaches ETA and cost consumers even on an unpriced CPU configuration");
@@ -208,9 +215,10 @@ internal static class EtaCostClosureChecks
                         Check(!wrapperCombat.ConditionPerformance.PhysicalImplementationRevision.Contains(
                             ".PartyQueryLiteralOpening.20261027.v1", StringComparison.Ordinal),
                             "unchanged opening bodies do not acquire the query-literal party revision");
-                        Check((wrapperCombat.QuoteUnit(window, false, new HashSet<string>()) is null) == changed &&
-                            (wrapperCombat.QuotePhysicalWork(new(false, false, window)) is null) == changed,
-                            "changed party C bodies cannot borrow old wrapper prices, while unchanged bodies retain them");
+                        var unitQuote = wrapperCombat.QuoteUnit(window, false, new HashSet<string>());
+                        Check(unitQuote is not null && FamilyCoarsePricing.IsEstimate(wrapperCombat.QuotePhysicalWork(new(false, false, window))) &&
+                            (!changed || unitQuote.Evidence.Contains("WeightedOwnChildren", StringComparison.Ordinal)),
+                            "changed party C bodies use their own child work estimate; unchanged wrappers retain historical estimates");
                     }
                 }
                 foreach (var opening in new[] {
@@ -237,8 +245,9 @@ internal static class EtaCostClosureChecks
                             wrapperCombat.ResolveConditionPerformance(compact).Evidence.Contains(
                                 "NoHistoricalOpeningQuote", StringComparison.Ordinal),
                             "changed party opening wrapper records the new body and missing reference scope");
-                        Check(wrapperCombat.QuoteUnit(window, compact, new HashSet<string>()) is null &&
-                            wrapperCombat.QuotePhysicalWork(new(compact, false, window)) is null,
+                        Check(wrapperCombat.QuoteUnit(window, compact, new HashSet<string>()) is { } openingQuote &&
+                            openingQuote.Evidence.Contains("WeightedOwnChildren", StringComparison.Ordinal) &&
+                            FamilyCoarsePricing.IsEstimate(wrapperCombat.QuotePhysicalWork(new(compact, false, window))),
                             "new partial-Bones/Capsule CPU and GPU wrappers cannot borrow old opening measurements");
                         Check(wrapperCombat.PersonalStages.All(stage =>
                             stage.Family.ResolveConditionPerformance(compact).PhysicalImplementationRevision.Contains(
@@ -274,7 +283,7 @@ internal static class EtaCostClosureChecks
         bool IFamilyInvocation.CanBindPrivateSerial => true;
         public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest geometry) => ns is double cost
             ? new(id, "EtaFixture", cost, FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize, 0, "EtaFixtureReference",
-                PublicTransportClass: "CompleteCanonicalAbi1") : null;
+                PublicTransportClass: "Counted32") : null;
         public FamilyPerformanceObservation CapturePerformanceObservation() => new(ConditionPerformance,
             "", 0, 0, 0, 0, 0, 0, 0, 0, false, "EtaFixture");
         public ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow window,

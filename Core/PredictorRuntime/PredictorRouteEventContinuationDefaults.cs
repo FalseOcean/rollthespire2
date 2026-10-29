@@ -12,14 +12,23 @@ internal sealed partial class PredictorRun
     {
         internal RouteDeckRead TargetRead { get; init; } = new(PredictorDeckProjectionScope.All, PredictorDeckUncertainFact.All);
         internal bool MayEditExistingCards { get; init; }
+        internal ImmutableArray<string> ChangedRelicEntries { get; init; } = [];
+        internal ImmutableArray<string> ChangedRelicStateEntries { get; init; } = [];
     }
 
     private static bool TryContinueRouteEventDeckAction(PredictorRun run, PredictorEventOption option,
         ImmutableArray<PredictorCombatPendingCause> readCauses, List<RouteDependency> dependencies, CancellationToken token)
     {
         if (run._preview.Settings.Policy != PredictorRoutePreviewPolicy.LiveMapDefaults || run._preview.Partial == null ||
-            run._eventKey is not { } key || readCauses.IsEmpty ||
-            readCauses.Any(c => (c.AffectedDomains & ~PredictorCombatDomain.Deck) != 0))
+            run._eventKey is not { } key || readCauses.IsEmpty)
+            return false;
+        bool terminalLocalUpgrade = (key.Entry, option.Key) is ("DOORS_OF_LIGHT_AND_DARK", "LIGHT") or
+            ("REFLECTIONS", "TOUCH_A_MIRROR") or ("WELCOME_TO_WONGOS", "LEAVE") or
+            ("ENDLESS_CONVEYOR", "OBSERVE_CHEF");
+        // A parent may also affect Health/Gold without this terminal local
+        // upgrade reading those fields. Keep that original parent intact;
+        // selectors with real fixed costs/hooks retain the broader guard.
+        if (!terminalLocalUpgrade && readCauses.Any(c => (c.AffectedDomains & ~PredictorCombatDomain.Deck) != 0))
             return false;
         if (RouteEventPicker(run, key.Entry, option.Key) is { } picker &&
             PendingRouteEventCardsEffect(run, out _, key.Entry, option.Key,
@@ -63,14 +72,16 @@ internal sealed partial class PredictorRun
             AddDependency(dependencies, EventCardEffectDependency(cause, effect));
             return true;
         }
-        if ((key.Entry, option.Key) is not (("DOORS_OF_LIGHT_AND_DARK", "LIGHT") or ("REFLECTIONS", "TOUCH_A_MIRROR")))
+        if (!terminalLocalUpgrade)
             return false;
-        // Both native handlers finish at this leaf and only change upgrades.
-        // LIGHT shuffles; Reflections draws sequentially without replacement.
-        // Neither advances a public stream. We deliberately do not substitute
-        // either draw law or a representative target set for the missing one.
+        // These native handlers finish at this leaf and only change upgrades.
+        // LIGHT shuffles, Reflections draws sequentially without replacement,
+        // and Wongo downgrades one randomly chosen upgraded card.
+        // None advances a public stream. We deliberately do not substitute
+        // a draw law or a representative target set for the missing one.
         var cards = run.Working.Deck.Select(run.Working.Card).Concat(run._preview.Partial.Deck.Choices
-            .SelectMany(c => c.Effects).SelectMany(e => e.AddedCards)).Distinct().ToImmutableArray();
+            .SelectMany(c => c.Effects).SelectMany(e => e.AddedCards)).Distinct()
+            .Where(card => card.MaxUpgradeLevel > 0).ToImmutableArray();
         var facts = PredictorDeckUncertainFact.Upgrade | PredictorDeckUncertainFact.Other;
         if (cards.Any(c => PredictorCardChanges.Definition(run.Context, c.Key).Levels
             .Select(level => level.Eternal).Distinct().Count() > 1)) facts |= PredictorDeckUncertainFact.Removable;
@@ -184,7 +195,8 @@ internal sealed partial class PredictorRun
                 var prototype = PredictorCardChanges.Definition(run.Context, new("CARD", added)).Prototype;
                 if (RouteEventFixedCardReadCauses(run, prototype, dependencies).IsEmpty) run.AddTrialCurse(added);
                 else effect = effect with { Cards = effect.Cards.Add(prototype), AddsCards = true,
-                    Domains = effect.Domains | PredictorCombatDomain.InstanceIds | PredictorCombatDomain.Relics | PredictorCombatDomain.Health };
+                    Domains = effect.Domains | PredictorCombatDomain.InstanceIds | PredictorCombatDomain.Relics | PredictorCombatDomain.Health,
+                    ChangedRelicStateEntries = EventCardReceiptRelicStateEntries(run) };
             }
             local[0] = cause with { AffectedDomains = effect.Domains };
             run._preview.Event.PendingCardEffect = effect;
@@ -198,6 +210,10 @@ internal sealed partial class PredictorRun
             // Source event-local transformation RNG is discarded at this leaf;
             // Conveyor's dependent next dish remains locally pending instead.
             if (run.Phase != PredictorPhase.Complete) run.FinishEvent();
+            // The scoped dependency above now owns this unresolved effect.
+            // Re-importing its local cause as an unscoped dependency would
+            // erase the proven membership/state/bag contract at node exit.
+            local.Clear();
             return true;
         }
         if (run.Phase != PredictorPhase.Rewards || run.HasObtainChild || cause.Code != "EventRewardsChoice" ||
@@ -216,7 +232,9 @@ internal sealed partial class PredictorRun
             if (reward.Kind is (PredictorRewardKind.Card or PredictorRewardKind.SpecialCard) &&
                 (PredictorSettlementEffects.Has(run.Working, "BOOK_OF_FIVE_RINGS") || PredictorSettlementEffects.Has(run.Working, "BING_BONG")))
                 AddDependency(dependencies, new(RewardChoiceCause(run, reward, "Pending" + reward.Kind + "Choice",
-                    PredictorCombatDomain.Relics, dependencies)));
+                    PredictorCombatDomain.Relics, dependencies))
+                { ChangedRelicEntries = [], ChangedRelicStateEntries = EventCardReceiptRelicStateEntries(run),
+                    ChangesPersonalRelicBag = false, ChangesSharedRelicBag = false });
         }
         if (!CausesFor(dependencies, PredictorCombatDomain.Continuation).IsEmpty) return false;
         local.Clear();
@@ -234,9 +252,15 @@ internal sealed partial class PredictorRun
         ChangedCardMembershipEntries = effect.ChangesMembership
             ? effect.Cards.IsEmpty ? default : effect.Cards.Select(c => c.Key.Entry).Distinct().ToImmutableArray() : [],
         ChangedCardStateEntries = effect.Cards.IsEmpty ? default : effect.Cards.Select(c => c.Key.Entry).Distinct().ToImmutableArray(),
-        ChangedRelicEntries = (effect.Domains & PredictorCombatDomain.Relics) != 0 ? default : [],
-        ChangedRelicStateEntries = (effect.Domains & PredictorCombatDomain.Relics) != 0 ? default : []
+        ChangedRelicEntries = effect.ChangedRelicEntries,
+        ChangedRelicStateEntries = effect.ChangedRelicStateEntries,
+        ChangesPersonalRelicBag = false,
+        ChangesSharedRelicBag = false
     };
+
+    private static ImmutableArray<string> EventCardReceiptRelicStateEntries(PredictorRun run) =>
+        new[] { "BOOK_OF_FIVE_RINGS", "BING_BONG" }
+            .Where(entry => PredictorSettlementEffects.Has(run.Working, entry)).ToImmutableArray();
 
     private static bool ContinueOptionalRouteEventTail(PredictorRun run, List<RouteDependency> dependencies,
         List<PredictorCombatPendingCause> local)
@@ -314,8 +338,16 @@ internal sealed partial class PredictorRun
         }
         if (transforms)
         {
-            var pools = cards.Select(c => PredictorCardChanges.Definition(run.Context, c.Key).TransformationPool).ToHashSet();
-            var keys = run.Context.Catalog!.TransformationPools.Where(p => pools.Contains(p.Key)).SelectMany(p => p.Cards).ToHashSet();
+            // Match Transform's source-specific pool and rarity predicate;
+            // quest/basic models in the catalog are not possible replacements.
+            var definitions = run.Context.Catalog!.CardDefinitions.ToDictionary(definition => definition.Prototype.Key);
+            var keys = cards.SelectMany(card =>
+            {
+                var definition = definitions[card.Key];
+                return run.Context.Catalog.TransformationPools.Single(pool => pool.Key == definition.TransformationPool).Cards
+                    .Where(key => key != card.Key && (definition.Rarity is "Curse" or "Status" ||
+                        definitions[key].Rarity is "Common" or "Uncommon" or "Rare"));
+            }).ToHashSet();
             cards = cards.AddRange(run.Context.Catalog.CardDefinitions.Where(d => keys.Contains(d.Prototype.Key))
                 .Select(d => d.Prototype)).Distinct().ToImmutableArray();
             addsCards = true;
@@ -350,6 +382,7 @@ internal sealed partial class PredictorRun
             (key, branch) == ("STONE_OF_ALL_TIME", "PUSH") ? 1 : 0,
             key == "ZEN_WEAVER" ? run._eventGoldAmount : 0, fixedAdded)
         { TargetRead = RouteEventDeckRead(key, branch),
+            ChangedRelicStateEntries = addsCards ? EventCardReceiptRelicStateEntries(run) : [],
             MayEditExistingCards = removes || transforms || fixedTransform || upgrade || enchant };
         return true;
     }

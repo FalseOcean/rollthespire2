@@ -19,6 +19,11 @@ internal sealed partial class PredictorRun
             ? PredictorDeckUncertainFact.Upgrade | PredictorDeckUncertainFact.Other
             : PredictorDeckUncertainFact.Membership;
         var cards = run.Working.Deck.Select(run.Working.Card).ToImmutableArray();
+        // Smith never selects a card whose definition has no upgrade levels.
+        // Keep already-upgraded candidates conservative when an earlier level
+        // is unresolved, while excluding immutable quest payloads/counters.
+        if (step.Action == PredictorRestAction.Smith)
+            cards = cards.Where(card => card.MaxUpgradeLevel > 0).ToImmutableArray();
         if (step.Action == PredictorRestAction.Smith && cards.Any(card => PredictorCardChanges.Definition(run.Context, card.Key)
                 .Levels.Select(level => level.Eternal).Distinct().Count() > 1)) facts |= PredictorDeckUncertainFact.Removable;
         var domains = PredictorCombatDomain.Deck;
@@ -38,7 +43,9 @@ internal sealed partial class PredictorRun
         AddDependency(dependencies, new(cause, cards, MayChangeExistingCards: true)
         {
             DeckFacts = facts,
-            ChangedCardMembershipEntries = step.Action == PredictorRestAction.Smith ? [] : default
+            AffectedCardIds = step.Action == PredictorRestAction.Smith ? cards.Select(card => card.Id).ToImmutableArray() : default,
+            ChangedCardMembershipEntries = step.Action == PredictorRestAction.Smith ? [] : default,
+            ChangedCardStateEntries = step.Action == PredictorRestAction.Smith ? [] : default
         });
         run._preview.Partial.Synchronize(run.Working);
         // Complete the selected action instance, including Tent's remaining

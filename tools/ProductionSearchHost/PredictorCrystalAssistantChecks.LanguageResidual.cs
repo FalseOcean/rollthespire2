@@ -8,6 +8,37 @@ internal static partial class PredictorCrystalAssistantChecks
 {
     private static int CheckLanguageResidual(string output,Action<PredictorCrystalSnapshot,PredictorCrystalSolution> native)
     {
+        if(Environment.GetEnvironmentVariable("RT2_CRYSTAL_LANGUAGE_PROFILE_SNAPSHOT") is {Length:>0} profileSnapshot)
+        {
+            var profileSource=ProductionSearchReplay.Read<PredictorCrystalSnapshot>(Path.GetFullPath(profileSnapshot));
+            string frozenSource=JsonSerializer.Serialize(profileSource,ProductionSearchReplay.JsonOptions);
+            ImmutableArray<CrystalRewardOption> profileGoals=Environment.GetEnvironmentVariable("RT2_CRYSTAL_LANGUAGE_PROFILE_GOALS") is {Length:>0} goalsFile
+                ?ProductionSearchReplay.Read<ImmutableArray<CrystalRewardOption>>(Path.GetFullPath(goalsFile))
+                :[new(PredictorRewardKind.Relic,new("RELIC","GAME_PIECE")),new(PredictorRewardKind.Card,new("CARD","STOKE"),0)];
+            int profileMs=int.Parse(Environment.GetEnvironmentVariable("RT2_CRYSTAL_LANGUAGE_PROFILE_MS")??"2000");
+            int profileLimit=int.Parse(Environment.GetEnvironmentVariable("RT2_CRYSTAL_LANGUAGE_PROFILE_LIMIT")??"100000");
+            int geometryMemoLimit=int.Parse(Environment.GetEnvironmentVariable("RT2_CRYSTAL_LANGUAGE_PROFILE_GEOMETRY_MEMO")??"1000000");
+            Check(profileMs>=0 && profileLimit>=0 && geometryMemoLimit>=0,"Single-query profile accepts nonnegative time/state/memo budgets");
+            var timer=Stopwatch.StartNew();
+            bool profileEnchantments=Environment.GetEnvironmentVariable("RT2_CRYSTAL_LANGUAGE_PROFILE_ENCHANTMENTS")=="1";
+            bool profileRerolls=Environment.GetEnvironmentVariable("RT2_CRYSTAL_LANGUAGE_PROFILE_REROLLS")!="0";
+            bool profileAvoidCurse=Environment.GetEnvironmentVariable("RT2_CRYSTAL_LANGUAGE_PROFILE_AVOID_CURSE")!="0";
+            var profileTable=new CrystalReachabilityTable(profileSource,includeRerolls:profileRerolls,includeEnchantments:profileEnchantments);
+            double profileTableMs=timer.Elapsed.TotalMilliseconds;timer.Restart();
+            var profileBound=new PredictorCrystalOffsetBound(profileSource,profileTable,profileAvoidCurse);
+            double profileBoundMs=timer.Elapsed.TotalMilliseconds;
+            var answer=PredictorCrystalGoalLanguage.Solve(profileSource,profileTable,profileGoals,profileAvoidCurse,
+                TimeSpan.FromMilliseconds(profileMs),profileLimit,sharedBound:profileBound,rootCardSlots:true,profileCompilation:true,geometryMemoLimit:geometryMemoLimit);
+            Check(frozenSource==JsonSerializer.Serialize(profileSource,ProductionSearchReplay.JsonOptions),"Single-query profile preserves frozen source");
+            ProductionSearchReplay.Write(Path.Combine(output,"language-single-profile.json"),new {
+                scope="Frozen generated capture diagnosis; not exact replay of Owner live scene or runtime acceptance",
+                snapshot=Path.GetFullPath(profileSnapshot),seed=profileSource.Context.Seed,remaining=profileSource.Remaining,
+                productMvid=typeof(PredictorCrystalSnapshot).Module.ModuleVersionId,profileGoals,profileMs,profileLimit,geometryMemoLimit,
+                includeRerolls=profileTable.IncludesRerolls,includeEnchantments=profileTable.IncludesEnchantments,avoidCurse=profileAvoidCurse,
+                tableMs=profileTableMs,boundMs=profileBoundMs,answer});
+            Console.WriteLine($"CRYSTAL_LANGUAGE_SINGLE_PROFILE seed={profileSource.Context.Seed};remaining={profileSource.Remaining};verdict={answer.Verdict};seconds={answer.Seconds:F6};compileSeconds={answer.CompileSeconds:F6};rewardStates={answer.RewardStates};geometry={answer.GeometryNodes};languageNodes={answer.LanguageNodes};typedReplays={answer.VerifiedWords};nativeExactReplay=false");
+            return 0;
+        }
         string survey=Environment.GetEnvironmentVariable("RT2_CRYSTAL_LANGUAGE_RESIDUAL")!;
         string owner=Environment.GetEnvironmentVariable("RT2_CRYSTAL_LANGUAGE_OWNER_SNAPSHOT")!;
         var cases=new[]{("R93J1VRL814T","OwnerSingle"),("TZSUCA3EM6T6","RelicFirst"),("KAJE4M0MECQ6","RelicSecond")};

@@ -107,6 +107,23 @@ internal sealed partial class PredictorRun
                 ? JsonSerializer.Serialize(s.Deck.Count(id => s.Card(id).Key.Entry == key))
                 : JsonSerializer.Serialize(s.Deck.Select(s.Card).Where(c => c.Key.Entry == key).ToArray())))
             .ToArray();
+        ImmutableArray<string> RelicScope(bool membership)
+        {
+            var scopes = newDependencies.Where(d => (d.Cause.AffectedDomains & PredictorCombatDomain.Relics) != 0)
+                .Select(d => membership ? d.ChangedRelicEntries : d.ChangedRelicStateEntries)
+                .Concat(outcomes.Select(o => o.CardEffect).OfType<PendingRouteEventCardEffect>()
+                    .Select(effect => membership ? effect.ChangedRelicEntries : effect.ChangedRelicStateEntries)).ToArray();
+            return scopes.Any(scope => scope.IsDefault) ? default :
+                VaryingRelics(membership).Concat(scopes.SelectMany(scope => scope)).Distinct().ToImmutableArray();
+        }
+        bool? RelicBagScope(bool shared)
+        {
+            if (Varies(state => shared ? state.SharedBag : state.PersonalBag)) return true;
+            var scopes = newDependencies.Where(d =>
+                    (d.Cause.AffectedDomains & (PredictorCombatDomain.Relics | PredictorCombatDomain.RelicRewards)) != 0)
+                .Select(d => shared ? d.ChangesSharedRelicBag : d.ChangesPersonalRelicBag).ToArray();
+            return scopes.Any(scope => scope == true) ? true : scopes.Any(scope => scope == null) ? null : false;
+        }
         var choice = PredictorRouteCauseEvidence.Bind(local[0] with
         {
             AffectedDomains = domains,
@@ -122,16 +139,14 @@ internal sealed partial class PredictorRun
                 .Concat(outcomes.SelectMany(o => o.CardEffect?.Cards ?? [])).Distinct().ToImmutableArray(),
             MayChangeExistingCards: existingCardsChange)
         {
-            ChangedRelicEntries = newDependencies.Any(d => (d.Cause.AffectedDomains & PredictorCombatDomain.Relics) != 0)
-                ? default : VaryingRelics(true).ToImmutableArray(),
-            ChangedRelicStateEntries = newDependencies.Any(d => (d.Cause.AffectedDomains & PredictorCombatDomain.Relics) != 0)
-                ? default : VaryingRelics(false).ToImmutableArray(),
+            ChangedRelicEntries = RelicScope(true),
+            ChangedRelicStateEntries = RelicScope(false),
             ChangedCardMembershipEntries = VaryingCards(true).Concat(outcomes.Where(o => o.CardEffect?.ChangesMembership == true)
                 .SelectMany(o => o.CardEffect!.Cards.Select(c => c.Key.Entry))).Distinct().ToImmutableArray(),
             ChangedCardStateEntries = VaryingCards(false).Concat(outcomes.SelectMany(o => o.CardEffect?.Cards ?? []).Select(c => c.Key.Entry))
                 .Distinct().ToImmutableArray(),
-            ChangesPersonalRelicBag = Varies(s => s.PersonalBag),
-            ChangesSharedRelicBag = Varies(s => s.SharedBag)
+            ChangesPersonalRelicBag = RelicBagScope(false),
+            ChangesSharedRelicBag = RelicBagScope(true)
         };
         run._preview.Partial?.PendingEventOptions(before, witness, outcomes, choice);
         if (domains != PredictorCombatDomain.None) AddDependency(dependencies, dependency);
@@ -154,11 +169,32 @@ internal sealed partial class PredictorRun
         private readonly HashSet<string> _conditionalGoldAssignments = [];
         internal void AssignEventGold() => _goldProjectionStart = Deck.GoldProjectionBoundary;
 
-        internal ImmutableArray<PredictorCombatPendingCause> WitnessCardCauses(PredictorCard card) =>
-            Deck.HasFixedMember(card.Id) ? [] : _eventAlternatives.Where(pair =>
-                pair.Value.Any(o => o.State.Deck.Contains(card.Id)) &&
-                pair.Value.Any(o => !o.State.Deck.Contains(card.Id) || o.State.Card(card.Id).Key != card.Key))
-                .Select(pair => _choices[pair.Key]).ToImmutableArray();
+        internal ImmutableArray<PredictorCombatPendingCause> WitnessCardCauses(PredictorCard card)
+        {
+            // A full card observation reads both membership and payload. Stable
+            // IDs do not certify an unresolved enchantment; conditional receipt
+            // IDs must likewise retain their own target gap.
+            if (!Deck.HasFixedMember(card.Id))
+                return WitnessCardMembershipCauses(card);
+            var gaps = Deck.TargetGaps(card.Id, PredictorDeckProjectionScope.All, PredictorDeckUncertainFact.All);
+            var retained = gaps.Where(gap => gap.ChoiceId != null && _choices.ContainsKey(gap.ChoiceId))
+                .Select(gap => _choices[gap.ChoiceId!]);
+            var unbound = gaps.Where(gap => gap.ChoiceId == null || !_choices.ContainsKey(gap.ChoiceId)).ToImmutableArray();
+            var target = PredictorRouteCauseEvidence.Normalize(retained.Concat(ProjectionCauses(
+                new(PredictorDeckProjectionScope.All, null, [], false, [], unbound), count: false)));
+            return target;
+        }
+
+        internal ImmutableArray<PredictorCombatPendingCause> WitnessCardMembershipCauses(PredictorCard card)
+        {
+            if (Deck.HasFixedMember(card.Id)) return [];
+            return PredictorRouteCauseEvidence.Normalize(Deck.Project(PredictorDeckProjectionScope.All)
+                    .UnresolvedCandidateSources.Where(source => _choices.ContainsKey(source.ChoiceId) &&
+                        source.Effects.Any(effect => effect.AddedCards.Any(added => added.Id == card.Id)))
+                    .Select(source => _choices[source.ChoiceId]).Concat(_eventAlternatives.Where(pair => pair.Value.Any(o => o.State.Deck.Contains(card.Id)) &&
+                    pair.Value.Any(o => !o.State.Deck.Contains(card.Id) || o.State.Card(card.Id).Key != card.Key))
+                    .Select(pair => _choices[pair.Key])));
+        }
 
         internal PredictorChoiceInt? EventGoldBalance(PredictorState state)
         {

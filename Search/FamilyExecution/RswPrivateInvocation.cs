@@ -16,7 +16,7 @@ internal sealed class RswPrivateInvocation(ExactSearchExecutionRequest request, 
     public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId, PrivateOrdinalBuffer.Capacity, [], "RSW.ExperimentalUnpriced");
     public FamilySurvivalProjection Survival => FamilySurvivalProjection.Unresolved(FamilyId, "RSW.ExperimentalJointUnpriced");
     public FamilyConditionPerformanceProjection ConditionPerformance => new(FamilyId,
-        "RSW." + order + ".PrivateSerial.CanonicalAbi1Ready.20260908.v1", "RSW.Neutral", 1, "ExplicitExperiment", usesGpu: true);
+        "RSW." + order + ".PrivateSerial.CanonicalAbi1Ready.20260908.v1" + GpuRngRotation.Revision, "RSW.Neutral", 1, "ExplicitExperiment", usesGpu: true);
     public FamilyPerformanceObservation CapturePerformanceObservation() => new(ConditionPerformance, _gpu?.Device ?? "", _gpu?.SetupMs ?? 0,
         0, 0, _batches, 0, _input, _output, _ms, false, _faulted ? "PhysicalFailure" : "RSW.ExperimentNoCalibration");
     public async ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow observation, FamilyCandidateSet input, CancellationToken token)

@@ -8,7 +8,7 @@ internal sealed partial class PredictorRun
     // concrete runtime and cannot turn Parasol into an optional preference.
 
     private static void ConfigureRouteShopProjection(PredictorRun run, List<RouteDependency> dependencies,
-        List<PredictorCombatPendingCause> entryCauses)
+        List<PredictorCombatPendingCause> entryCauses, HashSet<long> knownInstanceIds)
     {
         run._preview.ShopEntryCauses = entryCauses;
         run._preview.ShopAutomaticPurchaseAllowed = slot =>
@@ -26,12 +26,12 @@ internal sealed partial class PredictorRun
                 // Optional additions cannot turn an existing removable card
                 // into an empty picker. Pause only if existence itself is not
                 // established; the actual target is still a player choice.
-                bool knownCandidate = run.Working.Deck.Any(id => run.Working.Card(id).Removable &&
-                    !dependencies.Any(d => d.MayChangeExistingCards && (d.Cause.AffectedDomains & PredictorCombatDomain.Deck) != 0 &&
-                        (d.AnyExistingCard || d.PossibleCards.IsDefaultOrEmpty || d.PossibleCards.Any(c => c.Id == id))));
+                bool knownCandidate = ObserveRouteTargetCards(run, dependencies, knownInstanceIds,
+                    PredictorDeckProjectionScope.Removable, PredictorDeckUncertainFact.Definition).Any(card => card.IsKnown);
                 if (!knownCandidate) domains |= PredictorCombatDomain.Deck;
             }
-            var causes = PredictorRouteCauseEvidence.Normalize(CausesFor(dependencies, domains).AddRange(obtainCauses));
+            var causes = PredictorRouteCauseEvidence.Normalize(CausesFor(dependencies, domains)
+                .AddRange(RouteShopRelicCauses(run, dependencies, entry.Kind)).AddRange(obtainCauses));
             if (causes.IsEmpty) return true;
             foreach (var cause in causes)
                 if (!entryCauses.Contains(cause)) entryCauses.Add(cause);
@@ -129,16 +129,31 @@ internal sealed partial class PredictorRun
             Advanced = advanced, AppliedActions = applied, AutomaticPurchasesActive = run._parasolActive,
             ResolvedActions = resolvedActions.ToImmutableArray(),
             RequiredChoices = child == null ? [] : [child],
+            RemovalCards = ObserveRouteTargetCards(run, dependencies, knownInstanceIds,
+                PredictorDeckProjectionScope.Removable, PredictorDeckUncertainFact.Definition),
             GoldBalance = goldPending.IsEmpty ? run.Working.GoldBudget : null, GoldPendingCauses = goldPending
         };
     }
 
     private static PredictorCombatDomain RouteShopOfferDomains(PredictorShopEntryKind kind)
         => (kind == PredictorShopEntryKind.CardRemoval ? PredictorCombatDomain.None : PredictorCombatDomain.ShopsRng) |
-            PredictorCombatDomain.Relics |
             (kind == PredictorShopEntryKind.Relic ? PredictorCombatDomain.RewardsRng :
                 kind == PredictorShopEntryKind.CharacterCard ? PredictorCombatDomain.RewardsRng | PredictorCombatDomain.Odds :
                 PredictorCombatDomain.None);
+
+    private static ImmutableArray<PredictorCombatPendingCause> RouteShopRelicCauses(PredictorRun run,
+        List<RouteDependency> dependencies, PredictorShopEntryKind kind)
+    {
+        var causes = RouteRelicMembershipCauses(run, dependencies, "MEMBERSHIP_CARD")
+            .AddRange(RouteRelicMembershipCauses(run, dependencies, "THE_COURIER"));
+        if (kind == PredictorShopEntryKind.Relic)
+            causes = causes.AddRange(RouteRelicIdentityCauses(dependencies))
+                .AddRange(RouteRelicBagCauses(dependencies, shared: false));
+        if (kind is PredictorShopEntryKind.CharacterCard or PredictorShopEntryKind.ColorlessCard)
+            foreach (string entry in new[] { "MOLTEN_EGG", "TOXIC_EGG", "FROZEN_EGG", "FRESNEL_LENS" })
+                causes = causes.AddRange(RouteRelicMembershipCauses(run, dependencies, entry));
+        return PredictorRouteCauseEvidence.Normalize(causes);
+    }
 
     private static PredictorShopOfferSnapshot RouteShopSnapshot(PredictorRun run, int slot)
     {
@@ -178,7 +193,8 @@ internal sealed partial class PredictorRun
         for (int slot = 0; slot < run._shopEntries.Length; slot++)
         {
             var entry = run._shopEntries[slot];
-            var causes = CausesFor(dependencies, RouteShopOfferDomains(entry.Kind));
+            var causes = PredictorRouteCauseEvidence.Normalize(CausesFor(dependencies, RouteShopOfferDomains(entry.Kind))
+                .AddRange(RouteShopRelicCauses(run, dependencies, entry.Kind)));
             var affordability = causes.AddRange(CausesFor(dependencies, PredictorCombatDomain.Gold)).Distinct().ToImmutableArray();
             offers.Add(new(slot, entry.Kind, causes.IsEmpty ? RouteShopSnapshot(run, slot) : null, causes)
             {
@@ -238,11 +254,14 @@ internal sealed partial class PredictorRun
         }
         if (action.Action == PredictorShopActionKind.ChooseRemoval)
         {
-            bool knownTarget = RouteShopKnownCard(run, action.Card, dependencies, knownInstanceIds);
+            bool knownTarget = action.Card != null && IsKnownRouteDeckTarget(run, action.Card, dependencies, knownInstanceIds,
+                PredictorDeckProjectionScope.Removable, PredictorDeckUncertainFact.Definition);
             trace?.ReadRemovalTarget(run, action.Card, knownTarget,
-                knownTarget ? [] : RouteDeckTargetCauses(run, action.Card == null ? [] : [action.Card], dependencies, knownInstanceIds));
+                knownTarget ? [] : RouteDeckTargetCauses(run, action.Card == null ? [] : [action.Card], dependencies, knownInstanceIds,
+                    PredictorDeckProjectionScope.Removable, PredictorDeckUncertainFact.Definition));
             if (!knownTarget) return Pending("PlannedShopTargetPending",
-                RouteDeckTargetCauses(run, action.Card == null ? [] : [action.Card], dependencies, knownInstanceIds));
+                RouteDeckTargetCauses(run, action.Card == null ? [] : [action.Card], dependencies, knownInstanceIds,
+                    PredictorDeckProjectionScope.Removable, PredictorDeckUncertainFact.Definition));
             trace?.ReadFlow(run, removal: true);
             if (!run._parasolActive && !CausesFor(dependencies, PredictorCombatDomain.Gold).IsEmpty)
             {
@@ -284,7 +303,8 @@ internal sealed partial class PredictorRun
         else
         {
             trace?.ReadRemovalCandidates(run);
-            if (run.Working.Deck.All(id => !run.Working.Card(id).Removable) &&
+            if (!ObserveRouteTargetCards(run, dependencies, knownInstanceIds,
+                    PredictorDeckProjectionScope.Removable, PredictorDeckUncertainFact.Definition).Any(card => card.IsKnown) &&
                 !CausesFor(dependencies, PredictorCombatDomain.Deck).IsEmpty)
                 return Pending("PlannedShopTargetPending", CausesFor(dependencies, PredictorCombatDomain.Deck));
         }
@@ -297,14 +317,6 @@ internal sealed partial class PredictorRun
         return result == PredictorInputResult.Accepted || Pending(result == PredictorInputResult.TooFull ?
             "PlannedShopPotionInventoryFull" : "PlannedShopPurchaseUnavailable");
     }
-
-    private static bool RouteShopKnownCard(PredictorRun run, PredictorPlannedCard? target,
-        List<RouteDependency> dependencies, HashSet<long> knownInstanceIds)
-        => target != null && run.Working.Deck.Contains(target.InstanceId) && run.Working.Card(target.InstanceId) is { } card &&
-            card.Key == target.Key && card.FloorAdded == target.FloorAdded &&
-            (knownInstanceIds.Contains(card.Id) || CausesFor(dependencies, PredictorCombatDomain.InstanceIds).IsEmpty) &&
-            !dependencies.Any(d => d.MayChangeExistingCards && (d.Cause.AffectedDomains & PredictorCombatDomain.Deck) != 0 &&
-                (d.AnyExistingCard || d.PossibleCards.IsDefaultOrEmpty || d.PossibleCards.Any(c => c.Id == card.Id)));
 
     // Match an already accepted active prefix against the authored semantic
     // actions at their original boundaries. Counting purchase names would bind

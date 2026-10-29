@@ -45,6 +45,7 @@ internal static class ReleaseCompatibilityChecks
         {
             var w=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>(corpus+"v1/cases/"+id+".json");
             var baseline=Compile(w,current);
+            int knownTruth = 0, emptyNeutralSubsets = 0;
             foreach(var c in new[]{newer,cosmetic})
             {
                 var p=Compile(w,c);
@@ -53,11 +54,28 @@ internal static class ReleaseCompatibilityChecks
                     var input=TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance,Beta110SeedCodec.FormatOrdinal(i));
                     var a=ProductionExactSearchEvaluator.Evaluate(baseline,input);
                     var b=ProductionExactSearchEvaluator.Evaluate(p,input);
-                    Check(a.Evaluation.Disposition is SearchDisposition.Match or SearchDisposition.NoMatch,id+" baseline truth available");
+                    // Unpinned rewards observe proven-neutral real openings only.
+                    // An empty subset cannot disprove every actual opening; retain
+                    // that specific Unknown and its cause in this metadata check.
+                    bool emptyNeutralSubset = id == "C-three-potions" &&
+                        a.Evaluation.Disposition == SearchDisposition.Unknown &&
+                        a.Evaluation.FailureCode == "NoEligibleUnpinnedRewardRoute";
+                    Check(a.Evaluation.Disposition is SearchDisposition.Match or SearchDisposition.NoMatch || emptyNeutralSubset,
+                        $"{id} baseline truth available;ordinal={i};evaluation={JsonSerializer.Serialize(a.Evaluation,options)}");
+                    if (emptyNeutralSubset)
+                    {
+                        emptyNeutralSubsets++;
+                        Check(a.Evaluation.Witnesses.Count == 0 && a.Evaluation.MatchedRouteIds.Count == 0,
+                            id+" empty neutral subset cannot carry a confirmed witness");
+                    }
+                    else knownTruth++;
                     Check(a.Evaluation.Disposition==b.Evaluation.Disposition,id+" metadata-only Exact disposition");
+                    Check(a.Evaluation.FailureCode==b.Evaluation.FailureCode,id+" metadata-only Exact cause");
                     Check(JsonSerializer.Serialize(a.Evaluation.Witnesses,options)==JsonSerializer.Serialize(b.Evaluation.Witnesses,options),id+" witness");
                 }
             }
+            Check(knownTruth > 0,id+" still exercises confirmed baseline truth");
+            if (id == "C-three-potions") Check(emptyNeutralSubsets > 0,id+" exercises the real unpinned observation boundary");
         }
         var partialNode=JsonNode.Parse(raw)!;
         var auth=partialNode["Context"]!["Authority"]!;
@@ -75,7 +93,12 @@ internal static class ReleaseCompatibilityChecks
         Check(fast is not null,"partial pool execution binding");
         checks+=RelicCpuChecks.CheckEnvelope(sp,fast!.Matches,root=>MerchantShopColorlessQueryEvaluator.Evaluate(sp.Evaluation,root,sp.Authority).Disposition==SearchDisposition.Match);
         MerchantShopColorlessFamily.TryCreate(sp,out var owner);
-        Check(owner!.CpuRealizations.First().QuotePhysicalWork(new(false,false,65536)) is null,"partial geometry price Unknown, execution legal");
+        var partialQuote = owner!.CpuRealizations.First().QuotePhysicalWork(new(false,false,65536));
+        Check(partialQuote is { NanosecondsPerInput: > 0 } &&
+            double.IsFinite(partialQuote.NanosecondsPerInput) &&
+            partialQuote.Evidence.Contains("PriceQuality=Estimate",StringComparison.Ordinal) &&
+            partialQuote.Evidence.Contains("NotCurrentDeviceOrBodyMeasurement",StringComparison.Ordinal),
+            "partial pools retain an explicit coarse estimate without claiming a matching body measurement");
         Check(!partial.Authority.IsKaleidoscopeAllowed && partial.Authority.HasExactModernNeowIdentityInputs,"partial unlock is eligibility fact, not whole Search gate");
         foreach(bool? catalog in new bool?[]{null,false})
         {

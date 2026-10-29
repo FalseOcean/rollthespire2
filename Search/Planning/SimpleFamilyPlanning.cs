@@ -42,9 +42,12 @@ public static partial class FamilyExecutionCoordinator
                     NeowCapsuleComposite.TryCreate(request, replay, out var composite) && composite is not null
                         ? new NeowFamily(request, replay, composite: composite) : null);
         }
-        FamilyExecutionPlan selected = FamilyPlanner.PlanSimple(bodies, fused, includeCpuAlternatives: gpuAvailable, denseEntry: denseEntry);
+        FamilyExecutionPlan selected = request.RunOptions.ManualFamilyOrder is { Count: > 0 } manual
+            ? FamilyPlanner.InManualOrder(denseEntry is null ? [..fused, ..bodies] : [denseEntry, ..fused, ..bodies],
+                bodies, manual, denseEntry)
+            : FamilyPlanner.PlanSimple(bodies, fused, includeCpuAlternatives: gpuAvailable, denseEntry: denseEntry);
         var order = selected.OrderedFamilies;
-        bool privateSerial = order.Count is >= 2 and <= 7 && order.All(family => family.CanBindPrivateSerial &&
+        bool privateSerial = order.Count is >= 2 and <= 8 && order.All(family => family.CanBindPrivateSerial &&
             family.Coverage.Count == 1 && family.Coverage[0] == family.FamilyId) &&
             order.Select(family => family.FamilyId).Distinct(StringComparer.Ordinal).Count() == order.Count;
         if (privateSerial)
@@ -64,7 +67,7 @@ public static partial class FamilyExecutionCoordinator
                 EstimatedTerminalSurvival = selected.EstimatedTerminalSurvival,
                 DecisionEvidence = [..selected.DecisionEvidence,
                     "PrivateOrdinalTransportForSelectedWholeFamilyOrder;NoCompleteChainPromotionQuote;LazyStageCreation",
-                    "EtaUsesSelectedPublicUnitReferences;PrivateTransportOverheadNotMeasured"],
+                    "EtaUsesFamilyComputationAndSeparateTransportEnvelope;PrivateTransportOverheadNotMeasured"],
                 MissingEvidence = selected.MissingEvidence
             };
         }

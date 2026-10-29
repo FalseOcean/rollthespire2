@@ -13,23 +13,23 @@ public static class FamilyPhysicalImplementationRevisions
     // executors. Planner performance identities below additionally name the actual
     // input path and the canonical ABI1-ready timing boundary.
     public const string MerchantShopColorlessAtomicAppendHostSort =
-        "S.MerchantShopColorless.Gpu.v11.CanonicalIdentity.ConditionalPrefixReject.Base34Carry8.ProcessedWorkgroup.ConsumeOnly.HistoricalNextInt";
+        "S.MerchantShopColorless.Gpu.v11.CanonicalIdentity.ConditionalPrefixReject.Base34Carry8.ProcessedWorkgroup.ConsumeOnly.HistoricalNextInt" + GpuRngRotation.Revision;
     public const string MerchantShopColorlessStableOrderedCompaction =
-        "S.MerchantShopColorless.Gpu.v12.CanonicalIdentity.ConditionalPrefixReject.StableOrderedCompaction.HostPrefixScatter.Base34Carry8.ProcessedWorkgroup.ConsumeOnly.HistoricalNextInt";
+        "S.MerchantShopColorless.Gpu.v12.CanonicalIdentity.ConditionalPrefixReject.StableOrderedCompaction.HostPrefixScatter.Base34Carry8.ProcessedWorkgroup.ConsumeOnly.HistoricalNextInt" + GpuRngRotation.Revision;
     public const string MerchantShopColorless = MerchantShopColorlessAtomicAppendHostSort;
-    public const string Relic = "R.Relic.Gpu.v7.TrackedPositions.Base34Carry8.ProcessedWorkgroup.CompactFullDecode.HistoricalNextInt";
+    public const string Relic = "R.Relic.Gpu.v7.TrackedPositions.Base34Carry8.ProcessedWorkgroup.CompactFullDecode.HistoricalNextInt" + GpuRngRotation.Revision;
     public const string RelicFull = RelicFullGpuPlan.AlgorithmRevision;
 
     public const string MerchantShopColorlessAtomicDensePerformance =
-        "S.MerchantShopColorless.Atomic.DenseCarry8.CanonicalIdentity.ConditionalPrefixReject.CanonicalAbi1Ready.20261015.v2";
+        "S.MerchantShopColorless.Atomic.DenseCarry8.CanonicalIdentity.ConditionalPrefixReject.CanonicalAbi1Ready.20261015.v2" + GpuRngRotation.Revision;
     public const string MerchantShopColorlessStableDensePerformance =
-        "S.MerchantShopColorless.Stable.DenseCarry8.CanonicalIdentity.ConditionalPrefixReject.CanonicalAbi1Ready.20261015.v2";
+        "S.MerchantShopColorless.Stable.DenseCarry8.CanonicalIdentity.ConditionalPrefixReject.CanonicalAbi1Ready.20261015.v2" + GpuRngRotation.Revision;
     public const string MerchantShopColorlessCompactPerformance =
-        "S.MerchantShopColorless.Atomic.CompactAbi1FullDecode.CanonicalIdentity.ConditionalPrefixReject.CanonicalAbi1Ready.20261015.v2";
+        "S.MerchantShopColorless.Atomic.CompactAbi1FullDecode.CanonicalIdentity.ConditionalPrefixReject.CanonicalAbi1Ready.20261015.v2" + GpuRngRotation.Revision;
     public const string RelicDensePerformance =
-        "R.Relic.DenseCarry8.CanonicalAbi1Ready.20260904.v1";
+        "R.Relic.DenseCarry8.CanonicalAbi1Ready.20260904.v1" + GpuRngRotation.Revision;
     public const string RelicCompactPerformance =
-        "R.Relic.CompactAbi1FullDecode.CanonicalAbi1Ready.20260904.v1";
+        "R.Relic.CompactAbi1FullDecode.CanonicalAbi1Ready.20260904.v1" + GpuRngRotation.Revision;
 }
 
 /// <summary>
@@ -205,24 +205,24 @@ internal static class FamilyDeviceProfileFoundation
              "R.Relic.Cpu.ShopBackPrefix.20260912.v1", "R.Relic.Cpu.CapsuleAndSequenceReplay.20260905.v1",
              "W.World.Cpu.Progression.20260907.v1", "A.AncientOption.Cpu.EventLocal.20260907.v1", "E.EventResult.Cpu.EventLocal.20260907.v1"],
             [
-                $"N.Neow.Dense@{NeowFamilyGpuPlan.DenseRevision}",
-                $"N.Neow.DensePreBones@{NeowFamilyGpuPlan.StagedDenseRevision}",
-                $"N.Neow.LeafyPreGate.Dense@{NeowFamilyGpuPlan.LeafyDenseRevision}",
-                $"N.Neow.LeafyPreGate.DensePreBones@{NeowFamilyGpuPlan.LeafyStagedDenseRevision}",
-                $"N.Neow.RCapsule.Dense@{NeowCapsuleComposite.DenseRevision}",
-                $"N.Neow.RCapsule.Compact@{NeowCapsuleComposite.CompactRevision}",
-                $"N.Neow.RCapsule.BonesGrouped.Dense@{NeowCapsuleComposite.BonesDenseRevision}",
-                $"N.Neow.RCapsule.BonesGrouped.DensePreBones@{NeowCapsuleComposite.BonesStagedRevision}",
-                $"N.Neow.RCapsule.BonesGrouped.Compact@{NeowCapsuleComposite.BonesCompactRevision}",
-                $"N.Neow.Compact@{NeowFamilyGpuPlan.CompactRevision}",
-                $"N.Neow.LeafyPreGate.Compact@{NeowFamilyGpuPlan.LeafyCompactRevision}",
+                $"N.Neow.Dense@{NeowFamilyGpuPlan.DenseRevision}{GpuRngRotation.Revision}",
+                $"N.Neow.DensePreBones@{NeowFamilyGpuPlan.StagedDenseRevision}{GpuRngRotation.Revision}",
+                $"N.Neow.LeafyPreGate.Dense@{NeowFamilyGpuPlan.LeafyDenseRevision}{GpuRngRotation.Revision}",
+                $"N.Neow.LeafyPreGate.DensePreBones@{NeowFamilyGpuPlan.LeafyStagedDenseRevision}{GpuRngRotation.Revision}",
+                $"N.Neow.RCapsule.Dense@{NeowCapsuleComposite.DenseRevision}{GpuRngRotation.Revision}",
+                $"N.Neow.RCapsule.Compact@{NeowCapsuleComposite.CompactRevision}{GpuRngRotation.Revision}",
+                $"N.Neow.RCapsule.BonesGrouped.Dense@{NeowCapsuleComposite.BonesDenseRevision}{GpuRngRotation.Revision}",
+                $"N.Neow.RCapsule.BonesGrouped.DensePreBones@{NeowCapsuleComposite.BonesStagedRevision}{GpuRngRotation.Revision}",
+                $"N.Neow.RCapsule.BonesGrouped.Compact@{NeowCapsuleComposite.BonesCompactRevision}{GpuRngRotation.Revision}",
+                $"N.Neow.Compact@{NeowFamilyGpuPlan.CompactRevision}{GpuRngRotation.Revision}",
+                $"N.Neow.LeafyPreGate.Compact@{NeowFamilyGpuPlan.LeafyCompactRevision}{GpuRngRotation.Revision}",
                 $"S.MerchantShopColorless.Atomic.Dense@{FamilyPhysicalImplementationRevisions.MerchantShopColorlessAtomicDensePerformance}",
                 $"S.MerchantShopColorless.Stable.Dense@{FamilyPhysicalImplementationRevisions.MerchantShopColorlessStableDensePerformance}",
                 $"S.MerchantShopColorless.Compact@{FamilyPhysicalImplementationRevisions.MerchantShopColorlessCompactPerformance}",
                 $"R.Relic.Dense@{FamilyPhysicalImplementationRevisions.RelicDensePerformance}",
                 $"R.Relic.Compact@{FamilyPhysicalImplementationRevisions.RelicCompactPerformance}",
-                $"R.Relic.Rfull.Dense@{RelicFullGpuPlan.DenseRevision}",
-                $"R.Relic.Rfull.Compact@{RelicFullGpuPlan.CompactRevision}"
+                $"R.Relic.Rfull.Dense@{RelicFullGpuPlan.DenseRevision}{GpuRngRotation.Revision}",
+                $"R.Relic.Rfull.Compact@{RelicFullGpuPlan.CompactRevision}{GpuRngRotation.Revision}"
             ]);
     }
 

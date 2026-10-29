@@ -31,7 +31,8 @@ internal static partial class FamilyCpuIntegrationChecks
                     FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(request, f, q, 65536)),
                     "CPU attribution belongs to its historical actual-input anchor or exact embedded canonical body/input measurement");
                 Check(f.QuotePhysicalWork(new(false,true,65536)) is null,"no CPU private quote");
-                Check(f.QuotePhysicalWork(new(false,false,1)) is null,"unmeasured sub-1K CPU quote unknown");
+                Check(FamilyCoarsePricing.IsEstimate(f.QuotePhysicalWork(new(false,false,1))),
+                    "sub-1K CPU input has an explicit conservative estimate rather than a fictitious measured knot");
                 var snapshot=new GpuCostSnapshot([],_=>null);
                 Check(snapshot.Local(f,q,new(false,false,65536))==q,"GPU calibration never scales CPU");
             }
@@ -40,9 +41,13 @@ internal static partial class FamilyCpuIntegrationChecks
             {
                 var r=(FamilyCpuExecution)p.OrderedFamilies.Single(f=>f.FamilyId=="R.Relic");
                 Check(r.Workers==request.WorkerCount,"configured R stage follows the user worker count under N");
-                Check(r.Quote(new(true,false,6553.6),new HashSet<string>{"N.Neow"}) is null,"unmeasured P16 Capsule execution does not invent a price");
-                Check(r.Quote(new(true,false,6553.6),new HashSet<string>{"N.Neow","W.World"}) is null,"other conditioned input unpriced");
-                Check(r.Quote(new(true,false,3000),new HashSet<string>{"N.Neow"}) is null,"different Compact occupancy unpriced");
+                var own = r.Quote(new(true,false,6553.6),new HashSet<string>{"N.Neow"});
+                var otherPrefix = r.Quote(new(true,false,6553.6),new HashSet<string>{"N.Neow","W.World"});
+                Check(FamilyCoarsePricing.IsEstimate(own),"unmeasured P16 Capsule execution has an honest local work estimate");
+                Check(FamilyCoarsePricing.IsEstimate(otherPrefix) && own!.NanosecondsPerInput == otherPrefix!.NanosecondsPerInput,
+                    "unrelated passed coverage does not reprice unconditional Capsule work");
+                Check(FamilyCoarsePricing.IsEstimate(r.Quote(new(true,false,3000),new HashSet<string>{"N.Neow"})),
+                    "different Compact occupancy uses an estimate without acquiring anchor measurement identity");
             }
             if(path.Contains("S-three"))
                 Check(p.Stages.Single().PerInputTimeMs is >0,"READY public CPU allocation priced");

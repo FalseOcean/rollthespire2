@@ -44,6 +44,11 @@ internal sealed partial class QueryWorkbenchFrame
         runtimeColumn.AddThemeConstantOverride("separation", 16);
         _runtimeSurface = runtimeColumn;
         AddChild(_runtimeSurface);
+        _liveReadingsHeading = _p.Label(_text.Get("layout.runtime"), 17, heading: true);
+        _liveReadingsHeading.Name = "SearchLiveHeading"; runtimeColumn.AddChild(_liveReadingsHeading);
+        _liveReadings = new GridContainer { Name = "SearchLiveReadings", Columns = 3, SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        _liveReadings.AddThemeConstantOverride("h_separation", 8); _liveReadings.AddThemeConstantOverride("v_separation", 8);
+        runtimeColumn.AddChild(_liveReadings);
         string[] keys=["workflow.current_speed","workflow.scanned","workflow.elapsed","workflow.first_eta"];
         for(int i=0;i<keys.Length;i++)
         {
@@ -68,6 +73,7 @@ internal sealed partial class QueryWorkbenchFrame
     }
     private void UpdateRuntimeVisibility()
     {
+        UpdateExecutionOrderAvailability();
         if (_liveReadingsHeading is not null) _liveReadingsHeading.Visible = _showResults;
         if (_liveReadings is not null) _liveReadings.Visible = _showResults;
         if (_firstEtaPanel is not null) _firstEtaPanel.Visible = _showResults;

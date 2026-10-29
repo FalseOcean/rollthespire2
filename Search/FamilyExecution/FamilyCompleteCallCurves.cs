@@ -18,11 +18,61 @@ internal sealed class FamilyCompleteCallSnapshot
     private const double SourceSurvivalRelativeTolerance = 1e-10;
     private readonly IReadOnlyDictionary<string, FamilyCompleteCallCurve> _curves;
     private readonly IReadOnlyDictionary<string, FamilyCompleteCallCurve[]> _byShape;
+    private readonly IReadOnlyDictionary<(string Family, bool Compact, int Workers), double> _cpuWorkerRatios;
     internal bool IsEmpty => _curves.Count == 0;
     private FamilyCompleteCallSnapshot(IReadOnlyDictionary<string, FamilyCompleteCallCurve> curves)
-    { _curves = curves; _byShape = curves.Values.GroupBy(c => Shape(c.Key)).ToDictionary(g => g.Key, g => g.ToArray(), StringComparer.Ordinal); }
+    {
+        _curves = curves;
+        _byShape = curves.Values.GroupBy(c => Shape(c.Key)).ToDictionary(g => g.Key, g => g.ToArray(), StringComparer.Ordinal);
+        _cpuWorkerRatios = CpuWorkerRatios(curves.Values);
+    }
+
+    // Relative scaling only, never an absolute price for another shape/body.
+    // Match source work, device, population and survival within each measured
+    // pair, then take a same-family median. No linear core-count extrapolation.
+    private static IReadOnlyDictionary<(string Family, bool Compact, int Workers), double> CpuWorkerRatios(
+        IEnumerable<FamilyCompleteCallCurve> curves)
+    {
+        static string Group(FamilyCompleteCallCurve c) => (c.Key with {
+            ConfiguredWorkers = 1,
+            PhysicalRevision = System.Text.RegularExpressions.Regex.Replace(c.Key.PhysicalRevision, @"\.P\d+(?=\.)", ".P1")
+        }).StableKey + ";SourceSurvival=" + P(c.SourceSurvival);
+        var ratios = new List<(string Family, bool Compact, int Workers, double Ratio)>();
+        foreach (var group in curves.Where(c => c.Key.ExecutionClass == "CPU" && c.Key.Players == 1 &&
+            c.Key.OrderedChildBodies == "").GroupBy(Group))
+        {
+            var single = group.FirstOrDefault(c => c.Key.ConfiguredWorkers == 1);
+            if (single is null) continue;
+            foreach (var parallel in group.Where(c => c.Key.ConfiguredWorkers > 1))
+            {
+                var common = single.Points.Join(parallel.Points, p => p.N, p => p.N,
+                    (a, b) => (N: a.N, Ratio: b.CallMilliseconds / a.CallMilliseconds)).OrderByDescending(p => p.N).FirstOrDefault();
+                if (Positive(common.N) && Positive(common.Ratio))
+                    ratios.Add((parallel.Key.FamilyId, parallel.Key.CompactInput, parallel.Key.ConfiguredWorkers, common.Ratio));
+            }
+        }
+        return ratios.GroupBy(r => (r.Family, r.Compact, r.Workers)).ToDictionary(g => g.Key, g => {
+            var values = g.Select(r => r.Ratio).Order().ToArray();
+            return values.Length % 2 == 1 ? values[values.Length / 2] :
+                (values[values.Length / 2 - 1] + values[values.Length / 2]) / 2;
+        });
+    }
+
+    internal (double Ratio, string Evidence) CpuWorkerRatio(string family, int workers, bool compact)
+    {
+        if (workers <= 1) return (1, "WorkerScale=P1");
+        var points = _cpuWorkerRatios.Where(p => p.Key.Family == family && p.Key.Compact == compact)
+            .Select(p => (Workers: p.Key.Workers, Ratio: p.Value)).Append((Workers: 1, Ratio: 1d)).OrderBy(p => p.Workers).ToArray();
+        if (points.Length == 1) return (1, "WorkerScale=UnmeasuredConservativeP1");
+        var left = points.Last(p => p.Workers <= workers);
+        var right = points.FirstOrDefault(p => p.Workers >= workers, points[^1]);
+        double fraction = right.Workers == left.Workers ? 0 : (workers - left.Workers) / (double)(right.Workers - left.Workers);
+        return (left.Ratio * (1 - fraction) + right.Ratio * fraction,
+            $"WorkerScale=SameFamilyHistoricalMedian;WorkerAnchors={left.Workers}..{right.Workers};" +
+            "NotCurrentShapeMeasurement;AboveLastAnchorCapped");
+    }
     private static string Shape(FamilyCanonicalCostKey key) =>
-        (key.CompactInput ? key : key with { RootWindow = 0 }).StableKey;
+        (key.CompactInput ? key : key with { RootWindow = 0 }).PriceKey;
     private static bool Probability(double? value) => value is double p && double.IsFinite(p) && p is >= 0 and <= 1;
     // Admission retains exact round-trip identities, normalizing only +/-0.
     // Pricing selection below tolerates rounding from equivalent source sums;
@@ -149,6 +199,7 @@ internal sealed class FamilyCompleteCallSnapshot
             $"AnchorN={left.N:G17}..{right.N:G17};MeasuredRepeats={left.MeasuredRepeats},{right.MeasuredRepeats};" +
             $"TrainingRowsSha256={curve.TrainingRowsSha256};TrainingCases={string.Join(',', curve.TrainingCases)};" +
             $"ActualMeasurementCadence={curve.MeasurementCadence};FirstRootInvokeAndWarmupsExcluded;FullColdSetupUnknown;NoPeakRatio;NoSameRunRepricing;" +
+            FamilyCanonicalCostSnapshot.BudgetEvidence(key, curve.Key) +
             (curve.SourceSurvival.HasValue ? "SourceSurvival=" + P(curve.SourceSurvival) + ";QuerySourceSurvival=" + P(sourceSurvival) +
                 ";SourceModelSelector;PositiveRelativeTolerance=1e-10;ZeroExact;NotObserved;NoSurvivalScaling;" : "") + curve.Evidence,
             OutputElementBytes: 8, OutputAlreadyOrdered: true,

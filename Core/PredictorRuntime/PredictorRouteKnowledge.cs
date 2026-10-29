@@ -17,6 +17,7 @@ internal sealed record PredictorPlannedCard(long InstanceId, ModelKey Key, int F
 internal sealed record PredictorPlannedRewardChoice(PredictorReward ExpectedReward, int Occurrence,
     int? CardIndex = null, bool Skip = false)
 {
+    public ImmutableArray<int> UnresolvedEnchantmentIndices { get; init; } = [];
     public bool Reroll { get; init; }
     public PredictorReward? ExpectedRerolledReward { get; init; }
     public long? SacrificeRelicId { get; init; }
@@ -64,7 +65,13 @@ internal sealed record PredictorRouteCardKnowledge(PredictorCard Value,
     ImmutableArray<PredictorCombatPendingCause> PendingCauses)
 {
     internal bool IsKnown => PendingCauses.IsEmpty;
+    // A target reader can establish identity/eligibility without knowing every
+    // persistent card field. Do not render those unrelated witness fields.
+    public bool FullCardKnown { get; init; } = true;
 }
+
+internal sealed record PredictorRestActionKnowledge(int ActionIndex, PredictorRestAction Action,
+    ImmutableArray<PredictorRouteCardKnowledge> Candidates, ImmutableArray<ModelKey> ObtainedRelics);
 
 internal sealed record PredictorRouteRelicKnowledge(PredictorRelic Value,
     ImmutableArray<PredictorCombatPendingCause> PendingCauses)
@@ -109,6 +116,7 @@ internal sealed record PredictorRouteNodeKnowledge(PredictorPosition Position,
     public ImmutableArray<PredictorRouteCardKnowledge> CombatCards { get; init; } = [];
     public ImmutableArray<PredictorRouteRelicKnowledge> CombatRelics { get; init; } = [];
     public ImmutableArray<PredictorRouteCardKnowledge> RestCards { get; init; } = [];
+    public ImmutableArray<PredictorRestActionKnowledge> RestActionKnowledge { get; init; } = [];
     // Boundaries retain the inventory actually observed where operations bind.
     // Final inventory must never be reused as a pre-pickup operation target.
     public ImmutableArray<PredictorRoutePotionBoundaryKnowledge> PotionBoundaries { get; init; } = [];
@@ -130,4 +138,9 @@ internal sealed record PredictorRouteContinuation(ImmutableArray<PredictorRouteN
 {
     public PredictorKnowledgeSnapshot? Knowledge { get; init; }
     public PredictorRouteTerminalBoundary? TerminalBoundary { get; init; }
+    public PredictorRoutePredictionFault? Fault { get; init; }
 }
+
+// A real failed calculation has no settled node or invented after-state. The
+// original exception belongs to diagnostics, never to ordinary display text.
+internal sealed record PredictorRoutePredictionFault(PredictorPosition Position, string Stage, Exception Error);

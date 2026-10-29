@@ -139,6 +139,41 @@ internal static partial class UiSurfaceChecks
         var screen = PreloadManager.Cache.GetScene("res://scenes/screens/map/map_screen.tscn").Instantiate<NMapScreen>();
         screen.Name = "NativeMap"; screen.Visible = false;
         typeof(NGlobalUi).GetProperty("MapScreen")!.SetValue(global, screen);
+        // These controls are built separately in this detached host. Preserve
+        // the input overrides authored on their actual run.tscn instances;
+        // top_bar.tscn alone otherwise leaves a full-viewport mouse blocker.
+        // Read the authored text without loading the full run's unrelated FMOD
+        // dependencies, which are not present in the stock-engine UI host.
+        string runSceneText = Godot.FileAccess.GetFileAsString("res://scenes/run.tscn");
+        if (!runSceneText.StartsWith("[gd_scene", StringComparison.Ordinal))
+            throw new InvalidOperationException("Native run text scene unavailable for instance input overrides.");
+        Control.MouseFilterEnum RunMouseFilter(string path)
+        {
+            string nodePath = "";
+            foreach (string line in runSceneText.Split('\n'))
+            {
+                if (line.StartsWith("[node ", StringComparison.Ordinal))
+                {
+                    var name = System.Text.RegularExpressions.Regex.Match(line, "name=\"([^\"]+)\"").Groups[1].Value;
+                    var parent = System.Text.RegularExpressions.Regex.Match(line, "parent=\"([^\"]+)\"").Groups[1].Value;
+                    nodePath = parent is "" or "." ? name : parent + "/" + name;
+                }
+                else if (nodePath == path)
+                {
+                    var filter = System.Text.RegularExpressions.Regex.Match(line, "^mouse_filter = ([0-2])\\s*$");
+                    if (filter.Success) return (Control.MouseFilterEnum)int.Parse(filter.Groups[1].Value);
+                }
+            }
+            throw new InvalidOperationException("Native run input override not found: " + path);
+        }
+        global.MouseFilter = RunMouseFilter("GlobalUi");
+        topBar.MouseFilter = RunMouseFilter("GlobalUi/TopBar");
+        capstone.MouseFilter = RunMouseFilter("GlobalUi/CapstoneScreenContainer");
+        File.WriteAllText(Path.Combine(output, "native-map-input-instance.json"), JsonSerializer.Serialize(new {
+            source = "res://scenes/run.tscn", sourceSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(runSceneText))),
+            global = global.MouseFilter.ToString(),
+            topBar = topBar.MouseFilter.ToString(), capstone = capstone.MouseFilter.ToString()
+        }));
         global.AddChild(screen); global.AddChild(capstone); global.AddChild(topBar);
         var capstoneBackstop = new ColorRect { Name = "CapstoneBackstop", Color = new(0, 0, 0, .85f), MouseFilter = Control.MouseFilterEnum.Ignore };
         capstone.AddChild(capstoneBackstop);
@@ -367,9 +402,11 @@ internal static partial class UiSurfaceChecks
                 "native Open makes the attached panel visible and processing");
             Check(topBar.Size.IsEqualApprox(screen.Size) && topBar.GetGlobalRect().HasPoint(screen.GetGlobalRect().GetCenter()),
                 "native TopBar root covers viewport, reproducing the former exclusion defect");
-            Check(panel.FindChild("PredictionToggle", true, false) == null && panel.GetChildCount() == 1 &&
+            Check(panel.FindChild("PredictionToggle", true, false) == null && panel.GetChildren().All(child =>
+                    child is Label && (child.Name == "ForecastStatus" || child.Name == "OverviewCardCollectionIssue") ||
+                    child is OptionButton && child.Name == "OverviewCardCollectionPicker") &&
                 !((Control)Field(panel, "_forecastStatus")).Visible,
-                "default-enabled map has no resident mode/status chrome before Settings;children=" +
+                "default-enabled map allows the collection picker without resident mode/status chrome before Settings;children=" +
                 string.Join(',', panel.GetChildren().Select(child => child.Name + ":" + child.GetClass())) +
                 ";statusVisible=" + ((Control)Field(panel, "_forecastStatus")).Visible +
                 ";status=" + ((Label)Field(panel, "_forecastStatus")).Text);
@@ -404,6 +441,11 @@ internal static partial class UiSurfaceChecks
             {
                 await RunDrawingForecastUi(root, output, screen, panel, run, runtime.Detection.NormalizedVersion, a, b, Signature, Check);
                 Check(Signature() == before, "drawing forecast inputs leave native run and RNG unchanged");
+                if (OS.GetCmdlineUserArgs().Contains("--drawing-dependencies-ui")) return;
+                if (OS.GetCmdlineUserArgs().Contains("--drawing-overblocks-ui")) return;
+                if (OS.GetCmdlineUserArgs().Contains("--drawing-card-operations-ui")) return;
+                if (OS.GetCmdlineUserArgs().Contains("--drawing-boundaries-ui")) return;
+                if (OS.GetCmdlineUserArgs().Contains("--collection-picker-ui")) return;
                 if (OS.GetCmdlineUserArgs().Contains("--drawing-notices-ui")) return;
                 if (OS.GetCmdlineUserArgs().Contains("--shop-gold-ui")) return;
                 if (OS.GetCmdlineUserArgs().Contains("--card-collection-overview-ui")) return;

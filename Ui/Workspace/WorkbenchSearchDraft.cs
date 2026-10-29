@@ -40,12 +40,14 @@ internal sealed record WorkbenchSearchDraft(ModelKey Character, int Ascension, S
     AncientOptionConditionProfile AncientPremises)
 {
     public int Version { get; init; } = 3;
+    public IReadOnlyList<string>? ManualFamilyOrder { get; init; }
     public AncientEditorStateSnapshot? AncientEditor { get; init; }
     public NeowEditorStateSnapshot? NeowEditor { get; init; }
     public EventEditorStateSnapshot? EventEditor { get; init; }
     public TransformationEditorStateSnapshot? TransformationEditor { get; init; }
     public CombatRewardSearchDraft? CombatRewardEditor { get; init; }
     public PartyAncientEditorStateSnapshot? PartyAncientEditor { get; init; }
+    public MapEditorStateSnapshot? MapEditor { get; init; }
     public IReadOnlyList<WorkbenchPlayerDraft> Players { get; init; } = Array.Empty<WorkbenchPlayerDraft>();
     public WorldGameMode Mode { get; init; } = WorldGameMode.Singleplayer;
     public string GameVersion { get; init; } = "";

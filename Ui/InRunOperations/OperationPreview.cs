@@ -25,6 +25,7 @@ internal sealed record OperationPreviewCardGroup(long Id, ImmutableArray<Predict
     internal bool EarliestFirst { get; init; }
     internal bool ForceSingleRow { get; init; }
     internal bool SuppressPossiblePrefix { get; init; }
+    internal ImmutableArray<ModelKey> PotionUseOrder { get; init; } = [];
 }
 internal sealed record OperationPreviewSection(ModelKey Source, ImmutableArray<OperationPreviewRow> Rows,
     ImmutableArray<OperationPreviewCardGroup> CardGroups)

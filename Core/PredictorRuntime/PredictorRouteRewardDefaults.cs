@@ -121,11 +121,16 @@ internal sealed partial class PredictorRun
     // entirely of default card skips or optional potion display can close;
     // mandatory potion receipts and other child choices stay open.
     private static bool ContinueLiveDefaultCardRewardChildren(PredictorRun run,
-        List<RouteDependency> dependencies, CancellationToken token)
+        List<RouteDependency> dependencies, CancellationToken token, int? stopAtObtainDepth = null)
     {
+        // A receipt owns its newly opened obtain frames. Once it returns to the
+        // source, the caller still owns any authored sibling reward choices.
+        bool BelowSource() => !stopAtObtainDepth.HasValue || run._obtainFrames.Length > stopAtObtainDepth.Value;
+        if (!BelowSource()) return false;
         bool completed = CompleteLiveObtainHealth(run, dependencies, token);
+        if (!BelowSource()) return completed;
         completed |= CompleteLivePaelsTooth(run, dependencies, token);
-        while (run.HasObtainChild && run._preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults &&
+        while (BelowSource() && run.HasObtainChild && run._preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults &&
             !run._obtainFrames[^1].Mandatory)
         {
             var skipped = new HashSet<long>();
@@ -136,9 +141,11 @@ internal sealed partial class PredictorRun
             foreach (var reward in run.Rewards.Where(reward => reward.Status == PredictorRewardStatus.Open))
                 RegisterLiveDefaultPotionOmission(run, reward, dependencies);
             if (run.Submit(run.Request!, new LeaveRewards(), token) != PredictorInputResult.Accepted) break;
-            CompleteLiveObtainHealth(run, dependencies, token);
-            CompleteLivePaelsTooth(run, dependencies, token);
             completed = true;
+            if (!BelowSource()) break;
+            CompleteLiveObtainHealth(run, dependencies, token);
+            if (!BelowSource()) break;
+            CompleteLivePaelsTooth(run, dependencies, token);
         }
         return completed;
     }

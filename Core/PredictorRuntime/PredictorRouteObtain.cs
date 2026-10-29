@@ -96,13 +96,13 @@ internal sealed partial class PredictorRun
                 var candidates = run.Rewards.Where(r => r.Kind == choice.ExpectedReward.Kind &&
                     r.Origin == choice.ExpectedReward.Origin && r.Key == choice.ExpectedReward.Key).ToArray();
                 if (choice.Occurrence < 0 || choice.Occurrence >= candidates.Length ||
-                    !SameOffer(candidates[choice.Occurrence], choice.ExpectedReward)) return Pending("PlannedObtainRewardChanged");
+                    !SameRouteRewardOffer(run, candidates[choice.Occurrence], choice, dependencies)) return Pending("PlannedObtainRewardChanged");
                 var reward = candidates[choice.Occurrence];
                 var rewardKnowledge = ObserveRouteRewards(run, dependencies)[run.Rewards.IndexOf(reward)];
                 trace?.Read("rewardOffer", System.Text.Json.JsonSerializer.Serialize(reward with { Id = 0 }), rewardKnowledge.PendingCauses);
                 trace?.Read("rewardStatus", reward.Status);
                 if (reward.Status != PredictorRewardStatus.Open ||
-                    !ObserveRouteRewards(run, dependencies)[run.Rewards.IndexOf(reward)].IsKnown)
+                    !RouteRewardOperationKnown(run, rewardKnowledge, choice))
                     return Pending("PlannedObtainRewardPending", reward.Status == PredictorRewardStatus.Open ?
                         ObserveRouteRewards(run, dependencies)[run.Rewards.IndexOf(reward)].PendingCauses : []);
                 if (choice.Skip)
@@ -116,10 +116,11 @@ internal sealed partial class PredictorRun
                     trace?.Gate("rewardReceiptAllowed", causes);
                     return Pending("PlannedObtainRewardDependent", causes);
                 }
-                // Taking the last mandatory Bones relic unwinds its frame and
-                // generates the final curse inside the same Submit call.
+                // Concrete completion generates the curse in the same Submit.
+                // Live drawing instead owns its unknown-identity tail at that
+                // boundary; this independent relic receipt need not read Niche.
                 if (source.Entry == "NEOWS_BONES" && run.Rewards.Count(r => r.Status == PredictorRewardStatus.Open) == 1 &&
-                    !Reads(PredictorCombatDomain.NicheRng).IsEmpty)
+                    !run.CanProjectLiveBonesCurse() && !Reads(PredictorCombatDomain.NicheRng).IsEmpty)
                     return Pending("PlannedObtainClosureDependent", CausesFor(dependencies, PredictorCombatDomain.NicheRng));
                 if (reward.Kind is PredictorRewardKind.Card or PredictorRewardKind.SpecialCard)
                 {
@@ -140,7 +141,7 @@ internal sealed partial class PredictorRun
                 if (run.Phase != PredictorPhase.Rewards || run.Selection.CardRewardId != null ||
                     run.Rewards.Any(r => r.Status == PredictorRewardStatus.Open && (!r.CanSkip || r.Mandatory)))
                     return Pending("PlannedObtainClosurePending");
-                if (source.Entry == "NEOWS_BONES" && !Reads(PredictorCombatDomain.NicheRng).IsEmpty)
+                if (source.Entry == "NEOWS_BONES" && !run.CanProjectLiveBonesCurse() && !Reads(PredictorCombatDomain.NicheRng).IsEmpty)
                     return Pending("PlannedObtainClosureDependent", CausesFor(dependencies, PredictorCombatDomain.NicheRng));
                 return new LeaveRewards();
             case PredictorObtainChildAction.ChooseCard:
@@ -245,7 +246,7 @@ internal sealed partial class PredictorRun
             var matching = run.Rewards.Where(r => r.Kind == plannedReward.ExpectedReward.Kind &&
                 r.Origin == plannedReward.ExpectedReward.Origin && r.Key == plannedReward.ExpectedReward.Key).ToArray();
             if (plannedReward.Occurrence >= 0 && plannedReward.Occurrence < matching.Length &&
-                SameOffer(matching[plannedReward.Occurrence], plannedReward.ExpectedReward))
+                SameRouteRewardOffer(run, matching[plannedReward.Occurrence], plannedReward, dependencies))
             {
                 acceptedReward = matching[plannedReward.Occurrence]; acceptedChoice = plannedReward;
                 bool requestedOperationKnown;
@@ -263,7 +264,7 @@ internal sealed partial class PredictorRun
                     // pure observation admits navigation; actual execution
                     // below retains the original validation and failure cause.
                     requestedOperationKnown = ObserveRouteRewardAlternatives(run, acceptedReward, dependencies,
-                        ObserveRouteRewards(run, dependencies)[run.Rewards.IndexOf(acceptedReward)].PendingCauses)
+                        RewardOfferReadCauses(ObserveRouteRewards(run, dependencies)[run.Rewards.IndexOf(acceptedReward)]))
                         .Any(alternative => alternative.IsKnown && (plannedReward.Reroll ? alternative.Key == "REROLL" :
                             alternative.Key == "SACRIFICE" && alternative.RelicId == plannedReward.SacrificeRelicId));
                 }
@@ -273,7 +274,7 @@ internal sealed partial class PredictorRun
                 // disposition at the end of this reward transaction.
                 if (requestedOperationKnown && run._preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults &&
                     acceptedReward.Status == PredictorRewardStatus.Open &&
-                    ObserveRouteRewards(run, dependencies)[run.Rewards.IndexOf(acceptedReward)].IsKnown &&
+                    RouteRewardOperationKnown(run, ObserveRouteRewards(run, dependencies)[run.Rewards.IndexOf(acceptedReward)], plannedReward) &&
                     run.Selection.CardRewardId is { } selectedId && selectedId != acceptedReward.Id &&
                     run.Rewards.FirstOrDefault(reward => reward.Id == selectedId) is { HasRerolled: true,
                         Status: PredictorRewardStatus.Open } selected && IsLiveDefaultCardSkip(run, selected) &&
@@ -360,7 +361,7 @@ internal sealed partial class PredictorRun
             {
                 var card = run.Working.Card(t.InstanceId);
                 var targetGaps = deck.TargetGaps(t.InstanceId, scope, RouteTargetRequiredFacts(card, requiredFacts));
-                var sources = run._preview.Partial.WitnessCardCauses(card);
+                var sources = run._preview.Partial.WitnessCardMembershipCauses(card);
                 if (sources.IsEmpty) return targetGaps;
                 // The numerical ID belongs to an earlier event alternative,
                 // not to a missing base capture or a new implementation gap.

@@ -30,6 +30,10 @@ internal sealed partial class WorkspaceShell
             _persistence!.AcknowledgeNotesChapter(chapter);
             RefreshNotesReminder();
         };
+        _notesPage.ExternalLinkRequested += url =>
+        {
+            _notesPage?.ShowExternalLinkResult(url, TryOpenExternalUrl(url, "DeveloperNotes.ExternalLink"));
+        };
         _notesHost.AddChild(_notesPage);
         RefreshNotes();
         _notesPage.OpenChapter(DeveloperNotesChapterIds.Release);

@@ -85,8 +85,20 @@ internal sealed partial class MapWorkspace : PanelContainer
     }
 
     public void Open(int act, string seed, IUiTextProvider text, Control opener)
+        => OpenCore(act, seed, text, opener, null);
+
+    internal void OpenResultWitness(int act, string seed, IUiTextProvider text, Control opener,
+        RolltheSpire2.Ui.Persistence.PersistedMapRouteWitness witness)
+        => OpenCore(act, seed, text, opener, witness);
+
+    private void OpenCore(int act, string seed, IUiTextProvider text, Control opener,
+        RolltheSpire2.Ui.Persistence.PersistedMapRouteWitness? witness)
     {
+        ClearResultWitness();
         if (_routeSeed != seed) ResetRouteContext();
+        _witnessMapMode = witness is not null;
+        _map.ReadOnly = _witnessMapMode;
+        if (witness is not null) { _pendingWitness = witness; _pendingWitnessSeed = seed; }
         _routeSeed = seed;
         SelectedAct = act; _opener = opener; _hasMap = false;
         _map.Clear();
@@ -102,13 +114,13 @@ internal sealed partial class MapWorkspace : PanelContainer
     public void ApplyLocalization(IUiTextProvider text)
     {
         _text = text;
-        _title.Text = text.Get("ui1.map.open");
+        _title.Text = text.Get(_witnessMapMode ? "ui1.map.witness.title" : "ui1.map.open");
         _back.Text = text.Get("ui1.map.back");
         for (int index = 0; index < _actButtons.Length; index++)
             _actButtons[index].Text = text.Get(index switch { 1 => Ui1TextKey.AnalysisSectionAct2, 2 => Ui1TextKey.AnalysisSectionAct3, _ => Ui1TextKey.AnalysisSectionAct1 });
         RefreshTabs();
         _map.ApplyLocalization(text);
-        if (_hasMap) _status.Text = text.Get("ui1.map.scope");
+        if (_hasMap) _status.Text = text.Get(_witnessMapMode ? "ui1.map.witness.scope" : "ui1.map.scope");
         RefreshRouteControls();
         RefreshUnknownRooms();
     }
@@ -120,12 +132,13 @@ internal sealed partial class MapWorkspace : PanelContainer
         _map.Bind(map, bosses, ancient, _text);
         _hasMap = true;
         BindRoutes(map);
-        _status.Text = _text.Get("ui1.map.scope");
+        _status.Text = _text.Get(_witnessMapMode ? "ui1.map.witness.scope" : "ui1.map.scope");
     }
 
     public void Close()
     {
         if (!Visible) return;
+        ClearResultWitness();
         Visible = false; _hasMap = false; _map.Clear(); ClearRouteView();
         Closed?.Invoke();
         if (IsInstanceValid(_opener) && _opener!.IsInsideTree() && _opener.IsVisibleInTree()) _opener.GrabFocus();
@@ -145,6 +158,7 @@ internal sealed partial class MapWorkspace : PanelContainer
     {
         if (!Visible || act < 1 || act > 3) return;
         if (SelectedAct == act) { RefreshTabs(); return; }
+        ClearResultWitness();
         SelectedAct = act;
         SetStatus(_text?.Get("ui1.map.loading") ?? string.Empty);
         RefreshTabs();

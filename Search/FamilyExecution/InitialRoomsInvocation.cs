@@ -58,10 +58,71 @@ internal sealed class InitialRoomsInvocation : IFamilyInvocation
     GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements =>
         (_usesGpu ? Plan.NumericRequirements : GpuNumericRequirements.None) |
         (_ordinary?.GpuNumericRequirements ?? GpuNumericRequirements.None);
-    // These complete calls use their own finite public references. R/W private paths stay
-    // available only when this additional calculation is absent.
+    // Public calls retain finite references. Computation quotes compose only the
+    // ordinary and local work; this additional calculation has no private binding.
     bool IFamilyInvocation.CanBindPrivateSerial => false;
-    public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest request) => FamilyCanonicalMeasuredCost.TryDenseQuote(this, request);
+    public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest request)
+    {
+        var measured = FamilyCanonicalMeasuredCost.TryDenseQuote(this, request);
+        if (measured is not null) return measured;
+        if (!FamilyPhysicalQuote.AdmittedRequest(request) || request.PrivateInput || request.PrivateOutput || request.MeanInputPopulation <= 0)
+            return null; // this invocation has no private binding
+        double inputs = request.MeanInputPopulation, ordinaryPass = 1;
+        double ordinaryMs = 0;
+        FamilyPhysicalQuote? ordinaryQuote = null;
+        if (_ordinary is not null)
+        {
+            ordinaryPass = _ordinary.Survival.SurvivalProbability is { } p && double.IsFinite(p) && p is >= 0 and <= 1 ? p : 1;
+            ordinaryQuote = request.ComputationOnly
+                ? FamilyPhysicalQuote.Computation(_ordinary, request, request.CostSnapshot)
+                : _ordinary.QuotePhysicalWork(request);
+            bool ownedFallback = ordinaryQuote is null;
+            if (ordinaryQuote is null)
+            {
+                // A missing auxiliary child price is not zero work. Use this
+                // same owner's source-work envelope, explicitly as an estimate.
+                double work = Math.Max(1, _ordinary.AnalyticalCost.WorkUnitsPerInput);
+                ordinaryQuote = _ordinary.ConditionPerformance.UsesGpu
+                    ? FamilyCoarsePricing.Gpu(FamilyId, "InitialRooms.OrdinaryWorkEnvelope", .98 + .012 * work,
+                        _ordinary.AnalyticalCost.InputCapacityPerInvocation, request,
+                        "OrdinaryOwnerReferenceUnavailable;SourceWorkEnvelope;NoZeroCostSubstitution")
+                    : FamilyCoarsePricing.Cpu(FamilyId, "InitialRooms.OrdinaryWorkEnvelope", 243 + work,
+                        _ordinary is FamilyCpuExecution cpu ? cpu.Workers : _cpu.Workers, request,
+                        "OrdinaryOwnerReferenceUnavailable;SourceWorkEnvelope;NoZeroCostSubstitution");
+            }
+            if (ordinaryQuote is null) return null;
+            if (request.ComputationOnly && (ownedFallback || request.CostSnapshot is null))
+                ordinaryQuote = FamilyCoarsePricing.LocalComputation(_ordinary, ordinaryQuote, request);
+            double? value = request.ComputationOnly ? FamilyCoarsePricing.ComputationMilliseconds(ordinaryQuote, request)
+                : FamilyCoarsePricing.PublicMilliseconds(ordinaryQuote, request, ordinaryPass);
+            if (value is null) return null;
+            ordinaryMs = value.Value;
+        }
+        var localGeometry = request with { CompactInput = request.CompactInput || _ordinary is not null,
+            MeanInputPopulation = inputs * ordinaryPass };
+        var local = InitialRoomsWorkEstimate.Local(FamilyId, Plan, localGeometry, _usesGpu, _cpu.Workers);
+        var input = SearchSelectivityInput.From(_request);
+        var probability = Plan.CoversTreasure ? TreasureRelicProbability.Estimate(input).Probability :
+            FirstActUnknownEventProbability.Estimate(input).Probability;
+        double localPass = probability is { } q && double.IsFinite(q) && q is >= 0 and <= 1 ? q : 1;
+        if (local is null) return null;
+        if (request.ComputationOnly) local = FamilyCoarsePricing.LocalComputation(this, local, localGeometry);
+        double? localTime = request.ComputationOnly ? FamilyCoarsePricing.ComputationMilliseconds(local, localGeometry)
+            : FamilyCoarsePricing.PublicMilliseconds(local, localGeometry, localPass);
+        if (localTime is not { } localMs) return null;
+        return new(FamilyId, request.ComputationOnly ? "InitialRooms.OwnedComputationWorkEstimate.20261028.v1"
+                : "InitialRooms.OwnedPublicWorkEstimate.20261028.v1", (ordinaryMs + localMs) * 1e6 / inputs,
+            _usesGpu ? InitialRoomsPlan.Capacity : _cpu.WindowCapacity, null,
+            FamilyCoarsePricing.Revision + ";PriceQuality=Estimate;Model=ReusableCoarse;FamilyLocal;" +
+            (request.ComputationOnly ? "ComputationOnly;NumericalAndDeviceEmission;NoSubmitOrHostReadback;NoCrossFamilyHandoffCost;"
+                : "CompleteWithinFamilyPublicInvoke;") + "OrdinaryOnceThenLocalOnModeledSurvivors;" +
+            $"OrdinaryPass={ordinaryPass:G17};LocalPass={localPass:G17};UnknownPass=ConservativeOne;" +
+            "AlreadyCompleteOrdinaryHasNoSecondOutputCharge;NoCrossFamilyConnectionOrExactCost;" +
+            "OrdinaryEvidence=" + (ordinaryQuote?.Evidence ?? "None") + ";LocalEvidence=" + local.Evidence,
+            OutputElementBytes: 8, OutputAlreadyOrdered: true, PublicTransportClass: request.ComputationOnly
+                ? (_usesGpu ? "DeviceFamilyWork" : "CpuOrderedAbi1") : "CompleteCanonicalAbi1")
+            { LocalCostSource = request.ComputationOnly ? "ComponentComposition" : "ReferenceEstimate", ReferencePeakThroughput = 0 };
+    }
     public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId, InitialRoomsPlan.Capacity, [], "InitialRoomsAnalyticalWorkUnmodeled");
     public FamilySurvivalProjection Survival => ResolveSurvival(new HashSet<string>(StringComparer.Ordinal));
     public bool HasConditionalProjections => _ordinary?.HasConditionalProjections == true;
@@ -87,7 +148,8 @@ internal sealed class InitialRoomsInvocation : IFamilyInvocation
     public FamilyExpectedFilteringCostProjection? ExpectedFilteringCost => null;
     public FamilyConditionPerformanceProjection ConditionPerformance => ResolveConditionPerformance(false);
     public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compact) => new(FamilyId,
-        Revision + (_usesGpu ? ".Gpu" : ".Cpu.P" + _cpu.Workers) + (compact ? ".CompactAbi1" : ".Dense") + ".CanonicalAbi1Ready",
+        Revision + (_usesGpu ? ".Gpu" : ".Cpu.P" + _cpu.Workers) + (compact ? ".CompactAbi1" : ".Dense") + ".CanonicalAbi1Ready" +
+            (_usesGpu ? GpuRngRotation.Revision : ""),
         "InitialRooms.Neutral.20261024.v1", 1, "CompletePublicCall;FiniteReferenceWhenAvailable;ProductionExactFinal", usesGpu: _usesGpu);
 
     IEnumerable<IFamilyInvocation> IFamilyInvocation.CpuRealizations

@@ -230,7 +230,10 @@ internal sealed partial class AnalysisPage
                 CustomMinimumSize = new Vector2(48, 40) }; row.AddChild(toggle);
             var description = WColumn(); description.AddThemeConstantOverride("separation", 2); row.AddChild(description);
             description.AddChild(WLabel(_contentNames!.Resolve(key, GameContentKind.Relic)));
-            description.AddChild(WNote(Text(AncientOptionPremiseTextKey(key)!)));
+            string premise = Text(AncientOptionPremiseTextKey(key)!);
+            if (key.Entry == "BEAUTIFUL_BRACELET")
+                premise = string.Format(premise, _contentNames.Resolve(new("ENCHANTMENT", "SWIFT"), GameContentKind.Enchantment));
+            description.AddChild(WNote(premise));
             toggle.Toggled += value => _ancientGroupCard.SetConditions(_ancientGroupCard.CurrentConditions.WithOptionEligibility(key, value), notify: true);
         }
         var reset = WAction("predictor.design.conditions_reset"); reset.SizeFlagsHorizontal = SizeFlags.ShrinkBegin;

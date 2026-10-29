@@ -19,12 +19,13 @@ internal sealed partial class PredictorRun
         if (_eventKey?.Entry is ("ROOM_FULL_OF_CHEESE" or "BRAIN_LEECH") &&
             _eventBranch is ("GORGE" or "SHARE_KNOWLEDGE"))
         {
+            var offer = EventCardOffer();
+            var knowledge = _preview.Partial?.EventOfferedCardKnowledge(this);
             foreach (long id in selection.CardIds)
             {
                 var card = _eventOfferedCards.Single(c => c.Id == id);
                 PredictorSettlementEffects.RequireImplementedCard(card, context: Context);
-                Working = Working with { Cards = Working.Cards.Add(card) };
-                Working = PredictorObtainSources.AddExistingCard(Context, Working, card);
+                Working = ReceiveRewardCard(offer, card, knowledge);
             }
             Accept(new(_eventKey.Value.Entry == "BRAIN_LEECH" ? "BrainLeechGridCard" : "CheeseGorgeCards",
                 0, selection.CardIds, null, null));

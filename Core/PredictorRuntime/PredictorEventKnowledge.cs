@@ -27,6 +27,7 @@ internal sealed record PredictorPlannedEventAction(PredictorEventActionKind Acti
     public PredictorEventOption? ExpectedOption { get; init; }
     public ImmutableArray<PredictorPlannedCard> DeckCards { get; init; } = [];
     public ImmutableArray<PredictorCard> ExpectedCards { get; init; } = [];
+    public ImmutableArray<int> UnresolvedEnchantmentIndices { get; init; } = [];
     public ImmutableArray<int> CardIndices { get; init; } = [];
     public PredictorEventHealthFact? Health { get; init; }
     public PredictorConveyorInput? Conveyor { get; init; }
@@ -70,6 +71,8 @@ internal sealed record PredictorEventOptionResultKnowledge(
     ImmutableArray<PredictorCombatRewardKnowledge> Rewards,
     ImmutableArray<PredictorCombatPendingCause> PendingCauses)
 {
+    public ImmutableArray<PredictorCardRewardOptionKnowledge> OfferedCardOptions { get; init; } = [];
+    public PredictorRewardOfferBinding? OfferedCardBinding { get; init; }
     public ImmutableArray<PredictorEventOptionKnowledge> Options { get; init; } = [];
     public ImmutableArray<PredictorEventCardChangeKnowledge> ChangedCards { get; init; } = [];
     // Only causes read by this option or produced by its unresolved child.
@@ -110,6 +113,8 @@ internal sealed record PredictorEventNodeKnowledge(ModelKey? Event,
     ImmutableArray<PredictorCombatRewardKnowledge> Rewards,
     ImmutableArray<PredictorCombatPendingCause> PendingCauses)
 {
+    public ImmutableArray<PredictorCardRewardOptionKnowledge> OfferedCardOptions { get; init; } = [];
+    public PredictorRewardOfferBinding? OfferedCardBinding { get; init; }
     public PredictorRouteEventInputPolicy InputPolicy => PredictorRouteEventPolicy.For(Event);
     // The current stage can differ from the event's entry policy (for example
     // an adopted fight has only a deterministic confirmation page left).

@@ -19,9 +19,9 @@ internal static class SearchResultProjection
             Seed = candidate.Seed, CharacterKey = candidate.CharacterKey.Serialized, Ascension = candidate.Ascension,
             QueryFingerprint = queryFingerprint, Party = candidate.Document?.Party, IsUnverified = candidate.IsUnverified,
             IsUnfiltered = candidate.IsUnverified && candidate.IsUnfiltered, ValidationDisposition = candidate.ValidationDisposition,
-            ValidationIssue = candidate.ValidationIssue, SupportScope = candidate.SupportScope,
+            ValidationIssue = candidate.ValidationIssue, SupportScope = candidate.SupportScope, MapSearch = candidate.MapSearch,
             ExecutionWarnings = candidate.ExecutionWarnings.ToArray(), WitnessOpeningRouteId = route?.OpeningRouteId ?? "",
-            TreasureSources = TreasureSources(candidate)
+            TreasureSources = TreasureSources(candidate), MapRouteWitnesses = MapRouteWitnessProjection.FromCandidate(candidate)
         };
     }
 

@@ -33,6 +33,7 @@ uint next_int_current_shortcut_from_mantissa(uint64_t x, uint bound) {
     return uint(upper_limb >> 21u);
 }
 
+/*__RT2_XOSHIRO_ROTATE45__*/
 uint64_t rotl64(uint64_t value, uint amount) {
     return (value << amount) | (value >> (64u - amount));
 }
@@ -45,7 +46,7 @@ uint64_t next_u64(inout RngState rng) {
     rng.s1 ^= rng.s2;
     rng.s0 ^= rng.s3;
     rng.s2 ^= temporary;
-    rng.s3 = rotl64(rng.s3, 45u);
+    rng.s3 = rt2_rotate_left45_split32(rng.s3);
     return result;
 }
 

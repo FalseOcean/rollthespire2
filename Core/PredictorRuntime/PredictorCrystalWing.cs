@@ -30,32 +30,60 @@ internal static class PredictorCrystalWing
     internal static ImmutableHashSet<ModelKey> GiftAvailability(PredictorContext context, PredictorState state, int count)
     {
         if(count<=0) return ImmutableHashSet<ModelKey>.Empty;
-        var bag=state.PersonalBag;
-        if(context.Crystal==null || !context.Crystal.UnmodeledSources.IsEmpty || bag.RefreshAllowed && !bag.HasOriginalCatalog)
+        if(context.Crystal==null || !context.Crystal.UnmodeledSources.IsEmpty || !PredictableGiftBag(state))
             return GiftUpper(context,state,count);
-        bool Regular(string rarity)=>rarity is "Common" or "Uncommon" or "Rare";
-        bool Known(ModelKey key)
-        {
-            if(SpecialGiftRecipes.Contains(key.Entry)) return false;
-            // Bag labels are not implementation evidence. A missing handler
-            // stays in the conservative domain and may still fault on replay;
-            // this pruning decision never converts that fault into absence.
-            try {PredictorSettlementEffects.RequireImplementedRelic(key);return true;}
-            catch(NotImplementedException) {return false;}
-        }
-        if(bag.Buckets.Where(b=>Regular(b.Rarity)).SelectMany(b=>b.Entries).Concat(bag.MultiplayerFallback).Any(k=>!Known(k)) ||
-            bag.RefreshAllowed && bag.Original.Where(e=>Regular(e.Rarity)).Any(e=>!Known(e.Key)))
+        return DrawModeledGifts(context,state,count);
+    }
+
+    // Query-only evidence under Crystal's captured base-properties /
+    // no-custom-hooks premise. Card insertion and supported regular gift
+    // obtains preserve Rewards, and remove only the obtained nonstackable key
+    // from the bag; eligibility is frozen. Recheck this proof and its negative
+    // reuse if a future card/gift handler changes either stream or bag.
+    internal static ImmutableHashSet<ModelKey> ModeledGiftAvailability(PredictorContext context,PredictorState state,int count)
+    {
+        if(count<=0) return ImmutableHashSet<ModelKey>.Empty;
+        if(context.Crystal==null || state.PersonalBag.RefreshAllowed && !state.PersonalBag.HasOriginalCatalog)
             return GiftUpper(context,state,count);
+        // Unvisited unknown entries cannot affect these fixed pulls. Every
+        // actually drawn gift must still satisfy the obtain-effect proof.
+        return DrawModeledGifts(context,state,count,checkDrawnGifts:true);
+    }
+
+    private static ImmutableHashSet<ModelKey> DrawModeledGifts(PredictorContext context,PredictorState state,int count,bool checkDrawnGifts=false)
+    {
+        var source=state;
         var gifts=ImmutableHashSet.CreateBuilder<ModelKey>();
         for(int n=0;n<count;n++)
         {
             var key=PredictorRewardGeneration.PullRelic(context,ref state);
+            if(checkDrawnGifts && !PredictableGift(key)) return GiftUpper(context,source,count);
             gifts.Add(key);
             // RelicCmd.Obtain removes all instances of a nonstackable key after
             // its selected deque entry was pulled. Circlet remains stackable.
             if(key.Entry!="CIRCLET") state=state with {PersonalBag=state.PersonalBag.Remove(key),SharedBag=state.SharedBag.Remove(key)};
         }
         return gifts.ToImmutable();
+    }
+
+    private static bool PredictableGiftBag(PredictorState state)
+    {
+        var bag=state.PersonalBag;
+        if(bag.RefreshAllowed && !bag.HasOriginalCatalog) return false;
+        bool Regular(string rarity)=>rarity is "Common" or "Uncommon" or "Rare";
+        if(bag.Buckets.Where(b=>Regular(b.Rarity)).SelectMany(b=>b.Entries).Concat(bag.MultiplayerFallback).Any(k=>!PredictableGift(k)) ||
+            bag.RefreshAllowed && bag.Original.Where(e=>Regular(e.Rarity)).Any(e=>!PredictableGift(e.Key)))
+            return false;
+        return true;
+    }
+
+    private static bool PredictableGift(ModelKey key)
+    {
+        if(SpecialGiftRecipes.Contains(key.Entry)) return false;
+        // Bag labels are not implementation evidence. A missing handler stays
+        // conservative and may still fault on replay; it never proves absence.
+        try {PredictorSettlementEffects.RequireImplementedRelic(key);return true;}
+        catch(NotImplementedException) {return false;}
     }
 
     // Nonregular modeled recipes are deliberately outside the consecutive-draw

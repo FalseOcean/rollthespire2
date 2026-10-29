@@ -11,7 +11,9 @@ public sealed record SearchRunOptions(
     int TargetMatchCount,
     int WorkerCount,
     bool IncludeDiagnostics = true,
-    bool SkipExactValidation = false);
+    bool SkipExactValidation = false,
+    IReadOnlyList<string>? ManualFamilyOrder = null,
+    MapLossyOptions? MapLossy = null);
 
 public sealed record ExactSearchExecutionRequest(
     CompiledSearch CompiledSearch,
@@ -24,6 +26,8 @@ public sealed record ExactSearchExecutionRequest(
 {
     internal IReadOnlyList<RolltheSpire2.Core.Neow.NeowChoiceResult>? PartyOpeningChoices { get; init; }
     internal RolltheSpire2.Core.Rewards.CombatRewardPoolPreparation? RewardPoolPreparation { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    internal RolltheSpire2.Search.FamilyExecution.VariantOpeningPreparation? VariantOpening { get; init; }
     internal RolltheSpire2.Search.Runtime.ShionExactTrialOptions ExactOptions { get; init; } =
         RolltheSpire2.Search.Runtime.ShionExactTrialOptions.Default;
     public RuntimeProfileId ProfileId => CompiledSearch.Context.ProfileId;
@@ -35,6 +39,7 @@ public sealed record ExactSearchExecutionRequest(
     public RuntimeContextAuthoritySnapshot Authority => CompiledSearch.Context.Authority;
     public GameVersionDetection Detection => CompiledSearch.Context.Detection;
     public bool IncludeDiagnostics => RunOptions.IncludeDiagnostics;
+    public MapLossyOptions MapLossy => RunOptions.MapLossy ?? MapLossyOptions.Default;
 }
 
 public sealed record ExactSearchExecutionCompileResult(

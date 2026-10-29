@@ -59,7 +59,7 @@ internal sealed partial class EncyclopediaCanvas
         string title = firstHeading >= 0 ? lines[firstHeading].TrimStart('#', ' ') : ArticleName(definition);
         var eyebrow = ArticleText(T("约定与设计说明", "CONVENTIONS & DESIGN") + "   /   BETA " + (definition.GameVersion ?? EncyclopediaGameVersion), 14, _palette.Secondary);
         content.AddChild(eyebrow);
-        var heading = ArticleText(title, 30, firstRelicIcons: false);
+        var heading = ArticleText(title, 30, _palette.Selected, firstRelicIcons: false);
         content.AddChild(heading);
         if (_language != "zh" && localized is null)
             content.AddChild(ArticleText("English translation pending · Showing the Chinese article.", 16, _palette.Secondary));
@@ -101,7 +101,7 @@ internal sealed partial class EncyclopediaCanvas
                 var section = new MarginContainer();
                 section.AddThemeConstantOverride("margin_top", level == 3 ? 12 : 22);
                 section.AddThemeConstantOverride("margin_bottom", 4);
-                section.AddChild(ArticleText(heading.Groups[2].Value, level == 3 ? 22 : 25));
+                section.AddChild(ArticleText(heading.Groups[2].Value, level == 3 ? 22 : 25, _palette.Selected));
                 content.AddChild(section);
                 if (level <= 2) chapters.Add(new(heading.Groups[2].Value, section, level));
                 i++; continue;
@@ -178,7 +178,7 @@ internal sealed partial class EncyclopediaCanvas
         var style = new StyleBoxFlat
         {
             BgColor = fill is null ? Colors.Transparent : _palette.Color(fill),
-            BorderColor = _palette.Color(_palette.Line), BorderWidthLeft = accent ? 2 : 0,
+            BorderColor = _palette.Color(accent ? _palette.Selected : _palette.Line), BorderWidthLeft = accent ? 2 : 0,
             ContentMarginLeft = 18, ContentMarginRight = 18, ContentMarginTop = 13, ContentMarginBottom = 13,
             CornerRadiusTopLeft = 4, CornerRadiusTopRight = 4, CornerRadiusBottomLeft = 4, CornerRadiusBottomRight = 4
         };
@@ -191,7 +191,7 @@ internal sealed partial class EncyclopediaCanvas
         var panel = BlockPanel(_palette.OptionSurface, true);
         var inner = new VBoxContainer(); inner.AddThemeConstantOverride("separation", 7);
         panel.AddChild(inner);
-        if (caption is not null) inner.AddChild(ArticleText(caption, 13, _palette.Secondary));
+        if (caption is not null) inner.AddChild(ArticleText(caption, 13, _palette.Selected));
         inner.AddChild(ArticleText(text, 20));
         content.AddChild(panel);
     }

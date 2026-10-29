@@ -156,7 +156,7 @@ internal sealed partial class PredictorRun
             // An unprojected eligible count is an unknown upgrade result, not
             // a failure to receive the relic. ProjectUpgrade retains its deck
             // mutation and marks Niche unknown without changing other streams.
-            return Domain(PredictorCombatDomain.Relics).IsEmpty;
+            return RouteRelicIdentityCauses(_dependencies).IsEmpty;
         }
 
         internal PredictorCombatDomain RefineObtainReads(ModelKey relic, PredictorCombatDomain reads, bool entryOnly)
@@ -341,9 +341,10 @@ internal sealed partial class PredictorRun
         run._preview.Partial?.Synchronize(run.Working);
         if (HasLiveDeckRandomObtainBoundary(run, key) || run._preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults &&
             key.Entry == "LEAFY_POULTICE")
-            return CausesFor(dependencies, PredictorCombatDomain.Relics);
+            return RouteLiveObtainRelicCauses(run, key, dependencies);
         var reads = entryOnly ? ObtainEntryReadDomains(run, key, dependencies) : ObtainReadDomains(key);
         if (run._preview.Partial != null) reads = run._preview.Partial.RefineObtainReads(key, reads, entryOnly);
+        reads = RefineOpenRewardObtainReads(run, key, reads);
         return CausesFor(dependencies, reads);
     }
 }

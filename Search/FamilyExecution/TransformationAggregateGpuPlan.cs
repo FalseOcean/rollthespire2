@@ -32,18 +32,26 @@ internal sealed class TransformationAggregateGpuPlan
          p.Condition.TargetMultiset.Count == p.Condition.OpportunityCount || UsesBonesOptimization(p) && AllDrawsRequired(p));
     internal bool BonesOptimized { get; }
     internal bool FullTarget { get; }
+    internal bool PrefixReuse { get; }
+    internal const string PrefixReuseRevision = ".DensePrefixReuse.20261027.v1";
+    private static bool CapturePrefixReuse() => Environment.GetEnvironmentVariable("RT2_T_GPU_PLAN_EXPERIMENT") switch {
+        null or "" or "off" or "baseline" => false,
+        "prefix" => true,
+        var mode => throw new InvalidOperationException("T.UnknownGpuPlanExperiment:" + mode)
+    };
     internal GpuNumericalVariant NumericalVariant { get; }
     internal GpuNumericRequirements NumericRequirements => Supported ? GpuIntegerNumerics.Requirements(NumericalVariant) : GpuNumericRequirements.None;
     internal string NumericalRevision => NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "";
     internal string Revision(bool compact) => (BonesOptimized ? "T.Gpu.BonesTracked."+(FullTarget?"TransformFirst.Carry8.AllRequired":"OpeningFirst.Generic")+".20261001.v1" :
-        FullTarget?FullTargetRevision:GenericRevision)+"."+(compact?"CompactAbi1":"Dense")+".CanonicalAbi1Ready" + NumericalRevision;
+        FullTarget?FullTargetRevision:GenericRevision)+"."+(compact?"CompactAbi1":"Dense")+".CanonicalAbi1Ready" + NumericalRevision +
+        (PrefixReuse ? PrefixReuseRevision : "") + GpuRngRotation.Revision;
     internal int SeedsPerInvocation => FullTarget ? 8 : 1;
     internal int Capacity => FullTarget && Experiment != "full1m" ? FullTargetCapacity : WindowCapacity;
     internal uint[][] Buffers { get; }
     internal bool Supported { get; }
     internal TransformationAggregateGpuPlan() { Buffers = []; }
     internal TransformationAggregateGpuPlan(TransformationAggregateNumericalPlan p,
-        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
+        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64, bool? prefixReuse = null)
     {
         if (numericalVariant is not (GpuNumericalVariant.NativeFloat64 or GpuNumericalVariant.IntegerRne))
             throw new ArgumentOutOfRangeException(nameof(numericalVariant));
@@ -53,6 +61,7 @@ internal sealed class TransformationAggregateGpuPlan
         FullTarget = UsesFullTarget(p);
         Supported=p.Closed && (n is null || n.Authority.PlayerSlotIndex == 0 && n.Authority.EligibleCurseRelicIds.Length is >0 and <=32 &&
             (!p.Condition.IsBones || n.Authority.BonesEligibleRelicIds.Length is >=2 and <=32)) && groups.Length<=7 && groups.All(g=>g.Pools.Length<=2);
+        PrefixReuse = (prefixReuse ?? CapturePrefixReuse()) && Supported && !FullTarget;
         var meta=new List<uint>(new uint[32]); var data=new List<uint>();
         uint Add(IEnumerable<uint> values) { uint o=(uint)data.Count;data.AddRange(values);return o; }
         void Hash(int at,ulong hash){meta[at]=(uint)hash;meta[at+1]=(uint)(hash>>32);}
@@ -123,6 +132,7 @@ internal sealed class TransformationAggregateGpuPlan
         if (BonesOptimized && FullTarget && Buffers[0][1] == 0) defines += "\n#define T_ALL_RARE";
         body = body.Replace("#version 450", "#version 450" + defines, StringComparison.Ordinal);
         string assembled = body.Replace("/*__RNG__*/",rng,StringComparison.Ordinal);
+        if (PrefixReuse) assembled = TransformationAggregateGpuPrefixSource.Apply(assembled);
         return NumericalVariant == GpuNumericalVariant.IntegerRne ? TransformationAggregateGpuNumericalSource.IntegerRne(assembled) : assembled;
     }
 }

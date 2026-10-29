@@ -65,8 +65,8 @@ internal static class InRunFeaturePreferences
     internal static OperationPredictionMode GetOperationMode(string id) => Runtime.OperationPredictionModes.Get(id);
     internal static OperationPredictionPreferences CaptureOperationModes() => Runtime.OperationPredictionModes;
     internal static bool MapPredictionEnabled => Runtime.MapPredictionEnabled;
-    // Native entry may precede UI initialization. Unknown preserves capture;
-    // this read must never initialize Runtime or load workspace documents.
+    // Native entry may precede UI initialization. Callers resolve an unknown
+    // value through Runtime once; this cached read itself never loads documents.
     internal static bool? CachedMapPredictionEnabled => _runtimeDirectory is { } directory &&
         ByDirectory.TryGetValue(directory, out var current) ? current.MapPredictionEnabled : null;
     internal static string LanguageOverride => Runtime.LanguageOverride;

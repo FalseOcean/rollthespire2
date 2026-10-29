@@ -211,15 +211,20 @@ internal static class InitialRoomGpuChecks
                 try
                 {
                     var coverage = selected.Stages.SelectMany(stage => stage.Coverage).ToHashSet(StringComparer.Ordinal);
+                    var variantOwner = selected.ExecutionOrderUnits.Select(family => family is FamilyCpuExecution cpu
+                        ? cpu.RealizationOwner ?? family : family).OfType<VariantOpeningFamily>().SingleOrDefault();
                     check(coverage.Contains(InitialRoomsInvocation.TreasureCoverage) == (fixture.Query.TreasureRelics is not null) &&
-                        coverage.Contains(InitialRoomsInvocation.UnknownCoverage) == (fixture.Query.FirstActUnknownEventPrefixCount > 0),
+                        coverage.Contains(VariantOpeningFamily.Id) == (fixture.Query.FirstActUnknownEventPrefixCount > 0) &&
+                        (variantOwner?.Plan.UnknownPrefixCount ?? 0) == fixture.Query.FirstActUnknownEventPrefixCount &&
+                        !coverage.Contains(InitialRoomsInvocation.UnknownCoverage),
                         fixture.Name + ":actual default registration:" + gpu);
                     check(selected.OrderedFamilies.OfType<InitialRoomsInvocation>().All(f => !((IFamilyInvocation)f).CanBindPrivateSerial &&
                         f.ConditionPerformance.UsesGpu == gpu &&
-                        (mode != "IntegerRne" || f.QuotePhysicalWork(new(false, false, 4097)) is null) &&
+                        (mode != "IntegerRne" || f.QuotePhysicalWork(new(false, false, 4097)) is not { } quote ||
+                            FamilyCoarsePricing.IsEstimate(quote)) &&
                         f.QuotePhysicalWork(new(false, false, 4097) { PrivateInput = true }) is null &&
                         f.QuotePhysicalWork(new(false, false, 4097) { PrivateOutput = true }) is null),
-                        fixture.Name + ":requested public CPU/GPU path and compatibility price isolation");
+                        fixture.Name + ":requested public CPU/GPU path and honest compatibility estimate or unknown price");
                     check(selected.OrderedFamilies.All(f => !gpu || mode != "IntegerRne" ||
                         (f.GpuNumericRequirements & (GpuNumericRequirements.Float64 | GpuNumericRequirements.Unspecified)) == 0),
                         fixture.Name + ":actual compatibility requirements");
@@ -227,7 +232,10 @@ internal static class InitialRoomGpuChecks
                     var input = compact ? FamilyCandidateSet.FromSortedAbi1(batch, Enumerable.Range(0, 4097)
                         .Where(i => i % 3 == 0).Select(i => (ulong)i).ToArray()) : FamilyCandidateSet.Dense(batch);
                     var actual = input;
-                    foreach (var family in selected.OrderedFamilies)
+                    // The production serial wrapper admits dense root windows;
+                    // arbitrary compact fixtures exercise its public units.
+                    var invocations = compact ? selected.ExecutionOrderUnits : selected.OrderedFamilies;
+                    foreach (var family in invocations)
                         actual = await family.InvokeAsync(execution, new(batch, request), actual, default);
                     ulong[] expected = oracle.Where(i => !compact || i % 3 == 0).ToArray();
                     ulong[] actualOrdinals = actual.EnumerateLogicalOrdinals().ToArray();
@@ -237,10 +245,10 @@ internal static class InitialRoomGpuChecks
                     check(exact.IsMatch, fixture.Name + ":original whole Exact positive:" + mode);
                     receipts.Add(new { fixture.Name, Mode = mode, gpu, compact, input = input.Count, survivors = actual.Count,
                         ExpectedAbi1 = expected, ActualAbi1 = actualOrdinals, WholeExactPositive = positive, WholeExactDisposition = exact.Evaluation.Disposition.ToString(),
-                        Bodies = selected.OrderedFamilies.Select(f => new { f.FamilyId,
+                        Bodies = invocations.Select(f => new { f.FamilyId,
                             Revision = f.ResolveConditionPerformance(compact).PhysicalImplementationRevision,
                             Requirements = f.GpuNumericRequirements.ToString(), Device = f.CapturePerformanceObservation().DeviceName }).ToArray(),
-                        coverage, oracle = "DefaultPlannerR/WOwnedBodies;FullCoreReferencePopulation;LegacyOrdinaryShopAndWorldPreserved" });
+                        coverage, oracle = "DefaultPlannerR/V/WOwnedBodies;FullCoreReferencePopulation;LegacyOrdinaryShopAndWorldPreserved" });
                 }
                 finally
                 {
@@ -365,26 +373,30 @@ internal static class InitialRoomGpuChecks
                 var selected = FamilyExecutionCoordinator.Plan(request, gpu, gpuFloat64Available: mode != "IntegerRne");
                 try
                 {
-                    check(selected.Stages.SelectMany(stage => stage.Coverage).Count(atom => atom == InitialRoomsInvocation.UnknownCoverage) == 1 &&
-                        selected.OrderedFamilies.Count(family => family.FamilyId == "W.World") == 1 &&
-                        selected.OrderedFamilies.Single(family => family.FamilyId == "W.World").ConditionPerformance.UsesGpu == gpu,
-                        "captured party actual default one shared W owner:" + count + ":" + gpu);
+                    check(selected.Stages.SelectMany(stage => stage.Coverage).Count(atom => atom == VariantOpeningFamily.Id) == 1 &&
+                        selected.ExecutionOrderUnits.Count(family => family.FamilyId == VariantOpeningFamily.Id) == 1 &&
+                        selected.ExecutionOrderUnits.All(family => family.FamilyId != "W.World") &&
+                        selected.ExecutionOrderUnits.Single(family => family.FamilyId == VariantOpeningFamily.Id).ConditionPerformance.UsesGpu == gpu &&
+                        selected.ExecutionOrderUnits.Select(family => family is FamilyCpuExecution cpu ? cpu.RealizationOwner ?? family : family)
+                            .OfType<VariantOpeningFamily>().Single().Plan.UnknownPrefixCount == 3,
+                        "captured party actual default one shared V owner:" + count + ":" + gpu);
                     var batch = new SearchBatch(0, 32771);
                     var input = compact ? FamilyCandidateSet.FromSortedAbi1(batch, Enumerable.Range(0, 32771)
                         .Where(i => i % 3 == 0).Select(i => (ulong)i).ToArray()) : FamilyCandidateSet.Dense(batch);
                     var actual = input;
-                    foreach (var family in selected.OrderedFamilies)
+                    var invocations = compact ? selected.ExecutionOrderUnits : selected.OrderedFamilies;
+                    foreach (var family in invocations)
                         actual = await family.InvokeAsync(execution, new(batch, request), actual, default);
                     ulong[] expected = population.Where(i => !compact || i % 3 == 0).ToArray();
                     ulong[] actualOrdinals = actual.EnumerateLogicalOrdinals().ToArray();
                     check(actualOrdinals.SequenceEqual(expected),
-                        "captured party actual default W full CPU/GPU population:" + count + ":" + mode + ":" + compact);
+                        "captured party actual default V full CPU/GPU population:" + count + ":" + mode + ":" + compact);
                     check(mode != "IntegerRne" || selected.OrderedFamilies.All(f =>
                         (f.GpuNumericRequirements & (GpuNumericRequirements.Float64 | GpuNumericRequirements.Unspecified)) == 0),
                         "captured party actual wrapper requirements:" + count);
                     receipts.Add(new { Name = "CapturedPartyDefaultSharedUnknown", players = count, Mode = mode, compact,
                         ExpectedAbi1 = expected, ActualAbi1 = actualOrdinals,
-                        Bodies = selected.OrderedFamilies.Select(f => new { f.FamilyId,
+                        Bodies = invocations.Select(f => new { f.FamilyId,
                             Revision = f.ResolveConditionPerformance(compact).PhysicalImplementationRevision,
                             Requirements = f.GpuNumericRequirements.ToString(), Device = f.CapturePerformanceObservation().DeviceName }).ToArray(),
                         OriginalPositiveDisposition = Exact(request, positive).Evaluation.Disposition.ToString(),
@@ -438,7 +450,10 @@ internal static class InitialRoomGpuChecks
                 var selected = FamilyExecutionCoordinator.Plan(request, gpu, gpuFloat64Available: mode != "IntegerRne");
                 try
                 {
-                    check(selected.Stages.SelectMany(stage => stage.Coverage).Count(atom => atom == InitialRoomsInvocation.UnknownCoverage) == 1,
+                    check(selected.Stages.SelectMany(stage => stage.Coverage).Count(atom => atom == VariantOpeningFamily.Id) == 1 &&
+                        selected.ExecutionOrderUnits.Select(family => family is FamilyCpuExecution cpu ? cpu.RealizationOwner ?? family : family)
+                            .OfType<VariantOpeningFamily>().Single().Plan.UnknownPrefixCount ==
+                                PartyInitialRooms.Prefixes(request).Max(source => source.Count),
                         "mixed party owns shared prefix once:" + players + ":" + mode);
                     check(!gpu || selected.OrderedFamilies.All(f => f.ConditionPerformance.UsesGpu),
                         "mixed party actual all GPU selected:" + players + ":" + mode);
@@ -446,7 +461,8 @@ internal static class InitialRoomGpuChecks
                         (f.GpuNumericRequirements & (GpuNumericRequirements.Float64 | GpuNumericRequirements.Unspecified)) == 0),
                         "mixed party actual compatible wrapper requirements:" + players);
                     var actual = input;
-                    foreach (var family in selected.OrderedFamilies)
+                    var invocations = compact ? selected.ExecutionOrderUnits : selected.OrderedFamilies;
+                    foreach (var family in invocations)
                         actual = await family.InvokeAsync(execution, new(batch, request), actual, default);
                     ulong[] ordinals = actual.EnumerateLogicalOrdinals().ToArray();
                     cpuOrdinals ??= ordinals;
@@ -459,7 +475,7 @@ internal static class InitialRoomGpuChecks
                         ExpectedAbi1 = cpuOrdinals, ActualAbi1 = ordinals, InputCount = input.Count, WholeExactPositive = positive,
                         WholeExactDisposition = exact.Evaluation.Disposition.ToString(),
                         QueryFingerprint = request.CompiledSearch.SemanticFingerprint,
-                        Bodies = selected.OrderedFamilies.Select(f => new { f.FamilyId, Coverage = f.Coverage.ToArray(),
+                        Bodies = invocations.Select(f => new { f.FamilyId, Coverage = f.Coverage.ToArray(),
                             Revision = f.ResolveConditionPerformance(compact).PhysicalImplementationRevision,
                             Requirements = f.GpuNumericRequirements.ToString(), Device = f.CapturePerformanceObservation().DeviceName }).ToArray(),
                         Scope = "SameActualCapturedPartyOriginalQuery;OffersAndEventResultsAndSharedOrdinaryUnknown;NoOpeningIntervention"

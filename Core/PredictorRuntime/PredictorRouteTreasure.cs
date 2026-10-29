@@ -17,7 +17,7 @@ internal sealed partial class PredictorRun
         entry.AdvanceRoute(token);
         var offeredRelic = entry.TreasureRelic?.Key;
         bool generationAllowed = entry._treasureAllowed;
-        var generationPending = RouteTreasureRelicCauses(dependencies);
+        var generationPending = RouteTreasureRelicCauses(run, dependencies);
         var relicPending = !generationAllowed && generationPending.IsEmpty ? [] :
             generationPending.AddRange(CausesFor(dependencies, PredictorCombatDomain.TreasureRng)).Distinct().ToImmutableArray();
         var normalPending = !entry._treasureAllowed && generationPending.IsEmpty ? [] :
@@ -174,7 +174,7 @@ internal sealed partial class PredictorRun
             PredictorTreasureActionKind.Leave when run.Phase is PredictorPhase.TreasureClosed or PredictorPhase.TreasureRelic && !run._treasureObtaining => new LeaveTreasure(),
             PredictorTreasureActionKind.TakeRelic when run.Phase == PredictorPhase.TreasureRelic && !run._treasureObtaining &&
                 run.TreasureRelic is { } relic && relic.Key == action.ExpectedRelic &&
-                RouteTreasureRelicCauses(dependencies).IsEmpty &&
+                RouteTreasureRelicCauses(run, dependencies).IsEmpty &&
                 CausesFor(dependencies, PredictorCombatDomain.TreasureRng).IsEmpty &&
                 ObtainCauses(run, relic.Key, dependencies, entryOnly: true).IsEmpty => new TakeTreasureRelic(relic.Id),
             _ => null
@@ -185,7 +185,7 @@ internal sealed partial class PredictorRun
             // A changed phase/model is a plan binding failure in its own right.
             var parents = action.Action == PredictorTreasureActionKind.TakeRelic && run.Phase == PredictorPhase.TreasureRelic &&
                 !run._treasureObtaining && run.TreasureRelic is { } offered && offered.Key == action.ExpectedRelic
-                ? RouteTreasureRelicCauses(dependencies).AddRange(CausesFor(dependencies, PredictorCombatDomain.TreasureRng))
+                ? RouteTreasureRelicCauses(run, dependencies).AddRange(CausesFor(dependencies, PredictorCombatDomain.TreasureRng))
                     .AddRange(ObtainCauses(run, offered.Key, dependencies, entryOnly: true)) : [];
             local.Add(RouteCause("PlannedTreasureChoiceChanged", run.Working.Position.NodeId, PredictorCombatDomain.Continuation,
                 parents, PredictorRouteCauseEvidence.Key("treasure-action", run._inputs.Length.ToString(), action.Action.ToString())));
@@ -196,9 +196,19 @@ internal sealed partial class PredictorRun
     // FirstPlayerTurn is the maintained combat producer for a Bone Tea
     // lifetime counter. It cannot change chest eligibility, bags, gold hooks,
     // or Silver Crucible's independent treasure-entry counter.
-    private static ImmutableArray<PredictorCombatPendingCause> RouteTreasureRelicCauses(List<RouteDependency> dependencies)
-        => dependencies.Where(d => (d.Cause.AffectedDomains & PredictorCombatDomain.Relics) != 0 &&
-            d.Cause.Code != "FirstPlayerTurn").Select(d => d.Cause).Distinct().ToImmutableArray();
+    private static ImmutableArray<PredictorCombatPendingCause> RouteTreasureRelicCauses(PredictorRun run,
+        List<RouteDependency> dependencies)
+    {
+        var relevant = dependencies.Where(d => d.Cause.Code != "FirstPlayerTurn").ToList();
+        var causes = RouteRelicIdentityCauses(relevant)
+            .AddRange(RouteRelicBagCauses(relevant, shared: true))
+            .AddRange(RouteRelicStateCauses(run, relevant, "SILVER_CRUCIBLE"));
+        // The first-run Gorget probe also reads the personal bag. Ordinary
+        // treasure generation uses only the shared bag and Crucible counter.
+        if (run.Context.NumberOfRuns == 0)
+            causes = causes.AddRange(RouteRelicBagCauses(relevant, shared: false));
+        return PredictorRouteCauseEvidence.Normalize(causes);
+    }
 
     private static int ActiveRouteTreasurePlanPrefix(PredictorRun run, PredictorRun entry,
         ImmutableArray<PredictorPlannedTreasureAction> actions, List<RouteDependency> dependencies,

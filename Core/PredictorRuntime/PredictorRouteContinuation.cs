@@ -33,7 +33,7 @@ internal sealed partial class PredictorRun
         int maximumNodes = 8, CancellationToken token = default,
         PredictorRoutePreviewScope scope = PredictorRoutePreviewScope.CombatAndRest,
         PredictorRoutePreviewPolicy policy = PredictorRoutePreviewPolicy.AuthoredChoices,
-        bool allowSelectedPrefixes = false)
+        bool allowSelectedPrefixes = false, bool isolateNodeFailures = false)
     {
         RequireRouteSimulation();
         if (!Enum.IsDefined(scope)) throw new ArgumentOutOfRangeException(nameof(scope));
@@ -60,279 +60,318 @@ internal sealed partial class PredictorRun
             .Concat(scratch.Working.PotionSlots.OfType<PredictorPotion>().Select(p => p.Id)).ToHashSet();
         var nodes = ImmutableArray.CreateBuilder<PredictorRouteNodeKnowledge>();
         PredictorRouteTerminalBoundary? terminal = null;
+        PredictorRoutePredictionFault? fault = null;
         var partial = scratch.StartRouteKnowledge(dependencies);
         while (nodes.Count < maximumNodes)
         {
             token.ThrowIfCancellationRequested();
-            var entering = partial.Capture(scratch.Working);
-            var enteringStreams = partial.StreamProgress();
-            var entryCauses = new List<PredictorCombatPendingCause>();
-            if (scratch.Phase == PredictorPhase.Complete)
+            int completedNodes = nodes.Count;
+            var faultPosition = scratch.Working.Position;
+            string faultStage = "entry";
+            try
             {
-                if (scratch.Working.Outcome != null) break;
-                if (!CanProjectNextRouteNode(scratch, dependencies, includeAllNodes))
+                if (scratch.Phase == PredictorPhase.Complete) faultPosition = RouteTerminalTarget(scratch);
+                var entering = partial.Capture(scratch.Working);
+                var enteringStreams = partial.StreamProgress();
+                var entryCauses = new List<PredictorCombatPendingCause>();
+                if (scratch.Phase == PredictorPhase.Complete)
                 {
-                    var blocked = PredictorRouteCauseEvidence.Normalize(CausesFor(dependencies, PredictorCombatDomain.Continuation));
-                    // Exhausting a selected prefix or ending Act 3 is an
-                    // ordinary stop. Only actual entry blockers create this
-                    // terminal record, and AdvanceRoute is never called.
-                    if (!blocked.IsEmpty)
+                    if (scratch.Working.Outcome != null) break;
+                    if (!CanProjectNextRouteNode(scratch, dependencies, includeAllNodes))
                     {
-                        var target = RouteTerminalTarget(scratch);
-                        terminal = new(target, scratch.Working.Position, blocked);
-                        partial.RecordBoundary(target.NodeId, PredictorRouteFactPhase.Before, entering,
-                            nodes.Count == 0 && Context.Live != null ? PredictorKnowledgeOrigin.Captured : PredictorKnowledgeOrigin.Derived);
-                        partial.Facts.RecordResult("route.entry.entered", target.NodeId, false,
-                            operation: "route entry blocked before AdvanceRoute",
-                            derivation: "CanProjectNextRouteNode refused entry; no room entry or after frame exists.");
-                        partial.Facts.RecordUnknown("route.entry.allowed", target.NodeId, PredictorRouteFactPhase.Results,
-                            blocked, operation: "route entry prerequisites");
-                    }
-                    break;
-                }
-                scratch._preview.RequiresEventChoice = includeAllNodes;
-                if (includeAllNodes) ConfigureRouteShopProjection(scratch, dependencies, entryCauses);
-                scratch.AdvanceRoute(token);
-            }
-            var position = scratch.Working.Position;
-            partial.RecordBoundary(position.NodeId, PredictorRouteFactPhase.Before, entering,
-                nodes.Count == 0 && Context.Live != null ? PredictorKnowledgeOrigin.Captured : PredictorKnowledgeOrigin.Derived);
-            var visit = scratch.Working.Visits.LastOrDefault();
-            var room = visit?.Room ?? PredictorRoomKind.Event;
-            var plan = plans.SingleOrDefault(p => p.NodeId == position.NodeId) ?? new(position.NodeId);
-            var local = entryCauses;
-            var potionBoundaries = ImmutableArray.CreateBuilder<PredictorRoutePotionBoundaryKnowledge>();
-            var observed = ImmutableArray<PredictorCombatRewardKnowledge>.Empty;
-            PredictorRestHealOutcome? heal = null;
-            ImmutableArray<PredictorRestOffer> restOffers = [];
-            ImmutableArray<PredictorRouteCardKnowledge> restCards = [];
-            int appliedRestActions = 0;
-            bool restDefaultApplied = false;
-            PredictorPlannedRestAction? defaultRestAction = null;
-            bool advanced = false;
-            PredictorShopNodeKnowledge? shop = null;
-            PredictorAncientNodeKnowledge? ancient = null;
-            PredictorEventNodeKnowledge? eventKnowledge = null;
-            PredictorTreasureNodeKnowledge? treasure = null;
-            PredictorCombatRequirements? combatRequirements = null;
-            ImmutableArray<PredictorRouteCardKnowledge> combatCards = [];
-            ImmutableArray<PredictorRouteRelicKnowledge> combatRelics = [];
-            bool combatNode = room is PredictorRoomKind.Monster or PredictorRoomKind.Elite or PredictorRoomKind.Boss;
-            if (!combatNode)
-                potionBoundaries.Add(ApplyRouteInventoryActions(scratch, plan, PredictorRoutePotionStage.BeforeChoices,
-                    dependencies, knownInstanceIds, local, token));
-            if (scratch.Phase is PredictorPhase.CombatFacts or PredictorPhase.Rewards && combatNode)
-            {
-                var afterGeneration = new List<RouteDependency>();
-                if (scratch.Phase == PredictorPhase.CombatFacts)
-                {
-                    PropagateDeckCombatReaders(scratch, dependencies, afterGeneration);
-                    combatRequirements = scratch.CombatRequirements;
-                    combatCards = ObserveRouteCards(scratch, dependencies, knownInstanceIds);
-                    combatRelics = scratch.Working.Relics.Where(r => !r.Melted && PredictorCombatDefaults.IsConfigurableRelic(r.Key))
-                        .Select(relic => new PredictorRouteRelicKnowledge(relic, CausesFor(dependencies, PredictorCombatDomain.Relics)
-                            .AddRange(knownInstanceIds.Contains(relic.Id) ? [] : CausesFor(dependencies, PredictorCombatDomain.InstanceIds))
-                            .Distinct().ToImmutableArray())).ToImmutableArray();
-                    PredictorCombatProjection? projection = null;
-                    try { projection = scratch.ProjectCurrentCombat(plan.Combat, token); }
-                    catch (ArgumentException ex) when (plan.Combat != null && PredictorCombatPlanBindingException.IsPendingPlanBinding(ex))
-                    {
-                        // Saved identities can become unbound after an earlier
-                        // edit. Preserve that plan and expose its local binding
-                        // remainder; genuine execution faults still propagate.
-                        local.Add(RouteCause("PlannedCombatFactsPending", position.NodeId, PredictorCombatDomain.Continuation));
-                    }
-                    if (projection != null)
-                    {
-                        foreach (var cause in projection.Knowledge.PendingCauses)
-                            AddDependency(dependencies, new(cause,
-                                cause.Code == "StolenCardIdentity" ? scratch.Working.Deck.Select(scratch.Working.Card).ToImmutableArray() : default,
-                                (cause.AffectedDomains & PredictorCombatDomain.Deck) != 0 && cause.Code != "PaelsToothReturnedCardPending"));
-                        scratch = scratch.AcceptSettledRouteCombat(projection.Witness);
-                        observed = ObserveRouteRewards(scratch, dependencies, projection.Knowledge.Rewards);
-                    }
-                }
-                else observed = ObserveRouteRewards(scratch, dependencies);
-                var used = new HashSet<int>();
-                var skipped = new HashSet<long>();
-                potionBoundaries.Add(ApplyRouteInventoryActions(scratch, plan, PredictorRoutePotionStage.BeforeChoices,
-                    dependencies, knownInstanceIds, local, token));
-                bool choicesComplete = local.All(c => (c.AffectedDomains & PredictorCombatDomain.Continuation) == 0) &&
-                    ApplyRouteRewardChoices(scratch, plan, dependencies, used, skipped, local, token, knownInstanceIds);
-                observed = ObserveRouteRewards(scratch, dependencies, observed);
-                if (choicesComplete && scratch.Phase == PredictorPhase.Rewards)
-                {
-                    potionBoundaries.Add(ApplyRouteInventoryActions(scratch, plan, PredictorRoutePotionStage.BeforeLeave,
-                        dependencies, knownInstanceIds, local, token));
-                    // Authored closure and approved live card defaults resolve
-                    // their choices. Other witness omissions retain dependencies.
-                    foreach (var reward in scratch.Rewards.Where(r => r.Status == PredictorRewardStatus.Open && !skipped.Contains(r.Id)))
-                    {
-                        if (!plan.LeaveRewards) AddPendingReward(scratch, reward, dependencies);
-                    }
-                    if (dependencies.All(d => (d.Cause.AffectedDomains & PredictorCombatDomain.Continuation) == 0) &&
-                        local.All(c => (c.AffectedDomains & PredictorCombatDomain.Continuation) == 0))
-                    {
-                        if (scratch.Selection.CardRewardId != null) scratch.Submit(scratch.Request!, new ExitCardSelection(), token);
-                        advanced = scratch.Submit(scratch.Request!, new LeaveRewards(), token) == PredictorInputResult.Accepted;
-                        if (advanced)
+                        var blocked = PredictorRouteCauseEvidence.Normalize(CausesFor(dependencies, PredictorCombatDomain.Continuation));
+                        // Exhausting a selected prefix or ending Act 3 is an
+                        // ordinary stop. Only actual entry blockers create this
+                        // terminal record, and AdvanceRoute is never called.
+                        if (!blocked.IsEmpty)
                         {
-                            // SkipCardReward only exits the picker. The final
-                            // source disposition is assigned by LeaveRewards.
-                            // Publish it for authored and approved default Skip;
-                            // other witness omissions retain their dependencies.
-                            observed = observed.Select((knowledge, index) => knowledge.Value != null && index < scratch.Rewards.Length &&
-                                skipped.Contains(scratch.Rewards[index].Id)
-                                ? knowledge with { Value = DisplayReward(scratch.Rewards[index]) } : knowledge).ToImmutableArray();
+                            var target = RouteTerminalTarget(scratch);
+                            terminal = new(target, scratch.Working.Position, blocked);
+                            partial.RecordBoundary(target.NodeId, PredictorRouteFactPhase.Before, entering,
+                                nodes.Count == 0 && Context.Live != null ? PredictorKnowledgeOrigin.Captured : PredictorKnowledgeOrigin.Derived);
+                            partial.Facts.RecordResult("route.entry.entered", target.NodeId, false,
+                                operation: "route entry blocked before AdvanceRoute",
+                                derivation: "CanProjectNextRouteNode refused entry; no room entry or after frame exists.");
+                            partial.Facts.RecordUnknown("route.entry.allowed", target.NodeId, PredictorRouteFactPhase.Results,
+                                blocked, operation: "route entry prerequisites");
+                        }
+                        break;
+                    }
+                    scratch._preview.RequiresEventChoice = includeAllNodes;
+                    if (includeAllNodes) ConfigureRouteShopProjection(scratch, dependencies, entryCauses, knownInstanceIds);
+                    scratch.AdvanceRoute(token);
+                }
+                var position = scratch.Working.Position;
+                faultPosition = position;
+                faultStage = "node";
+                partial.RecordBoundary(position.NodeId, PredictorRouteFactPhase.Before, entering,
+                    nodes.Count == 0 && Context.Live != null ? PredictorKnowledgeOrigin.Captured : PredictorKnowledgeOrigin.Derived);
+                var visit = scratch.Working.Visits.LastOrDefault();
+                var room = visit?.Room ?? PredictorRoomKind.Event;
+                var plan = plans.SingleOrDefault(p => p.NodeId == position.NodeId) ?? new(position.NodeId);
+                var local = entryCauses;
+                var potionBoundaries = ImmutableArray.CreateBuilder<PredictorRoutePotionBoundaryKnowledge>();
+                var observed = ImmutableArray<PredictorCombatRewardKnowledge>.Empty;
+                PredictorRestHealOutcome? heal = null;
+                ImmutableArray<PredictorRestOffer> restOffers = [];
+                ImmutableArray<PredictorCombatPendingCause>? liveHatchOfferPending = null;
+                ImmutableArray<PredictorRouteCardKnowledge> restCards = [];
+                var restActionKnowledge = new List<PredictorRestActionKnowledge>();
+                int appliedRestActions = 0;
+                bool restDefaultApplied = false;
+                PredictorPlannedRestAction? defaultRestAction = null;
+                bool advanced = false;
+                PredictorShopNodeKnowledge? shop = null;
+                PredictorAncientNodeKnowledge? ancient = null;
+                PredictorEventNodeKnowledge? eventKnowledge = null;
+                PredictorTreasureNodeKnowledge? treasure = null;
+                PredictorCombatRequirements? combatRequirements = null;
+                ImmutableArray<PredictorRouteCardKnowledge> combatCards = [];
+                ImmutableArray<PredictorRouteRelicKnowledge> combatRelics = [];
+                bool combatNode = room is PredictorRoomKind.Monster or PredictorRoomKind.Elite or PredictorRoomKind.Boss;
+                if (!combatNode)
+                    potionBoundaries.Add(ApplyRouteInventoryActions(scratch, plan, PredictorRoutePotionStage.BeforeChoices,
+                        dependencies, knownInstanceIds, local, token));
+                if (scratch.Phase is PredictorPhase.CombatFacts or PredictorPhase.Rewards && combatNode)
+                {
+                    var afterGeneration = new List<RouteDependency>();
+                    if (scratch.Phase == PredictorPhase.CombatFacts)
+                    {
+                        PropagateDeckCombatReaders(scratch, plan.Combat, dependencies, afterGeneration);
+                        combatRequirements = scratch.CombatRequirements;
+                        combatCards = ObserveRouteCards(scratch, dependencies, knownInstanceIds);
+                        combatRelics = scratch.Working.Relics.Where(r => !r.Melted && PredictorCombatDefaults.IsConfigurableRelic(r.Key))
+                            .Select(relic => new PredictorRouteRelicKnowledge(relic, CausesFor(dependencies, PredictorCombatDomain.Relics)
+                                .AddRange(knownInstanceIds.Contains(relic.Id) ? [] : CausesFor(dependencies, PredictorCombatDomain.InstanceIds))
+                                .Distinct().ToImmutableArray())).ToImmutableArray();
+                        PredictorCombatProjection? projection = null;
+                        try { projection = scratch.ProjectCurrentCombat(plan.Combat, token); }
+                        catch (ArgumentException ex) when (plan.Combat != null && PredictorCombatPlanBindingException.IsPendingPlanBinding(ex))
+                        {
+                            // Saved identities can become unbound after an earlier
+                            // edit. Preserve that plan and expose its local binding
+                            // remainder; genuine execution faults still propagate.
+                            local.Add(RouteCause("PlannedCombatFactsPending", position.NodeId, PredictorCombatDomain.Continuation));
+                        }
+                        if (projection != null)
+                        {
+                            foreach (var cause in projection.Knowledge.PendingCauses)
+                                AddDependency(dependencies, new(cause,
+                                    cause.Code == "StolenCardIdentity" ? scratch.Working.Deck.Select(scratch.Working.Card).ToImmutableArray() : default,
+                                    (cause.AffectedDomains & PredictorCombatDomain.Deck) != 0 && cause.Code != "PaelsToothReturnedCardPending"));
+                            scratch = scratch.AcceptSettledRouteCombat(projection.Witness);
+                            observed = ObserveRouteRewards(scratch, dependencies, projection.Knowledge.Rewards);
                         }
                     }
+                    else observed = ObserveRouteRewards(scratch, dependencies);
+                    var used = new HashSet<int>();
+                    var skipped = new HashSet<long>();
+                    potionBoundaries.Add(ApplyRouteInventoryActions(scratch, plan, PredictorRoutePotionStage.BeforeChoices,
+                        dependencies, knownInstanceIds, local, token));
+                    bool choicesComplete = local.All(c => (c.AffectedDomains & PredictorCombatDomain.Continuation) == 0) &&
+                        ApplyRouteRewardChoices(scratch, plan, dependencies, used, skipped, local, token, knownInstanceIds);
+                    observed = ObserveRouteRewards(scratch, dependencies, observed);
+                    if (choicesComplete && scratch.Phase == PredictorPhase.Rewards)
+                    {
+                        potionBoundaries.Add(ApplyRouteInventoryActions(scratch, plan, PredictorRoutePotionStage.BeforeLeave,
+                            dependencies, knownInstanceIds, local, token));
+                        // Authored closure and approved live card defaults resolve
+                        // their choices. Other witness omissions retain dependencies.
+                        foreach (var reward in scratch.Rewards.Where(r => r.Status == PredictorRewardStatus.Open && !skipped.Contains(r.Id)))
+                        {
+                            if (!plan.LeaveRewards) AddPendingReward(scratch, reward, dependencies);
+                        }
+                        if (dependencies.All(d => (d.Cause.AffectedDomains & PredictorCombatDomain.Continuation) == 0) &&
+                            local.All(c => (c.AffectedDomains & PredictorCombatDomain.Continuation) == 0))
+                        {
+                            if (scratch.Selection.CardRewardId != null) scratch.Submit(scratch.Request!, new ExitCardSelection(), token);
+                            advanced = scratch.Submit(scratch.Request!, new LeaveRewards(), token) == PredictorInputResult.Accepted;
+                            if (advanced)
+                            {
+                                // SkipCardReward only exits the picker. The final
+                                // source disposition is assigned by LeaveRewards.
+                                // Publish it for authored and approved default Skip;
+                                // other witness omissions retain their dependencies.
+                                observed = observed.Select((knowledge, index) => index < scratch.Rewards.Length &&
+                                    skipped.Contains(scratch.Rewards[index].Id)
+                                    ? WithRouteRewardResult(scratch, scratch.Rewards[index], knowledge with
+                                        { Value = knowledge.Value != null ? DisplayReward(scratch.Rewards[index]) : null }, dependencies)
+                                    : knowledge).ToImmutableArray();
+                            }
+                        }
+                    }
+                    foreach (var dependency in afterGeneration) AddDependency(dependencies, dependency);
                 }
-                foreach (var dependency in afterGeneration) AddDependency(dependencies, dependency);
-            }
-            else if (room == PredictorRoomKind.RestSite && scratch.Phase is PredictorPhase.RestSite or PredictorPhase.SmithCards or PredictorPhase.RestCookCards or PredictorPhase.RestHealFact or PredictorPhase.Rewards)
-            {
-                restOffers = scratch.RestOffers;
-                restCards = ObserveRouteCards(scratch, dependencies, knownInstanceIds);
-                var used = new HashSet<int>();
-                var skipped = new HashSet<long>();
-                appliedRestActions = Math.Min(plan.RestActions.Length, scratch._inputs.Count(i => i.Action is
-                    "RestSmith" or "RestCookRemoveTwoGainMaxHp5" or "RestLift" or "RestDig" or "RestClone" or "RestHatch" or "RestKindle" or "RestHeal"));
-                if (scratch.Phase == PredictorPhase.Rewards)
+                else if (room == PredictorRoomKind.RestSite && scratch.Phase is PredictorPhase.RestSite or PredictorPhase.SmithCards or PredictorPhase.RestCookCards or PredictorPhase.RestHealFact or PredictorPhase.Rewards)
                 {
-                    var rewardBatch = scratch.Rewards;
-                    observed = ObserveRouteRewards(scratch, dependencies);
-                    ContinueRouteRestRewards(scratch, plan, dependencies, used, skipped, local, token, knownInstanceIds);
-                    observed = ObserveCompletedRouteRestRewards(scratch, rewardBatch, observed, dependencies);
-                }
-                foreach (var step in plan.RestActions.Skip(appliedRestActions))
-                {
-                    if (local.Count > 0) break;
-                    if (!ApplyRouteRestAction(scratch, step, dependencies, knownInstanceIds, local, token)) break;
-                    appliedRestActions++;
-                    heal = scratch._inputs.LastOrDefault(i => i.RestHealOutcome != null)?.RestHealOutcome;
+                    restOffers = scratch.RestOffers;
+                    restCards = ObserveRouteCards(scratch, dependencies, knownInstanceIds);
+                    restActionKnowledge = ObserveAcceptedRestActions(scratch, token);
+                    var used = new HashSet<int>();
+                    var skipped = new HashSet<long>();
+                    appliedRestActions = Math.Min(plan.RestActions.Length, scratch._inputs.Count(i => i.Action is
+                        "RestSmith" or "RestCookRemoveTwoGainMaxHp5" or "RestLift" or "RestDig" or "RestClone" or "RestHatch" or "RestKindle" or "RestHeal"));
                     if (scratch.Phase == PredictorPhase.Rewards)
                     {
                         var rewardBatch = scratch.Rewards;
                         observed = ObserveRouteRewards(scratch, dependencies);
-                        if (!ApplyRouteRewardChoices(scratch, plan, dependencies, used, skipped, local, token, knownInstanceIds)) break;
+                        ContinueRouteRestRewards(scratch, plan, dependencies, used, skipped, local, token, knownInstanceIds);
                         observed = ObserveCompletedRouteRestRewards(scratch, rewardBatch, observed, dependencies);
-                        if (scratch.Rewards.Any(r => r.Status == PredictorRewardStatus.Open && !skipped.Contains(r.Id)) && !plan.LeaveRewards &&
-                            !ContinuePendingRestRewardWitness(scratch, dependencies, skipped))
-                        {
-                            local.Add(RouteCause("RestRewardChoice", position.NodeId, PredictorCombatDomain.Continuation));
-                            break;
-                        }
+                    }
+                    foreach (var step in plan.RestActions.Skip(appliedRestActions))
+                    {
+                        if (local.Count > 0) break;
+                        var actionKnowledge = ObserveRouteRestAction(scratch, appliedRestActions, step.Action, dependencies, knownInstanceIds);
+                        int actionStart = scratch._inputs.Length;
+                        bool actionApplied = ApplyRouteRestAction(scratch, step, dependencies, knownInstanceIds, local, token);
+                        restActionKnowledge.Add(RestActionReceipts(scratch, actionKnowledge, actionStart));
+                        if (!actionApplied) break;
+                        appliedRestActions++;
+                        heal = scratch._inputs.LastOrDefault(i => i.RestHealOutcome != null)?.RestHealOutcome;
                         if (scratch.Phase == PredictorPhase.Rewards)
                         {
-                            if (scratch.Selection.CardRewardId != null)
-                                scratch.Submit(scratch.Request!, new ExitCardSelection(), token);
-                            scratch.Submit(scratch.Request!, new LeaveRewards(), token);
+                            var rewardBatch = scratch.Rewards;
+                            observed = ObserveRouteRewards(scratch, dependencies);
+                            if (!ApplyRouteRewardChoices(scratch, plan, dependencies, used, skipped, local, token, knownInstanceIds)) break;
                             observed = ObserveCompletedRouteRestRewards(scratch, rewardBatch, observed, dependencies);
+                            if (scratch.Rewards.Any(r => r.Status == PredictorRewardStatus.Open && !skipped.Contains(r.Id)) && !plan.LeaveRewards &&
+                                !ContinuePendingRestRewardWitness(scratch, dependencies, skipped))
+                            {
+                                local.Add(RouteCause("RestRewardChoice", position.NodeId, PredictorCombatDomain.Continuation));
+                                break;
+                            }
+                            if (scratch.Phase == PredictorPhase.Rewards)
+                            {
+                                if (scratch.Selection.CardRewardId != null)
+                                    scratch.Submit(scratch.Request!, new ExitCardSelection(), token);
+                                scratch.Submit(scratch.Request!, new LeaveRewards(), token);
+                                observed = ObserveCompletedRouteRestRewards(scratch, rewardBatch, observed, dependencies);
+                            }
+                        }
+                        if (scratch.Phase != PredictorPhase.RestSite)
+                        {
+                            local.Add(RouteCause("RestChildChoice", position.NodeId, PredictorCombatDomain.Continuation));
+                            break;
                         }
                     }
-                    if (scratch.Phase != PredictorPhase.RestSite)
+                    var defaultCandidates = ObserveRouteRestAction(scratch, 0, PredictorRestAction.Smith, dependencies, knownInstanceIds);
+                    restDefaultApplied = ApplyRouteRestDefault(scratch, plan, dependencies, knownInstanceIds,
+                        local, token, out defaultRestAction);
+                    if (restDefaultApplied && defaultRestAction != null) restActionKnowledge.Add(defaultCandidates);
+                    advanced |= restDefaultApplied;
+                    if (!restDefaultApplied && local.Count == 0 && appliedRestActions == plan.RestActions.Length && scratch.Phase == PredictorPhase.RestSite)
                     {
-                        local.Add(RouteCause("RestChildChoice", position.NodeId, PredictorCombatDomain.Continuation));
-                        break;
+                        if (plan.LeaveRest) advanced = scratch.Submit(scratch.Request!, new LeaveRestSite(), token) == PredictorInputResult.Accepted;
+                        else local.Add(RouteCause("RestChoice", position.NodeId, PredictorCombatDomain.Continuation));
+                    }
+                    if (policy == PredictorRoutePreviewPolicy.LiveMapDefaults)
+                    {
+                        // Remaining unselected actions can affect the suffix,
+                        // but cannot retroactively hide their own current offer.
+                        liveHatchOfferPending = RouteHatchPendingCauses(scratch, dependencies, knownInstanceIds);
+                        if (local.Count == 0 && scratch.Phase is PredictorPhase.SmithCards or PredictorPhase.RestCookCards)
+                            local.Add(RouteCause("RestTargetChoice", position.NodeId, PredictorCombatDomain.Continuation));
+                        advanced |= ContinueUnselectedRouteRest(scratch, plan, appliedRestActions, dependencies, local, token);
                     }
                 }
-                restDefaultApplied = ApplyRouteRestDefault(scratch, plan, dependencies, knownInstanceIds,
-                    local, token, out defaultRestAction);
-                advanced |= restDefaultApplied;
-                if (!restDefaultApplied && local.Count == 0 && appliedRestActions == plan.RestActions.Length && scratch.Phase == PredictorPhase.RestSite)
+                else if (includeAllNodes && room == PredictorRoomKind.Shop)
                 {
-                    if (plan.LeaveRest) advanced = scratch.Submit(scratch.Request!, new LeaveRestSite(), token) == PredictorInputResult.Accepted;
-                    else local.Add(RouteCause("RestChoice", position.NodeId, PredictorCombatDomain.Continuation));
+                    shop = ProjectRouteShop(scratch, plan.Shop, dependencies, knownInstanceIds, local, token);
+                    advanced = shop.Advanced;
+                    observed = ObserveRouteRewards(scratch, dependencies);
                 }
-                if (policy == PredictorRoutePreviewPolicy.LiveMapDefaults)
+                else if (includeAllNodes && room is PredictorRoomKind.Opening or PredictorRoomKind.Ancient)
                 {
-                    if (local.Count == 0 && scratch.Phase is PredictorPhase.SmithCards or PredictorPhase.RestCookCards)
-                        local.Add(RouteCause("RestTargetChoice", position.NodeId, PredictorCombatDomain.Continuation));
-                    advanced |= ContinueUnselectedRouteRest(scratch, plan, appliedRestActions, dependencies, local, token);
+                    ancient = ProjectRouteAncient(scratch, plan.Ancient, dependencies, knownInstanceIds, local, token);
+                    advanced = ancient.Advanced;
+                    observed = ancient.Rewards;
                 }
-            }
-            else if (includeAllNodes && room == PredictorRoomKind.Shop)
-            {
-                shop = ProjectRouteShop(scratch, plan.Shop, dependencies, knownInstanceIds, local, token);
-                advanced = shop.Advanced;
-                observed = ObserveRouteRewards(scratch, dependencies);
-            }
-            else if (includeAllNodes && room is PredictorRoomKind.Opening or PredictorRoomKind.Ancient)
-            {
-                ancient = ProjectRouteAncient(scratch, plan.Ancient, dependencies, knownInstanceIds, local, token);
-                advanced = ancient.Advanced;
-                observed = ancient.Rewards;
-            }
-            else if (includeAllNodes && room == PredictorRoomKind.Event)
-            {
-                eventKnowledge = ProjectRouteEvent(scratch, plan.Event, plan.EventOccurrenceExclusions, dependencies, knownInstanceIds, local, token);
-                advanced = eventKnowledge.Advanced;
-                observed = eventKnowledge.Rewards;
-            }
-            else if (includeAllNodes && room == PredictorRoomKind.Treasure)
-            {
-                treasure = ProjectRouteTreasure(scratch, plan.Treasure, dependencies, knownInstanceIds, local, token);
-                advanced = treasure.Advanced;
-                observed = treasure.Rewards;
-            }
-            else local.Add(RouteCause("RouteNodeOutsideContinuationSlice", position.NodeId, PredictorCombatDomain.Continuation));
+                else if (includeAllNodes && room == PredictorRoomKind.Event)
+                {
+                    eventKnowledge = ProjectRouteEvent(scratch, plan.Event, plan.EventOccurrenceExclusions, dependencies, knownInstanceIds, local, token);
+                    advanced = eventKnowledge.Advanced;
+                    observed = eventKnowledge.Rewards;
+                }
+                else if (includeAllNodes && room == PredictorRoomKind.Treasure)
+                {
+                    treasure = ProjectRouteTreasure(scratch, plan.Treasure, dependencies, knownInstanceIds, local, token);
+                    advanced = treasure.Advanced;
+                    observed = treasure.Rewards;
+                }
+                else local.Add(RouteCause("RouteNodeOutsideContinuationSlice", position.NodeId, PredictorCombatDomain.Continuation));
 
-            if (CausesFor(dependencies, PredictorCombatDomain.InstanceIds).IsEmpty)
-            {
-                knownInstanceIds.UnionWith(scratch.Working.Cards.Select(c => c.Id));
-                knownInstanceIds.UnionWith(scratch.Working.Relics.Select(r => r.Id));
-                knownInstanceIds.UnionWith(scratch.Working.PotionSlots.OfType<PredictorPotion>().Select(p => p.Id));
+                if (CausesFor(dependencies, PredictorCombatDomain.InstanceIds).IsEmpty)
+                {
+                    knownInstanceIds.UnionWith(scratch.Working.Cards.Select(c => c.Id));
+                    knownInstanceIds.UnionWith(scratch.Working.Relics.Select(r => r.Id));
+                    knownInstanceIds.UnionWith(scratch.Working.PotionSlots.OfType<PredictorPotion>().Select(p => p.Id));
+                }
+                if (potionBoundaries.All(b => b.Stage != PredictorRoutePotionStage.BeforeLeave) &&
+                    (scratch.Phase == PredictorPhase.Complete || RoutePotionActionsAvailable(scratch, false)))
+                    potionBoundaries.Add(ApplyRouteInventoryActions(scratch, plan, PredictorRoutePotionStage.BeforeLeave,
+                        dependencies, knownInstanceIds, local, token));
+                if (plan.PotionActions.Any(action => !potionBoundaries.Any(boundary => boundary.Stage == action.Stage)))
+                    local.Add(RouteCause("PlannedPotionStagePending", position.NodeId, PredictorCombatDomain.Continuation));
+                if (policy == PredictorRoutePreviewPolicy.LiveMapDefaults)
+                    foreach (var optional in plan.ObtainInputs.Where(optional => !scratch._preview.Obtains.OptionalInputs.Any(observed =>
+                        observed.Node == position.NodeId && observed.Input.Choice.Source == optional.Input.ExpectedSource &&
+                        SameOptionalObtainAddress(observed.Input.Address, optional.Address))))
+                        local.Add(PredictorRouteCauseEvidence.CreateExplicit("PlannedOptionalObtainSourcePending", position.NodeId,
+                            PredictorCombatDomain.None, PredictorPendingReasonKind.PlanBinding,
+                            "The optional target's original receipt source or parent context no longer binds; its intent is retained without selecting another source.",
+                            ["choice.obtain." + optional.Input.ExpectedSource.Entry + ".source"], occurrenceKey: optional.Address.Occurrence.ToString()));
+                if (local.Any(c => (c.AffectedDomains & PredictorCombatDomain.Continuation) != 0)) advanced = false;
+                var inventory = ObserveRouteInventory(scratch, dependencies, knownInstanceIds, scratch.Phase == PredictorPhase.Complete);
+                var cards = ObserveRouteCards(scratch, dependencies, knownInstanceIds);
+                var restOfferPending = room != PredictorRoomKind.RestSite ? [] :
+                    policy == PredictorRoutePreviewPolicy.LiveMapDefaults
+                        ? liveHatchOfferPending ?? RouteHatchPendingCauses(scratch, dependencies, knownInstanceIds)
+                        : dependencies.Where(d => (d.Cause.AffectedDomains & PredictorCombatDomain.Deck) != 0 &&
+                            (d.PossibleCards.IsDefaultOrEmpty || d.PossibleCards.Any(c => c.Key.Entry == "BYRDONIS_EGG")))
+                            .Select(d => d.Cause).Distinct().ToImmutableArray();
+                observed = RetainRouteAlternativeSources(scratch, observed, dependencies, knownInstanceIds);
+                // Ledger publication can fail after recording only part of an
+                // after-frame. Such a failure cannot return a trusted prefix
+                // sharing that ledger; let the session discard this attempt.
+                faultStage = "publication";
+                nodes.Add(new(position, room, eventKnowledge?.Event ?? visit?.Model, scratch.Phase, observed,
+                    room == PredictorRoomKind.RestSite ? (policy == PredictorRoutePreviewPolicy.LiveMapDefaults ? restOffers : scratch.RestOffers)
+                        .Where(o => o.Action != PredictorRestAction.Hatch || restOfferPending.IsEmpty).ToImmutableArray() : [], cards,
+                    CausesFor(dependencies, PredictorCombatDomain.Deck),
+                    dependencies.Select(d => d.Cause).Concat(local).Distinct().ToImmutableArray())
+                { Advanced = advanced, AppliedRestActions = appliedRestActions, RestHeal = heal, RestOfferPendingCauses = restOfferPending,
+                    OptionalObtainInputs = scratch._preview.Obtains.OptionalInputs.Where(input => input.Node == position.NodeId).Select(input => input.Input).ToImmutableArray(),
+                    ObtainHealthEffects = scratch._preview.Obtains.HealthEffects.Where(value => value.Node == position.NodeId).Select(value => value.Effect).ToImmutableArray(),
+                    PaelsToothStorage = scratch._preview.PaelsToothStorage.Values.Where(value => value.Knowledge.SourceNodeId == position.NodeId)
+                        .Select(value => value.Knowledge).ToImmutableArray(),
+                    RestDefaultApplied = restDefaultApplied, DefaultRestAction = defaultRestAction,
+                    Shop = shop, Ancient = ancient, Event = eventKnowledge, Treasure = treasure,
+                    CombatRequirements = combatRequirements, CombatCards = combatCards, CombatRelics = combatRelics,
+                    RestCards = restCards, Inventory = inventory, PotionBoundaries = potionBoundaries.ToImmutable(),
+                    RestActionKnowledge = restActionKnowledge.ToImmutableArray(),
+                    RewardObtainChoice = scratch._sacrificePendingRewardId != null ?
+                        ObserveRouteObtainChoice(scratch, dependencies, knownInstanceIds) : null });
+                foreach (var cause in local) AddDependency(dependencies, new(cause));
+                partial.RecordBoundary(position.NodeId, PredictorRouteFactPhase.After, partial.Capture(scratch.Working),
+                    PredictorKnowledgeOrigin.Derived);
+                partial.RecordResults(nodes[^1]);
+                partial.RecordConsumption(position.NodeId, enteringStreams);
+                if (!advanced) break;
             }
-            if (potionBoundaries.All(b => b.Stage != PredictorRoutePotionStage.BeforeLeave) &&
-                (scratch.Phase == PredictorPhase.Complete || RoutePotionActionsAvailable(scratch, false)))
-                potionBoundaries.Add(ApplyRouteInventoryActions(scratch, plan, PredictorRoutePotionStage.BeforeLeave,
-                    dependencies, knownInstanceIds, local, token));
-            if (plan.PotionActions.Any(action => !potionBoundaries.Any(boundary => boundary.Stage == action.Stage)))
-                local.Add(RouteCause("PlannedPotionStagePending", position.NodeId, PredictorCombatDomain.Continuation));
-            if (policy == PredictorRoutePreviewPolicy.LiveMapDefaults)
-                foreach (var optional in plan.ObtainInputs.Where(optional => !scratch._preview.Obtains.OptionalInputs.Any(observed =>
-                    observed.Node == position.NodeId && observed.Input.Choice.Source == optional.Input.ExpectedSource &&
-                    SameOptionalObtainAddress(observed.Input.Address, optional.Address))))
-                    local.Add(PredictorRouteCauseEvidence.CreateExplicit("PlannedOptionalObtainSourcePending", position.NodeId,
-                        PredictorCombatDomain.None, PredictorPendingReasonKind.PlanBinding,
-                        "The optional target's original receipt source or parent context no longer binds; its intent is retained without selecting another source.",
-                        ["choice.obtain." + optional.Input.ExpectedSource.Entry + ".source"], occurrenceKey: optional.Address.Occurrence.ToString()));
-            if (local.Any(c => (c.AffectedDomains & PredictorCombatDomain.Continuation) != 0)) advanced = false;
-            var inventory = ObserveRouteInventory(scratch, dependencies, knownInstanceIds, scratch.Phase == PredictorPhase.Complete);
-            var cards = ObserveRouteCards(scratch, dependencies, knownInstanceIds);
-            var restOfferPending = room == PredictorRoomKind.RestSite ? dependencies.Where(d =>
-                (d.Cause.AffectedDomains & PredictorCombatDomain.Deck) != 0 &&
-                (d.PossibleCards.IsDefaultOrEmpty || d.PossibleCards.Any(c => c.Key.Entry == "BYRDONIS_EGG")))
-                .Select(d => d.Cause).Distinct().ToImmutableArray() : [];
-            observed = RetainRouteAlternativeSources(scratch, observed, dependencies, knownInstanceIds);
-            nodes.Add(new(position, room, eventKnowledge?.Event ?? visit?.Model, scratch.Phase, observed,
-                room == PredictorRoomKind.RestSite ? (policy == PredictorRoutePreviewPolicy.LiveMapDefaults ? restOffers : scratch.RestOffers)
-                    .Where(o => o.Action != PredictorRestAction.Hatch || restOfferPending.IsEmpty).ToImmutableArray() : [], cards,
-                CausesFor(dependencies, PredictorCombatDomain.Deck),
-                dependencies.Select(d => d.Cause).Concat(local).Distinct().ToImmutableArray())
-            { Advanced = advanced, AppliedRestActions = appliedRestActions, RestHeal = heal, RestOfferPendingCauses = restOfferPending,
-                OptionalObtainInputs = scratch._preview.Obtains.OptionalInputs.Where(input => input.Node == position.NodeId).Select(input => input.Input).ToImmutableArray(),
-                ObtainHealthEffects = scratch._preview.Obtains.HealthEffects.Where(value => value.Node == position.NodeId).Select(value => value.Effect).ToImmutableArray(),
-                PaelsToothStorage = scratch._preview.PaelsToothStorage.Values.Where(value => value.Knowledge.SourceNodeId == position.NodeId)
-                    .Select(value => value.Knowledge).ToImmutableArray(),
-                RestDefaultApplied = restDefaultApplied, DefaultRestAction = defaultRestAction,
-                Shop = shop, Ancient = ancient, Event = eventKnowledge, Treasure = treasure,
-                CombatRequirements = combatRequirements, CombatCards = combatCards, CombatRelics = combatRelics,
-                RestCards = restCards, Inventory = inventory, PotionBoundaries = potionBoundaries.ToImmutable(),
-                RewardObtainChoice = scratch._sacrificePendingRewardId != null ?
-                    ObserveRouteObtainChoice(scratch, dependencies, knownInstanceIds) : null });
-            foreach (var cause in local) AddDependency(dependencies, new(cause));
-            partial.RecordBoundary(position.NodeId, PredictorRouteFactPhase.After, partial.Capture(scratch.Working),
-                PredictorKnowledgeOrigin.Derived);
-            partial.RecordResults(nodes[^1]);
-            partial.RecordConsumption(position.NodeId, enteringStreams);
-            if (!advanced) break;
+            catch (Exception error) when (isolateNodeFailures && faultStage != "publication" &&
+                policy == PredictorRoutePreviewPolicy.LiveMapDefaults &&
+                error is not OperationCanceledException and not OutOfMemoryException)
+            {
+                while (nodes.Count > completedNodes) nodes.RemoveAt(nodes.Count - 1);
+                fault = new(faultPosition, faultStage, error);
+                break;
+            }
         }
         var frames = partial.Facts.FreezeFrames();
         var snapshot = frames.Values.FirstOrDefault()?.Snapshot ?? partial.Facts.Snapshot();
         return new(nodes.Select(n => n with { Diagnostics = frames.GetValueOrDefault(n.Position.NodeId)?.Diagnostics }).ToImmutableArray(),
             dependencies.Select(d => d.Cause).Distinct().ToImmutableArray(), nodes.Count == maximumNodes)
-        { Knowledge = snapshot, TerminalBoundary = terminal == null ? null : terminal with
+        { Knowledge = snapshot, Fault = fault, TerminalBoundary = terminal == null ? null : terminal with
             { Diagnostics = frames.GetValueOrDefault(terminal.TargetPosition.NodeId)?.Diagnostics } };
     }
 
@@ -535,6 +574,7 @@ internal sealed partial class PredictorRun
         for (int index = 0; index < run.Rewards.Length; index++)
         {
             var reward = run.Rewards[index];
+            run._preview.Partial?.ObserveRewardSourceIds(reward);
             var domains = reward.Kind switch
             {
                 PredictorRewardKind.Card => PredictorCombatDomain.RewardsRng | PredictorCombatDomain.CardRewards,
@@ -651,19 +691,20 @@ internal sealed partial class PredictorRun
                     frame.ParentRewards.Where(reward => reward.Kind == choice.ExpectedReward.Kind &&
                         reward.Origin == choice.ExpectedReward.Origin && reward.Key == choice.ExpectedReward.Key)
                         .ElementAtOrDefault(choice.Occurrence) is { } parent && parent.Id == frame.SourceId &&
-                        SameOffer(parent, choice.ExpectedReward));
+                        SameRouteRewardOffer(run, parent, choice, dependencies));
                 if (suspended != null)
                 {
+                    int parentDepth = run._obtainFrames.IndexOf(suspended);
                     var parent = suspended.ParentRewards.Single(reward => reward.Id == suspended.SourceId);
                     RecordRouteRewardChoice(run, parent, choice, dependencies);
                     if (!ApplyPlannedRewardChildren(run, parent, choice, dependencies, knownInstanceIds, local, token)) return false;
-                    ContinueLiveDefaultCardRewardChildren(run, dependencies, token);
+                    ContinueLiveDefaultCardRewardChildren(run, dependencies, token, parentDepth);
                     used.Add(index);
                     continue;
                 }
             }
             if (identity.Length == 0 && run.Working.Visits.LastOrDefault()?.Room == PredictorRoomKind.RestSite) continue;
-            if (choice.Occurrence >= identity.Length || !SameOffer(identity[choice.Occurrence], choice.ExpectedReward))
+            if (choice.Occurrence >= identity.Length || !SameRouteRewardOffer(run, identity[choice.Occurrence], choice, dependencies))
             {
                 local.Add(RouteCause("PlannedRewardChanged", plan.NodeId, PredictorCombatDomain.Continuation,
                     occurrenceKey: PredictorRouteCauseEvidence.Key("planned-reward", index.ToString(), choice.Occurrence.ToString())));
@@ -675,7 +716,7 @@ internal sealed partial class PredictorRun
             // Capture its origin while the source occurrence is still present.
             var childCause = RewardChoiceCause(run, reward, "RewardChildChoice", PredictorCombatDomain.Continuation, dependencies);
             int rewardIndex = run.Rewards.IndexOf(reward);
-            if (!ObserveRouteRewards(run, dependencies)[rewardIndex].IsKnown)
+            if (!RouteRewardOperationKnown(run, ObserveRouteRewards(run, dependencies)[rewardIndex], choice))
             {
                 local.Add(RewardChoiceCause(run, reward, "PlannedRewardPending", PredictorCombatDomain.Continuation, dependencies));
                 return false;
@@ -749,7 +790,7 @@ internal sealed partial class PredictorRun
                 RecordRouteRewardChoice(run, originalReward, originalChoice, dependencies);
                 if (run._obtainFrames.Length > childDepth &&
                     !ApplyPlannedRewardChildren(run, originalReward, originalChoice, dependencies, knownInstanceIds, local, token)) return false;
-                ContinueLiveDefaultCardRewardChildren(run, dependencies, token);
+                ContinueLiveDefaultCardRewardChildren(run, dependencies, token, childDepth);
                 if (run._obtainFrames.Length > childDepth)
                 { local.Add(childCause); return false; }
             }
@@ -790,7 +831,7 @@ internal sealed partial class PredictorRun
                 { pendingReceipts.Add(reward.Id); continue; }
                 int childDepth = run._obtainFrames.Length;
                 if (run.Submit(run.Request!, take, token) != PredictorInputResult.Accepted) break;
-                ContinueLiveDefaultCardRewardChildren(run, dependencies, token);
+                ContinueLiveDefaultCardRewardChildren(run, dependencies, token, childDepth);
                 if (run.Phase == PredictorPhase.RestSite) return true;
                 if (run.Phase != PredictorPhase.Rewards || run._obtainFrames.Length > childDepth)
                 {
@@ -887,7 +928,8 @@ internal sealed partial class PredictorRun
         return RouteCause(code, run.Working.Position.NodeId, domains, parents, choice.Identity, choice);
     }
 
-    private static void PropagateDeckCombatReaders(PredictorRun run, List<RouteDependency> dependencies, List<RouteDependency> afterGeneration)
+    private static void PropagateDeckCombatReaders(PredictorRun run, PredictorCombatNodeOverrides? combat,
+        List<RouteDependency> dependencies, List<RouteDependency> afterGeneration)
     {
         foreach (var dependency in dependencies.ToArray())
         {
@@ -895,16 +937,25 @@ internal sealed partial class PredictorRun
             var possible = dependency.PossibleCards.IsDefaultOrEmpty || dependency.AnyExistingCard
                 ? run.Working.Deck.Select(run.Working.Card).Concat(dependency.PossibleCards.IsDefault ? [] : dependency.PossibleCards).Distinct().ToArray()
                 : dependency.PossibleCards.ToArray();
-            bool Active(string key) => possible.Any(c => c.Key.Entry == key && run.CombatDefaults.CardTriggers(c.Key) > 0);
+            bool ReadsCard(PredictorCard card, PredictorDeckUncertainFact fields) =>
+                RouteCardMayVary(run, [dependency], card.Key.Entry) ||
+                dependency.MayChangeExistingCards && (dependency.DeckFacts & fields) != 0 &&
+                (dependency.AffectedCardIds.IsDefaultOrEmpty || dependency.AffectedCardIds.Contains(card.Id)) &&
+                (dependency.AffectedCardTypes.IsDefaultOrEmpty || dependency.AffectedCardTypes.Contains(card.Type));
+            bool Active(string key, PredictorDeckUncertainFact fields = PredictorDeckUncertainFact.Definition) =>
+                possible.Any(card => card.Key.Entry == key &&
+                    (combat?.CardTriggers.FirstOrDefault(trigger => trigger.InstanceId == card.Id)?.EffectiveTriggers ??
+                        run.CombatDefaults.CardTriggers(card.Key)) > 0 && ReadsCard(card, fields));
             var domains = PredictorCombatDomain.None;
-            if (Active("HAND_OF_GREED")) domains |= PredictorCombatDomain.Gold;
-            if (Active("FEED") || Active("BRIGHTEST_FLAME")) domains |= PredictorCombatDomain.Health;
+            if (Active("HAND_OF_GREED", PredictorDeckUncertainFact.Definition | PredictorDeckUncertainFact.Upgrade)) domains |= PredictorCombatDomain.Gold;
+            if (Active("FEED", PredictorDeckUncertainFact.Definition | PredictorDeckUncertainFact.Upgrade) || Active("BRIGHTEST_FLAME")) domains |= PredictorCombatDomain.Health;
             if (Active("ALCHEMIZE")) domains |= PredictorCombatDomain.CombatPotionRng | PredictorCombatDomain.PotionInventory;
             if (Active("THE_HUNT")) domains |= PredictorCombatDomain.ExtraCardRewards;
-            if (Active("ROYALTIES")) domains |= PredictorCombatDomain.ExtraGoldRewards;
+            if (Active("ROYALTIES", PredictorDeckUncertainFact.Definition | PredictorDeckUncertainFact.Upgrade)) domains |= PredictorCombatDomain.ExtraGoldRewards;
             if (Active("FORBIDDEN_GRIMOIRE")) domains |= PredictorCombatDomain.RemoveCardRewards;
             var entry = run._eventCombatEntry ?? run._combatEntry;
-            bool randomUpgrade = possible.Any(c => c.UpgradeLevel < c.MaxUpgradeLevel) &&
+            bool randomUpgrade = possible.Any(c => c.UpgradeLevel < c.MaxUpgradeLevel &&
+                ReadsCard(c, PredictorDeckUncertainFact.Definition | PredictorDeckUncertainFact.Upgrade)) &&
                 (entry?.Kind == PredictorCombatKind.Elite && PredictorSettlementEffects.Has(run.Working, "WAR_HAMMER") ||
                 entry?.Encounter.IsMonsterEncounter == true && run.Working.Relics.Any(r => !r.Melted && r.Key.Entry == "FISHING_ROD" && (r.FishingRodCombatsSeen + 1) % 3 == 0));
             if (randomUpgrade) domains |= PredictorCombatDomain.NicheRng | PredictorCombatDomain.Deck;
@@ -956,7 +1007,9 @@ internal sealed partial class PredictorRun
                 step.Action == PredictorRestAction.Smith ? PredictorDeckProjectionScope.Upgradable : PredictorDeckProjectionScope.Removable,
                 step.Action == PredictorRestAction.Smith ? RouteLevelEditFacts : PredictorDeckUncertainFact.Definition);
             run._restPlanTrace?.BindRestTarget(run, target, known, known ? [] :
-                RouteDeckTargetCauses(run, target == null ? [] : [target], dependencies, knownInstanceIds));
+                RouteDeckTargetCauses(run, target == null ? [] : [target], dependencies, knownInstanceIds,
+                    step.Action == PredictorRestAction.Smith ? PredictorDeckProjectionScope.Upgradable : PredictorDeckProjectionScope.Removable,
+                    step.Action == PredictorRestAction.Smith ? RouteLevelEditFacts : PredictorDeckUncertainFact.Definition));
             return known;
         }
         if (step.Action == PredictorRestAction.Smith && !KnownTarget(step.SmithCard) ||
@@ -965,13 +1018,22 @@ internal sealed partial class PredictorRun
             if (TryProjectLiveRestTarget(run, step, dependencies, token)) return true;
             local.Add(RouteCause("PlannedRestTargetPending", run.Working.Position.NodeId, PredictorCombatDomain.Continuation,
                 RouteDeckTargetCauses(run, step.Action == PredictorRestAction.Smith ?
-                    (step.SmithCard == null ? [] : [step.SmithCard]) : step.CookCards, dependencies, knownInstanceIds)));
+                    (step.SmithCard == null ? [] : [step.SmithCard]) : step.CookCards, dependencies, knownInstanceIds,
+                    step.Action == PredictorRestAction.Smith ? PredictorDeckProjectionScope.Upgradable : PredictorDeckProjectionScope.Removable,
+                    step.Action == PredictorRestAction.Smith ? RouteLevelEditFacts : PredictorDeckUncertainFact.Definition)));
             return false;
         }
-        if (step.Action is PredictorRestAction.Clone or PredictorRestAction.Hatch && CausesFor(dependencies, PredictorCombatDomain.Deck).Length > 0)
+        var restDeckCauses = run._preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults
+            ? step.Action switch
+            {
+                PredictorRestAction.Hatch => RouteHatchPendingCauses(run, dependencies, knownInstanceIds),
+                PredictorRestAction.Clone => RouteClonePendingCauses(run, dependencies, knownInstanceIds),
+                _ => CausesFor(dependencies, PredictorCombatDomain.Deck)
+            } : CausesFor(dependencies, PredictorCombatDomain.Deck);
+        if (step.Action is PredictorRestAction.Clone or PredictorRestAction.Hatch && !restDeckCauses.IsEmpty)
         {
             local.Add(RouteCause("RestDeckDependentAction", run.Working.Position.NodeId, PredictorCombatDomain.Continuation,
-                CausesFor(dependencies, PredictorCombatDomain.Deck)));
+                restDeckCauses));
             return false;
         }
         if (step.Action == PredictorRestAction.Dig)
@@ -1053,8 +1115,14 @@ internal sealed partial class PredictorRun
     {
         run._preview.Partial?.Synchronize(run.Working);
         if (run._preview.Partial?.CanProjectUpgrade(key) == true) return PredictorCombatDomain.None;
-        var reads = ObtainReadDomains(key);
+        var reads = RefineOpenRewardObtainReads(run, key, ObtainReadDomains(key));
         if (run._preview.Partial != null) reads = run._preview.Partial.RefineObtainReads(key, reads, entryOnly: true);
+        // Mirror's entry opens a picker when at least two non-Quest cards are
+        // guaranteed. Full payload belongs to the subsequently chosen source,
+        // not every other card in the deck.
+        if (key.Entry == "DOLLYS_MIRROR" && run._preview.Settings.Policy == PredictorRoutePreviewPolicy.LiveMapDefaults &&
+            RouteDeckKnowledge(run).Project(PredictorDeckProjectionScope.Cloneable).Count?.Bounds.Lower > 1)
+            reads &= ~PredictorCombatDomain.Deck;
         int requested = key.Entry switch { "EMPTY_CAGE" => 2, "ASTROLABE" => 3, _ => 0 };
         if (requested == 0) return reads;
         // BeginObtainDeckChoice automatically acts only at <= requested eligible
@@ -1065,5 +1133,19 @@ internal sealed partial class PredictorRun
             !dependencies.Any(d => d.MayChangeExistingCards && (d.Cause.AffectedDomains & PredictorCombatDomain.Deck) != 0 &&
                 (d.AnyExistingCard || d.PossibleCards.IsDefaultOrEmpty || d.PossibleCards.Any(c => c.Id == card.Id))));
         return guaranteed > requested ? reads & ~(PredictorCombatDomain.Deck | PredictorCombatDomain.NicheRng) : reads;
+    }
+
+    private static PredictorCombatDomain RefineOpenRewardObtainReads(PredictorRun run, ModelKey key,
+        PredictorCombatDomain reads)
+    {
+        // Wing has no AfterObtained effect. Only still-subscribed card offers
+        // receive its immediate late modification; future offers retain their
+        // own Niche dependency at generation.
+        if (key.Entry == "WING_CHARM" && !run.Working.DetachedCardRewards
+            .Concat(run._obtainFrames.SelectMany(frame => frame.ParentRewards)).Concat(run.Rewards)
+            .Any(reward => reward.Kind == PredictorRewardKind.Card && reward.Status == PredictorRewardStatus.Open &&
+                reward.RelicSubscriptionActive))
+            reads &= ~PredictorCombatDomain.NicheRng;
+        return reads;
     }
 }

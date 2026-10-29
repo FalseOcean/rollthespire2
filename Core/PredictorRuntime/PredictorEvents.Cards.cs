@@ -8,6 +8,11 @@ namespace RolltheSpire2.Core.PredictorRuntime;
 
 internal sealed partial class PredictorRun
 {
+    private PredictorCardRewardNicheScope? _eventOfferedCardNicheScope;
+
+    private PredictorReward EventCardOffer() => new(_eventOfferedCards[0].Id, PredictorRewardKind.Card,
+        PredictorRewardOrigin.Event, _eventKey!.Value, _eventOfferedCards)
+        { CanSkip = false, CardRewardNicheScope = _eventOfferedCardNicheScope };
     private PredictorInputResult SubmitEventCardsOption(ChooseEventOption choice,
         PredictorEventOption option, CancellationToken token)
     {
@@ -328,7 +333,7 @@ internal sealed partial class PredictorRun
         var plan = new PredictorRewardPlan(PredictorRewardKind.Card, CardCount: 8,
             Odds: PredictorCardOdds.Uniform, Rarity: EffectCardRarity.Common,
             NoUpgradeRoll: true, NoCardPoolModifications: true);
-        var cards = PredictorRewardGeneration.GenerateCards(Context, ref state, plan, isCardReward: false);
+        var cards = PredictorRewardGeneration.GenerateCards(Context, ref state, plan, isCardReward: false, out var nicheScope);
         var offered = ImmutableArray.CreateBuilder<PredictorCard>(cards.Length);
         foreach (var card in cards)
         {
@@ -337,6 +342,8 @@ internal sealed partial class PredictorRun
         }
         Working = state;
         _eventOfferedCards = offered.ToImmutable();
+        _eventOfferedCardNicheScope = nicheScope;
+        _preview.Partial?.ObserveRewardSourceIds(EventCardOffer());
         _eventCardsRequired = 2;
         _eventCardCandidates = _eventOfferedCards.Select(c => c.Id).ToImmutableArray();
         EventOptions = [];
@@ -349,7 +356,7 @@ internal sealed partial class PredictorRun
         var state = Working;
         var plan = new PredictorRewardPlan(PredictorRewardKind.Card, CardCount: 5,
             Odds: PredictorCardOdds.Regular, NoUpgradeRoll: true, NoCardPoolModifications: true);
-        var cards = PredictorRewardGeneration.GenerateCards(Context, ref state, plan, isCardReward: false);
+        var cards = PredictorRewardGeneration.GenerateCards(Context, ref state, plan, isCardReward: false, out var nicheScope);
         var offered = ImmutableArray.CreateBuilder<PredictorCard>(cards.Length);
         foreach (var card in cards)
         {
@@ -358,6 +365,8 @@ internal sealed partial class PredictorRun
         }
         Working = state;
         _eventOfferedCards = offered.ToImmutable();
+        _eventOfferedCardNicheScope = nicheScope;
+        _preview.Partial?.ObserveRewardSourceIds(EventCardOffer());
         _eventCardsRequired = 1;
         _eventCardCandidates = _eventOfferedCards.Select(c => c.Id).ToImmutableArray();
         EventOptions = [];

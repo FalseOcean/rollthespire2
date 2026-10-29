@@ -51,7 +51,7 @@ internal static partial class PartyQueryProbability
 
         var query = compiled.NormalizedQuery; // Compiler has already bound shared facts once.
         Add("party:shared", "Shared facts and player A", Shared(compiled));
-        if (query.StandardMaps.Count > 0)
+        if (query.StandardMaps.Count > 0 || query.StandardMapRoutes.Count > 0)
             Add("party:map", "Shared map", StandardMapProbabilityEstimator.EstimateParty(SearchSelectivityInput.From(compiled)));
         var morphic = query.Players.SelectMany(p => p.Conditions.EventResultConditions)
             .Where(c => c.Kind == EventResultConditionKind.MorphicGroveGroupInitialBasicsContains).ToArray();
@@ -113,7 +113,7 @@ internal static partial class PartyQueryProbability
         if (q.LegacyWorld.AncientIdentityFilters.Any(f => f.Act == 1 && !NeowIdentity(f.Keys)))
             return JointSelectivityResult.Exact(0, JointSelectivityCombinationMethod.ExactImpossible,
                 "Probability.Party.Act1AncientConflict", "The standard Act 1 Ancient is Neow.", "P=0");
-        var shared = q with { Players = [], StandardMaps = [], EventResultConditions = q.Players
+        var shared = q with { Players = [], StandardMaps = [], StandardMapRoutes = [], EventResultConditions = q.Players
             .SelectMany(p => p.Conditions.EventResultConditions).Where(c => c.Kind == EventResultConditionKind.FakeMerchantOfferedFakeRelic)
             .DistinctBy(c => JsonSerializer.Serialize(c)).ToArray() };
         var generation = compiled.Context.Authority.WorldAuthority?.Beta109Generation;

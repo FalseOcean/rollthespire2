@@ -209,6 +209,7 @@ public sealed record SearchQuery(
     public TreasureRelicSearchCondition? TreasureRelics { get; init; }
     public int FirstActUnknownEventPrefixCount { get; init; }
     public IReadOnlyList<StandardMapSearchCondition> StandardMaps { get; init; } = Array.Empty<StandardMapSearchCondition>();
+    public IReadOnlyList<StandardMapRouteCondition> StandardMapRoutes { get; init; } = Array.Empty<StandardMapRouteCondition>();
 
     public CombatCardRewardSequenceSearchCondition? CombatCardRewards { get; init; }
     public CombatCardExclusionSearchCondition? CombatCardExclusion { get; init; }

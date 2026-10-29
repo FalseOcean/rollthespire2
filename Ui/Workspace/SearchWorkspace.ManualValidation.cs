@@ -189,6 +189,7 @@ internal sealed partial class SearchWorkspace
         updated.SupportScope = exact.Authority.SupportScope;
         updated.Party = null;
         updated.WitnessOpeningRouteId = "";
+        updated.MapRouteWitnesses = [];
         updated.TreasureSources = [];
         updated.SourceAssociation = new(history.QueryKey, exact.IsMatch && history.EnvironmentKnown && history.IdentityVersion == 2
             ? SeedQueryAssociationKind.VerifiedFromSearch : SeedQueryAssociationKind.UnverifiedFromSearch,
@@ -200,12 +201,13 @@ internal sealed partial class SearchWorkspace
                     exact.Authority.WorldSnapshotFingerprint }.Where(value => !string.IsNullOrWhiteSpace(value))),
                 exact.Request!, exact.Document!, exact.Authority, exact.Evaluation.Evidence,
                 exact.Evaluation.MatchedRouteIds, exact.Evaluation.Witnesses)
-                { ValidationDisposition = SearchDisposition.Match, ExecutionWarnings = original.ExecutionWarnings };
+                { ValidationDisposition = SearchDisposition.Match, ExecutionWarnings = original.ExecutionWarnings, MapSearch = original.MapSearch };
             operation.Candidate = candidate;
             updated.ValidationIssue = "";
             updated.Party = exact.Document!.Party;
             var projection = SearchResultProjection.FromCandidate(candidate, updated.QueryFingerprint);
             updated.WitnessOpeningRouteId = projection.WitnessOpeningRouteId;
+            updated.MapRouteWitnesses = projection.MapRouteWitnesses;
             updated.TreasureSources = projection.TreasureSources;
             if ((original.Context ?? history.Context) is { } context)
             {

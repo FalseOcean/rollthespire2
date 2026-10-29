@@ -48,7 +48,7 @@ internal static class PersistenceChecks
             }).Select(key => new RuntimeSemanticItem(key.Serialized, [])).ToArray(), true, "synthetic")).ToArray()
     };
 
-    internal static int Run()
+    internal static int Run(bool notesOnly = false, bool featurePreferencesOnly = false)
     {
         string root = Path.Combine(Environment.CurrentDirectory, ".build-evidence", "persistence", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -56,6 +56,9 @@ internal static class PersistenceChecks
         void Check(bool ok, string message) { checks++; if (!ok) throw new InvalidOperationException(message); }
         void Case(string name, Action<string> action)
         {
+            if (notesOnly && !name.StartsWith("notes-", StringComparison.Ordinal)) return;
+            if (featurePreferencesOnly && name is not ("in-run-console-preferences" or "in-run-feature-preferences" or
+                "in-run-explicit-preferences" or "retired-appearance-migration" or "interface-font-preference")) return;
             string directory = Path.Combine(root, name);
             Directory.CreateDirectory(directory);
             try { action(directory); Console.WriteLine("PASS " + name); }
@@ -729,12 +732,25 @@ internal static class PersistenceChecks
             var zh = zhResult.Document!;
             var en = enResult.Document!;
             Check(zh is not null && en is not null, $"Both indexed bundled languages load: {zhResult.Issue}; {enResult.Issue}");
-            Check(zh!.Chapters.Select(c => c.Id).SequenceEqual(new[] { "release", "next", "positioning", "devlog" }), "Four notes chapters remain after FAQ moves to encyclopedia");
+            Check(zh!.Chapters.Select(c => c.Id).SequenceEqual(new[] { "release", "next", "positioning", "devlog", "contributors" }), "Contributors remains a permanent final notes chapter");
             Check(zh.Chapters.Select(c => (c.Id, c.RequiresAcknowledgement, c.AcknowledgementVersion))
                 .SequenceEqual(en!.Chapters.Select(c => (c.Id, c.RequiresAcknowledgement, c.AcknowledgementVersion))), "Languages share acknowledgement metadata");
             var store = Workspace(directory);
             var release = zh.Chapters.Single(c => c.Id == DeveloperNotesChapterIds.Release);
             var positioning = zh.Chapters.Single(c => c.Id == DeveloperNotesChapterIds.Positioning);
+            foreach (var document in new[] { zh, en })
+            {
+                var contributors = document.Chapters.Single(c => c.Id == DeveloperNotesChapterIds.Contributors);
+                Check(!contributors.RequiresAcknowledgement && !store.NeedsNotesAcknowledgement(contributors),
+                    "Contributors adds no mandatory reading or reminder in either language");
+                Check(contributors.Blocks.Where(b => b.Type == DeveloperNotesBlockKinds.Heading).Select(b => b.Text)
+                    .SequenceEqual(new[] { "James Zhou", "Egoistic今宵" }), "Both languages preserve Owner-confirmed public names and order");
+                string content = string.Join("\n", contributors.Blocks.Select(b => b.Text));
+                Check(content.Contains("@JamesZhou233", StringComparison.Ordinal) && content.Contains("@shion0528", StringComparison.Ordinal) &&
+                    content.Contains("https://github.com/FalseOcean/rollthespire2/pull/4", StringComparison.Ordinal) &&
+                    content.Contains("https://github.com/shion0528/rollthespire2/releases/tag/v1.3.5-resource.17", StringComparison.Ordinal),
+                    "Both languages retain public accounts and actual contribution sources");
+            }
             Check(zh.Chapters.Where(store.NeedsNotesAcknowledgement).Select(c => c.Id)
                 .SequenceEqual(new[] { "release", "positioning" }), "New reader sees exactly the two required chapters");
             store.AcknowledgeNotesChapter(release);
@@ -778,8 +794,8 @@ internal static class PersistenceChecks
         Case("in-run-console-preferences", directory =>
         {
             var store = Workspace(directory);
-            Check(store.Preferences.ShowInRunConsole && store.Preferences.InRunConsoleVerticalPercent == 50 &&
-                store.Preferences.InRunConsoleScalePercent == 100, "Console starts enabled, centered and at normal scale");
+            Check(!store.Preferences.ShowInRunConsole && store.Preferences.InRunConsoleVerticalPercent == 50 &&
+                store.Preferences.InRunConsoleScalePercent == 100, "Console starts disabled, centered and at normal scale");
             store.SetInRunConsole(false, 80, 120);
             store = Workspace(directory);
             Check(!store.Preferences.ShowInRunConsole && store.Preferences.InRunConsoleVerticalPercent == 80 &&
@@ -795,9 +811,9 @@ internal static class PersistenceChecks
             string preferences = Path.Combine(directory, "RolltheSpire2", "state", "user_preferences.json");
             File.WriteAllText(preferences, "{\"SchemaVersion\":1,\"ShowInRunPredictionEntry\":false}");
             store = Workspace(directory);
-            Check(store.Preferences.ShowInRunConsole && store.Preferences.InRunConsoleVerticalPercent == 50 &&
+            Check(!store.Preferences.ShowInRunConsole && store.Preferences.InRunConsoleVerticalPercent == 50 &&
                 store.Preferences.InRunConsoleScalePercent == 100 && !store.Preferences.ShowInRunPredictionEntry,
-                "Older preferences acquire console defaults while preserving the existing prediction setting");
+                "Missing console preference defaults off while preserving the existing prediction setting");
         });
 
         Case("language-preferences-live-cache", directory =>
@@ -822,8 +838,11 @@ internal static class PersistenceChecks
         Case("in-run-feature-preferences", directory =>
         {
             var store = Workspace(directory);
-            Check(store.Preferences.OperationPredictionEnabled && store.Preferences.MapPredictionEnabled,
-                "Missing feature preferences preserve operation and map behavior");
+            Check(!store.Preferences.OperationPredictionEnabled && !store.Preferences.MapPredictionEnabled &&
+                !store.Preferences.ShowInRunPredictionEntry && !store.Preferences.ShowInRunConsole,
+                "All four in-run features default off when preferences are missing");
+            store.SetOperationPredictionEnabled(true);
+            store.SetMapPredictionEnabled(true);
             var stale = Workspace(directory);
             store.SetOperationPredictionEnabled(false);
             Check(!Workspace(directory).Preferences.OperationPredictionEnabled && store.Preferences.MapPredictionEnabled,
@@ -839,7 +858,7 @@ internal static class PersistenceChecks
                     !saved.RootElement.GetProperty("MapPredictionEnabled").GetBoolean(),
                     "An older workspace flushing unrelated preferences cannot overwrite either feature choice on disk");
             var other = Workspace(Path.Combine(directory, "other-workspace"));
-            Check(other.Preferences.OperationPredictionEnabled && other.Preferences.MapPredictionEnabled &&
+            Check(!other.Preferences.OperationPredictionEnabled && !other.Preferences.MapPredictionEnabled &&
                 !Workspace(directory).Preferences.OperationPredictionEnabled,
                 "Temporary directories keep independent feature caches");
             store.SetOperationPredictionEnabled(true);
@@ -847,6 +866,68 @@ internal static class PersistenceChecks
             Check(reopened.Preferences.OperationPredictionEnabled && !reopened.Preferences.MapPredictionEnabled &&
                 reopened.Preferences.ShowInRunConsole && !reopened.Preferences.ShowInRunPredictionEntry,
                 "Re-enabling one feature preserves other feature, console and entry preferences");
+        });
+
+        Case("in-run-explicit-preferences", directory =>
+        {
+            string state = Path.Combine(directory, "RolltheSpire2", "state");
+            Directory.CreateDirectory(state);
+            File.WriteAllText(Path.Combine(state, "user_preferences.json"),
+                """{"OperationPredictionEnabled":true,"MapPredictionEnabled":true,"ShowInRunPredictionEntry":true,"ShowInRunConsole":true,"FontChoice":"game-sans"}""");
+            var store = Workspace(directory);
+            Check(store.Preferences.OperationPredictionEnabled && store.Preferences.MapPredictionEnabled &&
+                store.Preferences.ShowInRunPredictionEntry && store.Preferences.ShowInRunConsole,
+                "Existing explicit opt-ins survive the new defaults");
+            store.SetInRunConsole(false, 50, 100);
+            var reopened = Workspace(directory);
+            Check(reopened.Preferences.OperationPredictionEnabled && reopened.Preferences.MapPredictionEnabled &&
+                reopened.Preferences.ShowInRunPredictionEntry && !reopened.Preferences.ShowInRunConsole &&
+                reopened.Preferences.FontChoice == "game-sans", "An explicit off and unrelated preferences survive reopen");
+        });
+
+        Case("retired-appearance-migration", directory =>
+        {
+            foreach (string scheme in new[] { "stars", "custom", "ink" })
+            {
+                string userRoot = Path.Combine(directory, scheme);
+                string state = Path.Combine(userRoot, "RolltheSpire2", "state");
+                Directory.CreateDirectory(state);
+                string path = Path.Combine(state, "user_preferences.json");
+                var before = JsonNode.Parse("""{"SchemaVersion":1,"Appearance":{"Scheme":"custom","Background":"FF0000","Panel":"00FF00","Accent":"0000FF","Text":"111111"},"FontChoice":"game-sans","OperationPredictionEnabled":true,"MapPredictionEnabled":false,"ShowInRunPredictionEntry":true,"ShowInRunConsole":false,"SkipExactValidation":true,"FuturePreference":{"value":42}}""")!.AsObject();
+                before["Appearance"]!["Scheme"] = scheme;
+                File.WriteAllText(path, before.ToJsonString());
+                var store = Workspace(userRoot);
+                var after = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+                before.Remove("Appearance");
+                Check(store.Preferences.Appearance is null && JsonNode.DeepEquals(before, after),
+                    "Only old Appearance is removed; every other JSON value survives: " + scheme);
+                Check(store.Preferences.OperationPredictionEnabled && !store.Preferences.MapPredictionEnabled &&
+                    store.Preferences.ShowInRunPredictionEntry && !store.Preferences.ShowInRunConsole &&
+                    store.Preferences.FontChoice == "game-sans" && store.Preferences.SkipExactValidation,
+                    "Explicit switches and unrelated settings survive appearance retirement: " + scheme);
+                string once = File.ReadAllText(path);
+                _ = Workspace(userRoot);
+                Check(File.ReadAllText(path) == once, "Appearance migration is idempotent: " + scheme);
+            }
+            foreach (var (name, raw) in new[]
+            {
+                ("future", """{"SchemaVersion":999,"Appearance":{"Scheme":"stars"},"FuturePreference":42}"""),
+                ("unreadable", "{broken preferences")
+            })
+            {
+                string userRoot = Path.Combine(directory, name);
+                string state = Path.Combine(userRoot, "RolltheSpire2", "state");
+                Directory.CreateDirectory(state);
+                string path = Path.Combine(state, "user_preferences.json");
+                File.WriteAllText(path, raw);
+                _ = Workspace(userRoot);
+                string? preserved = name == "unreadable"
+                    ? Directory.GetFiles(state, "user_preferences.json.corrupt-*").SingleOrDefault()
+                    : path;
+                Check(preserved is not null && File.Exists(preserved) && File.ReadAllText(preserved) == raw &&
+                    (name != "unreadable" || !File.Exists(path)),
+                    "Appearance migration preserves protected input and existing quarantine behavior: " + name);
+            }
         });
 
         Case("crystal-sphere-preferences", directory =>
@@ -922,8 +1003,7 @@ internal static class PersistenceChecks
                 store.SetFontChoice(choice);
                 var restored = Workspace(directory);
                 Check(restored.Preferences.FontChoice == choice, "Font preference survives reopen: " + choice);
-                restored.SetAppearance(new());
-                Check(Workspace(directory).Preferences.FontChoice == choice, "Resetting colors preserves font choice");
+                Check(restored.Preferences.Appearance is null, "Retired colors do not affect the font choice");
             }
             File.WriteAllText(Path.Combine(directory, "RolltheSpire2", "state", "user_preferences.json"), "{\"FontChoice\":\"source-han\"}");
             Check(Workspace(directory).Preferences.FontChoice == "game-serif", "Legacy embedded font migrates to the current default on load");

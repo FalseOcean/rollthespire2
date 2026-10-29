@@ -15,7 +15,7 @@ internal sealed partial class EventSearchEditor
 {
     private void ResultTile(Godot.Control content, float x, float y, EventResultConditionKind kind, int index = 0)
     {
-        if (!_draft.Results.TryGetValue(kind, out var slots)) _draft.Results[kind] = slots = new ModelKey?[EventResultTransformSemantics.DrawCount(kind)];
+        if (!_draft.Results.TryGetValue(kind, out var slots)) _draft.Results[kind] = slots = new ModelKey?[ResultSlotCount(kind)];
         var key = slots[index];
         var pool = ResultPool(kind);
         var objectKind = kind is EventResultConditionKind.FakeMerchantOfferedFakeRelic or EventResultConditionKind.TrashHeapDiveRelic

@@ -37,9 +37,12 @@ internal sealed class PredictorCrystalGoldSearch
     private PredictorCrystalSolution? _best;
     private int _bestGold=-1;
     private readonly int _rootUpper;
+    private UInt128 _coverageFog,_coverage;
+    private bool _hasCoverage;
     private long _nodes,_pruned,_merged;
     private double _seconds;
     private Exception? _failure;
+    private bool _proofComplete; // Geometry/threshold proof closed; a worker end receipt may still be pending.
     internal bool Complete { get; private set; }
     internal CrystalDiscoveryProgress Progress=>new(_nodes,_pruned,_merged,_endpoints.Count,_seconds);
 
@@ -107,6 +110,21 @@ internal sealed class PredictorCrystalGoldSearch
         if(!_selected.IsEmpty && _levels.Length>0) _languageBound??=new(_source,table,_avoidCurse);
     }
 
+    // Removing all take predicates enlarges the legal geometry domain, even
+    // when obtain hooks make arbitrary target-subset projections unsound. An
+    // empty query's acknowledged optimum is therefore an upper bound for every
+    // ordered selection on this exact frozen source and action domain.
+    internal void UseUnconditionalUpperBound(PredictorCrystalGoldSearch donor)
+    {
+        if(ReferenceEquals(this,donor) || !donor.Complete || !donor._selected.IsEmpty ||
+            donor._best==null || Volatile.Read(ref donor._failure)!=null ||
+            !ReferenceEquals(_source,donor._source) || _avoidCurse!=donor._avoidCurse ||
+            _includeRerolls!=donor._includeRerolls) return;
+        int upper=donor._bestGold;
+        if(_best!=null && _bestGold>upper) throw new InvalidOperationException("CrystalGoldConflictingUpperBound");
+        _upper=Math.Min(_upper,upper);
+    }
+
     internal CrystalOptionProjection Advance(TimeSpan budget,CrystalOptionProjection? known=null,CancellationToken token=default)
     {
         token.ThrowIfCancellationRequested();
@@ -120,12 +138,21 @@ internal sealed class PredictorCrystalGoldSearch
             AdvanceLanguage(budget,watch,token);
             // A completed reward picker is outside this board-click query.
             // Do not claim a new proof from a reconstructed empty event picker.
-            while(!Complete && _languageTask==null && _source.Remaining>0 && watch.Elapsed<budget)
+            while(!_proofComplete && _source.Remaining>0 && watch.Elapsed<budget)
             {
                 token.ThrowIfCancellationRequested();
+                // The threshold compiler owns a separate bound and reads the
+                // same frozen table. Its pending task must not suspend this
+                // finite geometry frontier or consume its slice by waiting.
+                if(_languageTask is {IsCompleted:true}) AdvanceLanguage(budget,watch,token);
+                if(_proofComplete) break;
                 if(!_cursor.MoveNext()) {Finish();break;}
                 if(_best!=null && _bestGold==_upper) Finish();
             }
+            if(_proofComplete) ConsumeRetiredThreshold(budget,watch,token);
+            else AdvanceLanguage(budget,watch,token);
+            if(Volatile.Read(ref _failure) is {} concurrentFailure)
+                throw new InvalidOperationException("CrystalGoldSearchFailed",concurrentFailure);
         }
         catch(OperationCanceledException) when(token.IsCancellationRequested) {throw;}
         catch(Exception ex) {_failure=ex;throw;}
@@ -136,11 +163,53 @@ internal sealed class PredictorCrystalGoldSearch
                     .Union(_best?.SacrificeRelics??ImmutableHashSet<RolltheSpire2.Core.Identity.ModelKey>.Empty)};
     }
 
-    private void Finish() {Complete=true;_cursor.Dispose();_languageCancel?.Cancel();}
+    private void Finish()
+    {
+        if(_proofComplete) return;
+        _proofComplete=true;_cursor.Dispose();_languageCancel?.Cancel();
+        Complete=_languageTask==null;
+    }
+
+    private void ConsumeRetiredThreshold(TimeSpan budget,Stopwatch watch,CancellationToken token)
+    {
+        if(_languageTask==null) {Complete=true;return;}
+        var task=_languageTask;
+        if(!task.IsCompleted)
+        {
+            // Only the end acknowledgement remains: spend this slice's unused
+            // budget waiting instead of hot-looping identical UI publications.
+            // Active geometry never waits here; zero-budget polls stay free.
+            var remaining=budget-watch.Elapsed;
+            if(remaining<=TimeSpan.Zero) return;
+            Task.WaitAny([task],Math.Max(1,(int)Math.Min(int.MaxValue,remaining.TotalMilliseconds)),token);
+            if(!task.IsCompleted) return;
+        }
+        var cancel=_languageCancel!;int threshold=_languageThreshold;
+        _languageTask=null;_languageCancel=null;
+        try
+        {
+            var result=task.GetAwaiter().GetResult();
+            if(result.Plan is {} plan)
+            {
+                int provedGold=_bestGold;
+                int? actual=Consider(plan.Steps,verifyExisting:true);
+                if(actual==null || actual<threshold) throw new InvalidOperationException("CrystalGoldThresholdWitnessMismatch");
+                if(actual>provedGold) throw new InvalidOperationException("CrystalGoldConflictingThresholdProof");
+            }
+            if(result.Verdict==CrystalOffsetVerdict.Impossible && _best!=null && _bestGold>=threshold)
+                throw new InvalidOperationException("CrystalGoldConflictingThresholdProof");
+        }
+        catch(OperationCanceledException) when(cancel.IsCancellationRequested) {token.ThrowIfCancellationRequested();}
+        finally {cancel.Dispose();}
+        // Keep certainty pending until the canceled worker has acknowledged its
+        // end. A real late proof/failure is consumed on this same owning thread,
+        // before callers can stop polling after observing GoldComplete.
+        Complete=true;
+    }
 
     private void AdvanceLanguage(TimeSpan budget,Stopwatch watch,CancellationToken token)
     {
-        if(Complete || _languageBound==null || _table==null || _table.IncludesRerolls!=_includeRerolls ||
+        if(_proofComplete || _languageBound==null || _table==null || _table.IncludesRerolls!=_includeRerolls ||
             _selected.IsEmpty || !_source.PlacedAllItems || _source.Remaining<=0) return;
         while(!Complete)
         {
@@ -164,7 +233,9 @@ internal sealed class PredictorCrystalGoldSearch
                     {
                         if(_best!=null && _bestGold>=threshold) throw new InvalidOperationException("CrystalGoldConflictingThresholdProof");
                         if(threshold==0) {Finish();return;}
-                        _upper=_levels.Where(v=>v<threshold).DefaultIfEmpty(0).Max();
+                        // An empty-query certificate may have tightened the
+                        // bound while this older threshold was still running.
+                        _upper=Math.Min(_upper,_levels.Where(v=>v<threshold).DefaultIfEmpty(0).Max());
                     }
                     else if(result.Verdict==CrystalOffsetVerdict.Incomplete) _incompleteThresholds.Add(threshold);
                     if(_best!=null && _bestGold==_upper) {Finish();return;}
@@ -198,9 +269,8 @@ internal sealed class PredictorCrystalGoldSearch
                     }
                 },workerToken);
             }
-            var remaining=budget-watch.Elapsed;
-            if(remaining<=TimeSpan.Zero) return;
-            Task.WaitAny([_languageTask],Math.Max(1,(int)Math.Min(int.MaxValue,remaining.TotalMilliseconds)),token);
+            // Poll only. The caller advances geometry within this same budget
+            // and consumes a completed threshold before its next cursor tick.
             if(!_languageTask.IsCompleted) return;
         }
     }
@@ -211,14 +281,17 @@ internal sealed class PredictorCrystalGoldSearch
         // Cooperate before all per-node work. This also lets a zero-work slice
         // retain precisely the same frontier without an incomplete proof claim.
         yield return false;
-        int upper=Upper(node);
+        int upper=Math.Min(Upper(node),_upper);
         if(upper<0 || _best!=null && upper<=_bestGold) {_pruned++;yield break;}
         int left=_source.Remaining-node.Path.Length;
         if(left==0)
         {
             Consider(node.Path);yield break;
         }
-        if(_canPad && Pad(node) is {} padded) Consider(padded);
+        // Pad prepends only initially blank Small clicks, so its endpoint gold
+        // is exactly node.Gold. Avoid constructing/replaying a candidate which
+        // cannot improve the already verified incumbent.
+        if(_canPad && (_best==null || node.Gold>_bestGold) && Pad(node) is {} padded) Consider(padded);
         if(_best!=null && upper<=_bestGold) {_pruned++;yield break;}
         UInt128 live=node.Fog&_relevant;
         UInt128 centers=node.Fog;
@@ -284,13 +357,21 @@ internal sealed class PredictorCrystalGoldSearch
     private bool MayCover(UInt128 need,UInt128 fog,int left)
     {
         if(need==0) return true;
-        if(left<=0 || Bits(need)>9*left || _residues.Any(r=>Bits(need&r)>left)) return false;
+        if(left<=0 || Bits(need)>9*left) return false;
+        foreach(var residue in _residues) if(Bits(need&residue)>left) return false;
+        if(left==1) return _moves.Any(m=>(fog&m.Center)!=0 && (need&~m.Mask)==0);
         // Each still-hidden cell needs some currently legal center. Legal
         // centers only disappear, so their optimistic union bounds the future.
-        UInt128 coverage=0;
-        foreach(var move in _moves) if((fog&move.Center)!=0) coverage|=move.Mask;
-        if((need&~coverage)!=0) return false;
-        return left!=1 || _moves.Any(m=>(fog&m.Center)!=0 && (need&~m.Mask)==0);
+        // One Upper call asks about many item/subset masks at the same fog.
+        // Keep only the last fog's union: it depends on no target or click count,
+        // and avoids a new unbounded per-position cache.
+        if(!_hasCoverage || _coverageFog!=fog)
+        {
+            UInt128 coverage=0;
+            foreach(var move in _moves) if((fog&move.Center)!=0) coverage|=move.Mask;
+            _coverageFog=fog;_coverage=coverage;_hasCoverage=true;
+        }
+        return (need&~_coverage)==0;
     }
 
     private ImmutableArray<PredictorCrystalStep>? Pad(Position node)
@@ -309,21 +390,21 @@ internal sealed class PredictorCrystalGoldSearch
         return prefix.ToImmutable().AddRange(node.Path);
     }
 
-    private void Consider(ImmutableArray<PredictorCrystalStep> path)
+    private int? Consider(ImmutableArray<PredictorCrystalStep> path,bool verifyExisting=false)
     {
-        if(path.Length!=_source.Remaining) return;
+        if(path.Length!=_source.Remaining) return null;
         var node=new Position(_initial,[],"",InitialGold());
         foreach(var step in path)
         {
             var move=_moves.FirstOrDefault(m=>m.Step==step);
-            if(move==null || (node.Fog&move.Center)==0 || Apply(node,move) is not {} next) return;
+            if(move==null || (node.Fog&move.Center)==0 || Apply(node,move) is not {} next) return null;
             node=next;
         }
-        if(_best!=null && node.Gold<=_bestGold) return;
+        if(!verifyExisting && _best!=null && node.Gold<=_bestGold) return null;
         // For empty targets all words with the same geometric gold amount are
         // interchangeable. Selected targets retain the entire completion word.
         string endpoint=_selected.IsEmpty?node.Gold.ToString():node.Word;
-        if(!_endpoints.Add(endpoint)) return;
+        if(!_endpoints.Add(endpoint) && !verifyExisting) return null;
         var run=PredictorCrystalExplorer.Replay(_source,path);
         int actual=run.Rewards.Where(r=>r.Kind==PredictorRewardKind.Gold).Sum(r=>r.GoldAmount);
         if(actual!=node.Gold) throw new InvalidOperationException("CrystalGoldRewardAmountContractChanged");
@@ -336,7 +417,10 @@ internal sealed class PredictorCrystalGoldSearch
             if(_includeRerolls && !_selected.IsEmpty) row=PredictorCrystalExplorer.WithRerolls(row,run);
             proof=PredictorCrystalExplorer.VerifySelection(_source,row,_selected);
         }
-        if(proof!=null) {_best=proof;_bestGold=actual;}
+        if(proof==null) return null;
+        if(actual>_upper) throw new InvalidOperationException("CrystalGoldConflictingUpperBound");
+        if(_best==null || actual>_bestGold) {_best=proof;_bestGold=actual;}
+        return actual;
     }
     private int InitialGold()=>_source.Revealed.Sum(i=>_source.Items[i].Subscriptions==0?0:_gold[i]/_source.Items[i].Subscriptions);
 

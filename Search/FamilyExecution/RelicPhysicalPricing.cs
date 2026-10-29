@@ -20,8 +20,8 @@ internal static partial class RelicPhysicalPricing
     }
     internal static FamilyPhysicalQuote? Quote(ExactSearchExecutionRequest request, RelicFamilyPlan plan,
         FamilyPhysicalQuoteRequest geometry, FamilyExpectedFilteringCostProjection expected) =>
-        QuoteMeasured(request, plan, geometry) ?? QuoteOrdinaryModel(request, plan, expected, geometry, cpu: false) ??
-        QuoteShopModel(request, plan, geometry, cpu: false) ?? QuoteMixedModel(request, plan, expected, geometry);
+        QuoteMeasured(request, plan, geometry) ??
+        RelicWorkEstimate.Ordinary(request, plan, geometry, expected, cpu: false);
 
     private static FamilyPhysicalQuote? QuoteMeasured(ExactSearchExecutionRequest request, RelicFamilyPlan plan,
         FamilyPhysicalQuoteRequest geometry)

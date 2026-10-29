@@ -150,6 +150,23 @@ internal sealed partial class SearchConditionSummary : VBoxContainer
         foreach (string line in query.LegacyWorld.BossFilters.Select(c => $"W · {_text!.Format(Ui1TextKey.SearchPresetSummaryAct, c.Act)} · {FormatKeyFilter(c.Keys, GameContentKind.Encounter)}")) yield return line;
         foreach (string line in query.LegacyWorld.BossOrdinalFilters.Select(c => $"W · {_text!.Format(Ui1TextKey.SearchPresetSummaryAct, c.Act)} · #{c.Ordinal} · {FormatKeyFilter(c.Keys, GameContentKind.Encounter)}")) yield return line;
         foreach (string line in query.StandardMaps.Select(FormatMapCondition)) yield return line;
+        foreach (var drawingRoute in query.StandardMapRoutes)
+        {
+            string Room(StandardMapRoomType room) => room switch
+            {
+                StandardMapRoomType.Monster => Local("小怪", "Monster"),
+                StandardMapRoomType.Elite => Local("精英", "Elite"),
+                StandardMapRoomType.RestSite => Local("火堆", "Rest Site"),
+                StandardMapRoomType.Shop => Local("商店", "Shop"),
+                StandardMapRoomType.Unknown => Local("问号", "Unknown"),
+                _ => room.ToString()
+            };
+            string groups = string.Join(" → ", drawingRoute.Groups.Select(group => group.Nodes.Count == 1
+                ? Room(group.Nodes[0]) : "[" + string.Join(" / ", group.Nodes.Select(Room)) + "]"));
+            yield return $"M · {_workbenchText!.Get($"query.map.scope.act{drawingRoute.Act}")} · " +
+                Local("绘画路线", "Drawn route") + " · " + groups + " · " +
+                Local("组内无序，允许间隔；不含固定节点", "Unordered within groups, gaps allowed; fixed rooms excluded");
+        }
         foreach (string line in query.RelicShopSequenceConditions.Select(c => "S · " + _text!.Get(Ui1TextKey.SearchRelicLaneShop) + " · " + FormatOrderMode(c.OrderMode) + " · " + FormatSlots(c.Slots.Take(c.Count), GameContentKind.Relic))) yield return line;
         foreach (string line in query.MerchantColorlessSequenceConditions.Select(c => "S · " + _text!.Get(c.Slot == MerchantColorlessSlot.Uncommon ? Ui1TextKey.SearchShopUncommon : Ui1TextKey.SearchShopRare) + " · " + FormatOrderMode(c.OrderMode) + " · " + FormatSlots(c.Slots.Take(c.Count), GameContentKind.Card))) yield return line;
         foreach (string line in query.MerchantColorlessConditions.Select(c => $"S · #{c.MerchantOrdinal} · " + _text!.Get(c.Slot == MerchantColorlessSlot.Uncommon ? Ui1TextKey.SearchShopUncommon : Ui1TextKey.SearchShopRare) + " · " + _names!.Resolve(c.TargetCardKey, GameContentKind.Card))) yield return line;

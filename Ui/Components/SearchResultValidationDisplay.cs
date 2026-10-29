@@ -28,12 +28,18 @@ internal static class SearchResultValidationDisplay
         };
 
     internal static void AddReason(VBoxContainer content, PersistedSearchResult result,
-        WorkspacePalette palette, IUiTextProvider text) =>
+        WorkspacePalette palette, IUiTextProvider text)
+    {
+        MapSearchProvenanceDisplay.Add(content, result.MapSearch, palette, text);
         AddReason(content, result.IsUnverified, result.EffectiveValidationDisposition, result.ValidationIssue, palette, text);
+    }
 
     internal static void AddReason(VBoxContainer content, SeedLibraryResultProvenance origin,
-        WorkspacePalette palette, IUiTextProvider text) =>
+        WorkspacePalette palette, IUiTextProvider text)
+    {
+        MapSearchProvenanceDisplay.Add(content, origin.MapSearch, palette, text);
         AddReason(content, origin.IsUnverified, origin.ValidationDisposition, origin.ValidationIssue, palette, text);
+    }
 
     private static void AddReason(VBoxContainer content, bool unverified, SearchDisposition disposition, string issue,
         WorkspacePalette palette, IUiTextProvider text)

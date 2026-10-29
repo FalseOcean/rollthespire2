@@ -11,8 +11,9 @@ internal sealed partial class WorldFamily
         get
         {
             foreach (int workers in FamilyCpuExecution.WorkerConfigurations(_request))
-                yield return new FamilyCpuExecution(_request, this, "W.World.Cpu.Progression.20261016.v2", Replay.Matches, workers,
-                    g => workers == 1 ? WorldPhysicalPricing.QuoteCpu(_request, Replay, _gpuPlan, g) : null);
+                yield return new FamilyCpuExecution(_request, this, "W.World.Cpu.Progression.20261028.v3", Replay.Matches, workers,
+                    g => (workers == 1 ? WorldPhysicalPricing.QuoteCpu(_request, Replay, _gpuPlan, g) : null) ??
+                        WorldWorkEstimate.Cpu(Replay, workers, g));
         }
     }
 }

@@ -1,0 +1,39 @@
+{
+  "Id": "contributors",
+  "Title": "贡献者与致谢",
+  "Summary": "感谢为 Roll the Spire 2 提供思路、实现与验证的贡献者。",
+  "Blocks": [
+    {
+      "Type": "Heading",
+      "Text": "James Zhou"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[font_size=18]@JamesZhou233[/font_size]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "提供 GPU 执行与数据传输优化的思路、实现和对照证据，帮助改进批量提交、缓冲复用与候选数据传递。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[url=https://github.com/FalseOcean/rollthespire2/pull/4]优化方案与提交[/url]"
+    },
+    {
+      "Type": "Heading",
+      "Text": "Egoistic今宵"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[font_size=18]@shion0528[/font_size]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "提供 CPU/GPU 筛选与开局模拟的优化实现和验证材料，帮助改进 CPU 批量预筛、计算复用、奖励池准备与候选状态复用。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[url=https://github.com/shion0528/rollthespire2/releases/tag/v1.3.5-resource.17]研究版本与实现[/url]"
+    }
+  ]
+}

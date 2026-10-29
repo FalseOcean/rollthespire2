@@ -38,10 +38,12 @@ internal sealed partial class InRunMapNodePresenter
                 _text.Format("predictor.map.rest_plan_progress", Math.Min(applied, actions.Length), Math.Max(0, actions.Length - applied)), [], []));
             foreach (var (step, index) in actions.Select((step, index) => (step, index)))
             {
+                var observation = c.Node.RestActionKnowledge.FirstOrDefault(action => action.ActionIndex == index && action.Action == step.Action);
                 var targets = step.SmithCard is { } smith
-                    ? c.Node.RestCards.Where(card => card.IsKnown && card.Value.Id == smith.InstanceId).Select(card => Object(card.Value)).ToArray()
-                    : step.CookCards.Select(target => c.Node.RestCards.FirstOrDefault(card => card.IsKnown && card.Value.Id == target.InstanceId))
-                        .Where(card => card != null).Select(card => Object(card!.Value)).ToArray();
+                    ? (observation?.Candidates ?? []).Where(card => card.IsKnown && card.Value.Id == smith.InstanceId).Select(TargetObject).ToArray()
+                    : step.CookCards.Select(target => (observation?.Candidates ?? []).FirstOrDefault(card => card.IsKnown && card.Value.Id == target.InstanceId))
+                        .Where(card => card != null).Select(card => TargetObject(card!)).ToArray();
+                targets = targets.Concat((observation?.ObtainedRelics ?? []).Select(Object)).ToArray();
                 parts.Sections.Add(new(R("rest." + step.Action), M(index < applied ? "rest_applied" : "rest_pending"), targets,
                     [Choice(c, R("plan.remove_action"), context => Set(context,
                         context.Plan with { RestActions = context.Plan.RestActions.RemoveAt(index), LeaveRest = false }), selected: index < applied)])
@@ -54,9 +56,9 @@ internal sealed partial class InRunMapNodePresenter
                     context.Plan with { RestActions = context.Plan.RestActions.RemoveAt(index), LeaveRest = false }))).ToArray()));
         if (detailed && c.Node.RestDefaultApplied && c.Node.DefaultRestAction is { Action: PredictorRestAction.Smith, SmithCard: null } defaultSmith)
         {
-            var targets = RestTargets(c).Where(card => card.UpgradeLevel < card.MaxUpgradeLevel);
+            var targets = RestTargets(c, 0, PredictorRestAction.Smith);
             parts.Sections.Add(new(R("rest.Smith"), "", [], targets.Select(card => Choice(c, R("plan.take"), context =>
-                Set(context, context.Plan with { RestActions = [defaultSmith with { SmithCard = Target(card) }], LeaveRest = true }), Object(card))).ToArray()));
+                Set(context, context.Plan with { RestActions = [defaultSmith with { SmithCard = Target(card.Value) }], LeaveRest = true }), TargetObject(card))).ToArray()));
         }
         foreach (var (step, index) in actions.Select((step, index) => (step, index)).Where(item => detailed &&
             item.step.Action is PredictorRestAction.Smith or PredictorRestAction.Cook &&
@@ -67,20 +69,22 @@ internal sealed partial class InRunMapNodePresenter
             // action. Its optional editor still owns that action's index.
             if (step.Action == PredictorRestAction.Smith)
             {
-                var targets = RestTargets(c).Where(card => card.UpgradeLevel < card.MaxUpgradeLevel).ToArray();
+                var targets = RestTargets(c, index, step.Action).ToArray();
                 parts.Sections.Add(new(R("rest.Smith"), "", [],
                     targets.Select(card => Choice(c, R("plan.take"), context =>
-                        Set(context, context.Plan with { RestActions = context.Plan.RestActions.SetItem(index, step with { SmithCard = Target(card) }) }), Object(card),
-                        selected: step.SmithCard == Target(card))).ToArray()));
+                        Set(context, context.Plan with { RestActions = context.Plan.RestActions.SetItem(index, step with { SmithCard = Target(card.Value) }) }), TargetObject(card),
+                        selected: step.SmithCard == Target(card.Value))).ToArray()));
             }
             else
             {
-                var targets = RestTargets(c).Where(card => card.Removable).ToImmutableArray();
+                var observations = RestTargets(c, index, step.Action).ToImmutableArray();
+                var targets = observations.Select(card => card.Value).ToImmutableArray();
                 CardSelection(c, parts, "rest-cook-" + index, targets, 2, 2, (context, indices) => Set(context,
                     context.Plan with { RestActions = context.Plan.RestActions.SetItem(index, step with {
                         CookCards = indices.Select(i => Target(targets[i])).ToImmutableArray() }) }),
                     selectedIndices: targets.Select((card, targetIndex) => (card, targetIndex))
-                        .Where(item => step.CookCards.Contains(Target(item.card))).Select(item => item.targetIndex).ToImmutableArray());
+                        .Where(item => step.CookCards.Contains(Target(item.card))).Select(item => item.targetIndex).ToImmutableArray(),
+                    display: card => TargetObject(observations.Single(observation => observation.Value.Id == card.Id)));
             }
         }
         foreach (var (step, index) in actions.Select((step, index) => (step, index)).Where(item => detailed &&
@@ -119,8 +123,13 @@ internal sealed partial class InRunMapNodePresenter
         if (detailed && !premisesOnly) parts.Sections.Add(new("", "", [], [Choice(c, R("plan.leave_rest"), context => Set(context, context.Plan with { LeaveRest = true }),
             enabled: pending == null, selected: c.Plan.LeaveRest)]));
     }
-    private static IEnumerable<PredictorCard> RestTargets(Context c) => c.Node.RestCards
-        .Where(card => card.IsKnown && card.Value.Id > 0 && !card.Value.Removed).Select(card => card.Value);
+    private static IEnumerable<PredictorRouteCardKnowledge> RestTargets(Context c, int index, PredictorRestAction action) =>
+        (c.Node.RestActionKnowledge.FirstOrDefault(value => value.ActionIndex == index && value.Action == action)?.Candidates ?? [])
+            .Where(card => card.IsKnown && card.Value.Id > 0 && !card.Value.Removed);
+
+    private InRunMapDetailObject TargetObject(PredictorRouteCardKnowledge card) =>
+        card.FullCardKnown ? Object(card.Value) : Object(card.Value.Key) with
+        { DisplayName = _names.Resolve(card.Value.Key, GameContentKind.Card) + " · " + M("target_card_details_pending") };
 
     private bool AddShop(Context c, PredictorPlannedShopAction action)
         => Set(c, ShopActionPlan(c, action));
@@ -191,9 +200,9 @@ internal sealed partial class InRunMapNodePresenter
             foreach (var required in shop.RequiredChoices) MainObtainEditor(c, parts, required);
         if (removing)
         {
-            var candidates = c.Node.Cards.Where(card => card.IsKnown && card.Value.Id > 0 && card.Value.Removable).Select(card => card.Value);
+            var candidates = shop.RemovalCards.Where(card => card.IsKnown && card.Value.Id > 0);
             parts.Sections.Add(new(R("remove_card"), "", [], candidates.Select(card => Choice(c, R("remove_card"), context =>
-                AddShop(context, new(PredictorShopActionKind.ChooseRemoval) { Card = Target(card) }), Object(card)))
+                AddShop(context, new(PredictorShopActionKind.ChooseRemoval) { Card = Target(card.Value) }), TargetObject(card)))
                 .Append(Choice(c, R("cancel"), context => AddShop(context, new(PredictorShopActionKind.CancelRemoval)))).ToArray()));
         }
     }

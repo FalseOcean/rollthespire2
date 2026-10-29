@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using RolltheSpire2.Core.Authority;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Prediction;
@@ -8,6 +9,21 @@ namespace RolltheSpire2.Search.Semantics;
 
 internal static class PartyInitialQuery
 {
+    // Empty drawing data did not exist in older queries. Preserve their resume
+    // identity while including every active route in new whole-table fingerprints.
+    private static readonly JsonSerializerOptions FingerprintJsonOptions = new()
+    {
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver
+        {
+            Modifiers = { info =>
+            {
+                if (info.Type != typeof(SearchQuery)) return;
+                var property = info.Properties.First(p => p.Name == nameof(SearchQuery.StandardMapRoutes));
+                property.ShouldSerialize = (_, value) => value is not IReadOnlyList<StandardMapRouteCondition> { Count: 0 };
+            } }
+        }
+    };
+
     internal const string OpeningPremiseId = "PartyOpening.UnselectedNeutralC.UnspecifiedCapsuleNoObtainEffects.v3";
     internal static IReadOnlyDictionary<ModelKey, IReadOnlySet<ModelKey>> CapsuleEffectPremise(SearchQuery query)
     {
@@ -41,7 +57,7 @@ internal static class PartyInitialQuery
             throw new ArgumentException("Party.InvalidOrderedSlotPredicate");
         query = BindSharedConditions(query);
         string empty = JsonSerializer.Serialize(SearchQuery.Empty);
-        var personalAtSharedLevel = query with { Players = [], VariantBossBranches = [], StandardMaps = [], EventSequenceConstraints = [],
+        var personalAtSharedLevel = query with { Players = [], VariantBossBranches = [], StandardMaps = [], StandardMapRoutes = [], EventSequenceConstraints = [],
             FirstActUnknownEventPrefixCount = 0,
             LegacyWorld = query.LegacyWorld with { BossFilters = [], BossOrdinalFilters = [], AncientIdentityFilters = [] } };
         if (JsonSerializer.Serialize(personalAtSharedLevel) != empty)
@@ -72,6 +88,7 @@ internal static class PartyInitialQuery
             keys.Ban.Distinct().OrderBy(k => k.Serialized).ToArray());
         var normalized = query with
         {
+            StandardMapRoutes = shared.NormalizedQuery.StandardMapRoutes,
             Players = query.Players.Select(p => p with { Offers = Canonical(p.Offers),
                 Conditions = p.Conditions with { CombatCardExclusion = personal[p.Slot].NormalizedQuery.CombatCardExclusion },
                 SelectedOption = p.SelectedOption is { } plan ? plan with { Choices = plan.Choices.OrderBy(c => c.GroupId, StringComparer.Ordinal).ToArray() } : null,
@@ -113,7 +130,7 @@ internal static class PartyInitialQuery
         impossible |= personal.Any(p => p.Status == QueryNormalizationStatus.Impossible) || shared.Status == QueryNormalizationStatus.Impossible;
         return new CompiledSearch(authored, context, new(normalized, impossible ? QueryNormalizationStatus.Impossible : QueryNormalizationStatus.Legal, [], [], [], []),
             new(new(ResolvedCombatRewardRouteKind.NotApplicable, null, false, OrderedPartyAuthority.ObservationVersion)), false,
-            OrderedPartyAuthority.Hash(party.Fingerprint + "|" + OpeningPremiseId + "|" + (PartyNeowQuery.HasTransactions(normalized) ? Core.Effects.PartyNeowAdmission.ObservationVersion : "") + "|" + JsonSerializer.Serialize(normalized) +
+            OrderedPartyAuthority.Hash(party.Fingerprint + "|" + OpeningPremiseId + "|" + (PartyNeowQuery.HasTransactions(normalized) ? Core.Effects.PartyNeowAdmission.ObservationVersion : "") + "|" + JsonSerializer.Serialize(normalized, FingerprintJsonOptions) +
                 string.Concat(personal.Where(p => p.NormalizedQuery.CombatCardExclusion is { IsEmpty: false })
                     .Select(p => "|CardIdentity:P" + p.Context.Authority.PlayerSlotIndex + ":" + p.Context.Authority.CardIdentityFingerprint))))
             { PlayerSearches = personal.Append(shared).ToArray(), UsesPartyFamilyProjection = familyProjection };
@@ -124,6 +141,7 @@ internal static class PartyInitialQuery
     internal static SearchQuery BindSharedConditions(SearchQuery query)
     {
         var sources = new[] { query }.Concat(query.Players.Select(p => p.Conditions)).ToArray();
+        foreach (var source in sources) SearchCompiler.ValidateStandardMapConditions(source);
         static T[] Unique<T>(IEnumerable<T> values) => values.DistinctBy(v => JsonSerializer.Serialize(v)).ToArray();
         var variants = new List<VariantScopedBossBranch>();
         foreach (int act in sources.SelectMany(q => q.VariantBossBranches).Select(b => b.Act).Distinct())
@@ -158,6 +176,8 @@ internal static class PartyInitialQuery
         {
             VariantBossBranches = Unique(variants),
             StandardMaps = Unique(sources.SelectMany(q => q.StandardMaps)),
+            StandardMapRoutes = sources.SelectMany(q => q.StandardMapRoutes).Where(c => !c.IsEmpty)
+                .Select(c => c.Normalize()).DistinctBy(c => c.Fingerprint).OrderBy(c => c.Act).ToArray(),
             EventSequenceConstraints = Unique(sources.SelectMany(q => q.EventSequenceConstraints)),
             LegacyWorld = query.LegacyWorld with
             {
@@ -167,7 +187,7 @@ internal static class PartyInitialQuery
             },
             Players = query.Players.Select(p => p with { Conditions = p.Conditions with
             {
-                VariantBossBranches = [], StandardMaps = [], EventSequenceConstraints = [],
+                VariantBossBranches = [], StandardMaps = [], StandardMapRoutes = [], EventSequenceConstraints = [],
                 AncientBranches = p.Conditions.AncientBranches.GroupBy(b => b.Act)
                     .Where(g => g.Any(b => b.OptionAny.Count > 0 || b.SeaGlassTargetAny.Count > 0)).SelectMany(g => g).ToArray(),
                 LegacyWorld = p.Conditions.LegacyWorld with { BossFilters = [], BossOrdinalFilters = [], AncientIdentityFilters = [] }

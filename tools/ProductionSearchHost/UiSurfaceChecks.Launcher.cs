@@ -49,25 +49,25 @@ internal static partial class UiSurfaceChecks
             }
             Caption("Native diagnostic fixture - not a full game screenshot", new(24, 20), 22);
             Caption("Main menu: 56px", new(24, 80));
-            Caption("In-run: native art", new(190, 80));
+            Caption("In-run: 56px", new(190, 80));
             Caption("Approved art enlarged to 256px (diagnostic only)", new(390, 80), 16);
             Caption("Normal scale / 38px icon region / existing button style", new(24, 340), 17);
             var launcher = new Button { Name = "DiagnosticMainMenuLauncher", Text = "",
                 Position = new(48, 120), Size = new(56, 56), CustomMinimumSize = new(56, 56),
                 FocusMode = Control.FocusModeEnum.None, ClipContents = false };
-            typeof(AppShellHostRoot).GetMethod("StyleMainMenuLauncher", methods)!.Invoke(null, [launcher]);
+            typeof(AppShellHostRoot).GetMethod("StyleRt2Launcher", methods)!.Invoke(null, [launcher]);
             viewport.AddChild(launcher);
             var inRun = new Button { Name = "DiagnosticInRunLauncher", Text = "",
                 Position = new(210, 120), Size = new(56, 56), CustomMinimumSize = new(56, 56),
                 FocusMode = Control.FocusModeEnum.None, ClipContents = false };
-            typeof(AppShellHostRoot).GetMethod("StyleNeowsBonesLauncher", methods)!.Invoke(null, [inRun, runtime]);
+            typeof(AppShellHostRoot).GetMethod("StyleRt2Launcher", methods)!.Invoke(null, [inRun]);
             viewport.AddChild(inRun);
             Check(launcher.GetNodeOrNull<Label>("RolltheSpire2_LauncherFallbackLabel") is null,
                 "main menu rendered art without the text fallback");
             Check(inRun.GetNodeOrNull<Label>("RolltheSpire2_LauncherFallbackLabel") is null,
-                "in-run native art rendered without the text fallback");
+                "in-run approved art rendered without the text fallback");
             var icon = launcher.GetNode<TextureRect>("RolltheSpire2_LauncherIcon");
-            var nativeIcon = inRun.GetNode<TextureRect>("RolltheSpire2_NeowsBonesLauncherIcon");
+            var nativeIcon = inRun.GetNode<TextureRect>("RolltheSpire2_LauncherIcon");
             Check(icon.Texture is ImageTexture && icon.Texture.GetWidth() == 512 && icon.Texture.GetHeight() == 512,
                 "main-menu texture comes from the embedded decoded image");
             using (Image rendered = icon.Texture!.GetImage())
@@ -77,9 +77,14 @@ internal static partial class UiSurfaceChecks
                     "actual main-menu texture preserves every decoded PNG pixel including alpha");
             }
             Texture2D expectedNative = ModelDb.Relic<NeowsBones>().Icon;
-            Check(nativeIcon.Texture is not null && nativeIcon.Texture.GetInstanceId() == expectedNative.GetInstanceId(),
-                "in-run styling still uses actual ModelDb NeowsBones.Icon");
-            Check(nativeIcon.Texture != icon.Texture, "in-run art was not replaced by the main-menu asset");
+            Check(nativeIcon.Texture is ImageTexture && nativeIcon.Texture.GetInstanceId() != expectedNative.GetInstanceId(),
+                "in-run styling uses the embedded launcher without replacing the native relic art");
+            using (Image rendered = nativeIcon.Texture!.GetImage())
+            {
+                rendered.Convert(Image.Format.Rgba8);
+                Check(rendered.GetData().AsSpan().SequenceEqual(approvedPixels),
+                    "actual in-run launcher preserves approved PNG pixels including alpha");
+            }
             var enlarged = new TextureRect { Texture = icon.Texture, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
                 Position = new(430, 110), Size = new(256, 256), StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered };
             viewport.AddChild(enlarged);
@@ -112,7 +117,7 @@ internal static partial class UiSurfaceChecks
                 ButtonSize = 56, IconRegion = 38, Inset = 9, NativeRelicIconPreserved = true,
                 Screenshot = screenshot, ScreenshotScope = "Native diagnostic fixture; not a full game screenshot"
             }, new JsonSerializerOptions { WriteIndented = true }));
-            GD.Print($"LAUNCHER_ICON_PASS checks={checks};asset={actualHash};button=56;icon=38;inRun=NeowsBones;fixtureOnly=true");
+            GD.Print($"LAUNCHER_ICON_PASS checks={checks};asset={actualHash};button=56;icon=38;inRun=Rt2Launcher;fixtureOnly=true");
         }
         finally { viewport.QueueFree(); }
     }

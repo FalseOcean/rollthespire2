@@ -237,27 +237,8 @@ internal static class ModernNeowIdentityPredictor
 
     private static void RemoveConflict(List<ModelKey> positives, ModelKey curse)
     {
-        if (curse == BaseGameModelKeys.Relics.CursedPearl)
-        {
-            positives.Remove(BaseGameModelKeys.Relics.GoldenPearl);
-        }
-        else if (curse == BaseGameModelKeys.Relics.HeftyTablet)
-        {
-            positives.Remove(BaseGameModelKeys.Relics.ArcaneScroll);
-        }
-        else if (curse == BaseGameModelKeys.Relics.LeafyPoultice)
-        {
-            positives.Remove(BaseGameModelKeys.Relics.NewLeaf);
-        }
-        else if (curse == BaseGameModelKeys.Relics.PrecariousShears)
-        {
-            positives.Remove(BaseGameModelKeys.Relics.PreciseScissors);
-        }
-        else if (curse == BaseGameModelKeys.Relics.NeowsSacrifice)
-        {
-            positives.Remove(BaseGameModelKeys.Relics.PhialHolster);
-            positives.Remove(BaseGameModelKeys.Relics.LostCoffer);
-        }
+        for (int i = positives.Count - 1; i >= 0; i--)
+            if (Conflicts(curse, positives[i])) positives.RemoveAt(i);
     }
 
     private static bool IsPositiveCandidate(ModelKey key) =>
