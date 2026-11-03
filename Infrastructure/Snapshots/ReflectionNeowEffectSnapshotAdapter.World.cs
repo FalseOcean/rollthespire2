@@ -11,6 +11,9 @@ namespace RolltheSpire2.Infrastructure.Snapshots;
 
 internal static partial class ReflectionNeowEffectSnapshotAdapter
 {
+    // Archived Stable107 ordering/shape supplements. Modern production authority
+    // comes from ObserveBeta109StaticAuthority, including native room-shape reads;
+    // these tables do not establish modern snapshot completeness or compatibility.
     private static readonly IReadOnlyDictionary<int, string[]> LegacyActOrderByIndex =
         new Dictionary<int, string[]>
         {

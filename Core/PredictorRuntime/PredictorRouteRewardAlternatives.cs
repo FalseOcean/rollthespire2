@@ -226,7 +226,7 @@ internal sealed partial class PredictorRun
             if (!ApplyRouteObtainChild(run, choice.Children[index], dependencies, knownInstanceIds, local, token)) return false;
             run._preview.Rewards.Results[reward.Id] = run._preview.Rewards.Results[reward.Id] with { AppliedChildren = index + 1 };
         }
-        ContinueLiveDefaultCardRewardChildren(run, dependencies, token, sourceObtainDepth);
+        ContinueLiveDefaultCardRewardChildren(run, dependencies, token, sourceObtainDepth, reward.Id);
         if (run._sacrificePendingRewardId == reward.Id)
         {
             // The source is suspended inside the ordinary obtain transaction;

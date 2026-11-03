@@ -11,12 +11,12 @@ internal static class AncientOptionPhysicalPricing
         plan.NumericalVariant == GpuNumericalVariant.NativeFloat64 && plan.SingleOptionPlan is { Generator: WorldFastAncientOptionGeneratorKind.Tezcatara,
             MaxScratchCount: 3 } && plan.ScratchWords == 3;
 
-    internal static FamilyPhysicalQuote? Quote(ExactSearchExecutionRequest request,
+    internal static FamilyPhysicalQuote? Quote(AncientOptionPricingInput request,
         AncientOptionFamilyPlan plan, FamilyPhysicalQuoteRequest geometry) =>
         (plan.NumericalVariant == GpuNumericalVariant.NativeFloat64 ? QuoteMeasured(request, plan, geometry) : null) ??
             AncientOptionWorkEstimate.Quote(request, plan, geometry, cpu: false);
 
-    private static FamilyPhysicalQuote? QuoteSeaGlass(ExactSearchExecutionRequest request,
+    private static FamilyPhysicalQuote? QuoteSeaGlass(AncientOptionPricingInput request,
         AncientOptionFamilyPlan plan, FamilyPhysicalQuoteRequest geometry)
     {
         if (!plan.GpuSupported || !FamilyPhysicalQuote.AdmittedRequest(geometry) ||
@@ -33,7 +33,7 @@ internal static class AncientOptionPhysicalPricing
             "Model=ConservativeCoarse;OrobasGeneratorEnvelopePlusTargetWork;RuntimeCharacterPool;NumericalDeviceEmission;NoObservedSurvival");
     }
 
-    private static FamilyPhysicalQuote? QuoteMeasured(ExactSearchExecutionRequest request,
+    private static FamilyPhysicalQuote? QuoteMeasured(AncientOptionPricingInput request,
         AncientOptionFamilyPlan plan, FamilyPhysicalQuoteRequest geometry)
     {
         if (!plan.GpuSupported || !FamilyPhysicalQuote.AdmittedRequest(geometry) ||
@@ -78,11 +78,11 @@ internal static class AncientOptionPhysicalPricing
             _ => false
         };
 
-    internal static FamilyPhysicalQuote? QuoteCpu(ExactSearchExecutionRequest request,
+    internal static FamilyPhysicalQuote? QuoteCpu(AncientOptionPricingInput request,
         AncientOptionFamilyPlan plan, FamilyPhysicalQuoteRequest g, int workers = 1) =>
         AncientOptionWorkEstimate.Quote(request, plan, g, cpu: true, workers: workers);
 
-    private static FamilyPhysicalQuote? QuoteGeneratorEnvelope(ExactSearchExecutionRequest request,
+    private static FamilyPhysicalQuote? QuoteGeneratorEnvelope(AncientOptionPricingInput request,
         AncientOptionFamilyPlan plan, FamilyPhysicalQuoteRequest g, bool cpu)
     {
         var allFilters = request.Evaluation.AncientOptionFilters.Where(f => !f.IsEmpty).ToArray();
@@ -116,7 +116,7 @@ internal static class AncientOptionPhysicalPricing
         { FixedWindowMilliseconds = cpu ? 0 : 1 };
     }
 
-    private static FamilyPhysicalQuote? QuoteCpuMeasured(ExactSearchExecutionRequest request,
+    private static FamilyPhysicalQuote? QuoteCpuMeasured(AncientOptionPricingInput request,
         AncientOptionFamilyPlan plan, FamilyPhysicalQuoteRequest g)
     {
         if (!plan.GpuSupported || !FamilyPhysicalQuote.AdmittedRequest(g) || g.CompactInput ||
@@ -144,7 +144,7 @@ internal static class AncientOptionPhysicalPricing
 
     // Same distinct-event conditional projection formerly embedded in the private
     // comparator. Each row is hypothetical; occurrence/identity remains W-owned.
-    internal static FamilySurvivalProjection ResolveSurvival(ExactSearchExecutionRequest request)
+    internal static FamilySurvivalProjection ResolveSurvival(SearchModel request)
     {
         var e = request.Evaluation;
         var rows = e.AncientBranchConditions.Where(r => r.OptionAny.Count > 0 || r.SeaGlassTargetAny.Count > 0 ||

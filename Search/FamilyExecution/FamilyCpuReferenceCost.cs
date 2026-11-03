@@ -23,10 +23,7 @@ internal static class FamilyCpuReferenceCost
         "R.CommonFirst3All3" => "R.Relic.Cpu.TrackedPositions.20261013.v2",
         "R.ShopOrdered3" => "R.Relic.Cpu.ShopBackPrefix.20260912.v1",
         "R.DirectSmallC" or "R.DirectLargeUR" => "R.Relic.Cpu.CapsuleTargets.20261013.v2", _=>null };
-    internal static bool Authority(ExactSearchExecutionRequest r, bool equivalentIdentityWork) => r.ProfileId == RuntimeProfileId.Beta111 &&
-        r.Authority.CanUseCurrentModel && r.Authority.PlayersCount == 1 && r.Ascension == 10 &&
-        (equivalentIdentityWork || r.Authority.Character.CharacterKey == BaseGameModelKeys.Characters.Ironclad) &&
-        r.Authority.AllCharacterCardPoolsUnlocked == true;
+    internal static bool Authority(FilterPricingAuthority r, bool equivalentIdentityWork) => r.AdmitsCpuReference(equivalentIdentityWork);
     // Old measured/model R envelopes belong to these physical bodies only.
     // A new matcher or scheduler window stays executable but needs new pricing.
     internal static bool RelicIdentitySupported(string? physicalRevision, int capacity, int workers, bool compact)
@@ -38,12 +35,18 @@ internal static class FamilyCpuReferenceCost
             : physicalRevision == "R.Relic.Cpu.TrackedPositions.20261013.v2" + suffix ||
               physicalRevision == "R.Relic.Cpu.ShopBackPrefix.20260912.v1" + suffix;
     }
-    internal static FamilyPhysicalQuote? Quote(ExactSearchExecutionRequest r, FamilyPhysicalQuoteRequest g,
+    internal static FamilyPhysicalQuote? Quote(FilterPricingAuthority r, FamilyPhysicalQuoteRequest g,
         string family, string shape, int workers, string range, bool compact = false, bool equivalentIdentityWork = false,
         string? cpuPhysicalRevision = null, int cpuWindowCapacity = 0)
     {
-        if (!Authority(r,equivalentIdentityWork) || !FamilyPhysicalQuote.AdmittedRequest(g) || g.PrivateInput || g.PrivateOutput ||
-            g.CompactInput != compact) return null;
+        if (!Authority(r,equivalentIdentityWork)) return null;
+        return QuoteAdmitted(g, family, shape, workers, range, compact, cpuPhysicalRevision, cpuWindowCapacity);
+    }
+    internal static FamilyPhysicalQuote? QuoteAdmitted(FamilyPhysicalQuoteRequest g,
+        string family, string shape, int workers, string range, bool compact = false,
+        string? cpuPhysicalRevision = null, int cpuWindowCapacity = 0)
+    {
+        if (!FamilyPhysicalQuote.AdmittedRequest(g) || g.PrivateInput || g.PrivateOutput || g.CompactInput != compact) return null;
         if (family == "R.Relic" && (!RelicIdentitySupported(cpuPhysicalRevision, cpuWindowCapacity, workers, compact) ||
             cpuPhysicalRevision != Revision(shape) + $".RootMode2.P{workers}.B65536.{(compact ? "CompactAbi1" : "Dense")}.CanonicalAbi1Ready"))
             return null;

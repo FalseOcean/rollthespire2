@@ -9,24 +9,16 @@ internal static class NeowSingleplayerReplay
     private static readonly ulong NicheHash = XxHash64.Hash("niche"u8, 0);
     private static readonly ulong TransformationsHash = XxHash64.Hash("transformations"u8, 0);
     private static readonly ulong PotionHash = XxHash64.Hash("combat_potion_generation"u8, 0);
-    internal static ReadOnlySpan<byte> Positives => [
-        Beta110FastRelicCatalog.ArcaneScroll, Beta110FastRelicCatalog.BoomingConch, Beta110FastRelicCatalog.FishingRod,
-        Beta110FastRelicCatalog.GoldenPearl, Beta110FastRelicCatalog.Kaleidoscope, Beta110FastRelicCatalog.LeadPaperweight,
-        Beta110FastRelicCatalog.LostCoffer, Beta110FastRelicCatalog.NeowsTorment,
-        Beta110FastRelicCatalog.NewLeaf, Beta110FastRelicCatalog.PhialHolster, Beta110FastRelicCatalog.PreciseScissors,
-        Beta110FastRelicCatalog.ScrollBoxes, Beta110FastRelicCatalog.WingedBoots];
-
     internal static NeowReplayObservation Observe(ulong root, NeowReplayPlan plan)
     {
         var authority = plan.Authority;
         byte curse = ObserveCurse(root, plan, out var rng);
         Span<byte> positive = stackalloc byte[17];
-        int count = 0;
-        foreach (byte id in Positives) if (NeowSingleplayerOperators.IsPositiveAllowed(id, curse, authority)) positive[count++] = id;
-        if (curse != Beta110FastRelicCatalog.LargeCapsule)
-            positive[count++] = rng.NextBool() ? Beta110FastRelicCatalog.LavaRock : Beta110FastRelicCatalog.SmallCapsule;
-        positive[count++] = rng.NextBool() ? Beta110FastRelicCatalog.NutritiousOyster : Beta110FastRelicCatalog.StoneHumidifier;
-        positive[count++] = rng.NextBool() ? Beta110FastRelicCatalog.NeowsTalisman : Beta110FastRelicCatalog.Pomander;
+        var identity = authority.Identity.ForCurse(curse);
+        identity.FixedCandidates.CopyTo(positive);
+        int count = identity.FixedCandidates.Length;
+        foreach (var choice in identity.AppendChoices)
+            positive[count++] = rng.NextBool() ? choice.TrueCandidate : choice.FalseCandidate;
         rng.UnstableShuffle(positive[..count]);
         ulong top = Bit(positive[0]) | Bit(positive[1]) | Bit(curse);
         bool pass = (plan.TopAny == 0 || (top & plan.TopAny) != 0) & ((top & plan.TopAll) == plan.TopAll) &
@@ -86,14 +78,26 @@ internal static class NeowSingleplayerReplay
     internal static bool Route(ulong root, NeowReplayPlan plan, byte first, byte second, Beta110FastRng afterBones)
     {
         if (!NeowLocalOperators.RequiredStructuredSourcesPresent(plan.StructuredConditions, first, second)) return false;
+        if (plan.CapsuleNicheContinuation is { } continuation)
+        {
+            int[] firstAdvances = NeowCapsuleNicheContinuation.ObservedAfterFirst(plan,second)
+                ? continuation.Advances(first,255) : NeowCapsuleNicheContinuation.Zero;
+            int[] secondAdvances = plan.HasFinalCurseFastProjection
+                ? continuation.Advances(second,first) : NeowCapsuleNicheContinuation.Zero;
+            foreach(int da in firstAdvances)
+            foreach(int db in secondAdvances)
+                if(RouteAtArrival(root,plan,first,second,afterBones,da,db)) return true;
+            return false;
+        }
         int firstAdvance = plan.AuthoredUpgrades?.Advance(first, 255) ?? 0;
         int secondAdvance = plan.AuthoredUpgrades?.Advance(second, first) ?? 0;
-        // No party arrivals or speculative upgrade enumeration in solo execution.
+        // The retained authored-only donor is used when no N-only continuation
+        // is required (and by the explicit frozen legacy comparison).
         return firstAdvance < 0 || secondAdvance < 0 ||
             RouteAtArrival(root, plan, first, second, afterBones, firstAdvance, secondAdvance);
     }
 
-    private static bool RouteAtArrival(ulong root, NeowReplayPlan plan, byte first, byte second,
+    internal static bool RouteAtArrival(ulong root, NeowReplayPlan plan, byte first, byte second,
         Beta110FastRng afterBones, int firstAdvance, int secondAdvance)
     {
         bool rewardsNeeded = (plan.EnabledDomains & ~(Beta110FastDomain.FinalCurse | Beta110FastDomain.NewLeafTransform |
@@ -110,22 +114,37 @@ internal static class NeowSingleplayerReplay
         var transformations = transformationsNeeded ? new Beta110FastRng(unchecked(root + TransformationsHash)) : default;
         var potions = potionsNeeded ? new Beta110FastRng(unchecked(root + PotionHash)) : default;
         Span<byte> matched = stackalloc byte[plan.StructuredConditions.Length]; matched.Clear();
+        bool nicheUnknown = false;
         for (int pickup = 0; pickup < 2; pickup++)
         {
             byte relic = pickup == 0 ? first : second;
             if (relic == Beta110FastRelicCatalog.InvalidId) continue;
-            if (!NeowSingleplayerOperators.ExecuteRelic(relic, true, plan, plan.Authority.EffectCatalog, rewardsNeeded, nicheNeeded,
-                transformationsNeeded, potionsNeeded,
-                ref rewards, ref niche, ref transformations, ref potions, matched))
-                throw new InvalidOperationException("NFamilyContinuationAuthorityUnavailable");
+            if (nicheUnknown && NeowCapsuleNicheContinuation.ReadsNiche(relic))
+            {
+                // Unknown only affects dependent Niche identities. K's Rewards
+                // consumption is fixed; independent later predicates still run.
+                if(relic==Beta110FastRelicCatalog.Kaleidoscope && rewardsNeeded)
+                    for(int i=0;i<18;i++) rewards.NextFloat();
+                for(int i=0;i<plan.StructuredConditions.Length;i++)
+                    if(plan.StructuredConditions[i].SourceRelicId==relic) matched[i]=1;
+            }
+            else
+            {
+                if (!NeowSingleplayerOperators.ExecuteRelic(relic, true, plan, plan.Authority.EffectCatalog, rewardsNeeded, nicheNeeded,
+                    transformationsNeeded, potionsNeeded,
+                    ref rewards, ref niche, ref transformations, ref potions, matched))
+                    throw new InvalidOperationException("NFamilyContinuationAuthorityUnavailable");
+            }
             int advance = relic == first ? firstAdvance : secondAdvance;
-            for (int i = 0; i < advance; i++) niche.NextInt(2);
+            if(advance<0) nicheUnknown=true;
+            else for (int i = 0; i < advance; i++) niche.NextInt(2);
         }
         bool allMatched = true;
         foreach (byte match in matched) allMatched &= match != 0;
         if (!allMatched) return false;
         if (plan.HasFinalCurseFastProjection)
         {
+            if(nicheUnknown) return true;
             var pool = plan.Authority.EffectCatalog.GeneratedCurseIds;
             ushort curse = pool[niche.NextInt(pool.Length)];
             bool curseMatches = true;

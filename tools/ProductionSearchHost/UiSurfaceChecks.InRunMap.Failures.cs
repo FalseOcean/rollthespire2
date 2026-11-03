@@ -30,7 +30,7 @@ internal static partial class UiSurfaceChecks
         var observed = actualNodes[0].Value;
         var point = actualNodes[0].Key.Point;
         string nativeBefore = signature(), plansBefore = JsonSerializer.Serialize(session.Plans),
-            snapshotBefore = JsonSerializer.Serialize(session.Snapshot!.Run.Working),
+            snapshotBefore = JsonSerializer.Serialize(session.Snapshot!.State),
             nodesBefore = JsonSerializer.Serialize(session.Nodes.Values.OrderBy(node => node.Position.Floor));
         long revisionBefore = session.Revision;
 
@@ -150,7 +150,7 @@ internal static partial class UiSurfaceChecks
             render.Invoke(panel, null);
         }
         check(signature() == nativeBefore && JsonSerializer.Serialize(session.Plans) == plansBefore &&
-            session.Revision == revisionBefore && JsonSerializer.Serialize(session.Snapshot.Run.Working) == snapshotBefore &&
+            session.Revision == revisionBefore && JsonSerializer.Serialize(session.Snapshot.State) == snapshotBefore &&
             JsonSerializer.Serialize(session.Nodes.Values.OrderBy(node => node.Position.Floor)) == nodesBefore,
             "null-event and injected presentation-failure checks leave native run/RNG, route knowledge, session plans and revision unchanged");
         return (failedReceipt!, recoveredReceipt!);

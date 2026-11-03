@@ -68,7 +68,7 @@ internal static partial class PartyPhase1Checks
                 var query = SearchQuery.Empty with { Players = players };
                 Godot.GD.Print($"PARTY_CPU_N_FIXTURE players={count};slot={slot};seed={seed};producerBaselineAdjusted=true;activeLegacyAny=SelectedLeafyOrObservedPositive1;wholeTableAny=ObservedPositive0OrArcane;passiveAnyGatesUnchanged=true;selectedChildProjectsOneAcquiredChoice=true");
                 var compiled = SearchCompiler.Compile(query, context);
-                var request = ExactSearchExecutionRequestFactory.Compile(compiled, new(seed, 1, 1, 16)).Plan
+                var request = SearchPreparationCompiler.Compile(compiled, new(seed, 1, 1, 16)).Plan
                     ?? throw new InvalidDataException("PartyCpuCorpus.Compile");
                 if (!TrustedRootHashInput.TryBindCanonicalSeed(Beta111Profile.Instance, root, seed, out var bound, out var issue))
                     throw new InvalidDataException(issue);
@@ -76,7 +76,7 @@ internal static partial class PartyPhase1Checks
                 // rejected producer fixture remains directly replayable.
                 ProductionSearchReplay.Write(Path.Combine(directory, "N-slot" + slot + "-positive-request.json"),
                     new ProductionSearchReplayWorkload(1, query, new(seed, 1, 1, 16, true)));
-                var exact = ProductionExactSearchEvaluator.Evaluate(request, bound);
+                var exact = ProductionExactSearchEvaluator.Evaluate(request.Model, bound);
                 if (!exact.IsMatch)
                 {
                     var shared = NeowEffectRngContext.CreateFromRootHash(Beta111Profile.Instance, root, 0);
@@ -84,7 +84,7 @@ internal static partial class PartyPhase1Checks
                     foreach (var personal in compiled.PlayerSearches.Take(count))
                     {
                         var owner = personal.Context.Authority;
-                        var child = ExactSearchExecutionRequestFactory.ForPlayer(request, personal);
+                        var child = SearchPreparationCompiler.ForPlayer(request.Model, personal);
                         if (!SeedPredictionRequest.TryCreateFromRootHash(bound, owner.Character, owner.Ascension,
                             owner.PlayersCount, owner.PlayerSlotIndex, owner, personal.Context.EvaluationAssumptions.AncientEligibilityAssumptions,
                             SeedPredictionDomainSelection.Neow, 10, false, out var childPrediction, out var childError))

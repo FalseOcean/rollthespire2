@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Rng;
+using RolltheSpire2.Core.Rewards;
 
 namespace RolltheSpire2.Core.PredictorRuntime;
 
@@ -160,7 +161,12 @@ internal static class PredictorSettlementEffects
     {
         if (pool.IsDefaultOrEmpty) throw new InvalidOperationException("PredictorPotionPoolNotInitialized");
         float roll = rng.NextFloat();
-        var rarity = roll <= .1f ? PredictorPotionRarity.Rare : roll <= .35f ? PredictorPotionRarity.Uncommon : PredictorPotionRarity.Common;
+        var rarity = PotionRarityRules.Evaluate(roll) switch
+        {
+            EffectPotionRarity.Rare => PredictorPotionRarity.Rare,
+            EffectPotionRarity.Uncommon => PredictorPotionRarity.Uncommon,
+            _ => PredictorPotionRarity.Common
+        };
         var options = pool.Where(p => p.Rarity == rarity).ToArray();
         // Native NextItem(empty) returns null, then ToMutable fails. Preserve
         // that failure instead of substituting a different rarity.

@@ -10,12 +10,14 @@ namespace RolltheSpire2.Search.FamilyExecution;
 internal sealed partial record RelicFullGpuPlan(RelicFamilyPlan SequencePlan, uint[] CapsuleMetadata, bool UsesBonesKBoundary = false)
 {
     internal bool GenericReplay { get; init; }
+    internal bool UsesOpeningPrefix { get; init; }
+    internal string OpeningPrefixRevision => UsesOpeningPrefix ? ".OpeningPrefix.20261031.v1" : "";
     internal GpuNumericalVariant NumericalVariant { get; init; } = GpuNumericalVariant.NativeFloat64;
     internal GpuNumericRequirements NumericRequirements => GpuIntegerNumerics.Requirements(NumericalVariant);
     internal string NumericalRevision => NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "";
-    internal string ActualAlgorithmRevision => AlgorithmRevision + NumericalRevision;
+    internal string ActualAlgorithmRevision => AlgorithmRevision + OpeningPrefixRevision + NumericalRevision;
     internal const string AlgorithmRevision =
-        "R.Relic.Gpu.Rfull.v4.TrackedSequence.CapsuleRarityTrackedRank.EmptySequenceElided.LastTargetBucket" + GpuRngRotation.Revision;
+        "R.Relic.Gpu.Rfull.v4.TrackedSequence.CapsuleRarityTrackedRank.EmptySequenceElided.LastTargetBucket" + NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision;
     internal const string DenseRevision =
         "R.Relic.Rfull.DenseCarry8.CanonicalAbi1Ready.20260906.v4";
     internal const string CompactRevision =
@@ -28,7 +30,7 @@ internal sealed partial record RelicFullGpuPlan(RelicFamilyPlan SequencePlan, ui
     internal bool SourceConstrainedCapsules => CapsuleMetadata[0] == SourceConstrainedBonesArrival;
     internal string BagCapacityRevision => GenericReplay && UseExactGenericBagCapacity && ConfiguredGenericBagCapacity < 512
         ? $".GenericBagCapacity.Slot{CapsuleMetadata[14]}.B{ConfiguredGenericBagCapacity}.20261016.v1" : "";
-    internal string Revision(bool compact) => NativeRevision(compact) + NumericalRevision + GpuRngRotation.Revision;
+    internal string Revision(bool compact) => NativeRevision(compact) + OpeningPrefixRevision + NumericalRevision + NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision;
     private string NativeRevision(bool compact) => GenericReplay ? "R.Relic.Gpu.GenericCapsule.20260922." + (compact ? "Compact" : "Dense") + BagCapacityRevision : SourceConstrainedCapsules
         ? $"R.Relic.Rfull.SourceConstrainedSmallLarge.{(compact ? "Compact" : "Dense")}.CanonicalAbi1Ready.20260913.v2"
         : CapsuleMetadata[0] == FixedBonesArrival
@@ -41,13 +43,17 @@ internal sealed partial record RelicFullGpuPlan(RelicFamilyPlan SequencePlan, ui
     private const int BucketLengthsOffset = 106;
 
     internal static bool TryCreate(
-        ExactSearchExecutionRequest request,
+        SearchModel request,
         NeowReplayPlan route,
         out RelicFullGpuPlan? plan,
-        out string issue, GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
+        out string issue, GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64,
+        bool? openingPrefixSelection = null)
     {
         if (numericalVariant is not (GpuNumericalVariant.NativeFloat64 or GpuNumericalVariant.IntegerRne))
             throw new ArgumentOutOfRangeException(nameof(numericalVariant));
+        // Capture the experiment selection once while preparing this immutable
+        // request plan. Execution never observes process-global switch changes.
+        bool openingPrefixEnabled = openingPrefixSelection ?? CaptureOpeningPrefixSelection();
         bool created;
         if (request.Authority.PlayersCount > 1 && RolltheSpire2.Search.Semantics.PartyInitialQuery.CapsuleEffectPremise(request.CompiledSearch.NormalizedQuery)
             .Values.SelectMany(keys => keys).Any(k => !Core.Rewards.VanillaRelicRewardEffects.TryGet(request.ProfileId, k, out var e) ||
@@ -57,34 +63,49 @@ internal sealed partial record RelicFullGpuPlan(RelicFamilyPlan SequencePlan, ui
             created = TryCreateCore(request, route, false, out plan, out issue);
             if (!created && request.Authority.PlayersCount > 1) created = TryCreateGeneric(request, route, out plan, out issue);
         }
+        // Keep mature tracked and party physicals first. Extend only rejected
+        // solo shapes, using one per-source continuation proof for both physicals.
+        if (!created && openingPrefixEnabled && request.Authority.PlayersCount == 1 &&
+            RelicOpeningPrefixPlan.TryCompile(route, out var prefix, out issue) && prefix is not null)
+        {
+            created = TryCreateCore(request, route, false, out plan, out issue, openingPrefix: prefix);
+            if (!created) created = TryCreateGeneric(request, route, out plan, out issue, prefix);
+        }
         if (created && plan is not null && numericalVariant != GpuNumericalVariant.NativeFloat64)
             plan = plan with { NumericalVariant = numericalVariant };
         return created;
     }
 
+    internal static bool CaptureOpeningPrefixSelection() => !string.Equals(
+        Environment.GetEnvironmentVariable("RT2_R_OPENING_PREFIX"), "off", StringComparison.OrdinalIgnoreCase);
+
     // Only the bounded N physical supplies both actual Capsule arrivals. This
     // entry compiles immutable target metadata; standalone Rfull stays unchanged.
     internal static bool TryCreateBonesArcaneCheckpoint(
-        ExactSearchExecutionRequest request, NeowReplayPlan route,
+        SearchModel request, NeowReplayPlan route,
         out RelicFullGpuPlan? plan, out string issue)
         => TryCreateCore(request, route, true, out plan, out issue);
 
     // Explicit bounded private N/R experiment only; normal Rfull admission is unchanged.
-    internal static bool TryCreateBonesKBoundary(ExactSearchExecutionRequest request, NeowReplayPlan route,
-        out RelicFullGpuPlan? plan, out string issue)
+    internal static bool TryCreateBonesKBoundary(SearchModel request, NeowReplayPlan route,
+        out RelicFullGpuPlan? plan, out string issue, bool allowPinned = false)
     {
         plan = null;
-        if (!route.Bones || !route.DirectNestedVanilla111 || request.Evaluation.RequiredBonesAcquisitionOrder.Count != 0 ||
-            request.Evaluation.RequiredBonesCombination.Count != 2 ||
-            !request.Evaluation.RequiredBonesCombination.ToHashSet().SetEquals([BaseGameModelKeys.Relics.LargeCapsule, BaseGameModelKeys.Relics.Kaleidoscope]) ||
+        var pair = request.Evaluation.RequiredBonesAcquisitionOrder.Count == 2
+            ? request.Evaluation.RequiredBonesAcquisitionOrder : request.Evaluation.RequiredBonesCombination;
+        if (!route.Bones || !route.DirectNestedVanilla111 ||
+            request.Evaluation.RequiredBonesAcquisitionOrder.Count != 0 && (!allowPinned || request.Evaluation.RequiredBonesAcquisitionOrder.Count != 2) ||
+            pair.Count != 2 ||
+            !pair.ToHashSet().SetEquals([BaseGameModelKeys.Relics.LargeCapsule, BaseGameModelKeys.Relics.Kaleidoscope]) ||
             request.Evaluation.RelicSequenceConditions.Any(c => !c.IsEmpty) || request.Evaluation.RelicShopSequenceConditions.Any(c => !c.IsEmpty))
             return Unsupported("RfullBonesKBoundaryShape", out issue);
         return TryCreateCore(request, route, false, out plan, out issue, bonesKBoundary: true);
     }
 
     private static bool TryCreateCore(
-        ExactSearchExecutionRequest request, NeowReplayPlan route, bool bonesArcaneCheckpoint,
-        out RelicFullGpuPlan? plan, out string issue, bool bonesKBoundary = false)
+        SearchModel request, NeowReplayPlan route, bool bonesArcaneCheckpoint,
+        out RelicFullGpuPlan? plan, out string issue, bool bonesKBoundary = false,
+        RelicOpeningPrefixPlan? openingPrefix = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(route);
@@ -132,6 +153,7 @@ internal sealed partial record RelicFullGpuPlan(RelicFamilyPlan SequencePlan, ui
         bool exactBonesOrder = false;
         byte orderedFirst = Beta110FastRelicCatalog.InvalidId;
         byte orderedSecond = Beta110FastRelicCatalog.InvalidId;
+        uint prefixDraws = 0;
 
         if (!route.Bones)
         {
@@ -193,10 +215,11 @@ internal sealed partial record RelicFullGpuPlan(RelicFamilyPlan SequencePlan, ui
                 bool companionPrecedesCapsule = exactBonesOrder && orderedSecond == firstCapsule;
                 bool suppliedArcaneArrival = bonesArcaneCheckpoint &&
                     firstCapsule == Beta110FastRelicCatalog.LargeCapsule && companion == Beta110FastRelicCatalog.ArcaneScroll;
-                bool suppliedKArrivals = bonesKBoundary && !exactBonesOrder &&
+                bool suppliedKArrivals = bonesKBoundary &&
                     firstCapsule == Beta110FastRelicCatalog.LargeCapsule && companion == Beta110FastRelicCatalog.Kaleidoscope;
+                bool compiledPrefix = openingPrefix is not null && openingPrefix.TryFixedRewardsDraws(companion, out prefixDraws);
                 if ((!exactBonesOrder || companionPrecedesCapsule) && !CapsuleContinuationNeutralCompanion(companion) &&
-                    !suppliedArcaneArrival && !suppliedKArrivals)
+                    !suppliedArcaneArrival && !suppliedKArrivals && !compiledPrefix)
                     return Unsupported("RfullPreCapsuleRewardsContinuationUnsupported", out issue);
                 arrival = FixedBonesArrival;
             }
@@ -279,7 +302,8 @@ internal sealed partial record RelicFullGpuPlan(RelicFamilyPlan SequencePlan, ui
         metadata[15] = checked((uint)route.Authority.PlayersCount);
         metadata[16] = (route.Authority.AllCharacterCardPoolsUnlocked ? 4u : 0u) |
                        (route.Authority.ScrollBoxesAllowed ? 8u : 0u) |
-                       (sourceConstrained && conditions.All(c => c.SourceRelicKey != BaseGameModelKeys.Relics.SmallCapsule) ? 16u : 0u);
+                       (sourceConstrained && conditions.All(c => c.SourceRelicKey != BaseGameModelKeys.Relics.SmallCapsule) ? 16u : 0u) |
+                       (openingPrefix is not null && arrival == FixedBonesArrival ? 32u | (prefixDraws << 8) : 0u);
         metadata[17] = checked((uint)route.Authority.EligibleCurseRelicIds.Length);
         WriteHash(metadata, 18, XxHash64.Hash("NEOW"u8, 0));
         WriteHash(metadata, 20, NeowFamilyReplay.RewardsHash);
@@ -299,7 +323,7 @@ internal sealed partial record RelicFullGpuPlan(RelicFamilyPlan SequencePlan, ui
         for (int bucket = 0; bucket < pool.BucketCount; bucket++)
             metadata[BucketLengthsOffset + bucket] = checked((uint)pool.BucketLengths[bucket]);
 
-        plan = new RelicFullGpuPlan(sequencePlan, metadata, bonesKBoundary);
+        plan = new RelicFullGpuPlan(sequencePlan, metadata, bonesKBoundary) { UsesOpeningPrefix = openingPrefix is not null };
         return true;
     }
 

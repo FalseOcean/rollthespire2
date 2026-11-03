@@ -18,9 +18,9 @@ internal static partial class FamilyPhysicalMatrix
     // Real factory, production packing and production shader. Repro mode records
     // all mismatches before the production fix; check mode requires full parity.
     // Synthetic ordered pools preserve real captured identities and draw weights.
-    private static void RunMerchantIdentityChecks(ExactSearchExecutionRequest basis, string output, bool requireParity)
+    private static void RunMerchantIdentityChecks(PreparedSearch basis, string output, bool requireParity)
     {
-        if (basis.Authority.PlayersCount != 1 || basis.Authority.PlayerSlotIndex != 0)
+        if (basis.Model.Authority.PlayersCount != 1 || basis.Model.Authority.PlayerSlotIndex != 0)
             throw new InvalidOperationException("SIdentity.SoloFixtureRequired");
         const BindingFlags statics = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
         var assembly = typeof(FamilyCandidateSet).Assembly;
@@ -34,7 +34,7 @@ internal static partial class FamilyPhysicalMatrix
             "SIdentity.RawEarlyRejectionDisabled");
         var pathType = T("MerchantShopColorlessCompactionPath");
         var format = T("VisibleSeedCandidateCodec").GetMethod("FormatOrdinal", statics)!;
-        var effects = basis.Authority.EffectAuthority ?? throw new InvalidDataException("SIdentity.EffectsMissing");
+        var effects = basis.Model.Authority.EffectAuthority ?? throw new InvalidDataException("SIdentity.EffectsMissing");
         var source = effects.MerchantColorlessOrderedPool ?? effects.ColorlessRewardPool
             ?? throw new InvalidDataException("SIdentity.PoolMissing");
         var u = source.Where(c => c.Rarity == EffectCardRarity.Uncommon).DistinctBy(c => c.CardKey).Take(3).ToArray();
@@ -42,7 +42,7 @@ internal static partial class FamilyPhysicalMatrix
         SrCheck(u.Length == 3 && r.Length == 3, "SIdentity.DonorIdentities");
         var poolU = new[] { u[0], u[1], u[0], u[1], u[0] }.Select((c, i) => c with { PoolOrder = i }).ToArray();
         var poolR = new[] { r[0], r[0], r[1], r[0], r[1] }.Select((c, i) => c with { PoolOrder = i }).ToArray();
-        var context = basis.CompiledSearch.Context with { Authority = basis.Authority.WithEffectAuthority(effects with {
+        var context = basis.Model.CompiledSearch.Context with { Authority = basis.Model.Authority.WithEffectAuthority(effects with {
             MerchantColorlessOrderedPool = poolU.Concat(poolR).ToArray(),
             MerchantColorlessOrderedPoolExact = true, MerchantColorlessPoolIdentityHooksExact = true,
             MerchantColorlessRarityIdentityHooksExact = true, MerchantInitialInventoryShapeExact = true }) };
@@ -54,7 +54,7 @@ internal static partial class FamilyPhysicalMatrix
         var compact = FamilyCandidateSet.FromAbi1(batch, Enumerable.Range(0, 343).Select(i => (ulong)i * 3).ToArray());
         var roots = Enumerable.Range(0, batch.BatchCandidateCount).Select(i => Beta111Profile.Instance.ComputeRootSeed(
             (string)format.Invoke(null, [Beta111Profile.Instance, batch.BatchBase + (ulong)i])!)).ToArray();
-        var uniqueContext = context with { Authority = basis.Authority.WithEffectAuthority(effects with {
+        var uniqueContext = context with { Authority = basis.Model.Authority.WithEffectAuthority(effects with {
             MerchantColorlessOrderedPool = u.Select((c, i) => c with { PoolOrder = i })
                 .Concat(r.Select((c, i) => c with { PoolOrder = i })).ToArray(),
             MerchantColorlessOrderedPoolExact = true, MerchantColorlessPoolIdentityHooksExact = true,
@@ -101,16 +101,15 @@ internal static partial class FamilyPhysicalMatrix
         using var rd = RenderingServer.CreateLocalRenderingDevice() ?? throw new InvalidOperationException("SIdentity.DeviceUnavailable");
         foreach (var test in cases)
         {
-            var compiled = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(test.Query, test.Unique ? uniqueContext : context), basis.RunOptions);
+            var compiled = SearchPreparationCompiler.Compile(SearchCompiler.Compile(test.Query, test.Unique ? uniqueContext : context), basis.RunOptions);
             var request = compiled.Plan ?? throw new InvalidDataException("SIdentity.Factory:" + test.Name + ":" + compiled.Issue);
-            object?[] admission = [request, null];
-            SrCheck((bool)T("MerchantShopColorlessFamily").GetMethod("TryCreate", statics)!.Invoke(null, admission)!,
+            SrCheck(MerchantShopColorlessFamily.TryCreate(request.Model,FilterExecutionPreferences.From(request.RunOptions),out _),
                 "SIdentity.FamilyAdmission:" + test.Name);
-            string configured = (string)configureEarly.Invoke(null, [rawShader, request.Evaluation, request.Authority.PlayersCount])!;
+            string configured = (string)configureEarly.Invoke(null, [rawShader, request.Model.Evaluation, request.Model.Authority.PlayersCount])!;
             SrCheck(configured.StartsWith("#version 450\n#define RT2_S_EARLY_REJECTION " +
                 (test.EarlyExpected ? "1" : "0") + "\n", StringComparison.Ordinal),
                 "SIdentity.SoloEarlyRejectionQualification:" + test.Name);
-            var expected = roots.Select(root => MerchantShopColorlessQueryEvaluator.Evaluate(request.Evaluation, root, request.Authority).Disposition)
+            var expected = roots.Select(root => MerchantShopColorlessQueryEvaluator.Evaluate(request.Model.Evaluation, root, request.Model.Authority).Disposition)
                 .Select(d => d switch { SearchDisposition.Match => true, SearchDisposition.NoMatch => false,
                     _ => throw new InvalidDataException("SIdentity.NonExactOracle:" + test.Name) }).ToArray();
             if (test.Name.Contains("Positive") || test.Name.Contains("MixedHorizons"))
@@ -119,7 +118,7 @@ internal static partial class FamilyPhysicalMatrix
                 SrCheck(!expected[0], "SIdentity.ExplicitFailureWitness:" + test.Name);
             foreach (string path in new[] { "AtomicAppendHostSort", "StableOrderedCompaction" })
             {
-                using var gpu = (IDisposable)create.Invoke(null, [rd, request, Enum.Parse(pathType, path)])!;
+                using var gpu = (IDisposable)create.Invoke(null, [rd, MerchantShopColorlessGpuExecutor.PrepareInputs(request.Model.Evaluation,Beta111MerchantColorlessAuthority.From(request.Model.Authority),request.Model.SnapshotFingerprint), Enum.Parse(pathType, path)])!;
                 foreach (var input in path == "AtomicAppendHostSort" ? new[] { dense, compact } : new[] { dense })
                 {
                     var (actual, metrics) = SrPublicExecute(gpu, input, CancellationToken.None);
@@ -155,16 +154,16 @@ internal static partial class FamilyPhysicalMatrix
     // Fixed transport boundaries only, not a pricing sweep. The two real S/R
     // predicates use captured pools; the separately labelled dense S case uses
     // an empty predicate solely to prove output capacity at 100% survival.
-    private static void RunSrReliability(ExactSearchExecutionRequest basis, string output)
+    private static void RunSrReliability(PreparedSearch basis, string output)
     {
         const int transferCapacity = 1 << 22;
         const int population = transferCapacity + 67;
         const BindingFlags statics = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
-        if (basis.Authority.PlayersCount != 1) throw new InvalidOperationException("SrReliability.SingleplayerFixtureRequired");
+        if (basis.Model.Authority.PlayersCount != 1) throw new InvalidOperationException("SrReliability.SingleplayerFixtureRequired");
         var assembly = typeof(FamilyCandidateSet).Assembly;
         Type T(string name) => assembly.GetType("RolltheSpire2.Search.FamilyExecution." + name, true)!;
-        var merchant = Beta111MerchantColorlessAuthority.From(basis.Authority);
-        var relic = basis.Authority.WorldAuthority?.Beta109Generation?.PlayerRelicBuckets
+        var merchant = Beta111MerchantColorlessAuthority.From(basis.Model.Authority);
+        var relic = basis.Model.Authority.WorldAuthority?.Beta109Generation?.PlayerRelicBuckets
             .First(bucket => bucket.BucketId.Split(':')[^1].Equals("Common", StringComparison.OrdinalIgnoreCase))
             .OrderedEntries.First().RelicKey ?? throw new InvalidOperationException("SrReliability.CommonPoolMissing");
         var query = SearchQuery.Empty with
@@ -172,19 +171,19 @@ internal static partial class FamilyPhysicalMatrix
             MerchantColorlessConditions = [new(1, MerchantColorlessSlot.Uncommon, merchant.UncommonPool.First())],
             RelicSequenceConstraints = [new(RelicSequenceKind.Common, SearchSequenceRangeMode.ExactSlot, 1, new([relic], [], []))]
         };
-        var compiled = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, basis.CompiledSearch.Context), basis.RunOptions);
+        var compiled = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, basis.Model.CompiledSearch.Context), basis.RunOptions);
         var request = compiled.Plan ?? throw new InvalidOperationException("SrReliability.Compile:" + compiled.Issue);
         var families = FamilyExecutionCoordinator.CreateRegisteredFamilies(request);
         if (families.Count != 2 || !families.Any(f => f.FamilyId.StartsWith("S.")) || !families.Any(f => f.FamilyId.StartsWith("R.")))
             throw new InvalidOperationException("SrReliability.ExpectedOnlySR");
-        var bind = typeof(IFamilyInvocation).GetMethod("BindPrivateSerial", Instance)!;
+
         Type bufferType = T("PrivateOrdinalBuffer"), pathType = T("MerchantShopColorlessCompactionPath");
         var createS = T("MerchantShopColorlessGpuExecutor").GetMethods(statics)
             .Single(m => m.Name == "Create" && m.GetParameters().Length == 3 && m.GetParameters()[2].ParameterType == pathType);
         Type relicPlanType = T("RelicFamilyPlan");
         var createR = T("RelicFamilyGpuExecutor").GetMethods(statics)
             .Single(m => m.Name == "Create" && m.GetParameters().Length == 3 && m.GetParameters()[2].ParameterType == relicPlanType);
-        object?[] planArgs = [request, null, null];
+        object?[] planArgs = [request.Model, null, null];
         if (!(bool)T("RelicFamilyPlanCompiler").GetMethod("TryCompile", statics)!.Invoke(null, planArgs)!)
             throw new InvalidOperationException("SrReliability.RPlan:" + planArgs[2]);
 
@@ -205,8 +204,8 @@ internal static partial class FamilyPhysicalMatrix
         {
             bool shop = family.FamilyId.StartsWith("S.");
             using var gpu = (IDisposable)(shop
-                ? createS.Invoke(null, [rd, request, Enum.Parse(pathType, "AtomicAppendHostSort")])!
-                : createR.Invoke(null, [rd, request, planArgs[1]])!);
+                ? createS.Invoke(null, [rd, MerchantShopColorlessGpuExecutor.PrepareInputs(request.Model.Evaluation,RolltheSpire2.Core.Merchant.Beta111MerchantColorlessAuthority.From(request.Model.Authority),request.Model.SnapshotFingerprint), Enum.Parse(pathType, "AtomicAppendHostSort")])!
+                : createR.Invoke(null, [rd, request.Model.SnapshotFingerprint, planArgs[1]])!);
             var (actual, metrics) = SrPublicExecute(gpu, input, CancellationToken.None);
             SrCheck(actual.Batch == batch && (int)Get(metrics, "InputCandidates")! == population &&
                 (int)Get(metrics, "ProcessedCandidates")! == population && (int)Get(metrics, "Survivors")! == actual.Count,
@@ -219,18 +218,18 @@ internal static partial class FamilyPhysicalMatrix
                 byte[] bytes = MemoryMarshal.AsBytes(privateOrdinals.AsSpan()).ToArray();
                 if (rd.BufferUpdate((Rid)Get(inputBuffer, "Buffer")!, 0, checked((uint)bytes.Length), bytes) != Error.Ok)
                     throw new InvalidOperationException("SrReliability.PrivateUpload");
-                using var execution = (IDisposable)bind.Invoke(family, [rd, inputBuffer, null])!;
+                using var execution = (IDisposable)family.BindPrivate!(rd,(PrivateOrdinalBuffer?)inputBuffer,null);
                 object outcome = Call(execution, "Execute", batch, population, CancellationToken.None)!;
                 var expected = (FamilyCandidateSet)Get(outcome, "PublicOutput")!;
                 SrCheck(expected.Batch == batch && expected.ExportAbi1().Span.SequenceEqual(actual.ExportAbi1().Span),
                     family.FamilyId + ".FullPublicPrivateParity");
             }
 
-            var cpu = ((IEnumerable<IFamilyInvocation>)typeof(IFamilyInvocation).GetProperty("CpuRealizations", Instance)!.GetValue(family)!).First();
-            var cpuContext = new FamilyExecutionContext(requiresGpu: false);
+            var cpu = family.CpuAlternatives.First();
+            var cpuContext = new FilterRuntimeServices(requiresGpu: false);
             try
             {
-                FamilyCandidateSet expected = cpu.InvokeAsync(cpuContext, new(batch, request), sample, CancellationToken.None).GetAwaiter().GetResult();
+                FamilyCandidateSet expected = cpu.ExecuteAsync(cpuContext, sample, CancellationToken.None).GetAwaiter().GetResult();
                 var cpuSurvivors = expected.ExportAbi1().ToArray().ToHashSet();
                 foreach (ulong ordinal in sample.ExportAbi1().Span)
                     SrCheck(cpuSurvivors.Contains(ordinal) == (actual.ExportAbi1().Span.BinarySearch(ordinal) >= 0),
@@ -260,12 +259,12 @@ internal static partial class FamilyPhysicalMatrix
         // Deliberately bypass condition admission only for this transport fixture.
         // The production S shader and executors remain unchanged; an empty S
         // predicate is mathematically all-pass and supplies an exact expectation.
-        var allPass = request with { Evaluation = ExactSearchEvaluationProjection.Empty,
+        var allPass = request.Model with { Evaluation = ExactSearchEvaluationProjection.Empty,
             SnapshotFingerprint = request.SnapshotFingerprint + "|transport-all-pass" };
         var denseBatch = new SearchBatch(batch.BatchBase, population);
         foreach (string path in new[] { "AtomicAppendHostSort", "StableOrderedCompaction" })
         {
-            using var gpu = (IDisposable)createS.Invoke(null, [rd, allPass, Enum.Parse(pathType, path)])!;
+            using var gpu = (IDisposable)createS.Invoke(null, [rd, MerchantShopColorlessGpuExecutor.PrepareInputs(allPass.Evaluation,Beta111MerchantColorlessAuthority.From(allPass.Authority),allPass.SnapshotFingerprint), Enum.Parse(pathType, path)])!;
             var (actual, metrics) = SrPublicExecute(gpu, FamilyCandidateSet.Dense(denseBatch), CancellationToken.None);
             SrCheck(actual.Batch == denseBatch && actual.Count == population &&
                 (int)Get(metrics, "ProcessedCandidates")! == population &&

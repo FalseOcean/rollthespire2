@@ -10,24 +10,24 @@ using RolltheSpire2.Search.Runtime;
 // original request is checked for every handed-off candidate.
 internal static class SmallCandidateExactProductionGpuChecks
 {
-    internal static async Task RunAsync(ExactSearchExecutionRequest request)
+    internal static async Task RunAsync(PreparedSearch request)
     {
         if (!VisibleSeedCandidateCodec.TryParseOrdinal(Beta111Profile.Instance, request.CanonicalStartSeed,
             out ulong startOrdinal, out _, out var issue)) throw new InvalidDataException(issue);
-        IFamilyInvocation[] CreateFamilies()
+        FilterBodyDescription[] CreateFamilies()
         {
             var families = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, gpuAvailable: true).ToArray();
-            var n = families.SingleOrDefault(family => family is NeowFamily);
+            var n = families.SingleOrDefault(family => family.FamilyId == "N.Neow");
             if (n is null || families.Length < 2 || families.Any(family => !family.CanBindPrivateSerial))
                 throw new InvalidOperationException("SmallCandidateExactProduction.RequiresNativeNAndPrivateBindableOriginalSuffixes");
             // Test the actual authored request. An unrelated R condition is not
             // required merely to instantiate the historical four-family fixture.
             return [n, ..families.Where(family => !ReferenceEquals(family, n))];
         }
-        await using var context = new FamilyExecutionContext(requiresGpu: true, cpuWorkerCount: request.WorkerCount);
+        await using var context = new FilterRuntimeServices(requiresGpu: true, cpuWorkerCount: request.WorkerCount);
         var publicFamilies = CreateFamilies();
-        var early = new AutomaticPrivateSerialInvocation(request, CreateFamilies(), enableSmallCandidateExact: true);
-        var complete = new AutomaticPrivateSerialInvocation(request, CreateFamilies(), verify: true);
+        var early = AutomaticPrivateSerialInvocation.Prepare(request.Model,FilterExecutionPreferences.From(request.RunOptions), CreateFamilies(), enableSmallCandidateExact: true);
+        var complete = AutomaticPrivateSerialInvocation.Prepare(request.Model,FilterExecutionPreferences.From(request.RunOptions), CreateFamilies(), verify: true);
         try
         {
             FamilyCandidateSet? prefix = null;
@@ -35,29 +35,28 @@ internal static class SmallCandidateExactProductionGpuChecks
             for (long offset = 0; offset < request.ScanCount && testedWindows < 64; offset += 1 << 24)
             {
                 var probe = new SearchBatch(checked(startOrdinal + (ulong)offset), (int)Math.Min(1 << 24, request.ScanCount - offset));
-                var observed = await publicFamilies[0].InvokeAsync(context, new(probe, request), FamilyCandidateSet.Dense(probe), CancellationToken.None);
+                var observed = await publicFamilies[0].ExecuteAsync(context, FamilyCandidateSet.Dense(probe), CancellationToken.None);
                 testedWindows++;
                 if (observed.Count is >= 1 and <= 8) { prefix = observed; break; }
             }
             if (prefix is null) throw new InvalidDataException("SmallCandidateExactProduction.NoActualSmallPositiveInFirst64AuthoredWindows");
             var batch = prefix.Batch;
-            var window = new FamilyObservationWindow(batch, request);
+
             ulong positiveOrdinal = batch.GlobalCandidate(prefix.ExportAbi1().Span[0]);
             string positive = Beta110SeedCodec.FormatOrdinal(positiveOrdinal);
-            if (!NeowFamilyReplay.Matches(Beta111Profile.Instance.ComputeRootSeed(positive), ((NeowFamily)publicFamilies[0]).PricingReplayPlan))
+            if (!NeowFamilyReplay.Matches(Beta111Profile.Instance.ComputeRootSeed(positive), NeowReplayPlan.Compile(request.Model,true)))
                 throw new InvalidDataException("SmallCandidateExactProduction.SelectedPositiveCpuMismatch");
-            var handedOff = await early.InvokeAsync(context, window, FamilyCandidateSet.Dense(batch), CancellationToken.None);
+            var handedOff = await early.ExecuteAsync(context, FamilyCandidateSet.Dense(batch), CancellationToken.None);
             if (!prefix.ExportAbi1().Span.SequenceEqual(handedOff.ExportAbi1().Span))
                 throw new InvalidDataException("SmallCandidateExactProduction.PrivatePrefixPayloadMismatch");
-            var full = await complete.InvokeAsync(context, window, FamilyCandidateSet.Dense(batch), CancellationToken.None);
-            var publicFull = await LinearFamilyPipeline.FilterAsync(context, window, publicFamilies, CancellationToken.None);
+            var full = await complete.ExecuteAsync(context, FamilyCandidateSet.Dense(batch), CancellationToken.None);
+            var publicFull = await LinearFamilyPipeline.FilterAsync(context, batch, HostFilterBindings.BindAll(publicFamilies,context), CancellationToken.None);
             if (!full.ExportAbi1().Span.SequenceEqual(publicFull.ExportAbi1().Span))
                 throw new InvalidDataException("SmallCandidateExactProduction.FullPublicPrivateMismatch");
             string[] ExactMatches(FamilyCandidateSet candidates) => candidates.EnumerateLogicalOrdinals().Where(ordinal =>
             {
                 string seed = Beta110SeedCodec.FormatOrdinal(batch.GlobalCandidate(ordinal));
-                var exact = ProductionExactSearchEvaluator.Evaluate(request,
-                    TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed));
+                var exact = ProductionExactSearchEvaluator.Evaluate(request.Model, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed));
                 if (exact.Evaluation.Disposition is SearchDisposition.Unknown or SearchDisposition.Unsupported)
                     throw new InvalidDataException("SmallCandidateExactProduction.ExactUnresolved:" + exact.FailureCode);
                 return exact.IsMatch;

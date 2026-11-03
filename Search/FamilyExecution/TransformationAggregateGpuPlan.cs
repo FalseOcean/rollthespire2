@@ -31,6 +31,15 @@ internal sealed class TransformationAggregateGpuPlan
          p.Condition.Predicate == TransformationAggregatePredicate.ContainsMultiset &&
          p.Condition.TargetMultiset.Count == p.Condition.OpportunityCount || UsesBonesOptimization(p) && AllDrawsRequired(p));
     internal bool BonesOptimized { get; }
+    internal bool NewLeafTracked { get; }
+    internal bool ClosedBonesTracked { get; }
+    internal bool EntryIdentityTracked => NewLeafTracked || ClosedBonesTracked;
+    internal const string EntryIdentityRevision = ".EntryIdentityTracked.20261030.v1";
+    private static bool CaptureEntryIdentity() => Environment.GetEnvironmentVariable("RT2_T_ENTRY_IDENTITY")?.Trim().ToLowerInvariant() switch {
+        null or "" or "default" or "track" => true,
+        "off" => false,
+        var mode => throw new InvalidOperationException("T.UnknownEntryIdentityExperiment:" + mode)
+    };
     internal bool FullTarget { get; }
     internal bool PrefixReuse { get; }
     internal const string PrefixReuseRevision = ".DensePrefixReuse.20261027.v1";
@@ -44,14 +53,14 @@ internal sealed class TransformationAggregateGpuPlan
     internal string NumericalRevision => NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "";
     internal string Revision(bool compact) => (BonesOptimized ? "T.Gpu.BonesTracked."+(FullTarget?"TransformFirst.Carry8.AllRequired":"OpeningFirst.Generic")+".20261001.v1" :
         FullTarget?FullTargetRevision:GenericRevision)+"."+(compact?"CompactAbi1":"Dense")+".CanonicalAbi1Ready" + NumericalRevision +
-        (PrefixReuse ? PrefixReuseRevision : "") + GpuRngRotation.Revision;
+        (EntryIdentityTracked ? EntryIdentityRevision : "") + (PrefixReuse ? PrefixReuseRevision : "") + NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision;
     internal int SeedsPerInvocation => FullTarget ? 8 : 1;
-    internal int Capacity => FullTarget && Experiment != "full1m" ? FullTargetCapacity : WindowCapacity;
+    internal int Capacity { get; } = WindowCapacity;
     internal uint[][] Buffers { get; }
     internal bool Supported { get; }
     internal TransformationAggregateGpuPlan() { Buffers = []; }
     internal TransformationAggregateGpuPlan(TransformationAggregateNumericalPlan p,
-        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64, bool? prefixReuse = null)
+        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64, bool? prefixReuse = null, bool? entryIdentity = null)
     {
         if (numericalVariant is not (GpuNumericalVariant.NativeFloat64 or GpuNumericalVariant.IntegerRne))
             throw new ArgumentOutOfRangeException(nameof(numericalVariant));
@@ -59,8 +68,14 @@ internal sealed class TransformationAggregateGpuPlan
         var n=p.Neow; var groups=p.DrawGroups;
         BonesOptimized = UsesBonesOptimization(p);
         FullTarget = UsesFullTarget(p);
+        Capacity = FullTarget && Experiment != "full1m" ? FullTargetCapacity : WindowCapacity;
         Supported=p.Closed && (n is null || n.Authority.PlayerSlotIndex == 0 && n.Authority.EligibleCurseRelicIds.Length is >0 and <=32 &&
             (!p.Condition.IsBones || n.Authority.BonesEligibleRelicIds.Length is >=2 and <=32)) && groups.Length<=7 && groups.All(g=>g.Pools.Length<=2);
+        bool entryTracking = entryIdentity ?? CaptureEntryIdentity();
+        bool newLeafUnique = true;
+        var newLeafPositions = new List<uint>();
+        ClosedBonesTracked = entryTracking && Supported && p.Condition.Opening == TransformationOpening.BonesLeafyOther &&
+            n is not null && n.Authority.BonesEligibleRelicIds.Distinct().Count() == n.Authority.BonesEligibleRelicIds.Length;
         PrefixReuse = (prefixReuse ?? CapturePrefixReuse()) && Supported && !FullTarget;
         var meta=new List<uint>(new uint[32]); var data=new List<uint>();
         uint Add(IEnumerable<uint> values) { uint o=(uint)data.Count;data.AddRange(values);return o; }
@@ -69,11 +84,8 @@ internal sealed class TransformationAggregateGpuPlan
         meta[3]=(uint)p.Condition.OpportunityCount; meta[4]=(uint)p.Condition.TargetMultiset.Count;
         meta[5]=(uint)groups.Length; meta[6]=32;
         Hash(13,XxHash64.Hash("NEOW"u8,0)); Hash(15,NeowFamilyReplay.RewardsHash);
-        meta[17]=Beta110FastRelicCatalog.LargeCapsule;meta[18]=Beta110FastRelicCatalog.LeafyPoultice;
+        meta[18]=Beta110FastRelicCatalog.LeafyPoultice;
         meta[19]=Beta110FastRelicCatalog.NeowsBones;meta[20]=p.Condition.IsBones && Beta110FastRelicCatalog.TryGetId(p.Condition.BonesCompanion,out byte companion) ? companion : Beta110FastRelicCatalog.NewLeaf;
-        meta[21]=Beta110FastRelicCatalog.LavaRock;meta[22]=Beta110FastRelicCatalog.SmallCapsule;
-        meta[23]=Beta110FastRelicCatalog.NutritiousOyster;meta[24]=Beta110FastRelicCatalog.StoneHumidifier;
-        meta[25]=Beta110FastRelicCatalog.NeowsTalisman;meta[26]=Beta110FastRelicCatalog.Pomander;
         if(n is not null)
         {
             var a=n.Authority;meta[7]=(uint)a.EligibleCurseRelicIds.Length;meta[8]=Add(a.EligibleCurseRelicIds.Select(i=>(uint)i));
@@ -81,8 +93,13 @@ internal sealed class TransformationAggregateGpuPlan
             meta[11]=(uint)meta.Count;
             foreach(byte curse in a.EligibleCurseRelicIds)
             {
-                byte[] positive=NeowFamilyReplay.Positives.ToArray().Where(id=>NeowLocalOperators.IsPositiveAllowed(id,curse,a)).ToArray();
+                byte[] positive=a.Identity.ForCurse(curse).FixedCandidates.ToArray();
                 meta.Add(Add(positive.Select(i=>(uint)i)));meta.Add((uint)positive.Length);
+                // New Leaf is a fixed positive identity, never one of the three
+                // two-choice append pairs. Track only its proven unique occurrence.
+                newLeafUnique &= positive.Count(id => id == Beta110FastRelicCatalog.NewLeaf) <= 1;
+                int position = Array.IndexOf(positive, Beta110FastRelicCatalog.NewLeaf);
+                newLeafPositions.Add(position < 0 ? uint.MaxValue : (uint)position);
             }
         }
         meta[6]=(uint)meta.Count;
@@ -96,6 +113,19 @@ internal sealed class TransformationAggregateGpuPlan
                     ? (p.IsRare(id)?1u:0u) : p.TargetBits(id) | (p.Condition.RequiresRareRemainder && p.IsRare(id) ? 0x80000000u : 0u))));meta.Add((uint)pool.Length);
             }
             for(int i=group.Pools.Length;i<2;i++){meta.Add(0);meta.Add(0);}
+        }
+        NewLeafTracked = entryTracking && Supported && p.Condition.Opening == TransformationOpening.NewLeaf && newLeafUnique;
+        if (NewLeafTracked)
+        {
+            meta[27] = checked((uint)meta.Count);
+            meta.AddRange(newLeafPositions);
+        }
+        if (ClosedBonesTracked)
+        {
+            int p0 = Array.IndexOf(n!.Authority.BonesEligibleRelicIds, checked((byte)meta[18]));
+            int p1 = Array.IndexOf(n.Authority.BonesEligibleRelicIds, checked((byte)meta[20]));
+            meta[28] = p0 < 0 ? 32u : (uint)p0;
+            meta[29] = p1 < 0 ? 32u : (uint)p1;
         }
         Buffers=[meta.ToArray(),data.ToArray()];
     }
@@ -128,7 +158,9 @@ internal sealed class TransformationAggregateGpuPlan
             if (!body.Contains(seam,StringComparison.Ordinal)) throw new InvalidOperationException("T.OpeningShaderSeam");
             body=body.Replace(seam,"uint mode="+Buffers[0][0].ToString(System.Globalization.CultureInfo.InvariantCulture)+"u;",StringComparison.Ordinal);
         }
-        string defines = BonesOptimized ? "\n#define T_BONES_TRACKED" : "";
+        string defines = BonesOptimized || ClosedBonesTracked ? "\n#define T_BONES_TRACKED" : "";
+        if (ClosedBonesTracked) defines += "\n#define T_BONES_ENTRY_PREPARED";
+        if (NewLeafTracked) defines += "\n#define T_NEWLEAF_TRACKED";
         if (BonesOptimized && FullTarget && Buffers[0][1] == 0) defines += "\n#define T_ALL_RARE";
         body = body.Replace("#version 450", "#version 450" + defines, StringComparison.Ordinal);
         string assembled = body.Replace("/*__RNG__*/",rng,StringComparison.Ordinal);

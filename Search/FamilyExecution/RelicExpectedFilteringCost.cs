@@ -84,7 +84,7 @@ internal readonly record struct FamilyExpectedFilteringCostSegment(
 internal static class RelicExpectedFilteringCost
 {
     internal static FamilyExpectedFilteringCostProjection Project(
-        ExactSearchExecutionRequest request,
+        SearchModel request,
         RelicFamilyPlan plan,
         FamilyAnalyticalCostProjection fullCost,
         FamilySurvivalProjection survival)

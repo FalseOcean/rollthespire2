@@ -7,14 +7,15 @@ using RolltheSpire2.Core.Seed;
 using RolltheSpire2.Core.World;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.Runtime;
+using RolltheSpire2.Search.Semantics;
 
 namespace RolltheSpire2.Search.FamilyExecution;
 
-// A filter for the explicitly uncommitted initial-room baseline. An offered
-// Neow relic is never an acquisition; committed openings remain Exact duties.
+// Unknown rooms use declared opening pickups; unspecified outcomes have no
+// influence. Treasure retains its actual-acquisition, same-route Exact duties.
 internal sealed partial class InitialRoomsPlan
 {
-    internal const string Revision = "InitialRooms.Baseline.TrackedSharedFront.20261020.v1";
+    internal const string Revision = "InitialRooms.DeclaredUnknownJuzu.TrackedSharedFront.20261029.v2";
     internal const int Capacity = 1 << 20;
     internal GpuNumericalVariant NumericalVariant { get; private init; }
     internal string ActualRevision => Revision + (NumericalVariant == GpuNumericalVariant.NativeFloat64 ? "" : ".IntegerRne.20261025.v1");
@@ -22,22 +23,30 @@ internal sealed partial class InitialRoomsPlan
     private static readonly ulong UnknownHash = XxHash64.Hash("unknown_map_point"u8, 0);
     private static readonly ulong TreasureHash = XxHash64.Hash("treasure_room_relics"u8, 0);
     private static readonly ulong UpFrontHash = XxHash64.Hash("up_front"u8, 0);
-    private readonly ExactSearchExecutionRequest _request;
+    private readonly IRuntimeProfile _referenceProfile;
+    private readonly RolltheSpire2.Core.World.Snapshots.WorldAuthoritySnapshot? _referenceWorld;
+    private readonly bool _isParty;
+    private readonly int _players;
     private readonly TreasureRelicSearchCondition? _treasure;
     private readonly int[] _lengths, _bucketLanes, _effectiveLengths, _targetLanes, _targetPositions, _removedPositions;
     private readonly bool[] _circlet;
     private readonly int _lastBucket;
     internal int UnknownPrefixCount { get; }
+    internal bool UnknownJuzuAcquired { get; }
     internal bool CoversUnknownPrefix => UnknownPrefixCount > 0;
     internal bool CoversTreasure => _treasure is not null;
     internal string TreasureRemainder { get; }
     internal uint[][] Buffers { get; }
 
-    private InitialRoomsPlan(ExactSearchExecutionRequest request, int unknown, TreasureRelicSearchCondition? treasure,
+    private InitialRoomsPlan(SearchModel request, int unknown, TreasureRelicSearchCondition? treasure,
         int[] lengths, int[] lanes, int[] effectiveLengths, int[] targetLanes, int[] targetPositions,
         int[] removedPositions, bool[] circlet, int lastBucket, string remainder)
     {
-        _request = request; UnknownPrefixCount = unknown; _treasure = treasure;
+        _referenceProfile = RuntimeProfileRegistry.Select(request.Detection);
+        _referenceWorld = request.Authority.WorldAuthority;
+        _isParty = request.CompiledSearch.Context.Party is not null; _players = request.Authority.PlayersCount;
+        UnknownPrefixCount = unknown; _treasure = treasure;
+        UnknownJuzuAcquired = unknown > 0 && ExplicitOpeningRelicFacts.HasDeclaredJuzuForUnknownRooms(request.CompiledSearch.NormalizedQuery);
         _lengths = lengths; _bucketLanes = lanes; _effectiveLengths = effectiveLengths;
         _targetLanes = targetLanes; _targetPositions = targetPositions; _removedPositions = removedPositions;
         _circlet = circlet; _lastBucket = lastBucket; TreasureRemainder = remainder;
@@ -57,15 +66,16 @@ internal sealed partial class InitialRoomsPlan
             if (circlet[i]) meta[25] |= 1u << i;
         }
         for (int i = 0; i < lengths.Length; i++) { meta[32 + i * 2] = (uint)lengths[i]; meta[33 + i * 2] = (uint)lanes[i]; }
+        meta[27] = UnknownJuzuAcquired ? 1u : 0u;
         Buffers = [meta, []];
     }
 
-    internal static InitialRoomsPlan? TryCompileTreasure(ExactSearchExecutionRequest request,
+    internal static InitialRoomsPlan? TryCompileTreasure(SearchModel request,
         GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64) => TryCompile(request, true, false, numericalVariant);
-    internal static InitialRoomsPlan? TryCompileUnknown(ExactSearchExecutionRequest request,
+    internal static InitialRoomsPlan? TryCompileUnknown(SearchModel request,
         GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64) => TryCompile(request, false, true, numericalVariant);
 
-    internal static InitialRoomsPlan? TryCompile(ExactSearchExecutionRequest request, bool includeTreasure = true, bool includeUnknown = true,
+    internal static InitialRoomsPlan? TryCompile(SearchModel request, bool includeTreasure = true, bool includeUnknown = true,
         GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
         if (request.CompiledSearch.Context.Party is not null)
@@ -74,9 +84,7 @@ internal sealed partial class InitialRoomsPlan
             return new(request, prefix, null, [], [], new int[3], [4, 4], [-1, -1], [-1, -1, -1], new bool[2], -1,
                 PartyInitialRooms.HasTreasure(request) ? "InitialRooms.SinglePlayerOnly" : "") { NumericalVariant = numericalVariant };
         }
-        if (request.ProfileId != RuntimeProfileId.Beta111 || request.Authority.PlayersCount != 1 ||
-            request.CompiledSearch.Context.Party is not null ||
-            ProductionQueryValidator.HasOpeningInitialRoomConditions(request.Evaluation)) return null;
+        if (request.ProfileId != RuntimeProfileId.Beta111 || request.Authority.PlayersCount != 1) return null;
         int unknown = includeUnknown ? request.Evaluation.FirstActUnknownEventPrefixCount : 0;
         var treasure = includeTreasure && request.Evaluation.TreasureRelics is { IsEmpty: false } condition ? condition : null;
         if (unknown == 0 && treasure is null) return null;
@@ -84,14 +92,16 @@ internal sealed partial class InitialRoomsPlan
         bool[] circlet = new bool[2]; int last = -1; string remainder = "";
         if (treasure is not null)
         {
-            if (!TryTreasure(request, treasure, out lengths, out lanes, effective, targetLanes, targets, removed, circlet, out last, out remainder))
+            if (ProductionQueryValidator.HasOpeningInitialRoomConditions(request.Evaluation))
+            { treasure = null; remainder = "InitialRooms.OpeningTreasureRetainedByExact"; }
+            else if (!TryTreasure(request, treasure, out lengths, out lanes, effective, targetLanes, targets, removed, circlet, out last, out remainder))
                 treasure = null;
         }
         return unknown == 0 && treasure is null ? null : new(request, unknown, treasure,
             lengths, lanes, effective, targetLanes, targets, removed, circlet, last, remainder) { NumericalVariant = numericalVariant };
     }
 
-    private static bool TryTreasure(ExactSearchExecutionRequest request, TreasureRelicSearchCondition condition,
+    private static bool TryTreasure(SearchModel request, TreasureRelicSearchCondition condition,
         out int[] lengths, out int[] lanes, int[] effective, int[] targetLanes, int[] targets, int[] removed,
         bool[] circlet, out int last, out string issue)
     {
@@ -134,7 +144,7 @@ internal sealed partial class InitialRoomsPlan
 
     internal bool Matches(ulong root)
     {
-        if (!MatchesUnknown(root, UnknownPrefixCount)) return false;
+        if (!MatchesUnknown(root, UnknownPrefixCount, UnknownJuzuAcquired)) return false;
         if (_treasure is null) return true;
         var rarity = new Beta110FastRng(unchecked(root + TreasureHash));
         Span<int> encounterLanes = stackalloc int[2], ranks = stackalloc int[2], taken = stackalloc int[3];
@@ -190,27 +200,28 @@ internal sealed partial class InitialRoomsPlan
     }
     private static int SwapPosition(int position, int selected, int tail) => position == selected ? tail : position == tail ? selected : position;
 
-    internal static bool MatchesUnknown(ulong root, int count)
+    internal static bool MatchesUnknown(ulong root, int count, bool juzuAcquired = false)
     {
         if (count == 0) return true;
         var rng = new Beta110FastRng(unchecked(root + UnknownHash));
         float monster = .1f, treasure = .02f, shop = .03f;
         for (int i = 0; i < count; i++)
         {
-            float total = monster + treasure; total += shop;
+            float total = juzuAcquired ? 0f : monster; total += treasure; total += shop;
             if (rng.NextFloat() <= total) return false;
-            monster += .1f; treasure += .02f; shop += .03f;
+            if (!juzuAcquired) monster += .1f;
+            treasure += .02f; shop += .03f;
         }
         return true;
     }
 
     internal bool Reference(ulong root)
     {
-        if (CoversUnknownPrefix && !OrdinaryUnknownRoomPredictor.ForAct1Filter(root, UnknownPrefixCount, false)
+        if (CoversUnknownPrefix && !OrdinaryUnknownRoomPredictor.ForAct1Filter(root, UnknownPrefixCount, UnknownJuzuAcquired)
                 .Steps.All(s => s.Room == UnknownRoomCategory.Event)) return false;
         if (_treasure is null) return true;
-        var profile = RuntimeProfileRegistry.Select(_request.Detection);
-        var bags = RelicSequencePredictor.PredictFromRootHash(profile, root, "root-hash:" + root, _request.Authority.WorldAuthority);
+        var profile = _referenceProfile;
+        var bags = RelicSequencePredictor.PredictFromRootHash(profile, root, "root-hash:" + root, _referenceWorld);
         var prediction = TreasureRelicPredictor.Predict(profile, root, bags, [], _treasure.StartOrdinal + _treasure.Count - 1);
         if (prediction.Status != SeedDomainEvaluationStatus.Evaluated || prediction.Precision != PredictionPrecision.Exact)
             throw new InvalidDataException("InitialRooms.CompiledReferenceAuthorityChanged:" + prediction.IssueCode);

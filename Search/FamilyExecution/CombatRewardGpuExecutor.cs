@@ -8,6 +8,9 @@ internal readonly record struct CombatRewardGpuMetrics(int Input, int Output, in
     double UploadMs, double DispatchSyncMs, double ReadbackMs, double CanonicalMs)
 {
     internal int SubmissionGroups { get; init; }
+    internal int ObservedConditionalKeeps { get; init; }
+    internal uint ObservedConditionalReasons { get; init; }
+    internal bool ObservedCountsAvailable { get; init; } = true;
 }
 
 // Bounded private dispatch windows, never a change to the root SearchBatch/ABI.
@@ -21,6 +24,8 @@ internal sealed class CombatRewardGpuExecutor : IDisposable
     private readonly int _groupingK;
     private readonly int _owner = System.Environment.CurrentManagedThreadId;
     private readonly int _routes;
+    private readonly bool _denseCarry8;
+    private readonly bool _observedHot;
     private readonly PrivateOrdinalBuffer? _privateOutput;
     private readonly bool _privateInput;
     private readonly PrivateOrdinalBuffer? _privateInputBuffer;
@@ -34,6 +39,7 @@ internal sealed class CombatRewardGpuExecutor : IDisposable
             (privateInput is not null || privateOutput is not null))
             throw new InvalidOperationException("C.IntegerRne.PublicTransportOnly");
         _rd = rd; _routes = plan.Routes; _privateOutput = privateOutput;
+        _denseCarry8 = plan.UsesDenseCarry8; _observedHot = plan.UsesObservedOpeningHotLoop;
         _privateInput=privateInput is not null; _privateInputBuffer=privateInput;
         if (_privateInput && ReferenceEquals(privateInput,privateOutput)) throw new ArgumentException("C.PrivateBuffersAlias");
         // Public transport adds at most one 8 MiB input/output pair. Resident
@@ -46,7 +52,7 @@ internal sealed class CombatRewardGpuExecutor : IDisposable
         Rid Buffer(uint[] values) => Add(FamilyGpuComputeUtility.CreateStorageBuffer(rd, FamilyGpuComputeUtility.ToBytesNonEmpty(values)));
         try
         {
-            Rid[] buffers=[default,Buffer(plan.Meta),Buffer([0]),Buffer(plan.Pools),Buffer(plan.Ids),Buffer([0]),
+            Rid[] buffers=[default,Buffer(plan.Meta),Buffer(plan.ObservedBonesIds.Length > 0 ? plan.ObservedBonesIds : [0]),Buffer(plan.Pools),Buffer(plan.Ids),Buffer(plan.ObservedOpeningData.Length > 0 ? plan.ObservedOpeningData : [0]),
                 Buffer(plan.Predicates),Buffer(plan.Targets),default,default,default];
             string source=plan.ShaderSource(forceGeneric);
             if (_privateInput)
@@ -119,6 +125,7 @@ internal sealed class CombatRewardGpuExecutor : IDisposable
         if (resident && !input.IsDense) throw new InvalidOperationException("C.PrivateDenseOnly");
         var watch=Stopwatch.StartNew(); var survivors=new List<ulong>();
         double upload=0,sync=0,read=0,widen=0; long bytes=0; int dispatches=0,groups=0;
+        int conditionalKeeps=0; uint conditionalReasons=0; bool observedCountsAvailable=true;
         if (resident) FamilyGpuComputeUtility.Update(_rd,_header[0],Header(),"C.PrivateHeader");
         for(int offset=0;offset<inputCount;)
         {
@@ -154,7 +161,8 @@ internal sealed class CombatRewardGpuExecutor : IDisposable
                     if(slot>0)_rd.ComputeListAddBarrier(list);
                     _rd.ComputeListBindUniformSet(list,_uniforms[slot],0);
                     int count=Math.Min(Capacity,inputCount-offset-slot*Capacity);
-                    _rd.ComputeListDispatch(list,(uint)((count+63)/64),1,1);
+                    int candidatesPerGroup=dense&&_denseCarry8?512:64;
+                    _rd.ComputeListDispatch(list,(uint)((count+candidatesPerGroup-1)/candidatesPerGroup),1,1);
                     dispatches++;
                 }
             }
@@ -185,10 +193,27 @@ internal sealed class CombatRewardGpuExecutor : IDisposable
                     header[3]!=0||header[4]!=expected||header[2]>expected)
                     throw new InvalidDataException($"C.GpuHeaderOrNumericFailure:batch={input.Batch.BatchBase};offset={offset+slot*Capacity};header={string.Join(',',header.ToArray())}");
                 bytes+=32;
+                if (_observedHot)
+                {
+                    int conditional = checked((int)(header[7] & 0x0fffffffu));
+                    uint reasons = header[7] >> 28;
+                    if (conditional > header[2] || (reasons & ~7u) != 0 ||
+                        (conditional == 0) != (reasons == 0))
+                    {
+                        // Auxiliary experimental counters cannot acquire
+                        // authority over the independently checked result ABI.
+                        observedCountsAvailable=false;
+                        Bootstrap.RuntimeLog.TryBackgroundInfo($"combatRewardObservedHotObservationUnavailable=true;packed={header[7]};output={header[2]};batch={input.Batch.BatchBase};offset={offset};resultsUnaffected=true");
+                    }
+                    else { conditionalKeeps+=conditional; conditionalReasons|=reasons; }
+                }
                 if (resident)
                 {
                     privateCount=checked((int)header[2]); read+=watch.Elapsed.TotalMilliseconds-start;
-                    metrics=new(inputCount,privateCount,dispatches,bytes,upload,sync,read,watch.Elapsed.TotalMilliseconds) { SubmissionGroups=groups };
+                    metrics=new(inputCount,privateCount,dispatches,bytes,upload,sync,read,watch.Elapsed.TotalMilliseconds) {
+                        SubmissionGroups=groups, ObservedConditionalKeeps=conditionalKeeps, ObservedConditionalReasons=conditionalReasons,
+                        ObservedCountsAvailable=observedCountsAvailable };
+                    ReportObservedHot(metrics);
                     return null;
                 }
                 uint n=header[2];bytes+=n*4L;
@@ -222,10 +247,22 @@ internal sealed class CombatRewardGpuExecutor : IDisposable
             }
         }
         token.ThrowIfCancellationRequested();
-        metrics=new(inputCount,result.Count,dispatches,bytes,upload,sync,read,watch.Elapsed.TotalMilliseconds) { SubmissionGroups=groups };
+        metrics=new(inputCount,result.Count,dispatches,bytes,upload,sync,read,watch.Elapsed.TotalMilliseconds) {
+            SubmissionGroups=groups, ObservedConditionalKeeps=conditionalKeeps, ObservedConditionalReasons=conditionalReasons,
+            ObservedCountsAvailable=observedCountsAvailable };
+        ReportObservedHot(metrics);
         if (_tracePrivate)
             Bootstrap.RuntimeLog.TryBackgroundDetail($"ncStageTiming=true;stage=C;input={inputCount};output={result.Count};dispatches={dispatches};groups={groups};uploadMs={upload};dispatchSyncMs={sync};readbackMs={read};readbackBytes={bytes};widenMs={widen};sortMs={sort};validationMs={watch.Elapsed.TotalMilliseconds-validationStart};canonicalMs={metrics.CanonicalMs}");
         return result;
+    }
+    private void ReportObservedHot(CombatRewardGpuMetrics metrics)
+    {
+        if (!_observedHot || !metrics.ObservedCountsAvailable) return;
+        var reasons = new List<string>();
+        if ((metrics.ObservedConditionalReasons & 1u) != 0) reasons.Add("UnresolvedObservedOpening");
+        if ((metrics.ObservedConditionalReasons & 2u) != 0) reasons.Add("OutsideHotRewardStructure");
+        if ((metrics.ObservedConditionalReasons & 4u) != 0) reasons.Add("UnresolvedPlanOpening");
+        Bootstrap.RuntimeLog.TryBackgroundInfo($"combatRewardObservedHotWork=true;input={metrics.Input};output={metrics.Output};hotRejected={metrics.Input-metrics.Output};hotPassed={metrics.Output-metrics.ObservedConditionalKeeps};conditionalKeptForExact={metrics.ObservedConditionalKeeps};conditionalReasonFlags={metrics.ObservedConditionalReasons};conditionalReasons={string.Join(',',reasons)};canonicalMs={metrics.CanonicalMs};counts=DistinctRoots;reasonFlags=ObservedUnionNotPerCauseCounts;experiment=true");
     }
     public void Dispose(){AssertOwner();_disposed=true;FamilyGpuComputeUtility.FreeAll(_rd, _owned);}
 }

@@ -101,6 +101,16 @@ internal static class InRunFeaturePreferences
         if (StringComparer.OrdinalIgnoreCase.Equals(directory, _runtimeDirectory)) OperationChanged?.Invoke(enabled);
     }
 
+    internal static void SetAllOperationModes(string directory, OperationPredictionMode mode)
+    {
+        directory = Key(directory);
+        var current = ByDirectory[directory];
+        var updated = current.OperationPredictionModes.WithAll(mode);
+        if (current.OperationPredictionModes == updated) return;
+        ByDirectory[directory] = current with { OperationPredictionModes = updated };
+        if (StringComparer.OrdinalIgnoreCase.Equals(directory, _runtimeDirectory)) OperationPolicyChanged?.Invoke();
+    }
+
     internal static void SetOperationMode(string directory, OperationPredictionCategory category, OperationPredictionMode mode)
     {
         directory = Key(directory);

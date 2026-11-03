@@ -29,6 +29,9 @@ internal sealed record NeowReplayPlan(
     internal (int Niche, int Potions)[] SharedArrivals { get; init; } = [];
     internal int CapsuleUpgradeUpperBound { get; init; } = -1;
     internal NeowAuthoredUpgradeContinuation? AuthoredUpgrades { get; init; }
+    internal NeowCapsuleNicheContinuation? CapsuleNicheContinuation { get; init; }
+    internal string[] FilterRemainders => ExactOnly.Concat(CapsuleNicheContinuation?.Remainders ?? [])
+        .Select(cause => "N.Neow:" + cause).ToArray();
     internal bool HasFinalCurseFastProjection => (EnabledDomains & Beta110FastDomain.FinalCurse) != 0;
 
     internal string ContinuationIssue(bool capsule = false)
@@ -79,12 +82,12 @@ internal sealed record NeowReplayPlan(
         condition.SourceRelicKey == BaseGameModelKeys.Relics.NeowsBones &&
         condition.Kind == NeowStructuredConditionKind.ExactGroupedCapsuleMultiset &&
         condition.OutputKeys.Count is >= 1 and <= 3;
-    internal static bool HasCapsule(ExactSearchExecutionRequest request) =>
+    internal static bool HasCapsule(SearchModel request) =>
         request.Evaluation.StructuredNeowEffects.Any(condition => !condition.IsEmpty && IsCapsule(condition)) ||
         request.Evaluation.EffectOutputConditions.Any(condition => !condition.IsEmpty && IsCapsule(condition.SourceRelicKey)) ||
         !request.Evaluation.CapsuleContainedRelics.IsEmpty || request.Evaluation.RequireWhetstone || request.Evaluation.RequireWarPaint;
 
-    internal static NeowSearchFilter NeowFilter(ExactSearchExecutionRequest request, bool capsule)
+    internal static NeowSearchFilter NeowFilter(SearchModel request, bool capsule)
     {
         ExactSearchEvaluationProjection e = request.Evaluation;
         bool legacyBonesContext = e.RequireNeowsBones || !e.BonesRelics.IsEmpty ||
@@ -107,7 +110,7 @@ internal sealed record NeowReplayPlan(
         };
     }
 
-    internal static NeowReplayPlan Compile(ExactSearchExecutionRequest request, bool capsule)
+    internal static NeowReplayPlan Compile(SearchModel request, bool capsule)
     {
         NeowSearchFilter filter = NeowFilter(request, capsule);
         if (!capsule) filter = filter with { StructuredNeowEffects = filter.StructuredNeowEffects
@@ -239,6 +242,10 @@ internal sealed record NeowReplayPlan(
             bones, filter.RequireNeowsBones, leafyBonesInitialTransformInvariant, exactOnly.ToArray())
         {
             AuthoredUpgrades = capsule ? null : NeowAuthoredUpgradeContinuation.Compile(request),
+            CapsuleNicheContinuation = capsule ? null : NeowCapsuleNicheContinuation.Compile(request, authority, bones, selected,
+                Id(filter.RequiredBonesAcquisitionOrder.ElementAtOrDefault(0)), Id(filter.RequiredBonesAcquisitionOrder.ElementAtOrDefault(1)),
+                Mask(filter.BonesRelics.All.Concat(filter.RequiredBonesCombination)) | sourceMask | (bones ? requiredCapsules : 0),
+                Mask(filter.BonesRelics.Ban), conditions, finalCurse),
             CapsuleUpgradeUpperBound = request.Authority.PlayersCount > 1 && effectAuthority?.HasExactDeck == true
                 ? checked(2 * (effectAuthority.OrderedDeck!.Count + 6)) : -1,
             DirectNestedVanilla111 = request.Authority.CanUseCurrentModel && request.Authority.NoRunModifiers == true &&

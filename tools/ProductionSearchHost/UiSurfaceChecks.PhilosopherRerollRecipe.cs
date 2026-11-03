@@ -25,7 +25,9 @@ using MegaCrit.Sts2.Core.Saves;
 using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Core.PredictorRuntime;
 using RolltheSpire2.Infrastructure.Snapshots;
+using RolltheSpire2.Presentation.Localization;
 using RolltheSpire2.Ui.InRunOperations;
+using RolltheSpire2.Ui.Settings;
 
 internal static partial class UiSurfaceChecks
 {
@@ -181,14 +183,57 @@ internal static partial class UiSurfaceChecks
                         var alternatives = PredictorOperationCapture.Read<IReadOnlyList<CardRewardAlternative>>(cardScreen, "_extraOptions");
                         int rerollIndex = alternatives.ToList().FindIndex(alternative => alternative.OptionId == "REROLL");
                         var button = Descendants(cardScreen).OfType<NCardRewardAlternativeButton>().ElementAt(rerollIndex);
+                        // The shared caption explains what is being positioned.
+                        // Reading order supplies the ordinal of each card group.
+                        var ordinalText = JsonUiTextProvider.CreateUi13(UiLanguagePreferences.LanguageCode);
+                        OperationPreview? ordinalPublished = null;
                         await exercise("philosopher-reroll-ordinal", button, button, "DRIFTWOOD",
                             capturedScene => capturedScene is PredictorOperationEventScene { Event.Entry: "COLORFUL_PHILOSOPHERS", RewardScene: not null },
                             preview => preview.OptionKey == "REROLL" && preview.Faults.IsEmpty &&
                                 preview.Style is { Text: OperationTextMode.None, Cards: OperationCardLayout.Groups } &&
                                 preview.Branches.SelectMany(branch => branch.Sections).SelectMany(section => section.CardGroups)
                                     .Select(group => group.Label).SequenceEqual(new[] { "RewardRerollStep:1", "RewardRerollStep:2", "RewardRerollStep:3" }),
-                            (view, _) => check(Descendants(view).OfType<Label>().Count(label => label.Text.Contains("次重掷", StringComparison.Ordinal)) == 3,
-                                "philosopher native hover renderer captions all three reroll ordinals"), false);
+                            (view, preview) =>
+                            {
+                                ordinalPublished = preview;
+                                var previewGroups = preview.Branches.SelectMany(branch => branch.Sections).SelectMany(section => section.CardGroups).ToArray();
+                                check(previewGroups.Select(group => group.SequenceOrdinal).SequenceEqual(new int?[] { 1, 2, 3 }) &&
+                                    preview.Branches.SelectMany(branch => branch.Sections).Any(section => section.FeatureId == "extra:reroll-sequence"),
+                                    "philosopher ordinals share the ordinary continuous-reward setting and preserve their exact numeric sequence");
+                                check(!Descendants(view).Any(node => node.Name == "Rt2IconPaths"),
+                                    "one deterministic philosopher result at each ordinal uses reading order without a redundant icon strip");
+                                bool needsCaption = previewGroups.Any(group => group.IconPaths.IsEmpty);
+                                var captions = Descendants(view).OfType<Label>().Where(label =>
+                                    label.Visible && label.Text == ordinalText.Get("operation.place.this.group")).ToArray();
+                                check(captions.Length == (needsCaption ? 1 : 0) &&
+                                Enumerable.Range(1, 3).All(ordinal => !Descendants(view).OfType<Label>()
+                                    .Any(label => label.Visible && label.Text == ordinalText.Format("operation.rerollStep", ordinal))),
+                                "philosopher hover identifies current-group placement once across three ordered results");
+                                CheckOperationIconPaths(view, preview, check);
+                                RecordRerollNativeLayout(view, preview, output, "philosopher-reroll-ordinal");
+                                var stacks = Descendants(view).OfType<Control>().Where(node => node.Name.ToString().StartsWith("Rt2NeowCardStack_", StringComparison.Ordinal)).ToArray();
+                                float cardTop = Descendants(stacks[0]).OfType<MegaCrit.Sts2.Core.Nodes.Cards.NCard>().Min(card => card.GetParent<Control>().GlobalPosition.Y);
+                                check(stacks.Length == 3 && captions.All(caption => Math.Abs(caption.GlobalPosition.X - stacks[0].GlobalPosition.X) < .2f &&
+                                    caption.GetGlobalRect().End.Y <= cardTop + .2f) &&
+                                    stacks.All(stack => Math.Abs(stack.GetMeta("rt2_header_height").AsSingle() - stacks[0].GetMeta("rt2_header_height").AsSingle()) < .2f),
+                                    "real philosopher unequal caption and icon headings reserve one aligned row with its ordering explanation above the leftmost group");
+                            }, false);
+                        var viewport = (SubViewport)game.GetViewport();
+                        var oldSize = viewport.Size; var oldWindow = root.GetWindow().Size;
+                        try
+                        {
+                            viewport.Size = new(1280, 720); root.GetWindow().Size = viewport.Size; await Frames(8);
+                            await exercise("philosopher-reroll-ordinal-1280", button, button, "DRIFTWOOD",
+                                capturedScene => capturedScene is PredictorOperationEventScene { Event.Entry: "COLORFUL_PHILOSOPHERS", RewardScene: not null },
+                                preview => RerollGroups(preview).Length == 3 && RerollGroups(preview).Zip(RerollGroups(ordinalPublished!))
+                                    .All(pair => SameCards(pair.First.Cards, pair.Second.Cards)),
+                                (view, preview) =>
+                                {
+                                    CheckOperationIconPaths(view, preview, check);
+                                    RecordRerollNativeLayout(view, preview, output, "philosopher-reroll-ordinal");
+                                }, false);
+                        }
+                        finally { viewport.Size = oldSize; root.GetWindow().Size = oldWindow; await Frames(8); }
                         RunPhilosopherEnchantmentProjectionChecks(snapshot, check);
                         int unknownFilterCalls = 0;
                         var unknownOptions = new CardCreationOptions(options.CardPools, options.Source, options.RarityOdds,

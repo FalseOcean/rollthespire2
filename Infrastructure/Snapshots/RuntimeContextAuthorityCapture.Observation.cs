@@ -111,7 +111,7 @@ internal sealed class NativeObservationSchedule
 // observed dependency, including the native encounter-comparer matrix.
 internal sealed record RuntimeContextObservedInputs(
     string RawSeed, CharacterIdentity Character, int Ascension, string GameVersion,
-    int PlayersCount, int PlayerSlotIndex, WorldGameMode GameMode,
+    RuntimeProfileId CapturedProfileId, int PlayersCount, int PlayerSlotIndex, WorldGameMode GameMode,
     PredictionGameModeAuthority GameModeAuthority,
     ReflectionNeowEffectSnapshotAdapter.EffectObservedInputs Effect,
     ReflectionNeowEffectSnapshotAdapter.WorldObservedInputs World,
@@ -131,8 +131,8 @@ internal sealed record RuntimeContextObservedInputs(
         a.Discovery with { Acts=b.Discovery.Acts } == b.Discovery && a.Discovery.Acts.SequenceEqual(b.Discovery.Acts);
     internal RuntimeContextAuthoritySnapshot Derive(IRuntimeProfile? profile = null)
     {
-        profile ??= Beta111Profile.Instance;
-        if (profile.ProfileId != RuntimeProfileId.Beta111)
+        profile ??= RuntimeProfileRegistry.Select(GameVersion);
+        if (profile.ProfileId != CapturedProfileId || !RuntimeProfilePolicies.UsesSlicedAuthorityObservation(profile.ProfileId))
             throw new InvalidOperationException("RuntimeObservationDeriveProfileMismatch");
         var captured = ReflectionNeowEffectSnapshotAdapter.DeriveEffect(profile, RawSeed, Character,
             Ascension, PlayersCount, PlayerSlotIndex, GameVersion, Effect);
@@ -164,8 +164,8 @@ public static partial class RuntimeContextAuthorityCapture
         IReadOnlyList<ModelKey>? explicitDiscoveredActs = null)
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
-        if (profile.ProfileId != RuntimeProfileId.Beta111)
-            throw new NotSupportedException("RuntimeObservationPreparationRequiresBeta111");
+        if (!RuntimeProfilePolicies.UsesSlicedAuthorityObservation(profile.ProfileId))
+            throw new NotSupportedException("RuntimeObservationPreparationUnavailable:" + profile.ProfileId);
         // Freeze account provenance through the existing ingress. Passing these
         // facts to adapters does not relabel them as an explicit user premise.
         var roster = orderedCharacters?.ToArray();
@@ -185,7 +185,7 @@ public static partial class RuntimeContextAuthorityCapture
             bool? neow = ReflectionNeowEffectSnapshotAdapter.CaptureVanillaNeowCatalogExact(out string evidence);
             if (neow != true && Interlocked.Exchange(ref _neowCatalogWarning, 1) == 0)
                 Bootstrap.RuntimeLog.TryBackgroundWarning($"runtimeNeowCatalogAuthority={neow?.ToString() ?? "Unknown"};evidence={evidence};scope=Neow;noInventedCatalog=true");
-            return new(rawSeed, character, ascension, gameVersion, playersCount, playerSlotIndex,
+            return new(rawSeed, character, ascension, gameVersion, profile.ProfileId, playersCount, playerSlotIndex,
                 predictionGameMode, predictionGameModeAuthority, effect, world, neow, support);
         });
     }

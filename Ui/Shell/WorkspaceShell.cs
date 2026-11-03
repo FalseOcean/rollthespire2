@@ -362,7 +362,7 @@ internal sealed partial class WorkspaceShell : Control
             string key = System.Text.Json.JsonSerializer.Serialize(new { Seed = _liveRun!.Rng.StringSeed, Context = context,
                 RuntimeAuthorityEnvironment.Current.Authority.Fingerprint,
                 RuntimeAuthorityEnvironment.Current.Authority.CaptureIssues });
-            if (!_runPredictionLoaded || key != _livePredictionBinding || _predictor?.LastDocument is null ||
+            if (!_runPredictionLoaded || key != _livePredictionBinding || _predictor?.LastFacts is null ||
                 _predictor.LastRequest?.OriginalSeed != _liveRun.Rng.StringSeed ||
                 !RuntimeAuthorityEnvironment.Current.Authority.Fingerprint.Complete)
             {

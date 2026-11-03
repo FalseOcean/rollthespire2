@@ -1,3 +1,4 @@
+using RolltheSpire2.Search.Compilation;
 using RolltheSpire2.Ui.Pages.Search;
 using System.Numerics;
 using RolltheSpire2.Compatibility;
@@ -23,13 +24,16 @@ internal static class MapRouteChecks
                     RolltheSpire2.Search.Semantics.StandardMapComparison.AtLeast, 0)).ToArray();
             var compiled = RolltheSpire2.Search.Semantics.SearchCompiler.Compile(
                 RolltheSpire2.Search.Semantics.SearchQuery.Empty with { StandardMaps = conditions }, context);
-            var request = RolltheSpire2.Search.Compilation.ExactSearchExecutionRequestFactory.Compile(compiled,
+            var request = RolltheSpire2.Search.Compilation.SearchPreparationCompiler.Compile(compiled,
                 new("000000000000", 1, 1, 1)).Plan!;
-            var fast = new RolltheSpire2.Search.FamilyExecution.StandardMapFamily(request);
+            var fastServices = new RolltheSpire2.Search.FamilyExecution.FilterRuntimeServices(false);
+            var fastBody = RolltheSpire2.Search.FamilyExecution.StandardMapFamily.Prepare(request.Model,
+                RolltheSpire2.Search.Contracts.FilterExecutionPreferences.From(request.RunOptions));
+            var fast = (RolltheSpire2.Search.FamilyExecution.StandardMapExecution)fastBody.CreateExecution!(fastBody,fastServices);
             var allocation = RolltheSpire2.Search.FamilyExecution.FamilyExecutionCoordinator.Plan(request, false);
-            var eta = RolltheSpire2.Search.FamilyExecution.FamilySearchEtaProjectorV1.Project(request, allocation);
+            var eta = RolltheSpire2.Search.FamilyExecution.FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(request, allocation), allocation);
             Check(eta.Status == RolltheSpire2.Search.FamilyExecution.FamilySearchEtaStatus.Unavailable &&
-                eta.TargetFamilyPipelineMs is null && fast.Survival.SurvivalProbability == 1,
+                eta.TargetFamilyPipelineMs is null && fast.Body.Survival.SurvivalProbability == 1,
                 "Map pricing remains deferred; explicit research timing does not restore a production quote");
             Console.WriteLine($"SOLO_MAP_ETA acts={acts};targetMs={eta.TargetSearchMeanMs};" +
                 $"familyMs={eta.TargetFamilyPipelineMs};exactMs={eta.TargetExactTailMs}");
@@ -41,7 +45,7 @@ internal static class MapRouteChecks
                     string seed = RolltheSpire2.Search.FamilyExecution.VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance, ordinal);
                     return boundary == "FastFinalCpu"
                         ? fast.MatchesRoot(Beta111Profile.Instance.ComputeRootSeed(seed))
-                        : RolltheSpire2.Search.Runtime.ProductionExactSearchEvaluator.Evaluate(request,
+                        : RolltheSpire2.Search.Runtime.ProductionExactSearchEvaluator.Evaluate(request.Model,
                             RolltheSpire2.Core.Prediction.TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed)).IsMatch;
                 }
                 for (ulong i = 0; i < 64; i++) _ = Evaluate(offset + i);
@@ -57,20 +61,22 @@ internal static class MapRouteChecks
             }
             foreach (int workers in new[] { 1, 4, 8 })
             {
-                var parallelRequest = RolltheSpire2.Search.Compilation.ExactSearchExecutionRequestFactory.Compile(compiled,
+                var parallelRequest = RolltheSpire2.Search.Compilation.SearchPreparationCompiler.Compile(compiled,
                     new("000000000000", 1024, 1, workers)).Plan!;
-                var parallelFamily = new RolltheSpire2.Search.FamilyExecution.StandardMapFamily(parallelRequest);
+                var parallelBody = RolltheSpire2.Search.FamilyExecution.StandardMapFamily.Prepare(parallelRequest.Model,
+                    RolltheSpire2.Search.Contracts.FilterExecutionPreferences.From(parallelRequest.RunOptions));
                 var batch = new RolltheSpire2.Search.FamilyExecution.SearchBatch(2048, 1024);
                 var input = RolltheSpire2.Search.FamilyExecution.FamilyCandidateSet.Dense(batch);
-                var window = new RolltheSpire2.Search.FamilyExecution.FamilyObservationWindow(batch, parallelRequest);
-                var execution = new RolltheSpire2.Search.FamilyExecution.FamilyExecutionContext(requiresGpu: false);
+                var window = batch;
+                var execution = new RolltheSpire2.Search.FamilyExecution.FilterRuntimeServices(requiresGpu: false);
+                var parallelFamily = parallelBody.CreateExecution!(parallelBody,execution);
                 try
                 {
-                    _ = parallelFamily.InvokeAsync(execution, window, input, default).AsTask().GetAwaiter().GetResult();
+                    _ = parallelFamily.FilterAsync(execution, input, default).AsTask().GetAwaiter().GetResult();
                     for (int repeat = 0; repeat < 3; repeat++)
                     {
                         var watch = System.Diagnostics.Stopwatch.StartNew();
-                        var result = parallelFamily.InvokeAsync(execution, window, input, default).AsTask().GetAwaiter().GetResult();
+                        var result = parallelFamily.FilterAsync(execution, input, default).AsTask().GetAwaiter().GetResult();
                         Console.WriteLine($"SOLO_MAP_WINDOW acts={acts};workers={workers};repeat={repeat};" +
                             $"roots=1024;start=2048;elapsedMs={watch.Elapsed.TotalMilliseconds:F4};" +
                             $"survivors={result.Count};boundary=CpuCanonicalAbi1Ready;warmup=1");

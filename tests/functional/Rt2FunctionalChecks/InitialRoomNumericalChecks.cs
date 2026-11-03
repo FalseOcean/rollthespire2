@@ -21,15 +21,18 @@ internal static class InitialRoomNumericalChecks
         void Check(bool value, string name) { checks++; if (!value) throw new InvalidDataException("InitialRoomNumerical:" + name); }
         var captured = ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/v1/context.json").Context;
         var profile = Beta111Profile.Instance;
-        ExactSearchExecutionRequest Request(SearchQuery query, SearchContext context) =>
-            ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context), new("000000000000", 65536, 1000, 1)).Plan
-            ?? throw new InvalidDataException("InitialRoomNumerical.Compile");
+        PreparedSearch Request(SearchQuery query, SearchContext context)
+        {
+            var result = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context), new("000000000000", 65536, 1000, 1));
+            return result.Plan ?? throw new InvalidDataException("InitialRoomNumerical.Compile:" + result.Issue);
+        }
         for (ulong ordinal = 0; ordinal < 4096; ordinal++)
         {
             ulong root = profile.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(ordinal));
             for (int count = 1; count <= 3; count++)
-                Check(InitialRoomsPlan.MatchesUnknown(root, count) == OrdinaryUnknownRoomPredictor.ForAct1Filter(root, count, false)
-                    .Steps.All(step => step.Room == UnknownRoomCategory.Event), "UnknownFloatPrefix:" + count);
+            foreach (bool juzu in new[] { false, true })
+                Check(InitialRoomsPlan.MatchesUnknown(root, count, juzu) == OrdinaryUnknownRoomPredictor.ForAct1Filter(root, count, juzu)
+                    .Steps.All(step => step.Room == UnknownRoomCategory.Event), "UnknownFloatPrefix:" + count + ":Juzu=" + juzu);
         }
         var world = captured.Authority.WorldAuthority!;
         var generation = world.Beta109Generation!;
@@ -66,7 +69,7 @@ internal static class InitialRoomNumericalChecks
             foreach (int prefix in new[] { 0, 3 })
             {
                 var request = Request(SearchQuery.Empty with { TreasureRelics = condition, FirstActUnknownEventPrefixCount = prefix }, fixture.Context);
-                var plan = InitialRoomsPlan.TryCompile(request);
+                var plan = InitialRoomsPlan.TryCompile(request.Model);
                 Check(plan is { CoversTreasure: true }, fixture.Name + ":TreasureAdmission");
                 for (ulong ordinal = 0; ordinal < 256; ordinal++)
                 {
@@ -76,16 +79,48 @@ internal static class InitialRoomNumericalChecks
             }
         }
         var unknownOnly = InitialRoomsPlan.TryCompile(Request(SearchQuery.Empty with { FirstActUnknownEventPrefixCount = 3 },
-            captured with { Authority = captured.Authority.WithWorldAuthority(null) }));
+            captured with { Authority = captured.Authority.WithWorldAuthority(null) }).Model);
         Check(unknownOnly is { CoversUnknownPrefix: true, CoversTreasure: false }, "UnknownIndependentOfMissingBags");
         var retainedUnknown = InitialRoomsPlan.TryCompile(Request(SearchQuery.Empty with { FirstActUnknownEventPrefixCount = 3,
             TreasureRelics = new(1, 1, TreasureRelicOrderMode.Ordered, [common.OrderedRelics[0], null]) },
-            captured with { Authority = captured.Authority.WithWorldAuthority(null) }));
+            captured with { Authority = captured.Authority.WithWorldAuthority(null) }).Model);
         Check(retainedUnknown is { CoversUnknownPrefix: true, CoversTreasure: false } && retainedUnknown.TreasureRemainder.Length > 0,
             "MissingTreasureAuthorityKeepsUnknownAndOriginalObligation");
-        var committed = Request(SearchQuery.Empty with { OpeningRoute = new(new("RELIC", "JUZU_BRACELET")),
-            FirstActUnknownEventPrefixCount = 3 }, captured);
-        Check(InitialRoomsPlan.TryCompile(committed) is null, "CommittedOpeningAndJuzuRemainExact");
+        ModelKey juzuKey = new("RELIC", "JUZU_BRACELET");
+        var prefixQuery = SearchQuery.Empty with { FirstActUnknownEventPrefixCount = 3 };
+        var capsule = prefixQuery with { OpeningRoute = new(BaseGameModelKeys.Relics.SmallCapsule) };
+        var declaredCases = new (string Name, SearchQuery Query, bool Juzu)[] {
+            ("Direct", prefixQuery with { OpeningRoute = new(juzuKey) }, true),
+            ("BonesUnspecified", prefixQuery with { OpeningRoute = new(BaseGameModelKeys.Relics.NeowsBones) }, false),
+            ("SmallCapsuleUnspecified", capsule, false),
+            ("LargeCapsuleUnspecified", prefixQuery with { OpeningRoute = new(BaseGameModelKeys.Relics.LargeCapsule) }, false),
+            ("BonesRequiredCapsuleNested", prefixQuery with { OpeningRoute = new(BaseGameModelKeys.Relics.NeowsBones),
+                OpeningRouteRelicRequirement = new(BaseGameModelKeys.Relics.NeowsBones, [BaseGameModelKeys.Relics.SmallCapsule], BonesRouteOrderMode.AnyOrder),
+                LegacyNeow = prefixQuery.LegacyNeow with { CapsuleContainedRelics = new([], [juzuKey], []) } }, true),
+            ("CapsuleAll", capsule with { LegacyNeow = capsule.LegacyNeow with { CapsuleContainedRelics = new([], [juzuKey], []) } }, true),
+            ("CapsuleSingletonAny", capsule with { LegacyNeow = capsule.LegacyNeow with { CapsuleContainedRelics = new([juzuKey], [], []) } }, true),
+            ("CapsuleMultiAny", capsule with { LegacyNeow = capsule.LegacyNeow with {
+                CapsuleContainedRelics = new([juzuKey, common.OrderedRelics.First(key => key != juzuKey)], [], []) } }, false),
+            ("FutureRelic", prefixQuery with { RelicSequenceConstraints = [new(RelicSequenceKind.Common,
+                SearchSequenceRangeMode.FirstN, 3, new([juzuKey], [], []))] }, false) };
+        foreach (var fixture in declaredCases)
+        {
+            var plan = InitialRoomsPlan.TryCompile(Request(fixture.Query, captured).Model);
+            Check(plan is { CoversUnknownPrefix: true, CoversTreasure: false } && plan.UnknownJuzuAcquired == fixture.Juzu,
+                "DeclaredOpeningAdmission:" + fixture.Name);
+            for (ulong ordinal = 0; ordinal < 128; ordinal++)
+            {
+                ulong root = profile.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(ordinal));
+                bool expected = OrdinaryUnknownRoomPredictor.ForAct1Filter(root, 3, fixture.Juzu).Steps.All(step => step.Room == UnknownRoomCategory.Event);
+                Check(plan!.Matches(root) == expected && plan.Reference(root) == expected,
+                    "DeclaredOpeningReference:" + fixture.Name + ":" + ordinal);
+            }
+        }
+        var committedTreasure = InitialRoomsPlan.TryCompile(Request(capsule with {
+            TreasureRelics = new(1, 1, TreasureRelicOrderMode.Ordered, [common.OrderedRelics[0], null]) }, captured).Model);
+        Check(committedTreasure is { CoversUnknownPrefix: true, CoversTreasure: false } &&
+            committedTreasure.TreasureRemainder == "InitialRooms.OpeningTreasureRetainedByExact",
+            "CommittedTreasureRetainsActualAcquisitionDutyWithoutBlockingUnknown");
         CheckOwnedInvocations(captured, Check).GetAwaiter().GetResult();
         CheckPartyUnknown(captured, Check);
         Console.WriteLine($"InitialRoomNumerical checks={checks};PASS"); return 0;
@@ -97,9 +132,12 @@ internal static class InitialRoomNumericalChecks
         ulong Root(ulong ordinal) => profile.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(ordinal));
         ulong witness = Enumerable.Range(0, 1024).Where(i => i % 3 == 0).Select(i => (ulong)i)
             .First(i => InitialRoomsPlan.MatchesUnknown(Root(i), 3));
-        ExactSearchExecutionRequest Request(SearchQuery query, SearchContext? context = null) =>
-            ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context ?? captured),
-                new("000000000000", 1024, int.MaxValue, 4)).Plan ?? throw new InvalidDataException("OwnedInitialRooms.Compile");
+        PreparedSearch Request(SearchQuery query, SearchContext? context = null)
+        {
+            var result = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context ?? captured),
+                new("000000000000", 1024, int.MaxValue, 4));
+            return result.Plan ?? throw new InvalidDataException("OwnedInitialRooms.Compile:" + result.Issue);
+        }
         var initial = RelicSequencePredictor.Predict(profile, Beta110SeedCodec.FormatOrdinal(witness), captured.Authority.WorldAuthority);
         var observed = TreasureRelicPredictor.Predict(profile, Root(witness), initial, []);
         var treasure = new TreasureRelicSearchCondition(1, 2, TreasureRelicOrderMode.Ordered,
@@ -125,7 +163,7 @@ internal static class InitialRoomNumericalChecks
                 captured with { Authority = captured.Authority.WithWorldAuthority(null) }),
             ("BothOwners", SearchQuery.Empty with { TreasureRelics = treasure, FirstActUnknownEventPrefixCount = 3 }, captured)
         };
-        await using var execution = new FamilyExecutionContext(requiresGpu: false, cpuWorkerCount: 4);
+        await using var execution = new FilterRuntimeServices(requiresGpu: false, cpuWorkerCount: 4);
         foreach (var fixture in fixtures)
         {
             var request = Request(fixture.Query, fixture.Context);
@@ -133,8 +171,7 @@ internal static class InitialRoomNumericalChecks
             var cover = selected.Stages.SelectMany(stage => stage.Coverage).ToHashSet(StringComparer.Ordinal);
             bool hasTreasure = fixture.Query.TreasureRelics is { IsEmpty: false };
             bool hasUnknown = fixture.Query.FirstActUnknownEventPrefixCount > 0;
-            var variant = selected.ExecutionOrderUnits.Select(family => family is FamilyCpuExecution cpu
-                ? cpu.RealizationOwner ?? family : family).OfType<VariantOpeningFamily>().SingleOrDefault();
+            VariantOpeningFamily.TryPrepare(request.Model, FilterExecutionPreferences.From(request.RunOptions), out var variant, false);
             check(cover.Contains(InitialRoomsInvocation.TreasureCoverage) == hasTreasure &&
                 cover.Contains(VariantOpeningFamily.Id) == hasUnknown &&
                 (variant?.Plan.UnknownPrefixCount ?? 0) == fixture.Query.FirstActUnknownEventPrefixCount &&
@@ -146,6 +183,7 @@ internal static class InitialRoomNumericalChecks
             if (fixture.Name == "TreasureMissingOrdinary")
                 check(!cover.Contains("R.Relic") && selected.FilterRemainders.Contains("R.Relic:NoSelectedFilter"),
                     "MissingOrdinaryDoesNotBorrowLegacyCoverage");
+            var running = selected.OrderedFamilies.ToDictionary(body => body, body => body.CreateExecution!(body, execution));
             foreach (bool compact in new[] { false, true })
             {
                 var batch = new SearchBatch(0, 1024);
@@ -154,34 +192,39 @@ internal static class InitialRoomNumericalChecks
                 var current = input;
                 foreach (var family in selected.OrderedFamilies)
                 {
-                    if (family is InitialRoomsInvocation)
+                    if (family.Coverage.Contains(InitialRoomsInvocation.TreasureCoverage))
                         check(!family.CanBindPrivateSerial &&
                             family.QuotePhysicalWork(new(compact, false, input.Count) { PrivateInput = true }) is null &&
                             family.QuotePhysicalWork(new(compact, false, input.Count) { PrivateOutput = true }) is null,
                             fixture.Name + ":InitialRoomsPublicCompleteCallsCannotBorrowPrivatePrice");
-                    current = await family.InvokeAsync(execution, new(batch, request), current, default);
+                    current = await running[family].FilterAsync(execution, current, default);
                 }
-                InitialRoomsPlan? rooms = InitialRoomsPlan.TryCompile(request);
-                RelicFamily.TryCreate(Request(fixture.Query with { TreasureRelics = null }, fixture.Context), out var legacyR);
-                WorldFamily.TryCreate(Request(fixture.Query with { FirstActUnknownEventPrefixCount = 0 }, fixture.Context), out var legacyW, false);
+                InitialRoomsPlan? rooms = InitialRoomsPlan.TryCompile(request.Model);
+                var relicRequest = Request(fixture.Query with { TreasureRelics = null }, fixture.Context);
+                RelicFamily.TryPrepare(relicRequest.Model, FilterExecutionPreferences.From(relicRequest.RunOptions), out var legacyR, false);
+                var relicReference = legacyR is null ? null : new RelicReferencePlan(RelicReferencePlan.ProjectEvaluation(relicRequest.Model),
+                    relicRequest.Model.Authority.WorldAuthority, profile);
+                var worldRequest = Request(fixture.Query with { FirstActUnknownEventPrefixCount = 0 }, fixture.Context);
+                WorldFamily.TryCreate(worldRequest.Model, FilterExecutionPreferences.From(worldRequest.RunOptions), out var legacyW, false);
+                var worldReference = legacyW is null ? null : new WorldFamilyReplay(worldRequest.Model);
                 var expected = input.EnumerateLogicalOrdinals().Where(i => (rooms?.Reference(Root(i)) ?? true) &&
-                    (legacyR is not RelicFamily relic || relic.MatchesCpuReference(Root(i))) &&
-                    (legacyW is not WorldFamily worldFamily || worldFamily.Replay.Matches(Root(i))));
+                    (relicReference?.Matches(Root(i)) ?? true) &&
+                    (worldReference?.Matches(Root(i)) ?? true));
                 var expectedOrdinals = expected.ToArray();
                 check(current.EnumerateLogicalOrdinals().SequenceEqual(expectedOrdinals), fixture.Name + ":CompleteCpuPopulation:" + compact);
                 if (fixture.Name == "TreasureOrdinaryAndShop")
                 {
                     check(expectedOrdinals.Contains(witness), "MixedOrdinaryShopTreasureHasKnownPositive");
-                    var old = (RelicFamily)legacyR!;
-                    check(Enumerable.Range(0, 4097).Select(i => (ulong)i).Any(i => old.MatchesCpuReference(Root(i)) && !rooms!.Reference(Root(i))),
+                    var old = relicReference!;
+                    check(Enumerable.Range(0, 4097).Select(i => (ulong)i).Any(i => old.Matches(Root(i)) && !rooms!.Reference(Root(i))),
                         "MixedTreasureGateActuallyRejectsLegacySurvivors");
-                    check(Enumerable.Range(0, 4097).Select(i => (ulong)i).Any(i => rooms!.Reference(Root(i)) && !old.MatchesCpuReference(Root(i))),
+                    check(Enumerable.Range(0, 4097).Select(i => (ulong)i).Any(i => rooms!.Reference(Root(i)) && !old.Matches(Root(i))),
                         "MixedOrdinaryShopGateActuallyRejectsTreasureSurvivors");
                 }
                 if (fixture.Name == "UnknownExistingWorld")
                     check(expectedOrdinals.Length > 0, "MixedWorldUnknownHasPositivePopulation");
             }
-            foreach (var family in selected.OrderedFamilies) await family.DisposeAsync(execution);
+            foreach (var family in running.Values) await family.DisposeAsync(execution);
         }
     }
 
@@ -197,39 +240,44 @@ internal static class InitialRoomNumericalChecks
         foreach (int count in new[] { 2, 3, 4 })
         {
             var context = (SearchContext)contextFactory.Invoke(null, [captured, count, null, null])!;
-            ExactSearchExecutionRequest Request(SearchQuery query) => ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context),
-                new(Beta110SeedCodec.FormatOrdinal(positive), 1, 1, 1)).Plan ?? throw new InvalidDataException("PartyUnknownFixture.Compile");
-            ProductionExactSearchResult Exact(ExactSearchExecutionRequest request, ulong ordinal) => ProductionExactSearchEvaluator.Evaluate(request,
+            PreparedSearch Request(SearchQuery query)
+            {
+                var result = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context),
+                    new(Beta110SeedCodec.FormatOrdinal(positive), 1, 1, 1));
+                return result.Plan ?? throw new InvalidDataException("PartyUnknownFixture.Compile:" + result.Issue);
+            }
+            ProductionExactSearchResult Exact(PreparedSearch request, ulong ordinal) => ProductionExactSearchEvaluator.Evaluate(request.Model,
                 TrustedRootHashInput.FromCanonicalSeed(profile, Beta110SeedCodec.FormatOrdinal(ordinal)));
             var query = SearchQuery.Empty with { FirstActUnknownEventPrefixCount = 1,
                 Players = Enumerable.Range(0, count).Select(slot => new PlayerOfferQuery(slot, ModelKeySetFilter.Empty) {
                     Conditions = SearchQuery.Empty with { FirstActUnknownEventPrefixCount = slot == count - 1 ? 3 : slot == 0 ? 2 : 0 } }).ToArray() };
             var request = Request(query);
             string originalFingerprint = request.SnapshotFingerprint;
-            string originalQuery = System.Text.Json.JsonSerializer.Serialize(request.CompiledSearch.Query, ProductionSearchReplay.JsonOptions);
-            var plan = InitialRoomsPlan.TryCompile(request);
+            string originalQuery = System.Text.Json.JsonSerializer.Serialize(request.Model.CompiledSearch.Query, ProductionSearchReplay.JsonOptions);
+            var plan = InitialRoomsPlan.TryCompile(request.Model);
             check(plan is { UnknownPrefixCount: 3, CoversTreasure: false }, "PartySharedMaximum:" + count);
             var selected = FamilyExecutionCoordinator.Plan(request, false);
             check(selected.Stages.SelectMany(stage => stage.Coverage).Count(atom => atom == VariantOpeningFamily.Id) == 1 &&
                 selected.ExecutionOrderUnits.Count(family => family.FamilyId == VariantOpeningFamily.Id) == 1 &&
                 selected.ExecutionOrderUnits.All(family => family.FamilyId != "W.World") &&
-                selected.ExecutionOrderUnits.Select(family => family is FamilyCpuExecution cpu ? cpu.RealizationOwner ?? family : family)
-                    .OfType<VariantOpeningFamily>().Single().Plan.UnknownPrefixCount == 3,
+                selected.ExecutionOrderUnits.Single(family => family.FamilyId == VariantOpeningFamily.Id).Preparation.Obligations
+                    .Any(obligation => obligation.Domain == InitialRoomsInvocation.UnknownCoverage && obligation.ThroughOrdinal == 3),
                 "PartyDefaultOneVOwnsWholeTableMaximum:" + count);
-            var execution = new FamilyExecutionContext(requiresGpu: false, cpuWorkerCount: request.WorkerCount);
+            var execution = new FilterRuntimeServices(requiresGpu: false, cpuWorkerCount: request.WorkerCount);
+            var running = selected.OrderedFamilies.ToDictionary(body => body, body => body.CreateExecution!(body, execution));
             try
             {
                 var batch = new SearchBatch(0, 128);
                 var actual = FamilyCandidateSet.Dense(batch);
                 foreach (var family in selected.OrderedFamilies)
-                    actual = family.InvokeAsync(execution, new(batch, request), actual, default).GetAwaiter().GetResult();
+                    actual = running[family].FilterAsync(execution, actual, default).GetAwaiter().GetResult();
                 var expected = Enumerable.Range(0, 128).Select(i => (ulong)i).Where(i => InitialRoomsPlan.MatchesUnknown(
                     profile.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(i)), 3));
                 check(actual.EnumerateLogicalOrdinals().SequenceEqual(expected), "PartyActualVPublicCpuPopulation:" + count);
-                foreach (var family in selected.OrderedFamilies) family.DisposeAsync(execution).GetAwaiter().GetResult();
+                foreach (var family in running.Values) family.DisposeAsync(execution).GetAwaiter().GetResult();
             }
             finally { execution.DisposeAsync().GetAwaiter().GetResult(); }
-            check(ReferenceEquals(PartyInitialRooms.IndependentDomains(request), PartyInitialRooms.IndependentDomains(request)),
+            check(ReferenceEquals(PartyInitialRooms.IndependentDomains(request.Model), PartyInitialRooms.IndependentDomains(request.Model)),
                 "IndependentProjectionReusedWithoutRootOrRngState:" + count);
             var result = Exact(request, positive);
             check(result.IsMatch && result.Evaluation.Evidence.Count(e => e.StreamDomain == "unknown_map_point") == 3,
@@ -240,7 +288,7 @@ internal static class InitialRoomNumericalChecks
             check(result.Evaluation.Witnesses.Count == 0 && result.Evaluation.MatchedRouteIds.Count == 0,
                 "PartyUnknownAloneHasNoOpeningWitness:" + count);
             check(request.SnapshotFingerprint == originalFingerprint && originalQuery == System.Text.Json.JsonSerializer.Serialize(
-                request.CompiledSearch.Query, ProductionSearchReplay.JsonOptions) && ReferenceEquals(result.Authority, request.Authority),
+                request.Model.CompiledSearch.Query, ProductionSearchReplay.JsonOptions) && ReferenceEquals(result.Authority, request.Model.Authority),
                 "InternalDomainProjectionPreservesOriginalIdentity:" + count);
             for (ulong ordinal = 0; ordinal < 128; ordinal++)
             {
@@ -257,7 +305,7 @@ internal static class InitialRoomNumericalChecks
             check(Exact(treasureRequest, positive).Evaluation.Disposition == SearchDisposition.Unsupported &&
                 Exact(treasureRequest, negative).Evaluation.Disposition == SearchDisposition.NoMatch,
                 "DisabledPartyTreasureCannotHideIndependentUnknownMismatch:" + count);
-            check(InitialRoomsPlan.TryCompile(treasureRequest) is { CoversUnknownPrefix: true, CoversTreasure: false },
+            check(InitialRoomsPlan.TryCompile(treasureRequest.Model) is { CoversUnknownPrefix: true, CoversTreasure: false },
                 "PartyTreasureRemainderDoesNotBlockUnknownCpuGpu:" + count);
             string seed = Beta110SeedCodec.FormatOrdinal(positive); ulong rootPositive = profile.ComputeRootSeed(seed);
             var mixed = query with { Players = query.Players.Select(player => {
@@ -275,21 +323,32 @@ internal static class InitialRoomNumericalChecks
             var mixedEvidence = mixedResult.Evaluation.Evidence.Select(item => StableMetadata(item)).ToHashSet(StringComparer.Ordinal);
             check(mixedResult.IsMatch && baseline.IsMatch && baseline.Evaluation.Evidence.All(item => mixedEvidence.Contains(StableMetadata(item))),
                 "MixedOffersAndEKeepExistingEvidence:" + count);
-            check(StableMetadata(mixedResult.Document) == StableMetadata(baseline.Document) &&
+            check(StableMetadata(mixedResult.Facts) == StableMetadata(baseline.Facts) &&
                 StableMetadata(mixedResult.Request) == StableMetadata(baseline.Request) &&
                 StableMetadata(mixedResult.Evaluation.Witnesses) == StableMetadata(baseline.Evaluation.Witnesses),
                 "PublishedMixedMetadataUnchangedExceptGeneratedRequestId:" + count);
             var intervention = mixed with { Players = mixed.Players.Select(player => player.Slot == count - 1 ? player with {
                 Conditions = player.Conditions with { OpeningRoute = new(player.Offers.All[0]) } } : player).ToArray() };
             var interventionRequest = Request(intervention);
-            check(InitialRoomsPlan.TryCompile(interventionRequest) is null &&
-                Exact(interventionRequest, positive).Evaluation.Disposition == SearchDisposition.Unknown &&
-                PartyInitialRooms.Evaluate(interventionRequest, rootPositive).FailureCode == "FirstActUnknownEventPrefix.PartyOpeningInterventionUnresolved",
-                "LastSeatOpeningIsSharedUnknownIntervention:" + count);
+            check(InitialRoomsPlan.TryCompile(interventionRequest.Model) is { CoversUnknownPrefix: true } &&
+                PartyInitialRooms.Evaluate(interventionRequest.Model, rootPositive).Disposition == SearchDisposition.Match &&
+                Exact(interventionRequest, positive).Evaluation.Disposition ==
+                    ProductionExactSearchEvaluator.Evaluate(PartyInitialRooms.IndependentDomains(interventionRequest.Model), TrustedRootHashInput.FromCanonicalSeed(profile, Beta110SeedCodec.FormatOrdinal(positive))).Evaluation.Disposition,
+                "LastSeatOpeningDoesNotBlockSharedPrefixOrOverrideIndependentN:" + count);
             var juzu = query with { Players = query.Players.Select(player => player.Slot == count - 1 ? player with {
-                Conditions = player.Conditions with { LegacyNeow = player.Conditions.LegacyNeow with {
+                Conditions = player.Conditions with { OpeningRoute = new(BaseGameModelKeys.Relics.SmallCapsule), LegacyNeow = player.Conditions.LegacyNeow with {
                     CapsuleContainedRelics = new([new ModelKey("RELIC", "JUZU_BRACELET")], [], []) } } } : player).ToArray() };
-            check(InitialRoomsPlan.TryCompile(Request(juzu)) is null, "LastSeatJuzuAcquisitionNotIgnored:" + count);
+            var juzuRequest = Request(juzu);
+            var juzuPlan = InitialRoomsPlan.TryCompile(juzuRequest.Model);
+            check(juzuPlan is { CoversUnknownPrefix: true, UnknownJuzuAcquired: true }, "LastSeatDeclaredJuzuControlsSharedPrefix:" + count);
+            for (ulong ordinal = 0; ordinal < 128; ordinal++)
+            {
+                ulong root = profile.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(ordinal));
+                bool expected = OrdinaryUnknownRoomPredictor.ForAct1Filter(root, 3, true).Steps.All(step => step.Room == UnknownRoomCategory.Event);
+                check(juzuPlan!.Matches(root) == expected && juzuPlan.Reference(root) == expected &&
+                    PartyInitialRooms.Evaluate(juzuRequest.Model, root).Disposition == (expected ? SearchDisposition.Match : SearchDisposition.NoMatch),
+                    "PartyDeclaredJuzuSameSharedPopulation:" + count + ":" + ordinal);
+            }
             var contradicted = intervention with { Players = intervention.Players.Select(player => player.Slot == 0
                 ? player with { Offers = new([], [], [player.Offers.All[0]]) } : player).ToArray() };
             var contradiction = Exact(Request(contradicted), positive);

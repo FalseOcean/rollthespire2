@@ -9,7 +9,7 @@ internal sealed partial class NeowFamilyGpuExecutor
     private bool CurseFirstEnabled => _optimizations.CurseFirst && !_privateInput;
     private int StagedDispatchCount => CurseFirstEnabled ? 4 : 3;
     internal string OptimizationRevisionFor(bool compact) => _optimizations.Applicable(_plan, compact || _privateInput).Revision +
-        GpuRngRotation.Revision;
+        _plan.EntryIdentityRevision + NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision;
 
     internal static bool SupportsDrawIntervals(NeowFamilyGpuPlan plan, bool compact)
     {

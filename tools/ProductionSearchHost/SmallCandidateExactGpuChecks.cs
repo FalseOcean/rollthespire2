@@ -11,7 +11,7 @@ internal static class SmallCandidateExactGpuChecks
 {
     private const BindingFlags Members = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
 
-    internal static void Run(ExactSearchExecutionRequest request)
+    internal static void Run(PreparedSearch request)
     {
         int checks = 0;
         void Check(bool condition, string reason)
@@ -56,17 +56,20 @@ internal static class SmallCandidateExactGpuChecks
         finally { payload.Dispose(); }
         Reject<ObjectDisposedException>(() => payload.CheckCount(0), "PayloadDisposed");
 
-        var gpuType = typeof(AutomaticPrivateSerialInvocation).GetNestedType("Gpu", BindingFlags.NonPublic)!;
+        var runtimeType = typeof(AutomaticPrivateSerialInvocation).GetNestedType("Runtime", BindingFlags.NonPublic)
+            ?? throw new MissingMemberException(typeof(AutomaticPrivateSerialInvocation).FullName, "Runtime");
+        var gpuType = runtimeType.GetNestedType("Gpu", BindingFlags.NonPublic)
+            ?? throw new MissingMemberException(runtimeType.FullName, "Gpu");
         var execute = gpuType.GetMethod("Execute", Members)!;
         var buffersField = gpuType.GetField("_buffers", Members)!;
         var executorsField = gpuType.GetField("_executors", Members)!;
         IDisposable NewSerial(FixtureFamily prefix, FixtureFamily tail) =>
             (IDisposable)Activator.CreateInstance(gpuType, Members, null,
-                [rd, new IFamilyInvocation[] { prefix, tail }, null], null)!;
+                [rd, new FilterBodyDescription[] { prefix.Body, tail.Body }, new FilterCostObserver(), null], null)!;
         FamilyCandidateSet Execute(IDisposable serial, SearchBatch inputBatch, SmallCandidateExactPolicy? policy,
             CancellationToken token = default) =>
             ((ValueTuple<FamilyCandidateSet, double, FamilyCandidateSet[]>)execute.Invoke(serial,
-                [FamilyCandidateSet.Dense(inputBatch), "PT", false, policy, token, null])!).Item1;
+                [FamilyCandidateSet.Dense(inputBatch), "PT", false, policy, new string[] { "M.StandardMap" }, token, null])!).Item1;
         bool Uninitialized(IDisposable serial) =>
             ((Array)buffersField.GetValue(serial)!).Cast<object?>().All(item => item is null) &&
             ((Array)executorsField.GetValue(serial)!).Cast<object?>().All(item => item is null);
@@ -130,7 +133,7 @@ internal static class SmallCandidateExactGpuChecks
             control.WrongTerminalBatch = false;
             CheckOutput(Execute(serial, batch, policy), batch, 9);
             Check(policy.GetSummary().Contains("smallCandidateExactBatches=3;", StringComparison.Ordinal) &&
-                policy.GetSummary().Contains("\"unexecutedTail\":\"T.Tail\"", StringComparison.Ordinal), "SummaryRecordsOnlyCompletedHandoffs");
+                policy.GetSummary().Contains("\"unexecutedTail\":\"T.Tail,M.StandardMap\"", StringComparison.Ordinal), "SummaryRecordsOnlyCompletedHandoffsIncludingCpuTail");
             actualBuffers = Buffers(serial);
             Check(actualBuffers.Length == 1 && prefix.Owners.Count == 1 && tail.Owners.Count == 1, "OnlyReachedResourcesCreated");
         }
@@ -177,7 +180,7 @@ internal static class SmallCandidateExactGpuChecks
         var partyControl = new FixtureControl { AcceptCompactPrefix = true };
         var partyPrefix = new FixtureFamily("P.Prefix", true, partyControl);
         var partyTail = new FixtureFamily("T.Tail", false, partyControl);
-        var partyChain = new FamilyPrivateGpuChain(rd, [partyPrefix, partyTail]);
+        var partyChain = new FamilyPrivateGpuChain(rd, [partyPrefix.Body, partyTail.Body]);
         var partyPolicy = new SmallCandidateExactPolicy();
         var chainType = typeof(FamilyPrivateGpuChain);
         bool PartyUninitialized() => ((Array)chainType.GetField("_executors", Members)!.GetValue(partyChain)!).Cast<object?>().All(value => value is null)
@@ -329,19 +332,27 @@ internal static class SmallCandidateExactGpuChecks
         internal ulong[]? CompactExpectedInput;
     }
 
-    private sealed class FixtureFamily(string id, bool prefix, FixtureControl control) : IFamilyInvocation
+    private sealed class FixtureFamily
     {
         internal int BindCount, ExecuteCount;
         internal readonly List<FixtureOwner> Owners = [];
-        public string FamilyId => id;
-        public FamilyAnalyticalCostProjection AnalyticalCost => new(id, 16, [], "AuthoredOrdinalFixture");
-        public FamilySurvivalProjection Survival => FamilySurvivalProjection.Unresolved(id, "NotNumericalParity");
-        public FamilyConditionPerformanceProjection ConditionPerformance => new(id,
-            "SmallCandidateExact.ControlledGpuBuffer.v1", "AuthoredOrdinals", 1, "TransportAndLifecycleOnly");
-        bool IFamilyInvocation.CanBindPrivateSerial => true;
-        GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => GpuNumericRequirements.None;
-        FamilyPrivateGpuExecution IFamilyInvocation.BindPrivateSerial(RenderingDevice device,
-            PrivateOrdinalBuffer? input, PrivateOrdinalBuffer? output)
+        internal FilterBodyDescription Body { get; }
+        private readonly string id;
+        private readonly bool prefix;
+        private readonly FixtureControl control;
+        internal FixtureFamily(string id, bool prefix, FixtureControl control)
+        {
+            this.id=id;this.prefix=prefix;this.control=control;
+            Body=new(new PreparedFilter(id) {
+                AnalyticalCost=new(id,16,[],"AuthoredOrdinalFixture"),
+                Survival=FamilySurvivalProjection.Unresolved(id,"NotNumericalParity")
+            },"SmallCandidateExact.ControlledGpuBuffer.v1",RolltheSpire2.Compatibility.RuntimeProfileId.Beta111) {
+                UsesGpu=true, NumericRequirements=GpuNumericRequirements.None,
+                PerformanceProjection=_=>new(id,"SmallCandidateExact.ControlledGpuBuffer.v1","AuthoredOrdinals",1,"TransportAndLifecycleOnly",true),
+                BindPrivate=Bind
+            };
+        }
+        private FamilyPrivateGpuExecution Bind(RenderingDevice device, PrivateOrdinalBuffer? input, PrivateOrdinalBuffer? output)
         {
             if (prefix ? input is not null && !control.AcceptCompactPrefix || output is null : input is null || output is not null)
                 throw new InvalidDataException("SmallCandidateExactGpu.FixturePortShape");
@@ -383,10 +394,6 @@ internal static class SmallCandidateExactGpuChecks
                 return new(count, result, 0, 0, count * sizeof(uint), 0, 0);
             });
         }
-        public ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow window,
-            FamilyCandidateSet input, CancellationToken token) => throw new NotSupportedException("SmallCandidateExactGpu.PrivateFixtureOnly");
-        public FamilyPerformanceObservation CapturePerformanceObservation() => new(ConditionPerformance, "Fixture", 0, 0, 0,
-            ExecuteCount, 0, 0, 0, 0, false, "TransportAndLifecycleOnly");
     }
 
     private sealed class FixtureOwner : IDisposable

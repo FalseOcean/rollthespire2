@@ -18,51 +18,30 @@ namespace RolltheSpire2.Core.Prediction.Profiles;
 /// </summary>
 internal static class SeedPredictionDocumentFactory
 {
-    public static SeedPredictionDocument Create(
-        SeedPredictionRequest request,
-        GameVersionDetection detection,
-        RuntimeProfileId profileId,
-        string analyzerId,
-        string canonicalSeed,
-        IReadOnlyList<NeowChoiceResult> choices,
-        IReadOnlyList<PredictionWarning> warnings,
-        IReadOnlyList<PredictionDiagnostic> diagnostics,
-        SeedPredictionOverallStatus documentViabilityStatus,
-        WorldPredictionResult? worldPrediction = null,
-        RelicSequencePredictionResult? relicSequencePrediction = null,
-        NormalCombatRewardSequencePredictionResult? normalCombatRewardPrediction = null,
-        SeedDomainEvaluationStatus? neowStatus = null,
-        string neowIssueCode = "") => new()
+    public static SeedPredictionDocument FromFacts(SeedPredictionFacts facts)
     {
-        Context = SeedPredictionDocument.CreateContext(request, detection.DisplayVersion, profileId),
-        PredictorId = analyzerId,
-        OriginalSeed = request.OriginalSeed,
-        CanonicalSeed = canonicalSeed,
-        Sections = BuildSections(
-            choices,
-            worldPrediction,
-            relicSequencePrediction,
-            normalCombatRewardPrediction,
-            request.Authority.WorldSnapshotFingerprint,
-            neowStatus,
-            neowIssueCode),
-        Warnings = warnings,
-        Diagnostics = request.IncludeDiagnostics
-            ? ContextDiagnostics(request)
-                .Concat(diagnostics)
-                .Concat(worldPrediction?.Diagnostics ?? Array.Empty<PredictionDiagnostic>())
-                .Concat(worldPrediction?.EventPoolSequencePrediction?.Diagnostics ?? Array.Empty<PredictionDiagnostic>())
-                .Concat(relicSequencePrediction?.Diagnostics ?? Array.Empty<PredictionDiagnostic>())
-                .Concat(normalCombatRewardPrediction?.Diagnostics ?? Array.Empty<PredictionDiagnostic>())
-                .ToArray()
-            : warnings.Any(w => w.Code == PredictionWarningCode.AnalysisFailed)
-                ? diagnostics.Where(d => d.Code == PredictionDiagnosticCodes.Exception).ToArray()
-                : Array.Empty<PredictionDiagnostic>(),
-        OverallStatus = documentViabilityStatus,
-        ProductRelevantProjectionPrecision = AggregateProductPrecision(choices),
-        ProductRelevantProjectionStatus = AggregateProductStatus(choices),
-        FullEffectSemanticsCompleteness = AggregateFullSemantics(choices)
-    };
+        ArgumentNullException.ThrowIfNull(facts);
+        var choices = facts.Neow?.Choices ?? [];
+        return new()
+        {
+            Context = facts.Context, PredictorId = facts.PredictorId,
+            OriginalSeed = facts.OriginalSeed, CanonicalSeed = facts.CanonicalSeed,
+            Sections = BuildSections(choices, facts.World, facts.Relics, facts.CombatRewards,
+                facts.WorldAuthorityFingerprint, facts.Neow?.Status, facts.Neow?.IssueCode ?? ""),
+            Warnings = facts.Warnings, Diagnostics = facts.Diagnostics, Party = facts.Party,
+            OverallStatus = facts.InputStatus switch
+            {
+                SeedPredictionInputStatus.InvalidRequest => SeedPredictionOverallStatus.InvalidRequest,
+                SeedPredictionInputStatus.Unsupported => SeedPredictionOverallStatus.Unsupported,
+                SeedPredictionInputStatus.Unknown => SeedPredictionOverallStatus.Unknown,
+                _ => ProductFacingOverallStatus(choices, facts.Neow?.IdentityPrecision ?? PredictionPrecision.Unknown,
+                    facts.Neow?.HasIdentityAuthorityWarning ?? false)
+            },
+            ProductRelevantProjectionPrecision = AggregateProductPrecision(choices),
+            ProductRelevantProjectionStatus = AggregateProductStatus(choices),
+            FullEffectSemanticsCompleteness = AggregateFullSemantics(choices)
+        };
+    }
 
     private static IReadOnlyList<PredictionSection> BuildSections(
         IReadOnlyList<NeowChoiceResult> choices,
@@ -177,7 +156,7 @@ internal static class SeedPredictionDocumentFactory
     /// Computes the preserved document viability/Neow product-facing status.
     /// Optional World, Relic, and Reward section status remains section-local.
     /// </summary>
-    public static SeedPredictionOverallStatus ProductFacingOverallStatus(
+    private static SeedPredictionOverallStatus ProductFacingOverallStatus(
         IReadOnlyList<NeowChoiceResult> choices,
         PredictionPrecision identityPrecision,
         bool additionalIdentityAuthorityWarning)
@@ -262,97 +241,4 @@ internal static class SeedPredictionDocumentFactory
         return FullEffectSemanticsCompleteness.Partial;
     }
 
-    private static IReadOnlyList<PredictionDiagnostic> ContextDiagnostics(SeedPredictionRequest request)
-    {
-        var diagnostics = new List<PredictionDiagnostic>
-        {
-            new(PredictionDiagnosticCodes.RequestId, request.RequestId.Serialized),
-            new(PredictionDiagnosticCodes.PlayerSlot, request.PlayerSlotIndex.ToString()),
-            new(PredictionDiagnosticCodes.UnlockSnapshotFingerprint, request.Authority.UnlockSnapshotFingerprint),
-            new(PredictionDiagnosticCodes.CatalogFingerprint, request.Authority.CatalogFingerprint)
-        };
-        if (request.Authority.EffectAuthority is { } effects)
-        {
-            diagnostics.Add(new(PredictionDiagnosticCodes.EffectAuthoritySource, effects.AuthoritySource.ToString()));
-            diagnostics.Add(new(PredictionDiagnosticCodes.EffectSnapshotFingerprint, effects.SnapshotFingerprint));
-            diagnostics.Add(new(PredictionDiagnosticCodes.EffectDeckFingerprint, effects.DeckFingerprint));
-            diagnostics.Add(new(PredictionDiagnosticCodes.EffectRelicBagFingerprint, effects.RelicBagFingerprint));
-            diagnostics.Add(new(PredictionDiagnosticCodes.EffectPotionPoolFingerprint, effects.PotionPoolFingerprint));
-            diagnostics.Add(new(PredictionDiagnosticCodes.EffectSnapshotCompleteness, effects.Completeness.ToString()));
-            diagnostics.Add(new(PredictionDiagnosticCodes.EffectSnapshotCapturedAt,
-                effects.CapturedAtUtc?.ToString("O") ?? "not-provided"));
-            diagnostics.Add(new(
-                PredictionDiagnosticCodes.EffectSnapshotWarnings,
-                effects.WarningCodes is { Count: > 0 }
-                    ? string.Join(",", effects.WarningCodes.Distinct())
-                    : "none"));
-            diagnostics.Add(new(
-                PredictionDiagnosticCodes.EffectSnapshotCaptureDiagnostic,
-                string.IsNullOrWhiteSpace(effects.CaptureDiagnosticCode)
-                    ? "not-provided"
-                    : effects.CaptureDiagnosticCode));
-        }
-        if (request.Authority.WorldAuthority is { } world)
-        {
-            diagnostics.Add(new("world-snapshot-fingerprint", world.SnapshotFingerprint));
-            diagnostics.Add(new("world-catalog-fingerprint", world.CatalogFingerprint));
-            diagnostics.Add(new("world-snapshot-completeness", world.Completeness.ToString()));
-            diagnostics.Add(new("world-snapshot-authority", world.SourceAuthority.ToString()));
-            diagnostics.Add(new("world-snapshot-capture-diagnostic", world.CaptureDiagnosticCode));
-        }
-        return diagnostics;
-    }
-
-    // Omitted observations retain no effect or continuation proof. Offer identity
-    // remains available without invoking an unrelated effect implementation.
-    internal static NeowEffectProjection UnrequestedNeowEffects => new(
-        NeowEffectImplementationStatus.Implemented,
-        PredictionPrecision.DescriptionOnly,
-        Array.Empty<PredictedEffectGroup>(),
-        Array.Empty<PredictionWarning>(),
-        "search.neow-effects-not-requested",
-        FullEffectSemanticsCompleteness: FullEffectSemanticsCompleteness.NotEvaluated,
-        ProductRelevantProjectionStatus: ProductRelevantProjectionStatus.NotEvaluatedByPolicy);
-
-    public static NeowChoiceResult Choice(
-        int slotIndex,
-        ModelKey relicKey,
-        SeedPredictionRequest request,
-        PredictionPrecision identityPrecision,
-        EvidenceCode identityEvidenceCode,
-        NeowEffectProjection effectProjection)
-    {
-        ArgumentNullException.ThrowIfNull(effectProjection);
-
-        var warnings = new List<PredictionWarning>(effectProjection.Warnings);
-        if (identityPrecision != PredictionPrecision.Exact)
-        {
-            warnings.Add(new PredictionWarning(
-                PredictionWarningCode.SnapshotAuthorityIncomplete,
-                relicKey,
-                "identity-authority"));
-        }
-
-        return new NeowChoiceResult(
-            slotIndex,
-            relicKey,
-            identityPrecision,
-            effectProjection.Capability,
-            effectProjection.Precision,
-            effectProjection.EffectGroups,
-            warnings,
-            identityEvidenceCode,
-            effectProjection.EvidenceCode,
-            new ModelSourceMetadata(
-                IsVanilla: request.Authority.IsVanilla,
-                SourceModId: request.Authority.SourceModId,
-                SourceAssembly: request.Authority.SourceAssembly,
-                SourceAuthority: request.Authority.SourceAuthority,
-                ResolutionStatus: request.Authority.ResolutionStatus),
-            effectProjection.BonesOutcome,
-            effectProjection.ProductRelevantProjectionPrecision,
-            effectProjection.FullEffectSemanticsCompleteness,
-            effectProjection.ProductRelevantProjectionStatus,
-            effectProjection.OpeningRewardContinuations);
-    }
 }

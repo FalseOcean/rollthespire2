@@ -25,7 +25,8 @@ func _initialize():
 				quit(1)
 				return
 			var shader := rd.shader_create_from_spirv(spirv)
-			cache[f.shader] = [shader,rd.compute_pipeline_create(shader)]
+			var dense_group := 512 if source.source_compute.contains("#define RT2_C_DENSE_CARRY8 1") else 64
+			cache[f.shader] = [shader,rd.compute_pipeline_create(shader),dense_group]
 		var compiled = cache[f.shader]
 		var initial = [f.batchMeta,f.Meta,[0],f.Pools,f.Ids,[0],f.Predicates,f.Targets,[0x43464d52,1,0,0,0,0x43463031,0,0],[],f.ordinals]
 		var buffers: Array[RID] = []
@@ -44,7 +45,8 @@ func _initialize():
 		var list := rd.compute_list_begin()
 		rd.compute_list_bind_compute_pipeline(list,compiled[1])
 		rd.compute_list_bind_uniform_set(list,binding,0)
-		rd.compute_list_dispatch(list,ceili(float(f.batchMeta[3])/64.0),1,1)
+		var candidates_per_group: int = compiled[2] if int(f.batchMeta[4])==0 else 64
+		rd.compute_list_dispatch(list,ceili(float(f.batchMeta[3])/float(candidates_per_group)),1,1)
 		rd.compute_list_end()
 		rd.submit()
 		rd.sync()

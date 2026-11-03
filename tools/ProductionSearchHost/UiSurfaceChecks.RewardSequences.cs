@@ -181,13 +181,36 @@ internal static partial class UiSurfaceChecks
                 check(signature() == liveBefore && snapshotBefore == JsonSerializer.Serialize(snapshot.State) +
                     PredictorOperationCapture.SceneFingerprint(snapshot.Scene), caseName + " forecasting preserves live run/RNG and its detached source snapshot");
                 var button = Descendants(cardScreen!).OfType<NCardRewardAlternativeButton>().ElementAt(AlternativeIndex(action));
+                void InspectPlain(NeowOperationOverlay view, OperationPreview hovered)
+                {
+                    if (sacrifice) return;
+                    CheckEarliestRewardCardStacks(view, hovered, check);
+                    CheckOperationIconPaths(view, hovered, check);
+                    check(!Descendants(view).Any(node => node.Name == "Rt2IconPaths"),
+                        "five ordinary ordinal results use their reading order without repeating deterministic reroll path icons");
+                    RecordRerollNativeLayout(view, hovered, output, caseName);
+                }
                 await exercise(caseName, button, button, sacrifice ? "PAELS_WING" : "DRIFTWOOD",
                     captured => captured is PredictorOperationObtainScene { Source.Entry: "ORRERY", Kind: PredictorOperationObtainChildKind.Rewards,
                         Parent: PredictorOperationShopScene { PendingPurchase: { } parent } } && parent.EntryId == entryId,
                     hovered => sacrifice ? hovered.Notices.Contains("RewardSacrificeProgress:1") && SacrificeRelics(hovered).SequenceEqual(expectedRelics) :
                         RerollGroups(hovered).Length == 5 && RerollGroups(hovered).Zip(expectedGroups)
                             .All(pair => SameCards(pair.First.Cards, pair.Second.Cards)),
-                    (view, hovered) => { if (!sacrifice) CheckEarliestRewardCardStacks(view, hovered, check); }, false);
+                    InspectPlain, false);
+                if (!sacrifice)
+                {
+                    var viewport = (SubViewport)game.GetViewport();
+                    var oldSize = viewport.Size; var oldWindow = root.GetWindow().Size;
+                    try
+                    {
+                        viewport.Size = new(1280, 720); root.GetWindow().Size = viewport.Size; await Frames(8);
+                        await exercise(caseName + "-1280", button, button, "DRIFTWOOD",
+                            captured => captured is PredictorOperationObtainScene { Source.Entry: "ORRERY" },
+                            hovered => RerollGroups(hovered).Length == 5 && RerollGroups(hovered).Zip(expectedGroups)
+                                .All(pair => SameCards(pair.First.Cards, pair.Second.Cards)), InspectPlain, false);
+                    }
+                    finally { viewport.Size = oldSize; root.GetWindow().Size = oldWindow; await Frames(8); }
+                }
 
                 if (!sacrifice)
                 {
@@ -206,7 +229,7 @@ internal static partial class UiSurfaceChecks
                 var inputs = ImmutableArray<PredictorInput>.Empty;
                 var actualCards = new List<string[]>();
                 var actualRelics = new List<ModelKey>();
-                int steps = sacrifice ? cards.Length : 2;
+                int steps = cards.Length;
                 for (int step = 0; step < steps; step++)
                 {
                     long id = PredictorLiveRunCapture.Id(cards[step]);
@@ -262,22 +285,22 @@ internal static partial class UiSurfaceChecks
                             var entered = PredictorOperation.Preview(nextCapture, new EnterCardSelection(nextId));
                             check(entered.Disposition == PredictorInputResult.Accepted, caseName + " first exit leaves the next independent reward available");
                         }
+                        if (step == 1)
+                        {
+                            await Open(cards[2]);
+                            var remaining = PredictorOperationCapture.Capture(run, runtime.Detection.NormalizedVersion, game);
+                            var remainingPreview = SurfaceOperationPreview.BuildRewardAlternative(remaining, PredictorLiveRunCapture.Id(cards[2]), "REROLL", null);
+                            check(RerollGroups(remainingPreview).Length == 3,
+                                caseName + " already rerolled groups disappear while ordinary Skip did not consume remaining rerolls");
+                            SelectAlternative("Skip");
+                            await Until(() => selecting!.IsCompleted, caseName + " untouched third picker exits without affecting its later real reroll");
+                        }
                     }
                 }
                 if (sacrifice)
                 {
                     check(actualRelics.SequenceEqual(expectedRelics), caseName + " all three displayed gifts equal five genuine consecutive sacrifices");
                     await Frames(65); // Original Wing activation animation resets its transient flag.
-                }
-                else
-                {
-                    await Open(cards[2]);
-                    var remaining = PredictorOperationCapture.Capture(run, runtime.Detection.NormalizedVersion, game);
-                    var remainingPreview = SurfaceOperationPreview.BuildRewardAlternative(remaining, PredictorLiveRunCapture.Id(cards[2]), "REROLL", null);
-                    check(RerollGroups(remainingPreview).Length == 3,
-                        caseName + " already rerolled groups disappear while ordinary Skip did not consume remaining rerolls");
-                    SelectAlternative("Skip");
-                    await Until(() => selecting!.IsCompleted, caseName + " final untouched picker exits ordinarily");
                 }
                 if (!RunManager.Instance.RewardsSetSynchronizer.IsRewardsSetCompleted(rewards))
                     RunManager.Instance.RewardsSetSynchronizer.SkipLocalRewardsSet();

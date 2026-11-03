@@ -15,11 +15,11 @@ internal static class VariantOpeningSurvivalChecks
         var context = VariantOpeningPreparationChecks.CreateContext();
         var a = VariantOpeningPreparationChecks.A; var b = VariantOpeningPreparationChecks.B;
         var c = VariantOpeningPreparationChecks.C; var x = VariantOpeningPreparationChecks.X;
-        ExactSearchExecutionRequest Request(SearchQuery query, SearchContext? ctx = null)
+        SearchModel Request(SearchQuery query, SearchContext? ctx = null)
         {
             var compiled = SearchCompiler.Compile(query, ctx ?? context);
-            return new(compiled, new("000000000000", 10, 1, 1), "000000000000", 10,
-                CompiledSearchEvaluationProjector.Project(compiled).Evaluation, CombatRewardRoutePolicyContract.None, compiled.SemanticFingerprint);
+            return new(compiled, CompiledSearchEvaluationProjector.Project(compiled).Evaluation,
+                CombatRewardRoutePolicyContract.None, compiled.SemanticFingerprint);
         }
         var eventQuery = SearchQuery.Empty with { EventSequenceConstraints = [new(1, null,
             SearchSequenceRangeMode.FirstN, 1, new([x], [], []))] };

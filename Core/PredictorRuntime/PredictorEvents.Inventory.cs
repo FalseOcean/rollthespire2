@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Effects.Snapshots;
+using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Rng;
 
@@ -24,49 +25,49 @@ internal sealed partial class PredictorRun
             case ("TEA_MASTER", "BONE_TEA"):
             case ("TEA_MASTER", "EMBER_TEA"):
             case ("TEA_MASTER", "TEA_OF_DISCOURTESY"):
-                if (choice.OptionKey == "BONE_TEA") SpendEventGold(50);
-                if (choice.OptionKey == "EMBER_TEA") SpendEventGold(150);
+                var teaChoice = Beta111EventOptionRules.TeaMaster(choice.OptionKey);
+                if (teaChoice.Cost.Amount != 0) SpendEventGold(teaChoice.Cost);
                 long teaSource = choice.OptionKey switch { "BONE_TEA" => 6, "EMBER_TEA" => 7, _ => 8 };
-                var tea = new ModelKey("RELIC", choice.OptionKey);
+                var tea = teaChoice.Relic;
                 if (BeginObtainRelic(tea, null, PredictorObtainReturn.Event, teaSource, token))
                     ResumeEventAfterRelicObtain(teaSource);
                 return PredictorInputResult.Accepted;
             case ("SUNKEN_STATUE", "GRAB_SWORD"):
-                if (BeginObtainRelic(new("RELIC", "SWORD_OF_STONE"), null, PredictorObtainReturn.Event, 9, token))
+                if (BeginObtainRelic(FixedEventRelicProduct(choice.OptionKey), null, PredictorObtainReturn.Event, 9, token))
                     ResumeEventAfterRelicObtain(9);
                 return PredictorInputResult.Accepted;
             case ("SUNKEN_STATUE", "DIVE_INTO_WATER"):
                 Working = PredictorSettlementEffects.TakeGold(Working, _eventGoldAmount);
                 Accept(new("SunkenStatueGold", 0, [], null, Working.GoldBudget));
-                ApplyEventHealth(-7, 0);
+                ApplyFixedEventHealth(choice.OptionKey);
                 if (Phase != PredictorPhase.Complete) FinishEvent();
                 return PredictorInputResult.Accepted;
             case ("ROUND_TEA_PARTY", "PICK_FIGHT"):
-                EventOptions = [new("CONTINUE_FIGHT", HealthDamage: 11)];
+                EventOptions = [FixedEventHealthOption("CONTINUE_FIGHT")];
                 _requestId++;
                 return PredictorInputResult.Accepted;
             case ("ROUND_TEA_PARTY", "CONTINUE_FIGHT"):
-                ApplyEventHealth(-11, 0);
+                ApplyFixedEventHealth(choice.OptionKey);
                 if (Phase == PredictorPhase.Complete) return PredictorInputResult.Accepted;
                 BeginEventFrontRelic(10, token);
                 return PredictorInputResult.Accepted;
             case ("ROUND_TEA_PARTY", "ENJOY_TEA"):
-                if (BeginObtainRelic(new("RELIC", "ROYAL_POISON"), null, PredictorObtainReturn.Event, 11, token))
+                if (BeginObtainRelic(FixedEventRelicProduct(choice.OptionKey), null, PredictorObtainReturn.Event, 11, token))
                     ResumeEventAfterRelicObtain(11);
                 return PredictorInputResult.Accepted;
             case ("DROWNING_BEACON", "BOTTLE"):
                 OfferEventRewardPlans([new(PredictorRewardKind.Potion,
-                    PrefilledPotionKey: new ModelKey("POTION", "GLOWWATER_POTION"))], token);
+                    PrefilledPotionKey: Beta111EventOptionRules.BeaconBottlePotion)], token);
                 return PredictorInputResult.Accepted;
             case ("DROWNING_BEACON", "CLIMB"):
-                ApplyEventHealth(0, -13);
+                ApplyEventHealth(Beta111EventOptionRules.BeaconClimb.Health);
                 if (Phase == PredictorPhase.Complete) return PredictorInputResult.Accepted;
-                if (BeginObtainRelic(new("RELIC", "FRESNEL_LENS"), null, PredictorObtainReturn.Event, 12, token))
+                if (BeginObtainRelic(Beta111EventOptionRules.BeaconClimb.Relic, null, PredictorObtainReturn.Event, 12, token))
                     ResumeEventAfterRelicObtain(12);
                 return PredictorInputResult.Accepted;
             case ("LOST_WISP", "CLAIM"):
-                AddTrialCurse("DECAY");
-                if (BeginObtainRelic(new("RELIC", "LOST_WISP"), null, PredictorObtainReturn.Event, 14, token))
+                AddTrialCurse(FixedEventCardProduct(choice.OptionKey).Entry);
+                if (BeginObtainRelic(FixedEventRelicProduct(choice.OptionKey), null, PredictorObtainReturn.Event, 14, token))
                     ResumeEventAfterRelicObtain(14);
                 return PredictorInputResult.Accepted;
             case ("LOST_WISP", "SEARCH"):
@@ -76,8 +77,8 @@ internal sealed partial class PredictorRun
                 return PredictorInputResult.Accepted;
             case ("BUGSLAYER", "EXTERMINATION"):
             case ("BUGSLAYER", "SQUASH"):
-                var bugCardKey = choice.OptionKey == "EXTERMINATION" ? "EXTERMINATE" : "SQUASH";
-                var bugCard = Context.Catalog!.CardDefinitions.Single(d => d.Prototype.Key.Entry == bugCardKey).Prototype;
+                var bugCardKey = FixedEventCardProduct(choice.OptionKey);
+                var bugCard = Context.Catalog!.CardDefinitions.Single(d => d.Prototype.Key == bugCardKey).Prototype;
                 PredictorSettlementEffects.RequireImplementedCard(bugCard, context: Context);
                 Working = PredictorObtainSources.AddCard(Context, Working, bugCard);
                 Accept(new("BugslayerCard", Working.Deck[^1], [], null, null));
@@ -132,28 +133,25 @@ internal sealed partial class PredictorRun
                     mushroomSource, token)) ResumeEventAfterRelicObtain(mushroomSource);
                 return PredictorInputResult.Accepted;
             case ("BYRDONIS_NEST", "EAT"):
-                ApplyEventHealth(7, 7);
+                ApplyFixedEventHealth(choice.OptionKey);
                 FinishEvent();
                 return PredictorInputResult.Accepted;
             case ("BYRDONIS_NEST", "TAKE"):
-                var eggKey = new ModelKey("CARD", "BYRDONIS_EGG");
+                var eggKey = FixedEventCardProduct(choice.OptionKey);
                 PredictorSettlementEffects.RequireImplementedCard(PredictorCardChanges.Definition(Context, eggKey).Prototype, context: Context);
                 Working = PredictorObtainSources.AddCard(Context, Working, eggKey);
                 Accept(new("ByrdonisEgg", Working.Deck[^1], [], null, null));
                 FinishEvent();
                 return PredictorInputResult.Accepted;
             case ("DOLL_ROOM", "RANDOM"):
-                var randomDoll = new[] { "DAUGHTER_OF_THE_WIND", "MR_STRUGGLES", "BING_BONG" };
-                BeginDollObtain(randomDoll[_eventRng!.NextInt(randomDoll.Length)], token);
+                BeginDollObtain(Beta111EventRules.RandomDoll(_eventRng!).Entry, token);
                 return PredictorInputResult.Accepted;
             case ("DOLL_ROOM", "TAKE_SOME_TIME"):
             case ("DOLL_ROOM", "EXAMINE"):
-                ApplyEventHealth(choice.OptionKey == "TAKE_SOME_TIME" ? -5 : -15, 0);
+                ApplyFixedEventHealth(choice.OptionKey);
                 if (Phase == PredictorPhase.Complete) return PredictorInputResult.Accepted;
-                var dollChoices = new List<string> { "BING_BONG", "DAUGHTER_OF_THE_WIND", "MR_STRUGGLES" };
-                _eventRng!.UnstableShuffle(dollChoices);
-                EventOptions = dollChoices.Take(choice.OptionKey == "TAKE_SOME_TIME" ? 2 : 3)
-                    .Select(k => new PredictorEventOption("DOLL_" + k, OfferedRelic: new("RELIC", k)))
+                EventOptions = Beta111EventRules.DollOffers(_eventRng!, choice.OptionKey == "TAKE_SOME_TIME" ? 2 : 3)
+                    .Select(k => new PredictorEventOption("DOLL_" + k.Entry, OfferedRelic: k))
                     .ToImmutableArray();
                 _requestId++;
                 return PredictorInputResult.Accepted;
@@ -175,7 +173,7 @@ internal sealed partial class PredictorRun
             case ("WELCOME_TO_WONGOS", "MYSTERY_BOX"):
                 SpendEventGold(300);
                 _wongoPointsEarned = 8;
-                if (BeginObtainRelic(new("RELIC", "WONGOS_MYSTERY_TICKET"), null,
+                if (BeginObtainRelic(FixedEventRelicProduct(choice.OptionKey), null,
                     PredictorObtainReturn.Event, 30, token)) ResumeEventAfterRelicObtain(30);
                 return PredictorInputResult.Accepted;
             case ("WELCOME_TO_WONGOS", "LEAVE"):
@@ -209,21 +207,22 @@ internal sealed partial class PredictorRun
     }
 
     private ImmutableArray<PredictorEventOption> TeaMasterOptions() =>
-    [
-        new("BONE_TEA", Enabled: Working.GoldBudget >= 50, GoldCost: 50),
-        new("EMBER_TEA", Enabled: Working.GoldBudget >= 150, GoldCost: 150),
-        new("TEA_OF_DISCOURTESY")
-    ];
+        new[] { "BONE_TEA", "EMBER_TEA", "TEA_OF_DISCOURTESY" }.Select(key =>
+        {
+            var choice = Beta111EventOptionRules.TeaMaster(key);
+            return new PredictorEventOption(key, Enabled: choice.Cost.CanChoose(Working.GoldBudget),
+                GoldCost: choice.Cost.Amount == 0 ? null : choice.Cost.Amount);
+        }).ToImmutableArray();
 
     private ImmutableArray<PredictorEventOption> SunkenStatueOptions()
     {
-        _eventGoldAmount = 101 + _eventRng!.NextInt(21);
-        return [new("GRAB_SWORD"), new("DIVE_INTO_WATER", GoldGain: _eventGoldAmount, HealthDamage: 7)];
+        _eventGoldAmount = Beta111EventRules.SunkenStatueGold(_eventRng!);
+        return [new("GRAB_SWORD"), FixedEventHealthOption("DIVE_INTO_WATER") with { GoldGain = _eventGoldAmount }];
     }
 
     private ImmutableArray<PredictorEventOption> LostWispOptions()
     {
-        _eventGoldAmount = 45 + _eventRng!.NextInt(31);
+        _eventGoldAmount = Beta111EventRules.LostWispGold(_eventRng!);
         return [new("CLAIM"), new("SEARCH", GoldGain: _eventGoldAmount)];
     }
 
@@ -252,11 +251,9 @@ internal sealed partial class PredictorRun
     {
         if (initializing)
         {
-            // Shuffle a local copy; the versioned source-order catalog is shared.
-            var pool = RolltheSpire2.Core.Events.Beta111EventResultCatalog.FakeMerchantRelics.ToList();
-            _eventRng!.UnstableShuffle(pool);
-            var stock = ImmutableArray.CreateBuilder<PredictorFakeMerchantStock>(6);
-            for (int slot = 0; slot < 6; slot++)
+            var pool = Beta111EventRules.FakeMerchantInventory(_eventRng!);
+            var stock = ImmutableArray.CreateBuilder<PredictorFakeMerchantStock>(pool.Length);
+            for (int slot = 0; slot < pool.Length; slot++)
             {
                 var (price, state) = PriceMerchantRelic(Working, pool[slot]);
                 Working = state;
@@ -311,7 +308,7 @@ internal sealed partial class PredictorRun
     private void BeginRepyCage(long sourceId, CancellationToken token)
     {
         Accept(new("RepyFreed", 0, [], null, null));
-        if (BeginObtainRelic(new("RELIC", "HISTORY_COURSE"), null, PredictorObtainReturn.Event,
+        if (BeginObtainRelic(FixedEventRelicProduct(_eventBranch!), null, PredictorObtainReturn.Event,
             sourceId, token)) ResumeEventAfterRelicObtain(sourceId);
     }
 

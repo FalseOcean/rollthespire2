@@ -29,7 +29,5 @@ internal sealed class Beta110NeowEffectSnapshotAdapter : INeowEffectSnapshotAdap
             playerSlotIndex,
             expectedProfile: RuntimeProfileId.Beta110,
             capturedGameVersion: gameVersion,
-            rules: new ReflectionSnapshotProfileRules(
-                GeneratedCursePoolRequiresModifierFlag: true,
-                OtherCharacterPoolsUseModelIdOrder: true));
+            rules: RuntimeProfilePolicies.EffectCatalogRules(profile.ProfileId));
 }

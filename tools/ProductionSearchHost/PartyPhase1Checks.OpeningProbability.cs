@@ -28,7 +28,7 @@ internal static partial class PartyPhase1Checks
         var target = new NeowStructuredEffectSearchCondition(massive, NeowStructuredConditionKind.ExactSingle,
             NeowStructuredEffectScope.SelectableOfferGroups, NeowStructuredOutputKind.Card, [sixCards[0].CardKey]);
         var query = SearchQuery.Empty with { OpeningRoute = new(massive), StructuredOpeningEffects = [target] };
-        ModernNeowIdentityPredictor.TryEstimatePositiveOfferProbability(smallContext.Authority, massive, out double parent, out _);
+        ModernNeowIdentityRules.TryEstimatePositiveOfferProbability(smallContext.Authority, massive, out double parent, out _);
         Equal(Probability(query, smallContext), parent * 3 / 6, "Massive Scroll captured six-card pool, three offers");
         Equal(Probability(query with { StructuredOpeningEffects = [target, target with { OutputKeys = [sixCards[0].CardKey] }] }, smallContext),
             parent * 3 / 6, "repeated same selected result is one fact");
@@ -36,7 +36,7 @@ internal static partial class PartyPhase1Checks
             0, "one selected Massive card cannot satisfy two identities");
         var bones = BaseGameModelKeys.Relics.NeowsBones;
         var pool = effects.BonesEligibleRelics!.Where(k => k != bones).Distinct().ToArray();
-        ModernNeowIdentityPredictor.TryEstimateOfferProbability(context.Authority, (a, b, c) => c == bones, out double bonesParent, out _);
+        ModernNeowIdentityRules.TryEstimateOfferProbability(context.Authority, (a, b, c) => c == bones, out double bonesParent, out _);
         var bonesQuery = SearchQuery.Empty with { OpeningRoute = new(bones), LegacyNeow = SearchQuery.Empty.LegacyNeow with
             { BonesRelics = new([pool[0], pool[1]], [], [pool[2]]) } };
         int hits = 0;

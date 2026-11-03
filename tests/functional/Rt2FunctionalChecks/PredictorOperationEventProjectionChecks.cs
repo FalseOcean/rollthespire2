@@ -22,7 +22,7 @@ internal static partial class PredictorOperationEventChecks
         static void CheckBattleRewards(OperationPreview preview, PredictorOperationResult expected)
         {
             var sections = preview.Branches.SelectMany(b => b.Sections).Where(s => s.Label == "EventCombatRewards").ToArray();
-            var cards = sections.SelectMany(s => s.CardGroups).SelectMany(g => g.Cards).Select(c => c with { Id = 0 });
+            var cards = sections.SelectMany(s => s.CardGroups).Where(g => g.Label?.StartsWith("EventHuntMinimum:", StringComparison.Ordinal) != true).SelectMany(g => g.Cards).Select(c => c with { Id = 0 });
             var wantedCards = expected.Rewards.Where(r => r.Kind == PredictorRewardKind.Card)
                 .SelectMany(r => r.Cards).Select(c => c with { Id = 0 });
             var models = sections.SelectMany(s => s.Rows).SelectMany(r => r.Models).OrderBy(k => k.Serialized);
@@ -283,12 +283,145 @@ internal static partial class PredictorOperationEventChecks
             .Select(t => t.InstanceId == huntState.Deck[^1] ? t with { EffectiveTriggers = 1 } : t).ToImmutableArray() };
         var withHunt = PredictorOperation.Preview(huntSnapshot, [new ChooseEventOption("I_CAN_TAKE_THEM"),
             new ChooseEventOption("FIGHT"), new ResolveCombat(huntFacts)]);
-        var firstHunt = withHunt.Rewards.Where(r => r.Kind == PredictorRewardKind.Card &&
-            r.RerollRecipe is { EncounterSource: true, IsFromCombat: false }).OrderBy(r => r.SubscriptionOrder).First();
-        var conditionalHunt = Groups(noHunt).Single(g => g.Label == "EventHuntConditional:1");
-        Require(conditionalHunt.Possible && conditionalHunt.Cards.Select(c => c with { Id = 0 })
-                .SequenceEqual(firstHunt.Cards.Select(c => c with { Id = 0 })),
-            "Hunt conditional group differs from the native-ordered full combat settlement");
+        var marginal = Groups(noHunt).Single(g => g.Label == "EventHuntMinimum:1");
+        var finalGroup = withHunt.Rewards.Where(r => r.Kind == PredictorRewardKind.Card).Last();
+        Require(marginal.Possible && marginal.Cards.Select(c => c with { Id = 0 })
+                .SequenceEqual(finalGroup.Cards.Select(c => c with { Id = 0 })) &&
+                noHunt.Branches.SelectMany(branch => branch.Sections).All(section => section.Source.Entry != "THE_HUNT"),
+            "Hunt minimum condition must name the marginal visible group without claiming its producer");
+
+        // Replay every reachable count separately. Expanding the compact
+        // minimum labels (or selecting one exact-count correlated section)
+        // must reconstruct that settlement's full ordered card faces.
+        void CheckHuntCounts(PredictorOperationSnapshot source, string option, ImmutableArray<PredictorInput> prefix, int maximum, bool royalties)
+        {
+            var forecast = EventOperationPreview.Build(source, option, playRoyalties: royalties);
+            Require(forecast.Faults.IsEmpty && forecast.PendingReasons.IsEmpty, "Hunt count forecast failed");
+            var forecastBranch = forecast.Branches.Single();
+            var allSections = forecastBranch.Sections;
+            Require(forecastBranch.HuntOutcomes.Select(outcome => outcome.Triggers).SequenceEqual(Enumerable.Range(0, maximum + 1)),
+                "Exact Hunt outcomes lost a reachable count");
+            var tree = OperationHuntTree.Build(forecastBranch);
+            var nodePaths = new List<int[]>();
+            bool correlated = allSections.Any(section => section.Label == "EventCombatNoHunt");
+            Console.WriteLine($"EVENT_HUNT_COUNT_COMPARISON source={((PredictorOperationEventScene)source.Scene).Event.Entry};max={maximum};royalties={royalties};correlated={correlated}");
+            for (int count = 0; count <= maximum; count++)
+            {
+                int triggersLeft = count;
+                long? royal = source.State.Deck.Select(source.State.Card).FirstOrDefault(card => card.Key.Entry == "ROYALTIES")?.Id;
+                var facts = NoExtraActions(source.State) with { CardTriggers = NoExtraActions(source.State).CardTriggers.Select(trigger =>
+                    source.State.Card(trigger.InstanceId).Key.Entry == "THE_HUNT" && triggersLeft-- > 0 || royalties && trigger.InstanceId == royal
+                        ? trigger with { EffectiveTriggers = 1 } : trigger).ToImmutableArray() };
+                var exact = PredictorOperation.Preview(source, prefix.Add(new ResolveCombat(facts)));
+                var relevant = allSections.Where(section => section.Label == "EventCombatRewards" ||
+                    correlated && section.Label == (count == 0 ? "EventCombatNoHunt" : "EventHuntTriggers:" + count)).ToArray();
+                var actualGroups = relevant.SelectMany(section => section.CardGroups).Where(group =>
+                    group.Label?.StartsWith("EventHuntMinimum:", StringComparison.Ordinal) != true ||
+                    int.Parse(group.Label[17..]) <= count).ToArray();
+                var expectedGroups = exact.Rewards.Where(reward => reward.Kind == PredictorRewardKind.Card).ToArray();
+                var models = relevant.SelectMany(section => section.Rows).SelectMany(row => row.Models).OrderBy(key => key.Serialized);
+                var expectedModels = exact.Rewards.Where(reward => reward.Kind is PredictorRewardKind.Potion or PredictorRewardKind.Relic)
+                    .Select(reward => reward.Key).OrderBy(key => key.Serialized);
+                Require(actualGroups.Length == expectedGroups.Length && actualGroups.Select((group, index) =>
+                    group.Cards.Select(card => card with { Id = 0 }).SequenceEqual(expectedGroups[index].Cards.Select(card => card with { Id = 0 })) &&
+                    group.MinimumSelect == 1 && group.MaximumSelect == 1 && group.CanSkip == expectedGroups[index].CanSkip).All(value => value) &&
+                    models.SequenceEqual(expectedModels),
+                    $"Hunt visible reconstruction differs for {source.Scene} at {count} triggers, Royalties={royalties}");
+                var ending = tree.Nodes.Single(node => node.EndingTriggerCounts.Contains(count));
+                var route = new List<int>();
+                for (var node = ending; node.Id != 0; node = tree.Nodes[node.ParentId])
+                {
+                    Require(node.ParentId < node.Id && node.TriggerCounts.Contains(count), "Hunt rendered route has an invalid parent or count");
+                    route.Add(node.Id);
+                }
+                route.Reverse(); nodePaths.Add(route.ToArray());
+                Require(route.Count == expectedGroups.Length && route.Select((id, index) =>
+                {
+                    var group = tree.Nodes[id].CardGroup!;
+                    return group.Cards.Select(card => card with { Id = 0 }).SequenceEqual(expectedGroups[index].Cards.Select(card => card with { Id = 0 })) &&
+                        group.MinimumSelect == 1 && group.MaximumSelect == 1 && group.CanSkip == expectedGroups[index].CanSkip;
+                }).All(value => value), "Hunt tree route fails to reconstruct the independently settled ordered card groups");
+                var retained = forecastBranch.HuntOutcomes.Single(outcome => outcome.Triggers == count);
+                Require(retained.Sections.SelectMany(section => section.CardGroups).Count() == expectedGroups.Length,
+                    "Hunt graph input must retain full independent settlements");
+            }
+            for (int first = 0; first < nodePaths.Count; first++)
+            for (int second = first + 1; second < nodePaths.Count; second++)
+            {
+                var a = forecastBranch.HuntOutcomes[first].Sections.SelectMany(section => section.CardGroups.Select(group => (section, group))).ToArray();
+                var b = forecastBranch.HuntOutcomes[second].Sections.SelectMany(section => section.CardGroups.Select(group => (section, group))).ToArray();
+                int common = 0;
+                while (common < Math.Min(a.Length, b.Length) && a[common].section.Source == b[common].section.Source &&
+                    a[common].group.MinimumSelect == b[common].group.MinimumSelect && a[common].group.MaximumSelect == b[common].group.MaximumSelect &&
+                    a[common].group.CanSkip == b[common].group.CanSkip && a[common].group.Possible == b[common].group.Possible &&
+                    a[common].group.Cards.Select(card => card with { Id = 0 }).SequenceEqual(b[common].group.Cards.Select(card => card with { Id = 0 }))) common++;
+                Require(nodePaths[first].Take(common).SequenceEqual(nodePaths[second].Take(common)) &&
+                    (common == Math.Min(a.Length, b.Length) || nodePaths[first][common] != nodePaths[second][common]),
+                    "Hunt graph must share every complete identical prefix and split at the first differing offer");
+            }
+            Require(!NeowOperationOverlay.CanRenderHuntTree(forecast, forecastBranch, true) &&
+                !NeowOperationOverlay.CanRenderHuntTree(forecast with { Style = new(OperationTextMode.Complex, OperationCardLayout.Groups) }, forecastBranch, false) &&
+                !NeowOperationOverlay.CanRenderHuntTree(forecast with { Style = new(OperationTextMode.CardRows, OperationCardLayout.Groups) }, forecastBranch, false),
+                "Hunt graph must leave map and explicit full-text presentation unchanged");
+            var hiddenPreferences = new RolltheSpire2.Ui.Settings.OperationPredictionPreferences()
+                .With("event:" + forecast.Source.Entry, RolltheSpire2.Ui.Settings.OperationPredictionMode.Off);
+            var hidden = OperationPredictionPolicy.Filter(forecast, new(hiddenPreferences, "event:" + forecast.Source.Entry,
+                true, new(), "") { ShowPrimary = false });
+            Require(hidden.Branches.All(branch => branch.HuntOutcomes.IsEmpty && branch.Sections.IsEmpty),
+                "Hidden event results must not reappear through retained Hunt graph paths");
+        }
+        var twoHunts = PredictorObtainSources.AddCard(context, huntState, new RolltheSpire2.Core.Identity.ModelKey("CARD", "THE_HUNT"));
+        twoHunts = PredictorObtainSources.AddCard(context, twoHunts, new RolltheSpire2.Core.Identity.ModelKey("CARD", "ROYALTIES"));
+        foreach (string? relic in new string?[] { null, "PRAYER_WHEEL", "WHITE_STAR" })
+        foreach (bool royalties in new[] { false, true })
+        {
+            var current = relic == null ? twoHunts : twoHunts with
+            { Relics = [new(twoHunts.NextInstanceId, new("RELIC", relic), 1)], NextInstanceId = twoHunts.NextInstanceId + 1 };
+            CheckHuntCounts(punchSnapshot with { State = current }, "I_CAN_TAKE_THEM",
+                [new ChooseEventOption("I_CAN_TAKE_THEM"), new ChooseEventOption("FIGHT")], 2, royalties);
+            CheckHuntCounts(Snapshot("DENSE_VEGETATION", new PredictorEventOption("FIGHT")) with { State = current }, "FIGHT",
+                [new ChooseEventOption("FIGHT")], 2, royalties);
+            CheckHuntCounts(Snapshot("THE_LANTERN_KEY", new PredictorEventOption("KEEP_THE_KEY")) with { State = current,
+                Scene = new PredictorOperationEventScene(new("EVENT", "THE_LANTERN_KEY"), rng,
+                    [new("KEEP_THE_KEY")], new(60, 80)) { LayoutEncounter = new("ENCOUNTER", "MYSTERIOUS_KNIGHT_EVENT_ENCOUNTER") } },
+                "KEEP_THE_KEY", [new ChooseEventOption("KEEP_THE_KEY"), new ChooseEventOption("FIGHT")], 1, royalties);
+        }
+        var fourHunts = PredictorObtainSources.AddCard(context, twoHunts, new RolltheSpire2.Core.Identity.ModelKey("CARD", "THE_HUNT"));
+        fourHunts = PredictorObtainSources.AddCard(context, fourHunts, new RolltheSpire2.Core.Identity.ModelKey("CARD", "THE_HUNT"));
+        CheckHuntCounts(Snapshot("DENSE_VEGETATION", new PredictorEventOption("FIGHT")) with { State = fourHunts }, "FIGHT",
+            [new ChooseEventOption("FIGHT")], 4, false);
+        var graphOffer = noHunt.Branches.Single().HuntOutcomes[0].Sections.First(section => !section.CardGroups.IsEmpty);
+        var graphGroup = graphOffer.CardGroups[0];
+        var terminalFixture = new OperationPreviewBranch([], [], [], 0, true)
+        {
+            HuntOutcomes = [new(0, []), new(1, [graphOffer with { Rows = [], CardGroups = [graphGroup] }]),
+                new(2, [graphOffer with { Rows = [], CardGroups = [graphGroup, graphGroup] }])]
+        };
+        var terminalTree = OperationHuntTree.Build(terminalFixture);
+        Require(terminalTree.Nodes[0].EndingTriggerCounts.SequenceEqual([0]) &&
+            terminalTree.Nodes[1].EndingTriggerCounts.SequenceEqual([1]) && terminalTree.Nodes[1].Children.Length == 1 &&
+            terminalTree.Nodes[2].EndingTriggerCounts.SequenceEqual([2]),
+            "Hunt graph must distinguish a zero-offer end and a shared prefix that can end or continue");
+        var changedFace = graphGroup.Cards.SetItem(0, graphGroup.Cards[0] with { UpgradeLevel = graphGroup.Cards[0].UpgradeLevel + 1 });
+        foreach (var different in new[]
+        {
+            graphOffer with { CardGroups = [graphGroup with { Cards = changedFace }] },
+            graphOffer with { CardGroups = [graphGroup with { CanSkip = !graphGroup.CanSkip }] },
+            graphOffer with { Source = new("CARD", "THE_HUNT") }
+        })
+        {
+            var differentTree = OperationHuntTree.Build(terminalFixture with
+                { HuntOutcomes = [new(0, [graphOffer with { Rows = [], CardGroups = [graphGroup] }]), new(1, [different])] });
+            Require(differentTree.Nodes[0].Children.Length == 2,
+                "Hunt graph must not share a changed face, selection condition or source");
+        }
+        var eventSection = noHunt.Branches.Single().Sections.First(section => !section.CardGroups.IsEmpty);
+        Require(OperationDisplayPolicy.CompactEventCardNames(noHunt, eventSection, true, false) &&
+            !OperationDisplayPolicy.CompactEventCardNames(noHunt, eventSection, false, false) &&
+            !OperationDisplayPolicy.CompactEventCardNames(noHunt, eventSection, true, true) &&
+            !OperationDisplayPolicy.CompactEventCardNames(noHunt with { Style = new(OperationTextMode.Complex, OperationCardLayout.Groups) }, eventSection, true, false) &&
+            !OperationDisplayPolicy.CompactEventCardNames(noHunt with { Style = new(OperationTextMode.CardRows, OperationCardLayout.Groups) }, eventSection, true, false),
+            "Event card-name compacting must preserve text-only, map, Complex and explicit CardRows presentations");
 
         var doll = Snapshot("DOLL_ROOM", new PredictorEventOption("TAKE_SOME_TIME"));
         var hiddenDolls = EventOperationPreview.Build(doll, "TAKE_SOME_TIME");

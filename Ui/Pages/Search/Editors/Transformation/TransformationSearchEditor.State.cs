@@ -33,18 +33,18 @@ internal sealed partial class TransformationSearchEditor
 
     internal Action PreserveConditionsForUndo()
     {
-        var saved = _drafts.ToDictionary(p => p.Key, p =>
+        return WorkbenchConditionReset.Preserve(_drafts, draft =>
         {
-            var copy = new SeatDraft { Objective = p.Value.Objective, ResultCount = p.Value.ResultCount, RareCount = p.Value.RareCount };
-            copy.TakenOver.UnionWith(p.Value.TakenOver); copy.Cards.AddRange(p.Value.Cards);
-            foreach (var source in p.Value.KnownSources) copy.KnownSources.Add(source.Key, source.Value);
+            var copy = new SeatDraft { Objective = draft.Objective, ResultCount = draft.ResultCount, RareCount = draft.RareCount };
+            copy.TakenOver.UnionWith(draft.TakenOver); copy.Cards.AddRange(draft.Cards);
+            foreach (var source in draft.KnownSources) copy.KnownSources.Add(source.Key, source.Value);
             return copy;
-        });
-        return () => { _drafts.Clear(); foreach (var pair in saved) _drafts[pair.Key] = pair.Value; };
+        }, (previous, current) => { if (ReferenceEquals(_draft, previous)) _draft = current; });
     }
 
     internal bool HasConditions() => _drafts.Values.Any(d => d.TakenOver.Count > 0 || d.Cards.Count > 0);
-    internal Action ClearConditions() => WorkbenchConditionReset.Swap(_drafts, _ => new SeatDraft());
+    internal Action ClearConditions() => WorkbenchConditionReset.Swap(_drafts, _ => new SeatDraft(),
+        replaceActive: (previous, current) => { if (ReferenceEquals(_draft, previous)) _draft = current; });
 
     internal int AuthoredConditionCount() => ActiveTakeovers().Any() &&
         (_draft.Objective == 0 ? _draft.RareCount > 0 : _draft.Cards.Count > 0) ? 1 : 0;

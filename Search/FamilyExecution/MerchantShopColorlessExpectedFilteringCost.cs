@@ -13,24 +13,24 @@ namespace RolltheSpire2.Search.FamilyExecution;
 internal static class MerchantShopColorlessExpectedFilteringCost
 {
     internal static FamilyExpectedFilteringCostProjection Project(
-        ExactSearchExecutionRequest request,
+        ExactSearchEvaluationProjection evaluation,
         FamilyAnalyticalCostProjection fullCost,
+        Beta111MerchantColorlessAuthority authority,
         FamilySurvivalProjection survival)
     {
-        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(evaluation);
         ArgumentNullException.ThrowIfNull(fullCost);
         ArgumentNullException.ThrowIfNull(survival);
 
         if (!survival.IsResolved)
             return Unresolved(fullCost, survival.SurvivalProbability, "FinalSurvivalUnresolved:" + survival.Evidence);
 
-        Beta111MerchantColorlessAuthority authority = Beta111MerchantColorlessAuthority.From(request.Authority);
         if (!authority.HasExactV1Inputs)
             return Unresolved(fullCost, survival.SurvivalProbability, "MerchantColorlessAuthorityUnavailable");
 
         try
         {
-            return Build(request.Evaluation, fullCost, authority, survival.SurvivalProbability);
+            return Build(evaluation, fullCost, authority, survival.SurvivalProbability);
         }
         catch (Exception ex)
         {

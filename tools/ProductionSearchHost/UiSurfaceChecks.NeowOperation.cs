@@ -29,6 +29,7 @@ using MegaCrit.Sts2.Core.Unlocks;
 using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Core.PredictorRuntime;
 using RolltheSpire2.Infrastructure.Snapshots;
+using RolltheSpire2.Presentation.Localization;
 using RolltheSpire2.Ui.InRunOperations;
 
 internal static partial class UiSurfaceChecks
@@ -87,11 +88,14 @@ internal static partial class UiSurfaceChecks
         if (addedDebugAction) InputMap.AddAction("debug_hide_event_ui");
         var nodes = new List<Node>();
         NGame? game = null;
+        var operationPreferences = new RolltheSpire2.Ui.Workspace.SearchWorkspace(OS.GetUserDataDir(), false);
+        bool originalOperationEnabled = operationPreferences.Preferences.OperationPredictionEnabled;
         SubViewport? nativeViewport = null;
         TextureRect? nativeDisplay = null;
         Neow? neow = null;
         try
         {
+            operationPreferences.SetOperationPredictionEnabled(true);
             TestMode.IsOn = true;
             typeof(NGame).GetProperty(nameof(NGame.Instance))!.SetValue(null, null);
             typeof(ModRuntime).GetProperty(nameof(ModRuntime.Snapshot))!.SetValue(null, runtime);
@@ -856,10 +860,11 @@ internal static partial class UiSurfaceChecks
                     failureView.SetLayout(new(new Vector2(200, 300), failureView.SummaryDesiredSize), default);
                     await Frames(3);
                     var lines = Descendants(failureView).OfType<Label>().Select(label => label.Text).ToArray();
+                    string rerollCaption = JsonUiTextProvider.CreateUi13(language).Format("operation.rerollStep", 3);
                     string[] expected = language == "en"
-                        ? ["Not enough gold", "This sacrifice: 1/2 → 0/2", "Reroll 3",
+                        ? ["Not enough gold", "This sacrifice: 1/2 → 0/2", rerollCaption,
                             "Restock with no further rerolls or sacrifices", "Restocking follows completion of the obtain effect"]
-                        : ["金币不足", "本次献祭：1/2 → 0/2", "第3次重掷", "若不再重掷或献祭，结算后补货", "领取效果完成后才会补货"];
+                        : ["金币不足", "本次献祭：1/2 → 0/2", rerollCaption, "若不再重掷或献祭，结算后补货", "领取效果完成后才会补货"];
                     Check(failureView.GetNode<Control>("Rt2NeowSummary").IsVisibleInTree() &&
                         expected.All(text => lines.Contains(text)) &&
                         lines.Any(line => line.Contains(new LocString("relics", "SMALL_CAPSULE.title").GetFormattedText(), StringComparison.Ordinal)) &&
@@ -1147,6 +1152,7 @@ internal static partial class UiSurfaceChecks
         }
         finally
         {
+            operationPreferences.SetOperationPredictionEnabled(originalOperationEnabled);
             if (game != null && GodotObject.IsInstanceValid(game)) game.Free();
             // Native selection screens return holders, then cards, through
             // deferred pool callbacks on tree exit. Flush that real lifecycle

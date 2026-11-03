@@ -7,6 +7,15 @@ namespace RolltheSpire2.Search.Semantics;
 // future Relic queues cannot become held reward modifiers in Product probability.
 internal static class ExplicitOpeningRelicFacts
 {
+    // The Unknown-room model shares C's declared opening premise. Unspecified
+    // pickups do not contribute; alternative offers are not held possessions.
+    internal static bool HasDeclaredJuzuForUnknownRooms(SearchQuery query)
+    {
+        var juzu = new ModelKey("RELIC", "JUZU_BRACELET");
+        return EnumerateGuaranteed(query).Contains(juzu) || query.Players.Any(player =>
+            EnumerateGuaranteed(player.Conditions).Contains(juzu));
+    }
+
     internal static ModelKey[] EnumerateGuaranteed(SearchQuery query) => EnumerateGuaranteed(
         query.OpeningRoute, query.OpeningRouteRelicRequirement, query.StructuredOpeningEffects, query.LegacyNeow);
 

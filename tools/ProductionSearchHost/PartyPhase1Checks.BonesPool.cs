@@ -100,12 +100,12 @@ internal static partial class PartyPhase1Checks
             }).ToArray()
         };
         Check(VisibleSeedCandidateCodec.TryParseOrdinal(profile, seed, out var ordinal, out _, out _), "seed ordinal");
-        await using var execution = new FamilyExecutionContext(requiresGpu: true, failOnPhysicalRecovery: true);
+        await using var execution = new FilterRuntimeServices(requiresGpu: true, failOnPhysicalRecovery: true);
         foreach (bool actual in new[] { false, true })
         {
             var compiled = SearchCompiler.Compile(Table(actual), context);
-            var request = ExactSearchExecutionRequestFactory.Compile(compiled, new(seed, 33, 1, 1)).Plan!;
-            var result = ProductionExactSearchEvaluator.Evaluate(request, TrustedRootHashInput.FromCanonicalSeed(profile, seed));
+            var request = SearchPreparationCompiler.Compile(compiled, new(seed, 33, 1, 1)).Plan!;
+            var result = ProductionExactSearchEvaluator.Evaluate(request.Model, TrustedRootHashInput.FromCanonicalSeed(profile, seed));
             Check(result.Evaluation.Disposition == (actual ? SearchDisposition.Match : SearchDisposition.NoMatch),
                 "Exact accepts actual pair and rejects reported false positive");
             if (actual)
@@ -115,8 +115,8 @@ internal static partial class PartyPhase1Checks
                 Check(probability is { } p && Math.Abs(p - onePlayer * onePlayer) < 1e-15,
                     "party probability uses 27-item pool for both players");
             }
-            var cpu = new NeowFamily.PartyInitial(request);
-            var gpu = new NeowFamily.PartyInitial(request, preferGpu: true);
+            var cpu = new NeowFamily.PartyInitial(request.Model, FilterExecutionPreferences.From(request.RunOptions)).Describe();
+            var gpu = new NeowFamily.PartyInitial(request.Model, FilterExecutionPreferences.From(request.RunOptions) ,preferGpu: true).Describe();
             try
             {
                 Check(gpu.ConditionPerformance.UsesGpu, "GPU admission");
@@ -124,8 +124,8 @@ internal static partial class PartyPhase1Checks
                 foreach (var input in new[] { FamilyCandidateSet.Dense(batch),
                     FamilyCandidateSet.FromSortedAbi1(batch, [0UL, 2UL, 10UL, 32UL]) })
                 {
-                    var a = await cpu.InvokeAsync(execution, new(batch, request), input, default);
-                    var b = await gpu.InvokeAsync(execution, new(batch, request), input, default);
+                    var a = await cpu.ExecuteAsync(execution, input, default);
+                    var b = await gpu.ExecuteAsync(execution, input, default);
                     Check(a.EnumerateLogicalOrdinals().SequenceEqual(b.EnumerateLogicalOrdinals()), "CPU/GPU dense/compact parity");
                     Check(a.EnumerateLogicalOrdinals().Contains(0UL) == actual, "fast keeps actual and rejects stale pair");
                 }

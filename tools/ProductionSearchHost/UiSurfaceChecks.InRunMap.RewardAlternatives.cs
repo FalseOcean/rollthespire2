@@ -48,7 +48,7 @@ internal static partial class UiSurfaceChecks
             var isolated = new InRunMapPredictionSession();
             isolated.Update(native, "0.111.0", true, new Dictionary<int, PredictorMapRouteDraft> { [0] = draft });
             var captured = isolated.Snapshot!;
-            var source = captured.Run;
+            var source = captured.CreateRun();
             var state = source.Working;
             long id = state.NextInstanceId;
             var controlled = new PredictorRun(source.Context, state with
@@ -61,7 +61,7 @@ internal static partial class UiSurfaceChecks
                     .Select(rarity => new PredictorBagBucket(rarity, [new("RELIC", fixture.Gift)])).ToImmutableArray(), []) : state.PersonalBag
             }) { CombatDefaults = source.CombatDefaults, AutomaticRewardPickup = source.AutomaticRewardPickup };
             void Capture(PredictorRun run) => typeof(InRunMapPredictionSession).GetProperty(nameof(InRunMapPredictionSession.Snapshot),
-                BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(isolated, captured with { Run = run });
+                BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(isolated, captured with { Context = run.Context, State = run.Working, CombatDefaults = run.CombatDefaults, AutomaticRewardPickup = run.AutomaticRewardPickup });
             Capture(controlled); isolated.Recompute();
             var presenter = new InRunMapNodePresenter(isolated, names, text);
             var view = new InRunMapNodeDetails((IGameIconResolver)DiagnosticField(product, "_icons"), names);

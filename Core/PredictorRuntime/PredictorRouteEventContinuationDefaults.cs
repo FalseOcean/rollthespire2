@@ -368,19 +368,12 @@ internal sealed partial class PredictorRun
         // Trial curses, Grave's Decay, Scriptorium costs and Stone's initial HP
         // loss already ran before opening the target choice. These are the only
         // remaining fixed tail effects in the supported handlers.
-        int damage = key == "WHISPERING_HOLLOW" ? 9 : (key, branch) == ("SPIRIT_GRAFTER", "REJECTION") ? 10 : 0;
-        string? fixedAdded = (key, branch) switch
-        {
-            ("WELLSPRING", "BATHE") => "GUILTY",
-            ("FIELD_OF_MAN_SIZED_HOLES", "RESIST") => "NORMALITY",
-            ("LUMINOUS_CHOIR", "REACH_INTO_THE_FLESH") => "SPORE_MIND",
-            ("AMALGAMATOR", "COMBINE_STRIKES") => "ULTIMATE_STRIKE",
-            ("AMALGAMATOR", "COMBINE_DEFENDS") => "ULTIMATE_DEFEND",
-            _ => null
-        };
+        var health = RolltheSpire2.Core.Events.Beta111EventOptionRules.FixedHealth(key, branch);
+        int damage = health is { AfterCardSelection: true, HpDelta: < 0 } delayed ? -delayed.HpDelta : 0;
+        string? fixedAdded = RolltheSpire2.Core.Events.Beta111EventOptionRules.CardProductAfterSelection(key, branch)?.Entry;
         effect = new(cards, existing, domains, facts, removes || transforms || fixedTransform || addsCards, addsCards, damage,
             (key, branch) == ("STONE_OF_ALL_TIME", "PUSH") ? 1 : 0,
-            key == "ZEN_WEAVER" ? run._eventGoldAmount : 0, fixedAdded)
+            key == "ZEN_WEAVER" ? run.PendingZenWeaverCost().Amount : 0, fixedAdded)
         { TargetRead = RouteEventDeckRead(key, branch),
             ChangedRelicStateEntries = addsCards ? EventCardReceiptRelicStateEntries(run) : [],
             MayEditExistingCards = removes || transforms || fixedTransform || upgrade || enchant };

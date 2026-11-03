@@ -135,10 +135,11 @@ internal static class NeowRewardGenerator
         bool upgraded = false;
         if (consumeUpgradeRoll)
         {
-            // Neow reward generation still consumes the upgrade roll even when
-            // its effective upgrade odds are zero. The draw must not be skipped,
-            // and the card must not be promoted based on ordinary combat odds.
-            _ = rng.NextFloat();
+            // Neow starts at zero upgrade odds, but CardFactory uses an inclusive
+            // comparison. Preserve its zero-roll boundary and consume the draw
+            // even for a card that cannot upgrade; ordinary combat odds do not apply.
+            float upgradeRoll = rng.NextFloat();
+            upgraded = selected.CanUpgrade && upgradeRoll <= 0f;
         }
 
         return new GeneratedCard(selected, upgraded);
@@ -149,7 +150,7 @@ internal static class NeowRewardGenerator
         IReadOnlyList<NeowEffectPotionSnapshot> source,
         HashSet<ModelKey> excluded)
     {
-        EffectPotionRarity rarity = RollPotionRarity(rng);
+        EffectPotionRarity rarity = PotionRarityRules.Evaluate(rng.NextFloat());
         List<NeowEffectPotionSnapshot> candidates = source
             .Where(potion => potion.Rarity == rarity && !excluded.Contains(potion.PotionKey))
             .OrderBy(potion => potion.PoolOrder)
@@ -214,14 +215,4 @@ internal static class NeowRewardGenerator
         EffectCardRarity.Uncommon => new[] { EffectCardRarity.Uncommon, EffectCardRarity.Rare, EffectCardRarity.Common },
         _ => new[] { EffectCardRarity.Rare, EffectCardRarity.Common, EffectCardRarity.Uncommon }
     };
-
-    private static EffectPotionRarity RollPotionRarity(Xoshiro256StarStar rng)
-    {
-        float roll = rng.NextFloat();
-        return roll <= 0.1f
-            ? EffectPotionRarity.Rare
-            : roll <= 0.35f
-                ? EffectPotionRarity.Uncommon
-                : EffectPotionRarity.Common;
-    }
 }

@@ -1,37 +1,42 @@
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Search.Contracts;
-using RolltheSpire2.Core.Identity;
-using RolltheSpire2.Core.Merchant;
-using RolltheSpire2.Search.Semantics;
+
 namespace RolltheSpire2.Search.FamilyExecution;
 
-internal sealed partial class CapsuleRelicFamily
+internal static partial class CapsuleRelicFamily
 {
-    IEnumerable<IFamilyInvocation> IFamilyInvocation.CpuRealizations
+    private static FilterBodyDescription PrepareCpu(SearchModel model, PreparedFilter preparation,
+        CapsuleRelicReplay replay, NeowReplayPlan route, RelicFullGpuPlan? gpu,
+        ExactSearchEvaluationProjection evaluation, IReadOnlyList<NeowStructuredEffectSearchCondition> conditions,
+        IRuntimeProfile profile, string identity, int workers)
     {
-        get
-        {
-            var route = NeowReplayPlan.Compile(_request,true);
-            var plan = CapsuleRelicCpuPlan.TryCompile(_request,route);
-            bool ordinarySequence = _request.Evaluation.RelicSequenceConditions.Any(c => !c.IsEmpty);
-            string compiledRevision = route.Bones
-                ? ordinarySequence ? "R.Relic.Cpu.BonesCapsuleTargetsWithOrdinary.20261016.v4" : "R.Relic.Cpu.BonesCapsuleTargets.20261016.v3"
-                : ordinarySequence ? "R.Relic.Cpu.CapsuleTargetsWithOrdinary.20261016.v3" : "R.Relic.Cpu.CapsuleTargets.20261013.v2";
-            var band = _request.Evaluation.RequiredFinalCurse is not null || _request.Evaluation.BannedFinalCurses.Count != 0 ||
-                _request.Evaluation.StructuredNeowEffects.Any(c=>!c.IsEmpty && !NeowReplayPlan.IsCapsule(c)) ? null : plan?.DirectPricingBand;
-            foreach(int workers in FamilyCpuExecution.WorkerConfigurations(_request))
-            {
-                FamilyCpuExecution? cpu = null;
-                cpu = new FamilyCpuExecution(_request,this,plan is null ? "R.Relic.Cpu.CapsuleAndSequenceReplay.20260905.v1" :
-                    compiledRevision,
-                    plan is null ? _replay.Matches : plan.Matches,workers,g =>
-                    RelicWorkEstimate.Capsule(_request, route, _replay.Pool, _gpuPlan, g,
-                        cpu: true, workers: workers, compiledMatcher: plan is not null));
-                // Retain only the historical acquisition mean as diagnostic
-                // calibration metadata. The estimate is not that measured band
-                // and does not require an upstream N pass to own a valid quote.
-                cpu.CalibrationMeanInput = band is null ? null : band=="SmallC" ? 65536d/17 : 65536d/10;
-                yield return cpu;
-            }
-        }
+        var plan = CapsuleRelicCpuPlan.TryCompile(model, route);
+        bool ordinarySequence = evaluation.RelicSequenceConditions.Any(c => !c.IsEmpty);
+        string revision = plan is null ? "R.Relic.Cpu.CapsuleAndSequenceReplay.20260905.v1" : route.Bones
+            ? ordinarySequence ? "R.Relic.Cpu.BonesCapsuleTargetsWithOrdinary.20261016.v4" : "R.Relic.Cpu.BonesCapsuleTargets.20261016.v3"
+            : ordinarySequence ? "R.Relic.Cpu.CapsuleTargetsWithOrdinary.20261016.v3" : "R.Relic.Cpu.CapsuleTargets.20261013.v2";
+        var band = model.Evaluation.RequiredFinalCurse is not null || model.Evaluation.BannedFinalCurses.Count != 0 ||
+            conditions.Any(c => !c.IsEmpty && !NeowReplayPlan.IsCapsule(c)) ? null : plan?.DirectPricingBand;
+        double? meanInput = band is null ? null : band == "SmallC" ? 65536d / 17 : 65536d / 10;
+        int players = model.Authority.PlayersCount;
+        bool numericalRoots = profile.ProfileId == RuntimeProfileId.Beta111;
+        var costs = FamilyAuxiliaryEvidence.Read<CpuCostSnapshot?>(Id, "CpuCostSnapshot", CpuCostCalibration.Capture, null);
+        FamilyPhysicalQuote? Raw(FamilyPhysicalQuoteRequest geometry) => RelicWorkEstimate.Capsule(evaluation, route, replay.Pool,
+            gpu, geometry, cpu: true, workers: workers, compiledMatcher: plan is not null);
+        return new(preparation, revision, profile.ProfileId) {
+            InputIdentity = identity, PlayersCount = players,
+            WindowCapacity = 65536, CpuChunkCapacity = CpuFilterExecution.Capacity, CpuWorkers = workers,
+            PerformanceProjection = compact => CpuFilterExecution.Describe(Id, revision, workers, 65536, numericalRoots, false, compact),
+            Cost = new() {
+                CalibrationRequiredPassedCoverage = meanInput.HasValue ? new HashSet<string>(["N.Neow"], StringComparer.Ordinal) : null,
+                CanonicalScope = players == 1,
+                CanonicalWorkShape = _ => FamilyCanonicalCostShape.DescribeCapsule(route, replay.Pool, gpu, conditions), CalibrationQuote = Raw,
+                Quote = (selected, geometry, _) => FamilyCanonicalMeasuredCost.TryDenseQuote(selected, geometry) ??
+                    (Raw(geometry) is { } raw ? costs?.Local(raw,
+                        selected.ResolveConditionPerformance(geometry.CompactInput).PhysicalImplementationRevision, workers, geometry.CompactInput) ?? raw : null)
+            },
+            CreateExecution = (selected, _) => new CpuFilterExecution(selected, profile,
+                plan is null ? replay.Matches : plan.Matches, numericalRoots) { CalibrationMeanInput = meanInput }
+        };
     }
 }

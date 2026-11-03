@@ -17,15 +17,11 @@ internal static class FamilyGpuReadback
     internal const string TransformationPublicBoundaryRevision =
         ".TransformationPublicInvoke.QueuedHeader32SyncPayloadWidenSortValidate.20261027.v1";
 
-    internal static string ObservationRevision(IFamilyInvocation family, FamilyPhysicalQuoteRequest geometry) =>
+    internal static string ObservationRevision(FilterBodyDescription family, FamilyPhysicalQuoteRequest geometry) =>
         !family.ConditionPerformance.UsesGpu ? "" : HostTransferRevision +
-        (family switch {
-            NeowFamily when !geometry.PrivateOutput => NeowFamilyGpuExecutor.PublicBoundaryRevision,
-            TransformationAggregateFamily when !geometry.PrivateInput && !geometry.PrivateOutput => TransformationPublicBoundaryRevision,
-            _ => ""
-        });
+        (family.Cost.ObservationRevision?.Invoke(geometry) ?? "");
 
-    internal static FamilyPhysicalQuote? Reference(IFamilyInvocation family, FamilyPhysicalQuote? quote)
+    internal static FamilyPhysicalQuote? Reference(FilterBodyDescription family, FamilyPhysicalQuote? quote)
     {
         if (quote is null || !family.ConditionPerformance.UsesGpu) return quote;
         // Legacy shader coefficients remain useful estimates after the equivalent
@@ -43,13 +39,7 @@ internal static class FamilyGpuReadback
         // matching boundary identity. Neither family borrows the other's token.
         // Historical canonical calls and numerical/private quotes keep their
         // original scope and disclaimer.
-        (string boundaryToken, string measuredMarker) = family switch {
-            NeowFamily => ("MeasuredNeowPublicBoundaryRevision=" + NeowFamilyGpuExecutor.PublicBoundaryRevision,
-                "CurrentNeowPublicInvokeHostTransportMeasured"),
-            TransformationAggregateFamily => ("MeasuredTransformationPublicBoundaryRevision=" + TransformationPublicBoundaryRevision,
-                "CurrentTransformationPublicInvokeHostTransportMeasured"),
-            _ => ("", "")
-        };
+        (string boundaryToken, string measuredMarker) = (family.Cost.PublicBoundaryToken, family.Cost.PublicBoundaryMeasuredMarker);
         if (boundaryToken.Length > 0 && quote.FamilyId == family.FamilyId &&
             quote.PublicTransportClass == "CompleteCanonicalAbi1")
         {

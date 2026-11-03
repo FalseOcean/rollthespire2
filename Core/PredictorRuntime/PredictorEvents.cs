@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Effects.Snapshots;
+using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Rng;
 
@@ -54,11 +55,11 @@ internal sealed partial class PredictorRun
             _requestId++;
             return;
         }
-        EventOptions = EventOptions.Select(o => o.Key is "EMOTIONAL_AWARENESS" or "ARACHNID_ACUPUNCTURE" or
-            "BONE_TEA" or "EMBER_TEA" or "OFFER_TRIBUTE" or "TENTACLE_QUILL" or "PRICKLY_SPONGE" or
-            "BARGAIN_BIN" or "FEATURED_ITEM" or "MYSTERY_BOX" ||
-            o.Key.StartsWith("BUY_", StringComparison.Ordinal)
-            ? o with { Enabled = o.GoldCost <= Working.GoldBudget } : o).ToImmutableArray();
+        EventOptions = EventOptions.Select(o => Beta111EventOptionRules.TryGoldCost(_eventKey.Value.Entry, o.Key, out var cost)
+            ? o with { Enabled = cost.CanChoose(Working.GoldBudget) }
+            : o.Key is "OFFER_TRIBUTE" or "BARGAIN_BIN" or "FEATURED_ITEM" or "MYSTERY_BOX" ||
+                o.Key.StartsWith("BUY_", StringComparison.Ordinal)
+                ? o with { Enabled = o.GoldCost <= Working.GoldBudget } : o).ToImmutableArray();
         _requestId++;
     }
 
@@ -81,8 +82,8 @@ internal sealed partial class PredictorRun
         PredictorSettlementEffects.RequireImplementedInventory(Working, context: Context);
         _eventKey = eventKey;
         _preview.Event.EnterEvent();
-        _eventRng = new Xoshiro256StarStar(Beta111Profile.Instance.DeriveEventStreamSeed(
-            Beta111Profile.Instance.ComputeRootSeed(Context.Seed), 0, eventKey.Entry));
+        _eventRng = new Xoshiro256StarStar(Context.RuntimeProfile.DeriveEventStreamSeed(
+            Context.RuntimeProfile.ComputeRootSeed(Context.Seed), 0, eventKey.Entry));
         _eventBranch = null;
         ResetEventChoiceState(bathsDamage: 3, resetAssignedGold: true);
         if (health is { CurrentHp: < 1 } || health is { MaxHp: < 1 } ||
@@ -114,14 +115,14 @@ internal sealed partial class PredictorRun
             "MORPHIC_GROVE" =>
                 [new("GROUP"), new("LONER")],
             "WHISPERING_HOLLOW" =>
-                [new("GOLD", GoldCost: 35 + _eventRng.NextInt(19) - 9), new("HUG")],
+                [new("GOLD", GoldCost: Beta111EventRules.WhisperingHollowGold(_eventRng!)), new("HUG")],
             "TRASH_HEAP" => [new("DIVE_IN"), new("GRAB")],
             "SYMBIOTE" => [new("APPROACH", SymbioteCandidates().Length > 0), new("KILL_WITH_FIRE")],
             "TINKER_TIME" => [new("CHOOSE_CARD_TYPE")],
             "COLORFUL_PHILOSOPHERS" => ColorfulOptions(),
             "TRIAL" => [new("ACCEPT"), new("REJECT")],
             "THIS_OR_THAT" => ThisOrThatOptions(),
-            "UNREST_SITE" => [new("REST"), new("KILL", MaxHpCost: 8)],
+            "UNREST_SITE" => [FixedEventHealthOption("REST"), FixedEventHealthOption("KILL")],
             "SAPPHIRE_SEED" => [new("EAT"), new("PLANT")],
             "ZEN_WEAVER" => ZenWeaverOptions(),
             "POTION_COURIER" => [new("GRAB_POTIONS"), new("RANSACK")],
@@ -135,9 +136,8 @@ internal sealed partial class PredictorRun
             "FIELD_OF_MAN_SIZED_HOLES" => [new("RESIST"), new("ENTER_YOUR_HOLE")],
             "ROUND_TEA_PARTY" => [new("ENJOY_TEA"), new("PICK_FIGHT")],
             "ABYSSAL_BATHS" => [new("IMMERSE", HealthDamage: 1), new("ABSTAIN")],
-            "DROWNING_BEACON" => [new("BOTTLE"), new("CLIMB", MaxHpCost: 13)],
-            "TABLET_OF_TRUTH" => [new("DECIPHER", MaxHpCost: 3,
-                WillKill: _eventHealth?.MaxHp <= 3), new("SMASH")],
+            "DROWNING_BEACON" => [new("BOTTLE"), FixedEventHealthOption("CLIMB")],
+            "TABLET_OF_TRUTH" => [TabletDecipherOption(), new("SMASH")],
             "LUMINOUS_CHOIR" => LuminousChoirOptions(),
             "LOST_WISP" => LostWispOptions(),
             "AMALGAMATOR" => [new("COMBINE_STRIKES"), new("COMBINE_DEFENDS")],
@@ -159,21 +159,18 @@ internal sealed partial class PredictorRun
             "GRAVE_OF_THE_FORGOTTEN" =>
                 [new("CONFRONT", GraveSoulCandidates().Length > 0), new("ACCEPT")],
             "ROOM_FULL_OF_CHEESE" =>
-                [new("GORGE"), new("SEARCH", HealthDamage: 14)],
-            "WATERLOGGED_SCRIPTORIUM" =>
-                [new("BLOODY_INK", HealthHeal: 6),
-                 new("TENTACLE_QUILL", Working.GoldBudget >= 55, GoldCost: 55),
-                 new("PRICKLY_SPONGE", Working.GoldBudget >= 99, GoldCost: 99)],
+                [new("GORGE"), FixedEventHealthOption("SEARCH")],
+            "WATERLOGGED_SCRIPTORIUM" => ScriptoriumOptions(),
             "THE_LEGENDS_WERE_TRUE" =>
-                [new("NAB_THE_MAP"), new("SLOWLY_FIND_AN_EXIT", HealthDamage: 8)],
+                [new("NAB_THE_MAP"), FixedEventHealthOption("SLOWLY_FIND_AN_EXIT")],
             "BRAIN_LEECH" =>
-                [new("SHARE_KNOWLEDGE"), new("RIP", HealthDamage: 5)],
+                [new("SHARE_KNOWLEDGE"), FixedEventHealthOption("RIP")],
             "HUNGRY_FOR_MUSHROOMS" => [new("BIG_MUSHROOM"), new("FRAGRANT_MUSHROOM", HealthDamage: 15)],
-            "BYRDONIS_NEST" => [new("EAT", HealthHeal: 7), new("TAKE")],
+            "BYRDONIS_NEST" => [FixedEventHealthOption("EAT"), new("TAKE")],
             "DOLL_ROOM" =>
-                [new("RANDOM"), new("TAKE_SOME_TIME", HealthDamage: 5), new("EXAMINE", HealthDamage: 15)],
+                [new("RANDOM"), FixedEventHealthOption("TAKE_SOME_TIME"), FixedEventHealthOption("EXAMINE")],
             "INFESTED_AUTOMATON" => [new("STUDY"), new("TOUCH_CORE")],
-            "SPIRIT_GRAFTER" => [new("LET_IT_IN", HealthHeal: 25), new("REJECTION", HealthDamage: 10)],
+            "SPIRIT_GRAFTER" => [FixedEventHealthOption("LET_IT_IN"), FixedEventHealthOption("REJECTION")],
             "ENDLESS_CONVEYOR" => BeginConveyorOptions(),
             "JUNGLE_MAZE_ADVENTURE" => JungleMazeOptions(),
             "WELCOME_TO_WONGOS" => WongoOptions(),
@@ -250,26 +247,13 @@ internal sealed partial class PredictorRun
             var option = EventOptions.FirstOrDefault(o => o.Key == choice.OptionKey);
             if (option == null || !option.Enabled)
                 return PredictorInputResult.Invalid;
-            if (_eventHealth == null && !_preview.Event.ProjectHealthIndependently && ((_eventKey!.Value.Entry, choice.OptionKey) is ("MORPHIC_GROVE", "LONER") or
-                ("WHISPERING_HOLLOW", "HUG") or ("TRASH_HEAP", "DIVE_IN") or
-                ("TRIAL", "NOBLE_GUILTY") or ("THIS_OR_THAT", "PLAIN") or
-                ("UNREST_SITE", "REST") or ("UNREST_SITE", "KILL") or
-                ("SAPPHIRE_SEED", "EAT") or ("SLIPPERY_BRIDGE", "HOLD_ON") or
-                ("STONE_OF_ALL_TIME", "LIFT") or ("STONE_OF_ALL_TIME", "PUSH") or
-                ("SUNKEN_STATUE", "DIVE_INTO_WATER") or ("ROUND_TEA_PARTY", "ENJOY_TEA") or
-                ("ROUND_TEA_PARTY", "CONTINUE_FIGHT") or ("ABYSSAL_BATHS", "IMMERSE") or
-                ("ABYSSAL_BATHS", "LINGER") or ("ABYSSAL_BATHS", "ABSTAIN") or
-                ("DROWNING_BEACON", "CLIMB") or ("TABLET_OF_TRUTH", "DECIPHER") or
-                ("TABLET_OF_TRUTH", "SMASH") or ("COLOSSAL_FLOWER", "REACH_DEEPER") or
-                ("COLOSSAL_FLOWER", "POLLINOUS_CORE") or
-                ("DENSE_VEGETATION", "TRUDGE_ON") or ("DENSE_VEGETATION", "REST") or
-                ("SPIRALING_WHIRLPOOL", "DRINK") or ("ROOM_FULL_OF_CHEESE", "SEARCH") or
-                ("WATERLOGGED_SCRIPTORIUM", "BLOODY_INK") or
-                ("THE_LEGENDS_WERE_TRUE", "SLOWLY_FIND_AN_EXIT") or ("BRAIN_LEECH", "RIP") or
-                ("BYRDONIS_NEST", "EAT") or
-                ("DOLL_ROOM", "TAKE_SOME_TIME") or ("DOLL_ROOM", "EXAMINE") or
-                ("SPIRIT_GRAFTER", "LET_IT_IN") or ("SPIRIT_GRAFTER", "REJECTION") or
-                ("JUNGLE_MAZE_ADVENTURE", "SOLO_QUEST")))
+            if (_eventHealth == null && !_preview.Event.ProjectHealthIndependently &&
+                (Beta111EventOptionRules.RequiresHealthFact(_eventKey!.Value.Entry, choice.OptionKey) ||
+                (_eventKey.Value.Entry, choice.OptionKey) is
+                ("SLIPPERY_BRIDGE", "HOLD_ON") or ("ROUND_TEA_PARTY", "ENJOY_TEA") or
+                ("ABYSSAL_BATHS", "IMMERSE") or ("ABYSSAL_BATHS", "LINGER") or ("ABYSSAL_BATHS", "ABSTAIN") or
+                ("COLOSSAL_FLOWER", "REACH_DEEPER") or ("COLOSSAL_FLOWER", "POLLINOUS_CORE") or
+                ("DENSE_VEGETATION", "REST") or ("SPIRALING_WHIRLPOOL", "DRINK")))
             {
                 _pendingHealthOption = choice.OptionKey;
                 _pendingHealthOptions = EventOptions;
@@ -318,10 +302,48 @@ internal sealed partial class PredictorRun
         return TrySubmitEventCardSelection(input, token);
     }
 
-    private void SpendEventGold(int amount)
+    private PredictorEventOption FixedEventHealthOption(string key)
+    {
+        var effect = Beta111EventOptionRules.FixedHealth(_eventKey!.Value.Entry, key)
+            ?? throw new InvalidOperationException("PredictorFixedEventHealthRuleMissing:" + _eventKey + ":" + key);
+        return new(key, HealthDamage: effect.HpDelta < 0 ? -effect.HpDelta : null,
+            MaxHpCost: effect.MaxHpDelta < 0 ? -effect.MaxHpDelta : null,
+            HealthHeal: effect.HpDelta > 0 ? effect.HpDelta : null);
+    }
+
+    private void ApplyFixedEventHealth(string key) => ApplyEventHealth(
+        Beta111EventOptionRules.FixedHealth(_eventKey!.Value.Entry, key)
+            ?? throw new InvalidOperationException("PredictorFixedEventHealthRuleMissing:" + _eventKey + ":" + key));
+
+    private ModelKey FixedEventRelicProduct(string key) => Beta111EventOptionRules.FixedRelicProduct(_eventKey!.Value.Entry, key)
+        ?? throw new InvalidOperationException("PredictorFixedEventRelicRuleMissing:" + _eventKey + ":" + key);
+
+    private ModelKey FixedEventCardProduct(string key) => Beta111EventOptionRules.FixedCardProduct(_eventKey!.Value.Entry, key)
+        ?? throw new InvalidOperationException("PredictorFixedEventCardRuleMissing:" + _eventKey + ":" + key);
+
+    private ModelKey EventCardProductAfterSelection(string key) => Beta111EventOptionRules.CardProductAfterSelection(_eventKey!.Value.Entry, key)
+        ?? throw new InvalidOperationException("PredictorPostSelectionEventCardRuleMissing:" + _eventKey + ":" + key);
+
+    private EventGoldCost PendingZenWeaverCost()
+    {
+        var cost = Beta111EventOptionRules.ZenWeaver(_eventBranch!).Cost;
+        // An already-open native picker owns its observed payment amount. New
+        // choices store the shared rule amount when they open this transaction.
+        return Context.Operation != null ? cost with { Amount = _eventGoldAmount } : cost;
+    }
+
+    private void ApplyEventHealth(EventHealthEffect effect)
+    {
+        if (effect.FullHeal) ApplyEventFullHeal();
+        else ApplyEventHealth(effect.HpDelta, effect.MaxHpDelta);
+    }
+
+    private void SpendEventGold(int amount) => SpendEventGold(new EventGoldCost(amount));
+
+    private void SpendEventGold(EventGoldCost cost)
     {
         int before = Working.GoldBudget;
-        Working = Working with { GoldBudget = Math.Max(0, before - amount) };
+        Working = Working with { GoldBudget = cost.BalanceAfterPayment(before) };
         Accept(new("EventGoldSpent", 0, [], before, Working.GoldBudget));
     }
 

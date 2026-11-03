@@ -17,16 +17,16 @@ internal sealed partial class AnalysisPage
 
     private void OnMapRequested(int act, Control opener)
     {
-        if (LastRequest is null || LastDocument is null || _viewModel is null || _uiText is null) return;
+        if (LastRequest is null || LastFacts is null || _viewModel is null || _uiText is null) return;
         _mapWitnessRequest = null;
         _workbenchRoot!.Hide();
-        _mapWorkspace.Open(act, LastDocument.CanonicalSeed, _uiText, opener);
+        _mapWorkspace.Open(act, LastFacts.CanonicalSeed, _uiText, opener);
     }
 
     private async void LoadMapAct(int act)
     {
         CancelMapLoad();
-        if (LastRequest is null || LastDocument is null || _viewModel is null || _uiText is null) return;
+        if (LastRequest is null || LastFacts is null || _viewModel is null || _uiText is null) return;
         var request = LastRequest;
         if (ReferenceEquals(_mapWitnessRequest, request))
         {
@@ -68,7 +68,7 @@ internal sealed partial class AnalysisPage
         using var cancel = new CancellationTokenSource();
         _mapLoad = cancel;
         _mapWorkspace.SetStatus(_uiText!.Get("ui1.map.loading"));
-        string seed = LastDocument!.CanonicalSeed;
+        string seed = LastFacts!.CanonicalSeed;
         try
         {
             var map = await Task.Run(() => MapRouteWitnessProjection.CreateMap(seed, act, request.Ascension, request.PlayersCount, cancel.Token), cancel.Token);

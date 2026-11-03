@@ -639,6 +639,15 @@ internal sealed partial class PredictorRun
 
     private void CompleteNode()
     {
+        // Automatic Opening completion can occur inside room entry, before
+        // its hooks and Terminal's required fact. Keep the real entry cut and
+        // its replay alive until the whole node can actually be committed.
+        if (_routeEntryInProgress)
+        {
+            _routeEntryCompletionPending = true;
+            Phase = PredictorPhase.Complete;
+            return;
+        }
         if (Context.Operation != null && CurrentAncient?.Entry == "NEOW")
             Working = Working with { OpeningCompleted = true };
         ResetCombatWorkflow();

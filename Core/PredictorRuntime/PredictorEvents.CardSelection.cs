@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Effects.Snapshots;
+using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Rng;
 
@@ -39,31 +40,31 @@ internal sealed partial class PredictorRun
         {
             RemoveEventCards(selection.CardIds);
             Accept(new("ZenWeaverRemove", 0, selection.CardIds, null, null));
-            SpendEventGold(_eventGoldAmount);
+            SpendEventGold(PendingZenWeaverCost());
         }
         else if (_eventBranch == "BATHE")
         {
             RemoveEventCards(selection.CardIds);
             Accept(new("WellspringRemove", 0, selection.CardIds, null, null));
-            AddTrialCurse("GUILTY");
+            AddTrialCurse(EventCardProductAfterSelection(_eventBranch!).Entry);
         }
         else if (_eventBranch == "RESIST")
         {
             RemoveEventCards(selection.CardIds);
             Accept(new("HolesRemove", 0, selection.CardIds, null, null));
-            AddTrialCurse("NORMALITY");
+            AddTrialCurse(EventCardProductAfterSelection(_eventBranch!).Entry);
         }
         else if (_eventBranch == "REACH_INTO_THE_FLESH")
         {
             RemoveEventCards(selection.CardIds);
             Accept(new("ChoirRemove", 0, selection.CardIds, null, null));
-            AddTrialCurse("SPORE_MIND");
+            AddTrialCurse(EventCardProductAfterSelection(_eventBranch!).Entry);
         }
         else if (_eventBranch is "COMBINE_STRIKES" or "COMBINE_DEFENDS")
         {
             RemoveEventCards(selection.CardIds);
             Accept(new("AmalgamatorRemove", 0, selection.CardIds, null, null));
-            AddAmalgamatedCard(_eventBranch == "COMBINE_STRIKES");
+            AddAmalgamatedCard();
         }
         else if (_eventKey?.Entry == "WOOD_CARVINGS" && _eventBranch is ("BIRD" or "TORUS"))
         {
@@ -109,9 +110,10 @@ internal sealed partial class PredictorRun
         }
         else if (_eventKey?.Entry == "WATERLOGGED_SCRIPTORIUM")
         {
+            var choice = Beta111EventOptionRules.Scriptorium(_eventBranch!);
             foreach (long id in selection.CardIds)
                 Working = Working.WithCard(PredictorCardLevelEffects.Reconcile(Context, Working.Card(id) with
-                    { Enchantment = new("ENCHANTMENT", "STEADY"), EnchantmentAmount = 1 }));
+                    { Enchantment = choice.Enchantment, EnchantmentAmount = choice.Amount }));
             Accept(new("ScriptoriumSteadyEnchant", 0, selection.CardIds, null, null));
         }
         else if (_eventKey?.Entry == "ENDLESS_CONVEYOR" && _conveyorDish == "JELLY_LIVER")
@@ -168,8 +170,9 @@ internal sealed partial class PredictorRun
             _preview.EventTrace?.TransformWrite(this, traceReads);
             Accept(new("EventTransform", 0, selection.CardIds, null, null) { Transformations = transformed.Changes });
         }
-        if (_eventKey!.Value.Entry == "WHISPERING_HOLLOW") ApplyEventHealth(-9, 0);
-        if (_eventKey.Value.Entry == "SPIRIT_GRAFTER" && _eventBranch == "REJECTION") ApplyEventHealth(-10, 0);
+        if (_eventKey!.Value.Entry == "WHISPERING_HOLLOW") ApplyFixedEventHealth(_eventBranch!);
+        if (Phase == PredictorPhase.Complete) return PredictorInputResult.Accepted;
+        if (_eventKey.Value.Entry == "SPIRIT_GRAFTER" && _eventBranch == "REJECTION") ApplyFixedEventHealth(_eventBranch);
         if (Phase != PredictorPhase.Complete) FinishEvent();
         return PredictorInputResult.Accepted;
     }

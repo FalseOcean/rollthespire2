@@ -18,7 +18,7 @@ internal sealed class RswPrivateGpuExecutor : IDisposable
     private bool _disposed;
     internal string Device { get; }
     internal double SetupMs { get; }
-    internal RswPrivateGpuExecutor(RenderingDevice rd, ExactSearchExecutionRequest request, RelicFamilyPlan r,
+    internal RswPrivateGpuExecutor(RenderingDevice rd, string identity, MerchantShopColorlessGpuPreparation shops, RelicFamilyPlan r,
         WorldFamilyGpuPlan w, string order, bool verify)
     {
         if (order is not ("RSW" or "RWS" or "SRW" or "SWR" or "WRS" or "WSR")) throw new ArgumentException("RSW.Order");
@@ -33,16 +33,16 @@ internal sealed class RswPrivateGpuExecutor : IDisposable
                 var output = i == 2 ? null : _ordinals[i];
                 switch (order[i])
                 {
-                    case 'R': _r = RelicFamilyGpuExecutor.Create(rd, request, r, input, output); break;
-                    case 'S': _s = MerchantShopColorlessGpuExecutor.Create(rd, request, MerchantShopColorlessCompactionPath.AtomicAppendHostSort, input, output); break;
+                    case 'R': _r = RelicFamilyGpuExecutor.Create(rd, identity, r, input, output); break;
+                    case 'S': _s = MerchantShopColorlessGpuExecutor.Create(rd, shops, MerchantShopColorlessCompactionPath.AtomicAppendHostSort, input, output); break;
                     case 'W': _w = new(rd, w, input?.Buffer, output); break;
                 }
             }
             SetupMs = timer.Elapsed.TotalMilliseconds; Device = rd.GetDeviceName();
             if (verify)
             {
-                _referenceR = RelicFamilyGpuExecutor.Create(rd, request, r);
-                _referenceS = MerchantShopColorlessGpuExecutor.Create(rd, request, MerchantShopColorlessCompactionPath.AtomicAppendHostSort);
+                _referenceR = RelicFamilyGpuExecutor.Create(rd, identity, r);
+                _referenceS = MerchantShopColorlessGpuExecutor.Create(rd, shops, MerchantShopColorlessCompactionPath.AtomicAppendHostSort);
                 _referenceW = new(rd, w);
             }
         }

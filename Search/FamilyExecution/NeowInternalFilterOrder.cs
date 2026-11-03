@@ -47,6 +47,7 @@ internal static class NeowInternalFilterOrder
     {
         ArgumentNullException.ThrowIfNull(plan);
         NeowInternalFilterOrderPlan Fallback(string reason) => new(false, [], true, reason);
+        if(plan.CapsuleNicheMetaOffset>=0) return Fallback("CapsuleNicheAlternativesRequireSameRoute");
         uint[] meta = plan.Meta;
         if (meta.Length < 85) return Fallback("MetadataTooShort");
         if (meta[5] != 0 || meta[6] != 1) return Fallback("SingleplayerOnly");

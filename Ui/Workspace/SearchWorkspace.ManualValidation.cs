@@ -86,11 +86,11 @@ internal sealed partial class SearchWorkspace
 
     internal (PersistedSearchResult Original, SearchContinuationSnapshot? Continuation, SearchStartContext Start, SearchResultAction Action)
         PrepareManualValidation(QueryHistoryEntry history, PersistedSearchResult original,
-        ExactSearchExecutionRequest plan, SearchResultAction? action)
+        PreparedSearch plan, SearchResultAction? action)
     {
         if (Runtime.HasSearchInFlight) throw new InvalidOperationException("ManualValidationAlreadyRunning");
         if (Runtime.HasManualCandidateDelivery(history.Id, original.Seed)) throw new InvalidOperationException("ManualValidationAwaitingDelivery");
-        if (!ProvesManualValidationSource(history, original, plan.CompiledSearch, plan.CombatRewardRoutePolicy))
+        if (!ProvesManualValidationSource(history, original, plan.Model.CompiledSearch, plan.Model.CombatRewardRoutePolicy))
             throw new InvalidOperationException("ManualValidationOriginalAuthorityMismatch");
         if (!TryManualValidationSource(original.Seed, out var selected, out _, out var sourceIssue, history.Id) || selected.Id != history.Id)
             throw new InvalidOperationException(sourceIssue.Length > 0 ? sourceIssue : "ManualValidationOriginalHistoryMismatch");
@@ -135,13 +135,13 @@ internal sealed partial class SearchWorkspace
         // older pending obligation retains its own identity until this check is
         // received under the same query, environment and authority.
         var origin = operation.SourceContinuation;
-        string originSemantic = origin?.SemanticFingerprint ?? plan.CompiledSearch.SemanticFingerprint;
+        string originSemantic = origin?.SemanticFingerprint ?? plan.Model.CompiledSearch.SemanticFingerprint;
         string originSnapshot = origin?.SnapshotFingerprint ?? plan.SnapshotFingerprint;
-        if (!VisibleSeedCandidateCodec.TryParseOrdinal(RuntimeProfileRegistry.Select(plan.Detection), original.Seed,
+        if (!VisibleSeedCandidateCodec.TryParseOrdinal(RuntimeProfileRegistry.Select(plan.Model.Detection), original.Seed,
             out var originalOrdinal, out _, out var seedIssue)) throw new InvalidOperationException("ManualValidationSeedIdentity:" + seedIssue);
         var continuation = history.ManualValidationCandidates.FirstOrDefault(recovery => recovery.Original.Seed == original.Seed &&
             recovery.Continuation.SemanticFingerprint == originSemantic && recovery.Continuation.SnapshotFingerprint == originSnapshot)?.Continuation
-            ?? origin ?? new(plan.CompiledSearch.SemanticFingerprint, plan.SnapshotFingerprint, originalOrdinal, [], [])
+            ?? origin ?? new(plan.Model.CompiledSearch.SemanticFingerprint, plan.SnapshotFingerprint, originalOrdinal, [], [])
                 { ContinuationFingerprint = SearchContinuationIdentity.For(plan) };
         ProductionExactSearchResult exact;
         try
@@ -151,11 +151,11 @@ internal sealed partial class SearchWorkspace
         }
         catch (Exception exception)
         {
-            if (!VisibleSeedCandidateCodec.TryParseOrdinal(RuntimeProfileRegistry.Select(plan.Detection), original.Seed,
+            if (!VisibleSeedCandidateCodec.TryParseOrdinal(RuntimeProfileRegistry.Select(plan.Model.Detection), original.Seed,
                 out var ordinal, out _, out var issue))
                 throw new InvalidOperationException("ManualValidationSeedIdentity:" + issue, exception);
             var previous = continuation.PendingCandidates.FirstOrDefault(candidate => candidate.Ordinal == ordinal);
-            string detail = $"attemptQuery={plan.CompiledSearch.SemanticFingerprint}; attemptSnapshot={plan.SnapshotFingerprint}; " +
+            string detail = $"attemptQuery={plan.Model.CompiledSearch.SemanticFingerprint}; attemptSnapshot={plan.SnapshotFingerprint}; " +
                 $"attemptContinuation={SearchContinuationIdentity.For(plan)}; " +
                 $"originQuery={originSemantic}; originSnapshot={originSnapshot}\n" + exception;
             if (previous is not null) detail = previous.ExceptionText + "\n\n" + detail;
@@ -181,9 +181,11 @@ internal sealed partial class SearchWorkspace
 
         var updated = FreezeResult(original);
         updated.ValidationDisposition = exact.Evaluation.Disposition;
-        updated.QueryFingerprint = plan.CompiledSearch.SemanticFingerprint;
-        updated.ValidationIssue = exact.Evaluation.FailureCode + string.Concat(exact.Evaluation.RouteRejections.Select(rejection =>
+        updated.QueryFingerprint = plan.Model.CompiledSearch.SemanticFingerprint;
+        updated.ValidationIssue = (string.IsNullOrWhiteSpace(exact.Evaluation.FailureCode) ? exact.FailureCode : exact.Evaluation.FailureCode) + string.Concat(exact.Evaluation.RouteRejections.Select(rejection =>
             $"\nroute={rejection.RouteId};disposition={rejection.Disposition};reason={rejection.Reason}"));
+        foreach (var scope in exact.Evaluation.Evidence.Where(evidence => evidence.Code == "Party.ChildEvaluationScope").Take(4))
+            updated.ValidationIssue += $"\nsource=P{scope.Ordinal};character={scope.RelatedKey}";
         updated.IsUnverified = !exact.IsMatch;
         updated.IsUnfiltered = false;
         updated.SupportScope = exact.Authority.SupportScope;
@@ -194,17 +196,19 @@ internal sealed partial class SearchWorkspace
         updated.SourceAssociation = new(history.QueryKey, exact.IsMatch && history.EnvironmentKnown && history.IdentityVersion == 2
             ? SeedQueryAssociationKind.VerifiedFromSearch : SeedQueryAssociationKind.UnverifiedFromSearch,
             history.EnvironmentFingerprint, history.Id);
+        var candidate = new SearchCandidate(original.Seed, plan.Model.ProfileId, plan.Model.CharacterKey, plan.Model.Ascension,
+            exact.IsMatch ? string.Join("|", new[] { plan.SnapshotFingerprint, exact.Authority.EffectSnapshotFingerprint,
+                exact.Authority.WorldSnapshotFingerprint }.Where(value => !string.IsNullOrWhiteSpace(value))) : plan.SnapshotFingerprint,
+            exact.Authority, exact.Evaluation)
+        {
+            Facts = exact.Facts, ValidationIssue = exact.IsMatch ? "" : updated.ValidationIssue,
+            ExecutionWarnings = original.ExecutionWarnings, MapSearch = original.MapSearch
+        };
+        operation.Candidate = candidate;
+        updated.Party = candidate.Party;
         if (exact.IsMatch)
         {
-            var candidate = new SearchCandidate(original.Seed, plan.ProfileId, plan.CharacterKey, plan.Ascension,
-                string.Join("|", new[] { plan.SnapshotFingerprint, exact.Authority.EffectSnapshotFingerprint,
-                    exact.Authority.WorldSnapshotFingerprint }.Where(value => !string.IsNullOrWhiteSpace(value))),
-                exact.Request!, exact.Document!, exact.Authority, exact.Evaluation.Evidence,
-                exact.Evaluation.MatchedRouteIds, exact.Evaluation.Witnesses)
-                { ValidationDisposition = SearchDisposition.Match, ExecutionWarnings = original.ExecutionWarnings, MapSearch = original.MapSearch };
-            operation.Candidate = candidate;
             updated.ValidationIssue = "";
-            updated.Party = exact.Document!.Party;
             var projection = SearchResultProjection.FromCandidate(candidate, updated.QueryFingerprint);
             updated.WitnessOpeningRouteId = projection.WitnessOpeningRouteId;
             updated.MapRouteWitnesses = projection.MapRouteWitnesses;
@@ -231,7 +235,7 @@ internal sealed partial class SearchWorkspace
         ReceiveManualObservation(history, updated);
         if (_processBatches.TryGetValue(history.Id, out var batch))
         {
-            if (operation.Candidate is { } candidate) RecordLiveResult(candidate, batch, operation.Start);
+            if (operation.Candidate is { } liveCandidate) RecordLiveResult(liveCandidate, batch, operation.Start);
             else batch.LiveResults.Remove(updated.Seed);
         }
         operation.ObservationReceived = true;

@@ -229,25 +229,26 @@ internal static class MapFullIntegrationChecks
             int threshold = signatures.Min(s => StandardMapFamily.Value(s, metric)) + 1;
             var compiled = SearchCompiler.Compile(SearchQuery.Empty with
                 { StandardMaps = [new(act, metric, StandardMapComparison.AtLeast, threshold)] }, context);
-            var admission = ExactSearchExecutionRequestFactory.Compile(compiled, new(Seed(batch.BatchBase), batch.BatchCandidateCount, 1, 1));
+            var admission = SearchPreparationCompiler.Compile(compiled, new(Seed(batch.BatchBase), batch.BatchCandidateCount, 1, 1));
             var request = admission.Plan ?? throw new Exception("map-only fixture admission: " + admission.Issue);
-            var family = new StandardMapFamily(request);
-            var execution = new FamilyExecutionContext(requiresGpu: false);
+            var execution = new FilterRuntimeServices(requiresGpu: false);
+            var body = StandardMapFamily.Prepare(request.Model, FilterExecutionPreferences.From(request.RunOptions));
+            var family = (StandardMapExecution)body.CreateExecution!(body, execution);
             try
             {
                 var truth = signatures.Select(s => StandardMapFamily.Value(s, metric) >= threshold).ToArray();
                 for (int i = 0; i < truth.Length; i++)
                 {
                     string seed = Seed(batch.GlobalCandidate((ulong)i));
-                    Check((StandardMapExactEvaluator.Evaluate(request, seed).Disposition == SearchDisposition.Match) == truth[i], "independent StandardMapExactEvaluator parity");
-                    Check(ProductionExactSearchEvaluator.Evaluate(request,
+                    Check((StandardMapExactEvaluator.Evaluate(request.Model, seed).Disposition == SearchDisposition.Match) == truth[i], "independent StandardMapExactEvaluator parity");
+                    Check(ProductionExactSearchEvaluator.Evaluate(request.Model,
                         TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed)).IsMatch == truth[i], "whole Production Exact parity");
                 }
                 foreach (bool compact in new[] { false, true })
                 {
                     var input = compact ? FamilyCandidateSet.FromAbi1(batch, [0, 3, 7, 16]) : FamilyCandidateSet.Dense(batch);
                     ulong[] expected = input.EnumerateLogicalOrdinals().Where(i => truth[(int)i]).ToArray();
-                    var actual = family.InvokeAsync(execution, new(batch, request), input, default).GetAwaiter().GetResult();
+                    var actual = family.FilterAsync(execution, input, default).GetAwaiter().GetResult();
                     Check(actual.Batch == batch && actual.ExportAbi1().Span.SequenceEqual(expected), "M dense/compact ordered unrenumbered ABI1 -> Exact");
                     inputs += input.Count;
                 }

@@ -15,7 +15,7 @@ internal static class FamilyWorkEstimateChecks
         var old = SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity();
         var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/owner-nwae-v1/context.json").Context;
         var variantContext = VariantOpeningPreparationChecks.CreateContext();
-        ExactSearchExecutionRequest Request(SearchQuery query, SearchContext? actual = null) => ExactSearchExecutionRequestFactory.Compile(
+        PreparedSearch Request(SearchQuery query, SearchContext? actual = null) => SearchPreparationCompiler.Compile(
             SearchCompiler.Compile(query, actual ?? context), new("000000000000", 65536, 16, 4)).Plan!
             ?? throw new InvalidOperationException("FamilyWorkEstimate.Compile");
         SearchQuery Read(string path) => ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/" + path).Query;
@@ -56,10 +56,10 @@ internal static class FamilyWorkEstimateChecks
                     var quote = family.QuotePhysicalWork(geometry);
                     Check(quote is { NanosecondsPerInput: > 0 } && FamilyCoarsePricing.IsEstimate(quote),
                         c.Id + " compiled " + family.GetType().Name + " has honest device/shape-independent estimate " + compact);
-                    var cpu = FamilyCpuExecution.ConfiguredRealizations(family).OfType<FamilyCpuExecution>().FirstOrDefault();
+                    var cpu = family.CpuAlternatives.FirstOrDefault();
                     if (cpu is not null)
                     {
-                        var cpuQuote = cpu.Quote(geometry, new HashSet<string>());
+                        var cpuQuote = cpu.QuotePhysicalWork(geometry, new HashSet<string>());
                         Check(cpuQuote is { NanosecondsPerInput: > 0 } &&
                             (FamilyCoarsePricing.IsEstimate(cpuQuote) || FamilyCanonicalMeasuredCost.IsCanonicalQuote(cpuQuote)),
                             c.Id + " configured CPU and actual Compact role retain measured priority or honest estimate");
@@ -75,14 +75,14 @@ internal static class FamilyWorkEstimateChecks
             var pool = effects.MerchantColorlessOrderedPool ?? effects.ColorlessRewardPool!;
             var expanded = context with { Authority = context.Authority.WithEffectAuthority(effects with {
                 MerchantColorlessOrderedPool = [..pool, pool[0]], SnapshotFingerprint = effects.SnapshotFingerprint + ":price-expanded-weighted-shop" }) };
-            var expandedRequest = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(
+            var expandedRequest = SearchPreparationCompiler.Compile(SearchCompiler.Compile(
                 cases.Single(c => c.Id == "S.MerchantShopColorless").Query, expanded), new("000000000000", 65536, 16, 4)).Plan!;
             var expandedShop = FamilyExecutionCoordinator.CreateRegisteredFamilies(expandedRequest).Single(f => f.FamilyId == "S.MerchantShopColorless");
             Check(FamilyCoarsePricing.IsEstimate(expandedShop.QuotePhysicalWork(new(false, false, 65536))),
                 "an executable weighted shop-pool expansion does not need another exact pool-layout price");
             var leafy = Read("n-cost-v1/Leafy.json");
             var ordinaryN = FamilyExecutionCoordinator.CreateRegisteredFamilies(Request(leafy)).Single(f => f.FamilyId == "N.Neow");
-            var expandedNRequest = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(leafy, expanded),
+            var expandedNRequest = SearchPreparationCompiler.Compile(SearchCompiler.Compile(leafy, expanded),
                 new("000000000000", 65536, 16, 4)).Plan!;
             var expandedN = FamilyExecutionCoordinator.CreateRegisteredFamilies(expandedNRequest).Single(f => f.FamilyId == "N.Neow");
             Check(ordinaryN.QuotePhysicalWork(new(false, false, 65536))!.NanosecondsPerInput ==
@@ -98,15 +98,17 @@ internal static class FamilyWorkEstimateChecks
                 new PlayerOfferQuery(owner.PlayerSlotIndex, new([], RolltheSpire2.Core.Neow.ModernNeowIdentityPredictor.PredictModernCore(
                     seed, owner, RolltheSpire2.Compatibility.Beta111Profile.Instance, true).RelicKeys, [])) {
                     Conditions = cases.Single(c => c.Id == "S.MerchantShopColorless").Query }).ToArray() };
-            var tableRequest = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(table, party), new(seed, 65536, 16, 4)).Plan!;
+            var tableRequest = SearchPreparationCompiler.Compile(SearchCompiler.Compile(table, party), new(seed, 65536, 16, 4)).Plan!;
             foreach (bool gpu in new[] { false, true })
             {
                 var plan = FamilyExecutionCoordinator.Plan(tableRequest, gpu);
                 foreach (var unit in plan.ExecutionOrderUnits)
                     Check(FamilyCoarsePricing.IsEstimate(unit.QuotePhysicalWork(new(false, false, 65536))),
                         "party same-family wrapper is quoted as an estimate for current CPU/GPU " + unit.FamilyId);
-                Check(plan.ExecutionOrderUnits.Any(unit => unit is NeowFamily.PartyInitial) &&
-                    plan.ExecutionOrderUnits.Any(unit => unit is PartyFamily), "both shared N and personal S are actually present");
+                Check(plan.OrderedFamilies.Any(unit => unit.FamilyId == "N.Neow" && unit.PlayersCount == 2 &&
+                        unit.Preparation.Obligations.All(obligation => obligation.Domain == "N.Neow" && obligation.PlayerSlot.HasValue)) &&
+                    plan.OrderedFamilies.Any(unit => unit.FamilyId == "S.MerchantShopColorless" && unit.PhysicalBodies.Count == 2 &&
+                        unit.Preparation.Obligations.Select(obligation => obligation.PlayerSlot).Order().SequenceEqual(new int?[] { 0, 1 })), "both shared N and personal S are actually present");
             }
             var ratio = FamilyCanonicalMeasuredCost.CpuWorkerRatio("S.MerchantShopColorless", 4, false);
             Check(ratio.Ratio > 0 && double.IsFinite(ratio.Ratio) && ratio.Evidence.Contains("SameFamilyHistoricalMedian", StringComparison.Ordinal),
@@ -114,9 +116,9 @@ internal static class FamilyWorkEstimateChecks
             Check(FamilyCanonicalMeasuredCost.CpuWorkerRatio("S.MerchantShopColorless", 32, false).Ratio ==
                 FamilyCanonicalMeasuredCost.CpuWorkerRatio("S.MerchantShopColorless", 16, false).Ratio,
                 "unmeasured larger budgets do not invent additional linear speedup");
-            var n = (NeowFamily)FamilyExecutionCoordinator.CreateRegisteredFamilies(Request(Read("n-cost-v1/Leafy.json")))
-                .Single(f => f.FamilyId == "N.Neow");
-            Check(NeowWorkEstimate.Describe(n.PricingReplayPlan).PoolVisits == 0,
+            var leafyRequest = Request(Read("n-cost-v1/Leafy.json"));
+            _ = FamilyExecutionCoordinator.CreateRegisteredFamilies(leafyRequest).Single(f => f.FamilyId == "N.Neow");
+            Check(NeowWorkEstimate.Describe(NeowReplayPlan.Compile(leafyRequest.Model, false)).PoolVisits == 0,
                 "direct-index Leafy does not acquire a whole transform-pool traversal cost");
             var source = FamilyCoarsePricing.Gpu("S", "Fixture", 1, 1024, new(false, false, 2048), "fixture")!;
             var full = source with { PublicTransportClass = "CompleteCanonicalAbi1", OutputAlreadyOrdered = true };
@@ -136,14 +138,14 @@ internal static class FamilyWorkEstimateChecks
             var resumeQuery = SearchQuery.Empty with { MerchantColorlessSequenceConditions = [
                 new(3, CombatRewardSequenceOrderMode.Unordered, MerchantColorlessSlot.Uncommon, [merchant.UncommonPool[0], null, null]),
                 new(3, CombatRewardSequenceOrderMode.Unordered, MerchantColorlessSlot.Rare, [merchant.RarePool[0], null, null])] };
-            var resumeRequest = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(resumeQuery, context),
+            var resumeRequest = SearchPreparationCompiler.Compile(SearchCompiler.Compile(resumeQuery, context),
                 new("000000000000", 16384, int.MaxValue, 4)).Plan!;
             async Task<(Dictionary<string, string> Records, SearchContinuationSnapshot? Continuation, ulong Cursor)> Collect(
                 SearchContinuationSnapshot? continuation, bool cancel)
             {
                 // The production caller compiles the saved frontier into the
                 // next request; the continuation owns pending/ACK, not StartSeed.
-                var activeRequest = continuation is null ? resumeRequest : ExactSearchExecutionRequestFactory.Compile(
+                var activeRequest = continuation is null ? resumeRequest : SearchPreparationCompiler.Compile(
                     SearchCompiler.Compile(resumeQuery, context), new(Beta110SeedCodec.FormatOrdinal(continuation.NextOrdinal),
                         16384 - (long)continuation.NextOrdinal, int.MaxValue, 4)).Plan!;
                 var session = FamilyExecutionCoordinator.Start(activeRequest, queueCapacity: 2,

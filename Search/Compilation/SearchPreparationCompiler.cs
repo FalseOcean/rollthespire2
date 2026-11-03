@@ -16,7 +16,7 @@ namespace RolltheSpire2.Search.Compilation;
 /// Production S0 compile boundary. CompiledSearch is projected directly to Exact
 /// evaluation criteria; no Legacy execution DTO, Fast plan, or backend planner is built.
 /// </summary>
-public static class ExactSearchExecutionRequestFactory
+public static class SearchPreparationCompiler
 {
     // Party ForPlayer is also used during per-candidate Exact evaluation. The
     // necessary-condition preparation belongs to the immutable compiled input,
@@ -28,19 +28,18 @@ public static class ExactSearchExecutionRequestFactory
         VariantOpeningPreparations.GetValue(compiled, static source => new Lazy<VariantOpeningPreparation>(
             () => VariantOpeningPreparation.Prepare(source), LazyThreadSafetyMode.ExecutionAndPublication)).Value;
 
-    internal static ExactSearchExecutionRequest ForPlayer(ExactSearchExecutionRequest parent, CompiledSearch player)
+    internal static SearchModel ForPlayer(SearchModel parent, CompiledSearch player)
     {
         var projection = CompiledSearchEvaluationProjector.Project(player);
         // Match the top-level Exact admission: runtime-proven equivalence is valid,
         // while lossy and unsupported projections remain rejected.
         if (projection.Fidelity is ProjectionFidelity.LossyButConservative or ProjectionFidelity.Unsupported)
             throw new InvalidOperationException("Party.PlayerProjection:" + string.Join(",", projection.Diagnostics));
-        return new(player, parent.RunOptions, parent.CanonicalStartSeed, parent.ResolvedScanCount,
-            projection.Evaluation, BuildCombatRewardRoutePolicy(player), player.SemanticFingerprint)
-        { ExactOptions = ShionExactTrialOptions.Off, VariantOpening = PrepareVariantOpening(player) };
+        return new(player, projection.Evaluation, BuildCombatRewardRoutePolicy(player), player.SemanticFingerprint)
+        { IncludeDiagnostics = parent.IncludeDiagnostics, ExactOptions = ShionExactTrialOptions.Off, VariantOpening = PrepareVariantOpening(player) };
     }
 
-    public static ExactSearchExecutionCompileResult Compile(CompiledSearch compiled, SearchRunOptions runOptions)
+    public static SearchPreparationResult Compile(CompiledSearch compiled, SearchRunOptions runOptions)
     {
         ArgumentNullException.ThrowIfNull(compiled);
         ArgumentNullException.ThrowIfNull(runOptions);
@@ -134,13 +133,13 @@ public static class ExactSearchExecutionRequestFactory
         if (runOptions.MapLossy.Enabled)
             fingerprintParts = [..fingerprintParts, "MapLossy:" + runOptions.MapLossy.Identity];
         string fingerprint = Fingerprint(fingerprintParts);
-        var request = new ExactSearchExecutionRequest(
-            compiled, runOptions, canonicalStart, resolvedScanCount, evaluation, rewardPolicy, fingerprint)
-        { ExactOptions = ShionExactTrialOptions.CaptureEnvironment(), VariantOpening = PrepareVariantOpening(compiled) };
-        return ExactSearchExecutionCompileResult.Accepted(PrepareRewardPools(request));
+        var model = PrepareRewardPools(new SearchModel(compiled, evaluation, rewardPolicy, compiled.SemanticFingerprint)
+        { IncludeDiagnostics = runOptions.IncludeDiagnostics, ExactOptions = ShionExactTrialOptions.CaptureEnvironment(),
+            VariantOpening = PrepareVariantOpening(compiled) });
+        return SearchPreparationResult.Accepted(new PreparedSearch(model, runOptions, canonicalStart, resolvedScanCount, fingerprint));
     }
 
-    private static ExactSearchExecutionRequest PrepareRewardPools(ExactSearchExecutionRequest request)
+    private static SearchModel PrepareRewardPools(SearchModel request)
     {
         // Fixed-pool reuse is bounded to solo modern Exact. Party ForPlayer runs
         // per candidate and must not allocate a new preparation on each visit.
@@ -153,7 +152,7 @@ public static class ExactSearchExecutionRequestFactory
         var preparation = new CombatRewardPoolPreparation(mode != "off");
         // Preparation is auxiliary. An invalid source stays on the original
         // predictor path with its existing guard order and original exception.
-        FamilyAuxiliaryEvidence.Read(nameof(ExactSearchExecutionRequestFactory), "PrepareRewardPools", () =>
+        FamilyAuxiliaryEvidence.Read(nameof(SearchPreparationCompiler), "PrepareRewardPools", () =>
         {
             preparation.Prepare(request.ProfileId, request.Authority.EffectAuthority, request.Authority.WorldAuthority);
             return true;
@@ -167,8 +166,8 @@ public static class ExactSearchExecutionRequestFactory
         };
     }
 
-    private static ExactSearchExecutionCompileResult Reject(SearchDisposition disposition, string issue) =>
-        ExactSearchExecutionCompileResult.Rejected(disposition, issue);
+    private static SearchPreparationResult Reject(SearchDisposition disposition, string issue) =>
+        SearchPreparationResult.Rejected(disposition, issue);
 
     private static string? ValidateContext(CompiledSearch compiled)
     {

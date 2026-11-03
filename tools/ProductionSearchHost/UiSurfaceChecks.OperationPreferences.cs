@@ -29,6 +29,26 @@ internal static partial class UiSurfaceChecks
         check(OperationPredictionCatalog.ForSource(new("EVENT", "POTION_COURIER")) == "event:POTION_COURIER" &&
             entries.Count(entry => entry.Id == "event:POTION_COURIER") == 1,
             "one Potion Courier source setting governs its operation stages");
+        check(entries.Count(entry => entry.Id == "extra:reroll-sequence") == 1 &&
+            entries.All(entry => entry.Id != "extra:philosopher-order"),
+            "ordinary and philosopher reroll order share one sequence setting without an obsolete separate catalog row");
+        foreach (var mode in Enum.GetValues<OperationPredictionMode>())
+        foreach (var legacy in new[] { OperationPredictionMode.On, OperationPredictionMode.Off })
+        {
+            var upgraded = JsonSerializer.Deserialize<OperationPredictionPreferences>(JsonSerializer.Serialize(
+                defaults.With("extra:philosopher-order", legacy).With("extra:reroll-sequence", mode)))!.Normalize();
+            check(upgraded.Get("extra:reroll-sequence") == mode && upgraded.Get("reward:reroll") == OperationPredictionMode.Auto,
+                "an old philosopher preference cannot override the existing shared sequence mode or the independent immediate result");
+        }
+        foreach (var mode in Enum.GetValues<OperationPredictionMode>())
+        {
+            var all = defaults.With("event:POTION_COURIER", OperationPredictionMode.On).WithAll(mode);
+            check(entries.All(entry => all.Get(entry.Id) == mode) && all.GetAllMode() == mode,
+                "global " + mode + " writes every concrete source and supplement without inherited defaults");
+        }
+        check(defaults.GetAllMode() == OperationPredictionMode.Auto &&
+            defaults.With("event:POTION_COURIER", OperationPredictionMode.On).GetAllMode() == null,
+            "global aggregate distinguishes mixed leaf modes from uniform Auto");
         foreach (var entry in entries)
         {
             foreach (var mode in new[] { OperationPredictionMode.Off, OperationPredictionMode.On })
@@ -91,6 +111,19 @@ internal static partial class UiSurfaceChecks
                 entry.Category == OperationPredictionCategory.EventOption ? OperationPredictionMode.Off : OperationPredictionMode.Auto)),
             "a persisted group batch remains overridable by one source in another workspace");
         first.SetOperationPredictionMode(OperationPredictionCategory.EventOption, OperationPredictionMode.Auto);
+        first.SetOperationPredictionEnabled(false);
+        foreach (var mode in Enum.GetValues<OperationPredictionMode>())
+        {
+            first.SetAllOperationPredictionModes(mode);
+            second.SyncFeaturePreferences();
+            var reopened = new SearchWorkspace(state, false);
+            check(!second.Preferences.OperationPredictionEnabled && !reopened.Preferences.OperationPredictionEnabled &&
+                entries.All(entry => second.Preferences.OperationPredictionModes.Get(entry.Id) == mode &&
+                    reopened.Preferences.OperationPredictionModes.Get(entry.Id) == mode),
+                "global " + mode + " persists and synchronizes leaves while preserving the disabled master");
+        }
+        first.SetAllOperationPredictionModes(OperationPredictionMode.Auto);
+        first.SetOperationPredictionEnabled(true);
         const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Instance;
         object Field(object value, string name) => value.GetType().GetField(name, flags)!.GetValue(value)!;
         void Call(object value, string name, params object?[] args) => value.GetType().GetMethod(name, flags)!.Invoke(value, args);
@@ -134,6 +167,12 @@ internal static partial class UiSurfaceChecks
                 check(controls.Values.All(control => Enum.GetValues<OperationPredictionMode>().All(mode =>
                     control.GetItemText((int)mode) == text.Get("settings.operation.mode." + mode))),
                     language + " localizes all concrete tri-state selectors");
+                var allStatus = (Label)shell.FindChild("SettingsOperationAllStatus", true, false);
+                check(allStatus.Text == text.Get("settings.operation.mode.Auto") &&
+                    Descendants(panel).OfType<Label>().Any(label => label.Text == text.Get("settings.operation.all")) &&
+                    Enum.GetValues<OperationPredictionMode>().All(mode =>
+                        ((Button)shell.FindChild("SettingsOperationAll" + mode, true, false)).Text == text.Get("settings.operation.mode." + mode)),
+                    language + " global batch controls and aggregate mode are localized");
                 foreach (var category in categories)
                 {
                     var group = (Control)shell.FindChild("SettingsOperationGroup" + category, true, false);
@@ -179,7 +218,26 @@ internal static partial class UiSurfaceChecks
                         entry.Category == OperationPredictionCategory.EventOption ? OperationPredictionMode.Off : OperationPredictionMode.Auto)) &&
                     new SearchWorkspace(state, false).Preferences.OperationPredictionModes.Get("event:POTION_COURIER") == OperationPredictionMode.On,
                     language + " a real source selector overrides and persists its filtered group batch");
+                check(allStatus.Text == text.Get("settings.operation.mode.Mixed"),
+                    language + " an individual override makes the global aggregate visibly mixed");
                 ((Button)shell.FindChild("SettingsOperationBatchEventOptionAuto", true, false)).EmitSignal(BaseButton.SignalName.Pressed);
+                store.SetOperationPredictionEnabled(false); Call(shell, "RefreshSettings", false);
+                foreach (var mode in new[] { OperationPredictionMode.Off, OperationPredictionMode.On, OperationPredictionMode.Auto })
+                {
+                    var global = (Button)shell.FindChild("SettingsOperationAll" + mode, true, false);
+                    global.EmitSignal(BaseButton.SignalName.Pressed);
+                    check(!global.Disabled && !store.Preferences.OperationPredictionEnabled &&
+                        entries.All(entry => store.Preferences.OperationPredictionModes.Get(entry.Id) == mode &&
+                            controls[entry.Id].Selected == (int)mode) && allStatus.Text == text.Get("settings.operation.mode." + mode) &&
+                        search.Text == "event:POTION_COURIER" && rows.Count(pair => pair.Value.Visible) == 1,
+                        language + " filtered global " + mode + " updates all categories while the master stays disabled");
+                }
+                courier.Select((int)OperationPredictionMode.On);
+                courier.EmitSignal(OptionButton.SignalName.ItemSelected, (long)OperationPredictionMode.On);
+                check(allStatus.Text == text.Get("settings.operation.mode.Mixed"),
+                    language + " leaves remain independently editable after a global batch");
+                ((Button)shell.FindChild("SettingsOperationAllAuto", true, false)).EmitSignal(BaseButton.SignalName.Pressed);
+                store.SetOperationPredictionEnabled(true); Call(shell, "RefreshSettings", false);
                 Search(sourceName);
                 check(rows["event:POTION_COURIER"].Visible,
                     language + " search finds a source by its localized game name");
@@ -282,9 +340,17 @@ internal static partial class UiSurfaceChecks
         var known = new RandomForeseerSnapshot(RandomForeseerStatus.Known, "0.13.19", "Loaded");
         check(known.IsLoaded && (known with { Version = "unrecognized-version" }).IsLoaded,
             "confirmed RF loading enables the coexistence assumption independently of its version");
-        foreach (var status in new[] { RandomForeseerStatus.Unknown, RandomForeseerStatus.NotLoaded })
-            check(!(known with { Status = status }).IsLoaded,
-                status + " preserves RT2 base prediction availability");
+        foreach (var status in Enum.GetValues<RandomForeseerStatus>())
+        foreach (string version in new[] { "0.13.20", "0.13.19", "0.8.4", "", "unrecognized-version" })
+        {
+            var rf = known with { Status = status, Version = version };
+            bool loaded = status == RandomForeseerStatus.Known;
+            check(rf.IsLoaded == loaded &&
+                OperationPredictionPolicy.Wants(OperationPredictionMode.Auto, rf.IsLoaded, false) == !loaded &&
+                OperationPredictionPolicy.Wants(OperationPredictionMode.On, rf.IsLoaded, false) &&
+                !OperationPredictionPolicy.Wants(OperationPredictionMode.Off, rf.IsLoaded, false),
+                status + ":" + version + " uses confirmed loading alone for ordinary and philosopher reroll Auto; On restores and Off suppresses");
+        }
 
         check(!OperationPredictionPolicy.Wants(OperationPredictionMode.Off, true, true) &&
             !OperationPredictionPolicy.Wants(OperationPredictionMode.Auto, true, false) &&

@@ -37,7 +37,7 @@ internal static class FamilyCoarsePricing
     internal static bool IsEstimate(FamilyPhysicalQuote? quote) =>
         quote?.Evidence.Contains("PriceQuality=Estimate", StringComparison.Ordinal) == true;
 
-    internal static FamilyPhysicalQuote LocalComputation(IFamilyInvocation family, FamilyPhysicalQuote quote,
+    internal static FamilyPhysicalQuote LocalComputation(FilterBodyDescription family, FamilyPhysicalQuote quote,
         FamilyPhysicalQuoteRequest geometry) => !family.ConditionPerformance.UsesGpu ? quote :
         FamilyAuxiliaryEvidence.Read(family.FamilyId, "LocalComputationReference",
             () => (geometry.CostSnapshot ?? GpuCostCalibration.Capture()).Local(family, quote,

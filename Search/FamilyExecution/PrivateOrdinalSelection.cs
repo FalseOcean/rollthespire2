@@ -13,8 +13,8 @@ internal static class PrivateOrdinalSelection
         ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "SlayTheSpire2", "RolltheSpire2", "private-ordinal-candidate.json");
     internal static bool IsRequested => File.Exists(PathForSelection);
-    internal static bool TrySelect(ExactSearchExecutionRequest request,
-        IReadOnlyList<IFamilyInvocation> registered, FamilyExecutionPlan ordinary,
+    internal static bool TrySelect(PreparedSearch request,
+        IReadOnlyList<FilterBodyDescription> registered, FamilyExecutionPlan ordinary,
         out FamilyExecutionPlan? selected)
     {
         selected = null;
@@ -39,20 +39,15 @@ internal static class PrivateOrdinalSelection
         }
         if (choice.Coverage == "NWAE")
         {
-            bool applicable = registered.Count == 4
-                && registered.OfType<NeowFamily>().SingleOrDefault()?.GpuPlan is not null
-                && registered.OfType<AncientOptionFamily>().SingleOrDefault() is { Plan.GpuSupported: true }
-                && registered.OfType<EventResultFamily>().SingleOrDefault() is { Plan.GpuSupported: true }
-                && registered.OfType<WorldFamily>().SingleOrDefault() is { } world && WorldFamilyGpuPlan.Supports(world.Replay);
+            bool applicable = registered.Count == 4 && registered.All(f => f.UsesGpu && f.CanBindPrivateSerial) &&
+                registered.Select(f => f.FamilyId).ToHashSet().SetEquals(["N.Neow", "A.AncientOption", "E.EventResult", "W.World"]);
             Bootstrap.RuntimeLog.TryBackgroundInfo($"privateOrdinalCandidateRequested=true;coverage=NWAE;mode={choice.Mode};order={choice.Order};applicable={applicable};normalPlan={ordinary.PlanId};pricingChanged=false");
             if (!applicable) return false;
             return NwaePhysicalExperiment.TrySelect(request, registered, ordinary, out selected, choice.Mode + "-" + choice.Order);
         }
-        bool supported = registered.Count == 2 && (choice.Coverage == "EW"
-            ? registered.OfType<EventResultFamily>().SingleOrDefault() is { Plan.GpuSupported: true }
-                && registered.OfType<WorldFamily>().SingleOrDefault() is { } w && WorldFamilyGpuPlan.Supports(w.Replay)
-            : registered.OfType<CombatRewardFamily>().SingleOrDefault()?.GpuPlan is not null
-                && registered.OfType<NeowFamily>().SingleOrDefault()?.GpuPlan is not null);
+        bool supported = registered.Count == 2 && registered.All(f => f.UsesGpu && f.CanBindPrivateSerial) &&
+            registered.Select(f => f.FamilyId).ToHashSet().SetEquals(choice.Coverage == "EW"
+                ? ["E.EventResult", "W.World"] : new[] { "C.CombatReward", "N.Neow" });
         Bootstrap.RuntimeLog.TryBackgroundInfo($"privateOrdinalCandidateRequested=true;coverage={choice.Coverage};mode={choice.Mode};applicable={supported};normalPlan={ordinary.PlanId};pricingChanged=false");
         if (!supported) return false; // Physical non-applicability, before selection.
         string mode = choice.Coverage == "EW"

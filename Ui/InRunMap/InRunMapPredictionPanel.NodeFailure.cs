@@ -36,7 +36,7 @@ internal sealed partial class InRunMapPredictionPanel
     {
         RuntimeLog.WarnException($"inRunRouteNodeInformationFailed=true stage={stage} revision={_prediction.Revision} " +
             $"act={location.ActIndex + 1} point={location.Point} node={nodeId} " +
-            $"seed={_prediction.Snapshot?.Run.Context.Seed}", error);
+            $"seed={_prediction.Snapshot?.Context.Seed}", error);
         _presenter.DiscardNodeProjection(location);
         _nodeInformationFailures.Add(location.Point);
         if (_details.HoverNodeId == nodeId) _details.CloseHover();

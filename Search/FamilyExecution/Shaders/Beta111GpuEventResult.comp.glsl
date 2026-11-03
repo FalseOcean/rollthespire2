@@ -101,6 +101,7 @@ uint64_t root_hash_for_ordinal(uint64_t ordinal) {
 }
 
 bool evaluate_event_results(uint64_t root) {
+#ifndef RT2_E_PREPARED_GROUPS
     uint condition_count = event_plan_buffer.values[0u];
     if (condition_count == 0u) return true;
     uint player_slot = event_plan_buffer.values[2u];
@@ -209,6 +210,122 @@ bool evaluate_event_results(uint64_t root) {
         }
     }
     return true;
+#else
+    uint condition_count = event_plan_buffer.values[0u];
+    if (condition_count == 0u) return true;
+    uint player_slot = event_plan_buffer.values[2u];
+    uint groups = 9u + condition_count * 2u;
+    uint needs = event_plan_buffer.values[groups];
+    uint cheap_count = event_plan_buffer.values[groups + 1u];
+    uint trash_count = event_plan_buffer.values[groups + 2u];
+    uint indices = groups + 3u;
+
+    // Independent scalar groups run before inventory generation. Each condition
+    // still replays its original checkpoint; shared-checkpoint folding is separate.
+    for (uint i = 0u; i < cheap_count; ++i) {
+        uint index = event_plan_buffer.values[indices + i];
+        uint kind = event_plan_buffer.values[9u + index * 2u];
+        uint target = event_plan_buffer.values[10u + index * 2u];
+        rng_initialize(root + uint64_t(player_slot) + make_u64(event_plan_buffer.values[target], event_plan_buffer.values[target + 1u]));
+        uint value = event_plan_buffer.values[target + 2u];
+        if (kind == 7u) { if (next_int(3u) != value) return false; continue; }
+        uint types[3]; for (uint j = 0u; j < 3u; j++) types[j] = j;
+        for (uint j = 2u; j > 0u; j--) { uint k = next_int(j + 1u); uint tmp = types[j]; types[j] = types[k]; types[k] = tmp; }
+        if (types[0] != value / 4u && types[1] != value / 4u) return false;
+        if (value % 4u != 0u) {
+            uint riders[3]; for (uint j = 0u; j < 3u; j++) riders[j] = j;
+            for (uint j = 2u; j > 0u; j--) { uint k = next_int(j + 1u); uint tmp = riders[j]; riders[j] = riders[k]; riders[k] = tmp; }
+            if (riders[0] != value % 4u - 1u && riders[1] != value % 4u - 1u) return false;
+        }
+    }
+
+    int grab = -1;
+    int dive = -1;
+    if ((needs & 3u) != 0u) {
+        uint64_t trash_hash = make_u64(event_plan_buffer.values[3u], event_plan_buffer.values[4u]);
+        rng_initialize(root + uint64_t(player_slot) + trash_hash);
+        uint grab_index = next_int(10u);
+        grab = int(grab_index);
+        dive = int(grab_index / 2u);
+    }
+    for (uint i = cheap_count; i < cheap_count + trash_count; ++i) {
+        uint index = event_plan_buffer.values[indices + i];
+        uint kind = event_plan_buffer.values[9u + index * 2u];
+        uint target = event_plan_buffer.values[10u + index * 2u];
+        if (target == INVALID_ID || (kind == 0u ? uint(grab) : uint(dive)) != target) return false;
+    }
+
+    uint fake_order[9];
+    uint colorful_order[5];
+    uint colorful_count = event_plan_buffer.values[1u];
+    if ((needs & 4u) != 0u) {
+        for (uint index = 0u; index < 9u; ++index) fake_order[index] = index;
+        uint64_t fake_hash = make_u64(event_plan_buffer.values[5u], event_plan_buffer.values[6u]);
+        rng_initialize(root + fake_hash);
+        for (uint count = 9u; count > 1u; --count) {
+            uint selected = next_int(count);
+            uint tail = count - 1u;
+            uint temporary = fake_order[selected];
+            fake_order[selected] = fake_order[tail];
+            fake_order[tail] = temporary;
+        }
+    }
+    if ((needs & 8u) != 0u) {
+        uint64_t colorful_hash = make_u64(event_plan_buffer.values[7u], event_plan_buffer.values[8u]);
+        rng_initialize(root + uint64_t(player_slot) + colorful_hash);
+        for (uint index = 0u; index < colorful_count; ++index)
+            colorful_order[index] = colorful_pool_buffer.ids[index];
+        uint target_count = min(3u, colorful_count);
+        while (colorful_count > target_count) {
+            uint remove = next_int(colorful_count);
+            for (uint index = remove; index + 1u < colorful_count; ++index)
+                colorful_order[index] = colorful_order[index + 1u];
+            colorful_count--;
+        }
+    }
+    for (uint i = cheap_count + trash_count; i < condition_count; ++i) {
+        uint index = event_plan_buffer.values[indices + i];
+        uint kind = event_plan_buffer.values[9u + index * 2u];
+        uint target = event_plan_buffer.values[10u + index * 2u];
+        if (kind == 4u || kind == 5u || kind == 6u) {
+            uint64_t event_hash = make_u64(event_plan_buffer.values[target], event_plan_buffer.values[target + 1u]);
+            uint count = event_plan_buffer.values[target + 2u];
+            rng_initialize(root + event_hash);
+            uint prefix = event_plan_buffer.values[target + 3u];
+            if (prefix == 1u) next_int(19u);
+            if (prefix == 2u && next_int(3u) != 2u) return false;
+            uint first = next_int(count);
+            if (kind == 6u) { if (event_plan_buffer.values[target + 4u + first] == 0u) return false; continue; }
+            if (kind == 5u) {
+                uint a = event_plan_buffer.values[target + 4u + first];
+                if (a == 0u) return false;
+                uint second = next_int(count);
+                uint b = event_plan_buffer.values[target + 4u + second];
+                if (!(((a & 1u) != 0u && (b & 2u) != 0u) || ((a & 2u) != 0u && (b & 1u) != 0u))) return false;
+                continue;
+            }
+            bool found = event_plan_buffer.values[target + 4u + first] != 0u;
+            if (!found) {
+                uint second = next_int(count);
+                found = event_plan_buffer.values[target + 4u + second] != 0u;
+            }
+            if (!found) return false;
+            continue;
+        }
+        if (target == INVALID_ID) return false;
+        if (kind == 2u) {
+            bool found = false;
+            for (uint probe = 0u; probe < 6u; ++probe) found = found || fake_order[probe] == target;
+            if (!found) return false;
+        }
+        if (kind == 3u) {
+            bool found = false;
+            for (uint probe = 0u; probe < colorful_count; ++probe) found = found || colorful_order[probe] == target;
+            if (!found) return false;
+        }
+    }
+    return true;
+#endif
 }
 
 void append_output(uint64_t ordinal) {

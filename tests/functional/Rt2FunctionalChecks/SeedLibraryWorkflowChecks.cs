@@ -123,26 +123,26 @@ internal static class SeedLibraryWorkflowChecks
         Check(visibleInputRejected && !page.CanFavoriteVisibleSeed, "Invalid visible input cannot favorite the previous valid prediction");
         page.SetSeedText(soloEntry.Seed, commit: true);
         var candidate = new SearchCandidate("000000000000", runtime.Profile.ProfileId, solo.Character, solo.Ascension, "fixture",
-            page.LastRequest!, page.LastDocument!, page.LastRequest!.Authority, [], [],
-            [new("000000000000", "choice.2.fixture-route", [], [], "", null, [])]);
+            page.LastRequest!.Authority, SearchQueryEvaluation.Match(witnesses:
+            [new("000000000000", "choice.2.fixture-route", [], [], "", null, [])])) { Facts = page.LastFacts };
         var witnessed = SeedLibraryContextCapture.WithWitness(soloContext, candidate);
         Check(witnessed.Players[0].Selection is { ChoiceSlot: 2, Route: "fixture-route", Explicit: true },
             "Search result transport extracts one explicit solo choice and route");
-        CheckIncompleteInformationPresentation(page, page.LastRequest!, page.LastDocument!, Check);
+        CheckIncompleteInformationPresentation(page, page.LastRequest!, page.LastFacts!, Check);
         if (soloCaptured.Players[0].Selection is { ChoiceSlot: > 0, Route.Length: > 0 } validSelection)
         {
             var actualWitness = SeedLibraryContextCapture.WithWitness(soloContext, candidate with
-            { Witnesses = [new(candidate.Seed, $"choice.{validSelection.ChoiceSlot}.{validSelection.Route}", [], [], "", null, [])] });
+            { Evaluation = candidate.Evaluation with { Witnesses = [new(candidate.Seed, $"choice.{validSelection.ChoiceSlot}.{validSelection.Route}", [], [], "", null, [])] } });
             var witnessedEntry = store.Save(candidate.Seed, actualWitness, "native witnessed opening");
             controller.OpenSeedLibraryEntry(witnessedEntry);
             Check(store.TryFind(candidate.Seed, controller.CaptureSeedLibraryContext(), out var witnessedFavorite) &&
                 witnessedFavorite.Id == witnessedEntry.Id, "Native witnessed opening finds the existing favorite after reopen");
         }
         else Console.WriteLine("SEED_LIBRARY_WORKFLOW nativeWitnessRoundtrip=unavailable:no-concrete-native-selection");
-        var partyDocument = new SeedPredictionDocument
+        var partyDocument = new SeedPredictionFacts
         {
-            Context = page.LastDocument!.Context, PredictorId = "transport-fixture", OriginalSeed = candidate.Seed, CanonicalSeed = candidate.Seed,
-            Sections = [], Warnings = [], Diagnostics = [], OverallStatus = SeedPredictionOverallStatus.Completed,
+            Context = page.LastFacts!.Context, PredictorId = "transport-fixture", OriginalSeed = candidate.Seed, CanonicalSeed = candidate.Seed,
+            Warnings = [], Diagnostics = [],
             Party = new(candidate.Seed, 0, runtime.Detection.NormalizedVersion, party.Ascension, "transport-fixture", [], [],
                 party.Players.Select(p => new PlayerInitialOffers(p.Slot, p.Character,
                     [BaseGameModelKeys.Relics.CursedPearl, BaseGameModelKeys.Relics.GoldenPearl]) { UnlockSource = p.UnlockSource }).ToArray())
@@ -151,17 +151,17 @@ internal static class SeedLibraryWorkflowChecks
                     { OpeningRouteId = "party-route" }]
             }
         };
-        var partyWitnessed = SeedLibraryContextCapture.WithWitness(searchContext, candidate with { Document = partyDocument });
+        var partyWitnessed = SeedLibraryContextCapture.WithWitness(searchContext, candidate with { Facts = partyDocument });
         Check(partyWitnessed.Players[1].Selection is { ChoiceSlot: 2, Route: "party-route", Explicit: false } &&
             partyWitnessed.Players.Where(p => p.Slot != 1).All(p => p.Selection is null),
             "Automatic witness stays on its slot without declaring a pickup");
         var declaredContext = searchContext with { Players = searchContext.Players.Select(p => p.Slot == 1
             ? p with { OpeningPremise = SearchQuery.Empty with { OpeningRoute = new(BaseGameModelKeys.Relics.GoldenPearl) } } : p).ToArray() };
-        Check(SeedLibraryContextCapture.WithWitness(declaredContext, candidate with { Document = partyDocument }).Players[1].Selection!.Explicit,
+        Check(SeedLibraryContextCapture.WithWitness(declaredContext, candidate with { Facts = partyDocument }).Players[1].Selection!.Explicit,
             "Declared pickup premise retains its explicit witness");
         bool rosterRejected = false;
         try { SeedLibraryContextCapture.WithWitness(searchContext with { Players = searchContext.Players.Select(p => p.Slot == 1
-            ? p with { Character = BaseGameModelKeys.Characters.Necrobinder } : p).ToArray() }, candidate with { Document = partyDocument }); }
+            ? p with { Character = BaseGameModelKeys.Characters.Necrobinder } : p).ToArray() }, candidate with { Facts = partyDocument }); }
         catch (InvalidOperationException) { rosterRejected = true; }
         Check(rosterRejected, "Same-count mismatched roster cannot borrow result witness");
         bool staleRejected = false;
@@ -184,14 +184,14 @@ internal static class SeedLibraryWorkflowChecks
         var draft = new WorkbenchSearchDraft(solo.Character, solo.Ascension, SearchQuery.Empty, solo.AncientPremises);
         var compiled = draft.Compile(runtime, out var authority);
         var context = SeedLibraryContextCapture.ForSearch(draft, runtime);
-        var plan = ExactSearchExecutionRequestFactory.Compile(compiled, new(Seed(0), 1, 1, 1)).Plan
+        var plan = SearchPreparationCompiler.Compile(compiled, new(Seed(0), 1, 1, 1)).Plan
             ?? throw new InvalidOperationException("Manual quota fixture Exact admission failed");
         var store = new SearchWorkspace(directory, false);
         store.EnsureEnvironment(SearchEnvironmentSignatureBuilder.Capture(runtime));
         store.BindPreparedResultWorkspace(store.PrepareResultWorkspace(compiled.SemanticFingerprint, draft, context, skipExactValidation: true));
-        void Add(ulong ordinal) => store.AppendResult(new(Seed(ordinal), plan.ProfileId, plan.CharacterKey, plan.Ascension,
-            plan.SnapshotFingerprint, null!, null, authority, [], [], [])
-            { ValidationDisposition = SearchDisposition.NotEvaluatedByPolicy, ValidationIssue = "quota-original-unchecked" }, compiled.SemanticFingerprint);
+        void Add(ulong ordinal) => store.AppendResult(new(Seed(ordinal), plan.Model.ProfileId, plan.Model.CharacterKey, plan.Model.Ascension,
+            plan.SnapshotFingerprint, authority, new SearchQueryEvaluation(SearchDisposition.NotEvaluatedByPolicy,[],[],[]))
+            { ValidationIssue = "quota-original-unchecked" }, compiled.SemanticFingerprint);
         Add(0);
         check(store.TryManualValidationSource(Seed(0), out var history, out var original, out _), "Quota fixture original source available");
         string historyId = history.Id;
@@ -242,17 +242,16 @@ internal static class SeedLibraryWorkflowChecks
         check(store.TryManualValidationSource(Seed(0), out history, out original, out _, historyId, pending), "Second failure remains recoverable after another restart");
         retryPlan = RolltheSpire2.Ui.Workspace.SearchResultProjection.RebuildSavedValidationPlan(runtime, history, original);
         if (!SeedPredictionRequest.TryCreateFromRootHash(TrustedRootHashInput.FromCanonicalSeed(runtime.Profile, Seed(0)),
-            CharacterIdentity.FromKey(plan.CharacterKey), plan.Ascension, 1, 0, retryPlan.Authority, plan.Evaluation.AncientOptionConditions,
+            CharacterIdentity.FromKey(plan.Model.CharacterKey), plan.Model.Ascension, 1, 0, retryPlan.Model.Authority, plan.Model.Evaluation.AncientOptionConditions,
             SeedPredictionDomainSelection.None, 1, false, out var request, out var requestIssue))
             throw new InvalidOperationException("Manual quota success request: " + requestIssue);
-        var document = new SeedPredictionDocument { Context = SeedPredictionDocument.CreateContext(request!, runtime.Detection.DisplayVersion, plan.ProfileId),
-            PredictorId = "ManualQuotaLifecycleFixture", OriginalSeed = Seed(0), CanonicalSeed = Seed(0), Sections = [], Warnings = [], Diagnostics = [],
-            OverallStatus = SeedPredictionOverallStatus.Completed };
+        var document = new SeedPredictionFacts { Context = PredictionContext.FromRequest(request!, runtime.Detection.DisplayVersion, plan.Model.ProfileId),
+            PredictorId = "ManualQuotaLifecycleFixture", OriginalSeed = Seed(0), CanonicalSeed = Seed(0), Warnings = [], Diagnostics = [] };
         int exactCalls = 0;
         var success = store.Runtime.TrackManualCandidateValidation(history, original, retryPlan, () =>
         {
             Interlocked.Increment(ref exactCalls);
-            return new(request, document, retryPlan.Authority, SearchQueryEvaluation.Match([new("ManualQuotaFixture")], ["quota-fixture"]), "");
+            return new(request, document, retryPlan.Model.Authority, SearchQueryEvaluation.Match([new("ManualQuotaFixture")], ["quota-fixture"]), "");
         });
         success.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
         string workspaceFile = Path.Combine(directory, "RolltheSpire2", "state", "search_workspace.json");
@@ -298,8 +297,8 @@ internal static class SeedLibraryWorkflowChecks
         var neutral = SeedLibraryContextCapture.ForSearch(solo with { Query = SearchQuery.Empty }, runtime);
         controller.OpenPredictionContext(seed, neutral);
         var request = page.LastRequest!;
-        var document = page.LastDocument!;
-        var bones = document.Sections.SelectMany(s => s.NeowChoices).Single(c => c.RelicKey == BaseGameModelKeys.Relics.NeowsBones);
+        var document = page.LastFacts!;
+        var bones = document.Neow!.Choices.Single(c => c.RelicKey == BaseGameModelKeys.Relics.NeowsBones);
         var ordered = bones.BonesOutcome!.OriginalRoutes.Last();
         var query = solo.Query with { OpeningRoute = new(bones.RelicKey), OpeningRouteRelicRequirement =
             new(bones.RelicKey, ordered.AcquisitionOrder, BonesRouteOrderMode.ExactOrder), StructuredOpeningEffects = [] };
@@ -317,7 +316,7 @@ internal static class SeedLibraryWorkflowChecks
                 context.Players[0].OpeningPremise.StandardMaps.Count == 0 && JsonSerializer.Serialize(draft.Query) == originalQuery,
                 "Real ForSearch retains authored solo order without fabricating a selection or changing the original query");
             var candidate = new SearchCandidate(seed, runtime.Profile.ProfileId, solo.Character, solo.Ascension, "origin-fixture",
-                request, null, request.Authority, [], [], []) { ValidationDisposition = disposition,
+                request.Authority, new SearchQueryEvaluation(disposition, [], [], [])) {
                 ValidationIssue = "origin-cause:" + disposition, IsUnfiltered = disposition == SearchDisposition.NotEvaluatedByPolicy };
             var association = new SeedQueryAssociation("original-query", SeedQueryAssociationKind.UnverifiedFromSearch, "original-environment", "record-" + disposition);
             controller.ClearSeedLibraryOverrides();
@@ -325,7 +324,7 @@ internal static class SeedLibraryWorkflowChecks
             page.SetPredictorContext(solo.Character, solo.Ascension, 1, 0, solo.AncientPremises, "", null, "", false);
             page.SetSeedText(seed, commit: true);
             controller.AnalyzeCurrentDraft();
-            var expected = AnalysisPageController.ResolveSearchOpening(page.LastDocument!, query);
+            var expected = AnalysisPageController.ResolveSearchOpening(page.LastFacts!, query);
             check(expected.Available, "Native fixed Bones acquisition order is available");
             AssertOpening(expected.Route, expected.ChoiceSlot, "Direct unverified navigation uses the authored Bones order");
             var captured = controller.CaptureSeedLibraryContext();
@@ -369,7 +368,7 @@ internal static class SeedLibraryWorkflowChecks
             controller.ImportSearchOpening(candidate, missingDraft, missingContext, association);
             page.SetPredictorContext(solo.Character, solo.Ascension, 1, 0, solo.AncientPremises, "", null, "", false);
             page.SetSeedText(seed, commit: true); controller.AnalyzeCurrentDraft();
-            check(!AnalysisPageController.ResolveSearchOpening(page.LastDocument!, missingDraft.Query).Available && OriginRowHidden(),
+            check(!AnalysisPageController.ResolveSearchOpening(page.LastFacts!, missingDraft.Query).Available && OriginRowHidden(),
                 "Missing authored Bones order remains unavailable while its Analysis origin row stays hidden");
             var missingCaptured = controller.CaptureSeedLibraryContext();
             var missingOrigin = controller.CaptureResultOrigin(missingCaptured);
@@ -380,7 +379,7 @@ internal static class SeedLibraryWorkflowChecks
                 "Favorite reopening retains the missing authored requirement without an Analysis origin row");
             controller.OpenSavedSearchResult(new PersistedSearchResult { Seed = seed, Context = missingContext, SourceAssociation = association,
                 ValidationDisposition = disposition, ValidationIssue = candidate.ValidationIssue });
-            check(OriginRowHidden() && !AnalysisPageController.ResolveSearchOpening(page.LastDocument!, missingDraft.Query).Available,
+            check(OriginRowHidden() && !AnalysisPageController.ResolveSearchOpening(page.LastFacts!, missingDraft.Query).Available,
                 "History reopening preserves the unavailable authored opening without showing the removed origin row");
         }
         controller.OpenPredictionContext(seed, neutral);
@@ -390,28 +389,25 @@ internal static class SeedLibraryWorkflowChecks
     }
 
     private static void CheckIncompleteInformationPresentation(AnalysisPage page, SeedPredictionRequest request,
-        SeedPredictionDocument document, Action<bool, string> check)
+        SeedPredictionFacts document, Action<bool, string> check)
     {
-        var unknown = new SeedPredictionDocument { Context = document.Context, PredictorId = document.PredictorId,
-            OriginalSeed = document.OriginalSeed, CanonicalSeed = document.CanonicalSeed, Warnings = document.Warnings,
-            Diagnostics = document.Diagnostics, Party = document.Party, OverallStatus = SeedPredictionOverallStatus.CompletedWithWarnings,
-            Sections = document.Sections.Select(section => section.Kind switch
-            {
-                PredictionSectionKind.NeowIdentity => section with { NeowChoices = [], DomainStatus = Core.World.SeedDomainEvaluationStatus.Unknown, IssueCode = "Party.NeowAuthorityIncomplete" },
-                PredictionSectionKind.BossIdentity => section with { Bosses = [], DomainStatus = Core.World.SeedDomainEvaluationStatus.Unsupported, IssueCode = "Party.BossModelUnsupported" },
-                _ => section
-            }).ToArray() };
+        var unknown = document with
+        {
+            Neow = new([], PredictionPrecision.Unknown, Core.World.SeedDomainEvaluationStatus.Unknown, "Party.NeowAuthorityIncomplete"),
+            World = document.World! with { Bosses = [], BossStatus = Core.World.SeedDomainEvaluationStatus.Unsupported,
+                BossIssueCode = "Party.BossModelUnsupported" }
+        };
         var text = JsonUiTextProvider.CreateUi13("zh");
-        var view = Presentation.Ui1.SeedAnalysisPresentationBuilder.Build(unknown, text, RuntimeGameContentNameResolver.Create("zh"), false);
+        var view = Presentation.Ui1.SeedAnalysisPresentationBuilder.Build(SeedPredictionDocument.FromFacts(unknown), text, RuntimeGameContentNameResolver.Create("zh"), false);
         check(view.NeowChoices.Count == 0 && view.NeowIdentityStatus == Core.World.SeedDomainEvaluationStatus.Unknown &&
             view.NeowIdentityIssueCode == "Party.NeowAuthorityIncomplete" && view.BossDomain.Status == Core.World.SeedDomainEvaluationStatus.Unsupported &&
             view.BossDomain.IssueCode == "Party.BossModelUnsupported", "Empty incomplete offers/bosses retain actual status and cause in presentation");
         var preferred = page.PreferredOpeningRouteId;
         var choice = page.PreferredOpeningChoiceSlotIndex;
-        page.ShowDocument(request, unknown);
-        check(page.LastDocument == unknown && page.PreferredOpeningRouteId == preferred && page.PreferredOpeningChoiceSlotIndex == choice,
+        page.ShowFacts(request, unknown);
+        check(page.LastFacts == unknown && page.PreferredOpeningRouteId == preferred && page.PreferredOpeningChoiceSlotIndex == choice,
             "An unknown opening projection cannot erase the player's frozen choice/route");
-        page.ShowDocument(request, document);
+        page.ShowFacts(request, document);
     }
 
     private static void CheckPredictorPartyConfiguration(AnalysisPage page, AnalysisPageController controller,
@@ -424,7 +420,7 @@ internal static class SeedLibraryWorkflowChecks
             new PlayerOfferQuery(p.Slot, ModelKeySetFilter.Empty)).ToArray() } };
         controller.ClearSeedLibraryOverrides();
         controller.SetPartyDraft(draft, seed);
-        var first = page.LastDocument!.Sections.SelectMany(s => s.NeowChoices)
+        var first = page.LastFacts!.Neow!.Choices
             .Single(c => c.SlotIndex == page.PreferredOpeningChoiceSlotIndex);
         var before = first.OpeningRewardContinuations!.Routes.Single(r => r.Route.RouteId == page.PreferredOpeningRouteId);
         check(before.NicheState is { CallCount: > 0 }, "Fixed default opening consumes shared RNG");
@@ -442,7 +438,7 @@ internal static class SeedLibraryWorkflowChecks
         }
         CheckPrefix(before);
         Call(controller, "SelectPartyPlayer", 0);
-        var alternative = page.LastDocument!.Sections.SelectMany(s => s.NeowChoices)
+        var alternative = page.LastFacts!.Neow!.Choices
             .First(c => c.SlotIndex != first.SlotIndex && c.OpeningRewardContinuations?.Routes.Count > 0);
         var next = alternative.OpeningRewardContinuations!.Routes[0];
         Call(page, "ApplyOpeningSelection", alternative.RelicKey, next.Route.RouteId);

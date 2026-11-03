@@ -7,7 +7,7 @@ namespace RolltheSpire2.Ui.Workspace;
 
 // Process-only state. Plans/candidates retain their captured authority here; none
 // of these objects are part of the workspace JSON contract.
-internal sealed record SearchStartContext(WorkbenchSearchDraft Draft, ExactSearchExecutionRequest Plan,
+internal sealed record SearchStartContext(WorkbenchSearchDraft Draft, PreparedSearch Plan,
     SearchEnvironmentSignature Environment, string QueryKey, string EnvironmentFingerprint,
     string HistoryId, string BatchId, DateTimeOffset StartedAtUtc, SeedLibraryContext? Context,
     SearchWorkspace.SearchStartResolution Resolution);
@@ -31,4 +31,4 @@ internal sealed class SearchResultBatch(string id, string historyId, WorkbenchSe
 internal sealed record SearchResultAction(string BatchId, string HistoryId, PersistedSearchResult Result,
     WorkbenchSearchDraft? Draft, SeedLibraryContext? Context, SeedQueryAssociation? Association,
     SeedLibraryResultProvenance Provenance, SearchLiveResult? Live = null,
-    SearchPendingCandidate? Pending = null, ExactSearchExecutionRequest? ValidationPlan = null);
+    SearchPendingCandidate? Pending = null, PreparedSearch? ValidationPlan = null);

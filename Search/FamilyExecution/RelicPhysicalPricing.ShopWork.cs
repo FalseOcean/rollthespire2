@@ -4,12 +4,12 @@ namespace RolltheSpire2.Search.FamilyExecution;
 
 internal static partial class RelicPhysicalPricing
 {
-    internal static FamilyPhysicalQuote? QuoteShopModel(ExactSearchExecutionRequest request,
+    internal static FamilyPhysicalQuote? QuoteShopModel(FilterPricingAuthority request,
         RelicFamilyPlan plan, FamilyPhysicalQuoteRequest geometry, bool cpu)
     {
         if (!FamilyPhysicalQuote.AdmittedRequest(geometry) ||
-            request.ProfileId != Compatibility.RuntimeProfileId.Beta111 || !request.Authority.CanUseCurrentModel ||
-            request.Authority.PlayersCount != 1 || request.Authority.AllCharacterCardPoolsUnlocked != true ||
+            request.ProfileId != Compatibility.RuntimeProfileId.Beta111 || !request.CanUseCurrentModel ||
+            request.PlayersCount != 1 || request.AllCharacterCardPoolsUnlocked != true ||
             plan.AlwaysReject || plan.Predicates.Length != 0 || plan.LastRequiredBucket != 9 ||
             plan.ShopPredicates is not [{Count: >= 1 and <= 5} p] ||
             !plan.Pool.BucketLengths.SequenceEqual(new[]{30,25,35,25,1,2,32,26,38,26})) return null;

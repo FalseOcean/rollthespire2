@@ -102,28 +102,28 @@ internal static partial class PredictorClosureChecks
         }
 
         var faultWorkload=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>(Path.Combine(corpus,"wwp-commitment-v1/authored-wp-positive.json"));
-        var faultPlan=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(faultWorkload.Query,context),faultWorkload.Options with {ScanCount=8,WorkerCount=1}).Plan!;
+        var faultPlan=SearchPreparationCompiler.Compile(SearchCompiler.Compile(faultWorkload.Query,context),faultWorkload.Options with {ScanCount=8,WorkerCount=1}).Plan!;
         var pairQuery=faultWorkload.Query with {StructuredOpeningEffects=[]};
         var pairContext=context with {Authority=unavailable};
-        var pairPlan=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(pairQuery,pairContext),faultWorkload.Options).Plan!;
-        var pairResult=ProductionExactSearchEvaluator.Evaluate(pairPlan,input);
+        var pairPlan=SearchPreparationCompiler.Compile(SearchCompiler.Compile(pairQuery,pairContext),faultWorkload.Options).Plan!;
+        var pairResult=ProductionExactSearchEvaluator.Evaluate(pairPlan.Model,input);
         Check(pairResult.IsMatch,"Missing Capsule bag does not block known Bones pair identity: "+pairResult.FailureCode);
         foreach(var ordered in new[] {pairQuery.OpeningRouteRelicRequirement!.RequiredRelicKeys,
             pairQuery.OpeningRouteRelicRequirement!.RequiredRelicKeys.Reverse().ToArray()})
         {
             var pinned=pairQuery with {OpeningRouteRelicRequirement=pairQuery.OpeningRouteRelicRequirement! with {
                 RequiredRelicKeys=ordered,OrderMode=BonesRouteOrderMode.ExactOrder}};
-            var pinnedPlan=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(pinned,pairContext),faultWorkload.Options).Plan!;
-            Check(ProductionExactSearchEvaluator.Evaluate(pinnedPlan,input).IsMatch,"Both identity-only acquisition orders remain legal");
+            var pinnedPlan=SearchPreparationCompiler.Compile(SearchCompiler.Compile(pinned,pairContext),faultWorkload.Options).Plan!;
+            Check(ProductionExactSearchEvaluator.Evaluate(pinnedPlan.Model,input).IsMatch,"Both identity-only acquisition orders remain legal");
         }
         var wrongPair=pairQuery with {OpeningRouteRelicRequirement=pairQuery.OpeningRouteRelicRequirement! with {
             RequiredRelicKeys=[BaseGameModelKeys.Relics.Kaleidoscope,BaseGameModelKeys.Relics.SmallCapsule]}};
-        var wrongPairPlan=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(wrongPair,pairContext),faultWorkload.Options).Plan!;
-        Check(ProductionExactSearchEvaluator.Evaluate(wrongPairPlan,input).Evaluation.Disposition==SearchDisposition.NoMatch,"Known wrong pair is NoMatch");
-        var capsulePlan=faultPlan with {CompiledSearch=SearchCompiler.Compile(faultWorkload.Query,pairContext)};
-        Check(ProductionExactSearchEvaluator.Evaluate(capsulePlan,input).Evaluation.Disposition==SearchDisposition.Unknown,"Missing Capsule authority is Unknown, not a fabricated Match/NoMatch");
+        var wrongPairPlan=SearchPreparationCompiler.Compile(SearchCompiler.Compile(wrongPair,pairContext),faultWorkload.Options).Plan!;
+        Check(ProductionExactSearchEvaluator.Evaluate(wrongPairPlan.Model,input).Evaluation.Disposition==SearchDisposition.NoMatch,"Known wrong pair is NoMatch");
+        var capsulePlan=faultPlan with {Model=faultPlan.Model with {CompiledSearch=SearchCompiler.Compile(faultWorkload.Query,pairContext)}};
+        Check(ProductionExactSearchEvaluator.Evaluate(capsulePlan.Model,input).Evaluation.Disposition==SearchDisposition.Unknown,"Missing Capsule authority is Unknown, not a fabricated Match/NoMatch");
         var noFilter=FamilyPlanner.InOrder([]);
-        var faultSession=new ProductionSearchSession(faultPlan,noFilter,FamilySearchEtaProjectorV1.Project(faultPlan,noFilter),8,16,null,"",
+        var faultSession=new ProductionSearchSession(faultPlan,noFilter,FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(faultPlan,noFilter),noFilter),8,16,null,"",
             exactEvaluator:(p,i)=>{
                 WorldPredictionEngine.PredictFromRootHash(Beta111Profile.Instance,i.RootHash,i.SeedIdentity,10,0,context.CharacterKey,brokenWorld,effects);
                 throw new Exception("Predictor failure swallowed");
@@ -154,10 +154,10 @@ internal static partial class PredictorClosureChecks
             Check(SeedPredictionRequest.TryCreate(seed,independent.Character,10,1,0,independent,
                 context.EvaluationAssumptions.AncientEligibilityAssumptions,SeedPredictionDomainSelection.World|SeedPredictionDomainSelection.RelicSequence,
                 false,out var request,out _),"Independent request");
-            var document=RuntimeProfileRegistry.Predict(new(version,version,"test","test",true,"test"),request!);
-            Check(document.Sections.Any(s=>s.RelicSequencePrediction?.Status==SeedDomainEvaluationStatus.Evaluated),"No Neow admission for R: "+profile);
-            Check(document.Sections.Any(s=>s.Kind==PredictionSectionKind.BossIdentity && s.DomainStatus==SeedDomainEvaluationStatus.Evaluated),"No Neow admission for W: "+profile);
-            Check(!document.Sections.Any(s=>s.NeowChoices.Count>0),"Unrequested Neow not activated");
+            var document=RuntimeProfileRegistry.Observe(new(version,version,"test","test",true,"test"),request!);
+            Check(document.Relics?.Status==SeedDomainEvaluationStatus.Evaluated,"No Neow admission for R: "+profile);
+            Check(document.World?.BossStatus==SeedDomainEvaluationStatus.Evaluated,"No Neow admission for W: "+profile);
+            Check(document.Neow is null,"Unrequested Neow not activated");
         }
 
         // Existing committed-route corpus: invoke Exact directly with no Filter.
@@ -167,13 +167,13 @@ internal static partial class PredictorClosureChecks
             string dir=Path.Combine(corpus,"wwp-commitment-v1");
             var c=ProductionSearchReplay.Read<ProductionSearchReplayContext>(Path.GetFullPath(Path.Combine(dir,entry.GetProperty("Context").GetString()!))).Context;
             var workload=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>(Path.Combine(dir,entry.GetProperty("Path").GetString()!));
-            var plan=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(workload.Query,c),workload.Options).Plan!;
+            var plan=SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query,c),workload.Options).Plan!;
             Check(RolltheSpire2.Search.FamilyExecution.Beta110SeedCodec.TryParseOrdinal(plan.CanonicalStartSeed,out ulong start,out _,out _),"Corpus root interval");
             int accepted=0;
             for(ulong i=0;i<(ulong)plan.ScanCount;i++)
             {
                 string candidate=RolltheSpire2.Search.FamilyExecution.Beta110SeedCodec.FormatOrdinal(start+i);
-                var result=ProductionExactSearchEvaluator.Evaluate(plan,TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance,candidate));
+                var result=ProductionExactSearchEvaluator.Evaluate(plan.Model,TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance,candidate));
                 if(result.IsMatch) {accepted++;Check(result.Evaluation.Witnesses.Count>0,"Committed witness");}
             }
             Check(accepted==entry.GetProperty("ExpectedMatches").GetInt32(),"Committed Exact count: "+entry.GetProperty("Path").GetString());

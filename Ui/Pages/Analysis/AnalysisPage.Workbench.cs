@@ -393,7 +393,7 @@ internal sealed partial class AnalysisPage
         body.AddThemeConstantOverride("separation", 4);
         body.AddChild(new Control { Name = "InitialTreasureRaritySpacer", MouseFilter = MouseFilterEnum.Ignore });
         section.AddChild(body);
-        var sequences = LastDocument?.Sections.Select(item => item.RelicSequencePrediction).FirstOrDefault(result => result is not null);
+        var sequences = LastFacts?.Relics;
         if (sequences is null || !TryGetProjectionRoot(out ulong rootHash)) { WEmpty(body); return section; }
         var profile = LastRequest!.Authority.ProfileId == RolltheSpire2.Compatibility.RuntimeProfileId.Beta111
             ? RolltheSpire2.Compatibility.Beta111Profile.Instance : _runtime.Profile;
@@ -633,7 +633,7 @@ internal sealed partial class AnalysisPage
         {
             var map = await GetOverviewMap(act, actKey, bosses.Length > 1, cancellation);
             // A premise-only request revision shares this map's authority and
-            // lifetime. A new seed/context cancels the lifetime in ShowDocument.
+            // lifetime. A new seed/context cancels the lifetime in ShowFacts.
             if (cancellation.IsCancellationRequested || !IsInstanceValid(surface) || !surface.IsInsideTree() ||
                 !ReferenceEquals(LastRequest?.Authority, request.Authority) || _wbPage != act - 1) return;
             surface.Bind(map, bosses.Select(b => _icons.Resolve(b.BossDisplay.ModelKey, GameContentKind.Encounter, IconVariant.WorldCompendiumBossIcon).Texture).ToArray(),

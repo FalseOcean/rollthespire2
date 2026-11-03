@@ -1,39 +1,45 @@
-using RolltheSpire2.Search.Contracts;
-using RolltheSpire2.Core.Identity;
-using RolltheSpire2.Core.Merchant;
-using RolltheSpire2.Search.Semantics;
+using RolltheSpire2.Compatibility;
+
 namespace RolltheSpire2.Search.FamilyExecution;
 
-internal sealed partial class RelicFamily
+internal static partial class RelicFamily
 {
-    IEnumerable<IFamilyInvocation> IFamilyInvocation.CpuRealizations
+    private static FilterBodyDescription PrepareCpu(PreparedFilter preparation, RelicFamilyPlan plan,
+        RelicReferencePlan reference, FilterPricingAuthority authority, IRuntimeProfile profile, string identity, int workers)
     {
-        get
-        {
-            var ordinary = RelicCpuPlan.TryCompile(_plan);
-            bool referencePool = _request.Authority.PlayersCount == 1 &&
-                _plan.Pool.BucketLengths.SequenceEqual(new[]{30,25,35,25,1,2,32,26,38,26});
-            var shop = RelicShopCpuPlan.TryCompile(_plan);
-            bool common = referencePool && ordinary is not null && _plan.Predicates is [{Lane:0,RangeMode:0,RangeValue:3,AnyCount:0,AllCount:3,BanCount:0}] &&
-                _plan.LastRequiredBucket == 7 && _plan.TrackedInitialPositions.Length == 3;
-            bool threeShop = referencePool && shop is not null && _plan.Predicates.Length == 0 && _plan.ShopPredicates is [{Count:3,OrderMode:0}] && _plan.ShopPredicates[0].TargetIds.Distinct().Count()==3;
-            Func<ulong,bool> matcher = shop is not null ? shop.Matches : ordinary is not null ? ordinary.Matches : MatchesCpuReference;
-            foreach(int workers in FamilyCpuExecution.WorkerConfigurations(_request))
-            {
-                FamilyCpuExecution? cpu = null;
-                cpu = new FamilyCpuExecution(_request,this,shop is not null ? "R.Relic.Cpu.ShopBackPrefix.20261016.v2" : ordinary is not null ? "R.Relic.Cpu.TrackedPositions.20261016.v3" : "R.Relic.Cpu.Reference.20260912.v1",
-                    matcher,workers,g =>
-                    {
-                        string revision = cpu!.Condition(g.CompactInput).PhysicalImplementationRevision;
-                        return (common && workers == 1 ? FamilyCpuReferenceCost.Quote(_request,g,FamilyId,"R.CommonFirst3All3",1,"254.912-257.253",
-                            cpuPhysicalRevision: revision, cpuWindowCapacity: cpu.WindowCapacity) :
-                            threeShop && workers is 1 or 8 ? FamilyCpuReferenceCost.Quote(_request,g,FamilyId,"R.ShopOrdered3",workers,workers==1?"232.418-232.635":"52.627-53.505",
-                                cpuPhysicalRevision: revision, cpuWindowCapacity: cpu.WindowCapacity) : null) ??
-                            RelicWorkEstimate.Ordinary(_request, _plan, g, _expectedFilteringCost,
-                                cpu: true, workers: workers, referenceMatcher: ordinary is null && shop is null);
-                    });
-                yield return cpu;
-            }
-        }
+        var ordinary = RelicCpuPlan.TryCompile(plan);
+        var shop = RelicShopCpuPlan.TryCompile(plan);
+        bool referencePool = authority.PlayersCount == 1 && plan.Pool.BucketLengths.SequenceEqual(new[] { 30, 25, 35, 25, 1, 2, 32, 26, 38, 26 });
+        bool common = referencePool && ordinary is not null && plan.Predicates is [{ Lane: 0, RangeMode: 0, RangeValue: 3, AnyCount: 0, AllCount: 3, BanCount: 0 }] &&
+            plan.LastRequiredBucket == 7 && plan.TrackedInitialPositions.Length == 3;
+        bool threeShop = referencePool && shop is not null && plan.Predicates.Length == 0 &&
+            plan.ShopPredicates is [{ Count: 3, OrderMode: 0 }] && plan.ShopPredicates[0].TargetIds.Distinct().Count() == 3;
+        string revision = shop is not null ? "R.Relic.Cpu.ShopBackPrefix.20261016.v2" : ordinary is not null
+            ? "R.Relic.Cpu.TrackedPositions.20261016.v3" : "R.Relic.Cpu.Reference.20260912.v1";
+        bool numericalRoots = profile.ProfileId == RuntimeProfileId.Beta111;
+        FamilyConditionPerformanceProjection Condition(bool compact) => CpuFilterExecution.Describe(Id, revision, workers, 65536, numericalRoots, false, compact);
+        var costs = FamilyAuxiliaryEvidence.Read<CpuCostSnapshot?>(Id, "CpuCostSnapshot", CpuCostCalibration.Capture, null);
+        FamilyPhysicalQuote? Raw(FamilyPhysicalQuoteRequest geometry) =>
+            (common && workers == 1 ? FamilyCpuReferenceCost.Quote(authority, geometry, Id, "R.CommonFirst3All3", 1, "254.912-257.253",
+                cpuPhysicalRevision: Condition(geometry.CompactInput).PhysicalImplementationRevision, cpuWindowCapacity: 65536) :
+             threeShop && workers is 1 or 8 ? FamilyCpuReferenceCost.Quote(authority, geometry, Id, "R.ShopOrdered3", workers,
+                workers == 1 ? "232.418-232.635" : "52.627-53.505", cpuPhysicalRevision: Condition(geometry.CompactInput).PhysicalImplementationRevision,
+                cpuWindowCapacity: 65536) : null) ??
+            RelicWorkEstimate.Ordinary(plan, geometry, preparation.ExpectedFilteringCost, cpu: true, workers: workers,
+                referenceMatcher: ordinary is null && shop is null);
+        return new(preparation, revision, profile.ProfileId) {
+            InputIdentity = identity, PlayersCount = authority.PlayersCount,
+            WindowCapacity = 65536, CpuChunkCapacity = CpuFilterExecution.Capacity, CpuWorkers = workers,
+            PerformanceProjection = Condition,
+            Cost = new() {
+                CanonicalScope = authority.PlayersCount == 1, CanonicalWorkShape = _ => FamilyCanonicalCostShape.DescribeRelic(plan),
+                CalibrationQuote = Raw,
+                Quote = (selected, geometry, _) => FamilyCanonicalMeasuredCost.TryDenseQuote(selected, geometry) ??
+                    (Raw(geometry) is { } raw ? costs?.Local(raw,
+                        selected.ResolveConditionPerformance(geometry.CompactInput).PhysicalImplementationRevision, workers, geometry.CompactInput) ?? raw : null)
+            },
+            CreateExecution = (selected, _) => new CpuFilterExecution(selected, profile,
+                shop is not null ? shop.Matches : ordinary is not null ? ordinary.Matches : CreateReferenceMatcher(reference), numericalRoots)
+        };
     }
 }

@@ -26,7 +26,7 @@ internal sealed partial class AnalysisPage
         _overviewMaps.Clear();
         _overviewRoutes.Clear();
         _overviewRouteMetrics.Clear();
-        _ancientPremiseVariants.Clear();
+        _ancientPremiseVariants = null;
         _merchantProjection = null;
         _eventProjection = null;
         _eventTransformUnlocks = null;
@@ -41,7 +41,7 @@ internal sealed partial class AnalysisPage
             return cached;
 
         var request = LastRequest!;
-        string seed = LastDocument!.CanonicalSeed;
+        string seed = LastFacts!.CanonicalSeed;
         var task = Task.Run(() => Beta111MapPredictor.Predict(seed, request.Authority.ProfileId,
             actKey, act - 1, request.Ascension, request.PlayersCount, secondBoss, cancellation), cancellation);
         _overviewMaps[act] = task;

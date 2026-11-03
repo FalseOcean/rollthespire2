@@ -18,9 +18,9 @@ internal static class NeowPhysicalPricing
     internal static FamilyPhysicalQuote? Quote(NeowFamily family, FamilyPhysicalQuoteRequest request)
     {
         if (family.UsesCompatibilityGpu) return null;
-        var p = family.PricingReplayPlan;
+        var p = family.Replay;
         var gpu = family.GpuPlan;
-        if (family.PricingComposite is { UsesBonesCheckpoint: true, UsesBonesArcane: false } grouped &&
+        if (family.Composite is { UsesBonesCheckpoint: true, UsesBonesArcane: false } grouped &&
             p.DirectNestedVanilla111 && p.Authority.PlayersCount == 1 && p.Authority.AllCharacterCardPoolsUnlocked &&
             p.Authority.BonesEligibleRelicIds.Length == 28 && p.Authority.EligibleCurseRelicIds.Length == 10 &&
             FamilyPhysicalQuote.AdmittedRequest(request) && FamilyPhysicalQuote.HasReferenceBackend())
@@ -83,7 +83,7 @@ internal static class NeowPhysicalPricing
         work = default; shape = "Unknown";
         if (family.UsesCompatibilityGpu) return false;
         var gpu = family.GpuPlan;
-        var p = family.PricingReplayPlan;
+        var p = family.Replay;
         bool identityOnly = p.EnabledDomains == Beta110FastDomain.None && p.StructuredConditions.Length == 0;
         // Identity masks use the same body without a route-form Selected value.
         // The actual first-draw/positive-pool split below still determines work.
@@ -113,7 +113,7 @@ internal static class NeowPhysicalPricing
 
     private static FamilyPhysicalQuote? QuoteDirectEnvelope(NeowFamily family, FamilyPhysicalQuoteRequest g)
     {
-        var p=family.PricingReplayPlan;var gpu=family.GpuPlan;
+        var p=family.Replay;var gpu=family.GpuPlan;
         if(!FamilyPhysicalQuote.AdmittedRequest(g)||!FamilyPhysicalQuote.HasReferenceBackend()||family.Coverage.Count!=1||
             gpu is not {UsesStagedDense:false,DirectNestedMode:0}||p.Bones||p.RequireBones||p.HasFinalCurseFastProjection||
             !p.DirectNestedVanilla111||p.Authority.PlayersCount!=1||!p.Authority.AllCharacterCardPoolsUnlocked||p.Authority.Ascension!=10||
@@ -133,7 +133,7 @@ internal static class NeowPhysicalPricing
 
     private static FamilyPhysicalQuote? QuoteBones(NeowFamily family, FamilyPhysicalQuoteRequest g)
     {
-        var p = family.PricingReplayPlan; var gpu = family.GpuPlan;
+        var p = family.Replay; var gpu = family.GpuPlan;
         if (!FamilyPhysicalQuote.AdmittedRequest(g) || !FamilyPhysicalQuote.HasReferenceBackend() ||
             family.Coverage.Count != 1 || gpu is not { UsesStagedDense: true } ||
             gpu.DirectNestedMode is not (0 or 102) || gpu.Meta[67] != 1 ||
@@ -159,7 +159,7 @@ internal static class NeowPhysicalPricing
 
     internal static FamilyPhysicalQuote? QuoteCpuPreGate(NeowFamily family, NeowCpuPreGate gate, FamilyPhysicalQuoteRequest g)
     {
-        var p = family.PricingReplayPlan;
+        var p = family.Replay;
         if (!FamilyPhysicalQuote.AdmittedRequest(g) || g.PrivateInput || g.PrivateOutput || g.CompactInput ||
             g.MeanInputPopulation < 1024 || p.Authority.EligibleCurseRelicIds.Length != 10) return null;
         double? ns;
@@ -191,7 +191,7 @@ internal static class NeowPhysicalPricing
 
     internal static FamilyPhysicalQuote? QuoteCpuIdentity(NeowFamily family, FamilyPhysicalQuoteRequest geometry)
     {
-        var p=family.PricingReplayPlan;
+        var p=family.Replay;
         if(!FamilyPhysicalQuote.AdmittedRequest(geometry) || geometry.PrivateInput || geometry.PrivateOutput ||
             geometry.CompactInput || geometry.MeanInputPopulation<4096 || !p.DirectNestedVanilla111 ||
             p.Bones || p.RequireBones || p.StructuredConditions.Length!=0 || p.ExactOnly.Length!=0 ||
@@ -208,7 +208,7 @@ internal static class NeowPhysicalPricing
 
     internal static FamilyPhysicalQuote? QuoteCpuLocal(NeowFamily family, FamilyPhysicalQuoteRequest geometry)
     {
-        var p=family.PricingReplayPlan;
+        var p=family.Replay;
         if(!FamilyPhysicalQuote.AdmittedRequest(geometry) || geometry.PrivateInput || geometry.PrivateOutput ||
             geometry.CompactInput || geometry.MeanInputPopulation<4096 || !p.DirectNestedVanilla111 ||
             p.Bones || p.RequireBones || p.ExactOnly.Length!=0 || p.HasFinalCurseFastProjection ||

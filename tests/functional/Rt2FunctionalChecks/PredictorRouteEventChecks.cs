@@ -1450,6 +1450,19 @@ internal static class PredictorRouteEventChecks
                 var fight = Add(plan, new(PredictorEventActionKind.Option)
                     { ExpectedOption = view.EntryOptions.Single(option => option.Key == "THROW_FOUL_POTION").Value });
                 var combat = Pure(run, [fight], policy: PredictorRoutePreviewPolicy.LiveMapDefaults).Nodes.Single();
+                Console.WriteLine("ROUTE_FAKE_FOUL_DETAIL " + JsonSerializer.Serialize(new
+                {
+                    combat.Event!.Advanced, combat.Event.NeededInput, combat.Event.AppliedActions,
+                    potions = combat.Inventory!.PotionSlots.Select(slot => new
+                        { slot.IsKnown, slot.Value, slot.PendingCauses }),
+                    rewards = combat.Event.Rewards.Select(reward => new
+                        { reward.Kind, reward.IsKnown, reward.Value, reward.PendingCauses }),
+                    pending = combat.Event.PendingCauses,
+                    combatPending = combat.Event.Combat?.PendingCauses,
+                    rng = combat.Diagnostics!.After.Select(combat.Diagnostics.Snapshot.Fact)
+                        .Where(fact => fact.PropertyKey.StartsWith("rng.", StringComparison.Ordinal))
+                        .Select(fact => new { fact.PropertyKey, fact.Status, fact.DisplayValue })
+                }));
                 Check(combat.Event is { Advanced: true, NeededInput: PredictorEventNeededInput.None, AppliedActions: 1 } &&
                     combat.Inventory!.PotionSlots.All(slot => slot.IsKnown && slot.Value == null) &&
                     combat.Event.Rewards.Any(reward => reward.IsKnown && reward.Kind == PredictorRewardKind.Card),

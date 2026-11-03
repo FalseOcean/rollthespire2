@@ -93,42 +93,27 @@ public sealed record SearchQueryEvaluation(
 public sealed record SearchRouteRejection(string RouteId, IReadOnlyList<ModelKey> AcquisitionOrder,
     SearchDisposition Disposition, string Reason);
 
+/// <summary>A delivered model disposition and its evidence, independent of any analysis view.</summary>
 public sealed record SearchCandidate(
     string Seed,
     RuntimeProfileId ProfileId,
     ModelKey CharacterKey,
     int Ascension,
     string SnapshotFingerprint,
-    [property: System.Text.Json.Serialization.JsonPropertyName("AnalysisRequest")] SeedPredictionRequest PredictionRequest,
-    SeedPredictionDocument? Document,
     RuntimeContextAuthoritySnapshot Authority,
-    IReadOnlyList<SearchMatchEvidence> MatchEvidence,
-    IReadOnlyList<string> MatchedRouteIds,
-    IReadOnlyList<SearchMatchWitness> Witnesses)
+    SearchQueryEvaluation Evaluation)
 {
-    private SearchDisposition? _validationDisposition;
-    private bool _legacyIsUnverified;
-    // Old candidates only carried IsUnverified. New results carry the actual
-    // validation disposition; it is authoritative even if the legacy flag is set.
-    public SearchDisposition ValidationDisposition
-    {
-        get => _validationDisposition ?? (_legacyIsUnverified ? SearchDisposition.NotEvaluatedByPolicy : SearchDisposition.Match);
-        init => _validationDisposition = value;
-    }
+    public SeedPredictionFacts? Facts { get; init; }
+    public SearchDisposition ValidationDisposition => Evaluation.Disposition;
     public string ValidationIssue { get; init; } = "";
+    public IReadOnlyList<SearchMatchEvidence> MatchEvidence => Evaluation.Evidence;
+    public IReadOnlyList<string> MatchedRouteIds => Evaluation.MatchedRouteIds;
+    public IReadOnlyList<SearchMatchWitness> Witnesses => Evaluation.Witnesses;
+    public PartySeedInformation? Party => Facts?.Party;
     public MapSearchProvenance? MapSearch { get; init; }
     public IReadOnlyList<string> ExecutionWarnings { get; init; } = [];
-    // Model validation and the conditional product support scope are separate.
-    // This metadata never changes candidate admission or validation disposition.
     public RequestSupportAssessment SupportScope => Authority.SupportScope;
-    // An unverified candidate has no document, match evidence or witness. Fast is not truth.
-    public bool IsUnverified
-    {
-        get => ValidationDisposition != SearchDisposition.Match;
-        init => _legacyIsUnverified = value;
-    }
-    // Diagnostic output from a plan with no applied candidate filters. None of
-    // the authored conditions has participated in selecting this seed.
+    public bool IsUnverified => ValidationDisposition != SearchDisposition.Match;
     public bool IsUnfiltered { get; init; }
     public SearchMatchWitness? PrimaryWitness => Witnesses.FirstOrDefault();
 }

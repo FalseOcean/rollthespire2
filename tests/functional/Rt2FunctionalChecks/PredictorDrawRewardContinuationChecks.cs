@@ -18,6 +18,7 @@ internal static class PredictorDrawRewardContinuationChecks
         TargetReceiptAndOptionalEdit(captured);
         TransformUsesItsActualCardPool(captured);
         RestTargetsKeepFollowingActionsAndRewards(captured);
+        HealthOnlySacrificeCompletesItsReceipt(captured);
         CompletedSiblingRerollsRemainAuthored(captured);
         CompletedNestedParentsKeepCurrentChildren(captured);
         Console.WriteLine("PREDICTOR_DRAW_REWARD_CONTINUATION_PASS optional target receipts; exact receipt address; editable targets; Tent suffix; Night Terrors independent rewards; concrete policy preserved");
@@ -534,6 +535,22 @@ internal static class PredictorDrawRewardContinuationChecks
             "Night Terrors health uncertainty does not suppress Dream Catcher, Mailbox or next-combat rewards");
         Check(!Preview(run, [plan], PredictorRoutePreviewPolicy.AuthoredChoices).Nodes[0].Advanced,
             "target omission remains drawing-only");
+    }
+
+    private static void HealthOnlySacrificeCompletesItsReceipt(PredictorRun captured)
+    {
+        var run = Route(captured, rest: false, relic: "GORGET", nested: true, gift: "LEES_WAFFLE");
+        var combat = Preview(run, []).Nodes[1];
+        var offer = combat.Rewards.Single(reward => reward.Kind == PredictorRewardKind.Card && reward.IsKnown);
+        long wing = run.Working.Relics.Single(relic => relic.Key.Entry == "PAELS_WING").Id;
+        var choice = new PredictorPlannedRewardChoice(offer.Value!, offer.Occurrence) { SacrificeRelicId = wing };
+        var result = Preview(run, [new(combat.Position.NodeId) { RewardChoices = [choice] }]).Nodes[1];
+        Check(result.Advanced && result.Inventory!.Relics.Any(relic => relic.IsKnown && relic.Value.Key == R("LEES_WAFFLE")) &&
+            result.Inventory.Relics.Single(relic => relic.Value.Id == wing).Value.RewardsSacrificed == 2,
+            "Pael's health-only gift completes that exact sacrifice receipt once without requiring a synthetic health input");
+        Check(result.ObtainHealthEffects.Any(effect => effect.Source == R("LEES_WAFFLE")) &&
+            !result.PendingCauses.Any(cause => (cause.AffectedDomains & PredictorCombatDomain.Continuation) != 0),
+            "the gift's health outcome remains an observation while independent continuation is retained");
     }
 
     private static void CompletedSiblingRerollsRemainAuthored(PredictorRun captured)

@@ -16,8 +16,8 @@ internal static partial class MorphicFilterChecks
     private static void EventSemanticClosure(SearchContext context, SearchQuery fragile, Action<bool, string> check)
     {
         var options = new SearchRunOptions("000000000000", 1027, int.MaxValue, 1);
-        ExactSearchExecutionRequest Request(SearchQuery q, SearchContext? ctx = null) =>
-            ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(q, ctx ?? context), options).Plan!;
+        PreparedSearch Request(SearchQuery q, SearchContext? ctx = null) =>
+            SearchPreparationCompiler.Compile(SearchCompiler.Compile(q, ctx ?? context), options).Plan!;
         ModelKey[] Queue(string seed) => WorldPredictionEngine.Predict(Beta111Profile.Instance, seed, context.Ascension,
             0, context.CharacterKey, context.Authority.WorldAuthority, context.Authority.EffectAuthority)
             .EventPoolSequencePrediction!.Acts.Single(a => a.Act == 1).Entries.OrderBy(e => e.Ordinal).Select(e => e.EventKey).ToArray();
@@ -33,15 +33,15 @@ internal static partial class MorphicFilterChecks
         var mixed = fragile with { EventSequenceConstraints = unordered.EventSequenceConstraints };
         var queries = new[] { ordered, unordered, advanced, stable, fragile, mixed };
         var requests = queries.Select(q => Request(q)).ToArray();
-        check(requests.Select(r => r.CompiledSearch.SemanticFingerprint).Distinct().Count() == queries.Length, "Distinct W/E/order/advanced semantic fingerprints");
+        check(requests.Select(r => r.Model.CompiledSearch.SemanticFingerprint).Distinct().Count() == queries.Length, "Distinct W/E/order/advanced semantic fingerprints");
         foreach (var q in queries)
         {
             var restored = JsonSerializer.Deserialize<SearchQuery>(JsonSerializer.Serialize(q, ProductionSearchReplay.JsonOptions), ProductionSearchReplay.JsonOptions)!;
             check(Request(q).SnapshotFingerprint == Request(restored).SnapshotFingerprint, "Event Query JSON/cursor identity roundtrip");
         }
-        var replays = requests.Take(3).Select(r => new WorldFamilyReplay(r)).ToArray();
-        var stablePlan = new EventResultFamilyPlan(requests[3]);
-        var fragilePlan = new EventResultFamilyPlan(requests[4]);
+        var replays = requests.Take(3).Select(r => new WorldFamilyReplay(r.Model)).ToArray();
+        var stablePlan = new EventResultFamilyPlan(requests[3].Model);
+        var fragilePlan = new EventResultFamilyPlan(requests[4].Model);
         // E-only must still execute with all World authority removed. The scenario's
         // event-entry immutable authority remains its own explicit input.
         var noWorld = context with { Authority = context.Authority.WithWorldAuthority(null) };
@@ -61,14 +61,14 @@ internal static partial class MorphicFilterChecks
             truth[5] = truth[1] && truth[4];
             for (int j = 0; j < requests.Length; j++)
             {
-                var exact = ProductionExactSearchEvaluator.Evaluate(requests[j], root);
+                var exact = ProductionExactSearchEvaluator.Evaluate(requests[j].Model, root);
                 check(exact.Evaluation.Disposition is SearchDisposition.Match or SearchDisposition.NoMatch, "Event Exact resolved");
                 check(exact.IsMatch == truth[j], "Authored Event predicate matches reference / W AND E only");
                 if (j < 3) check(replays[j].Matches(root.RootHash) == truth[j], "W numerical slots/prefix parity");
                 if (exact.IsMatch) { hits[j]++; expected[j].Add(seed); check(exact.Evaluation.Witnesses.Count > 0, "Event Exact Witness"); }
             }
-            check(ProductionExactSearchEvaluator.Evaluate(noWorldStable, root).IsMatch == truth[3], "Stable E has no World proof obligation");
-            check(ProductionExactSearchEvaluator.Evaluate(noWorldFragile, root).IsMatch == truth[4], "Fragile E has no World/deck-path proof obligation");
+            check(ProductionExactSearchEvaluator.Evaluate(noWorldStable.Model, root).IsMatch == truth[3], "Stable E has no World proof obligation");
+            check(ProductionExactSearchEvaluator.Evaluate(noWorldFragile.Model, root).IsMatch == truth[4], "Fragile E has no World/deck-path proof obligation");
             if (truth[4] && !truth[1]) eWithoutW++;
         }
         check(hits.Take(5).All(n => n > 0), "Positive simple/advanced/stable/fragile witnesses");

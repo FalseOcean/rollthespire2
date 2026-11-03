@@ -14,6 +14,7 @@ internal sealed class VariantOpeningPlan
     internal VariantOpeningPreparation Preparation { get; }
     internal VariantOpeningPreparation CheckedPreparation => Preparation;
     internal int UnknownPrefixCount { get; }
+    internal bool UnknownJuzuAcquired { get; }
     internal bool CoversVariants => Groups.Length > 0;
     internal string VariantUnavailableReason { get; }
     internal int SelectionDraws => Groups.Count(group => !group.DeterministicFirst);
@@ -22,18 +23,19 @@ internal sealed class VariantOpeningPlan
     // number of primitive draws; this does not impose a global Family order.
     internal bool UnknownFirst => UnknownPrefixCount > 0 && CoversVariants && UnknownPrefixCount < SelectionDraws;
 
-    private VariantOpeningPlan(VariantOpeningPreparation preparation, Group[] groups, int unknown, string unavailable)
+    private VariantOpeningPlan(VariantOpeningPreparation preparation, Group[] groups, int unknown, bool juzu, string unavailable)
     {
         Preparation = preparation; Groups = groups; UnknownPrefixCount = unknown;
+        UnknownJuzuAcquired = juzu;
         VariantUnavailableReason = unavailable;
     }
 
-    internal static VariantOpeningPlan? TryCompile(ExactSearchExecutionRequest request,
+    internal static VariantOpeningPlan? TryCompile(SearchModel request,
         VariantOpeningPreparation preparation, GpuNumericalVariant numericalVariant)
     {
-        // Reuse the existing ordinary-room admission, including Party's shared
-        // maximum prefix and the authored-opening intervention exclusions.
-        int unknown = InitialRoomsPlan.TryCompileUnknown(request, numericalVariant)?.UnknownPrefixCount ?? 0;
+        // Independent of W/event predicates and unspecified opening results.
+        var unknownPlan = InitialRoomsPlan.TryCompileUnknown(request, numericalVariant);
+        int unknown = unknownPlan?.UnknownPrefixCount ?? 0;
         Group[] groups = [];
         string unavailable = "";
         if (preparation.HasVariantRestrictions)
@@ -62,12 +64,12 @@ internal sealed class VariantOpeningPlan
         if (groups.Length == 0 && unknown == 0) return null;
         // Only actually checked variant facts can participate in conditional s.
         var actual = groups.Length > 0 ? preparation : preparation with { Acts = [] };
-        return new(actual, groups, unknown, unavailable);
+        return new(actual, groups, unknown, unknownPlan?.UnknownJuzuAcquired == true, unavailable);
     }
 
     internal bool Matches(ulong root)
     {
-        if (UnknownFirst && !InitialRoomsPlan.MatchesUnknown(root, UnknownPrefixCount)) return false;
+        if (UnknownFirst && !InitialRoomsPlan.MatchesUnknown(root, UnknownPrefixCount, UnknownJuzuAcquired)) return false;
         if (CoversVariants)
         {
             var selection = new Beta110FastRng(unchecked(root + SelectionHash));
@@ -78,6 +80,6 @@ internal sealed class VariantOpeningPlan
                 if (!(group.OverrideAllowed ?? group.Allowed[selected])) return false;
             }
         }
-        return UnknownFirst || InitialRoomsPlan.MatchesUnknown(root, UnknownPrefixCount);
+        return UnknownFirst || InitialRoomsPlan.MatchesUnknown(root, UnknownPrefixCount, UnknownJuzuAcquired);
     }
 }

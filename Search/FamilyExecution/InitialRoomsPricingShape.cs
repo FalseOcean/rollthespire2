@@ -15,7 +15,8 @@ internal sealed record InitialRoomsPricingShape(string BodyRevision, string Scop
     int LastRequiredShuffleBucket, int SharedShuffleDraws, IReadOnlyList<InitialRoomsTargetShape> Targets,
     string TreasureRemainder)
 {
-    internal string Key => FormattableString.Invariant($"{BodyRevision};Scope={Scope};Players={Players};Unknown={UnknownPrefixCount};Treasure={TreasureCovered};Window={TreasureStart}+{TreasureCount};Order={TreasureOrder};Bags={string.Join(',', EffectiveRarityCounts)};Shared={string.Join(',', SharedBucketCounts.Zip(SharedBucketLanes).Select(bucket => $"{bucket.Second}:{bucket.First}"))};Last={LastRequiredShuffleBucket};Shuffle={SharedShuffleDraws};Targets={string.Join(',', Targets.Select(t => $"{t.Slot}:{t.RarityLane}:G{t.IdentityGroup}:C{t.MatchesExhaustedCirclet}"))}");
+    internal bool UnknownJuzuAcquired { get; init; }
+    internal string Key => FormattableString.Invariant($"{BodyRevision};Scope={Scope};Players={Players};Unknown={UnknownPrefixCount};DeclaredJuzu={UnknownJuzuAcquired};Treasure={TreasureCovered};Window={TreasureStart}+{TreasureCount};Order={TreasureOrder};Bags={string.Join(',', EffectiveRarityCounts)};Shared={string.Join(',', SharedBucketCounts.Zip(SharedBucketLanes).Select(bucket => $"{bucket.Second}:{bucket.First}"))};Last={LastRequiredShuffleBucket};Shuffle={SharedShuffleDraws};Targets={string.Join(',', Targets.Select(t => $"{t.Slot}:{t.RarityLane}:G{t.IdentityGroup}:C{t.MatchesExhaustedCirclet}"))}");
 }
 
 internal sealed partial class InitialRoomsPlan
@@ -30,13 +31,14 @@ internal sealed partial class InitialRoomsPlan
             if (!groups.TryGetValue(key, out int group)) groups.Add(key, group = groups.Count);
             targets.Add(new(slot, key, group, _targetLanes[slot], _targetPositions[slot] >= 0, _circlet[slot]));
         }
-        bool party = _request.CompiledSearch.Context.Party is not null;
-        return new(ActualRevision, party ? "Party.SharedOrdinaryUnknown.Uncommitted" : "Solo.InitialRooms.Uncommitted",
-            _request.Authority.PlayersCount, UnknownPrefixCount, CoversTreasure,
+        bool party = _isParty;
+        return new(ActualRevision, party ? "Party.SharedUnknown.DeclaredOpening" :
+            CoversTreasure ? "Solo.InitialTreasure.Uncommitted" : "Solo.Unknown.DeclaredOpening",
+            _players, UnknownPrefixCount, CoversTreasure,
             _treasure?.StartOrdinal ?? 0, _treasure?.Count ?? 0, _treasure?.OrderMode,
             Array.AsReadOnly(_effectiveLengths.ToArray()), Array.AsReadOnly(_lengths.ToArray()),
             Array.AsReadOnly(_bucketLanes.ToArray()), _lastBucket,
             _lengths.Take(_lastBucket + 1).Sum(length => Math.Max(0, length - 1)),
-            targets.AsReadOnly(), TreasureRemainder);
+            targets.AsReadOnly(), TreasureRemainder) { UnknownJuzuAcquired = UnknownJuzuAcquired };
     }
 }

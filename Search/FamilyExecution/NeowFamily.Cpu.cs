@@ -1,28 +1,44 @@
-using RolltheSpire2.Search.Contracts;
-using RolltheSpire2.Core.Identity;
-using RolltheSpire2.Core.Merchant;
-using RolltheSpire2.Search.Semantics;
+using RolltheSpire2.Compatibility;
 namespace RolltheSpire2.Search.FamilyExecution;
-
 internal sealed partial class NeowFamily
 {
-    IEnumerable<IFamilyInvocation> IFamilyInvocation.CpuRealizations
+    private IEnumerable<FilterBodyDescription> DescribeCpu(PreparedFilter prepared,IRuntimeProfile profile,int workerBudget)
     {
-        get
+        if(_composite is not null || _transformations is not null || _profile.ProfileId!=RuntimeProfileId.Beta111)yield break;
+        bool capsuleNiche=HasCapsuleNicheContinuation;
+        var pair=capsuleNiche ? null : NeowIdentityCpuPlan.TryCompile(_plan);
+        var local=capsuleNiche || pair is not null ? null : NeowSingleplayerLocalCpuPlan.TryCompile(_plan,_cpuPositiveIdentity);
+        var gate=pair is null && local is null ? NeowCpuPreGate.TryCompile(_plan) : null;
+        var fourWay=NeowCpuFourWayPreGate.TryCompile(_plan);
+        Func<ulong,bool> matcher=capsuleNiche ? _cpuMatcher : local is not null ? local.Matches : pair is not null ? pair.Matches :
+            _cpuPositiveIdentity is not null ? _cpuPositiveIdentity.Matches : gate is not null ? gate.Matches : _cpuMatcher;
+        string revision=capsuleNiche ? CpuRevision : (local is not null ? local.Revision :
+            (gate is not null ? "N.Neow.Cpu.IdentityPreGate.20261015.v3" : pair is null ? "N.Neow.Cpu.LocalReplay.20261015.v3" : "N.Neow.Cpu.IdentityPair.20260912.v1")+
+            (_cpuPositiveIdentity is null ? "" : NeowCpuPositiveIdentityPlan.Revision))+NeowIdentityOfferFacts.Revision;
+        int workers=Math.Clamp(workerBudget,1,32);
+        if(capsuleNiche) prepared=prepared with {
+            AnalyticalCost=new(FamilyId,65536,[],"SoloCapsuleNicheCpuFullWorkUnpriced"),
+            Survival=FamilySurvivalProjection.Unresolved(FamilyId,"SoloCapsuleNicheJointProbabilityUnpriced"),
+            ExpectedFilteringCost=new(FamilyId,0,null,null,1,[],"SoloCapsuleNicheCpuWorkAndJointProbabilityUnpriced"),
+            SurvivalResolver=null,ExpectedCostResolver=null
+        };
+        Func<FamilyPhysicalQuoteRequest,FamilyPhysicalQuote?> raw=g=>capsuleNiche ? null : NeowWorkEstimate.Cpu(this,_workEstimate,g,workers,
+            gate,fixedPair:pair is not null,directLocal:local is not null,fourWay:fourWay);
+        var snapshot=FamilyAuxiliaryEvidence.Read<CpuCostSnapshot?>(nameof(NeowFamily),"CostSnapshot",CpuCostCalibration.Capture,null);
+        yield return new(prepared,revision,_profile.ProfileId)
         {
-            if (_composite is not null || _transformations is not null || _request.ProfileId != Compatibility.RuntimeProfileId.Beta111) yield break;
-            var plan = NeowIdentityCpuPlan.TryCompile(_plan);
-            var local = plan is null ? NeowSingleplayerLocalCpuPlan.TryCompile(_plan) : null;
-            var gate = plan is null && local is null ? NeowCpuPreGate.TryCompile(_plan) : null;
-            // Eligible AVX2 bodies default to packed roots and a four-root necessary
-            // gate. Explicit off keeps packed scalar; legacy retains byte roots.
-            var fourWay = NeowCpuFourWayPreGate.TryCompile(_plan);
-            Func<ulong,bool> matcher = local is not null ? local.Matches : plan is not null ? plan.Matches : gate is not null ? gate.Matches : _cpuMatcher;
-            foreach (int workers in FamilyCpuExecution.WorkerConfigurations(_request))
-                yield return new FamilyCpuExecution(_request, this, local is not null ? local.Revision : gate is not null ? "N.Neow.Cpu.IdentityPreGate.20261015.v3" : plan is null ? "N.Neow.Cpu.LocalReplay.20261015.v3" : "N.Neow.Cpu.IdentityPair.20260912.v1",
-                    matcher, workers, g => NeowWorkEstimate.Cpu(this, _workEstimate, g, workers,
-                        gate, fixedPair: plan is not null, directLocal: local is not null, fourWay: fourWay),
-                    packedSeedRoots: fourWay is not null, fourWayPreGate: fourWay is { Enabled: true } ? fourWay : null);
-        }
+            CpuWorkers=workers,WindowCapacity=65536,PreferredRootWindowSize=65536,CpuChunkCapacity=CpuFilterExecution.Capacity,InputIdentity=_inputIdentity,
+            PlayersCount=_plan.Authority.PlayersCount,
+            PerformanceProjection=compact=>CpuFilterExecution.Describe(FamilyId,revision,workers,65536,true,fourWay is not null,compact,fourWay is {Enabled:true}?fourWay:null),
+            Cost=new(){CalibrationQuote=raw,CanonicalScope=_canonicalScope,
+                CanonicalWorkShape=_=>FamilyCanonicalCostShape.DescribeNeow(_plan,_gpuPlan),
+                OptimizationShape=_=>fourWay is not { Enabled:true } ? "" : $";N.FourWayGate.v1:bound={fourWay.Bound};allowed={System.Numerics.BitOperations.PopCount(fourWay.AllowedIndexes)}",
+                Quote=(body,g,passed)=>FamilyCanonicalMeasuredCost.TryDenseQuote(body,g) ??
+                    (raw(g) is {} quote ? snapshot?.Local(quote,body.ResolveConditionPerformance(g.CompactInput).PhysicalImplementationRevision,workers,g.CompactInput) ?? quote : null)},
+            CreateExecution=BindCpu(profile,matcher,fourWay,_sparseRefinement)
+        };
     }
+    private static Func<FilterBodyDescription,FilterRuntimeServices,IFilterExecution> BindCpu(IRuntimeProfile profile,
+        Func<ulong,bool> matcher,NeowCpuFourWayPreGate? fourWay,NeowCapsuleSparseRefinement? sparse)=>(body,services)=>
+        NeowCapsuleSparseRefinementRun.WrapCpu(body,profile,matcher,true,fourWay is not null,fourWay is {Enabled:true}?fourWay:null,sparse);
 }

@@ -200,10 +200,8 @@ internal static partial class UiSurfaceChecks
         persistence.BindPreparedResultWorkspace(persistence.PrepareResultWorkspace("library-ui-run", solo, soloContext));
         foreach (string resultSeed in new[] { "000000000111", "000000000112", "000000000113" })
         {
-            var candidate = new SearchCandidate(resultSeed, RuntimeProfileId.Beta111, solo.Character, solo.Ascension, "library-ui-run", null!,
-                new RolltheSpire2.Core.Prediction.SeedPredictionDocument { Context = null!, PredictorId = "fixture",
-                    OriginalSeed = resultSeed, CanonicalSeed = resultSeed, Sections = [], Warnings = [], Diagnostics = [],
-                    OverallStatus = RolltheSpire2.Core.Prediction.SeedPredictionOverallStatus.Unknown }, fixtureAuthority, [], [], []);
+            var candidate = new SearchCandidate(resultSeed, RuntimeProfileId.Beta111, solo.Character, solo.Ascension,
+                "library-ui-run", fixtureAuthority, SearchQueryEvaluation.Match());
             persistence.AppendResult(candidate, "library-ui-run");
         }
         var history = persistence.RecentQueries.Single();
@@ -233,7 +231,10 @@ internal static partial class UiSurfaceChecks
                     "Search preset entry navigates to the full Seed library");
                 Check(!Field<Button>(shell, "_seeds").Disabled && !Field<Button>(shell, "_search").Disabled,
                     "Library browsing does not lock top-level navigation");
-                Check(library.FindChildren("SeedLibrary*", "Button", true, false).Count == 3, "Exactly three library sections");
+                Check(library.FindChildren("SeedLibrary*", "Button", true, false).Count == 4 &&
+                    Enum.GetValues<SeedLibraryCanvas.LibrarySection>().All(section =>
+                        library.FindChild("SeedLibrary" + section, true, false) is Button { Visible: true }),
+                    "All four library sections have their visible native navigation tabs");
                 Check(!library.FindChildren("LibraryItem*", "Button", true, false).OfType<Button>()
                     .Any(b => b.GetMeta("entry_id").AsString().StartsWith("temporary:")), "Legacy history is absent from presets");
                 await SelectEntry(soloSaved.Id);
@@ -439,9 +440,9 @@ internal static partial class UiSurfaceChecks
                 if (slot != 0) Call(predictorController, "SelectPartyPlayer", slot);
                 Check(predictor.LastRequest is { PlayersCount: 2, Ascension: 10 } request &&
                     request.PlayerSlotIndex == slot && request.Character.CharacterKey == BaseGameModelKeys.Characters.Ironclad &&
-                    predictor.LastDocument?.CanonicalSeed == developerSeed.Seed,
+                    predictor.LastFacts?.CanonicalSeed == developerSeed.Seed,
                     "Developer prediction restores both Ironclads and the authored seed");
-                Check(predictor.LastDocument!.Sections.SelectMany(s => s.NeowChoices).Any(c =>
+                Check(predictor.LastFacts!.Neow!.Choices.Any(c =>
                     c.SlotIndex == predictor.PreferredOpeningChoiceSlotIndex && c.RelicKey == BaseGameModelKeys.Relics.LeafyPoultice),
                     "Each seat restores Leafy Poultice rather than an unrelated default opening");
             }
@@ -449,8 +450,8 @@ internal static partial class UiSurfaceChecks
             // acquire a favorite's verified-search association from this page.
             persistence.BindPreparedResultWorkspace(persistence.PrepareResultWorkspace("uncertain-ui-fixture", solo, soloContext));
             persistence.AppendResult(new SearchCandidate("000000000222", RuntimeProfileId.Beta111,
-                solo.Character, solo.Ascension, "uncertain-ui-fixture", null!, null, fixtureAuthority, [], [], [])
-                { ValidationDisposition = SearchDisposition.Unknown, ValidationIssue = "FixtureObservationUnavailable" }, "uncertain-ui-fixture");
+                solo.Character, solo.Ascension, "uncertain-ui-fixture", fixtureAuthority, SearchQueryEvaluation.Unknown("FixtureObservationUnavailable"))
+                { ValidationIssue = "FixtureObservationUnavailable" }, "uncertain-ui-fixture");
             frame.RestoreDraft(solo, false);
             Navigate("Search"); frame.ShowLastResults();
             var resultRows = Field<VBoxContainer>(frame, "_resultRows");
@@ -480,7 +481,7 @@ internal static partial class UiSurfaceChecks
             shell.HandleBack();
             Check(Field<PanelContainer?>(shell, "_issuesPanel") is null && shell.IsVisibleInTree(),
                 "Back closes issue details before closing the workspace");
-            GD.Print($"PRESET_LIBRARY_SURFACE checks={checks};failures=0;languages=zh,en;layout=master-detail;sections=3;seedScans=0;state={state}");
+            GD.Print($"PRESET_LIBRARY_SURFACE checks={checks};failures=0;languages=zh,en;layout=master-detail;sections=4;seedScans=0;state={state}");
         }
         finally
         {

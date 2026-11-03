@@ -28,9 +28,9 @@ internal static class ExactBoundaryChecks
         void Check(bool value, string name) { checks++; if (!value) throw new InvalidOperationException(name); }
         var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>(Path.Combine(
             Environment.CurrentDirectory, "tools/ProductionSearchHost/Corpus/v1/context.json")).Context;
-        var plan = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(SearchQuery.Empty, context),
+        var plan = SearchPreparationCompiler.Compile(SearchCompiler.Compile(SearchQuery.Empty, context),
             new("000000000000", 2, 1, 2)).Plan!;
-        var positive = ProductionExactSearchEvaluator.Evaluate(plan,
+        var positive = ProductionExactSearchEvaluator.Evaluate(plan.Model,
             TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, plan.CanonicalStartSeed));
         Check(positive.IsMatch, "Cancellation fixture uses a real Exact Match");
         CheckExactCancellationWindow(plan, Check);
@@ -51,53 +51,53 @@ internal static class ExactBoundaryChecks
         string corpus = Path.Combine(Environment.CurrentDirectory, "tools/ProductionSearchHost/Corpus");
         var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>(Path.Combine(corpus,"v1/context.json")).Context;
         var workload = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>(Path.Combine(corpus,"classic-product-v1/B-SourceCapsules-positive.json"));
-        var plan = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(workload.Query, context),
+        var plan = SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, context),
             workload.Options with { ScanCount=8, TargetMatchCount=100, WorkerCount=4 }).Plan!;
         TrustedRootHashInput Input(string seed) => TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance,seed);
-        var positive = ProductionExactSearchEvaluator.Evaluate(plan,Input(plan.CanonicalStartSeed));
+        var positive = ProductionExactSearchEvaluator.Evaluate(plan.Model,Input(plan.CanonicalStartSeed));
         Check(positive.IsMatch && positive.Evaluation.Witnesses.Count>0,"Real Exact positive fixture");
         CheckPreparedOpeningReuse(context, plan.CanonicalStartSeed, corpus, Check);
-        var bonesChoice = positive.Document!.Sections.SelectMany(s => s.NeowChoices).First(c => c.BonesOutcome is not null);
+        var bonesChoice = positive.Facts!.Neow!.Choices.First(c => c.BonesOutcome is not null);
         CheckMissingBonesOutcome(context, bonesChoice, Check);
         var actualOpening = bonesChoice.BonesOutcome!.OriginalRoutes.Last();
         var authoredOpening = SearchQuery.Empty with { OpeningRoute = new(bonesChoice.RelicKey),
             OpeningRouteRelicRequirement = new(bonesChoice.RelicKey, actualOpening.AcquisitionOrder, BonesRouteOrderMode.ExactOrder) };
-        var selection = RolltheSpire2.Ui.Controllers.AnalysisPageController.ResolveSearchOpening(positive.Document, authoredOpening);
+        var selection = RolltheSpire2.Ui.Controllers.AnalysisPageController.ResolveSearchOpening(positive.Facts, authoredOpening);
         Check(selection.Available && selection.ChoiceSlot == bonesChoice.SlotIndex &&
             selection.Route == (actualOpening.OpeningRewardContinuation?.Route.RouteId ?? actualOpening.RouteId),
             "Unverified opening navigation selects the actual requested Bones order");
         var missingOpening = authoredOpening with { OpeningRoute = new(new ModelKey("RELIC", "MISSING_OPENING")) };
-        Check(!RolltheSpire2.Ui.Controllers.AnalysisPageController.ResolveSearchOpening(positive.Document, missingOpening).Available,
+        Check(!RolltheSpire2.Ui.Controllers.AnalysisPageController.ResolveSearchOpening(positive.Facts, missingOpening).Available,
             "Absent authored opening is reported unavailable, never manufactured");
         var injected = new Beta111PredictionProfile((_,_,_,_) => throw new InvalidOperationException("InjectedAnalyzerFailure"));
-        var failed = injected.Predict(positive.Request!,plan.Detection);
-        var quietPlan = plan with { RunOptions = plan.RunOptions with { IncludeDiagnostics=false } };
-        var quietPositive = ProductionExactSearchEvaluator.Evaluate(quietPlan,Input(plan.CanonicalStartSeed));
-        var quietFailed = injected.Predict(quietPositive.Request!,plan.Detection);
+        var failed = injected.Observe(positive.Request!,plan.Model.Detection);
+        var quietPlan = SearchPreparationCompiler.Compile(plan.Model.CompiledSearch, plan.RunOptions with { IncludeDiagnostics=false }).Plan!;
+        var quietPositive = ProductionExactSearchEvaluator.Evaluate(quietPlan.Model,Input(plan.CanonicalStartSeed));
+        var quietFailed = injected.Observe(quietPositive.Request!,plan.Model.Detection);
         Check(!quietPositive.Request!.IncludeDiagnostics && quietFailed.Diagnostics.Any(d=>d.Value.Contains("InjectedAnalyzerFailure")),"Failure evidence survives diagnostics off");
-        var semanticUnknown = SeedPredictionDocumentFactory.Create(positive.Request!,plan.Detection,plan.ProfileId,"UnknownFixture",plan.CanonicalStartSeed,[],
-            [new PredictionWarning(PredictionWarningCode.SnapshotAuthorityIncomplete)],[],SeedPredictionOverallStatus.Unknown);
+        var semanticUnknown = SeedPredictionFactsFactory.Create(positive.Request!,plan.Model.Detection,plan.Model.ProfileId,"UnknownFixture",plan.CanonicalStartSeed,[],
+            [new PredictionWarning(PredictionWarningCode.SnapshotAuthorityIncomplete)],[],SeedPredictionInputStatus.Unknown);
         ProductionExactSearchEvaluator.ThrowIfPredictionFailed(semanticUnknown);checks++;
         Check(failed.Warnings.Any(w=>w.Code==PredictionWarningCode.AnalysisFailed),"Typed analyzer failure document");
         try { ProductionExactSearchEvaluator.ThrowIfPredictionFailed(failed); throw new Exception("Missing fatal"); }
         catch(InvalidOperationException ex) { Check(ex.Message.Contains("InjectedAnalyzerFailure") && ex.Message.Contains("ExactBoundaryChecks"),"Original exception and stack retained"); }
         var cancelled = new Beta111PredictionProfile((_,_,_,_) => throw new OperationCanceledException("InjectedCancellation"));
-        try { cancelled.Predict(positive.Request!,plan.Detection); throw new Exception("Cancellation swallowed"); }
+        try { cancelled.Observe(positive.Request!,plan.Model.Detection); throw new Exception("Cancellation swallowed"); }
         catch(OperationCanceledException) { checks++; }
-        var preparedChoices = positive.Document.Sections.SelectMany(s => s.NeowChoices).ToArray();
-        var reusedFailure = injected.PredictFromRootHash(positive.Request!, plan.Detection, Input(plan.CanonicalStartSeed), preparedChoices);
+        var preparedChoices = positive.Facts.Neow!.Choices.ToArray();
+        var reusedFailure = injected.ObserveFromRootHash(positive.Request!, plan.Model.Detection, Input(plan.CanonicalStartSeed), preparedChoices);
         Check(reusedFailure.Warnings.Any(w => w.Code == PredictionWarningCode.AnalysisFailed) &&
             reusedFailure.Diagnostics.Any(d => d.Value.Contains("InjectedAnalyzerFailure")),
             "Prepared openings retain the original identity failure and evidence");
-        try { cancelled.PredictFromRootHash(positive.Request!, plan.Detection, Input(plan.CanonicalStartSeed), preparedChoices); throw new Exception("Prepared opening swallowed cancellation"); }
+        try { cancelled.ObserveFromRootHash(positive.Request!, plan.Model.Detection, Input(plan.CanonicalStartSeed), preparedChoices); throw new Exception("Prepared opening swallowed cancellation"); }
         catch(OperationCanceledException) { checks++; }
 
         ulong start=0; foreach(char c in plan.CanonicalStartSeed) start=checked(start*34+(uint)"0123456789ABCDEFGHJKLMNPQRSTUVWXYZ".IndexOf(c));
         CheckCandidatePublication(plan, positive, start, Check);
         var unknown=positive with {Evaluation=SearchQueryEvaluation.Unknown("SemanticDetailUnknown")};
         var negativeWorkload=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>(Path.Combine(corpus,"classic-product-v1/B-small-first-positive.json"));
-        var negativePlan=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(negativeWorkload.Query,context),negativeWorkload.Options).Plan!;
-        var noMatch=ProductionExactSearchEvaluator.Evaluate(negativePlan,Input(negativePlan.CanonicalStartSeed));
+        var negativePlan=SearchPreparationCompiler.Compile(SearchCompiler.Compile(negativeWorkload.Query,context),negativeWorkload.Options).Plan!;
+        var noMatch=ProductionExactSearchEvaluator.Evaluate(negativePlan.Model,Input(negativePlan.CanonicalStartSeed));
         Check(noMatch.Evaluation.Disposition==SearchDisposition.NoMatch,"Real source-constrained NoMatch");
         Check(noMatch.Evaluation.RouteRejections.Count > 0 && noMatch.Evaluation.RouteRejections.All(r => r.Reason.Length > 0),
             "Rejected openings preserve actual condition reasons");
@@ -109,12 +109,12 @@ internal static class ExactBoundaryChecks
         // Its authored predicates have no selected filtering stage and no Exact.
         var bypassExecution = FamilyPlanner.InOrder([]) with { AllConditionsUnfiltered = true, FinalValidationSkipped = true };
         var bypass = new ProductionSearchSession(bypassPlan, bypassExecution,
-            FamilySearchEtaProjectorV1.Project(bypassPlan, bypassExecution), 8, 8, null, "",
+            FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(bypassPlan, bypassExecution), bypassExecution), 8, 8, null, "",
             exactEvaluator: (_, _) => throw new Exception("Bypass must not invoke Exact"));
         Check(bypass.Completion.Wait(10000), "Candidate mode terminates at its target");
         var unverified = new List<SearchCandidate>();
         while (bypass.TryReadCandidate(out var item)) unverified.Add(item!);
-        Check(unverified.Count == 3 && unverified.All(c => c.IsUnverified && c.IsUnfiltered && c.Document is null && c.Witnesses.Count == 0 && c.MatchEvidence.Count == 0),
+        Check(unverified.Count == 3 && unverified.All(c => c.IsUnverified && c.IsUnfiltered && c.Facts is null && c.Witnesses.Count == 0 && c.MatchEvidence.Count == 0),
             "Raw unfiltered outputs have no manufactured proof or prediction document");
         Check(bypass.GetProgress().MatchCount == 0 && bypass.GetProgress().UnverifiedCandidateCount == 3 && bypass.GetProgress().State == SearchRunState.Completed,
             "Unverified count stays separate from Exact matches");
@@ -124,7 +124,7 @@ internal static class ExactBoundaryChecks
         bypass.DisposeAsync().AsTask().GetAwaiter().GetResult();
         var diagnosticExecution = FamilyPlanner.InOrder([]);
         var diagnosticSession = new ProductionSearchSession(plan, diagnosticExecution,
-            FamilySearchEtaProjectorV1.Project(plan, diagnosticExecution), 8, 32, null, "",
+            FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(plan, diagnosticExecution), diagnosticExecution), 8, 32, null, "",
             exactEvaluator: (_, input) => positive with { Evaluation = SearchQueryEvaluation.NoMatch("seed:" + input.CanonicalSeed) });
         Check(diagnosticSession.Completion.Wait(10000), "Concurrent rejection diagnostics complete");
         var diagnostic = diagnosticSession.GetDiagnosticSummary();
@@ -135,7 +135,7 @@ internal static class ExactBoundaryChecks
         {
             using var later=new ManualResetEventSlim(); using var entered=new ManualResetEventSlim(); using var release=new ManualResetEventSlim();
             CancellationToken exactToken = default;
-            ProductionExactSearchResult Evaluate(ExactSearchExecutionRequest p,TrustedRootHashInput input)
+            ProductionExactSearchResult Evaluate(SearchModel p,TrustedRootHashInput input)
             {
                 ulong ordinal=0; foreach(char c in input.CanonicalSeed) ordinal=checked(ordinal*34+(uint)"0123456789ABCDEFGHJKLMNPQRSTUVWXYZ".IndexOf(c));
                 int index=checked((int)(ordinal-start));
@@ -153,7 +153,7 @@ internal static class ExactBoundaryChecks
                 later.Set(); return unknown;
             }
             var execution=FamilyPlanner.InOrder([]);
-            var session=new ProductionSearchSession(plan,execution,FamilySearchEtaProjectorV1.Project(plan,execution),8,32,null,"",exactEvaluator:Evaluate,
+            var session=new ProductionSearchSession(plan,execution,FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(plan, execution), execution),8,32,null,"",exactEvaluator:Evaluate,
                 beforeExactEvaluate: token => exactToken = token);
             var emitted=new List<SearchCandidate>();
             if(mode is not ("unknown" or "nomatch"))
@@ -191,7 +191,7 @@ internal static class ExactBoundaryChecks
                 Check(pending.Ordinal==start+1 && pending.Seed==Beta110SeedCodec.FormatOrdinal(start+1) &&
                     pending.Stage=="CandidateCheck" && pending.Attempts==1 &&
                     pending.ExceptionText.Contains("InjectedAnalyzerFailure",StringComparison.Ordinal) &&
-                    pending.QueryFingerprint==plan.CompiledSearch.SemanticFingerprint && pending.SnapshotFingerprint==plan.SnapshotFingerprint,
+                    pending.QueryFingerprint==plan.Model.CompiledSearch.SemanticFingerprint && pending.SnapshotFingerprint==plan.SnapshotFingerprint,
                     "Real analyzer failure retains its original cause and seed/context as pending "+mode);
                 Check(string.IsNullOrEmpty(progress.FailureCode),"Recoverable candidate fault is not a session execution fault "+mode);
                 Check(session.GetDiagnosticSummary().DispositionCounts.Values.Sum()==progress.ScannedCount-1,
@@ -201,9 +201,9 @@ internal static class ExactBoundaryChecks
             foreach(var candidate in emitted)
             {
                 if(candidate.ValidationDisposition==SearchDisposition.Unknown)
-                    Check(candidate.IsUnverified && candidate.Document is null && candidate.Witnesses.Count==0 &&
+                    Check(candidate.IsUnverified && ReferenceEquals(candidate.Facts, unknown.Facts) && candidate.Witnesses.Count==0 &&
                         candidate.MatchEvidence.Count==0 && candidate.MatchedRouteIds.Count==0 && candidate.ValidationIssue=="SemanticDetailUnknown",
-                        "Checked Unknown delivery retains explicit state and reason without a proof payload");
+                        "Checked Unknown delivery retains observed facts and the actual disposition without a Match witness");
                 else Check(!candidate.IsUnverified && candidate.ValidationDisposition==SearchDisposition.Match && candidate.Witnesses.Count>0,
                     "Confirmed delivery retains its real Match witness");
             }
@@ -232,7 +232,7 @@ internal static class ExactBoundaryChecks
             new ModelKeySetFilter([gen.OrderedActCatalog[0].Bosses[0]],[],[gen.OrderedActCatalog[0].Bosses[0]]),ModelKeySetFilter.Empty,false);
         var variantProbe=SearchCompiler.Compile(SearchQuery.Empty with {VariantBossBranches=[impossibleBranch,impossibleBranch with {FirstBoss=ModelKeySetFilter.Empty}]},context);
         Console.WriteLine($"VariantRobustnessProbe={variantProbe.Status};canonicalQuery=true;editorUnchanged=true");
-        ExactSearchExecutionRequest? oversizedWorld=null;
+        PreparedSearch? oversizedWorld=null;
         foreach(string dimension in new[]{"acts","groups","ancients"})
         foreach(int delta in new[]{-1,0,1})
         {
@@ -244,38 +244,38 @@ internal static class ExactBoundaryChecks
             };
             var authority=context.Authority.WithWorldAuthority(context.Authority.WorldAuthority with {Beta109Generation=g});
             var c=context with {Authority=authority};
-            var request=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(aw.Query,c),aw.Options with {ScanCount=1}).Plan!;
+            var request=SearchPreparationCompiler.Compile(SearchCompiler.Compile(aw.Query,c),aw.Options with {ScanCount=1}).Plan!;
             Check(request is not null,"Capacity Query still admitted");
-            Check(WorldFamily.TryCreate(request!,out var w)==(delta<=0),"W capacity boundary "+dimension+delta);
+            Check(WorldFamily.TryCreate(request!.Model,FilterExecutionPreferences.From(request.RunOptions),out var w)==(delta<=0),"W capacity boundary "+dimension+delta);
             if(delta>0)
             {
                 Check(w is null,"No false W coverage");
-                Check(request!.CompiledSearch.NormalizedQuery.AncientBranches.Count==aw.Query.AncientBranches.Count,"Exact World predicates retained");
-                var actual=ProductionExactSearchEvaluator.Evaluate(request,Input(request.CanonicalStartSeed));
+                Check(request!.Model.CompiledSearch.NormalizedQuery.AncientBranches.Count==aw.Query.AncientBranches.Count,"Exact World predicates retained");
+                var actual=ProductionExactSearchEvaluator.Evaluate(request.Model,Input(request.CanonicalStartSeed));
                 Check(actual.Evaluation.Disposition != SearchDisposition.Unknown,"Oversized authority reaches Exact");
                 if(dimension=="acts")
                 {
-                    var baseline=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(aw.Query,context),aw.Options with {ScanCount=1}).Plan!;
-                    var baselineResult=ProductionExactSearchEvaluator.Evaluate(baseline,Input(baseline.CanonicalStartSeed));
+                    var baseline=SearchPreparationCompiler.Compile(SearchCompiler.Compile(aw.Query,context),aw.Options with {ScanCount=1}).Plan!;
+                    var baselineResult=ProductionExactSearchEvaluator.Evaluate(baseline.Model,Input(baseline.CanonicalStartSeed));
                     Check(actual.IsMatch && baselineResult.IsMatch && System.Text.Json.JsonSerializer.Serialize(actual.Evaluation.Witnesses)==
                         System.Text.Json.JsonSerializer.Serialize(baselineResult.Evaluation.Witnesses),"Mixed oversized catalog preserves positive Exact/Witness");
                     var wq=LegacySearchQueryAdapter.FromFilter(NeowSearchFilter.Empty with {
                         BossOrdinalFilters=[new(1,1,new ModelKeySetFilter([gen.OrderedActCatalog[0].Bosses[0]],[],[]))] });
-                    oversizedWorld=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(wq,c),aw.Options with {ScanCount=67,TargetMatchCount=1000,WorkerCount=4}).Plan!;
+                    oversizedWorld=SearchPreparationCompiler.Compile(SearchCompiler.Compile(wq,c),aw.Options with {ScanCount=67,TargetMatchCount=1000,WorkerCount=4}).Plan!;
                     var registered=FamilyExecutionCoordinator.Plan(request);
                     Check(!registered.Stages.Any(s=>s.Coverage.Contains("W.World")) && registered.Stages.Count>0,"Mixed allocation keeps other Families, no fabricated W coverage");
                     var corrupt=c with {Authority=authority.WithWorldAuthority(authority.WorldAuthority! with {Beta109Generation=g with {RelicInitializationExact=false}})};
-                    var bad=request with {CompiledSearch=SearchCompiler.Compile(aw.Query,corrupt)};
-                    Check(!WorldFamily.TryCreate(bad,out var unavailableRelicWorld) && unavailableRelicWorld is null,
+                    var bad=request with {Model=request.Model with {CompiledSearch=SearchCompiler.Compile(aw.Query,corrupt)}};
+                    Check(!WorldFamily.TryCreate(bad.Model,FilterExecutionPreferences.From(bad.RunOptions),out var unavailableRelicWorld) && unavailableRelicWorld is null,
                         "Missing actual World initialization facts retire W coverage");
-                    var incompleteRelicResult=ProductionExactSearchEvaluator.Evaluate(bad,Input(bad.CanonicalStartSeed));
+                    var incompleteRelicResult=ProductionExactSearchEvaluator.Evaluate(bad.Model,Input(bad.CanonicalStartSeed));
                     Check(incompleteRelicResult.Evaluation.Disposition==SearchDisposition.Unknown && incompleteRelicResult.Evaluation.Witnesses.Count==0,
                         "Missing World initialization stays unresolved in final model");
                     var empty=c with {Authority=authority.WithWorldAuthority(authority.WorldAuthority! with {Beta109Generation=g with {ActSelectionGroups=[]}})};
-                    var missingSelection=request with {CompiledSearch=SearchCompiler.Compile(aw.Query,empty)};
-                    Check(!WorldFamily.TryCreate(missingSelection,out var unavailableSelectionWorld) && unavailableSelectionWorld is null,
+                    var missingSelection=request with {Model=request.Model with {CompiledSearch=SearchCompiler.Compile(aw.Query,empty)}};
+                    Check(!WorldFamily.TryCreate(missingSelection.Model,FilterExecutionPreferences.From(missingSelection.RunOptions),out var unavailableSelectionWorld) && unavailableSelectionWorld is null,
                         "Missing actual Act-selection facts retire W coverage");
-                    var incompleteSelectionResult=ProductionExactSearchEvaluator.Evaluate(missingSelection,Input(missingSelection.CanonicalStartSeed));
+                    var incompleteSelectionResult=ProductionExactSearchEvaluator.Evaluate(missingSelection.Model,Input(missingSelection.CanonicalStartSeed));
                     Check(incompleteSelectionResult.Evaluation.Disposition==SearchDisposition.Unknown && incompleteSelectionResult.Evaluation.Witnesses.Count==0,
                         "Missing Act-selection observation stays unresolved in final model");
                 }
@@ -287,7 +287,7 @@ internal static class ExactBoundaryChecks
         var expected=new List<string>();
         ulong wStart=0;foreach(char c in only.CanonicalStartSeed)wStart=checked(wStart*34+(uint)"0123456789ABCDEFGHJKLMNPQRSTUVWXYZ".IndexOf(c));
         for(ulong i=0;i<67;i++) {
-            var exact=ProductionExactSearchEvaluator.Evaluate(only,Input(RolltheSpire2.Search.FamilyExecution.Beta110SeedCodec.FormatOrdinal(wStart+i)));
+            var exact=ProductionExactSearchEvaluator.Evaluate(only.Model,Input(RolltheSpire2.Search.FamilyExecution.Beta110SeedCodec.FormatOrdinal(wStart+i)));
             if(exact.IsMatch) expected.Add(System.Text.Json.JsonSerializer.Serialize(exact.Evaluation.Witnesses));
         }
         var worldSession=FamilyExecutionCoordinator.Start(only,queueCapacity:128);
@@ -301,7 +301,7 @@ internal static class ExactBoundaryChecks
         {
             var serial=only with {RunOptions=only.RunOptions with {WorkerCount=1}};
             CancellationToken exactToken = default;
-            var cancelSession=new ProductionSearchSession(serial,selected,FamilySearchEtaProjectorV1.Project(serial,selected),8,128,null,"",
+            var cancelSession=new ProductionSearchSession(serial,selected,FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(serial, selected), selected),8,128,null,"",
                 exactEvaluator:(p,i)=>{
                     if(i.CanonicalSeed==RolltheSpire2.Search.FamilyExecution.Beta110SeedCodec.FormatOrdinal(wStart+8)) {
                         stopped.Set();if(!resume.Wait(10000))throw new TimeoutException();throw new OperationCanceledException(exactToken);
@@ -312,7 +312,7 @@ internal static class ExactBoundaryChecks
             Check(cancelSession.Completion.Wait(10000) && cancelSession.GetProgress().State==SearchRunState.Cancelled && cancelSession.GetSafeNextOrdinal()==wStart+8,"W cancellation preserves committed prefix");
             var combined=new List<string>();while(cancelSession.TryReadCandidate(out var candidate))combined.Add(System.Text.Json.JsonSerializer.Serialize(candidate!.Witnesses));
             cancelSession.DisposeAsync().AsTask().GetAwaiter().GetResult();
-            var remaining=ExactSearchExecutionRequestFactory.Compile(only.CompiledSearch,only.RunOptions with {
+            var remaining=SearchPreparationCompiler.Compile(only.Model.CompiledSearch,only.RunOptions with {
                 StartSeed=RolltheSpire2.Search.FamilyExecution.Beta110SeedCodec.FormatOrdinal(wStart+8),ScanCount=59}).Plan!;
             var resumed=FamilyExecutionCoordinator.Start(remaining,queueCapacity:128);
             Check(resumed.Completion.Wait(10000),"W resumed completes");
@@ -320,8 +320,8 @@ internal static class ExactBoundaryChecks
             Check(expected.Order().SequenceEqual(combined.Order()) && resumed.GetSafeNextOrdinal()==wStart+67,"W cancel/resume Exact/Witness and cursor parity");
             resumed.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
-        var faultPlan=FamilyPlanner.InOrder([new SelectedWorldFault()]);
-        var faultSession=new ProductionSearchSession(only,faultPlan,FamilySearchEtaProjectorV1.Project(only,faultPlan),8,32,null,"");
+        var faultPlan=FamilyPlanner.InOrder([SelectedWorldFault.Describe(only.Model.ProfileId)]);
+        var faultSession=new ProductionSearchSession(only,faultPlan,FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(only, faultPlan), faultPlan),8,32,null,"");
         Check(faultSession.Completion.Wait(15000) && faultSession.GetProgress().State==SearchRunState.Faulted &&
             faultSession.GetProgress().FailureCode.Contains("InjectedSelectedWFailure") && faultSession.GetSafeNextOrdinal()==wStart,"Selected W fault never becomes inapplicability");
         faultSession.DisposeAsync().AsTask().GetAwaiter().GetResult();
@@ -354,8 +354,8 @@ internal static class ExactBoundaryChecks
                 }
                 var cheapRequest = Request(SeedPredictionDomainSelection.Neow);
                 var rewardRequest = Request(SeedPredictionDomainSelection.Neow | SeedPredictionDomainSelection.NormalCombatRewards);
-                var cheapDocument = RuntimeProfileRegistry.PredictFromRootHash(detection, cheapRequest, input);
-                var choices = cheapDocument.Sections.SelectMany(s => s.NeowChoices).ToArray();
+                var cheapDocument = RuntimeProfileRegistry.ObserveFromRootHash(detection, cheapRequest, input);
+                var choices = cheapDocument.Neow!.Choices.ToArray();
                 // Include internal shared RNG snapshots as well as the entire wire payload.
                 // They are intentionally absent from ordinary JSON serialization.
                 string SourceSignature() => JsonSerializer.Serialize(new
@@ -372,9 +372,9 @@ internal static class ExactBoundaryChecks
                     })
                 });
                 string sourceJson = SourceSignature();
-                var original = RuntimeProfileRegistry.PredictFromRootHash(detection, rewardRequest, input);
+                var original = RuntimeProfileRegistry.ObserveFromRootHash(detection, rewardRequest, input);
                 check(SourceSignature() == sourceJson, "Original reward projection preserves opening inputs and all continuation RNG states");
-                var rewards = original.Sections.Single(s => s.Kind == PredictionSectionKind.NormalCombatRewardSequence).NormalCombatRewardSequencePrediction!;
+                var rewards = original.CombatRewards!;
                 if (missingEffects) check(rewards.Status == SeedDomainEvaluationStatus.Unknown, "Missing reward authority remains Unknown before reuse");
                 if (!missingEffects && source.ProfileId == RuntimeProfileId.Beta111 && seed == bonesSeed)
                 {
@@ -389,7 +389,7 @@ internal static class ExactBoundaryChecks
             foreach (int index in new[] { 0, 1, 0 })
             {
                 var fixture = fixtures[index];
-                var reused = RuntimeProfileRegistry.PredictFromRootHash(detection, fixture.rewardRequest, fixture.input, fixture.choices);
+                var reused = RuntimeProfileRegistry.ObserveFromRootHash(detection, fixture.rewardRequest, fixture.input, fixture.choices);
                 check(JsonSerializer.Serialize(reused) == fixture.originalJson,
                     $"{source.ProfileId} full same-request reward document parity A/B/A; complex={complex};missingEffects={missingEffects};root={index}");
                 foreach (var observed in fixtures)
@@ -413,8 +413,8 @@ internal static class ExactBoundaryChecks
         check(SeedPredictionRequest.TryCreate(seed, context.Authority.Character, context.Ascension,
             context.Authority.PlayersCount, context.Authority.PlayerSlotIndex, context.Authority, false, out var request, out _),
             "Missing Bones typed fixture request");
-        ExactSearchExecutionRequest Compile(SearchQuery query) => ExactSearchExecutionRequestFactory.Compile(
-            SearchCompiler.Compile(query, context), new(seed, 1, int.MaxValue, 1)).Plan
+        SearchModel Compile(SearchQuery query) => SearchPreparationCompiler.Compile(
+            SearchCompiler.Compile(query, context), new(seed, 1, int.MaxValue, 1)).Plan?.Model
             ?? throw new InvalidOperationException("MissingBonesFixture.Compile");
         var query = SearchQuery.Empty with { OpeningRoute = new(bones),
             OpeningRouteRelicRequirement = new(bones, [kalei, phial], BonesRouteOrderMode.AnyOrder),
@@ -424,14 +424,14 @@ internal static class ExactBoundaryChecks
                 new(kalei, NeowStructuredConditionKind.IndependentOfferGroupTargets, NeowStructuredEffectScope.SelectableOfferGroups,
                     NeowStructuredOutputKind.Card, [new("CARD", "WROUGHT_IN_WAR")])] };
         var plan = Compile(query);
-        var sibling = SeedPredictionDocumentFactory.Choice(1, phial, request!, PredictionPrecision.Exact, "fixture.exact-offer",
+        var sibling = NeowChoiceFacts.Choice(1, phial, request!, PredictionPrecision.Exact, "fixture.exact-offer",
             NeowEffectProjection.ProductExactNoVisibleEffects(phial, "fixture.independent-effect"));
-        SeedPredictionDocument Document(params NeowChoiceResult[] choices) => SeedPredictionDocumentFactory.Create(
-            request!, context.Detection, context.ProfileId, "MissingBonesTypedBoundary", seed, choices, [], [], SeedPredictionOverallStatus.CompletedWithWarnings);
+        SeedPredictionFacts Document(params NeowChoiceResult[] choices) => SeedPredictionFactsFactory.Create(
+            request!, context.Detection, context.ProfileId, "MissingBonesTypedBoundary", seed, choices, [], [], SeedPredictionInputStatus.Ready);
         foreach (var projection in new[] { NeowEffectProjection.UnknownAuthority(bones, cause),
             NeowEffectProjection.Unsupported(bones, "fixture.bones-projection-unsupported") })
         {
-            var missing = SeedPredictionDocumentFactory.Choice(3, bones, request!, PredictionPrecision.Exact, "fixture.exact-offer", projection);
+            var missing = NeowChoiceFacts.Choice(3, bones, request!, PredictionPrecision.Exact, "fixture.exact-offer", projection);
             check(missing.BonesOutcome is null && missing.OpeningRewardContinuations is null,
                 "Actual missing-authority producer retains no invented Bones outcome or continuation");
             var document = Document(missing, sibling);
@@ -466,8 +466,8 @@ internal static class ExactBoundaryChecks
     private static void CheckDomainAndRouteUncertainty(SearchContext context, string corpus, Action<bool,string> check)
     {
         var workload=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>(Path.Combine(corpus,"v1/cases/C-three-potions.json"));
-        ExactSearchExecutionRequest Compile(SearchQuery query) => ExactSearchExecutionRequestFactory.Compile(
-            SearchCompiler.Compile(query,context),workload.Options with {ScanCount=1,WorkerCount=1}).Plan!;
+        SearchModel Compile(SearchQuery query) => SearchPreparationCompiler.Compile(
+            SearchCompiler.Compile(query,context),workload.Options with {ScanCount=1,WorkerCount=1}).Plan!.Model;
         var input=TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance,workload.Options.StartSeed);
         // An unpinned C request permits only proven-neutral openings; the first
         // seed need not contain any. Obtain real route facts from the existing
@@ -475,9 +475,8 @@ internal static class ExactBoundaryChecks
         check(SeedPredictionRequest.TryCreate(input.CanonicalSeed,context.Authority.Character,context.Ascension,
             context.Authority.PlayersCount,context.Authority.PlayerSlotIndex,context.Authority,true,out var request,out _),
             "Full captured reward-route fixture request");
-        var document=RuntimeProfileRegistry.Predict(context.Detection,request!);
-        var section=document.Sections.Single(s=>s.Kind==PredictionSectionKind.NormalCombatRewardSequence);
-        var sequence=section.NormalCombatRewardSequencePrediction!;
+        var document=RuntimeProfileRegistry.Observe(context.Detection,request!);
+        var sequence=document.CombatRewards!;
         // Successful reward projections are deliberately Partial: default Monster
         // rewards and no intervening consumers are declared model assumptions.
         // The validator accepts these evaluated facts; this precedence check does
@@ -498,9 +497,9 @@ internal static class ExactBoundaryChecks
         var cheap=ProductionQueryValidator.EvaluateCheap(matchedPlan,document);
         check(cheap.Disposition==SearchDisposition.Match && cheap.Witnesses.Any(w=>route.EquivalentRoutes.Any(d=>d.RouteId==w.OpeningRouteId)),
             "Actual offered opening supplies a compatible cheap witness for the reward-route fixture");
-        SeedPredictionDocument Document(params NormalCombatRewardRoutePredictionResult[] routes) => SeedPredictionDocumentFactory.Create(
+        SeedPredictionFacts Document(params NormalCombatRewardRoutePredictionResult[] routes) => SeedPredictionFactsFactory.Create(
             request!,sourcePlan.Detection,sourcePlan.ProfileId,"RewardRouteUncertaintyFixture",input.CanonicalSeed,
-            [],[],[],SeedPredictionOverallStatus.Completed,normalCombatRewardPrediction:sequence with {Routes=routes});
+            [],[],[],SeedPredictionInputStatus.Ready,normalCombatRewardPrediction:sequence with {Routes=routes});
         var unsupported=route with {RouteGroupId="unsupported-first",Status=SeedDomainEvaluationStatus.Unsupported,IssueCode="UnsupportedFixture"};
         var unresolved=ProductionQueryValidator.EvaluateRewards(matchedPlan,Document(unsupported),cheap);
         check(unresolved.Disposition==SearchDisposition.Unsupported && unresolved.FailureCode=="NoSupportedNormalCombatRewardRouteMatched" &&
@@ -518,8 +517,8 @@ internal static class ExactBoundaryChecks
             "Known failed reward route cannot disprove an unsupported alternative");
 
         var emptyPolicy=sequence with {Routes=[],NoEligibleSearchRewardRoute=true};
-        var policyDocument=SeedPredictionDocumentFactory.Create(request!,sourcePlan.Detection,sourcePlan.ProfileId,"EmptyPolicyFixture",
-            input.CanonicalSeed,[],[],[],SeedPredictionOverallStatus.Completed,normalCombatRewardPrediction:emptyPolicy);
+        var policyDocument=SeedPredictionFactsFactory.Create(request!,sourcePlan.Detection,sourcePlan.ProfileId,"EmptyPolicyFixture",
+            input.CanonicalSeed,[],[],[],SeedPredictionInputStatus.Ready,normalCombatRewardPrediction:emptyPolicy);
         var unpinnedPlan=Compile(workload.Query);
         var policyResult=ProductionQueryValidator.EvaluateRewards(unpinnedPlan,policyDocument,SearchQueryEvaluation.Match());
         check(policyResult.Disposition==SearchDisposition.Unknown && policyResult.FailureCode=="NoEligibleUnpinnedRewardRoute" && policyResult.Witnesses.Count==0,
@@ -566,15 +565,15 @@ internal static class ExactBoundaryChecks
         check(unresolvedCanonical.Disposition==SearchDisposition.Unsupported && unresolvedCanonical.Witnesses.Count==0,
             "Independent Match cannot manufacture an unsupported canonical witness");
 
-        var allOffers=document.Sections.Single(s=>s.Kind==PredictionSectionKind.NeowIdentity).NeowChoices;
+        var allOffers=document.Neow!.Choices;
         var identityPlan=Compile(SearchQuery.Empty with {OpeningRoute=new(opening.RootRelicKey)});
         var identityResult=ProductionExactSearchEvaluator.Evaluate(identityPlan,input);
-        var identities=identityResult.Document!.Sections.Single(s=>s.Kind==PredictionSectionKind.NeowIdentity).NeowChoices;
+        var identities=identityResult.Facts!.Neow!.Choices;
         check(identityResult.IsMatch && identities.Select(c=>c.RelicKey).SequenceEqual(allOffers.Select(c=>c.RelicKey)) &&
             identities.All(c=>c.OpeningRewardContinuations is null && c.EffectGroups.Count==0),
             "Identity-only Exact retains all offers without projecting unrequested effects or continuation");
         var pinnedResult=ProductionExactSearchEvaluator.Evaluate(matchedPlan,input);
-        var projectedChoices=pinnedResult.Document!.Sections.Single(s=>s.Kind==PredictionSectionKind.NeowIdentity).NeowChoices;
+        var projectedChoices=pinnedResult.Facts!.Neow!.Choices;
         check(projectedChoices.Where(c=>c.RelicKey!=opening.RootRelicKey).All(c=>c.OpeningRewardContinuations is null) &&
             projectedChoices.Single(c=>c.RelicKey==opening.RootRelicKey).OpeningRewardContinuations is not null,
             "Pinned reward Exact observes selected opening continuation while retaining sibling identities");
@@ -582,10 +581,10 @@ internal static class ExactBoundaryChecks
         check(SearchAuthorityProjector.TryProjectForRootHash(sourcePlan,input.RootHash,input.CanonicalSeed,
             out var projectedAuthority,out _,out _),"Typed Variant fixture authority projected for actual root");
         var generation=projectedAuthority.WorldAuthority!.Beta109Generation!;
-        var firstBoss=document.Sections.Single(s=>s.Kind==PredictionSectionKind.BossIdentity).Bosses.First(b=>b.Ordinal==1);
+        var firstBoss=document.World!.Bosses.First(b=>b.Ordinal==1);
         var worldPredicate=LegacyWorldSemanticConstraints.Empty with {BossFilters=[new(firstBoss.Act,new([firstBoss.BossKey],[],[]))]};
-        var knownRewardWithUnknownWorld=SeedPredictionDocumentFactory.Create(request!,sourcePlan.Detection,sourcePlan.ProfileId,"IndependentRewardFixture",
-            input.CanonicalSeed,allOffers,[],[],SeedPredictionOverallStatus.Completed,
+        var knownRewardWithUnknownWorld=SeedPredictionFactsFactory.Create(request!,sourcePlan.Detection,sourcePlan.ProfileId,"IndependentRewardFixture",
+            input.CanonicalSeed,allOffers,[],[],SeedPredictionInputStatus.Ready,
             worldPrediction:WorldPredictionResult.Unknown("MissingWorldFixture"),normalCombatRewardPrediction:sequence with {Routes=[route]});
         var matchedWithWorld=Compile(pinnedQuery with {CombatPotionRewards=new(1,CombatRewardSequenceOrderMode.Ordered,[slot]),LegacyWorld=worldPredicate});
         var rejectedWithWorld=Compile(pinnedQuery with {CombatPotionRewards=new(1,CombatRewardSequenceOrderMode.Ordered,[opposite]),LegacyWorld=worldPredicate});
@@ -599,8 +598,8 @@ internal static class ExactBoundaryChecks
         var stillUnknown=ProductionQueryValidator.Evaluate(matchedWithWorld,knownRewardWithUnknownWorld);
         check(stillUnknown.Disposition==SearchDisposition.Unknown && stillUnknown.Witnesses.Count==0 &&
             stillUnknown.FailureCode==partialCheap.FailureCode,"C Match cannot clear independent World unknown or supply a final witness");
-        var unknownN=SeedPredictionDocumentFactory.Create(request!,sourcePlan.Detection,sourcePlan.ProfileId,"UnknownOpeningFixture",
-            input.CanonicalSeed,allOffers,[],[],SeedPredictionOverallStatus.Completed,normalCombatRewardPrediction:sequence with {Routes=[route]},
+        var unknownN=SeedPredictionFactsFactory.Create(request!,sourcePlan.Detection,sourcePlan.ProfileId,"UnknownOpeningFixture",
+            input.CanonicalSeed,allOffers,[],[],SeedPredictionInputStatus.Ready,normalCombatRewardPrediction:sequence with {Routes=[route]},
             neowStatus:SeedDomainEvaluationStatus.Unknown,neowIssueCode:"MissingNFixture");
         var noBorrowedRoute=ProductionQueryValidator.Evaluate(rejectedPlan,unknownN);
         check(noBorrowedRoute.Disposition==SearchDisposition.Unknown && noBorrowedRoute.FailureCode=="NeowDomainUnknown:MissingNFixture" &&
@@ -610,8 +609,8 @@ internal static class ExactBoundaryChecks
             EventAuthority=context.Authority.WorldAuthority.Beta109Generation.EventAuthority with {SharedRawOrderExact=false}
         }};
         var incompleteEventContext=context with {Authority=context.Authority.WithWorldAuthority(incompleteEventWorld)};
-        ExactSearchExecutionRequest MissingWorldPlan(SearchQuery q)=>ExactSearchExecutionRequestFactory.Compile(
-            SearchCompiler.Compile(q,incompleteEventContext),workload.Options with {ScanCount=1,WorkerCount=1}).Plan!;
+        SearchModel MissingWorldPlan(SearchQuery q)=>SearchPreparationCompiler.Compile(
+            SearchCompiler.Compile(q,incompleteEventContext),workload.Options with {ScanCount=1,WorkerCount=1}).Plan!.Model;
         var e2eMismatch=ProductionExactSearchEvaluator.Evaluate(MissingWorldPlan(pinnedQuery with {
             CombatPotionRewards=new(1,CombatRewardSequenceOrderMode.Ordered,[opposite]),LegacyWorld=worldPredicate}),input);
         check(e2eMismatch.Evaluation.Disposition==SearchDisposition.NoMatch && e2eMismatch.Evaluation.FailureCode=="NoNormalCombatRewardRouteMatched",
@@ -634,7 +633,7 @@ internal static class ExactBoundaryChecks
         check(Branches(new VariantScopedBossBranch(firstBoss.Act,variant,acceptedBoss,rejectedBoss,true),
             new VariantScopedBossBranch(firstBoss.Act,variant,rejectedBoss,acceptedBoss,true)).Disposition!=SearchDisposition.Match,
             "Typed Variant Boss1/Boss2 cannot combine children from different rows");
-        var finalBossFacts = document.Sections.Single(s => s.Kind == PredictionSectionKind.BossIdentity).Bosses
+        var finalBossFacts = document.World!.Bosses
             .Where(b => b.Act == 3).OrderBy(b => b.Ordinal).ToArray();
         check(finalBossFacts.Length == 2 && finalBossFacts[0].BossKey != finalBossFacts[1].BossKey,
             "Captured A10 fixture supplies two distinct final Boss identities");
@@ -646,13 +645,8 @@ internal static class ExactBoundaryChecks
         var presenceFinal = orderedFinal with { FirstBoss = ModelKeySetFilter.Empty, SecondBoss = ModelKeySetFilter.Empty };
         check(Branches(presenceFinal).Disposition == SearchDisposition.Match,
             "Presence-only second Boss declaration accepts a real second Boss observation");
-        var missingSecondDocument = new SeedPredictionDocument
-        {
-            Context = document.Context, PredictorId = document.PredictorId, OriginalSeed = document.OriginalSeed,
-            CanonicalSeed = document.CanonicalSeed, Warnings = document.Warnings, Diagnostics = document.Diagnostics,
-            OverallStatus = document.OverallStatus, Sections = document.Sections.Select(s => s.Kind == PredictionSectionKind.BossIdentity
-                ? s with { Bosses = s.Bosses.Where(b => b.Act != 3 || b.Ordinal != 2).ToArray() } : s).ToArray()
-        };
+        var missingSecondDocument = document with
+        { World = document.World! with { Bosses = document.World.Bosses.Where(b => b.Act != 3 || b.Ordinal != 2).ToArray() } };
         var missingSecond = ProductionQueryValidator.EvaluateCheap(sourcePlan with
             { Evaluation = ExactSearchEvaluationProjection.Empty with { VariantBossBranches = [presenceFinal] } }, missingSecondDocument, projectedAuthority);
         check(missingSecond.Disposition == SearchDisposition.Unknown && missingSecond.FailureCode == "VariantBossNotReplayable:Act3:Ordinal2",
@@ -725,18 +719,15 @@ internal static class ExactBoundaryChecks
 
         // Keep real World facts and one real N predicate; change only the observed
         // Neow domain to incomplete. No route-specific negations are combined.
-        var boss=document.Sections.Single(s=>s.Kind==PredictionSectionKind.BossIdentity).Bosses.First();
-        var offer=document.Sections.Single(s=>s.Kind==PredictionSectionKind.NeowIdentity).NeowChoices.First().RelicKey;
+        var boss=document.World!.Bosses.First();
+        var offer=document.Neow!.Choices.First().RelicKey;
         SearchQuery Query(bool rejectBoss) => LegacySearchQueryAdapter.FromFilter(NeowSearchFilter.Empty with {
             NeowRelics=new([offer],[],[]),BossFilters=[new(boss.Act,rejectBoss?new([],[],[boss.BossKey]):new([boss.BossKey],[],[]))]});
-        var unknownDocument=SeedPredictionDocumentFactory.Create(request!,context.Detection,context.Authority.ProfileId,"DomainUncertaintyFixture",
-            input.CanonicalSeed,[],[],[],SeedPredictionOverallStatus.CompletedWithWarnings,
+        var unknownDocument=SeedPredictionFactsFactory.Create(request!,context.Detection,context.Authority.ProfileId,"DomainUncertaintyFixture",
+            input.CanonicalSeed,[],[],[],SeedPredictionInputStatus.Ready,
             neowStatus:SeedDomainEvaluationStatus.Unknown,neowIssueCode:"SnapshotAuthorityIncomplete");
         // Copy the independent immutable section payloads; no simulated state changes.
-        var independent= new SeedPredictionDocument {
-            Context=unknownDocument.Context,PredictorId=unknownDocument.PredictorId,OriginalSeed=unknownDocument.OriginalSeed,
-            CanonicalSeed=unknownDocument.CanonicalSeed,Warnings=unknownDocument.Warnings,Diagnostics=unknownDocument.Diagnostics,
-            OverallStatus=unknownDocument.OverallStatus,Sections=unknownDocument.Sections.Concat(document.Sections.Where(s=>s.Kind!=PredictionSectionKind.NeowIdentity)).ToArray()};
+        var independent = unknownDocument with { World = document.World, Relics = document.Relics, CombatRewards = document.CombatRewards };
         var mismatch=ProductionQueryValidator.EvaluateCheap(Compile(Query(true)),independent);
         check(mismatch.Disposition==SearchDisposition.NoMatch && mismatch.FailureCode=="BossFilterRejected:Act"+boss.Act,
             "Independent proven World mismatch decides conjunction after unknown Neow");
@@ -788,14 +779,14 @@ internal static class ExactBoundaryChecks
         }
         SearchQuery Table(SearchQuery first, SearchQuery last) => SearchQuery.Empty with { Players =
             [new(0, ModelKeySetFilter.Empty) { Conditions = first }, new(1, ModelKeySetFilter.Empty) { Conditions = last }] };
-        ExactSearchExecutionRequest Plan(SearchContext context, SearchQuery query)
+        PreparedSearch Plan(SearchContext context, SearchQuery query)
         {
-            var compiled = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context), new(seed, 1, 1, 1));
+            var compiled = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context), new(seed, 1, 1, 1));
             check(compiled.Success, "Independent party repro compiles the actual authored request: " + compiled.Issue);
             return compiled.Plan!;
         }
         ProductionExactSearchResult Exact(SearchContext context, SearchQuery query) =>
-            ProductionExactSearchEvaluator.Evaluate(Plan(context, query), input);
+            ProductionExactSearchEvaluator.Evaluate(Plan(context, query).Model, input);
         var healthy = Context(false, false);
         var owner = healthy.Party!.Players[1];
         int actualTrial = Beta111TrialTinkerProjector.TrialCase(input.RootHash, 1);
@@ -814,7 +805,7 @@ internal static class ExactBoundaryChecks
             check(Exact(healthy, Table(SearchQuery.Empty, canonical(true))).IsMatch,
                 "Matching canonical-only party request remains confirmed");
             var single = Plan(healthy, Table(SearchQuery.Empty, canonical(false)));
-            var child = ExactSearchExecutionRequestFactory.ForPlayer(single, single.CompiledSearch.PlayerSearches[1]);
+            var child = SearchPreparationCompiler.ForPlayer(single.Model, single.Model.CompiledSearch.PlayerSearches[1]);
             check(ProductionExactSearchEvaluator.Evaluate(child, input).Evaluation.Disposition == SearchDisposition.NoMatch,
                 "Actual standalone P2 Exact proves the independent contradiction");
         }
@@ -889,13 +880,13 @@ internal static class ExactBoundaryChecks
                     ? SearchQuery.Empty with { CombatCardRewards = new(6, CombatRewardSequenceOrderMode.Unordered,
                         [new ModelKey("CARD", "BETA111_TRANSFORM_19"), null, null, null, null, null]) }
                     : SearchQuery.Empty }).ToArray() };
-            var compiled = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context), new(seed, 1, int.MaxValue, 1));
+            var compiled = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context), new(seed, 1, int.MaxValue, 1));
             check(compiled.Success, "Controlled mixed-character party request preserves a missing C observation");
             var request = compiled.Plan!;
-            var unknown = ProductionExactSearchEvaluator.Evaluate(request, input);
+            var unknown = ProductionExactSearchEvaluator.Evaluate(request.Model, input);
             check((unknown.Evaluation.Disposition is SearchDisposition.Unknown or SearchDisposition.Unsupported) && !unknown.IsMatch,
                 "Missing personal C remains an actual unresolved model outcome");
-            check(ReferenceEquals(unknown.Authority, request.Authority), "P1 and P4 non-Match return the parent authority");
+            check(ReferenceEquals(unknown.Authority, request.Model.Authority), "P1 and P4 non-Match return the parent authority");
             if (activeSlot == 3)
             {
                 var scope = unknown.Evaluation.Evidence.Single(e => e.Code == "Party.ChildEvaluationScope");
@@ -915,13 +906,13 @@ internal static class ExactBoundaryChecks
         var realWorkload = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>(nativeWorkload);
         check(realContext.Party is { Players.Count: 4 } realParty && realParty.Players[3].Character.CharacterKey == BaseGameModelKeys.Characters.Regent,
             "Native regression retains the actual four-player Regent P4 owner");
-        var realCompiled = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(realWorkload.Query, realContext),
+        var realCompiled = SearchPreparationCompiler.Compile(SearchCompiler.Compile(realWorkload.Query, realContext),
             realWorkload.Options with { StartSeed = seed, ScanCount = 1, TargetMatchCount = int.MaxValue });
         check(realCompiled.Success, "Native four-player ordinal 22650 request remains admissible");
         var real = realCompiled.Plan!;
-        var result = ProductionExactSearchEvaluator.Evaluate(real, input);
+        var result = ProductionExactSearchEvaluator.Evaluate(real.Model, input);
         check(result.Evaluation.Disposition == SearchDisposition.Unknown && result.Evaluation.FailureCode == "NoEligibleUnpinnedRewardRoute" &&
-            result.FailureCode == "NoEligibleUnpinnedRewardRoute" && ReferenceEquals(result.Authority, real.Authority),
+            result.FailureCode == "NoEligibleUnpinnedRewardRoute" && ReferenceEquals(result.Authority, real.Model.Authority),
             "Native ordinal 22650 preserves the original Unknown cause in the parent envelope");
         var provenance = result.Evaluation.Evidence.Single(e => e.Code == "Party.ChildEvaluationScope");
         check(provenance.Ordinal == 4 && provenance.RelatedKey == BaseGameModelKeys.Characters.Regent && result.Evaluation.Witnesses.Count == 0,
@@ -929,11 +920,11 @@ internal static class ExactBoundaryChecks
         CheckPartyUnknownPublication(real, result.Evaluation, check);
     }
 
-    private static void CheckPartyUnknownPublication(ExactSearchExecutionRequest request, SearchQueryEvaluation evaluation,
+    private static void CheckPartyUnknownPublication(PreparedSearch request, SearchQueryEvaluation evaluation,
         Action<bool, string> check)
     {
         var execution = FamilyPlanner.InOrder([]); // Exercise the one actual terminal root; filtering is not under test.
-        var session = new ProductionSearchSession(request, execution, FamilySearchEtaProjectorV1.Project(request, execution), 1, 4, null, "");
+        var session = new ProductionSearchSession(request, execution, FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(request, execution), execution), 1, 4, null, "");
         try
         {
             check(session.Completion.Wait(15000), "Party unresolved terminal publication completes");
@@ -944,10 +935,9 @@ internal static class ExactBoundaryChecks
                 progress.PendingCandidateCount == 0 && outputs.Count == 1 && string.IsNullOrEmpty(progress.FailureCode),
                 "A real unresolved child is delivered once unverified, without a session fault or fake pending work");
             var output = outputs.Single();
-            check(output.CharacterKey == request.CharacterKey && ReferenceEquals(output.Authority, request.Authority) &&
-                output.PredictionRequest.Character.CharacterKey == request.CharacterKey &&
-                ReferenceEquals(output.PredictionRequest.Authority, request.Authority) && output.PredictionRequest.PlayerSlotIndex == 0,
-                "Party candidate metadata and its unobserved request agree on the parent identity");
+            check(output.CharacterKey == request.Model.CharacterKey && ReferenceEquals(output.Authority, request.Model.Authority) &&
+                output.Authority.PlayerSlotIndex == 0,
+                "Party candidate metadata retains the parent identity without an invented analysis request");
             string issue = evaluation.FailureCode;
             if (evaluation.RouteRejections.Count > 0)
                 issue += "\n" + string.Join("\n", evaluation.RouteRejections.Select(r =>
@@ -956,9 +946,9 @@ internal static class ExactBoundaryChecks
                 issue += $"\nsource=P{scope.Ordinal};character={scope.RelatedKey}";
             check(output.ValidationIssue.Contains("source=P4;character=CHARACTER:REGENT", StringComparison.Ordinal),
                 "Persisted unresolved output names its actual P4 Regent child source");
-            check(output.ValidationDisposition == evaluation.Disposition && output.ValidationIssue == issue && output.Document is null &&
-                output.MatchEvidence.Count == 0 && output.Witnesses.Count == 0,
-                "Unverified publication retains the original cause and has no proof payload");
+            check(output.ValidationDisposition == evaluation.Disposition && output.ValidationIssue == issue &&
+                JsonSerializer.Serialize(output.Evaluation) == JsonSerializer.Serialize(evaluation) && output.Witnesses.Count == 0,
+                "Unverified publication retains the original cause and scoped evidence without a Match witness");
             const ulong ordinal = 22650;
             check(session.GetSafeNextOrdinal() == ordinal + 1 && session.CaptureContinuation()!.PendingCandidates.Count == 0,
                 "Completed unresolved root advances the trustworthy scan frontier without pending loss");
@@ -970,7 +960,7 @@ internal static class ExactBoundaryChecks
         finally { session.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
     }
 
-    private static void CheckExactCancellationWindow(ExactSearchExecutionRequest request, Action<bool, string> check)
+    private static void CheckExactCancellationWindow(PreparedSearch request, Action<bool, string> check)
     {
         using var heldEntered = new ManualResetEventSlim();
         using var targetEntered = new ManualResetEventSlim();
@@ -994,7 +984,7 @@ internal static class ExactBoundaryChecks
         }
         var execution = FamilyPlanner.InOrder([]);
         var session = new ProductionSearchSession(request, execution,
-            FamilySearchEtaProjectorV1.Project(request, execution), 2, 2, null, "", beforeExactEvaluate: BeforeExact);
+            FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(request, execution), execution), 2, 2, null, "", beforeExactEvaluate: BeforeExact);
         try
         {
             check(heldEntered.Wait(10000) && targetEntered.Wait(10000), "Both real Exact workers reach the synchronous boundary");
@@ -1037,11 +1027,11 @@ internal static class ExactBoundaryChecks
             check(received.NextOrdinal == unfinished && received.UnreceivedOrdinals!.Count == 0 &&
                 received.PendingCandidates.Count == 0, "ACK advances only the received result and retains the unfinished candidate");
 
-            var remaining = ExactSearchExecutionRequestFactory.Compile(request.CompiledSearch, request.RunOptions with
+            var remaining = SearchPreparationCompiler.Compile(request.Model.CompiledSearch, request.RunOptions with
             { StartSeed = Beta110SeedCodec.FormatOrdinal(received.NextOrdinal), ScanCount = 2 - (long)received.NextOrdinal,
                 TargetMatchCount = 2, WorkerCount = 1 }).Plan!;
             var resumed = new ProductionSearchSession(remaining, execution,
-                FamilySearchEtaProjectorV1.Project(remaining, execution), 2, 2, null, "", continuation: received);
+                FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(remaining, execution), execution), 2, 2, null, "", continuation: received);
             try
             {
                 check(resumed.Completion.Wait(10000), "Saved target cancellation resumes to completion");
@@ -1066,7 +1056,7 @@ internal static class ExactBoundaryChecks
         }
     }
 
-    private static void CheckStoppedExact(ExactSearchExecutionRequest fixture, ProductionExactSearchResult positive,
+    private static void CheckStoppedExact(PreparedSearch fixture, ProductionExactSearchResult positive,
         Action<bool, string> check)
     {
         // A cancelled session does not make an unrelated OCE a normal stop.
@@ -1090,7 +1080,7 @@ internal static class ExactBoundaryChecks
                 entered.Set();
                 if (!release.Wait(10000)) throw new TimeoutException("Stopped Exact release");
             }
-            ProductionExactSearchResult Evaluate(ExactSearchExecutionRequest _, TrustedRootHashInput input)
+            ProductionExactSearchResult Evaluate(SearchModel _, TrustedRootHashInput input)
             {
                 if (input.CanonicalSeed != request.CanonicalStartSeed) return positive;
                 if (mode == "unsignalled")
@@ -1098,7 +1088,7 @@ internal static class ExactBoundaryChecks
                 throw original;
             }
             var session = new ProductionSearchSession(request, execution,
-                FamilySearchEtaProjectorV1.Project(request, execution), 2, 2, null, "", exactEvaluator: mode == "normal" ? null : Evaluate,
+                FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(request, execution), execution), 2, 2, null, "", exactEvaluator: mode == "normal" ? null : Evaluate,
                 beforeExactEvaluate: BeforeExact);
             try
             {
@@ -1120,7 +1110,7 @@ internal static class ExactBoundaryChecks
                         pending.Attempts == 1 && pending.ExceptionText.Contains("OriginalCancellationCause", StringComparison.Ordinal) &&
                         pending.ExceptionText.Contains(mode == "foreign" ? "InjectedForeignCancellation" :
                             mode == "tokenless" ? "InjectedTokenlessCancellation" : "InjectedCandidateCancellation", StringComparison.Ordinal) &&
-                        pending.QueryFingerprint == request.CompiledSearch.SemanticFingerprint &&
+                        pending.QueryFingerprint == request.Model.CompiledSearch.SemanticFingerprint &&
                         pending.SnapshotFingerprint == request.SnapshotFingerprint,
                         "Unexpected cancellation retains original cause and candidate identity as pending: " + mode);
                     check(session.GetDiagnosticSummary().DispositionCounts.Values.Sum() == progress.ScannedCount - 1,
@@ -1136,7 +1126,7 @@ internal static class ExactBoundaryChecks
     }
 
     private static void CheckCandidatePublication(
-        ExactSearchExecutionRequest fixture,
+        PreparedSearch fixture,
         ProductionExactSearchResult positive,
         ulong start,
         Action<bool, string> check)
@@ -1159,7 +1149,7 @@ internal static class ExactBoundaryChecks
                 await firstReserved.Task.WaitAsync(token).ConfigureAwait(false);
         }
         var reordered = new ProductionSearchSession(request, execution,
-            FamilySearchEtaProjectorV1.Project(request, execution), 2, 1, null, "",
+            FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(request, execution), execution), 2, 1, null, "",
             exactEvaluator: (_, _) => positive, beforeCandidatePublish: BeforePublish);
         try
         {
@@ -1203,7 +1193,7 @@ internal static class ExactBoundaryChecks
             return ValueTask.CompletedTask;
         }
         var cancelled = new ProductionSearchSession(request, execution,
-            FamilySearchEtaProjectorV1.Project(request, execution), 2, 1, null, "",
+            FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(request, execution), execution), 2, 1, null, "",
             exactEvaluator: (_, _) => positive, beforeCandidatePublish: ObserveReservation);
         try
         {
@@ -1230,14 +1220,24 @@ internal static class ExactBoundaryChecks
         }
     }
 
-    private sealed class SelectedWorldFault : IFamilyInvocation
+    private sealed class SelectedWorldFault(FilterBodyDescription body) : IFilterExecution
     {
-        public string FamilyId=>"W.World";
-        public FamilyAnalyticalCostProjection AnalyticalCost=>new(FamilyId,8,[],"Injected");
-        public FamilySurvivalProjection Survival=>FamilySurvivalProjection.Resolved(FamilyId,.5,"Injected");
-        public FamilyConditionPerformanceProjection ConditionPerformance=>new(FamilyId,"InjectedW","Injected",1,"Injected",usesGpu:false);
-        public FamilyPerformanceObservation CapturePerformanceObservation()=>new(ConditionPerformance,"",0,0,0,0,0,0,0,0,false,"Injected");
-        public ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context,FamilyObservationWindow window,FamilyCandidateSet input,CancellationToken token)
-            =>ValueTask.FromException<FamilyCandidateSet>(new InvalidOperationException("InjectedSelectedWFailure"));
+        internal static FilterBodyDescription Describe(RuntimeProfileId profile) => new(
+            new PreparedFilter("W.World")
+            {
+                AnalyticalCost = new("W.World", 8, [], "Injected"),
+                Survival = FamilySurvivalProjection.Resolved("W.World", .5, "Injected")
+            }, "InjectedW", profile)
+        {
+            CreateExecution = static (description, _) => new SelectedWorldFault(description)
+        };
+        public FilterBodyDescription Body { get; } = body;
+        public bool ExecutionFaulted { get; private set; }
+        public ValueTask<FamilyCandidateSet> FilterAsync(FilterRuntimeServices services,FamilyCandidateSet input,CancellationToken token)
+        {
+            ExecutionFaulted = true;
+            return ValueTask.FromException<FamilyCandidateSet>(new InvalidOperationException("InjectedSelectedWFailure"));
+        }
+        public ValueTask DisposeAsync(FilterRuntimeServices services) => ValueTask.CompletedTask;
     }
 }

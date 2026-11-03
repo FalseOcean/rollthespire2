@@ -129,7 +129,7 @@ internal static class CombatRewardGpuPacking
         for (int index = 0; index < 4; index++) meta[45 + index] = unchecked((uint)(capsuleNicheAdvances?[index] ?? 0));
         meta[49] = kaleidoscopeCountOnly ? 1u : 0u;
         meta[50] = conservativeOpening ? 1u : 0u;
-        // 51..54 are reserved: production no longer recovers latent identities.
+        // 51..54 are reserved for family-owned necessary-condition proof data.
         meta[55] = reward.CardAssignmentWindow;
         meta[56] = checked((uint)reward.CardAssignmentTargets.Length);
         meta[57] = checked((uint)cardAssignmentOffset);

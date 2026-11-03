@@ -23,6 +23,13 @@ internal sealed partial class SearchWorkspace
         MarkPreferencesDirty(); FlushPreferences();
     }
 
+    internal void SetAllOperationPredictionModes(OperationPredictionMode mode)
+    {
+        InitializeFeaturePreferences();
+        InRunFeaturePreferences.SetAllOperationModes(_directory, mode);
+        MarkPreferencesDirty(); FlushPreferences();
+    }
+
     internal void SetOperationPredictionMode(string id, OperationPredictionMode mode)
     {
         InitializeFeaturePreferences();

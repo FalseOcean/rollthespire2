@@ -44,11 +44,11 @@ internal static partial class GpuOwnerLifecycleChecks
         return passed ? 0 : 1;
     }
 
-    private static ExactSearchExecutionRequest LifecycleRequest(string workloadPath)
+    private static PreparedSearch LifecycleRequest(string workloadPath)
     {
         var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/v1/context.json");
         var workload = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/" + workloadPath);
-        return ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(workload.Query, context.Context),
+        return SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, context.Context),
             workload.Options with { ScanCount = 1, TargetMatchCount = 1, SkipExactValidation = true }).Plan
             ?? throw new InvalidOperationException("Lifecycle fixture did not compile:" + workloadPath);
     }
@@ -57,10 +57,10 @@ internal static partial class GpuOwnerLifecycleChecks
     {
         var request = LifecycleRequest("v1/cases/S-three-shops.json");
         var plan = FamilyPlanner.InOrder([]);
-        var eta = FamilySearchEtaProjectorV1.Project(request, plan);
+        var eta = FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(request, plan), plan);
         var global = FamilyDeviceProfileFoundation.Initialization;
         int activeBefore = global.Capture().ActiveOwners, factories = 0;
-        FamilyExecutionContext Context() { factories++; return new(false); }
+        FilterRuntimeServices Context() { factories++; return new(false); }
         foreach (var (window, capacity, parameter) in new[] { (0, 64, "executionWindowSize"), (1, 0, "queueCapacity") })
         {
             try
@@ -116,34 +116,35 @@ internal static partial class GpuOwnerLifecycleChecks
                 "S" => "v1/cases/S-three-shops.json",
                 "R" => "v1/cases/R-three-common.json",
                 _ => "family-pricing-matrix-v1/Rfull-Large-RR.json" });
-            IFamilyInvocation? family;
+            FilterBodyDescription? description;
             bool created = kind switch {
-                "S" => MerchantShopColorlessFamily.TryCreate(request, out family),
-                "R" => RelicFamily.TryCreate(request, out family),
-                _ => CapsuleRelicFamily.TryCreate(request, out family) };
-            if (!created || family is null) throw new InvalidOperationException("Consumer fixture unavailable:" + kind);
-            var field = family.GetType().GetField("_gpu",
+                "S" => MerchantShopColorlessFamily.TryCreate(request.Model, FilterExecutionPreferences.From(request.RunOptions), out description),
+                "R" => RelicFamily.TryCreate(request.Model, FilterExecutionPreferences.From(request.RunOptions), out description),
+                _ => CapsuleRelicFamily.TryCreate(request.Model, FilterExecutionPreferences.From(request.RunOptions), out description) };
+            if (!created || description is null) throw new InvalidOperationException("Consumer fixture unavailable:" + kind);
+            var context = new FilterRuntimeServices(false) { CorrelationId = request.SnapshotFingerprint };
+            var family = description.CreateExecution!(description, context);
+            var field = family.GetType().GetField("_resource",
                 System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
             // The executor is only an ownership marker. A CPU-only context faults
             // before either execute/dispose callback can enter it or call Godot.
             field.SetValue(family, System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(field.FieldType));
-            var context = new FamilyExecutionContext(false);
             Exception? primary = null;
             var batch = new SearchBatch(0, 1);
-            try { family.InvokeAsync(context, new(batch, request), FamilyCandidateSet.Dense(batch), CancellationToken.None)
+            try { family.FilterAsync(context, FamilyCandidateSet.Dense(batch), CancellationToken.None)
                 .AsTask().WaitAsync(Timeout).GetAwaiter().GetResult(); }
             catch (Exception failure) { primary = failure; }
             if (primary is not InvalidOperationException { Message: "FamilyGpuOwnerUnavailable" } ||
                 !family.ExecutionFaulted || field.GetValue(family) is not null)
                 throw new InvalidOperationException("Consumer did not retain its original execution fault:" + kind, primary);
-            var pending = (System.Collections.Concurrent.ConcurrentQueue<Exception>)typeof(FamilyExecutionContext)
+            var pending = (System.Collections.Concurrent.ConcurrentQueue<Exception>)typeof(FilterRuntimeServices)
                 .GetField("_gpuCleanupFailures", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
                 .GetValue(context)!;
             var cleanup = pending.Single();
             string stage = kind == "Capsule" ? "CapsuleGpuFault.Dispose" : "DisableGpu.Dispose";
             if (cleanup.InnerException is not { Message: "FamilyGpuOwnerUnavailable" } secondary ||
                 ReferenceEquals(primary, secondary) || string.IsNullOrWhiteSpace(secondary.StackTrace) ||
-                !cleanup.Message.Contains(family.FamilyId, StringComparison.Ordinal) ||
+                !cleanup.Message.Contains(family.Body.FamilyId, StringComparison.Ordinal) ||
                 !cleanup.Message.Contains(stage, StringComparison.Ordinal) ||
                 !cleanup.Message.Contains(request.SnapshotFingerprint, StringComparison.Ordinal))
                 throw new InvalidOperationException("Consumer cleanup lost original cause or correlation:" + kind);
@@ -151,7 +152,7 @@ internal static partial class GpuOwnerLifecycleChecks
             // The existing Session cleanup boundary must receive the deferred
             // second failure while a separately completed calculation stays completed.
             var execution = FamilyPlanner.InOrder([]);
-            var session = new ProductionSearchSession(request, execution, FamilySearchEtaProjectorV1.Project(request, execution),
+            var session = new ProductionSearchSession(request, execution, FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(request, execution), execution),
                 1, 64, null, "", executionContextFactory: () => context);
             try
             {
@@ -411,12 +412,12 @@ internal static partial class GpuOwnerLifecycleChecks
         if (!condition) throw new InvalidOperationException("Initial GPU creation recovery: " + reason);
     }
 
-    private static ExactSearchExecutionRequest CreationRecoveryRequest(bool skipExact = false,
+    private static PreparedSearch CreationRecoveryRequest(bool skipExact = false,
         string start = "000000000000", long count = 6)
     {
         var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/v1/context.json");
         var workload = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/v1/cases/S-three-shops.json");
-        return ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(workload.Query, context.Context),
+        return SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, context.Context),
             workload.Options with { StartSeed = start, ScanCount = count, TargetMatchCount = 100,
                 WorkerCount = 1, SkipExactValidation = skipExact }).Plan
             ?? throw new InvalidOperationException("Creation recovery fixture did not compile");
@@ -429,24 +430,24 @@ internal static partial class GpuOwnerLifecycleChecks
         return ordinal;
     }
 
-    private static ProductionExactSearchResult UnverifiedRecoveryFixture(ExactSearchExecutionRequest request) =>
+    private static ProductionExactSearchResult UnverifiedRecoveryFixture(SearchModel request) =>
         new(null, null, request.Authority, SearchQueryEvaluation.Unknown("InjectedRecoveryObservationUnknown"),
             "InjectedRecoveryObservationUnknown");
 
     private sealed class CreationRecoveryFamily(string id, bool gpu,
-        Func<FamilyExecutionContext, FamilyObservationWindow, FamilyCandidateSet, CancellationToken, ValueTask<FamilyCandidateSet>> invoke,
-        Action? dispose = null) : IFamilyInvocation
+        Func<FilterRuntimeServices, SearchBatch, FamilyCandidateSet, CancellationToken, ValueTask<FamilyCandidateSet>> invoke,
+        Action? dispose = null) : IFilterExecution
     {
-        public string FamilyId => id;
-        public FamilyAnalyticalCostProjection AnalyticalCost => new(id, 65536, [], "CreationRecoveryFixture");
-        public FamilySurvivalProjection Survival => FamilySurvivalProjection.Resolved(id, 1, "CreationRecoveryFixture");
-        public FamilyConditionPerformanceProjection ConditionPerformance =>
-            new(id, id + ".CreationRecoveryFixture", "Fixture", 1, "Fixture", usesGpu: gpu);
-        public ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow window,
-            FamilyCandidateSet input, CancellationToken token) => invoke(context, window, input, token);
-        public FamilyPerformanceObservation CapturePerformanceObservation() =>
-            new(ConditionPerformance, "Fixture", 0, 0, 0, 0, 0, 0, 0, 0, false, "Fixture");
-        public ValueTask DisposeAsync(FamilyExecutionContext context) { dispose?.Invoke(); return ValueTask.CompletedTask; }
+        private FilterBodyDescription? _body;
+        public FilterBodyDescription Body => _body ??= new(new PreparedFilter(id)
+        { AnalyticalCost = new(id, 65536, [], "CreationRecoveryFixture"), Survival = FamilySurvivalProjection.Resolved(id, 1, "CreationRecoveryFixture") },
+            id + ".CreationRecoveryFixture", RolltheSpire2.Compatibility.RuntimeProfileId.Beta111)
+        { UsesGpu = gpu, PerformanceProjection = _ => new(id, id + ".CreationRecoveryFixture", "Fixture", 1, "Fixture", usesGpu: gpu),
+            CreateExecution = (_, _) => this };
+        public static implicit operator FilterBodyDescription(CreationRecoveryFamily fixture) => fixture.Body;
+        public bool ExecutionFaulted => false;
+        public ValueTask<FamilyCandidateSet> FilterAsync(FilterRuntimeServices services, FamilyCandidateSet input, CancellationToken token) => invoke(services, input.Batch, input, token);
+        public ValueTask DisposeAsync(FilterRuntimeServices services) { dispose?.Invoke(); return ValueTask.CompletedTask; }
     }
 
     private static async Task<bool> CheckInitialCreationRecoveryAsync()
@@ -492,12 +493,12 @@ internal static partial class GpuOwnerLifecycleChecks
             context.ExecuteGpuAsync(_ => { Interlocked.Increment(ref dispatches); return input; }, token),
             () => Interlocked.Increment(ref disposals));
         var selected = FamilyPlanner.InOrder([prefix, gpu]);
-        var eta = FamilySearchEtaProjectorV1.Project(request, selected);
-        FamilyExecutionContext? executionContext = null;
+        var eta = FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(request, selected), selected);
+        FilterRuntimeServices? executionContext = null;
         await using var session = new ProductionSearchSession(request, selected, eta, 4096, 64, null, "",
             exactEvaluator: (actual, input) =>
             {
-                RequireCreationRecovery(ReferenceEquals(actual, request), "Exact receives original complete request");
+                RequireCreationRecovery(ReferenceEquals(actual, request.Model), "Exact receives original complete model");
                 ulong ordinal = RecoveryOrdinal(input.CanonicalSeed);
                 exactCalls.AddOrUpdate(ordinal, 1, (_, n) => n + 1);
                 if (ordinal == 0) throw candidateFailure;
@@ -554,7 +555,7 @@ internal static partial class GpuOwnerLifecycleChecks
             var resumeCalls = new ConcurrentDictionary<ulong, int>();
             var direct = FamilyPlanner.Plan([]);
             await using var retry = new ProductionSearchSession(resumed, direct,
-                FamilySearchEtaProjectorV1.Project(resumed, direct), 2, 64, null, "", continuation: retained,
+                FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(resumed, direct), direct), 2, 64, null, "", continuation: retained,
                 executionContextFactory: () => new(false, cpuWorkerCount: 1), exactEvaluator: (actual, input) =>
                 {
                     resumeCalls.AddOrUpdate(RecoveryOrdinal(input.CanonicalSeed), 1, (_, n) => n + 1);
@@ -579,16 +580,21 @@ internal static partial class GpuOwnerLifecycleChecks
         using var prefixCompleted = new ManualResetEventSlim();
         using var creationEntered = new ManualResetEventSlim();
         using var creationRelease = new ManualResetEventSlim();
+        using var gpuQueued = new ManualResetEventSlim();
         using var exactEntered = new ManualResetEventSlim();
         using var exactRelease = new ManualResetEventSlim();
         int creations = 0, dispatches = 0;
         var prefix = new CreationRecoveryFamily("Fixture.CpuPrefix", false, (_, _, input, _) =>
         { prefixCompleted.Set(); return ValueTask.FromResult(input); });
         var gpu = new CreationRecoveryFamily("Fixture.Gpu", true, (context, _, input, token) =>
-            context.ExecuteGpuAsync(_ => { Interlocked.Increment(ref dispatches); return input; }, token));
+        {
+            var pending = context.ExecuteGpuAsync(_ => { Interlocked.Increment(ref dispatches); return input; }, token);
+            gpuQueued.Set();
+            return pending;
+        });
         var selected = FamilyPlanner.InOrder([prefix, gpu]);
         await using var session = new ProductionSearchSession(request, selected,
-            FamilySearchEtaProjectorV1.Project(request, selected), 4096, 64, null, "",
+            FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(request, selected), selected), 4096, 64, null, "",
             executionContextFactory: () => new(true, cpuWorkerCount: 1, gpuOwnerFactory: () => new(() =>
             {
                 Interlocked.Increment(ref creations);
@@ -607,6 +613,7 @@ internal static partial class GpuOwnerLifecycleChecks
             // Prefix completion does not prove the owner thread has entered
             // native initialization. Hold cancellation at the intended boundary.
             RequireCreationRecovery(creationEntered.Wait(Timeout), "cancel fixture native creation entered");
+            RequireCreationRecovery(gpuQueued.Wait(Timeout), "cancel fixture GPU work queued without native execution");
             if (afterRecovery)
             {
                 creationRelease.Set();
@@ -637,7 +644,7 @@ internal static partial class GpuOwnerLifecycleChecks
             if (mode == "Explicit") selected = selected with { RankingAuthority = FamilyPlannerRankingAuthority.UnpricedPhysicalTrial,
                 DecisionEvidence = ["ExplicitPhysicalSelection=true"] };
             await using var session = new ProductionSearchSession(request, selected,
-                FamilySearchEtaProjectorV1.Project(request, selected), 16, 64, null, "",
+                FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(request, selected), selected), 16, 64, null, "",
                 failOnPhysicalRecovery: mode == "FailOnRecovery", allowInitialGpuCreationFallback: mode != "NotAuthorized",
                 executionContextFactory: () => mode == "NonCreation" ? new(false) : new(true, gpuOwnerFactory: () => new(() => throw original)),
                 exactEvaluator: (actual, _) => { exactCalls++; return UnverifiedRecoveryFixture(actual); });

@@ -7,15 +7,12 @@ using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.Authority;
 using RolltheSpire2.Core.Effects.Coverage;
+using RolltheSpire2.Core.Effects;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Rng;
 
 namespace RolltheSpire2.Infrastructure.Snapshots;
-
-internal sealed record ReflectionSnapshotProfileRules(
-    bool GeneratedCursePoolRequiresModifierFlag,
-    bool OtherCharacterPoolsUseModelIdOrder);
 
 /// <summary>
 /// Narrow reflection boundary over the live STS2 model catalog/profile. It is intentionally
@@ -40,7 +37,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         int playerSlotIndex,
         RuntimeProfileId expectedProfile,
         string capturedGameVersion,
-        ReflectionSnapshotProfileRules rules,
+        EffectCatalogRules rules,
         object? explicitUnlockState = null)
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
@@ -451,40 +448,6 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             StringComparer.Ordinal);
     }
 
-    private static IReadOnlyList<ModelKey>? BuildGeneratedCursePool(
-        PoolCapture curseCards,
-        ReflectionSnapshotProfileRules rules,
-        out bool exact)
-    {
-        exact = curseCards.Exact;
-        if (curseCards.Cards is null)
-        {
-            exact = false;
-            return null;
-        }
-        var output = new List<ModelKey>();
-        foreach (NeowEffectCardSnapshot card in curseCards.Cards.OrderBy(card => card.CardKey.Category, StringComparer.Ordinal)
-                     .ThenBy(card => card.CardKey.Entry, StringComparer.Ordinal))
-        {
-            if (!rules.GeneratedCursePoolRequiresModifierFlag)
-            {
-                output.Add(card.CardKey);
-                continue;
-            }
-            if (!card.CanBeGeneratedByModifiers.HasValue)
-            {
-                exact = false;
-                continue;
-            }
-            if (card.CanBeGeneratedByModifiers.Value)
-            {
-                output.Add(card.CardKey);
-            }
-        }
-        exact &= output.Count > 0;
-        return output;
-    }
-
     private static bool? CaptureAllCharacterCardPoolsUnlocked(
         Assembly assembly,
         object unlockState,
@@ -565,7 +528,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             bool? scrollBoxesAllowed = unlockedCommonCards.HasValue && unlockedUncommonCards.HasValue
                 ? unlockedCommonCards.Value >= 4 && unlockedUncommonCards.Value >= 2 : null;
             exact &= allCharacterPoolsUnlocked.HasValue && scrollBoxesAllowed.HasValue;
-            values = values.Where(key => Core.Neow.ModernNeowIdentityPredictor.IsAllowed(
+            values = values.Where(key => Core.Neow.ModernNeowIdentityRules.IsAllowed(
                 key, playersCount, allCharacterPoolsUnlocked, scrollBoxesAllowed) != false);
         }
         return values.ToArray();

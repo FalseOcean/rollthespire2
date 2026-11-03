@@ -34,6 +34,15 @@ public sealed record PredictionContext(
     string? SourceModId,
     string? SourceAssembly)
 {
+    public static PredictionContext FromRequest(SeedPredictionRequest request,
+        string detectedVersion, RuntimeProfileId profileId) => new(
+        request.RequestId, profileId, detectedVersion, request.Character, request.Ascension,
+        request.PlayersCount, request.PlayerSlotIndex, request.Authority.UnlockSnapshotFingerprint,
+        request.Authority.CatalogFingerprint, request.Authority.SourceAuthority,
+        request.Authority.Completeness, request.Authority.ResolutionStatus, request.Authority.IsVanilla,
+        request.Authority.SourceModId, request.Authority.SourceAssembly)
+    { SupportScope = request.Authority.SupportScope };
+
     // Frozen request scope, independent of the document's modeled precision.
     // Missing evidence in older documents is unknown, never an inferred promise.
     public RequestSupportAssessment? SupportScope { get; init; }

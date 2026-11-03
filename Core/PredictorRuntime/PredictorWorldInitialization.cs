@@ -19,11 +19,13 @@ internal static class PredictorWorldInitialization
     // replay uses the same numerical donors with the actual empty pool.
     internal static PredictorRuntimeWorld Generate(PredictorContext context, WorldAuthoritySnapshot world)
     {
+        if (!RuntimeProfilePolicies.SupportsPredictorSeedInitialization(context.VersionResolution))
+            throw new InvalidOperationException("PredictorSeedInitializationVersionUnsupported:" + context.GameVersion);
         bool startedWithNeow = context.RevealedEpochs.Contains("NEOW_EPOCH");
         var source = world.Beta109Generation ?? throw new InvalidOperationException("PredictorRuntimeWorldSnapshotMissing");
         var snapshot = Beta109WorldSnapshotProjector.ProjectForSeed(source, context.Seed);
         var missing = new List<string>();
-        if (snapshot.Profile != RuntimeProfileId.Beta111) missing.Add("Profile");
+        if (snapshot.Profile != context.RuntimeProfile.ProfileId) missing.Add("Profile");
         if (!snapshot.DirectSourceAudited) missing.Add("DirectSourceAudited");
         if (!snapshot.IsVanilla) missing.Add("IsVanilla");
         if (snapshot.GameMode != WorldGameMode.Singleplayer || !snapshot.ModeFactsExact) missing.Add("SingleplayerModeFacts");

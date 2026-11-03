@@ -44,7 +44,7 @@ public sealed record FamilySurvivalProjection
 
 internal static class MerchantShopColorlessSurvival
 {
-    internal static FamilySurvivalProjection Project(ExactSearchExecutionRequest request)
+    internal static FamilySurvivalProjection Project(SearchModel request)
     {
         ArgumentNullException.ThrowIfNull(request);
         Beta111MerchantColorlessAuthority authority = Beta111MerchantColorlessAuthority.From(request.Authority);
@@ -87,7 +87,7 @@ internal static class MerchantShopColorlessSurvival
 
 internal static class RelicFamilySurvival
 {
-    internal static FamilySurvivalProjection Project(ExactSearchExecutionRequest request)
+    internal static FamilySurvivalProjection Project(SearchModel request)
     {
         ArgumentNullException.ThrowIfNull(request);
         SearchSelectivityEstimate estimate = SearchSelectivityEstimator.EstimateStage(

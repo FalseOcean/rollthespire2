@@ -1,3 +1,4 @@
+using RolltheSpire2.Infrastructure.PredictionSessions;
 using System.Collections.Immutable;
 using Godot;
 using MegaCrit.Sts2.Core.Models;
@@ -89,9 +90,9 @@ internal sealed partial class CrystalSphereAssistantPanel
             Quiet(option);option.CustomMinimumSize=new(0,60);
             option.AutowrapMode=TextServer.AutowrapMode.WordSmart;left.AddChild(option);
         }
-        _avoidCurse.Toggled += enabled=>{ _preferences.SetCrystalSphereOptions(avoidCurse:enabled);if(_snapshot!=null) BeginBranch(); };
-        _includeDriftwood.Toggled += enabled=>{ _preferences.SetCrystalSphereOptions(includeDriftwood:enabled);if(_snapshot!=null) BeginBranch(); };
-        _includeEnchantments.Toggled += enabled=>{ _preferences.SetCrystalSphereOptions(includeEnchantments:enabled);if(_snapshot!=null) BeginBranch(); };
+        _avoidCurse.Toggled += enabled=>{ _preferences.SetCrystalSphereOptions(avoidCurse:enabled);if(Calculation.Snapshot!=null) BeginBranch(); };
+        _includeDriftwood.Toggled += enabled=>{ _preferences.SetCrystalSphereOptions(includeDriftwood:enabled);if(Calculation.Snapshot!=null) BeginBranch(); };
+        _includeEnchantments.Toggled += enabled=>{ _preferences.SetCrystalSphereOptions(includeEnchantments:enabled);if(Calculation.Snapshot!=null) BeginBranch(); };
         _transparentMask.Toggled += enabled=>{
             _preferences.SetCrystalSphereOptions(transparentMask:enabled);CrystalSphereMaskAppearance.SetEnabled(enabled);
         };
@@ -104,8 +105,8 @@ internal sealed partial class CrystalSphereAssistantPanel
         _speed=new Label { Text="—",AutowrapMode=TextServer.AutowrapMode.WordSmart };statistics.AddChild(_speed);
         Text(statistics,"elapsed",15);_elapsed=new Label { Text="—" };statistics.AddChild(_elapsed);
         _continue=Action(context,"continue_discovery",StartDiscovery);
-        _stop=Action(context,"pause_discovery",()=>_cancel?.Cancel());
-        _allCandidates=Action(context,"focus_back",()=>{ SwitchSearchQueue();_focusTarget=null;Render();StartDiscovery(); });
+        _stop=Action(context,"pause_discovery",()=>Calculation.Pause());
+        _allCandidates=Action(context,"focus_back",()=>{ Calculation.ReturnToCandidates();Render();StartDiscovery(); });
         _allCandidates.Visible=false;
 
         var center=Column("CrystalRewardCandidates",WorkspaceLayout.CenterLeft,WorkspaceLayout.CenterWidth);
@@ -155,6 +156,11 @@ internal sealed partial class CrystalSphereAssistantPanel
     private static void StyleChoice(OptionButton choice)
     {
         var p=WorkspacePalette.MainPanel;choice.CustomMinimumSize=new(0,44);choice.FitToLongestItem=false;
+        // FitToLongestItem only excludes other popup rows. The selected
+        // continuation label can still enlarge this fixed rail unless its
+        // text participates in wrapping, including the remaining-reveal count.
+        choice.AutowrapMode=TextServer.AutowrapMode.WordSmart;
+        choice.ClipText=false;choice.TextOverrunBehavior=TextServer.OverrunBehavior.NoTrimming;
         foreach(var state in new[]{"normal","hover","pressed","disabled","focus"})
             choice.AddThemeStyleboxOverride(state,p.Box(state=="hover"?p.Hover:p.Surface,p.Line,1));
         choice.AddThemeFontSizeOverride("font_size",18);
@@ -241,42 +247,42 @@ internal sealed partial class CrystalSphereAssistantPanel
     private void RenderChrome()
     {
         if(_results==null) return;
-        _branch.Disabled=_snapshot==null || _stale;_avoidCurse.Disabled=_stale;
-        _includeDriftwood.Disabled=_stale || _snapshot==null || !PredictorSettlementEffects.Has(Source.State,"DRIFTWOOD");
-        _includeEnchantments.Disabled=_stale || _snapshot==null;
-        _continue.Disabled=_snapshot==null || _stale || _running || _complete;
-        _stop.Disabled=!_running;
-        _continue.Visible=_snapshot!=null && !_stale && !_running && !_complete;
-        _stop.Visible=_running;
-        _statistics.Visible=_snapshot!=null;
-        _searchHint.Visible=_snapshot!=null && !_stale && !_candidatesComplete;
-        _use.Disabled=_stale || _projection.SelectedPlan==null;
-        _summary.Text=_snapshot==null?"":_projection.SelectedPlan==null?T(_selected.IsEmpty?"gold_finding":"checking_joint"):
-            _selected.IsEmpty?string.Format(T("gold_ready"),_projection.Gold):
-            string.Format(T("joint_ready"),_selected.Length,_projection.Gold);
-        if(_projection.SelectedPlan!=null)
-            _summary.Text+="\n"+(_projection.GoldComplete?T("gold_optimal"):
-                _projection.GoldUpperBound is { } upper?string.Format(T("gold_bound"),upper):T("gold_searching"));
-        if(_projection.SelectedPlan is { RerollRewardIndices.Length: >0 } suffixPlan)
+        _branch.Disabled=Calculation.Snapshot==null || Calculation.Stale;_avoidCurse.Disabled=Calculation.Stale;
+        _includeDriftwood.Disabled=Calculation.Stale || Calculation.Snapshot==null || !PredictorSettlementEffects.Has(Source.State,"DRIFTWOOD");
+        _includeEnchantments.Disabled=Calculation.Stale || Calculation.Snapshot==null;
+        _continue.Disabled=Calculation.Snapshot==null || Calculation.Stale || Calculation.Running || Calculation.Complete;
+        _stop.Disabled=!Calculation.Running;
+        _continue.Visible=Calculation.Snapshot!=null && !Calculation.Stale && !Calculation.Running && !Calculation.Complete;
+        _stop.Visible=Calculation.Running;
+        _statistics.Visible=Calculation.Snapshot!=null;
+        _searchHint.Visible=Calculation.Snapshot!=null && !Calculation.Stale && !Calculation.CandidatesComplete;
+        _use.Disabled=Calculation.Stale || Calculation.Projection.SelectedPlan==null;
+        _summary.Text=Calculation.Snapshot==null?"":Calculation.Projection.SelectedPlan==null?T(Calculation.Selected.IsEmpty?"gold_finding":"checking_joint"):
+            Calculation.Selected.IsEmpty?string.Format(T("gold_ready"),Calculation.Projection.Gold):
+            string.Format(T("joint_ready"),Calculation.Selected.Length,Calculation.Projection.Gold);
+        if(Calculation.Projection.SelectedPlan!=null)
+            _summary.Text+="\n"+(Calculation.Projection.GoldComplete?T("gold_optimal"):
+                Calculation.Projection.GoldUpperBound is { } upper?string.Format(T("gold_bound"),upper):T("gold_searching"));
+        if(Calculation.Projection.SelectedPlan is { RerollRewardIndices.Length: >0 } suffixPlan)
             _summary.Text+=string.Format(T("reroll_count"),suffixPlan.RerollRewardIndices.Length);
         _summary.TooltipText=T("plan_scope");
-        if(_snapshot==null) { _status.Text=T(_emptyStatusKey);UpdateEmptyState();return; }
-        _allCandidates.Visible=_focusTarget!=null;_allCandidates.Disabled=_stale;
-        _status.Text=_stale?T("retained_plan"):_errorKey!=null?T(_errorKey):T(_complete ? (_projecting || _dirty ? "discovery_finalizing" : "discovery_exhausted") :
-            _running ? (_phase==CrystalDiscoveryPhase.Exhaustive ? "discovery_exhausting" : "discovery_finding") :
-            _stopReason switch { DiscoveryStop.TimeLimit=>"discovery_time_limit", DiscoveryStop.UserPaused=>"discovery_user_paused",
-                DiscoveryStop.Failed=>"discovery_failed", _=>"discovery_ready" });
-        if(!_stale && _errorKey==null && _focusTarget is { } target)
-            _status.Text=string.Format(T(_focusVerdict switch {
+        if(Calculation.Snapshot==null) { _status.Text=T(_emptyStatusKey);UpdateEmptyState();return; }
+        _allCandidates.Visible=Calculation.FocusTarget!=null;_allCandidates.Disabled=Calculation.Stale;
+        _status.Text=Calculation.Stale?T("retained_plan"):Calculation.ErrorKey!=null?T(Calculation.ErrorKey):T(Calculation.Complete ? (Calculation.Projecting || Calculation.Dirty ? "discovery_finalizing" : "discovery_exhausted") :
+            Calculation.Running ? (Calculation.Phase==CrystalDiscoveryPhase.Exhaustive ? "discovery_exhausting" : "discovery_finding") :
+            Calculation.StopReason switch { CrystalPredictionSession.DiscoveryStop.TimeLimit=>"discovery_time_limit", CrystalPredictionSession.DiscoveryStop.UserPaused=>"discovery_user_paused",
+                CrystalPredictionSession.DiscoveryStop.Failed=>"discovery_failed", _=>"discovery_ready" });
+        if(!Calculation.Stale && Calculation.ErrorKey==null && Calculation.FocusTarget is { } target)
+            _status.Text=string.Format(T(Calculation.FocusVerdict switch {
                 CrystalFocusVerdict.Reachable=>"focus_reachable",CrystalFocusVerdict.Unreachable=>"focus_unreachable",
-                _=>_running?"focus_checking":"focus_paused" }),NameOf(target));
-        else if(!_stale && _errorKey==null && _candidatesComplete && !_projection.GoldComplete)
-            _status.Text=T(_running?"gold_optimizing":"gold_paused");
-        double seconds=_progress.Seconds+_goldProgress.Seconds;
-        _speed.Text=seconds>0?string.Format(T("speed_value"),(_progress.Examined+_goldProgress.Examined)/seconds):"—";
+                _=>Calculation.Running?"focus_checking":"focus_paused" }),NameOf(target));
+        else if(!Calculation.Stale && Calculation.ErrorKey==null && Calculation.CandidatesComplete && !Calculation.Projection.GoldComplete)
+            _status.Text=T(Calculation.Running?"gold_optimizing":"gold_paused");
+        double seconds=Calculation.Progress.Seconds+Calculation.GoldProgress.Seconds;
+        _speed.Text=seconds>0?string.Format(T("speed_value"),(Calculation.Progress.Examined+Calculation.GoldProgress.Examined)/seconds):"—";
         _elapsed.Text=string.Format(T("elapsed_value"),seconds);
-        _status.TooltipText=T("discovery_scope")+(_progress.Examined>0?"\n"+string.Format(T("discovery_progress"),_progress.Examined,
-            _progress.Pruned+_progress.Merged,_progress.Orders,_progress.Seconds):"");
+        _status.TooltipText=T("discovery_scope")+(Calculation.Progress.Examined>0?"\n"+string.Format(T("discovery_progress"),Calculation.Progress.Examined,
+            Calculation.Progress.Pruned+Calculation.Progress.Merged,Calculation.Progress.Orders,Calculation.Progress.Seconds):"");
         UpdateEmptyState();
     }
 

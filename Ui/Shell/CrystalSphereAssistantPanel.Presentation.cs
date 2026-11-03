@@ -24,22 +24,15 @@ internal sealed partial class CrystalSphereAssistantPanel
     // Current requested controls have been applied; discovery may continue to
     // publish new evidence. This is deliberately independent of solver completion.
     internal bool IsPresentationReady => !_exited && _results!=null && !_presentationRequested && !_presentationInvalidated &&
-        _updates.IsEmpty && _optionPresentationQueue.Count==0 && _targetPresentationIndex>=_selected.Length && (_snapshot==null || _stale || _presentationSceneValidated);
+        Calculation.Updates.IsEmpty && _optionPresentationQueue.Count==0 && _targetPresentationIndex>=Calculation.Selected.Length && (Calculation.Snapshot==null || Calculation.Stale || _presentationSceneValidated);
 
-    private void NormalizePendingOptions()
-    {
-        _pendingOptions.ExceptWith(_projection.Available.Keys);
-        _pendingOptions.ExceptWith(_selected);
-        if(_candidatesComplete || _snapshot==null) _pendingOptions.Clear();
-    }
     private void Render()
     {
-        NormalizePendingOptions();
         // A request can lose or downgrade evidence between process frames. Hide
         // the old view before chrome describes the new request; the desired-state
         // pass will restore unchanged tiles and leave changed ones hidden until
         // their bounded update is applied. Progress alone does not invalidate it.
-        if(_renderedTargets.IsDefault || !_renderedTargets.SequenceEqual(_selected) ||
+        if(_renderedTargets.IsDefault || !_renderedTargets.SequenceEqual(Calculation.Selected) ||
             _renderedTargetContentRevision!=_contentRevision || _visibleOptionViews.Any(option=>
                 !TryCurrentOptionView(option,out var current) || !_presentedOptionViews.TryGetValue(option,out var shown) || shown!=current))
             InvalidatePresentation();
@@ -56,8 +49,8 @@ internal sealed partial class CrystalSphereAssistantPanel
     }
     private bool TryCurrentOptionView(CrystalRewardOption option,out OptionPresentation state)
     {
-        bool pending=_pendingOptions.Contains(option),available=_projection.Available.ContainsKey(option);
-        state=new(pending,!pending && available && _projection.SacrificeRelics.Contains(option.Key),_stale,_contentRevision);
+        bool pending=Calculation.PendingOptions.Contains(option),available=Calculation.Projection.Available.ContainsKey(option);
+        state=new(pending,!pending && available && Calculation.Projection.SacrificeRelics.Contains(option.Key),Calculation.Stale,_contentRevision);
         return option!=CrystalRewardOption.AnyRelic && (pending || available);
     }
     private void HideOptionView(CrystalRewardOption option,Control tile)
@@ -85,7 +78,7 @@ internal sealed partial class CrystalSphereAssistantPanel
     }
     private void CaptureRequestedOptionViews()
     {
-        var desired=_projection.Available.Keys.Concat(_pendingOptions).Where(o=>o!=CrystalRewardOption.AnyRelic).ToHashSet();
+        var desired=Calculation.Projection.Available.Keys.Concat(Calculation.PendingOptions).Where(o=>o!=CrystalRewardOption.AnyRelic).ToHashSet();
         foreach(var option in _requestedOptionViews.Keys.Where(o=>!desired.Contains(o)).ToArray())
         { _requestedOptionViews.Remove(option);QueueOptionView(option); }
         // Keep existing tile identity/order across progress receipts. Only new or
@@ -118,17 +111,17 @@ internal sealed partial class CrystalSphereAssistantPanel
             _presentationRequested=false;
         }
         long started=System.Diagnostics.Stopwatch.GetTimestamp();
-        if(_renderedTargets.IsDefault || !_renderedTargets.SequenceEqual(_selected) || _renderedTargetContentRevision!=_contentRevision)
+        if(_renderedTargets.IsDefault || !_renderedTargets.SequenceEqual(Calculation.Selected) || _renderedTargetContentRevision!=_contentRevision)
         {
-            Clear(_targetRow);_renderedTargets=_selected;_renderedTargetContentRevision=_contentRevision;_targetPresentationIndex=0;
-            if(_selected.IsEmpty) _targetRow.AddChild(new Label { Text=T("none_selected"),
+            Clear(_targetRow);_renderedTargets=Calculation.Selected;_renderedTargetContentRevision=_contentRevision;_targetPresentationIndex=0;
+            if(Calculation.Selected.IsEmpty) _targetRow.AddChild(new Label { Text=T("none_selected"),
                 AutowrapMode=TextServer.AutowrapMode.WordSmart,SizeFlagsHorizontal=SizeFlags.ExpandFill });
         }
         int applied=0;
-        while(_targetPresentationIndex<_selected.Length && applied<OptionTilesPerFrame &&
+        while(_targetPresentationIndex<Calculation.Selected.Length && applied<OptionTilesPerFrame &&
             (applied==0 || System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds<OptionSliceMilliseconds))
-        { _targetRow.AddChild(Tile(_selected[_targetPresentationIndex++],true));applied++; }
-        foreach(var button in _targetRow.GetChildren().OfType<Button>()) button.Disabled=_stale;
+        { _targetRow.AddChild(Tile(Calculation.Selected[_targetPresentationIndex++],true));applied++; }
+        foreach(var button in _targetRow.GetChildren().OfType<Button>()) button.Disabled=Calculation.Stale;
         int examined=applied;
         while(examined<OptionTilesPerFrame && _optionPresentationQueue.Count>0 &&
             (applied==0 || System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds<OptionSliceMilliseconds))
@@ -172,7 +165,7 @@ internal sealed partial class CrystalSphereAssistantPanel
     private void SetPresentationVisibility()
     {
         if(_results==null) return;
-        bool allowed=_snapshot==null || _stale || _presentationSceneValidated;
+        bool allowed=Calculation.Snapshot==null || Calculation.Stale || _presentationSceneValidated;
         _results.Visible=allowed && !_presentationInvalidated;
         _targetRow.Visible=allowed && !_presentationInvalidated;
         _rewardScroll.Visible=allowed && !_presentationInvalidated && _visibleOptionViews.Count>0;

@@ -17,7 +17,7 @@ internal static class SearchResultProjection
         return new()
         {
             Seed = candidate.Seed, CharacterKey = candidate.CharacterKey.Serialized, Ascension = candidate.Ascension,
-            QueryFingerprint = queryFingerprint, Party = candidate.Document?.Party, IsUnverified = candidate.IsUnverified,
+            QueryFingerprint = queryFingerprint, Party = candidate.Party, IsUnverified = candidate.IsUnverified,
             IsUnfiltered = candidate.IsUnverified && candidate.IsUnfiltered, ValidationDisposition = candidate.ValidationDisposition,
             ValidationIssue = candidate.ValidationIssue, SupportScope = candidate.SupportScope, MapSearch = candidate.MapSearch,
             ExecutionWarnings = candidate.ExecutionWarnings.ToArray(), WitnessOpeningRouteId = route?.OpeningRouteId ?? "",
@@ -51,7 +51,7 @@ internal static class SearchResultProjection
             .Select(group => group.Single()).OrderBy(source => source.TargetSlot).ToArray();
     }
 
-    internal static ExactSearchExecutionRequest RebuildSavedValidationPlan(ModRuntimeSnapshot runtime,
+    internal static PreparedSearch RebuildSavedValidationPlan(ModRuntimeSnapshot runtime,
         QueryHistoryEntry history, PersistedSearchResult result)
     {
         var draft = history.Draft ?? throw new InvalidOperationException("ManualValidationOriginalContextUnavailable");
@@ -77,7 +77,7 @@ internal static class SearchResultProjection
         var compiled = bound.Compile(runtime, out _);
         if (!SearchWorkspace.ProvesManualValidationSource(history, result, compiled))
             throw new InvalidOperationException("ManualValidationOriginalAuthorityMismatch");
-        var execution = ExactSearchExecutionRequestFactory.Compile(compiled, new(result.Seed, 1, 1, 1, SkipExactValidation: false));
+        var execution = SearchPreparationCompiler.Compile(compiled, new(result.Seed, 1, 1, 1, SkipExactValidation: false));
         return execution.Success && execution.Plan is { } plan ? plan : throw new InvalidOperationException(execution.Issue);
     }
 }

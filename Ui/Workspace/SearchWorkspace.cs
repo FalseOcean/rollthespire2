@@ -166,6 +166,7 @@ internal sealed partial class SearchWorkspace
         var result = SearchResultProjection.FromCandidate(candidate, queryFingerprint ?? string.Empty);
         if ((targetBatch is not null ? targetBatch.Context : _workspace.ResultContext) is { } context)
         {
+            result.Context = context;
             try
             {
                 result.Context = candidate.IsUnverified ? context : SeedLibraryContextCapture.WithWitness(context, candidate);

@@ -362,18 +362,10 @@ internal sealed partial class QueryWorkbenchFrame
             ? FamilySearchEtaProjectorV1.EstimationStages(eta.Plan) : [];
         var stage = stages.FirstOrDefault(item => item.Family.FamilyId == VariantOpeningFamily.Id);
         if (stage is null && !preview.Costs.ContainsKey(VariantOpeningFamily.Id)) return;
-        IFamilyInvocation? owner = stage?.Family is FamilyCpuExecution cpu ? cpu.RealizationOwner : stage?.Family;
-        var plan = (owner as VariantOpeningFamily)?.Plan;
         var sources = new List<string>();
-        if (plan?.CoversVariants == true)
-        {
-            if (plan.CheckedPreparation.Acts.Any(row => row.ExplicitAllowed.Count > 0))
-                sources.Add(_text.Get("workflow.source.acts"));
-            if (plan.CheckedPreparation.Acts.Any(row => row.Evidence.Any(evidence =>
-                evidence.Contains("PositiveEventMembershipImpossible", StringComparison.Ordinal))))
-                sources.Add(_text.Get("workflow.source.events"));
-        }
-        if (plan?.UnknownPrefixCount > 0) sources.Add(_text.Get("workflow.source.unknown"));
+        if (preview.VariantRestrictsActs) sources.Add(_text.Get("workflow.source.acts"));
+        if (preview.VariantRestrictsEvents) sources.Add(_text.Get("workflow.source.events"));
+        if (preview.VariantUnknownPrefix > 0) sources.Add(_text.Get("workflow.source.unknown"));
         double? survival = stage?.Survival;
         string pass = survival is { } value && double.IsFinite(value) && value is >= 0 and <= 1
             ? (value > 0 && value < .0001 ? (value * 100).ToString("0.###E+0", CultureInfo.InvariantCulture) + "%" :

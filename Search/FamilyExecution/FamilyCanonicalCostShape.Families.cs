@@ -12,43 +12,16 @@ internal static partial class FamilyCanonicalCostShape
 {
     // Structure only. ExpectedWork/reach/warp activity and observed population
     // are model inputs, not exact-key fields. No fallback to query fingerprints.
-    private static string? TryDescribeFamily(ExactSearchExecutionRequest request, IFamilyInvocation owner, IFamilyInvocation actual)
+    private static string Shape(string family, object data, string version = "20261021.v1") =>
+        family + ".CanonicalStructure." + version + ":" + JsonSerializer.Serialize(data);
+
+    internal static string? DescribeNeow(NeowReplayPlan plan, NeowFamilyGpuPlan? gpu)
     {
-        object? data = owner switch {
-            NeowFamily neow when neow.Coverage.Count == 1 => NeowStructure(neow.PricingReplayPlan,
-                actual.ConditionPerformance.UsesGpu ? neow.GpuPlan : null),
-            MerchantShopColorlessFamily => ShopStructure(request),
-            RelicFamily relic => RelicStructure(relic.PricingPlan),
-            // Distinct owner identity: no ordinary-R or old conditional-call
-            // measurement is silently admitted as a Capsule invocation.
-            CapsuleRelicFamily capsule => new {
-                Owner = "CapsuleRelicFamily",
-                Arrival = NeowStructure(capsule.PricingReplayPlan, null),
-                Sequence = capsule.GpuPlan is { } full ? RelicStructure(full.SequencePlan) : null,
-                BagLengths = capsule.PricingPool.BucketLengths,
-                Targets = request.Evaluation.StructuredNeowEffects.Where(NeowReplayPlan.IsCapsule)
-                    .Select(c => new { c.SourceRelicKey, c.Scope, Count = c.OutputKeys.Count }).ToArray()
-            },
-            CombatRewardFamily combat => CombatStructure(combat, actual.ConditionPerformance.UsesGpu),
-            WorldFamily world => WorldStructure(world, actual.ConditionPerformance.UsesGpu),
-            AncientOptionFamily ancient => AncientStructure(request, ancient.Plan),
-            TransformationAggregateFamily transform => TransformStructure(transform, actual.ConditionPerformance.UsesGpu),
-            _ => null
-        };
-        if (data is null) return null;
-        // Concrete W and Gold-sensitive C bodies version their own projections.
-        string version = owner is WorldFamily worldOwner
-            ? WorldUsesLocalEventCostRoles(worldOwner.Replay.Plan) ? "20261021.v3" : "20261021.v2"
-            : owner is CombatRewardFamily combatOwner ? combatOwner.Replay.UsesQueryLiteralPartyOpening
-                ? "20261027.v4" : CombatCostStructureVersion(combatOwner.Replay.Plan)
-            : "20261021.v1";
-        string shape = owner.FamilyId + ".CanonicalStructure." + version + ":" + JsonSerializer.Serialize(data);
-        if (owner is not NeowFamily { Coverage.Count: 1 } singleton ||
-            singleton.PricingReplayPlan.AuthoredUpgrades is not { } authored) return shape;
-        // This is an operation-count vector indexed by Small/Large source and
-        // prior Neow opcode, not target dense IDs. -1 is the actual conservative
-        // keep branch; nonnegative entries count Niche.NextInt(2) advances.
-        // A conditional suffix preserves every non-authored legacy shape byte.
+        string shape = Shape("N.Neow", NeowStructure(plan, gpu));
+        if(plan.CapsuleNicheContinuation is { } continuation)
+            shape += ";" + NeowCapsuleNicheContinuation.Revision + ":" + JsonSerializer.Serialize(new {
+                continuation.DrawSets, continuation.Remainders, TailObserved = plan.HasFinalCurseFastProjection });
+        if (plan.AuthoredUpgrades is not { } authored) return shape;
         if (authored.Advances.Length != 2 * NeowAuthoredUpgradeContinuation.PriorCount ||
             authored.Advances.Any(advance => advance < -1)) return null;
         return shape + ";AuthoredUpgradeContinuation.v1:" + JsonSerializer.Serialize(new {
@@ -57,9 +30,28 @@ internal static partial class FamilyCanonicalCostShape
             LargeSourceOpcode = Beta110FastRelicCatalog.LargeCapsule,
             NoPriorOpcode = byte.MaxValue,
             authored.Advances,
-            UpperBound = singleton.PricingReplayPlan.CapsuleUpgradeUpperBound
+            UpperBound = plan.CapsuleUpgradeUpperBound
         });
     }
+    internal static string? DescribeShop(ExactSearchEvaluationProjection evaluation, Beta111MerchantColorlessAuthority authority) =>
+        ShopStructure(evaluation, authority) is { } data ? Shape("S.MerchantShopColorless", data) : null;
+    internal static string DescribeRelic(RelicFamilyPlan plan) => Shape("R.Relic", RelicStructure(plan));
+    internal static string DescribeCapsule(NeowReplayPlan route, RelicFamilyPool pool, RelicFullGpuPlan? full,
+        IReadOnlyList<NeowStructuredEffectSearchCondition> conditions) => Shape("R.Relic", new {
+            Owner = "CapsuleRelicFamily", Arrival = NeowStructure(route, null),
+            Sequence = full is null ? null : RelicStructure(full.SequencePlan), BagLengths = pool.BucketLengths,
+            Targets = conditions.Where(NeowReplayPlan.IsCapsule)
+                .Select(c => new { c.SourceRelicKey, c.Scope, Count = c.OutputKeys.Count }).ToArray()
+        });
+    internal static string DescribeCombat(CombatRewardReplay replay, CombatRewardGpuPlan? gpu) =>
+        Shape("C.CombatReward", CombatStructure(replay, gpu), replay.UsesQueryLiteralPartyOpening
+            ? "20261027.v4" : CombatCostStructureVersion(replay.Plan));
+    internal static string DescribeWorld(WorldFamilyReplay replay, WorldFamilyGpuPlan? gpu) =>
+        Shape("W.World", WorldStructure(replay, gpu), WorldUsesLocalEventCostRoles(replay.Plan) ? "20261021.v3" : "20261021.v2");
+    internal static string? DescribeAncient(ExactSearchEvaluationProjection evaluation, AncientOptionFamilyPlan plan) =>
+        AncientStructure(evaluation, plan) is { } data ? Shape("A.AncientOption", data) : null;
+    internal static string? DescribeTransform(TransformationAggregateNumericalPlan plan, TransformationAggregateGpuPlan? gpu) =>
+        TransformStructure(plan, gpu) is { } data ? Shape("T.TransformationAggregate", data) : null;
 
     // IDs below are alpha-renamed operand roles, not catalog IDs or pool ranks.
     // Equal targets keep one role across predicates; different identities with
@@ -151,14 +143,13 @@ internal static partial class FamilyCanonicalCostShape
     private static object PotionPools(DenseRoles roles, Beta110FastPotionPool pool) => new {
         Common = roles.Pool(pool.Common), Uncommon = roles.Pool(pool.Uncommon), Rare = roles.Pool(pool.Rare), All = roles.Pool(pool.AllAllowed) };
 
-    private static object? ShopStructure(ExactSearchExecutionRequest request)
+    private static object? ShopStructure(ExactSearchEvaluationProjection evaluation, Beta111MerchantColorlessAuthority authority)
     {
-        var authority = Beta111MerchantColorlessAuthority.From(request.Authority);
         if (!authority.HasExactV1Inputs) return null;
         var roles = new KeyRoles();
-        var fixedSlots = request.Evaluation.MerchantColorlessConditions.OrderBy(c => c.MerchantOrdinal).ThenBy(c => c.Slot)
+        var fixedSlots = evaluation.MerchantColorlessConditions.OrderBy(c => c.MerchantOrdinal).ThenBy(c => c.Slot)
             .Select(c => new { c.MerchantOrdinal, c.Slot, Target = roles.Role(c.TargetCardKey) }).ToArray();
-        var sequences = request.Evaluation.MerchantColorlessSequenceConditions.Select(c => new {
+        var sequences = evaluation.MerchantColorlessSequenceConditions.Select(c => new {
             c.Count, c.Slot, c.OrderMode, Targets = c.Slots.Select(k => roles.Role(k)).ToArray() }).ToArray();
         return new { Fixed = fixedSlots, Sequences = sequences,
             Uncommon = roles.Membership(authority.UncommonPool), Rare = roles.Membership(authority.RarePool),
@@ -187,9 +178,9 @@ internal static partial class FamilyCanonicalCostShape
     private static object RelicPoolStructure(RelicFamilyPool pool) => new {
         pool.BucketLengths, pool.BucketScopes, pool.BucketKinds, pool.DrawDirections, pool.MaxBucketLength };
 
-    private static object CombatStructure(CombatRewardFamily family, bool usesGpu)
+    private static object CombatStructure(CombatRewardReplay replay, CombatRewardGpuPlan? gpu)
     {
-        var replay = family.Replay; var plan = replay.Plan; var roles = new DenseRoles();
+        var plan = replay.Plan; var roles = new DenseRoles();
         var predicates = plan.Predicates.Select(p => new { p.BattleOrdinal,
             CardAny = roles.Pattern(p.CardAny), CardAll = roles.Pattern(p.CardAll), CardBan = roles.Pattern(p.CardBan),
             p.PotionRequirement, PotionAny = roles.Pattern(p.PotionAny), PotionAll = roles.Pattern(p.PotionAll), PotionBan = roles.Pattern(p.PotionBan),
@@ -209,8 +200,11 @@ internal static partial class FamilyCanonicalCostShape
             TargetRarities = roles.Rarities(replay.Catalog), CardPools = CardPools(roles, replay.Catalog.CombatRewardCardPool),
             PowerPools = CardPools(roles, replay.Catalog.CombatRewardPowerPool),
             Potions = PotionPools(roles, replay.Catalog.CombatRewardPotionPool),
-            Gpu = !usesGpu || family.GpuPlan is not { } gpu ? null : new { gpu.UsesHotLoop, gpu.Routes, gpu.BagCapacity,
+            Gpu = gpu is null ? null : new { gpu.UsesHotLoop, gpu.Routes, gpu.BagCapacity,
                 gpu.UsesTerminalCardGate } };
+        if (replay.NeutralWitness is { } proof)
+            return CombatGoldCostStructure(new { SourceWork = structure, RealNeutralWitness = new {
+                proof.NeutralMask, proof.RequiresAllOffers, proof.Available } }, plan);
         if (replay.UsesQueryLiteralPartyOpening)
             return CombatGoldCostStructure(new { SourceWork = structure, replay.UsesQueryLiteralPartyOpening,
                 PredicateWindows = plan.Predicates.Select(p => p.AnyBattleWindow).ToArray() }, plan);
@@ -236,11 +230,6 @@ internal static partial class FamilyCanonicalCostShape
                 MinimumGold = p.HasMinimumGold ? (int?)p.MinimumGold : null,
                 MaximumGold = p.HasMaximumGold ? (int?)p.MaximumGold : null }).ToArray(),
             plan.ExplicitContext.FixedGoldAmount };
-    }
-
-    private static object WorldStructure(WorldFamily family, bool usesGpu)
-    {
-        return WorldStructure(family.Replay, usesGpu ? family.PricingGpuPlan : null);
     }
 
     private static bool WorldUsesLocalEventCostRoles(Beta110WorldFastPlan plan) =>
@@ -290,13 +279,13 @@ internal static partial class FamilyCanonicalCostShape
             Gpu = gpu is null ? null : new { gpu.VariantOnly, gpu.ScratchWords, gpu.Capacity, gpu.GroupingK } };
     }
 
-    private static object? AncientStructure(ExactSearchExecutionRequest request, AncientOptionFamilyPlan plan)
+    private static object? AncientStructure(ExactSearchEvaluationProjection evaluation, AncientOptionFamilyPlan plan)
     {
         if (plan.OptionPlans.Count == 0) return null;
         // Legacy hypothetical-row unions with repeated/overlapping bindings need
         // joint OR-row geometry beyond counts. Do not alias them to a modern row.
-        var branches = request.Evaluation.AncientBranchConditions;
-        if (request.Evaluation.AncientOptionFilters.Count > 0 || request.Evaluation.AncientSeaGlassTargetFilters.Count > 0 ||
+        var branches = evaluation.AncientBranchConditions;
+        if (evaluation.AncientOptionFilters.Count > 0 || evaluation.AncientSeaGlassTargetFilters.Count > 0 ||
             branches.GroupBy(b => (b.Act, b.AncientKey)).Any(g => g.Count() > 1) ||
             branches.Any(b => !plan.UsesNumericalAct(b.Act))) return null;
         var roles = new DenseRoles();
@@ -316,14 +305,14 @@ internal static partial class FamilyCanonicalCostShape
                 Pools = p.Pools.Select(pool => new { pool.Role, pool.SourceOrdinal, Shape = roles.Pool(pool.Values) }).ToArray() }).ToArray() };
     }
 
-    private static object? TransformStructure(TransformationAggregateFamily family, bool usesGpu)
+    private static object? TransformStructure(TransformationAggregateNumericalPlan p, TransformationAggregateGpuPlan? gpu)
     {
-        var p = family.Plan; var c = p.Condition;
+        var c = p.Condition;
         if (!p.Closed) return null;
         return new { c.Opening, c.PickupOrder, c.Predicate, c.MinimumRareCount, c.OpportunityCount,
             c.MorphicGrove, c.AromaOfChaos, c.WhisperingHollow, c.Symbiote, c.TrialNondescript,
             Targets = c.TargetMultiset.Count, Multiplicities = c.TargetMultiset.GroupBy(k => k).Select(g => g.Count()).Order().ToArray(),
-            p.UsesStreaming, Gpu = !usesGpu ? null : new { family.GpuPlan.BonesOptimized, family.GpuPlan.FullTarget },
+            p.UsesStreaming, Gpu = gpu is null ? null : new { gpu.BonesOptimized, gpu.FullTarget },
             Neow = p.Neow is null ? null : NeowStructure(p.Neow, null),
             Draws = p.DrawGroups.Select((g, index) => new { Index = index, g.Prefix,
                 // The group index is the authored stream role; the hash is a

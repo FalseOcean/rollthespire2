@@ -34,7 +34,7 @@ internal static class SearchFeasibilityAnalyzer
             bool accepted = false;
             var filter = query.LegacyNeow.NeowRelics;
             var selected = query.OpeningRoute?.RouteRelicKey;
-            bool exact = Core.Neow.ModernNeowIdentityPredictor.TryVisitOfferSpace(compiled.Context.Authority, (a,b,c,_) =>
+            bool exact = Core.Neow.ModernNeowIdentityRules.TryVisitOfferSpace(compiled.Context.Authority, (a,b,c,_) =>
             {
                 bool Has(ModelKey key) => key == a || key == b || key == c;
                 accepted |= (!selected.HasValue || Has(selected.Value)) &&

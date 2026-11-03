@@ -22,8 +22,8 @@ internal interface IDenseFamilyBatchGrouping
     // Capability and default cadence are distinct. Explicit native checks may
     // exercise a supported group even when ordinary execution prefers K1.
     bool PreferDenseBatchGrouping => CanGroupDenseBatches;
-    ValueTask<DenseFamilyBatchGroup> PrepareDensePairAsync(FamilyExecutionContext context,
-        FamilyObservationWindow first, FamilyObservationWindow second, CancellationToken token);
+    ValueTask<DenseFamilyBatchGroup> PrepareDensePairAsync(FilterRuntimeServices context,
+        SearchBatch first, SearchBatch second, CancellationToken token);
 }
 
 internal sealed record DenseFamilyBatchGroup(PreparedFamilyBatch First, PreparedFamilyBatch Second);
@@ -37,24 +37,24 @@ internal sealed class DeferredRootBatchFailure(SearchBatch batch, Exception orig
     internal Exception Original => InnerException!;
 }
 
-internal sealed class PreparedFamilyBatch(IFamilyInvocation owner, SearchBatch batch,
+internal sealed class PreparedFamilyBatch(IFilterExecution owner, SearchBatch batch,
     Func<CancellationToken, ValueTask<FamilyCandidateSet>> invoke)
 {
     private int _used;
     internal SearchBatch Batch => batch;
-    internal static PreparedFamilyBatch Ready(IFamilyInvocation owner, FamilyCandidateSet output) =>
+    internal static PreparedFamilyBatch Ready(IFilterExecution owner, FamilyCandidateSet output) =>
         new(owner, output.Batch, _ => ValueTask.FromResult(output));
-    internal static PreparedFamilyBatch Failed(IFamilyInvocation owner, SearchBatch batch, Exception failure,
+    internal static PreparedFamilyBatch Failed(IFilterExecution owner, SearchBatch batch, Exception failure,
         Action? markFaulted = null) => new(owner, batch, _ =>
         {
             markFaulted?.Invoke();
             return ValueTask.FromException<FamilyCandidateSet>(new DeferredRootBatchFailure(batch, failure));
         });
-    internal ValueTask<FamilyCandidateSet> InvokeAsync(IFamilyInvocation family,
-        FamilyObservationWindow observation, FamilyCandidateSet input, CancellationToken token)
+    internal ValueTask<FamilyCandidateSet> InvokeAsync(IFilterExecution family,
+        FamilyCandidateSet input, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        if (!ReferenceEquals(owner, family) || batch != observation.Batch || input.Batch != batch || !input.IsDense)
+        if (!ReferenceEquals(owner, family) || input.Batch != batch || !input.IsDense)
             throw new InvalidDataException("PreparedFamilyBatch.OwnerOrBatchMismatch");
         if (Interlocked.Exchange(ref _used, 1) != 0) throw new InvalidOperationException("PreparedFamilyBatch.AlreadyConsumed");
         return invoke(token);

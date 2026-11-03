@@ -16,7 +16,7 @@ public sealed class Beta109PredictionProfile : ISeedPredictionProfile
     public RuntimeProfileId ProfileId => RuntimeProfileId.Beta109;
     public string PredictorId => "Beta109AnalysisProfile";
 
-    public SeedPredictionDocument Predict(SeedPredictionRequest request, GameVersionDetection detection)
+    public SeedPredictionFacts Observe(SeedPredictionRequest request, GameVersionDetection detection)
     {
         RuntimeVersionResolution compatibility = new(
             GameVersionIdentity.From(detection.NormalizedVersion),
@@ -33,22 +33,22 @@ public sealed class Beta109PredictionProfile : ISeedPredictionProfile
             !(RuntimeVersionCompatibility.IsBeta109_0(request.Authority.GameVersion) || RuntimeVersionCompatibility.IsBeta109_1(request.Authority.GameVersion)) ||
             !string.Equals(request.Authority.GameVersion, detection.NormalizedVersion, StringComparison.Ordinal))
         {
-            return Fail(request, detection, string.Empty, PredictionWarningCode.InvalidRequestContext, SeedPredictionOverallStatus.Unknown);
+            return Fail(request, detection, string.Empty, PredictionWarningCode.InvalidRequestContext, SeedPredictionInputStatus.Unknown);
         }
 
         if (!Beta109Profile.Instance.TryCanonicalizeSeed(request.OriginalSeed, out string canonicalSeed, out string issue))
         {
-            return SeedPredictionDocument.Invalid(detection.DisplayVersion, ProfileId, PredictorId, request, issue);
+            return SeedPredictionFacts.Invalid(detection.DisplayVersion, ProfileId, PredictorId, request, issue);
         }
 
         if (request.Authority.NoRunModifiers == false || request.Authority.VanillaNeowCatalogExact == false)
         {
-            return Fail(request, detection, canonicalSeed, PredictionWarningCode.NonVanillaCatalogUnsupported, SeedPredictionOverallStatus.Unsupported);
+            return Fail(request, detection, canonicalSeed, PredictionWarningCode.NonVanillaCatalogUnsupported, SeedPredictionInputStatus.Unsupported);
         }
 
         if (!request.Authority.HasCoreNoModifierCatalogAuthority)
         {
-            return Fail(request, detection, canonicalSeed, PredictionWarningCode.SnapshotAuthorityIncomplete, SeedPredictionOverallStatus.Unknown);
+            return Fail(request, detection, canonicalSeed, PredictionWarningCode.SnapshotAuthorityIncomplete, SeedPredictionInputStatus.Unknown);
         }
 
         ModernNeowIdentityResult result;
@@ -63,7 +63,7 @@ public sealed class Beta109PredictionProfile : ISeedPredictionProfile
                 detection,
                 canonicalSeed,
                 PredictionWarningCode.AnalysisFailed,
-                SeedPredictionOverallStatus.Unknown,
+                SeedPredictionInputStatus.Unknown,
                 new PredictionDiagnostic(PredictionDiagnosticCodes.Exception, $"{ex.GetType().Name}:{ex.Message}"));
         }
 
@@ -73,7 +73,7 @@ public sealed class Beta109PredictionProfile : ISeedPredictionProfile
         NeowChoiceResult[] choices = result.RelicKeys.Select((key, index) =>
         {
             var projection = Beta109NeowEffectProjector.Project(key, identityPrecision, request.Authority, canonicalSeed, request.EnableComplexBonesDeckInteractions);
-            return SeedPredictionDocumentFactory.Choice(
+            return NeowChoiceFacts.Choice(
                 index + 1,
                 key,
                 request,
@@ -130,7 +130,7 @@ public sealed class Beta109PredictionProfile : ISeedPredictionProfile
                     request.Authority.WorldAuthority)
                 : null;
 
-        return SeedPredictionDocumentFactory.Create(
+        return SeedPredictionFactsFactory.Create(
             request,
             detection,
             ProfileId,
@@ -147,25 +147,21 @@ public sealed class Beta109PredictionProfile : ISeedPredictionProfile
                 new PredictionDiagnostic(PredictionDiagnosticCodes.RuntimeCompatibilityMode, compatibility.SupportKind.ToString()),
                 new PredictionDiagnostic(PredictionDiagnosticCodes.RuntimeCompatibilityReferenceVersion, compatibility.ReferenceVersion)
             },
-            SeedPredictionDocumentFactory.ProductFacingOverallStatus(
-                choices,
-                identityPrecision,
-                additionalIdentityAuthorityWarning:
-                    result.UnknownEligibilityAffectedPool ||
-                    !result.ExactAuthority),
+            SeedPredictionInputStatus.Ready,
             worldPrediction,
             relicSequencePrediction,
-            normalCombatRewardPrediction);
+            normalCombatRewardPrediction, identityPrecision: identityPrecision,
+            identityAuthorityWarning: result.UnknownEligibilityAffectedPool || !result.ExactAuthority);
     }
 
-    private SeedPredictionDocument Fail(
+    private SeedPredictionFacts Fail(
         SeedPredictionRequest request,
         GameVersionDetection detection,
         string canonicalSeed,
         PredictionWarningCode warning,
-        SeedPredictionOverallStatus status,
+        SeedPredictionInputStatus status,
         PredictionDiagnostic? diagnostic = null) =>
-        SeedPredictionDocumentFactory.Create(
+        SeedPredictionFactsFactory.Create(
             request,
             detection,
             ProfileId,
@@ -174,5 +170,5 @@ public sealed class Beta109PredictionProfile : ISeedPredictionProfile
             Array.Empty<NeowChoiceResult>(),
             new[] { new PredictionWarning(warning) },
             diagnostic is null ? Array.Empty<PredictionDiagnostic>() : new[] { diagnostic },
-            status);
+            status, inputIssue: warning.ToString());
 }

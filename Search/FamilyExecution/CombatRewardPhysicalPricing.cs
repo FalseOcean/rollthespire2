@@ -4,12 +4,12 @@ namespace RolltheSpire2.Search.FamilyExecution;
 
 internal static class CombatRewardPhysicalPricing
 {
-    internal static FamilyPhysicalQuote? Quote(ExactSearchExecutionRequest request, CombatRewardReplay replay,
-        CombatRewardGpuPlan? gpu, FamilyPhysicalQuoteRequest geometry) => replay.UsesQueryLiteralPartyOpening || replay.Plan.NeedsCompleteMatchingReference ? null : gpu?.NumericalVariant == GpuNumericalVariant.IntegerRne ? null :
+    internal static FamilyPhysicalQuote? Quote(CombatRewardPricingInput request, CombatRewardReplay replay,
+        CombatRewardGpuPlan? gpu, FamilyPhysicalQuoteRequest geometry) => replay.UsesNeutralWitness || replay.UsesObservedOpening || replay.UsesQueryLiteralPartyOpening || replay.Plan.NeedsCompleteMatchingReference ? null : gpu?.NumericalVariant == GpuNumericalVariant.IntegerRne ? null :
         QuoteSixBattleModel(request,replay,gpu,geometry,cpu:false) ?? QuoteMeasured(request,replay,gpu,geometry) ?? QuoteNeutralModel(request,replay,gpu,geometry,cpu:false) ??
         QuoteGenericCardModel(request,replay,gpu,geometry) ?? QuoteGenericScalarModelOnKnownDevice(request,replay,gpu,geometry);
 
-    private static FamilyPhysicalQuote? QuoteGenericScalarModelOnKnownDevice(ExactSearchExecutionRequest request,
+    private static FamilyPhysicalQuote? QuoteGenericScalarModelOnKnownDevice(CombatRewardPricingInput request,
         CombatRewardReplay replay, CombatRewardGpuPlan? gpu, FamilyPhysicalQuoteRequest geometry)
     {
         var device = Runtime.SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity();
@@ -18,16 +18,16 @@ internal static class CombatRewardPhysicalPricing
 
     // Explicit device arguments keep the bounded quote contract testable without
     // changing the process's observed device or constructing a RenderingDevice.
-    internal static FamilyPhysicalQuote? QuoteGenericScalarModel(ExactSearchExecutionRequest request,
+    internal static FamilyPhysicalQuote? QuoteGenericScalarModel(CombatRewardPricingInput request,
         CombatRewardReplay replay, CombatRewardGpuPlan? gpu, FamilyPhysicalQuoteRequest g,
         string gpuIdentity, string renderingBackend)
     {
         var p = replay.Plan;
-        if (replay.UsesQueryLiteralPartyOpening || p.NeedsCompleteMatchingReference) return null;
+        if (replay.UsesNeutralWitness || replay.UsesObservedOpening || replay.UsesQueryLiteralPartyOpening || p.NeedsCompleteMatchingReference) return null;
         var cards = replay.Catalog.CombatRewardCardPool;
         var potions = replay.Catalog.CombatRewardPotionPool;
         int? prefix = p.OpeningConsumption.HasReplay
-            ? CombatRewardSieveProbability.FixedAuthoredPrefixDrawCount(request, p) : 0;
+            ? request.FixedAuthoredPrefixDrawCount : 0;
         if (!FamilyPhysicalQuote.AdmittedRequest(g) || !g.CompactInput || !g.PrivateInput || g.MeanInputPopulation < 1048576 ||
             renderingBackend != "d3d12" || !gpuIdentity.Contains("RTX 4060 Laptop GPU", StringComparison.OrdinalIgnoreCase) ||
             gpu is not { UsesHotLoop: false, Routes: 1 } || replay.RouteCount != 1 || replay.ConservativelyKeeps ||
@@ -74,11 +74,11 @@ internal static class CombatRewardPhysicalPricing
     // Newly measured horizon, not an extrapolation of H3. CPU emits the entire
     // horizon. The GPU quote is limited to the early-Common / late-Rare
     // workload measured separately on Vulkan and local D3D12.
-    internal static FamilyPhysicalQuote? QuoteSixBattleModel(ExactSearchExecutionRequest request, CombatRewardReplay replay,
+    internal static FamilyPhysicalQuote? QuoteSixBattleModel(CombatRewardPricingInput request, CombatRewardReplay replay,
         CombatRewardGpuPlan? gpu, FamilyPhysicalQuoteRequest geometry, bool cpu)
     {
         var p=replay.Plan;
-        if (replay.UsesQueryLiteralPartyOpening || p.NeedsCompleteMatchingReference) return null;
+        if (replay.UsesNeutralWitness || replay.UsesObservedOpening || replay.UsesQueryLiteralPartyOpening || p.NeedsCompleteMatchingReference) return null;
         var pool=replay.Catalog.CombatRewardCardPool;
         if(!FamilyPhysicalQuote.AdmittedRequest(geometry) || request.ProfileId!=Compatibility.RuntimeProfileId.Beta111 ||
             request.Ascension!=10 || !request.Authority.CanUseCurrentModel || request.Authority.PlayersCount!=1 || replay.RouteCount!=1 ||
@@ -105,7 +105,7 @@ internal static class CombatRewardPhysicalPricing
         return new("C.CombatReward",$"C.Horizon4-6.20260919.H{p.MaximumBattleOrdinal}."+
             (cpu ? "CpuP1" : localD3d12 ? "D3D12.CommonThenRare" : "Vulkan.CommonThenRare"),
             ns,cpu?65536:CombatRewardGpuExecutor.Capacity,localD3d12 ? 350 : null,
-            "GameRuntimeCaptureCorpus;262144Roots;3WarmRounds;BoundedCoarse;NoOpeningOrInfluence;"+
+            "GameRuntimeCaptureCorpus;262144Roots;3WarmRounds;BoundedCoarse;PriceQuality=Estimate;NoOpeningOrInfluence;"+
             (cpu?"CpuCanonicalAbi1;FullHorizonGeneration":localD3d12 ?
                 "LocalD3D12RTX4060Laptop;DenseCompactPublicPrivate;64To1048576Roots;ColdSetup218To232msBound350ms;EarlyCommonLateRareOnly;NoExact" :
                 "VulkanNumericalIncludingSync;NoHostTransportOrExact;EarlyCommonLateRareOnly"),
@@ -114,14 +114,14 @@ internal static class CombatRewardPhysicalPricing
             LocalCostSource = localD3d12 ? "LocalMeasurement" : "ReferenceDefault" };
     }
 
-    private static FamilyPhysicalQuote? QuoteGenericCardModel(ExactSearchExecutionRequest request, CombatRewardReplay replay,
+    private static FamilyPhysicalQuote? QuoteGenericCardModel(CombatRewardPricingInput request, CombatRewardReplay replay,
         CombatRewardGpuPlan? gpu, FamilyPhysicalQuoteRequest g)
     {
         var p = replay.Plan;
-        if (replay.UsesQueryLiteralPartyOpening || p.NeedsCompleteMatchingReference) return null;
+        if (replay.UsesNeutralWitness || replay.UsesObservedOpening || replay.UsesQueryLiteralPartyOpening || p.NeedsCompleteMatchingReference) return null;
         var pool = replay.Catalog.CharacterRewardPool;
         int? draws = p.OpeningConsumption.HasReplay
-            ? CombatRewardSieveProbability.FixedAuthoredPrefixDrawCount(request,p) : 0;
+            ? request.FixedAuthoredPrefixDrawCount : 0;
         if (gpu is not { UsesHotLoop: false, Routes: >= 1 and <= 2 } ||
             !FamilyPhysicalQuote.AdmittedRequest(g) || !FamilyPhysicalQuote.HasReferenceBackend() ||
             request.ProfileId != Compatibility.RuntimeProfileId.Beta111 || !request.Authority.CanUseCurrentModel ||
@@ -158,12 +158,12 @@ internal static class CombatRewardPhysicalPricing
             $"NumericalEmissionOnly;InvocationAndEdgesSeparate;ModeledGenerationScale={generationScale:R};ExtraGroupsCandyWbsFullWorkEnvelope");
     }
 
-    private static FamilyPhysicalQuote? QuoteMeasured(ExactSearchExecutionRequest request, CombatRewardReplay replay,
+    private static FamilyPhysicalQuote? QuoteMeasured(CombatRewardPricingInput request, CombatRewardReplay replay,
         CombatRewardGpuPlan? gpu, FamilyPhysicalQuoteRequest geometry)
     {
         var authored = replay.Plan;
         var pool = replay.Catalog.CharacterRewardPool;
-        int? prefixDraws = CombatRewardSieveProbability.FixedAuthoredPrefixDrawCount(request, authored);
+        int? prefixDraws = request.FixedAuthoredPrefixDrawCount;
         if (gpu is { UsesHotLoop: false, Routes: 2 } &&
             FamilyPhysicalQuote.AdmittedRequest(geometry) && FamilyPhysicalQuote.HasReferenceBackend() &&
             request.Ascension == 10 && (prefixDraws == 0 || prefixDraws == 1 && authored.MaximumBattleOrdinal == 1) &&
@@ -180,7 +180,7 @@ internal static class CombatRewardPhysicalPricing
             !FamilyPhysicalQuote.HasReferenceBackend() || request.ProfileId != Compatibility.RuntimeProfileId.Beta111 ||
             request.Authority.CanUseCurrentModel != true || request.Authority.PlayersCount != 1 || request.Ascension != 10) return null;
         var p = replay.Plan;
-        if (replay.UsesQueryLiteralPartyOpening || p.NeedsCompleteMatchingReference) return null;
+        if (replay.UsesNeutralWitness || replay.UsesObservedOpening || replay.UsesQueryLiteralPartyOpening || p.NeedsCompleteMatchingReference) return null;
         if (p.OpeningConsumption.HasReplay || p.ExplicitContext.InfluenceFlags != Beta110CombatRewardInfluenceFlags.None ||
             p.MaximumBattleOrdinal is < 1 or > 3 || p.PredicateCount != p.MaximumBattleOrdinal ||
             p.Predicates.Where((row, i) => row.BattleOrdinal != i + 1).Any()) return null;
@@ -195,10 +195,10 @@ internal static class CombatRewardPhysicalPricing
             "FamilyMatrix.20260910.C1-C3;HotLoopNumericalDeviceEmission;GenericAuthoredUnpriced");
     }
 
-    internal static FamilyPhysicalQuote? QuoteCpuPotionPrefix(ExactSearchExecutionRequest request, CombatRewardReplay replay, FamilyPhysicalQuoteRequest g)
+    internal static FamilyPhysicalQuote? QuoteCpuPotionPrefix(CombatRewardPricingInput request, CombatRewardReplay replay, FamilyPhysicalQuoteRequest g)
     {
         var p = replay.Plan;
-        if (replay.UsesQueryLiteralPartyOpening || p.NeedsCompleteMatchingReference) return null;
+        if (replay.UsesNeutralWitness || replay.UsesObservedOpening || replay.UsesQueryLiteralPartyOpening || p.NeedsCompleteMatchingReference) return null;
         var pool = replay.Catalog.CombatRewardPotionPool;
         if (!replay.CanUsePotionPrefix || !FamilyPhysicalQuote.AdmittedRequest(g) || g.PrivateInput || g.PrivateOutput ||
             g.CompactInput || g.MeanInputPopulation < 1024 || request.Ascension != 10 ||
@@ -226,16 +226,16 @@ internal static class CombatRewardPhysicalPricing
             shape = rows[0].PotionRequirement + ".H" + horizon;
         }
         return ns is null ? null : new("C.CombatReward", "C.PotionPrefix.20260913.v1.P1." + shape, ns.Value,
-            65536, null, "CpuNumericalClosure.20260913;Model=BoundedCoarse;NeutralPotionPrefix;Workers=1;" +
+            65536, null, "CpuNumericalClosure.20260913;Model=BoundedCoarse;PriceQuality=Estimate;NeutralPotionPrefix;Workers=1;" +
             "MinInput=1024;CpuCanonicalAbi1;metric=ns/ActualStageInput", OutputElementBytes:8,
             OutputAlreadyOrdered:true,PublicTransportClass:"CpuOrderedAbi1");
     }
 
-    internal static FamilyPhysicalQuote? QuoteNeutralModel(ExactSearchExecutionRequest request, CombatRewardReplay replay,
+    internal static FamilyPhysicalQuote? QuoteNeutralModel(CombatRewardPricingInput request, CombatRewardReplay replay,
         CombatRewardGpuPlan? gpu, FamilyPhysicalQuoteRequest geometry, bool cpu)
     {
         var p=replay.Plan;
-        if (replay.UsesQueryLiteralPartyOpening || p.NeedsCompleteMatchingReference) return null;
+        if (replay.UsesNeutralWitness || replay.UsesObservedOpening || replay.UsesQueryLiteralPartyOpening || p.NeedsCompleteMatchingReference) return null;
         var pool=replay.Catalog.CharacterRewardPool;
         if(!FamilyPhysicalQuote.AdmittedRequest(geometry) || request.ProfileId!=Compatibility.RuntimeProfileId.Beta111 ||
             !request.Authority.CanUseCurrentModel || request.Authority.PlayersCount!=1 || request.Ascension!=10 ||
@@ -254,7 +254,7 @@ internal static class CombatRewardPhysicalPricing
         ns += extraTargets * (cpu ? 8 : .04); // Same reward draw, extra comparisons only.
         return new("C.CombatReward","C.NeutralCardHorizon.20260913.v1.H"+p.MaximumBattleOrdinal+(cpu?".P1":".Gpu"),
             ns,cpu?65536:CombatRewardGpuExecutor.Capacity,cpu?null:120,
-            "FamilyCostClosure.20260913;Model=BoundedCoarse;metric=ns/ActualStageInput;NeutralCardHorizon1..3;TargetsPerRow1..4;"+
+            "FamilyCostClosure.20260913;Model=BoundedCoarse;PriceQuality=Estimate;metric=ns/ActualStageInput;NeutralCardHorizon1..3;TargetsPerRow1..4;"+
             "MeasuredSpecializationFirst;FixedRewardPoolGeometry;NoOpeningOrInfluence;"+
             (extraTargets > 0 ? "ConservativeCoarse;ExtraTargetComparisons;" : "") +
             (cpu?"CpuCanonicalAbi1;MinInput=4096":"NumericalDeviceEmission;MinInput=1048576;HostEdgesExcluded"),

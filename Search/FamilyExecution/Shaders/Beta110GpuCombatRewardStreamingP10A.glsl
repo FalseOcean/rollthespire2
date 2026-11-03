@@ -228,7 +228,8 @@ bool cr_hot_select_card_direct(uint meta,uint sm0,uint si0,uint sm1,uint si1,uin
     if(e0!=0xffffffffu&&actual>=e0)actual++;
     if(e1!=0xffffffffu&&actual>=e1)actual++;
     if(actual>=len){value=0xffffffffu;pool_index=0xffffffffu;return false;}
-    pool_index=actual;value=dense_ids.ids[off+actual];return true;
+    pool_index=actual;value=dense_ids.ids[off+actual];
+    return true;
 }
 
 bool cr_hot_generate_card(inout RngState rewards,uint asc,inout float card_offset,inout uint card_state,
@@ -236,8 +237,19 @@ bool cr_hot_generate_card(inout RngState rewards,uint asc,inout float card_offse
     out uint value,out uint used_meta,out uint used_index){
     uint requested=cr_hot_roll_card_rarity(rewards,asc,card_offset,card_state);
 #if RT2_CR_HOT_DIRECT_POOL == 1
-    used_meta=cr_combat_card_meta(requested);
-    if(!cr_hot_select_card_direct(used_meta,sm0,si0,sm1,si1,selected_count,rewards,value,used_index))return false;
+#if RT2_C_RARE_ONLY_IDENTITY == 1
+    // Only Rare identities are observed. Disjoint pools of >=3 valid unique
+    // cards guarantee every nonrare pick succeeds with one RNG draw. Its exact
+    // index cannot exclude any Rare card; later nonrare picks are also burned.
+    if(requested!=3u){
+        cr_next_u64(rewards);
+        value=0xffffffffu;used_meta=0xffffffffu;used_index=0xffffffffu;
+    }else
+#endif
+    {
+        used_meta=cr_combat_card_meta(requested);
+        if(!cr_hot_select_card_direct(used_meta,sm0,si0,sm1,si1,selected_count,rewards,value,used_index))return false;
+    }
 #else
     bool selected=false;value=0xffffffffu;used_meta=0xffffffffu;used_index=0xffffffffu;
     for(uint f=0u;f<3u;++f){
@@ -252,14 +264,20 @@ bool cr_hot_generate_card(inout RngState rewards,uint asc,inout float card_offse
 #else
     cr_next_float(rewards);
 #endif
+#if RT2_C_RARE_ONLY_IDENTITY == 1
+    return requested!=3u||value!=0xffffffffu;
+#else
     return value!=0xffffffffu;
+#endif
 }
 
-bool cr_evaluate_rewards_unpinned_hot(uint64_t root){
+// Prefix preparation owns opening draws and failures. This suffix accepts its
+// Rewards checkpoint; admitted query-literal prefixes retain initial pity states.
+bool cr_evaluate_rewards_unpinned_hot_state(RewardRouteState state){
     uint asc=plan_meta.values[4u];
-    RngState rewards=cr_rng_initialize(root+uint64_t(plan_meta.values[2u])+cr_plan_u64(14u));
-    float potion_odds=0.4f;
-    float card_offset=-0.05f;
+    RngState rewards=state.rewards;
+    float potion_odds=state.potion_odds;
+    float card_offset=state.card_offset;
     uint potion_node=0u;
     uint card_state=0u;
     uint64_t matched_mask=uint64_t(0u);
@@ -331,6 +349,11 @@ bool cr_evaluate_rewards_unpinned_hot(uint64_t root){
             }
             potion_states=cr_assignment_step(potion_states,matches,plan_meta.values[59]);
         }
+#if RT2_C_ASSIGNMENT_EARLY == 1
+        // A reachable subset must still fit into the remaining distinct battle
+        // slots. This optimistic bound never counts two targets from one battle.
+        if(!cr_hot_assignment_feasible(card_states,potion_states,battle_ordinal))return false;
+#endif
 #endif
         for(uint pi=0u;pi<RT2_CR_HOT_PREDICATE_COUNT;++pi){
             uint base=pi*16u,predicate_battle=predicate_meta.values[base];uint64_t bit=uint64_t(1u)<<pi;
@@ -350,4 +373,9 @@ bool cr_evaluate_rewards_unpinned_hot(uint64_t root){
         && (potion_states&(uint64_t(1u)<<((1u<<plan_meta.values[59])-1u)))!=uint64_t(0u)
 #endif
         ;
+}
+
+bool cr_evaluate_rewards_unpinned_hot(uint64_t root){
+    RngState unused=cr_rng_initialize(uint64_t(0));
+    return cr_evaluate_rewards_unpinned_hot_state(cr_initialize_route(root,false,unused));
 }

@@ -1,214 +1,169 @@
 using RolltheSpire2.Bootstrap;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Identity;
-using RolltheSpire2.Core.Seed;
-using RolltheSpire2.Core.Rewards;
 using RolltheSpire2.Search.Contracts;
-using RolltheSpire2.Search.FamilyExecution;
-using RolltheSpire2.Search.Semantics;
 
 namespace RolltheSpire2.Search.FamilyExecution;
 
-// One continuous ordinary-combat observation, independently replayed from root.
-// Authored Neow mechanics are prerequisites, never N Coverage or opening truth.
-// Capsule latent obtains follow the authored-only policy. Multiplayer Bones
-// recovers unspecified companions from the real root-local offered-pair shuffle.
-internal sealed partial class CombatRewardFamily : IFamilyInvocation
+internal sealed record CombatRewardPreparation(CombatRewardReplay Replay, CombatRewardGpuPlan? GpuPlan, FilterBodyDescription Body);
+
+// C prepares its authored/neutral opening and continuous reward observation.
+// Numerical replay is shared input; selected CPU/GPU lifetimes are independent.
+internal static partial class CombatRewardFamily
 {
-    private readonly GpuCostSamples _costSamples = new();
-    IEnumerable<GpuLocalPeak> IFamilyInvocation.CostPeaks => _costSamples.Peaks;
-    void IFamilyInvocation.LogExecutionEvidence() => _costSamples.WriteSummary();
-    private readonly FamilyCpuExecution _cpu;
-    private readonly ExactSearchExecutionRequest _request;
-    internal ExactSearchExecutionRequest PricingRequest => _request;
-    private readonly CombatRewardGpuPlan? _gpuPlan;
-    internal CombatRewardGpuPlan? GpuPlan => _gpuPlan;
-    private readonly CombatRewardFamilyModels _models;
-    private static readonly IReadOnlySet<string> EmptyCoverage = new HashSet<string>();
-    private CombatRewardGpuExecutor? _gpu;
-    private bool _compact, _parity, _faulted;
-    private int _batches;
-    private long _inputs, _outputs, _liveInputs;
-    private double _canonicalMs, _liveMs, _peak;
-    internal CombatRewardReplay Replay { get; }
-    internal string GpuPreparationFailureDetail { get; } = "";
-
-    private CombatRewardFamily(ExactSearchExecutionRequest request, CombatRewardReplay replay, bool preferGpu,
+    internal const string Id = "C.CombatReward";
+    private static readonly IReadOnlySet<string> EmptyCoverage = new HashSet<string>(StringComparer.Ordinal);
+    internal static bool TryCreate(SearchModel model, FilterExecutionPreferences preferences,
+        out FilterBodyDescription? body, bool preferGpu = true,
         GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
-        _request = request;
-        Replay = replay;
-        string gpuIssue = "CpuReferenceSelected";
-        if (preferGpu)
-        {
-            try
-            {
-                var prepared = CombatRewardGpuPlan.TryCreate(request, Replay, out gpuIssue);
-                _gpuPlan = prepared is null ? null : prepared with { NumericalVariant = numericalVariant };
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                gpuIssue = "GpuPlanConstructionFailed"; GpuPreparationFailureDetail = ex.ToString();
-                RuntimeLog.TryBackgroundWarning("combatRewardGpuPreparationFailed=true;selected=CpuReplay;exceptionJson=" + RuntimeLog.SafeJson(ex.ToString()));
-            }
-        }
-        _models = new(request, Replay, _gpuPlan is null ? FamilyCpuExecution.Capacity : CombatRewardGpuExecutor.Capacity);
-        _cpu = new(request, FamilyId, Replay.CpuRevision);
-        RuntimeLog.TryBackgroundInfo($"combatRewardFamilyReady=true;family={FamilyId};" +
-            $"bonesPrefix={Replay.Plan.OpeningConsumption.ReplayBonesOffer};authoredChildren={Replay.Plan.OpeningConsumption.OrderedRelicIds.Length};" +
-            $"prefixRoutes={Replay.RouteCount};precedingNicheDraws={Replay.PrecedingNicheDraws};maximumBattle={Replay.Plan.MaximumBattleOrdinal};" +
-            $"continuationIssue={Replay.ConservativeOpeningReason};kaleidoscopeCountOnly={Replay.KaleidoscopeCountOnly};" +
-            $"effectiveSieve={!Replay.ConservativelyKeeps};exactRemainder={Replay.ConservativelyKeeps};" +
-            $"partyQueryLiteralOpening={Replay.UsesQueryLiteralPartyOpening};unspecifiedOpeningEffects=Neutral;" +
-            $"explicitImpacts={string.Join(',', Replay.Plan.ExplicitContext.SourceRelicKeys)};" +
-            $"physical={(_gpuPlan is null ? "CPU" : _gpuPlan.UsesHotLoop ? "GpuNeutralHotLoop" : "GpuGenericStreaming")};physicalIssue={gpuIssue};" +
-            $"model={(request.Authority.PlayersCount > 1 ? "PartyAuthoredOrNeutralContinuation" : "AuthoredPlusNeutralBestEffort")};unordered=DistinctBattleAssignment;survival={(Survival.IsResolved ? "Available" : "Unknown")};expectedCost=FullEnvelope;recovery=None");
+        bool accepted = TryPrepare(model, preferences, out var prepared, preferGpu, numericalVariant);
+        body = prepared?.Body;
+        return accepted;
     }
-
-    bool IFamilyInvocation.ExecutionFaulted => _faulted;
-    GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => _gpuPlan?.NumericRequirements ?? GpuNumericRequirements.None;
-    public string FamilyId => "C.CombatReward";
-    public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest request) =>
-        FamilyGpuReadback.Reference(this, FamilyCanonicalMeasuredCost.TryDenseQuote(this, request) ??
-            CombatRewardPhysicalPricing.Quote(_request, Replay, _gpuPlan, request) ??
-            (_gpuPlan is null ? CombatRewardWorkEstimate.Cpu(Replay, _cpu.Workers, request, capacity: _cpu.WindowCapacity) :
-                CombatRewardWorkEstimate.Gpu(Replay, _gpuPlan, request)));
-    bool IFamilyInvocation.CanBindPrivateSerial => _gpuPlan is { NumericalVariant: GpuNumericalVariant.NativeFloat64 };
-    FamilyPrivateGpuExecution IFamilyInvocation.BindPrivateSerial(Godot.RenderingDevice rd,
-        PrivateOrdinalBuffer? input, PrivateOrdinalBuffer? output)
-    {
-        if (_gpuPlan is not { NumericalVariant: GpuNumericalVariant.NativeFloat64 }) throw new InvalidOperationException("C.PrivateSerialNotAdmitted");
-        var gpu = new CombatRewardGpuExecutor(rd, _gpuPlan, privateInput: input, privateOutput: output);
-        return new(gpu, gpu.Device, gpu.SetupMs, input, output, (batch, count, token) =>
-        {
-            FamilyCandidateSet? result = null; CombatRewardGpuMetrics m;
-            if (output is not null)
-            {
-                if (input is null) gpu.ExecutePrivate(FamilyCandidateSet.Dense(batch), token, out m);
-                else gpu.ExecutePrivateStage(batch, count, token, out m);
-            }
-            else result = input is null ? gpu.Execute(FamilyCandidateSet.Dense(batch), token, out m) : gpu.ExecutePrivateInput(batch, count, token, out m);
-            return new(m.Output, result, m.DispatchSyncMs, m.ReadbackMs, m.ReadbackBytes, m.CanonicalMs, m.Dispatches);
-        });
-    }
-    public FamilyAnalyticalCostProjection AnalyticalCost => _models.Analytical;
-    public FamilySurvivalProjection Survival => _models.Survival;
-    public bool HasConditionalProjections => true;
-    public FamilySurvivalProjection ResolveSurvival(IReadOnlySet<string> passedCoverage) => _models.ResolveSurvival(passedCoverage);
-    public FamilyExpectedFilteringCostProjection ExpectedFilteringCost => _models.Expected(EmptyCoverage);
-    public FamilyExpectedFilteringCostProjection ResolveExpectedFilteringCost(IReadOnlySet<string> passedCoverage) => _models.Expected(passedCoverage);
-    public FamilyConditionPerformanceProjection ConditionPerformance => ResolveConditionPerformance(false);
-    public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compactAbi1Input) => _gpuPlan is null
-        ? _cpu.Condition(compactAbi1Input) : new(FamilyId,_gpuPlan.Revision(compactAbi1Input),
-            "C.Neutral.20260907.v1",1,"NoAcceptedWithinPathCurve;CanonicalAbi1Ready",usesGpu:true);
-    public FamilyPerformanceObservation CapturePerformanceObservation() => _gpuPlan is null ? _cpu.Observation() :
-        new(ResolveConditionPerformance(_compact),_gpu?.Device??"",_gpu?.SetupMs??0,_peak,_peak,_batches,Math.Max(0,_batches-1),
-            _inputs,_outputs,_canonicalMs,_parity&&!_faulted&&_batches>1,"CanonicalAbi1Ready;FirstBatchExcluded;CpuReferenceParity="+_parity);
-    public FamilyLivePerformanceSnapshot? CaptureLivePerformanceSnapshot() => _gpuPlan is null ? _cpu.Live() :
-        _faulted||!_parity||_batches<2?null:new(FamilyId,_gpuPlan.Revision(_compact),Interlocked.Read(ref _liveInputs),Volatile.Read(ref _liveMs),_batches-1);
-    public async ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext executionContext,
-        FamilyObservationWindow observationWindow, FamilyCandidateSet input, CancellationToken cancellationToken)
-    {
-        if(_gpuPlan is null)return _cpu.Execute(observationWindow,input,cancellationToken,Replay.Matches,executionContext);
-        cancellationToken.ThrowIfCancellationRequested();
-        if(_faulted)throw new InvalidOperationException("C.GpuInvocationFaulted");
-        if(observationWindow.ExactRequest.SnapshotFingerprint!=_request.SnapshotFingerprint)throw new InvalidOperationException("C.ObservationMismatch");
-        if(input.Count==0)return input;
-        _compact=!input.IsDense;
-        try
-        {
-            _gpu??=await executionContext.ExecuteGpuAsync(rd=>new CombatRewardGpuExecutor(rd,_gpuPlan),cancellationToken).ConfigureAwait(false);
-            if(!_parity)
-            {
-                // Separate tiny GPU dispatch, compared in full before admitting the
-                // large batch. Parity cost is not physical performance evidence.
-                var sample=FamilyCandidateSet.FromSortedAbi1(input.Batch,input.EnumerateLogicalOrdinals().Take(4096).ToArray());
-                var actual=await executionContext.ExecuteGpuAsync(rd=>_gpu.Execute(sample,cancellationToken,out _),cancellationToken).ConfigureAwait(false);
-                var profile=RolltheSpire2.Compatibility.RuntimeProfileRegistry.Select(_request.Detection);
-                var expected=sample.EnumerateLogicalOrdinals().Where(i=>Replay.Matches(profile.ComputeRootSeed(
-                    VisibleSeedCandidateCodec.FormatOrdinal(profile,input.Batch.GlobalCandidate(i))))).ToArray();
-                var actualOrdinals = actual.EnumerateLogicalOrdinals().ToArray();
-                if(!actualOrdinals.SequenceEqual(expected))throw new InvalidDataException(
-                    $"C.GpuCpuParityMismatch:batchBase={input.Batch.BatchBase};slot={_request.Authority.PlayerSlotIndex};" +
-                    $"cpu={expected.Length};gpu={actualOrdinals.Length};cpuOnly={string.Join(',',expected.Except(actualOrdinals).Take(8))};" +
-                    $"gpuOnly={string.Join(',',actualOrdinals.Except(expected).Take(8))}");
-                _parity=true;
-            }
-            var result=await executionContext.ExecuteGpuAsync(_=>{
-                var output=_gpu.Execute(input,cancellationToken,out var metrics);return (output,metrics);
-            },cancellationToken).ConfigureAwait(false);
-            _costSamples.Observe(this, new(!input.IsDense, false, input.Count), input.Count, result.metrics.DispatchSyncMs, outputs: result.output.Count, canonicalMs: result.metrics.CanonicalMs, readbackMs: result.metrics.ReadbackMs, readbackBytes: result.metrics.ReadbackBytes);
-            var m=result.metrics;_batches++;_inputs+=m.Input;_outputs+=m.Output;_canonicalMs+=m.CanonicalMs;
-            if(_batches>1){Interlocked.Add(ref _liveInputs,m.Input);_liveMs+=m.CanonicalMs;_peak=Math.Max(_peak,m.Input*1000d/m.CanonicalMs);}
-            if (RolltheSpire2.Bootstrap.RuntimeLog.DetailEnabled)RuntimeLog.TryBackgroundDetail($"combatRewardGpuBatch=true;physicalRevision={_gpuPlan.Revision(_compact)};"+
-                $"input={m.Input};output={m.Output};dispatches={m.Dispatches};uploadMs={m.UploadMs};dispatchSyncMs={m.DispatchSyncMs};readbackMs={m.ReadbackMs};"+
-                $"readbackBytes={m.ReadbackBytes};canonicalAbi1ReadyMs={m.CanonicalMs};parity={_parity};recovery=False");
-            return result.output;
-        }
-        catch(OperationCanceledException){throw;}
-        catch(Exception ex){_faulted=true;RuntimeLog.TryBackgroundWarning("combatRewardGpuFault=true;recovery=None;error="+ex.Message);throw;}
-    }
-    public async ValueTask DisposeAsync(FamilyExecutionContext executionContext)
-    {
-        if(_gpuPlan is null){_cpu.WriteSummary();return;}
-        RuntimeLog.TryBackgroundInfo($"combatRewardGpuSummary=true;batches={_batches};input={_inputs};output={_outputs};canonicalMs={_canonicalMs};parity={_parity};faulted={_faulted};recovery=False");
-        if(_gpu is not null)await executionContext.ExecuteGpuAsync(_=>{_gpu.Dispose();return true;},CancellationToken.None).ConfigureAwait(false);
-    }
-
-    internal static bool TryCreate(ExactSearchExecutionRequest request, out IFamilyInvocation? family)
-        => TryCreate(request, out family, true);
-    internal static bool TryCreate(ExactSearchExecutionRequest request, out IFamilyInvocation? family, bool preferGpu,
+    internal static bool TryPrepare(SearchModel model, FilterExecutionPreferences preferences,
+        out CombatRewardPreparation? prepared, bool preferGpu = true,
         GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
-        family = null;
-        // A personal multiplayer request must carry its shared arrival explicitly.
-        if (request.Authority.PlayersCount != 1) return false;
-        if (!request.Evaluation.NormalCombatRewardConditions.Any(c => !c.IsEmpty)) return false;
-        if (!TryCreateReplay(request, 0, out var replay)) return false;
-        family = new CombatRewardFamily(request, replay!, preferGpu, numericalVariant);
+        prepared = null;
+        if (model.Authority.PlayersCount != 1 || !model.Evaluation.NormalCombatRewardConditions.Any(c => !c.IsEmpty)) return false;
+        if (!TryCreateReplay(model, preferences, 0, out var replay)) return false;
+        prepared = Prepare(model, preferences, replay!, preferGpu, numericalVariant);
         return true;
     }
-
-    internal static bool TryCreateParty(ExactSearchExecutionRequest request,
-        int? precedingNicheDraws, int? precedingPotionDraws, out IFamilyInvocation? family, bool preferGpu = true,
+    internal static bool TryCreateParty(SearchModel model, FilterExecutionPreferences preferences,
+        int? precedingNicheDraws, int? precedingPotionDraws, out FilterBodyDescription? body, bool preferGpu = true,
         GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
-        family = null;
-        if (request.ProfileId != Compatibility.RuntimeProfileId.Beta111 ||
-            !request.Authority.CanUseCurrentModel || request.Authority.PlayersCount is < 2 or > 4 ||
-            request.Authority.PlayerSlotIndex < 0 || request.Authority.PlayerSlotIndex >= request.Authority.PlayersCount ||
-            !request.Evaluation.NormalCombatRewardConditions.Any(c => !c.IsEmpty))
-            return false;
-        if (request.CompiledSearch.NormalizedQuery.OpeningRoute is { } route &&
+        bool accepted = TryPrepareParty(model, preferences, precedingNicheDraws, precedingPotionDraws,
+            out var prepared, preferGpu, numericalVariant);
+        body = prepared?.Body;
+        return accepted;
+    }
+    internal static bool TryPrepareParty(SearchModel model, FilterExecutionPreferences preferences,
+        int? precedingNicheDraws, int? precedingPotionDraws, out CombatRewardPreparation? prepared, bool preferGpu = true,
+        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
+    {
+        prepared = null;
+        if (model.ProfileId != RuntimeProfileId.Beta111 || !model.Authority.CanUseCurrentModel ||
+            model.Authority.PlayersCount is < 2 or > 4 || model.Authority.PlayerSlotIndex < 0 ||
+            model.Authority.PlayerSlotIndex >= model.Authority.PlayersCount ||
+            !model.Evaluation.NormalCombatRewardConditions.Any(c => !c.IsEmpty)) return false;
+        if (model.CompiledSearch.NormalizedQuery.OpeningRoute is { } route &&
             (!route.IsValid || !Beta110FastRelicCatalog.TryGetId(route.RouteRelicKey, out _))) return false;
-        // Combat potion rewards use personal Rewards, never the shared opening
-        // CombatPotionGeneration stream. Unknown Niche remains explicitly unknown.
-        if (!TryCreateReplay(request, precedingNicheDraws, out var replay)) return false;
-        family = new CombatRewardFamily(request, replay!, preferGpu, numericalVariant);
+        // Combat potions use personal Rewards. The shared opening-potion arrival
+        // is deliberately not substituted for this independent stream.
+        if (!TryCreateReplay(model, preferences, precedingNicheDraws, out var replay)) return false;
+        prepared = Prepare(model, preferences, replay!, preferGpu, numericalVariant);
         return true;
     }
-
-    private static bool TryCreateReplay(ExactSearchExecutionRequest request, int? precedingNicheDraws, out CombatRewardReplay? replay)
+    private static bool TryCreateReplay(SearchModel model, FilterExecutionPreferences preferences,
+        int? precedingNicheDraws, out CombatRewardReplay? replay)
     {
         replay = null;
-        if (!CombatRewardReplay.TryCompile(request, out var catalog, out var plan, out string issue))
+        if (!CombatRewardReplay.TryCompile(model, out var catalog, out var plan, out string issue))
         {
-            RuntimeLog.TryBackgroundInfo($"combatRewardFamilyUnavailable=true;reason={issue};remainingQueryOwner=ProductionExact;replacementCompleteness=NotClaimed");
-            if (RuntimeLog.SessionId.Length > 0) Infrastructure.Diagnostics.RuntimeIssueLedger.Current.RecordDegradation("CombatRewardFilterUnavailable",
-                nameof(CombatRewardFamily), "Filter.Construction", "issues.filter_incomplete",
-                $"cause={issue};predicatesRetained=true;finalValidationSkipped={request.RunOptions.SkipExactValidation};matchClaimed=false");
+            ReportUnavailable(issue, preferences.SkipExactValidation);
             return false;
         }
-        replay = new(request, precedingNicheDraws, catalog, plan);
+        replay = new(model, precedingNicheDraws, catalog, plan);
         if (replay.ConservativeOpeningReason.StartsWith("OpeningConsumptionAuthorityUnavailable:", StringComparison.Ordinal) ||
             replay.ConservativeOpeningReason == "BonesShufflePoolUnavailable")
         {
-            if (RuntimeLog.SessionId.Length > 0)
-                Infrastructure.Diagnostics.RuntimeIssueLedger.Current.RecordDegradation("CombatRewardFilterUnavailable", nameof(CombatRewardFamily),
-                    "Filter.Construction", "issues.filter_incomplete", $"cause={replay.ConservativeOpeningReason};predicatesRetained=true;finalValidationSkipped={request.RunOptions.SkipExactValidation};matchClaimed=false");
+            ReportUnavailable(replay.ConservativeOpeningReason, preferences.SkipExactValidation);
             replay = null;
             return false;
         }
         return true;
+    }
+    private static void ReportUnavailable(string cause, bool skipExact)
+    {
+        RuntimeLog.TryBackgroundInfo($"combatRewardFamilyUnavailable=true;reason={cause};remainingQueryOwner=ProductionExact;replacementCompleteness=NotClaimed");
+        if (RuntimeLog.SessionId.Length > 0)
+            RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.RecordDegradation("CombatRewardFilterUnavailable",
+                nameof(CombatRewardFamily), "Filter.Construction", "issues.filter_incomplete",
+                $"cause={cause};predicatesRetained=true;finalValidationSkipped={skipExact};matchClaimed=false");
+    }
+    private static CombatRewardPreparation Prepare(SearchModel model, FilterExecutionPreferences preferences,
+        CombatRewardReplay replay, bool preferGpu, GpuNumericalVariant numericalVariant)
+    {
+        CombatRewardGpuPlan? gpu = null;
+        string failure = "", gpuIssue = "CpuReferenceSelected";
+        if (preferGpu)
+        {
+            try { gpu = CombatRewardGpuPlan.TryCreate(model, replay, out gpuIssue) is { } compiled
+                ? compiled with { NumericalVariant = numericalVariant } : null; }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception error) { gpuIssue = "GpuPlanConstructionFailed"; failure = error.ToString(); }
+        }
+        var projections = new CombatRewardFamilyModels(model, replay, gpu is null ? CpuFilterExecution.Capacity : CombatRewardGpuExecutor.Capacity);
+        var issues = new List<FilterPreparationIssue>();
+        if (failure.Length > 0) issues.Add(new("GpuPreparation", gpuIssue, failure));
+        if (replay.ConservativelyKeeps) issues.Add(new("Filtering", replay.ConservativeOpeningReason));
+        string observedRemainder = replay.UsesObservedOpening && replay.ObservedOpening!.HasUnresolvedEffects
+            ? "UnresolvedObservedOpeningEffectsRetainedForExact" : "";
+        if (observedRemainder.Length > 0) issues.Add(new("Filtering", observedRemainder));
+        string neutralRemainder = replay.NeutralWitness?.Remainder ?? "";
+        if (neutralRemainder.Length > 0) issues.Add(new("Filtering", neutralRemainder));
+        var preparation = new PreparedFilter(Id) {
+            AnalyticalCost = projections.Analytical, Survival = projections.Survival,
+            ExpectedFilteringCost = projections.Expected(EmptyCoverage), HasConditionalProjections = true,
+            SurvivalResolver = projections.ResolveSurvival, ExpectedCostResolver = projections.Expected,
+            Obligations = [new(Id, model.Authority.PlayerSlotIndex)], Issues = issues.ToArray(),
+            Remainders = replay.ConservativelyKeeps ? [Id + ":" + replay.ConservativeOpeningReason] :
+                new[] { observedRemainder, neutralRemainder }.Where(cause => cause.Length > 0)
+                    .Select(cause => Id + ":" + cause).ToArray()
+        };
+        var profile = RuntimeProfileRegistry.Select(model.Detection);
+        var pricing = CombatRewardPricingInput.From(model, replay);
+        int workers = Math.Clamp(preferences.WorkerCount, 1, 32);
+        string identity = model.SnapshotFingerprint;
+        var ordinary = PrepareCpu(preparation, replay, gpu, pricing, profile, identity, workers, false);
+        var cpu = replay.CanUsePotionPrefix ? PrepareCpu(preparation, replay, gpu, pricing, profile, identity, workers, true) : ordinary;
+        if (gpu is null) return new(replay, null, cpu);
+        var gpuPlan = gpu;
+        const string hotRemainder = "ObservedOpeningOutsideHotStructureRetainedForExact";
+        var gpuPreparation = gpu.UsesObservedOpeningHotLoop ? preparation with {
+            Issues = [..preparation.Issues, new("Filtering", hotRemainder)],
+            Remainders = [..preparation.Remainders, Id + ":" + hotRemainder]
+        } : preparation;
+        var body = new FilterBodyDescription(gpuPreparation, gpu.Revision(false), profile.ProfileId) {
+            UsesGpu = true, NumericRequirements = gpu.NumericRequirements,
+            InputIdentity = identity, PlayersCount = model.Authority.PlayersCount, CpuWorkers = preferences.WorkerCount,
+            WindowCapacity = CombatRewardGpuExecutor.Capacity,
+            CpuAlternatives = replay.CanUsePotionPrefix ? [cpu, ordinary] : [ordinary],
+            PerformanceProjection = compact => new(Id, gpuPlan.Revision(compact), "C.Neutral.20260907.v1", 1,
+                "NoAcceptedWithinPathCurve;CanonicalAbi1Ready", true),
+            Cost = new() {
+                PartyChild = new(AllowsHistoricalEnvelope: gpuPlan.NumericalVariant != GpuNumericalVariant.IntegerRne && !replay.Plan.NeedsCompleteMatchingReference && !replay.UsesQueryLiteralPartyOpening && !replay.UsesObservedOpening && !replay.UsesNeutralWitness, NumericalRevision: gpuPlan.NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "", CapacityRevision: gpuPlan.BagCapacityRevision, CompleteCombatMatching: replay.Plan.NeedsCompleteMatchingReference, QueryLiteralCombatOpening: replay.UsesQueryLiteralPartyOpening),
+                MinimumComparableInput = _ => 1,
+                CanonicalScope = pricing.Authority.PlayersCount == 1,
+                CanonicalWorkShape = _ => FamilyCanonicalCostShape.DescribeCombat(replay, gpuPlan),
+                Quote = (selected, geometry, _) => FamilyGpuReadback.Reference(selected,
+                    FamilyCanonicalMeasuredCost.TryDenseQuote(selected, geometry) ??
+                    CombatRewardPhysicalPricing.Quote(pricing, replay, gpuPlan, geometry) ?? CombatRewardWorkEstimate.Gpu(replay, gpuPlan, geometry))
+            },
+            CreateExecution = (selected, _) => new GpuFilterExecution<CombatRewardGpuExecutor>(selected,
+                device => new(device, gpuPlan), (resource, input, token) => {
+                    var output = resource.Execute(input, token, out var metrics);
+                    return new(output, metrics.CanonicalMs, metrics.DispatchSyncMs, metrics.ReadbackMs, metrics.ReadbackBytes);
+                }, resource => resource.Dispose(), gpuPlan.UsesObservedOpeningHotLoop ? replay.MatchesObservedHotReference : replay.MatchesReference,
+                profile, resource => (resource.Device, resource.SetupMs), 4096),
+            BindPrivate = gpuPlan.NumericalVariant != GpuNumericalVariant.NativeFloat64 ? null : (device, input, output) => {
+                var resource = new CombatRewardGpuExecutor(device, gpuPlan, privateInput: input, privateOutput: output);
+                return new(resource, resource.Device, resource.SetupMs, input, output, (batch, count, token) => {
+                    FamilyCandidateSet? filtered = null; CombatRewardGpuMetrics metrics;
+                    if (output is not null) {
+                        if (input is null) resource.ExecutePrivate(FamilyCandidateSet.Dense(batch), token, out metrics);
+                        else resource.ExecutePrivateStage(batch, count, token, out metrics);
+                    }
+                    else filtered = input is null ? resource.Execute(FamilyCandidateSet.Dense(batch), token, out metrics) :
+                        resource.ExecutePrivateInput(batch, count, token, out metrics);
+                    return new(metrics.Output, filtered, metrics.DispatchSyncMs, metrics.ReadbackMs,
+                        metrics.ReadbackBytes, metrics.CanonicalMs, metrics.Dispatches);
+                });
+            }
+        };
+        return new(replay, gpuPlan, body);
     }
 }

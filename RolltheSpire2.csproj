@@ -8,10 +8,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
-    <Version>1.4.0</Version>
-    <AssemblyVersion>1.4.0.0</AssemblyVersion>
-    <FileVersion>1.4.0.0</FileVersion>
-    <InformationalVersion>1.4.0+$(Configuration)</InformationalVersion>
+    <Version>1.4.1</Version>
+    <AssemblyVersion>1.4.1.0</AssemblyVersion>
+    <FileVersion>1.4.1.0</FileVersion>
+    <InformationalVersion>1.4.1+$(Configuration)</InformationalVersion>
     <NoWarn>$(NoWarn);MSB3270;STS002</NoWarn>
   </PropertyGroup>
 
@@ -38,10 +38,10 @@
     <None Include="RolltheSpire2.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="project.godot" />
     <EmbeddedResource Include="Texts\**\*.json" WithCulture="false" />
-    <EmbeddedResource Include="Search\FamilyExecution\FamilyPrivateCompleteCallCostReference.json"
-                      LogicalName="RolltheSpire2.Search.FamilyExecution.FamilyPrivateCompleteCallCostReference.json" />
-    <EmbeddedResource Include="Search\FamilyExecution\CanonicalCostReference.json"
-                      LogicalName="RolltheSpire2.Search.FamilyExecution.CanonicalCostReference.json" />
+    <_Rt2CostReference Include="Search\FamilyExecution\FamilyPrivateCompleteCallCostReference.json"
+                       LogicalName="RolltheSpire2.Search.FamilyExecution.FamilyPrivateCompleteCallCostReference.json.gz" />
+    <_Rt2CostReference Include="Search\FamilyExecution\CanonicalCostReference.json"
+                       LogicalName="RolltheSpire2.Search.FamilyExecution.CanonicalCostReference.json.gz" />
     <EmbeddedResource Include="Texts\**\*.md" WithCulture="false" />
     <EmbeddedResource Include="Assets\Icons\Rt2Launcher.png"
                       LogicalName="RolltheSpire2.Assets.Icons.Rt2Launcher.png" />
@@ -58,10 +58,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <AssemblyMetadata Include="Rt2BuildIdentity" Value="RolltheSpire2-1.4.0-Production" />
+    <AssemblyMetadata Include="Rt2BuildIdentity" Value="RolltheSpire2-1.4.1-Production" />
     <AssemblyMetadata Include="Rt2CompatibilityTarget" Value="Beta110-0.110.1-AuditedExact_Beta111-0.111.0-AcceptedCompatible-Modern110Semantic" />
     <AssemblyMetadata Include="Rt2BuildConfiguration" Value="$(Configuration)" />
   </ItemGroup>
+
+  <Import Project="tools/build/CompressCostReferences.targets" />
 
   <Target Name="ValidateSts2ReferenceDir">
     <Message Importance="high"

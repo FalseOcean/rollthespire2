@@ -20,12 +20,6 @@ using static RolltheSpire2.Infrastructure.Snapshots.PredictorLiveRunCapture;
 
 namespace RolltheSpire2.Infrastructure.Snapshots;
 
-// A reward is an offered native bottle, never a current inventory slot.
-internal sealed record PredictorOperationPotionSource(PredictorPotion Potion, int? HeldSlot = null, long? RewardId = null);
-internal sealed record PredictorOperationPotionObservation(PredictorContext Context, PredictorOperationPotionSource Source,
-    ImmutableArray<PredictorPotion?> Inventory, PredictorStreamState CombatPotionRng,
-    bool InCombat, bool HasSozu, string Stamp);
-
 // Detached generation inputs only: no scene, combat serialization, use or hooks.
 internal static class PredictorOperationPotionTargetCapture
 {

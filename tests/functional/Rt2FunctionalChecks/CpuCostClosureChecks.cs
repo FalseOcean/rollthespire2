@@ -56,34 +56,36 @@ internal static class CpuCostClosureChecks
         checks += CheckGenericScalarQuotes(context.Context);
         checks += CheckRelicQuoteIdentities(context.Context);
         checks += CheckPartyRelicQuoteIdentities();
-        ExactSearchExecutionRequest Request(string id,int budget,long count=1<<24)
+        PreparedSearch Request(string id,int budget,long count=1<<24)
         {
             var w=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>($"tools/ProductionSearchHost/Corpus/cpu-main-v1/{id}.json");
-            return ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(w.Query,context.Context),w.Options with {WorkerCount=budget,ScanCount=count,TargetMatchCount=30}).Plan!;
+            return SearchPreparationCompiler.Compile(SearchCompiler.Compile(w.Query,context.Context),w.Options with {WorkerCount=budget,ScanCount=count,TargetMatchCount=30}).Plan!;
         }
         foreach(int budget in new[]{1,4,8,16})
         {
             var r=Request("R-shop-three",budget);
-            RelicFamily.TryCreate(r,out var f);
-            var configs=f!.CpuRealizations.Cast<FamilyCpuExecution>().Select(c=>c.Workers).ToArray();
-            Check(configs.All(n=>n<=budget) && configs.Contains(1),"budget bounds physical candidates");
-            Check(configs.SequenceEqual(Enumerable.Range(1,budget)),"all integer worker counts available independently of price");
+            RelicFamily.TryCreate(r.Model, FilterExecutionPreferences.From(r.RunOptions), out var f);
+            var configs=f!.CpuAlternatives.Select(c=>c.CpuWorkers).ToArray();
+            Check(configs.Length > 0 && configs.All(n => n >= 1 && n <= budget),
+                "budget bounds prepared CPU alternatives");
+            Check(configs.Contains(budget),
+                "configured worker budget remains available independently of price");
         }
         foreach(var id in new[]{"N-identity-source","S-three-slots","R-three-common","R-shop-three","C-three-potions"})
         {
             var r=Request(id,1);var plan=FamilyExecutionCoordinator.Plan(r,false);
-            Check(plan.OrderedFamilies.All(f=>f is FamilyCpuExecution),"CPU Only preserved");
-            if (id.StartsWith("R-", StringComparison.Ordinal) && plan.OrderedFamilies.OfType<FamilyCpuExecution>().Any(c =>
-                !FamilyCpuReferenceCost.RelicIdentitySupported(c.Condition(false).PhysicalImplementationRevision, c.WindowCapacity, c.Workers, false)))
+            Check(plan.OrderedFamilies.All(f=>!f.UsesGpu),"CPU Only preserved");
+            if (id.StartsWith("R-", StringComparison.Ordinal) && plan.OrderedFamilies.Any(c =>
+                !FamilyCpuReferenceCost.RelicIdentitySupported(c.ResolveConditionPerformance(false).PhysicalImplementationRevision, c.WindowCapacity, c.CpuWorkers, false)))
             {
                 Check(plan.OrderedFamilies.Count > 0 && plan.OrderedFamilies.All(f =>
-                    f.QuotePhysicalWork(new(false, false, 65536)) is not { } quote ||
-                    FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(r, f, quote, 65536)),
-                    "New R CPU bodies stay unpriced unless their actual identity and input have an embedded canonical measurement");
+                    f.QuotePhysicalWork(new(false, false, 65536)) is { } quote &&
+                    CurrentMeasurementOrOwnedEstimate(r, f, quote, new(false, false, 65536))),
+                    "new R CPU bodies use their actual measurement or declared R work estimate, never a historical body anchor");
                 continue;
             }
             if(id=="N-identity-source")continue; // source-conditioned R has no complete price
-            var eta=FamilySearchEtaProjectorV1.Project(r,plan,liveExactMsPerAttempt:.01);
+            var eta=FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(r, plan), plan, liveExactMsPerAttempt:.01);
             Console.WriteLine(id+" "+eta.FormatSummary());
             Check(eta.Status==FamilySearchEtaStatus.Ready && eta.TargetSearchMeanMs is >0,"Reference CPU produces estimate "+id);
             Check(eta.TargetExactTailMs>=0,"Exact retains independent local timing");
@@ -96,42 +98,37 @@ internal static class CpuCostClosureChecks
         Check(longPlan.Stages.Single().PerInputTimeMs == shortPlan.Stages.Single().PerInputTimeMs,"unit scheduling reference is independent of requested scan horizon");
         var tiny=Request("R-shop-three",16,128);
         var tinyPlan=FamilyExecutionCoordinator.Plan(tiny,false);
-        Check(tinyPlan.OrderedFamilies.Count > 0 && tinyPlan.OrderedFamilies.All(family => family.QuotePhysicalWork(new(false, false, 128)) is null),
-            "an actual unmeasured tiny invocation stays unpriced while its full-window ranking reference remains usable");
-        var tinyEta = FamilySearchEtaProjectorV1.Project(tiny,tinyPlan,liveExactMsPerAttempt:.01);
+        Check(tinyPlan.OrderedFamilies.Count > 0 && tinyPlan.OrderedFamilies.All(family =>
+            CurrentMeasurementOrOwnedEstimate(tiny, family, family.QuotePhysicalWork(new(false, false, 128)), new(false, false, 128))),
+            "tiny R input cannot borrow a historical measurement; a declared R work estimate remains available");
+        var tinyEta = FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(tiny, tinyPlan), tinyPlan, liveExactMsPerAttempt:.01);
         Check(tinyEta.Status==FamilySearchEtaStatus.Ready && tinyEta.TargetStages.Any(stage =>
-            stage.CostEvidence.Contains("ReferenceGeometryApproximation", StringComparison.Ordinal)),
-            "tiny input uses an explicitly approximate estimate from its existing same-body reference");
+            stage.CostEvidence.Contains("PriceQuality=Estimate", StringComparison.Ordinal) &&
+            stage.CostEvidence.Contains("R.FamilyCostClosure.20260913", StringComparison.Ordinal)),
+            "tiny input uses the declared R work estimate without claiming a tiny measurement");
         var rprice=Request("R-three-common",1);
         var rplan=FamilyExecutionCoordinator.Plan(rprice,false);
-        var exactReference = FamilySearchEtaProjectorV1.Project(longRequest, longPlan, liveExactMsPerAttempt: .02);
-        var exactDouble = FamilySearchEtaProjectorV1.Project(longRequest, longPlan, liveExactMsPerAttempt: .04);
+        var exactReference = FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(longRequest, longPlan), longPlan, liveExactMsPerAttempt: .02);
+        var exactDouble = FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(longRequest, longPlan), longPlan, liveExactMsPerAttempt: .04);
         Check(exactReference.TargetExactTailMs is > 0 &&
             exactDouble.TargetExactTailMs == 2 * exactReference.TargetExactTailMs,
             "Exact local cost scales only with its independent observed per-attempt cost");
         var noQuote = tinyPlan;
-        var relicUi=FamilySearchEtaProjectorV1.Project(rprice,rplan,liveExactMsPerAttempt:.01);
-        bool oldRelicIdentity=rplan.OrderedFamilies.OfType<FamilyCpuExecution>().All(c =>
-            FamilyCpuReferenceCost.RelicIdentitySupported(c.Condition(false).PhysicalImplementationRevision,c.WindowCapacity,c.Workers,false));
-        Check(RolltheSpire2.Presentation.Ui1.SearchEtaPresentationBuilder.Build(relicUi).Status == (oldRelicIdentity
-            ? RolltheSpire2.Presentation.Ui1.SearchEtaQuickViewStatus.Ready : RolltheSpire2.Presentation.Ui1.SearchEtaQuickViewStatus.Unavailable),
+        var relicUi=FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(rprice, rplan), rplan, liveExactMsPerAttempt:.01);
+        Check(RolltheSpire2.Presentation.Ui1.SearchEtaPresentationBuilder.Build(relicUi).Status ==
+            RolltheSpire2.Presentation.Ui1.SearchEtaQuickViewStatus.Ready && relicUi.TargetStages.All(stage =>
+                stage.CostEvidence.Contains("PriceQuality=Estimate", StringComparison.Ordinal) ||
+                stage.CostEvidence.Contains("CanonicalAssetSource=", StringComparison.Ordinal)),
             "R estimate presentation follows actual body pricing without blocking execution");
         // Keep the generic Ready/live presentation checks on an independently priced fixture.
-        var readyUi=FamilySearchEtaProjectorV1.Project(longRequest,longPlan,liveExactMsPerAttempt:.01);
+        var readyUi=FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(longRequest, longPlan), longPlan, liveExactMsPerAttempt:.01);
         Check(RolltheSpire2.Presentation.Ui1.SearchEtaPresentationBuilder.Build(readyUi).Status==RolltheSpire2.Presentation.Ui1.SearchEtaQuickViewStatus.Ready,"reference estimate UI is Ready");
         var waitingUi=readyUi with {Status=FamilySearchEtaStatus.Calibrating,FirstResultSearchMeanMs=null,FirstResultSearchP99Ms=null,TargetSearchMeanMs=null};
         Check(RolltheSpire2.Presentation.Ui1.SearchEtaPresentationBuilder.Build(waitingUi).Status==RolltheSpire2.Presentation.Ui1.SearchEtaQuickViewStatus.Calibrating,"local evidence presentation state");
-        Check(RolltheSpire2.Presentation.Ui1.SearchEtaPresentationBuilder.Build(FamilySearchEtaProjectorV1.Project(tiny,noQuote,liveExactMsPerAttempt:.01)).Status==RolltheSpire2.Presentation.Ui1.SearchEtaQuickViewStatus.Ready,"explicit reference estimate is presented without claiming a measured tiny quote");
-        var rolling=new RolltheSpire2.Presentation.Ui1.SearchScanningSpeed();
-        Check(rolling.Observe(0,0) is null && rolling.Observe(3,100) is null && rolling.Observe(3.5,200) is null,"cold/warm speed waits for actual window");
-        Check(Math.Abs(rolling.Observe(4.1,320)!.Value-200)<.001,"rolling speed excludes startup");
+        Check(RolltheSpire2.Presentation.Ui1.SearchEtaPresentationBuilder.Build(FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(tiny, noQuote), noQuote, liveExactMsPerAttempt:.01)).Status==RolltheSpire2.Presentation.Ui1.SearchEtaQuickViewStatus.Ready,"explicit reference estimate is presented without claiming a measured tiny quote");
+        checks += FamilyAllocationPricingChecks.CheckScanningSpeed();
         var progress=new SearchProgressSnapshot(SearchRunState.Completed,1000,1,1000,1,10,100,SearchDisposition.Match,"",false)
             {ObservedScanningRoots=500,ObservedScanningSeconds=.1};
-        Check(RolltheSpire2.Presentation.Ui1.SearchScanningSpeed.Terminal(progress,null)==5000,"short terminal speed excludes startup");
-        Check(RolltheSpire2.Presentation.Ui1.SearchScanningSpeed.Terminal(progress with {State=SearchRunState.Running},null) is null,"running waits for rolling window");
-        Check(RolltheSpire2.Presentation.Ui1.SearchScanningSpeed.Terminal(progress with {ObservedScanningRoots=0},null) is null,"no invented speed without observation");
-        Check(RolltheSpire2.Presentation.Ui1.SearchScanningSpeed.Terminal(progress with {ObservedScanningRoots=0},12345) is null,"terminal cannot borrow stale rolling speed");
-        Check(RolltheSpire2.Presentation.Ui1.SearchScanningSpeed.Terminal(progress with {State=SearchRunState.Faulted},null)==5000,"faulted session may show completed scanning evidence");
         var etaFrozen = RolltheSpire2.Presentation.Ui1.SearchEtaPresentationBuilder.Build(readyUi) with {
             AcceptedResultSurvivalRate = 1e-9, TargetCount = 30, FirstResultMeanMs = 2000 };
         var running = progress with { State = SearchRunState.Running, TargetMatchCount = 30, MatchCount = 7 };
@@ -172,18 +169,19 @@ internal static class CpuCostClosureChecks
             foreach(string id in new[]{"N-identity-source","S-three-slots"})
             {
                 var w=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>($"tools/ProductionSearchHost/Corpus/cpu-main-v1/{id}.json");
-                var r=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(w.Query,character.Context),w.Options with {WorkerCount=16}).Plan!;
-                IFamilyInvocation? f;
-                if(id.StartsWith("N"))NeowFamily.TryCreate(r,out f);else MerchantShopColorlessFamily.TryCreate(r,out f);
-                var cpu=f!.CpuRealizations.First();var q=cpu.QuotePhysicalWork(new(false,false,65536));
-                Check(q is not null,"equal vanilla A10 N/S work does not require Ironclad name: "+r.CharacterKey);
-                Console.WriteLine($"CPU_ROLE_QUOTE character={r.CharacterKey};shape={q!.Shape};ns={q.NanosecondsPerInput}");
+                var r=SearchPreparationCompiler.Compile(SearchCompiler.Compile(w.Query,character.Context),w.Options with {WorkerCount=16}).Plan!;
+                FilterBodyDescription? f;
+                if(id.StartsWith("N"))NeowFamily.TryCreate(r.Model, FilterExecutionPreferences.From(r.RunOptions), out f);else MerchantShopColorlessFamily.TryCreate(r.Model, FilterExecutionPreferences.From(r.RunOptions), out f);
+                var cpu=f!.CpuAlternatives.First();var q=cpu.QuotePhysicalWork(new(false,false,65536));
+                Check(q is not null,"equal vanilla A10 N/S work does not require Ironclad name: "+r.Model.CharacterKey);
+                Console.WriteLine($"CPU_ROLE_QUOTE character={r.Model.CharacterKey};shape={q!.Shape};ns={q.NanosecondsPerInput}");
                 using var cancel=new CancellationTokenSource();
-                var ec=new FamilyExecutionContext(false);var b=new SearchBatch(123456,1024);
-                var output=cpu.InvokeAsync(ec,new(b,r),FamilyCandidateSet.Dense(b),cancel.Token).GetAwaiter().GetResult();
-                Func<ulong,bool> reference=id.StartsWith("N")?root=>NeowFamilyReplay.Matches(root,NeowReplayPlan.Compile(r,false)):
-                    root=>RolltheSpire2.Search.Semantics.MerchantShopColorlessQueryEvaluator.Evaluate(r.Evaluation,root,r.Authority).Disposition!=SearchDisposition.NoMatch;
-                var profile=RolltheSpire2.Compatibility.RuntimeProfileRegistry.Select(r.Detection);
+                var ec=new FilterRuntimeServices(false);var b=new SearchBatch(123456,1024);
+                var roleRuntime=cpu.CreateExecution!(cpu,ec);
+                var output=roleRuntime.FilterAsync(ec,FamilyCandidateSet.Dense(b),cancel.Token).GetAwaiter().GetResult();
+                Func<ulong,bool> reference=id.StartsWith("N")?root=>NeowFamilyReplay.Matches(root,NeowReplayPlan.Compile(r.Model,false)):
+                    root=>RolltheSpire2.Search.Semantics.MerchantShopColorlessQueryEvaluator.Evaluate(r.Model.Evaluation,root,r.Model.Authority).Disposition!=SearchDisposition.NoMatch;
+                var profile=RolltheSpire2.Compatibility.RuntimeProfileRegistry.Select(r.Model.Detection);
                 var expected=Enumerable.Range(0,1024).Where(i=>reference(profile.ComputeRootSeed(
                     RolltheSpire2.Search.FamilyExecution.VisibleSeedCandidateCodec.FormatOrdinal(profile,123456UL+(ulong)i)))).Select(i=>(ulong)i).ToArray();
                 Check(output.ExportAbi1().Span.SequenceEqual(expected),"captured character reference parity");
@@ -195,68 +193,73 @@ internal static class CpuCostClosureChecks
         {
             var w=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>($"tools/ProductionSearchHost/Corpus/family-cost-closure-v1/{id}.json");
             var ctx=ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/v1/context.json");
-            var r=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(w.Query,ctx.Context),w.Options).Plan!;
-            RelicFamily.TryCreate(r,out var owner);
-            var cpu=owner!.CpuRealizations.First();
+            var r=SearchPreparationCompiler.Compile(SearchCompiler.Compile(w.Query,ctx.Context),w.Options).Plan!;
+            RelicFamily.TryCreate(r.Model, FilterExecutionPreferences.From(r.RunOptions), out var owner);
+            var cpu=owner!.CpuAlternatives.First();
             var quote=cpu.QuotePhysicalWork(new(false,false,65536));
-            var physical=(FamilyCpuExecution)cpu;
-            if (!FamilyCpuReferenceCost.RelicIdentitySupported(physical.Condition(false).PhysicalImplementationRevision,
-                physical.WindowCapacity,physical.Workers,false))
-            { Check(quote is null || FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(r, cpu, quote, 65536),
-                "new ordinary R body needs its own embedded canonical measurement rather than a historical anchor " + id); continue; }
+            var physical=cpu;
             Check(quote is not null,"ordinary R model coverage "+id);
-            Check((id=="R-T3" ? quote!.Shape=="R.CommonFirst3All3.P1" : quote!.Shape.StartsWith("R.OrdinaryWork.")) ||
-                FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(r, cpu, quote!, 65536),"measured specialization wins before model");
+            Check(CurrentMeasurementOrOwnedEstimate(r, cpu, quote, new(false, false, 65536)) ||
+                FamilyCanonicalMeasuredCost.TryDenseQuote(cpu, new(false, false, 65536)) is null &&
+                FamilyCpuReferenceCost.RelicIdentitySupported(physical.ResolveConditionPerformance(false).PhysicalImplementationRevision,
+                    physical.WindowCapacity, physical.CpuWorkers, false) &&
+                quote!.Evidence.Contains("CpuPhysicalRevision=" + physical.ResolveConditionPerformance(false).PhysicalImplementationRevision, StringComparison.Ordinal),
+                "actual measured specialization wins before the declared R estimate");
             Check(quote!.OutputAlreadyOrdered && quote.PublicTransportClass=="CpuOrderedAbi1","CPU canonical envelope has no duplicate transport");
-            Check(cpu.QuotePhysicalWork(new(true,false,65536)) is null,"unmeasured compact CPU stays Unknown");
-            Check(cpu.QuotePhysicalWork(new(false,false,64)) is not { } tinyQuote ||
-                FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(r, cpu, tinyQuote, 64),"tiny input needs a separate finite canonical source");
+            Check(CurrentMeasurementOrOwnedEstimate(r, cpu, cpu.QuotePhysicalWork(new(true, false, 65536)), new(true, false, 65536)),
+                "compact R has a declared estimate or no quote, never an unrelated measurement");
+            Check(CurrentMeasurementOrOwnedEstimate(r, cpu, cpu.QuotePhysicalWork(new(false, false, 64)), new(false, false, 64)),
+                "tiny R uses its finite canonical source or declared R estimate");
         }
 
         foreach(string id in new[]{"Shop-O1","Shop-O3","Shop-O5","Shop-U3","Shop-U5","Shop-last3"})
         {
             var w=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>($"tools/ProductionSearchHost/Corpus/family-cost-closure-v1/{id}.json");
             var ctx=ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/v1/context.json");
-            var r=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(w.Query,ctx.Context),w.Options).Plan!;
-            RelicFamily.TryCreate(r,out var owner);var cpu=owner!.CpuRealizations.First();
+            var r=SearchPreparationCompiler.Compile(SearchCompiler.Compile(w.Query,ctx.Context),w.Options).Plan!;
+            RelicFamily.TryCreate(r.Model, FilterExecutionPreferences.From(r.RunOptions), out var owner);var cpu=owner!.CpuAlternatives.First();
             var q=cpu.QuotePhysicalWork(new(false,false,65536));
-            var physical=(FamilyCpuExecution)cpu;
-            if (!FamilyCpuReferenceCost.RelicIdentitySupported(physical.Condition(false).PhysicalImplementationRevision,
-                physical.WindowCapacity,physical.Workers,false))
-            { Check(q is null || FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(r, cpu, q, 65536),
-                "new Shop R body needs its own embedded canonical measurement rather than a historical anchor " + id); continue; }
+            var physical=cpu;
             Check(q is not null,"Shop work coverage "+id);
-            Check((id=="Shop-O3" ? q!.Shape=="R.ShopOrdered3.P1" : q!.Shape=="R.ShopPrefixWork.20260913.v1.P1") ||
-                FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(r, cpu, q!, 65536),"Shop measured override preserved");
-            Check((cpu.QuotePhysicalWork(new(false,false,64)) is not { } tinyQuote ||
-                FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(r, cpu, tinyQuote, 64)) && cpu.QuotePhysicalWork(new(true,false,65536)) is null,"Shop short/compact geometry cannot extrapolate historical anchors");
+            Check(CurrentMeasurementOrOwnedEstimate(r, cpu, q, new(false, false, 65536)) ||
+                FamilyCanonicalMeasuredCost.TryDenseQuote(cpu, new(false, false, 65536)) is null &&
+                FamilyCpuReferenceCost.RelicIdentitySupported(physical.ResolveConditionPerformance(false).PhysicalImplementationRevision,
+                    physical.WindowCapacity, physical.CpuWorkers, false) &&
+                q!.Evidence.Contains("CpuPhysicalRevision=" + physical.ResolveConditionPerformance(false).PhysicalImplementationRevision, StringComparison.Ordinal),
+                "Shop actual measurement precedes the declared R estimate");
+            Check(CurrentMeasurementOrOwnedEstimate(r, cpu, cpu.QuotePhysicalWork(new(false, false, 64)), new(false, false, 64)) &&
+                CurrentMeasurementOrOwnedEstimate(r, cpu, cpu.QuotePhysicalWork(new(true, false, 65536)), new(true, false, 65536)),
+                "Shop short/compact estimates cannot masquerade as historical measurements");
         }
 
         foreach(string id in new[]{"N-curse","N-positive","N-large","N-mixed","C-H1","C-H2","C-H3","C-any3","C-last3"})
         {
             var w=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>($"tools/ProductionSearchHost/Corpus/family-cost-closure-v1/{id}.json");
             var ctx=ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/v1/context.json");
-            var r=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(w.Query,ctx.Context),w.Options).Plan!;
-            IFamilyInvocation? owner;if(id.StartsWith("N"))NeowFamily.TryCreate(r,out owner);else CombatRewardFamily.TryCreate(r,out owner);
-            var cpu=owner!.CpuRealizations.First();
-            if (owner is CombatRewardFamily changed && changed.Replay.Plan.NeedsCompleteMatchingReference)
+            var r=SearchPreparationCompiler.Compile(SearchCompiler.Compile(w.Query,ctx.Context),w.Options).Plan!;
+            FilterBodyDescription? owner;if(id.StartsWith("N"))NeowFamily.TryCreate(r.Model, FilterExecutionPreferences.From(r.RunOptions), out owner);else CombatRewardFamily.TryCreate(r.Model, FilterExecutionPreferences.From(r.RunOptions), out owner);
+            var cpu=owner!.CpuAlternatives.First();
+            if (owner.FamilyId == "C.CombatReward" && owner.Cost.PartyChild.CompleteCombatMatching)
             {
-                Check(cpu.QuotePhysicalWork(new(false,false,65536)) is null,
-                    "changed complete C matcher does not inherit old existential CPU measurement " + id);
+                var quote = cpu.QuotePhysicalWork(new(false, false, 65536));
+                Check(quote is not null && CurrentMeasurementOrOwnedEstimate(r, cpu, quote, new(false, false, 65536)),
+                    "changed complete C matcher uses its actual measurement or declared C estimate, never old existential measurement " + id);
                 continue;
             }
             Check(cpu.QuotePhysicalWork(new(false,false,65536)) is not null,"N/C numerical pricing coverage "+id);
-            Check(cpu.QuotePhysicalWork(new(true,false,65536)) is null &&
-                (cpu.QuotePhysicalWork(new(false,false,64)) is not { } tinyQuote || FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(r, cpu, tinyQuote, 64)),"N/C static boundaries or separately validated finite canonical input");
+            Check(CurrentMeasurementOrOwnedEstimate(r, cpu, cpu.QuotePhysicalWork(new(true, false, 65536)), new(true, false, 65536)) &&
+                CurrentMeasurementOrOwnedEstimate(r, cpu, cpu.QuotePhysicalWork(new(false, false, 64)), new(false, false, 64)),
+                "N/C short/compact prices retain their own finite measurement or explicit work-estimate source");
         }
         foreach(string id in new[]{"NN-KaleidoscopeBoth","NN-Leafy","NN-Arcane-first-rank","NN-NewLeaf","NN-Lost-card-common","NN-Phial-two-rare","NN-Lead-rare","NN-ScrollSpecial"})
         {
             var w=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>($"tools/ProductionSearchHost/Corpus/family-cost-closure-v1/{id}.json");
             var ctx=ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/"+(id=="NN-ScrollSpecial"?"n-direct-v1/context-defect-a10.json":"owner-nwae-v1/context.json"));
-            var r=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(w.Query,ctx.Context),w.Options).Plan!;
-            NeowFamily.TryCreate(r,out var owner);var cpu = owner!.CpuRealizations.First();
+            var r=SearchPreparationCompiler.Compile(SearchCompiler.Compile(w.Query,ctx.Context),w.Options).Plan!;
+            NeowFamily.TryCreate(r.Model, FilterExecutionPreferences.From(r.RunOptions), out var owner);var cpu = owner!.CpuAlternatives.First();
             var q = cpu.QuotePhysicalWork(new(false,false,65536));
-            Check(id=="NN-ScrollSpecial" ? q is null || FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(r, cpu, q, 65536) : q is not null,"N local validated operators / failed holdout boundary "+id);
+            Check(id=="NN-ScrollSpecial" ? CurrentMeasurementOrOwnedEstimate(r, cpu, q, new(false, false, 65536)) : q is not null,
+                "N local operators preserve actual measurement scope and may use a declared N work estimate " + id);
         }
         string a0=".rewrite-build-evidence/production-replay/runtime-catalog/contexts/character-00-a00.json";
         if(File.Exists(a0))
@@ -264,56 +267,69 @@ internal static class CpuCostClosureChecks
         {
             var ctx=ProductionSearchReplay.Read<ProductionSearchReplayContext>(a0);
             var w=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>($"tools/ProductionSearchHost/Corpus/family-cost-closure-v1/{id}.json");
-            var r=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(w.Query,ctx.Context),w.Options).Plan!;
-            NeowFamily.TryCreate(r,out var owner);
-            Check(NeowPhysicalPricing.TryResolve((NeowFamily)owner!,out var work,out var shape),"A0 identity uses unchanged physical class");
+            var r=SearchPreparationCompiler.Compile(SearchCompiler.Compile(w.Query,ctx.Context),w.Options).Plan!;
+            NeowFamily.TryCreate(r.Model, FilterExecutionPreferences.From(r.RunOptions), out var owner);
+            Check(NeowPhysicalPricing.TryResolve(new NeowFamily(r.Model,NeowReplayPlan.Compile(r.Model,false)),out var work,out var shape),"A0 identity uses unchanged physical class");
             Check(work.DenseNs==(id=="N-curse"?.28:1.10),"GPU eight-class coefficients unchanged");
-            Check(owner!.CpuRealizations.First().QuotePhysicalWork(new(false,false,65536)) is not null,"A0 CPU identity workload equivalent");
+            Check(owner!.CpuAlternatives.First().QuotePhysicalWork(new(false,false,65536)) is not null,"A0 CPU identity workload equivalent");
         }
 
         foreach(string id in new[]{"C-specific1","C-specific2","C-specific3","C-late3","C-drop1","C-drop2","C-drop3","C-nodrop1","C-nodrop2","C-nodrop3"})
         {
             var w=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>($"tools/ProductionSearchHost/Corpus/cpu-numerical-closure-v1/{id}.json");
-            var r=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(w.Query,context.Context),w.Options with {WorkerCount=16}).Plan!;
-            CombatRewardFamily.TryCreate(r,out var owner);var variants=owner!.CpuRealizations.ToArray();var cpu=variants[0];
+            var r=SearchPreparationCompiler.Compile(SearchCompiler.Compile(w.Query,context.Context),w.Options with {WorkerCount=16}).Plan!;
+            CombatRewardFamily.TryCreate(r.Model, FilterExecutionPreferences.From(r.RunOptions), out var owner);var variants=owner!.CpuAlternatives.ToArray();var cpu=variants[0];
             Check(cpu.ConditionPerformance.PhysicalImplementationRevision.Contains("PotionPrefix"),"C prefix has independent numerical revision");
             Check(variants.Length>=2,"C old numerical/worker alternatives preserved");
             var shortQuote = cpu.QuotePhysicalWork(new(false,false,1024));
             Check(shortQuote is not null && (shortQuote.Shape.Contains("PotionPrefix") ||
                 FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(r, cpu, shortQuote, 1024)),"C prefix owns measured short quote");
-            Check((cpu.QuotePhysicalWork(new(false,false,64)) is not { } tinyQuote ||
-                FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(r, cpu, tinyQuote, 64)) && cpu.QuotePhysicalWork(new(true,false,65536)) is null,"C prefix keeps static short/compact bounds outside canonical measured geometry");
+            Check(CurrentMeasurementOrOwnedEstimate(r, cpu, cpu.QuotePhysicalWork(new(false, false, 64)), new(false, false, 64)) &&
+                CurrentMeasurementOrOwnedEstimate(r, cpu, cpu.QuotePhysicalWork(new(true, false, 65536)), new(true, false, 65536)),
+                "C short/compact prices preserve finite measurement scope or identify their own work estimate");
         }
 
         foreach(string id in new[]{"E-Color","E-FakeColor","E-Color2","E-Color3","E-ColorGrab"})
         {
             var w=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>($"tools/ProductionSearchHost/Corpus/cpu-numerical-closure-v1/{id}.json");
-            var r=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(w.Query,context.Context),w.Options).Plan!;
-            EventResultFamily.TryCreate(r,out var owner);var cpu=owner!.CpuRealizations.First();
+            var r=SearchPreparationCompiler.Compile(SearchCompiler.Compile(w.Query,context.Context),w.Options).Plan!;
+            EventResultFamily.TryCreate(r.Model, FilterExecutionPreferences.From(r.RunOptions), out var owner);var cpu=owner!.CpuAlternatives.First();
             Check(cpu.ConditionPerformance.PhysicalImplementationRevision.Contains("CompiledColor"),"E compiled revision separate");
             var shortQuote = cpu.QuotePhysicalWork(new(false,false,1024));
             Check(shortQuote is not null && (shortQuote.Shape.Contains("CompiledColor") ||
                 FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(r, cpu, shortQuote, 1024)),"E compiled work quote");
-            Check((cpu.QuotePhysicalWork(new(false,false,64)) is not { } tinyQuote ||
-                FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(r, cpu, tinyQuote, 64)) && cpu.QuotePhysicalWork(new(true,false,65536)) is null,"E keeps static short/compact bounds outside canonical measured geometry");
+            Check(CurrentMeasurementOrOwnedEstimate(r, cpu, cpu.QuotePhysicalWork(new(false, false, 64)), new(false, false, 64)) &&
+                CurrentMeasurementOrOwnedEstimate(r, cpu, cpu.QuotePhysicalWork(new(true, false, 65536)), new(true, false, 65536)),
+                "E short/compact prices preserve finite measurement scope or identify their own work estimate");
         }
 
         string store=Path.GetFullPath(".build-evidence/cpu-cost-closure/isolated-"+Guid.NewGuid()+".json");
         Environment.SetEnvironmentVariable("RT2_CPU_COST_EVIDENCE_PATH",store);
         CpuCostCalibration.InitializeOnMainThread();
-        NeowFamily.TryCreate(Request("N-identity-source",1),out var nOwner);
-        var frozenInvocation=nOwner!.CpuRealizations.First();
+        var frozenRequest=Request("N-identity-source",1);
+        NeowFamily.TryCreate(frozenRequest.Model,FilterExecutionPreferences.From(frozenRequest.RunOptions),out var nOwner);
+        var frozenInvocation=nOwner!.CpuAlternatives.First();
         var frozen=CpuCostCalibration.Capture();CpuCostCalibration.Submit([p1,p1b,p8]);
         Check(frozen.Resolve(p1.Key,1).Ratio==1 && CpuCostCalibration.Capture().Resolve(p1.Key,1).Ratio==2,"next Search only consumes new evidence");
         var frozenQuote = frozenInvocation.QuotePhysicalWork(new(false, false, 65536))!;
-        var nextInvocation = nOwner.CpuRealizations.First();
+        NeowFamily.TryCreate(frozenRequest.Model,FilterExecutionPreferences.From(frozenRequest.RunOptions),out var nextOwner);
+        var nextInvocation = nextOwner!.CpuAlternatives.First();
         var nextQuote = nextInvocation.QuotePhysicalWork(new(false, false, 65536))!;
+        var rawFrozen = frozenInvocation.Cost.CalibrationQuote!(new(false, false, 65536))!;
+        string frozenRevision = frozenInvocation.ResolveConditionPerformance(false).PhysicalImplementationRevision;
+        var expectedFrozen = frozen.Local(rawFrozen, frozenRevision, frozenInvocation.CpuWorkers, false);
+        var expectedNext = CpuCostCalibration.Capture().Local(rawFrozen, frozenRevision, frozenInvocation.CpuWorkers, false);
         Check(FamilyCanonicalMeasuredCost.IsCanonicalQuote(frozenQuote)
-            ? FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(Request("N-identity-source", 1), frozenInvocation, frozenQuote, 65536) &&
-              FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(Request("N-identity-source", 1), nextInvocation, nextQuote, 65536) &&
+            ? FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(frozenRequest, frozenInvocation, frozenQuote, 65536) &&
+              FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(frozenRequest, nextInvocation, nextQuote, 65536) &&
               frozenQuote.NanosecondsPerInput == nextQuote.NanosecondsPerInput
-            : frozenQuote.NanosecondsPerInput == 29 && nextQuote.NanosecondsPerInput == 58,
-            "actual invocation freezes its historical local ratio; absolute canonical measurements never consume peak ratios");
+            : CurrentMeasurementOrOwnedEstimate(frozenRequest, frozenInvocation, frozenQuote, new(false, false, 65536)) &&
+              CurrentMeasurementOrOwnedEstimate(frozenRequest, nextInvocation, nextQuote, new(false, false, 65536)) &&
+              expectedNext.NanosecondsPerInput > expectedFrozen.NanosecondsPerInput &&
+              frozenQuote.NanosecondsPerInput == expectedFrozen.NanosecondsPerInput &&
+              nextQuote.NanosecondsPerInput == expectedNext.NanosecondsPerInput &&
+              frozenInvocation.QuotePhysicalWork(new(false, false, 65536)) == frozenQuote,
+            "actual invocation freezes its own raw work and local ratio; absolute canonical measurements never consume peak ratios");
         CpuCostCalibration.TryFlushPendingOnMainThread();
         using var doc=JsonDocument.Parse(File.ReadAllText(store));
         Check(doc.RootElement.GetProperty("Peaks").GetArrayLength()==3 && !File.ReadAllText(store).Contains("Ratio"),"persist raw measurements, never ratio truth");
@@ -324,20 +340,23 @@ internal static class CpuCostClosureChecks
             "E-grab","E-Dive","E-Fake","E-Color-other","E-FakeColor","E-FakeTwo","E-IndependentPair","E-SharedTrash"})
         {
             var w=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>($"tools/ProductionSearchHost/Corpus/family-cost-closure-v1/{id}.json");
-            var r=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(w.Query,context.Context),w.Options).Plan!;
-            IFamilyInvocation? owner;
-            if(id.StartsWith("S")) MerchantShopColorlessFamily.TryCreate(r,out owner); else EventResultFamily.TryCreate(r,out owner);
-            var cpu=owner!.CpuRealizations.First();
+            var r=SearchPreparationCompiler.Compile(SearchCompiler.Compile(w.Query,context.Context),w.Options).Plan!;
+            FilterBodyDescription? owner;
+            if(id.StartsWith("S")) MerchantShopColorlessFamily.TryCreate(r.Model, FilterExecutionPreferences.From(r.RunOptions), out owner); else EventResultFamily.TryCreate(r.Model, FilterExecutionPreferences.From(r.RunOptions), out owner);
+            var cpu=owner!.CpuAlternatives.First();
             var q=cpu.QuotePhysicalWork(new(false,false,65536));
             bool sequence=id is "S-O3" or "S-U3";
             Check(q is not null,"S/E bounded CPU quote including numerical sequence "+id);
-            if(sequence) Check(q!.Shape=="S.SequenceCalls.20260913.v1.P1" || FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(r, cpu, q, 65536),"new sequence revision never borrows old slot/reference price");
+            if(sequence) Check(q!.Shape=="S.SequenceCalls.20260913.v1.P1" ||
+                CurrentMeasurementOrOwnedEstimate(r, cpu, q, new(false, false, 65536)),
+                "sequence uses its own measured call or declared S estimate, never an old slot/reference price");
             if(q is not null) Check(q.OutputAlreadyOrdered && q.PublicTransportClass=="CpuOrderedAbi1","no CPU transport double charge");
             var tinyQuote = cpu.QuotePhysicalWork(new(false, false, 64));
             var compactQuote = cpu.QuotePhysicalWork(new(true, false, 65536));
             string tinyReason = "QuoteUnavailable";
-            bool tinyValid = tinyQuote is null || FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(r, cpu, tinyQuote, 64, out tinyReason);
-            if (!tinyValid || compactQuote is not null)
+            bool tinyValid = CurrentMeasurementOrOwnedEstimate(r, cpu, tinyQuote, new(false, false, 64));
+            bool compactValid = CurrentMeasurementOrOwnedEstimate(r, cpu, compactQuote, new(true, false, 65536));
+            if (!tinyValid || !compactValid)
             {
                 object Describe(FamilyPhysicalQuote? quote, string geometry) => quote is null ? new { Geometry = geometry, Available = false } :
                     new { Geometry = geometry, Available = true, ShapeKind = quote.Shape.Split('.')[0], quote.NanosecondsPerInput,
@@ -356,18 +375,53 @@ internal static class CpuCostClosureChecks
             "W-variant","W-boss-2","W-boss-3","W-K4"})
         {
             var w=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>($"tools/ProductionSearchHost/Corpus/family-cost-closure-v1/{id}.json");
-            var r=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(w.Query,context.Context),w.Options).Plan!;
-            IFamilyInvocation? owner;
-            if(id.StartsWith("A")) AncientOptionFamily.TryCreate(r,out owner); else WorldFamily.TryCreate(r,out owner);
-            var cpu=owner!.CpuRealizations.First(); var quote=cpu.QuotePhysicalWork(new(false,false,65536));
-            Check(id=="W-K4" ? quote is null || FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(r, cpu, quote, 65536) : quote is not null,"A/W generator and progression boundaries "+id);
-            Check((cpu.QuotePhysicalWork(new(false,false,64)) is not { } tinyQuote ||
-                FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(r, cpu, tinyQuote, 64)) && cpu.QuotePhysicalWork(new(true,false,65536)) is null,"A/W static tiny/compact boundaries or separately validated canonical input");
+            var r=SearchPreparationCompiler.Compile(SearchCompiler.Compile(w.Query,context.Context),w.Options).Plan!;
+            FilterBodyDescription? owner;
+            if (id == "W-variant")
+            {
+                // The original captured Act2 universe contains only HIVE. Its
+                // authored condition remains Exact's duty but needs no V filter.
+                var generation = r.Model.Authority.WorldAuthority?.Beta109Generation
+                    ?? throw new InvalidDataException("CpuCostClosure.VariantAuthorityMissing");
+                var act2 = generation.ActSelectionGroups.Single(group => group.Act == 2);
+                Check(generation.CanReconstructSelectedActs && generation.DirectSourceAudited &&
+                    generation.WorldGenerationHooksExact && generation.NoUnknownHooksOrModifiers &&
+                    act2.EligibilityAndOrderExact && act2.EligibleActsInSourceOrder.Count == 1 &&
+                    act2.EligibleActsInSourceOrder[0] == w.Query.VariantBossBranches.Single().VariantKey &&
+                    r.Model.VariantOpening is { HasConditions: false } && !WorldFamilyReplay.HasConditions(r.Model) &&
+                    JsonSerializer.Serialize(r.Model.CompiledSearch.NormalizedQuery.VariantBossBranches) ==
+                        JsonSerializer.Serialize(w.Query.VariantBossBranches) &&
+                    JsonSerializer.Serialize(r.Model.Evaluation.VariantBossBranches) == JsonSerializer.Serialize(w.Query.VariantBossBranches),
+                    "captured singleton variant needs no numerical filter while Exact retains the authored condition");
+                // Reuse this captured context's real two-variant Act1 selection
+                // for the original generator-price/short-input assertions below.
+                var act1 = generation.ActSelectionGroups.Single(group => group.Act == 1);
+                Check(act1.EligibilityAndOrderExact && act1.EligibleActsInSourceOrder.Count == 2,
+                    "V generator price fixture has an exact two-variant selection");
+                var restricted = w.Query with { VariantBossBranches = [new(1, act1.EligibleActsInSourceOrder[0],
+                    ModelKeySetFilter.Empty, ModelKeySetFilter.Empty, false)] };
+                r = SearchPreparationCompiler.Compile(SearchCompiler.Compile(restricted, context.Context), w.Options).Plan
+                    ?? throw new InvalidDataException("CpuCostClosure.RestrictedVariantPreparation");
+            }
+            var preferences = FilterExecutionPreferences.From(r.RunOptions);
+            bool prepared = id.StartsWith("A", StringComparison.Ordinal)
+                ? AncientOptionFamily.TryCreate(r.Model, preferences, out owner)
+                : id == "W-variant"
+                    ? VariantOpeningFamily.TryCreate(r.Model, preferences, out owner)
+                    : WorldFamily.TryCreate(r.Model, preferences, out owner);
+            if (!prepared || owner is null) throw new InvalidDataException("CpuCostClosure.GeneratorPreparation:" + id);
+            var cpu = owner.UsesGpu ? owner.CpuAlternatives.First() : owner;
+            var quote=cpu.QuotePhysicalWork(new(false,false,65536));
+            Check(id=="W-K4" ? CurrentMeasurementOrOwnedEstimate(r, cpu, quote, new(false, false, 65536)) : quote is not null,
+                "A/V/W generator and progression measurement scope remains separate from declared work estimates " + id);
+            Check(CurrentMeasurementOrOwnedEstimate(r, cpu, cpu.QuotePhysicalWork(new(false, false, 64)), new(false, false, 64)) &&
+                CurrentMeasurementOrOwnedEstimate(r, cpu, cpu.QuotePhysicalWork(new(true, false, 65536)), new(true, false, 65536)),
+                "A/V/W tiny/compact prices need their own finite measurement or domain work estimate");
         }
         // Quote contract only: identify the measured backend without creating a
         // device. Numerical parity is covered by the native physical matrix.
-        // This retained R-envelope fixture fixes N's historical comparison body;
-        // current optimized N prices require their own measured device/shape.
+        // Historical R compact coefficients now supply an explicit owned work
+        // estimate; they do not certify a new body, population or backend measurement.
         var previousBackend = RolltheSpire2.Search.Runtime.SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity().RenderingBackend;
         var previousNeowGpuOptions = Environment.GetEnvironmentVariable("RT2_SHION_GPU_TRIAL");
         try
@@ -375,30 +429,47 @@ internal static class CpuCostClosureChecks
             Environment.SetEnvironmentVariable("RT2_SHION_GPU_TRIAL", "off");
             RolltheSpire2.Search.Runtime.SearchPerformanceProfileFoundation.ObserveRenderingBackend("d3d12");
             var workload = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/family-cost-closure-v1/NRC-small-compact.json");
-            var request = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(workload.Query, context.Context), workload.Options).Plan!;
-            RelicFamily.TryCreate(request, out var relic);
+            var request = SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, context.Context), workload.Options).Plan!;
+            RelicFamily.TryCreate(request.Model, FilterExecutionPreferences.From(request.RunOptions), out var relic);
             foreach (bool privateOutput in new[] { false, true })
             foreach (bool privateInput in new[] { false, true })
             foreach (double n in new[] { 64d, 512, 4096, 4438, 65536, 262143 })
             {
                 var quote = relic!.QuotePhysicalWork(new(true, privateOutput, n, privateInput));
-                Check(quote is not null && quote.Shape.Contains("CompactSmall"), "bounded small compact R quote");
-                Check(quote!.NanosecondsPerInput * n >= 250000 - 1e-8, "underfill floor retained");
+                Check(quote is not null && FamilyCoarsePricing.IsEstimate(quote) &&
+                    quote.Evidence.Contains("Basis=R.FamilyCostClosure.20260913", StringComparison.Ordinal) &&
+                    quote.Evidence.Contains("NotCurrentDeviceOrBodyMeasurement", StringComparison.Ordinal),
+                    "small compact R uses its declared work estimate without claiming a measurement");
+                Check(quote!.FixedWindowMilliseconds == .25 &&
+                    quote.Evidence.Contains("UnderfillEnvelopeMs=0.25;NotNewMeasurement", StringComparison.Ordinal),
+                    "underfill allowance remains explicit outside per-input numerical work");
                 var localQuote = new GpuCostSnapshot([]).Local(relic, quote, new(true, privateOutput, n, privateInput));
                 Check(Math.Abs(localQuote.NanosecondsPerInput / quote.NanosecondsPerInput - 1) < 1e-12, "GPU calibration preserves effective small-input price");
             }
-            Check(relic!.QuotePhysicalWork(new(true, true, 63, true)) is null, "unmeasured sub-64 stays Unknown");
-            Check(relic.QuotePhysicalWork(new(false, true, 4438)) is null, "dense small input not silently admitted");
-            Check(relic.QuotePhysicalWork(new(true, true, 262144, true))!.Shape.EndsWith(".Compact"), "full-input model unchanged");
-            NeowFamily.TryCreate(request, out var neow);
-            CombatRewardFamily.TryCreate(request, out var combat);
+            var sub64 = relic!.QuotePhysicalWork(new(true, true, 63, true));
+            Check(FamilyCoarsePricing.IsEstimate(sub64) && sub64!.Evidence.Contains("NotNewMeasurement", StringComparison.Ordinal),
+                "sub-64 work estimate does not acquire historical measured status");
+            var denseSmall = relic.QuotePhysicalWork(new(false, true, 4438));
+            Check(FamilyCoarsePricing.IsEstimate(denseSmall) && denseSmall!.FixedWindowMilliseconds == 0 &&
+                denseSmall.Evidence.Contains("NotCurrentDeviceOrBodyMeasurement", StringComparison.Ordinal),
+                "small dense estimate never borrows the compact underfill measurement");
+            var fullInput = relic.QuotePhysicalWork(new(true, true, 262144, true));
+            Check(FamilyCoarsePricing.IsEstimate(fullInput) && fullInput!.FixedWindowMilliseconds == 0,
+                "full compact input leaves the underfill allowance");
+            NeowFamily.TryCreate(request.Model, FilterExecutionPreferences.From(request.RunOptions), out var neow);
+            CombatRewardFamily.TryCreate(request.Model, FilterExecutionPreferences.From(request.RunOptions), out var combat);
             var families = new[] { neow!, relic, combat! };
             var greedy = FamilyPlanner.Plan(families);
-            Check(greedy.OrderedFamilies.First().FamilyId == "N.Neow", "Measured single-unit elimination cost selects N first");
+            Check(greedy.OrderedFamilies.First().FamilyId == "N.Neow", "declared single-unit elimination cost selects N first");
             Check(greedy.Stages.SelectMany(stage => stage.Coverage).ToHashSet().SetEquals(families.SelectMany(family => family.Coverage)),
                 "Small-compact reference support never removes an unpriced downstream obligation");
             RolltheSpire2.Search.Runtime.SearchPerformanceProfileFoundation.ObserveRenderingBackend("vulkan");
-            Check(relic.QuotePhysicalWork(new(true, true, 4438, true)) is null, "D3D12 evidence does not admit another backend");
+            var otherBackend = relic.QuotePhysicalWork(new(true, true, 4438, true));
+            Check(FamilyCoarsePricing.IsEstimate(otherBackend) &&
+                otherBackend!.Evidence.Contains("ReferenceBackend=d3d12", StringComparison.Ordinal) &&
+                otherBackend.Evidence.Contains("NotCurrentDeviceOrBodyMeasurement", StringComparison.Ordinal) &&
+                !FamilyCanonicalMeasuredCost.IsCanonicalQuote(otherBackend),
+                "Vulkan may use the declared D3D12 reference estimate without borrowing measured backend authority");
         }
         finally
         {
@@ -407,6 +478,39 @@ internal static class CpuCostClosureChecks
         }
         Console.WriteLine("CPU_COST_CLOSURE PASS checks="+checks);return 0;
     }
+    // Preserve finite measured identity/geometry priority. An unavailable
+    // measurement may coexist with a domain-owned estimate, whose source and
+    // quality must remain explicit rather than inheriting a historical anchor.
+    private static bool CurrentMeasurementOrOwnedEstimate(PreparedSearch request, FilterBodyDescription body,
+        FamilyPhysicalQuote? quote, FamilyPhysicalQuoteRequest geometry)
+    {
+        var current = FamilyCanonicalMeasuredCost.TryDenseQuote(body, geometry);
+        if (current is not null)
+            return quote is not null && quote == current && FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(
+                request, body, quote, checked((int)geometry.MeanInputPopulation));
+        if (quote is null) return true;
+        string basis = body.FamilyId switch {
+            "R.Relic" => "R.FamilyCostClosure.20260913",
+            "N.Neow" => "N.WorkEstimate.20261028.v1",
+            "C.CombatReward" => "C.CpuHorizon505AndH4To6_850",
+            "S.MerchantShopColorless" => "S.FamilyCostClosure.20260913",
+            "E.EventResult" => "E.OperatorGroupAndWhitelistAnchors",
+            "A.AncientOption" => "A.AncientGenerators.20260910-FamilyCostClosure.20260913",
+            "W.World" => "W.CpuVariant55AndProgression2700_3750Envelopes",
+            "V.VariantOpening" => "V.ShortWork",
+            _ => ""
+        };
+        return basis.Length != 0 && !body.UsesGpu && quote.FamilyId == body.FamilyId &&
+            FamilyCoarsePricing.IsEstimate(quote) && !FamilyCanonicalMeasuredCost.IsCanonicalQuote(quote) &&
+            quote.Shape.StartsWith(FamilyCoarsePricing.Revision + "." + body.FamilyId.Split('.')[0] + ".", StringComparison.Ordinal) &&
+            quote.Evidence.Contains("Basis=" + basis, StringComparison.Ordinal) &&
+            quote.Evidence.Contains("NotCurrentDeviceOrBodyMeasurement", StringComparison.Ordinal) &&
+            quote.Evidence.Contains("Workers=" + body.CpuWorkers + ";", StringComparison.Ordinal) &&
+            quote.NanosecondsPerInput > 0 && double.IsFinite(quote.NanosecondsPerInput) &&
+            quote.SetupMilliseconds is null && quote.OutputAlreadyOrdered && quote.OutputElementBytes == 8 &&
+            quote.PublicTransportClass == "CpuOrderedAbi1";
+    }
+
     private static int CheckGenericScalarQuotes(SearchContext context)
     {
         int checks = 0;
@@ -414,16 +518,19 @@ internal static class CpuCostClosureChecks
         const string device = "NVIDIA GeForce RTX 4060 Laptop GPU";
         var geometry = new FamilyPhysicalQuoteRequest(true, true, 1677721.6, true);
         var nc = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/owner-rare-nc-v1/NC_RARE_01.json");
-        ExactSearchExecutionRequest Compile(SearchQuery query) =>
-            ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context), nc.Options).Plan!;
+        PreparedSearch Compile(SearchQuery query) =>
+            SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context), nc.Options).Plan!;
         var request = Compile(nc.Query);
-        var replay = new CombatRewardReplay(request);
-        CombatRewardGpuPlan Gpu(ExactSearchExecutionRequest r, CombatRewardReplay c) =>
-            CombatRewardGpuPlan.TryCreate(r, c, out string issue) ?? throw new InvalidOperationException("C scalar quote fixture: " + issue);
+        var replay = new CombatRewardReplay(request.Model);
+        // This retained envelope measures the generic donor. The default prefix
+        // hot-loop is a different implementation and cannot borrow its price.
+        CombatRewardGpuPlan Gpu(PreparedSearch r, CombatRewardReplay c) =>
+            CombatRewardGpuPlan.TryCreate(r.Model, c, out string issue, openingPrefixHotLoop: false)
+                ?? throw new InvalidOperationException("C scalar quote fixture: " + issue);
         var gpu = Gpu(request, replay);
-        FamilyPhysicalQuote? Quote(ExactSearchExecutionRequest r, CombatRewardReplay c, CombatRewardGpuPlan p,
+        FamilyPhysicalQuote? Quote(PreparedSearch r, CombatRewardReplay c, CombatRewardGpuPlan p,
             FamilyPhysicalQuoteRequest g, string identity = device, string backend = "d3d12") =>
-            CombatRewardPhysicalPricing.QuoteGenericScalarModel(r, c, p, g, identity, backend);
+            CombatRewardPhysicalPricing.QuoteGenericScalarModel(CombatRewardPricingInput.From(r.Model,c), c, p, g, identity, backend);
         Check(!replay.Plan.NeedsCompleteMatchingReference || Quote(request, replay, gpu, geometry) is null,
             "complete solo matcher never borrows the old existential scalar price");
         // Retained reference boundary fixture, explicitly not a newly compiled
@@ -433,13 +540,13 @@ internal static class CpuCostClosureChecks
             CardAssignmentWindow = 0, CardAssignmentTargets = [], PotionAssignmentWindow = 0,
             PotionAssignmentRequirements = [], PotionAssignmentTargets = [],
             Predicates = replay.Plan.Predicates.Select(p => p with { AnyBattleWindow = 0 }).ToArray() };
-        replay = new CombatRewardReplay(request, catalog: replay.Catalog, plan: referencePlan);
+        replay = new CombatRewardReplay(request.Model, catalog: replay.Catalog, plan: referencePlan);
         gpu = Gpu(request, replay);
         var quote = Quote(request, replay, gpu, geometry);
-        Check(quote is not null && Math.Abs(quote.NanosecondsPerInput - 6.7) < 1e-12 &&
+        Check(!gpu.UsesHotLoop && quote is not null && Math.Abs(quote.NanosecondsPerInput - 6.7) < 1e-12 &&
             quote.SetupMilliseconds is null && quote.Evidence.Contains("ConservativeCoarse") && quote.Evidence.Contains("NotCalibratedPeak"),
             "NC generic scalar quote reuses full-generation envelope, with unknown setup and no peak claim");
-        var model = new CombatRewardFamilyModels(request, replay, CombatRewardGpuExecutor.Capacity);
+        var model = new CombatRewardFamilyModels(request.Model, replay, CombatRewardGpuExecutor.Capacity);
         Check(model.Survival.IsResolved && model.ResolveSurvival(new HashSet<string> { "N.Neow" }).SurvivalProbability == model.Survival.SurvivalProbability,
             "NC scheduling uses the fixed declared probability independently of retained legacy price evidence");
         foreach (double population in new[] { 1048576d, 4194304d, 16777216d })
@@ -461,7 +568,7 @@ internal static class CpuCostClosureChecks
             ("common-target", nc.Query with { CombatCardRewards = new(3, CombatRewardSequenceOrderMode.Unordered,
                 [new("CARD", "ANGER"), new("CARD", "ARMAMENTS"), new("CARD", "ANGER")]) }, true) })
         {
-            var r = Compile(fixture.Query); var c = new CombatRewardReplay(r);
+            var r = Compile(fixture.Query); var c = new CombatRewardReplay(r.Model);
             Check((Quote(r, c, Gpu(r, c), geometry) is not null) == (fixture.Quoted && !c.Plan.NeedsCompleteMatchingReference),
                 "C structural holdout quote boundary: " + fixture.Name);
             if (!fixture.Quoted) Check(c.Plan.Predicates.Any(p => p.HasPotionIdentityPredicate),
@@ -469,12 +576,12 @@ internal static class CpuCostClosureChecks
         }
         void Outside(string label, Beta110CombatRewardFastPlan p, Beta110FastEffectCatalog? catalog = null)
         {
-            var c = new CombatRewardReplay(request, catalog: catalog ?? replay.Catalog, plan: p);
+            var c = new CombatRewardReplay(request.Model, catalog: catalog ?? replay.Catalog, plan: p);
             Check(Quote(request, c, Gpu(request, c), geometry) is null, "C scalar envelope excludes " + label);
         }
         foreach (int horizon in new[] { 1, 2 }) Outside("H" + horizon, replay.Plan with { MaximumBattleOrdinal = horizon });
         var prefixOne = replay.Plan with { OpeningConsumption = new(false, [Beta110FastRelicCatalog.ArcaneScroll], "quote-test-prefix1") };
-        Check(CombatRewardSieveProbability.FixedAuthoredPrefixDrawCount(request, prefixOne) == 1,
+        Check(CombatRewardSieveProbability.FixedAuthoredPrefixDrawCount(request.Model, prefixOne) == 1,
             "C negative fixture has a proven one-draw prefix");
         Outside("prefix1", prefixOne);
         ushort potion = replay.Catalog.CombatRewardPotionPool.Common[0];
@@ -496,9 +603,9 @@ internal static class CpuCostClosureChecks
         var potionPool = replay.Catalog.CombatRewardPotionPool;
         Outside("actual potion pool shape", replay.Plan, replay.Catalog with {
             CombatRewardPotionPool = potionPool with { Rare = [] } });
-        var partyAuthority = RolltheSpire2.Tests.FastSearch.Beta110FastSearchFixtureAuthority.CreateBeta111(request.CharacterKey, 10, 0, 2);
-        var partyRequest = request with { CompiledSearch = request.CompiledSearch with {
-            Context = request.CompiledSearch.Context with { Authority = partyAuthority } } };
+        var partyAuthority = RolltheSpire2.Tests.FastSearch.Beta110FastSearchFixtureAuthority.CreateBeta111(request.Model.CharacterKey, 10, 0, 2);
+        var partyRequest = request with { Model = request.Model with { CompiledSearch = request.Model.CompiledSearch with {
+            Context = request.Model.CompiledSearch.Context with { Authority = partyAuthority } } } };
         Check(Quote(partyRequest, replay, gpu, geometry) is null, "C scalar quote does not extrapolate multiplayer");
         return checks;
     }
@@ -508,9 +615,9 @@ internal static class CpuCostClosureChecks
         int checks = 0;
         void Check(bool ok, string why) { checks++; if (!ok) throw new InvalidOperationException("RelicQuoteIdentity:" + why); }
         var workload = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/cpu-main-v1/R-three-common.json");
-        var request = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(workload.Query, context), workload.Options).Plan!;
+        var request = SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, context), workload.Options).Plan!;
         FamilyPhysicalQuote? Quote(string shape, int workers, bool compact, string? revision, int capacity = 65536) =>
-            FamilyCpuReferenceCost.Quote(request, new(compact,false,compact ? 65536d/10 : 65536), "R.Relic", shape, workers,
+            FamilyCpuReferenceCost.Quote(FilterPricingAuthority.From(request.Model), new(compact,false,compact ? 65536d/10 : 65536), "R.Relic", shape, workers,
                 "ExistingAnchorRegression", compact: compact, cpuPhysicalRevision: revision, cpuWindowCapacity: capacity);
         foreach (var (shape, workers, compact) in new[] {
             ("R.CommonFirst3All3",1,false), ("R.ShopOrdered3",1,false), ("R.ShopOrdered3",8,false),
@@ -539,7 +646,7 @@ internal static class CpuCostClosureChecks
             Check(!FamilyCpuReferenceCost.RelicIdentitySupported(revision,65536,1,compact) && Quote(shape,1,compact,revision) is null,
                 "New numerical body cannot borrow measured or model identity " + body);
         }
-        Check(FamilyCpuReferenceCost.Quote(request,new(false,false,65536),"S.MerchantShopColorless","S.ThreeUncommonSlots",1,"fixture") is not null,
+        Check(FamilyCpuReferenceCost.Quote(FilterPricingAuthority.From(request.Model),new(false,false,65536),"S.MerchantShopColorless","S.ThreeUncommonSlots",1,"fixture") is not null,
             "Other families do not acquire a new identity requirement");
         return checks;
     }
@@ -622,97 +729,109 @@ internal static class CpuCostClosureChecks
         {
             string id=Path.GetFileNameWithoutExtension(path);
             var w=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>(path);
-            var compiled=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(w.Query,context.Context),w.Options with {WorkerCount=workerBudget});
+            var compiled=SearchPreparationCompiler.Compile(SearchCompiler.Compile(w.Query,context.Context),w.Options with {WorkerCount=workerBudget});
             var r=compiled.Plan ?? throw new InvalidOperationException($"CostCorpusCompile:{id}:{compiled.Issue}");
             var cpuOnlyOwners=FamilyExecutionCoordinator.CreateRegisteredFamilies(r,gpuAvailable:false);
+            var serialRequest=r with { RunOptions=r.RunOptions with { WorkerCount=1 } };
+            var serialOwners=FamilyExecutionCoordinator.CreateRegisteredFamilies(serialRequest,gpuAvailable:false);
             // Optional owner metadata preparation only. Every invocation below
             // remains FamilyCpuExecution; no GPU executor/device is created.
             var owners=prepareOwnerQuotes ? FamilyExecutionCoordinator.CreateRegisteredFamilies(r,gpuAvailable:true) : cpuOnlyOwners;
             // The first P1 body is the same numerical body selected by CPU-only
             // allocation. It checks the complete N-owned obligations of this request.
-            var neow=passedNeowInput ? cpuOnlyOwners.Single(f=>f.FamilyId=="N.Neow").CpuRealizations
-                .OfType<FamilyCpuExecution>().First(f=>f.Workers==1) : null;
+            var neow=passedNeowInput ? cpuOnlyOwners.Single(f=>f.FamilyId=="N.Neow").CpuAlternatives
+                .FirstOrDefault(f=>f.CpuWorkers==1) ?? PrepareSerialNeow() : null;
+            FilterBodyDescription PrepareSerialNeow()
+            {
+                var preferences=FilterExecutionPreferences.From(r.RunOptions) with { WorkerCount=1 };
+                if(!NeowFamily.TryCreate(r.Model,preferences,out var body,false) || body is null)
+                    throw new InvalidOperationException("CpuCorpusSerialNeowPreparationUnavailable");
+                return body.CpuAlternatives.Single(candidate=>candidate.CpuWorkers==1);
+            }
             IReadOnlySet<string> passedCoverage=new HashSet<string>{"N.Neow"};
             foreach(var owner in owners.Where(f=>Arg("--families","NSRCWAE").Contains(f.FamilyId[0]) &&
                 (!passedNeowInput || f.FamilyId=="R.Relic")))
-            foreach(var f in owner.CpuRealizations.Cast<FamilyCpuExecution>().Where(f=>configurations.Count==0 || configurations.Contains(f.Workers)))
+            foreach(var f in owner.CpuAlternatives.Where(f=>configurations.Count==0 || configurations.Contains(f.CpuWorkers)))
             foreach(int n in Arg("--populations",passedNeowInput?"65536":"65536,1024,4096,16384,32768,65536").Split(',').Select(int.Parse))
             {
-                if(passedNeowInput && (n!=65536 || f.CalibrationMeanInput is null ||
-                    f.RequiredPassedCoverage is null || !f.RequiredPassedCoverage.SetEquals(passedCoverage)))
+                var contextExecution=new FilterRuntimeServices(false);
+                var actualCpu=(CpuFilterExecution)f.CreateExecution!(f,contextExecution);
+                var neowExecution=neow?.CreateExecution!(neow,contextExecution);
+                if(passedNeowInput && (n!=65536 || actualCpu.CalibrationMeanInput is null ||
+                    f.Cost.CalibrationRequiredPassedCoverage is null || !f.Cost.CalibrationRequiredPassedCoverage.SetEquals(passedCoverage)))
                     throw new InvalidOperationException("N-passed measurement requires the existing full-window direct Capsule pricing shape");
-                var contextExecution=new FamilyExecutionContext(false);
                 FamilyCandidateSet Input(SearchBatch b) => neow is not null ?
-                    ((IFamilyInvocation)neow).InvokeAsync(contextExecution,new(b,r),FamilyCandidateSet.Dense(b),CancellationToken.None).GetAwaiter().GetResult() :
+                    neowExecution!.FilterAsync(contextExecution,FamilyCandidateSet.Dense(b),CancellationToken.None).GetAwaiter().GetResult() :
                     stride==1 ? FamilyCandidateSet.Dense(b) :
                     FamilyCandidateSet.FromSortedAbi1(b,Enumerable.Range(0,b.BatchCandidateCount).Where(i=>i%stride==0).Select(i=>(ulong)i).ToArray());
                 bool compact=passedNeowInput || stride>1;
                 var parityBatch=new SearchBatch(987654321,n);
                 var parityInput=Input(parityBatch);
                 int inputCount=parityInput.Count;
-                if(passedNeowInput) f.BindCalibrationCoverage(passedCoverage);
+                if(passedNeowInput) contextExecution.BindCoverage(f,passedCoverage);
                 // n is the actual root span, including synthetic/real Compact
                 // inputs. Its retained population must never replace RootWindow.
-                var canonicalKey=FamilyCanonicalCostShape.Describe(r,f,compact,n);
+                var canonicalKey=FamilyCanonicalCostShape.Describe(f,compact,n);
                 double? sourceSurvival=owner.FamilyId=="N.Neow"
                     ? owner.ResolveSurvival(new HashSet<string>()).SurvivalProbability : null;
-                FamilyPhysicalQuote? Quote() => passedNeowInput ? f.Quote(new(true,false,f.CalibrationMeanInput!.Value),passedCoverage) :
-                    ((IFamilyInvocation)f).QuotePhysicalWork(new(compact,false,inputCount));
+                FamilyPhysicalQuote? Quote() => passedNeowInput ? f.QuotePhysicalWork(new(true,false,actualCpu.CalibrationMeanInput!.Value),passedCoverage) :
+                    ((FilterBodyDescription)f).QuotePhysicalWork(new(compact,false,inputCount));
                 if(args.Contains("--inventory-only"))
                 {
-                    rows.Add(new{id,family=owner.FamilyId,revision=((IFamilyInvocation)f).ResolveConditionPerformance(compact).PhysicalImplementationRevision,n,inputCount,stride,workerBudget,workers=f.Workers,work=owner.ExpectedFilteringCost?.Segments,survival=owner.Survival,quote=Quote(),passedNeowInput,PrepareOwnerQuotes=prepareOwnerQuotes,ExecutionClass="CPU",neowRevision=neow?.Condition(false).PhysicalImplementationRevision,ModeledInput=f.CalibrationMeanInput,CanonicalKey=canonicalKey,SourceSurvival=sourceSurvival,DeviceIdentity=deviceIdentity});
+                    rows.Add(new{id,family=owner.FamilyId,revision=((FilterBodyDescription)f).ResolveConditionPerformance(compact).PhysicalImplementationRevision,n,inputCount,stride,workerBudget,workers=f.CpuWorkers,work=owner.ExpectedFilteringCost?.Segments,survival=owner.Survival,quote=Quote(),passedNeowInput,PrepareOwnerQuotes=prepareOwnerQuotes,ExecutionClass="CPU",neowRevision=neow?.ResolveConditionPerformance(false).PhysicalImplementationRevision,ModeledInput=actualCpu.CalibrationMeanInput,CanonicalKey=canonicalKey,SourceSurvival=sourceSurvival,DeviceIdentity=deviceIdentity});
                     contextExecution.DisposeAsync().AsTask().GetAwaiter().GetResult();
                     continue;
                 }
                 // Compare the complete ordered population, never a timing-dependent first-N result.
-                string body=((IFamilyInvocation)f).ConditionPerformance.PhysicalImplementationRevision.Split(".RootMode",StringSplitOptions.None)[0];
-                var serialOwner=prepareOwnerQuotes ? cpuOnlyOwners.SingleOrDefault(x=>x.FamilyId==owner.FamilyId) : owner;
-                var serial=serialOwner?.CpuRealizations.Cast<FamilyCpuExecution>().SingleOrDefault(x=>x.Workers==1 && ((IFamilyInvocation)x).ConditionPerformance.PhysicalImplementationRevision.StartsWith(body+".RootMode",StringComparison.Ordinal))
+                string body=((FilterBodyDescription)f).ConditionPerformance.PhysicalImplementationRevision.Split(".RootMode",StringSplitOptions.None)[0];
+                var serialOwner=serialOwners.SingleOrDefault(x=>x.FamilyId==owner.FamilyId);
+                var serial=serialOwner?.CpuAlternatives.SingleOrDefault(x=>x.CpuWorkers==1 && ((FilterBodyDescription)x).ConditionPerformance.PhysicalImplementationRevision.StartsWith(body+".RootMode",StringComparison.Ordinal))
                     ?? throw new InvalidOperationException($"CpuOwnerQuoteParityBodyMissing:{id}:{owner.FamilyId}:{body}");
-                if(passedNeowInput) serial.BindCalibrationCoverage(passedCoverage);
+                if(passedNeowInput) contextExecution.BindCoverage(serial,passedCoverage);
                 // Prepared owners must also agree across preparation modes over
                 // a full root window, even when timing a shorter geometry.
                 var checkBatch=prepareOwnerQuotes ? new SearchBatch(987654321,65536) : parityBatch;
                 var checkInput=prepareOwnerQuotes ? Input(checkBatch) : parityInput;
-                var expected=((IFamilyInvocation)serial).InvokeAsync(contextExecution,new(checkBatch,r),checkInput,CancellationToken.None).GetAwaiter().GetResult();
-                var actual=((IFamilyInvocation)f).InvokeAsync(contextExecution,new(checkBatch,r),checkInput,CancellationToken.None).GetAwaiter().GetResult();
+                var serialExecution=serial.CreateExecution!(serial,contextExecution);
+                var expected=serialExecution.FilterAsync(contextExecution,checkInput,CancellationToken.None).GetAwaiter().GetResult();
+                var actual=actualCpu.FilterAsync(contextExecution,checkInput,CancellationToken.None).GetAwaiter().GetResult();
                 if(!actual.ExportAbi1().Span.SequenceEqual(expected.ExportAbi1().Span))
-                    throw new InvalidOperationException($"CpuWorkerOrderedParity:{id}:P{f.Workers}:stride={stride}");
+                    throw new InvalidOperationException($"CpuWorkerOrderedParity:{id}:P{f.CpuWorkers}:stride={stride}");
                 if(!primed)
                 {
                     var prelude=Stopwatch.StartNew();
                     while(prelude.ElapsedMilliseconds<int.Parse(Arg("--warmup-ms","0")))
                     {
                         var b=new SearchBatch(123456,n);
-                        ((IFamilyInvocation)f).InvokeAsync(contextExecution,new(b,r),Input(b),CancellationToken.None).GetAwaiter().GetResult();
+                        actualCpu.FilterAsync(contextExecution,Input(b),CancellationToken.None).GetAwaiter().GetResult();
                     }
                     primed=true;
                 }
                 for(int warm=0;warm<warmupBatches;warm++)
                 {
                     var b=new SearchBatch(123456UL+(ulong)warm*(ulong)n,n);
-                    ((IFamilyInvocation)f).InvokeAsync(contextExecution,new(b,r),Input(b),CancellationToken.None).GetAwaiter().GetResult();
+                    actualCpu.FilterAsync(contextExecution,Input(b),CancellationToken.None).GetAwaiter().GetResult();
                 }
                 for(int repeat=0;repeat<repeats;repeat++)
                 {
-                    var before=f.Observation(); var timer=Stopwatch.StartNew(); int batches=0; long actualInputs=0;
+                    var before=contextExecution.Costs.Capture(f,compact); var timer=Stopwatch.StartNew(); int batches=0; long actualInputs=0;
                     long outerInvokeTicks=0;
                     do
                     {
                         var b=new SearchBatch(123456UL+((ulong)batches+(ulong)repeat*10000UL)*(ulong)n,n);
                         var input=Input(b); // N work stays outside R's canonical timing boundary.
-                        var observationWindow=new FamilyObservationWindow(b,r);
+                        var observationWindow=b;
                         long invokeStarted=Stopwatch.GetTimestamp();
-                        ((IFamilyInvocation)f).InvokeAsync(contextExecution,observationWindow,input,CancellationToken.None).GetAwaiter().GetResult();
+                        actualCpu.FilterAsync(contextExecution,input,CancellationToken.None).GetAwaiter().GetResult();
                         outerInvokeTicks+=Stopwatch.GetTimestamp()-invokeStarted;
                         actualInputs+=input.Count; batches++;
                     }while(timer.ElapsedMilliseconds<sampleMs);
-                    var after=f.Observation();
+                    var after=contextExecution.Costs.Capture(f,compact);
                     double ms=after.PerformanceBoundaryMs-before.PerformanceBoundaryMs;
                     double outerInvokeMs=outerInvokeTicks*1000d/Stopwatch.Frequency;
                     if(passedNeowInput && actualInputs==0)
                         throw new InvalidOperationException("N prerequisite produced no actual R inputs; no compact cost anchor exists for this sample");
-                    rows.Add(new{id,family=owner.FamilyId,revision=((IFamilyInvocation)f).ResolveConditionPerformance(compact).PhysicalImplementationRevision,n,inputCount,stride,workerBudget,workers=f.Workers,repeat,batches,inputs=actualInputs,ms,ns=ms*1e6/actualInputs,outerInvokeMs,OuterInvokeBoundary=FamilyCanonicalMeasuredCost.Boundary,work=owner.ExpectedFilteringCost?.Segments,quote=Quote(),passedNeowInput,PrepareOwnerQuotes=prepareOwnerQuotes,ExecutionClass="CPU",rootBatches=batches,ModeledInput=f.CalibrationMeanInput,actualInputs,neowRevision=neow?.Condition(false).PhysicalImplementationRevision,CanonicalKey=canonicalKey,SourceSurvival=sourceSurvival,DeviceIdentity=deviceIdentity});
+                    rows.Add(new{id,family=owner.FamilyId,revision=((FilterBodyDescription)f).ResolveConditionPerformance(compact).PhysicalImplementationRevision,n,inputCount,stride,workerBudget,workers=f.CpuWorkers,repeat,batches,inputs=actualInputs,ms,ns=ms*1e6/actualInputs,outerInvokeMs,OuterInvokeBoundary=FamilyCanonicalMeasuredCost.Boundary,work=owner.ExpectedFilteringCost?.Segments,quote=Quote(),passedNeowInput,PrepareOwnerQuotes=prepareOwnerQuotes,ExecutionClass="CPU",rootBatches=batches,ModeledInput=actualCpu.CalibrationMeanInput,actualInputs,neowRevision=neow?.ResolveConditionPerformance(false).PhysicalImplementationRevision,CanonicalKey=canonicalKey,SourceSurvival=sourceSurvival,DeviceIdentity=deviceIdentity});
                 }
                 contextExecution.DisposeAsync().AsTask().GetAwaiter().GetResult();
             }

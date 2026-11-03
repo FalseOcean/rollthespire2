@@ -26,18 +26,19 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
     private const int TerminalHandoffCapacity = 1;
     private const int TerminalOutstandingLimit = TerminalHandoffCapacity + 1;
     private const int LiveBatchStateLimit = TerminalHandoffCapacity + 2;
-    private readonly ExactSearchExecutionRequest _plan;
+    private readonly PreparedSearch _plan;
+    private readonly SearchModel _model;
     private readonly FamilyExecutionPlan _executionPlan;
     internal FamilyExecutionPlan ExecutionPlan => Volatile.Read(ref _gpuCreationCpuRecovery)?.Plan ?? _executionPlan;
     private readonly FamilySearchEtaProjectionV1 _etaProjection;
     private readonly IRuntimeProfile _profile;
-    private readonly IReadOnlyList<IFamilyInvocation> _families;
+    private readonly IReadOnlyList<IFilterExecution> _families;
     private readonly SmallCandidateExactPolicy? _smallCandidateExactPolicy;
     private int _rootBatchPairGroups;
     private long _rootBatchPairAdmissionWaitTicks;
     private readonly Channel<SearchCandidate> _candidates;
     private readonly Channel<FamilyTerminalBatch> _terminalHandoff;
-    private readonly FamilyExecutionContext _executionContext;
+    private readonly FilterRuntimeServices _executionContext;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private readonly int _executionWindowSize;
@@ -75,12 +76,12 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
     private int _cursorContinuityViolationCount;
     private int _boundedQueueViolationCount;
     private string _failureCode = string.Empty;
-    private readonly Func<ExactSearchExecutionRequest, TrustedRootHashInput, ProductionExactSearchResult>? _exactEvaluator;
+    private readonly Func<SearchModel, TrustedRootHashInput, ProductionExactSearchResult>? _exactEvaluator;
     private readonly Action<CancellationToken>? _beforeExactEvaluate;
     private readonly Func<int, CancellationToken, ValueTask>? _beforeCandidatePublish;
 
     internal ProductionSearchSession(
-        ExactSearchExecutionRequest plan,
+        PreparedSearch plan,
         FamilyExecutionPlan executionPlan,
         FamilySearchEtaProjectionV1 etaProjection,
         int executionWindowSize,
@@ -88,10 +89,10 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
         IRuntimePredictionDiagnosticSink? diagnosticSink,
         string traceSingleCandidateSeed,
         bool failOnPhysicalRecovery = false,
-        Func<ExactSearchExecutionRequest, TrustedRootHashInput, ProductionExactSearchResult>? exactEvaluator = null,
+        Func<SearchModel, TrustedRootHashInput, ProductionExactSearchResult>? exactEvaluator = null,
         Func<int, CancellationToken, ValueTask>? beforeCandidatePublish = null,
         SearchContinuationSnapshot? continuation = null,
-        Func<FamilyExecutionContext>? executionContextFactory = null,
+        Func<FilterRuntimeServices>? executionContextFactory = null,
         Func<Func<Task>, Task>? startRun = null,
         long pendingPayloadLimitBytes = DefaultPendingPayloadLimitBytes,
         Func<SearchPendingCandidate, long>? measurePendingPayload = null,
@@ -105,6 +106,7 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
         _pendingPayloadLimitBytes = pendingPayloadLimitBytes;
         _recoveryReceiptWaitStarted = recoveryReceiptWaitStarted;
         _plan = plan ?? throw new ArgumentNullException(nameof(plan));
+        _model = plan.Model;
         _exactEvaluator = exactEvaluator;
         _beforeExactEvaluate = beforeExactEvaluate;
         _beforeCandidatePublish = beforeCandidatePublish;
@@ -115,15 +117,8 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
             !plan.RunOptions.SkipExactValidation && executionPlan.RankingAuthority != FamilyPlannerRankingAuthority.UnpricedPhysicalTrial &&
             !executionPlan.DecisionEvidence.Contains("ExplicitPhysicalSelection=true", StringComparer.Ordinal);
         _etaProjection = etaProjection ?? throw new ArgumentNullException(nameof(etaProjection));
-        _profile = RuntimeProfileRegistry.Select(plan.Detection);
+        _profile = RuntimeProfileRegistry.Select(plan.Model.Detection);
         _recovery = new(plan, _profile, continuation, measurePendingPayload);
-        _families = executionPlan.OrderedFamilies;
-        var calibrationCoverage = new HashSet<string>();
-        foreach(var family in _families)
-        {
-            if(family is FamilyCpuExecution cpu)cpu.BindCalibrationCoverage(calibrationCoverage);
-            calibrationCoverage.UnionWith(family.Coverage);
-        }
         _executionWindowSize = executionWindowSize;
         _diagnosticSink = diagnosticSink;
         _traceSingleCandidateSeed = traceSingleCandidateSeed?.Trim() ?? string.Empty;
@@ -144,23 +139,54 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
         // Acquire the GPU owner only after validation and channel construction.
         // Until RunAsync is handed off successfully, this constructor owns cleanup.
         _executionContext = executionContextFactory is null
-            ? new FamilyExecutionContext(requiresGpu: _families.Any(family => family.ConditionPerformance.UsesGpu),
-                failOnPhysicalRecovery, cpuWorkerCount: plan.WorkerCount)
+            ? new FilterRuntimeServices(requiresGpu: executionPlan.OrderedFamilies.Any(body => body.UsesGpu),
+                failOnPhysicalRecovery, cpuWorkerCount: plan.WorkerCount) { CorrelationId=plan.SnapshotFingerprint,SkipExactValidation=plan.RunOptions.SkipExactValidation }
             : executionContextFactory();
-        _executionContext.SmallCandidateExact = _smallCandidateExactPolicy;
-        try { _completion = startRun is null ? Task.Run(RunAsync) : startRun(RunAsync); }
+        var selectedExecutions = new List<IFilterExecution>();
+        try
+        {
+            _executionContext.SmallCandidateExact = _smallCandidateExactPolicy;
+            if(executionPlan.OrderedFamilies.Any(body=>body.RequiresBonesCapsuleDiagnostics))
+                _executionContext.BonesCapsuleDiagnostics=new(_model);
+            var passedCoverage = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var body in executionPlan.OrderedFamilies)
+            {
+                _executionContext.BindCoverage(body,passedCoverage);
+                selectedExecutions.Add((body.CreateExecution ?? throw new InvalidOperationException("SelectedFilterHasNoExecutionFactory:"+body.FamilyId))(body,_executionContext));
+                passedCoverage.UnionWith(body.Coverage);
+            }
+            _families = selectedExecutions;
+            _completion = startRun is null ? Task.Run(RunAsync) : startRun(RunAsync);
+        }
         catch (Exception failure)
         {
             try
             {
                 FamilyGpuComputeUtility.CleanupAfterFailure(failure,
-                    () => _executionContext.DisposeAsync().AsTask().GetAwaiter().GetResult(),
-                    "ProductionSearchSession.Construction");
+                    () =>
+                    {
+                        var failures=new List<Exception>();
+                        foreach(var execution in selectedExecutions)
+                            try{execution.DisposeAsync(_executionContext).AsTask().GetAwaiter().GetResult();}catch(Exception error){failures.Add(error);}
+                        try{_executionContext.DisposeAsync().AsTask().GetAwaiter().GetResult();}catch(Exception error){failures.Add(error);}
+                        if(failures.Count>0)throw new AggregateException("FilterBindingCleanup",failures);
+                    }, "ProductionSearchSession.Construction");
             }
             finally { _lifetime.Dispose(); }
             throw;
         }
     }
+
+    internal FamilyPerformanceObservation CaptureFilterObservation(FilterBodyDescription body)
+    {
+        var execution=_families.FirstOrDefault(item=>ReferenceEquals(item.Body,body));
+        var resource=execution?.ResourceInfo ?? (Device:"",SetupMs:0d);
+        return _executionContext.Costs.CaptureLatest(body,resource.Device,resource.SetupMs);
+    }
+    // Null means the descriptor has no directly bound public handle. Private
+    // children report completed samples through the observer, not invented state.
+    internal bool? IsFilterExecutionFaulted(FilterBodyDescription body) =>
+        _families.FirstOrDefault(item=>ReferenceEquals(item.Body,body))?.ExecutionFaulted;
 
     public Task Completion => _completion;
     public IReadOnlyList<string> FamilyIds => ExecutionPlan.OrderedFamilies.Select(family => family.FamilyId).ToArray();
@@ -259,28 +285,31 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
             _terminalHandoff.Writer.TryComplete();
             bool physicalRecoveryContaminated = Volatile.Read(ref _initialGpuCreationRecoveryAttempted) != 0;
             bool performanceEvidenceUnavailable = false;
-            foreach (IFamilyInvocation family in _families)
+            foreach (IFilterExecution family in _families)
             {
                 try { await family.DisposeAsync(_executionContext).ConfigureAwait(false); }
                 catch (Exception ex)
                 {
-                    RecordCleanupFailure(ex, "FamilyCleanup:" + family.FamilyId);
+                    RecordCleanupFailure(ex, "FamilyCleanup:" + family.Body.FamilyId);
+                    _executionContext.Costs.Invalidate(family.Body);
                     physicalRecoveryContaminated = true;
                     RuntimeLog.TryBackgroundWarning(
                         $"familyResourceDisposeFailed=true;family={family.GetType().Name};error={ex.GetType().Name}:{ex.Message}");
                 }
                 try
                 {
-                    FamilyPerformanceObservation observation = family.CapturePerformanceObservation();
+                    if (family.ExecutionFaulted) _executionContext.Costs.Invalidate(family.Body);
+                    var resource=family.ResourceInfo;
+                    FamilyPerformanceObservation observation = _executionContext.Costs.CaptureLatest(family.Body,resource.Device,resource.SetupMs);
                     if (string.Equals(observation.EligibilityEvidence, "PhysicalFailureOrRecovery", StringComparison.Ordinal))
                         physicalRecoveryContaminated = true;
                     RuntimeLog.TryBackgroundInfo(
-                        $"familyPerformanceObservation=true;family={family.FamilyId};revision={family.ConditionPerformance.PhysicalImplementationRevision};gpu={family.ConditionPerformance.UsesGpu};input={observation.InputCandidates};output={observation.OutputCandidates};canonicalMs={observation.PerformanceBoundaryMs};legacyPeakAuthority=false");
+                        $"familyPerformanceObservation=true;family={family.Body.FamilyId};revision={family.Body.ConditionPerformance.PhysicalImplementationRevision};gpu={family.Body.ConditionPerformance.UsesGpu};input={observation.InputCandidates};output={observation.OutputCandidates};canonicalMs={observation.PerformanceBoundaryMs};legacyPeakAuthority=false");
                 }
                 catch (Exception ex)
                 {
                     performanceEvidenceUnavailable = true;
-                    RecordDiagnosticFailure(ex, "PerformanceObservation:" + family.FamilyId);
+                    RecordDiagnosticFailure(ex, "PerformanceObservation:" + family.Body.FamilyId);
                 }
             }
             long exactAttempts = Interlocked.Read(ref _exactAttempts);
@@ -289,14 +318,14 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
             string exactTimingRevision = "";
             bool exactTimingSubmitted = false;
             // Empty queries return seeds but do not measure normal Exact work.
-            if (FamilyExactTimingDomains.HasQueryWork(_plan.CompiledSearch.NormalizedQuery) &&
+            if (FamilyExactTimingDomains.HasQueryWork(_model.CompiledSearch.NormalizedQuery) &&
                 !physicalRecoveryContaminated && !performanceEvidenceUnavailable && completedExactAttempts > 0 && exactAggregateMs > 0d)
             {
                 try
                 {
-                    exactTimingRevision = FamilyExactTimingDomains.ImplementationRevision(_plan);
+                    exactTimingRevision = FamilyExactTimingDomains.ImplementationRevision(_model);
                     SearchPredictabilityVerificationStore.SubmitExactTimingSample(
-                    FamilyExactTimingDomains.Resolve(_plan),
+                    FamilyExactTimingDomains.Resolve(_model),
                     completedExactAttempts,
                     exactAggregateMs,
                     $"FamilyExecutionExactTiming;state={(SearchRunState)Volatile.Read(ref _state)};" +
@@ -319,14 +348,13 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
                 RuntimeLog.TryBackgroundWarning(
                     $"familyExecutionContextDisposeFailed=true;error={ex.GetType().Name}:{ex.Message}");
             }
-            foreach(var family in _families)
-                try { family.LogExecutionEvidence(); } catch(Exception ex) { RecordDiagnosticFailure(ex, "ExecutionEvidence:" + family.FamilyId); }
+            try { _executionContext.Costs.WriteSummary(); } catch(Exception ex) { RecordDiagnosticFailure(ex,"ExecutionEvidence"); }
             LogResultEvidence(exactAttempts);
             if (!physicalRecoveryContaminated && !performanceEvidenceUnavailable && (SearchRunState)Volatile.Read(ref _state) != SearchRunState.Faulted)
             {
-                try { GpuCostCalibration.Submit(_families.SelectMany(f => f.CostPeaks)); }
+                try { GpuCostCalibration.Submit(_executionContext.Costs.GpuPeaks); }
                 catch (Exception ex) { RecordDiagnosticFailure(ex, "GpuCalibrationSample"); }
-                try { CpuCostCalibration.Submit(_families.OfType<FamilyCpuExecution>().SelectMany(f=>f.LocalPeaks)); }
+                try { CpuCostCalibration.Submit(_executionContext.Costs.CpuPeaks); }
                 catch (Exception ex) { RecordDiagnosticFailure(ex, "CpuCalibrationSample"); }
             }
             _candidates.Writer.TryComplete();
@@ -361,7 +389,7 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
                 // remains only BatchBase + BatchCandidateCount and owns no 2^24 rule.
                 int count = (int)Math.Min(remaining, ExecutionWindowSize);
                 var batch = new SearchBatch(batchBase, count);
-                var observation = new FamilyObservationWindow(batch, _plan);
+                var observation = batch;
                 long familyPipelineStarted = Stopwatch.GetTimestamp();
                 long pairAdmissionWait = 0;
                 FamilyCandidateSet survivors;
@@ -388,7 +416,7 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
                             int secondCount = (int)Math.Min(remaining - count, ExecutionWindowSize);
                             var secondBatch = new SearchBatch(checked(batchBase + (ulong)count), secondCount);
                             var group = await grouping.PrepareDensePairAsync(_executionContext, observation,
-                                new FamilyObservationWindow(secondBatch, _plan), cancellationToken).ConfigureAwait(false);
+                                secondBatch, cancellationToken).ConfigureAwait(false);
                             if (group.First.Batch != batch || group.Second.Batch != secondBatch)
                                 throw new InvalidDataException("RootPair.PreparedBatchIdentityMismatch");
                             prepared = group.First;
@@ -425,7 +453,7 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
                 // Includes subsequent submit/handoff/backpressure elapsed time.
                 if(nextBatchNumber==1)
                 {
-                    bool cpuOnly=_families.Count>0 && !_families.Any(f=>f.ConditionPerformance.UsesGpu);
+                    bool cpuOnly=_families.Count>0 && !_families.Any(f=>f.Body.UsesGpu);
                     Interlocked.Exchange(ref _scanFirstCompletedTimestamp,cpuOnly?familyPipelineStarted:familyCompletedTimestamp);
                     if(cpuOnly)Interlocked.Add(ref _scanAfterFirstRoots,count);
                 }
@@ -628,17 +656,9 @@ public sealed partial class ProductionSearchSession : IProductionSearchSession
             // Parallel.ForEachAsync owns a child token whose propagation may lag
             // session cancellation. Exact and its consumer must use the same token.
             exact = _exactEvaluator is null
-                ? ProductionExactSearchEvaluator.Evaluate(_plan, input, cancellationToken)
-                : _exactEvaluator(_plan, input);
-            if (exact.Document is { } document)
-            {
-                ProductionExactSearchEvaluator.ThrowIfPredictionFailed(document);
-                string[] exceptions = document.Diagnostics.Where(d => d.Code == PredictionDiagnosticCodes.Exception).Select(d => d.Value).ToArray();
-                if (exceptions.Length > 0)
-                    throw new InvalidOperationException($"ProductionExact.DocumentException:{document.PredictorId}:{document.CanonicalSeed}:" + string.Join(" | ", exceptions));
-            }
-            if (exact.Evaluation.Disposition == SearchDisposition.Match && !exact.IsMatch)
-                throw new InvalidOperationException("ProductionExact.MatchPayloadMissing:" + seed);
+                ? ProductionExactSearchEvaluator.Evaluate(_model, input, cancellationToken)
+                : _exactEvaluator(_model, input);
+            if (exact.Facts is { } facts) ProductionExactSearchEvaluator.ThrowIfPredictionFailed(facts);
             evaluation = exact.Evaluation;
             exactCompleted = true;
         }

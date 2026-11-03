@@ -39,7 +39,7 @@ internal static partial class UiSurfaceChecks
         InRunMapPredictionSession Fixture(string entry, bool treasure = false, bool rest = false, bool extraCards = false, bool rerolls = false,
             int goldBudget = 1000, bool tradeRelic = false, bool cook = false, bool ordinaryRest = false, bool shop = false, string treasureRelic = "POMANDER")
         {
-            var source = captured.Run;
+            var source = captured.CreateRun();
             var state = source.Working;
             int act = state.Position.Act;
             var configured = state with
@@ -66,7 +66,7 @@ internal static partial class UiSurfaceChecks
             var session = new InRunMapPredictionSession();
             const BindingFlags members = BindingFlags.Instance | BindingFlags.NonPublic;
             typeof(InRunMapPredictionSession).GetProperty(nameof(InRunMapPredictionSession.Snapshot), members)!
-                .SetValue(session, captured with { Run = new(source.Context, configured) });
+                .SetValue(session, captured with { Context = source.Context, State = configured, CombatDefaults = new(), AutomaticRewardPickup = true });
             typeof(InRunMapPredictionSession).GetField("_drafts", members)!
                 .SetValue(session, DiagnosticField(production, "_drafts"));
             session.Recompute();
@@ -74,7 +74,7 @@ internal static partial class UiSurfaceChecks
         }
         InRunMapPredictionSession AncientFixture(string? openingGift = null, bool pael = false)
         {
-            var original = captured.Run;
+            var original = captured.CreateRun();
             int ancientAct = openingGift == null ? 2 : 1;
             var points = new[]
             {
@@ -111,7 +111,7 @@ internal static partial class UiSurfaceChecks
                     AncientAuthority = Beta109WorldSnapshotProjector.ProjectForSeed(original.Context.AncientAuthority!, seed) };
                 var session = new InRunMapPredictionSession();
                 typeof(InRunMapPredictionSession).GetProperty(nameof(InRunMapPredictionSession.Snapshot), members)!
-                    .SetValue(session, captured with { Run = new(context, state) });
+                    .SetValue(session, captured with { Context = context, State = state, CombatDefaults = new(), AutomaticRewardPickup = true });
                 typeof(InRunMapPredictionSession).GetField("_drafts", members)!.SetValue(session, drafts);
                 session.Recompute();
                 if (session.Nodes.TryGetValue((ancientAct - 1, selected[0]), out var node) &&
@@ -236,7 +236,7 @@ internal static partial class UiSurfaceChecks
             string oldNativeLanguage = MegaCrit.Sts2.Core.Localization.LocManager.Instance.Language;
             string languageDirectory = Path.Combine(OS.GetUserDataDir(), "RolltheSpire2", "state");
             var oldKinds = panel.OverviewKinds;
-            int overviewAct = captured.Run.Working.Position.Act - 1, overviewChecks = 0;
+            int overviewAct = captured.State.Position.Act - 1, overviewChecks = 0;
             var overviewScreenshots = new List<string>();
             void Require(bool value, string message) { overviewChecks++; check(value, "EventOverview: " + message); }
             InRunMapDetailObject[] Summary(PredictorRouteNodeKnowledge node) =>
@@ -289,7 +289,7 @@ internal static partial class UiSurfaceChecks
                     {
                         var dollSession = Fixture("DOLL_ROOM");
                         var dollPresenter = new InRunMapNodePresenter(dollSession, overviewNames, overviewText);
-                        string callerState = JsonSerializer.Serialize(dollSession.Snapshot!.Run.Working);
+                        string callerState = JsonSerializer.Serialize(dollSession.Snapshot!.State);
                         string scenario = parentOption + "-" + overviewLanguage;
                         await ShowSummary(dollSession, dollPresenter, overviewNames, [], scenario + " initial");
                         Require(dollSession.Nodes[(overviewAct, first)].Event!.AppliedResult == null,
@@ -348,13 +348,15 @@ internal static partial class UiSurfaceChecks
                             priorRelic = selectedRelic;
                         }
                         dollDetail = dollPresenter.Detail((overviewAct, first))!;
-                        var clear = AllChoices(dollDetail.Premises!.Sections).Single(choice =>
+                        var clearEditor = dollPresenter.Editor((overviewAct, first))!;
+                        var clear = AllChoices(clearEditor.Sections).Single(choice =>
                             choice.Label == overviewText.Get("predictor.runtime.plan.clear"));
-                        Require(dollPresenter.ApplyChoice(dollDetail.NodeId, clear.Id) && dollSession.GetPlan(overviewAct, first) == null &&
+                        Require(clearEditor.NodeId == dollDetail.NodeId && clear.Enabled && dollSession.GetPlan(overviewAct, first) != null &&
+                            dollPresenter.ApplyChoice(dollDetail.NodeId, clear.Id) && dollSession.GetPlan(overviewAct, first) == null &&
                             dollSession.Nodes[(overviewAct, first)].Event!.AppliedResult == null,
                             scenario + " actual clear-plan callback retires the adopted event prefix");
                         await ShowSummary(dollSession, dollPresenter, overviewNames, [], scenario + " cleared");
-                        Require(JsonSerializer.Serialize(dollSession.Snapshot.Run.Working) == callerState && signature() == before,
+                        Require(JsonSerializer.Serialize(dollSession.Snapshot.State) == callerState && signature() == before,
                             scenario + " display and all choice transitions preserve caller snapshot and native serialized facts");
                     }
                     var rewardSession = Fixture("PUNCH_OFF");
@@ -408,7 +410,7 @@ internal static partial class UiSurfaceChecks
             ModelKey Relic(string entry) => new("RELIC", entry);
             var treasureLocation = (act - 1, new MapPosition(3, 1));
             var combatLocation = (act - 1, new MapPosition(3, 2));
-            var source = captured.Run;
+            var source = captured.CreateRun();
             var catalog = source.Context.Catalog!;
             var candidates = catalog.CharacterCards.Where(card => PredictorObtainSources.CanEnchant(source.Context,
                 PredictorCardChanges.Definition(source.Context, card.CardKey).Prototype)).ToArray();
@@ -465,7 +467,7 @@ internal static partial class UiSurfaceChecks
                 var session = new InRunMapPredictionSession();
                 var drafts = DiagnosticField(session, "_drafts");
                 typeof(InRunMapPredictionSession).GetProperty(nameof(InRunMapPredictionSession.Snapshot), members)!
-                    .SetValue(session, captured with { Run = new(context, state) });
+                    .SetValue(session, captured with { Context = context, State = state, CombatDefaults = new(), AutomaticRewardPickup = true });
                 typeof(InRunMapPredictionSession).GetField("_drafts", members)!
                     .SetValue(session, drafts.GetType().GetMethod("SetItem")!.Invoke(drafts, [act - 1, draft]));
                 session.Recompute();
@@ -526,7 +528,7 @@ internal static partial class UiSurfaceChecks
             async Task Hover(InRunMapNodeDetailData data, InRunMapDetailChoice choice, bool pending,
                 InRunMapPredictionSession session, string label, bool requireComplete = true)
             {
-                string plans = JsonSerializer.Serialize(session.Plans), snapshot = JsonSerializer.Serialize(session.Snapshot!.Run.Working);
+                string plans = JsonSerializer.Serialize(session.Plans), snapshot = JsonSerializer.Serialize(session.Snapshot!.State);
                 var preview = choice.Preview ?? choice.PreviewFactory?.Invoke();
                 var hoverText = JsonUiTextProvider.CreatePredictorUi13(InRunFeaturePreferences.LanguageOverride);
                 var enchantmentPending = InRunMapPrerequisiteProjection.Pending(session.Nodes.Values.SelectMany(node => node.Rewards)
@@ -550,7 +552,7 @@ internal static partial class UiSurfaceChecks
                 bool shownAfterSignal = overlay.IsVisibleInTree();
                 await Layout();
                 var visibleText = VisibleText(details);
-                string currentPlans = JsonSerializer.Serialize(session.Plans), currentSnapshot = JsonSerializer.Serialize(session.Snapshot.Run.Working);
+                string currentPlans = JsonSerializer.Serialize(session.Plans), currentSnapshot = JsonSerializer.Serialize(session.Snapshot.State);
                 var expectedCards = preview!.Branches.SelectMany(branch => branch.Sections).SelectMany(section =>
                     section.Rows.Where(row => row.ShowCards).SelectMany(row => row.Cards)
                         .Concat(section.CardGroups.SelectMany(group => group.Cards)))
@@ -626,7 +628,7 @@ internal static partial class UiSurfaceChecks
                     {
                         var rootSession = Create();
                         var rootPresenter = new InRunMapNodePresenter(rootSession, localizedNames, text);
-                        string rootSnapshot = JsonSerializer.Serialize(rootSession.Snapshot!.Run.Working);
+                        string rootSnapshot = JsonSerializer.Serialize(rootSession.Snapshot!.State);
                         var rootOffer = rootSession.Nodes[combatLocation].Rewards.Single(reward => reward.Kind == PredictorRewardKind.Card);
                         int uncertain = rootOffer.CardOptions.FindIndex(option => !option.IsKnown);
                         Require(uncertain >= 0 && rootOffer.CompletedEdit == null,
@@ -650,14 +652,14 @@ internal static partial class UiSurfaceChecks
                         var cancelled = rootSession.Nodes[combatLocation].Rewards.Single(reward => reward.Kind == PredictorRewardKind.Card);
                         Require(cancelled is { DefaultSkipped: true, AppliedChoice: null } &&
                             cancelled.OfferBinding?.Value.Status == PredictorRewardStatus.Skipped &&
-                            JsonSerializer.Serialize(rootSession.Snapshot.Run.Working) == rootSnapshot,
+                            JsonSerializer.Serialize(rootSession.Snapshot.State) == rootSnapshot,
                             "root cancellation click agrees with its hover and preserves caller state/RNG/" + language);
 
                         foreach (var (entry, branch, required, count) in new[]
                         { ("BRAIN_LEECH", "SHARE_KNOWLEDGE", 1, 5), ("ROOM_FULL_OF_CHEESE", "GORGE", 2, 8) })
                         {
                             var gridSession = Create(directEvent: entry);
-                            string gridSnapshot = JsonSerializer.Serialize(gridSession.Snapshot!.Run.Working);
+                            string gridSnapshot = JsonSerializer.Serialize(gridSession.Snapshot!.State);
                             var gridPresenter = new InRunMapNodePresenter(gridSession, localizedNames, text);
                             var gridData = gridPresenter.Detail(treasureLocation)!;
                             var option = AllChoices(gridData.Sections.Concat(gridData.Premises?.Sections ?? []))
@@ -700,7 +702,7 @@ internal static partial class UiSurfaceChecks
                                 savedAgain.UnresolvedEnchantmentIndices.All(index => savedAgain.ExpectedCards[index] is
                                     { Enchantment: null, EnchantmentAmount: 0 }) &&
                                 gridSession.Nodes[treasureLocation].Advanced && gridSession.Nodes[combatLocation].Advanced &&
-                                JsonSerializer.Serialize(gridSession.Snapshot.Run.Working) == gridSnapshot,
+                                JsonSerializer.Serialize(gridSession.Snapshot.State) == gridSnapshot,
                                 "actual " + entry + " click saves the explicit mask and continues without changing caller state/RNG/" + language);
                             if (required > 1)
                             {
@@ -721,7 +723,7 @@ internal static partial class UiSurfaceChecks
                         continue;
                     }
                     var session = Create();
-                    string snapshot = JsonSerializer.Serialize(session.Snapshot!.Run.Working);
+                    string snapshot = JsonSerializer.Serialize(session.Snapshot!.State);
                     var presenter = new InRunMapNodePresenter(session, localizedNames, text);
                     var offer = Child(session);
                     Require(!offer.IsKnown && offer.OfferBinding?.UnresolvedEnchantmentIndices.Length == 2 &&
@@ -762,7 +764,7 @@ internal static partial class UiSurfaceChecks
                     await Hover(data, cancel, pending: false, session, "own-unknown Take cancellation/" + language);
                     await Click(data, cancel, presenter);
                     Require(Child(session) is { DefaultSkipped: true, AppliedChoice: null } &&
-                        JsonSerializer.Serialize(session.Snapshot.Run.Working) == snapshot,
+                        JsonSerializer.Serialize(session.Snapshot.State) == snapshot,
                         "own-unknown cancellation restores default Skip without altering the caller snapshot/RNG/" + language);
 
                     foreach (int counter in new[] { 0, 1 })
@@ -810,13 +812,13 @@ internal static partial class UiSurfaceChecks
         async Task CheckDrawingOverblocks()
         {
             const BindingFlags members = BindingFlags.Instance | BindingFlags.NonPublic;
-            int checks = 0, act = captured.Run.Working.Position.Act;
+            int checks = 0, act = captured.State.Position.Act;
             void Require(bool value, string message) { checks++; check(value, "DrawingOverblocks: " + message); }
             InRunMapPredictionSession Create(string entry, bool hatch = false, bool hammer = false, bool bridge = false)
             {
                 // Controlled map geometry and inventory, actual captured
                 // catalogs and detached entry/settlement/presenter pipeline.
-                var source = captured.Run;
+                var source = captured.CreateRun();
                 var types = hatch ? new[] { MapPointType.Ancient, MapPointType.RestSite, MapPointType.Monster, MapPointType.Boss } :
                     hammer ? new[] { MapPointType.Ancient, MapPointType.Unknown, MapPointType.Shop, MapPointType.Monster, MapPointType.Boss } :
                     new[] { MapPointType.Ancient, MapPointType.RestSite, MapPointType.Unknown, MapPointType.Monster, MapPointType.Boss };
@@ -849,7 +851,7 @@ internal static partial class UiSurfaceChecks
                 var drafts = DiagnosticField(session, "_drafts");
                 drafts = drafts.GetType().GetMethod("SetItem")!.Invoke(drafts, [act - 1, draft])!;
                 typeof(InRunMapPredictionSession).GetProperty(nameof(InRunMapPredictionSession.Snapshot), members)!
-                    .SetValue(session, captured with { Run = new(source.Context, state) });
+                    .SetValue(session, captured with { Context = source.Context, State = state, CombatDefaults = new(), AutomaticRewardPickup = true });
                 typeof(InRunMapPredictionSession).GetField("_drafts", members)!.SetValue(session, drafts);
                 session.Recompute();
                 Require(session.Forecast?.Fault == null, "controlled fixture has no hidden projection fault/" + entry);
@@ -940,7 +942,7 @@ internal static partial class UiSurfaceChecks
             var oldPresenter = DiagnosticField(panel, "_presenter");
             var oldFault = DiagnosticField(panel, "_predictionFault");
             bool processing = panel.IsProcessing();
-            int focusedChecks = 0, act = captured.Run.Working.Position.Act - 1;
+            int focusedChecks = 0, act = captured.State.Position.Act - 1;
             void Require(bool value, string message) { focusedChecks++; check(value, "DrawingBoundaries: " + message); }
             void Bind(InRunMapPredictionSession session, InRunMapNodePresenter presenter)
             {
@@ -995,12 +997,12 @@ internal static partial class UiSurfaceChecks
 
                     session = Fixture("ABYSSAL_BATHS", rest: true);
                     var capturedRest = session.Snapshot!;
-                    var restState = capturedRest.Run.Working;
+                    var restState = capturedRest.State;
                     restState = restState with { PersonalBag = PredictorRelicBag.Empty(false),
                         Relics = restState.Relics.Add(new(restState.NextInstanceId, new("RELIC", "SHOVEL"), 1)),
                         NextInstanceId = restState.NextInstanceId + 1 };
                     typeof(InRunMapPredictionSession).GetProperty(nameof(InRunMapPredictionSession.Snapshot), members)!
-                        .SetValue(session, capturedRest with { Run = new(capturedRest.Run.Context, restState) });
+                        .SetValue(session, capturedRest with { Context = capturedRest.Context, State = restState, CombatDefaults = new(), AutomaticRewardPickup = true });
                     session.Recompute();
                     presenter = new(session, localizedNames, text);
                     Bind(session, presenter);
@@ -1128,7 +1130,7 @@ internal static partial class UiSurfaceChecks
                 Require(panel.UsesDefaultOverviewCardCollection && picker.Text == PickerLabel(
                     ((IUiTextProvider)DiagnosticField(panel, "_text")).Get("predictor.map.card_collection.all_rare")),
                     "a fresh preference uses the built-in all-rare selection and shows its current name");
-                var card = captured.Run.Context.Catalog!.CardDefinitions.First(definition => definition.Rarity == "Common").Prototype.Key;
+                var card = captured.Context.Catalog!.CardDefinitions.First(definition => definition.Rarity == "Common").Prototype.Key;
                 var custom = library.Save(null, "Picker saved common", [card]);
                 var empty = library.Save(null, "Picker saved empty", []);
                 await Select(custom);
@@ -1253,7 +1255,7 @@ internal static partial class UiSurfaceChecks
             string oldLanguage = InRunFeaturePreferences.LanguageOverride;
             string oldNativeLanguage = MegaCrit.Sts2.Core.Localization.LocManager.Instance.Language;
             string languageDirectory = Path.Combine(OS.GetUserDataDir(), "RolltheSpire2", "state");
-            int focusedChecks = 0, act = captured.Run.Working.Position.Act - 1;
+            int focusedChecks = 0, act = captured.State.Position.Act - 1;
             void Require(bool value, string message) { focusedChecks++; check(value, "CardCollectionOverview: " + message); }
             InRunMapDetailObject[] Summary(PredictorRouteNodeKnowledge node) =>
                 ((IEnumerable<InRunMapDetailObject>)overviewMethod.Invoke(panel, [node])!).Where(item => item.Kind == GameContentKind.Card).ToArray();
@@ -1270,7 +1272,7 @@ internal static partial class UiSurfaceChecks
                 var session = Fixture("ABYSSAL_BATHS");
                 var presenter = new InRunMapNodePresenter(session, names, JsonUiTextProvider.CreatePredictorUi13("zh"));
                 Bind(session, presenter);
-                var catalog = session.Snapshot!.Run.Context.Catalog!;
+                var catalog = session.Snapshot!.Context.Catalog!;
                 var rare = catalog.CardDefinitions.First(definition => definition.Rarity == "Rare").Prototype;
                 var common = catalog.CardDefinitions.First(definition => definition.Rarity == "Common").Prototype;
                 var upgraded = common with { UpgradeLevel = 1, Enchantment = new("ENCHANTMENT", "TEST_OVERVIEW_ONLY"), EnchantmentAmount = 3 };
@@ -1350,7 +1352,7 @@ internal static partial class UiSurfaceChecks
                     var runtimeNode = session.Nodes[(act, suffix)];
                     var runtimeCard = runtimeNode.Rewards.SelectMany(reward => reward.IsKnown && reward.Value != null
                         ? (IEnumerable<PredictorCard>)reward.Value.Cards : reward.CardOptions.Select(option => option.Value)).First();
-                    string caller = JsonSerializer.Serialize(session.Snapshot.Run.Working), plans = JsonSerializer.Serialize(session.Plans);
+                    string caller = JsonSerializer.Serialize(session.Snapshot.State), plans = JsonSerializer.Serialize(session.Plans);
                     var forecast = session.Forecast;
                     var nodes = session.Nodes;
                     long revision = session.Revision;
@@ -1379,7 +1381,7 @@ internal static partial class UiSurfaceChecks
                     await DiagnosticFrame(root);
                     Require(panel.UsesDefaultOverviewCardCollection && panel.OverviewCardCollection!.Cards.ToHashSet().SetEquals(expectedDefault) &&
                         Summary(rewardNode).Select(item => item.Key).SequenceEqual([rare.Key]), "reset restores the built-in rare collection/" + language);
-                    Require(JsonSerializer.Serialize(session.Snapshot.Run.Working) == caller && JsonSerializer.Serialize(session.Plans) == plans &&
+                    Require(JsonSerializer.Serialize(session.Snapshot.State) == caller && JsonSerializer.Serialize(session.Plans) == plans &&
                         ReferenceEquals(forecast, session.Forecast) && ReferenceEquals(nodes, session.Nodes) && session.Revision == revision &&
                         session.HistoryCount == history && ReferenceEquals(detail, presenter.Detail((act, suffix))) && signature() == before,
                         "collection changes remain projection-only and preserve native, caller, plans, forecast, history and details/" + language);
@@ -1411,14 +1413,14 @@ internal static partial class UiSurfaceChecks
         {
             int focusedChecks = 0;
             void Require(bool value, string message) { focusedChecks++; check(value, "ShopGold: " + message); }
-            int act = captured.Run.Working.Position.Act - 1;
+            int act = captured.State.Position.Act - 1;
             const BindingFlags members = BindingFlags.Instance | BindingFlags.NonPublic;
             foreach (string language in new[] { "zh", "en" })
             {
                 var text = JsonUiTextProvider.CreatePredictorUi13(language);
                 string M(string key) => text.Get("predictor.map." + key);
                 var session = Fixture("ABYSSAL_BATHS", shop: true);
-                string caller = JsonSerializer.Serialize(session.Snapshot!.Run.Working);
+                string caller = JsonSerializer.Serialize(session.Snapshot!.State);
                 var presenter = new InRunMapNodePresenter(session, names, text);
                 var data = presenter.Detail((act, first))!;
                 string Balance(int gold) => text.Format("predictor.map.shop_gold_balance", gold);
@@ -1459,11 +1461,11 @@ internal static partial class UiSurfaceChecks
                 // while the unresolved event branch leaves only gold unknown.
                 var uncertain = Fixture("JUNGLE_MAZE_ADVENTURE", goldBudget: 0);
                 var snap = uncertain.Snapshot!;
-                var state = snap.Run.Working with { Maps = snap.Run.Working.Maps.Select(map => map.Act != act + 1 ? map : map with
+                var state = snap.State with { Maps = snap.State.Maps.Select(map => map.Act != act + 1 ? map : map with
                     { Map = map.Map with { Points = map.Map.Points.Select(point => point.Position == suffix ? point with
                         { Type = MapPointType.Shop } : point).ToArray() } }).ToImmutableArray() };
                 typeof(InRunMapPredictionSession).GetProperty(nameof(InRunMapPredictionSession.Snapshot), members)!
-                    .SetValue(uncertain, snap with { Run = new(snap.Run.Context, state) });
+                    .SetValue(uncertain, snap with { Context = snap.Context, State = state, CombatDefaults = new(), AutomaticRewardPickup = true });
                 uncertain.Recompute();
                 var source = uncertain.Nodes[(act, first)];
                 var consumer = uncertain.Nodes[(act, suffix)];
@@ -1510,7 +1512,7 @@ internal static partial class UiSurfaceChecks
                 var anchorData = new InRunMapNodePresenter(anchoring, names, text).Detail((act, first))!;
                 await CheckDrawingSourceAnchoring(root, output, screen, details, anchorData, language,
                     () => signature() + "|" + JsonSerializer.Serialize(anchoring.Plans) + "|" + JsonSerializer.Serialize(anchoring.Forecast), Require);
-                Require(JsonSerializer.Serialize(session.Snapshot.Run.Working) == caller && signature() == before &&
+                Require(JsonSerializer.Serialize(session.Snapshot.State) == caller && signature() == before &&
                     JsonSerializer.Serialize(production.Plans) == productionPlans, "projection and edits preserve caller and native state/" + language);
             }
             File.WriteAllText(Path.Combine(output, "shop-gold-result.json"), JsonSerializer.Serialize(new {
@@ -1525,7 +1527,7 @@ internal static partial class UiSurfaceChecks
             void Require(bool value, string message) { focusedChecks++; check(value, "ShopTreasurePremises: " + message); }
             async Task Render(InRunMapPredictionSession session, InRunMapNodeDetailData data, string label, bool expand = false)
             {
-                string caller = JsonSerializer.Serialize(session.Snapshot!.Run.Working), plans = JsonSerializer.Serialize(session.Plans);
+                string caller = JsonSerializer.Serialize(session.Snapshot!.State), plans = JsonSerializer.Serialize(session.Plans);
                 var forecast = session.Forecast;
                 long revision = session.Revision;
                 int history = session.HistoryCount;
@@ -1539,7 +1541,7 @@ internal static partial class UiSurfaceChecks
                     expansion!.EmitSignal(Button.SignalName.Pressed);
                     await Layout();
                 }
-                Require(JsonSerializer.Serialize(session.Snapshot.Run.Working) == caller && JsonSerializer.Serialize(session.Plans) == plans &&
+                Require(JsonSerializer.Serialize(session.Snapshot.State) == caller && JsonSerializer.Serialize(session.Plans) == plans &&
                     ReferenceEquals(session.Forecast, forecast) && session.Revision == revision && session.HistoryCount == history && signature() == before,
                     label + " rendering preserves caller, plans, forecast, revision, history and native game");
             }
@@ -1549,10 +1551,10 @@ internal static partial class UiSurfaceChecks
                 var text = JsonUiTextProvider.CreatePredictorUi13(language);
                 string R(string key) => text.Get("predictor.runtime." + key);
                 string M(string key) => text.Get("predictor.map." + key);
-                int act = captured.Run.Working.Position.Act - 1;
+                int act = captured.State.Position.Act - 1;
                 var location = (act, first);
                 var shop = Fixture("ABYSSAL_BATHS", shop: true);
-                string shopCaller = JsonSerializer.Serialize(shop.Snapshot!.Run.Working);
+                string shopCaller = JsonSerializer.Serialize(shop.Snapshot!.State);
                 var shopPresenter = new InRunMapNodePresenter(shop, names, text);
                 var shopData = shopPresenter.Detail(location)!;
                 MainOnly(shopData, "initial shop/" + language);
@@ -1588,7 +1590,7 @@ internal static partial class UiSurfaceChecks
                 details.CloseHover();
 
                 var removalSession = Fixture("ABYSSAL_BATHS", shop: true);
-                string removalCaller = JsonSerializer.Serialize(removalSession.Snapshot!.Run.Working);
+                string removalCaller = JsonSerializer.Serialize(removalSession.Snapshot!.State);
                 var removalPresenter = new InRunMapNodePresenter(removalSession, names, text);
                 var removalData = removalPresenter.Detail(location)!;
                 bool BeginRemoval()
@@ -1617,7 +1619,7 @@ internal static partial class UiSurfaceChecks
                 details.CloseHover();
 
                 var poor = Fixture("ABYSSAL_BATHS", shop: true, goldBudget: 0);
-                string poorCaller = JsonSerializer.Serialize(poor.Snapshot!.Run.Working);
+                string poorCaller = JsonSerializer.Serialize(poor.Snapshot!.State);
                 var poorData = new InRunMapNodePresenter(poor, names, text).Detail(location)!;
                 var poorTiles = poorData.Sections.Single(section => section.ItemFlow).Choices;
                 var unaffordable = poor.Nodes[location].Shop!.Offers.Where(offer => offer.Affordable == false).ToArray();
@@ -1629,7 +1631,7 @@ internal static partial class UiSurfaceChecks
                 details.CloseHover();
 
                 var chest = Fixture("ABYSSAL_BATHS", treasure: true, treasureRelic: "GORGET");
-                string chestCaller = JsonSerializer.Serialize(chest.Snapshot!.Run.Working);
+                string chestCaller = JsonSerializer.Serialize(chest.Snapshot!.State);
                 var chestPresenter = new InRunMapNodePresenter(chest, names, text);
                 var chestData = chestPresenter.Detail(location)!;
                 Require(chest.Nodes[location].Treasure!.OfferedRelic?.Entry == "GORGET", "ordinary chest has its actual simple relic/" + language);
@@ -1649,7 +1651,7 @@ internal static partial class UiSurfaceChecks
                 details.CloseHover();
 
                 var targetChest = Fixture("ABYSSAL_BATHS", treasure: true);
-                string targetCaller = JsonSerializer.Serialize(targetChest.Snapshot!.Run.Working);
+                string targetCaller = JsonSerializer.Serialize(targetChest.Snapshot!.State);
                 var targetPresenter = new InRunMapNodePresenter(targetChest, names, text);
                 var targetData = targetPresenter.Detail(location)!;
                 Require(targetChest.Nodes[location].Treasure!.OfferedRelic?.Entry == "POMANDER" &&
@@ -1676,9 +1678,9 @@ internal static partial class UiSurfaceChecks
                     targetChest.Nodes[(act, suffix)].Rewards.Any(reward => reward.Kind == PredictorRewardKind.Card && reward.IsKnown),
                     "target chest clear restores targetless continuation with independent suffix rewards/" + language);
                 details.CloseHover();
-                Require(JsonSerializer.Serialize(shop.Snapshot.Run.Working) == shopCaller &&
-                    JsonSerializer.Serialize(removalSession.Snapshot.Run.Working) == removalCaller && JsonSerializer.Serialize(poor.Snapshot.Run.Working) == poorCaller &&
-                    JsonSerializer.Serialize(chest.Snapshot.Run.Working) == chestCaller && JsonSerializer.Serialize(targetChest.Snapshot.Run.Working) == targetCaller,
+                Require(JsonSerializer.Serialize(shop.Snapshot.State) == shopCaller &&
+                    JsonSerializer.Serialize(removalSession.Snapshot.State) == removalCaller && JsonSerializer.Serialize(poor.Snapshot.State) == poorCaller &&
+                    JsonSerializer.Serialize(chest.Snapshot.State) == chestCaller && JsonSerializer.Serialize(targetChest.Snapshot.State) == targetCaller,
                     "shop and chest detached edits preserve every caller state/" + language);
             }
             Require(signature() == before && JsonSerializer.Serialize(production.Plans) == productionPlans,
@@ -1717,9 +1719,9 @@ internal static partial class UiSurfaceChecks
             foreach (string language in new[] { "zh", "en" })
             {
                 var text = JsonUiTextProvider.CreatePredictorUi13(language);
-                int act = captured.Run.Working.Position.Act - 1;
+                int act = captured.State.Position.Act - 1;
                 var ordinary = Fixture("ABYSSAL_BATHS", rest: true, ordinaryRest: true);
-                string ordinaryCaller = JsonSerializer.Serialize(ordinary.Snapshot!.Run.Working);
+                string ordinaryCaller = JsonSerializer.Serialize(ordinary.Snapshot!.State);
                 var ordinaryPresenter = new InRunMapNodePresenter(ordinary, names, text);
                 var smith = ordinaryPresenter.Detail((act, first))!;
                 var smithTarget = AllChoices(smith.Premises?.Sections ?? []).First(choice => choice.Enabled && choice.Object?.CardSnapshot != null);
@@ -1739,10 +1741,10 @@ internal static partial class UiSurfaceChecks
                     "ordinary completed no-target Heal has no premise/" + language);
                 await Render(healed, "ordinary no-target Heal/" + language);
                 details.CloseHover();
-                Require(JsonSerializer.Serialize(ordinary.Snapshot.Run.Working) == ordinaryCaller, "ordinary edits preserve caller/" + language);
+                Require(JsonSerializer.Serialize(ordinary.Snapshot.State) == ordinaryCaller, "ordinary edits preserve caller/" + language);
 
                 var tent = Fixture("ABYSSAL_BATHS", rest: true);
-                string tentCaller = JsonSerializer.Serialize(tent.Snapshot!.Run.Working);
+                string tentCaller = JsonSerializer.Serialize(tent.Snapshot!.State);
                 Require(tent.SetPlan(act, first, new PredictorPlannedNode(tent.Nodes[(act, first)].Position.NodeId)
                     { RestActions = [new(PredictorRestAction.Smith), new(PredictorRestAction.Heal) { MaximumHp = 80 }], LeaveRest = true }),
                     "Tent has its actual two-action plan/" + language);
@@ -1755,7 +1757,7 @@ internal static partial class UiSurfaceChecks
                 var tentTarget = AllChoices(tentDetail.Premises?.Sections ?? []).First(choice => choice.Enabled && choice.Object?.CardSnapshot != null);
                 Require(tentPresenter.ApplyChoice(tentDetail.NodeId, tentTarget.Id) && tent.GetPlan(act, first) is
                     { RestActions.Length: 2 } updated && updated.RestActions[0].SmithCard != null && updated.RestActions[1].Action == PredictorRestAction.Heal &&
-                    JsonSerializer.Serialize(tent.Snapshot.Run.Working) == tentCaller, "Tent optional Smith target preserves Heal suffix and caller/" + language);
+                    JsonSerializer.Serialize(tent.Snapshot.State) == tentCaller, "Tent optional Smith target preserves Heal suffix and caller/" + language);
 
                 var ancientPoint = new MapPosition(3, 0);
                 foreach (string gift in new[] { "ARCANE_SCROLL", "HEFTY_TABLET", "SCROLL_BOXES", "SEA_GLASS", "PAELS_TOOTH" })
@@ -1763,7 +1765,7 @@ internal static partial class UiSurfaceChecks
                     bool pael = gift == "PAELS_TOOTH", sea = gift == "SEA_GLASS";
                     int ancientAct = pael || sea ? 1 : 0;
                     var session = pael ? AncientFixture(pael: true) : sea ? AncientFixture() : AncientFixture(gift);
-                    string caller = JsonSerializer.Serialize(session.Snapshot!.Run.Working);
+                    string caller = JsonSerializer.Serialize(session.Snapshot!.State);
                     var presenter = new InRunMapNodePresenter(session, names, text);
                     var data = presenter.Detail((ancientAct, ancientPoint))!;
                     Require(data.Premises == null, gift + " before selection has no supplemental input/" + language);
@@ -1812,7 +1814,7 @@ internal static partial class UiSurfaceChecks
                                 "Hefty optional target is saved/" + language);
                     }
                     details.CloseHover();
-                    Require(JsonSerializer.Serialize(session.Snapshot.Run.Working) == caller, gift + " preserves caller state/" + language);
+                    Require(JsonSerializer.Serialize(session.Snapshot.State) == caller, gift + " preserves caller state/" + language);
                 }
             }
             Require(signature() == before && JsonSerializer.Serialize(production.Plans) == productionPlans,
@@ -1838,12 +1840,12 @@ internal static partial class UiSurfaceChecks
                 details.ShowNode(data with { IsCurrent = null }, new(120, 230, 56, 56), screen.GetGlobalRect());
                 await Layout();
             }
-            int act = captured.Run.Working.Position.Act - 1;
+            int act = captured.State.Position.Act - 1;
             foreach (string language in new[] { "zh", "en" })
             {
                 var text = JsonUiTextProvider.CreatePredictorUi13(language);
                 var shop = Fixture("ABYSSAL_BATHS", shop: true);
-                string caller = JsonSerializer.Serialize(shop.Snapshot!.Run.Working);
+                string caller = JsonSerializer.Serialize(shop.Snapshot!.State);
                 var presenter = new InRunMapNodePresenter(shop, names, text);
                 var data = presenter.Detail((act, first))!;
                 var offer = shop.Nodes[(act, first)].Shop!.Offers.First(item => item.IsKnown && item.Affordable == true &&
@@ -1858,7 +1860,7 @@ internal static partial class UiSurfaceChecks
                 await Layout();
                 var overlay = (NeowOperationOverlay)DiagnosticField(details, "_optionPreview");
                 Require(overlay.IsVisibleInTree() && VisibleText(overlay).Any(line => line.Contains(offer.Value!.Cost + "G", StringComparison.Ordinal)) &&
-                    !HasGenericPending(VisibleText(overlay)) && shop.Plans.IsEmpty && JsonSerializer.Serialize(shop.Snapshot.Run.Working) == caller,
+                    !HasGenericPending(VisibleText(overlay)) && shop.Plans.IsEmpty && JsonSerializer.Serialize(shop.Snapshot.State) == caller,
                     "actual successful shop hover displays stock and price without a false missing-input warning or authoring state/" + language);
 
                 // Controlled presentation DTO: a specific localized reward cause,
@@ -2045,7 +2047,7 @@ internal static partial class UiSurfaceChecks
             foreach (string language in new[] { "zh", "en" })
             {
                 var text = JsonUiTextProvider.CreatePredictorUi13(language);
-                int act = captured.Run.Working.Position.Act - 1;
+                int act = captured.State.Position.Act - 1;
                 var session = Fixture("ABYSSAL_BATHS");
                 var presenter = new InRunMapNodePresenter(session, names, text);
                 check(session.Nodes.Count == 2 && session.Nodes[(act, first)].Advanced &&
@@ -2057,7 +2059,7 @@ internal static partial class UiSurfaceChecks
                     "optional deck/health event exposes branches without an empty or duplicate premise panel in " + language);
 
                 var doorsSession = Fixture("DOORS_OF_LIGHT_AND_DARK");
-                string doorsCaller = JsonSerializer.Serialize(doorsSession.Snapshot!.Run.Working);
+                string doorsCaller = JsonSerializer.Serialize(doorsSession.Snapshot!.State);
                 var doorsPresenter = new InRunMapNodePresenter(doorsSession, names, text);
                 var doorsDetail = doorsPresenter.Detail((act, first))!;
                 var doorsNode = doorsSession.Nodes[(act, first)].Event!;
@@ -2124,7 +2126,7 @@ internal static partial class UiSurfaceChecks
                 check(doorsDetail.Premises == null &&
                     AllChoices(doorsDetail.Sections).Any(choice => choice.Selected && choice.Object?.CardSnapshot?.Id == removedCard.Id) &&
                     doorsSession.Nodes[(act, suffix)].Rewards.Any(reward => reward.Kind == PredictorRewardKind.Card && reward.IsKnown) &&
-                    JsonSerializer.Serialize(doorsSession.Snapshot.Run.Working) == doorsCaller,
+                    JsonSerializer.Serialize(doorsSession.Snapshot.State) == doorsCaller,
                     "Doors saved removal feedback and independent real rewards survive recreation without mutating the captured state in " + language);
                 var adoptedDark = AllChoices(doorsDetail.Sections).Single(choice => choice.Preview?.OptionKey == "DARK");
                 check(doorsPresenter.ApplyChoice(doorsDetail.NodeId, adoptedDark.Id) &&
@@ -2135,14 +2137,14 @@ internal static partial class UiSurfaceChecks
                 foreach (string entry in new[] { "TABLET_OF_TRUTH", "SELF_HELP_BOOK", "AROMA_OF_CHAOS" })
                 {
                     var deckSession = Fixture(entry);
-                    string deckCaller = JsonSerializer.Serialize(deckSession.Snapshot!.Run.Working);
+                    string deckCaller = JsonSerializer.Serialize(deckSession.Snapshot!.State);
                     var deckDetail = new InRunMapNodePresenter(deckSession, names, text).Detail((act, first))!;
                     check(deckSession.GetPlan(act, first) == null && deckDetail.Premises == null &&
                         deckDetail.Sections.Where(section => section.BranchRow).SelectMany(section => section.Choices).Any() &&
                         deckDetail.Sections.Where(section => section.OutcomePreview != null)
                             .SelectMany(section => PreviewRows(section.OutcomePreview!)).All(row => row.Cards.IsEmpty) &&
                         deckSession.Nodes[(act, suffix)].Rewards.Any(reward => reward.Kind == PredictorRewardKind.Card && reward.IsKnown) &&
-                        JsonSerializer.Serialize(deckSession.Snapshot.Run.Working) == deckCaller,
+                        JsonSerializer.Serialize(deckSession.Snapshot.State) == deckCaller,
                         "unselected " + entry + " exposes branches without irrelevant target inputs, while retaining real suffix rewards and caller state in " + language);
                 }
                 if (doorsOnly) continue;
@@ -2187,7 +2189,7 @@ internal static partial class UiSurfaceChecks
 
                 // This bounded display fixture uses the captured native catalog
                 // prototype. It does not claim SpoilsMap was generated here.
-                var spoilsCard = captured.Run.Context.Catalog!.CardDefinitions.Single(definition =>
+                var spoilsCard = captured.Context.Catalog!.CardDefinitions.Single(definition =>
                     definition.Prototype.Key.Entry == "SPOILS_MAP").Prototype;
                 var spoilsObject = new InRunMapDetailObject(spoilsCard.Key, GameContentKind.Card)
                     { CardSnapshot = spoilsCard };
@@ -2473,10 +2475,10 @@ internal static partial class UiSurfaceChecks
                 var ancientPoint = new MapPosition(3, 0); var ancientSuffix = new MapPosition(3, 1);
                 var orobasPresenter = new InRunMapNodePresenter(orobasSession, names, text);
                 var orobasDetail = orobasPresenter.Detail((1, ancientPoint))!;
-                string orobasCaller = JsonSerializer.Serialize(orobasSession.Snapshot!.Run.Working);
+                string orobasCaller = JsonSerializer.Serialize(orobasSession.Snapshot!.State);
                 var gifts = orobasDetail.Sections.Select(section => section.HeaderChoice).OfType<InRunMapDetailChoice>()
                     .Where(choice => choice.Object?.Kind == GameContentKind.Relic && choice.Enabled).ToArray();
-                check(gifts.Length == 3 && orobasSession.Snapshot.Run.Working.Visits.IsEmpty &&
+                check(gifts.Length == 3 && orobasSession.Snapshot.State.Visits.IsEmpty &&
                     gifts.Select(choice => choice.Object!.Key.Entry).ToHashSet().SetEquals(["SEA_GLASS", "DRIFTWOOD", "ARCHAIC_TOOTH"]),
                     "controlled native-catalog Orobas fixture exposes all three real gifts before caller entry in " + language);
                 var toothSection = orobasDetail.Sections.Single(section => section.HeaderChoice?.Object?.Key.Entry == "ARCHAIC_TOOTH");
@@ -2576,7 +2578,7 @@ internal static partial class UiSurfaceChecks
                     orobasSession.Nodes[(1, ancientPoint)].Cards.Count(card => card.IsKnown) == seaDeckBefore + 1 &&
                     orobasSession.Nodes[(1, ancientSuffix)].Rewards.Any(reward => reward.Kind == PredictorRewardKind.Card && reward.IsKnown),
                     "confirming Sea Glass backfill takes exactly the authored real card and preserves the known suffix in " + language);
-                check(JsonSerializer.Serialize(orobasSession.Snapshot.Run.Working) == orobasCaller &&
+                check(JsonSerializer.Serialize(orobasSession.Snapshot.State) == orobasCaller &&
                     !orobasPresenter.ApplyChoice(orobasDetail.NodeId, confirmSea.Id),
                     "Orobas UI hypotheses preserve caller state and reject superseded child callbacks in " + language);
                 orobasDetail = orobasPresenter.Detail((1, ancientPoint))!;
@@ -2589,7 +2591,7 @@ internal static partial class UiSurfaceChecks
                 var leafySession = AncientFixture("LEAFY_POULTICE");
                 var leafyPresenter = new InRunMapNodePresenter(leafySession, names, text);
                 var leafyDetail = leafyPresenter.Detail((0, ancientPoint))!;
-                string leafyCaller = JsonSerializer.Serialize(leafySession.Snapshot!.Run.Working);
+                string leafyCaller = JsonSerializer.Serialize(leafySession.Snapshot!.State);
                 var chooseLeafy = leafyDetail.Sections.Select(section => section.HeaderChoice).OfType<InRunMapDetailChoice>()
                     .Single(choice => choice.Object?.Key.Entry == "LEAFY_POULTICE");
                 check(chooseLeafy.Enabled && leafyPresenter.ApplyChoice(leafyDetail.NodeId, chooseLeafy.Id) &&
@@ -2603,11 +2605,11 @@ internal static partial class UiSurfaceChecks
                 check(leafyEffect.Kind == PredictorObtainHealthEffectKind.LoseMaxHp && leafyEffect.Amount == 12 &&
                     leafyEffect.Address.SourceId == leafyRelic.Id && !leafyEffect.PendingCauses.IsEmpty,
                     "Leafy health display retains its actual receipt address, twelve maximum-HP loss and unsettled settlement causes in " + language);
-                var leafyOriginal = leafySession.Snapshot.Run.Working;
+                var leafyOriginal = leafySession.Snapshot.State;
                 var leafyBasics = leafyOriginal.Deck.Select(leafyOriginal.Card).Where(card =>
-                    leafySession.Snapshot.Run.Context.Catalog!.CardDefinitions.Any(definition =>
+                    leafySession.Snapshot.Context.Catalog!.CardDefinitions.Any(definition =>
                         definition.Prototype.Key == card.Key && definition.Rarity == "Basic")).ToArray();
-                bool LeafyFamily(PredictorCard card, bool strike) => leafySession.Snapshot.Run.Context.Catalog!.CardDefinitions.Any(definition =>
+                bool LeafyFamily(PredictorCard card, bool strike) => leafySession.Snapshot.Context.Catalog!.CardDefinitions.Any(definition =>
                     definition.Prototype.Key == card.Key && (strike ? definition.IsStrike : definition.IsDefend));
                 var leafyTargets = new[] { leafyBasics.FirstOrDefault(card => LeafyFamily(card, true))?.Id,
                     leafyBasics.FirstOrDefault(card => LeafyFamily(card, false))?.Id }.OfType<long>().ToHashSet();
@@ -2616,7 +2618,7 @@ internal static partial class UiSurfaceChecks
                         leafyNode.Cards.Any(card => card.IsKnown && card.Value == leafyOriginal.Card(id))) &&
                     leafyNode.Cards.Length == leafyOriginal.Deck.Length &&
                     leafySession.Nodes[(0, ancientSuffix)].Rewards.Any(reward => reward.Kind == PredictorRewardKind.Card && reward.IsKnown) &&
-                    JsonSerializer.Serialize(leafySession.Snapshot.Run.Working) == leafyCaller,
+                    JsonSerializer.Serialize(leafySession.Snapshot.State) == leafyCaller,
                     "Leafy executes real independent starter transformations and keeps the suffix known while preserving caller health/state in " + language);
                 leafyDetail = leafyPresenter.Detail((0, ancientPoint))!;
                 string leafyHealthText = text.Format("predictor.map.obtain_health.lose_max_hp", 12);
@@ -2639,8 +2641,8 @@ internal static partial class UiSurfaceChecks
                 var tabletSession = AncientFixture("HEFTY_TABLET");
                 var tabletPresenter = new InRunMapNodePresenter(tabletSession, names, text);
                 var tabletDetail = tabletPresenter.Detail((0, ancientPoint))!;
-                string tabletCaller = JsonSerializer.Serialize(tabletSession.Snapshot!.Run.Working);
-                int originalInjuries = tabletSession.Snapshot.Run.Working.Deck.Count(id => tabletSession.Snapshot.Run.Working.Card(id).Key.Entry == "INJURY");
+                string tabletCaller = JsonSerializer.Serialize(tabletSession.Snapshot!.State);
+                int originalInjuries = tabletSession.Snapshot.State.Deck.Count(id => tabletSession.Snapshot.State.Card(id).Key.Entry == "INJURY");
                 var chooseTablet = tabletDetail.Sections.Select(section => section.HeaderChoice).OfType<InRunMapDetailChoice>()
                     .Single(choice => choice.Object?.Key.Entry == "HEFTY_TABLET");
                 check(tabletPresenter.ApplyChoice(tabletDetail.NodeId, chooseTablet.Id) &&
@@ -2681,7 +2683,7 @@ internal static partial class UiSurfaceChecks
                     tabletSession.Nodes[(0, ancientPoint)].Ancient!.OptionalCards!.SelectedIndices.IsEmpty &&
                     tabletSession.Nodes[(0, ancientPoint)].Cards.Count(card => card.IsKnown && card.Value.Key.Entry == "INJURY") == originalInjuries + 1 &&
                     tabletSession.Nodes[(0, ancientSuffix)].Rewards.Any(reward => reward.Kind == PredictorRewardKind.Card && reward.IsKnown) &&
-                    JsonSerializer.Serialize(tabletSession.Snapshot.Run.Working) == tabletCaller,
+                    JsonSerializer.Serialize(tabletSession.Snapshot.State) == tabletCaller,
                     "cancelling Hefty Tablet authors the real null single-card child, keeps mandatory Injury singular and preserves suffix/caller in " + language);
 
                 // Controlled pre-entry geometry, actual PAEL generator and offer.
@@ -2690,7 +2692,7 @@ internal static partial class UiSurfaceChecks
                 var paelSession = AncientFixture(pael: true);
                 var paelPresenter = new InRunMapNodePresenter(paelSession, names, text);
                 var paelDetail = paelPresenter.Detail((1, ancientPoint))!;
-                string paelCaller = JsonSerializer.Serialize(paelSession.Snapshot!.Run.Working);
+                string paelCaller = JsonSerializer.Serialize(paelSession.Snapshot!.State);
                 var choosePaelTooth = paelDetail.Sections.Select(section => section.HeaderChoice).OfType<InRunMapDetailChoice>()
                     .Single(choice => choice.Object?.Key.Entry == "PAELS_TOOTH");
                 check(choosePaelTooth.Enabled && paelPresenter.ApplyChoice(paelDetail.NodeId, choosePaelTooth.Id) &&
@@ -2807,7 +2809,7 @@ internal static partial class UiSurfaceChecks
                     paelSession.Nodes[(1, ancientPoint)].Inventory!.Relics.Single(relic => relic.Value.Key.Entry == "PAELS_TOOTH").Value.StoredCards.IsEmpty &&
                     paelSession.Nodes[(1, ancientSuffix)].Advanced &&
                     paelSession.Nodes[(1, ancientSuffix)].Rewards.Any(reward => reward.Kind == PredictorRewardKind.Card && reward.IsKnown) &&
-                    JsonSerializer.Serialize(paelSession.Snapshot.Run.Working) == paelCaller,
+                    JsonSerializer.Serialize(paelSession.Snapshot.State) == paelCaller,
                     "clearing Pael precise storage restores targetless continuation, keeps parent/source and independent rewards, rejects stale confirmation and preserves caller state in " + language);
                 check(PaelSelected(paelPresenter.Detail((1, ancientPoint))!).Length == 0 &&
                     PaelSelected(new InRunMapNodePresenter(paelSession, names, text).Detail((1, ancientPoint))!).Length == 0 &&
@@ -2817,7 +2819,7 @@ internal static partial class UiSurfaceChecks
                 var arcaneSession = AncientFixture("ARCANE_SCROLL");
                 var arcanePresenter = new InRunMapNodePresenter(arcaneSession, names, text);
                 var arcaneDetail = arcanePresenter.Detail((0, ancientPoint))!;
-                string arcaneCaller = JsonSerializer.Serialize(arcaneSession.Snapshot!.Run.Working);
+                string arcaneCaller = JsonSerializer.Serialize(arcaneSession.Snapshot!.State);
                 var chooseArcane = AllChoices(arcaneDetail.Sections).Single(choice => choice.Object?.Key.Entry == "ARCANE_SCROLL");
                 check(arcanePresenter.ApplyChoice(arcaneDetail.NodeId, chooseArcane.Id) && arcaneSession.Nodes[(0, ancientPoint)].Advanced,
                     "the actual Arcane Scroll gift is adopted before direct generated results are displayed in " + language);
@@ -2834,7 +2836,7 @@ internal static partial class UiSurfaceChecks
                 await Layout();
                 check(arcaneOutcome.AddedCards.All(added => TopCards().Any(shown => shown.Id == added.Id && shown.Key == added.Key)) &&
                     arcaneSession.Nodes[(0, ancientSuffix)].Rewards.Any(reward => reward.IsKnown && reward.Kind == PredictorRewardKind.Card) &&
-                    JsonSerializer.Serialize(arcaneSession.Snapshot.Run.Working) == arcaneCaller,
+                    JsonSerializer.Serialize(arcaneSession.Snapshot.State) == arcaneCaller,
                     "the known Arcane Scroll result reaches the actual main card surface while suffix and caller state stay valid in " + language);
                 using (var image = root.GetViewport().GetTexture().GetImage())
                     image.SavePng(Path.Combine(output, "drawing-arcane-scroll-result-" + language + ".png"));
@@ -2843,7 +2845,7 @@ internal static partial class UiSurfaceChecks
                 var boxesSession = AncientFixture("SCROLL_BOXES");
                 var boxesPresenter = new InRunMapNodePresenter(boxesSession, names, text);
                 var boxesDetail = boxesPresenter.Detail((0, ancientPoint))!;
-                string boxesCaller = JsonSerializer.Serialize(boxesSession.Snapshot!.Run.Working);
+                string boxesCaller = JsonSerializer.Serialize(boxesSession.Snapshot!.State);
                 var chooseBoxes = AllChoices(boxesDetail.Sections).Single(choice => choice.Object?.Key.Entry == "SCROLL_BOXES");
                 check(boxesPresenter.ApplyChoice(boxesDetail.NodeId, chooseBoxes.Id) && boxesSession.Nodes[(0, ancientPoint)].Advanced &&
                     boxesSession.Nodes[(0, ancientSuffix)].Advanced &&
@@ -2855,7 +2857,9 @@ internal static partial class UiSurfaceChecks
                 InRunMapDetailSection BoxSection(InRunMapNodeDetailData data, int index) => data.Sections.Single(section => section.StableId == "ancient-bundle-" + index);
                 check(boxesDefault.SelectedBundle == null && boxesDefault.Choice.Bundles.Length == 2 &&
                     boxesSession.GetPlan(0, ancientPoint)!.Ancient!.Children.IsEmpty &&
-                    boxesDetail.Sections.Any(section => section.StableId == "ancient-bundle-unselected") &&
+                    // The existing notices fixture also requires the two live
+                    // choices to express this state without a redundant paragraph.
+                    !boxesDetail.Sections.Any(section => section.StableId == "ancient-bundle-unselected") &&
                     new[] { 0, 1 }.All(index => BoxSection(boxesDetail, index).LargeCardResults &&
                         !BoxSection(boxesDetail, index).Choices.Single().Selected &&
                         BoxSection(boxesDetail, index).Objects.Select(item => item.CardSnapshot).SequenceEqual(boxesDefault.Choice.Bundles[index])) &&
@@ -2897,13 +2901,13 @@ internal static partial class UiSurfaceChecks
                     boxesSession.GetPlan(0, ancientPoint)!.Ancient!.Children.IsEmpty &&
                     boxesSession.Nodes[(0, ancientPoint)].Ancient!.BundleChoice!.SelectedBundle == null &&
                     boxesSession.Nodes[(0, ancientSuffix)].Advanced &&
-                    JsonSerializer.Serialize(boxesSession.Snapshot.Run.Working) == boxesCaller,
+                    JsonSerializer.Serialize(boxesSession.Snapshot.State) == boxesCaller,
                     "clearing Scroll Boxes returns to a truthful unselected default, rejects superseded callbacks and preserves caller state in " + language);
 
                 var pomanderSession = AncientFixture("POMANDER");
                 var pomanderPresenter = new InRunMapNodePresenter(pomanderSession, names, text);
                 var pomanderDetail = pomanderPresenter.Detail((0, ancientPoint))!;
-                string pomanderCaller = JsonSerializer.Serialize(pomanderSession.Snapshot!.Run.Working);
+                string pomanderCaller = JsonSerializer.Serialize(pomanderSession.Snapshot!.State);
                 var choosePomander = AllChoices(pomanderDetail.Sections).Single(choice => choice.Object?.Key.Entry == "POMANDER");
                 check(pomanderPresenter.ApplyChoice(pomanderDetail.NodeId, choosePomander.Id) && pomanderSession.Nodes[(0, ancientPoint)].Advanced,
                     "actual Pomander gift adoption continues before optional target precision is supplied in " + language);
@@ -2929,7 +2933,7 @@ internal static partial class UiSurfaceChecks
                     !PomanderSelected(new InRunMapNodePresenter(pomanderSession, names, text).Detail((0, ancientPoint))!) &&
                     JsonSerializer.Serialize(pomanderSession.GetPlan(0, ancientPoint)!.Ancient) == pomanderParent &&
                     pomanderSession.Nodes[(0, ancientSuffix)].Rewards.Any(reward => reward.IsKnown && reward.Kind == PredictorRewardKind.Card) &&
-                    JsonSerializer.Serialize(pomanderSession.Snapshot.Run.Working) == pomanderCaller,
+                    JsonSerializer.Serialize(pomanderSession.Snapshot.State) == pomanderCaller,
                     "clearing Pomander removes saved and cached target feedback while preserving its true parent, independent suffix and caller state in " + language);
 
                 foreach (var directCase in new[] { (Entry: "TRASH_HEAP", Option: "GRAB"), (Entry: "TEA_MASTER", Option: "BONE_TEA") })
@@ -2937,17 +2941,17 @@ internal static partial class UiSurfaceChecks
                     var directSession = Fixture(directCase.Entry);
                     var directPresenter = new InRunMapNodePresenter(directSession, names, text);
                     var directDetail = directPresenter.Detail((act, first))!;
-                    string directCaller = JsonSerializer.Serialize(directSession.Snapshot!.Run.Working);
-                    var directChoice = AllChoices(directDetail.Sections.Concat(directDetail.Premises!.Sections))
+                    string directCaller = JsonSerializer.Serialize(directSession.Snapshot!.State);
+                    var directChoice = AllChoices(directDetail.Sections.Concat(directDetail.Premises?.Sections ?? []))
                         .First(choice => choice.Enabled && choice.Preview?.OptionKey == directCase.Option);
                     check(directPresenter.ApplyChoice(directDetail.NodeId, directChoice.Id) && directSession.Nodes[(act, first)].Advanced,
                         "the actual " + directCase.Entry + " branch is adopted without losing its direct acquisition in " + language);
                     directDetail = directPresenter.Detail((act, first))!;
                     var directOutcome = directDetail.Sections.Single(section => section.StableId == directDetail.NodeId + "|event-applied-outcome").OutcomePreview!;
                     var directNode = directSession.Nodes[(act, first)];
-                    var originalCardIds = directSession.Snapshot.Run.Working.Deck.ToHashSet();
+                    var originalCardIds = directSession.Snapshot.State.Deck.ToHashSet();
                     var directAddedCards = directNode.Cards.Where(item => item.IsKnown && !originalCardIds.Contains(item.Value.Id)).Select(item => item.Value).ToArray();
-                    var originalRelicIds = directSession.Snapshot.Run.Working.Relics.Select(item => item.Id).ToHashSet();
+                    var originalRelicIds = directSession.Snapshot.State.Relics.Select(item => item.Id).ToHashSet();
                     var directAddedRelics = directNode.Inventory!.Relics.Where(item => item.IsKnown && !originalRelicIds.Contains(item.Value.Id)).Select(item => item.Value.Key).ToArray();
                     check(directCase.Entry == "TRASH_HEAP"
                         ? directAddedCards.Length != 0 && directAddedCards.All(item => PreviewRows(directOutcome)
@@ -2969,7 +2973,7 @@ internal static partial class UiSurfaceChecks
                         "the actual adopted " + directCase.Entry + " result remains visible with premises collapsed in " + language);
                     using (var image = root.GetViewport().GetTexture().GetImage())
                         image.SavePng(Path.Combine(output, "drawing-adopted-direct-" + directCase.Entry + "-" + language + ".png"));
-                    check(JsonSerializer.Serialize(directSession.Snapshot.Run.Working) == directCaller,
+                    check(JsonSerializer.Serialize(directSession.Snapshot.State) == directCaller,
                         "direct event outcome display preserves caller state in " + directCase.Entry + "/" + language);
                     details.CloseHover();
                 }
@@ -2980,7 +2984,7 @@ internal static partial class UiSurfaceChecks
                 var traderPresenter = new InRunMapNodePresenter(traderSession, names, text);
                 var traderDetail = traderPresenter.Detail((act, first))!;
                 var traderOption = traderSession.Nodes[(act, first)].Event!.EntryOptions.First(option => option.Value?.RelicId != null);
-                var traderLost = traderSession.Snapshot!.Run.Working.Relics.Single(item => item.Id == traderOption.Value!.RelicId).Key;
+                var traderLost = traderSession.Snapshot!.State.Relics.Single(item => item.Id == traderOption.Value!.RelicId).Key;
                 var traderChoice = AllChoices(traderDetail.Sections).Single(choice => choice.Preview?.OptionKey == traderOption.Key);
                 string traderLossText = text.Format("predictor.map.event_relic_lost", names.Resolve(traderLost, GameContentKind.Relic));
                 check(traderOption.LostRelic == traderLost && traderChoice.Preview!.Notices.Contains(traderLossText),
@@ -3111,9 +3115,13 @@ internal static partial class UiSurfaceChecks
                             "one actual relic receipt is displayed once and duplicate same-model receipts remain two in " + language +
                             "; actual=" + actualRelic + "; rewards=" + string.Join(',', nab.Rewards.Select(reward =>
                                 reward.Value?.Key + ":" + reward.Value?.Status)));
-                        check(NestedSections(eventDetail.Premises!.Sections).Sum(section =>
-                            section.Objects.Count(item => item.Kind == GameContentKind.Relic && item.Key == actualRelic)) == 1,
-                            "the actual unselected Punch Off NAB premise displays its single relic receipt once in " + language);
+                        var nabChoice = eventDetail.Sections.Where(section => section.BranchRow).SelectMany(section => section.Choices)
+                            .Single(choice => choice.Preview?.OptionKey == "NAB");
+                        var conditionalNab = nabChoice.PreviewFactory?.Invoke() ?? nabChoice.Preview;
+                        check(conditionalNab != null && Relics(conditionalNab) == 1 &&
+                            NestedSections(eventDetail.Premises?.Sections ?? []).Sum(section =>
+                                section.Objects.Count(item => item.Kind == GameContentKind.Relic && item.Key == actualRelic)) == 0,
+                            "the actual unselected Punch Off NAB main branch preview displays its single relic receipt once without a duplicate premise copy in " + language);
                     }
                     details.ShowNode(eventDetail with { IsCurrent = null }, new(new(650, 230), new(56, 56)), screen.GetGlobalRect());
                     await Layout();
@@ -3151,7 +3159,7 @@ internal static partial class UiSurfaceChecks
                     var actualSections = adopted.Sections.Where(section => section.StableId?.Contains("|reward|", StringComparison.Ordinal) == true).ToArray();
                     var actualIds = actualSections.Select(section => section.StableId).ToHashSet();
                     check(actualSections.Length == actualRewards.Length && actualIds.Count == actualSections.Length &&
-                        !adopted.Premises!.Sections.Any(section => actualIds.Contains(section.StableId)) &&
+                        !(adopted.Premises?.Sections ?? []).Any(section => actualIds.Contains(section.StableId)) &&
                         !adopted.Sections.Any(section => section.CombatPanel) &&
                         !actualSections.SelectMany(section => section.Choices).Any(choice => choice.Label == text.Get("predictor.runtime.plan.skip")),
                         "completed event owns each current reward once in the main panel without a separate combat panel or Skip buttons in " + entry + "/" + language);
@@ -3250,20 +3258,40 @@ internal static partial class UiSurfaceChecks
                         "; hover=" + details.HoverOpen + "; preview=" + ((Control)DiagnosticField(details, "_previewViewport")).Visible +
                         "; combat=" + (details.FindChild("EventCombatPanel", true, false) as Control)?.Visible);
                     var stableBeforePremises = details.HoverGlobalRegion;
-                    ((Button)details.FindChild("PremisesExpansion", true, false)!).EmitSignal(Button.SignalName.Pressed);
-                    await Layout();
+                    var premiseExpansion = details.FindChild("PremisesExpansion", true, false) as Button;
+                    if (adopted.Premises != null)
+                    {
+                        check(premiseExpansion != null, "actual optional event inputs retain their expansion control in " + entry + "/" + language);
+                        premiseExpansion!.EmitSignal(Button.SignalName.Pressed);
+                        await Layout();
+                    }
+                    else check(premiseExpansion == null, "an event without supplemental inputs creates no empty premise panel in " + entry + "/" + language);
                     check(details.HoverGlobalRegion.Position.IsEqualApprox(stableBeforePremises.Position) &&
                         Math.Abs(details.HoverGlobalRegion.Size.X - stableBeforePremises.Size.X) < 1,
-                        "expanding optional premises keeps the same main origin and reward-owned width in " + entry + "/" + language);
+                        "optional premise presentation keeps the same main origin and reward-owned width in " + entry + "/" + language);
                     using (var image = root.GetViewport().GetTexture().GetImage())
                         image.SavePng(Path.Combine(output, "drawing-event-" + entry + "-premises-" + language + ".png"));
                     check(CardGroups() == expectedGroups,
-                        "opening premises does not add a second copy of the adopted combat cards in " + entry + "/" + language);
+                        "optional premises do not add a second copy of the adopted combat cards in " + entry + "/" + language);
+                    var other = adopted.Sections.Where(section => section.BranchRow).SelectMany(section => section.Choices)
+                        .First(choice => choice.Enabled && !choice.Selected);
                     if (entry == "PUNCH_OFF")
-                        check(adopted.Premises!.Sections.SelectMany(section => section.Objects).Any(item => item.Key.Entry == "INJURY") &&
-                            HasVisibleName(details, new("CARD", "INJURY")) && TopCards().Length != 0 &&
-                            TopCards().All(card => card.Key.Entry != "INJURY"),
-                            "expanded Punch Off keeps the other branch Injury compact and current combat cards above the panel in " + language);
+                    {
+                        var otherPreview = other.PreviewFactory?.Invoke() ?? other.Preview;
+                        check(otherPreview != null && PreviewRows(otherPreview).SelectMany(row => row.Cards)
+                            .Concat(otherPreview.Branches.SelectMany(branch => branch.Sections).SelectMany(section => section.CardGroups)
+                                .SelectMany(group => group.Cards)).Any(card => card.Key.Entry == "INJURY"),
+                            "the actual unselected Punch Off NAB preview retains its original Injury result in " + language);
+                        VisibleChoice(other.Id)!.EmitSignal(Control.SignalName.MouseEntered);
+                        await Layout();
+                        check(Descendants(details).OfType<MegaCrit.Sts2.Core.Nodes.Cards.NCard>().Any(card =>
+                            card.IsVisibleInTree() && card.Model?.Id.Entry == "INJURY"),
+                            "the real unselected Punch Off hover renders the Injury result without adopting the branch in " + language);
+                        typeof(InRunMapNodeDetails).GetMethod("CloseOptionPreview", members)!.Invoke(details, null);
+                        await Layout();
+                        check(CardGroups() == expectedGroups && TopCards().Length != 0 && TopCards().All(card => card.Key.Entry != "INJURY"),
+                            "closing the unselected Punch Off hover restores only the adopted combat groups in " + language);
+                    }
                     else
                     {
                         var quest = actualSections.SelectMany(section => section.Choices).Single(choice =>
@@ -3273,8 +3301,6 @@ internal static partial class UiSurfaceChecks
                             quest.PreviewFactory?.Invoke() != null,
                             "actual Lantern Key receipt keeps its compact name and reward input while expanded premises add no quest face in " + language);
                     }
-                    var other = adopted.Sections.Where(section => section.BranchRow).SelectMany(section => section.Choices)
-                        .First(choice => choice.Enabled && !choice.Selected);
                     check(presenter.ApplyChoice(adopted.NodeId, other.Id),
                         "the retained business branch can still be changed after combat adoption in " + entry + "/" + language);
                     var changed = presenter.Detail((act, first))!;

@@ -36,7 +36,7 @@ internal static partial class CompatibilityChecks
         string unitFloat = GpuIntegerNumerics.UnitFloatSource;
         string source = NumericShaderSource(nextInt, unitFloat);
         NumericReadback actual;
-        await using (var context = new FamilyExecutionContext(requiresGpu: true))
+        await using (var context = new FilterRuntimeServices(requiresGpu: true))
             actual = await context.ExecuteGpuAsync(rd => ExecuteNumericProbe(rd, source, inputWords), CancellationToken.None);
 
         int integerFailures = 0, floatFailures = 0;

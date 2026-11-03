@@ -12,6 +12,7 @@ using MegaCrit.Sts2.Core.Models.CardPools;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Cards;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
+using MegaCrit.Sts2.Core.Nodes.HoverTips;
 using MegaCrit.Sts2.Core.Nodes.Potions;
 using MegaCrit.Sts2.Core.Nodes.Rewards;
 using MegaCrit.Sts2.Core.Nodes.Screens;
@@ -154,8 +155,8 @@ internal static partial class UiSurfaceChecks
             var recipes = new Dictionary<string, string[]>(StringComparer.Ordinal);
             void Recipe(params string[] preceding)
             {
-                string[] order = [.. preceding.Order(StringComparer.Ordinal), source.Potion.Key.Entry];
-                recipes.TryAdd(string.Join("|", order.Select(key => "POTION:" + key)), order);
+                string[] order = [.. preceding, source.Potion.Key.Entry];
+                recipes.TryAdd(string.Join(">", order), order);
             }
             Recipe();
             foreach (var slots in inventories)
@@ -164,42 +165,45 @@ internal static partial class UiSurfaceChecks
                     !player.PotionSlots.Contains(p));
                 var others = slots.Where((p, index) => index != selectedSlot && p != null && p.Id.Entry != "ENTROPIC_BREW" &&
                     keys.Contains(p.Id.Entry)).Select(p => p!).ToArray();
-                foreach (var predecessor in others.DistinctBy(p => p.Id)) Recipe(predecessor.Id.Entry);
-                // Pair actual bottle indices before canonicalizing their type
-                // order: a repeated type requires two captured bottles.
+                foreach (var predecessor in others) Recipe(predecessor.Id.Entry);
+                // Enumerate real bottle indices and both orders. Identical
+                // bottle types coalesce only after preserving multiplicity.
                 for (int first = 0; first < others.Length; first++)
-                for (int second = first + 1; second < others.Length; second++)
-                    Recipe(others[first].Id.Entry, others[second].Id.Entry);
+                for (int second = 0; second < others.Length; second++)
+                    if (first != second) Recipe(others[first].Id.Entry, others[second].Id.Entry);
             }
-            // Decide the depth from recipe identities alone. Equal generated
-            // cards never collapse two different potion conditions.
-            bool thirdUse = recipes.Count <= 8;
-            var expected = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-            foreach (var (sequence, order) in recipes.Where(recipe => thirdUse || recipe.Value.Length < 3))
+            var reference = new List<(int Depth, string Cards, string Path)>();
+            foreach (var (sequence, order) in recipes)
             {
                 var rng = new Rng(run.Rng.CombatCardGeneration.ToSerializable());
                 foreach (string predecessor in order.SkipLast(1)) NativeCards(predecessor, rng);
-                string value = CardSignature(NativeCards(source.Potion.Key.Entry, rng), source.Potion.Key.Entry);
-                expected.Add(sequence, [value]);
-                if (order.Length == 3)
+                reference.Add((order.Length, CardSignature(NativeCards(source.Potion.Key.Entry, rng), source.Potion.Key.Entry), sequence));
+            }
+            bool thirdUse = reference.GroupBy(row => (row.Depth, row.Cards)).Count() <= 8;
+            var expected = reference.Where(row => thirdUse || row.Depth < 3).ToArray();
+            var groups = Groups(preview);
+            var actual = new HashSet<(int Depth, string Cards, string Path)>();
+            foreach (var group in groups)
+            {
+                var paths = group.IconPaths.SelectMany(ExpandOperationIconPath).ToArray();
+                check(paths.Length > 0 && paths.All(path => path.Length is >= 1 and <= 3 && path[^1] == source.Potion.Key.Serialized) &&
+                    paths.Select(path => path.Length).Distinct().Count() == 1 && !group.Possible,
+                    "each potion result preserves complete target-last paths at one use depth");
+                int depth = paths[0].Length;
+                check(group.Label == null || group.Label == "PotionUseStep:" + depth,
+                    "potion result ordinal agrees with every merged route");
+                int select = source.Potion.Key.Entry is "COSMIC_CONCOCTION" or "OROBIC_ACID" ? group.Cards.Length : 1;
+                check(group.MinimumSelect == select && group.MaximumSelect == select,
+                    "merged potion result preserves actual choose-one versus generate-all behavior");
+                foreach (var path in paths)
                 {
-                    var reversed = new Rng(run.Rng.CombatCardGeneration.ToSerializable());
-                    foreach (string predecessor in order.Take(2).Reverse()) NativeCards(predecessor, reversed);
-                    string reverseValue = CardSignature(NativeCards(source.Potion.Key.Entry, reversed), source.Potion.Key.Entry);
-                    check(reverseValue == value && JsonSerializer.Serialize(reversed.ToSerializable()) ==
-                        JsonSerializer.Serialize(rng.ToSerializable()),
-                        "native fixed pools give both predecessor orders the same hovered cards and RNG cursor");
+                    string sequence = string.Join(">", path.Select(key => key.Split(':')[1]));
+                    actual.Add((depth, GroupSignature(group), sequence));
                 }
             }
-            var groups = Groups(preview);
-            var actual = groups.GroupBy(g => string.Join("|", g.PotionUseOrder.Select(key => key.Serialized)))
-                .ToDictionary(g => g.Key, g => g.Select(GroupSignature).ToHashSet());
-            check(preview.Faults.IsEmpty && groups.Length == expected.Sum(pair => pair.Value.Count) &&
-                groups.All(group => !group.Possible && group.PotionUseOrder.Length is >= 1 and <= 3 && group.PotionUseOrder[^1] == source.Potion.Key &&
-                    (group.Label == null || group.Label == "PotionUseStep:" + group.PotionUseOrder.Length)) &&
-                actual.Count == expected.Count && expected.All(pair =>
-                actual.TryGetValue(pair.Key, out var values) && values.SetEquals(pair.Value)),
-                "native cloned CardFactory oracle covers distinct recipes through use three when at most eight groups, otherwise use two: " + source.Potion.Key.Entry);
+            check(preview.Faults.IsEmpty && groups.Length == expected.GroupBy(row => (row.Depth, row.Cards)).Count() &&
+                actual.SetEquals(expected),
+                "native cloned CardFactory oracle preserves every explicit legal route while merging equal ordered cards within a depth: " + source.Potion.Key.Entry);
             check(signature() == before && ObservationSignature(observation) == detachedBefore,
                 "native identity oracle and forecast leave live and captured input unchanged");
         }
@@ -213,16 +217,7 @@ internal static partial class UiSurfaceChecks
             check(Descendants(view).OfType<NCard>().Count() == Groups(preview).Sum(g => g.Cards.Length),
                 "native potion renderer retains every candidate card");
             var groups = Groups(preview);
-            check(stacks.Select((stack, index) =>
-            {
-                var strips = Descendants(stack).OfType<Control>().Where(control => control.Name == "Rt2PotionUseOrder").ToArray();
-                if (strips.Length != 1) return false;
-                var icons = strips[0].GetChildren().OfType<Control>().Where(control => control.HasMeta("rt2_model")).ToArray();
-                return icons.Select(icon => icon.GetMeta("rt2_model").AsString())
-                    .SequenceEqual(groups[index].PotionUseOrder.Select(key => key.Serialized)) &&
-                    icons.All(icon => icon.CustomMinimumSize.IsEqualApprox(new(28, 28))) &&
-                    view.GetViewportRect().Grow(.2f).Encloses(strips[0].GetGlobalRect());
-            }).All(value => value), "each native card group shows its actual one-to-three-bottle order as small icons inside the viewport");
+            CheckOperationIconPaths(view, preview, check);
             if (grouped)
                 check(stacks.Select((stack, index) =>
                 {
@@ -313,7 +308,66 @@ internal static partial class UiSurfaceChecks
                 }
             }
 
-            // A heterogeneous current inventory keeps distinct recipes.
+            // Native colorless factory cursor is shared by the two bottles.
+            // Their direct effects differ: Cosmic upgrades all generated cards,
+            // while Colorless presents unupgraded choose-one candidates.
+            await Leave(); ClearInventory(); Combat(false);
+            var attackTarget = Add("ATTACK_POTION");
+            var colorlessBottle = Add("COLORLESS_POTION"); var cosmicBottle = Add("COSMIC_CONCOCTION");
+            var colorlessPreview = PotionOperationPreview.Build(Capture(colorlessBottle));
+            var cosmicPreview = PotionOperationPreview.Build(Capture(cosmicBottle));
+            CheckCardOracle(colorlessPreview, Capture(colorlessBottle)); CheckCardOracle(cosmicPreview, Capture(cosmicBottle));
+            var colorlessDirect = Groups(colorlessPreview).Single(group => group.IconPaths[0].Segments.Sum(segment => segment.Length) == 1);
+            var cosmicDirect = Groups(cosmicPreview).Single(group => group.IconPaths[0].Segments.Sum(segment => segment.Length) == 1);
+            check(colorlessDirect.Cards.Select(card => card.Key).SequenceEqual(cosmicDirect.Cards.Select(card => card.Key)) &&
+                colorlessDirect.MinimumSelect == 1 && cosmicDirect.MinimumSelect == cosmicDirect.Cards.Length &&
+                colorlessDirect.Cards.Zip(cosmicDirect.Cards).All(pair => pair.Second.UpgradeLevel == Math.Min(pair.First.MaxUpgradeLevel, pair.First.UpgradeLevel + 1)) &&
+                colorlessDirect.Cards.Zip(cosmicDirect.Cards).Any(pair => pair.Second.UpgradeLevel > pair.First.UpgradeLevel),
+                "native factory and upgrade oracle distinguish direct Cosmic upgraded generate-all from Colorless unupgraded choose-one");
+            var alternateHolder = await Mount(attackTarget); var alternateObservation = Capture(attackTarget);
+            var alternatePreview = PotionOperationPreview.Build(alternateObservation); CheckCardOracle(alternatePreview, alternateObservation);
+            var secondUse = Groups(alternatePreview).Single(group => group.IconPaths[0].Segments.Sum(segment => segment.Length) == 2);
+            check(secondUse.IconPaths.SelectMany(ExpandOperationIconPath).Select(path => string.Join(">", path)).ToHashSet().SetEquals(new[] {
+                    "POTION:COLORLESS_POTION>POTION:ATTACK_POTION", "POTION:COSMIC_CONCOCTION>POTION:ATTACK_POTION" }),
+                "Colorless and Cosmic as alternate prerequisites merge into one target result with both complete legal routes");
+            await exercise("potion-sequence-colorless-cosmic-alternatives", alternateHolder, alternateHolder, "ATTACK_POTION", null,
+                preview => Groups(preview).Length == Groups(alternatePreview).Length,
+                (view, preview) =>
+                {
+                    InspectCards(view, preview);
+                    check(Descendants(view).OfType<Label>().Any(label => label.Name == "Rt2AlternativeOr" && label.Text == "或") &&
+                        Descendants(view).OfType<Label>().Any(label => label.Name == "Rt2PathArrow") &&
+                        Descendants(view).OfType<Label>().Any(label => label.Name == "Rt2PathOpenBracket"),
+                        "actual potion hover renders alternate prerequisites with or, sequential arrow and exchangeable all-steps bracket");
+                    var stacks = Descendants(view).OfType<Control>().Where(node => node.Name.ToString().StartsWith("Rt2NeowCardStack_", StringComparison.Ordinal)).ToArray();
+                    var shown = Groups(preview);
+                    int alternativeIndex = Array.FindIndex(shown, group => group.IconPaths[0].Segments.Sum(segment => segment.Length) == 2);
+                    int bothIndex = Array.FindIndex(shown, group => group.IconPaths[0].Segments.Sum(segment => segment.Length) == 3);
+                    check(Descendants(stacks[alternativeIndex]).Count(node => node.HasMeta("rt2_alternatives")) == 1 &&
+                        !Descendants(stacks[bothIndex]).Any(node => node.HasMeta("rt2_alternatives")),
+                        "actual choose-either precursor is a stacked bottle pair while two required bottles remain separate bracketed steps");
+                }, false);
+            var alternateOldViewport = viewport.Size; var alternateOldWindow = root.GetWindow().Size;
+            var alternateLanguage = new RolltheSpire2.Ui.Workspace.SearchWorkspace(OS.GetUserDataDir(), false);
+            string alternateOldLanguage = alternateLanguage.Preferences.LanguageOverride;
+            try
+            {
+                foreach (string language in new[] { "zh", "en" })
+                foreach (var size in new[] { new Vector2I(1920, 1080), new Vector2I(1280, 720) })
+                {
+                    if (language == "zh" && size.X == 1920) continue;
+                    alternateLanguage.SetLanguageOverride(language);
+                    viewport.Size = size; root.GetWindow().Size = viewport.Size; await Frames(8);
+                    await exercise("potion-sequence-colorless-cosmic-alternatives-" + language + "-" + size.X, alternateHolder, alternateHolder, "ATTACK_POTION", null,
+                        preview => Groups(preview).Length == Groups(alternatePreview).Length, InspectCards, false);
+                }
+            }
+            finally { alternateLanguage.SetLanguageOverride(alternateOldLanguage); viewport.Size = alternateOldViewport; root.GetWindow().Size = alternateOldWindow; await Frames(8); }
+            evidence.Add(new { source = "NPotionHolder", key = "ATTACK_POTION", caseName = "colorless-cosmic-alternatives",
+                groups = Groups(alternatePreview).Select(group => new { group.Cards, group.MinimumSelect, group.MaximumSelect, group.IconPaths }),
+                directColorless = colorlessDirect.Cards, directCosmic = cosmicDirect.Cards });
+
+            // A heterogeneous current inventory keeps distinct results.
             // Three identical bottles collapse to one recipe per use position.
             foreach (bool mixed in new[] { true, false })
             {
@@ -322,13 +376,12 @@ internal static partial class UiSurfaceChecks
                 Add(mixed ? "SKILL_POTION" : "ATTACK_POTION"); Add(mixed ? "POWER_POTION" : "ATTACK_POTION");
                 var holder = await Mount(potion); var observation = Capture(potion);
                 var expected = PotionOperationPreview.Build(observation); CheckCardOracle(expected, observation);
-                check(Groups(expected).Select(g => g.PotionUseOrder.Length).Distinct().Order().SequenceEqual([1, 2, 3]) &&
+                check(Groups(expected).Select(g => g.IconPaths[0].Segments.Sum(segment => segment.Length)).Distinct().Order().SequenceEqual([1, 2, 3]) &&
                     Groups(expected).Length == (mixed ? 4 : 3), "three actual bottles retain all first-to-third-use recipes and equivalent predecessor identities coalesce");
                 if (mixed)
                 {
-                    // A valid reduced detached pool makes both predecessor
-                    // recipes consume no RNG and the hovered result identical.
-                    // Their visible order must still preserve recipe identity.
+                    // Both predecessors consume no RNG in this reduced legal
+                    // pool. Equal results merge but retain every genuine route.
                     var operation = observation.Context.Operation!;
                     var pools = operation.CombatCardPools!;
                     var reduced = observation with { Context = observation.Context with { Operation = operation with
@@ -341,13 +394,14 @@ internal static partial class UiSurfaceChecks
                             .Take(1).ToImmutableArray() }
                     } } };
                     var collisions = Groups(PotionOperationPreview.Build(reduced));
-                    check(collisions.Length == 4 && collisions.All(group => group.Cards.Length == 1) &&
+                    check(collisions.Length == 3 && collisions.All(group => group.Cards.Length == 1) &&
                         collisions.Select(GroupSignature).Distinct().Count() == 1 &&
-                        collisions.Where(group => group.PotionUseOrder.Length == 2).Select(group => group.PotionUseOrder[0].Entry)
-                            .Order().SequenceEqual(new[] { "POWER_POTION", "SKILL_POTION" }) &&
-                        collisions.Single(group => group.PotionUseOrder.Length == 3).PotionUseOrder.Select(key => key.Entry)
-                            .SequenceEqual(new[] { "POWER_POTION", "SKILL_POTION", "ATTACK_POTION" }),
-                        "different recipes remain distinct even when RNG cursor and visible card results coincide");
+                        collisions.Single(group => group.IconPaths[0].Segments.Sum(segment => segment.Length) == 2).IconPaths
+                            .SelectMany(ExpandOperationIconPath).Select(path => string.Join(">", path)).ToHashSet().SetEquals(new[] {
+                                "POTION:POWER_POTION>POTION:ATTACK_POTION", "POTION:SKILL_POTION>POTION:ATTACK_POTION" }) &&
+                        collisions.Single(group => group.IconPaths[0].Segments.Sum(segment => segment.Length) == 3).IconPaths
+                            .SelectMany(ExpandOperationIconPath).Count() == 2,
+                        "same-depth equal cards merge while retaining alternative prerequisites and both exchangeable predecessor orders");
                 }
                 await exercise("potion-sequence-" + (mixed ? "mixed" : "equal"), holder, holder, "ATTACK_POTION", null,
                     preview => JsonSerializer.Serialize(preview) == JsonSerializer.Serialize(expected), InspectCards, false);
@@ -360,7 +414,7 @@ internal static partial class UiSurfaceChecks
                 (Name: "four-distinct", Others: new[] { "SKILL_POTION", "POWER_POTION", "COLORLESS_POTION" }, Groups: 7, Depth: 3),
                 (Name: "exact-eight", Others: new[] { "SKILL_POTION", "SKILL_POTION", "POWER_POTION", "COLORLESS_POTION" }, Groups: 8, Depth: 3),
                 (Name: "five-distinct", Others: new[] { "SKILL_POTION", "POWER_POTION", "COLORLESS_POTION", "OROBIC_ACID" }, Groups: 5, Depth: 2),
-                (Name: "seven-slots", Others: new[] { "SKILL_POTION", "POWER_POTION", "COLORLESS_POTION", "OROBIC_ACID", "COSMIC_CONCOCTION", "ATTACK_POTION" }, Groups: 7, Depth: 2)
+                (Name: "seven-slots", Others: new[] { "SKILL_POTION", "POWER_POTION", "COLORLESS_POTION", "OROBIC_ACID", "COSMIC_CONCOCTION", "ATTACK_POTION" }, Groups: 6, Depth: 2)
             })
             {
                 await Leave(); ClearInventory(); Combat(false);
@@ -374,8 +428,8 @@ internal static partial class UiSurfaceChecks
                     foreach (string key in scenario.Others) Add(key);
                     var holder = await Mount(potion); var observation = Capture(potion);
                     var expected = PotionOperationPreview.Build(observation); CheckCardOracle(expected, observation);
-                    check(Groups(expected).Length == scenario.Groups && Groups(expected).Count(group => group.PotionUseOrder.Length == 1) == 1 &&
-                        Groups(expected).Max(group => group.PotionUseOrder.Length) == scenario.Depth,
+                    check(Groups(expected).Length == scenario.Groups && Groups(expected).Count(group => group.IconPaths[0].Segments.Sum(segment => segment.Length) == 1) == 1 &&
+                        Groups(expected).Max(group => group.IconPaths[0].Segments.Sum(segment => segment.Length)) == scenario.Depth,
                         "expanded actual bottles select the expected recipe count/depth at the eight-group boundary: " + scenario.Name);
                     await exercise("potion-sequence-dense-" + scenario.Name, holder, holder, "ATTACK_POTION", null,
                         preview => JsonSerializer.Serialize(preview) == JsonSerializer.Serialize(expected),
@@ -452,6 +506,61 @@ internal static partial class UiSurfaceChecks
             // inventories: receiving the offer requires replacing a real slot.
             Combat(false);
             overlays.MouseFilter = originalOverlayFilter;
+            // Reproduce the player's entry point: a single held Power Potion
+            // while the native reward screen is open, not its offered bottle.
+            await Leave(); ClearInventory();
+            var heldPower = Add("POWER_POTION");
+            var heldPowerHolder = await Mount(heldPower);
+            var offeredBrew = ModelDb.GetById<PotionModel>(new("POTION", "ENTROPIC_BREW")).ToMutable();
+            var heldRewards = new RewardsSet(player).WithCustomRewards([new PotionReward(offeredBrew, player)]);
+            await heldRewards.GenerateWithoutOffering();
+            _ = RunManager.Instance.RewardsSetSynchronizer.BeginRewardsSet(heldRewards);
+            NRewardsScreen? heldRewardScreen = null;
+            var originalViewportSize = viewport.Size;
+            var originalWindowSize = root.GetWindow().Size;
+            int originalOverlayIndex = overlays.GetIndex();
+            try
+            {
+                // run.tscn places the overlay stack before TopBar. The host
+                // appends its synthetic stack later, so its real full-screen
+                // backstop would otherwise intercept this topbar pointer.
+                game.MoveChild(overlays, global.TopBar.GetIndex());
+                heldRewardScreen = NRewardsScreen.ShowScreen(heldRewards, false, run); await Frames(40);
+                foreach (var size in new[] { new Vector2I(1920, 1080), new Vector2I(1280, 720) })
+                {
+                    viewport.Size = size; root.GetWindow().Size = size; await Frames(6);
+                    var expected = PotionOperationPreview.Build(Capture(heldPower));
+                    check(Groups(expected) is [{ Cards.Length: 3 }],
+                        "reward-screen held Power Potion has one actual three-candidate group");
+                    await exercise("potion-reward-screen-held-power-" + size.X, heldPowerHolder, heldPowerHolder,
+                        "POWER_POTION", null, preview => JsonSerializer.Serialize(preview) == JsonSerializer.Serialize(expected),
+                        (view, preview) =>
+                        {
+                            InspectCards(view, preview);
+                            var tiles = Descendants(view).OfType<NCard>().Select(face => face.GetParent<Control>()).ToArray();
+                            check(tiles.Length == 3 && tiles.All(tile => Math.Abs(tile.GlobalPosition.Y - tiles[0].GlobalPosition.Y) < .2f) &&
+                                tiles.Zip(tiles.Skip(1)).All(pair => pair.First.GetGlobalRect().End.X <= pair.Second.GlobalPosition.X) &&
+                                tiles.All(tile => view.GetViewportRect().Grow(.2f).Encloses(tile.GetGlobalRect())),
+                                "single held potion candidates spread left-to-right in one complete row inside the reward-screen viewport");
+                            var tips = hoverRoot.GetChildren().OfType<NHoverTipSet>()
+                                .Where(tip => ReferenceEquals(PredictorOperationCapture.ReadNullable(tip, "_owner"), heldPowerHolder))
+                                .Select(tip => tip.GetNodeOrNull<Control>("textHoverTipContainer"))
+                                .Where(tip => tip != null && tip.IsVisibleInTree() && tip.Size.X > 0 && tip.Size.Y > 0).ToArray();
+                            check(tips.Length == 1 && view.VisibleRegions.All(region => !region.Intersects(tips[0]!.GetGlobalRect())),
+                                "held potion preserves its original native tooltip alongside the candidate row");
+                            evidence.Add(new { source = "NPotionHolder", key = "POWER_POTION", rewardScreen = true,
+                                width = size.X, groups = Groups(preview).Length, nativeFaces = tiles.Length, scale = view.CardDisplayScale });
+                        }, false);
+                }
+            }
+            finally
+            {
+                await Leave();
+                viewport.Size = originalViewportSize; root.GetWindow().Size = originalWindowSize;
+                if (heldRewardScreen != null && GodotObject.IsInstanceValid(heldRewardScreen)) overlays.Remove(heldRewardScreen);
+                game.MoveChild(overlays, originalOverlayIndex);
+                RunManager.Instance.RewardsSetSynchronizer.SkipLocalRewardsSet(); await Frames();
+            }
             foreach (bool full in new[] { false, true })
             foreach (string key in keys)
             {

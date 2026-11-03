@@ -17,11 +17,11 @@ internal sealed class CapsuleRelicReplay
     private readonly ExactSearchEvaluationProjection _evaluation;
     private readonly NeowReplayPlan _route;
     private readonly HashSet<ModelKey> _unresolvedObtains;
-    internal CapsuleRelicReplay(ExactSearchExecutionRequest request, NeowReplayPlan route)
+    internal CapsuleRelicReplay(SearchModel request, NeowReplayPlan route)
     {
         if (!RelicFamilyPlanCompiler.TryCompilePool(request, out var pool, out var dense, out _, out string issue))
             throw new InvalidOperationException(issue);
-        Pool = pool; _route = route; _evaluation = request.Evaluation;
+        Pool = pool; _route = route; _evaluation = RelicReferencePlan.ProjectEvaluation(request);
         _unresolvedObtains = request.Authority.PlayersCount == 1 ? [] : PartyInitialQuery.CapsuleEffectPremise(
             request.CompiledSearch.NormalizedQuery).Values.SelectMany(keys => keys).Where(k =>
                 !Core.Rewards.VanillaRelicRewardEffects.TryGet(request.ProfileId, k, out var e) ||

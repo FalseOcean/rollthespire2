@@ -1,18 +1,16 @@
 using System.Collections.Immutable;
 using RolltheSpire2.Core.Identity;
-using RolltheSpire2.Core.PredictorRuntime;
-using RolltheSpire2.Infrastructure.Snapshots;
 
-namespace RolltheSpire2.Ui.InRunOperations;
+namespace RolltheSpire2.Core.PredictorRuntime;
 
-internal static partial class PotionOperationPreview
+internal static partial class PotionOperationForecast
 {
-    internal static OperationPreview Build(PredictorOperationPotionObservation observation,
-        CancellationToken token = default, OperationPotionDemand? demand = null)
+    private static OperationForecast BuildCore(PredictorOperationPotionObservation observation,
+        CancellationToken token = default, OperationPotionForecastScope? demand = null)
     {
         ArgumentNullException.ThrowIfNull(observation);
         token.ThrowIfCancellationRequested();
-        demand ??= OperationPotionDemand.All;
+        demand ??= OperationPotionForecastScope.All;
         var source = observation.Source;
         if (source.HeldSlot is int held && (held < 0 || held >= observation.Inventory.Length ||
             observation.Inventory[held] != source.Potion))
@@ -59,110 +57,129 @@ internal static partial class PotionOperationPreview
             inventorySupplement);
     }
 
-    private static OperationPreview CardGeneration(PredictorContext context, ModelKey potion,
+    private sealed record PotionCardOutcome(PredictorOperationPotionQueryResult Result,
+        List<ImmutableArray<ModelKey>> Orders);
+
+    private static OperationForecast CardGeneration(PredictorContext context, ModelKey potion,
         ImmutableArray<(ImmutableArray<PredictorPotion?> Slots, int SourceSlot)> inventories,
-        ImmutableArray<string> notices, CancellationToken token, OperationPotionDemand demand, bool inventorySupplement)
+        ImmutableArray<string> notices, CancellationToken token, OperationPotionForecastScope demand, bool inventorySupplement)
     {
-        var alternatives = new List<(ImmutableArray<ModelKey> Order, PredictorOperationPotionQueryResult Result)>();
         var pending = new HashSet<string>(StringComparer.Ordinal);
-        var faults = ImmutableArray.CreateBuilder<OperationPreviewFault>();
+        var faults = ImmutableArray.CreateBuilder<OperationForecastFault>();
         int examined = 0;
-        var predecessors = new HashSet<ModelKey>();
-        var pairs = new HashSet<(ModelKey First, ModelKey Second)>();
-        foreach (var inventory in inventories.Take(demand.IncludeOrder ? inventories.Length : 1))
-        {
-            token.ThrowIfCancellationRequested();
-            if (!demand.IncludeOrder) break;
-            var recipes = inventory.Slots.Where((p, i) => i != inventory.SourceSlot && p != null &&
-                PredictorOperationPotionQueries.Supports(p.Key)).GroupBy(p => p!.Key)
-                .Select(group => (Key: group.Key, Count: group.Count()))
-                .OrderBy(recipe => recipe.Key.Serialized, StringComparer.Ordinal).ToArray();
-            foreach (var recipe in recipes) predecessors.Add(recipe.Key);
-            for (int i = 0; i < recipes.Length; i++)
-                for (int j = i; j < recipes.Length; j++)
-                    if (i != j || recipes[i].Count > 1) pairs.Add((recipes[i].Key, recipes[j].Key));
-        }
-        // Decide the display depth from recipe identities before running RNG.
-        // A pair is unordered: with these fixed full-pool shuffle recipes,
-        // exchanging its two bottles does not change the hovered bottle's cursor.
-        // Equal card results from different recipes are deliberately not merged.
+        bool truncated = false;
+        var groups = ImmutableArray.CreateBuilder<OperationOutcomeChoices>();
         var orders = new List<ImmutableArray<ModelKey>>();
-        if (!inventories.IsEmpty) orders.Add([potion]);
-        orders.AddRange(predecessors.Select(predecessor => ImmutableArray.Create(predecessor, potion)));
-        if (orders.Count + pairs.Count <= 8)
-            orders.AddRange(pairs.Select(pair => ImmutableArray.Create(pair.First, pair.Second, potion)));
-        foreach (var order in orders)
+        var orderKeys = new HashSet<string>(StringComparer.Ordinal);
+        void AddOrder(ImmutableArray<ModelKey> order)
         {
-            token.ThrowIfCancellationRequested();
-            if (context.Operation?.CombatCardRng is not { } initial)
-            {
-                foreach (var missing in PredictorOperationPotionQueries.Query(context, potion).MissingInputs) pending.Add(missing);
-                break;
-            }
-            var cursor = initial;
-            bool ready = true;
-            foreach (var predecessor in order.Take(order.Length - 1))
+            if (orderKeys.Add(string.Join("|", order.Select(key => key.Serialized)))) orders.Add(order);
+        }
+        if (!inventories.IsEmpty) AddOrder([potion]);
+        if (demand.IncludeOrder)
+            foreach (var inventory in inventories)
             {
                 token.ThrowIfCancellationRequested();
+                var available = inventory.Slots.Where((p, slot) => slot != inventory.SourceSlot && p != null &&
+                    PredictorOperationPotionQueries.Supports(p.Key)).Select(p => p!.Key)
+                    .OrderBy(key => key.Serialized, StringComparer.Ordinal).ToImmutableArray();
+                // Every prefix belongs to one concrete held/acquired inventory.
+                // Do not combine bottles across different pickup replacements.
+                for (int first = 0; first < available.Length; first++)
+                {
+                    AddOrder([available[first], potion]);
+                    for (int second = 0; second < available.Length; second++)
+                        if (first != second) AddOrder([available[first], available[second], potion]);
+                }
+            }
+        for (int depth = 1; depth <= (demand.IncludeOrder ? 3 : 1); depth++)
+        {
+            var outcomes = new List<PotionCardOutcome>();
+            foreach (var order in orders.Where(order => order.Length == depth))
+            {
+                token.ThrowIfCancellationRequested();
+                if (context.Operation?.CombatCardRng is not { } initial)
+                {
+                    foreach (var missing in PredictorOperationPotionQueries.Query(context, potion).MissingInputs) pending.Add(missing);
+                    break;
+                }
+                var cursor = initial;
+                bool ready = true;
+                foreach (var predecessor in order.Take(order.Length - 1))
+                {
+                    token.ThrowIfCancellationRequested();
+                    try
+                    {
+                        var query = PredictorOperationPotionQueries.Query(AtCursor(context, cursor), predecessor);
+                        foreach (var missing in query.MissingInputs) pending.Add(missing);
+                        if (query.RngAfter is { } after) cursor = after;
+                        else { ready = false; break; }
+                    }
+                    catch (Exception error) when (error is not OperationCanceledException)
+                    { faults.Add(new("PotionUsePredecessor:" + predecessor.Entry, [], error)); ready = false; break; }
+                }
+                if (!ready) continue;
+                examined++;
                 try
                 {
-                    var query = PredictorOperationPotionQueries.Query(AtCursor(context, cursor), predecessor);
+                    var query = PredictorOperationPotionQueries.Query(AtCursor(context, cursor), potion);
                     foreach (var missing in query.MissingInputs) pending.Add(missing);
-                    if (query.RngAfter is { } after) cursor = after;
-                    else { ready = false; break; }
+                    if (!query.IdentitiesComputed) continue;
+                    var outcome = outcomes.FirstOrDefault(other => SamePotionResult(other.Result, query));
+                    if (outcome == null) outcomes.Add(new(query, [order]));
+                    else outcome.Orders.Add(order);
                 }
                 catch (Exception error) when (error is not OperationCanceledException)
-                { faults.Add(new("PotionUsePredecessor:" + predecessor.Entry, [], error)); ready = false; break; }
+                { faults.Add(new("PotionUseOrdinal:" + depth, [], error)); }
             }
-            if (ready) AddResult(cursor, order);
-        }
-        bool grouped = alternatives.Any(result => result.Order.Length > 1);
-        var style = new OperationDisplayStyle(OperationTextMode.None,
-            grouped ? OperationCardLayout.Groups : OperationCardLayout.Parallel);
-        var groups = ImmutableArray.CreateBuilder<OperationPreviewCardGroup>();
-        foreach (var (order, query) in alternatives)
+            // Apply the limit after merging complete results, and admit all of
+            // a depth together. A matching card face never merges continuations:
+            // every longer order above was replayed from the original cursor.
+            if (groups.Count + outcomes.Count > 8) { truncated = true; break; }
+            foreach (var outcome in outcomes)
             {
+                var query = outcome.Result;
                 var cards = query.Cards.OrderBy(c => c.Group).ThenBy(c => c.Ordinal).Select(c => c.Card).ToImmutableArray();
                 int select = query.RequiresCardChoice ? 1 : cards.Length;
                 groups.Add(new(groups.Count, cards, select, select, false, false)
-                { Label = grouped ? "PotionUseStep:" + order.Length : null, EarliestFirst = grouped,
-                    PotionUseOrder = order });
+                    { SequenceOrdinal = depth, IconPaths = OperationIconPaths.Compress(outcome.Orders, token) });
             }
-        var section = new OperationPreviewSection(potion, [], groups.ToImmutable())
+        }
+        bool grouped = groups.Any(group => group.SequenceOrdinal > 1);
+        for (int i = 0; i < groups.Count; i++)
+            groups[i] = groups[i] with { Kind = grouped ? "PotionUseStep:" + groups[i].SequenceOrdinal : null,
+                SequenceOrdinal = grouped ? groups[i].SequenceOrdinal : null };
+        var section = new OperationOutcomeSource(potion, [], groups.ToImmutable())
         {
-            Label = grouped ? "PotionUseOrdinal" : "PotionCombatUse", Style = style,
+            Kind = grouped ? "PotionUseOrdinal" : "PotionCombatUse",
             FeatureId = grouped || !demand.IncludeBasicResult && demand.IncludeOrder ? "extra:potion-order" :
                 inventorySupplement ? "extra:potion-inventory" : PotionFeature(potion)
         };
         return new(potion, [], [], false,
-            [new([], groups.Count == 0 ? [] : [section], pending.ToImmutableArray(), examined, pending.Count == 0 && faults.Count == 0)], [])
-        { Style = style, Notices = notices, Faults = faults.ToImmutable() };
-
-        void AddResult(PredictorOperationEventRng cursor, ImmutableArray<ModelKey> order)
-        {
-            token.ThrowIfCancellationRequested();
-            examined++;
-            try
-            {
-                var query = PredictorOperationPotionQueries.Query(AtCursor(context, cursor), potion);
-                foreach (var missing in query.MissingInputs) pending.Add(missing);
-                if (query.IdentitiesComputed) alternatives.Add((order, query));
-            }
-            catch (Exception error) when (error is not OperationCanceledException)
-            { faults.Add(new("PotionUseOrdinal:" + order.Length, [], error)); }
-        }
+            [new([], groups.Count == 0 ? [] : [section], pending.ToImmutableArray(), examined,
+                !truncated && pending.Count == 0 && faults.Count == 0)], [])
+        { Notices = notices, Faults = faults.ToImmutable() };
     }
+
+    private static bool SamePotionResult(PredictorOperationPotionQueryResult left,
+        PredictorOperationPotionQueryResult right) => left.Potion == right.Potion &&
+        left.TargetPlayerId == right.TargetPlayerId && left.RequiresCardChoice == right.RequiresCardChoice &&
+        left.Preconditions.SequenceEqual(right.Preconditions) && left.Cards.Length == right.Cards.Length &&
+        left.Cards.OrderBy(card => card.Group).ThenBy(card => card.Ordinal)
+            .Zip(right.Cards.OrderBy(card => card.Group).ThenBy(card => card.Ordinal)).All(pair =>
+                (pair.First with { Card = pair.First.Card with { Id = 0 } }) ==
+                (pair.Second with { Card = pair.Second.Card with { Id = 0 } }));
 
     private static PredictorContext AtCursor(PredictorContext context, PredictorOperationEventRng cursor) =>
         context with { Operation = context.Operation! with { CombatCardRng = cursor } };
 
-    private static OperationPreview Entropic(PredictorOperationPotionObservation observation,
+    private static OperationForecast Entropic(PredictorOperationPotionObservation observation,
         ImmutableArray<(ImmutableArray<PredictorPotion?> Slots, int SourceSlot)> inventories,
-        ImmutableArray<string> notices, CancellationToken token, OperationPotionDemand demand)
+        ImmutableArray<string> notices, CancellationToken token, OperationPotionForecastScope demand)
     {
         var potion = observation.Source.Potion.Key;
         var results = new SortedDictionary<int, List<(ImmutableArray<ModelKey> Models, int Obtained)>>();
-        var faults = ImmutableArray.CreateBuilder<OperationPreviewFault>();
+        var faults = ImmutableArray.CreateBuilder<OperationForecastFault>();
         int minimumBrews = inventories.IsEmpty ? 0 : inventories.Min(inventory => inventory.Slots.Count(p => p?.Key == potion));
         foreach (var inventory in inventories.Take(demand.IncludeOrder ? inventories.Length : 1))
         {
@@ -204,18 +221,17 @@ internal static partial class PotionOperationPreview
         }
         bool sequence = results.Count > 1;
         var rows = results.SelectMany(pair => pair.Value.Select(result =>
-            new OperationPreviewRow(OperationPreviewAction.GeneratePotion, result.Models, [], pair.Value.Count > 1 || pair.Key > minimumBrews)
-            { Label = sequence ? $"EntropicUseStep:{pair.Key}:{result.Models.Length}:{result.Obtained}" :
+            new OperationOutcome(OperationOutcomeAction.GeneratePotion, result.Models, [], pair.Value.Count > 1 || pair.Key > minimumBrews)
+            { Kind = sequence ? $"EntropicUseStep:{pair.Key}:{result.Models.Length}:{result.Obtained}" :
                 $"EntropicCurrentSlots:{result.Models.Length}:{result.Obtained}" })).ToImmutableArray();
-        var style = OperationDisplayPolicy.A1;
         var featureId = sequence || !demand.IncludeBasicResult && demand.IncludeOrder ? "extra:potion-order" :
             demand.IncludeInventory ? "extra:potion-inventory" : PotionFeature(potion);
         return new(potion, [], [], false,
             [new([], rows.IsEmpty ? [] : [new(potion, rows, []) { FeatureId = featureId }], [], inventories.Length, faults.Count == 0)], [])
-        { Style = style, Notices = notices, Faults = faults.ToImmutable() };
+        { Notices = notices, Faults = faults.ToImmutable() };
     }
 
-    private static OperationPreview FirstOfferedUse(PredictorOperationPotionObservation observation,
+    private static OperationForecast FirstOfferedUse(PredictorOperationPotionObservation observation,
         ImmutableArray<string> notices, CancellationToken token)
     {
         var potion = observation.Source.Potion.Key;
@@ -226,11 +242,11 @@ internal static partial class PotionOperationPreview
                 return Build(observation.Context, potion, token) with { Notices = notices };
             var model = PredictorSettlementEffects.GenerateEntropicPotion(observation.Context.PotionPool,
                 observation.CombatPotionRng.Restore());
-            var row = new OperationPreviewRow(OperationPreviewAction.GeneratePotion, [model], [], false)
-            { Label = "EntropicCurrentSlots:1:" + (observation.HasSozu ? 0 : 1) };
-            var section = new OperationPreviewSection(potion, [row], []) { FeatureId = PotionFeature(potion) };
+            var row = new OperationOutcome(OperationOutcomeAction.GeneratePotion, [model], [], false)
+            { Kind = "EntropicCurrentSlots:1:" + (observation.HasSozu ? 0 : 1) };
+            var section = new OperationOutcomeSource(potion, [row], []) { FeatureId = PotionFeature(potion) };
             return new(potion, [], [], false, [new([], [section], [], 1, true)], [])
-            { Style = OperationDisplayPolicy.A1, Notices = notices };
+            { Activity = OperationForecastActivity.PotionUse, Notices = notices };
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {

@@ -182,9 +182,13 @@ internal static class FamilyGpuComputeUtility
         string source = reader.ReadToEnd();
         // Expand at resource load so donor slicing, numerical adapters and source
         // exports all observe the same implementation that reaches compilation.
-        if (!source.Contains(GpuRngRotation.SourceMarker, StringComparison.Ordinal)) return source;
-        return source.Replace(GpuRngRotation.SourceMarker,
-            LoadEmbeddedShader(GpuRngRotation.ShaderResourceSuffix), StringComparison.Ordinal);
+        if (source.Contains(GpuRngRotation.SourceMarker, StringComparison.Ordinal))
+            source = source.Replace(GpuRngRotation.SourceMarker,
+                LoadEmbeddedShader(GpuRngRotation.ShaderResourceSuffix), StringComparison.Ordinal);
+        if (source.Contains(NeowIdentityShaderFacts.SourceMarker, StringComparison.Ordinal))
+            source = source.Replace(NeowIdentityShaderFacts.SourceMarker,
+                NeowIdentityShaderFacts.Source, StringComparison.Ordinal);
+        return source;
     }
 
     public static string LoadFamilyShaderWithVisibleSeedRootHash(string suffix)

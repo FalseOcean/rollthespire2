@@ -20,11 +20,10 @@ internal static class OperationDisplayPolicy
         if (TransformOnly(preview))
             return (section.Style ?? Resolve(preview)) with { Text = OperationTextMode.None };
         if (section.Style is { } authored) return authored;
-        if ((section.Label is "EventCombatRewards" or "EventCombatNoHunt" ||
-             section.Label?.StartsWith("EventHuntTriggers:", StringComparison.Ordinal) == true || section.Source.Entry == "THE_HUNT") &&
-            preview.Branches.SelectMany(branch => branch.Sections).Sum(part => part.CardGroups.Length) > 1)
-            return new(OperationTextMode.GroupRows, OperationCardLayout.Groups);
         var root = Resolve(preview);
+        if (IsEventCombat(section) &&
+            preview.Branches.SelectMany(branch => branch.Sections).Sum(part => part.CardGroups.Length) > 1)
+            return new(root.Text is OperationTextMode.Complex or OperationTextMode.CardRows ? root.Text : OperationTextMode.GroupRows, OperationCardLayout.Groups);
         // A complex comparison needs its entire chain in the same readable
         // account, including effects whose ordinary standalone policy is D.
         if (root.Text == OperationTextMode.Complex) return root;
@@ -37,6 +36,36 @@ internal static class OperationDisplayPolicy
         }
         return ForSource(section.Source, preview.OptionKey);
     }
+
+    internal static bool IsRewardReroll(OperationPreview preview, OperationPreviewSection section) =>
+        section.Category == RolltheSpire2.Ui.Settings.OperationPredictionCategory.RewardReroll ||
+        section.Category == null && preview.OptionKey == "REROLL";
+
+    internal static bool HasRerollCardGroups(OperationPreview preview) => preview.Branches.Any(branch =>
+        branch.Sections.Any(section => IsRewardReroll(preview, section) && section.CardGroups.Any(group => !group.Cards.IsDefaultOrEmpty)));
+
+    // Reading order already conveys an unambiguous ordinal. Paths only help
+    // distinguish different complete card faces at the same ordinal; an icon's
+    // recipe class (including Candy/White Star) does not by itself add meaning.
+    // Keep the original paths on the detached preview for their numerical and
+    // provenance consumers; this decision only controls visible presentation.
+    internal static bool ShowIconPaths(OperationPreview preview, OperationPreviewSection section, OperationPreviewCardGroup group)
+    {
+        if (group.IconPaths.IsDefaultOrEmpty) return false;
+        if (!IsRewardReroll(preview, section)) return true;
+        return group.SequenceOrdinal.HasValue && section.CardGroups.Any(other =>
+            other.SequenceOrdinal == group.SequenceOrdinal && !other.Cards.IsDefaultOrEmpty &&
+            (other.Cards.Length != group.Cards.Length || other.Cards.Zip(group.Cards).Any(pair =>
+                (pair.First with { Id = 0, FloorAdded = 0 }) != (pair.Second with { Id = 0, FloorAdded = 0 }))));
+    }
+
+    internal static bool IsEventCombat(OperationPreviewSection section) =>
+        section.Label is "EventCombatRewards" or "EventCombatNoHunt" ||
+        section.Label?.StartsWith("EventHuntTriggers:", StringComparison.Ordinal) == true;
+
+    internal static bool CompactEventCardNames(OperationPreview preview, OperationPreviewSection section,
+        bool cardFacesVisible, bool mapPresentation) => cardFacesVisible && !mapPresentation && IsEventCombat(section) &&
+        Resolve(preview, section).Text is OperationTextMode.GroupRows or OperationTextMode.None;
 
     internal static OperationDisplayStyle ForSource(ModelKey source, string? option = null) => DeclaredSourceStyle(source, option) ?? A1;
     internal static bool HasAuthoredSourceStyle(ModelKey source) => source.Entry == "BATTLEWORN_DUMMY" || DeclaredSourceStyle(source, null) != null;

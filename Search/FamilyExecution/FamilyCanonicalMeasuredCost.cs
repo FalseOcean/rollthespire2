@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text;
 using System.Security.Cryptography;
+using System.IO.Compression;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.Predictability;
 
@@ -166,6 +167,7 @@ internal static class FamilyCanonicalMeasuredCost
         value is HistoricalCadence or BlockedMainLoopCadence or LiveMainLoopCadence;
     internal const string Boundary = "CompleteInvokeAsyncWall.FirstAndWarmupExcluded.20261021.v1";
     internal const string ResourceName = "RolltheSpire2.Search.FamilyExecution.CanonicalCostReference.json";
+    internal const string CompressedResourceName = ResourceName + ".gz";
     private static readonly Lazy<FamilyCanonicalCostSnapshot> Reference = new(() =>
         FamilyAuxiliaryEvidence.Read(nameof(FamilyCanonicalMeasuredCost), "LoadFiniteCanonicalReference",
             LoadReference, new FamilyCanonicalCostSnapshot([])));
@@ -179,10 +181,11 @@ internal static class FamilyCanonicalMeasuredCost
     {
         string? path = Environment.GetEnvironmentVariable("RT2_CANONICAL_COST_REFERENCE_PATH");
         if (!string.IsNullOrWhiteSpace(path)) return ParseLoaded(File.ReadAllBytes(path), "Override:" + Path.GetFullPath(path));
-        using var stream = typeof(FamilyCanonicalMeasuredCost).Assembly.GetManifestResourceStream(ResourceName)
-            ?? throw new FileNotFoundException("CanonicalCostReference.EmbeddedResourceMissing", ResourceName);
+        using var stream = typeof(FamilyCanonicalMeasuredCost).Assembly.GetManifestResourceStream(CompressedResourceName)
+            ?? throw new FileNotFoundException("CanonicalCostReference.EmbeddedResourceMissing", CompressedResourceName);
+        using var gzip = new GZipStream(stream, CompressionMode.Decompress);
         using var bytes = new MemoryStream();
-        stream.CopyTo(bytes);
+        gzip.CopyTo(bytes);
         return ParseLoaded(bytes.ToArray(), "Embedded:" + ResourceName);
     }
 
@@ -201,61 +204,23 @@ internal static class FamilyCanonicalMeasuredCost
         return new(document.Rows, document.CompleteCallCurves) { AssetEvidence = assetEvidence };
     }
 
-    internal static ExactSearchExecutionRequest? SourceRequest(IFamilyInvocation family) => family switch
-    {
-        FamilyCpuExecution cpu => cpu.PricingRequest,
-        InitialRoomsInvocation initial => initial.PricingRequest,
-        EventResultFamily events => events.PricingRequest,
-        NeowFamily neow => neow.PricingRequest,
-        MerchantShopColorlessFamily shop => shop.PricingRequest,
-        RelicFamily relic => relic.PricingRequest,
-        CapsuleRelicFamily capsule => capsule.PricingRequest,
-        CombatRewardFamily combat => combat.PricingRequest,
-        WorldFamily world => world.PricingRequest,
-        AncientOptionFamily ancient => ancient.PricingRequest,
-        TransformationAggregateFamily transform => transform.PricingRequest,
-        _ => null
-    };
-
-    // Match reviewed standalone call owners; concrete revisions/shapes still
-    // separate ordinary E/W and additional initial-room R/W calls.
-    internal static bool InScope(ExactSearchExecutionRequest request, IFamilyInvocation family)
-    {
-        if (request.Authority.PlayersCount != 1 || request.CompiledSearch.Context.Party is not null)
-            return false;
-        IFamilyInvocation owner = family is FamilyCpuExecution cpu ? cpu.PricingOwner ?? family : family;
-        return owner switch
-        {
-            NeowFamily n => n.Coverage.Count == 1,
-            MerchantShopColorlessFamily => true,
-            RelicFamily => true,
-            CapsuleRelicFamily => true,
-            CombatRewardFamily => true,
-            TransformationAggregateFamily => true,
-            AncientOptionFamily => true,
-            EventResultFamily or WorldFamily => true,
-            InitialRoomsInvocation => family.ConditionPerformance.UsesGpu,
-            _ => false
-        };
-    }
-
-    internal static FamilyPhysicalQuote? TryQuote(IFamilyInvocation family, FamilyPhysicalQuoteRequest geometry,
+    internal static bool InScope(FilterBodyDescription family) => family.PlayersCount == 1 && family.Cost.CanonicalScope;
+    internal static FamilyPhysicalQuote? TryQuote(FilterBodyDescription family, FamilyPhysicalQuoteRequest geometry,
         int rootPopulation, IReadOnlySet<string>? passedCoverage = null)
     {
-        var request = SourceRequest(family);
-        if (request is null || !InScope(request, family) || geometry.PrivateInput || geometry.PrivateOutput ||
+        if (!InScope(family) || geometry.PrivateInput || geometry.PrivateOutput ||
             geometry.ComputationOnly && family.ConditionPerformance.UsesGpu) return null;
-        if (family is FamilyCpuExecution { RequiredPassedCoverage: { } required } &&
+        if (family.RequiredPassedCoverage is { } required &&
             (passedCoverage is null || !required.SetEquals(passedCoverage))) return null;
         if (Reference.Value.IsEmpty) return null;
         return FamilyAuxiliaryEvidence.Read<FamilyPhysicalQuote?>(family.FamilyId, "FiniteCanonicalQuote", () =>
         {
             var snapshot = Reference.Value;
-            var key = FamilyCanonicalCostShape.Describe(request, family, geometry.CompactInput, rootPopulation);
+            var key = FamilyCanonicalCostShape.Describe(family, geometry.CompactInput, rootPopulation);
             return FamilyGpuReadback.Reference(family, snapshot.Quote(key, geometry, snapshot.RequiresSourceSurvival(key)
-                ? SourceSurvival(family, passedCoverage, request.SnapshotFingerprint) : null));
+                ? SourceSurvival(family, passedCoverage, family.InputIdentity) : null));
         },
-            null, request.SnapshotFingerprint);
+            null, family.InputIdentity);
     }
 
     // Boundary identity covers finite historical rows and complete-call curves.
@@ -263,18 +228,17 @@ internal static class FamilyCanonicalMeasuredCost
     internal static bool IsCanonicalQuote(FamilyPhysicalQuote? quote) => quote is not null &&
         quote.Evidence.StartsWith(Boundary + ";", StringComparison.Ordinal);
 
-    internal static bool HasShapeReference(IFamilyInvocation family, bool compact, int rootWindow,
+    internal static bool HasShapeReference(FilterBodyDescription family, bool compact, int rootWindow,
         IReadOnlySet<string>? passedCoverage = null)
     {
         if (rootWindow <= 0) return false;
-        if (family is FamilyCpuExecution { RequiredPassedCoverage: { } required } &&
+        if (family.RequiredPassedCoverage is { } required &&
             (passedCoverage is null || !required.SetEquals(passedCoverage))) return false;
-        var request = SourceRequest(family);
-        return request is not null && InScope(request, family) && !Reference.Value.IsEmpty && FamilyAuxiliaryEvidence.Read(family.FamilyId, "FiniteCanonicalShapePresence",
+        return InScope(family) && !Reference.Value.IsEmpty && FamilyAuxiliaryEvidence.Read(family.FamilyId, "FiniteCanonicalShapePresence",
             () =>
             {
                 var snapshot = Reference.Value;
-                var key = FamilyCanonicalCostShape.Describe(request, family, compact, rootWindow);
+                var key = FamilyCanonicalCostShape.Describe(family, compact, rootWindow);
                 // This is structural existence for finite-gap handling, not
                 // admission of a price. A known N body with an unknown or
                 // unmeasured source selector must not become a static CPS fit.
@@ -282,16 +246,16 @@ internal static class FamilyCanonicalMeasuredCost
                 // explicitly applicable legacy finite row.
                 return snapshot.HasShapeReference(key) || snapshot.RequiresSourceSurvival(key);
             },
-            false, request.SnapshotFingerprint);
+            false, family.InputIdentity);
     }
 
-    private static double? SourceSurvival(IFamilyInvocation family, IReadOnlySet<string>? passed, string correlation) =>
+    private static double? SourceSurvival(FilterBodyDescription family, IReadOnlySet<string>? passed, string correlation) =>
         family.FamilyId != "N.Neow" ? null : FamilyAuxiliaryEvidence.Read<double?>(family.FamilyId, "FiniteCanonicalSourceSurvival",
             () => family.ResolveSurvival(passed ?? EmptyCoverage).SurvivalProbability, null, correlation);
 
     // The public quote request has no Compact root span. Only Dense implies its
     // own root count; Compact callers must use the explicit rootPopulation API.
-    internal static FamilyPhysicalQuote? TryDenseQuote(IFamilyInvocation family, FamilyPhysicalQuoteRequest geometry)
+    internal static FamilyPhysicalQuote? TryDenseQuote(FilterBodyDescription family, FamilyPhysicalQuoteRequest geometry)
     {
         if (geometry.ComputationOnly && family.ConditionPerformance.UsesGpu) return null;
         double n = geometry.MeanInputPopulation;
@@ -299,7 +263,7 @@ internal static class FamilyCanonicalMeasuredCost
             ? null : TryQuote(family, geometry, (int)n);
     }
 
-    internal static FamilyCanonicalStagePrice? TryInvocation(IFamilyInvocation family, double inputs, bool compact,
+    internal static FamilyCanonicalStagePrice? TryInvocation(FilterBodyDescription family, double inputs, bool compact,
         int rootPopulation, IReadOnlySet<string>? passedCoverage = null)
     {
         var quote = TryQuote(family, new(compact, false, inputs), rootPopulation, passedCoverage);
@@ -311,7 +275,7 @@ internal static class FamilyCanonicalMeasuredCost
     // ETA may repeat one public unit reference over real root fragments. This
     // does not quote a chain or a private transport allocation. Never infer a
     // Compact root span from its expected survivor population.
-    internal static FamilyCanonicalStagePrice? TryStage(IFamilyInvocation family, double roots, double fraction,
+    internal static FamilyCanonicalStagePrice? TryStage(FilterBodyDescription family, double roots, double fraction,
         bool compact, int rootWindow, IReadOnlySet<string>? passedCoverage = null)
     {
         if (!double.IsFinite(roots) || roots <= 0 ||

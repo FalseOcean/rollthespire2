@@ -92,8 +92,8 @@ internal static partial class CombinationRegressionChecks
         VariantScopedBossBranch Row(ModelKey boss) => new(1, initial.Acts[0], new([boss], [], []), ModelKeySetFilter.Empty, false);
         var query = Table(2) with { VariantBossBranches = [Row(new("ENCOUNTER", "ABSENT_OR_ALTERNATIVE")), Row(actual)] };
         var compiled = SearchCompiler.Compile(query, context);
-        var whole = RolltheSpire2.Search.Compilation.ExactSearchExecutionRequestFactory.Compile(compiled, new("000000000000", count, count, 1)).Plan!;
-        var shared = RolltheSpire2.Search.Compilation.ExactSearchExecutionRequestFactory.ForPlayer(whole, compiled.PlayerSearches.Last());
+        var whole = RolltheSpire2.Search.Compilation.SearchPreparationCompiler.Compile(compiled, new("000000000000", count, count, 1)).Plan!;
+        var shared = RolltheSpire2.Search.Compilation.SearchPreparationCompiler.ForPlayer(whole.Model, compiled.PlayerSearches.Last());
         var replay = new WorldFamilyReplay(shared);
         Check(replay.Plan.Acts.All(a => !a.FamilyBossBranchesConjunctive), "MP W consumes composed OR rows");
         var variant = VariantOpeningPlan.TryCompile(shared, shared.VariantOpening!, GpuNumericalVariant.NativeFloat64);
@@ -192,11 +192,20 @@ internal static partial class CombinationRegressionChecks
             prayer.Battles[0].CardRewards.Skip(1).SelectMany(r => r.Cards).Any(card => card.CardKey.Entry == "BLUDGEON"),
             "aligned positive uses a card exclusive to the unlisted Prayer Wheel's extra reward");
         Expect(context, Table(2, (0, aligned)), seed, true, "Exact same-order N/C positive retains the real extra reward");
-        // C deliberately omits an unspecified Capsule held effect. This fixed
-        // source-derived positive is therefore outside the sieve's coverage;
-        // Exact truth and its joint route witness remain unchanged.
-        CheckCpuFamilies(context, Table(2, (0, aligned)), seed, ["N.Neow", "C.CombatReward"],
-            projectedOutFamilies: ["C.CombatReward"]);
+        // C now observes the actual Capsule bag and applies its held effect,
+        // including Prayer Wheel's second card reward without a nested N target.
+        var alignedPlan = Compile(context, Table(2, (0, aligned)), seed);
+        var alignedPlayer = RolltheSpire2.Search.Compilation.SearchPreparationCompiler.ForPlayer(
+            alignedPlan.Model, alignedPlan.Model.CompiledSearch.PlayerSearches[0]);
+        var alignedReplay = new CombatRewardReplay(alignedPlayer);
+        Check(alignedReplay.UsesObservedOpening && !alignedReplay.ConservativelyKeeps &&
+            Enumerable.Range(0, alignedReplay.RouteCount).Any(route => {
+                var opening = alignedReplay.Opening(Input(seed).RootHash, route);
+                return opening.ExactProjectionAuthority && opening.AdditionalCardRewardCount == 1 &&
+                    Beta110CombatRewardFastStage.EvaluateForFamily(opening, alignedReplay.Plan,
+                        alignedReplay.Catalog, context.Ascension).Status == Beta110CombatRewardRouteProjectionStatus.ExactProjection;
+            }), "C retains the real observed Prayer Wheel reward continuation");
+        CheckCpuFamilies(context, Table(2, (0, aligned)), seed, ["N.Neow", "C.CombatReward"]);
         var explicitPrayer = aligned with { StructuredOpeningEffects = [ArcaneTarget("UNMOVABLE"),
             new(Large, NeowStructuredConditionKind.ExactUnorderedPair, NeowStructuredEffectScope.NestedRelics,
                 NeowStructuredOutputKind.Relic, [new("RELIC", "PRAYER_WHEEL")])] };
@@ -209,7 +218,7 @@ internal static partial class CombinationRegressionChecks
         Expect(context, Table(2, (0, incompatibleHeld)), seed, false,
             "explicit held relic from the opposite order cannot replace the required joint route witness");
         CheckCapsuleHookAcrossGap(captured, seed, pool, first);
-        Console.WriteLine($"COMBINATION_JOINT_WITNESS seed={seed};N=PYRE;C=NoDrop;NFast=true;CFast=true;Exact=NoMatch;acceptedFalsePositive=true;unlistedPrayerPositive=ExactOnly;explicitPrayerPositive=FastRetained");
+        Console.WriteLine($"COMBINATION_JOINT_WITNESS seed={seed};N=PYRE;C=NoDrop;NFast=true;CFast=true;Exact=NoMatch;acceptedFalsePositive=true;unlistedPrayerPositive=ObservedFastRetained;explicitPrayerPositive=FastRetained");
     }
 
     private static void CheckPartyProjectionIsolation(SearchContext context, string seed, SearchQuery personal)
@@ -250,8 +259,8 @@ internal static partial class CombinationRegressionChecks
         Check(bagBuilds == 1 && System.Text.Json.JsonSerializer.Serialize(prepared) == System.Text.Json.JsonSerializer.Serialize(narrowed),
             "Prepared slot bag preserves the entire opening payload and builds only when consumed");
         var parent = Compile(context, Table(context.Party.Players.Count, (0, personal)), seed);
-        var child = RolltheSpire2.Search.Compilation.ExactSearchExecutionRequestFactory.ForPlayer(
-            parent, parent.CompiledSearch.PlayerSearches[0]);
+        var child = RolltheSpire2.Search.Compilation.SearchPreparationCompiler.ForPlayer(
+            parent.Model, parent.Model.CompiledSearch.PlayerSearches[0]);
         Check(SearchAuthorityProjector.TryProjectForRootHash(child, input.RootHash, input.SeedIdentity,
             out var baselineAuthority, out var baselineDisposition, out var baselineIssue), "baseline slot authority projection");
         Check(SearchAuthorityProjector.TryProjectForRootHash(child, input.RootHash, input.SeedIdentity,
@@ -265,8 +274,8 @@ internal static partial class CombinationRegressionChecks
         _ = PartyNeowProjection.ProjectChoices(request, input.RootHash, shared.Niche,
             shared.CombatPotionGeneration, authoredCapsuleEffects: premise, preparedRelicBag: forbiddenBag);
         Check(!forbiddenBag.IsValueCreated, "Unrequested party effects do not evaluate the prepared bag");
-        var noBagChild = RolltheSpire2.Search.Compilation.ExactSearchExecutionRequestFactory.ForPlayer(
-            parent, parent.CompiledSearch.PlayerSearches[^1]);
+        var noBagChild = RolltheSpire2.Search.Compilation.SearchPreparationCompiler.ForPlayer(
+            parent.Model, parent.Model.CompiledSearch.PlayerSearches[^1]);
         Check(SearchAuthorityProjector.TryProjectForRootHash(noBagChild, input.RootHash, input.SeedIdentity,
             out _, out _, out _, forbiddenBag) && !forbiddenBag.IsValueCreated,
             "Authority without a bag obligation does not evaluate the prepared bag");
@@ -368,40 +377,38 @@ internal static partial class CombinationRegressionChecks
             Expect(context, Table(4, (0, first), (1, observer with { StructuredOpeningEffects = [LeafTarget(advancedObserver)] }), (3, last)),
                 seed, false, "observation-only N must not inherit a selected predecessor's cursor");
             var result = Exact(context, table, seed);
-            Check(result.Document!.Party!.Transactions.Select(t => t.Slot).SequenceEqual(new[] { 0, 3 }),
+            Check(result.Facts!.Party!.Transactions.Select(t => t.Slot).SequenceEqual(new[] { 0, 3 }),
                 "only explicitly selected slots own opening transactions");
-            Check(result.Document.Party.Transactions[0].OpeningRouteId == source.OpeningRewardContinuations.Routes.Single().Route.RouteId,
+            Check(result.Facts!.Party.Transactions[0].OpeningRouteId == source.OpeningRewardContinuations.Routes.Single().Route.RouteId,
                 "Exact publishes the selected Bones acquisition order");
             CheckCpuFamilies(context, table, seed, ["N.Neow", "C.CombatReward"]);
             Console.WriteLine($"COMBINATION_PARTY_GAP seed={seed};order={string.Join(',', order)};observer={observation};P4={target};C={reward.Battles[0].Cards[0].CardKey}");
         }
     }
 
-    private static void CheckCpuFamilies(SearchContext context, SearchQuery query, string seed, string[] expectedFamilies,
-        string[]? projectedOutFamilies = null)
+    private static void CheckCpuFamilies(SearchContext context, SearchQuery query, string seed, string[] expectedFamilies)
     {
         var request = Compile(context, query, seed);
         var families = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, false);
-        var execution = new FamilyExecutionContext(requiresGpu: false, failOnPhysicalRecovery: true);
+        var execution = new FilterRuntimeServices(requiresGpu: false, failOnPhysicalRecovery: true);
+        var handles = families.Select(body => body.CreateExecution!(body, execution)).ToArray();
         try
         {
             Check(expectedFamilies.All(id => families.Any(f => f.FamilyId == id)), "required CPU families are registered");
-            Check(projectedOutFamilies is null || projectedOutFamilies.All(expectedFamilies.Contains),
-                "every explicitly projected-out family remains a registered obligation");
             Check(VisibleSeedCandidateCodec.TryParseOrdinal(Beta111Profile.Instance, seed, out ulong ordinal, out _, out _), "fixed seed ordinal");
             var batch = new SearchBatch(ordinal, 1);
-            foreach (var family in families)
+            foreach (var handle in handles)
             {
+                var family = handle.Body;
                 Check(!family.ConditionPerformance.UsesGpu, "CPU-only regression execution");
-                var result = family.InvokeAsync(execution, new(batch, request), FamilyCandidateSet.Dense(batch), default).AsTask().GetAwaiter().GetResult();
-                bool projectedOut = projectedOutFamilies?.Contains(family.FamilyId) == true;
-                Check(result.EnumerateLogicalOrdinals().SequenceEqual(projectedOut ? Array.Empty<ulong>() : new[] { 0UL }),
-                    family.FamilyId + (projectedOut ? " rejects the fixed root under the declared neutral projection" : " retains the fixed root"));
+                var result = handle.FilterAsync(execution, FamilyCandidateSet.Dense(batch), default).AsTask().GetAwaiter().GetResult();
+                Check(result.EnumerateLogicalOrdinals().SequenceEqual(new[] { 0UL }),
+                    family.FamilyId + " retains the fixed root");
             }
         }
         finally
         {
-            foreach (var family in families) family.DisposeAsync(execution).AsTask().GetAwaiter().GetResult();
+            foreach (var handle in handles) handle.DisposeAsync(execution).AsTask().GetAwaiter().GetResult();
             execution.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
     }
@@ -422,13 +429,15 @@ internal static partial class CombinationRegressionChecks
             // Registration plans both CPU and Auto realizations without invoking
             // any family, allocating GPU resources, or starting worker tasks.
             var families = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, gpuAvailable);
-            var execution = new FamilyExecutionContext(requiresGpu: false, failOnPhysicalRecovery: true);
-            IFamilyInvocation? cpu = null;
+            var execution = new FilterRuntimeServices(requiresGpu: false, failOnPhysicalRecovery: true);
+            FilterBodyDescription? cpu = null;
             try
             {
                 var neow = families.Single(f => f.FamilyId == "N.Neow");
-                Check(neow is NeowFamily.PartyInitial, "worker budget exercises the registered party N realization");
-                cpu = neow.CpuRealizations.Single();
+                Check(neow.PlayersCount == 2 && neow.PhysicalRevision.Contains("N.Neow.Party", StringComparison.Ordinal), "worker budget exercises the registered party N realization");
+                cpu = neow.UsesGpu
+                    ? neow.CpuAlternatives.Single(body => body.CpuWorkers == Math.Clamp(neow.CpuWorkers, 1, 32))
+                    : neow;
                 int expectedCpuWorkers = workers == 1 ? 1 : 32;
                 Check(!cpu.ConditionPerformance.UsesGpu && cpu.ConditionPerformance.PhysicalImplementationRevision
                     .Contains($".P{expectedCpuWorkers}.B", StringComparison.Ordinal),
@@ -437,8 +446,6 @@ internal static partial class CombinationRegressionChecks
             }
             finally
             {
-                if (cpu is not null) cpu.DisposeAsync(execution).AsTask().GetAwaiter().GetResult();
-                foreach (var family in families) family.DisposeAsync(execution).AsTask().GetAwaiter().GetResult();
                 execution.DisposeAsync().AsTask().GetAwaiter().GetResult();
             }
         }

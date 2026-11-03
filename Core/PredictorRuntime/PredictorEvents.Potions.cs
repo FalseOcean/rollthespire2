@@ -63,12 +63,12 @@ internal sealed partial class PredictorRun
                 if (stoneSlot < 0) return PredictorInputResult.Invalid;
                 SetEventPotionSlot(stoneSlot, null);
                 Accept(new("StoneDiscardPotion", _stonePotionId!.Value, [], null, null));
-                ApplyEventHealth(10, 10);
+                ApplyFixedEventHealth(choice.OptionKey);
                 _eventRng!.NextInt(100);
                 FinishEvent();
                 return PredictorInputResult.Accepted;
             case ("STONE_OF_ALL_TIME", "PUSH"):
-                ApplyEventHealth(-6, 0);
+                ApplyFixedEventHealth(choice.OptionKey);
                 if (Phase == PredictorPhase.Complete) return PredictorInputResult.Accepted;
                 var vigorous = SymbioteCandidates();
                 if (vigorous.IsEmpty)
@@ -120,7 +120,7 @@ internal sealed partial class PredictorRun
         if (potions.Length == 0) throw new InvalidOperationException("PredictorStonePotionRequired");
         _stonePotionId = potions[_eventRng!.NextInt(potions.Length)].Id;
         return [EventPotionOption("LIFT", potions.Single(potion => potion.Id == _stonePotionId)),
-            new("PUSH", Enabled: SymbioteCandidates().Length > 0, HealthDamage: 6)];
+            FixedEventHealthOption("PUSH") with { Enabled = SymbioteCandidates().Length > 0 }];
     }
 
     private ImmutableArray<PredictorEventOption> RanwidOptions()

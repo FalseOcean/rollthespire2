@@ -10,51 +10,67 @@ using RolltheSpire2.Search.Semantics;
 
 namespace RolltheSpire2.Search.FamilyExecution;
 
+internal sealed record NeowPartyStage(int Slot, FilterBodyDescription Family, NeowReplayPlan Replay, NeowFamilyGpuPlan? Gpu);
+
 internal sealed partial class NeowFamily
 {
-    // Physical specialization of the existing Family; ABI1 remains ordinals only.
-    internal sealed partial class PartyInitial : IFamilyInvocation, IDenseFamilyBatchGrouping
+    internal static bool TryCreateParty(SearchModel model, FilterExecutionPreferences preferences,
+        out FilterBodyDescription? body, bool preferGpu, GpuPlanFactory? gpuPlanFactory = null)
     {
-        private readonly ExactSearchExecutionRequest _request;
-        private readonly FamilyCpuExecution _cpu;
-        private readonly List<NeowReplayPlan> _cpuPlans = [];
-        private readonly List<CpuPlayer> _cpuPlayers = [];
-        private sealed record CpuPlayer(PlayerOfferQuery Player, NeowReplayPlan Offers, NeowReplayPlan[] Predicates,
-            (ulong Any, ulong All, ulong Ban)[]? Gates);
-        private readonly List<(ExactSearchExecutionRequest Request, IFamilyInvocation Family)> _gpuStages = [];
-        internal string GpuPreparationFailureDetail { get; private set; } = "";
-        private long _inputs, _outputs, _liveInputs;
-        private double _ms, _liveMs;
-        private int _batches;
-        private bool _compact, _privateParity;
-        private readonly bool _optimize;
-        private FamilyPrivateGpuChain? _chain;
-        private NeowFamilyGpuExecutor? _fused;
+        body = null;
+        if (!model.CompiledSearch.NormalizedQuery.Players.Any(PartyInitial.HasConditions)) return false;
+        try { body = new PartyInitial(model, preferences, preferGpu, gpuPlanFactory: gpuPlanFactory).Describe(); return true; }
+        catch (InvalidOperationException error) when (error.Message is "NeowFamilyReplayAuthorityUnavailable" or "NeowFamilyUnmappedIdentity" ||
+            error.Message.StartsWith("DonorContinuationAuthorityUnavailable:", StringComparison.Ordinal))
+        {
+            RuntimeLog.TryBackgroundWarning("partyNeowFamilyUnavailable=true;phase=CpuReplayCompilation;replacement=None;remainingQueryOwner=ProductionExact;replacementCompleteness=NotClaimed;exceptionJson=" + RuntimeLog.SafeJson(error.ToString()));
+            return false;
+        }
+    }
+    // Pure ordered-arrival preparation, not a running invocation.
+    internal sealed partial class PartyInitial
+    {
+        private const string CpuRevision = "N.Neow.PartyEffects.Cpu.20261016.v6";
+        private const int CpuCapacity = 65536;
+        private readonly string _identity;
+        private readonly IRuntimeProfile _profile;
+        private readonly int _workers, _requestedWorkers, _playersCount;
+        private readonly bool _optimize, _skipExactValidation;
         private readonly bool? _fuse;
-        private long _fusedReadback;
-        private double _fusedDispatch;
+        private readonly FamilySurvivalProjection _survival;
+        private readonly NeowPartyProgram _program;
+        private readonly List<string> _remainders = [];
+        private readonly List<NeowReplayPlan> _cpuPlans = [];
+        private readonly List<NeowPartyPlayer> _cpuPlayers = [];
+        private readonly List<NeowPartyStage> _gpuStages = [];
+        internal string GpuPreparationFailureDetail { get; private set; } = "";
+        private sealed record PlayerPreparation(PlayerOfferQuery Player, SearchModel Personal, NeowReplayPlan[] Predicates);
+        public string FamilyId => "N.Neow";
+        internal int CpuWindowCapacity => CpuCapacity;
+        private bool UsesCompatibilityGpu => _gpuStages.Any(s => s.Gpu?.NumericalVariant == NeowGpuNumericalVariant.IntegerUnitFloat);
+        private bool UsesPrivate => _optimize && _gpuStages.Count > 1 && _gpuStages.All(s => s.Family.CanBindPrivateSerial);
         private bool UsesFused => _optimize && _fuse != false && _gpuStages.Count > 1 &&
-            _gpuStages.All(s => s.Family is NeowFamily { GpuPlan.NumericalVariant: NeowGpuNumericalVariant.NativeFloat64 }) &&
-            (_fuse == true || PreferFused());
-        private bool UsesCompatibilityGpu => _gpuStages.Any(s => s.Family is NeowFamily { UsesCompatibilityGpu: true });
+            _gpuStages.All(s => s.Gpu?.NumericalVariant == NeowGpuNumericalVariant.NativeFloat64) && (_fuse == true || PreferFused());
+        private bool HasOrderedKBody => _gpuStages.Any(s => s.Replay.StructuredConditions.Any(c => c.OrderedKaleidoscope));
         private bool PreferFused()
         {
-            // The bounded workload comparison regressed on mixed heavy effects.
-            // Fuse homogeneous identity/Leafy kernels; retain private compaction for others.
-            var first = ((NeowFamily)_gpuStages[0].Family).GpuPlan!;
+            var first = _gpuStages[0].Gpu!;
             return first.Meta[82] is 0 or 4 && (first.Meta[56] & 2) == 0 &&
-                _gpuStages.All(s => ((NeowFamily)s.Family).GpuPlan is { } p &&
-                    p.Meta[82] == first.Meta[82] && p.Meta[81] == first.Meta[81] && (p.Meta[56] & 2) == 0);
+                _gpuStages.All(s => s.Gpu is { } plan && plan.Meta[82] == first.Meta[82] &&
+                    plan.Meta[81] == first.Meta[81] && (plan.Meta[56] & 2) == 0);
         }
-        private bool UsesPrivate => _optimize && _gpuStages.Count > 1 && _gpuStages.All(s => s.Family.CanBindPrivateSerial);
-        private sealed record PlayerPreparation(PlayerOfferQuery Player, ExactSearchExecutionRequest Personal, NeowReplayPlan[] Predicates);
-        internal PartyInitial(ExactSearchExecutionRequest request, bool preferGpu = false, bool optimize = true, bool? fuse = null,
+        internal PartyInitial(SearchModel request, FilterExecutionPreferences preferences, bool preferGpu = false, bool optimize = true, bool? fuse = null,
             GpuPlanFactory? gpuPlanFactory = null)
         {
             _optimize = optimize; _fuse = fuse;
-            _request = request;
-            _cpu = new(request, FamilyId, "N.Neow.PartyEffects.Cpu.20261016.v6", workers: Math.Clamp(request.WorkerCount, 1, 32),
-                windowCapacity: 65536, numericalRoots: true);
+            _identity = request.SnapshotFingerprint; _profile = RuntimeProfileRegistry.Select(request.Detection);
+            _workers = Math.Clamp(preferences.WorkerCount, 1, 32); _requestedWorkers = preferences.WorkerCount;
+            _skipExactValidation = preferences.SkipExactValidation;
+            _playersCount = request.CompiledSearch.NormalizedQuery.Players.Count;
+            var offers = PartyStageSurvival.Project(request, FamilyId);
+            _survival = offers.SurvivalProbability is double p ? FamilySurvivalProjection.Resolved(FamilyId, p,
+                "PartyN.OfferGateUpperEnvelope;ResultArrivalUnionsAndExactRemaindersNotPaid;" + offers.Evidence) :
+                FamilySurvivalProjection.Unresolved(FamilyId, "PartyN.OfferProbabilityUnavailable;" + offers.Evidence);
             var preparations = new List<PlayerPreparation>();
             {
                 (int Niche, int Potions)[]? arrivals = [(0, 0)];
@@ -68,7 +84,7 @@ internal sealed partial class NeowFamily
                     if (player.SelectedOption is { } selectedOption)
                         compiledPersonal = SearchCompiler.CompilePlayer(player.Conditions with
                         { OpeningRoute = new(selectedOption.Option), StructuredOpeningEffects = player.Results }, compiledPersonal.Context);
-                    var personal = ExactSearchExecutionRequestFactory.ForPlayer(request, compiledPersonal);
+                    var personal = SearchPreparationCompiler.ForPlayer(request, compiledPersonal);
                     var effectPlan = NeowReplayPlan.Compile(personal, false);
                     var predicateArrivals = route is null && !compiledPersonal.NormalizedQuery.HasCombatRewardConstraints
                         ? new[] { (Niche: 0, Potions: 0) } : arrivals;
@@ -106,10 +122,16 @@ internal sealed partial class NeowFamily
                         parts = PredicateParts(predicate).ToArray();
                         _cpuPlans.AddRange(parts);
                         if (!hooksKnown || predicateArrivals is null && (effectPlan.HasFinalCurseFastProjection || effectPlan.StructuredConditions.Any(ReadsShared)))
+                        {
+                            _remainders.Add($"slot={player.Slot};UnmodeledAuthoredHookOrPrefixAuthority;ProductionExactOnly");
                             RuntimeLog.TryBackgroundInfo($"partyNeowEffectRemainder=true;slot={player.Slot};reason=UnmodeledAuthoredHookOrPrefixAuthority;owner=WholeTableExact");
+                        }
                     }
                     if (effectPlan.ExactOnly.Length > 0)
+                    {
+                        _remainders.AddRange(effectPlan.ExactOnly.Select(reason => $"slot={player.Slot};{reason};ProductionExactOnly"));
                         RuntimeLog.TryBackgroundInfo($"partyNeowEffectRemainder=true;slot={player.Slot};reason={string.Join(',', effectPlan.ExactOnly)};owner=WholeTableExact");
+                    }
                     var advances = SharedAdvanceOptions(personal, effectPlan);
                     arrivals = arrivals is null || advances is null ? null : arrivals.SelectMany(a => advances.Select(b =>
                         (Niche: a.Niche + b.Niche, Potions: a.Potions + b.Potions))).Distinct().OrderBy(x => x.Niche).ThenBy(x => x.Potions).ToArray();
@@ -133,13 +155,16 @@ internal sealed partial class NeowFamily
                         if (!Beta110FastRelicCatalog.TryGetId(required, out byte id)) { numerical = false; break; }
                         masks.Add((0, Beta110FastRelicCatalog.Bit(id), 0));
                     }
-                    _cpuPlayers.Add(new(player, IdentityOnly(effectPlan) with { Bones = false }, parts,
-                        numerical ? masks.ToArray() : null));
+                    _cpuPlayers.Add(new(request.CompiledSearch.Context.Party!.Players[player.Slot], gates,
+                        new ModelKey?[] { player.SelectedOption?.Option, player.Conditions.OpeningRoute?.RouteRelicKey }
+                            .Where(key => key.HasValue).Select(key => key!.Value).ToArray(),
+                        IdentityOnly(effectPlan) with { Bones = false }, parts, numerical ? masks.ToArray() : null));
                 }
             }
-            if (preferGpu) PrepareGpuStages(preparations, gpuPlanFactory);
+            if (preferGpu) PrepareGpuStages(request, preferences, preparations, gpuPlanFactory);
+            _program = new(_cpuPlayers.ToArray(), _cpuPlans.ToArray(), optimize);
         }
-        private void PrepareGpuStages(IReadOnlyList<PlayerPreparation> preparations, GpuPlanFactory? gpuPlanFactory)
+        private void PrepareGpuStages(SearchModel request, FilterExecutionPreferences preferences, IReadOnlyList<PlayerPreparation> preparations, GpuPlanFactory? gpuPlanFactory)
         {
             // Every slot's CPU predicate already exists. Only optional physical
             // stages are discarded if their preparation fails; no partial CPU takeover.
@@ -147,7 +172,7 @@ internal sealed partial class NeowFamily
                 _gpuStages.Clear();
                 RuntimeLog.TryBackgroundInfo($"partyNeowGpuUnavailable=true;selected=CPU;scope=N.Neow;cpuPlans={_cpuPlans.Count};allSlotsCompiled=true;remainder=WholeTableExact;reason={reason}");
             }
-            bool Add(ExactSearchExecutionRequest child, NeowReplayPlan plan)
+            bool Add(SearchModel child, NeowReplayPlan plan)
             {
                 var family = new NeowFamily(child, plan, gpuPlanFactory: gpuPlanFactory);
                 if (family.GpuPreparationFailed)
@@ -155,7 +180,7 @@ internal sealed partial class NeowFamily
                     GpuPreparationFailureDetail = $"slot={plan.Authority.PlayerSlotIndex};" + family.GpuPreparationFailureDetail;
                     UseCompleteCpu("GpuStageConstructionFailed"); return false;
                 }
-                _gpuStages.Add((child, family));
+                _gpuStages.Add(new(plan.Authority.PlayerSlotIndex, family.Describe(preferences), plan, family.GpuPlan));
                 if (family.GpuPlan is null)
                     RuntimeLog.TryBackgroundInfo($"partyNeowCpuStage=true;slot={plan.Authority.PlayerSlotIndex};reason=GpuPlanNotAdmitted;predicate=NumericalReplay;owner=WholeTableExact");
                 return true;
@@ -176,8 +201,8 @@ internal sealed partial class NeowFamily
                         var required = route is null ? offers.All : offers.All.Append(route.RouteRelicKey).Distinct().ToArray();
                         var query = SearchQuery.Empty with { LegacyNeow = SearchQuery.Empty.LegacyNeow with
                             { NeowRelics = new(offers.Any, required, offers.Ban) } };
-                        var compiled = SearchCompiler.CompilePlayer(query, _request.CompiledSearch.PlayerSearches[player.Slot].Context);
-                        var child = ExactSearchExecutionRequestFactory.ForPlayer(_request, compiled);
+                        var compiled = SearchCompiler.CompilePlayer(query, request.CompiledSearch.PlayerSearches[player.Slot].Context);
+                        var child = SearchPreparationCompiler.ForPlayer(request, compiled);
                         if (!Add(child, NeowReplayPlan.Compile(child, false))) return;
                     }
                     int gateCount = _gpuStages.Count - gateStart;
@@ -222,7 +247,7 @@ internal sealed partial class NeowFamily
             ? [plan.First, plan.Second]
             : plan.Authority.BonesEligibleRelicIds.Where(id => (plan.BonesAll & Beta110FastRelicCatalog.Bit(id)) != 0).ToArray();
 
-        private static bool AuthoredOpeningHooksSupported(ExactSearchExecutionRequest request)
+        private static bool AuthoredOpeningHooksSupported(SearchModel request)
         {
             var a = request.Authority.EffectAuthority;
             var relics = (a?.OrderedRelicBag ?? []).Concat(a?.SharedRelicPoolSource ?? []).Concat(a?.CharacterRelicPoolSource ?? []);
@@ -234,7 +259,7 @@ internal sealed partial class NeowFamily
 
         // A necessary-condition union of possible shared arrivals. It does not
         // select a player-local witness; whole-table Exact binds the real route.
-        internal static (int Niche, int Potions)[]? SharedAdvanceOptions(ExactSearchExecutionRequest request, NeowReplayPlan plan)
+        internal static (int Niche, int Potions)[]? SharedAdvanceOptions(SearchModel request, NeowReplayPlan plan)
         {
             var values = new HashSet<(int Niche, int Potions)>();
             bool Add(NeowReplayPlan order)
@@ -260,7 +285,7 @@ internal sealed partial class NeowFamily
             return values.ToArray();
         }
 
-        internal static (int? Niche, int? Potions) SharedAdvance(ExactSearchExecutionRequest request, NeowReplayPlan plan)
+        internal static (int? Niche, int? Potions) SharedAdvance(SearchModel request, NeowReplayPlan plan)
         {
             if (plan.Selected == 255) return (0, 0);
             var pair = plan.Bones ? KnownBonesPair(plan) : [];
@@ -327,112 +352,30 @@ internal sealed partial class NeowFamily
                 n.Preset != NeowSearchPreset.None || n.EffectOutputConditions.Any(c => !c.IsEmpty) ||
                 q.LegacyWorld.AncientOptionFilters.Any(f => f.Act == 1 && !f.IsEmpty);
         }
-        private bool MatchesRichOffers(ulong root, PlayerOfferQuery p)
-        {
-            var authority = _request.CompiledSearch.Context.Party!.Players[p.Slot];
-            var offers = ModernNeowIdentityPredictor.PredictModernCore(root, authority, Beta111Profile.Instance, true).RelicKeys;
-            return PartyInitialQuery.Matches(p.Offers, offers) && PartyInitialQuery.Matches(p.Conditions.LegacyNeow.NeowRelics, offers) &&
-                p.Conditions.LegacyWorld.AncientOptionFilters.Where(f => f.Act == 1).All(f => PartyInitialQuery.Matches(f.Keys, offers)) &&
-                (p.SelectedOption is null || offers.Contains(p.SelectedOption.Option)) &&
-                (p.Conditions.OpeningRoute is null || offers.Contains(p.Conditions.OpeningRoute.RouteRelicKey));
-        }
-        private bool MatchesOffers(ulong root, CpuPlayer player, out NeowReplayObservation observation)
-        {
-            observation = NeowPartyReplay.Observe(root, player.Offers);
-            if (player.Gates is null) return MatchesRichOffers(root, player.Player);
-            ulong top = Beta110FastRelicCatalog.Bit(observation.First) | Beta110FastRelicCatalog.Bit(observation.Second) |
-                Beta110FastRelicCatalog.Bit(observation.Curse);
-            // Each Any row is an independent gate. Combining them into one OR
-            // would weaken the whole authored conjunction.
-            foreach (var gate in player.Gates)
-                if (gate.Any != 0 && (top & gate.Any) == 0 || (top & gate.All) != gate.All || (top & gate.Ban) != 0) return false;
-            return true;
-        }
-        internal bool MatchesInitialOffers(ulong root)
-        {
-            foreach (var player in _cpuPlayers)
-                if (!MatchesOffers(root, player, out _)) return false;
-            return true;
-        }
-        internal bool MatchesInitialOffersReference(ulong root) => _cpuPlayers.All(p => MatchesRichOffers(root, p.Player));
-        private bool Matches(ulong root)
-        {
-            if (!_optimize) return MatchesInitialOffersReference(root) && _cpuPlans.All(plan => NeowPartyReplay.Matches(root, plan));
-            Span<NeowReplayObservation> offers = stackalloc NeowReplayObservation[_cpuPlayers.Count];
-            // All slots' initial gates still precede every local predicate/fault.
-            for (int i = 0; i < _cpuPlayers.Count; i++)
-                if (!MatchesOffers(root, _cpuPlayers[i], out offers[i])) return false;
-            for (int i = 0; i < _cpuPlayers.Count; i++)
-            {
-                var player = _cpuPlayers[i];
-                if (player.Predicates.Length == 0) continue;
-                var observation = NeowPartyReplay.CompleteObservation(root, player.Predicates[0], offers[i]);
-                foreach (var plan in player.Predicates)
-                    if (!NeowPartyReplay.Matches(root, plan, observation)) return false;
-            }
-            return true;
-        }
-        GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => _gpuStages.Aggregate(GpuNumericRequirements.None, (requirements, stage) => requirements | stage.Family.GpuNumericRequirements);
-        public string FamilyId => "N.Neow";
-        internal int CpuWindowCapacity => _cpu.WindowCapacity;
-        public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId,
-            _gpuStages.Count == 0 ? _cpu.WindowCapacity : FamilyCpuExecution.Capacity, [], "PartyInitialAnalyticalWorkUnavailable;PhysicalQuoteBounded");
-        public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest geometry)
-        {
-            if (!FamilyPhysicalQuote.AdmittedRequest(geometry) || geometry.PrivateInput || geometry.PrivateOutput ||
-                geometry.MeanInputPopulation <= 0) return null;
-            int window = ConditionPerformance.UsesGpu ? FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize : _cpu.WindowCapacity;
-            var price = QuoteUnit(geometry.MeanInputPopulation, geometry.CompactInput, geometry.ComputationOnly, geometry.CostSnapshot);
-            var quote = price is null ? null : new FamilyPhysicalQuote(FamilyId,
-                geometry.ComputationOnly ? "PartyNComputationReference" : "PartyNCompleteReference",
-                price.Milliseconds * 1e6 / geometry.MeanInputPopulation, window, price.SetupMilliseconds,
-                price.Evidence + (geometry.ComputationOnly ? ";FamilyComputationBoundary" : ";CompleteCanonicalAbi1;PlannerRankingReference"), OutputElementBytes: 8)
-            { LocalCostSource = geometry.ComputationOnly ? "ComponentComposition" : "ReferenceDefault",
-                OutputAlreadyOrdered = true, PublicTransportClass = geometry.ComputationOnly
-                ? (ConditionPerformance.UsesGpu ? "DeviceFamilyWork" : "CpuOrderedAbi1") : "CompleteCanonicalAbi1" };
-            return geometry.ComputationOnly ? quote : FamilyGpuReadback.Reference(this, quote);
-        }
-        // The offer-only projection is an explicit envelope for this necessary
-        // gate. Missing base offer evidence stays missing; it is not probability 1.
-        public FamilySurvivalProjection Survival
-        {
-            get
-            {
-                FamilySurvivalProjection offers = PartyStageSurvival.Project(_request, FamilyId);
-                return offers.SurvivalProbability is double p
-                    ? FamilySurvivalProjection.Resolved(FamilyId, p,
-                        "PartyN.OfferGateUpperEnvelope;ResultArrivalUnionsAndExactRemaindersNotPaid;" + offers.Evidence)
-                    : FamilySurvivalProjection.Unresolved(FamilyId,
-                        "PartyN.OfferProbabilityUnavailable;" + offers.Evidence);
-            }
-        }
-        public FamilyConditionPerformanceProjection ConditionPerformance => ResolveConditionPerformance(false);
         internal FamilyUnitCost? QuoteUnit(double inputs, bool compact, bool computationOnly = false, GpuCostSnapshot? costs = null)
         {
             double outputRate = Survival.SurvivalProbability ?? 1;
             if (computationOnly) return QuoteCoarseUnit(inputs, compact, outputRate, computationOnly: true, costs);
             if (_gpuStages.Count == 0)
             {
-                double work = _request.CompiledSearch.NormalizedQuery.Players.Count +
+                double work = _playersCount +
                     _cpuPlans.Sum(plan => 1 + plan.StructuredConditions.Length * 3 +
                         (plan.HasFinalCurseFastProjection ? 1 : 0));
                 var cpuMeasured = PartyMeasuredCost.Price(FamilyId, inputs,
-                    _request.CompiledSearch.NormalizedQuery.Players.Count, false, false,
-                    _cpu.WindowCapacity, work, outputRate, _request.WorkerCount,
-                    cpuPhysicalRevision: _cpu.Condition(compact).PhysicalImplementationRevision);
+                    _playersCount, false, false,
+                    CpuCapacity, work, outputRate, _requestedWorkers,
+                    cpuPhysicalRevision: CpuCondition(compact).PhysicalImplementationRevision);
                 return cpuMeasured is { } cpuPrice
                     ? new(cpuPrice.Ms, cpuPrice.SetupMs,
                         cpuPrice.Evidence.Replace("LocalMeasuredCPU;", "HistoricalCpuWrapperReference;", StringComparison.Ordinal) +
                         $";CpuNPlans={_cpuPlans.Count};Work={work:G9};SingleFamilyWrapper;PriceQuality=Estimate;CurrentWrapperNotMeasured;SharedArrivalWitnessUnchanged")
                     : QuoteCoarseUnit(inputs, compact, outputRate);
             }
-            IFamilyInvocation[] children = _gpuStages.Select(s => s.Family).ToArray();
+            FilterBodyDescription[] children = _gpuStages.Select(s => s.Family).ToArray();
             bool privateEdges = UsesPrivate || UsesFused;
             if (!UsesCompatibilityGpu && privateEdges)
             {
-                double work = children.Sum(child => child is NeowFamily n
-                    ? 1 + n.PricingReplayPlan.StructuredConditions.Length * 3 +
-                        (n.PricingReplayPlan.HasFinalCurseFastProjection ? 1 : 0) : 1);
+                double work = _gpuStages.Sum(stage => 1 + stage.Replay.StructuredConditions.Length * 3 + (stage.Replay.HasFinalCurseFastProjection ? 1 : 0));
                 var gpuMeasured = PartyMeasuredCost.Price(FamilyId, inputs, children.Length,
                     true, true, NeowFamilyGpuExecutor.Capacity, work, outputRate);
                 if (gpuMeasured is { } gpuPrice)
@@ -449,74 +392,76 @@ internal sealed partial class NeowFamily
             // probability product or a replacement for the shared arrival witness.
             return QuoteCoarseUnit(inputs, compact, outputRate);
         }
-        private bool HasOrderedKBody => _gpuStages.Any(s => s.Family is NeowFamily n &&
-            n.PricingReplayPlan.StructuredConditions.Any(c => c.OrderedKaleidoscope));
-        public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compact) => _gpuStages.Count == 0 ? _cpu.Condition(compact) :
+        public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compact) => _gpuStages.Count == 0 ? CpuCondition(compact) :
             new(FamilyId, "N.Neow.PartyEffects.Gpu.v6." + (UsesFused ? "Fused." : UsesPrivate ? "PrivateOrdinal." : "Public.") + (compact ? "CompactAbi1" : "Dense") +
                 (UsesPrivate && compact ? ".DirectCompactCast.20261016.v1" : "") + (HasOrderedKBody ? PartyOrderedKRevision : "") +
-                (UsesCompatibilityGpu ? ".IntegerUnitFloat.Rne.20261025.v1" : "") + GpuRngRotation.Revision,
+                (UsesCompatibilityGpu ? ".IntegerUnitFloat.Rne.20261025.v1" : "") + NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision,
                 "OrderedSlotInitialOffers", 1, "InitialOffersAndResolvedEffects;SharedArrival=AuthoredDrawUnion;Remainder=WholeTableExact;" +
                     (UsesCompatibilityGpu ? "GpuNumericalVariant=IntegerUnitFloat;PhysicalQuoteUnavailable=UnmeasuredVariant" : "BoundedLocalPhysicalQuote"),
                 usesGpu: _gpuStages.Any(s => s.Family.ConditionPerformance.UsesGpu));
-        IEnumerable<IFamilyInvocation> IFamilyInvocation.CpuRealizations => [new PartyInitial(_request)];
-        public async ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow window,
-            FamilyCandidateSet input, CancellationToken token)
+        private FamilyConditionPerformanceProjection CpuCondition(bool compact) =>
+            CpuFilterExecution.Describe(FamilyId, CpuRevision, _workers, CpuCapacity, true, false, compact);
+        public FamilySurvivalProjection Survival => _survival;
+        internal bool MatchesInitialOffers(ulong root) => _program.MatchesInitialOffers(root);
+        internal bool MatchesInitialOffersReference(ulong root) => _program.MatchesInitialOffersReference(root);
+        internal bool Matches(ulong root) => _program.Matches(root);
+        private PartyInitial(PartyInitial source)
         {
-            if (window.ExactRequest.SnapshotFingerprint != _request.SnapshotFingerprint)
-                throw new InvalidOperationException("PartyNeowObservationContextMismatch");
-            if (_gpuStages.Count == 0) return _cpu.Execute(window, input, token, Matches,context);
-            token.ThrowIfCancellationRequested();
-            if (_groupingDisabled) throw new InvalidOperationException("PartyN.SelectedInvocationFaulted");
-            _compact = !input.IsDense;
-            var watch = Stopwatch.StartNew();
-            var result = input;
-            if ((UsesFused || UsesPrivate) && input.Count > 0)
-            {
-                if (UsesFused)
-                {
-                    _fused ??= await context.ExecuteGpuAsync(rd => CreateFused(rd), token).ConfigureAwait(false);
-                    result = await context.ExecuteGpuAsync(_ =>
-                    {
-                        var output = _fused.Execute(input, token, out var metrics);
-                        _fusedReadback += metrics.ReadbackBytes; _fusedDispatch += metrics.DispatchSyncMs;
-                        return output;
-                    }, token).ConfigureAwait(false);
-                }
-                else
-                {
-                    _chain ??= await context.ExecuteGpuAsync(rd => new FamilyPrivateGpuChain(rd, _gpuStages.Select(s => s.Family).ToArray()), token).ConfigureAwait(false);
-                    result = await context.ExecuteGpuAsync(_ => _chain.Execute(input, token), token).ConfigureAwait(false);
-                }
-                ValidatePrivateParity(input, result);
-            }
-            else foreach (var stage in _gpuStages)
-            {
-                if (result.Count == 0) break;
-                result = await stage.Family.InvokeAsync(context, new(window.Batch, stage.Request), result, token).ConfigureAwait(false);
-            }
-            double elapsed = watch.Elapsed.TotalMilliseconds;
-            if (input.IsDense) Volatile.Write(ref _lastDenseOutputCount, result.Count);
-            _inputs += input.Count; _outputs += result.Count; _ms += elapsed;
-            if (_batches++ > 0) { Interlocked.Add(ref _liveInputs, input.Count); _liveMs += elapsed; _liveBatches++; }
-            return result;
+            _identity = source._identity; _profile = source._profile; _workers = source._workers;
+            _requestedWorkers = source._requestedWorkers; _playersCount = source._playersCount;
+            _optimize = source._optimize; _skipExactValidation = source._skipExactValidation; _fuse = source._fuse;
+            _survival = source._survival; _program = source._program;
+            _remainders.AddRange(source._remainders);
+            _cpuPlans.AddRange(source._cpuPlans); _cpuPlayers.AddRange(source._cpuPlayers);
         }
-        public FamilyPerformanceObservation CapturePerformanceObservation() => _gpuStages.Count == 0 ? _cpu.Observation() :
-            new(ResolveConditionPerformance(_compact), _fused?.Device ?? _chain?.Device ?? _gpuStages[0].Family.CapturePerformanceObservation().DeviceName,
-                (_fused?.SetupMs ?? _chain?.SetupMs ?? _gpuStages.Sum(s => s.Family.CapturePerformanceObservation().SetupMs)) + (_pairFused?.SetupMs ?? 0) + (_privatePairChain?.SetupMs ?? 0), 0, 0, _batches, Math.Max(0, _batches - 1),
-                _inputs, _outputs, _ms, false, "PartyInitialGpu;CanonicalAbi1Observation;BoundedLocalQuote;PostPickup=WholeTableExact");
-        public FamilyLivePerformanceSnapshot? CaptureLivePerformanceSnapshot() => _gpuStages.Count == 0 ? _cpu.Live() :
-            _groupingDisabled || _liveBatches == 0 ? null : new(FamilyId, ResolveConditionPerformance(_compact).PhysicalImplementationRevision,
-                Interlocked.Read(ref _liveInputs), Volatile.Read(ref _liveMs), _liveBatches);
-        public async ValueTask DisposeAsync(FamilyExecutionContext context)
+        internal FilterBodyDescription Describe()
         {
-            _privatePairDisposed = true;
-            if (_gpuStages.Count == 0) { _cpu.WriteSummary(); return; }
-            if (_fused is not null || _pairFused is not null)
-                await context.ExecuteGpuAsync(_ => { DisposePair(_pairFused, _fused); return true; }, CancellationToken.None).ConfigureAwait(false);
-            if (_chain is not null || _privatePairChain is not null)
-                await context.ExecuteGpuAsync(_ => { PrivateOrdinalBuffer.DisposeAll(_privatePairChain, _chain); return true; }, CancellationToken.None).ConfigureAwait(false);
-            foreach (var stage in _gpuStages) await stage.Family.DisposeAsync(context).ConfigureAwait(false);
-            RuntimeLog.TryBackgroundInfo($"partyNeowPipelineSummary=true;fused={UsesFused};private={UsesPrivate && !UsesFused};stages={_gpuStages.Count};batches={_batches};input={_inputs};output={_outputs};wallMs={_ms};setupMs={(_fused?.SetupMs ?? _chain?.SetupMs ?? 0) + (_pairFused?.SetupMs ?? 0) + (_privatePairChain?.SetupMs ?? 0)};intermediatePayloadReadbackBytes={(_chain is not null || _fused is not null ? 0 : -1)};readbackBytes={(_chain?.ReadbackBytes ?? _fusedReadback) + (_privatePairChain?.ReadbackBytes ?? 0)};dispatchSyncMs={(_chain?.DispatchMs ?? _fusedDispatch) + (_privatePairChain?.DispatchMs ?? 0)};parity={_privateParity};densePairGroups={_densePairGroups};densePairCalibrationSamples=Excluded;privateDensePairGroups={_privateDensePairGroups}");
+            var prepared = new PreparedFilter(FamilyId)
+            {
+                AnalyticalCost = new(FamilyId, _gpuStages.Count == 0 ? CpuCapacity : CpuFilterExecution.Capacity,
+                    [], "PartyInitialAnalyticalWorkUnavailable;PhysicalQuoteBounded"),
+                Survival = _survival, Remainders = _remainders.Distinct(StringComparer.Ordinal).ToArray(),
+                Obligations = _cpuPlayers.Select(p => new FilterObligation(FamilyId, p.Authority.PlayerSlotIndex)).ToArray(),
+                Issues = string.IsNullOrEmpty(GpuPreparationFailureDetail) ? [] :
+                    [new("GpuPreparation", "PartyNeowGpuPreparationFailed", GpuPreparationFailureDetail)]
+            };
+            var stages = _gpuStages.ToArray();
+            bool usesGpu = stages.Any(s => s.Family.UsesGpu);
+            return new(prepared, ResolveConditionPerformance(false).PhysicalImplementationRevision, _profile.ProfileId)
+            {
+                UsesGpu = usesGpu, WindowCapacity = stages.Length == 0 ? CpuCapacity : FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize,
+                PreferredRootWindowSize = usesGpu ? null : CpuCapacity,
+                CpuWorkers = _workers, PlayersCount = _playersCount, InputIdentity = _identity,
+                NumericRequirements = stages.Aggregate(GpuNumericRequirements.None, (value, s) => value | s.Family.NumericRequirements),
+                PhysicalBodies = stages.Select(s => s.Family).ToArray(),
+                CpuAlternatives = stages.Length == 0 ? [] : [new PartyInitial(this).Describe()],
+                PerformanceProjection = ResolveConditionPerformance,
+                Cost = new()
+                {
+                    ComposedPopulationReference = true,
+                    CompleteCallQuote = (geometry, passed) => QuoteUnit(geometry.MeanInputPopulation, geometry.CompactInput),
+                    Quote = QuotePhysicalWork
+                },
+                CreateExecution = RuntimeFactory(_program, stages, UsesFused, UsesPrivate, _skipExactValidation, _profile)
+            };
         }
+        private FamilyPhysicalQuote? QuotePhysicalWork(FilterBodyDescription body, FamilyPhysicalQuoteRequest geometry, IReadOnlySet<string> passed)
+        {
+            if (!FamilyPhysicalQuote.AdmittedRequest(geometry) || geometry.PrivateInput || geometry.PrivateOutput || geometry.MeanInputPopulation <= 0) return null;
+            var price = QuoteUnit(geometry.MeanInputPopulation, geometry.CompactInput, geometry.ComputationOnly, geometry.CostSnapshot);
+            var quote = price is null ? null : new FamilyPhysicalQuote(FamilyId,
+                geometry.ComputationOnly ? "PartyNComputationReference" : "PartyNCompleteReference",
+                price.Milliseconds * 1e6 / geometry.MeanInputPopulation, body.WindowCapacity, price.SetupMilliseconds,
+                price.Evidence + (geometry.ComputationOnly ? ";FamilyComputationBoundary" : ";CompleteCanonicalAbi1;PlannerRankingReference"),
+                OutputElementBytes: 8, OutputAlreadyOrdered: true,
+                PublicTransportClass: geometry.ComputationOnly ? body.UsesGpu ? "DeviceFamilyWork" : "CpuOrderedAbi1" : "CompleteCanonicalAbi1")
+            { LocalCostSource = geometry.ComputationOnly ? "ComponentComposition" : "ReferenceDefault" };
+            return geometry.ComputationOnly ? quote : FamilyGpuReadback.Reference(body, quote);
+        }
+        private static Func<FilterBodyDescription, FilterRuntimeServices, IFilterExecution> RuntimeFactory(
+            NeowPartyProgram program, NeowPartyStage[] stages, bool fused, bool privateEdges,
+            bool skipExact, IRuntimeProfile profile) => (body, services) => stages.Length == 0
+                ? new CpuFilterExecution(body, profile, program.Matches, numericalRoots: true)
+                : new NeowPartyFilterExecution(body, stages, fused, privateEdges, skipExact, services);
     }
 }

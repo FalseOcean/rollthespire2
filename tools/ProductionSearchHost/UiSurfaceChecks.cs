@@ -64,6 +64,17 @@ internal static partial class UiSurfaceChecks
         var args = OS.GetCmdlineUserArgs();
         var runtime = ModRuntimeSnapshot.NotInitialized with { Profile = Beta111Profile.Instance,
             Detection = new("0.111.0", "0.111.0", "beta", "WorkspaceSurface", true, "") };
+        if (args.Contains("--card-picker-refresh-ui"))
+        {
+            await RunCardPickerRefreshChecks(root, output);
+            return;
+        }
+
+        if (args.Contains("--crystal-left-rail-only"))
+        {
+            await RunCrystalLeftRailChecksAsync(root, output, runtime);
+            return;
+        }
 
         if (args.Contains("--owner-ui-polish"))
         {
@@ -194,7 +205,10 @@ internal static partial class UiSurfaceChecks
                 var worker = (SpinBox)Field(shell, "_workerBudget");
                 var operation = (CheckButton)Field(shell, "_operationPrediction");
                 var map = (CheckButton)Field(shell, "_mapPrediction");
-                Check(operation.ButtonPressed && map.ButtonPressed, "existing feature behavior defaults enabled");
+                Check(!operation.ButtonPressed && !map.ButtonPressed, "operation and map prediction default off");
+                operation.ButtonPressed = true; map.ButtonPressed = true;
+                Check(persistence.Preferences.OperationPredictionEnabled && persistence.Preferences.MapPredictionEnabled,
+                    "explicit feature enable reaches the saved preferences");
                 operation.ButtonPressed = false; map.ButtonPressed = false;
                 Check(!persistence.Preferences.OperationPredictionEnabled && !persistence.Preferences.MapPredictionEnabled,
                     "feature buttons update preferences");
@@ -264,7 +278,7 @@ internal static partial class UiSurfaceChecks
             about.EmitSignal(Button.SignalName.Pressed);
             var notes = (DeveloperNotesPage)Field(shell, "_notesPage");
             Require(((Dictionary<string, Button>)Field(notes, "_chapterButtons")).Keys.SequenceEqual(
-                new[] { "release", "next", "positioning", "devlog" }), "notes retain four peer chapters after FAQ migration");
+                new[] { "release", "next", "positioning", "devlog", "contributors" }), "notes retain all five current peer chapters");
             await AwaitPageReady(root, shell);
             root.GetViewport().GetTexture().GetImage().SavePng(Path.Combine(output, "notes-unread.png"));
             ((Button)Field(shell, "_search")).EmitSignal(Button.SignalName.Pressed);

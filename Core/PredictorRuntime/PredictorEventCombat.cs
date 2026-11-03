@@ -19,7 +19,7 @@ internal sealed partial class PredictorRun
     {
         if (_eventLayoutEncounter == encounter) return;
         if (_eventLayoutEncounter != null) throw new InvalidOperationException("PredictorEventLayoutAlreadyPrepared");
-        int count = PredictorEncounterEntry.InitialEnemyCount(encounter, Beta111Profile.Instance.ComputeRootSeed(Context.Seed), Working.Position.Floor);
+        int count = PredictorEncounterEntry.InitialEnemyCount(encounter, Context.RuntimeProfile.ComputeRootSeed(Context.Seed), Working.Position.Floor);
         Working = PredictorEncounterEntry.ConsumeInitialEnemyHp(Working, count);
         _eventLayoutEncounter = encounter;
     }

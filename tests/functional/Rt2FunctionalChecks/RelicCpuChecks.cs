@@ -194,8 +194,8 @@ internal static class RelicCpuChecks
         var directSmall = cases.Single(c => c.path == "direct-capsule-v1/Small-C-check.json").workload;
         cases.Add(("authored/direct-capsule-plus-ordinary", directSmall with { Query = directSmall.Query with
             { RelicSequenceConstraints = basis.Query.RelicSequenceConstraints } }));
-        var baseRequest = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(basis.Query, context.Context), basis.Options).Plan!;
-        RelicFamilyPlanCompiler.TryCompilePool(baseRequest, out _, out var dense, out var lanes, out _);
+        var baseRequest = SearchPreparationCompiler.Compile(SearchCompiler.Compile(basis.Query, context.Context), basis.Options).Plan!;
+        RelicFamilyPlanCompiler.TryCompilePool(baseRequest.Model, out _, out var dense, out var lanes, out _);
         for (int lane = 0; lane < 3; lane++)
         {
             var keys = dense.Where(p => lanes[lane].ContainsKey(p.Value)).Take(2).Select(p => p.Key).ToArray();
@@ -213,14 +213,14 @@ internal static class RelicCpuChecks
         int checks = CheckTreasureProjection() + CheckLargeTargetPlan() + CheckNeutralCapsuleContinuation(source, context);
         foreach (var (path, workload) in cases)
         {
-            var result = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(workload.Query, context.Context), workload.Options);
+            var result = SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, context.Context), workload.Options);
             var request = result.Plan ?? throw new InvalidOperationException(path + ":" + result.Issue);
             Func<ulong, bool> fast, reference;
-            if (NeowReplayPlan.HasCapsule(request))
+            if (NeowReplayPlan.HasCapsule(request.Model))
             {
-                var route = NeowReplayPlan.Compile(request, true);
-                var plan = CapsuleRelicCpuPlan.TryCompile(request, route) ?? throw new InvalidOperationException("not admitted:" + path);
-                fast = plan.Matches; reference = new CapsuleRelicReplay(request, route).Matches;
+                var route = NeowReplayPlan.Compile(request.Model, true);
+                var plan = CapsuleRelicCpuPlan.TryCompile(request.Model, route) ?? throw new InvalidOperationException("not admitted:" + path);
+                fast = plan.Matches; reference = new CapsuleRelicReplay(request.Model, route).Matches;
                 if (path.StartsWith("direct-capsule-v1/", StringComparison.Ordinal))
                 {
                     checks += CheckDirectRarityPrerequisite(request, route, fast, reference, path);
@@ -229,11 +229,11 @@ internal static class RelicCpuChecks
             }
             else
             {
-                if (!RelicFamilyPlanCompiler.TryCompile(request, out var plan, out string issue)) throw new InvalidOperationException(issue);
+                if (!RelicFamilyPlanCompiler.TryCompile(request.Model, out var plan, out string issue)) throw new InvalidOperationException(issue);
                 fast = (RelicCpuPlan.TryCompile(plan!) ?? throw new InvalidOperationException("ordinary not admitted")).Matches;
-                RelicFamily.TryCreate(request, out var family);
-                reference = typeof(RelicFamily).GetMethod("MatchesCpuReference", BindingFlags.Instance | BindingFlags.NonPublic)!
-                    .CreateDelegate<Func<ulong, bool>>(family);
+                var referencePlan = new RelicReferencePlan(RelicReferencePlan.ProjectEvaluation(request.Model),
+                    request.Model.Authority.WorldAuthority, RuntimeProfileRegistry.Select(request.Model.Detection));
+                reference = referencePlan.Reference;
             }
             ulong start = 0;
             foreach (char c in workload.Options.StartSeed) start = checked(start * 34 + (uint)"0123456789ABCDEFGHJKLMNPQRSTUVWXYZ".IndexOf(c));
@@ -263,10 +263,10 @@ internal static class RelicCpuChecks
         foreach (string path in new[] { "family-pricing-matrix-v1/R-shop.json", "bones-capsule-boundary-v1/K-full.json" })
         {
             var w = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/" + path);
-            var request = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(w.Query, context.Context), w.Options).Plan!;
+            var request = SearchPreparationCompiler.Compile(SearchCompiler.Compile(w.Query, context.Context), w.Options).Plan!;
             bool admitted;
-            if (NeowReplayPlan.HasCapsule(request)) admitted = CapsuleRelicCpuPlan.TryCompile(request, NeowReplayPlan.Compile(request, true)) is not null;
-            else { RelicFamilyPlanCompiler.TryCompile(request, out var plan, out _); admitted = RelicCpuPlan.TryCompile(plan!) is not null; }
+            if (NeowReplayPlan.HasCapsule(request.Model)) admitted = CapsuleRelicCpuPlan.TryCompile(request.Model, NeowReplayPlan.Compile(request.Model, true)) is not null;
+            else { RelicFamilyPlanCompiler.TryCompile(request.Model, out var plan, out _); admitted = RelicCpuPlan.TryCompile(plan!) is not null; }
             if (admitted) throw new InvalidDataException("reference alternative unexpectedly admitted:" + path);
             checks++;
         }
@@ -284,9 +284,9 @@ internal static class RelicCpuChecks
             var query = source.Query with { OpeningRouteRelicRequirement = source.Query.OpeningRouteRelicRequirement! with {
                 RequiredRelicKeys = [BaseGameModelKeys.Relics.LargeCapsule, companion], OrderMode = BonesRouteOrderMode.AnyOrder },
                 StructuredOpeningEffects = [large] };
-            var request = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context.Context), source.Options).Plan!;
-            var route = NeowReplayPlan.Compile(request, true);
-            if (CapsuleRelicCpuPlan.TryCompile(request, route) is null) throw new InvalidDataException("R neutral companion not admitted: " + companion);
+            var request = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context.Context), source.Options).Plan!;
+            var route = NeowReplayPlan.Compile(request.Model, true);
+            if (CapsuleRelicCpuPlan.TryCompile(request.Model, route) is null) throw new InvalidDataException("R neutral companion not admitted: " + companion);
             ulong root = 0;
             while (root < 65536 && !NeowSingleplayerReplay.Observe(root, route).IdentityPass) root++;
             if (root == 65536) throw new InvalidDataException("R neutral offered-pair witness missing: " + companion);
@@ -317,8 +317,8 @@ internal static class RelicCpuChecks
                 var positiveQuery = source.Query with { OpeningRouteRelicRequirement = source.Query.OpeningRouteRelicRequirement! with {
                     RequiredRelicKeys = [capsuleKey, companion], OrderMode = BonesRouteOrderMode.AnyOrder },
                     StructuredOpeningEffects = [source.Query.StructuredOpeningEffects.Single(c => c.SourceRelicKey == capsuleKey)] };
-                var seedRequest = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(positiveQuery, context.Context), source.Options).Plan!;
-                var seedRoute = NeowReplayPlan.Compile(seedRequest, true);
+                var seedRequest = SearchPreparationCompiler.Compile(SearchCompiler.Compile(positiveQuery, context.Context), source.Options).Plan!;
+                var seedRoute = NeowReplayPlan.Compile(seedRequest.Model, true);
                 ulong positiveRoot = 0;
                 while (positiveRoot < 65536 && !NeowSingleplayerReplay.Observe(positiveRoot, seedRoute).IdentityPass) positiveRoot++;
                 if (positiveRoot == 65536) throw new InvalidDataException("R neutral positive identity witness missing");
@@ -329,10 +329,10 @@ internal static class RelicCpuChecks
                     var orderedQuery = positiveQuery with { OpeningRouteRelicRequirement = positiveQuery.OpeningRouteRelicRequirement! with {
                         OrderMode = pickup == 0 ? BonesRouteOrderMode.AnyOrder : BonesRouteOrderMode.ExactOrder,
                         RequiredRelicKeys = pickup == 2 ? [companion, capsuleKey] : [capsuleKey, companion] } };
-                    var positiveRequest = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(orderedQuery, context.Context), source.Options).Plan!;
-                    var positiveRoute = NeowReplayPlan.Compile(positiveRequest, true);
-                    var positivePlan = CapsuleRelicCpuPlan.TryCompile(positiveRequest, positiveRoute) ?? throw new InvalidDataException("R neutral positive plan not admitted");
-                    if (!new CapsuleRelicReplay(positiveRequest, positiveRoute).Matches(positiveRoot) || !positivePlan.Matches(positiveRoot))
+                    var positiveRequest = SearchPreparationCompiler.Compile(SearchCompiler.Compile(orderedQuery, context.Context), source.Options).Plan!;
+                    var positiveRoute = NeowReplayPlan.Compile(positiveRequest.Model, true);
+                    var positivePlan = CapsuleRelicCpuPlan.TryCompile(positiveRequest.Model, positiveRoute) ?? throw new InvalidDataException("R neutral positive plan not admitted");
+                    if (!new CapsuleRelicReplay(positiveRequest.Model, positiveRoute).Matches(positiveRoot) || !positivePlan.Matches(positiveRoot))
                         throw new InvalidDataException("R neutral positive pickup witness lost: " + companion);
                     checks++;
                 }
@@ -341,11 +341,11 @@ internal static class RelicCpuChecks
             {
                 var bad = route with { Authority = route.Authority with { EffectCatalog = route.Authority.EffectCatalog with {
                     NewLeafTransformAuthorityExact = false } } };
-                if (CapsuleRelicCpuPlan.TryCompile(request, bad) is not null) throw new InvalidDataException("R neutral companion hid NewLeaf authority fault");
+                if (CapsuleRelicCpuPlan.TryCompile(request.Model, bad) is not null) throw new InvalidDataException("R neutral companion hid NewLeaf authority fault");
                 checks++;
             }
             // A multiplayer authority cannot borrow the solo neutral proof.
-            if (CapsuleRelicCpuPlan.TryCompile(request, route with { Authority = route.Authority with { PlayersCount = 2 } }) is not null)
+            if (CapsuleRelicCpuPlan.TryCompile(request.Model, route with { Authority = route.Authority with { PlayersCount = 2 } }) is not null)
                 throw new InvalidDataException("R neutral solo proof leaked into party");
             checks++;
         }
@@ -355,9 +355,9 @@ internal static class RelicCpuChecks
 
     // Test-only full permutation oracle: no tracked positions or target-rank
     // code participates in choosing the known positive Capsule outputs.
-    private static ModelKey[] IndependentCapsuleOutputs(ExactSearchExecutionRequest request, NeowReplayPlan route, ulong root, int count)
+    private static ModelKey[] IndependentCapsuleOutputs(PreparedSearch request, NeowReplayPlan route, ulong root, int count)
     {
-        if (!RelicFamilyPlanCompiler.TryCompilePool(request, out var pool, out var dense, out _, out string issue))
+        if (!RelicFamilyPlanCompiler.TryCompilePool(request.Model, out var pool, out var dense, out _, out string issue))
             throw new InvalidDataException(issue);
         var keys = dense.ToDictionary(pair => pair.Value, pair => pair.Key);
         var lanes = new ushort[3][];
@@ -381,12 +381,12 @@ internal static class RelicCpuChecks
         return observed;
     }
 
-    private static int CheckDirectRarityPrerequisite(ExactSearchExecutionRequest request, NeowReplayPlan route,
+    private static int CheckDirectRarityPrerequisite(PreparedSearch request, NeowReplayPlan route,
         Func<ulong, bool> fast, Func<ulong, bool> reference, string name)
     {
         if (route.Bones || route.Selected is not (Beta110FastRelicCatalog.SmallCapsule or Beta110FastRelicCatalog.LargeCapsule))
             throw new InvalidDataException("Direct rarity fixture scope");
-        if (!RelicFamilyPlanCompiler.TryCompilePool(request, out _, out var dense, out var lanes, out string issue))
+        if (!RelicFamilyPlanCompiler.TryCompilePool(request.Model, out _, out var dense, out var lanes, out string issue))
             throw new InvalidDataException(issue);
         int[] required = new int[3];
         foreach (var key in route.Filter.StructuredNeowEffects.Single().OutputKeys)
@@ -423,7 +423,7 @@ internal static class RelicCpuChecks
         return checkedRoots + 1;
     }
 
-    private static int CheckDirectSlotAndOverflow(ExactSearchExecutionRequest request, NeowReplayPlan route, string name)
+    private static int CheckDirectSlotAndOverflow(PreparedSearch request, NeowReplayPlan route, string name)
     {
         int checks = 0;
         foreach (int slot in new[] { 0, 1, 3 })
@@ -436,8 +436,8 @@ internal static class RelicCpuChecks
             if (repeated)
                 personal = personal with { Filter = personal.Filter with { StructuredNeowEffects = personal.Filter.StructuredNeowEffects
                     .Select(c => c with { OutputKeys = new[] { c.OutputKeys[0], c.OutputKeys[0] }, AllowDuplicateOutputs = true }).ToArray() } };
-            var fast = CapsuleRelicCpuPlan.TryCompile(request, personal) ?? throw new InvalidDataException("Direct slot fixture not admitted: " + name);
-            var reference = new CapsuleRelicReplay(request, personal);
+            var fast = CapsuleRelicCpuPlan.TryCompile(request.Model, personal) ?? throw new InvalidDataException("Direct slot fixture not admitted: " + name);
+            var reference = new CapsuleRelicReplay(request.Model, personal);
             ulong rewardsWrap = unchecked(0UL - (ulong)slot - NeowFamilyReplay.RewardsHash);
             ulong eventWrap = unchecked(0UL - (ulong)slot - XxHash64.Hash("NEOW"u8, 0));
             ulong[] boundary = [0, 1, ulong.MaxValue, ulong.MaxValue - 1,
@@ -455,7 +455,7 @@ internal static class RelicCpuChecks
         return checks;
     }
 
-    internal static int CheckEnvelope(ExactSearchExecutionRequest request, Func<ulong, bool> fast, Func<ulong, bool> reference)
+    internal static int CheckEnvelope(PreparedSearch request, Func<ulong, bool> fast, Func<ulong, bool> reference)
     {
         string[] names = ["RT2_CPU_ROOTS", "RT2_CPU_WORKERS", "RT2_CPU_PARTITIONED"];
         var previous = names.Select(Environment.GetEnvironmentVariable).ToArray();
@@ -472,18 +472,23 @@ internal static class RelicCpuChecks
                 var batch = new SearchBatch(first, 8193);
                 var input = compact ? FamilyCandidateSet.FromAbi1(batch, Enumerable.Range(0, 8193).Where(i => i % 2 == 0).Select(i => (ulong)i).ToArray()) : FamilyCandidateSet.Dense(batch);
                 var expected = input.EnumerateLogicalOrdinals().Where(i => reference(profile.ComputeRootSeed(VisibleSeedCandidateCodec.FormatOrdinal(profile, first + i)))).ToArray();
-                var cpu = new FamilyCpuExecution(request, "R.Check", "TrackedParity", workers:4, windowCapacity:65536, numericalRoots:true);
-                var actual = cpu.Execute(new(batch, request), input, CancellationToken.None, fast);
+                bool inject = false;
+                var services = new FilterRuntimeServices(false);
+                var body = new FilterBodyDescription(new PreparedFilter("R.Check"), "TrackedParity", request.Model.ProfileId)
+                { CpuWorkers=4, WindowCapacity=65536 };
+                var cpu = new CpuFilterExecution(body, profile, root => { bool kept=fast(root); if(inject)throw new InvalidOperationException("injected-R");return kept; }, true);
+                var actual = cpu.FilterAsync(services, input, CancellationToken.None).GetAwaiter().GetResult();
                 if (!actual.ExportAbi1().Span.SequenceEqual(expected)) throw new InvalidDataException("R partition/tail ABI1");
                 var zero = FamilyCandidateSet.Dense(new(first, 0));
-                if (cpu.Execute(new(zero.Batch, request), zero, CancellationToken.None, fast).Count != 0) throw new InvalidDataException("R zero");
-                try { cpu.Execute(new(batch, request), input, new CancellationToken(true), fast); throw new InvalidDataException("R cancel lost"); }
+                if (cpu.FilterAsync(services, zero, CancellationToken.None).GetAwaiter().GetResult().Count != 0) throw new InvalidDataException("R zero");
+                try { cpu.FilterAsync(services, input, new CancellationToken(true)).GetAwaiter().GetResult(); throw new InvalidDataException("R cancel lost"); }
                 catch (OperationCanceledException) { }
-                try { cpu.Execute(new(batch, request), input, CancellationToken.None, root => { _ = fast(root); throw new InvalidOperationException("injected-R"); }); throw new InvalidDataException("R fault lost"); }
+                inject=true;
+                try { cpu.FilterAsync(services, input, CancellationToken.None).GetAwaiter().GetResult(); throw new InvalidDataException("R fault lost"); }
                 catch (Exception ex) when (FamilyCpuMatchException.IsRecoverable(ex) &&
                     FamilyCpuMatchException.Matches(ex).All(failure => failure.FamilyId == "R.Check" &&
                         failure.Batch == batch && failure.InnerException is InvalidOperationException { Message: "injected-R" })) { }
-                try { cpu.Execute(new(batch, request), input, CancellationToken.None, fast); throw new InvalidDataException("R resumed after fault"); }
+                try { cpu.FilterAsync(services, input, CancellationToken.None).GetAwaiter().GetResult(); throw new InvalidDataException("R resumed after fault"); }
                 catch (InvalidOperationException) { }
                 checks += 5;
             }

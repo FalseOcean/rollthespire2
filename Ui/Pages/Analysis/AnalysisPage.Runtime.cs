@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Godot;
 using RolltheSpire2.Core.Identity;
+using RolltheSpire2.Core.Authority;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.PredictorRuntime;
@@ -23,6 +24,8 @@ internal sealed partial class AnalysisPage
     private PredictorRun? _routeRuntime;
     private string _routeRuntimeKey = "", _routeMessage = "";
     private string _routeAnalysisKey = "";
+    private string _routeSeed = "";
+    private RuntimeContextAuthoritySnapshot? _routeAuthority;
     private MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState? _routePredictionUnlocks;
     private readonly Dictionary<int, ImmutableArray<MapPosition>> _routeEdits = [];
     private string RouteSavePath => System.IO.Path.Combine(OS.GetUserDataDir(), "RolltheSpire2", "state", "routes",
@@ -100,7 +103,7 @@ internal sealed partial class AnalysisPage
             }
     }
     private void SaveRouteBoundary() => PredictorRunStore.Save(RouteSavePath, _routeRuntime!);
-    private void BindRouteContext(SeedPredictionRequest request, SeedPredictionDocument document,
+    private void BindRouteContext(SeedPredictionRequest request, string canonicalSeed,
         MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState? unlocks)
     {
         var authority = request.Authority;
@@ -112,7 +115,7 @@ internal sealed partial class AnalysisPage
             DiscoveredActs = authority.WorldAuthority?.Beta109Generation?.ActSelectionGroups.SelectMany(g => g.Candidates)
                 .Where(c => c.DiscoveredInSingleplayer).Select(c => c.ActKey.Serialized).Distinct().Order(StringComparer.Ordinal).ToArray()
         });
-        string key = string.Join("/", document.CanonicalSeed, request.Character.CharacterKey.Serialized,
+        string key = string.Join("/", canonicalSeed, request.Character.CharacterKey.Serialized,
             request.Ascension, request.PlayersCount, request.PlayerSlotIndex, authority.ProfileId, authority.GameVersion,
             authority.CatalogFingerprint, authority.UnlockSnapshotFingerprint, authority.WorldSnapshotFingerprint, facts);
         if (_routeAnalysisKey != key)
@@ -121,6 +124,7 @@ internal sealed partial class AnalysisPage
             _routeEditingCombat = _routeDefaultQueued = false; _routeEdits.Clear();
         }
         _routeAnalysisKey = key;
+        _routeSeed = canonicalSeed; _routeAuthority = authority;
         _routePredictionUnlocks = unlocks is null ? null : LobbyUnlockReadout.Copy(unlocks);
     }
     private bool RouteContextDiffers(PredictorContext context)
@@ -136,7 +140,7 @@ internal sealed partial class AnalysisPage
     private void EnsureRouteRuntime()
     {
         var request = LastRequest!;
-        string key = LastDocument!.CanonicalSeed + "/" + request.Character.CharacterKey.Serialized + "/" + request.Ascension;
+        string key = _routeSeed + "/" + request.Character.CharacterKey.Serialized + "/" + request.Ascension;
         if (_routeRuntime != null && key == _routeRuntimeKey) return;
         // Never silently overwrite a failed/mismatched saved run.
         string path = System.IO.Path.Combine(OS.GetUserDataDir(), "RolltheSpire2", "state", "routes",
@@ -145,14 +149,14 @@ internal sealed partial class AnalysisPage
         if (System.IO.File.Exists(path))
         {
             var frozen = PredictorRunStore.ReadFrozenContext(path);
-            if (frozen.Seed != LastDocument.CanonicalSeed || frozen.Character != request.Character.CharacterKey || frozen.Ascension != request.Ascension)
+            if (frozen.Seed != _routeSeed || frozen.Character != request.Character.CharacterKey || frozen.Ascension != request.Ascension)
                 throw new InvalidDataException("PredictorSavedContextMismatch");
             // Account progress can advance between sessions. Revalidate the
             // saved frozen facts against this game catalog, not a newer account.
             var probe = PredictorSeedCapture.CreateRun(frozen);
             created = PredictorRunStore.Load(path, probe.Context.CatalogFingerprint, probe.Context.UnlockFingerprint);
         }
-        else created = PredictorSeedCapture.CreateFromPrediction(request, _routePredictionUnlocks!);
+        else created = PredictorSeedCapture.CreateFromSeedContext(_routeSeed, _routeAuthority!, _routePredictionUnlocks!);
         if (created.Context.Crystal is not null) throw new InvalidDataException("PredictorRouteContextIsLocalCrystal");
         _routeRuntimeKey = key; _routeRuntime = created;
         _routeEditingCombat = created.Project().CombatInputForEditing != null;
@@ -237,7 +241,7 @@ internal sealed partial class AnalysisPage
                 if (!IsInsideTree() || !IsVisibleInTree() || !_routeSubview || _routeAnalysisKey != analysisKey) return;
                 RouteAction(() =>
                 {
-                    var fresh = PredictorSeedCapture.CreateFromPrediction(request, unlocks);
+                    var fresh = PredictorSeedCapture.CreateFromSeedContext(_routeSeed, _routeAuthority!, unlocks);
                     _routeRuntimeKey = fresh.Context.Seed + "/" + request.Character.CharacterKey.Serialized + "/" + request.Ascension;
                     _routeRuntime = fresh; _routeEdits.Clear(); _routeEditingCombat = false;
                 });

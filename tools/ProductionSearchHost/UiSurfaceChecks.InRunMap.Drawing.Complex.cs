@@ -314,7 +314,7 @@ internal static partial class UiSurfaceChecks
                     foreach (var nested in Sections(section.EmbeddedEditor.Sections)) yield return nested;
             }
         }
-        InRunMapDetailSection Picker(InRunMapNodeDetailData data) => Sections(data.Premises!.Sections).Single(section =>
+        InRunMapDetailSection Picker(InRunMapNodeDetailData data) => Sections(data.Sections.Concat(data.Premises?.Sections ?? [])).Single(section =>
             section.Choices.Count(choice => choice.Object?.CardSnapshot != null) >= 2 &&
             section.Choices.Any(choice => choice.Label == text.Get("predictor.runtime.confirm")));
         InRunMapDetailChoice[] Cards(InRunMapDetailSection section) => section.Choices
@@ -323,7 +323,7 @@ internal static partial class UiSurfaceChecks
         {
             details.ShowNode(data with { IsCurrent = null }, new(new(120, 400), new(56, 56)), screen.GetGlobalRect());
             await DiagnosticFrame(root);
-            if (!(bool)DiagnosticField(details, "_premisesExpanded"))
+            if (data.Premises != null && !(bool)DiagnosticField(details, "_premisesExpanded"))
                 ((Button)details.FindChild("PremisesExpansion", true, false)!).EmitSignal(Button.SignalName.Pressed);
             await DiagnosticFrame(root);
         }
@@ -457,8 +457,18 @@ internal static partial class UiSurfaceChecks
             .Single(choice => choice.Label == text.Get("predictor.runtime.option.GORGE"));
         await Press(data, gorge, "Cheese same-parent reselection");
         data = Current();
-        check(session.GetPlan(act, point)!.Event!.Actions.Length == 1,
-            "Cheese same-parent reselection actually truncates its previously accepted child in " + language);
+        // Adopted branch buttons toggle the parent off together with its
+        // dependent suffix, as the Doors branch oracle also requires.
+        check(session.GetPlan(act, point)!.Event!.Actions.IsEmpty &&
+            data.Sections.Where(section => section.BranchRow).SelectMany(section => section.Choices).All(choice => !choice.Selected),
+            "Cheese same-parent reselection removes its parent and previously accepted child in " + language);
+        gorge = data.Sections.Where(section => section.BranchRow).SelectMany(section => section.Choices)
+            .Single(choice => choice.Label == text.Get("predictor.runtime.option.GORGE"));
+        await Press(data, gorge, "Cheese GORGE parent re-adoption");
+        data = Current();
+        check(session.GetPlan(act, point)!.Event!.Actions is { Length: 1 } readopted &&
+            readopted[0] is { Action: PredictorEventActionKind.Option, ExpectedOption.Key: "GORGE" },
+            "Cheese re-adoption saves only its parent without restoring the old two-card child in " + language);
         await CheckSelected(data, Cards(Picker(data)), [], "Cheese parent reselection clears former saved selection");
         await CheckReopenedHeight(data, "cheese-reselected");
         using (var image = root.GetViewport().GetTexture().GetImage())

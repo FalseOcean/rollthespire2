@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using RolltheSpire2.Core.Identity;
+using RolltheSpire2.Core.Events;
 
 namespace RolltheSpire2.Core.PredictorRuntime;
 
@@ -310,36 +311,24 @@ internal sealed partial class PredictorRun
         return reads;
     }
 
-    private static bool RouteEventHealthMayLose(string key, string branch) => RouteEventOptionNeedsHealth(key, branch) &&
-        (key, branch) is not (("MORPHIC_GROVE", "LONER") or ("TRIAL", "NOBLE_GUILTY") or
-            ("UNREST_SITE", "REST") or ("SAPPHIRE_SEED", "EAT") or ("STONE_OF_ALL_TIME", "LIFT") or
-            ("ROUND_TEA_PARTY", "ENJOY_TEA") or ("ABYSSAL_BATHS", "ABSTAIN") or ("TABLET_OF_TRUTH", "SMASH") or
-            ("DENSE_VEGETATION", "REST") or ("SPIRALING_WHIRLPOOL", "DRINK") or
-            ("WATERLOGGED_SCRIPTORIUM", "BLOODY_INK") or ("BYRDONIS_NEST", "EAT") or
-            ("SPIRIT_GRAFTER", "LET_IT_IN"));
+    private static bool RouteEventHealthMayLose(string key, string branch)
+    {
+        if (Beta111EventOptionRules.FixedHealth(key, branch) is { } health)
+            return health.HpDelta < 0 || health.MaxHpDelta < 0;
+        return RouteEventOptionNeedsHealth(key, branch) &&
+            (key, branch) is not (("ROUND_TEA_PARTY", "ENJOY_TEA") or ("ABYSSAL_BATHS", "ABSTAIN") or
+                ("DENSE_VEGETATION", "REST") or ("SPIRALING_WHIRLPOOL", "DRINK"));
+    }
 
     // These branches call AddCard before any card picker or obtain child. The
     // concrete AddCard helper remains the sole effects implementation.
     private static PredictorCard? RouteEventFixedAddedCard(PredictorRun run, string key, string branch)
     {
-        string? entry = (key, branch) switch
-        {
-            ("BYRDONIS_NEST", "TAKE") => "BYRDONIS_EGG",
-            ("THE_LEGENDS_WERE_TRUE", "NAB_THE_MAP") => "SPOILS_MAP",
-            ("SPIRIT_GRAFTER", "LET_IT_IN") => "METAMORPHOSIS",
-            ("BUGSLAYER", "EXTERMINATION") => "EXTERMINATE",
-            ("BUGSLAYER", "SQUASH") => "SQUASH",
-            ("CRYSTAL_SPHERE", "PAYMENT_PLAN") => "DEBT",
-            ("ZEN_WEAVER", "BREATHING_TECHNIQUES") => "ENLIGHTENMENT",
-            ("UNREST_SITE", "REST") => "POOR_SLEEP",
-            ("LOST_WISP", "CLAIM") or ("GRAVE_OF_THE_FORGOTTEN", "CONFRONT") => "DECAY",
-            ("PUNCH_OFF", "NAB") => "INJURY",
-            ("TRIAL", "MERCHANT_INNOCENT") => "SHAME",
-            ("TRIAL", "MERCHANT_GUILTY") or ("TRIAL", "NOBLE_INNOCENT") => "REGRET",
-            ("TRIAL", "NONDESCRIPT_INNOCENT") or ("TRIAL", "NONDESCRIPT_GUILTY") => "DOUBT",
-            _ => null
-        };
-        return entry == null ? null : PredictorCardChanges.Definition(run.Context, new("CARD", entry)).Prototype;
+        // Post-picker products belong to the retained selection continuation;
+        // do not read their creation hooks while merely entering the picker.
+        if (Beta111EventOptionRules.CardProductAfterSelection(key, branch) is not null) return null;
+        var product = Beta111EventOptionRules.FixedCardProduct(key, branch);
+        return product is null ? null : PredictorCardChanges.Definition(run.Context, product.Value).Prototype;
     }
 
     private static ImmutableArray<PredictorCombatPendingCause> RouteEventFixedCardReadCauses(PredictorRun run,

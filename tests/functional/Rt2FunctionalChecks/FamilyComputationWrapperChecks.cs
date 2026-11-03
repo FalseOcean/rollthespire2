@@ -28,25 +28,25 @@ internal static class FamilyComputationWrapperChecks
             "tools/ProductionSearchHost/Corpus/v1/context.json").Context;
         var party = (SearchContext)typeof(CombinationRegressionChecks).GetMethod("PartyContext", statics)!
             .Invoke(null, [captured, 2, null, null])!;
-        ExactSearchExecutionRequest Request(SearchQuery query, SearchContext source)
+        PreparedSearch Request(SearchQuery query, SearchContext source)
         {
-            var result = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, source),
+            var result = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, source),
                 new("000000000000", 65536, 16, 4));
             return result.Plan ?? throw new InvalidOperationException("FamilyComputationWrapper.Compile:" + result.Issue);
         }
         SearchQuery Read(string path) => ProductionSearchReplay.Read<ProductionSearchReplayWorkload>(
             "tools/ProductionSearchHost/Corpus/" + path).Query;
-        FamilyPhysicalQuote Need(IFamilyInvocation family, FamilyPhysicalQuoteRequest geometry) =>
+        FamilyPhysicalQuote Need(FilterBodyDescription family, FamilyPhysicalQuoteRequest geometry) =>
             family.QuotePhysicalWork(geometry) ?? throw new InvalidOperationException("FamilyComputationWrapper.Missing:" + family.FamilyId);
         double Computation(FamilyPhysicalQuote quote, FamilyPhysicalQuoteRequest geometry) =>
             FamilyCoarsePricing.ComputationMilliseconds(quote, geometry) ??
                 throw new InvalidOperationException("FamilyComputationWrapper.InadmissibleComputation:" + quote.Evidence);
-        double Component(IFamilyInvocation family, FamilyPhysicalQuoteRequest geometry) =>
+        double Component(FilterBodyDescription family, FamilyPhysicalQuoteRequest geometry) =>
             Computation(FamilyCoarsePricing.LocalComputation(family, Need(family, geometry), geometry), geometry);
         double Public(FamilyPhysicalQuote quote, FamilyPhysicalQuoteRequest geometry, double pass) =>
             FamilyCoarsePricing.PublicMilliseconds(quote, geometry, pass) ??
                 throw new InvalidOperationException("FamilyComputationWrapper.InadmissiblePublic:" + quote.Evidence);
-        void Boundary(IFamilyInvocation family, FamilyPhysicalQuote full, FamilyPhysicalQuote compute)
+        void Boundary(FilterBodyDescription family, FamilyPhysicalQuote full, FamilyPhysicalQuote compute)
         {
             Check(full.PublicTransportClass == "CompleteCanonicalAbi1", family.FamilyId + " default retains complete public boundary");
             Check(compute.PublicTransportClass == (family.ConditionPerformance.UsesGpu ? "DeviceFamilyWork" : "CpuOrderedAbi1"),
@@ -78,13 +78,13 @@ internal static class FamilyComputationWrapperChecks
             foreach (bool gpu in new[] { false, true })
             {
                 var units = FamilyExecutionCoordinator.CreateRegisteredFamilies(tableRequest, gpu);
-                var personal = units.OfType<PartyFamily>().Single(f => f.FamilyId == "S.MerchantShopColorless");
-                var neow = units.OfType<NeowFamily.PartyInitial>().Single();
+                var personal = units.Single(f => f.FamilyId == "S.MerchantShopColorless");
+                var neow = units.Single(f => f.FamilyId == "N.Neow");
                 foreach (bool compact in new[] { false, true })
                 {
                     var geometry = new FamilyPhysicalQuoteRequest(compact, false, 65536);
                     var computeGeometry = geometry with { ComputationOnly = true };
-                    foreach (IFamilyInvocation unit in new IFamilyInvocation[] { personal, neow })
+                    foreach (FilterBodyDescription unit in new FilterBodyDescription[] { personal, neow })
                     {
                         var full = Need(unit, geometry);
                         var compute = Need(unit, computeGeometry);
@@ -105,10 +105,10 @@ internal static class FamilyComputationWrapperChecks
                     }
                     // Real child numerical quotes include device filtering/emission;
                     // sum those rather than reconstructing them from public-call deltas.
-                    var ordered = ((ValueTuple<ExactSearchExecutionRequest, IFamilyInvocation>[])
-                        typeof(PartyFamily).GetMethod("OrderPersonalStages", members)!.Invoke(personal,
-                            [compact, new HashSet<string>(StringComparer.Ordinal)])!).Select(s => s.Item2).ToArray();
-                    bool privateEdges = (bool)typeof(PartyFamily).GetProperty("UsesPrivate", members)!.GetValue(personal)!;
+                    var ordered = ((PartyFilterStage[])
+                        typeof(PartyFamily).GetMethod("OrderPersonalStages", members)!.Invoke(personal.PerformanceProjection!.Target,
+                            [compact, new HashSet<string>(StringComparer.Ordinal)])!).Select(stage => stage.Body).ToArray();
+                    bool privateEdges = (bool)typeof(PartyFamily).GetProperty("UsesPrivate", members)!.GetValue(personal.PerformanceProjection!.Target)!;
                     double expected = 0, reach = 1;
                     for (int index = 0; index < ordered.Length; index++)
                     {
@@ -128,10 +128,10 @@ internal static class FamilyComputationWrapperChecks
             // full population envelope. Check public, private-chain and fused modes.
             foreach (var mode in new[] { (false, (bool?)false), (true, (bool?)false), (true, (bool?)true) })
             {
-                var neow = new NeowFamily.PartyInitial(tableRequest, preferGpu: true, optimize: mode.Item1, fuse: mode.Item2);
-                var stages = (List<(ExactSearchExecutionRequest Request, IFamilyInvocation Family)>)
+                var neow = new NeowFamily.PartyInitial(tableRequest.Model, FilterExecutionPreferences.From(tableRequest.RunOptions), preferGpu: true, optimize: mode.Item1, fuse: mode.Item2);
+                var stages = (List<NeowPartyStage>)
                     typeof(NeowFamily.PartyInitial).GetField("_gpuStages", members)!.GetValue(neow)!;
-                Check(stages.Count > 1 && neow.ConditionPerformance.UsesGpu, "N test has real multiple GPU stages");
+                Check(stages.Count > 1 && neow.ResolveConditionPerformance(false).UsesGpu, "N test has real multiple GPU stages");
                 bool fused = (bool)typeof(NeowFamily.PartyInitial).GetProperty("UsesFused", members)!.GetValue(neow)!;
                 bool privateEdges = fused || (bool)typeof(NeowFamily.PartyInitial).GetProperty("UsesPrivate", members)!.GetValue(neow)!;
                 foreach (bool compact in new[] { false, true })
@@ -146,7 +146,7 @@ internal static class FamilyComputationWrapperChecks
                             PrivateInput: privateEdges && stageCompact) { ComputationOnly = true };
                         expected += Component(stages[index].Family, childGeometry);
                     }
-                    var compute = Need(neow, geometry);
+                    var compute = Need(neow.Describe(), geometry);
                     Check(Near(Computation(compute, geometry), expected),
                         "N preserves full-stage shared-witness envelope and device output without a second host charge");
                     Check(compute.Evidence.Contains("SharedArrivalWitnessUnchanged", StringComparison.Ordinal),
@@ -164,8 +164,8 @@ internal static class FamilyComputationWrapperChecks
                 foreach (bool gpu in new[] { false, true })
                 {
                     var wrapper = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, gpu)
-                        .OfType<InitialRoomsInvocation>().Single(f => f.FamilyId == familyId);
-                    Check(wrapper.Ordinary is not null, familyId + " InitialRooms has actual ordinary and additional work");
+                        .Single(f => f.FamilyId == familyId && f.Coverage.Contains(InitialRoomsInvocation.TreasureCoverage));
+                    Check(wrapper.PhysicalBodies.Count > 1, familyId + " InitialRooms has actual ordinary and additional work");
                     foreach (bool compact in new[] { false, true })
                     {
                         var geometry = new FamilyPhysicalQuoteRequest(compact, false, 65536);
@@ -173,11 +173,11 @@ internal static class FamilyComputationWrapperChecks
                         var full = Need(wrapper, geometry);
                         var compute = Need(wrapper, computeGeometry);
                         Boundary(wrapper, full, compute);
-                        double reach = wrapper.Ordinary!.Survival.SurvivalProbability ?? 1;
+                        double reach = wrapper.PhysicalBodies[0].Survival.SurvivalProbability ?? 1;
                         var localGeometry = computeGeometry with { CompactInput = true, MeanInputPopulation = 65536 * reach };
-                        var local = InitialRoomsWorkEstimate.Local(familyId, wrapper.Plan, localGeometry, gpu,
-                            FamilyCpuExecution.ConfiguredWorkers(request))!;
-                        double expected = Component(wrapper.Ordinary, computeGeometry) +
+                        var local = InitialRoomsWorkEstimate.Local(familyId, InitialRoomsPlan.TryCompileTreasure(request.Model)!, localGeometry, gpu,
+                            Math.Clamp(request.WorkerCount, 1, 32))!;
+                        double expected = Component(wrapper.PhysicalBodies[0], computeGeometry) +
                             Computation(FamilyCoarsePricing.LocalComputation(wrapper, local, localGeometry), localGeometry);
                         Check(Near(Computation(compute, computeGeometry), expected),
                             familyId + " InitialRooms owns ordinary once and local once on ordinary survivors");
@@ -197,11 +197,11 @@ internal static class FamilyComputationWrapperChecks
             foreach (bool gpu in new[] { false, true })
             {
                 var units = FamilyExecutionCoordinator.CreateRegisteredFamilies(unknownRequest, gpu);
-                var world = units.OfType<WorldFamily>().Single();
-                var variant = units.OfType<VariantOpeningFamily>().Single();
-                Check(variant.Plan.UnknownPrefixCount == 2 && units.All(f => f is not InitialRoomsInvocation),
+                var world = units.Single(body => body.FamilyId == "W.World");
+                var variant = units.Single(body => body.FamilyId == VariantOpeningFamily.Id);
+                Check(variant.Preparation.Obligations.Any(o => o.Domain == InitialRoomsInvocation.UnknownCoverage && o.ThroughOrdinal == 2) && units.All(f => !f.Coverage.Contains(InitialRoomsInvocation.TreasureCoverage)),
                     "W progression and V Unknown prefix retain independent actual owners " + gpu);
-                foreach (IFamilyInvocation owner in new IFamilyInvocation[] { world, variant })
+                foreach (FilterBodyDescription owner in new FilterBodyDescription[] { world, variant })
                 foreach (bool compact in new[] { false, true })
                 {
                     var geometry = new FamilyPhysicalQuoteRequest(compact, false, 65536);

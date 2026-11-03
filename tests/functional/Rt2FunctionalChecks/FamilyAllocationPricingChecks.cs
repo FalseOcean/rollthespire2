@@ -66,10 +66,10 @@ internal static class FamilyAllocationPricingChecks
         var workload = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/owner-nwae-v1/NWAE_01.json");
         var compiled = SearchCompiler.Compile(workload.Query, context.Context);
         var options = workload.Options with { ScanCount = 3, TargetMatchCount = 1, WorkerCount = 1, ManualFamilyOrder = null };
-        var automaticRequest = ExactSearchExecutionRequestFactory.Compile(compiled, options).Plan!;
+        var automaticRequest = SearchPreparationCompiler.Compile(compiled, options).Plan!;
         var automatic = FamilyExecutionCoordinator.Plan(automaticRequest, false);
         var authored = automatic.ExecutionOrderUnits.Select(FamilyExecutionCoordinator.FamilyOrderKey).Reverse().ToArray();
-        var request = ExactSearchExecutionRequestFactory.Compile(compiled, options with { ManualFamilyOrder = authored }).Plan!;
+        var request = SearchPreparationCompiler.Compile(compiled, options with { ManualFamilyOrder = authored }).Plan!;
         var requested = authored.ToArray();
         authored[0] = "ChangedAfterCompile";
         Check(request.RunOptions.ManualFamilyOrder!.SequenceEqual(requested) && request.SnapshotFingerprint != automaticRequest.SnapshotFingerprint,
@@ -77,11 +77,12 @@ internal static class FamilyAllocationPricingChecks
         var selected = FamilyExecutionCoordinator.Plan(request, false);
         Check(selected.ExecutionOrderUnits.Select(FamilyExecutionCoordinator.FamilyOrderKey).SequenceEqual(requested),
             "production planning consumes request order instead of rerunning greedy sorting");
-        var executionContext = new FamilyExecutionContext(false);
+        var executionContext = new FilterRuntimeServices(false);
         try
         {
             var batch = new SearchBatch(0, 3);
-            var output = LinearFamilyPipeline.FilterAsync(executionContext, new(batch, request), manual.OrderedFamilies, default)
+            var output = LinearFamilyPipeline.FilterAsync(executionContext, batch,
+                manual.OrderedFamilies.Select(body => body.CreateExecution!(body, executionContext)).ToArray(), default)
                 .GetAwaiter().GetResult();
             Check(calls.SequenceEqual([("W.World", false), ("N.Neow", true)]) && output.Count == 3,
                 "runtime pipeline invokes the manual order with canonical compact transport");
@@ -89,6 +90,89 @@ internal static class FamilyAllocationPricingChecks
         finally { executionContext.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
         Console.WriteLine($"ManualFamilyOrder checks={checks};PASS");
         return 0;
+    }
+
+    internal static int RunScanningSpeed()
+    {
+        int checks = CheckScanningSpeed();
+        Console.WriteLine($"SearchScanningSpeed checks={checks};PASS");
+        return 0;
+    }
+
+    internal static int CheckScanningSpeed()
+    {
+        int checks = 0;
+        void Check(bool ok, string name) { checks++; if (!ok) throw new InvalidOperationException("SearchScanningSpeed: " + name); }
+        var speed=new RolltheSpire2.Presentation.Ui1.SearchScanningSpeed();
+        Check(speed.Observe(0,0) is null && speed.Observe(10,0) is null,"Startup has no scanning speed");
+        Check(speed.Observe(11,100) is null && speed.Observe(11.5,600) is null,"Active scanning warms for one second");
+        Check(speed.Observe(12,1100)==1000,"One-second scanning rate excludes cold setup");
+        Check(Math.Abs(speed.Observe(12.5,2100)!.Value - 2000 / 1.5) < .001,
+            "Recent completed intervals smooth uneven progress without splitting their work");
+        Check(speed.Observe(13,2100)==1000,"Waiting contributes elapsed wall time without fictitious roots");
+        Check(speed.Observe(13.6,2100) is null,"A stalled active window cannot retain stale speed indefinitely");
+        Check(speed.Observe(0,0) is null && speed.Observe(1,200) is null,"New session resets speed");
+        const long mapBatch = 16 * 1024 * 1024;
+        speed.Reset();
+        Check(speed.Observe(50,0) is null && speed.Observe(58.6,mapBatch) is null,
+            "Cold GPU preparation and the first batch do not invent a measured interval");
+        for (int second = 1; second <= 8; second++)
+            Check(speed.Observe(58.6 + second,mapBatch) is null,
+                "Zero-progress UI polls cannot fabricate a first batch duration");
+        double batchRate = mapBatch / 8.6;
+        Check(Math.Abs(speed.Observe(67.2,2 * mapBatch)!.Value / batchRate - 1) < 1e-9,
+            "An eight-second GPU batch uses its complete wall interval rather than a UI tick");
+        for (int second = 1; second <= 8; second++)
+        {
+            double rate = speed.Observe(67.2 + second,2 * mapBatch)!.Value;
+            Check(rate > 0 && Math.Abs(rate - mapBatch / (8.6 + second)) < .001,
+                "A normal GPU batch keeps a visible rate and includes its current waiting time");
+        }
+        speed.Observe(75.8,3 * mapBatch);
+        speed.Observe(84.4,4 * mapBatch);
+        Check(Math.Abs(speed.Observe(93,5 * mapBatch)!.Value / batchRate - 1) < 1e-9,
+            "Recent GPU speed retains three full completed batches");
+        Check(speed.Observe(101,5 * mapBatch) is > 0 &&
+            Math.Abs(speed.Observe(101,5 * mapBatch)!.Value - 3 * mapBatch / 33.8) < .001,
+            "Three batch smoothing limits normal inter-batch variation without inventing progress");
+        Check(speed.Observe(111,5 * mapBatch) is null,
+            "No GPU progress beyond twice the recent batch interval expires the observation");
+        Check(Math.Abs(speed.Observe(115,6 * mapBatch)!.Value - 3 * mapBatch / 39.2) < .001,
+            "Progress after a stall retains the actual stalled wall time");
+        Check(speed.Observe(116,0) is null && speed.Observe(117,100) is null,
+            "Root counter regression resets an otherwise increasing session clock");
+        speed.Reset();
+        Check(speed.Observe(200,5 * mapBatch) is null && speed.Observe(208.6,6 * mapBatch) is > 0,
+            "Reopening a running page measures new progress instead of borrowing earlier roots");
+        speed.Reset();
+        speed.Observe(0,1);
+        bool highFrequencyCorrect = true;
+        for (int tick = 1; tick <= 2000; tick++)
+        {
+            double? rate = speed.Observe(tick / 1000d,tick + 1);
+            if (tick >= 1000) highFrequencyCorrect &= rate is { } value && Math.Abs(value - 1000) < .001;
+        }
+        Check(highFrequencyCorrect,"Bounded observation history still warms and measures high frequency CPU progress");
+        Check(speed.Observe(double.NaN,2002) is null && speed.Observe(2.01,2011) is > 0,
+            "Invalid presentation input does not corrupt the valid observation history");
+        speed.Reset();
+        Check(speed.Observe(5,100) is null && speed.Observe(5,200) is null && speed.Observe(6,200) is null,
+            "Same-timestamp progress alone cannot establish a measured interval");
+        Check(speed.Observe(7,300)==100,"Same-timestamp observations preserve roots once a real interval completes");
+        var rolling=new RolltheSpire2.Presentation.Ui1.SearchScanningSpeed();
+        Check(rolling.Observe(0,0) is null && rolling.Observe(3,100) is null && rolling.Observe(3.5,200) is null,"cold/warm speed waits for actual window");
+        Check(Math.Abs(rolling.Observe(4.1,320)!.Value-200)<.001,"rolling speed excludes startup");
+        var progress=new SearchProgressSnapshot(SearchRunState.Completed,1000,1,1000,1,10,100,SearchDisposition.Match,"",false)
+            {ObservedScanningRoots=500,ObservedScanningSeconds=.1};
+        Check(RolltheSpire2.Presentation.Ui1.SearchScanningSpeed.Terminal(progress,null)==5000,"short terminal speed excludes startup");
+        Check(RolltheSpire2.Presentation.Ui1.SearchScanningSpeed.Terminal(progress with {State=SearchRunState.Running},null) is null,"running waits for rolling window");
+        Check(RolltheSpire2.Presentation.Ui1.SearchScanningSpeed.Terminal(progress with {State=SearchRunState.Running},12345)==12345,"running uses its recent measured rate");
+        Check(RolltheSpire2.Presentation.Ui1.SearchScanningSpeed.Terminal(progress with {ObservedScanningRoots=0},null) is null,"no invented speed without observation");
+        Check(RolltheSpire2.Presentation.Ui1.SearchScanningSpeed.Terminal(progress with {ObservedScanningRoots=0},12345) is null,"terminal cannot borrow stale rolling speed");
+        Check(RolltheSpire2.Presentation.Ui1.SearchScanningSpeed.Terminal(progress with {ObservedScanningSeconds=double.NaN},12345) is null,"terminal cannot use invalid completed-interval time");
+        Check(RolltheSpire2.Presentation.Ui1.SearchScanningSpeed.Terminal(progress with {State=SearchRunState.Cancelled},null)==5000,"cancelled session may show completed scanning evidence");
+        Check(RolltheSpire2.Presentation.Ui1.SearchScanningSpeed.Terminal(progress with {State=SearchRunState.Faulted},null)==5000,"faulted session may show completed scanning evidence");
+        return checks;
     }
 
     internal static int Run()
@@ -144,13 +228,7 @@ internal static class FamilyAllocationPricingChecks
         Check(NeowPhysicalPricing.StagedSetupMilliseconds(new(false,true,1))==1800,"Private Dense N removes existing full-donor setup component");
         Check(NeowPhysicalPricing.StagedSetupMilliseconds(new(true,true,1,true))==2400 &&
             NeowPhysicalPricing.StagedSetupMilliseconds(new(true,false,1,true))==2400,"Private Compact N retains only full donor including terminal role");
-        var speed=new RolltheSpire2.Presentation.Ui1.SearchScanningSpeed();
-        Check(speed.Observe(0,0) is null && speed.Observe(10,0) is null,"Startup has no scanning speed");
-        Check(speed.Observe(11,100) is null && speed.Observe(11.5,600) is null,"Active scanning warms for one second");
-        Check(speed.Observe(12,1100)==1000,"One-second scanning rate excludes cold setup");
-        Check(speed.Observe(12.5,2100)==1500,"Rolling window follows recent work");
-        Check(speed.Observe(13.5,2100)==0,"A stalled active window is not stale speed");
-        Check(speed.Observe(0,0) is null && speed.Observe(1,200) is null,"New session resets speed");
+        checks += CheckScanningSpeed();
         // Real compiled work-shape facts, not relic-name lookups or runtime ratios.
         string corpus = Path.Combine(Environment.CurrentDirectory, "tools", "ProductionSearchHost", "Corpus");
         var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>(Path.Combine(corpus, "owner-nwae-v1", "context.json"));
@@ -158,9 +236,9 @@ internal static class FamilyAllocationPricingChecks
         {
             var workload = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>(Path.Combine(corpus, file));
             var source = ascension.HasValue ? context.Context with { Ascension = ascension.Value } : context.Context;
-            var compiled = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(workload.Query, source), workload.Options);
+            var compiled = SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, source), workload.Options);
             if (!compiled.Success || compiled.Plan is null) throw new InvalidDataException(compiled.Issue);
-            return new NeowFamily(compiled.Plan, NeowReplayPlan.Compile(compiled.Plan, false));
+            return new NeowFamily(compiled.Plan.Model, NeowReplayPlan.Compile(compiled.Plan.Model, false));
         }
         Check(NeowPhysicalPricing.TryResolve(Family("n-cost-v1/CurseIdentity.json"), out var curseWork, out _), "Curse work priced");
         Check(NeowPhysicalPricing.TryResolve(Family("n-cost-v1/PositiveIdentity.json"), out var positiveWork, out _), "Positive work priced");
@@ -173,15 +251,12 @@ internal static class FamilyAllocationPricingChecks
         Check(!NeowPhysicalPricing.TryResolve(Family("n-direct-v1/K-one.json"), out _, out _), "Unmeasured generic operator stays unknown");
         var legacyContext = ProductionSearchReplay.Read<ProductionSearchReplayContext>(Path.Combine(corpus, "v1", "context.json"));
         var legacyWorkload = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>(Path.Combine(corpus, "v1", "cases", "NC-silken-cards.json"));
-        var legacyRequest = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(legacyWorkload.Query, legacyContext.Context), legacyWorkload.Options).Plan!;
-        var legacyReplay = NeowReplayPlan.Compile(legacyRequest, false);
+        var legacyRequest = SearchPreparationCompiler.Compile(SearchCompiler.Compile(legacyWorkload.Query, legacyContext.Context), legacyWorkload.Options).Plan!;
+        var legacyReplay = NeowReplayPlan.Compile(legacyRequest.Model, false);
         var unfilteredQuery = SearchQuery.Empty with { LegacyNeow = SearchQuery.Empty.LegacyNeow with {
             NeowRelics = new([], [new("RELIC", "UNMAPPED_N_ALLOCATION_FIXTURE")], []) } };
         var unfilteredCompiled = SearchCompiler.Compile(unfilteredQuery, legacyContext.Context);
-        var unfilteredRequest = new ExactSearchExecutionRequest(unfilteredCompiled,
-            legacyRequest.RunOptions with { SkipExactValidation = true }, legacyRequest.CanonicalStartSeed,
-            legacyRequest.ResolvedScanCount, CompiledSearchEvaluationProjector.Project(unfilteredCompiled).Evaluation,
-            legacyRequest.CombatRewardRoutePolicy, unfilteredCompiled.SemanticFingerprint);
+        var unfilteredRequest = new PreparedSearch(new SearchModel(unfilteredCompiled, CompiledSearchEvaluationProjector.Project(unfilteredCompiled).Evaluation, legacyRequest.Model.CombatRewardRoutePolicy, unfilteredCompiled.SemanticFingerprint), legacyRequest.RunOptions with { SkipExactValidation = true }, legacyRequest.CanonicalStartSeed, legacyRequest.ResolvedScanCount, unfilteredCompiled.SemanticFingerprint);
         var rawPlan = FamilyExecutionCoordinator.Plan(unfilteredRequest, false);
         Check(rawPlan.Stages.Count == 0 && rawPlan.AllConditionsUnfiltered && rawPlan.FinalValidationSkipped &&
             rawPlan.FormatSummary().Contains("UnfilteredSeedEnumeration", StringComparison.Ordinal),
@@ -191,25 +266,25 @@ internal static class FamilyAllocationPricingChecks
         Check(exactPlan.AllConditionsUnfiltered && !exactPlan.FinalValidationSkipped &&
             exactPlan.FormatSummary().Contains("DirectProductionExact", StringComparison.Ordinal),
             "No Fast filters do not claim Exact coverage or disable ordinary final validation");
-        Check(legacyReplay.Selected == 255 && NeowPhysicalPricing.TryResolve(new NeowFamily(legacyRequest, legacyReplay), out _, out var legacyShape) &&
+        Check(legacyReplay.Selected == 255 && NeowPhysicalPricing.TryResolve(new NeowFamily(legacyRequest.Model, legacyReplay), out _, out var legacyShape) &&
             legacyShape == "N.FirstDrawOrBoundedProjection", "Legacy singleton identity receives its actual entry-mask work quote");
         var singleWorkload = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>(Path.Combine(corpus,
             "composition-holdout-v2", "Arcane-singleA-k11.json"));
-        var singleRequest = ExactSearchExecutionRequestFactory.Compile(
+        var singleRequest = SearchPreparationCompiler.Compile(
             SearchCompiler.Compile(singleWorkload.Query, context.Context), singleWorkload.Options).Plan!;
-        var singlePlan = new AncientOptionFamilyPlan(singleRequest);
+        var singlePlan = new AncientOptionFamilyPlan(singleRequest.Model);
         Check(singlePlan.ScratchWords == 3,
             "Single-option quote follows compiled generator and scratch, not Query identity");
         // Exercise actual session completion with injected invocation cleanup/recovery
         // failures. This is a lifecycle fixture, not a new registered Product allocation.
         var fixtureWorkload = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>(Path.Combine(corpus, "owner-nwae-v1", "NWAE_01.json"));
-        var fixtureRequest = ExactSearchExecutionRequestFactory.Compile(
+        var fixtureRequest = SearchPreparationCompiler.Compile(
             SearchCompiler.Compile(fixtureWorkload.Query, context.Context),
             fixtureWorkload.Options with { ScanCount = 67, TargetMatchCount = 1 }).Plan!;
-        double aConditional = fixtureRequest.Evaluation.AncientBranchConditions.Aggregate(1d, (product, row) =>
+        double aConditional = fixtureRequest.Model.Evaluation.AncientBranchConditions.Aggregate(1d, (product, row) =>
             product * AncientOptionProbabilityEstimator.EstimateConditional(SearchSelectivityInput.From(fixtureRequest), row).Probability!.Value);
-        double? wConditional = WorldPhysicalPricing.ProjectOwnedSurvival(fixtureRequest, aConditional);
-        double nConditional = new NeowFamily(fixtureRequest, NeowReplayPlan.Compile(fixtureRequest, false)).Survival.SurvivalProbability!.Value;
+        double? wConditional = WorldPhysicalPricing.ProjectOwnedSurvival(fixtureRequest.Model, aConditional);
+        double nConditional = new NeowFamily(fixtureRequest.Model, NeowReplayPlan.Compile(fixtureRequest.Model, false)).Survival.SurvivalProbability!.Value;
         var fullProbability = JointSelectivityEstimator.EstimateQuery(SearchSelectivityInput.From(fixtureRequest));
         Check(wConditional is > 0 and <= 1 && fullProbability.JointlyPriced &&
             Math.Abs(nConditional * .1 * aConditional * wConditional.Value / fullProbability.Probability!.Value - 1) < 1e-10,
@@ -223,17 +298,17 @@ internal static class FamilyAllocationPricingChecks
                 "Auxiliary planning failure keeps the registered filtering obligation: " + auxiliaryFault);
         }
         var failedQuotePlan = FamilyPlanner.Plan([new LifecycleFixture("quote")]);
-        var failedQuoteEta = FamilySearchEtaProjectorV1.Project(fixtureRequest, failedQuotePlan);
+        var failedQuoteEta = FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(fixtureRequest, failedQuotePlan), failedQuotePlan);
         Check(failedQuoteEta.Status == FamilySearchEtaStatus.Unavailable &&
             failedQuoteEta.AcceptedResultProbability == fullProbability.Probability && failedQuoteEta.TargetFamilyPipelineMs is null,
             "Failed auxiliary unit quote preserves the query probability without inventing time");
-        var observationContext = new FamilyExecutionContext(false);
+        var observationContext = new FilterRuntimeServices(false);
         try
         {
             var observed = new LifecycleFixture("observation");
             var observedBatch = new SearchBatch(0, 3);
             var observedOutput = LinearFamilyPipeline.FilterAsync(observationContext,
-                new(observedBatch, fixtureRequest), [observed], default).GetAwaiter().GetResult();
+                observedBatch, [observed], default).GetAwaiter().GetResult();
             Check(observedOutput.Count == 0 && observed.Calls == 1,
                 "Failed performance observation does not discard a valid filtering result");
         }
@@ -243,7 +318,7 @@ internal static class FamilyAllocationPricingChecks
         {
             var invocation = new LifecycleFixture(fault);
             var quotedPlan = FamilyPlanner.InOrder([invocation]);
-            var eta = FamilySearchEtaProjectorV1.Project(fixtureRequest, quotedPlan);
+            var eta = FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(fixtureRequest, quotedPlan), quotedPlan);
             Check(eta.TargetMeanMs is null && eta.TargetFamilyPipelineMs is null,
                 "Unmeasured lifecycle fixture never invents an ETA");
             var session = new ProductionSearchSession(fixtureRequest, quotedPlan, eta, 64, 8, null, "", legacyRecoveryFlag);
@@ -266,6 +341,8 @@ internal static class FamilyAllocationPricingChecks
         checks += CheckStartupFilterDisclosure();
         checks += CheckSimplePlanning();
         checks += CheckDenseAcceleratorReachability();
+        checks += CheckBonesHiddenUpgradeSelections();
+        checks += CheckCapsuleSparseSelections();
         Console.WriteLine($"FamilyAllocationPricing checks={checks};PASS");
         return 0;
     }
@@ -276,7 +353,7 @@ internal static class FamilyAllocationPricingChecks
         var n = new SimplePlannerFixture("N", 1, 100, _ => 1e-10);
         var r = new SimplePlannerFixture("R", 3, null, _ => .5);
         var sparse = FamilyPlanner.PlanSimple([r, n]);
-        Check(sparse.OrderedFamilies.SequenceEqual(new IFamilyInvocation[] { n, r }),
+        Check(sparse.OrderedFamilies.SequenceEqual(new FilterBodyDescription[] { n, r }),
             "Known Dense N entry survives an unpriced Compact R suffix");
         Check(sparse.AllowSmallCandidateExact && sparse.SelectionPolicyId == FamilyPlanner.SelectionPolicyId &&
             sparse.ExpectedFamilyPipelineMsPerRoot is null,
@@ -291,7 +368,7 @@ internal static class FamilyAllocationPricingChecks
         var a = new SimplePlannerFixture("A", 1, 30, _ => .1);
         var b = new SimplePlannerFixture("B", 2, 20, _ => .1);
         var c = new SimplePlannerFixture("C", 3, 1, _ => .1);
-        Check(FamilyPlanner.PlanSimple([b, c, a]).OrderedFamilies.SequenceEqual(new IFamilyInvocation[] { a, c, b }),
+        Check(FamilyPlanner.PlanSimple([b, c, a]).OrderedFamilies.SequenceEqual(new FilterBodyDescription[] { a, c, b }),
             "Dense first and Compact suffix use their own unit costs");
         var localFirst = new SimplePlannerFixture("LocalFirst", 2, 1, _ => .5);
         var wholeChainFirst = new SimplePlannerFixture("WholeChainFirst", 3, 100, _ => .5);
@@ -302,7 +379,7 @@ internal static class FamilyAllocationPricingChecks
         var conditional = new SimplePlannerFixture("Conditional", 1, 1, passed => passed.Contains("Prefix") ? .99 : .01);
         var independent = new SimplePlannerFixture("Independent", 2, 2, _ => .5);
         var conditionalPlan = FamilyPlanner.PlanSimple([conditional, independent, prefix]);
-        Check(conditionalPlan.OrderedFamilies.SequenceEqual(new IFamilyInvocation[] { prefix, independent, conditional }) &&
+        Check(conditionalPlan.OrderedFamilies.SequenceEqual(new FilterBodyDescription[] { prefix, independent, conditional }) &&
             conditionalPlan.Stages[2].Survival == .99 &&
             conditional.PassedCoverage.Any(passed => passed.SetEquals(new[] { "Prefix", "Independent" })),
             "Greedy selection and final stage projections use the selected passed Coverage");
@@ -310,7 +387,7 @@ internal static class FamilyAllocationPricingChecks
         var unknown = new SimplePlannerFixture("Unknown", null, null, _ => null);
         var alsoUnknown = new SimplePlannerFixture("AlsoUnknown", null, null, _ => null);
         var unknownPlan = FamilyPlanner.PlanSimple([unknown, alsoUnknown]);
-        Check(unknownPlan.OrderedFamilies.SequenceEqual(new IFamilyInvocation[] { unknown, alsoUnknown }) &&
+        Check(unknownPlan.OrderedFamilies.SequenceEqual(new FilterBodyDescription[] { unknown, alsoUnknown }) &&
             unknownPlan.Stages.All(stage => stage.Survival is null && stage.PerInputTimeMs is null) &&
             unknownPlan.ExpectedFamilyPipelineMsPerRoot is null && unknownPlan.EstimatedTerminalSurvival is null,
             "Unresolved units retain every original filter and preserve Unknown");
@@ -320,7 +397,7 @@ internal static class FamilyAllocationPricingChecks
             "Missing evidence retains its stable boundary instead of becoming an infinite cost");
         var knownBefore = new SimplePlannerFixture("KnownBefore", 10, 10, _ => .5);
         Check(FamilyPlanner.PlanSimple([knownBefore, unknown, pricedLater]).OrderedFamilies.SequenceEqual(
-            new IFamilyInvocation[] { knownBefore, unknown, pricedLater }),
+            new FilterBodyDescription[] { knownBefore, unknown, pricedLater }),
             "Known units do not jump an unresolved original obligation; no time or survival is invented");
         var analyticalFast = new SimplePlannerFixture("AnalyticalFast", null, null, _ => .1, expectedWork: 1);
         Check(FamilyPlanner.PlanSimple([analyticalSlow, analyticalFast]).OrderedFamilies.First() == analyticalFast,
@@ -330,7 +407,7 @@ internal static class FamilyAllocationPricingChecks
         var neow = new SimplePlannerFixture("N", 2, 2, _ => .1);
         var fused = new SimplePlannerFixture("NT", .5, .5, _ => .01, coverage: ["N", "T"]);
         var fusedPlan = FamilyPlanner.PlanSimple([neow, transform], [fused]);
-        Check(fusedPlan.OrderedFamilies.SequenceEqual(new IFamilyInvocation[] { fused }) &&
+        Check(fusedPlan.OrderedFamilies.SequenceEqual(new FilterBodyDescription[] { fused }) &&
             fusedPlan.Stages.SelectMany(stage => stage.Coverage).Order().SequenceEqual(new[] { "N", "T" }),
             "An existing fused whole unit competes by the same score and replaces its entire equivalent Coverage");
         var expensiveFusion = new SimplePlannerFixture("NT", 100, 100, _ => .01, coverage: ["N", "T"]);
@@ -343,14 +420,17 @@ internal static class FamilyAllocationPricingChecks
         Check(rejectedCoverage, "A fused alternative cannot add or substitute authored Coverage");
 
         var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/v1/context.json").Context;
-        ExactSearchExecutionRequest Request(SearchQuery query, bool skip = false) => ExactSearchExecutionRequestFactory.Compile(
+        PreparedSearch Request(SearchQuery query, bool skip = false) => SearchPreparationCompiler.Compile(
             SearchCompiler.Compile(query, context), new("000000000000", 1, 1, 1) { SkipExactValidation = skip }).Plan
             ?? throw new InvalidOperationException("SimplePlanning.RequestCompile");
         var request = Request(SearchQuery.Empty);
-        FamilyCpuExecution Cpu(SimplePlannerFixture owner, string revision,
-            Func<FamilyPhysicalQuoteRequest, FamilyPhysicalQuote?> quote) =>
-            new(request, owner, revision, _ => true, 1, quote);
-        FamilyPhysicalQuote CpuQuote(IFamilyInvocation owner, double ns) =>
+        FilterBodyDescription Cpu(SimplePlannerFixture owner, string revision,
+            Func<FamilyPhysicalQuoteRequest, FamilyPhysicalQuote?> quote) => owner.Body with
+            { UsesGpu = false, PhysicalRevision = revision, WindowCapacity = 65536,
+                NumericRequirements = GpuNumericRequirements.None,
+                PerformanceProjection = compact => CpuFilterExecution.Describe(owner.FamilyId, revision, 1, 65536, false, false, compact),
+                Cost = new() { Quote = (_, geometry, _) => quote(geometry) } };
+        FamilyPhysicalQuote CpuQuote(FilterBodyDescription owner, double ns) =>
             new(owner.FamilyId, "SimpleCpuAlternative", ns, 65536, null, "SimpleCpuAlternative",
                 PublicTransportClass: "CpuOrderedAbi1");
         var gpuOwner = new SimplePlannerFixture("CpuPreferred", 1000, 1000, _ => .5, gpu: true);
@@ -365,18 +445,18 @@ internal static class FamilyAllocationPricingChecks
         unpricedInteger.CpuAlternatives = [Cpu(unpricedInteger, "KnownCpuForUnpricedInteger", _ => CpuQuote(unpricedInteger, 1))];
         var integerSelected = FamilyPlanner.PlanSimple([unpricedInteger], includeCpuAlternatives: true);
         Check(integerSelected.OrderedFamilies.Single() == unpricedInteger && integerSelected.Stages[0].PerInputTimeMs is null &&
-            ((IFamilyInvocation)unpricedInteger).GpuNumericRequirements == GpuNumericRequirements.Int64,
+            ((FilterBodyDescription)unpricedInteger).GpuNumericRequirements == GpuNumericRequirements.Int64,
             "A known CPU price cannot displace an executable unpriced integer GPU body");
 
         var conditionalOwner = new SimplePlannerFixture("ConditionalCpu", 1000, 1000, _ => .5, gpu: true);
         var conditionalCpu = Cpu(conditionalOwner, "SimpleConditionalCpu", _ => CpuQuote(conditionalOwner, 1));
-        conditionalCpu.RequiredPassedCoverage = new HashSet<string> { "CpuPrefix" };
+        conditionalCpu = conditionalCpu with { RequiredPassedCoverage = new HashSet<string> { "CpuPrefix" } };
         conditionalOwner.CpuAlternatives = [conditionalCpu];
         Check(FamilyPlanner.PlanSimple([conditionalOwner], includeCpuAlternatives: true).OrderedFamilies.Single() == conditionalOwner,
             "A cheap conditional CPU quote cannot bypass its RequiredPassedCoverage");
         var cpuPrefix = new SimplePlannerFixture("CpuPrefix", .01, .01, _ => .1);
         var conditionalCpuPlan = FamilyPlanner.PlanSimple([conditionalOwner, cpuPrefix], includeCpuAlternatives: true);
-        Check(conditionalCpuPlan.OrderedFamilies.SequenceEqual(new IFamilyInvocation[] { cpuPrefix, conditionalCpu }) &&
+        Check(conditionalCpuPlan.OrderedFamilies.SequenceEqual(new FilterBodyDescription[] { cpuPrefix, conditionalCpu }) &&
             conditionalCpuPlan.Stages[1].CompactAbi1Input && conditionalCpuPlan.Stages[1].PerInputTimeMs.HasValue,
             "A CPU alternative becomes eligible only after its exact passed Coverage in the Compact role");
         var denseOnlyOwner = new SimplePlannerFixture("DenseOnlyCpu", 1000, 1000, _ => .5, gpu: true);
@@ -391,7 +471,7 @@ internal static class FamilyAllocationPricingChecks
             "A known GPU Dense price cannot justify CPU replacement when its actual Compact price is Unknown");
         var unpricedCpuOwner = new SimplePlannerFixture("UnpricedCpu", null, null, _ => null, gpu: true);
         unpricedCpuOwner.CpuAlternatives = Enumerable.Range(0, 3).Select(index =>
-            (IFamilyInvocation)Cpu(unpricedCpuOwner, "SimpleUnpricedCpu" + index, _ => null)).ToArray();
+            (FilterBodyDescription)Cpu(unpricedCpuOwner, "SimpleUnpricedCpu" + index, _ => null)).ToArray();
         Check(FamilyPlanner.PlanSimple([unpricedCpuOwner], includeCpuAlternatives: true).OrderedFamilies.Single() == unpricedCpuOwner,
             "Adding unpriced CPU versions keeps the original Unknown-cost fallback stable");
         Check(FamilyExecutionCoordinator.Plan(request, false).AllowSmallCandidateExact &&
@@ -404,7 +484,7 @@ internal static class FamilyAllocationPricingChecks
             "Map queries use the same simple planner");
         var partyContext = (SearchContext)typeof(CombinationRegressionChecks).GetMethod("PartyContext", flags)!
             .Invoke(null, [context, 2, null, null])!;
-        var partyRequest = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(SearchQuery.Empty with {
+        var partyRequest = SearchPreparationCompiler.Compile(SearchCompiler.Compile(SearchQuery.Empty with {
             Players = [new(0, ModelKeySetFilter.Empty), new(1, ModelKeySetFilter.Empty)] }, partyContext),
             new("000000000000", 1, 1, 1)).Plan ?? throw new InvalidOperationException("SimplePlanning.PartyRequestCompile");
         Check(FamilyExecutionCoordinator.Plan(partyRequest, false).AllowSmallCandidateExact,
@@ -430,7 +510,7 @@ internal static class FamilyAllocationPricingChecks
         int checks = 0;
         void Check(bool value, string reason) { checks++; if (!value) throw new InvalidOperationException("DenseAccelerator:" + reason); }
         var oldDevice = SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity();
-        string[] controls = ["RT2_BONES_CAPSULE_BOUNDARY", "RT2_DIRECT_CAPSULE_EXPERIMENT", "RT2_N_DIRECT_EXPERIMENT"];
+        string[] controls = ["RT2_BONES_CAPSULE_BOUNDARY", "RT2_DIRECT_CAPSULE_EXPERIMENT", "RT2_N_DIRECT_EXPERIMENT", "RT2_CAPSULE_SPARSE_REFINE"];
         var previous = controls.ToDictionary(name => name, Environment.GetEnvironmentVariable);
         try
         {
@@ -442,22 +522,30 @@ internal static class FamilyAllocationPricingChecks
             {
                 var source = ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/" + fixture.Context).Context;
                 var workload = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/" + fixture.Workload);
-                var request = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(workload.Query, source), workload.Options).Plan
+                var request = SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, source), workload.Options).Plan
                     ?? throw new InvalidOperationException("DenseAccelerator.Compile");
+                string bonesRevision = BonesCapsuleAllocation.LocalRevision + (BonesHiddenUpgradeContinuation.CaptureMode() switch {
+                    0 => "", 1 => BonesHiddenUpgradeContinuation.Revision + ".direct",
+                    2 => BonesHiddenUpgradeContinuation.Revision + ".branches",
+                    3 => BonesHiddenUpgradeContinuation.Revision + ".direct-first",
+                    _ => throw new InvalidOperationException("DenseAccelerator.UnknownHiddenUpgradeMode") });
+                if (NeowReplayPlan.Compile(request.Model, false).CapsuleNicheContinuation is not null)
+                    bonesRevision += NeowCapsuleNicheContinuation.Revision;
                 foreach (bool skip in new[] { false, true })
                 {
                     var selected = FamilyExecutionCoordinator.Plan(request with { RunOptions = request.RunOptions with { SkipExactValidation = skip } }, true);
                     var first = selected.Stages.First();
-                    Check(fixture.Bones ? first.Family is BonesCapsuleBoundaryInvocation &&
-                        first.ConditionPerformance.PhysicalImplementationRevision == BonesCapsuleAllocation.LocalRevision
-                        : first.Family is DirectCapsuleInvocation,
+                    Check(first.Family.UsesGpu && first.Family.InputModes == FilterInputModes.Dense &&
+                        (fixture.Bones ? first.ConditionPerformance.PhysicalImplementationRevision == bonesRevision && first.Family.PhysicalRevision == bonesRevision :
+                        new[] { "fused", "rarity-serial", "entry-rarity-serial" }.Any(mode =>
+                            first.Family.PhysicalRevision == DirectCapsuleInvocation.PhysicalRevision(mode))),
                         "Ordinary greedy retains the existing coupled Dense accelerator:" + fixture.Workload);
                     Check(!first.CompactAbi1Input && first.Coverage.ToHashSet().SetEquals(["N.Neow", "R.Relic"]) &&
                         selected.AllowSmallCandidateExact && selected.FinalValidationSkipped == skip,
                         "Coupled entry retains all same-route obligations and requested Exact mode");
                 }
                 var restricted = FamilyExecutionCoordinator.Plan(request, true, gpuFloat64Available: false);
-                Check(restricted.OrderedFamilies.All(family => family is not BonesCapsuleBoundaryInvocation && family is not DirectCapsuleInvocation),
+                Check(restricted.OrderedFamilies.All(family => family.InputModes != FilterInputModes.Dense),
                     "Restricted backend never reconstructs an unavailable native coupled body");
                 string control = fixture.Bones ? "RT2_BONES_CAPSULE_BOUNDARY" : "RT2_DIRECT_CAPSULE_EXPERIMENT";
                 Environment.SetEnvironmentVariable(control, fixture.Bones ? "local" : "fused");
@@ -476,21 +564,274 @@ internal static class FamilyAllocationPricingChecks
         return checks;
     }
 
+    private static int CheckBonesHiddenUpgradeSelections()
+    {
+        int checks = 0;
+        void Check(bool pass, string reason) { checks++; if (!pass) throw new InvalidOperationException("BonesHiddenSelection:" + reason); }
+        string[] controls = ["RT2_BONES_HIDDEN_UPGRADES", "RT2_BONES_CAPSULE_BOUNDARY", "RT2_DIRECT_CAPSULE_EXPERIMENT", "RT2_N_DIRECT_EXPERIMENT", "RT2_CAPSULE_SPARSE_REFINE"];
+        var previous = controls.ToDictionary(name => name, Environment.GetEnvironmentVariable);
+        var oldDevice = SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity();
+        var source = ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/n-direct-v1/context-defect-a10.json").Context;
+        var template = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/bones-k-sameroute-v1/counterexample.json");
+        PreparedSearch Request(SearchQuery query) => SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, source),
+            template.Options with { ScanCount = 67, WorkerCount = 1 }).Plan ?? throw new InvalidOperationException("BonesHiddenSelection.Compile");
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic;
+        var simple = typeof(FamilyExecutionCoordinator).GetMethod("PlanSimpleSingleplayer", flags)!;
+        try
+        {
+            foreach (string control in controls) Environment.SetEnvironmentVariable(control, null);
+            SearchPerformanceProfileFoundation.ObserveRenderingBackend("d3d12");
+            var pinned = template.Query with { OpeningRouteRelicRequirement = new(BaseGameModelKeys.Relics.NeowsBones,
+                [BaseGameModelKeys.Relics.LargeCapsule, BaseGameModelKeys.Relics.Kaleidoscope], BonesRouteOrderMode.ExactOrder) };
+            var full = pinned with { StructuredOpeningEffects = pinned.StructuredOpeningEffects.Select(c =>
+                c.SourceRelicKey == BaseGameModelKeys.Relics.LargeCapsule ? c with {
+                    OutputKeys = [new("RELIC", "ANCHOR"), BaseGameModelKeys.OrdinaryRelics.WarPaint] } : c).ToArray() };
+            foreach (var mode in new[] { "direct", "branches", "direct-first" })
+            foreach (var (shape, query) in new[] { ("any-partial", template.Query), ("pinned-partial", pinned), ("pinned-full", full) })
+            {
+                Environment.SetEnvironmentVariable("RT2_BONES_HIDDEN_UPGRADES", mode);
+                Environment.SetEnvironmentVariable("RT2_BONES_CAPSULE_BOUNDARY", null);
+                var request = Request(query);
+                var replay = NeowReplayPlan.Compile(request.Model, false);
+                Check(replay.CapsuleNicheContinuation is not null, mode + ":" + shape + ":shared continuation prepared");
+                string expectedCpu = "N.Neow.Cpu.LocalReplay.20261015.v3" + NeowIdentityOfferFacts.Revision +
+                    NeowCapsuleNicheContinuation.Revision;
+                string expectedDefaultCpu = CpuFilterExecution.Describe("N.Neow", expectedCpu, 1,
+                    CpuFilterExecution.Capacity, false, false, false).PhysicalImplementationRevision;
+                var nativeOwner = new NeowFamily(request.Model, replay);
+                var integerOwner = new NeowFamily(request.Model, replay, gpuPlanFactory: NeowFamilyGpuPlan.TryCreateIntegerUnitFloat);
+                string expectedNative = nativeOwner.ConditionPerformance.PhysicalImplementationRevision;
+                string expectedInteger = integerOwner.ConditionPerformance.PhysicalImplementationRevision;
+                var registered = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, true, true);
+                var native = registered.Single(b => b.FamilyId == "N.Neow");
+                Check(native.UsesGpu && native.PhysicalRevision == expectedNative &&
+                    nativeOwner.GpuPlan is { CapsuleNicheMetaOffset: >= 0 } && integerOwner.GpuPlan is { CapsuleNicheMetaOffset: >= 0 } &&
+                    native.CpuAlternatives.Any(b => !b.UsesGpu && b.PhysicalRevision == expectedCpu),
+                    mode + ":" + shape + ":native integer and CPU share corrected continuation");
+                void CorrectedStandalone(FamilyExecutionPlan plan, string path, bool integer = false)
+                {
+                    var n = plan.ExecutionOrderUnits.Where(b => b.Coverage.Contains("N.Neow")).ToArray();
+                    Check(n is [var body] &&
+                        body.Coverage.SequenceEqual(["N.Neow"]) &&
+                        (body.UsesGpu ? body.PhysicalRevision == (integer ? expectedInteger : expectedNative) &&
+                            body.ConditionPerformance.PhysicalImplementationRevision == body.PhysicalRevision :
+                            (body.PhysicalRevision == expectedCpu && body.WindowCapacity == 65536 ||
+                             body.PhysicalRevision == expectedDefaultCpu && body.WindowCapacity == CpuFilterExecution.Capacity)) &&
+                        (!integer || (body.NumericRequirements & GpuNumericRequirements.Float64) == 0),
+                        mode + ":" + shape + ":" + path + ":exact corrected standalone body");
+                }
+                var dense = FamilyExecutionCoordinator.Plan(request, true, true);
+                Check(dense.OrderedFamilies.First().PhysicalRevision == BonesCapsuleAllocation.LocalRevision +
+                    BonesHiddenUpgradeContinuation.Revision + "." + mode +
+                    (shape == "pinned-full" ? BonesHiddenUpgradeContinuation.KnownFullGpuRevision : "") + NeowCapsuleNicheContinuation.Revision &&
+                    dense.OrderedFamilies.First().Coverage.ToHashSet().SetEquals(["N.Neow", "R.Relic"]),
+                    mode + ":" + shape + ":coupled Dense remains available");
+                Environment.SetEnvironmentVariable("RT2_BONES_CAPSULE_BOUNDARY", "ordinary");
+                CorrectedStandalone(FamilyExecutionCoordinator.Plan(request, true, true), "ordinary");
+                Environment.SetEnvironmentVariable("RT2_BONES_CAPSULE_BOUNDARY", null);
+                var manual = FamilyExecutionCoordinator.Plan(request with { RunOptions = request.RunOptions with {
+                    ManualFamilyOrder = ["R.Relic", "N.Neow"] } }, true, true);
+                CorrectedStandalone(manual, "manual R-before-N");
+                Check(manual.ExecutionOrderUnits.Select(b => b.FamilyId).SequenceEqual(["R.Relic", "N.Neow"]),
+                    mode + ":" + shape + ":manual order preserved");
+                CorrectedStandalone(FamilyExecutionCoordinator.Plan(request, true, false), "noFP64", integer: true);
+                CorrectedStandalone(FamilyExecutionCoordinator.Plan(request, false), "CPU-only");
+                var blocked = registered.Select(b => b.FamilyId == "R.Relic" ? b with {
+                    Preparation = b.Preparation with { Issues = [new("GpuPreparation", "InjectedFailure", "Dense entry unavailable fixture")] } } : b).ToArray();
+                CorrectedStandalone((FamilyExecutionPlan)simple.Invoke(null, [request, blocked, true, true])!, "Dense preparation unavailable");
+            }
+            Environment.SetEnvironmentVariable("RT2_BONES_HIDDEN_UPGRADES", "legacy");
+            Check(NeowReplayPlan.Compile(Request(template.Query).Model, false).CapsuleNicheContinuation is null,
+                "Legacy control retains its original donor identity");
+        }
+        finally
+        {
+            foreach (string name in controls) Environment.SetEnvironmentVariable(name, previous[name]);
+            SearchPerformanceProfileFoundation.ObserveGpuIdentity(oldDevice.GpuIdentity.Length == 0 ? "Unknown" : oldDevice.GpuIdentity,
+                oldDevice.RenderingBackend.Length == 0 ? "unknown" : oldDevice.RenderingBackend);
+        }
+        return checks;
+    }
+
+    private static int CheckCapsuleSparseSelections()
+    {
+        int checks = 0;
+        void Check(bool pass, string reason) { checks++; if (!pass) throw new InvalidOperationException("CapsuleSparseSelection:" + reason); }
+        string[] controls = ["RT2_CAPSULE_SPARSE_REFINE", "RT2_BONES_HIDDEN_UPGRADES", "RT2_BONES_CAPSULE_BOUNDARY", "RT2_N_DIRECT_EXPERIMENT", "RT2_DIRECT_CAPSULE_EXPERIMENT"];
+        var previous = controls.ToDictionary(name => name, Environment.GetEnvironmentVariable);
+        var oldDevice = SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity();
+        try
+        {
+            foreach (string name in controls) Environment.SetEnvironmentVariable(name, null);
+            SearchPerformanceProfileFoundation.ObserveRenderingBackend("d3d12");
+            Check(NeowCapsuleSparseRefinement.CaptureSelection() == "auto" && !NeowCapsuleSparseRefinement.CaptureMode(),
+                "default is auto and needs a matching plan");
+            foreach (string mode in new[] { "", "auto", "off", "on" })
+            {
+                Environment.SetEnvironmentVariable("RT2_CAPSULE_SPARSE_REFINE", mode);
+                Check(NeowCapsuleSparseRefinement.CaptureSelection() == (mode.Length == 0 ? "auto" : mode) &&
+                    NeowCapsuleSparseRefinement.CaptureMode() == (mode == "on"), "explicit selector:" + mode);
+            }
+            Environment.SetEnvironmentVariable("RT2_CAPSULE_SPARSE_REFINE", "invalid");
+            bool rejected = false;
+            try { _ = NeowCapsuleSparseRefinement.CaptureMode(); }
+            catch (InvalidOperationException error) when (error.Message == "N.UnknownCapsuleSparseRefineMode:invalid") { rejected = true; }
+            Check(rejected, "invalid selector reports its cause");
+            Environment.SetEnvironmentVariable("RT2_BONES_HIDDEN_UPGRADES", "branches");
+            var source = ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/n-direct-v1/context-defect-a10.json").Context;
+            var workload = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/bones-k-sameroute-v1/counterexample.json");
+            var options = workload.Options with { ScanCount = 67, WorkerCount = 1 };
+            var bones = BaseGameModelKeys.Relics.NeowsBones;
+            var small = BaseGameModelKeys.Relics.SmallCapsule;
+            var large = BaseGameModelKeys.Relics.LargeCapsule;
+            var leaf = BaseGameModelKeys.Relics.NewLeaf;
+            var leafRow = new NeowStructuredEffectSearchCondition(leaf, NeowStructuredConditionKind.ExactSingle,
+                NeowStructuredEffectScope.TransformResults, NeowStructuredOutputKind.Card, [new("CARD", "CHILL")]);
+            SearchQuery AutoQuery(IReadOnlyList<ModelKey> pair,
+                IReadOnlyList<NeowStructuredEffectSearchCondition> rows, BonesRouteOrderMode order = BonesRouteOrderMode.AnyOrder,
+                bool finalCurse = false) => SearchQuery.Empty with {
+                    OpeningRoute = new(bones), OpeningRouteRelicRequirement = pair.Count == 0 ? null : new(bones, pair, order),
+                    StructuredOpeningEffects = rows, LegacyNeow = SearchQuery.Empty.LegacyNeow with {
+                        RequiredFinalCurse = finalCurse ? source.Authority.EffectAuthority!.GeneratedCursePool!.First() : null } };
+            var autoCases = new List<(string Name, SearchQuery Query, bool Enabled)>();
+            foreach (var (orderName, order, reverse) in new[] {
+                ("any", BonesRouteOrderMode.AnyOrder, false), ("pinned", BonesRouteOrderMode.ExactOrder, false),
+                ("reverse", BonesRouteOrderMode.ExactOrder, true) })
+            {
+                autoCases.Add(("small-leaf-" + orderName, AutoQuery(reverse ? [leaf, small] : [small, leaf], [leafRow], order), true));
+                autoCases.Add(("dual-final-" + orderName, AutoQuery(reverse ? [large, small] : [small, large], [], order, finalCurse: true), true));
+            }
+            autoCases.Add(("small-k", AutoQuery([small, BaseGameModelKeys.Relics.Kaleidoscope],
+                workload.Query.StructuredOpeningEffects.Where(c => c.SourceRelicKey == BaseGameModelKeys.Relics.Kaleidoscope).ToArray()), false));
+            autoCases.Add(("wide-bones", AutoQuery([], [leafRow]), false));
+            // A source-scoped NewLeaf row itself requires that Bones source;
+            // together with Small it determines the complete unordered pair.
+            autoCases.Add(("small-plus-implied-leaf-source", AutoQuery([small], [leafRow]), true));
+            autoCases.Add(("one-required-bones-relic", AutoQuery([small], [], finalCurse: true), false));
+            autoCases.Add(("small-leaf-no-observation", AutoQuery([small, leaf], []), false));
+            autoCases.Add(("dual-no-final-curse", AutoQuery([small, large], []), false));
+            autoCases.Add(("large-leaf", AutoQuery([large, leaf], [leafRow]), false));
+            foreach (var fixture in autoCases)
+            {
+                var prepared = SearchPreparationCompiler.Compile(SearchCompiler.Compile(fixture.Query, source), options).Plan
+                    ?? throw new InvalidOperationException("CapsuleSparseSelection.AutoCompile:" + fixture.Name);
+                var n = NeowReplayPlan.Compile(prepared.Model, false);
+                var pref = FilterExecutionPreferences.From(prepared.RunOptions);
+                Environment.SetEnvironmentVariable("RT2_CAPSULE_SPARSE_REFINE", "off");
+                var off = new NeowFamily(prepared.Model, n);
+                string dense = off.ConditionPerformance.PhysicalImplementationRevision;
+                string compact = off.ResolveConditionPerformance(true).PhysicalImplementationRevision;
+                string cpuOff = new NeowFamily(prepared.Model, n, preferGpu: false).ConditionPerformance.PhysicalImplementationRevision;
+                foreach (string? mode in new string?[] { null, "", "auto" })
+                {
+                    Environment.SetEnvironmentVariable("RT2_CAPSULE_SPARSE_REFINE", mode);
+                    Check(NeowCapsuleSparseRefinement.CaptureSelection() == "auto" &&
+                        NeowCapsuleSparseRefinement.ShouldApply("auto", n) == fixture.Enabled &&
+                        NeowCapsuleSparseRefinement.CaptureMode(n) == fixture.Enabled,
+                        fixture.Name + ":canonical auto selector and gate:" + (mode ?? "unset"));
+                    var owner = new NeowFamily(prepared.Model, n); var body = owner.Describe(pref);
+                    string suffix = fixture.Enabled ? NeowCapsuleSparseRefinement.Revision : "";
+                    Check(body.UsesGpu && body.PhysicalRevision == dense + suffix &&
+                        owner.ResolveConditionPerformance(true).PhysicalImplementationRevision == compact + suffix,
+                        fixture.Name + ":exact auto dense/compact identity");
+                    Check(fixture.Enabled ? body.Cost.PrivatePhysicalRevision?.Invoke(false) == dense + NeowCapsuleSparseRefinement.PrivateRevision &&
+                        body.Cost.PrivatePhysicalRevision?.Invoke(true) == compact + NeowCapsuleSparseRefinement.PrivateRevision :
+                        body.Cost.PrivatePhysicalRevision is null, fixture.Name + ":private union identity follows gate");
+                    string cpuExpected = fixture.Enabled ? CpuFilterExecution.Describe("N.Neow",
+                        "N.Neow.Cpu.LocalReplay.20261015.v3" + NeowIdentityOfferFacts.Revision +
+                        NeowCapsuleNicheContinuation.Revision + NeowCapsuleSparseRefinement.Revision,
+                        1, CpuFilterExecution.Capacity, false, false, false).PhysicalImplementationRevision : cpuOff;
+                    Check(new NeowFamily(prepared.Model, n, preferGpu: false).ConditionPerformance.PhysicalImplementationRevision == cpuExpected,
+                        fixture.Name + ":exact auto CPU identity");
+                }
+            }
+            var query = workload.Query with { StructuredOpeningEffects = workload.Query.StructuredOpeningEffects
+                .Where(c => c.SourceRelicKey == BaseGameModelKeys.Relics.Kaleidoscope).ToArray() };
+            var request = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, source), options).Plan
+                ?? throw new InvalidOperationException("CapsuleSparseSelection.Compile");
+            var replay = NeowReplayPlan.Compile(request.Model, false);
+            Check(replay.CapsuleNicheContinuation is not null, "shared union remains present");
+            var preferences = FilterExecutionPreferences.From(request.RunOptions);
+            foreach (bool integer in new[] { false, true })
+            {
+                NeowFamily Owner(bool gpu = true) => new(request.Model, replay, preferGpu: gpu,
+                    gpuPlanFactory: integer ? NeowFamilyGpuPlan.TryCreateIntegerUnitFloat : NeowFamilyGpuPlan.TryCreate);
+                Environment.SetEnvironmentVariable("RT2_CAPSULE_SPARSE_REFINE", "off");
+                var off = Owner(); var offBody = off.Describe(preferences);
+                string dense = off.ConditionPerformance.PhysicalImplementationRevision;
+                string compact = off.ResolveConditionPerformance(true).PhysicalImplementationRevision;
+                Check(offBody.UsesGpu && offBody.Cost.PrivatePhysicalRevision is null, "off preserves ordinary body:" + integer);
+                Environment.SetEnvironmentVariable("RT2_CAPSULE_SPARSE_REFINE", "on");
+                var on = Owner(); var onBody = on.Describe(preferences);
+                Check(onBody.PhysicalRevision == dense + NeowCapsuleSparseRefinement.Revision &&
+                    on.ResolveConditionPerformance(true).PhysicalImplementationRevision == compact + NeowCapsuleSparseRefinement.Revision,
+                    "public dense/compact exact body identity:" + integer);
+                Check(on.GpuPlan!.Meta.SequenceEqual(off.GpuPlan!.Meta) && on.GpuPlan.Conditions.SequenceEqual(off.GpuPlan.Conditions),
+                    "GPU numerical payload unchanged:" + integer);
+                Check(onBody.Cost.PrivatePhysicalRevision?.Invoke(false) == dense + NeowCapsuleSparseRefinement.PrivateRevision &&
+                    onBody.Cost.PrivatePhysicalRevision?.Invoke(true) == compact + NeowCapsuleSparseRefinement.PrivateRevision,
+                    "private retains exact union body identity:" + integer);
+                Check(integer ? onBody.BindPrivate is null && onBody.BindPrivateShared is null :
+                    onBody.BindPrivate is not null && onBody.BindPrivateShared is not null, "private availability unchanged:" + integer);
+                string cpuBase = "N.Neow.Cpu.LocalReplay.20261015.v3" + NeowIdentityOfferFacts.Revision +
+                    NeowCapsuleNicheContinuation.Revision + NeowCapsuleSparseRefinement.Revision;
+                Check(onBody.CpuAlternatives.Any(b => !b.UsesGpu && b.PhysicalRevision == cpuBase), "optimized CPU uses same refinement:" + integer);
+                var cpu = Owner(gpu: false).Describe(preferences);
+                string expectedCpu = CpuFilterExecution.Describe("N.Neow", cpuBase, 1, CpuFilterExecution.Capacity, false, false, false).PhysicalImplementationRevision;
+                Check(!cpu.UsesGpu && cpu.PhysicalRevision == expectedCpu, "default CPU exact body identity:" + integer);
+            }
+            var coupledRequest = SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, source), options).Plan
+                ?? throw new InvalidOperationException("CapsuleSparseSelection.CoupledCompile");
+            var coupled = FamilyExecutionCoordinator.Plan(coupledRequest, true, true).OrderedFamilies.First();
+            Check(coupled.Coverage.ToHashSet().SetEquals(["N.Neow", "R.Relic"]) &&
+                coupled.PhysicalRevision == BonesCapsuleAllocation.LocalRevision + BonesHiddenUpgradeContinuation.Revision +
+                    ".branches" + NeowCapsuleNicheContinuation.Revision, "coupled body retains its exact union identity");
+            var unrelated = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query with { StructuredOpeningEffects = [] }, source), options).Plan
+                ?? throw new InvalidOperationException("CapsuleSparseSelection.UnrelatedCompile");
+            var unrelatedReplay = NeowReplayPlan.Compile(unrelated.Model, false);
+            var unrelatedOwner = new NeowFamily(unrelated.Model, unrelatedReplay);
+            Check(unrelatedReplay.CapsuleNicheContinuation is null &&
+                unrelatedOwner.Describe(FilterExecutionPreferences.From(unrelated.RunOptions)).Cost.PrivatePhysicalRevision is null &&
+                !unrelatedOwner.ConditionPerformance.PhysicalImplementationRevision.Contains(NeowCapsuleSparseRefinement.Revision, StringComparison.Ordinal),
+                "unrelated N has no refinement identity");
+        }
+        finally
+        {
+            foreach (string name in controls) Environment.SetEnvironmentVariable(name, previous[name]);
+            SearchPerformanceProfileFoundation.ObserveGpuIdentity(oldDevice.GpuIdentity.Length == 0 ? "Unknown" : oldDevice.GpuIdentity,
+                oldDevice.RenderingBackend.Length == 0 ? "unknown" : oldDevice.RenderingBackend);
+        }
+        return checks;
+    }
+
     private sealed class SimplePlannerFixture(string id, double? denseNs, double? compactNs,
         Func<IReadOnlySet<string>, double?> survival, double? expectedWork = null, string[]? coverage = null, bool gpu = false,
-        GpuNumericRequirements? numericRequirements = null, Action<string, bool>? onInvoke = null) : IFamilyInvocation
+        GpuNumericRequirements? numericRequirements = null, Action<string, bool>? onInvoke = null) : IFilterExecution
     {
         internal readonly List<double> QuotedPopulations = [];
         internal readonly List<HashSet<string>> PassedCoverage = [];
-        internal IReadOnlyList<IFamilyInvocation> CpuAlternatives = [];
-        IEnumerable<IFamilyInvocation> IFamilyInvocation.CpuRealizations => CpuAlternatives;
-        GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => gpu
-            ? numericRequirements ?? GpuNumericRequirements.Unspecified : GpuNumericRequirements.None;
+        private FilterBodyDescription? _body;
+        private IReadOnlyList<FilterBodyDescription> _cpuAlternatives = [];
+        internal IReadOnlyList<FilterBodyDescription> CpuAlternatives
+        { get => _cpuAlternatives; set { _cpuAlternatives = value; if (_body is not null) _body = _body with { CpuAlternatives = value }; } }
+        public FilterBodyDescription Body => _body ??= new(new PreparedFilter(id)
+        {
+            Coverage = coverage ?? [id], AnalyticalCost = new(id, PrivateOrdinalBuffer.Capacity, [], "SimplePlannerFixture"),
+            Survival = FamilySurvivalProjection.Unresolved(id, "SimplePlannerFixture"),
+            HasConditionalProjections = true, SurvivalResolver = ResolveSurvival,
+            ExpectedCostResolver = _ => ExpectedFilteringCost
+        }, "SimplePlannerFixture." + id, RolltheSpire2.Compatibility.RuntimeProfileId.Beta111)
+        {
+            UsesGpu = gpu, NumericRequirements = gpu ? numericRequirements ?? GpuNumericRequirements.Unspecified : GpuNumericRequirements.None,
+            CpuAlternatives = _cpuAlternatives, PerformanceProjection = _ => ConditionPerformance,
+            Cost = new() { Quote = (_, geometry, _) => QuotePhysicalWork(geometry) },
+            CreateExecution = (_, _) => this
+        };
+        public static implicit operator FilterBodyDescription(SimplePlannerFixture fixture) => fixture.Body;
+        public bool ExecutionFaulted => false;
         public string FamilyId => id;
         public IReadOnlyList<string> Coverage => coverage ?? [id];
-        public FamilyAnalyticalCostProjection AnalyticalCost => new(id, PrivateOrdinalBuffer.Capacity, [], "SimplePlannerFixture");
         public FamilySurvivalProjection Survival => ResolveSurvival(new HashSet<string>());
-        public bool HasConditionalProjections => true;
         public FamilySurvivalProjection ResolveSurvival(IReadOnlySet<string> passed)
         {
             PassedCoverage.Add(new(passed, StringComparer.Ordinal));
@@ -509,16 +850,13 @@ internal static class FamilyAllocationPricingChecks
                 ? new(id, "SimplePlannerFixture", ns, PrivateOrdinalBuffer.Capacity, null, "SimplePlannerFixture")
                     { PublicTransportClass = "CpuOrderedAbi1" } : null;
         }
-        public FamilyPerformanceObservation CapturePerformanceObservation() => onInvoke is null
-            ? throw new InvalidOperationException("PlanningFixtureMustNotExecute")
-            : new(ConditionPerformance, "", 0, 0, 0, 0, 0, 0, 0, 0, false, "ManualOrderFixture");
-        public ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow window,
-            FamilyCandidateSet input, CancellationToken token)
+        public ValueTask<FamilyCandidateSet> FilterAsync(FilterRuntimeServices services, FamilyCandidateSet input, CancellationToken token)
         {
             if (onInvoke is null) throw new InvalidOperationException("PlanningFixtureMustNotExecute");
             onInvoke(id, !input.IsDense);
             return ValueTask.FromResult(FamilyCandidateSet.FromSortedAbi1(input.Batch, input.EnumerateLogicalOrdinals().ToArray()));
         }
+        public ValueTask DisposeAsync(FilterRuntimeServices services) => ValueTask.CompletedTask;
     }
 
     private static int CheckPartyFilterRemainders()
@@ -534,13 +872,13 @@ internal static class FamilyAllocationPricingChecks
             Authority = players[0], Party = new(players, context.Party!.UnlockProvenance, context.Party.World) };
         SearchQuery Table(SearchQuery first, SearchQuery second) => SearchQuery.Empty with {
             Players = [new(0, ModelKeySetFilter.Empty) { Conditions = first }, new(1, ModelKeySetFilter.Empty) { Conditions = second }] };
-        ExactSearchExecutionRequest Request(SearchQuery query, SearchContext source)
+        PreparedSearch Request(SearchQuery query, SearchContext source)
         {
-            var result = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, source),
+            var result = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, source),
                 new("000000000000", 16, 1, 1) { SkipExactValidation = true });
             return result.Plan ?? throw new InvalidOperationException("PartyFilterRemainders.Compile:" + result.Issue);
         }
-        string[] Describe(ExactSearchExecutionRequest request, IFamilyInvocation[] selected) =>
+        string[] Describe(PreparedSearch request, FilterBodyDescription[] selected) =>
             ((IReadOnlyList<string>)describe.Invoke(null, [request, FamilyPlanner.InOrder(selected), selected])!).ToArray();
         var shop = SearchQuery.Empty with { MerchantColorlessConditions = [new(1, MerchantColorlessSlot.Uncommon,
             RolltheSpire2.Core.Merchant.Beta111MerchantColorlessAuthority.From(context.Party!.Players[0]).UncommonPool[0])] };
@@ -563,11 +901,11 @@ internal static class FamilyAllocationPricingChecks
         Check(mixedPlan.OrderedFamilies.Any(f => f.FamilyId == "E.EventResult") && !mixedPlan.AllConditionsUnfiltered &&
             mixedPlan.FilterRemainders.Contains("S.MerchantShopColorless:slot=0:NoSelectedFilter"),
             "Missing P1 S remains disclosed when only P2 E participates");
-        Check(mixed.CompiledSearch.NormalizedQuery.Players[0].Conditions.MerchantColorlessConditions.Count == 1 &&
+        Check(mixed.Model.CompiledSearch.NormalizedQuery.Players[0].Conditions.MerchantColorlessConditions.Count == 1 &&
             mixedPlan.FinalValidationSkipped, "Disclosure retains authored S and the requested validation mode");
         var sameShop = Request(Table(shop, shop), missingShop);
         var sameShopPlan = FamilyExecutionCoordinator.Plan(sameShop, false);
-        Check(sameShopPlan.OrderedFamilies.OfType<PartyFamily>().Single().PersonalStages.Single().Slot == 1 &&
+        Check(sameShopPlan.OrderedFamilies.Single().Preparation.Obligations.Single().PlayerSlot == 1 &&
             sameShopPlan.FilterRemainders.Contains("S.MerchantShopColorless:slot=0:NoSelectedFilter") &&
             !sameShopPlan.FilterRemainders.Contains("S.MerchantShopColorless:slot=1:NoSelectedFilter"),
             "P2 S cannot impersonate missing P1 S coverage");
@@ -580,8 +918,8 @@ internal static class FamilyAllocationPricingChecks
             "Missing P2 A OptionContext remains disclosed beside P1 E");
         var sameAncient = Request(Table(ancient, ancient), missingAncient);
         var sameAncientPlan = FamilyExecutionCoordinator.Plan(sameAncient, false);
-        Check(sameAncientPlan.OrderedFamilies.OfType<PartyFamily>().Single(f => f.FamilyId == "A.AncientOption")
-                .PersonalStages.Single().Slot == 0 &&
+        Check(sameAncientPlan.OrderedFamilies.Single(f => f.FamilyId == "A.AncientOption")
+                .Preparation.Obligations.Single().PlayerSlot == 0 &&
             sameAncientPlan.FilterRemainders.Contains("A.AncientOption:slot=1:NoSelectedFilter") &&
             !sameAncientPlan.FilterRemainders.Contains("A.AncientOption:slot=0:NoSelectedFilter"),
             "P1 A cannot impersonate missing P2 A coverage");
@@ -590,9 +928,10 @@ internal static class FamilyAllocationPricingChecks
         // are missing. Exercise a selected-allocation omission directly instead
         // of claiming that absent event authority prevents E registration.
         var sameEvents = Request(Table(events, events), context);
-        var eventFamily = FamilyExecutionCoordinator.CreateRegisteredFamilies(sameEvents, false).OfType<PartyFamily>().Single();
-        var eventChild = ExactSearchExecutionRequestFactory.ForPlayer(sameEvents, sameEvents.CompiledSearch.PlayerSearches[0]);
-        var firstEvent = new PartyFamily(sameEvents, [(eventChild, eventFamily.PersonalStages.Single(s => s.Slot == 0).Family)]);
+        var eventFamily = FamilyExecutionCoordinator.CreateRegisteredFamilies(sameEvents, false).Single(body => body.FamilyId == "E.EventResult");
+        var eventChild = SearchPreparationCompiler.ForPlayer(sameEvents.Model, sameEvents.Model.CompiledSearch.PlayerSearches[0]);
+        var firstEvent = PartyFamily.Prepare(sameEvents.Model, FilterExecutionPreferences.From(sameEvents.RunOptions),
+            [new PartyFilterStage(0, eventFamily.PhysicalBodies.Single(body => body.Preparation.Obligations.Any(o => o.PlayerSlot == 0)))]);
         string[] eventRemainders = Describe(sameEvents, [firstEvent]);
         Check(eventRemainders.Contains("E.EventResult:slot=1:NoSelectedFilter") &&
             !eventRemainders.Contains("E.EventResult:slot=0:NoSelectedFilter"), "P1 E cannot impersonate unselected P2 E coverage");
@@ -617,10 +956,10 @@ internal static class FamilyAllocationPricingChecks
         var authored = SearchQuery.Empty with { TreasureRelics = treasure, FirstActUnknownEventPrefixCount = 2 };
         var bounded = Request(authored, captured.Context);
         var boundedPlan = FamilyExecutionCoordinator.Plan(bounded, false);
-        Check(bounded.Evaluation.TreasureRelics is { StartOrdinal: 1, Count: 2, OrderMode: TreasureRelicOrderMode.Ordered } kept &&
-            kept.Slots.SequenceEqual(treasure.Slots) && bounded.Evaluation.FirstActUnknownEventPrefixCount == 2,
+        Check(bounded.Model.Evaluation.TreasureRelics is { StartOrdinal: 1, Count: 2, OrderMode: TreasureRelicOrderMode.Ordered } kept &&
+            kept.Slots.SequenceEqual(treasure.Slots) && bounded.Model.Evaluation.FirstActUnknownEventPrefixCount == 2,
             "Exact projection preserves both new obligations and relative empty slots");
-        Check(bounded.Evaluation.RequiresRelicSequenceDomain && !bounded.Evaluation.HasNeowConstraints &&
+        Check(bounded.Model.Evaluation.RequiresRelicSequenceDomain && !bounded.Model.Evaluation.HasNeowConstraints &&
             boundedPlan.Stages.Count == 2 && !boundedPlan.AllConditionsUnfiltered &&
             boundedPlan.Stages.SelectMany(stage => stage.Coverage).ToHashSet(StringComparer.Ordinal)
                 .SetEquals([InitialRoomsInvocation.TreasureCoverage, VariantOpeningFamily.Id]) &&
@@ -628,8 +967,8 @@ internal static class FamilyAllocationPricingChecks
             "Initial treasure and Unknown filters retain their separate R/V ownership without invented N authority");
         var prefix = Request(SearchQuery.Empty with { FirstActUnknownEventPrefixCount = 3 }, captured.Context);
         var prefixPlan = FamilyExecutionCoordinator.Plan(prefix, false);
-        Check(prefix.Evaluation.CheapPredictionDomains == RolltheSpire2.Core.Prediction.SeedPredictionDomainSelection.None &&
-            prefix.Evaluation.RequiresCanonicalRootLocalDomain && !prefix.Evaluation.HasNeowConstraints &&
+        Check(prefix.Model.Evaluation.CheapPredictionDomains == RolltheSpire2.Core.Prediction.SeedPredictionDomainSelection.None &&
+            prefix.Model.Evaluation.RequiresCanonicalRootLocalDomain && !prefix.Model.Evaluation.HasNeowConstraints &&
             !prefixPlan.AllConditionsUnfiltered && prefixPlan.Stages.Count == 1 &&
             prefixPlan.OrderedFamilies.Single().FamilyId == VariantOpeningFamily.Id &&
             prefixPlan.Stages.Single().Coverage.SequenceEqual([VariantOpeningFamily.Id]),
@@ -639,9 +978,9 @@ internal static class FamilyAllocationPricingChecks
         Check(!missingBagPlan.AllConditionsUnfiltered &&
             missingBagPlan.Stages.SelectMany(stage => stage.Coverage).SequenceEqual([VariantOpeningFamily.Id]) &&
             missingBagPlan.FilterRemainders.SequenceEqual(["TreasureRelics:ProductionExactOnly"]) &&
-            missingBag.Evaluation.TreasureRelics!.Slots.SequenceEqual(treasure.Slots),
+            missingBag.Model.Evaluation.TreasureRelics!.Slots.SequenceEqual(treasure.Slots),
             "Missing shared-bag authority retains the treasure remainder while independent V filtering continues");
-        var projected = bounded.Evaluation.ToLegacyFilter();
+        var projected = bounded.Model.Evaluation.ToLegacyFilter();
         var roundtrip = SearchCompiler.Compile(LegacySearchQueryAdapter.FromFilter(projected), captured.Context);
         Check(roundtrip.NormalizedQuery.TreasureRelics!.Slots.SequenceEqual(treasure.Slots) &&
             roundtrip.NormalizedQuery.FirstActUnknownEventPrefixCount == 2 &&
@@ -652,8 +991,8 @@ internal static class FamilyAllocationPricingChecks
         Check(dormant.IsEmpty && dormantQuery.NormalizedQuery.TreasureRelics!.Slots.SequenceEqual(treasure.Slots) &&
             !CompiledSearchEvaluationProjector.Project(dormantQuery).Evaluation.RequiresRelicSequenceDomain,
             "Inactive authored target survives normalization without becoming a predicate");
-        Check(bounded.CompiledSearch.SemanticFingerprint != Request(authored with { FirstActUnknownEventPrefixCount = 1 }, captured.Context).CompiledSearch.SemanticFingerprint &&
-            bounded.CompiledSearch.SemanticFingerprint != Request(authored with { TreasureRelics = treasure with { OrderMode = TreasureRelicOrderMode.Unordered } }, captured.Context).CompiledSearch.SemanticFingerprint,
+        Check(bounded.Model.CompiledSearch.SemanticFingerprint != Request(authored with { FirstActUnknownEventPrefixCount = 1 }, captured.Context).Model.CompiledSearch.SemanticFingerprint &&
+            bounded.Model.CompiledSearch.SemanticFingerprint != Request(authored with { TreasureRelics = treasure with { OrderMode = TreasureRelicOrderMode.Unordered } }, captured.Context).Model.CompiledSearch.SemanticFingerprint,
             "New settings participate in semantic identity");
         var initialProbability = RolltheSpire2.Search.Selectivity.JointSelectivityEstimator.EstimateQuery(
             RolltheSpire2.Search.Selectivity.SearchSelectivityInput.From(bounded));
@@ -678,15 +1017,15 @@ internal static class FamilyAllocationPricingChecks
         int checks = 0;
         void Check(bool pass, string name) { checks++; if (!pass) throw new InvalidOperationException("StartupFilterDisclosure:" + name); }
         var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/v1/context.json").Context;
-        ExactSearchExecutionRequest Request(SearchQuery query, SearchContext source, bool skip)
+        PreparedSearch Request(SearchQuery query, SearchContext source, bool skip)
         {
             var compiled = SearchCompiler.Compile(query, source);
-            var result = ExactSearchExecutionRequestFactory.Compile(compiled,
+            var result = SearchPreparationCompiler.Compile(compiled,
                 new("000000000000", 1, 1, 1) { SkipExactValidation = skip });
             return result.Plan ?? throw new InvalidOperationException("StartupFilterDisclosure.Compile:" + result.Issue +
                 ";normalization=" + compiled.Status + ";diagnostics=" + string.Join('|', compiled.Normalization.Diagnostics));
         }
-        (RuntimeIssue[] Issues, SearchProgressSnapshot Progress, SearchCandidate[] Candidates) Start(ExactSearchExecutionRequest request)
+        (RuntimeIssue[] Issues, SearchProgressSnapshot Progress, SearchCandidate[] Candidates) Start(PreparedSearch request)
         {
             string correlation = "StartupFilterDisclosure." + Guid.NewGuid().ToString("N");
             using var scope = RuntimeLog.SearchScope(correlation);
@@ -779,7 +1118,7 @@ internal static class FamilyAllocationPricingChecks
         var compileFault = treasure with { LegacyNeow = LegacyNeowSemanticConstraints.Empty with { RequireNeowsBones = true } };
         var faultRequest = Request(compileFault, missing, false);
         bool replayRejected = false;
-        try { _ = NeowReplayPlan.Compile(faultRequest, false); }
+        try { _ = NeowReplayPlan.Compile(faultRequest.Model, false); }
         catch (InvalidOperationException error) when (error.Message == "NeowFamilyReplayAuthorityUnavailable") { replayRejected = true; }
         Check(replayRejected, "Legal request reaches the real replay compilation authority failure");
         var failed = Start(faultRequest).Issues.Single(issue => issue.Code == "SearchFilterIncomplete");
@@ -791,6 +1130,124 @@ internal static class FamilyAllocationPricingChecks
             Check(text.Get("issues.conditions_unchecked") != "issues.conditions_unchecked" &&
                 text.Get("issues.filter_incomplete") != "issues.filter_incomplete", "Both warning classes are localized:" + language);
         }
+        checks += CheckComposedFilterDisclosure(context);
+        return checks;
+    }
+    private static int CheckComposedFilterDisclosure(SearchContext context)
+    {
+        int checks = 0;
+        void Check(bool pass, string reason) { checks++; if (!pass) throw new InvalidOperationException("ComposedFilterDisclosure:" + reason); }
+        PreparedSearch Request(SearchQuery query, SearchContext? source = null) => SearchPreparationCompiler.Compile(
+            SearchCompiler.Compile(query, source ?? context), new("000000000000", 1, 1, 1)).Plan
+            ?? throw new InvalidOperationException("ComposedFilterDisclosure.Compile");
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic;
+        var describe = typeof(FamilyExecutionCoordinator).GetMethod("DescribeFilterRemainders", flags)!;
+        string[] Describe(PreparedSearch request, params FilterBodyDescription[] bodies) =>
+            ((IReadOnlyList<string>)describe.Invoke(null, [request, FamilyPlanner.InOrder(bodies), bodies])!).ToArray();
+        FilterBodyDescription Body(string id, FilterObligation[]? obligations = null) => new(
+            new PreparedFilter(id) { Obligations = obligations ?? [] }, "DisclosureFixture", context.ProfileId)
+            { BindPrivate = (_, _, _) => throw new InvalidOperationException("DisclosureFixture.MustNotExecute") };
+        var events = new EventResultSearchCondition(EventResultConditionKind.TrashHeapGrabCard,
+            RolltheSpire2.Core.Events.Beta111EventResultCatalog.TrashHeapGrabCards[0]);
+        var request = Request(SearchQuery.Empty with { EventResultConditions = [events], FirstActUnknownEventPrefixCount = 3 });
+        var preferences = FilterExecutionPreferences.From(request.RunOptions);
+        var n = Body("N.Neow");
+        var w = Body("W.World");
+        var e = Body("E.EventResult", [new("E.EventResult", 1)]) with {
+            Preparation = new("E.EventResult") { Obligations = [new("E.EventResult", 1)], Remainders = ["RealEventRemainder"] } };
+        var v = Body(VariantOpeningFamily.Id, [new(InitialRoomsInvocation.UnknownCoverage, ThroughOrdinal: 2)]) with {
+            Preparation = new(VariantOpeningFamily.Id) {
+                Obligations = [new(InitialRoomsInvocation.UnknownCoverage, ThroughOrdinal: 2)],
+                Issues = [new("VariantPreparation", "RealVariantUnavailable")] } };
+        var serial = AutomaticPrivateSerialInvocation.Prepare(request.Model, preferences, [n, v, w, e]);
+        Check(serial.Preparation.Obligations.Contains(new("N.Neow")) && serial.Preparation.Obligations.Contains(new("W.World")) &&
+            serial.Preparation.Obligations.Contains(new("E.EventResult", 1)), "Mixed declarations retain every child including explicit player ownership");
+        Check(!serial.Preparation.Obligations.Any(o => o.Domain == VariantOpeningFamily.Id) &&
+            serial.Preparation.Obligations.Contains(new(InitialRoomsInvocation.UnknownCoverage, ThroughOrdinal: 2)),
+            "Partial V keeps its bounded Unknown duty without claiming variant coverage");
+        Check(Describe(request, serial).ToHashSet().SetEquals(["FirstActUnknownEventPrefix:ProductionExactOnly",
+            "V.VariantOpening:RealVariantUnavailable", "E.EventResult:RealEventRemainder"]),
+            "Composition retains the real ordinal gap and child causes without attributing them to the transport parent");
+        var noVariant = Body(VariantOpeningFamily.Id);
+        var noClaim = AutomaticPrivateSerialInvocation.Prepare(request.Model, preferences, [n, noVariant]);
+        Check(!noClaim.Preparation.Obligations.Any(o => o.Domain == VariantOpeningFamily.Id),
+            "An undeclared V never acquires support from its broad physical Coverage");
+        var unknownPlan = InitialRoomsPlan.TryCompileUnknown(request.Model)!;
+        var decorated = InitialRoomsInvocation.Prepare(request.Model, preferences, "W.World", unknownPlan, w, false);
+        Check(decorated.Preparation.Obligations.Contains(new("W.World")) &&
+            decorated.Preparation.Obligations.Contains(new(InitialRoomsInvocation.UnknownCoverage, ThroughOrdinal: 3)),
+            "Initial Unknown decoration retains ordinary W and the real prefix bound");
+        var treasureRequest = Request(SearchQuery.Empty with { TreasureRelics = new(1, 1, TreasureRelicOrderMode.Ordered,
+            [new("RELIC", "JUZU_BRACELET")]) });
+        var treasure = InitialRoomsInvocation.Prepare(treasureRequest.Model, preferences, "R.Relic",
+            InitialRoomsPlan.TryCompileTreasure(treasureRequest.Model)!, Body("R.Relic"), false);
+        Check(treasure.Preparation.Obligations.Contains(new("R.Relic")) &&
+            treasure.Preparation.Obligations.Contains(new(InitialRoomsInvocation.TreasureCoverage)),
+            "Initial treasure decoration retains a Coverage-only ordinary child");
+        var party = (SearchContext)typeof(CombinationRegressionChecks).GetMethod("PartyContext", flags)!
+            .Invoke(null, [context, 2, null, null])!;
+        var tableRequest = Request(SearchQuery.Empty with { Players = [
+            new(0, ModelKeySetFilter.Empty) { Conditions = SearchQuery.Empty with { EventResultConditions = [events] } },
+            new(1, ModelKeySetFilter.Empty) { Conditions = SearchQuery.Empty with { EventResultConditions = [events] } }] }, party);
+        var table = PartyFamily.Prepare(tableRequest.Model, preferences, [new(0, Body("E.EventResult")), new(1, e)]);
+        Check(table.Preparation.Obligations.Select(o => o.PlayerSlot).SequenceEqual(new int?[] { 0, 1 }) &&
+            !Describe(tableRequest, table).Any(r => r.Contains("NoSelectedFilter", StringComparison.Ordinal)),
+            "Party mixes fallback and explicit personal declarations without losing a seat");
+        Check(Describe(tableRequest, PartyFamily.Prepare(tableRequest.Model, preferences, [new(0, e)]))
+            .Contains("E.EventResult:slot=0:NoSelectedFilter"), "Explicit ownership cannot be reassigned to conceal a missing seat");
+        var ncRequest = Request(SearchQuery.Empty with {
+            LegacyNeow = LegacyNeowSemanticConstraints.Empty with { RequiredFinalCurse = new("CARD", "RT2_UNAVAILABLE_CURSE") },
+            CombatCardRewards = new(1, CombatRewardSequenceOrderMode.Ordered, [new("CARD", "BLUDGEON")]) });
+        var ncBodies = FamilyExecutionCoordinator.CreateRegisteredFamilies(ncRequest, true);
+        foreach (string mode in new[] { "private-nc", "private-ordinal" })
+        {
+            Check(NcPhysicalExperiment.TrySelect(ncRequest, ncBodies, FamilyPlanner.InOrder(ncBodies), out var nc, mode) &&
+                Describe(ncRequest, nc!.OrderedFamilies.ToArray()).Contains("N.Neow:FinalCurseAuthorityUnavailable"),
+                "Dedicated NC preserves its actual N remainder in either physical order:" + mode);
+            var body = nc!.OrderedFamilies.Single();
+            // Controlled C cause also verifies qualification when C is not the
+            // transport parent's ID; colons inside a raw cause are not domains.
+            var causes = body with { Preparation = body.Preparation with { Remainders =
+                ["C.CombatReward:AuthoredNestedRewardEffectUnresolved:RELIC:CONTROLLED", "RawCause:Detail"] } };
+            var remaining = Describe(ncRequest, causes);
+            Check(remaining.Contains("C.CombatReward:AuthoredNestedRewardEffectUnresolved:RELIC:CONTROLLED") &&
+                remaining.Contains(body.FamilyId + ":RawCause:Detail"), "Dedicated causes retain their actual domain:" + mode);
+        }
+        var nwaeRequest = Request(SearchQuery.Empty with {
+            LegacyNeow = ncRequest.Model.CompiledSearch.Query.LegacyNeow, EventResultConditions = [events],
+            AncientBranches = [new(2, new("EVENT", "TEZCATARA"), [new("RELIC", "TOASTY_MITTENS")], [])] });
+        var nwaeBodies = FamilyExecutionCoordinator.CreateRegisteredFamilies(nwaeRequest, true);
+        Check(NwaePhysicalExperiment.TrySelect(nwaeRequest, nwaeBodies, FamilyPlanner.InOrder(nwaeBodies), out var nwae, "private-ENAW") &&
+            Describe(nwaeRequest, nwae!.OrderedFamilies.ToArray()).Contains("N.Neow:FinalCurseAuthorityUnavailable"),
+            "E-first dedicated NWAE retains the actual N cause without an E prefix");
+        var oldDevice = SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity();
+        try
+        {
+            SearchPerformanceProfileFoundation.ObserveRenderingBackend("d3d12");
+            var capsule = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>(
+                "tools/ProductionSearchHost/Corpus/direct-capsule-v1/Small-C-check.json");
+            var nrRequest = Request(capsule.Query with { TreasureRelics = treasureRequest.Model.CompiledSearch.Query.TreasureRelics });
+            // Current opening/treasure admission keeps this combination Exact-only.
+            // Widen the input descriptor deliberately to guard against a future
+            // decorator accidentally granting NR a duty its kernel never runs.
+            var registered = FamilyExecutionCoordinator.CreateRegisteredFamilies(nrRequest, true).Select(body =>
+                body.FamilyId == "R.Relic" ? body with { Preparation = body.Preparation with {
+                    Coverage = [..body.Coverage, InitialRoomsInvocation.TreasureCoverage],
+                    Obligations = [..body.Preparation.EffectiveObligations, new(InitialRoomsInvocation.TreasureCoverage)] } } : body).ToArray();
+            Check(registered.Single(body => body.FamilyId == "R.Relic").Coverage.Contains(InitialRoomsInvocation.TreasureCoverage),
+                "Controlled wider R descriptor includes the additional treasure obligation");
+            Check(DirectCapsuleAllocation.TryCreateDefaultUnit(nrRequest.Model, preferences, registered, out var nr) && nr is not null,
+                "Actual dedicated NR admits its ordinary N/R numerical scope beside decorated R");
+            Check(Describe(nrRequest, [nr!, ..registered.Where(body => body.FamilyId is not ("N.Neow" or "R.Relic"))])
+                .Contains("TreasureRelics:ProductionExactOnly"),
+                "Dedicated NR does not inherit unexecuted initial treasure from the wider registered R");
+        }
+        finally
+        {
+            SearchPerformanceProfileFoundation.ObserveGpuIdentity(oldDevice.GpuIdentity.Length == 0 ? "Unknown" : oldDevice.GpuIdentity,
+                oldDevice.RenderingBackend.Length == 0 ? "unknown" : oldDevice.RenderingBackend);
+        }
+        Console.WriteLine($"ComposedFilterDisclosure checks={checks};PASS");
         return checks;
     }
     private static int CheckUnifiedPartyPlanning()
@@ -818,7 +1275,7 @@ internal static class FamilyAllocationPricingChecks
             foreach (bool map in new[] { false, true })
             {
                 var authored = map ? query with { StandardMaps = [new(1, StandardMapMetric.GuaranteedMonster, StandardMapComparison.AtLeast, 1)] } : query;
-                ExactSearchExecutionRequest Request(long count, int target) => ExactSearchExecutionRequestFactory.Compile(
+                PreparedSearch Request(long count, int target) => SearchPreparationCompiler.Compile(
                     SearchCompiler.Compile(authored, context), new(seed, count, target, 4, SkipExactValidation: skip)).Plan
                     ?? throw new InvalidOperationException("UnifiedParty.Compile");
                 var request = Request(64, 1);
@@ -826,14 +1283,14 @@ internal static class FamilyAllocationPricingChecks
                 var otherHorizon = FamilyExecutionCoordinator.Plan(Request(1L << 34, 1000), gpuAvailable: false);
                 Check(plan.SelectionPolicyId == FamilyPlanner.SelectionPolicyId && plan.AllowSmallCandidateExact,
                     $"Shared greedy policy players={players};skip={skip};map={map}");
-                Check(plan.FinalValidationSkipped == skip && request.CompiledSearch.NormalizedQuery.Players.Count == players,
+                Check(plan.FinalValidationSkipped == skip && request.Model.CompiledSearch.NormalizedQuery.Players.Count == players,
                     "Validation mode and authored table remain intact");
                 Check(plan.Stages.SelectMany(stage => stage.Coverage).ToHashSet().IsSupersetOf(["N.Neow", "S.MerchantShopColorless"]),
                     "Every table N/S obligation participates");
                 Check(plan.OrderedFamilies.Select(f => f.FamilyId).SequenceEqual(otherHorizon.OrderedFamilies.Select(f => f.FamilyId)),
                     "Target count and scan horizon cannot choose a different whole chain");
-                var shop = plan.OrderedFamilies.OfType<PartyFamily>().Single(f => f.FamilyId == "S.MerchantShopColorless");
-                Check(shop.PersonalStages.Select(stage => stage.Slot).Order().SequenceEqual(Enumerable.Range(0, players)),
+                var shop = plan.OrderedFamilies.Single(f => f.FamilyId == "S.MerchantShopColorless");
+                Check(shop.Preparation.Obligations.Select(obligation => obligation.PlayerSlot!.Value).Order().SequenceEqual(Enumerable.Range(0, players)),
                     "Whole-table shop keeps every personal predicate bound to its original seat");
             }
         }
@@ -911,30 +1368,33 @@ internal static class FamilyAllocationPricingChecks
     private static void CheckCandidateValidationPublication(SearchContext context, Action<bool, string> check)
     {
         var compiled = SearchCompiler.Compile(SearchQuery.Empty, context);
-        var plan = ExactSearchExecutionRequestFactory.Compile(compiled, new("000000000000", 4, 4, 1)).Plan!;
+        var plan = SearchPreparationCompiler.Compile(compiled, new("000000000000", 4, 4, 1)).Plan!;
         var execution = FamilyPlanner.InOrder([]);
-        (SearchProgressSnapshot Progress, SearchCandidate[] Candidates, ulong Cursor) Run(
+        (SearchProgressSnapshot Progress, SearchCandidate[] Candidates, ulong Cursor, IReadOnlyList<SearchPendingCandidate> Pending) Run(
             SearchDisposition[] dispositions, int target, string fault = "")
         {
             var requestPlan = plan with { RunOptions = plan.RunOptions with { TargetMatchCount = target } };
             int attempt = 0;
-            ProductionExactSearchResult Evaluate(ExactSearchExecutionRequest request, TrustedRootHashInput input)
+            ProductionExactSearchResult Evaluate(SearchModel request, TrustedRootHashInput input)
             {
                 if (fault == "throw") throw new InvalidOperationException("InjectedValidationFault");
                 if (fault == "unexpectedCancel") throw new OperationCanceledException("InjectedUnrequestedCancellation");
-                var disposition = dispositions[attempt++];
+                // A one-disposition fixture applies to every attempted seed,
+                // including later seeds retained after a real provider failure.
+                var disposition = dispositions[Math.Min(attempt++, dispositions.Length - 1)];
                 if (fault == "missingMatch") return new(null, null, request.Authority, SearchQueryEvaluation.Match(), "");
                 if (!SeedPredictionRequest.TryCreateFromRootHash(input, CharacterIdentity.FromKey(request.CharacterKey), request.Ascension,
                     request.Authority.PlayersCount, request.Authority.PlayerSlotIndex, request.Authority,
                     request.Evaluation.AncientOptionConditions, SeedPredictionDomainSelection.None,
                     SeedPredictionInputLimits.DefaultRelicSequencePreviewCount, true, out var predictionRequest, out var issue))
                     throw new InvalidOperationException("PublicationFixtureRequest:" + issue);
-                var document = new SeedPredictionDocument {
-                    Context = SeedPredictionDocument.CreateContext(predictionRequest!, request.Detection.DisplayVersion, request.ProfileId),
+                var facts = new SeedPredictionFacts {
+                    Context = PredictionContext.FromRequest(predictionRequest!, request.Detection.DisplayVersion, request.ProfileId),
                     PredictorId = "ValidationPublicationFixture", OriginalSeed = input.CanonicalSeed, CanonicalSeed = input.CanonicalSeed,
-                    Sections = [], OverallStatus = SeedPredictionOverallStatus.Completed,
-                    Warnings = fault == "document" ? [new(PredictionWarningCode.AnalysisFailed)] : [],
-                    Diagnostics = fault is "document" or "diagnostic" ? [new(PredictionDiagnosticCodes.Exception, "InjectedDocumentFault")] : []
+                    InputStatus = SeedPredictionInputStatus.Ready,
+                    Warnings = fault == "predictionFailure" ? [new(PredictionWarningCode.AnalysisFailed)] : [],
+                    Diagnostics = fault is "predictionFailure" or "diagnostic"
+                        ? [new(PredictionDiagnosticCodes.Exception, fault == "predictionFailure" ? "InjectedPredictionFault" : "InjectedDiagnosticOnly")] : []
                 };
                 var evaluation = disposition switch {
                     SearchDisposition.Match => SearchQueryEvaluation.Match([new("FixtureEvidence")], ["FixtureRoute"]),
@@ -943,17 +1403,18 @@ internal static class FamilyAllocationPricingChecks
                         RouteRejections = [new("FixtureRoute", [], SearchDisposition.Unsupported, "RouteUnsupportedRootCause")] },
                     _ => SearchQueryEvaluation.Unsupported("UnsupportedFixture")
                 };
-                // An unresolved evaluator may have a partial payload. Publication
-                // must discard it rather than presenting it as a full observation.
-                return new(predictionRequest, document, request.Authority, evaluation, evaluation.FailureCode);
+                // Scoped unresolved evaluations may retain bounded input facts;
+                // those facts never add confirmation evidence or route witnesses.
+                return new(predictionRequest, facts, request.Authority, evaluation, evaluation.FailureCode);
             }
             var session = new ProductionSearchSession(requestPlan, execution,
-                FamilySearchEtaProjectorV1.Project(requestPlan, execution), 4, 8, null, "", exactEvaluator: Evaluate);
+                FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(requestPlan, execution), execution), 4, 8, null, "", exactEvaluator: Evaluate);
             try {
                 check(session.Completion.Wait(15000), "Validation publication session completes: " + fault);
                 var candidates = new List<SearchCandidate>();
                 while (session.TryReadCandidate(out var candidate)) candidates.Add(candidate!);
-                return (session.GetProgress(), candidates.ToArray(), session.GetSafeNextOrdinal());
+                return (session.GetProgress(), candidates.ToArray(), session.GetSafeNextOrdinal(),
+                    session.CaptureContinuation()!.PendingCandidates);
             }
             finally { session.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
         }
@@ -964,66 +1425,84 @@ internal static class FamilyAllocationPricingChecks
         check(mixed.Candidates.Select(c => c.ValidationDisposition).SequenceEqual([SearchDisposition.Match, SearchDisposition.Unknown, SearchDisposition.Unsupported]),
             "Delivered candidates retain distinct validation dispositions");
         var unresolved = mixed.Candidates.Where(c => c.IsUnverified).ToArray();
-        check(unresolved.All(c => c.ValidationIssue.Length > 0 && c.Document is null),
-            "Unresolved deliveries retain a reason without an observed document");
+        check(unresolved.All(c => c.ValidationIssue.Length > 0 && c.Facts is { Neow: null, World: null, Relics: null, CombatRewards: null }),
+            "Unresolved deliveries retain a reason and no invented domain observation");
         check(unresolved.All(c => c.MatchEvidence.Count == 0 && c.MatchedRouteIds.Count == 0 && c.Witnesses.Count == 0),
             "Unresolved deliveries contain no confirmation evidence, route or witness");
         // TryCreateFromRootHash normalizes None to Neow request intent. Domains
         // do not assert observations; canonical identity and the empty result
         // payload above establish that this is an input-only candidate.
-        check(unresolved.All(c => c.PredictionRequest.OriginalSeed == c.Seed &&
-            c.PredictionRequest.TrustedRootHashInput is { } bound && bound.SeedIdentity == c.Seed &&
-            ReferenceEquals(c.PredictionRequest.Authority, c.Authority) && c.PredictionRequest.PartyOpeningChoices is null),
+        check(unresolved.All(c => c.Facts?.OriginalSeed == c.Seed && c.Facts.CanonicalSeed == c.Seed &&
+            ReferenceEquals(c.Authority, plan.Model.Authority) && c.Facts.Party is null),
             "Unresolved deliveries bind canonical input and frozen authority without an opening observation");
         check(unresolved.All(c => !c.IsUnfiltered), "Attempted validation is not wholly unfiltered seed enumeration");
         var unknown = mixed.Candidates[1];
         check(unknown.ValidationIssue.StartsWith("UnresolvedFixture\n", StringComparison.Ordinal) &&
             unknown.ValidationIssue.Contains("route=FixtureRoute;disposition=Unsupported;reason=RouteUnsupportedRootCause", StringComparison.Ordinal),
             "Unresolved candidate retains the stable code first and each route's actual missing-support cause");
-        check((unknown with { IsUnverified = false }).IsUnverified &&
-            (unknown with { ValidationDisposition = SearchDisposition.Match }).IsUnverified == false,
+        check(unknown.IsUnverified &&
+            !(unknown with { Evaluation = SearchQueryEvaluation.Match() }).IsUnverified,
             "Explicit validation disposition owns the compatibility flag");
         var legacy = new SearchCandidate(unknown.Seed, unknown.ProfileId, unknown.CharacterKey, unknown.Ascension,
-            unknown.SnapshotFingerprint, unknown.PredictionRequest, null, unknown.Authority, [], [], []) { IsUnverified = true };
+            unknown.SnapshotFingerprint, unknown.Authority, SearchQueryEvaluation.NotEvaluatedByPolicy("FixtureSkipped"));
         check(legacy.IsUnverified && legacy.ValidationDisposition == SearchDisposition.NotEvaluatedByPolicy &&
-            (legacy with { IsUnverified = false }).ValidationDisposition == SearchDisposition.Match,
-            "Legacy candidates without a validation state retain their skipped/confirmed interpretation");
+            (legacy with { Evaluation = SearchQueryEvaluation.Match() }).ValidationDisposition == SearchDisposition.Match,
+            "Explicit skipped and confirmed evaluations retain distinct candidate interpretation");
         var limited = Run([SearchDisposition.Unknown, SearchDisposition.Unsupported, SearchDisposition.Match], 2);
         check(limited.Progress.State == SearchRunState.Completed && limited.Candidates.Length == 2 &&
             limited.Progress.MatchCount == 0 && limited.Progress.UnverifiedCandidateCount == 2 && limited.Progress.DeliveredCandidateCount == 2,
             "Target stops at actual unresolved deliveries without waiting for confirmed matches");
-        foreach (string fault in new[] { "throw", "document", "diagnostic", "missingMatch", "unexpectedCancel" }) {
+        var withoutPayload = Run([SearchDisposition.Match], 1, "missingMatch");
+        check(withoutPayload.Progress.MatchCount == 1 && withoutPayload.Candidates.Length == 1 &&
+            withoutPayload.Candidates[0].Facts is null && !withoutPayload.Candidates[0].IsUnverified &&
+            withoutPayload.Progress.PendingCandidateCount == 0,
+            "A completed model Match remains confirmed without optional prediction payload");
+        var diagnosticOnly = Run([SearchDisposition.Match], 1, "diagnostic");
+        check(diagnosticOnly.Progress.State == SearchRunState.Completed && diagnosticOnly.Candidates.Length == 1 &&
+            diagnosticOnly.Progress.MatchCount == 1 && diagnosticOnly.Progress.PendingCandidateCount == 0 &&
+            !diagnosticOnly.Candidates[0].IsUnverified && diagnosticOnly.Candidates[0].Facts!.Diagnostics.Any(d =>
+                d.Code == PredictionDiagnosticCodes.Exception && d.Value == "InjectedDiagnosticOnly"),
+            "Auxiliary diagnostic text remains available without reversing a completed model Match");
+        foreach (string fault in new[] { "throw", "predictionFailure", "unexpectedCancel" }) {
             var failed = Run([SearchDisposition.Unknown], 1, fault);
             check(failed.Progress.State == SearchRunState.Completed && failed.Candidates.Length == 0 && failed.Cursor == 4 &&
-                failed.Progress.PendingCandidateCount == 4 && failed.Progress.DeliveredCandidateCount == 0,
-                "Failed attempts remain pending after scanning; they are neither results nor target credit: " + fault);
+                failed.Progress.PendingCandidateCount == 4 && failed.Progress.DeliveredCandidateCount == 0 &&
+                failed.Pending.Count == 4 && failed.Pending.All(pending => pending.ExceptionText.Contains(fault switch {
+                    "throw" => "InjectedValidationFault", "predictionFailure" => "InjectedPredictionFault",
+                    _ => "InjectedUnrequestedCancellation" }, StringComparison.Ordinal)),
+                "Failed attempts retain their original cause and remain pending without target credit: " + fault);
         }
     }
-    private sealed class LifecycleFixture(string fault, string id = "LifecycleFixture") : IFamilyInvocation
+    private sealed class LifecycleFixture(string fault, string id = "LifecycleFixture") : IFilterExecution
     {
         internal int Calls;
-        public string FamilyId => id;
-        bool IFamilyInvocation.ExecutionFaulted => fault == "recovery" && Calls > 0;
-        public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest geometry) =>
-            fault == "quote" ? throw new IOException("InjectedAuxiliaryQuoteFailure") : null;
-        public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId, 64, [], "fixture");
-        public FamilySurvivalProjection Survival => fault == "survival" ? throw new IOException("InjectedAuxiliarySurvivalFailure") :
-            FamilySurvivalProjection.Resolved(FamilyId, 0, "fixture");
-        public FamilyConditionPerformanceProjection ConditionPerformance => new(FamilyId, "LifecycleFixture", "fixture", 1, "fixture", usesGpu: false);
-        public FamilyPerformanceObservation CapturePerformanceObservation() => fault == "observation" ? throw new IOException("InjectedAuxiliaryObservationFailure") : new(ConditionPerformance, "", 0, 0, 0, Calls, 0, 0, 0, 0, false,
-            fault == "recovery" ? "PhysicalFailureOrRecovery" : "FixtureNoCalibration");
-        public ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow window, FamilyCandidateSet input, CancellationToken token)
+        private FilterBodyDescription? _body;
+        public FilterBodyDescription Body => _body ??= new(new PreparedFilter(id)
+        { AnalyticalCost = new(id, 64, [], "fixture"), Survival = FamilySurvivalProjection.Unresolved(id, "fixture"),
+            HasConditionalProjections = true, SurvivalResolver = _ => fault == "survival"
+                ? throw new IOException("InjectedAuxiliarySurvivalFailure") : FamilySurvivalProjection.Resolved(id, 0, "fixture") },
+            "LifecycleFixture", RolltheSpire2.Compatibility.RuntimeProfileId.Beta111)
         {
-            Calls++; return ValueTask.FromResult(FamilyCandidateSet.FromSortedAbi1(input.Batch, []));
+            WindowCapacity = 64, CpuChunkCapacity = 64,
+            PerformanceProjection = _ => new(id, "LifecycleFixture", "fixture", 1, "fixture", usesGpu: false),
+            Cost = new() {
+                Quote = (_, _, _) => fault == "quote" ? throw new IOException("InjectedAuxiliaryQuoteFailure") : null,
+                MinimumComparableInput = _ => fault == "observation" ? throw new IOException("InjectedAuxiliaryObservationFailure") : 64,
+                CalibrationQuote = _ => fault == "calibration" ? throw new InvalidOperationException("InjectedCalibrationObservationFailure") : null,
+                CanonicalWorkShape = _ => fault == "evidence" ? throw new InvalidOperationException("InjectedEvidenceFailure") : null
+            },
+            CreateExecution = (_, _) => this
+        };
+        public static implicit operator FilterBodyDescription(LifecycleFixture fixture) => fixture.Body;
+        public bool ExecutionFaulted => fault == "recovery" && Calls > 0;
+        public ValueTask<FamilyCandidateSet> FilterAsync(FilterRuntimeServices services, FamilyCandidateSet input, CancellationToken token)
+        {
+            Calls++;
+            var output = FamilyCandidateSet.FromSortedAbi1(input.Batch, []);
+            services.Costs.ObserveCompleted(Body, input, output.Count, 1);
+            return ValueTask.FromResult(output);
         }
-        public ValueTask DisposeAsync(FamilyExecutionContext context) => fault == "cleanup"
+        public ValueTask DisposeAsync(FilterRuntimeServices services) => fault == "cleanup"
             ? ValueTask.FromException(new InvalidOperationException("InjectedCleanupFailure")) : ValueTask.CompletedTask;
-        void IFamilyInvocation.LogExecutionEvidence()
-        {
-            if (fault == "evidence") throw new InvalidOperationException("InjectedEvidenceFailure");
-        }
-        IEnumerable<GpuLocalPeak> IFamilyInvocation.CostPeaks => fault == "calibration"
-            ? throw new InvalidOperationException("InjectedCalibrationObservationFailure") : [];
     }
-
 }

@@ -168,7 +168,7 @@ internal static class SearchSelectivityEstimator
 
         if (IsSimpleRequiredCurseIdentity(filter, out ModelKey requiredCurse))
         {
-            if (!ModernNeowIdentityPredictor.TryGetEligibleCursePool(plan.Authority, out IReadOnlyList<ModelKey> cursePool))
+            if (!ModernNeowIdentityRules.TryGetEligibleCursePool(plan.Authority, out IReadOnlyList<ModelKey> cursePool))
             {
                 return SearchSelectivityEstimate.Unpriced(
                     "P5.Neow.RequiredCurse.AuthorityMissing",
@@ -223,7 +223,7 @@ internal static class SearchSelectivityEstimator
     private static SearchSelectivityEstimate EstimateBonesConditionalChain(SearchSelectivityInput plan)
     {
         NeowEffectAuthoritySnapshot? effects = plan.Authority.EffectAuthority;
-        if (!ModernNeowIdentityPredictor.TryGetEligibleCursePool(plan.Authority, out IReadOnlyList<ModelKey> cursePool) ||
+        if (!ModernNeowIdentityRules.TryGetEligibleCursePool(plan.Authority, out IReadOnlyList<ModelKey> cursePool) ||
             effects is null || !effects.HasExactBonesPools || effects.BonesEligibleRelics is null)
         {
             return SearchSelectivityEstimate.Unpriced(

@@ -129,16 +129,18 @@ internal static class SimpleProbabilityPrinciplesChecks
             OpeningRouteRelicRequirement = new(BaseGameModelKeys.Relics.NeowsBones,
                 [BaseGameModelKeys.Relics.LeafyPoultice, BaseGameModelKeys.Relics.SmallCapsule]) };
         var compiledCompanion = SearchCompiler.Compile(companionQuery, captured);
-        var request = new ExactSearchExecutionRequest(compiledCompanion, new("000000000000", 1, 1, 1), "000000000000", 1,
-            CompiledSearchEvaluationProjector.Project(compiledCompanion).Evaluation, CombatRewardRoutePolicyContract.None, compiledCompanion.SemanticFingerprint);
-        var numerical = new TransformationAggregateNumericalPlan(request);
+        var request = new PreparedSearch(new SearchModel(compiledCompanion,
+            CompiledSearchEvaluationProjector.Project(compiledCompanion).Evaluation, CombatRewardRoutePolicyContract.None, compiledCompanion.SemanticFingerprint),
+            new("000000000000", 1, 1, 1), "000000000000", 1, compiledCompanion.SemanticFingerprint);
+        var numerical = new TransformationAggregateNumericalPlan(request.Model);
         var companionProbability = TransformationAggregateProbability.Build(numerical);
         Check(!numerical.Closed && numerical.ProbabilityClosed && companionProbability.QueryHitProbability.HasValue,
             "unspecified companion permits declared marginal probability while runtime continuation proof remains unchanged");
         Check(companionProbability.StageSurvival is null && companionProbability.Evidence.Contains("RuntimeSurvivalUnmodeled", StringComparison.Ordinal),
             "query marginal does not claim the conservative runtime's population");
-        var companionFamily = new TransformationAggregateFamily(request, preferGpu: false);
-        Check(!companionFamily.Survival.IsResolved && !companionFamily.ResolveSurvival(new HashSet<string> { "N.Neow" }).IsResolved,
+        if (!TransformationAggregateFamily.TryCreate(request.Model, FilterExecutionPreferences.From(request.RunOptions), out var companionFamily, preferGpu: false) || companionFamily is null)
+            throw new Exception("Companion family preparation");
+        Check(!companionFamily!.Survival.IsResolved && !companionFamily.ResolveSurvival(new HashSet<string> { "N.Neow" }).IsResolved,
             "neither unconditional nor given-N physical survival can recover the query marginal");
         Check(companionProbability.QueryHitProbability is double companionQ && companionQ > 0 && companionQ < companionProbability.IdentityProbability &&
             Enumerable.Range(0, 8192).Select(i => (ulong)i).Any(numerical.MatchesCollected),

@@ -10,19 +10,17 @@ public sealed partial class ProductionSearchSession
         ProductionExactSearchResult? exact = null)
     {
         bool match = exact?.IsMatch == true;
-        var authority = exact?.Authority ?? _plan.Authority;
+        var authority = exact?.Authority ?? _plan.Model.Authority;
         var disposition = exact?.Evaluation.Disposition ?? SearchDisposition.NotEvaluatedByPolicy;
         string fingerprint = match ? string.Join("|", new[]
         {
             _plan.SnapshotFingerprint, authority.EffectSnapshotFingerprint, authority.WorldSnapshotFingerprint
         }.Where(value => !string.IsNullOrWhiteSpace(value))) : _plan.SnapshotFingerprint;
-        return new(input.CanonicalSeed, _plan.ProfileId, _plan.CharacterKey, _plan.Ascension, fingerprint,
-            match ? exact!.Request! : CreateUnobservedCandidateRequest(input, authority),
-            match ? exact!.Document : null, authority,
-            match ? exact!.Evaluation.Evidence : [], match ? exact!.Evaluation.MatchedRouteIds : [],
-            match ? exact!.Evaluation.Witnesses : [])
+        var evaluation = exact?.Evaluation ?? SearchQueryEvaluation.NotEvaluatedByPolicy("CandidateValidationSkipped");
+        return new(input.CanonicalSeed, _plan.Model.ProfileId, _plan.Model.CharacterKey, _plan.Model.Ascension, fingerprint,
+            authority, evaluation)
         {
-            ValidationDisposition = disposition,
+            Facts = exact?.Facts,
             ValidationIssue = exact is null ? "CandidateValidationSkipped" : match ? "" : ValidationIssue(exact),
             IsUnfiltered = exact is null && (ExecutionPlan.AllConditionsUnfiltered || BatchHasNoFilters(batch)),
             ExecutionWarnings = BatchExecutionWarnings(batch),
@@ -41,18 +39,6 @@ public sealed partial class ProductionSearchSession
         foreach (var scope in evaluation.Evidence.Where(e => e.Code == "Party.ChildEvaluationScope").Take(4))
             issue += $"\nsource=P{scope.Ordinal};character={scope.RelatedKey}";
         return issue;
-    }
-
-    private SeedPredictionRequest CreateUnobservedCandidateRequest(TrustedRootHashInput input,
-        RolltheSpire2.Core.Authority.RuntimeContextAuthoritySnapshot authority)
-    {
-        if (!SeedPredictionRequest.TryCreateFromRootHash(input,
-                RolltheSpire2.Core.Identity.CharacterIdentity.FromKey(_plan.CharacterKey), _plan.Ascension,
-                authority.PlayersCount, authority.PlayerSlotIndex, authority,
-                _plan.Evaluation.AncientOptionConditions, SeedPredictionDomainSelection.None,
-                SeedPredictionInputLimits.DefaultRelicSequencePreviewCount, false, out var request, out var error))
-            throw new InvalidOperationException("CandidateContextRejected:" + error);
-        return request!;
     }
 
     private async ValueTask<bool> PublishCandidateAsync(SearchCandidate output, ulong ordinal, CancellationToken cancellationToken)
@@ -86,5 +72,5 @@ public sealed partial class ProductionSearchSession
     }
 
     private bool BatchHasNoFilters(SearchBatch batch) => _families.Count > 0 &&
-        _executionContext.CaptureFilterIsolations(batch).Any(i => i.FamilyId == _families[0].FamilyId);
+        _executionContext.CaptureFilterIsolations(batch).Any(i => i.FamilyId == _families[0].Body.FamilyId);
 }

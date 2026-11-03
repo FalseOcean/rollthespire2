@@ -41,8 +41,8 @@ internal static partial class UiSurfaceChecks
             var environment = SearchEnvironmentSignatureBuilder.Capture(runtime);
             Check(environment.CaptureComplete, "real environment capture supports continuation checks: " + environment.CaptureIssue);
             store.EnsureEnvironment(environment);
-            ExactSearchExecutionRequest Plan(string seed = "000000000000") =>
-                ExactSearchExecutionRequestFactory.Compile(compiled, new(seed, 128, 1, 1, MapLossy: store.MapLossyPreferences)).Plan!;
+            PreparedSearch Plan(string seed = "000000000000") =>
+                SearchPreparationCompiler.Compile(compiled, new(seed, 128, 1, 1, MapLossy: store.MapLossyPreferences)).Plan!;
             Check(!store.Preferences.MapLossyEnabled, "new workspace defaults to complete map filtering");
             var full = Plan();
             store.SetMapLossyEnabled(true); store.SetMapLossyGpuBatchSize(32768);
@@ -64,7 +64,7 @@ internal static partial class UiSurfaceChecks
                 { ContinuationFingerprint = SearchContinuationIdentity.For(on), UnreceivedOrdinals = [], MapSearch = scan };
             var progress = new SearchProgressSnapshot(SearchRunState.Cancelled, 64, 0, 128, 1, 1, 64,
                 SearchDisposition.NoMatch, "", true);
-            string oldIdentity = SearchContinuationIdentity.For(compiled, on.CombatRewardRoutePolicy) +
+            string oldIdentity = SearchContinuationIdentity.For(compiled, on.Model.CombatRewardRoutePolicy) +
                 ":MapLossy:AssignmentRound1.Drawing5.Multiword.20261028.v2:batch=32768";
             var oldScan = scan with { Strategy = "AssignmentRound1.Drawing5.Multiword.20261028.v2", AttemptFingerprint = "old-er-attempt", EndOrdinalExclusive = 32 };
             var oldPending = new SearchPendingCandidate(31, "00000000000V", "Exact", "OldExecutionFault", "original old fault",
@@ -76,12 +76,11 @@ internal static partial class UiSurfaceChecks
             Check(store.ContinuationFor(draft, full) is null, "switching off never resumes a lossy frontier as full coverage");
             Check(store.ContinuationFor(draft, on)?.NextOrdinal == 64, "same lossy policy resumes its own frontier");
 
-            var exact = ProductionExactSearchEvaluator.Evaluate(full,
+            var exact = ProductionExactSearchEvaluator.Evaluate(full.Model,
                 TrustedRootHashInput.FromCanonicalSeed(runtime.Profile, full.CanonicalStartSeed));
-            Check(exact.IsMatch && exact.Request is not null && exact.Document is not null, "result projection fixture has actual Production Exact observation");
-            var candidate = new SearchCandidate(full.CanonicalStartSeed, full.ProfileId, full.CharacterKey, full.Ascension,
-                full.SnapshotFingerprint, exact.Request!, exact.Document!, exact.Authority, exact.Evaluation.Evidence,
-                exact.Evaluation.MatchedRouteIds, exact.Evaluation.Witnesses) { MapSearch = scan };
+            Check(exact.IsMatch && exact.Request is not null && exact.Facts is not null, "result projection fixture has actual Production Exact observation");
+            var candidate = new SearchCandidate(full.CanonicalStartSeed, full.Model.ProfileId, full.Model.CharacterKey, full.Model.Ascension,
+                full.SnapshotFingerprint, exact.Authority, exact.Evaluation) { Facts = exact.Facts, MapSearch = scan };
             store.AppendResult(candidate, compiled.SemanticFingerprint);
             store.FlushAll();
             var restored = new SearchWorkspace(state, false);

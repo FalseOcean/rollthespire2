@@ -4,6 +4,18 @@
   "Blocks": [
     {
       "Type": "Heading",
+      "Text": "RolltheSpire2 1.4.1"
+    },
+    {
+      "Type": "Callout",
+      "Text": "修复了部分性能问题，优化执行架构。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "1.4.1 之后会暂缓常规更新，等游戏新版上线后，我会再研究适配。"
+    },
+    {
+      "Type": "Heading",
       "Text": "RolltheSpire2 1.4.0"
     },
     {

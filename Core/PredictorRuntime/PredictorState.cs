@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Text.Json.Serialization;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Identity;
@@ -15,6 +16,13 @@ internal sealed record PredictorContext(
     ImmutableArray<ModelKey> DiscoveredActs, int NumberOfRuns,
     int? SealOfGoldFixedDeduction = null)
 {
+    // Resolve from the copied identity on every access: a record with-copy can
+    // change GameVersion, and must not inherit the original version's profile.
+    [JsonIgnore]
+    public RuntimeVersionResolution VersionResolution => RuntimeProfileRegistry.Resolve(GameVersion);
+    [JsonIgnore]
+    public IRuntimeProfile RuntimeProfile => RuntimeProfileRegistry.Select(VersionResolution);
+
     // Captured character pool followed by shared unlocked pool, in source order.
     // Empty while this dependency has not yet been initialized, never "all unlocked".
     public ImmutableArray<PredictorPotionOption> PotionPool { get; init; } = [];
@@ -208,9 +216,10 @@ internal static class PredictorSeedState
         long id = 1;
         var cards = startingDeck.Select(c => c with { Id = id++, Removed = false }).ToImmutableArray();
         var relics = startingRelics.Select(key => new PredictorRelic(id++, key, 1)).ToImmutableArray();
-        ulong root = Beta111Profile.Instance.ComputeRootSeed(context.Seed);
+        var profile = context.RuntimeProfile;
+        ulong root = profile.ComputeRootSeed(context.Seed);
         var streams = Enum.GetValues<PredictorStream>().Select(stream => PredictorStreamState.Capture(stream,
-            new Xoshiro256StarStar(Beta111Profile.Instance.DeriveNamedStreamSeed(root, Name(stream))))).ToImmutableArray();
+            new Xoshiro256StarStar(profile.DeriveNamedStreamSeed(root, Name(stream))))).ToImmutableArray();
         var result = new PredictorState(id, new(0, 0, "seed-initialization"), initialGold, cards,
             cards.Select(c => c.Id).ToImmutableArray(), relics,
             Enumerable.Repeat<PredictorPotion?>(null, potionCapacity).ToImmutableArray(), streams, odds,
@@ -221,8 +230,13 @@ internal static class PredictorSeedState
 
     internal static void ValidateContext(PredictorContext context)
     {
-        if (context == null || !ProfileSeedRules.TryCanonicalizePredictionSeed(Beta111Profile.Instance, context.Seed, out string canonical, out _) || canonical != context.Seed ||
-            (context.Live == null && context.Operation == null ? context.GameVersion != "0.111.0" : string.IsNullOrWhiteSpace(context.GameVersion)) ||
+        if (context == null) throw new InvalidDataException("PredictorContextInvalid");
+        var resolution = context.VersionResolution;
+        if (!resolution.IsUsable)
+            throw new NotSupportedException("PredictorRuntimeVersionUnavailable:" + context.GameVersion +
+                ";evidence=" + resolution.EvidenceCode);
+        if (!ProfileSeedRules.TryCanonicalizePredictionSeed(context.RuntimeProfile, context.Seed, out string canonical, out _) || canonical != context.Seed ||
+            (context.Live == null && context.Operation == null && !RuntimeProfilePolicies.SupportsPredictorSeedInitialization(context.VersionResolution)) ||
             !context.Character.IsValid || context.Ascension is < 0 or > 10 ||
             string.IsNullOrWhiteSpace(context.CatalogFingerprint) || string.IsNullOrWhiteSpace(context.UnlockFingerprint) ||
             context.RevealedEpochs.IsDefault || context.SeenEncounters.IsDefault || context.DiscoveredActs.IsDefault || context.Modifiers.IsDefault ||

@@ -21,16 +21,16 @@ internal static class InitialRoomGpuChecks
 {
     private static readonly GpuNumericalVariant[] NumericalVariants = [GpuNumericalVariant.NativeFloat64, GpuNumericalVariant.IntegerRne];
 
-    internal static async Task RunAsync(ExactSearchExecutionRequest basis, string output)
+    internal static async Task RunAsync(PreparedSearch basis, string output)
     {
-        var context = basis.CompiledSearch.Context;
+        var context = basis.Model.CompiledSearch.Context;
         if (context.Party is not null) throw new ArgumentException("InitialRoomGpuChecks.RequiresSolo");
         Directory.CreateDirectory(output);
         int checks = 0;
         void Check(bool condition, string name) { checks++; if (!condition) throw new InvalidDataException("InitialRoomGpuChecks:" + name); }
         var profile = Beta111Profile.Instance;
         ulong Root(ulong ordinal) => profile.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(ordinal));
-        ExactSearchExecutionRequest Request(SearchQuery query) => ExactSearchExecutionRequestFactory.Compile(
+        PreparedSearch Request(SearchQuery query) => SearchPreparationCompiler.Compile(
             SearchCompiler.Compile(query, context), new("000000000000", 32771, int.MaxValue, 1)).Plan
             ?? throw new InvalidDataException("InitialRoomGpuChecks.Compile");
         // Actual game RNG and UnstableShuffle/rarity entry points, immutable DTO
@@ -65,6 +65,10 @@ internal static class InitialRoomGpuChecks
         var fixtures = new (string Name, SearchQuery Query)[] {
             ("Unknown1", SearchQuery.Empty with { FirstActUnknownEventPrefixCount = 1 }),
             ("Unknown3", SearchQuery.Empty with { FirstActUnknownEventPrefixCount = 3 }),
+            ("Unknown3DeclaredJuzu", SearchQuery.Empty with { OpeningRoute = new(new("RELIC", "JUZU_BRACELET")),
+                FirstActUnknownEventPrefixCount = 3 }),
+            ("Unknown3UnspecifiedCapsule", SearchQuery.Empty with { OpeningRoute = new(BaseGameModelKeys.Relics.SmallCapsule),
+                FirstActUnknownEventPrefixCount = 3 }),
             ("OrderedTwo", SearchQuery.Empty with { TreasureRelics = new(1, 2, TreasureRelicOrderMode.Ordered, [source[0], source[1]]) }),
             ("UnorderedTwo", SearchQuery.Empty with { TreasureRelics = new(1, 2, TreasureRelicOrderMode.Unordered, [source[1], source[0]]) }),
             ("SecondWindow", SearchQuery.Empty with { TreasureRelics = new(2, 1, TreasureRelicOrderMode.Unordered, [source[1], null]) }),
@@ -72,11 +76,11 @@ internal static class InitialRoomGpuChecks
             ("Joint", SearchQuery.Empty with { FirstActUnknownEventPrefixCount = 3,
                 TreasureRelics = new(1, 1, TreasureRelicOrderMode.Ordered, [source[0], null]) }) };
         var receipts = new List<object>();
-        await using var execution = new FamilyExecutionContext(requiresGpu: true, failOnPhysicalRecovery: true);
+        await using var execution = new FilterRuntimeServices(requiresGpu: true, failOnPhysicalRecovery: true);
         foreach (var fixture in fixtures)
         {
             var request = Request(fixture.Query);
-            var plan = InitialRoomsPlan.TryCompile(request) ?? throw new InvalidDataException("InitialRoomGpuChecks.Admission:" + fixture.Name);
+            var plan = InitialRoomsPlan.TryCompile(request.Model) ?? throw new InvalidDataException("InitialRoomGpuChecks.Admission:" + fixture.Name);
             Check(plan.CoversTreasure == (fixture.Query.TreasureRelics is not null), "complete treasure coverage:" + fixture.Name);
             for (ulong ordinal = 0; ordinal < 128; ordinal++)
             {
@@ -96,14 +100,16 @@ internal static class InitialRoomGpuChecks
                         expected &= found;
                     }
                     if (fixture.Query.FirstActUnknownEventPrefixCount > 0)
-                        expected &= InitialRoomsPlan.MatchesUnknown(root, fixture.Query.FirstActUnknownEventPrefixCount);
+                        expected &= InitialRoomsPlan.MatchesUnknown(root, fixture.Query.FirstActUnknownEventPrefixCount,
+                            ExplicitOpeningRelicFacts.HasDeclaredJuzuForUnknownRooms(request.Model.CompiledSearch.NormalizedQuery));
                     Check(plan.Matches(root) == expected, "gameRngSharedShuffleAndRarity:" + fixture.Name);
                 }
             }
-            var population = Enumerable.Range(0, 32771).Where(i => plan.Matches(Root((ulong)i))).Select(i => (ulong)i).ToArray();
+            var population = Enumerable.Range(0, 32771).Where(i => plan.CoversTreasure
+                ? plan.Matches(Root((ulong)i)) : plan.Reference(Root((ulong)i))).Select(i => (ulong)i).ToArray();
             foreach (var variant in NumericalVariants)
             {
-            var actualPlan = InitialRoomsPlan.TryCompile(request, numericalVariant: variant)
+            var actualPlan = InitialRoomsPlan.TryCompile(request.Model, numericalVariant: variant)
                 ?? throw new InvalidDataException("InitialRoomGpuChecks.VariantAdmission:" + fixture.Name + ":" + variant);
             ExportPlanSource(actualPlan, fixture.Name, output, receipts, Check);
             Check((actualPlan.ActualRevision != plan.ActualRevision) == (variant == GpuNumericalVariant.IntegerRne), "distinct variant revision:" + fixture.Name);
@@ -152,15 +158,15 @@ internal static class InitialRoomGpuChecks
         GD.Print($"INITIAL_ROOMS_GPU_PASS checks={checks};fixtures={fixtures.Length};nativeIntegerParity=true;denseCompact=true;productionPrivateDisabled=true;sourceRngAndReference=true;targetMetalClaimed=false");
     }
 
-    private static async Task CheckOwnedPublicRoutes(ExactSearchExecutionRequest basis, string output, FamilyExecutionContext execution,
+    private static async Task CheckOwnedPublicRoutes(PreparedSearch basis, string output, FilterRuntimeServices execution,
         List<object> receipts, Action<bool, string> check)
     {
-        var context = basis.CompiledSearch.Context;
+        var context = basis.Model.CompiledSearch.Context;
         var profile = Beta111Profile.Instance;
         ulong Root(ulong ordinal) => profile.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(ordinal));
         ulong witness = Enumerable.Range(0, 1024).Where(i => i % 3 == 0).Select(i => (ulong)i)
             .First(i => InitialRoomsPlan.MatchesUnknown(Root(i), 3));
-        ExactSearchExecutionRequest Request(SearchQuery query) => ExactSearchExecutionRequestFactory.Compile(
+        PreparedSearch Request(SearchQuery query) => SearchPreparationCompiler.Compile(
             SearchCompiler.Compile(query, context), new("000000000000", 4097, int.MaxValue, 1)).Plan
             ?? throw new InvalidDataException("OwnedInitialRoomsGpu.Compile");
         var initial = RelicSequencePredictor.Predict(profile, Beta110SeedCodec.FormatOrdinal(witness), context.Authority.WorldAuthority);
@@ -187,20 +193,22 @@ internal static class InitialRoomGpuChecks
             var request = Request(fixture.Query);
             ProductionSearchReplay.Write(Path.Combine(output, fixture.Name + "-workload.json"),
                 new ProductionSearchReplayWorkload(ProductionSearchReplay.SchemaVersion, fixture.Query, request.RunOptions));
-            var rooms = InitialRoomsPlan.TryCompile(request)!;
-            RelicFamily.TryCreate(Request(fixture.Query with { TreasureRelics = null }), out var legacyR);
-            WorldFamily.TryCreate(Request(fixture.Query with { FirstActUnknownEventPrefixCount = 0 }), out var legacyW, false);
+            var rooms = InitialRoomsPlan.TryCompile(request.Model)!;
+            var legacyRModel = Request(fixture.Query with { TreasureRelics = null }).Model;
+            var legacyWModel = Request(fixture.Query with { FirstActUnknownEventPrefixCount = 0 }).Model;
+            var legacyR = new RelicReferencePlan(RelicReferencePlan.ProjectEvaluation(legacyRModel), legacyRModel.Authority.WorldAuthority, profile);
+            WorldFamilyReplay? legacyW = WorldFamilyReplay.HasConditions(legacyWModel)
+                ? new WorldFamilyReplay(legacyWModel) : null;
             ulong[] oracle = Enumerable.Range(0, 4097).Select(i => (ulong)i).Where(i => rooms.Reference(Root(i)) &&
-                (legacyR is not RelicFamily relic || relic.MatchesCpuReference(Root(i))) &&
-                (legacyW is not WorldFamily worldFamily || worldFamily.Replay.Matches(Root(i)))).ToArray();
+                legacyR.Reference(Root(i)) && (legacyW is null || legacyW.Matches(Root(i)))).ToArray();
             check(oracle.Length > 0, fixture.Name + ":nonempty oracle population");
             if (fixture.Name == "OwnedTreasureOrdinaryShop")
             {
                 check(oracle.Contains(witness), fixture.Name + ":known shared positive");
-                var old = (RelicFamily)legacyR!;
-                check(Enumerable.Range(0, 4097).Select(i => (ulong)i).Any(i => old.MatchesCpuReference(Root(i)) && !rooms.Reference(Root(i))),
+                var old = legacyR;
+                check(Enumerable.Range(0, 4097).Select(i => (ulong)i).Any(i => old.Reference(Root(i)) && !rooms.Reference(Root(i))),
                     fixture.Name + ":treasure gate rejects legacy survivors");
-                check(Enumerable.Range(0, 4097).Select(i => (ulong)i).Any(i => rooms.Reference(Root(i)) && !old.MatchesCpuReference(Root(i))),
+                check(Enumerable.Range(0, 4097).Select(i => (ulong)i).Any(i => rooms.Reference(Root(i)) && !old.Reference(Root(i))),
                     fixture.Name + ":ordinary and shop gate rejects treasure survivors");
             }
             foreach (var mode in new[] { "CPU", "NativeFloat64", "IntegerRne" })
@@ -211,14 +219,16 @@ internal static class InitialRoomGpuChecks
                 try
                 {
                     var coverage = selected.Stages.SelectMany(stage => stage.Coverage).ToHashSet(StringComparer.Ordinal);
-                    var variantOwner = selected.ExecutionOrderUnits.Select(family => family is FamilyCpuExecution cpu
-                        ? cpu.RealizationOwner ?? family : family).OfType<VariantOpeningFamily>().SingleOrDefault();
+                    var variantOwner = selected.ExecutionOrderUnits.SingleOrDefault(family => family.FamilyId == VariantOpeningFamily.Id);
+                    int unknownPrefix = variantOwner?.Preparation.Obligations.Where(o=>o.Domain==InitialRoomsInvocation.UnknownCoverage)
+                        .Select(o=>o.ThroughOrdinal ?? 0).DefaultIfEmpty().Max() ?? 0;
                     check(coverage.Contains(InitialRoomsInvocation.TreasureCoverage) == (fixture.Query.TreasureRelics is not null) &&
                         coverage.Contains(VariantOpeningFamily.Id) == (fixture.Query.FirstActUnknownEventPrefixCount > 0) &&
-                        (variantOwner?.Plan.UnknownPrefixCount ?? 0) == fixture.Query.FirstActUnknownEventPrefixCount &&
+                        unknownPrefix == fixture.Query.FirstActUnknownEventPrefixCount &&
                         !coverage.Contains(InitialRoomsInvocation.UnknownCoverage),
-                        fixture.Name + ":actual default registration:" + gpu);
-                    check(selected.OrderedFamilies.OfType<InitialRoomsInvocation>().All(f => !((IFamilyInvocation)f).CanBindPrivateSerial &&
+                        fixture.Name + ":actual default registration:" + gpu + ";coverage=" + string.Join(',',coverage) +
+                            ";unknownPrefix=" + unknownPrefix + ";authoredUnknownPrefix=" + fixture.Query.FirstActUnknownEventPrefixCount);
+                    check(selected.OrderedFamilies.Where(f=>f.Coverage.Contains(InitialRoomsInvocation.TreasureCoverage)).All(f => !((FilterBodyDescription)f).CanBindPrivateSerial &&
                         f.ConditionPerformance.UsesGpu == gpu &&
                         (mode != "IntegerRne" || f.QuotePhysicalWork(new(false, false, 4097)) is not { } quote ||
                             FamilyCoarsePricing.IsEstimate(quote)) &&
@@ -236,12 +246,12 @@ internal static class InitialRoomGpuChecks
                     // arbitrary compact fixtures exercise its public units.
                     var invocations = compact ? selected.ExecutionOrderUnits : selected.OrderedFamilies;
                     foreach (var family in invocations)
-                        actual = await family.InvokeAsync(execution, new(batch, request), actual, default);
+                        actual = await family.ExecuteAsync(execution, actual, default);
                     ulong[] expected = oracle.Where(i => !compact || i % 3 == 0).ToArray();
                     ulong[] actualOrdinals = actual.EnumerateLogicalOrdinals().ToArray();
                     check(actualOrdinals.SequenceEqual(expected), fixture.Name + ":default full CPU/GPU population:" + mode + ":" + compact);
                     ulong positive = oracle[0];
-                    var exact = ProductionExactSearchEvaluator.Evaluate(request, TrustedRootHashInput.FromCanonicalSeed(profile, Beta110SeedCodec.FormatOrdinal(positive)));
+                    var exact = ProductionExactSearchEvaluator.Evaluate(request.Model, TrustedRootHashInput.FromCanonicalSeed(profile, Beta110SeedCodec.FormatOrdinal(positive)));
                     check(exact.IsMatch, fixture.Name + ":original whole Exact positive:" + mode);
                     receipts.Add(new { fixture.Name, Mode = mode, gpu, compact, input = input.Count, survivors = actual.Count,
                         ExpectedAbi1 = expected, ActualAbi1 = actualOrdinals, WholeExactPositive = positive, WholeExactDisposition = exact.Evaluation.Disposition.ToString(),
@@ -258,7 +268,7 @@ internal static class InitialRoomGpuChecks
         }
     }
 
-    private static async Task CheckCapturedPartyUnknown(string contextsRoot, string output, FamilyExecutionContext execution,
+    private static async Task CheckCapturedPartyUnknown(string contextsRoot, string output, FilterRuntimeServices execution,
         List<object> receipts, Action<bool, string> check)
     {
         var profile = Beta111Profile.Instance;
@@ -283,15 +293,14 @@ internal static class InitialRoomGpuChecks
             var captured = ProductionSearchReplay.Read<ProductionSearchReplayContext>(Path.Combine(contextsRoot, count + "p", "context.json"));
             var context = captured.Context;
             check(context.Party?.Players.Count == count, "captured party roster:" + count);
-            ExactSearchExecutionRequest Request(SearchQuery query) => ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context),
+            PreparedSearch Request(SearchQuery query) => SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context),
                 new(Beta110SeedCodec.FormatOrdinal(positive), 32771, int.MaxValue, 4)).Plan ?? throw new InvalidDataException("PartyUnknownGpu.Compile");
-            ProductionExactSearchResult Exact(ExactSearchExecutionRequest request, ulong ordinal) => ProductionExactSearchEvaluator.Evaluate(request,
-                TrustedRootHashInput.FromCanonicalSeed(profile, Beta110SeedCodec.FormatOrdinal(ordinal)));
+            ProductionExactSearchResult Exact(PreparedSearch request, ulong ordinal) => ProductionExactSearchEvaluator.Evaluate(request.Model, TrustedRootHashInput.FromCanonicalSeed(profile, Beta110SeedCodec.FormatOrdinal(ordinal)));
             var query = SearchQuery.Empty with { FirstActUnknownEventPrefixCount = 1,
                 Players = Enumerable.Range(0, count).Select(slot => new PlayerOfferQuery(slot, ModelKeySetFilter.Empty) {
                     Conditions = SearchQuery.Empty with { FirstActUnknownEventPrefixCount = slot == count - 1 ? 3 : slot == 0 ? 2 : 0 } }).ToArray() };
             var request = Request(query);
-            var plan = InitialRoomsPlan.TryCompile(request) ?? throw new InvalidDataException("PartyUnknownGpu.Admission");
+            var plan = InitialRoomsPlan.TryCompile(request.Model) ?? throw new InvalidDataException("PartyUnknownGpu.Admission");
             check(plan.UnknownPrefixCount == 3 && plan.CoversUnknownPrefix && !plan.CoversTreasure, "one shared max prefix:" + count);
             for (ulong ordinal = 0; ordinal < 128; ordinal++)
             {
@@ -318,7 +327,7 @@ internal static class InitialRoomGpuChecks
             var publishedEvidence = mixedResult.Evaluation.Evidence.Select(e => StablePartyMetadata(e)).ToHashSet(StringComparer.Ordinal);
             check(independentResult.IsMatch && independentResult.Evaluation.Evidence.All(e => publishedEvidence.Contains(StablePartyMetadata(e))) &&
                 StablePartyMetadata(independentResult.Request) == StablePartyMetadata(mixedResult.Request) &&
-                StablePartyMetadata(independentResult.Document) == StablePartyMetadata(mixedResult.Document) &&
+                StablePartyMetadata(independentResult.Facts) == StablePartyMetadata(mixedResult.Facts) &&
                 StablePartyMetadata(independentResult.Evaluation.Witnesses) == StablePartyMetadata(mixedResult.Evaluation.Witnesses),
                 "published original domain metadata preserved except generated request ID:" + count);
             var treasure = query with { Players = query.Players.Select(player => player.Slot == 0 ? player with {
@@ -330,9 +339,11 @@ internal static class InitialRoomGpuChecks
             var intervention = mixed with { Players = mixed.Players.Select(player => player.Slot == count - 1 ? player with {
                 Conditions = player.Conditions with { OpeningRoute = new(player.Offers.All[0]) } } : player).ToArray() };
             var interventionRequest = Request(intervention);
-            check(InitialRoomsPlan.TryCompile(interventionRequest) is null && Exact(interventionRequest, positive).Evaluation.Disposition == SearchDisposition.Unknown &&
-                PartyInitialRooms.Evaluate(interventionRequest, Root(positive)).FailureCode == "FirstActUnknownEventPrefix.PartyOpeningInterventionUnresolved",
-                "last seat opening leaves shared unknown unresolved:" + count);
+            var interventionPlan = InitialRoomsPlan.TryCompile(interventionRequest.Model);
+            check(interventionPlan is { CoversUnknownPrefix: true, UnknownPrefixCount: 3 } &&
+                Exact(interventionRequest, positive).IsMatch &&
+                PartyInitialRooms.Evaluate(interventionRequest.Model, Root(positive)).Disposition == SearchDisposition.Match,
+                "last seat route preserves the independently declared ordinary shared unknown:" + count);
             var contradiction = intervention with { Players = intervention.Players.Select(player => player.Slot == 0
                 ? player with { Offers = new([], [], [player.Offers.All[0]]) } : player).ToArray() };
             var rejected = Exact(Request(contradiction), positive);
@@ -341,7 +352,7 @@ internal static class InitialRoomGpuChecks
             var population = Enumerable.Range(0, 32771).Where(i => Source(Root((ulong)i), 3)).Select(i => (ulong)i).ToArray();
             foreach (var variant in NumericalVariants)
             {
-            var actualPlan = InitialRoomsPlan.TryCompile(request, numericalVariant: variant)
+            var actualPlan = InitialRoomsPlan.TryCompile(request.Model, numericalVariant: variant)
                 ?? throw new InvalidDataException("PartyUnknownGpu.VariantAdmission:" + count + ":" + variant);
             ExportPlanSource(actualPlan, "PartyUnknown" + count, output, receipts, check);
             await execution.ExecuteGpuAsync(rd =>
@@ -377,8 +388,8 @@ internal static class InitialRoomGpuChecks
                         selected.ExecutionOrderUnits.Count(family => family.FamilyId == VariantOpeningFamily.Id) == 1 &&
                         selected.ExecutionOrderUnits.All(family => family.FamilyId != "W.World") &&
                         selected.ExecutionOrderUnits.Single(family => family.FamilyId == VariantOpeningFamily.Id).ConditionPerformance.UsesGpu == gpu &&
-                        selected.ExecutionOrderUnits.Select(family => family is FamilyCpuExecution cpu ? cpu.RealizationOwner ?? family : family)
-                            .OfType<VariantOpeningFamily>().Single().Plan.UnknownPrefixCount == 3,
+                        selected.ExecutionOrderUnits.Single(family=>family.FamilyId==VariantOpeningFamily.Id).Preparation.Obligations
+                            .Where(o=>o.Domain==InitialRoomsInvocation.UnknownCoverage).Max(o=>o.ThroughOrdinal ?? 0) == 3,
                         "captured party actual default one shared V owner:" + count + ":" + gpu);
                     var batch = new SearchBatch(0, 32771);
                     var input = compact ? FamilyCandidateSet.FromSortedAbi1(batch, Enumerable.Range(0, 32771)
@@ -386,7 +397,7 @@ internal static class InitialRoomGpuChecks
                     var actual = input;
                     var invocations = compact ? selected.ExecutionOrderUnits : selected.OrderedFamilies;
                     foreach (var family in invocations)
-                        actual = await family.InvokeAsync(execution, new(batch, request), actual, default);
+                        actual = await family.ExecuteAsync(execution, actual, default);
                     ulong[] expected = population.Where(i => !compact || i % 3 == 0).ToArray();
                     ulong[] actualOrdinals = actual.EnumerateLogicalOrdinals().ToArray();
                     check(actualOrdinals.SequenceEqual(expected),
@@ -433,8 +444,8 @@ internal static class InitialRoomGpuChecks
         RemoveCorrelation(node); return node?.ToJsonString() ?? "null";
     }
 
-    private static async Task CheckMixedPartyPublic(ExactSearchExecutionRequest request, ulong positive, int players,
-        FamilyExecutionContext execution, List<object> receipts, Action<bool, string> check)
+    private static async Task CheckMixedPartyPublic(PreparedSearch request, ulong positive, int players,
+        FilterRuntimeServices execution, List<object> receipts, Action<bool, string> check)
     {
         // The CPU call is the complete same registered predicate, including all
         // requested seats and the shared prefix; it is not an injected outcome.
@@ -451,9 +462,9 @@ internal static class InitialRoomGpuChecks
                 try
                 {
                     check(selected.Stages.SelectMany(stage => stage.Coverage).Count(atom => atom == VariantOpeningFamily.Id) == 1 &&
-                        selected.ExecutionOrderUnits.Select(family => family is FamilyCpuExecution cpu ? cpu.RealizationOwner ?? family : family)
-                            .OfType<VariantOpeningFamily>().Single().Plan.UnknownPrefixCount ==
-                                PartyInitialRooms.Prefixes(request).Max(source => source.Count),
+                        selected.ExecutionOrderUnits.Single(family=>family.FamilyId==VariantOpeningFamily.Id).Preparation.Obligations
+                            .Where(o=>o.Domain==InitialRoomsInvocation.UnknownCoverage).Max(o=>o.ThroughOrdinal ?? 0) ==
+                                PartyInitialRooms.Prefixes(request.Model).Max(source => source.Count),
                         "mixed party owns shared prefix once:" + players + ":" + mode);
                     check(!gpu || selected.OrderedFamilies.All(f => f.ConditionPerformance.UsesGpu),
                         "mixed party actual all GPU selected:" + players + ":" + mode);
@@ -463,18 +474,18 @@ internal static class InitialRoomGpuChecks
                     var actual = input;
                     var invocations = compact ? selected.ExecutionOrderUnits : selected.OrderedFamilies;
                     foreach (var family in invocations)
-                        actual = await family.InvokeAsync(execution, new(batch, request), actual, default);
+                        actual = await family.ExecuteAsync(execution, actual, default);
                     ulong[] ordinals = actual.EnumerateLogicalOrdinals().ToArray();
                     cpuOrdinals ??= ordinals;
                     check(cpuOrdinals.SequenceEqual(ordinals) && ordinals.Contains(positive),
                         "mixed party complete ordered ABI1 and whole Exact witness retained:" + players + ":" + mode + ":" + compact);
-                    var exact = ProductionExactSearchEvaluator.Evaluate(request, TrustedRootHashInput.FromCanonicalSeed(
+                    var exact = ProductionExactSearchEvaluator.Evaluate(request.Model, TrustedRootHashInput.FromCanonicalSeed(
                         Beta111Profile.Instance, Beta110SeedCodec.FormatOrdinal(positive)));
                     check(exact.IsMatch, "mixed party original whole Exact positive:" + players);
                     receipts.Add(new { Name = "CapturedPartyMixedPublic", players, Mode = mode, compact,
                         ExpectedAbi1 = cpuOrdinals, ActualAbi1 = ordinals, InputCount = input.Count, WholeExactPositive = positive,
                         WholeExactDisposition = exact.Evaluation.Disposition.ToString(),
-                        QueryFingerprint = request.CompiledSearch.SemanticFingerprint,
+                        QueryFingerprint = request.Model.CompiledSearch.SemanticFingerprint,
                         Bodies = invocations.Select(f => new { f.FamilyId, Coverage = f.Coverage.ToArray(),
                             Revision = f.ResolveConditionPerformance(compact).PhysicalImplementationRevision,
                             Requirements = f.GpuNumericRequirements.ToString(), Device = f.CapturePerformanceObservation().DeviceName }).ToArray(),
@@ -516,12 +527,12 @@ internal static class InitialRoomGpuChecks
 
     // This receipt specifically owns the K2 group with different slot counts;
     // the separate Wide population remains a three-window transport check.
-    private static async Task CheckTwoWindowHeaderBank(FamilyExecutionContext execution, ExactSearchExecutionRequest request,
+    private static async Task CheckTwoWindowHeaderBank(FilterRuntimeServices execution, PreparedSearch request,
         string output, List<object> receipts, Action<bool, string> check)
     {
         const int count = InitialRoomsPlan.Capacity + 67;
         const ulong batchBase = (1UL << 32) + 701;
-        var cpu = InitialRoomsPlan.TryCompile(request) ?? throw new InvalidDataException("InitialRooms.K2Admission");
+        var cpu = InitialRoomsPlan.TryCompile(request.Model) ?? throw new InvalidDataException("InitialRooms.K2Admission");
         var seed = new byte[Beta110SeedCodec.SeedLength];
         foreach (bool compact in new[] { false, true })
         {
@@ -544,7 +555,7 @@ internal static class InitialRoomGpuChecks
             string expectedDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(Path.Combine(output, expectedFile))));
             foreach (var variant in NumericalVariants)
             {
-                var plan = InitialRoomsPlan.TryCompile(request, numericalVariant: variant)
+                var plan = InitialRoomsPlan.TryCompile(request.Model, numericalVariant: variant)
                     ?? throw new InvalidDataException("InitialRooms.K2VariantAdmission:" + variant);
                 await execution.ExecuteGpuAsync(rd =>
                 {
@@ -577,7 +588,7 @@ internal static class InitialRoomGpuChecks
 
     // One high-survival gate crosses both the input and survivor windows. The
     // existing small fixtures own game/source parity; this owns transport bounds.
-    private static async Task CheckWideUnknownPopulation(FamilyExecutionContext execution, ExactSearchExecutionRequest request, string output,
+    private static async Task CheckWideUnknownPopulation(FilterRuntimeServices execution, PreparedSearch request, string output,
         List<object> receipts, Action<bool, string> check)
     {
         const int population = InitialRoomsPlan.Capacity * 2 + 65;
@@ -585,7 +596,7 @@ internal static class InitialRoomGpuChecks
         string Digest(FamilyCandidateSet values) => Convert.ToHexString(SHA256.HashData(
             FamilyGpuComputeUtility.ToBytes(values.EnumerateLogicalOrdinals().Select(i => checked((uint)i)).ToArray())));
         var seed = new byte[Beta110SeedCodec.SeedLength];
-        var plan = InitialRoomsPlan.TryCompile(request) ?? throw new InvalidDataException("InitialRooms.WideAdmission");
+        var plan = InitialRoomsPlan.TryCompile(request.Model) ?? throw new InvalidDataException("InitialRooms.WideAdmission");
         foreach (bool compact in new[] { false, true })
         {
             var batch = new SearchBatch(batchBase, compact ? (1 << 24) : population);
@@ -606,7 +617,7 @@ internal static class InitialRoomGpuChecks
             WriteCompleteAbi1(Path.Combine(output, expectedFile), expected.EnumerateLogicalOrdinals());
             foreach (var variant in NumericalVariants)
             {
-            var actualPlan = InitialRoomsPlan.TryCompile(request, numericalVariant: variant)
+            var actualPlan = InitialRoomsPlan.TryCompile(request.Model, numericalVariant: variant)
                 ?? throw new InvalidDataException("InitialRooms.WideVariantAdmission");
             await execution.ExecuteGpuAsync(rd =>
             {

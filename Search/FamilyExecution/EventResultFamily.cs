@@ -1,129 +1,104 @@
-using RolltheSpire2.Bootstrap;
-using RolltheSpire2.Core.Seed;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Search.Contracts;
+
 namespace RolltheSpire2.Search.FamilyExecution;
 
-internal sealed partial class EventResultFamily : IFamilyInvocation
+internal sealed record EventResultPreparation(EventResultFamilyPlan Plan, FilterBodyDescription Body);
+
+// Root-local event facts and immutable numerical preparation, independent of a
+// search lifetime. World occurrence and final full-request judgment stay separate.
+internal static partial class EventResultFamily
 {
-    private readonly GpuCostSamples _costSamples = new();
-    IEnumerable<GpuLocalPeak> IFamilyInvocation.CostPeaks => _costSamples.Peaks;
-    void IFamilyInvocation.LogExecutionEvidence() => _costSamples.WriteSummary();
-    private readonly ExactSearchExecutionRequest _request;
-    internal ExactSearchExecutionRequest PricingRequest => _request;
-    private readonly FamilyCpuExecution _cpu;
-    internal EventResultFamilyPlan Plan { get; }
-    private EventResultFamilyGpuExecutor? _gpu;
-    private bool _parity, _faulted, _compact;
-    private readonly Sample[] _samples = [new(), new()];
-    private Sample Current => _samples[_compact ? 1 : 0];
-    private sealed class Sample
-    {
-        internal int Batches, Comparable; internal long Input, Output, LiveInput; internal double Ms, LiveMs, Peak, ValidPeak;
-    }
-    private EventResultFamily(ExactSearchExecutionRequest request, bool preferGpu,
+    internal const string Id = "E.EventResult";
+    internal static bool TryCreate(SearchModel model, FilterExecutionPreferences preferences,
+        out FilterBodyDescription? body, bool preferGpu = true,
         GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
-        _request = request; Plan = new(request, preferGpu, numericalVariant); _cpu = new(request, FamilyId, CpuRevision);
-        RuntimeLog.TryBackgroundInfo($"eventResultFamilyReady=true;family={FamilyId};physicalRevision={ConditionPerformance.PhysicalImplementationRevision};gpu={Plan.GpuSupported};recovery=None");
+        bool accepted = TryPrepare(model, preferences, out var preparation, preferGpu, numericalVariant);
+        body = preparation?.Body;
+        return accepted;
     }
-    bool IFamilyInvocation.ExecutionFaulted => _faulted;
-    GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => Plan.GpuNumericRequirements;
-    public string FamilyId => "E.EventResult";
-    internal string CpuRevision => Plan.HasNewWhitelist ? "E.EventResult.Cpu.Whitelist.20261016.v4" : Plan.HasMorphic ? "E.EventResult.Cpu.GroupInitialBasicsContains.20261016.v4" : "E.EventResult.Cpu.EventLocal.20261016.v4";
-    bool IFamilyInvocation.CanBindPrivateSerial => Plan.GpuSupported && Plan.NumericalVariant == GpuNumericalVariant.NativeFloat64;
-    FamilyPrivateGpuExecution IFamilyInvocation.BindPrivateSerial(Godot.RenderingDevice rd,
-        PrivateOrdinalBuffer? input, PrivateOrdinalBuffer? output)
+
+    internal static bool TryPrepare(SearchModel model, FilterExecutionPreferences preferences,
+        out EventResultPreparation? result, bool preferGpu = true,
+        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
-        if (!Plan.GpuSupported || Plan.NumericalVariant != GpuNumericalVariant.NativeFloat64) throw new InvalidOperationException("E.PrivateSerialNotAdmitted");
-        var gpu = new EventResultFamilyGpuExecutor(rd, Plan, input, output);
-        return new(gpu, gpu.Device, gpu.SetupMs, input, output, (batch, count, token) =>
-        {
-            FamilyCandidateSet? result = null; EventResultFamilyGpuMetrics m;
-            if (output is not null) gpu.ExecutePrivateStage(batch, count, token, out m);
-            else result = input is null ? gpu.Execute(FamilyCandidateSet.Dense(batch), token, out m) : gpu.ExecutePrivate(batch, count, token, out m);
-            return new(m.Output, result, m.DispatchSyncMs, m.ReadbackMs, m.ReadbackBytes, m.CanonicalMs, m.Dispatches);
+        result = null;
+        if (model.Evaluation.EventResultConditions.Count == 0) return false;
+        var plan = new EventResultFamilyPlan(model, preferGpu, numericalVariant);
+        var profile = RuntimeProfileRegistry.Select(model.Detection);
+        var authority = FilterPricingAuthority.From(model);
+        string identity = model.SnapshotFingerprint;
+        var preparation = new PreparedFilter(Id) {
+            AnalyticalCost = new(Id, plan.Capacity, [], "EventLocalExpectedWorkUnavailable"),
+            Survival = plan.Survival,
+            Obligations = [new(Id, model.Authority.PlayerSlotIndex)],
+            Issues = plan.GpuPreparationFailureDetail.Length == 0 ? [] :
+                [new("GpuPreparation", "GpuPlanConstructionFailed", plan.GpuPreparationFailureDetail)]
+        };
+        var compiled = EventResultCpuPlan.TryCompile(model, plan);
+        int workers = Math.Clamp(preferences.WorkerCount, 1, 32);
+        var ordinary = PrepareCpu(preparation, plan, null, authority, profile, identity, workers);
+        var cpu = compiled is null ? ordinary : PrepareCpu(preparation, plan, compiled, authority, profile, identity, workers);
+        if (!plan.GpuSupported) { result = new(plan, cpu); return true; }
+        bool finalHeader = plan.NumericalVariant == GpuNumericalVariant.NativeFloat64;
+        var body = new FilterBodyDescription(preparation, "E.EventResult.Gpu.Whitelist", model.ProfileId) {
+            UsesGpu = true, InputIdentity = identity, PlayersCount = model.Authority.PlayersCount,
+            CpuWorkers = preferences.WorkerCount, WindowCapacity = plan.Capacity,
+            NumericRequirements = plan.GpuNumericRequirements,
+            CpuAlternatives = compiled is null ? [ordinary] : [cpu, ordinary],
+            PerformanceProjection = compact => new(Id,
+                $"E.EventResult.Gpu.Whitelist.{(compact ? "CompactAbi1" : "Dense")}.CanonicalAbi1Ready.20260919.v1" +
+                    (plan.NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "") +
+                    (plan.UsesPreparedGroups ? ".RequestGroups.20261030.v1" : "") + GpuRngRotation.Revision,
+                "E.EventResult.Neutral.20260907.v1", 1, plan.NumericalVariant == GpuNumericalVariant.IntegerRne
+                    ? "NoAcceptedWithinPathCurve;CanonicalAbi1Ready;PhysicalQuoteUnavailable=UnmeasuredIntegerRneVariant"
+                    : "NoAcceptedWithinPathCurve;CanonicalAbi1Ready", true),
+            Cost = new() {
+                MinimumComparableInput = compactInput => plan.Capacity,
+                PartyChild = new(Math.Max(1, plan.Conditions.Sum(c => c.Kind is EventResultConditionKind.MorphicGroveGroupInitialBasicsContains ? 5 : c.Kind > EventResultConditionKind.MorphicGroveGroupInitialBasicsContains ? 3 : 1)), plan.NumericalVariant != GpuNumericalVariant.IntegerRne, plan.NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : ""),
+                CanonicalScope = authority.PlayersCount == 1,
+                CanonicalWorkShape = _ => FamilyCanonicalCostShape.DescribeEvent(plan),
+                PrivateOutputRevision = finalHeader ? EventResultFamilyGpuExecutor.FinalPrivateHeaderRevision : "",
+                PrivateOutputPathSuffix = finalHeader ? ".PrivateFinalHeaderReadback" : "",
+                Quote = (selected, geometry, _) => {
+                    var quote = FamilyCanonicalMeasuredCost.TryDenseQuote(selected, geometry) ??
+                        EventResultPhysicalPricing.Quote(plan, geometry) ?? EventResultWorkEstimate.Gpu(plan, geometry);
+                    if (plan.UsesPreparedGroups && quote is not null)
+                        quote = quote with { Evidence = quote.Evidence + ";RequestGroupsRetainedNumericalReference;NoNewGroupBodyMeasurement" };
+                    return FamilyGpuReadback.Reference(selected, geometry.PrivateOutput && finalHeader && quote is not null
+                        ? quote with { Evidence = quote.Evidence + ";RetainedNumericalEstimate;PrivateFinalHeaderTransportUnmeasured" } : quote);
+                }
+            },
+            CreateExecution = (selected, _) => new GpuFilterExecution<EventResultFamilyGpuExecutor>(selected,
+                device => new(device, plan), (resource, input, token) => {
+                    var output = resource.Execute(input, token, out var metrics);
+                    return new(output, metrics.CanonicalMs, metrics.DispatchSyncMs, metrics.ReadbackMs, metrics.ReadbackBytes);
+                }, resource => resource.Dispose(), plan.Reference, profile, resource => (resource.Device, resource.SetupMs)),
+            BindPrivate = !finalHeader ? null : (device, input, output) => {
+                var resource = new EventResultFamilyGpuExecutor(device, plan, input, output);
+                return new(resource, resource.Device, resource.SetupMs, input, output, (batch, count, token) => {
+                    FamilyCandidateSet? filtered = null; EventResultFamilyGpuMetrics metrics;
+                    if (output is not null) resource.ExecutePrivateStage(batch, count, token, out metrics);
+                    else filtered = input is null ? resource.Execute(FamilyCandidateSet.Dense(batch), token, out metrics) :
+                        resource.ExecutePrivate(batch, count, token, out metrics);
+                    return new(metrics.Output, filtered, metrics.DispatchSyncMs, metrics.ReadbackMs,
+                        metrics.ReadbackBytes, metrics.CanonicalMs, metrics.Dispatches);
+                });
+            }
+        };
+        result = new(plan, body);
+        return true;
+    }
+
+    private static Func<ulong, bool> CreateMatcher(EventResultFamilyPlan plan)
+    {
+        var reported = new System.Collections.Concurrent.ConcurrentDictionary<EventResultConditionKind, byte>();
+        return root => plan.MatchesObserved(root, (kind, cause) => {
+            if (reported.TryAdd(kind, 0))
+                RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.RecordDegradation(
+                    "EventResultFilterIncomplete", nameof(EventResultFamilyPlan), "Filter." + kind,
+                    "issues.filter_incomplete", $"condition={kind};cause=E.ReferenceAuthorityUnavailable:{cause};retained=true;filterDecision=Unknown;matchClaimed=false");
         });
-    }
-    internal bool UsesFinalPrivateHeader => Plan.GpuSupported && Plan.NumericalVariant == GpuNumericalVariant.NativeFloat64;
-    public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest geometry)
-    {
-        var quote = FamilyCanonicalMeasuredCost.TryDenseQuote(this, geometry) ??
-            (Plan.GpuSupported ? EventResultPhysicalPricing.Quote(Plan, geometry) ?? EventResultWorkEstimate.Gpu(Plan, geometry) :
-                EventResultWorkEstimate.Cpu(Plan, _cpu.Workers, geometry, capacity: _cpu.WindowCapacity));
-        return FamilyGpuReadback.Reference(this, geometry.PrivateOutput && UsesFinalPrivateHeader && quote is not null
-            ? quote with { Evidence = quote.Evidence + ";RetainedNumericalEstimate;PrivateFinalHeaderTransportUnmeasured" } : quote);
-    }
-    public FamilySurvivalProjection Survival => Plan.Survival;
-    public FamilyExpectedFilteringCostProjection? ExpectedFilteringCost => null;
-    public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId, Plan.Capacity, [], "EventLocalExpectedWorkUnavailable");
-    public FamilyConditionPerformanceProjection ConditionPerformance => ResolveConditionPerformance(false);
-    public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compact) => !Plan.GpuSupported ? _cpu.Condition(compact) :
-        new(FamilyId, $"E.EventResult.Gpu.Whitelist.{(compact ? "CompactAbi1" : "Dense")}.CanonicalAbi1Ready.20260919.v1" +
-            (Plan.NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "") + GpuRngRotation.Revision,
-            "E.EventResult.Neutral.20260907.v1", 1, Plan.NumericalVariant == GpuNumericalVariant.IntegerRne
-                ? "NoAcceptedWithinPathCurve;CanonicalAbi1Ready;PhysicalQuoteUnavailable=UnmeasuredIntegerRneVariant"
-                : "NoAcceptedWithinPathCurve;CanonicalAbi1Ready", usesGpu: true);
-    public FamilyPerformanceObservation CapturePerformanceObservation()
-    {
-        if (!Plan.GpuSupported) return _cpu.Observation(); var s = Current;
-        return new(ResolveConditionPerformance(_compact), _gpu?.Device ?? "", _gpu?.SetupMs ?? 0, s.Peak, s.ValidPeak, s.Batches, s.Comparable,
-            s.Input, s.Output, s.Ms, _parity && !_faulted && s.Comparable > 0,
-            _faulted ? "PhysicalFailureOrRecovery" : "CanonicalAbi1Ready;ColdModeExcluded;FullPrivateWindowRequired;CpuReferenceParity=" + _parity);
-    }
-    public FamilyLivePerformanceSnapshot? CaptureLivePerformanceSnapshot()
-    {
-        if (!Plan.GpuSupported) return _cpu.Live(); var s = Current;
-        return _faulted || !_parity || s.Batches < 2 ? null : new(FamilyId, ResolveConditionPerformance(_compact).PhysicalImplementationRevision, s.LiveInput, s.LiveMs, s.Batches - 1);
-    }
-    public async ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow observation,
-        FamilyCandidateSet input, CancellationToken token)
-    {
-        if (!Plan.GpuSupported) return _cpu.Execute(observation, input, token, Plan.Matches, context);
-        token.ThrowIfCancellationRequested();
-        if (_faulted) throw new InvalidOperationException("E.EventResult.InvocationFaulted");
-        if (observation.ExactRequest.SnapshotFingerprint != _request.SnapshotFingerprint) throw new InvalidOperationException("E.EventResult.ObservationMismatch");
-        if (input.Count == 0) return input;
-        _compact = !input.IsDense;
-        try
-        {
-            _gpu ??= await context.ExecuteGpuAsync(rd => new EventResultFamilyGpuExecutor(rd, Plan), token).ConfigureAwait(false);
-            if (!_parity)
-            {
-                var sample = FamilyCandidateSet.FromSortedAbi1(input.Batch, input.EnumerateLogicalOrdinals().Take(2048).ToArray());
-                var actual = await context.ExecuteGpuAsync(rd => _gpu.Execute(sample, token, out _), token).ConfigureAwait(false);
-                var profile = RolltheSpire2.Compatibility.RuntimeProfileRegistry.Select(_request.Detection);
-                var expected = sample.EnumerateLogicalOrdinals().Where(i => Plan.Reference(profile.ComputeRootSeed(
-                    VisibleSeedCandidateCodec.FormatOrdinal(profile, input.Batch.GlobalCandidate(i)))));
-                if (!actual.EnumerateLogicalOrdinals().SequenceEqual(expected)) throw new InvalidDataException("E.EventResult.CanonicalReferenceParityMismatch");
-                _parity = true;
-            }
-            var result = await context.ExecuteGpuAsync(rd => { var output = _gpu.Execute(input, token, out var m); return (output, m); }, token).ConfigureAwait(false);
-            _costSamples.Observe(this, new(!input.IsDense, false, input.Count), input.Count, result.m.DispatchSyncMs, outputs: result.output.Count, canonicalMs: result.m.CanonicalMs, readbackMs: result.m.ReadbackMs, readbackBytes: result.m.ReadbackBytes);
-            var metrics = result.m; var s = Current; s.Batches++; s.Input += metrics.Input; s.Output += metrics.Output; s.Ms += metrics.CanonicalMs;
-            if (s.Batches > 1)
-            {
-                s.LiveInput += metrics.Input; s.LiveMs += metrics.CanonicalMs; double rate = metrics.Input * 1000d / metrics.CanonicalMs; s.Peak = Math.Max(s.Peak, rate);
-                if (metrics.Input >= Plan.Capacity && double.IsFinite(rate) && rate > 0) { s.Comparable++; s.ValidPeak = Math.Max(s.ValidPeak, rate); }
-            }
-            if (RolltheSpire2.Bootstrap.RuntimeLog.DetailEnabled) RuntimeLog.TryBackgroundDetail($"eventResultFamilyGpuBatch=true;family={FamilyId};physicalRevision={ResolveConditionPerformance(_compact).PhysicalImplementationRevision};input={metrics.Input};output={metrics.Output};observedSurvivalDiagnostic={(double)metrics.Output / metrics.Input};privateCapacity={Plan.Capacity};dispatches={metrics.Dispatches};readbackBytes={metrics.ReadbackBytes};readbackMs={metrics.ReadbackMs};sortMs={metrics.SortMs};canonicalAbi1ReadyMs={metrics.CanonicalMs};workspaceBytes={_gpu.WorkspaceBytes};parity={_parity};faulted=False;recovery=None");
-            return result.output;
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex) { _faulted = true; RuntimeLog.TryBackgroundWarning("eventResultFamilyFault=true;recovery=None;error=" + ex.Message); throw; }
-    }
-    public async ValueTask DisposeAsync(FamilyExecutionContext context)
-    {
-        if (!Plan.GpuSupported) { _cpu.WriteSummary(); return; }
-        if (_gpu != null) try { await context.ExecuteGpuAsync(_ => { _gpu.Dispose(); return true; }, CancellationToken.None).ConfigureAwait(false); }
-            catch { _faulted = true; throw; }
-        var s = Current;
-        RuntimeLog.TryBackgroundInfo($"eventResultFamilySummary=true;family={FamilyId};physicalRevision={ResolveConditionPerformance(_compact).PhysicalImplementationRevision};batches={s.Batches};input={s.Input};output={s.Output};canonicalAbi1ReadyMs={s.Ms};parity={_parity};faulted={_faulted};recovery=None");
-    }
-    internal static bool TryCreate(ExactSearchExecutionRequest request, out IFamilyInvocation? family)
-        => TryCreate(request, out family, true);
-    internal static bool TryCreate(ExactSearchExecutionRequest request, out IFamilyInvocation? family, bool preferGpu,
-        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
-    {
-        family = null; if (!(request.Evaluation.EventResultConditions.Count > 0)) return false; family = new EventResultFamily(request, preferGpu, numericalVariant); return true;
     }
 }

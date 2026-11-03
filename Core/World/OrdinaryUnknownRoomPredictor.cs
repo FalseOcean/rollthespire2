@@ -27,7 +27,7 @@ internal static class OrdinaryUnknownRoomPredictor
     }
 
     // Search's standard Act 1 assumption: entered Unknown ordinal, fresh odds,
-    // no adjacent-Shop restriction, and only the committed opening's Juzu hook.
+    // no adjacent-Shop restriction, and only explicitly declared opening Juzu.
     internal static UnknownRoomSequence ForAct1Filter(ulong rootHash, int count, bool juzuAcquired)
     {
         if (count is < 1 or > 3) throw new ArgumentOutOfRangeException(nameof(count));

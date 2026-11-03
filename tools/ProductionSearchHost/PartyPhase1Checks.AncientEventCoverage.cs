@@ -26,10 +26,10 @@ internal static partial class PartyPhase1Checks
             [UnlockState.all.ToSerializable(), UnlockState.all.ToSerializable()], 10, "0.111.0");
         var context = SearchContextFactory.From(RuntimeProfileId.Beta111, party.Players[0].Character.CharacterKey,
             10, party.Players[0], detection, AncientOptionConditionProfile.BroadDefault) with { Party = party };
-        var parent = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(SearchQuery.Empty with
+        var parent = SearchPreparationCompiler.Compile(SearchCompiler.Compile(SearchQuery.Empty with
             { Players = [new(0, ModelKeySetFilter.Empty), new(1, ModelKeySetFilter.Empty)] }, context), new("000000000000", 65, 1, 1)).Plan!;
-        ExactSearchExecutionRequest Request(SearchQuery q, AncientOptionConditionProfile? premises = null) =>
-            ExactSearchExecutionRequestFactory.ForPlayer(parent, SearchCompiler.CompilePlayer(q, parent.CompiledSearch.PlayerSearches[1].Context with
+        SearchModel Request(SearchQuery q, AncientOptionConditionProfile? premises = null) =>
+            SearchPreparationCompiler.ForPlayer(parent.Model, SearchCompiler.CompilePlayer(q, parent.Model.CompiledSearch.PlayerSearches[1].Context with
             { EvaluationAssumptions = new(premises ?? AncientOptionConditionProfile.BroadDefault) }));
         var empty = SearchSelectivityInput.From(Request(SearchQuery.Empty));
         foreach (var kind in new[] { EventResultConditionKind.MorphicGroveGroupInitialBasicsContains,
@@ -92,12 +92,12 @@ internal static partial class PartyPhase1Checks
         var legacy = Request(SearchQuery.Empty with { AncientBranches = [new(oro.Act, oro.AncientKey, [], [])],
             LegacyWorld = SearchQuery.Empty.LegacyWorld with { AncientOptionFilters = [new(oro.Act, new([], [], [sea]))],
                 AncientSeaGlassTargetFilters = [new(oro.Act, new([party.Players[0].Character.CharacterKey], [], []))] } }, locked);
-        await using var execution = new FamilyExecutionContext(requiresGpu: true, failOnPhysicalRecovery: true);
+        await using var execution = new FilterRuntimeServices(requiresGpu: true, failOnPhysicalRecovery: true);
         foreach (var request in new[] { lockedRequest, legacy })
         {
-            Check(AncientOptionFamily.TryCreate(request, out var family) && family is AncientOptionFamily { Plan.GpuSupported: true },
+            Check(AncientOptionFamily.TryPrepare(request, FilterExecutionPreferences.From(parent.RunOptions), out var ancient) && ancient is { Plan.GpuSupported: true },
                 "A changed shape admitted to GPU");
-            var ancient = (AncientOptionFamily)family!;
+            var family = ancient!.Body;
             try
             {
                 var batch = new SearchBatch(0, 65);
@@ -107,7 +107,7 @@ internal static partial class PartyPhase1Checks
                 foreach (var candidates in new[] { FamilyCandidateSet.Dense(batch), FamilyCandidateSet.FromSortedAbi1(batch,
                     Enumerable.Range(0, 33).Select(i => (ulong)i * 2).ToArray()) })
                 {
-                    var gpu = await family!.InvokeAsync(execution, new(batch, request), candidates, default);
+                    var gpu = await family!.ExecuteAsync(execution, candidates, default);
                     Check(gpu.EnumerateLogicalOrdinals().SequenceEqual(expected.Where(i => candidates.IsDense || i % 2 == 0)),
                         "A dense/compact GPU agrees with source OR/legacy/locked option semantics");
                     Check(candidates.EnumerateLogicalOrdinals().Where(i => ancient.Plan.Matches(Beta111Profile.Instance.ComputeRootSeed(

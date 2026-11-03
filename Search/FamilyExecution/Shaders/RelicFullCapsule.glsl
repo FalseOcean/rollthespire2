@@ -1,5 +1,6 @@
 // Historical Capsule rarity/target-rank donor, extended with a fixed-Bones
 // arrival checkpoint and a three-draw grouped Small+Large matcher.
+/*__RT2_NEOW_IDENTITY_FACTS__*/
 uint rfull_meta(uint index) { return rfull_capsule.values[index]; }
 uint64_t rfull_u64(uint index) { return make_u64(rfull_meta(index), rfull_meta(index + 1u)); }
 
@@ -14,33 +15,22 @@ float rfull_next_float() {
 }
 
 #ifndef RFULL_CHECKPOINT_ONLY
-bool rfull_positive_allowed(uint id, uint curse) {
-    uint players = rfull_meta(15u);
-    uint flags = rfull_meta(16u);
-    if (id == 17u && players <= 1u) return false;
-    if (id == 14u && (flags & 4u) == 0u) return false;
-    if (id == 22u && (flags & 8u) == 0u) return false;
-    if (id == 23u && players != 1u) return false;
-    if (curse == 0u && id == 13u) return false;
-    if (curse == 2u && id == 10u) return false;
-    if (curse == 4u && id == 19u) return false;
-    if (curse == 7u && id == 21u) return false;
-    if (curse == 6u && (id == 20u || id == 16u)) return false;
-    return true;
-}
-
 bool rfull_top_contains(uint64_t root, uint required) {
     uint curse_count = rfull_meta(17u);
     if (curse_count == 0u || curse_count > 10u) return false;
     rng_initialize(root + uint64_t(rfull_meta(14u)) + rfull_u64(18u));
     uint curse = rfull_meta(32u + next_int(curse_count));
+    uint flags = rfull_meta(16u);
+    uint profile = rt2_neow_profile(rfull_meta(15u), (flags & 4u) != 0u, (flags & 8u) != 0u);
+    uint fixed_mask = rt2_neow_fixed_mask(profile, curse);
     uint positives[17];
     uint count = 0u;
-    for (uint id = 10u; id <= 23u; ++id)
-        if (rfull_positive_allowed(id, curse)) positives[count++] = id;
-    if (curse != 3u) positives[count++] = next_int(2u) == 0u ? 24u : 28u;
-    positives[count++] = next_int(2u) == 0u ? 26u : 29u;
-    positives[count++] = next_int(2u) == 0u ? 25u : 27u;
+    for (uint index = 0u; index < RT2_NEOW_FIXED_COUNT; ++index)
+        if ((fixed_mask & (1u << index)) != 0u) positives[count++] = rt2_neow_fixed_candidates[index];
+    if (curse != RT2_NEOW_OPTIONAL_APPEND_CURSE)
+        positives[count++] = next_int(2u) == 0u ? RT2_NEOW_APPEND0_TRUE : RT2_NEOW_APPEND0_FALSE;
+    positives[count++] = next_int(2u) == 0u ? RT2_NEOW_APPEND1_TRUE : RT2_NEOW_APPEND1_FALSE;
+    positives[count++] = next_int(2u) == 0u ? RT2_NEOW_APPEND2_TRUE : RT2_NEOW_APPEND2_FALSE;
     for (uint remaining = count; remaining > 1u; --remaining) {
         uint selected = next_int(remaining);
         uint tail = remaining - 1u;
@@ -163,12 +153,22 @@ bool rfull_capsule_after_rewards(uint64_t root) {
 
     uint ranks[3];
     ranks[0] = rfull_meta(5u); ranks[1] = rfull_meta(8u); ranks[2] = rfull_meta(11u);
+#ifdef RFULL_HIDDEN_UPGRADES
+    uint wp_rank=rfull_meta(BONES_HIDDEN_OFFSET+8u), w_rank=rfull_meta(BONES_HIDDEN_OFFSET+5u);
+    bool track_w=bones_track_hidden && (rarities[0]==rfull_meta(BONES_HIDDEN_OFFSET+6u) || rarities[1]==rfull_meta(BONES_HIDDEN_OFFSET+6u));
+    bool track_wp=bones_track_hidden && (rarities[0]==rfull_meta(BONES_HIDDEN_OFFSET+9u) || rarities[1]==rfull_meta(BONES_HIDDEN_OFFSET+9u));
+    rfull_upgrade_mask=0u;
+#endif
     rfull_rng_initialize(root + rfull_u64(22u));
     // No later consumer uses this private UpFront state. Keep all prerequisite
     // buckets, including shared ones, but stop after the last observed target.
     uint last_target_bucket = rfull_meta(4u);
     if (target_count > 1u) last_target_bucket = max(last_target_bucket, rfull_meta(7u));
     if (target_count > 2u) last_target_bucket = max(last_target_bucket, rfull_meta(10u));
+#ifdef RFULL_HIDDEN_UPGRADES
+    if(track_w) last_target_bucket=max(last_target_bucket,rfull_meta(BONES_HIDDEN_OFFSET+4u));
+    if(track_wp) last_target_bucket=max(last_target_bucket,rfull_meta(BONES_HIDDEN_OFFSET+7u));
+#endif
     for (uint bucket = 0u; bucket <= last_target_bucket; ++bucket) {
         for (uint remaining = rfull_meta(106u + bucket); remaining > 1u; --remaining) {
             uint selected = rfull_next_int(remaining);
@@ -176,6 +176,10 @@ bool rfull_capsule_after_rewards(uint64_t root) {
             if (bucket == rfull_meta(4u)) rfull_swap_tracked(ranks[0], selected, tail);
             if (target_count > 1u && bucket == rfull_meta(7u)) rfull_swap_tracked(ranks[1], selected, tail);
             if (target_count > 2u && bucket == rfull_meta(10u)) rfull_swap_tracked(ranks[2], selected, tail);
+#ifdef RFULL_HIDDEN_UPGRADES
+            if(track_w && bucket==rfull_meta(BONES_HIDDEN_OFFSET+4u)) rfull_swap_tracked(w_rank,selected,tail);
+            if(track_wp && bucket==rfull_meta(BONES_HIDDEN_OFFSET+7u)) rfull_swap_tracked(wp_rank,selected,tail);
+#endif
         }
     }
 
@@ -186,6 +190,10 @@ bool rfull_capsule_after_rewards(uint64_t root) {
     for (uint draw = 0u; draw < draw_count; ++draw) {
         uint lane = rarities[draw] - 1u;
         ordinals[draw] = consumed[lane]++;
+#ifdef RFULL_HIDDEN_UPGRADES
+        if(track_w && rarities[draw]==rfull_meta(BONES_HIDDEN_OFFSET+6u) && ordinals[draw]==w_rank) rfull_upgrade_mask|=1u;
+        if(track_wp && rarities[draw]==rfull_meta(BONES_HIDDEN_OFFSET+9u) && ordinals[draw]==wp_rank) rfull_upgrade_mask|=2u;
+#endif
     }
 
     bool m00 = rarities[0] == rfull_meta(6u) && ranks[0] == ordinals[0];
@@ -201,6 +209,21 @@ bool rfull_capsule_after_rewards(uint64_t root) {
 }
 #ifndef RFULL_CHECKPOINT_ONLY
 bool rfull_capsule_matches(uint64_t root) {
+#ifdef RFULL_OPENING_PREFIX
+    if ((rfull_meta(16u) & 32u) != 0u) {
+        if (!rfull_prepare_rewards(root)) return false;
+        // Offer order was checked above. Acquisition order selects the R-local
+        // arrival(s), each restored from the same RewardsAfterBones checkpoint.
+        uint64_t q0=s0, q1=s1, q2=s2, q3=s3;
+        bool any_order=rfull_meta(29u)==0u;
+        if ((any_order || rfull_meta(30u)==rfull_meta(1u)) && rfull_capsule_after_rewards(root)) return true;
+        if (!any_order && rfull_meta(30u)==rfull_meta(1u)) return false;
+        s0=q0; s1=q1; s2=q2; s3=q3;
+        uint draws=rfull_meta(16u)>>8u;
+        for(uint draw=0u;draw<draws;++draw) rfull_next_u64();
+        return rfull_capsule_after_rewards(root);
+    }
+#endif
     return rfull_prepare_rewards(root) && rfull_capsule_after_rewards(root);
 }
 #endif

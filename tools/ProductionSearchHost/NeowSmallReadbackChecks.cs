@@ -14,10 +14,10 @@ using RolltheSpire2.Search.FamilyExecution;
 internal static class NeowSmallReadbackChecks
 {
     private const BindingFlags Members = BindingFlags.Instance | BindingFlags.NonPublic;
-    internal static void Run(ExactSearchExecutionRequest request, string output)
+    internal static void Run(PreparedSearch request, string output)
     {
-        var family = (NeowFamily)FamilyExecutionCoordinator.CreateRegisteredFamilies(request, gpuAvailable: true)
-            .Single(f => f.FamilyId == "N.Neow");
+        var preparation = HostFilterBindings.PrepareNeow(request);
+        var family = preparation.Domain;
         var plan = family.GpuPlan ?? throw new InvalidOperationException("NReadback.NoGpuPlan");
         if (!family.UsesSmallPrivateOutput || !plan.UsesStagedDense) throw new InvalidOperationException("NReadback.RequiresSoloStagedLeafy");
         const string alphabet = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -28,8 +28,8 @@ internal static class NeowSmallReadbackChecks
         using var gpu = new NeowFamilyGpuExecutor(rd, plan, 42, privateOutput: buffer);
         using var reference = new NeowFamilyGpuExecutor(rd, plan, 43);
         if(!gpu.SupportsDensePair)throw new InvalidOperationException("NReadback.RequiresOrdinaryDensePairScope");
-        var matcher = NeowFamilyReplay.Bind(family.PricingReplayPlan);
-        var profile = RuntimeProfileRegistry.Select(request.Detection);
+        var matcher = NeowFamilyReplay.Bind(family.Replay);
+        var profile = RuntimeProfileRegistry.Select(request.Model.Detection);
         bool cpu(ulong candidate) => matcher(profile.ComputeRootSeed(VisibleSeedCandidateCodec.FormatOrdinal(profile, candidate)));
         long candidates = 0, smallWindows = 0, emptyWindows = 0, largeWindows = 0, cpuChecks = 0;
         ulong? positive = null;

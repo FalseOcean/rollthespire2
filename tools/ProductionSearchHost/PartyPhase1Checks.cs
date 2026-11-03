@@ -176,12 +176,12 @@ internal static partial class PartyPhase1Checks
             var compiled = SearchCompiler.Compile(query, context);
             var restoredContext = JsonSerializer.Deserialize<SearchContext>(JsonSerializer.Serialize(context, ProductionSearchReplay.JsonOptions), ProductionSearchReplay.JsonOptions)!;
             Check(SearchCompiler.Compile(query, restoredContext).SemanticFingerprint == compiled.SemanticFingerprint, "party context replay JSON roundtrip");
-            var request = ExactSearchExecutionRequestFactory.Compile(compiled, new(seed, 1, 1, 1));
+            var request = SearchPreparationCompiler.Compile(compiled, new(seed, 1, 1, 1));
             Check(request.Success, "Production compile:" + request.Issue);
             await using var session = FamilyExecutionCoordinator.Start(request.Plan!, gpuAvailable: false);
             await session.Completion;
-            Check(session.TryReadCandidate(out var candidate) && candidate?.Document?.Party is not null, "Production result:" + session.GetProgress().FailureCode);
-            Check(JsonSerializer.Serialize(candidate!.Document!.Party) == JsonSerializer.Serialize(observation), "Filter/Information parity");
+            Check(session.TryReadCandidate(out var candidate) && candidate?.Facts?.Party is not null, "Production result:" + session.GetProgress().FailureCode);
+            Check(JsonSerializer.Serialize(candidate!.Facts!.Party) == JsonSerializer.Serialize(observation), "Filter/Information parity");
             Check(session.EtaProjection.AcceptedResultProbability == RolltheSpire2.Search.Selectivity.JointSelectivityEstimator
                 .EstimateQuery(RolltheSpire2.Search.Selectivity.SearchSelectivityInput.From(compiled)).Probability, "whole-table probability authority");
             Check(session.FamilyIds.Count(f => f == "W.World") == 1, "W once per root");
@@ -197,8 +197,8 @@ internal static partial class PartyPhase1Checks
             var alternatives = query with { VariantBossBranches = [query.VariantBossBranches[0], query.VariantBossBranches[0] with
                 { FirstBoss = new([differentBoss], [], []) }] };
             Check(PartyInitialQuery.MatchesWorld(alternatives, observation), "same-source Boss alternatives preserve matching branch");
-            var alternativesPlan = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(alternatives, context), new(seed, 1, 1, 1));
-            Check(alternativesPlan.Success && ProductionExactSearchEvaluator.Evaluate(alternativesPlan.Plan!,
+            var alternativesPlan = SearchPreparationCompiler.Compile(SearchCompiler.Compile(alternatives, context), new(seed, 1, 1, 1));
+            Check(alternativesPlan.Success && ProductionExactSearchEvaluator.Evaluate(alternativesPlan.Plan!.Model,
                 TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed)).IsMatch,
                 "same-source Boss alternatives compile and reach Exact as OR");
             var conflict = query with { VariantBossBranches = [query.VariantBossBranches[0] with
@@ -208,19 +208,19 @@ internal static partial class PartyPhase1Checks
             var ordinalQuery = query with { VariantBossBranches = [], LegacyWorld = LegacyWorldSemanticConstraints.Empty with
                 { BossOrdinalFilters = [new(3, 2, new([observation.Bosses.Single(b => b.Ordinal == 2).BossKey], [], []))] } };
             Check(PartyInitialQuery.MatchesWorld(ordinalQuery, observation), "explicit Boss ordinal projection");
-            var ordinalPlan = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(ordinalQuery, context), new(seed, 1, 1, 1));
+            var ordinalPlan = SearchPreparationCompiler.Compile(SearchCompiler.Compile(ordinalQuery, context), new(seed, 1, 1, 1));
             Check(ordinalPlan.Success && FamilyExecutionCoordinator.CreateRegisteredFamilies(ordinalPlan.Plan!).Count(f => f.FamilyId == "W.World") == 1, "ordinal shared W compile");
             var lost = compiled with { Normalization = compiled.Normalization with { NormalizedQuery = compiled.NormalizedQuery with
                 { Players = query.Players.Select(p => p with { Offers = ModelKeySetFilter.Empty }).ToArray() } } };
-            Check(!ExactSearchExecutionRequestFactory.Compile(lost, new(seed, 1, 1, 1)).Success, "omitted compiled predicate rejected");
+            Check(!SearchPreparationCompiler.Compile(lost, new(seed, 1, 1, 1)).Success, "omitted compiled predicate rejected");
             var onlyWorld = query with { Players = query.Players.Select(p => p with { Offers = ModelKeySetFilter.Empty }).ToArray() };
             var onlyNeow = query with { VariantBossBranches = [] };
             foreach (var shape in new[] { onlyWorld, onlyNeow, query with { Players = query.Players.Select(p => p.Slot == 0 ? p with { Offers = ModelKeySetFilter.Empty } : p).ToArray() } })
             {
-                var shapePlan = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(shape, context), new(seed, 1, 1, 1));
+                var shapePlan = SearchPreparationCompiler.Compile(SearchCompiler.Compile(shape, context), new(seed, 1, 1, 1));
                 Check(shapePlan.Success, "W/N-only compile");
                 Check(TrustedRootHashInput.TryBindCanonicalSeed(Beta111Profile.Instance, observation.Root, seed, out var input, out _), "root binding");
-                Check(ProductionExactSearchEvaluator.Evaluate(shapePlan.Plan!, input).IsMatch, "W/N-only and unauthored member Exact");
+                Check(ProductionExactSearchEvaluator.Evaluate(shapePlan.Plan!.Model, input).IsMatch, "W/N-only and unauthored member Exact");
             }
             var draft = new WorkbenchSearchDraft(characters[0], 10, query, AncientOptionConditionProfile.BroadDefault)
             { Players = characters.Select((c, i) => new WorkbenchPlayerDraft(i, c, unlocks[i], "NativeOracleCapturedUnlock")).ToArray(),
@@ -311,14 +311,14 @@ internal static partial class PartyPhase1Checks
         while (liveStore.Runtime.Receiving) await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
         frame._Process(1);
         var results = liveStore.DisplayResults.Select(row => liveStore.ResultAction(row)).ToArray();
-        Check(results.Length == 1 && results[0].Live?.Candidate.Document?.Party is not null, "Workbench Production result");
+        Check(results.Length == 1 && results[0].Live?.Candidate.Facts?.Party is not null, "Workbench Production result");
         var resultRows = Field<VBoxContainer>(frame, "_resultRows");
         await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
         var analyzeText = Field<RolltheSpire2.Presentation.Localization.IUiTextProvider>(frame, "_text").Get("integration.analyze");
         var open = resultRows.FindChildren("*", "Button", true, false).OfType<Button>().Single(b => b.Text == analyzeText);
         open.EmitSignal(Button.SignalName.Pressed);
         var information = Field<RolltheSpire2.Ui.Pages.Analysis.AnalysisPage>(shell, "_predictor");
-        Check(information.LastDocument?.CanonicalSeed == results[0].Result.Seed && information.LastRequest?.PlayersCount == 2,
+        Check(information.LastFacts?.CanonicalSeed == results[0].Result.Seed && information.LastRequest?.PlayersCount == 2,
             "Filter button opens existing information page with party context");
         Set(frame, "_partyAscension", 9); open.EmitSignal(Button.SignalName.Pressed);
         Check(information.LastRequest?.Ascension == uiDraft!.Ascension, "saved result retains its original authority");

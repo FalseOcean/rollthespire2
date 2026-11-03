@@ -27,7 +27,7 @@ internal static partial class PartyPhase1Checks
             if (!condition) throw new Exception("Party W: " + message);
             checks++;
         }
-        await using var execution = new FamilyExecutionContext(requiresGpu: true, failOnPhysicalRecovery: true);
+        await using var execution = new FilterRuntimeServices(requiresGpu: true, failOnPhysicalRecovery: true);
         foreach (int count in new[] { 2, 3, 4 })
         {
             var unlocks = Enumerable.Range(0, count).Select(_ => UnlockState.all.ToSerializable()).ToArray();
@@ -58,7 +58,7 @@ internal static partial class PartyPhase1Checks
             };
             var context = SearchContextFactory.From(RuntimeProfileId.Beta111, party.Players[0].Character.CharacterKey,
                 10, party.Players[0], detection, AncientOptionConditionProfile.BroadDefault) with { Party = party };
-            var compile = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context), new(seed, roots, 1, 1));
+            var compile = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context), new(seed, roots, 1, 1));
             Check(compile.Success, "query compilation: " + compile.Issue);
             var request = compile.Plan!;
             var cpu = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, false);
@@ -95,15 +95,14 @@ internal static partial class PartyPhase1Checks
                     Enumerable.Range(0, (roots + 1) / 2).Select(i => (ulong)i * 2).ToArray()) })
                 {
                     var expected = sourceMatches.Where(i => input.IsDense || i % 2 == 0);
-                    var window = new FamilyObservationWindow(batch, request);
-                    var cpuResult = await cpu[0].InvokeAsync(execution, window, input, default);
-                    var gpuResult = await gpu[0].InvokeAsync(execution, window, input, default);
+
+                    var cpuResult = await cpu[0].ExecuteAsync(execution, input, default);
+                    var gpuResult = await gpu[0].ExecuteAsync(execution, input, default);
                     Check(cpuResult.EnumerateLogicalOrdinals().SequenceEqual(expected), "CPU complete population/source parity");
                     Check(gpuResult.EnumerateLogicalOrdinals().SequenceEqual(expected), "GPU complete population/source parity");
                     Check(gpuResult.EnumerateLogicalOrdinals().Contains(positive), "known positive retained");
                 }
-                Check(ProductionExactSearchEvaluator.Evaluate(request,
-                    TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed)).IsMatch,
+                Check(ProductionExactSearchEvaluator.Evaluate(request.Model, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed)).IsMatch,
                     "whole-table Exact accepts source positive");
                 GD.Print($"PARTY_WORLD_FAST players={count};roots={roots};sourceMatches={sourceMatches.Count};overrides={generation.PartyBossDiscoveryOverrides.Count};replacedDraws={replacedDraws};act3Queue=true;secondBoss=true;denseCompact=true");
             }

@@ -1,0 +1,44 @@
+<Project>
+  <!-- Keep readable JSON as source; generate only the two embedded payloads.
+       Use the SDK's task compiler so clean source builds need no extra tool. -->
+  <UsingTask TaskName="Rt2CompressCostReferences" TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <Sources ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" />
+      <OutputDirectory ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.IO.Compression" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        Directory.CreateDirectory(OutputDirectory);
+        foreach (var source in Sources)
+        {
+            string destination = Path.Combine(OutputDirectory, Path.GetFileName(source.ItemSpec) + ".gz");
+            // Publish only a finished stream; an interrupted build must not
+            // leave a partial output that the next incremental build accepts.
+            using (var input = File.OpenRead(source.GetMetadata("FullPath")))
+            using (var output = File.Create(destination + ".tmp"))
+            using (var gzip = new GZipStream(output, CompressionLevel.Optimal))
+                input.CopyTo(gzip);
+            File.Delete(destination);
+            File.Move(destination + ".tmp", destination);
+        }
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="CompressCostReferences"
+          Inputs="@(_Rt2CostReference);$(MSBuildThisFileFullPath)"
+          Outputs="@(_Rt2CostReference->'$(IntermediateOutputPath)cost-references/%(Filename)%(Extension).gz')">
+    <Rt2CompressCostReferences Sources="@(_Rt2CostReference)" OutputDirectory="$(IntermediateOutputPath)cost-references" />
+  </Target>
+
+  <Target Name="EmbedCompressedCostReferences" BeforeTargets="AssignTargetPaths" DependsOnTargets="CompressCostReferences">
+    <ItemGroup>
+      <EmbeddedResource Include="@(_Rt2CostReference->'$(IntermediateOutputPath)cost-references/%(Filename)%(Extension).gz')"
+                        WithCulture="false" />
+      <FileWrites Include="@(_Rt2CostReference->'$(IntermediateOutputPath)cost-references/%(Filename)%(Extension).gz')" />
+    </ItemGroup>
+  </Target>
+</Project>

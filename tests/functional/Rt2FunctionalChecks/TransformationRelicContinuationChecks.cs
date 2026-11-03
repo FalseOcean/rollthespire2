@@ -40,9 +40,9 @@ internal static class TransformationRelicContinuationChecks
         var profile = Beta111Profile.Instance;
         var root = TrustedRootHashInput.FromCanonicalSeed(profile, seed);
         var options = new SearchRunOptions(seed, 1, 30, 1);
-        ExactSearchExecutionRequest Compile(SearchQuery q)
+        PreparedSearch Compile(SearchQuery q)
         {
-            var result = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(q, context), options);
+            var result = SearchPreparationCompiler.Compile(SearchCompiler.Compile(q, context), options);
             Check(result.Success && result.Plan is not null, "Compile/Exact admission: " + result.Issue);
             return result.Plan!;
         }
@@ -105,7 +105,7 @@ internal static class TransformationRelicContinuationChecks
             });
         }
         var positivePlan = Compile(positive);
-        var positiveExact = ProductionExactSearchEvaluator.Evaluate(positivePlan, root);
+        var positiveExact = ProductionExactSearchEvaluator.Evaluate(positivePlan.Model, root);
         Check(positiveExact.IsMatch, "Real T/R positive: " + positiveExact.FailureCode);
         foreach (var order in Enum.GetValues<TransformationPickupOrder>().Take(3))
         foreach (int count in new[] { 1, 2, 3 })
@@ -116,10 +116,10 @@ internal static class TransformationRelicContinuationChecks
                 TransformationAggregate = positive.TransformationAggregate! with { PickupOrder = order, TargetMultiset = cards.Take(count).Reverse().ToArray() },
                 RelicShopSequenceConditions = [new(3, shopOrder, (shopOrder == CombatRewardSequenceOrderMode.Ordered ? shop : Enumerable.Reverse(shop)).Select(k => (ModelKey?)k).ToArray())] };
             var plan = Compile(q);
-            var exact = ProductionExactSearchEvaluator.Evaluate(plan, root);
+            var exact = ProductionExactSearchEvaluator.Evaluate(plan.Model, root);
             Check(Expected(q, seed) && exact.IsMatch, "Order/partial target/slot order: " + exact.FailureCode);
-            Check(RelicFamilyPlanCompiler.TryCompile(plan, out var rPlan, out _) && RelicShopCpuPlan.TryCompile(rPlan!)!.Matches(root.RootHash) &&
-                new TransformationAggregateNumericalPlan(plan).Matches(root.RootHash), "Necessary CPU T/R filters retain positive");
+            Check(RelicFamilyPlanCompiler.TryCompile(plan.Model, out var rPlan, out _) && RelicShopCpuPlan.TryCompile(rPlan!)!.Matches(root.RootHash) &&
+                new TransformationAggregateNumericalPlan(plan.Model).Matches(root.RootHash), "Necessary CPU T/R filters retain positive");
             Check(exact.Evaluation.Witnesses.All(w => w.MatchedConditions.Contains("relic-shop-sequence-0") &&
                 w.MatchedConditions.Contains("transformation-aggregate") && w.MatchedConditions.Contains("fixed-bones-relic-continuation") &&
                 (order == TransformationPickupOrder.Any || w.AcquisitionOrder.SequenceEqual(pair))), "T and R are attached to the same allowed N witness");
@@ -128,7 +128,7 @@ internal static class TransformationRelicContinuationChecks
         }
         var absentRelic = initial["Shop"].First(k => !shop.Contains(k));
         foreach (var shopOrder in Enum.GetValues<CombatRewardSequenceOrderMode>())
-            Check(ProductionExactSearchEvaluator.Evaluate(Compile(positive with { RelicShopSequenceConditions = [new(3, shopOrder, [null, shop[1], null])] }), root).IsMatch,
+            Check(ProductionExactSearchEvaluator.Evaluate(Compile(positive with { RelicShopSequenceConditions = [new(3, shopOrder, [null, shop[1], null])] }).Model, root).IsMatch,
                 "Partially specified shop slots retain wildcard semantics");
         var absentCard = context.Authority.EffectAuthority!.TransformPool!.First(c => !cards.Contains(c.CardKey)).CardKey;
         var negatives = new[] {
@@ -142,7 +142,7 @@ internal static class TransformationRelicContinuationChecks
             Predicate = TransformationAggregatePredicate.ContainsMultisetAndRemainingRare } } }))
         foreach (string candidate in new[] { seed, "000000000000", "000000000001", "0000000001FB" })
         {
-            var exact = ProductionExactSearchEvaluator.Evaluate(Compile(q), TrustedRootHashInput.FromCanonicalSeed(profile, candidate));
+            var exact = ProductionExactSearchEvaluator.Evaluate(Compile(q).Model, TrustedRootHashInput.FromCanonicalSeed(profile, candidate));
             Check(exact.Evaluation.Disposition is SearchDisposition.Match or SearchDisposition.NoMatch && exact.IsMatch == Expected(q, candidate),
                 "Independent opening/bag replay at " + candidate + ":" + exact.FailureCode);
         }
@@ -152,7 +152,7 @@ internal static class TransformationRelicContinuationChecks
         {
             var q = positive with { StructuredOpeningEffects = [new(leaf, NeowStructuredConditionKind.ExactSingle,
                 NeowStructuredEffectScope.TransformResults, NeowStructuredOutputKind.Card, [target])] };
-            Check(ProductionExactSearchEvaluator.Evaluate(Compile(q), root).IsMatch == (target == newLeafCard), "Additional N shares the opening");
+            Check(ProductionExactSearchEvaluator.Evaluate(Compile(q).Model, root).IsMatch == (target == newLeafCard), "Additional N shares the opening");
         }
         var witnesses = positiveExact.Evaluation.Witnesses;
         var aggregateEvidence = positiveExact.Evaluation.Evidence.Where(e => e.Code == "TransformationAggregateMatched").ToArray();
@@ -169,8 +169,8 @@ internal static class TransformationRelicContinuationChecks
         foreach (var lane in new[] { RelicSequenceKind.Common, RelicSequenceKind.Uncommon, RelicSequenceKind.Rare, RelicSequenceKind.Shop })
         {
             var q = positive with { RelicSequenceConstraints = [new(lane, SearchSequenceRangeMode.ExactSlot, 1, new([initial[lane.ToString()][0]], [], []))] };
-            Check(ProductionExactSearchEvaluator.Evaluate(Compile(q), root).IsMatch, "Ordinary lane continuation " + lane);
-            Check(ProductionExactSearchEvaluator.Evaluate(Compile(q with { TransformationAggregate = null }), root).IsMatch, "Existing ordinary N/R unchanged " + lane);
+            Check(ProductionExactSearchEvaluator.Evaluate(Compile(q).Model, root).IsMatch, "Ordinary lane continuation " + lane);
+            Check(ProductionExactSearchEvaluator.Evaluate(Compile(q with { TransformationAggregate = null }).Model, root).IsMatch, "Existing ordinary N/R unchanged " + lane);
         }
         // Restore the report's additional A/W facts one at a time. These fixtures
         // reproduce typed intent; the original user log/draft is not available here.
@@ -182,22 +182,21 @@ internal static class TransformationRelicContinuationChecks
         {
             var plan = Compile(q);
             _ = FamilyExecutionCoordinator.Plan(plan, gpuAvailable: false);
-            var exact = ProductionExactSearchEvaluator.Evaluate(plan, root);
-            var withoutT = ProductionExactSearchEvaluator.Evaluate(Compile(q with { TransformationAggregate = null }), root);
+            var exact = ProductionExactSearchEvaluator.Evaluate(plan.Model, root);
+            var withoutT = ProductionExactSearchEvaluator.Evaluate(Compile(q with { TransformationAggregate = null }).Model, root);
             Check(exact.Evaluation.Disposition is SearchDisposition.Match or SearchDisposition.NoMatch &&
                 exact.IsMatch == (Expected(q, seed) && withoutT.IsMatch), "A/W are real independent predicates, not admission blockers: " + exact.FailureCode);
         }
         var combatProbe = Compile(positive with { CombatCardRewards = new(1, CombatRewardSequenceOrderMode.Ordered,
             [context.Authority.EffectAuthority.CharacterRewardPool![0].CardKey]) });
-        var combatDocument = ProductionExactSearchEvaluator.Evaluate(combatProbe, root).Document;
-        var reward = combatDocument!.Sections.First(s => s.NormalCombatRewardSequencePrediction is not null).NormalCombatRewardSequencePrediction!;
+        var reward = ProductionExactSearchEvaluator.Evaluate(combatProbe.Model, root).Facts!.CombatRewards!;
         var combatTarget = reward.Routes[0].Battles[0].Cards[0].CardKey;
         foreach (bool withR in new[] { false, true })
         {
             var q = positive with { RelicShopSequenceConditions = withR ? positive.RelicShopSequenceConditions : [],
                 CombatCardRewards = new(1, CombatRewardSequenceOrderMode.Ordered, [combatTarget]) };
             var plan = Compile(q);
-            Check(ProductionExactSearchEvaluator.Evaluate(plan, root).IsMatch && new CombatRewardReplay(plan).Matches(root.RootHash), "Existing T+C and joint T+C+R");
+            Check(ProductionExactSearchEvaluator.Evaluate(plan.Model, root).IsMatch && new CombatRewardReplay(plan.Model).Matches(root.RootHash), "Existing T+C and joint T+C+R");
         }
         foreach (var q in new[] { positive, query })
         {

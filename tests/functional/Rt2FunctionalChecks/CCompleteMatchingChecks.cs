@@ -16,7 +16,7 @@ using RolltheSpire2.Tests.FastSearch;
 
 internal static class CCompleteMatchingChecks
 {
-    internal sealed record MatchingCase(string Name, ExactSearchExecutionRequest Request);
+    internal sealed record MatchingCase(string Name, PreparedSearch Request);
 
     // Reusable by the existing Host: supply its captured solo/personal context.
     internal static IReadOnlyList<MatchingCase> Cases(SearchContext context)
@@ -48,13 +48,14 @@ internal static class CCompleteMatchingChecks
         return queries.Select(item => new MatchingCase(item.Name, Request(item.Query, context))).ToArray();
     }
 
-    internal static ExactSearchExecutionRequest Request(SearchQuery query, SearchContext context)
+    internal static PreparedSearch Request(SearchQuery query, SearchContext context)
     {
         var compiled = context.Authority.PlayersCount > 1
             ? SearchCompiler.CompilePlayer(query, context)
             : SearchCompiler.Compile(query, context);
-        return new(compiled, new("000000000000", 1024, 1, 1), "000000000000", 1024,
-            CompiledSearchEvaluationProjector.Project(compiled).Evaluation, CombatRewardRoutePolicyContract.None, compiled.SemanticFingerprint);
+        return new(new SearchModel(compiled, CompiledSearchEvaluationProjector.Project(compiled).Evaluation,
+            CombatRewardRoutePolicyContract.None, compiled.SemanticFingerprint),
+            new("000000000000", 1024, 1, 1), "000000000000", 1024, compiled.SemanticFingerprint);
     }
 
     internal static int Run(int count = 128, bool exportGpu = false)
@@ -87,8 +88,8 @@ internal static class CCompleteMatchingChecks
             foreach (int horizon in new[] { 3, 6 })
             {
                 var slots = Enumerable.Repeat<ModelKey?>(null, horizon).ToArray(); slots[0] = single;
-                var equivalent = new CombatRewardReplay(Request(SearchQuery.Empty with { CombatCardRewards =
-                    new(horizon, CombatRewardSequenceOrderMode.Unordered, slots) }, context));
+                var equivalent = new CombatRewardReplay((Request(SearchQuery.Empty with { CombatCardRewards =
+                    new(horizon, CombatRewardSequenceOrderMode.Unordered, slots) }, context)).Model);
                 Check(equivalent.Plan.CardAssignmentTargets.Length == (slot < 0 ? 0 : 1), "Solo scalar elision preserves party single-target arrays");
                 Check(!equivalent.Plan.NeedsCompleteMatchingReference && equivalent.Plan.Predicates.All(p => p.AnyBattleWindow == 0),
                     "Equivalent single-target full-window body preserves reference and predicate encoding");
@@ -98,9 +99,9 @@ internal static class CCompleteMatchingChecks
             foreach (var fixture in cases)
             {
                 var request = fixture.Request;
-                var replay = new CombatRewardReplay(request);
-                var gpu = CombatRewardGpuPlan.TryCreate(request, replay, out string issue) ?? throw new Exception(issue);
-                var q = request.CompiledSearch.NormalizedQuery;
+                var replay = new CombatRewardReplay(request.Model);
+                var gpu = CombatRewardGpuPlan.TryCreate(request.Model, replay, out string issue) ?? throw new Exception(issue);
+                var q = request.Model.CompiledSearch.NormalizedQuery;
                 Check(replay.Plan.MaximumBattleOrdinal == Math.Max(q.CombatCardRewards?.Count ?? 0, q.CombatPotionRewards?.Count ?? 0), "Typed horizon " + fixture.Name);
                 if (fixture.Name != "MixedPotionIdentity") Check(gpu.UsesHotLoop, "Complete assignment retains hot loop " + fixture.Name);
                 else Check(!gpu.UsesHotLoop, "Previously unvalidated unordered potion identity stays generic");
@@ -126,7 +127,7 @@ internal static class CCompleteMatchingChecks
                 if (slot == -1)
                 {
                     var banned = q with { CombatCardExclusion = new(6, [q.CombatCardRewards!.Slots.First(k => k.HasValue)!.Value]) };
-                    var withExclusion = new CombatRewardReplay(Request(banned, context));
+                    var withExclusion = new CombatRewardReplay((Request(banned, context)).Model);
                     Check(withExclusion.Plan.Fingerprint == replay.Plan.Fingerprint, "Exact-only exclusion does not alter optimized C");
                     Check(withExclusion.Plan.MaximumBattleOrdinal == replay.Plan.MaximumBattleOrdinal, "Exclusion does not extend generation");
                 }
@@ -137,7 +138,7 @@ internal static class CCompleteMatchingChecks
             }
             var onlyNegative = Request(SearchQuery.Empty with { CombatCardExclusion = new(6,
                 [context.Authority.EffectAuthority!.CharacterRewardPool![0].CardKey]) }, context);
-            Check(!(slot < 0 ? CombatRewardFamily.TryCreate(onlyNegative, out _) : CombatRewardFamily.TryCreateParty(onlyNegative, 0, 0, out _)),
+            Check(!(slot < 0 ? CombatRewardFamily.TryCreate(onlyNegative.Model,FilterExecutionPreferences.From(onlyNegative.RunOptions), out _) : CombatRewardFamily.TryCreateParty(onlyNegative.Model,FilterExecutionPreferences.From(onlyNegative.RunOptions), 0, 0, out _)),
                 "Negative-only remains Exact-only");
         }
         Check(strictWitnesses > 0, "Fixtures include real histories rejected by complete matching but accepted by old existential rows");

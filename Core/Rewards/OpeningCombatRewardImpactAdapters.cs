@@ -88,7 +88,7 @@ public static class OpeningCombatRewardImpactAdapterRegistry
                 "vanilla-relic-reward-adapter.amethyst-aubergine.fixed-gold-entry",
                 new OpeningCombatRewardImpactOperation(
                     OpeningCombatRewardImpactOperationKind.AddFixedGoldReward,
-                    Amount: 15)),
+                    Amount: CombatRewardRelicRules.AmethystGold(CombatRewardRoomKind.Monster, false))),
             ["FROZEN_EGG"] = profileId => Descriptor(
                 profileId,
                 "FROZEN_EGG",
@@ -96,7 +96,7 @@ public static class OpeningCombatRewardImpactAdapterRegistry
                 "vanilla-relic-reward-adapter.frozen-egg.power-upgrade",
                 new OpeningCombatRewardImpactOperation(
                     OpeningCombatRewardImpactOperationKind.ForceUpgradeCardType,
-                    CardType: EffectCardType.Power)),
+                    CardType: CardRewardRelicRules.EggCardType("FROZEN_EGG"))),
             ["LASTING_CANDY"] = profileId => Descriptor(
                 profileId,
                 "LASTING_CANDY",
@@ -108,9 +108,9 @@ public static class OpeningCombatRewardImpactAdapterRegistry
                         : "vanilla-relic-reward-adapter.lasting-candy.stable107.every-other-combat-power",
                 new OpeningCombatRewardImpactOperation(
                     OpeningCombatRewardImpactOperationKind.AddPowerCardEveryOtherCombat,
-                    Amount: 1,
+                    Amount: CardRewardRelicRules.CandyPowerCardCount,
                     CardType: EffectCardType.Power,
-                    RequiresIsFromCombat: RuntimeProfilePolicies.IsModernCore(profileId))),
+                    RequiresIsFromCombat: CardRewardRelicRules.CandyRequiresIsFromCombat(RuntimeProfilePolicies.LastingCandyCounter(profileId)))),
             ["MOLTEN_EGG"] = profileId => Descriptor(
                 profileId,
                 "MOLTEN_EGG",
@@ -118,16 +118,13 @@ public static class OpeningCombatRewardImpactAdapterRegistry
                 "vanilla-relic-reward-adapter.molten-egg.attack-upgrade",
                 new OpeningCombatRewardImpactOperation(
                     OpeningCombatRewardImpactOperationKind.ForceUpgradeCardType,
-                    CardType: EffectCardType.Attack)),
+                    CardType: CardRewardRelicRules.EggCardType("MOLTEN_EGG"))),
             ["PRAYER_WHEEL"] = profileId => Descriptor(
                 profileId,
                 "PRAYER_WHEEL",
                 "prayer-wheel",
                 "vanilla-relic-reward-adapter.prayer-wheel.extra-card-reward",
-                new OpeningCombatRewardImpactOperation(
-                    OpeningCombatRewardImpactOperationKind.AddCardReward,
-                    Amount: 1,
-                    AddedCardRewardIsFromCombat: false)),
+                PrayerWheelOperation()),
             ["SILKEN_TRESS"] = profileId => Descriptor(
                 profileId,
                 "SILKEN_TRESS",
@@ -135,7 +132,7 @@ public static class OpeningCombatRewardImpactAdapterRegistry
                 "vanilla-relic-reward-adapter.silken-tress.first-card-reward-glam",
                 new OpeningCombatRewardImpactOperation(
                     OpeningCombatRewardImpactOperationKind.EnchantFirstCardRewardWithGlam,
-                    Amount: 1)),
+                    Amount: CardRewardRelicRules.SilkenTressRewardCount)),
             ["SILVER_CRUCIBLE"] = profileId => Descriptor(
                 profileId,
                 "SILVER_CRUCIBLE",
@@ -143,7 +140,7 @@ public static class OpeningCombatRewardImpactAdapterRegistry
                 "vanilla-relic-reward-adapter.silver-crucible.first-three-combat-card-rewards",
                 new OpeningCombatRewardImpactOperation(
                     OpeningCombatRewardImpactOperationKind.UpgradeNextCardRewards,
-                    Amount: 3)),
+                    Amount: CardRewardRelicRules.SilverCrucibleRewardLimit)),
             ["TOXIC_EGG"] = profileId => Descriptor(
                 profileId,
                 "TOXIC_EGG",
@@ -151,7 +148,7 @@ public static class OpeningCombatRewardImpactAdapterRegistry
                 "vanilla-relic-reward-adapter.toxic-egg.skill-upgrade",
                 new OpeningCombatRewardImpactOperation(
                     OpeningCombatRewardImpactOperationKind.ForceUpgradeCardType,
-                    CardType: EffectCardType.Skill)),
+                    CardType: CardRewardRelicRules.EggCardType("TOXIC_EGG"))),
             ["WHITE_BEAST_STATUE"] = profileId => Descriptor(
                 profileId,
                 "WHITE_BEAST_STATUE",
@@ -235,5 +232,12 @@ public static class OpeningCombatRewardImpactAdapterRegistry
             $"{profileId}.{adapterId}",
             operations,
             new EvidenceCode(evidenceCode));
+    }
+
+    private static OpeningCombatRewardImpactOperation PrayerWheelOperation()
+    {
+        AddedCardReward addition = CombatRewardRelicRules.PrayerWheel(CombatRewardRoomKind.Monster);
+        return new(OpeningCombatRewardImpactOperationKind.AddCardReward,
+            Amount: addition.RewardCount, AddedCardRewardIsFromCombat: addition.IsFromCombat);
     }
 }

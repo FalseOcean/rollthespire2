@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Effects.Snapshots;
+using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Rng;
 
@@ -14,7 +15,7 @@ internal sealed partial class PredictorRun
         switch (_eventKey!.Value.Entry, choice.OptionKey)
         {
             case ("DENSE_VEGETATION", "TRUDGE_ON"):
-                ApplyEventHealth(-8, 0);
+                ApplyFixedEventHealth(choice.OptionKey);
                 if (Phase == PredictorPhase.Complete) return PredictorInputResult.Accepted;
                 Working = PredictorSettlementEffects.TakeGold(Working, _eventGoldAmount);
                 Accept(new("DenseVegetationGold", 0, [], null, Working.GoldBudget));
@@ -49,7 +50,7 @@ internal sealed partial class PredictorRun
                 BeginEventCombat(new("ENCOUNTER", "DENSE_VEGETATION_EVENT_ENCOUNTER"), [], false, token);
                 return PredictorInputResult.Accepted;
             case ("PUNCH_OFF", "NAB"):
-                AddTrialCurse("INJURY");
+                AddTrialCurse(FixedEventCardProduct(choice.OptionKey).Entry);
                 OfferEventRewardPlans([new(PredictorRewardKind.Relic)], token);
                 return PredictorInputResult.Accepted;
             case ("PUNCH_OFF", "I_CAN_TAKE_THEM"):
@@ -86,8 +87,8 @@ internal sealed partial class PredictorRun
 
     private ImmutableArray<PredictorEventOption> DenseVegetationOptions()
     {
-        _eventGoldAmount = 61 + _eventRng!.NextInt(39);
-        return [new("TRUDGE_ON", GoldGain: _eventGoldAmount, HealthDamage: 8), new("REST")];
+        _eventGoldAmount = Beta111EventRules.DenseVegetationGold(_eventRng!);
+        return [FixedEventHealthOption("TRUDGE_ON") with { GoldGain = _eventGoldAmount }, new("REST")];
     }
 
     private ImmutableArray<PredictorEventOption> PunchOffOptions()

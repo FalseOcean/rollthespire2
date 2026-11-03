@@ -17,7 +17,7 @@ internal static class TransformationAggregateValidator
 {
     internal readonly record struct Output(ModelKey? Card, bool? Rare);
 
-    internal static SearchQueryEvaluation Evaluate(ExactSearchExecutionRequest request, ulong root,
+    internal static SearchQueryEvaluation Evaluate(SearchModel request, ulong root,
         RuntimeContextAuthoritySnapshot authority)
     {
         if (request.Evaluation.TransformationAggregate is not { } c) return SearchQueryEvaluation.Match();

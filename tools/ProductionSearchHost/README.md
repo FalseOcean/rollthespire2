@@ -2,6 +2,80 @@
 
 # Standalone Production Search
 
+## Capsule Niche continuation comparison
+
+`Run.ps1 -BonesHiddenUpgradeChecks -BonesHiddenUpgradeWindow 65539 -Headless`
+uses the existing captured Ironclad, Defect and Necrobinder contexts to generate
+an independent Exact manifest. Supply the normal `-Godot`, `-Context`,
+`-Workload` and a new `-Output` directory. Every root receives the identity-only
+Bones prerequisite; every admitted pair receives Production Exact, regardless
+of the old N/R filter results. The output includes unselected intervals, hidden
+Whetstone/War Paint, complete authored capsule contents and acquisition-order
+controls. Synthetic zero/one/two eligible-card checks are labelled separately.
+
+`-BonesHiddenUpgradeExpanded` selects the expanded Small/Large matrix in the
+same generator and comparator. It includes unconstrained capsule contents,
+Kaleidoscope/NewLeaf, FinalCurse, preceding deck changes and both capsules.
+`-BonesHiddenUpgradeDiscovery` bounds identity-only discovery of actual Core
+routes (default 4194304 roots); missing required positives fail explicitly.
+Each derived query is checked again by Exact before its complete interval is
+generated. Actual choice traces and deck fingerprints remain in the evidence.
+The default continuation is enabled without an environment switch. The direct
+detector controls still apply only to the bounded K+Large comparison.
+
+For each manifest case, run its Context/Workload through ordinary Search into
+`<comparison-output>/<case.Id>`. Select `RT2_BONES_HIDDEN_UPGRADES=direct`,
+`direct-first` or `branches`; `direct-first` changes the direct detector's
+filter order, not its matching semantics. `legacy` preserves the old control.
+Then run `-BonesHiddenUpgradeCompare <manifest.json> -Headless -Output
+<comparison-output>` to check complete seed, disposition, route, witness and
+cursor equality. `-CpuOnly` exercises the independent CPU entry. A one-root
+query may bypass Fast and cannot establish that the GPU recall problem is fixed.
+
+Use one native Host process at a time for measurements, frozen binaries and
+`-Warmup 1 -Repeat 2`. Keep correctness verification outside the timed run;
+compare whole Search completion including Exact, not only GPU dispatch time.
+The launcher's Debug staging directory is shared, so different frozen binaries
+must not be staged concurrently.
+
+## Map measurements in the actual game
+
+`RunInGameMapMeasurement.ps1` uses an already built Host and the installed RT2
+Mod to compare baseline/prefetch in the real game's offline main menu. It does
+not build or replace RT2. Both `ProductionSearchHost.dll` and `RolltheSpire2.dll`
+must exist in `-ReleaseBinaryDirectory`; the latter must match the installed
+`mods/RolltheSpire2/RolltheSpire2.dll` byte for byte. Close the game first.
+
+```powershell
+./tools/ProductionSearchHost/RunInGameMapMeasurement.ps1 `
+    -GameExe 'D:/Game/Steam/steamapps/common/Slay the Spire 2/SlayTheSpire2.exe' `
+    -Context 'D:/measurements/context.json' -Workload 'D:/measurements/map-32m.json' `
+    -ReleaseBinaryDirectory 'D:/measurements/published-host' `
+    -Output 'D:/measurements/game-map-trial-01' -TimeoutSeconds 300
+```
+
+Output must be new. The launcher uses the shared performance mutex, refuses an
+existing game or temporary `mods/ProductionSearchHost` directory, and installs
+only the temporary Host DLL/manifest with an RT2 dependency. It isolates APPDATA
+under Output and passes `--force-steam off`. Optional `-Settings <settings.save>`
+copies settings into isolated `SlayTheSpire2/default/1`, enabling mods and skipping
+intro/disclaimer screens there; omission creates those minimal settings. Original
+settings and saves are never written or copied as a run. Cleanup stops only the
+launcher-owned process before deleting its two temporary files and empty folder;
+all logs, isolated state and measurement receipts remain under Output.
+
+The Host starts three alternating baseline/prefetch rounds as fresh Production
+sessions in one process. Set the workload's `Options.ScanCount` to `33554432` for
+32 Mi roots per session; the input controls the count and query. Optional
+`-Pipeline` also runs the bounded 4 Mi proposer comparison before those sessions.
+Success requires a completed receipt with `passed: true`, matching process and
+loaded DLL identities; inspect per-session results for cross-mode equivalence.
+
+This uses captured portable context/workload inputs after real engine and Mod
+initialization, rather than replaying a real game's RunState. Keep standalone
+Godot-host, actual-game engine, proposer-only and Production Search E2E throughput
+labelled separately; their numbers are not interchangeable.
+
 ## Focused Owner interface polish
 
 `Run.ps1 -OwnerUiPolish -Godot <Godot .NET console exe> -GamePck <matching game PCK> -Output <isolated directory>` uses the existing native workspace initialization and returns before the general UI or replay suites. `-OwnerUiPolishScope chrome|editors|content|state|map` selects an affected slice when repairing a failure. Supply an isolated `APPDATA` as for other standalone runs; workspace data is also scoped beneath the output directory.
@@ -411,6 +485,8 @@ The existing measurement entry accepts `--worker-configs`, `--sample-ms` (at mos
 ## Integrated Neow computation checks and local pricing
 
 `-Y2Probe N-trials` checks current optimized N against the original body, both NativeFloat64 and IntegerUnitFloat, with complete ABI1, bounded CPU oracles, dual slots, public/private output, prefix/seed-space boundaries and cancellation reuse. `RT2_NEOW_CHECK_MODE=combined` limits this existing check to the production combination when individual methods already have current evidence.
+
+`-Y2Probe N-entry-default` checks the actual default Track-only plan against same-build `off` GPU and the unchanged full-shuffle CPU on six representative fixed/paired, mixed-Any, unavailable and Ban/unlock cases in Dense/Compact and both numeric paths. `-Y2Probe N-entry-identity` retains the full fixed/paired, pool/flag and route-continuation matrix plus explicit reject/track arms. Ordinary startup enables eligible tracking only; unavailable-identity rejection stays off. The managed companion is `dotnet run --project tests/functional/Rt2FunctionalChecks -c Release -- --neow-entry-identity`. These numerical probes do not measure throughput or replace complete Production Exact search comparisons.
 
 `-NeowCanonicalCost -CanonicalMode both -CanonicalInputs '65536,1048576,16777216' -Repeat 3` reuses the existing R43/R44 public Invoke collector in a bounded N entry. It runs through a live Godot main loop and records actual body/workshape/device/source-survival, complete Invoke wall time, excluded warmups, ABI1 digests outside timing and cleanup status. `-CanonicalInteger` selects IntegerUnitFloat; `-CanonicalSplit validation` retains separate validation evidence. `-CanonicalSampleMs` and `-CanonicalMinBatches` are both minima per sample. The output does not update prices. Offline reviewed training knots can enter `CanonicalCostReference.json`; never relabel Y2 kernel diagnostics, private bindings, full searches or blocked-main-loop timing as these public calls.
 

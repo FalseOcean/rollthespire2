@@ -10,7 +10,7 @@ internal enum FamilyPlannerRankingAuthority
 }
 
 internal sealed record FamilyExecutionPlanStage(
-    IFamilyInvocation Family,
+    FilterBodyDescription Family,
     IReadOnlyList<string> Coverage,
     bool CompactAbi1Input,
     double ExpectedInputFraction,
@@ -47,11 +47,11 @@ internal sealed record FamilyExecutionPlan(
     // StageSurvival lives in the selected stage projections; stronger Composites
     // may have a different terminal rate for the same logical Coverage.
     internal double? EstimatedTerminalSurvival { get; init; }
-    internal IReadOnlyList<IFamilyInvocation> OrderedFamilies => Stages.Select(stage => stage.Family).ToArray();
+    internal IReadOnlyList<FilterBodyDescription> OrderedFamilies => Stages.Select(stage => stage.Family).ToArray();
     // Private ordinal transport is one runtime invocation, but preserves the
     // selected public units and their exact order internally.
-    internal IReadOnlyList<IFamilyInvocation> ExecutionOrderUnits => OrderedFamilies.SelectMany(family =>
-        family is AutomaticPrivateSerialInvocation serial ? serial.PhysicalFamilies : [family]).ToArray();
+    internal IReadOnlyList<FilterBodyDescription> ExecutionOrderUnits => OrderedFamilies.SelectMany(family =>
+        family.IsPrivateTransport && family.PhysicalBodies.Count > 0 ? family.PhysicalBodies : [family]).ToArray();
 
     internal string FormatSummary()
     {
@@ -96,16 +96,16 @@ internal static class FamilyPlanner
 
     // Fixed construction is reserved for explicit physical trials and transport
     // wrappers. It does not compare complete plans or enable early Exact.
-    internal static FamilyExecutionPlan InOrder(IReadOnlyList<IFamilyInvocation> families)
+    internal static FamilyExecutionPlan InOrder(IReadOnlyList<FilterBodyDescription> families)
     {
         var costs = FamilyAuxiliaryEvidence.Read<GpuCostSnapshot?>(nameof(FamilyPlanner), "CostSnapshot", GpuCostCalibration.Capture, null);
         return BuildPlan(BuildCandidates(families, costs), FamilyPlannerRankingAuthority.FixedExecutionOrder,
             ["SpecifiedExecutionOrder"]);
     }
 
-    internal static FamilyExecutionPlan InManualOrder(IReadOnlyList<IFamilyInvocation> available,
-        IReadOnlyList<IFamilyInvocation> required, IReadOnlyList<string> requested,
-        IFamilyInvocation? denseOnlyEntry = null)
+    internal static FamilyExecutionPlan InManualOrder(IReadOnlyList<FilterBodyDescription> available,
+        IReadOnlyList<FilterBodyDescription> required, IReadOnlyList<string> requested,
+        FilterBodyDescription? denseOnlyEntry = null)
     {
         if (requested.Any(string.IsNullOrWhiteSpace) || requested.Distinct(StringComparer.Ordinal).Count() != requested.Count)
             throw new InvalidOperationException("ManualFamilyOrder.InvalidOrDuplicateUnit");
@@ -114,7 +114,7 @@ internal static class FamilyPlanner
             throw new InvalidOperationException("ManualFamilyOrder.OverlappingUnits");
         var expected = required.SelectMany(family => family.Coverage).ToHashSet(StringComparer.Ordinal);
         var remaining = new HashSet<string>(expected, StringComparer.Ordinal);
-        var current = new List<IFamilyInvocation>();
+        var current = new List<FilterBodyDescription>();
         // Retain still available authored groups without invoking greedy cost
         // selection. Changed predicates can remove a group or split its body;
         // ordinary current units fill the remaining obligations below.
@@ -150,10 +150,10 @@ internal static class FamilyPlanner
                 ? selected.Stages.Aggregate(1d, (fraction, stage) => fraction * stage.Survival!.Value) : null };
     }
 
-    internal static FamilyExecutionPlan Plan(IReadOnlyList<IFamilyInvocation> families) => PlanSimple(families);
+    internal static FamilyExecutionPlan Plan(IReadOnlyList<FilterBodyDescription> families) => PlanSimple(families);
 
     private sealed record Candidate(
-        IFamilyInvocation Family,
+        FilterBodyDescription Family,
         string[] Coverage,
         double? Survival,
         double? Rejection,
@@ -171,9 +171,9 @@ internal static class FamilyPlanner
     // price for every sparse suffix. Existing N+T/N+R fused bodies may compete
     // as whole units; selecting either constituent removes that overlapping
     // alternative. This is one greedy walk, not complete-allocation enumeration.
-    internal static FamilyExecutionPlan PlanSimple(IReadOnlyList<IFamilyInvocation> registeredFamilies,
-        IReadOnlyList<IFamilyInvocation>? fusedUnits = null, bool includeCpuAlternatives = false,
-        IFamilyInvocation? denseEntry = null)
+    internal static FamilyExecutionPlan PlanSimple(IReadOnlyList<FilterBodyDescription> registeredFamilies,
+        IReadOnlyList<FilterBodyDescription>? fusedUnits = null, bool includeCpuAlternatives = false,
+        FilterBodyDescription? denseEntry = null)
     {
         ArgumentNullException.ThrowIfNull(registeredFamilies);
         var costSnapshot = FamilyAuxiliaryEvidence.Read<GpuCostSnapshot?>(nameof(FamilyPlanner), "CostSnapshot", GpuCostCalibration.Capture, null);
@@ -184,11 +184,11 @@ internal static class FamilyPlanner
             if (unit is null || unit.Coverage.Count < 2 || !unit.Coverage.All(required.Contains))
                 throw new InvalidOperationException("SimplePlanning.FusedCoverageMustReplaceRegisteredObligations");
         var cpuAlternatives = includeCpuAlternatives ? registeredFamilies.SelectMany(family =>
-            FamilyAuxiliaryEvidence.Read<IFamilyInvocation[]>(family.FamilyId, "SimplePlanner.CpuRealizations",
+            FamilyAuxiliaryEvidence.Read<FilterBodyDescription[]>(family.FamilyId, "SimplePlanner.CpuRealizations",
                 () =>
                 {
-                    var alternatives = FamilyCpuExecution.ConfiguredRealizations(family).ToArray();
-                    if (alternatives.Any(alternative => alternative.Coverage.Count != 1 ||
+                    var alternatives = family.CpuAlternatives.ToArray();
+                    if (alternatives.Any(alternative =>
                         !alternative.Coverage.ToHashSet(StringComparer.Ordinal).SetEquals(family.Coverage)))
                         throw new InvalidOperationException("SimplePlanning.CpuAlternativeCoverageMismatch");
                     return alternatives;
@@ -227,7 +227,7 @@ internal static class FamilyPlanner
                         Rejection = survival.HasValue ? 1d - survival.Value : null,
                         DenseWorkPerInput = expected?.ExpectedFilteringWorkUnitsPerInput,
                         CompactWorkPerInput = expected?.ExpectedFilteringWorkUnitsPerInput + expected?.CompactInputWorkUnitsPerInput };
-                    if (candidate.Family is PartyFamily or FamilyCpuExecution)
+                    if (!candidate.Family.UsesGpu || candidate.Family.Cost.ComposedPopulationReference)
                     {
                         var performance = ReadReference(costSnapshot, candidate.Family,
                             candidate.Family.ResolveConditionPerformance(compact), compact, passed);
@@ -278,14 +278,14 @@ internal static class FamilyPlanner
 
     private static string SimpleScoreText(double? score) => score == double.PositiveInfinity ? "NoPredictedRejection" : Maybe(score);
 
-    private static Candidate[] BuildCandidates(IReadOnlyList<IFamilyInvocation> registeredFamilies,
+    private static Candidate[] BuildCandidates(IReadOnlyList<FilterBodyDescription> registeredFamilies,
         GpuCostSnapshot? costSnapshot, bool allowEquivalentCoverage = false)
     {
         var candidates = new Candidate[registeredFamilies.Count];
         var covered = new HashSet<string>(StringComparer.Ordinal);
         for (int index = 0; index < registeredFamilies.Count; index++)
         {
-            IFamilyInvocation family = registeredFamilies[index] ??
+            FilterBodyDescription family = registeredFamilies[index] ??
                 throw new ArgumentException("Registered Family cannot be null.", nameof(registeredFamilies));
             string[] coverage = family.Coverage
                 .Where(item => !string.IsNullOrWhiteSpace(item))
@@ -351,7 +351,7 @@ internal static class FamilyPlanner
             {
                 // Conditional CPU and party prices belong to the actual
                 // prefix/input role; an absent quote remains unknown.
-                if (candidate.Family is FamilyCpuExecution or PartyFamily)
+                if (!candidate.Family.UsesGpu || candidate.Family.Cost.ComposedPopulationReference)
                     performance = ReadReference(costs, candidate.Family, condition, compact, passedCoverage);
                 perInputMs = FamilyPerformanceProjectionMath.PerInputMilliseconds(performance);
             }
@@ -385,26 +385,26 @@ internal static class FamilyPlanner
             missing.Distinct(StringComparer.Ordinal).OrderBy(item => item, StringComparer.Ordinal).ToArray());
     }
 
-    private static FamilySurvivalProjection ReadSurvival(IFamilyInvocation family, IReadOnlySet<string>? passed = null) =>
+    private static FamilySurvivalProjection ReadSurvival(FilterBodyDescription family, IReadOnlySet<string>? passed = null) =>
         FamilyAuxiliaryEvidence.Read(family.FamilyId, "Planner.Survival",
             () => passed is null ? family.Survival : family.ResolveSurvival(passed),
             FamilySurvivalProjection.Unresolved(family.FamilyId, "AuxiliarySurvivalFailed"));
 
-    private static FamilyExpectedFilteringCostProjection? ReadExpectedCost(IFamilyInvocation family, IReadOnlySet<string>? passed = null) =>
+    private static FamilyExpectedFilteringCostProjection? ReadExpectedCost(FilterBodyDescription family, IReadOnlySet<string>? passed = null) =>
         FamilyAuxiliaryEvidence.Read<FamilyExpectedFilteringCostProjection?>(family.FamilyId, "Planner.ExpectedCost",
             () => passed is null ? family.ExpectedFilteringCost : family.ResolveExpectedFilteringCost(passed), null);
 
-    private static FamilyPerformanceReference ReadReference(GpuCostSnapshot? costs, IFamilyInvocation family,
+    private static FamilyPerformanceReference ReadReference(GpuCostSnapshot? costs, FilterBodyDescription family,
         FamilyConditionPerformanceProjection condition, bool compact, IReadOnlySet<string>? passed = null) =>
         FamilyAuxiliaryEvidence.Read(family.FamilyId, "Planner.PhysicalQuote",
             () => GpuCostSnapshot.ComputationReference(costs, family, condition, compact, passed,
-                referenceRootWindow: passed is not null && family is FamilyCpuExecution cpu
-                    ? compact ? PrivateOrdinalBuffer.Capacity : cpu.WindowCapacity : null,
-                referencePopulation: passed is null ? null : family is FamilyCpuExecution cpuFamily
-                    ? cpuFamily.WindowCapacity : FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize),
+                referenceRootWindow: passed is not null && !family.UsesGpu
+                    ? compact ? PrivateOrdinalBuffer.Capacity : family.WindowCapacity : null,
+                referencePopulation: passed is null ? null : !family.UsesGpu
+                    ? family.WindowCapacity : FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize),
             UnavailableReference(family, condition));
 
-    private static FamilyPerformanceReference UnavailableReference(IFamilyInvocation family, FamilyConditionPerformanceProjection condition) =>
+    private static FamilyPerformanceReference UnavailableReference(FilterBodyDescription family, FamilyConditionPerformanceProjection condition) =>
             new FamilyPerformanceReference(family.FamilyId, condition.PhysicalImplementationRevision,
                 condition.Factor, 0d, FamilyPerformanceEvidenceSource.Unavailable, "", "", "AuxiliaryQuoteFailed");
 

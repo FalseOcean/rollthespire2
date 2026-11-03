@@ -12,5 +12,5 @@ public interface ISeedPredictionProfile
     RuntimeProfileId ProfileId { get; }
     // Stable evidence ID; historical string values are not CLR type names.
     string PredictorId { get; }
-    SeedPredictionDocument Predict(SeedPredictionRequest request, GameVersionDetection detection);
+    SeedPredictionFacts Observe(SeedPredictionRequest request, GameVersionDetection detection);
 }

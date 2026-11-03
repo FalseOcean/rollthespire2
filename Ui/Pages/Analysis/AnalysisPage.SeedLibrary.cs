@@ -13,8 +13,8 @@ internal sealed partial class AnalysisPage
         add { _favoriteSeedRequested += value; RefreshFavoriteSeed(); }
         remove { _favoriteSeedRequested -= value; RefreshFavoriteSeed(); }
     }
-    internal bool CanFavoriteVisibleSeed => _wbHasResult && _requestBar.HasValidVisibleSeed && LastDocument is not null &&
-        ProfileSeedRules.TryCanonicalizePredictionSeed(_runtime.Profile, CurrentDraft.RawSeed, out var canonical, out _) && LastDocument.CanonicalSeed == canonical;
+    internal bool CanFavoriteVisibleSeed => _wbHasResult && _requestBar.HasValidVisibleSeed && LastFacts is not null &&
+        ProfileSeedRules.TryCanonicalizePredictionSeed(_runtime.Profile, CurrentDraft.RawSeed, out var canonical, out _) && LastFacts.CanonicalSeed == canonical;
 
     private void BuildFavoriteSeed(Control rail)
     {

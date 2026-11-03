@@ -24,6 +24,9 @@ internal sealed record WorkbenchProbabilityPreview(
     internal IReadOnlyList<string> FamilyOrder { get; init; } = [];
     internal IReadOnlySet<string> DenseFirstOrderUnits { get; init; } = new HashSet<string>();
     internal string OrderIssue { get; init; } = "";
+    internal bool VariantRestrictsActs { get; init; }
+    internal bool VariantRestrictsEvents { get; init; }
+    internal int VariantUnknownPrefix { get; init; }
 
     internal static WorkbenchProbabilityPreview Compute(CompiledSearch compiled, int target, int workers, bool cpuOnly,
         IReadOnlyList<string>? manualFamilyOrder = null, MapLossyOptions? mapLossy = null)
@@ -41,9 +44,11 @@ internal sealed record WorkbenchProbabilityPreview(
         string[] automaticOrder = [], order = [], denseFirst = [];
         string orderIssue = "";
         bool orderResolved = false;
+        bool variantRestrictsActs = false, variantRestrictsEvents = false;
+        int variantUnknownPrefix = 0;
         try
         {
-            var execution = ExactSearchExecutionRequestFactory.Compile(compiled,
+            var execution = SearchPreparationCompiler.Compile(compiled,
                 new("000000000000", long.MaxValue, target, workers, ManualFamilyOrder: manualFamilyOrder, MapLossy: mapLossy));
             if (execution.Success && execution.Plan is { } request)
             {
@@ -68,12 +73,26 @@ internal sealed record WorkbenchProbabilityPreview(
                         issues.Add("workbenchAutomaticOrderUnavailable=" + error.Message);
                     }
                 }
-                eta = FamilySearchEtaProjectorV1.Project(request, selected);
+                eta = FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(request, selected), selected);
+                var variant = FamilySearchEtaProjectorV1.EstimationStages(eta.Plan)
+                    .FirstOrDefault(stage => stage.Family.FamilyId == VariantOpeningFamily.Id)?.Family.Preparation;
+                if (variant is not null)
+                {
+                    if (variant.Obligations.Any(obligation => obligation.Domain == VariantOpeningFamily.Id) &&
+                        request.Model.VariantOpening is { } preparation)
+                    {
+                        variantRestrictsActs = preparation.Acts.Any(row => row.ExplicitAllowed.Count > 0);
+                        variantRestrictsEvents = preparation.Acts.Any(row => row.Evidence.Any(evidence =>
+                            evidence.Contains("PositiveEventMembershipImpossible", StringComparison.Ordinal)));
+                    }
+                    variantUnknownPrefix = variant.Obligations.Where(obligation => obligation.Domain == InitialRoomsInvocation.UnknownCoverage)
+                        .Select(obligation => obligation.ThroughOrdinal ?? 0).DefaultIfEmpty(0).Max();
+                }
                 var calibration = GpuCostCalibration.Capture();
                 var geometry = new FamilyPhysicalQuoteRequest(false, false, 1 << 20);
                 foreach (var family in FamilyExecutionCoordinator.CreateRegisteredFamilies(request))
                 {
-                    var cpu = QuoteConfiguredCpu(family, calibration);
+                    var cpu = QuoteConfiguredCpu(family, workers, calibration);
                     var gpu = !cpuOnly && family.ConditionPerformance.UsesGpu
                         ? FamilyPhysicalQuote.Computation(family, geometry, calibration) : null;
                     costs[family.FamilyId] = (cpu?.NanosecondsPerInput, gpu?.NanosecondsPerInput);
@@ -99,11 +118,11 @@ internal sealed record WorkbenchProbabilityPreview(
             try
             {
                 var single = SearchCompiler.Compile(q with { EventResultConditions = [c] }, compiled.Context);
-                var request = ExactSearchExecutionRequestFactory.Compile(single, new("000000000000", 1 << 20, 1, workers));
-                if (request.Plan is { } plan && EventResultFamily.TryCreate(plan, out var family) && family is not null)
+                var request = SearchPreparationCompiler.Compile(single, new("000000000000", 1 << 20, 1, workers));
+                if (request.Plan is { } plan && EventResultFamily.TryCreate(plan.Model, FilterExecutionPreferences.From(plan.RunOptions), out var family) && family is not null)
                 {
                     var calibration = GpuCostCalibration.Capture();
-                    var cpu = QuoteConfiguredCpu(family, calibration);
+                    var cpu = QuoteConfiguredCpu(family, workers, calibration);
                     var geometry = new FamilyPhysicalQuoteRequest(false, false, 1 << 20);
                     var gpu = !cpuOnly && family.ConditionPerformance.UsesGpu
                         ? FamilyPhysicalQuote.Computation(family, geometry, calibration) : null;
@@ -120,17 +139,24 @@ internal sealed record WorkbenchProbabilityPreview(
         }
         return new(joint, view, eta, costs, map, events, issues) {
             AutomaticFamilyOrder = automaticOrder, FamilyOrder = order,
-            DenseFirstOrderUnits = denseFirst.ToHashSet(StringComparer.Ordinal), OrderIssue = orderIssue
+            DenseFirstOrderUnits = denseFirst.ToHashSet(StringComparer.Ordinal), OrderIssue = orderIssue,
+            VariantRestrictsActs = variantRestrictsActs, VariantRestrictsEvents = variantRestrictsEvents,
+            VariantUnknownPrefix = variantUnknownPrefix
         };
     }
 
     // Match the execution budget. A lower worker count's reference cannot
     // describe this configuration when its own applicable quote is missing.
-    private static FamilyPhysicalQuote? QuoteConfiguredCpu(IFamilyInvocation family, GpuCostSnapshot costs) =>
-        FamilyCpuExecution.ConfiguredRealizations(family)
+    private static FamilyPhysicalQuote? QuoteConfiguredCpu(FilterBodyDescription family, int workers, GpuCostSnapshot costs)
+    {
+        IEnumerable<FilterBodyDescription> bodies = family.CpuAlternatives.Count > 0 ? family.CpuAlternatives :
+            family.UsesGpu ? [] : [family];
+        return bodies
+            .Where(body => body.CpuWorkers == Math.Clamp(workers, 1, 32))
             .Select(f => FamilyPhysicalQuote.Computation(f, new(false, false, 1 << 20), costs))
             .Where(c => c is { NanosecondsPerInput: > 0 })
             .OrderBy(c => c!.NanosecondsPerInput).FirstOrDefault();
+    }
 }
 
 // One running estimate plus the newest requested snapshot. Rapid edits replace

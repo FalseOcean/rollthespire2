@@ -43,7 +43,10 @@ internal static class PredictorShopChecks
                 .First(s => PredictorSeedCapture.CreateRun(context with { Seed = s }, authority)
                     .Working.OpeningOptions.Any(k => k.Entry == "GOLDEN_PEARL"));
             var runtime = PredictorSeedCapture.CreateRun(context with { Seed = seed }, authority);
+            NeowRouteFloors(runtime.Context, authority);
             runtime.EnterOpening();
+            Check(runtime.Working.StartedWithNeow && runtime.Working.Position.Floor == 1,
+                "Neow opening remains on floor 1");
             Check(runtime.Submit(runtime.Request!, new ChooseOpeningRelic(new("RELIC", "GOLDEN_PEARL"))) == PredictorInputResult.Accepted,
                 "opening choice");
             var player = Player.CreateForNewRun<Ironclad>(UnlockState.all, 1);
@@ -321,6 +324,35 @@ internal static class PredictorShopChecks
         }
     }
 
+    private static void NeowRouteFloors(PredictorContext context, RuntimeContextAuthoritySnapshot authority)
+    {
+        var routed = PredictorSeedCapture.CreateRun(context, authority);
+        Check(routed.Working.StartedWithNeow && routed.Working.Position.Floor == 0 &&
+            routed.Working.Visits.IsEmpty && routed.Working.Maps.IsEmpty,
+            "Neow seed origin has no recorded map points");
+        var map = routed.RouteMap(1);
+        routed.SetRoute(1, new RolltheSpire2.Core.Prediction.Maps.MapRouteSet(map,
+            RolltheSpire2.Core.Prediction.Maps.MapPointType.Monster, minimize: true).At(0).ToImmutableArray());
+        routed.AdvanceRoute();
+        Check(routed.Phase == PredictorPhase.OpeningChoice && routed.Working.Position.Floor == 1 &&
+            routed.Working.Visits is [{ Room: PredictorRoomKind.Opening, TotalFloor: 1 }],
+            "route enters Neow on floor 1");
+        Check(routed.Submit(routed.Request!, new ChooseOpeningRelic(new("RELIC", "GOLDEN_PEARL"))) == PredictorInputResult.Accepted &&
+            routed.Phase == PredictorPhase.Complete,
+            "route completes Neow before next map point");
+        var reloaded = PredictorRunStore.Deserialize(PredictorRunStore.Serialize(routed),
+            context.CatalogFingerprint, context.UnlockFingerprint);
+        Check(reloaded.Working.Position == routed.Working.Position && reloaded.Working.Visits.Length == 1 &&
+            reloaded.Working.Visits[0].TotalFloor == 1,
+            "Neow save/reload retains the entered floor");
+        reloaded.AdvanceRoute();
+        Check(reloaded.Working.Position.Floor == 2 && reloaded.Working.Visits.Length == 2 &&
+            reloaded.Working.Visits[1].TotalFloor == 2 &&
+            reloaded.Working.Visits.Count(v => v.Room == PredictorRoomKind.Opening) == 1,
+            "route advances from saved Neow to floor 2 without repeating opening");
+        Console.WriteLine("RUNTIME_NEOW_ROUTE origin0/opening1/next2; opening checkpoint/save/reload PASS");
+    }
+
     private static void TutorialRewards(PredictorContext context, RuntimeContextAuthoritySnapshot authority)
     {
         bool savedTestMode = TestMode.IsOn;
@@ -369,6 +401,8 @@ internal static class PredictorShopChecks
         native.SharedRelicGrabBag.Populate(ModelDb.RelicPool<SharedRelicPool>().GetUnlockedRelics(UnlockState.none), native.Rng.UpFront);
         player.PopulateRelicGrabBagIfNecessary(native.Rng.UpFront);
         manager.GenerateRooms();
+        Check(run.Working.Position.Floor == native.TotalFloor && native.TotalFloor == 0,
+            "no-Neow origin has no recorded map points before first Monster");
         var roomSetField = typeof(ActModel).GetField("_rooms", BindingFlags.Instance | BindingFlags.NonPublic)!;
         for (int i = 0; i < native.Acts.Count; i++)
         {
@@ -401,7 +435,7 @@ internal static class PredictorShopChecks
             var room = new CombatRoom(encounter.ToMutable(), native);
             var expected = new RewardsSet(player).WithRewardsFromRoom(room);
             expected.GenerateWithoutOffering().GetAwaiter().GetResult();
-            run.EnterCombatRewards(PredictorCombatKind.Monster, 1, battle + 1);
+            run.EnterCombatRewards(PredictorCombatKind.Monster, 1, native.TotalFloor);
             Check(run.Rewards.OfType<PredictorReward>().Where(r => r.Kind == PredictorRewardKind.Card)
                 .SelectMany(r => r.Cards).Select(c => c.Key.Entry)
                 .SequenceEqual(expected.Rewards.OfType<CardReward>().SelectMany(r => r.Cards).Select(c => c.Id.Entry)),
@@ -427,8 +461,9 @@ internal static class PredictorShopChecks
             RolltheSpire2.Core.Prediction.Maps.MapPointType.Monster, minimize: true).At(0).ToImmutableArray());
         routed.AdvanceRoute();
         Check(routed.Phase == PredictorPhase.CombatFacts && routed.Working.Visits.Length == 1 &&
-            routed.Working.Visits[0].Room == PredictorRoomKind.Monster,
-            "first-run route enters actual starting Monster without Opening");
+            routed.Working.Visits[0].Room == PredictorRoomKind.Monster &&
+            routed.Working.Position.Floor == 1 && routed.Working.Visits[0].TotalFloor == 1,
+            "first-run route enters actual starting Monster on floor 1 without Opening");
         var combatFacts = new PredictorCombatFacts
         {
             Potions = PredictorCombatPotionFacts.NoAdditional,
@@ -444,6 +479,9 @@ internal static class PredictorShopChecks
         var reloaded = PredictorRunStore.Deserialize(PredictorRunStore.Serialize(routed),
             tutorialContext.CatalogFingerprint, tutorialContext.UnlockFingerprint);
         Check(reloaded.Working.Visits.Length == routed.Working.Visits.Length &&
+            reloaded.Working.Position == routed.Working.Position &&
+            reloaded.Checkpoints[0].State.Position.Floor == 0 &&
+            reloaded.Working.Visits[0].TotalFloor == 1 &&
             reloaded.Working.Visits[0].Point == routed.Working.Visits[0].Point &&
             reloaded.Working.Visits[0].Room == routed.Working.Visits[0].Room &&
             reloaded.Working.Visits[0].CombatKinds.SequenceEqual(routed.Working.Visits[0].CombatKinds) &&
@@ -452,8 +490,10 @@ internal static class PredictorShopChecks
             reloaded.Routes.Length == 1 && reloaded.Routes[0].Points.SequenceEqual(routed.Routes[0].Points),
             "first-run route save/reload after starting Monster");
         Console.WriteLine("RUNTIME_FIRST_RUN_ROUTE starting Monster no Opening, first combat reward checkpoint/save/reload PASS");
-        ActEntryModifierOrder(tutorialContext, firstAuthority);
+        // These create independent runs; exercise persistence before the
+        // act-entry comparison so a local modifier failure cannot hide it.
         StaleRoutePersistence(tutorialContext, firstAuthority);
+        ActEntryModifierOrder(tutorialContext, firstAuthority);
         }
         finally { TestMode.IsOn = savedTestMode; }
     }
@@ -472,9 +512,10 @@ internal static class PredictorShopChecks
         cursed.AdvanceRoute();
         int nicheAfter = cursed.Working.Streams.Single(s => s.Stream == PredictorStream.Niche).Calls;
         Check(cursed.Phase == PredictorPhase.CombatFacts && cursed.Working.Deck.Length == cardsBefore + 1 &&
+            cursed.Working.Position.Floor == 1 && cursed.Working.Visits[0].TotalFloor == 1 &&
             cursed.Working.Card(cursed.Working.Deck[^1]).Key == expectedCurse &&
             cursed.Working.Card(cursed.Working.Deck[^1]).FloorAdded == 0 && nicheAfter >= nicheBefore + 1,
-            $"CursedRun AfterActEntered before no-Neow first combat phase={cursed.Phase} cards={cursed.Working.Deck.Length - cardsBefore} niche={nicheAfter - nicheBefore} expected={expectedCurse} actual={cursed.Working.Card(cursed.Working.Deck[^1]).Key}");
+            $"CursedRun AfterActEntered before no-Neow first combat phase={cursed.Phase} cards={cursed.Working.Deck.Length - cardsBefore} niche={nicheAfter - nicheBefore} expected={expectedCurse} actual={cursed.Working.Card(cursed.Working.Deck[^1]).Key} floorAdded={cursed.Working.Card(cursed.Working.Deck[^1]).FloorAdded} position={cursed.Working.Position}");
         var facts = new PredictorCombatFacts
         {
             Potions = PredictorCombatPotionFacts.NoAdditional,

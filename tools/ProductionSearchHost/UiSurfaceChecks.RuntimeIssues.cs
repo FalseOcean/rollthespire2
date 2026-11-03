@@ -95,8 +95,8 @@ internal static partial class UiSurfaceChecks
             var controller = Field<AnalysisPageController>(shell, "_predictorController");
             controller.OpenPredictionContext(saved.Seed, libraryContext);
             var predictor = Field<AnalysisPage>(shell, "_predictor");
-            Check(predictor.LastDocument?.CanonicalSeed == "16_10_2026" &&
-                predictor.LastDocument.Sections.Count > 0, "native ten-character saved prediction reopens through the real controller");
+            Check(predictor.LastFacts?.CanonicalSeed == "16_10_2026" &&
+                predictor.LastFacts.Neow is not null, "native ten-character saved prediction reopens through the real controller");
             Check(predictor.CanFavoriteVisibleSeed, "native seed remains a valid committed input eligible for a favorite");
             Check(ledger.Snapshot().Count == 0, "native seed reopening does not create a retained computation failure");
             Field<Button>(shell, "_analysis").EmitSignal(Button.SignalName.Pressed);

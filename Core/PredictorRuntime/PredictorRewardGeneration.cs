@@ -2,6 +2,8 @@ using System.Collections.Immutable;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Rng;
+using RolltheSpire2.Core.Rewards;
+using RolltheSpire2.Compatibility;
 
 namespace RolltheSpire2.Core.PredictorRuntime;
 
@@ -9,7 +11,7 @@ internal enum PredictorCombatKind { Monster, Elite, Boss }
 internal enum PredictorCardOdds { Regular, Elite, Boss, Uniform }
 internal enum PredictorRewardStage { Construct, PopulateOriginal, Modify, ModifyLate, PopulateAdded, AfterModifying, Sort, BeforeOffering }
 internal sealed record PredictorRewardPlan(PredictorRewardKind Kind, int MinGold = 0, int MaxGold = 0,
-    bool PrefilledGold = false, int CardCount = 3, PredictorCardOdds Odds = PredictorCardOdds.Regular,
+    bool PrefilledGold = false, int CardCount = CombatRewardRelicRules.DefaultCardOptionCount, PredictorCardOdds Odds = PredictorCardOdds.Regular,
     bool EncounterSource = false, bool IsFromCombat = false, bool Colorless = false,
     EffectCardRarity? Rarity = null, bool NoUpgradeRoll = false,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
@@ -46,29 +48,47 @@ internal static class PredictorRewardGeneration
                 ? eventRng ?? throw new InvalidOperationException("PredictorEventRewardRngMissing") : null));
         }
         stages.Add(PredictorRewardStage.Modify);
-        var modified = new List<long>();
+        var ticketsToComplete = new List<(long Id, bool GaveRelic)>();
+        var roomKind = room switch { PredictorCombatKind.Monster => CombatRewardRoomKind.Monster,
+            PredictorCombatKind.Elite => CombatRewardRoomKind.Elite, PredictorCombatKind.Boss => CombatRewardRoomKind.Boss,
+            _ => CombatRewardRoomKind.Other };
+        void AddCards(AddedCardReward addition)
+        {
+            if (addition.RewardCount == 0) return;
+            var odds = addition.Odds switch { CardBaseOddsType.Regular => PredictorCardOdds.Regular,
+                CardBaseOddsType.Boss => PredictorCardOdds.Boss, _ => throw new InvalidOperationException("PredictorRelicAddedCardOddsUnsupported") };
+            for (int i = 0; i < addition.RewardCount; i++)
+                added.Add(new(PredictorRewardKind.Card, CardCount: addition.CardCount, Odds: odds,
+                    EncounterSource: addition.EncounterSource, IsFromCombat: addition.IsFromCombat));
+        }
         // Concrete source handlers, in actual relic instance order. Added objects
         // remain plans until BOTH normal and late ModifyRewards have finished.
         foreach (var relic in state.Relics.Where(r => !r.Melted))
         {
             switch (relic.Key.Entry)
             {
-                case "PRAYER_WHEEL" when room == PredictorCombatKind.Monster:
-                    added.Add(new(PredictorRewardKind.Card, EncounterSource: true)); break;
-                case "WHITE_STAR" when room == PredictorCombatKind.Elite:
-                    added.Add(new(PredictorRewardKind.Card, Odds: PredictorCardOdds.Boss, EncounterSource: true)); break;
-                case "BLACK_STAR" when room == PredictorCombatKind.Elite:
-                    added.Add(new(PredictorRewardKind.Relic)); break;
-                case "LAVA_ROCK" when room == PredictorCombatKind.Boss && state.Position.Act == 1 && !relic.LavaRockTriggered:
-                    added.AddRange(Enumerable.Repeat(new PredictorRewardPlan(PredictorRewardKind.Relic), 2));
+                case "PRAYER_WHEEL":
+                    AddCards(CombatRewardRelicRules.PrayerWheel(roomKind)); break;
+                case "WHITE_STAR":
+                    AddCards(CombatRewardRelicRules.WhiteStar(roomKind)); break;
+                case "BLACK_STAR":
+                    added.AddRange(Enumerable.Repeat(new PredictorRewardPlan(PredictorRewardKind.Relic), CombatRewardRelicRules.BlackStarRelics(roomKind))); break;
+                case "LAVA_ROCK":
+                    var lava = CombatRewardRelicRules.LavaRock(roomKind, state.Position.Act, relic.LavaRockTriggered);
+                    if (lava.RelicCount == 0) break;
+                    added.AddRange(Enumerable.Repeat(new PredictorRewardPlan(PredictorRewardKind.Relic), lava.RelicCount));
                     int lavaIndex = state.Relics.FindIndex(r => r.Id == relic.Id);
-                    state = state with { Relics = state.Relics.SetItem(lavaIndex, relic with { LavaRockTriggered = true }) };
+                    state = state with { Relics = state.Relics.SetItem(lavaIndex, relic with { LavaRockTriggered = lava.HasTriggeredAfterModification }) };
                     break;
-                case "AMETHYST_AUBERGINE" when room != null && !(room == PredictorCombatKind.Boss && state.Position.Act == 3):
-                    added.Add(new(PredictorRewardKind.Gold, 15, 15, PrefilledGold: true)); break;
-                case "WONGOS_MYSTERY_TICKET" when room != null && relic.CombatsFinished >= 5 && !relic.GaveRelic:
-                    added.AddRange(Enumerable.Repeat(new PredictorRewardPlan(PredictorRewardKind.Relic), 3));
-                    modified.Add(relic.Id); break;
+                case "AMETHYST_AUBERGINE":
+                    int gold = CombatRewardRelicRules.AmethystGold(roomKind, state.Position.Act == 3);
+                    if (gold > 0) added.Add(new(PredictorRewardKind.Gold, gold, gold, PrefilledGold: true));
+                    break;
+                case "WONGOS_MYSTERY_TICKET":
+                    var ticket = CombatRewardRelicRules.Wongo(roomKind, relic.CombatsFinished, relic.GaveRelic);
+                    if (ticket.RelicCount == 0) break;
+                    added.AddRange(Enumerable.Repeat(new PredictorRewardPlan(PredictorRewardKind.Relic), ticket.RelicCount));
+                    ticketsToComplete.Add((relic.Id, ticket.GaveRelicAfterModifyingRewards)); break;
             }
         }
         stages.Add(PredictorRewardStage.ModifyLate);
@@ -123,10 +143,10 @@ internal static class PredictorRewardGeneration
             rewards.Add(populated with { CanReroll = reroll && populated.Kind == PredictorRewardKind.Card });
         }
         stages.Add(PredictorRewardStage.AfterModifying);
-        foreach (long id in modified)
+        foreach (var ticket in ticketsToComplete)
         {
-            int index = state.Relics.FindIndex(r => r.Id == id);
-            state = state with { Relics = state.Relics.SetItem(index, state.Relics[index] with { GaveRelic = true }) };
+            int index = state.Relics.FindIndex(r => r.Id == ticket.Id);
+            state = state with { Relics = state.Relics.SetItem(index, state.Relics[index] with { GaveRelic = ticket.GaveRelic }) };
         }
         stages.Add(PredictorRewardStage.Sort);
         static int Order(PredictorReward r) => r.Kind switch { PredictorRewardKind.Gold => 1, PredictorRewardKind.Potion => 2, PredictorRewardKind.Relic => 3, PredictorRewardKind.SpecialCard => 4, PredictorRewardKind.RemoveCard => 7, _ => 5 };
@@ -134,7 +154,8 @@ internal static class PredictorRewardGeneration
         stages.Add(PredictorRewardStage.BeforeOffering);
         if (room != null && rewards.Any(r => r.Kind == PredictorRewardKind.Card))
             state = state with { Relics = state.Relics.Select(r => !r.Melted && r.Key.Entry == "LASTING_CANDY"
-                ? r with { CombatRewardsSeen = r.CombatRewardsSeen + 1 } : r).ToImmutableArray() };
+                ? r with { CombatRewardsSeen = CardRewardRelicRules.CandyCounterBeforeOffering(
+                    RuntimeProfilePolicies.LastingCandyCounter(context.RuntimeProfile.ProfileId), r.CombatRewardsSeen, true) } : r).ToImmutableArray() };
         return new(state, rewards.ToImmutableArray(), stages.ToImmutable());
     }
 
@@ -212,7 +233,12 @@ internal static class PredictorRewardGeneration
         for (int i = 0; i < count; i++)
         {
             float roll = rng.NextFloat();
-            var rarity = roll <= .1f ? PredictorPotionRarity.Rare : roll <= .35f ? PredictorPotionRarity.Uncommon : PredictorPotionRarity.Common;
+            var rarity = PotionRarityRules.Evaluate(roll) switch
+            {
+                EffectPotionRarity.Rare => PredictorPotionRarity.Rare,
+                EffectPotionRarity.Uncommon => PredictorPotionRarity.Uncommon,
+                _ => PredictorPotionRarity.Common
+            };
             var bucket = pool.Where(p => p.Rarity == rarity).ToArray();
             if (bucket.Length == 0) throw new InvalidOperationException("PredictorPotionRarityDepleted");
             var item = bucket[rng.NextInt(bucket.Length)];
@@ -307,11 +333,17 @@ internal static class PredictorRewardGeneration
             cards.Add(GenerateCard(context, ref state, plan, pool.Where(c => cards.All(t => t.Key != c.CardKey)).ToArray(), rngOverride));
         {
             foreach (var relic in state.Relics.Where(r => !r.Melted))
-                if (isCardReward && relic.Key.Entry == "LASTING_CANDY" && plan.EncounterSource && plan.IsFromCombat && relic.CombatRewardsSeen % 2 == 1)
+                if (relic.Key.Entry == "LASTING_CANDY")
                 {
-                    var power = pool.Where(c => c.CardType == EffectCardType.Power && cards.All(t => t.Key != c.CardKey)).ToArray();
-                    if (power.Length == 0) power = pool.Where(c => c.CardType == EffectCardType.Power).ToArray();
-                    if (power.Length > 0) cards.Add(GenerateCard(context, ref state, plan with { EncounterSource = false }, power, rngOverride));
+                    int extraCards = CardRewardRelicRules.CandyExtraCardCount(
+                        RuntimeProfilePolicies.LastingCandyCounter(context.RuntimeProfile.ProfileId), relic.CombatRewardsSeen,
+                        isCardReward, plan.EncounterSource, plan.IsFromCombat);
+                    for (int extra = 0; extra < extraCards; extra++)
+                    {
+                        var power = pool.Where(c => c.CardType == EffectCardType.Power && cards.All(t => t.Key != c.CardKey)).ToArray();
+                        if (power.Length == 0) power = pool.Where(c => c.CardType == EffectCardType.Power).ToArray();
+                        if (power.Length > 0) cards.Add(GenerateCard(context, ref state, plan with { EncounterSource = false }, power, rngOverride));
+                    }
                 }
         }
         var modified = ModifyManualCardRewardOptions(context, ref state, cards, isCardReward, out nicheScope);
@@ -340,13 +372,13 @@ internal static class PredictorRewardGeneration
                     enchantmentAlternatives ??= PredictorCardRewardNicheScope.BeginAlternatives(cards);
                 if (enchantmentAlternatives != null)
                     PredictorCardRewardNicheScope.AdvanceAlternatives(context, cards, relic.Key.Entry,
-                        enchantmentAlternatives, isCardReward && !relic.SilkenUsed);
-                if (isCardReward && relic.Key.Entry == "SILVER_CRUCIBLE" && relic.RewardUpgradeUses < 3)
+                        enchantmentAlternatives, CardRewardRelicRules.SilkenTressApplies(isCardReward, relic.SilkenUsed));
+                if (relic.Key.Entry == "SILVER_CRUCIBLE" && CardRewardRelicRules.SilverCrucibleApplies(isCardReward, relic.RewardUpgradeUses))
                 {
                     cards = cards.Select(c => c.UpgradeLevel < c.MaxUpgradeLevel ? c with { UpgradeLevel = c.UpgradeLevel + 1 } : c).ToList();
                     after.Add(relic.Id);
                 }
-                if (isCardReward && relic.Key.Entry == "SILKEN_TRESS" && !relic.SilkenUsed)
+                if (relic.Key.Entry == "SILKEN_TRESS" && CardRewardRelicRules.SilkenTressApplies(isCardReward, relic.SilkenUsed))
                 {
                     cards = cards.Select(c => c.Enchantment == null && c.Type is EffectCardType.Attack or EffectCardType.Skill or EffectCardType.Power
                         ? c with { Enchantment = new ModelKey("ENCHANTMENT", "GLAM"), EnchantmentAmount = 1 } : c).ToList();
@@ -360,7 +392,7 @@ internal static class PredictorRewardGeneration
                 int i = state.Relics.FindIndex(r => r.Id == id);
                 var relic = state.Relics[i];
                 state = state with { Relics = state.Relics.SetItem(i, relic.Key.Entry == "SILVER_CRUCIBLE"
-                    ? relic with { RewardUpgradeUses = relic.RewardUpgradeUses + 1 } : relic with { SilkenUsed = true }) };
+                    ? relic with { RewardUpgradeUses = CardRewardRelicRules.SilverCrucibleUsesAfterModification(relic.RewardUpgradeUses) } : relic with { SilkenUsed = true }) };
             }
         nicheScope = PredictorCardRewardNicheScope.From(wingCharmEligibility, alternatives: enchantmentAlternatives);
         return cards.Select(c => PredictorCardLevelEffects.Reconcile(context, c)).ToImmutableArray();
@@ -375,13 +407,17 @@ internal static class PredictorRewardGeneration
             choices = pool.Where(c => c.Rarity is not (EffectCardRarity.Basic or EffectCardRarity.Ancient)).ToArray();
         else
         {
-            float baseRare = plan.Odds switch { PredictorCardOdds.Boss => 1f, PredictorCardOdds.Elite => context.Ascension >= 7 ? .05f : .1f, _ => context.Ascension >= 7 ? .0149f : .03f };
-            float uncommon = plan.Odds switch { PredictorCardOdds.Boss => 0f, PredictorCardOdds.Elite => .4f, _ => .37f };
-            float offset = (plan.EncounterSource || plan.ForceRarityOddsChange) && plan.Odds != PredictorCardOdds.Boss ? state.Odds.CardRarityOffset : 0;
+            var oddsType = plan.Odds switch { PredictorCardOdds.Boss => CardBaseOddsType.Boss,
+                PredictorCardOdds.Elite => CardBaseOddsType.Elite, _ => CardBaseOddsType.Regular };
+            bool changesFutureOdds = plan.EncounterSource || plan.ForceRarityOddsChange;
+            float offset = changesFutureOdds && plan.Odds != PredictorCardOdds.Boss ? state.Odds.CardRarityOffset : 0;
             float roll = rng.NextFloat();
-            var rolled = roll < baseRare + offset ? EffectCardRarity.Rare : roll < baseRare + offset + uncommon ? EffectCardRarity.Uncommon : EffectCardRarity.Common;
-            if (plan.EncounterSource || plan.ForceRarityOddsChange)
-                state = state with { Odds = state.Odds with { CardRarityOffset = rolled == EffectCardRarity.Rare ? -.05f : Math.Min(.4f, state.Odds.CardRarityOffset + (context.Ascension >= 7 ? .005f : .01f)) } };
+            // This consumer has always used cumulative thresholds, including
+            // base-only cards. Its supported modern profiles share that formula.
+            var rolled = CardRarityRules.EvaluateWithOffset(roll, oddsType, context.Ascension, offset).Rarity;
+            if (changesFutureOdds)
+                state = state with { Odds = state.Odds with { CardRarityOffset =
+                    CardRarityRules.AdvanceOffset(state.Odds.CardRarityOffset, rolled, context.Ascension) } };
             var rarity = rolled;
             do
             {
@@ -406,8 +442,7 @@ internal static class PredictorRewardGeneration
     }
 
     internal static PredictorCard UpgradeWithEgg(PredictorCard card, string relic) =>
-        card.UpgradeLevel < card.MaxUpgradeLevel && (relic == "MOLTEN_EGG" && card.Type == EffectCardType.Attack ||
-            relic == "TOXIC_EGG" && card.Type == EffectCardType.Skill || relic == "FROZEN_EGG" && card.Type == EffectCardType.Power)
+        CardRewardRelicRules.EggCanUpgrade(card.Type, card.UpgradeLevel < card.MaxUpgradeLevel, relic)
         ? card with { UpgradeLevel = card.UpgradeLevel + 1 } : card;
 
     // Deck insertion is a different hook from reward creation/open-reward

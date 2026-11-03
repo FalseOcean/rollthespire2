@@ -18,7 +18,8 @@ internal static class CompatibilityReferenceChecks
         var authority = RuntimeContextAuthorityCapture.CaptureAuditedVanillaAllUnlocks(character, 10, "0.107.1", RuntimeProfileId.Stable107);
         var detection = new GameVersionDetection("v0.107.1", "0.107.1", "v0.107.1", "CompatibilityReference", true, "");
         Check(SeedPredictionRequest.TryCreate(" H0T0Z0S23C ", character, 10, 1, 0, authority, true, out var request, out var error), error.ToString());
-        var document = Stable107PredictionProfile.Instance.Predict(request!, detection);
+        var facts = Stable107PredictionProfile.Instance.Observe(request!, detection);
+        var document = SeedPredictionDocument.FromFacts(facts);
         var choices = document.Sections.SelectMany(s => s.NeowChoices).ToArray();
         Check(RuntimeProfileRegistry.Select(detection).ProfileId == RuntimeProfileId.Unsupported, "Archived profile became Production selectable");
         Check(document.ProfileId == RuntimeProfileId.Stable107 && document.PredictorId == "Stable107AnalysisProfile", "Version binding");
@@ -32,9 +33,10 @@ internal static class CompatibilityReferenceChecks
         Check(serialized.GetProperty("AnalyzerId").GetString() == "Stable107AnalysisProfile", "Historical predictor wire identity");
         Check(!serialized.TryGetProperty("PredictorId", out _), "Internal rename leaked into document schema");
         var candidate = new RolltheSpire2.Search.Contracts.SearchCandidate(
-            document.CanonicalSeed, document.ProfileId, character.CharacterKey, 10, "fixture", request!, document, authority, [], [], []);
+            document.CanonicalSeed, document.ProfileId, character.CharacterKey, 10, "fixture", authority,
+            RolltheSpire2.Search.Contracts.SearchQueryEvaluation.Match()) { Facts = facts };
         var candidateJson = System.Text.Json.JsonSerializer.SerializeToElement(candidate, options);
-        Check(candidateJson.TryGetProperty("AnalysisRequest", out _), "Candidate request wire name");
+        Check(candidateJson.TryGetProperty("Evaluation", out _) && !candidateJson.TryGetProperty("AnalysisRequest", out _), "Candidate carries final evaluation independently of analysis request");
         Check(!candidateJson.TryGetProperty("PredictionRequest", out _), "Internal rename leaked into candidate schema");
         Console.WriteLine($"CompatibilityReference checks={checks};PASS");
         return 0;

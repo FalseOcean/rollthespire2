@@ -15,7 +15,8 @@ internal sealed partial class CombatRewardSearchEditor
     internal bool HasConditions(bool party) => (party ? _partyDrafts : _drafts).Values.Any(d =>
         d.Slots.Any(k => k.HasValue) || d.Potions.Any(p => !p.IsNeutral) || d.Exclusion is not null);
     internal Action ClearConditions(bool party, int? slot = null) =>
-        WorkbenchConditionReset.Swap(party ? _partyDrafts : _drafts, _ => new SeatDraft(), slot);
+        WorkbenchConditionReset.Swap(party ? _partyDrafts : _drafts, _ => new SeatDraft(), slot,
+            (previous, current) => { if (ReferenceEquals(_draft, previous)) _draft = current; });
 
     internal int AuthoredConditionCount()
     {

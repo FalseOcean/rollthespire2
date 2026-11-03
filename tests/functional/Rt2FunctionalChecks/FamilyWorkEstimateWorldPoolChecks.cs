@@ -57,14 +57,14 @@ internal static class FamilyWorkEstimateWorldPoolChecks
             {
                 (WorldFamilyReplay Replay, FamilyPhysicalQuote Quote) Quote(SearchQuery query, SearchContext source)
                 {
-                    var request = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, source),
+                    var request = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, source),
                         new("000000000000", 65536, 16, 1)).Plan!;
-                    Check(WorldFamily.TryCreate(request, out var invocation, gpu) && invocation is WorldFamily,
+                    Check(WorldFamily.TryCreate(request.Model, FilterExecutionPreferences.From(request.RunOptions), out var invocation, gpu) && invocation is not null,
                         "actual compiled W registration " + gpu);
-                    var family = (WorldFamily)invocation!;
+                    var family = invocation!;
                     var quote = family.QuotePhysicalWork(new(false, false, 65536))!;
                     Check(FamilyCoarsePricing.IsEstimate(quote), "actual W quote consumes coarse estimate " + gpu);
-                    return (family.Replay, quote);
+                    return (new WorldFamilyReplay(request.Model), quote);
                 }
                 foreach (var query in new[] { boss, ancient, events })
                 {
@@ -86,19 +86,20 @@ internal static class FamilyWorkEstimateWorldPoolChecks
                 var variantExpanded = variantContext with { Authority = variantContext.Authority.WithWorldAuthority(variantWorld with {
                     Beta109Generation = variantWorld.Beta109Generation! with {
                         OrderedActCatalog = variantWorld.Beta109Generation.OrderedActCatalog.Select(Expand).ToArray() } }) };
-                VariantOpeningFamily Variant(SearchContext source)
+                VariantOpeningPreparedBody Variant(SearchContext source)
                 {
-                    var request = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(variant, source),
+                    var request = SearchPreparationCompiler.Compile(SearchCompiler.Compile(variant, source),
                         new("000000000000", 65536, 16, 1)).Plan!;
                     var families = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, gpu);
-                    Check(families.All(f => f is not WorldFamily) && families.Single() is VariantOpeningFamily,
+                    Check(families.All(f => f.FamilyId != "W.World") && families.Single().FamilyId == VariantOpeningFamily.Id,
                         "variant-only registration belongs to V without a W progression stage " + gpu);
-                    return (VariantOpeningFamily)families.Single();
+                    VariantOpeningFamily.TryPrepare(request.Model, FilterExecutionPreferences.From(request.RunOptions), out var prepared, gpu);
+                    return prepared!;
                 }
                 var variantBase = Variant(variantContext);
                 Check(variantBase.Plan.CoversVariants &&
-                    Variant(variantExpanded).QuotePhysicalWork(new(false, false, 65536))!.NanosecondsPerInput ==
-                    variantBase.QuotePhysicalWork(new(false, false, 65536))!.NanosecondsPerInput,
+                    Variant(variantExpanded).Body.QuotePhysicalWork(new(false, false, 65536))!.NanosecondsPerInput ==
+                    variantBase.Body.QuotePhysicalWork(new(false, false, 65536))!.NanosecondsPerInput,
                     "V variant-only path does not acquire unread event progression cost " + gpu);
             }
         }

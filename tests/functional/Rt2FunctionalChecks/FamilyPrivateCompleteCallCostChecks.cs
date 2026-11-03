@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.IO.Compression;
 using RolltheSpire2.Search.FamilyExecution;
 
 internal static class FamilyPrivateCompleteCallCostChecks
@@ -6,9 +7,12 @@ internal static class FamilyPrivateCompleteCallCostChecks
     internal static int RunReference(string path)
     {
         byte[] bytes = File.ReadAllBytes(path);
-        using var embedded = typeof(FamilyPrivateCompleteCallCost).Assembly.GetManifestResourceStream(FamilyPrivateCompleteCallCost.ResourceName)
+        if (typeof(FamilyPrivateCompleteCallCost).Assembly.GetManifestResourceNames().Contains(FamilyPrivateCompleteCallCost.ResourceName))
+            throw new InvalidDataException("PrivateReference.UncompressedDuplicateEmbedded");
+        using var embedded = typeof(FamilyPrivateCompleteCallCost).Assembly.GetManifestResourceStream(FamilyPrivateCompleteCallCost.CompressedResourceName)
             ?? throw new InvalidDataException("PrivateReference.EmbeddedResourceMissing");
-        using var buffer = new MemoryStream(); embedded.CopyTo(buffer);
+        using var gzip = new GZipStream(embedded, CompressionMode.Decompress);
+        using var buffer = new MemoryStream(); gzip.CopyTo(buffer);
         if (!bytes.AsSpan().SequenceEqual(buffer.ToArray())) throw new InvalidDataException("PrivateReference.EmbeddedBytesDiffer");
         string json = System.Text.Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF');
         var snapshot = FamilyPrivateCompleteCallCost.Parse(json);

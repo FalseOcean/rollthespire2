@@ -41,21 +41,21 @@ public static class RuntimeProfileRegistry
         };
     }
 
-    public static SeedPredictionDocument Predict(GameVersionDetection detection, SeedPredictionRequest request)
+    public static SeedPredictionFacts Observe(GameVersionDetection detection, SeedPredictionRequest request)
     {
         ArgumentNullException.ThrowIfNull(detection);
         ArgumentNullException.ThrowIfNull(request);
         return Resolve(detection).ProfileId switch
         {
-            RuntimeProfileId.Beta110 => Beta110PredictionProfile.Instance.Predict(request, detection),
-            RuntimeProfileId.Beta111 => Beta111PredictionProfile.Instance.Predict(request, detection),
-            _ => UnsupportedPredictionProfile.Instance.Predict(request, detection)
+            RuntimeProfileId.Beta110 => Beta110PredictionProfile.Instance.Observe(request, detection),
+            RuntimeProfileId.Beta111 => Beta111PredictionProfile.Instance.Observe(request, detection),
+            _ => UnsupportedPredictionProfile.Instance.Observe(request, detection)
         };
     }
 
     // Prepared choices belong to an earlier projection in this same candidate's
     // root/authority/effect context; callers retain ownership of those immutable facts.
-    internal static SeedPredictionDocument PredictFromRootHash(
+    internal static SeedPredictionFacts ObserveFromRootHash(
         GameVersionDetection detection,
         SeedPredictionRequest request,
         TrustedRootHashInput input,
@@ -66,9 +66,9 @@ public static class RuntimeProfileRegistry
         ArgumentNullException.ThrowIfNull(request);
         return Resolve(detection).ProfileId switch
         {
-            RuntimeProfileId.Beta110 => Beta110PredictionProfile.Instance.PredictFromRootHash(request, detection, input, preparedOpeningChoices),
-            RuntimeProfileId.Beta111 => Beta111PredictionProfile.Instance.PredictFromRootHash(request, detection, input, preparedOpeningChoices, identityReuse),
-            _ => UnsupportedPredictionProfile.Instance.Predict(request, detection)
+            RuntimeProfileId.Beta110 => Beta110PredictionProfile.Instance.ObserveFromRootHash(request, detection, input, preparedOpeningChoices),
+            RuntimeProfileId.Beta111 => Beta111PredictionProfile.Instance.ObserveFromRootHash(request, detection, input, preparedOpeningChoices, identityReuse),
+            _ => UnsupportedPredictionProfile.Instance.Observe(request, detection)
         };
     }
 }

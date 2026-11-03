@@ -123,6 +123,7 @@ internal sealed partial class AnalysisPage : MarginContainer, IAppPage, IRespons
     public AppPageKey PageKey { get; }
     public Control View => this;
     public SeedPredictionRequest? LastRequest { get; private set; }
+    public SeedPredictionFacts? LastFacts { get; private set; }
     public SeedPredictionDocument? LastDocument { get; private set; }
     public AnalysisRequestDraft CurrentDraft => _requestBar.CurrentDraft with { AncientOptionConditions = _ancientGroupCard.CurrentConditions };
     public AnalysisRequestDraft CurrentReactiveDraft => _requestBar.CurrentReactiveDraft with { AncientOptionConditions = _ancientGroupCard.CurrentConditions };
@@ -227,18 +228,18 @@ internal sealed partial class AnalysisPage : MarginContainer, IAppPage, IRespons
         _ancientGroupCard.SetBusy(false);
     }
 
-    public void ShowDocument(
+    public void ShowFacts(
         SeedPredictionRequest request,
-        SeedPredictionDocument document,
+        SeedPredictionFacts facts,
         MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState? eventUnlocks = null)
     {
-        if (!ReferenceEquals(LastRequest, request) || !ReferenceEquals(LastDocument, document))
+        if (!ReferenceEquals(LastRequest, request) || !ReferenceEquals(LastFacts, facts))
             ClearWorkbenchProjections();
         // Copy the same player's unlock context used for this prediction. Never
         // substitute the local profile when inspecting another seat/favorite.
         _eventTransformUnlocks = eventUnlocks is null ? null :
             MegaCrit.Sts2.Core.Unlocks.UnlockState.FromSerializable(LobbyUnlockReadout.Copy(eventUnlocks));
-        BindRouteContext(request, document, eventUnlocks);
+        BindRouteContext(request, facts.CanonicalSeed, eventUnlocks);
         bool isNewAnalysisContext = LastRequest is null || LastRequest.RequestId != request.RequestId;
         if (isNewAnalysisContext) ResetMaps();
         if (isNewAnalysisContext && !_openingPreselectionProvided)
@@ -250,11 +251,12 @@ internal sealed partial class AnalysisPage : MarginContainer, IAppPage, IRespons
         }
         _openingPreselectionProvided = false;
         LastRequest = request;
-        LastDocument = document;
-        PrecomputeAncientPremises(request, document);
-        string committedSeed = string.IsNullOrWhiteSpace(document.CanonicalSeed)
+        LastFacts = facts;
+        LastDocument = SeedPredictionDocument.FromFacts(facts);
+        PrecomputeAncientPremises(request, facts);
+        string committedSeed = string.IsNullOrWhiteSpace(facts.CanonicalSeed)
             ? request.OriginalSeed
-            : document.CanonicalSeed;
+            : facts.CanonicalSeed;
         _requestBar.CommitSeed(committedSeed);
         _requestBar.SetContext(
             request.Character.CharacterKey,
@@ -321,8 +323,8 @@ internal sealed partial class AnalysisPage : MarginContainer, IAppPage, IRespons
             return true;
         }
 
-        string canonicalSeed = LastDocument is not null && !string.IsNullOrWhiteSpace(LastDocument.CanonicalSeed)
-            ? LastDocument.CanonicalSeed
+        string canonicalSeed = LastFacts is not null && !string.IsNullOrWhiteSpace(LastFacts.CanonicalSeed)
+            ? LastFacts.CanonicalSeed
             : LastRequest.OriginalSeed;
         IRuntimeProfile profile = LastRequest.Authority.ProfileId == RuntimeProfileId.Beta111
             ? Beta111Profile.Instance

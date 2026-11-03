@@ -4,6 +4,7 @@ using System.Collections.Immutable;
 using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Identity;
+using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Authority;
 using RolltheSpire2.Core.World.Snapshots;
 using RolltheSpire2.Core.World;
@@ -30,6 +31,7 @@ internal static class RuntimeVersionProfileChecks
             throw new InvalidOperationException(label + " did not explicitly reject the profile");
         }
         CheckRequestSupportScope(Check);
+        CheckEffectCatalogRules(Check);
         string directory = Path.Combine(Environment.CurrentDirectory, ".build-evidence", "runtime-version-profile", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         string file = Path.Combine(directory, "release_info.json");
@@ -179,6 +181,33 @@ internal static class RuntimeVersionProfileChecks
         check(baseline.SupportEvidence.Unlock.NumberOfRuns == 7 && baseline.SupportEvidence.Unlock.RevealedEpochs.SequenceEqual(Vanilla111EpochBaseline.EpochIds) &&
             baseline.SupportEvidence.Discovery.Source == RequestFactSource.ExplicitRequest,
             "Actual unlock/discovery primitives and source are retained without substituting account or all state");
+    }
+
+    private static void CheckEffectCatalogRules(Action<bool, string> check)
+    {
+        var modern = RuntimeProfilePolicies.EffectCatalogRules(RuntimeProfileId.Beta111);
+        check(ReferenceEquals(modern, RuntimeProfilePolicies.EffectCatalogRules(RuntimeProfileId.Beta110)),
+            "Audited compatible pool mechanisms share rules without sharing game-version evidence");
+        var future = RuntimeVersionCompatibility.Resolve("0.112.0");
+        check(ReferenceEquals(modern, RuntimeProfilePolicies.EffectCatalogRules(future.ProfileId)) &&
+              future.IsProvisional && !RuntimeProfilePolicies.SupportsPredictorSeedInitialization(future),
+            "Shared future mechanism selection preserves uncertainty and the full-seed support boundary");
+        check(modern.IsGeneratedCurseEligible(true) == true && modern.IsGeneratedCurseEligible(false) == false &&
+              modern.IsGeneratedCurseEligible(null) is null,
+            "Missing modifier eligibility is unknown, not an invented eligible or excluded fact");
+        NeowEffectCardSnapshot Card(string entry, bool? eligible) =>
+            new(entry, new("CARD", entry), 0, EffectCardRarity.Curse,
+                EffectCardType.Curse, false, false, false, false, true,
+                CanBeGeneratedByModifiers: eligible);
+        var cards = new[] { Card("Z_CURSE", true), Card("A_CURSE", true), Card("NO", false) };
+        var ordered = modern.BuildGeneratedCursePool(cards, true, out bool exact);
+        check(exact && ordered!.Select(key => key.Entry).SequenceEqual(new[] { "A_CURSE", "Z_CURSE" }),
+            "Generated curses preserve official ModelId ordering and modifier filtering");
+        var partial = modern.BuildGeneratedCursePool(cards.Append(Card("UNKNOWN", null)).ToArray(), true, out exact);
+        check(!exact && partial!.SequenceEqual(ordered!),
+            "Unknown eligibility retains known independent curses but cannot establish pool completeness");
+        check(modern.BuildGeneratedCursePool(null, true, out exact) is null && !exact,
+            "A missing observed pool is not supplied by the selected mechanism");
     }
 
     private sealed record BrokenProfile(int SeedLength, string SeedAlphabet, bool SupportsSeedRng = true,

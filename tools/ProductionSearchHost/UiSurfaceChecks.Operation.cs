@@ -217,10 +217,22 @@ internal static partial class UiSurfaceChecks
         {
             await RunRfCoexistenceChecks(root, output, runtime, game, viewport, hoverRoot, run, player, topBar,
                 ransack, Signature, Check);
+            await RunRfRerollSequenceChecks(root, output, runtime, game, viewport, hoverRoot, run, player,
+                eventNode, global, Signature, Check, Exercise, fixture, set);
             eventLayout.Free(); ordinary.EnsureCleanup(); run.PopCurrentRoom();
+            File.WriteAllText(receipt, System.Text.Json.JsonSerializer.Serialize(new
+                { passed = true, checks, cases, focused = "RandomForeseerCoexistence" }));
             return;
         }
         var operationFeedbackBasis = PredictorOperationCapture.Capture(run, runtime.Detection.NormalizedVersion, game);
+        if (System.Environment.GetEnvironmentVariable("RT2_HUNT_PREFIX_GEOMETRY") == "1")
+        {
+            var actualOwner = ransack.GetGlobalRect();
+            eventLayout.Free(); ordinary.EnsureCleanup(); run.PopCurrentRoom();
+            await RunHuntPrefixDisplayChecks(root, output, viewport, hoverRoot, operationFeedbackBasis, Check, actualOwner);
+            File.WriteAllText(receipt, System.Text.Json.JsonSerializer.Serialize(new { passed = true, checks, focused = "HuntPrefixGeometry" }));
+            return;
+        }
         await RunDisabledOperationSourceCheck(root, viewport, hoverRoot, ransack,
             runtime.Detection.NormalizedVersion, Signature, Check);
         await Exercise("event-potion-courier", ransack, ransack, "POTION_COURIER",
@@ -548,10 +560,14 @@ internal static partial class UiSurfaceChecks
             Signature, Check, Exercise, set);
         await RunPhilosopherRerollRecipeChecks(root, output, runtime, game, run, player, eventNode, overlays,
             Signature, Check, Exercise, set);
+        await RunCombatRerollPathChecks(root, output, runtime, game, viewport, run, player, overlays,
+            Signature, Check, Exercise, set);
         await RunCrystalLootOperationChecks(root, output, runtime, game, run, player, eventNode, global, overlays,
             Signature, Check, Exercise, set);
         RunEventFeedbackChecks(operationFeedbackBasis, output);
         await RunOperationPolishDisplayChecks(root, output, viewport, hoverRoot, operationFeedbackBasis, Check);
+        await RunPotionAlternativeDisplayChecks(root, output, viewport, hoverRoot, operationFeedbackBasis, Check);
+        await RunHuntPrefixDisplayChecks(root, output, viewport, hoverRoot, operationFeedbackBasis, Check);
         await RunModCardDisplayChecks(root, output, viewport, hoverRoot, run, player, Signature, Check);
         await RunEventRoyaltiesInputChecks(root, output, runtime, game, viewport, hoverRoot, run, player,
             eventNode, layoutScenes, overlays, Signature, Check, set);

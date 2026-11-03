@@ -104,9 +104,10 @@ internal sealed partial class ObjectPickerPanel : Control
         var grid = new GridContainer { Columns = cards ? 5 : 6 }; grid.AddThemeConstantOverride("h_separation", 12); grid.AddThemeConstantOverride("v_separation", 12); gridInset.AddChild(grid);
         var nativeTiles = new List<(Button Tile, ModelKey Key)>();
         var nativeViews = new Dictionary<Button, Control>();
+        bool cardLayoutPending = false, nativeRefreshQueued = false;
         void RefreshNativeCards()
         {
-            if (!cards || !GodotObject.IsInstanceValid(scroll) || !scroll.IsInsideTree() || !Visible) return;
+            if (!cards || cardLayoutPending || !GodotObject.IsInstanceValid(scroll) || !scroll.IsInsideTree() || !Visible) return;
             var viewport = scroll.GetGlobalRect().Grow(80);
             foreach (var (tile, key) in nativeTiles)
             {
@@ -115,9 +116,20 @@ internal sealed partial class ObjectPickerPanel : Control
                 else if (!visible && nativeViews.Remove(tile, out var view)) { tile.RemoveChild(view); view.QueueFree(); }
             }
         }
-        scroll.GetVScrollBar().ValueChanged += _ => RefreshNativeCards();
+        void QueueNativeRefresh()
+        {
+            if (!cards || nativeRefreshQueued) return;
+            nativeRefreshQueued = true;
+            Callable.From(() => { nativeRefreshQueued = false; RefreshNativeCards(); }).CallDeferred();
+        }
+        // ValueChanged precedes the scroll container's content translation.
+        // Grid sorting also settles new tile positions after a filter rebuild.
+        scroll.GetVScrollBar().ValueChanged += _ => QueueNativeRefresh();
+        scroll.Resized += QueueNativeRefresh;
+        grid.SortChildren += () => { cardLayoutPending = false; QueueNativeRefresh(); };
         void Filter(string text)
         {
+            cardLayoutPending = cards;
             nativeTiles.Clear(); nativeViews.Clear();
             Clear(grid);
             grid.Columns = cards ? 5 : 6;
@@ -150,7 +162,7 @@ internal sealed partial class ObjectPickerPanel : Control
                     ClosePicker(); selected(key);
                 };
             }
-            Callable.From(RefreshNativeCards).CallDeferred();
+            grid.QueueSort();
         }
         {
             var railScroll = new ScrollContainer { Position = new(24, 76), Size = new(filterRailWidth, cards ? 550 : 600), HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };

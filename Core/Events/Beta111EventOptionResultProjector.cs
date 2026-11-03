@@ -28,25 +28,25 @@ public static class Beta111EventOptionResultProjector
             eventEntry is "DENSE_VEGETATION" or "JUNGLE_MAZE_ADVENTURE", eventEntry));
         return eventEntry switch
         {
-            "DENSE_VEGETATION" => [Gold("TRUDGE_ON", 61 + rng.NextInt(39))],
+            "DENSE_VEGETATION" => [Gold("TRUDGE_ON", Beta111EventRules.DenseVegetationGold(rng))],
             // Native NextFloat casts the ranged double to float before decimal conversion;
             // IntValue then truncates the entire positive amount, not its signed offset.
             "JUNGLE_MAZE_ADVENTURE" =>
             [
-                Gold("SOLO_QUEST", JungleGold(rng, 150m)),
-                Gold("JOIN_FORCES", JungleGold(rng, 50m))
+                Gold("SOLO_QUEST", (int)Beta111EventRules.JungleGold(rng, 150m)),
+                Gold("JOIN_FORCES", (int)Beta111EventRules.JungleGold(rng, 50m))
             ],
-            "LOST_WISP" => [Gold("SEARCH", 60 + rng.NextInt(31) - 15)],
-            "LUMINOUS_CHOIR" => [Gold("OFFER_TRIBUTE", 149 - rng.NextInt(50))],
-            "CRYSTAL_SPHERE" => [Gold("UNCOVER_FUTURE", 51 + rng.NextInt(49))],
+            "LOST_WISP" => [Gold("SEARCH", Beta111EventRules.LostWispGold(rng))],
+            "LUMINOUS_CHOIR" => [Gold("OFFER_TRIBUTE", Beta111EventRules.LuminousChoirGold(rng))],
+            "CRYSTAL_SPHERE" => [Gold("UNCOVER_FUTURE", Beta111EventRules.CrystalSphereGold(rng))],
             "SUNKEN_TREASURY" =>
             [
-                Gold("FIRST_CHEST", 60 + rng.NextInt(16) - 8),
-                Gold("SECOND_CHEST", 333 + rng.NextInt(61) - 30)
+                Gold("FIRST_CHEST", Beta111EventRules.SunkenTreasurySmallGold(rng)),
+                Gold("SECOND_CHEST", Beta111EventRules.SunkenTreasuryLargeGold(rng))
             ],
-            "SUNKEN_STATUE" => [Gold("DIVE_INTO_WATER", 111 + rng.NextInt(21) - 10)],
-            "THIS_OR_THAT" => [Gold("PLAIN", 41 + rng.NextInt(28))],
-            "WHISPERING_HOLLOW" => [Gold("GOLD", 35 + rng.NextInt(19) - 9)],
+            "SUNKEN_STATUE" => [Gold("DIVE_INTO_WATER", Beta111EventRules.SunkenStatueGold(rng))],
+            "THIS_OR_THAT" => [Gold("PLAIN", Beta111EventRules.ThisOrThatGold(rng))],
+            "WHISPERING_HOLLOW" => [Gold("GOLD", Beta111EventRules.WhisperingHollowGold(rng))],
             "DOLL_ROOM" => Dolls(rng),
             _ => []
         };
@@ -54,27 +54,10 @@ public static class Beta111EventOptionResultProjector
 
     private static Beta111EventOptionResult Gold(string option, int amount) => new(option, amount, []);
 
-    private static int JungleGold(Xoshiro256StarStar rng, decimal baseAmount) =>
-        (int)(baseAmount + (decimal)(float)(rng.NextDouble() * 30d - 15d));
-
-    private static IReadOnlyList<Beta111EventOptionResult> Dolls(Xoshiro256StarStar rng)
-    {
-        // ChooseRandom uses the authored array. TakeSomeTime starts independently at
-        // event entry and StableShuffle first sorts by RelicModel.CompareTo/ModelId.
-        ModelKey[] authored =
-        [
-            new("RELIC", "DAUGHTER_OF_THE_WIND"),
-            new("RELIC", "MR_STRUGGLES"),
-            new("RELIC", "BING_BONG")
-        ];
-        var randomRng = rng.Clone();
-        ModelKey random = authored[randomRng.NextInt(authored.Length)];
-        ModelKey[] sorted = [authored[2], authored[0], authored[1]];
-        rng.UnstableShuffle(sorted);
-        return
-        [
-            new("RANDOM", null, [random]),
-            new("TAKE_SOME_TIME", null, [sorted[0], sorted[1]])
-        ];
-    }
+    private static IReadOnlyList<Beta111EventOptionResult> Dolls(Xoshiro256StarStar rng) =>
+    [
+        // Each alternative owns its own copy of the caller's entry checkpoint.
+        new("RANDOM", null, [Beta111EventRules.RandomDoll(rng.Clone())]),
+        new("TAKE_SOME_TIME", null, Beta111EventRules.DollOffers(rng.Clone(), 2))
+    ];
 }

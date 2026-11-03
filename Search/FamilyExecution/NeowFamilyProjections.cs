@@ -10,7 +10,7 @@ namespace RolltheSpire2.Search.FamilyExecution;
 // mutable cross-Family cache is shared. Numerical probability solvers are donors.
 internal sealed class NeowFamilyProjections
 {
-    private readonly ExactSearchExecutionRequest _request;
+    private readonly SearchContext _context;
     private readonly NeowSearchFilter _n, _r, _identity;
     private readonly string _id;
     private readonly bool _capsule;
@@ -19,9 +19,9 @@ internal sealed class NeowFamilyProjections
     private readonly double _prefixWork, _tailWork;
     internal FamilyAnalyticalCostProjection Full { get; }
 
-    internal NeowFamilyProjections(ExactSearchExecutionRequest request, NeowReplayPlan plan, bool capsule, RelicFamilyPool? pool, int physicalCapacity = FamilyCpuExecution.Capacity)
+    internal NeowFamilyProjections(SearchModel request, NeowReplayPlan plan, bool capsule, RelicFamilyPool? pool, int physicalCapacity = CpuFilterExecution.Capacity)
     {
-        _request = request; _capsule = capsule; _id = capsule ? "R.Relic" : "N.Neow";
+        _context = request.CompiledSearch.Context; _capsule = capsule; _id = capsule ? "R.Relic" : "N.Neow";
         _n = capsule ? NeowReplayPlan.Compile(request, false).Filter : plan.Filter;
         _r = capsule ? plan.Filter : NeowReplayPlan.NeowFilter(request, true);
         _r = _r with { RelicSequenceConditions = request.Evaluation.RelicSequenceConditions, RelicShopSequenceConditions = request.Evaluation.RelicShopSequenceConditions };
@@ -143,7 +143,7 @@ internal sealed class NeowFamilyProjections
     {
         // Family projections belong to one owner, including multiplayer slots.
         // Keep that context; only the outer Search compiler accepts a whole table.
-        CompiledSearch compiled = SearchCompiler.CompilePlayer(LegacySearchQueryAdapter.FromFilter(filter), _request.CompiledSearch.Context);
+        CompiledSearch compiled = SearchCompiler.CompilePlayer(LegacySearchQueryAdapter.FromFilter(filter), _context);
         lock (_probabilities)
         {
             if (_probabilities.TryGetValue(compiled.SemanticFingerprint, out double? cached)) return cached;
@@ -181,7 +181,7 @@ internal sealed class NeowFamilyProjections
         else donor = NeowSearchFilter.Empty with { RelicSequenceConditions = filter.RelicSequenceConditions,
             RelicShopSequenceConditions = filter.RelicShopSequenceConditions };
         if (parent == 0) return null;
-        var compiled = SearchCompiler.CompilePlayer(LegacySearchQueryAdapter.FromFilter(donor), _request.CompiledSearch.Context);
+        var compiled = SearchCompiler.CompilePlayer(LegacySearchQueryAdapter.FromFilter(donor), _context);
         var estimate = JointSelectivityEstimator.EstimateQuery(SearchSelectivityInput.From(compiled));
         if (!estimate.JointlyPriced || !estimate.Probability.HasValue) return null;
         double conditional = estimate.Probability.Value / parent;
@@ -224,15 +224,20 @@ internal sealed class NeowFamilyProjections
         double mass = 0;
         foreach (byte curse in plan.Authority.EligibleCurseRelicIds)
         {
-            int variants = curse == Beta110FastRelicCatalog.LargeCapsule ? 4 : 8;
+            var identity = plan.Authority.Identity.ForCurse(curse);
+            int variants = 1 << identity.AppendChoices.Length;
             for (int variant = 0; variant < variants; variant++)
             {
-                var positive = new List<byte>();
-                foreach (byte source in NeowFamilyReplay.Positives)
-                    if (NeowLocalOperators.IsPositiveAllowed(source, curse, plan.Authority)) positive.Add(source);
-                positive.Add((variant & 1) == 0 ? Beta110FastRelicCatalog.NutritiousOyster : Beta110FastRelicCatalog.StoneHumidifier);
-                positive.Add((variant & 2) == 0 ? Beta110FastRelicCatalog.NeowsTalisman : Beta110FastRelicCatalog.Pomander);
-                if (variants == 8) positive.Add((variant & 4) == 0 ? Beta110FastRelicCatalog.LavaRock : Beta110FastRelicCatalog.SmallCapsule);
+                var positive = identity.FixedCandidates.ToArray().ToList();
+                for (int i = 0; i < identity.AppendChoices.Length; i++)
+                {
+                    // Keep the existing probability visitation order. This is
+                    // binary enumeration geometry, not a second rule table.
+                    int bit = identity.AppendChoices.Length == NeowIdentityOfferFacts.BinaryChoices.Length
+                        ? (i + identity.AppendChoices.Length - 1) % identity.AppendChoices.Length : i;
+                    var choice = identity.AppendChoices[i];
+                    positive.Add((variant & (1 << bit)) == 0 ? choice.TrueCandidate : choice.FalseCandidate);
+                }
                 int accepted = 0;
                 for (int i = 0; i < positive.Count; i++)
                 for (int j = i + 1; j < positive.Count; j++)
@@ -303,12 +308,12 @@ internal sealed class NeowFamilyProjections
     }
     private double IdentityWork(byte curse)
     {
-        int binary = curse == Beta110FastRelicCatalog.LargeCapsule ? 2 : 3;
-        int positiveCount = binary;
-        foreach (byte id in NeowFamilyReplay.Positives)
-            if (NeowLocalOperators.IsPositiveAllowed(id, curse, _plan.Authority)) positiveCount++;
-        // Root, two RNG initializations (the captured Rewards value is always
-        // constructed), 14 source eligibility probes, draws, observations, masks.
+        var identity = _plan.Authority.Identity.ForCurse(curse);
+        int binary = identity.AppendChoices.Length;
+        int positiveCount = binary + identity.FixedCandidates.Length;
+        // Retained historical coarse work reference: root, two RNG initializations,
+        // fourteen former eligibility probes, draws, observations and masks. The
+        // probes now belong to frozen preparation; this is not a new measurement.
         return (_capsule ? 0 : 1) + 2 + 14 + (1 + binary + positiveCount - 1) + 3 + 5 +
             (_plan.Bones ? _plan.Authority.BonesEligibleRelicIds.Length +
                 Math.Max(0, _plan.Authority.BonesEligibleRelicIds.Length - 1) + 2 + 3 +

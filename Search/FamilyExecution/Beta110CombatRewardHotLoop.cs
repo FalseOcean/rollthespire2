@@ -37,6 +37,10 @@ internal sealed record Beta110GpuCombatRewardHotLoopPlan(
 {
     public int CardStateCount => CardRareStrictCutoffs.Length;
     public int PotionDropNodeCount => PotionDropStrictCutoffs.Length;
+    public bool RareOnlyIdentityElisionEnabled { get; init; }
+    public bool UnobservedFixedGoldEnabled { get; init; }
+    public bool AssignmentEarlyRejectionEnabled { get; init; }
+    public string AssignmentFeasibilitySource { get; init; } = "";
 
     public static Beta110GpuCombatRewardHotLoopPlan Disabled(string reason) => new(
         false,
@@ -64,15 +68,24 @@ internal static class Beta110GpuCombatRewardHotLoopCompiler
 
     internal static Beta110GpuCombatRewardHotLoopPlan Compile(
         int ascension, Beta110CombatRewardFastPlan reward, Beta110FastEffectCatalog catalog,
-        Beta110GpuCombatRewardRoutePolicy routePolicy)
+        Beta110GpuCombatRewardRoutePolicy routePolicy, bool allowOpeningPrefix = false,
+        bool allowUnobservedFixedGold = false)
     {
         if (routePolicy != Beta110GpuCombatRewardRoutePolicy.UnpinnedAssumeUnperturbed)
             return Beta110GpuCombatRewardHotLoopPlan.Disabled("PinnedOrLegacyRouteUsesAcceptedP10APath");
         if (!reward.Enabled)
             return Beta110GpuCombatRewardHotLoopPlan.Disabled("NoCombatRewardConditions");
-        if (reward.OpeningConsumption.HasReplay)
+        if (reward.OpeningConsumption.HasReplay && !allowOpeningPrefix)
             return Beta110GpuCombatRewardHotLoopPlan.Disabled("QueryLiteralOpeningConsumptionUsesGenericSyntheticEvaluator");
-        if (reward.ExplicitContext.ChangesCurrentFastObservables)
+        var context = reward.ExplicitContext;
+        // Fixed gold changes only the discarded amount, not its one RNG draw.
+        // Keep every other structural or unknown influence on the generic body.
+        bool unobservedFixedGold = allowUnobservedFixedGold && reward.GoldPredicateCount == 0 &&
+            context.ChangesCurrentFastObservables && context.AdditionalCardRewardCount == 0 &&
+            (context.InfluenceFlags & ~(Beta110CombatRewardInfluenceFlags.AmethystAubergineFixedGold |
+                Beta110CombatRewardInfluenceFlags.DeterministicUpgradeOnly |
+                Beta110CombatRewardInfluenceFlags.DeterministicEnchantmentOnly)) == 0;
+        if (context.ChangesCurrentFastObservables && !unobservedFixedGold)
             return Beta110GpuCombatRewardHotLoopPlan.Disabled("ExplicitRewardContextUsesGenericSyntheticEvaluator");
         if (!reward.CardPoolAuthorityExact || !reward.PotionPoolAuthorityExact)
             return Beta110GpuCombatRewardHotLoopPlan.Disabled("CombatRewardPoolAuthorityIncomplete");
@@ -89,10 +102,10 @@ internal static class Beta110GpuCombatRewardHotLoopCompiler
         bool potionPoolsComplete = catalog.CombatRewardPotionPool.HasEveryRarity;
         bool potionIdentityRequired = reward.PotionIdentityPredicateCount != 0;
 
-        // This shortcut is admitted only when authored opening replay is empty and
-        // the explicit Reward context does not change the current card/potion/gold
-        // observables. Card rarity state can therefore advance at most three times
-        // per battle before a rare reset on the current hot-loop surface.
+        // Query-literal opening replay consumes Rewards/Niche draws but does not
+        // advance combat card rarity or potion pity. The experimental C caller
+        // carries its prepared Rewards checkpoint into this unchanged suffix.
+        // Explicit context still cannot change the three-card/potion structure.
         int cardStateCount = checked(maxBattle * 3 + 1);
         var rareCutoffs = new ulong[cardStateCount];
         var uncommonCutoffs = new ulong[cardStateCount];
@@ -141,7 +154,9 @@ internal static class Beta110GpuCombatRewardHotLoopCompiler
             CardUncommonStrictCutoffs: uncommonCutoffs,
             PotionDropStrictCutoffs: potionCutoffs,
             PotionRareInclusiveCutoff: FindNextFloatCutoff(0.1f, inclusive: true),
-            PotionUncommonInclusiveCutoff: FindNextFloatCutoff(0.35f, inclusive: true));
+            PotionUncommonInclusiveCutoff: FindNextFloatCutoff(0.35f, inclusive: true)) {
+            UnobservedFixedGoldEnabled = unobservedFixedGold
+        };
     }
 
     internal static string BuildShaderDefines(Beta110GpuCombatRewardHotLoopPlan hot,
@@ -176,6 +191,9 @@ internal static class Beta110GpuCombatRewardHotLoopCompiler
         sb.Append("#define RT2_CR_HOT_POTION_ID_REQUIRED ").Append(hot.PotionIdentityObservableRequired ? "1\n" : "0\n");
         sb.Append("#define RT2_CR_HOT_MAX_BATTLE ").Append(Math.Max(1, hot.MaximumBattleOrdinal).ToString(CultureInfo.InvariantCulture)).Append("u\n");
         sb.Append("#define RT2_CR_HOT_PREDICATE_COUNT ").Append(Math.Max(0, hot.PredicateCount).ToString(CultureInfo.InvariantCulture)).Append("u\n");
+        sb.Append("#define RT2_C_RARE_ONLY_IDENTITY ").Append(directPool && hot.RareOnlyIdentityElisionEnabled ? "1\n" : "0\n");
+        sb.Append("#define RT2_C_ASSIGNMENT_EARLY ").Append(enabled && hot.AssignmentEarlyRejectionEnabled ? "1\n" : "0\n");
+        if (enabled && hot.AssignmentEarlyRejectionEnabled) sb.Append(hot.AssignmentFeasibilitySource);
         return sb.ToString();
     }
 

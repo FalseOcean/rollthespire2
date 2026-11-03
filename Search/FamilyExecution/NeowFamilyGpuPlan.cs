@@ -18,6 +18,13 @@ internal sealed record NeowFamilyGpuPlan(uint[] Meta, uint[] PoolMeta, uint[] Ca
         _ => NumericRequirements.Unspecified
     };
     internal bool HasAuthoredUpgrades { get; init; }
+    internal int CapsuleNicheMetaOffset { get; init; } = -1;
+    internal NeowEntryIdentityMode EntryIdentityMode { get; init; }
+    internal byte EntryIdentityTarget { get; init; } = 255;
+    internal int EntryIdentityMetaOffset { get; init; } = -1;
+    internal string EntryIdentityRevision =>
+        ((EntryIdentityMode & NeowEntryIdentityMode.RejectUnavailable) != 0 ? ".EntryUnavailableReject.20261030.v1" : "") +
+        ((EntryIdentityMode & NeowEntryIdentityMode.TrackSingleRequired) != 0 ? ".EntrySingleIdentityTrack.20261030.v1" : "");
     internal int JointTransformMetaOffset { get; init; } = -1;
     internal bool IsMultiplayer => Meta[6] > 1;
     internal bool HasLocalResults => Meta[83] != 0 || Meta[84] != 0;

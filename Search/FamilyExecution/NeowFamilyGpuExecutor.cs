@@ -68,6 +68,7 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
     private readonly uint _tag;
     private readonly bool _bonesArcane;
     private readonly int _bonesKMode;
+    private readonly BonesHiddenUpgradeContinuation? _bonesHiddenUpgrades;
     internal uint[] BonesKCounts { get; private set; } = [];
     private readonly bool _privateInput;
     private readonly bool _privateOutput;
@@ -92,20 +93,26 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
         bool bonesCapsuleComposite = false, bool bonesArcaneComposite = false, int directNestedMode = 0, int capsulePhysicalMode = 0, int bonesKMode = 0, bool authoredUpgrades = false,
         bool localResults = true, bool multiplayer = false, int jointTransformMetaOffset = -1,
         NeowGpuNumericalVariant numericalVariant = NeowGpuNumericalVariant.NativeFloat64,
-        bool leafyLazy = false)
+        bool leafyLazy = false, int entryIdentityMetaOffset = -1, byte entryIdentityTarget = 255,
+        int bonesHiddenUpgradeMode = 0, int bonesHiddenUpgradeOffset = 0, int capsuleNicheMetaOffset = -1)
     {
         if (numericalVariant != NeowGpuNumericalVariant.NativeFloat64 &&
             (capsuleComposite || bonesCapsuleComposite || bonesArcaneComposite ||
              capsulePhysicalMode != 0 || bonesKMode != 0 || jointTransformMetaOffset >= 0))
             throw new InvalidOperationException("N.IntegerUnitFloat.OrdinarySourceOnly");
         string source = FamilyGpuComputeUtility.LoadEmbeddedShader(multiplayer ? "NeowParty.comp.glsl" : "NeowSingleplayer.comp.glsl")
+        .Replace("__RT2_N_ENTRY_META_OFFSET__", entryIdentityMetaOffset.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
+        .Replace("__RT2_N_ENTRY_TARGET__", entryIdentityTarget.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
         .Replace("#define RT2_N_LEAFY_LAZY 0", leafyLazy && leafyPreGate && !multiplayer
             ? "#define RT2_N_LEAFY_LAZY 1" : "#define RT2_N_LEAFY_LAZY 0", StringComparison.Ordinal)
         .Replace("__RT2_N_TRANSFORM_META_OFFSET__", jointTransformMetaOffset.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
         .Replace("/*__RT2_N_JOINT_TRANSFORMS__*/", jointTransformMetaOffset < 0 ? "" : FamilyGpuComputeUtility.LoadEmbeddedShader("NeowJointTransforms.glsl"), StringComparison.Ordinal)
         .Replace("__RT2_LOCAL_RESULTS__", localResults ? "1" : "0", StringComparison.Ordinal)
         .Replace("__RT2_AUTHORED_UPGRADES__", authoredUpgrades ? "1" : "0", StringComparison.Ordinal)
+        .Replace("__RT2_CAPSULE_NICHE_OFFSET__", capsuleNicheMetaOffset.ToString(), StringComparison.Ordinal)
         .Replace("__RT2_BONES_K_MODE__", bonesKMode.ToString(), StringComparison.Ordinal)
+        .Replace("__RT2_BONES_HIDDEN_UPGRADES__", bonesHiddenUpgradeMode.ToString(), StringComparison.Ordinal)
+        .Replace("__RT2_BONES_HIDDEN_OFFSET__", bonesHiddenUpgradeOffset.ToString(), StringComparison.Ordinal)
         .Replace("/*__RT2_BONES_K__*/", bonesKMode == 0 ? "" : FamilyGpuComputeUtility.LoadEmbeddedShader("BonesKSameRoute.glsl")
             .Replace("/*__RT2_RFULL_CHECKPOINT_MATCHER__*/", FamilyGpuComputeUtility.LoadEmbeddedShader("RelicFullCapsule.glsl"), StringComparison.Ordinal), StringComparison.Ordinal)
         .Replace("__RT2_CAPSULE_PHYSICAL__", capsulePhysicalMode.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
@@ -133,7 +140,7 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
             .Replace("__RT2_UP_FRONT_LOW__", ((uint)hash).ToString("x8"), StringComparison.Ordinal)
             .Replace("__RT2_UP_FRONT_HIGH__", ((uint)(hash >> 32)).ToString("x8"), StringComparison.Ordinal);
     }
-    internal NeowFamilyGpuExecutor(RenderingDevice rd, NeowFamilyGpuPlan plan, uint tag, NeowCapsuleComposite? composite = null, PrivateOrdinalBuffer? privateInput = null, PrivateOrdinalBuffer? privateOutput = null, int capsulePhysicalMode = 0, int bonesKMode = 0, uint[]? bonesKMetadata = null, NeowFamilyGpuPlan[]? partyPlans = null, NeowFamilyGpuExecutor? sharedDenseScratch = null, NeowGpuOptimizations? optimizations = null)
+    internal NeowFamilyGpuExecutor(RenderingDevice rd, NeowFamilyGpuPlan plan, uint tag, NeowCapsuleComposite? composite = null, PrivateOrdinalBuffer? privateInput = null, PrivateOrdinalBuffer? privateOutput = null, int capsulePhysicalMode = 0, int bonesKMode = 0, uint[]? bonesKMetadata = null, NeowFamilyGpuPlan[]? partyPlans = null, NeowFamilyGpuExecutor? sharedDenseScratch = null, NeowGpuOptimizations? optimizations = null, BonesHiddenUpgradeContinuation? bonesHiddenUpgrades = null)
     {
         if (plan.NumericalVariant != NeowGpuNumericalVariant.NativeFloat64 &&
             (plan.JointTransformMetaOffset >= 0 || composite is not null ||
@@ -151,6 +158,7 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
         if (bonesKMode is < 0 or > 2 || (bonesKMode != 0 && (composite is not null || bonesKMode == 1 && privateOutput is null || bonesKMode == 2 && bonesKMetadata is null)))
             throw new InvalidOperationException("BonesK.SameRouteScope");
         _bonesKMode = bonesKMode;
+        _bonesHiddenUpgrades = bonesHiddenUpgrades;
         _rd = rd; _tag = tag; _bonesArcane = composite?.UsesBonesArcane == true; _privateInput = privateInput is not null;
         _privateOutput = privateOutput is not null;
         _smallOutput = _privateOutput && composite is null && bonesKMode == 0 && partyPlans is null && SupportsSmallOutput(plan);
@@ -205,6 +213,9 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
         UsesLeafyLazy == other.UsesLeafyLazy &&
         _smallOutput == other._smallOutput && _partySource == other._partySource &&
         _plan.NumericalVariant == other._plan.NumericalVariant && _plan.HasAuthoredUpgrades == other._plan.HasAuthoredUpgrades &&
+        _plan.CapsuleNicheMetaOffset == other._plan.CapsuleNicheMetaOffset &&
+        _plan.EntryIdentityMode == other._plan.EntryIdentityMode && _plan.EntryIdentityTarget == other._plan.EntryIdentityTarget &&
+        _plan.EntryIdentityMetaOffset == other._plan.EntryIdentityMetaOffset &&
         _plan.Meta.AsSpan().SequenceEqual(other._plan.Meta) && _plan.PoolMeta.AsSpan().SequenceEqual(other._plan.PoolMeta) &&
         _plan.Cards.AsSpan().SequenceEqual(other._plan.Cards) && _plan.Strike.AsSpan().SequenceEqual(other._plan.Strike) &&
         _plan.Defend.AsSpan().SequenceEqual(other._plan.Defend) && _plan.Bones.AsSpan().SequenceEqual(other._plan.Bones) &&
@@ -220,7 +231,13 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
             authoredUpgrades: _plan.HasAuthoredUpgrades,
             localResults: _plan.HasLocalResults || _composite is not null || _bonesKMode != 0, multiplayer: _plan.IsMultiplayer,
             jointTransformMetaOffset: _plan.JointTransformMetaOffset, numericalVariant: _plan.NumericalVariant,
-            leafyLazy: UsesLeafyLazy);
+            leafyLazy: UsesLeafyLazy, entryIdentityMetaOffset: _plan.EntryIdentityMetaOffset,
+            entryIdentityTarget: _plan.EntryIdentityTarget,
+            // Two distinct authored Capsule targets occupy both actual draws.
+            // Their W/WP advances already live in N's authored continuation.
+            bonesHiddenUpgradeMode: _bonesHiddenUpgrades is { KnownFull: true } ? 4 : _bonesHiddenUpgrades?.Mode ?? 0,
+            bonesHiddenUpgradeOffset: _bonesHiddenUpgrades?.MetadataOffset ?? 0,
+            capsuleNicheMetaOffset: _plan.CapsuleNicheMetaOffset);
         source = ApplyOptimizations(source, stage);
         if (leafyLocalPrefix)
             source = source.Replace("#define RT2_N_LEAFY_LOCAL_PREFIX 0", "#define RT2_N_LEAFY_LOCAL_PREFIX 1", StringComparison.Ordinal);

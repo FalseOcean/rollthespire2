@@ -135,7 +135,7 @@ internal sealed partial class EventSearchEditor : Control
                     {
                         var effects = ReflectionNeowEffectSnapshotAdapter.Capture(_runtime.Profile, seed,
                             CharacterIdentity.FromKey(character), ascension, players, seat, _runtime.Profile.ProfileId,
-                            _runtime.Detection.DisplayVersion, new ReflectionSnapshotProfileRules(true, true), resolved);
+                            _runtime.Detection.DisplayVersion, RolltheSpire2.Compatibility.RuntimeProfilePolicies.EffectCatalogRules(_runtime.Profile.ProfileId), resolved);
                         world = ReflectionNeowEffectSnapshotAdapter.CaptureWorld(_runtime.Profile, seed,
                             CharacterIdentity.FromKey(character), ascension, players, seat, noRunModifiers: true,
                             effects.EffectAuthority, gameVersion: _runtime.Detection.DisplayVersion);

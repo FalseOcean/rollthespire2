@@ -292,7 +292,7 @@ internal static partial class UiSurfaceChecks
                     object? menuPreparationProcessCpu = sample == 0 ? menuMeasurement?.CaptureFirstEntryProcessCpu() : null;
                     if (sample == 0) menuFirstAfterEntry = menuPreparationAfterEntry;
                     double currentPageLongestFrameIntervalMs = frameIntervals.DefaultIfEmpty().Max();
-                    if (scene == "in-run" && PanelOpenField(current, "_predictor") is not RolltheSpire2.Ui.Pages.Analysis.AnalysisPage { LastDocument: not null })
+                    if (scene == "in-run" && PanelOpenField(current, "_predictor") is not RolltheSpire2.Ui.Pages.Analysis.AnalysisPage { LastFacts: not null })
                         throw new InvalidOperationException("Ordinary run did not produce its supported initial prediction");
                     Control? crystalPanel = scene == "crystal"
                         ? (Control)PanelOpenField(PanelOpenField(launcher, "_surface")!, "_panel")! : null;
@@ -816,7 +816,7 @@ internal static partial class UiSurfaceChecks
     {
         if (!shell.IsVisibleInTree() || !PanelOpenActivePageReady(shell) || shell.CloseButton.Disabled) return false;
         if (scene == "main-menu") return PanelOpenField(shell, "_references") is Control references && references.IsVisibleInTree() && references.IsNodeReady();
-        if (scene == "in-run") return PanelOpenField(shell, "_predictor") is RolltheSpire2.Ui.Pages.Analysis.AnalysisPage { LastDocument: not null } predictor && predictor.IsVisibleInTree();
+        if (scene == "in-run") return PanelOpenField(shell, "_predictor") is RolltheSpire2.Ui.Pages.Analysis.AnalysisPage { LastFacts: not null } predictor && predictor.IsVisibleInTree();
         return PanelOpenField(shell, "_crystalScene") is Control crystal && crystal.IsVisibleInTree() &&
             PanelOpenField(crystal, "_snapshot") is not null &&
             PanelOpenField(crystal, "_optionTiles") is System.Collections.IDictionary { Count: > 0 };

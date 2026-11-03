@@ -1,5 +1,4 @@
 using RolltheSpire2.Compatibility;
-using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.Semantics;
 
@@ -10,7 +9,6 @@ namespace RolltheSpire2.Search.Selectivity;
 internal static class FirstActUnknownEventProbability
 {
     internal const string ComponentId = "E.FirstActUnknownEventPrefix";
-    private static readonly ModelKey Juzu = new("RELIC", "JUZU_BRACELET");
 
     internal static double ConditionalPrefix(int count, bool juzuAcquired)
     {
@@ -37,8 +35,7 @@ internal static class FirstActUnknownEventProbability
         var query = input.CompiledSearch.NormalizedQuery;
         int count = Math.Max(query.FirstActUnknownEventPrefixCount,
             query.Players.Select(player => player.Conditions.FirstActUnknownEventPrefixCount).DefaultIfEmpty(0).Max());
-        bool juzu = ExplicitOpeningRelicFacts.EnumerateGuaranteed(query).Contains(Juzu) || query.Players.Any(player =>
-            ExplicitOpeningRelicFacts.EnumerateGuaranteed(player.Conditions).Contains(Juzu));
+        bool juzu = ExplicitOpeningRelicFacts.HasDeclaredJuzuForUnknownRooms(query);
         bool supported = input.ProfileId == RuntimeProfileId.Beta111 && count is >= 1 and <= 3;
         string issue = input.ProfileId != RuntimeProfileId.Beta111 ? "ProfileUnsupported" :
             count is < 1 or > 3 ? "CountUnsupported" :

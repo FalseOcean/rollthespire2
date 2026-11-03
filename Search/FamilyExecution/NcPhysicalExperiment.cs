@@ -5,14 +5,19 @@ namespace RolltheSpire2.Search.FamilyExecution;
 internal static class NcPhysicalExperiment
 {
     internal static string Mode => Environment.GetEnvironmentVariable("RT2_NC_EXPERIMENT") ?? "";
-    internal static bool TrySelect(ExactSearchExecutionRequest request,IReadOnlyList<IFamilyInvocation> registered,
+    internal static bool TrySelect(PreparedSearch request,IReadOnlyList<FilterBodyDescription> registered,
         FamilyExecutionPlan ordinary,out FamilyExecutionPlan? selected, string? explicitMode = null)
     {
         selected=null;string mode=explicitMode ?? Mode;if(mode.Length==0)return false;
         if(EwPhysicalExperiment.Mode.Length!=0)throw new InvalidOperationException("Y5.ConflictingExperiments");
         if(mode is not ("ordinary" or "private-ordinal" or "verify-ordinal" or "ordinary-nc" or "ordinary-cn" or "private-nc" or "verify-nc"))throw new InvalidOperationException("Y5.UnknownMode");
-        if(registered.Count!=2||registered.OfType<CombatRewardFamily>().SingleOrDefault()?.GpuPlan is not {} c ||
-            registered.OfType<NeowFamily>().SingleOrDefault()?.GpuPlan is not {} n)
+        var model = request.Model;
+        var preferences = FilterExecutionPreferences.From(request.RunOptions);
+        NeowReplayPlan? neowReplay = null;
+        if (registered.Count != 2 || !registered.Any(f => f.FamilyId == "C.CombatReward" && f.UsesGpu) ||
+            !registered.Any(f => f.FamilyId == "N.Neow" && f.UsesGpu) ||
+            !CombatRewardFamily.TryPrepare(model, preferences, out var combat) || combat!.GpuPlan is not { } c ||
+            !NeowFamilyGpuPlan.TryCreate(neowReplay = NeowReplayPlan.Compile(model, false), out var n, out _) || n is null)
             throw new InvalidOperationException("Y5.RequiresGpuNCOnly");
         // Every trial names its execution order directly. The original Y5
         // aliases retain C>N independently of the ordinary Search planner.
@@ -31,7 +36,8 @@ internal static class NcPhysicalExperiment
         }
         else
         {
-            var f=new NcPrivateInvocation(request,c,n,mode);
+            var f=NcPrivateInvocation.Prepare(model,c,n,mode,
+                neowReplay!.FilterRemainders.Concat(combat.Body.Preparation.Remainders).ToArray());
             var condition=f.ConditionPerformance;
             var stage=new FamilyExecutionPlanStage(f,f.Coverage,false,1,null,null,null,condition,
                 GpuCostCalibration.ResolveReference(condition),null,null,null,null,0);

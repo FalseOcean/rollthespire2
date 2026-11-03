@@ -54,6 +54,27 @@ internal static class EventResultGpuPacking
             output.Add(target < 0 ? ushort.MaxValue : checked((uint)target));
         }
 
+        // Keep the original header and condition pairs intact. The old predicate
+        // ignores this request-only trailer and follows the same payload pointers.
+        // [need bits, cheap count, Trash count, grouped original condition indices].
+        // Every condition belongs to exactly one group; no predicate is removed.
+        uint needs = 0;
+        var cheap = new List<uint>();
+        var trash = new List<uint>();
+        var remaining = new List<uint>();
+        for (int i = 0; i < conditions.Count; i++)
+        {
+            uint kind = output[9 + i * 2];
+            if (kind <= 3) needs |= 1u << (int)kind;
+            (kind is 7 or 8 ? cheap : kind is 0 or 1 ? trash : remaining).Add(checked((uint)i));
+        }
+        output.Add(needs);
+        output.Add(checked((uint)cheap.Count));
+        output.Add(checked((uint)trash.Count));
+        output.AddRange(cheap);
+        output.AddRange(trash);
+        output.AddRange(remaining);
+
         // Existing E plan buffer owns the bounded two-draw constants. Cross-Family
         // input/output remains ordinal-only, including private execution.
         for (int i = 0; i < conditions.Count; i++)
@@ -81,10 +102,9 @@ internal static class EventResultGpuPacking
         var colors = new List<uint>();
         if (eventAuthority is { ColorfulPoolAuthorityExact: true } authority)
         {
-            foreach (ModelKey key in Beta111EventResultCatalog.ColorfulCharacterOrder)
+            foreach (ModelKey key in Beta111EventRules.ColorfulCandidates(authority.OwnerCharacterKey,
+                         authority.UnlockedCharacterCardPoolKeys))
             {
-                if (key == authority.OwnerCharacterKey ||
-                    !authority.UnlockedCharacterCardPoolKeys.Contains(key)) continue;
                 colors.Add(checked((uint)IndexOf(Beta111EventResultCatalog.ColorfulCharacterOrder, key)));
             }
         }

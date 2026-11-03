@@ -17,15 +17,15 @@ internal static partial class FamilyPhysicalMatrix
     // Diagnostic only: two independently registered wrappers retain the actual
     // child request/slot/pools and differ only in which complete tuple runs first.
     // No production ordering or cost coefficients are changed by this check.
-    internal static void RunPartyMerchantOrderChecks(ExactSearchExecutionRequest basis, string output)
+    internal static void RunPartyMerchantOrderChecks(PreparedSearch basis, string output)
         => RunPartyMerchantOrderCore(basis, output, holdout: false);
 
-    internal static void RunPartyMerchantOrderHoldoutChecks(ExactSearchExecutionRequest basis, string output)
+    internal static void RunPartyMerchantOrderHoldoutChecks(PreparedSearch basis, string output)
         => RunPartyMerchantOrderCore(basis, output, holdout: true);
 
-    private static void RunPartyMerchantOrderCore(ExactSearchExecutionRequest basis, string output, bool holdout)
+    private static void RunPartyMerchantOrderCore(PreparedSearch basis, string output, bool holdout)
     {
-        var context = basis.CompiledSearch.Context;
+        var context = basis.Model.CompiledSearch.Context;
         var party = context.Party ?? throw new InvalidDataException("MpP3.RealPartyContextRequired");
         int players = party.Players.Count, checks = 0;
         void Check(bool pass, string label)
@@ -73,34 +73,33 @@ internal static partial class FamilyPhysicalMatrix
             var query = SearchQuery.Empty with { Players = party.Players.Select(p => new PlayerOfferQuery(
                 p.PlayerSlotIndex, ModelKeySetFilter.Empty) { Conditions = Personal(p.PlayerSlotIndex,
                     shape == "AllOrderedSymmetric" || p.PlayerSlotIndex == (shape == "WideThenRare" ? 1 : 0)) }).ToArray() };
-            var parent = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context), options).Plan
+            var parent = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context), options).Plan
                 ?? throw new InvalidDataException("MpP3.FactoryRejected:" + shape);
             var cpuFamilies = FamilyExecutionCoordinator.CreateRegisteredFamilies(parent, false);
             var originalFamilies = FamilyExecutionCoordinator.CreateRegisteredFamilies(parent, true);
             var movedFamilies = FamilyExecutionCoordinator.CreateRegisteredFamilies(parent, true);
             var cpu = cpuFamilies.Single(f => f.FamilyId == "S.MerchantShopColorless");
-            var original = originalFamilies.OfType<PartyFamily>().Single(f => f.FamilyId == "S.MerchantShopColorless");
-            var donor = movedFamilies.OfType<PartyFamily>().Single(f => f.FamilyId == "S.MerchantShopColorless");
+            var original = originalFamilies.Single(f => f.FamilyId == "S.MerchantShopColorless");
+            var donor = movedFamilies.Single(f => f.FamilyId == "S.MerchantShopColorless");
             // Copy actual tuples from a fresh registration, not newly projected
             // requests or children shared with the reference wrapper. The donor
             // has never invoked/bound resources; the new wrapper owns its children.
-            var originalStages = ((ExactSearchExecutionRequest Request, IFamilyInvocation Family)[])
-                typeof(PartyFamily).GetField("_stages", Instance)!.GetValue(original)!;
-            var donorStages = ((ExactSearchExecutionRequest Request, IFamilyInvocation Family)[])
-                typeof(PartyFamily).GetField("_stages", Instance)!.GetValue(donor)!;
+            var originalStages = HostFilterBindings.PartyModels(parent, original);
+            var donorStages = HostFilterBindings.PartyModels(parent, donor);
             Check(originalStages.Length == players && donorStages.Length == players &&
                 originalStages.Select(s => s.Request.Authority.PlayerSlotIndex).SequenceEqual(Enumerable.Range(0, players)) &&
                 donorStages.Select(s => s.Request.Authority.PlayerSlotIndex).SequenceEqual(Enumerable.Range(0, players)),
                 "OriginalSlotOrder:" + shape);
             Check(originalStages.All(a => donorStages.All(b => !ReferenceEquals(a.Family, b.Family))), "IndependentChildren:" + shape);
             var movedStages = new[] { donorStages[1], donorStages[0] }.Concat(donorStages.Skip(2)).ToArray();
-            var moved = new PartyFamily(parent, movedStages);
-            Check((bool)Get(original, "UsesPrivate")! && (bool)Get(moved, "UsesPrivate")!, "CompletePrivateChains:" + shape);
-            var execution = new FamilyExecutionContext(requiresGpu: true, failOnPhysicalRecovery: true, cpuWorkerCount: 16);
-            IFamilyInvocation? compactProducer = null;
+            var moved = PartyFamily.Prepare(parent.Model, FilterExecutionPreferences.From(parent.RunOptions),
+                movedStages.Select(s => new PartyFilterStage(s.Slot,s.Family)).ToArray());
+            Check(original.PhysicalBodies.All(s=>s.CanBindPrivateSerial) && moved.PhysicalBodies.All(s=>s.CanBindPrivateSerial), "CompletePrivateChains:" + shape);
+            var execution = new FilterRuntimeServices(requiresGpu: true, failOnPhysicalRecovery: true, cpuWorkerCount: 16);
+            FilterBodyDescription? compactProducer = null;
             try
             {
-                ExactSearchExecutionRequest? producerRequest = null;
+                PreparedSearch? producerRequest = null;
                 if (holdout)
                 {
                     // A separately registered real N offer gate produces Compact
@@ -110,7 +109,7 @@ internal static partial class FamilyPhysicalMatrix
                     var producerQuery = SearchQuery.Empty with { Players = party.Players.Select(p =>
                         new PlayerOfferQuery(p.PlayerSlotIndex, p.PlayerSlotIndex == 0
                             ? new ModelKeySetFilter([offer], [], []) : ModelKeySetFilter.Empty)).ToArray() };
-                    producerRequest = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(producerQuery, context), options).Plan
+                    producerRequest = SearchPreparationCompiler.Compile(SearchCompiler.Compile(producerQuery, context), options).Plan
                         ?? throw new InvalidDataException("MpP3.CompactProducerCompile");
                     compactProducer = FamilyExecutionCoordinator.CreateRegisteredFamilies(producerRequest, true)
                         .Single(f => f.FamilyId == "N.Neow");
@@ -119,11 +118,10 @@ internal static partial class FamilyPhysicalMatrix
                 }
                 FamilyCandidateSet ActualCompact(SearchBatch batch)
                 {
-                    var value = compactProducer!.InvokeAsync(execution, new(batch, producerRequest!),
-                        FamilyCandidateSet.Dense(batch), default).GetAwaiter().GetResult();
+                    var value = compactProducer!.ExecuteAsync(execution, FamilyCandidateSet.Dense(batch), default).GetAwaiter().GetResult();
                     Check(value.Batch == batch && !value.IsDense && value.EnumerateLogicalOrdinals().Contains(0UL), "RealCompactProducerPopulation:" + shape);
                     producerRows.Add(new { Shape = shape, Input = batch.BatchCandidateCount, Output = value.Count,
-                        Digest = Digest(value), Slot = producerRequest!.Authority.PlayerSlotIndex,
+                        Digest = Digest(value), Slot = producerRequest!.Model.Authority.PlayerSlotIndex,
                         Provenance = "ActualIndependentNOfferGateGpuOutput;GeneratedOutsideConsumerTimers" });
                     return value;
                 }
@@ -136,14 +134,13 @@ internal static partial class FamilyPhysicalMatrix
                 for (int child = 0; child < players; child++)
                     Check(roots.Select(cpuPlans[child].Matches).SequenceEqual(sourceMatches[child]), "CpuSourceFullPopulation:" + shape + ":" + child);
                 var expected = Enumerable.Range(0, oraclePopulation).Select(i => sourceMatches.All(matches => matches[i])).ToArray();
-                Check(expected[0] && ProductionExactSearchEvaluator.Evaluate(parent,
-                    TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed)).IsMatch, "WholeTableExactPositive:" + shape);
+                Check(expected[0] && ProductionExactSearchEvaluator.Evaluate(parent.Model, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed)).IsMatch, "WholeTableExactPositive:" + shape);
                 foreach (var input in new[] { FamilyCandidateSet.Dense(oracleBatch), holdout ? ActualCompact(oracleBatch) :
                     FamilyCandidateSet.FromSortedAbi1(oracleBatch, Enumerable.Range(0, 129).Select(i => (ulong)i * 2).ToArray()) })
                 {
-                    var window = new FamilyObservationWindow(input.Batch, parent);
+
                     var watch = System.Diagnostics.Stopwatch.StartNew();
-                    var cpuResult = cpu.InvokeAsync(execution, window, input, default).GetAwaiter().GetResult();
+                    var cpuResult = cpu.ExecuteAsync(execution, input, default).GetAwaiter().GetResult();
                     double cpuMs = watch.Elapsed.TotalMilliseconds;
                     var wanted = input.EnumerateLogicalOrdinals().Where(i => expected[(int)i]).ToArray();
                     Check(cpuResult.Batch == input.Batch && cpuResult.EnumerateLogicalOrdinals().SequenceEqual(wanted), "CpuWrapperOracle:" + shape);
@@ -151,7 +148,7 @@ internal static partial class FamilyPhysicalMatrix
                         Output = cpuResult.Count, CanonicalMs = cpuMs, Digest = Digest(cpuResult), FullPopulationParity = true });
                     foreach (var variant in new[] { (Name: "Original", Family: original), (Name: "Slot1MovedFirst", Family: moved) })
                     {
-                        var actual = variant.Family.InvokeAsync(execution, window, input, default).GetAwaiter().GetResult();
+                        var actual = variant.Family.ExecuteAsync(execution, input, default).GetAwaiter().GetResult();
                         Check(actual.Batch == input.Batch && actual.EnumerateLogicalOrdinals().SequenceEqual(wanted), "GpuOracle:" + shape + ":" + variant.Name);
                         oracleRows.Add(new { Shape = shape, Mode = variant.Name, Dense = input.IsDense, Input = input.Count,
                             Output = actual.Count, Digest = Digest(actual), FullPopulationParity = true });
@@ -186,7 +183,7 @@ internal static partial class FamilyPhysicalMatrix
                                 Boundary = "ExistingWholeWrapperModel;NoCoefficientsFitted;SingleUnitReferenceBeforeMeasuredRounds;SetupExcluded" });
                         }
                     }
-                    var measuredWindow = new FamilyObservationWindow(measuredInput.Batch, parent);
+
                     string? stableDigest = null;
                     for (int round = -1; round < measuredRounds; round++)
                     {
@@ -195,7 +192,7 @@ internal static partial class FamilyPhysicalMatrix
                         {
                             var family = moveFirst ? moved : original;
                             var watch = System.Diagnostics.Stopwatch.StartNew();
-                            var actual = family.InvokeAsync(execution, measuredWindow, measuredInput, default).GetAwaiter().GetResult();
+                            var actual = family.ExecuteAsync(execution, measuredInput, default).GetAwaiter().GetResult();
                             double ms = watch.Elapsed.TotalMilliseconds;
                             string digest = Digest(actual); // Full ordered ABI1; outside the timed boundary.
                             Check(actual.Batch == measuredInput.Batch && actual.EnumerateLogicalOrdinals().Contains(0UL), "MeasuredKnownPositive:" + shape);
@@ -262,9 +259,9 @@ internal static partial class FamilyPhysicalMatrix
 
     // Run separately with each saved 2/3/4-player native context. No authority,
     // pool, slot or character is synthesized from a single-player fixture.
-    internal static void RunPartyMerchantChecks(ExactSearchExecutionRequest basis, string output)
+    internal static void RunPartyMerchantChecks(PreparedSearch basis, string output)
     {
-        var context = basis.CompiledSearch.Context;
+        var context = basis.Model.CompiledSearch.Context;
         var party = context.Party ?? throw new InvalidDataException("MpS1.RealPartyContextRequired");
         int players = party.Players.Count, checks = 0;
         void Check(bool pass, string label)
@@ -281,7 +278,7 @@ internal static partial class FamilyPhysicalMatrix
         SearchQuery WholeQuery(Func<int, SearchQuery> conditions) => SearchQuery.Empty with {
             Players = party.Players.Select(p => new PlayerOfferQuery(p.PlayerSlotIndex, ModelKeySetFilter.Empty) {
                 Conditions = conditions(p.PlayerSlotIndex) }).ToArray() };
-        ExactSearchExecutionRequest Compile(SearchQuery query) => ExactSearchExecutionRequestFactory.Compile(
+        PreparedSearch Compile(SearchQuery query) => SearchPreparationCompiler.Compile(
             SearchCompiler.Compile(query, context), options).Plan ?? throw new InvalidDataException("MpS1.FactoryRejected");
         var rows = new List<object>();
         var chainRows = new List<object>();
@@ -343,7 +340,7 @@ internal static partial class FamilyPhysicalMatrix
             foreach (var test in cases)
             {
                 var parent = Compile(WholeQuery(s => s == currentSlot ? test.Query : SearchQuery.Empty));
-                var request = ExactSearchExecutionRequestFactory.ForPlayer(parent, parent.CompiledSearch.PlayerSearches[slot]);
+                var request = SearchPreparationCompiler.ForPlayer(parent.Model, parent.Model.CompiledSearch.PlayerSearches[slot]);
                 Check(request.Authority.PlayerSlotIndex == slot && request.Authority.PlayersCount == players &&
                     request.Authority.CatalogFingerprint == party.Players[slot].CatalogFingerprint, "FactorySlotBinding:" + test.Name);
                 string configured = MerchantShopColorlessGpuExecutor.ConfigureEarlyRejection(rawShader, request.Evaluation, players);
@@ -363,7 +360,7 @@ internal static partial class FamilyPhysicalMatrix
                 foreach (var path in new[] { MerchantShopColorlessCompactionPath.AtomicAppendHostSort,
                     MerchantShopColorlessCompactionPath.StableOrderedCompaction })
                 {
-                    using var gpu = MerchantShopColorlessGpuExecutor.Create(rd, request, path);
+                    using var gpu = MerchantShopColorlessGpuExecutor.Create(rd,MerchantShopColorlessGpuExecutor.PrepareInputs(request.Evaluation,Beta111MerchantColorlessAuthority.From(request.Authority),request.SnapshotFingerprint),path);
                     foreach (var input in path == MerchantShopColorlessCompactionPath.AtomicAppendHostSort ? new[] { dense, compact } : new[] { dense })
                     {
                         var actual = gpu.Execute(input, default, out var metrics);
@@ -396,16 +393,16 @@ internal static partial class FamilyPhysicalMatrix
             var gpuFamilies = FamilyExecutionCoordinator.CreateRegisteredFamilies(parent, true);
             var cpu = cpuFamilies.Single(f => f.FamilyId == "S.MerchantShopColorless");
             var gpu = gpuFamilies.Single(f => f.FamilyId == "S.MerchantShopColorless");
-            Check(gpu is PartyFamily partyFamily && partyFamily.PersonalStages.Count() == players && (bool)Get(gpu, "UsesPrivate")!,
+            Check(gpu.PhysicalBodies.Count == players && gpu.PhysicalBodies.All(s=>s.CanBindPrivateSerial),
                 "CompletePrivateChain:" + shape.Name);
-            var execution = new FamilyExecutionContext(requiresGpu: true, failOnPhysicalRecovery: true, cpuWorkerCount: 1);
+            var execution = new FilterRuntimeServices(requiresGpu: true, failOnPhysicalRecovery: true, cpuWorkerCount: 1);
             try
             {
-                var children = parent.CompiledSearch.PlayerSearches.Take(players).Select(p => ExactSearchExecutionRequestFactory.ForPlayer(parent, p)).ToArray();
+                var children = parent.Model.CompiledSearch.PlayerSearches.Take(players).Select(p => SearchPreparationCompiler.ForPlayer(parent.Model, p)).ToArray();
                 var expected = roots.Select(root => children.All(child => MerchantShopColorlessQueryEvaluator.Evaluate(
                     child.Evaluation, root, child.Authority).Disposition == SearchDisposition.Match)).ToArray();
                 Check(expected[0], "WholeTableKnownPositive:" + shape.Name);
-                Check(ProductionExactSearchEvaluator.Evaluate(parent, TrustedRootHashInput.FromCanonicalSeed(
+                Check(ProductionExactSearchEvaluator.Evaluate(parent.Model, TrustedRootHashInput.FromCanonicalSeed(
                     Beta111Profile.Instance, "000000000000")).IsMatch, "ProductionExactKnownPositive:" + shape.Name);
                 bool early = shape.Name == "S-ordered5-all-slots";
                 foreach (var child in children)
@@ -415,9 +412,9 @@ internal static partial class FamilyPhysicalMatrix
                 foreach (var input in new[] { FamilyCandidateSet.Dense(batch), FamilyCandidateSet.FromSortedAbi1(batch,
                     Enumerable.Range(0, 129).Select(i => (ulong)i * 2).ToArray()) })
                 {
-                    var window = new FamilyObservationWindow(batch, parent);
-                    var cpuResult = cpu.InvokeAsync(execution, window, input, default).GetAwaiter().GetResult();
-                    var gpuResult = gpu.InvokeAsync(execution, window, input, default).GetAwaiter().GetResult();
+
+                    var cpuResult = cpu.ExecuteAsync(execution, input, default).GetAwaiter().GetResult();
+                    var gpuResult = gpu.ExecuteAsync(execution, input, default).GetAwaiter().GetResult();
                     var wanted = input.EnumerateLogicalOrdinals().Where(i => expected[(int)i]).ToArray();
                     Check(cpuResult.EnumerateLogicalOrdinals().SequenceEqual(wanted) && gpuResult.EnumerateLogicalOrdinals().SequenceEqual(wanted),
                         "WholeTableCpuGpuCanonical:" + shape.Name);

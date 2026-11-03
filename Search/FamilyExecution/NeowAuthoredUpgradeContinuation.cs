@@ -15,7 +15,7 @@ internal sealed record NeowAuthoredUpgradeContinuation(int[] Advances)
     internal int Advance(byte source, byte prior) => source is Beta110FastRelicCatalog.SmallCapsule or Beta110FastRelicCatalog.LargeCapsule
         ? Advances[(source == Beta110FastRelicCatalog.SmallCapsule ? 0 : PriorCount) + (prior == 255 ? 32 : prior)] : 0;
 
-    internal static NeowAuthoredUpgradeContinuation? Compile(ExactSearchExecutionRequest request)
+    internal static NeowAuthoredUpgradeContinuation? Compile(SearchModel request)
     {
         var e = request.Evaluation;
         var requirements = new Dictionary<byte, (bool W, bool WP)>();

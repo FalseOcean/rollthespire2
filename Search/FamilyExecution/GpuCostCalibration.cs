@@ -23,14 +23,10 @@ internal static class GpuReferenceCostAtlas
     // never a GPU-body calibration anchor or part of its global device ratio.
     internal static double? ComputationPeak(string key) => key.EndsWith("|" + Boundary, StringComparison.Ordinal)
         ? Peak(key) : null;
-    internal static string PhysicalRevision(IFamilyInvocation family, FamilyPhysicalQuoteRequest geometry) =>
+    internal static string PhysicalRevision(FilterBodyDescription family, FamilyPhysicalQuoteRequest geometry) =>
         family.ResolveConditionPerformance(geometry.CompactInput).PhysicalImplementationRevision +
-        (geometry.PrivateOutput ? family switch {
-            NeowFamily { UsesSmallPrivateOutput: true } => NeowFamilyGpuExecutor.SmallOutputRevision,
-            EventResultFamily { UsesFinalPrivateHeader: true } => EventResultFamilyGpuExecutor.FinalPrivateHeaderRevision,
-            _ => ""
-        } : "") + FamilyGpuReadback.ObservationRevision(family, geometry);
-    internal static string Key(IFamilyInvocation family, FamilyPhysicalQuote quote, FamilyPhysicalQuoteRequest geometry) =>
+        (geometry.PrivateOutput ? family.Cost.PrivateOutputRevision : "") + FamilyGpuReadback.ObservationRevision(family, geometry);
+    internal static string Key(FilterBodyDescription family, FamilyPhysicalQuote quote, FamilyPhysicalQuoteRequest geometry) =>
         string.Join("|", quote.FamilyId, quote.Shape,
             PhysicalRevision(family, geometry),
             geometry.CompactInput ? "Compact" : "Dense", geometry.PrivateInput ? "PrivateInput" : "PublicInput",
@@ -57,7 +53,7 @@ internal sealed class GpuCostSnapshot
             values[values.Length / 2 - 1] / 2 + values[values.Length / 2] / 2;
     }
     internal double Ratio(string key) => _ratios.GetValueOrDefault(key, GlobalRatio);
-    internal FamilyPhysicalQuote Local(IFamilyInvocation family, FamilyPhysicalQuote quote, FamilyPhysicalQuoteRequest geometry)
+    internal FamilyPhysicalQuote Local(FilterBodyDescription family, FamilyPhysicalQuote quote, FamilyPhysicalQuoteRequest geometry)
     {
         if (!geometry.ComputationOnly) quote = FamilyGpuReadback.Reference(family, quote)!;
         if (!family.ConditionPerformance.UsesGpu) return quote;
@@ -72,7 +68,7 @@ internal sealed class GpuCostSnapshot
         return quote with { ReferencePeakThroughput = referencePeak, NanosecondsPerInput = (referencePeak > 0 ? 1e9 / referencePeak : quote.NanosecondsPerInput) * ratio,
             GpuCostRatio = ratio, LocalExecutorCostRatio = ratio, LocalCostSource = _ratios.ContainsKey(key) ? "Condition" : _ratios.Count > 0 ? "Global" : "ReferenceDefault", Evidence = quote.Evidence + $";GpuCostRatio={ratio:G17};RatioSource={(_ratios.ContainsKey(key) ? "Condition" : _ratios.Count > 0 ? "GlobalMedian" : "ReferenceDefault")};ReferenceQuality={(GpuReferenceCostAtlas.Peak(key).HasValue ? "EligiblePeak" : "BoundedLegacy")};Provenance={GpuReferenceCostAtlas.Provenance}" };
     }
-    internal static FamilyPerformanceReference ComputationReference(GpuCostSnapshot? costs, IFamilyInvocation family,
+    internal static FamilyPerformanceReference ComputationReference(GpuCostSnapshot? costs, FilterBodyDescription family,
         FamilyConditionPerformanceProjection condition, bool compact, IReadOnlySet<string>? passedCoverage = null,
         int? referenceRootWindow = null, double? referencePopulation = null)
     {
@@ -86,22 +82,22 @@ internal sealed class GpuCostSnapshot
         int roots = referenceRootWindow ?? PrivateOrdinalBuffer.Capacity;
         var geometry = new FamilyPhysicalQuoteRequest(compact, false, referencePopulation ?? PrivateOrdinalBuffer.Capacity);
         var raw = FamilyPhysicalQuote.Computation(family, geometry, costs, passedCoverage,
-            referenceRootWindow ?? (family is FamilyCpuExecution && referencePopulation.HasValue ? null : roots));
+            referenceRootWindow ?? (!family.UsesGpu && referencePopulation.HasValue ? null : roots));
         if (raw is not null) raw = raw with { Evidence = raw.Evidence +
             $";StaticFamilyLocalReference;ReferenceRootWindow={roots};ReferenceInputPopulation={geometry.MeanInputPopulation:G17}" };
-        if (referencePopulation.HasValue && family is FamilyCpuExecution cpu)
+        if (referencePopulation.HasValue && !family.UsesGpu && !family.Cost.ComposedPopulationReference)
         {
             if (raw is null || raw.NanosecondsPerInput is not (> 0d) || !double.IsFinite(raw.NanosecondsPerInput) ||
                 raw.WindowCapacity <= 0 || raw.FixedWindowMilliseconds < 0d || !double.IsFinite(raw.FixedWindowMilliseconds))
                 return GpuCostCalibration.ResolveReference(condition);
             double perInputMs = raw.NanosecondsPerInput / 1e6 +
-                raw.FixedWindowMilliseconds / Math.Min(cpu.WindowCapacity, raw.WindowCapacity);
+                raw.FixedWindowMilliseconds / Math.Min(family.WindowCapacity, raw.WindowCapacity);
             return new(condition.FamilyId, condition.PhysicalImplementationRevision, 1, 1000d / perInputMs,
                 raw.LocalCostSource == "Condition" ? FamilyPerformanceEvidenceSource.Condition :
                     raw.LocalCostSource == "Global" ? FamilyPerformanceEvidenceSource.Global : FamilyPerformanceEvidenceSource.Reference,
                 "CPU", "CPU", raw.Evidence);
         }
-        if (referencePopulation.HasValue && family is PartyFamily)
+        if (referencePopulation.HasValue && family.Cost.ComposedPopulationReference)
         {
             double? milliseconds = raw is null ? null : FamilyCoarsePricing.ComputationMilliseconds(raw, geometry);
             if (milliseconds is not (> 0d) || !double.IsFinite(milliseconds.Value))
@@ -138,7 +134,7 @@ internal sealed class GpuCostSamples
     private bool _observationFailed;
     private sealed class Window { internal long Inputs; internal double Ms; internal bool Warmed; internal int CompletedWindows; }
     private readonly Dictionary<string, Window> _windows = new();
-    private readonly Dictionary<(IFamilyInvocation, bool, bool, bool), FamilyPhysicalQuote?> _quotes = new();
+    private readonly Dictionary<(FilterBodyDescription, bool, bool, bool), FamilyPhysicalQuote?> _quotes = new();
     private readonly Dictionary<string, GpuLocalPeak> _peaks = new();
     // Log-only totals never participate in Peaks, ratios or any quote.
     private sealed class Totals {
@@ -187,7 +183,7 @@ internal sealed class GpuCostSamples
         }
     }
     internal IReadOnlyCollection<GpuLocalPeak> Peaks => _peaks.Values;
-    internal void Observe(IFamilyInvocation family, FamilyPhysicalQuoteRequest geometry, int inputs, double dispatchMs,
+    internal void Observe(FilterBodyDescription family, FamilyPhysicalQuoteRequest geometry, int inputs, double dispatchMs,
         bool verification = false, int outputs = 0, double canonicalMs = 0, double readbackMs = 0, long readbackBytes = 0)
     {
         if (_observationFailed) return;
@@ -195,7 +191,7 @@ internal sealed class GpuCostSamples
         { ObserveCore(family, geometry, inputs, dispatchMs, verification, outputs, canonicalMs, readbackMs, readbackBytes); return true; }, false);
     }
 
-    private void ObserveCore(IFamilyInvocation family, FamilyPhysicalQuoteRequest geometry, int inputs, double dispatchMs,
+    private void ObserveCore(FilterBodyDescription family, FamilyPhysicalQuoteRequest geometry, int inputs, double dispatchMs,
         bool verification, int outputs, double canonicalMs, double readbackMs, long readbackBytes)
     {
         var binding = (family, geometry.CompactInput, geometry.PrivateInput, geometry.PrivateOutput);

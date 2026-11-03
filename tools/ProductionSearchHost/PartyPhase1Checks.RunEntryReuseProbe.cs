@@ -13,7 +13,7 @@ using RolltheSpire2.Ui.Workspace;
 internal static partial class PartyPhase1Checks
 {
     private sealed record RunEntryReuseProbe(string? Binding, string RecomputedKey, bool Loaded,
-        bool GlobalComplete, string Workspace, AnalysisPage? Page, object? Document, bool Visible,
+        bool GlobalComplete, string Workspace, AnalysisPage? Page, object? Facts, bool Visible,
         string InterpretationStatus, string InterpretationReason, bool InterpretationKeyPresent,
         string? EffectiveContext, string? EffectiveContextIssue, int? DisplayedChoice, string? DisplayedRoute);
 
@@ -34,7 +34,7 @@ internal static partial class PartyPhase1Checks
         try { effective = JsonSerializer.Serialize(((AnalysisPageController)Field("_predictorController")!).CaptureSeedLibraryContext()); }
         catch (Exception ex) { effectiveIssue = ex.ToString(); }
         return new((string?)Field("_livePredictionBinding"),key,(bool)Field("_runPredictionLoaded")!,
-            environment.Fingerprint.Complete,Field("_workspace")!.ToString()!,page,page?.LastDocument,page?.Visible == true,
+            environment.Fingerprint.Complete,Field("_workspace")!.ToString()!,page,page?.LastFacts,page?.Visible == true,
             RuntimeAuthorityEnvironment.Current.Interpretation.EnvironmentStatus.ToString(),
             RuntimeAuthorityEnvironment.Current.Interpretation.EnvironmentReason,
             ((string?)typeof(RuntimeAuthorityEnvironment).GetField("_interpretationKey",BindingFlags.Static|BindingFlags.NonPublic)!
@@ -64,7 +64,7 @@ internal static partial class PartyPhase1Checks
                 StoredMatchesCurrent=before.Binding==before.RecomputedKey },
             After = new { after.Loaded,after.GlobalComplete,after.Workspace,after.Visible,after.InterpretationStatus,after.InterpretationReason,after.InterpretationKeyPresent,after.EffectiveContextIssue,after.DisplayedChoice,after.DisplayedRoute,
                 StoredMatchesCurrent=after.Binding==after.RecomputedKey },
-            SamePage=ReferenceEquals(before.Page,after.Page), SameDocument=ReferenceEquals(before.Document,after.Document),
+            SamePage=ReferenceEquals(before.Page,after.Page), SameFacts=ReferenceEquals(before.Facts,after.Facts),
             BeforeBinding=before.Binding, BeforeRecomputed=before.RecomputedKey,
             AfterBinding=after.Binding, AfterRecomputed=after.RecomputedKey,
             BeforeEffectiveContext=before.EffectiveContext, AfterEffectiveContext=after.EffectiveContext, Differences=differences
@@ -72,7 +72,7 @@ internal static partial class PartyPhase1Checks
         File.WriteAllText(Path.Combine(output,"run-entry-reuse-key-diff.json"),
             JsonSerializer.Serialize(receipt,new JsonSerializerOptions { WriteIndented=true }));
         GD.Print("RUN_ENTRY_REUSE_PROBE "+JsonSerializer.Serialize(new {
-            receipt.Before,receipt.After,receipt.SamePage,receipt.SameDocument,
+            receipt.Before,receipt.After,receipt.SamePage,receipt.SameFacts,
             DifferenceCount=differences.Count, Differences=differences.Take(24) }));
     }
 }

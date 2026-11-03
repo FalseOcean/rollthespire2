@@ -33,9 +33,12 @@ internal static class SeedLibraryContextCapture
 
     internal static SeedLibraryContext WithWitness(SeedLibraryContext context, SearchCandidate candidate)
     {
+        if (candidate.IsUnverified) return context;
         if (context.Mode == WorldGameMode.Multiplayer)
         {
-            var party = candidate.Document?.Party ?? throw new InvalidOperationException("SeedLibrary.PartyWitnessMissing");
+            // A confirmed global/model disposition need not have requested party
+            // observations. Preserve authored context when there is no witness to add.
+            if (candidate.Party is not { } party) return context;
             if (party.Players.Count != context.Players.Count || party.Ascension != context.Ascension || party.Version != context.GameVersion ||
                 party.Players.Where((p, i) => p.Slot != context.Players[i].Slot || p.Character != context.Players[i].Character ||
                     p.UnlockSource != context.Players[i].UnlockSource).Any())

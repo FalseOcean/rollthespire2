@@ -124,25 +124,25 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
     public static long ScratchWorkspaceBytes => 0;
     public static long CaptureWorkspaceBytes => 0;
 
-    public static RelicFamilyGpuExecutor Create(RenderingDevice rd, ExactSearchExecutionRequest request, RelicFamilyPlan plan)
-        => Create(rd, request, plan, privateInput: null, privateOutput: null);
-    internal static RelicFamilyGpuExecutor Create(RenderingDevice rd, ExactSearchExecutionRequest request, RelicFamilyPlan plan,
+    public static RelicFamilyGpuExecutor Create(RenderingDevice rd, string inputIdentity, RelicFamilyPlan plan)
+        => Create(rd, inputIdentity, plan, privateInput: null, privateOutput: null);
+    internal static RelicFamilyGpuExecutor Create(RenderingDevice rd, string inputIdentity, RelicFamilyPlan plan,
         PrivateOrdinalBuffer? privateInput, PrivateOrdinalBuffer? privateOutput)
-        => Create(rd, request, plan, fullPlan: null, privateInput: privateInput, privateOutput: privateOutput);
+        => Create(rd, inputIdentity, plan, fullPlan: null, privateInput: privateInput, privateOutput: privateOutput);
 
     internal static RelicFamilyGpuExecutor Create(
         RenderingDevice rd,
-        ExactSearchExecutionRequest request,
+        string inputIdentity,
         RelicFullGpuPlan fullPlan, PrivateOrdinalBuffer? privateInput = null, bool bonesKRouteMask = false) =>
-        Create(rd, request, fullPlan, privateInput, bonesKRouteMask, null);
+        Create(rd, inputIdentity, fullPlan, privateInput, bonesKRouteMask, null);
 
-    internal static RelicFamilyGpuExecutor Create(RenderingDevice rd, ExactSearchExecutionRequest request,
+    internal static RelicFamilyGpuExecutor Create(RenderingDevice rd, string inputIdentity,
         RelicFullGpuPlan fullPlan, PrivateOrdinalBuffer? privateInput, bool bonesKRouteMask, PrivateOrdinalBuffer? privateOutput) =>
-        Create(rd, request, fullPlan.SequencePlan, fullPlan, privateInput, bonesKRouteMask, privateOutput);
+        Create(rd, inputIdentity, fullPlan.SequencePlan, fullPlan, privateInput, bonesKRouteMask, privateOutput);
 
     private static RelicFamilyGpuExecutor Create(
         RenderingDevice rd,
-        ExactSearchExecutionRequest request,
+        string inputIdentity,
         RelicFamilyPlan plan,
         RelicFullGpuPlan? fullPlan, PrivateOrdinalBuffer? privateInput = null, bool bonesKRouteMask = false, PrivateOrdinalBuffer? privateOutput = null)
     {
@@ -152,7 +152,7 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
         if (privateInput is not null && ReferenceEquals(privateInput, privateOutput)) throw new ArgumentException("R.PrivateBuffersAlias");
         if (bonesKRouteMask && (privateInput is null || fullPlan?.UsesBonesKBoundary != true)) throw new InvalidOperationException("BonesK.MaskConsumerScope");
         ArgumentNullException.ThrowIfNull(rd);
-        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(inputIdentity);
         ArgumentNullException.ThrowIfNull(plan);
         var timer = Stopwatch.StartNew();
         var owned = new List<Rid>();
@@ -160,7 +160,7 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
         {
             Rid Add(Rid rid) { owned.Add(rid); return rid; }
             uint planTag = StableTag(
-                request.SnapshotFingerprint + "|" +
+                inputIdentity + "|" +
                 (fullPlan is null ? FamilyPhysicalImplementationRevisions.Relic : fullPlan.ActualAlgorithmRevision));
             uint[] planMeta = PackPlanMeta(plan);
             uint[] bucketMeta = PackBuckets(plan.Pool);
@@ -206,7 +206,8 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
                     rd, FamilyGpuComputeUtility.ToBytesNonEmpty(fullPlan.CapsuleMetadata))));
 
             string source = ShaderSource(fullPlan is not null, fullPlan?.UsesBonesKBoundary == true, bonesKRouteMask,
-                fullPlan?.GenericReplay == true, plan.LocalStateCapacity, fullPlan?.NumericalVariant ?? GpuNumericalVariant.NativeFloat64);
+                fullPlan?.GenericReplay == true, plan.LocalStateCapacity, fullPlan?.NumericalVariant ?? GpuNumericalVariant.NativeFloat64,
+                fullPlan?.UsesOpeningPrefix == true);
             if (fullPlan?.GenericReplay == true)
                 source = source.Replace("#version 450", "#version 450\n#define RT2_R_GENERIC_BAG_CAPACITY " +
                     fullPlan.ConfiguredGenericBagCapacity.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
@@ -247,7 +248,7 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
 
     internal static string ShaderSource(bool rfull, bool bonesKBoundary = false, bool bonesKRouteMask = false,
         bool genericReplay = false, int localStateCapacity = 64,
-        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
+        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64, bool openingPrefix = false)
     {
         string source = FamilyGpuComputeUtility.LoadFamilyShaderWithVisibleSeedRootHash(ShaderSuffix);
         source = source.Replace("const int MAX_LOCAL_STATE = 64;", $"const int MAX_LOCAL_STATE = {localStateCapacity};", StringComparison.Ordinal);
@@ -258,6 +259,7 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
             ? "layout(set = 0, binding = 13, std430) readonly restrict buffer RfullCapsuleMeta { uint values[]; } rfull_capsule;"
             : string.Empty;
         string functions = genericReplay ? RelicFullGpuPlan.GenericShaderFunctions() : rfull ? FamilyGpuComputeUtility.LoadEmbeddedShader(RfullShaderSuffix) : string.Empty;
+        if (openingPrefix) source = source.Replace("#version 450", "#version 450\n#define RFULL_OPENING_PREFIX", StringComparison.Ordinal);
         if (genericReplay) source = source.Replace("#version 450", "#version 450\n#extension GL_EXT_shader_explicit_arithmetic_types_float64 : require", StringComparison.Ordinal);
         if (bonesKBoundary) functions = "#define RFULL_TRACK_HEAVY_ENTRY\n#define BONES_K_MASK " + (bonesKRouteMask ? "1" : "0") + "\nuint nr_heavy_entries; uint nr_route_mask;\n" + functions.Replace(
             "return rfull_prepare_rewards(root) && rfull_capsule_after_rewards(root);",
@@ -444,6 +446,10 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
         int survivors = checked((int)header[2]);
         int overflow = checked((int)header[3]);
         int processed = checked((int)header[4]);
+        if (overflow == 3)
+            throw new InvalidDataException("RFamilyOpeningPrefixBagCapacityExceeded");
+        if (overflow is >= 256 and < 286)
+            throw new InvalidDataException("RFamilyOpeningPrefixContinuationUnavailable:Source" + (overflow - 256));
         if (overflow != 0 || survivors < 0 || survivors > processed || processed != inputCount || survivors > OutputCapacity)
             throw new InvalidDataException(
                 $"RFamilyGpuHeaderInvalid:survivors={survivors};processed={processed};input={inputCount};overflow={overflow}");

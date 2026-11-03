@@ -46,15 +46,15 @@ internal static partial class CombinationRegressionChecks
         return 0;
     }
 
-    private static ExactSearchExecutionRequest Compile(SearchContext context, SearchQuery query, string seed, int workers = 1)
+    private static PreparedSearch Compile(SearchContext context, SearchQuery query, string seed, int workers = 1)
     {
-        var result = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context), new(seed, 1, 1, workers));
+        var result = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context), new(seed, 1, 1, workers));
         Check(result.Success, "compile " + result.Issue);
         return result.Plan!;
     }
 
     private static ProductionExactSearchResult Exact(SearchContext context, SearchQuery query, string seed) =>
-        ProductionExactSearchEvaluator.Evaluate(Compile(context, query, seed), Input(seed));
+        ProductionExactSearchEvaluator.Evaluate(Compile(context, query, seed).Model, Input(seed));
 
     private static TrustedRootHashInput Input(string seed) => TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed);
 
@@ -73,7 +73,7 @@ internal static partial class CombinationRegressionChecks
         var variantQuery = Table(4) with { VariantBossBranches =
             [new(1, full.Acts[0], ModelKeySetFilter.Empty, ModelKeySetFilter.Empty, false)] };
         var variant = Exact(context, variantQuery, seed);
-        Check(variant.IsMatch && variant.Document!.Party is { ActObservationRequested: true,
+        Check(variant.IsMatch && variant.Facts!.Party is { ActObservationRequested: true,
             BossObservationRequested: false, Bosses.Count: 0 } actsOnly &&
             actsOnly.Acts.SequenceEqual(full.Acts) && actsOnly.Players.All(p => !p.ObservationRequested),
             "Variant-only Exact observes Acts without manufacturing Boss or N observations");
@@ -101,13 +101,13 @@ internal static partial class CombinationRegressionChecks
         var offerQuery = Table(4) with { Players = Table(4).Players.Select(p => p.Slot == 0
             ? p with { Offers = new([target], [], []) } : p).ToArray() };
         var offers = Exact(faultContext, offerQuery, seed);
-        Check(offers.IsMatch && offers.Document!.Party is { ActObservationRequested: false,
+        Check(offers.IsMatch && offers.Facts!.Party is { ActObservationRequested: false,
             BossObservationRequested: false } initial && initial.Players[0].ObservationRequested &&
             initial.Players[0].Offers.SequenceEqual(full.Players[0].Offers) &&
             initial.Players.Skip(1).All(p => !p.ObservationRequested && p.Offers.Count == 0 &&
                 p.IdentityPrecision != PredictionPrecision.Exact && p.IssueCode == "Party.NeowObservationNotRequested"),
             "Offer-only Exact skips the faulting World producer and marks unused seats as unrequested");
-        Check(offers.Document!.Party is { Acts.Count: 0, Bosses.Count: 0,
+        Check(offers.Facts!.Party is { Acts.Count: 0, Bosses.Count: 0,
             ActIdentityPrecision: PredictionPrecision.DescriptionOnly,
             BossIssueCode: "Party.BossObservationNotRequested" },
             "Unrequested World envelope carries no Exact observation claim");
@@ -115,7 +115,7 @@ internal static partial class CombinationRegressionChecks
         var personalIdentity = SearchQuery.Empty with { LegacyNeow = LegacyNeowSemanticConstraints.Empty with
             { NeowRelics = new([target], [], []) } };
         var familyOffers = Exact(faultContext, Table(4, (0, personalIdentity)), seed);
-        Check(familyOffers.IsMatch && familyOffers.Document!.Party is { IncludesFamilyInformation: true,
+        Check(familyOffers.IsMatch && familyOffers.Facts!.Party is { IncludesFamilyInformation: true,
             ActObservationRequested: false, BossObservationRequested: false } family &&
             family.Players.Where(p => p.ObservationRequested).Select(p => p.Slot).SequenceEqual(new[] { 0 }),
             "Family Exact keeps the requested N fact with empty shared/other-seat queries and no World production");
@@ -125,7 +125,7 @@ internal static partial class CombinationRegressionChecks
         var eventQuery = SearchQuery.Empty with { EventResultConditions =
             [new(EventResultConditionKind.TrashHeapGrabCard, eventProjection.TrashHeapGrabCard)] };
         var canonical = Exact(faultContext, Table(4, (2, eventQuery)), seed);
-        Check(canonical.IsMatch && canonical.Document!.Party is { ActObservationRequested: false,
+        Check(canonical.IsMatch && canonical.Facts!.Party is { ActObservationRequested: false,
             BossObservationRequested: false } canonicalParty && canonicalParty.Players.All(p =>
                 !p.ObservationRequested && p.IdentityPrecision != PredictionPrecision.Exact),
             "Canonical-only party Exact retains its personal Event obligation without World or N observations");
@@ -191,18 +191,13 @@ internal static partial class CombinationRegressionChecks
                                 ? i with { Precision = PredictionPrecision.Unknown } : i).ToArray() }).ToArray() }
                 };
             }
-            var original = joint.Document!;
-            var document = new SeedPredictionDocument {
-                Context = original.Context, PredictorId = original.PredictorId, OriginalSeed = original.OriginalSeed,
-                CanonicalSeed = original.CanonicalSeed, Warnings = original.Warnings, Diagnostics = original.Diagnostics,
-                OverallStatus = original.OverallStatus, ProductRelevantProjectionPrecision = original.ProductRelevantProjectionPrecision,
-                ProductRelevantProjectionStatus = original.ProductRelevantProjectionStatus, FullEffectSemanticsCompleteness = original.FullEffectSemanticsCompleteness,
-                Sections = original.Sections.Select(s => s with {
-                NeowChoices = s.NeowChoices.Select(c => c.BonesOutcome is not { } bones ? c : c with {
+            var original = joint.Facts!;
+            var facts = original with { Neow = original.Neow! with {
+                Choices = original.Neow.Choices.Select(c => c.BonesOutcome is not { } bones ? c : c with {
                     BonesOutcome = bones with { OriginalRoutes = bones.OriginalRoutes.Select(r => r with {
                         RelicScopedResults = r.RelicScopedResults.Select(Damage).ToArray() }).ToArray() } }).ToArray()
-            }).ToArray() };
-            var rejected = ProductionQueryValidator.Evaluate(groupedPlan, document, joint.Authority);
+            } };
+            var rejected = ProductionQueryValidator.Evaluate(groupedPlan.Model, facts, joint.Authority);
             Check(rejected.Disposition is SearchDisposition.Unknown or SearchDisposition.NotEvaluatedByPolicy,
                 "Grouped Capsules still refuse incomplete required observations: " + damaged);
         }
@@ -227,9 +222,9 @@ internal static partial class CombinationRegressionChecks
             query.OpeningRouteRelicRequirement with { OrderMode = BonesRouteOrderMode.ExactOrder, RequiredRelicKeys = pairs.Reverse().ToArray() } })
         {
             var plan = Compile(context, query with { OpeningRouteRelicRequirement = order }, seed);
-            var n = NeowReplayPlan.Compile(plan, false);
+            var n = NeowReplayPlan.Compile(plan.Model, false);
             Check(n.HasFinalCurseFastProjection, "Alternative check actually exercises route-local N predicates");
-            Check(NeowSingleplayerReplay.Matches(Input(seed).RootHash, n) == ProductionExactSearchEvaluator.Evaluate(plan, Input(seed)).IsMatch,
+            Check(NeowSingleplayerReplay.Matches(Input(seed).RootHash, n) == ProductionExactSearchEvaluator.Evaluate(plan.Model, Input(seed)).IsMatch,
                 "Solo OR and both pinned acquisition orders agree with independent Production Exact");
         }
     }
@@ -253,8 +248,7 @@ internal static partial class CombinationRegressionChecks
         var probe = Exact(context, SearchQuery.Empty with { LegacyCombatRewardConstraints = [
             new(3, ModelKeySetFilter.Empty, NormalCombatPotionRequirement.Any, ModelKeySetFilter.Empty, 0, null)] }, seed);
         Check(probe.IsMatch, "neutral reward fixture is an Exact positive");
-        var routes = probe.Document!.Sections.Single(s => s.NormalCombatRewardSequencePrediction is not null)
-            .NormalCombatRewardSequencePrediction!.Routes;
+        var routes = probe.Facts!.CombatRewards!.Routes;
         Check(routes.Count > 0 && routes.All(r => r.Battles.Count >= 3), "three neutral battles are available");
         var battles = routes[0].Battles.Take(3).ToArray();
         string Signature(NormalCombatRewardRoutePredictionResult r) => string.Join(";", r.Battles.Take(3)
@@ -280,13 +274,13 @@ internal static partial class CombinationRegressionChecks
 
         var duplicate = SearchQuery.Empty with { CombatCardRewards = new(3, CombatRewardSequenceOrderMode.Unordered, [a, a, null]) };
         Expect(context, duplicate, seed, false, "two typed copies require distinct battles");
-        Check(!new CombatRewardReplay(Compile(context, duplicate, seed)).Matches(Input(seed).RootHash),
-            "complete solo C rejects the same distinct-battle violation as Exact");
-        Expect(context, duplicate with { CombatCardRewards = new(3, CombatRewardSequenceOrderMode.Unordered, [a, b, null]) },
+        var distinct = duplicate with { CombatCardRewards = new(3, CombatRewardSequenceOrderMode.Unordered, [a, b, null]) };
+        CheckCombatAssignmentFiltering(context, duplicate, distinct, probe, seed);
+        Expect(context, distinct,
             seed, true, "two distinct battle witnesses satisfy typed slots");
 
         var six = NormalCombatRewardSequencePredictor.PredictFromRootHash(Beta111Profile.Instance, Input(seed).RootHash, seed,
-            0, context.Ascension, probe.Document.Sections.SelectMany(s => s.NeowChoices).ToArray(),
+            0, context.Ascension, probe.Facts!.Neow!.Choices,
             probe.Authority.EffectAuthority, probe.Authority.WorldAuthority,
             new(NormalCombatRewardProjectionScope.SearchExact, NormalCombatRewardRouteSelectionMode.ProvablyNeutralRealRoutes) { BattleCount = 6 });
         Check(six.Routes.Count > 0 && six.Routes.All(r => r.Status == SeedDomainEvaluationStatus.Evaluated && r.Battles.Count == 6),
@@ -316,6 +310,25 @@ internal static partial class CombinationRegressionChecks
         Expect(context, narrowCard with { CombatCardRewards = new(6, CombatRewardSequenceOrderMode.Unordered, [lateCard, null, null, null, null, null]) },
             seed, true, "late card becomes valid only when its own window widens");
         Console.WriteLine($"COMBINATION_COMBAT seed={seed};singleBattleCards={string.Join(',', unique)};completePositiveMatching=true;distinctBattlesAndDomainWindows=true");
+    }
+
+    private static void CheckCombatAssignmentFiltering(SearchContext context, SearchQuery duplicate,
+        SearchQuery distinct, ProductionExactSearchResult probe, string seed)
+    {
+        // Only compare rejection on a real neutral opening. Without a pinned
+        // opening C may conservatively pass a numeric mismatch to Exact.
+        var route = probe.Facts!.CombatRewards!.Routes[0].RepresentativeContinuation;
+        Check(OpeningRewardNeutralityClassifier.Classify(route) == OpeningRewardNeutrality.ProvablyNeutral,
+            "the assignment comparison has a neutral opening witness");
+        var pinnedDuplicate = duplicate with { OpeningRoute = new(route.Route.RootRelicKey) };
+        var pinnedDistinct = distinct with { OpeningRoute = pinnedDuplicate.OpeningRoute };
+        var root = Input(seed).RootHash;
+        Check(!new CombatRewardReplay(Compile(context, pinnedDuplicate, seed).Model).Matches(root),
+            "on the pinned opening C rejects reuse of one battle for two slots");
+        Expect(context, pinnedDuplicate, seed, false, "Exact rejects that same pinned assignment");
+        Check(new CombatRewardReplay(Compile(context, pinnedDistinct, seed).Model).Matches(root),
+            "on the same opening C keeps two distinct battle witnesses");
+        Expect(context, pinnedDistinct, seed, true, "Exact confirms that same pinned assignment");
     }
 
     private static SearchContext PartyContext(SearchContext captured, int count, ModelKey[]? bonesPair = null,

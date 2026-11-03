@@ -1,6 +1,7 @@
 using RolltheSpire2.Core.Authority;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Prediction;
+using RolltheSpire2.Core.Rng;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.World.Beta109;
@@ -15,7 +16,7 @@ public sealed record Beta111EventResultAuthority(
     RuntimeProfileId ProfileId,
     string AuthorityFingerprint)
 {
-    public bool IsBeta111 => ProfileId == RuntimeProfileId.Beta111;
+    public bool IsBeta111 => RuntimeProfilePolicies.SupportsEventResultModel(ProfileId);
 
     public static Beta111EventResultAuthority From(
         RuntimeContextAuthoritySnapshot authority)
@@ -71,50 +72,21 @@ public static class Beta111EventResultProjector
         if (!authority.StaticCatalogAuthorityExact)
             return Beta111EventResultProjection.Unsupported("EventResultV1StaticCatalogAuthorityIncomplete");
 
-        ModelKey grab = ProjectFreshRootSingle(
-            rootHash,
-            playerSlotIndex,
-            isShared: false,
-            Beta111EventResultCatalog.TrashHeapEventEntry,
-            Beta111EventResultCatalog.TrashHeapGrabCards,
-            "trash-grab");
-        ModelKey dive = ProjectFreshRootSingle(
-            rootHash,
-            playerSlotIndex,
-            isShared: false,
-            Beta111EventResultCatalog.TrashHeapEventEntry,
-            Beta111EventResultCatalog.TrashHeapDiveRelics,
-            "trash-dive");
-
-        var fake = Beta111EventResultCatalog.FakeMerchantRelics.ToList();
-        Beta109WorldRng fakeRng = Beta109WorldRng.CreateEventLocal(
-            rootHash,
-            playerSlotIndex,
-            isShared: true,
-            Beta111EventResultCatalog.FakeMerchantEventEntry);
-        fakeRng.UnstableShuffle(fake, "fake-merchant-inventory");
-        ModelKey[] fakeSix = fake.Take(6).ToArray();
+        // Grab and Dive are alternative choices from the same entry checkpoint.
+        Xoshiro256StarStar trashRng = EventRng(rootHash, playerSlotIndex, false,
+            Beta111EventResultCatalog.TrashHeapEventEntry);
+        ModelKey grab = Beta111EventRules.TrashHeapGrab(trashRng.Clone());
+        ModelKey dive = Beta111EventRules.TrashHeapDive(trashRng.Clone());
+        ModelKey[] fakeSix = Beta111EventRules.FakeMerchantInventory(EventRng(
+            rootHash, playerSlotIndex, true, Beta111EventResultCatalog.FakeMerchantEventEntry));
 
         ModelKey[] colorful = Array.Empty<ModelKey>();
         PredictionPrecision colorfulPrecision = PredictionPrecision.Unknown;
         if (authority.ColorfulPoolAuthorityExact && authority.OwnerCharacterKey.IsValid)
         {
-            var unlocked = new HashSet<ModelKey>(authority.UnlockedCharacterCardPoolKeys, ModelKeyComparer.Instance);
-            var candidates = Beta111EventResultCatalog.ColorfulCharacterOrder
-                .Where(key => key != authority.OwnerCharacterKey && unlocked.Contains(key))
-                .ToList();
-            Beta109WorldRng colorfulRng = Beta109WorldRng.CreateEventLocal(
-                rootHash,
-                playerSlotIndex,
-                isShared: false,
-                Beta111EventResultCatalog.ColorfulPhilosophersEventEntry);
-            int targetCount = Math.Min(3, candidates.Count);
-            while (candidates.Count > targetCount)
-            {
-                int remove = colorfulRng.NextInt(candidates.Count, "colorful-remove");
-                candidates.RemoveAt(remove);
-            }
-            colorful = candidates.ToArray();
+            colorful = Beta111EventRules.ColorfulOffers(EventRng(rootHash, playerSlotIndex, false,
+                Beta111EventResultCatalog.ColorfulPhilosophersEventEntry),
+                authority.OwnerCharacterKey, authority.UnlockedCharacterCardPoolKeys);
             colorfulPrecision = PredictionPrecision.Exact;
         }
 
@@ -129,19 +101,7 @@ public static class Beta111EventResultProjector
             "beta111.event-result-v1.source-audited");
     }
 
-    private static ModelKey ProjectFreshRootSingle(
-        ulong rootHash,
-        int playerSlotIndex,
-        bool isShared,
-        string eventEntry,
-        IReadOnlyList<ModelKey> source,
-        string stage)
-    {
-        Beta109WorldRng rng = Beta109WorldRng.CreateEventLocal(
-            rootHash,
-            playerSlotIndex,
-            isShared,
-            eventEntry);
-        return rng.NextModelKey(source, stage);
-    }
+    private static Xoshiro256StarStar EventRng(ulong rootHash, int playerSlotIndex,
+        bool isShared, string eventEntry) => new(Beta109WorldRng.DeriveEventLocalSeed(
+            rootHash, playerSlotIndex, isShared, eventEntry));
 }

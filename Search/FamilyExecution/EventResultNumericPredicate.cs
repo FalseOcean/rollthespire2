@@ -70,11 +70,9 @@ internal static class EventResultNumericPredicate
             TrashTargets = trash.ToArray();
             InventoryTargets = inventory.ToArray();
             ColorfulPool = NeedsColorful && CanReject && ColorfulPoolKnown
-                ? Beta111EventResultCatalog.ColorfulCharacterOrder
-                    .Select((key, index) => (key, index))
-                    .Where(candidate => candidate.key != authority!.OwnerCharacterKey &&
-                        Contains(authority!.UnlockedCharacterCardPoolKeys, candidate.key))
-                    .Select(candidate => candidate.index).ToArray()
+                ? Beta111EventRules.ColorfulCandidates(authority!.OwnerCharacterKey,
+                        authority.UnlockedCharacterCardPoolKeys)
+                    .Select(key => IndexOf(Beta111EventResultCatalog.ColorfulCharacterOrder, key)).ToArray()
                 : [];
         }
     }

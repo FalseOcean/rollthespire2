@@ -14,6 +14,7 @@ internal sealed partial class NeowOperationOverlay : Control
 {
     private static IUiTextProvider UiText => JsonUiTextProvider.CreateUi13(UiLanguagePreferences.LanguageCode);
     private OperationPreview? _preview;
+    private bool _rerollCardLayout;
     private Control? _summary;
     private readonly List<(MarginContainer Shell, VBoxContainer Content)> _summaryPanels = [];
     private VBoxContainer? _summaryContent;
@@ -120,14 +121,17 @@ internal sealed partial class NeowOperationOverlay : Control
     {
         _potionGroupScale = 1f;
         _potionGroupRegions = null;
+        _rerollCardLayout = false;
         ReleaseCardDisplays();
         foreach (Node child in GetChildren()) { RemoveChild(child); child.QueueFree(); }
         _nativeTiles.Clear();
         _mapSummaryNames.Clear();
+        _huntTrees.Clear();
         _stacks.Clear(); _iconGroups.Clear(); _visibleCardRegions.Clear(); _summaryPanels.Clear();
         _summary = null; _summaryContent = null; _cardsArea = null; _summaryNaturalWidth = 0;
         NativeCardCreateMilliseconds = 0; NativeCardReadyMilliseconds = 0; NativeCardCount = 0; NativeCardReuseCount = 0;
         if (_preview is not { } preview || !HasVisibleContent(preview)) { _cardReuse?.Clear(); return; }
+        _rerollCardLayout = OperationDisplayPolicy.HasRerollCardGroups(preview);
         var rootStyle = OperationDisplayPolicy.Resolve(preview);
         var details = Column(7);
         if (MapCardPresentation && !string.IsNullOrWhiteSpace(preview.Heading))
@@ -150,6 +154,7 @@ internal sealed partial class NeowOperationOverlay : Control
         // Two retained Bones branches have not been proven equivalent. Their
         // full textual comparison must not imply a shared set of external cards.
         bool suppressBranchCards = IsBones && preview.Branches.Length > 1;
+        bool hasLimitedHuntBranch = false;
         for (int branchIndex = 0; branchIndex < preview.Branches.Length; branchIndex++)
         {
             var branch = preview.Branches[branchIndex];
@@ -162,6 +167,9 @@ internal sealed partial class NeowOperationOverlay : Control
                     .SelectMany(r => r.Cards).Select(CardName).ToArray();
                 if (targets.Length > 0) branchName = JoinCaption(branchName, string.Join("／", targets));
             }
+            bool limited = false;
+            bool huntTree = !suppressBranchCards && AddHuntTree(preview, branch, branchIndex, branchName, out limited);
+            hasLimitedHuntBranch |= limited;
             bool branchHasText = branch.Sections.Any(s => OperationDisplayPolicy.Resolve(preview, s).Text != OperationTextMode.None);
             if (branchHasText && !branch.Order.IsDefaultOrEmpty)
                 block.AddChild(WrappedText((preview.Branches.Length > 1 ? branchName + " " : "") +
@@ -169,6 +177,7 @@ internal sealed partial class NeowOperationOverlay : Control
             else if (branchHasText && preview.Branches.Length > 1) block.AddChild(WrappedText(branchName, true));
             foreach (var section in DisplaySections(preview, branch))
             {
+                if (limited && AboveHuntDisplayLimit(section)) continue;
                 var style = OperationDisplayPolicy.Resolve(preview, section);
                 bool separateEffect = preview.Branches.Length == 1 && section.Source != preview.Source &&
                     section.Source.Entry is "WHETSTONE" or "WAR_PAINT";
@@ -177,6 +186,8 @@ internal sealed partial class NeowOperationOverlay : Control
                     section.Rows.Any(row => row.Cards.Any(card => !MapUsesCardFace(card))) ||
                     section.CardGroups.Any(group => group.Cards.Any(card => !MapUsesCardFace(card))));
                 bool text = separateEffect || style.Text != OperationTextMode.None || mapNeedsCardNames;
+                bool compactEventCardNames = OperationDisplayPolicy.CompactEventCardNames(preview, section,
+                    !suppressBranchCards, MapCardPresentation);
                 var sectionBlock = block;
                 if (section.EmptyReason == null && !section.Rows.Any(r => !r.Models.IsDefaultOrEmpty || !r.Cards.IsDefaultOrEmpty) &&
                     !section.CardGroups.Any(g => !g.Cards.IsDefaultOrEmpty)) continue;
@@ -185,9 +196,11 @@ internal sealed partial class NeowOperationOverlay : Control
                     sectionBlock = Column(7);
                     effectDetails.Add((section.Source, sectionBlock));
                 }
-                string sectionName = LocalizedLabel(section.Source, section.Label);
+                bool pathReplacesOrdinal = section.Label == "RewardRerollOrdinal" && !section.CardGroups.IsDefaultOrEmpty &&
+                    section.CardGroups.All(group => !group.IconPaths.IsDefaultOrEmpty);
+                string sectionName = pathReplacesOrdinal ? "" : LocalizedLabel(section.Source, section.Label);
                 if (text && !separateEffect && section.Source != preview.Source) sectionBlock.AddChild(Identity(section.Source, NameOf(section.Source), 24));
-                if (text && sectionName.Length > 0) sectionBlock.AddChild(WrappedText(sectionName, true));
+                if (text && sectionName.Length > 0 && (!compactEventCardNames || !section.Rows.IsEmpty)) sectionBlock.AddChild(WrappedText(sectionName, true));
                 if (text && section.EmptyReason != null) sectionBlock.AddChild(WrappedText(LocalizedLabel(section.Source, section.EmptyReason)));
                 string artCaption = preview.Branches.Length > 1 ? branchName : "";
                 if (section.Source != preview.Source && section.Source.Entry != "THE_HUNT") artCaption = JoinCaption(artCaption, NameOf(section.Source));
@@ -238,11 +251,12 @@ internal sealed partial class NeowOperationOverlay : Control
                 {
                     var group = section.CardGroups[groupIndex];
                     if (group.Cards.IsDefaultOrEmpty) continue;
-                    bool potionOrderCaption = !group.PotionUseOrder.IsDefaultOrEmpty &&
+                    ImmutableArray<OperationIconPath> displayPaths = OperationDisplayPolicy.ShowIconPaths(preview, section, group) ? group.IconPaths : [];
+                    bool potionOrderCaption = !displayPaths.IsDefaultOrEmpty &&
                         group.Label?.StartsWith("PotionUseStep:", StringComparison.Ordinal) == true;
-                    string groupName = LocalizedLabel(section.Source, group.Label);
+                    string groupName = text && !displayPaths.IsDefaultOrEmpty ? IconPathsText(displayPaths) : LocalizedLabel(section.Source, group.Label);
                     if (groupName.Length == 0) groupName = UiText.Format("operation.group", groupIndex + 1);
-                    if (text)
+                    if (text && !compactEventCardNames)
                     {
                         string qualifier = group.Possible ? UiText.Get("operation.possiblePrefix") : "";
                         if (MapCardPresentation)
@@ -264,14 +278,24 @@ internal sealed partial class NeowOperationOverlay : Control
                             string.Join("／", group.Cards.Select(CardName))));
                     }
                     bool rerollGroup = group.Label?.StartsWith("RewardRerollStep:", StringComparison.Ordinal) == true;
-                    if (!suppressBranchCards) AddCardGroup(group.Cards,
-                        rerollGroup ? groupName : string.IsNullOrEmpty(group.Label) || potionOrderCaption ? artCaption : JoinCaption(artCaption, groupName), branchIndex,
+                    // The sequence is laid out in reading order. Show its scope once
+                    // (e.g. same-recipe rewards); the card faces carry each result.
+                    string cardCaption = compactEventCardNames
+                        ? JoinCaption(preview.Branches.Length > 1 ? branchName : "",
+                            JoinCaption(section.Label == "EventCombatRewards" ? "" : sectionName, string.IsNullOrWhiteSpace(group.Label) ? "" : groupName))
+                        : rerollGroup
+                        ? (groupIndex == 0 && !text ? artCaption : "")
+                        : string.IsNullOrEmpty(group.Label) || potionOrderCaption || !displayPaths.IsDefaultOrEmpty ? artCaption : JoinCaption(artCaption, groupName);
+                    if (!suppressBranchCards && !(huntTree && OperationDisplayPolicy.IsEventCombat(section))) AddCardGroup(group.Cards,
+                        cardCaption, branchIndex,
                         style.Cards is OperationCardLayout.Stack or OperationCardLayout.Groups or OperationCardLayout.Branches,
-                        style.Cards == OperationCardLayout.Spread, group.Possible && !group.SuppressPossiblePrefix,
-                        group.Highlighted, group.EarliestFirst, group.ForceSingleRow || section.Source.Entry == "DREAM_CATCHER" ||
+                        style.Cards == OperationCardLayout.Spread, group.Possible && !group.SuppressPossiblePrefix && !compactEventCardNames,
+                        group.Highlighted, group.EarliestFirst, group.ForceSingleRow ||
+                        (OperationDisplayPolicy.IsRewardReroll(preview, section) || !displayPaths.IsDefaultOrEmpty) && style.Cards == OperationCardLayout.Parallel ||
+                        preview.Source.Category == "POTION" && style.Cards == OperationCardLayout.Parallel || section.Source.Entry == "DREAM_CATCHER" ||
                         preview.Source.Entry == "SLIPPERY_BRIDGE" && style.Cards == OperationCardLayout.Parallel,
                         dimmed: ordinalFocus && !group.Highlighted, compact: ordinalFocus,
-                        potionUseOrder: group.PotionUseOrder);
+                        iconPaths: displayPaths);
                 }
             }
             if (block.GetChildCount() > 0) details.AddChild(block); else block.QueueFree();
@@ -279,7 +303,8 @@ internal sealed partial class NeowOperationOverlay : Control
         if (rootStyle.Text != OperationTextMode.None)
             foreach (var key in preview.ContainedRelics.Where(key => !preview.Branches.Any(b => b.Order.Contains(key) || b.Sections.Any(s => s.Source == key))))
                 details.AddChild(Identity(key, NameOf(key), 24));
-        if (OperationDisplayPolicy.TransformOnly(preview) && _stacks.Count > 0 ||
+        if ((OperationDisplayPolicy.TransformOnly(preview) || _rerollCardLayout) && _stacks.Count > 0 ||
+            _stacks.Any(stack => !stack.IconPaths.IsDefaultOrEmpty) ||
             preview.Source.Category == "POTION" && (_stacks.Count > 0 || _iconGroups.Count > 0))
         {
             // Preserve incomplete/failure information beside the cards without
@@ -291,6 +316,7 @@ internal sealed partial class NeowOperationOverlay : Control
             notices.QueueFree();
         }
         else AddOutcomeNotices(details, preview);
+        if (hasLimitedHuntBranch) details.AddChild(WrappedText(UiText.Get("operation.hunt.displayLimit")));
         if (details.GetChildCount() > 0 || effectDetails.Count > 0)
         {
             _summary = new Control { Name = "Rt2NeowSummary", MouseFilter = MouseFilterEnum.Ignore };
@@ -445,6 +471,7 @@ internal sealed partial class NeowOperationOverlay : Control
         if (notice == "Purchase:TooFull") return UiText.Get("operation.potionSlotsFull");
         if (notice.StartsWith("RewardSacrificeProgress:", StringComparison.Ordinal) && int.TryParse(notice[24..], out int progress))
             return UiText.Format("operation.sacrificeProgress", progress, (progress + 1) % 2);
+        if (notice == "RewardRerollCombatRecipes") return UiText.Get("operation.notice.rerollCombatRecipes");
         if (notice == "EventTransformSlotAlternativesRelated") return UiText.Get("operation.notice.transformSlotAlternatives");
         if (notice == "EventCombatStableContextNoExtraActions") return UiText.Get("operation.notice.stableCombatContext");
         if (notice == "EventCombatRoyaltiesPlayed") return UiText.Get("operation.notice.royaltiesPlayed");
@@ -524,8 +551,8 @@ internal sealed partial class NeowOperationOverlay : Control
         if (value == "EventCombatNoHunt") return UiText.Get("operation.label.noHunt");
         if (value.StartsWith("EventHuntTriggers:", StringComparison.Ordinal) && int.TryParse(value[18..], out int huntCount))
             return UiText.Format("operation.label.huntTriggers", huntCount);
-        if (value.StartsWith("EventHuntConditional:", StringComparison.Ordinal) && int.TryParse(value[21..], out int huntIndex))
-            return UiText.Format("operation.label.huntGroup", huntIndex);
+        if (value.StartsWith("EventHuntMinimum:", StringComparison.Ordinal) && int.TryParse(value[17..], out int huntMinimum))
+            return UiText.Format("operation.label.huntMinimum", huntMinimum);
         if (value == "WhetstoneAfterSkippingCardRewards") return UiText.Get("operation.label.whetstoneSkipCards");
         if (value == "WhetstoneAfterMirrorChoice") return UiText.Get("operation.label.whetstoneMirrorChoice");
         if (value == "WhetstoneNoUpgradeTargets") return UiText.Get("operation.noUpgradeTargets");

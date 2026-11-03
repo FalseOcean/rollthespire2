@@ -18,6 +18,8 @@ using MegaCrit.Sts2.Core.Rewards;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Saves.Runs;
 using RolltheSpire2.Core.Authority;
+using RolltheSpire2.Compatibility;
+using RolltheSpire2.Core.Effects;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Prediction.Maps;
@@ -28,14 +30,18 @@ using MapType = RolltheSpire2.Core.Prediction.Maps.MapPointType;
 
 namespace RolltheSpire2.Infrastructure.Snapshots;
 
-internal sealed record PredictorLiveRunSnapshot(string Fingerprint, PredictorRun Run,
+internal sealed record PredictorLiveRunSnapshot(string Fingerprint, PredictorContext Context, PredictorState State,
     int CurrentHp, int MaximumHp)
 {
     // Set only by the native before-entry observer, never by a midpoint capture.
     internal MapPosition? EntryPoint { get; init; }
     internal int? EntryActIndex { get; init; }
-    internal bool CanLeaveCurrentNode => Run.Context.Live!.CanLeaveCurrentNode;
-    internal ImmutableArray<PredictorCombatPendingCause> PendingCauses => Run.Context.Live!.PendingCauses;
+    internal PredictorCombatDefaults CombatDefaults { get; init; } = new();
+    internal bool AutomaticRewardPickup { get; init; } = true;
+    internal PredictorRun CreateRun() => new(Context, State)
+    { CombatDefaults = CombatDefaults, AutomaticRewardPickup = AutomaticRewardPickup };
+    internal bool CanLeaveCurrentNode => Context.Live!.CanLeaveCurrentNode;
+    internal ImmutableArray<PredictorCombatPendingCause> PendingCauses => Context.Live!.PendingCauses;
 }
 
 // Main-thread read-only adapter. Only copied values escape; no native lifecycle,
@@ -98,18 +104,20 @@ internal static partial class PredictorLiveRunCapture
         string before = Fingerprint(run, canLeaveCurrentNode);
         var unlocks = player.UnlockState.ToSerializable();
         var discovered = MegaCrit.Sts2.Core.Saves.SaveManager.Instance.Progress.DiscoveredActs.Select(Key).ToImmutableArray();
+        var versionResolution = RuntimeVersionCompatibility.Resolve(version);
+        var profile = RuntimeProfileRegistry.Select(versionResolution);
         var authority = RuntimeContextAuthorityCapture.CaptureRuntimeReadOnly(
-            RolltheSpire2.Compatibility.Beta111Profile.Instance, run.Rng.StringSeed,
+            profile, run.Rng.StringSeed,
             CharacterIdentity.FromKey(Key(player.Character)), run.AscensionLevel, version,
             predictionGameMode: WorldGameMode.Singleplayer,
             predictionGameModeAuthority: PredictionGameModeAuthority.ExplicitRequest,
             explicitUnlockState: player.UnlockState, explicitDiscoveredActs: discovered);
         // Only immutable native canonical upgrade metadata may outlive a
         // capture. Every pool, authority and live value is read at this entry.
-        var levels = new CatalogLevels(previous?.Run, timing);
+        var levels = new CatalogLevels(previous?.Context, timing);
         var pools = new CrystalSphereCatalogCapture.CapturePools(run, player);
         var (catalog, unmodeled) = CrystalSphereCatalogCapture.Capture(run, player, pools, levels.Capture);
-        catalog = CompleteCatalog(catalog, run, player, pools);
+        catalog = CompleteCatalog(catalog, run, player, RuntimeProfilePolicies.EffectCatalogRules(profile.ProfileId), pools);
         var context = new PredictorContext(run.Rng.StringSeed, version, Key(player.Character), run.AscensionLevel,
             Hash(catalog), Hash(unlocks), unlocks.UnlockedEpochs.ToImmutableArray(),
             unlocks.EncountersSeen.Select(Key).ToImmutableArray(), discovered, unlocks.NumberOfRuns)
@@ -161,7 +169,7 @@ internal static partial class PredictorLiveRunCapture
         if (!canLeaveCurrentNode)
             pending.Add(new("LiveCurrentNodePending", "The current native room has not reached its departure boundary.",
                 PredictorCombatDomain.Continuation) { NodeId = node });
-        if (version != "0.111.0")
+        if (!RuntimeProfilePolicies.SupportsPredictorSeedInitialization(versionResolution))
             pending.Add(new("LiveGameVersionUnverified", "Detached source behavior has not been verified for " + version,
                 PredictorCombatDomain.Deck | PredictorCombatDomain.Relics | PredictorCombatDomain.Gold |
                 PredictorCombatDomain.RewardsRng | PredictorCombatDomain.NicheRng | PredictorCombatDomain.ShopsRng |
@@ -222,19 +230,24 @@ internal static partial class PredictorLiveRunCapture
             if (authority.VanillaNeowCatalogExact != true)
                 throw new InvalidOperationException("PredictorOpeningCatalogMissing");
             var opening = RolltheSpire2.Core.Neow.ModernNeowIdentityPredictor.PredictModernCore(
-                context.Seed, authority, RolltheSpire2.Compatibility.Beta111Profile.Instance, true);
+                context.Seed, authority, context.RuntimeProfile, true);
             if (opening.UnknownEligibilityAffectedPool)
                 throw new InvalidOperationException("PredictorOpeningEligibilityMissing");
             state = state with { OpeningOptions = opening.RelicKeys.ToImmutableArray() };
         }
         var detached = PredictorLiveInitialization.FromSnapshot(context, state);
         if (Fingerprint(run, canLeaveCurrentNode) != before) throw new InvalidOperationException("PredictorLiveSnapshotChanged");
-        levels.Remember(detached);
         if (timing != null)
         {
             timing.PoolReads = pools.Reads; timing.PoolReuses = pools.Reuses; timing.PoolProjectionReuses = pools.ProjectionReuses;
         }
-        return new(before, detached, player.Creature.CurrentHp, player.Creature.MaxHp);
+        var snapshot = new PredictorLiveRunSnapshot(before, detached.Context, detached.Working,
+            player.Creature.CurrentHp, player.Creature.MaxHp)
+        { CombatDefaults = detached.CombatDefaults, AutomaticRewardPickup = detached.AutomaticRewardPickup };
+        // Node-entry metadata uses record copies of the snapshot. Context is
+        // the stable captured owner shared by those copies, preserving reuse.
+        levels.Remember(snapshot.Context);
+        return snapshot;
     }
 
     internal static string Fingerprint(RunState run, bool canLeaveCurrentNode)
@@ -420,7 +433,7 @@ internal static partial class PredictorLiveRunCapture
     }
 
     internal static PredictorCatalog CompleteCatalog(PredictorCatalog catalog, RunState run, Player player,
-        CrystalSphereCatalogCapture.CapturePools? pools = null)
+        EffectCatalogRules rules, CrystalSphereCatalogCapture.CapturePools? pools = null)
     {
         var unlocks = player.UnlockState;
         var constraint = ((IRunState)run).CardMultiplayerConstraint;
@@ -437,7 +450,7 @@ internal static partial class PredictorLiveRunCapture
                 HasInnateKeyword = keywords.Contains(CardKeyword.Innate), HasRetainKeyword = keywords.Contains(CardKeyword.Retain)
             } };
         }).ToImmutableArray();
-        var curses = Pool(ModelDb.CardPool<CurseCardPool>()).Where(c => c.CanBeGeneratedByModifiers).Select(Key).ToImmutableArray();
+        var curses = Pool(ModelDb.CardPool<CurseCardPool>()).Where(c => rules.IsGeneratedCurseEligible(c.CanBeGeneratedByModifiers) == true).Select(Key).ToImmutableArray();
         EncounterModel[] extras = [ModelDb.Encounter<DenseVegetationEventEncounter>(), ModelDb.Encounter<PunchOffEventEncounter>(),
             ModelDb.Encounter<MysteriousKnightEventEncounter>(), ModelDb.Encounter<BattlewornDummyEventV1Encounter>(),
             ModelDb.Encounter<BattlewornDummyEventV2Encounter>(), ModelDb.Encounter<BattlewornDummyEventV3Encounter>(), ModelDb.Encounter<FakeMerchantEventEncounter>()];

@@ -44,7 +44,7 @@ internal static class ShionExactTrialChecks
         string? oldPoolMode = Environment.GetEnvironmentVariable("RT2_C_PREPARED_REWARD_POOLS");
         try
         {
-            ExactSearchExecutionRequest Compile() => ExactSearchExecutionRequestFactory.Compile(
+            PreparedSearch Compile() => SearchPreparationCompiler.Compile(
                 SearchCompiler.Compile(positive.Query, context),
                 positive.Options with { ScanCount = 1, WorkerCount = 1 }).Plan!;
             Environment.SetEnvironmentVariable("RT2_SHION_EXACT_TRIAL", null);
@@ -52,18 +52,18 @@ internal static class ShionExactTrialChecks
             var defaultPlan = Compile();
             Environment.SetEnvironmentVariable("RT2_SHION_EXACT_TRIAL", "off");
             var offPlan = Compile();
-            Check(defaultPlan.ExactOptions == on && offPlan.ExactOptions == off,
+            Check(defaultPlan.Model.ExactOptions == on && offPlan.Model.ExactOptions == off,
                 "compilation captures the production default and explicit off mode");
             var input = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, positive.Options.StartSeed);
             ShionExactTrialMetrics.Reset();
-            var actualDefault = ProductionExactSearchEvaluator.Evaluate(defaultPlan, input);
+            var actualDefault = ProductionExactSearchEvaluator.Evaluate(defaultPlan.Model, input);
             Check(ShionExactTrialMetrics.Snapshot().IdentityReuses > 0,
                 "compiled default still reuses identity after the environment changes to off");
             ShionExactTrialMetrics.Reset();
-            var actualOff = ProductionExactSearchEvaluator.Evaluate(offPlan, input);
+            var actualOff = ProductionExactSearchEvaluator.Evaluate(offPlan.Model, input);
             Check(ShionExactTrialMetrics.Snapshot().OpeningReuseCandidates == 0 &&
                 JsonSerializer.Serialize(actualDefault.Evaluation) == JsonSerializer.Serialize(actualOff.Evaluation) &&
-                DocumentSignature(actualDefault.Document) == DocumentSignature(actualOff.Document),
+                FactsSignature(actualDefault.Facts) == FactsSignature(actualOff.Facts),
                 "compiled off keeps the original path with equal full result and document");
             CheckTimingIdentity(defaultPlan, offPlan, Check);
         }
@@ -77,14 +77,14 @@ internal static class ShionExactTrialChecks
         foreach (string seed in new[] { workload.Options.StartSeed, "000000000000", "0000000001FA" }.Distinct())
         foreach (bool diagnostics in new[] { false, true })
         {
-            var plan = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(workload.Query, context),
+            var plan = SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, context),
                 workload.Options with { StartSeed = seed, ScanCount = 1, WorkerCount = 1, IncludeDiagnostics = diagnostics }).Plan!;
             var input = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed);
-            var baseline = ProductionExactSearchEvaluator.Evaluate(plan, input, CancellationToken.None, off);
-            var trial = ProductionExactSearchEvaluator.Evaluate(plan, input, CancellationToken.None, on);
+            var baseline = ProductionExactSearchEvaluator.Evaluate(plan.Model, input, CancellationToken.None, off);
+            var trial = ProductionExactSearchEvaluator.Evaluate(plan.Model, input, CancellationToken.None, on);
             Check(JsonSerializer.Serialize(baseline.Evaluation) == JsonSerializer.Serialize(trial.Evaluation),
                 "complete Exact dispositions, causes, witnesses and evidence match the unmodified path");
-            Check(DocumentSignature(baseline.Document) == DocumentSignature(trial.Document),
+            Check(FactsSignature(baseline.Facts) == FactsSignature(trial.Facts),
                 "complete numeric outputs, statuses, warnings and diagnostics match (only request id normalized)");
             if (workload == positive && seed == workload.Options.StartSeed)
                 Check(baseline.IsMatch && trial.IsMatch, "existing C positive actually reaches rewards");
@@ -116,17 +116,16 @@ internal static class ShionExactTrialChecks
             var source = Request(SeedPredictionDomainSelection.Neow);
             var reward = Request(SeedPredictionDomainSelection.Neow | SeedPredictionDomainSelection.NormalCombatRewards);
             var reuse = new Beta111NeowIdentityReuse();
-            var cheap = Beta111PredictionProfile.Instance.PredictFromRootHash(source, context.Detection, input, identityReuse: reuse);
-            var choices = cheap.Sections.SelectMany(s => s.NeowChoices).ToArray();
+            var cheap = Beta111PredictionProfile.Instance.ObserveFromRootHash(source, context.Detection, input, identityReuse: reuse);
+            var choices = cheap.Neow!.Choices.ToArray();
             string frozenChoices = ChoiceSignature(choices);
-            var baseline = Beta111PredictionProfile.Instance.PredictFromRootHash(reward, context.Detection, input, choices);
-            var trial = Beta111PredictionProfile.Instance.PredictFromRootHash(reward, context.Detection, input, choices, reuse);
+            var baseline = Beta111PredictionProfile.Instance.ObserveFromRootHash(reward, context.Detection, input, choices);
+            var trial = Beta111PredictionProfile.Instance.ObserveFromRootHash(reward, context.Detection, input, choices, reuse);
             Check(reuse.WasReused, "same captured authority/root/context reuses identity including complex Bones mode");
             Check(JsonSerializer.Serialize(baseline) == JsonSerializer.Serialize(trial), "same-request full document equality");
             Check(ChoiceSignature(choices) == frozenChoices, "opening choices and internal RNG continuation states remain unchanged");
             if (missingEffects)
-                Check(trial.Sections.Single(s => s.Kind == PredictionSectionKind.NormalCombatRewardSequence)
-                    .NormalCombatRewardSequencePrediction!.Status == SeedDomainEvaluationStatus.Unknown,
+                Check(trial.CombatRewards!.Status == SeedDomainEvaluationStatus.Unknown,
                     "missing effects retain Unknown rather than a fabricated reward result");
             bool CanReuse(SeedPredictionRequest request, TrustedRootHashInput root) =>
                 reuse.TryReuse(Beta111PredictionProfile.Instance, request, root,
@@ -140,8 +139,8 @@ internal static class ShionExactTrialChecks
             Check(!new Beta111NeowIdentityReuse().TryReuse(Beta111PredictionProfile.Instance, reward, input,
                 authority.IsBeta111NeowIdentityAuthorityExact, out _), "a new candidate has no inherited identity proof");
             var badDetection = context.Detection with { NormalizedVersion = "0.110.0" };
-            var badBaseline = Beta111PredictionProfile.Instance.PredictFromRootHash(reward, badDetection, input);
-            var badTrial = Beta111PredictionProfile.Instance.PredictFromRootHash(reward, badDetection, input, identityReuse: reuse);
+            var badBaseline = Beta111PredictionProfile.Instance.ObserveFromRootHash(reward, badDetection, input);
+            var badTrial = Beta111PredictionProfile.Instance.ObserveFromRootHash(reward, badDetection, input, identityReuse: reuse);
             Check(JsonSerializer.Serialize(badBaseline) == JsonSerializer.Serialize(badTrial) &&
                 badTrial.Warnings.Any(w => w.Code == PredictionWarningCode.InvalidRequestContext),
                 "real profile entry preserves version/context rejection before identity reuse");
@@ -151,12 +150,12 @@ internal static class ShionExactTrialChecks
             void CheckIndependentRequest(SeedPredictionRequest current, string setting)
             {
                 var independentReuse = new Beta111NeowIdentityReuse();
-                Beta111PredictionProfile.Instance.PredictFromRootHash(source, context.Detection, input,
+                Beta111PredictionProfile.Instance.ObserveFromRootHash(source, context.Detection, input,
                     identityReuse: independentReuse);
                 // No prepared choices: the current request must generate its own
                 // effects and reward continuation. Only identity may be reused.
-                var expected = Beta111PredictionProfile.Instance.PredictFromRootHash(current, context.Detection, input);
-                var actual = Beta111PredictionProfile.Instance.PredictFromRootHash(current, context.Detection, input,
+                var expected = Beta111PredictionProfile.Instance.ObserveFromRootHash(current, context.Detection, input);
+                var actual = Beta111PredictionProfile.Instance.ObserveFromRootHash(current, context.Detection, input,
                     identityReuse: independentReuse);
                 Check(independentReuse.WasReused, setting + " does not affect pure identity");
                 Check(JsonSerializer.Serialize(expected) == JsonSerializer.Serialize(actual),
@@ -175,16 +174,16 @@ internal static class ShionExactTrialChecks
             int calls = 0;
             var injected = new Beta111PredictionProfile((root, captured, profile, exact) =>
             { calls++; return ModernNeowIdentityPredictor.PredictModernCore(root, captured, profile, exact); });
-            injected.PredictFromRootHash(reward, context.Detection, input, choices, reuse);
+            injected.ObserveFromRootHash(reward, context.Detection, input, choices, reuse);
             Check(calls == 1, "injected stateful delegate is always executed");
             var failed = new Beta111PredictionProfile((_, _, _, _) => throw new InvalidOperationException("ShionIdentityOriginalFailure"))
-                .PredictFromRootHash(reward, context.Detection, input, choices, reuse);
+                .ObserveFromRootHash(reward, context.Detection, input, choices, reuse);
             Check(failed.Warnings.Any(w => w.Code == PredictionWarningCode.AnalysisFailed) &&
                 failed.Diagnostics.Any(d => d.Value.Contains("ShionIdentityOriginalFailure")), "original failure evidence survives reuse and diagnostics off");
             try
             {
                 new Beta111PredictionProfile((_, _, _, _) => throw new OperationCanceledException("ShionIdentityCancellation"))
-                    .PredictFromRootHash(reward, context.Detection, input, choices, reuse);
+                    .ObserveFromRootHash(reward, context.Detection, input, choices, reuse);
                 throw new Exception("Cancellation swallowed");
             }
             catch (OperationCanceledException ex) { Check(ex.Message == "ShionIdentityCancellation", "original cancellation preserved"); }
@@ -198,13 +197,13 @@ internal static class ShionExactTrialChecks
                 a.SourceAuthority, a.Completeness, a.ResolutionStatus, a.EffectAuthority, a.WorldAuthority,
                 a.PredictionGameMode, a.PredictionGameModeAuthority);
             var reducedContext = context with { Authority = reduced };
-            var plan = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(c.Query, reducedContext),
+            var plan = SearchPreparationCompiler.Compile(SearchCompiler.Compile(c.Query, reducedContext),
                 c.Options with { ScanCount = 1, WorkerCount = 1 }).Plan!;
             var input = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, c.Options.StartSeed);
-            var baseline = ProductionExactSearchEvaluator.Evaluate(plan, input, CancellationToken.None, off);
-            var trial = ProductionExactSearchEvaluator.Evaluate(plan, input, CancellationToken.None, on);
+            var baseline = ProductionExactSearchEvaluator.Evaluate(plan.Model, input, CancellationToken.None, off);
+            var trial = ProductionExactSearchEvaluator.Evaluate(plan.Model, input, CancellationToken.None, on);
             Check(JsonSerializer.Serialize(baseline.Evaluation) == JsonSerializer.Serialize(trial.Evaluation) &&
-                DocumentSignature(baseline.Document) == DocumentSignature(trial.Document),
+                FactsSignature(baseline.Facts) == FactsSignature(trial.Facts),
                 "Unknown/Unsupported identity authority preserves complete cause and document");
             Check(trial.Evaluation.Disposition is SearchDisposition.Unknown or SearchDisposition.Unsupported,
                 "nonexact authority is never promoted to Match");
@@ -213,21 +212,21 @@ internal static class ShionExactTrialChecks
         return 0;
     }
 
-    private static void CheckTimingIdentity(ExactSearchExecutionRequest optimized,
-        ExactSearchExecutionRequest poolsOnly, Action<bool, string> check)
+    private static void CheckTimingIdentity(PreparedSearch optimized,
+        PreparedSearch poolsOnly, Action<bool, string> check)
     {
-        var legacy = poolsOnly with { RewardPoolPreparation = null };
-        var identityOnly = optimized with { RewardPoolPreparation = null };
-        string revision = FamilyExactTimingDomains.ImplementationRevision(optimized);
-        string poolsRevision = FamilyExactTimingDomains.ImplementationRevision(poolsOnly);
-        string identityRevision = FamilyExactTimingDomains.ImplementationRevision(identityOnly);
-        check(optimized.RewardPoolPreparation?.Pools is not null && revision.Length > 0 &&
+        var legacy = poolsOnly with { Model = poolsOnly.Model with { RewardPoolPreparation = null } };
+        var identityOnly = optimized with { Model = optimized.Model with { RewardPoolPreparation = null } };
+        string revision = FamilyExactTimingDomains.ImplementationRevision(optimized.Model);
+        string poolsRevision = FamilyExactTimingDomains.ImplementationRevision(poolsOnly.Model);
+        string identityRevision = FamilyExactTimingDomains.ImplementationRevision(identityOnly.Model);
+        check(optimized.Model.RewardPoolPreparation?.Pools is not null && revision.Length > 0 &&
             new[] { "", revision, poolsRevision, identityRevision }.Distinct().Count() == 4 &&
-            FamilyExactTimingDomains.ImplementationRevision(legacy) == "",
+            FamilyExactTimingDomains.ImplementationRevision(legacy.Model) == "",
             "actual prepared pools and enabled identity reuse distinguish every changed Exact implementation from legacy");
-        var empty = ExactSearchExecutionRequestFactory.Compile(
-            SearchCompiler.Compile(SearchQuery.Empty, optimized.CompiledSearch.Context), optimized.RunOptions).Plan!;
-        check(FamilyExactTimingDomains.ImplementationRevision(empty) == "",
+        var empty = SearchPreparationCompiler.Compile(
+            SearchCompiler.Compile(SearchQuery.Empty, optimized.Model.CompiledSearch.Context), optimized.RunOptions).Plan!;
+        check(FamilyExactTimingDomains.ImplementationRevision(empty.Model) == "",
             "unrelated non-reward timing retains its existing identity");
 
         // Isolate the existing in-memory store and restore it without disk I/O.
@@ -243,12 +242,13 @@ internal static class ShionExactTrialChecks
                 "{\"SchemaVersion\":1,\"VerificationAbi\":1,\"Entries\":[]}", fields[0].FieldType));
             fields[1].SetValue(null, true);
             fields[2].SetValue(null, false);
-            var family = FamilyExactTimingDomains.Resolve(optimized);
+            var family = FamilyExactTimingDomains.Resolve(optimized.Model);
             SearchPredictabilityVerificationStore.SubmitExactTimingSample(family, 10, 100, "legacy-fixture");
             SearchPredictabilityVerificationStore.SubmitExactTimingSample(SearchVerificationFamily.RelicOnly, 10, 70, "unrelated-fixture");
             check(SearchPredictabilityVerificationStore.TryGetExactTiming(family, revision) is null,
                 "old reward timing cannot price the optimized implementation");
-            var before = FamilySearchEtaProjectorV1.Project(optimized, FamilyPlanner.InOrder([]));
+            var emptyExecution = FamilyPlanner.InOrder([]);
+            var before = FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(optimized, emptyExecution), emptyExecution);
             check(before.TargetExactTailMs is null && before.MissingEvidence.Any(e => e.Contains(revision)),
                 "ETA explicitly identifies the missing new-body timing without borrowing legacy evidence");
             SearchPredictabilityVerificationStore.SubmitExactTimingSample(family, 10, 20, "optimized-fixture", revision);
@@ -261,8 +261,8 @@ internal static class ShionExactTrialChecks
                 SearchPredictabilityVerificationStore.TryGetExactTiming(family, identityRevision) is null &&
                 SearchPredictabilityVerificationStore.TryGetExactTiming(SearchVerificationFamily.RelicOnly)!.AverageExactMsPerAttempt == 7,
                 "new samples populate only their exact revision while legacy and unrelated timing survive");
-            var after = FamilySearchEtaProjectorV1.Project(optimized, FamilyPlanner.InOrder([]));
-            var legacyEta = FamilySearchEtaProjectorV1.Project(legacy, FamilyPlanner.InOrder([]));
+            var after = FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(optimized, emptyExecution), emptyExecution);
+            var legacyEta = FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(legacy, emptyExecution), emptyExecution);
             check(after.TargetExactTailMs is > 0 && after.TargetExactTailMs == legacyEta.TargetExactTailMs * .2 &&
                 after.ExactTimingImplementationRevision == revision && after.FormatSummary().Contains(revision),
                 "unchanged ETA math consumes the matching new timing and reports its implementation");
@@ -280,11 +280,12 @@ internal static class ShionExactTrialChecks
         finally { for (int i = 0; i < fields.Length; i++) fields[i].SetValue(null, saved[i]); }
     }
 
-    private static string? DocumentSignature(SeedPredictionDocument? d) => d is null ? null : JsonSerializer.Serialize(new
+    private static string? FactsSignature(SeedPredictionFacts? facts) => facts is null ? null : JsonSerializer.Serialize(new
     {
-        Context = d.Context with { RequestId = default }, d.PredictorId, d.OriginalSeed, d.CanonicalSeed,
-        d.Sections, d.Warnings, Diagnostics = d.Diagnostics.Where(x => x.Code != PredictionDiagnosticCodes.RequestId),
-        d.OverallStatus, d.ProductRelevantProjectionPrecision, d.ProductRelevantProjectionStatus, d.FullEffectSemanticsCompleteness
+        Context = facts.Context with { RequestId = default }, facts.PredictorId, facts.OriginalSeed, facts.CanonicalSeed,
+        facts.Neow, facts.World, facts.Relics, facts.CombatRewards, facts.Party, facts.Warnings,
+        Diagnostics = facts.Diagnostics.Where(x => x.Code != PredictionDiagnosticCodes.RequestId),
+        facts.InputStatus, facts.InputIssue
     });
 
     private static string ChoiceSignature(IReadOnlyList<NeowChoiceResult> choices) => JsonSerializer.Serialize(new

@@ -9,15 +9,15 @@ using RolltheSpire2.Search.FamilyExecution;
 // for the scanned population; bounded dense/compact populations also use CPU.
 internal static class ShionNeowOptimizationChecks
 {
-    internal static void Run(ExactSearchExecutionRequest request, string output)
+    internal static void Run(PreparedSearch request, string output)
     {
-        var family = (NeowFamily)FamilyExecutionCoordinator.CreateRegisteredFamilies(request, gpuAvailable: true)
-            .Single(f => f.FamilyId == "N.Neow");
+        var preparation = HostFilterBindings.PrepareNeow(request);
+        var family = preparation.Domain;
         var native = family.GpuPlan ?? throw new InvalidOperationException("ShionN.NoOrdinaryGpuPlan");
         if (native.IsMultiplayer || native.DirectNestedMode != 0 || native.JointTransformMetaOffset >= 0)
             throw new InvalidOperationException("ShionN.RequiresOrdinarySolo");
-        var profile = RuntimeProfileRegistry.Select(request.Detection);
-        var matcher = NeowFamilyReplay.Bind(family.PricingReplayPlan);
+        var profile = RuntimeProfileRegistry.Select(request.Model.Detection);
+        var matcher = NeowFamilyReplay.Bind(family.Replay);
         bool Cpu(ulong ordinal) => matcher(profile.ComputeRootSeed(VisibleSeedCandidateCodec.FormatOrdinal(profile, ordinal)));
         ulong start = ParseOrdinal(request.CanonicalStartSeed);
         using var rd = RenderingServer.CreateLocalRenderingDevice() ?? throw new InvalidOperationException("ShionN.NoGpu");

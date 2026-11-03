@@ -121,11 +121,23 @@ internal sealed partial class PredictorRun
     // entirely of default card skips or optional potion display can close;
     // mandatory potion receipts and other child choices stay open.
     private static bool ContinueLiveDefaultCardRewardChildren(PredictorRun run,
-        List<RouteDependency> dependencies, CancellationToken token, int? stopAtObtainDepth = null)
+        List<RouteDependency> dependencies, CancellationToken token, int? stopAtObtainDepth = null,
+        long? sourceRewardId = null)
     {
         // A receipt owns its newly opened obtain frames. Once it returns to the
         // source, the caller still owns any authored sibling reward choices.
-        bool BelowSource() => !stopAtObtainDepth.HasValue || run._obtainFrames.Length > stopAtObtainDepth.Value;
+        // Health-only pickup effects suspend their reward receipt without
+        // pushing a frame. Retain that receipt's identity as well as its depth.
+        bool BelowSource()
+        {
+            if (!stopAtObtainDepth.HasValue || run._obtainFrames.Length > stopAtObtainDepth.Value) return true;
+            if (run._obtainFrames.Length != stopAtObtainDepth.Value || run.Phase != PredictorPhase.ObtainHealth ||
+                !sourceRewardId.HasValue) return false;
+            var health = run._leafyPending ?? run._wafflePending ?? run._fakeWafflePending ?? run._fragrantPending ??
+                run._serePending ?? run._precariousPending;
+            return health is { Destination: PredictorObtainReturn.Reward or PredictorObtainReturn.RewardAlternative } &&
+                health.SourceId == sourceRewardId.Value;
+        }
         if (!BelowSource()) return false;
         bool completed = CompleteLiveObtainHealth(run, dependencies, token);
         if (!BelowSource()) return completed;

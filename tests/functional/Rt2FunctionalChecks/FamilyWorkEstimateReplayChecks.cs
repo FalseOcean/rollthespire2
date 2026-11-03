@@ -15,9 +15,9 @@ internal static class FamilyWorkEstimateReplayChecks
         void Check(bool ok, string message) { checks++; if (!ok) throw new InvalidOperationException("ReplayWork: " + message); }
         var captured = ProductionSearchReplay.Read<ProductionSearchReplayContext>(
             "tools/ProductionSearchHost/Corpus/v1/context.json").Context;
-        ExactSearchExecutionRequest Request(SearchQuery query, SearchContext source)
+        PreparedSearch Request(SearchQuery query, SearchContext source)
         {
-            var result = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, source),
+            var result = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, source),
                 new("000000000000", 65536, 16, 4));
             return result.Plan ?? throw new InvalidOperationException("ReplayWork.Compile: " + result.Issue);
         }
@@ -60,12 +60,12 @@ internal static class FamilyWorkEstimateReplayChecks
             FamilyPhysicalQuote PartyQuote(SearchContext source)
             {
                 var request = Request(table, source);
-                var personal = ExactSearchExecutionRequestFactory.ForPlayer(request, request.CompiledSearch.PlayerSearches[0]);
+                var personal = SearchPreparationCompiler.ForPlayer(request.Model, request.Model.CompiledSearch.PlayerSearches[0]);
                 var generated = NeowWorkEstimate.Describe(NeowReplayPlan.Compile(personal, false));
                 Check(generated.Draws > 0 && generated.PoolVisits > 0,
                     "actual MassiveScroll personal plan has both generation and repeated-selection work");
                 var unit = FamilyExecutionCoordinator.Plan(request, gpuAvailable: false).ExecutionOrderUnits
-                    .OfType<NeowFamily.PartyInitial>().Single();
+                    .Single(body => body.FamilyId == "N.Neow" && body.PlayersCount > 1);
                 var quote = unit.QuotePhysicalWork(new(false, false, 65536))!;
                 Check(FamilyCoarsePricing.IsEstimate(quote) && quote.Evidence.Contains("N.PartyInitial.WorkEstimate", StringComparison.Ordinal),
                     "actual PartyInitial CPU consumes the source-work estimate");
@@ -84,17 +84,17 @@ internal static class FamilyWorkEstimateReplayChecks
                 OpeningRoute = new(BaseGameModelKeys.Relics.NeowsBones), OpeningRouteRelicRequirement = new(
                     BaseGameModelKeys.Relics.NeowsBones, [BaseGameModelKeys.Relics.SmallCapsule, companion],
                     ordered ? BonesRouteOrderMode.ExactOrder : BonesRouteOrderMode.AnyOrder) };
-            (FamilyCpuExecution Cpu, FamilyPhysicalQuote Quote) RelicQuote(SearchQuery query, SearchContext source, bool compiled)
+            (FilterBodyDescription Cpu, FamilyPhysicalQuote Quote) RelicQuote(SearchQuery query, SearchContext source, bool compiled)
             {
                 var request = Request(query, source);
-                var route = NeowReplayPlan.Compile(request, true);
-                Check((CapsuleRelicCpuPlan.TryCompile(request, route) is not null) == compiled,
+                var route = NeowReplayPlan.Compile(request.Model, true);
+                Check((CapsuleRelicCpuPlan.TryCompile(request.Model, route) is not null) == compiled,
                     "expected actual Capsule CPU realization");
-                var owner = FamilyExecutionCoordinator.CreateRegisteredFamilies(request).Single(f => f is CapsuleRelicFamily);
-                var cpu = (FamilyCpuExecution)FamilyCpuExecution.ConfiguredRealizations(owner).Single();
-                var quote = cpu.Quote(new(false, false, 65536), new HashSet<string>())!;
+                var owner = FamilyExecutionCoordinator.CreateRegisteredFamilies(request).Single(f => f.FamilyId == "R.Relic");
+                var cpu = owner.CpuAlternatives.Single(cpu => cpu.CpuWorkers == Math.Clamp(owner.CpuWorkers, 1, 32));
+                var quote = cpu.QuotePhysicalWork(new(false, false, 65536), new HashSet<string>())!;
                 Check(FamilyCoarsePricing.IsEstimate(quote), "actual configured Capsule CPU quote is estimated");
-                Check(cpu.Quote(new(false, false, 65536), new HashSet<string> { "N.Neow" })!.NanosecondsPerInput == quote.NanosecondsPerInput,
+                Check(cpu.QuotePhysicalWork(new(false, false, 65536), new HashSet<string> { "N.Neow" })!.NanosecondsPerInput == quote.NanosecondsPerInput,
                     "R continuation does not acquire or price another N filtering obligation");
                 return (cpu, quote);
             }

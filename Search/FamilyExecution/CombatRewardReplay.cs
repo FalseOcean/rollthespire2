@@ -16,11 +16,21 @@ internal sealed partial class CombatRewardReplay
     private readonly bool _defect;
     private readonly bool _authoredNicheUnbound;
     private readonly CombatRewardCardSelection _cardSelection;
+    private readonly CombatRewardCpuAssignmentEarlyPlan? _assignmentEarly;
     internal Beta110FastEffectCatalog Catalog { get; }
     internal Beta110CombatRewardFastPlan Plan { get; }
+    internal CombatRewardObservedOpening? ObservedOpening { get; }
+    internal bool UsesObservedOpening => ObservedOpening is { Available: true };
+    internal CombatRewardNeutralWitness? NeutralWitness { get; }
+    internal bool UsesNeutralWitness => NeutralWitness is not null;
+    internal bool IsMultiplayer => _players > 1;
+    internal bool UsesCpuAssignmentEarly => _assignmentEarly is not null;
+    internal string CpuAssignmentRevision => UsesCpuAssignmentEarly ? ".StreamingAssignmentEarly.20261031.v1" : "";
     internal string CpuRevision => "C.CombatReward.Cpu.AuthoredPrefix.20261013.v2" +
+        (UsesNeutralWitness ? CombatRewardNeutralWitness.Revision : "") +
+        (UsesObservedOpening ? CombatRewardObservedOpening.Revision : "") +
         (UsesQueryLiteralPartyOpening ? ".PartyQueryLiteralOpening.20261027.v1" : "") +
-        (Plan.NeedsCompleteMatchingReference ? ".CompletePositiveMatching.20261026.v1" : "");
+        (Plan.NeedsCompleteMatchingReference ? ".CompletePositiveMatching.20261026.v1" : "") + CpuAssignmentRevision;
     internal int RouteCount { get; }
     internal bool CanUsePotionPrefix { get; }
     internal int? PrecedingNicheDraws { get; }
@@ -30,7 +40,7 @@ internal sealed partial class CombatRewardReplay
     internal string ConservativeOpeningReason { get; } = "";
     internal bool ConservativelyKeeps => ConservativeOpeningReason.Length != 0;
 
-    internal static bool TryCompile(ExactSearchExecutionRequest request, out Beta110FastEffectCatalog catalog,
+    internal static bool TryCompile(SearchModel request, out Beta110FastEffectCatalog catalog,
         out Beta110CombatRewardFastPlan plan, out string issue)
     {
         var keys = request.Evaluation.NormalCombatRewardConditions.SelectMany(c => c.Cards.Any.Concat(c.Cards.All)
@@ -47,8 +57,9 @@ internal sealed partial class CombatRewardReplay
         return plan.Enabled;
     }
 
-    internal CombatRewardReplay(ExactSearchExecutionRequest request, int? precedingNicheDraws = 0,
-        Beta110FastEffectCatalog? catalog = null, Beta110CombatRewardFastPlan? plan = null)
+    internal CombatRewardReplay(SearchModel request, int? precedingNicheDraws = 0,
+        Beta110FastEffectCatalog? catalog = null, Beta110CombatRewardFastPlan? plan = null,
+        bool? cpuAssignmentEarly = null)
     {
         if (precedingNicheDraws < 0) throw new ArgumentOutOfRangeException(nameof(precedingNicheDraws));
         PrecedingNicheDraws = precedingNicheDraws;
@@ -61,8 +72,12 @@ internal sealed partial class CombatRewardReplay
                 ExplicitContext = Beta110CombatRewardExplicitContext.Empty(request.ProfileId),
                 Fingerprint = Plan.Fingerprint + ":PartyNeutralOpening" };
         if (!Plan.Enabled) throw new InvalidOperationException("C.CombatReward.CompilationFailure:" + Plan.DisableReason);
+        if (request.CombatRewardRoutePolicy.IsUnpinned)
+            NeutralWitness = new(request, Catalog);
         _playerSlot = request.Authority.PlayerSlotIndex;
         _players = request.Authority.PlayersCount;
+        if (_players == 1 && (cpuAssignmentEarly ?? CaptureCpuAssignmentEarly()))
+            _assignmentEarly = Beta110CombatRewardFastStage.PrepareAssignmentEarly(Plan, Catalog);
         if (_players == 1 && (_playerSlot != 0 || precedingNicheDraws != 0))
             throw new InvalidOperationException("C.SingleplayerContainsPartyContinuation");
         _ascension = request.Ascension;
@@ -142,10 +157,26 @@ internal sealed partial class CombatRewardReplay
             };
             if (!ready) ConservativeOpeningReason = "OpeningConsumptionAuthorityUnavailable:Source" + source;
         }
+        if (CombatRewardObservedOpening.Needed(Plan.OpeningConsumption))
+        {
+            ObservedOpening = new(request, upgrades);
+            if (!ObservedOpening.Available) ConservativeOpeningReason = ObservedOpening.Issue;
+            if (ObservedOpening.DynamicBones) RouteCount = 2;
+            UsesQueryLiteralPartyOpening = false;
+        }
         CanUsePotionPrefix = request.Authority.CanUseCurrentModel && request.Authority.PlayersCount == 1 &&
             request.ProfileId == Compatibility.RuntimeProfileId.Beta111 && Plan.CardPoolAuthorityExact && Plan.PotionPoolAuthorityExact &&
             Plan.Predicates.Length > 0 && Plan.Predicates.All(p => !p.IsAnyBattle && !p.HasCardPredicate);
     }
+
+    // Capture once for this immutable replay; per-candidate calls only read the
+    // captured value. Off remains the original CPU numerical oracle.
+    private static bool CaptureCpuAssignmentEarly() => Environment.GetEnvironmentVariable("RT2_C_CPU_ASSIGNMENT") switch
+    {
+        "off" => false,
+        null or "" or "default" or "on" => true,
+        var mode => throw new InvalidOperationException("C.UnknownCpuAssignmentExperiment:" + mode)
+    };
 
     internal Beta110OpeningRewardState Opening(ulong root, int route) => Opening(root, route, out _);
 
@@ -153,6 +184,9 @@ internal sealed partial class CombatRewardReplay
     {
         if (ConservativelyKeeps) throw new InvalidOperationException("C.CombatReward.OpeningUnresolved:" + ConservativeOpeningReason);
         if ((uint)route >= (uint)RouteCount) throw new ArgumentOutOfRangeException(nameof(route));
+        if (UsesObservedOpening)
+            return ObservedOpening!.Replay(root, route, this, _playerSlot, _ascension, _defect,
+                PrecedingNicheDraws, out nicheState);
         var opening = _players > 1 ? OpeningParty(root, route, out nicheState) : OpeningSingleplayer(root, route, out nicheState);
         if (_authoredNicheUnbound) nicheState = null;
         return opening;
@@ -196,16 +230,22 @@ internal sealed partial class CombatRewardReplay
     }
 
     internal bool Matches(ulong root) => MatchesCore(root, false);
+    // GPU parity keeps the original complete-generation oracle independent of
+    // the CPU early-rejection optimization.
+    internal bool MatchesReference(ulong root) => MatchesCore(root, false, useAssignmentEarly: false);
+    internal bool MatchesObservedHotReference(ulong root) =>
+        MatchesCore(root, false, useAssignmentEarly: false, observedHotOnly: true);
 
-    private bool MatchesCore(ulong root, bool potionPrefix)
+    private bool MatchesCore(ulong root, bool potionPrefix, bool useAssignmentEarly = true, bool observedHotOnly = false)
     {
         if (ConservativelyKeeps) return true;
         var first = Opening(root, 0);
-        bool firstPass = Evaluate(first, potionPrefix);
-        if (RouteCount == 1) return firstPass;
+        bool firstPass = Evaluate(first, potionPrefix, useAssignmentEarly, observedHotOnly);
+        if (RouteCount == 1) return firstPass || NeutralWitness is { } singleProof && !singleProof.AllowsRejection(root);
         var second = Opening(root, 1);
         // Evaluate every distinct authored predecessor, including error checking.
-        return second.EquivalentTo(first) ? firstPass : (Evaluate(second, potionPrefix) | firstPass);
+        bool keep = second.EquivalentTo(first) ? firstPass : (Evaluate(second, potionPrefix, useAssignmentEarly, observedHotOnly) | firstPass);
+        return keep || NeutralWitness is { } proof && !proof.AllowsRejection(root);
     }
 
     internal bool MatchesPotionPrefix(ulong root)
@@ -214,9 +254,18 @@ internal sealed partial class CombatRewardReplay
         return MatchesCore(root, true);
     }
 
-    private bool Evaluate(Beta110OpeningRewardState opening, bool potionPrefix) =>
-        !opening.RewardInfluenceAuthorityExact ||
+    internal static bool HasObservedHotShape(Beta110OpeningRewardState opening) =>
+        opening.AdditionalCardRewardCount == 0 &&
+        (opening.InfluenceFlags & ~(Beta110CombatRewardInfluenceFlags.AmethystAubergineFixedGold |
+            Beta110CombatRewardInfluenceFlags.DeterministicUpgradeOnly |
+            Beta110CombatRewardInfluenceFlags.DeterministicEnchantmentOnly)) == 0 &&
+        opening.PotionOdds == .4f && opening.CardRarityOffset == -.05f && opening.LastingCandyCounter == 0;
+
+    private bool Evaluate(Beta110OpeningRewardState opening, bool potionPrefix, bool useAssignmentEarly, bool observedHotOnly = false) =>
+        !opening.ExactProjectionAuthority ||
+        observedHotOnly && !HasObservedHotShape(opening) ||
         (potionPrefix ? Beta110CombatRewardFastStage.EvaluatePotionPrefixForFamily(opening, Plan, Catalog, _ascension, _cardSelection) :
-            Beta110CombatRewardFastStage.EvaluateForFamily(opening, Plan, Catalog, _ascension, _cardSelection)).Status ==
+            Beta110CombatRewardFastStage.EvaluateForFamily(opening, Plan, Catalog, _ascension, _cardSelection,
+                useAssignmentEarly ? _assignmentEarly : null)).Status ==
             Beta110CombatRewardRouteProjectionStatus.ExactProjection;
 }

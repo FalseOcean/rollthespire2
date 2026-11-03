@@ -225,7 +225,7 @@ internal static class Beta110LargeCapsuleSemanticFixture
             issue = "LargeCapsuleDuplicateCompileFailed:" + result.Issue;
             return false;
         }
-        var condition = plan.Evaluation.StructuredNeowEffects.Single();
+        var condition = plan.Model.Evaluation.StructuredNeowEffects.Single();
         // A repeated target remains an authored multiplicity obligation. The
         // canonical entry may admit it; only the final observation rejects it.
         bool preserved = condition.AllowDuplicateOutputs && condition.OutputKeys.SequenceEqual(new[] { RelicA, RelicA });
@@ -236,7 +236,7 @@ internal static class Beta110LargeCapsuleSemanticFixture
             issue = "LargeCapsuleDuplicateRootHashBindingFailed:" + bindIssue;
             return false;
         }
-        var exact = ProductionExactSearchEvaluator.Evaluate(plan, input);
+        var exact = ProductionExactSearchEvaluator.Evaluate(plan.Model, input);
         bool rejected = preserved && exact.Evaluation.Disposition == SearchDisposition.NoMatch;
         issue = rejected ? string.Empty : "LargeCapsuleDuplicateOutputRuleMismatch:" + exact.FailureCode;
         return rejected;
@@ -256,8 +256,8 @@ internal static class Beta110LargeCapsuleSemanticFixture
 
         var plan = compile.Plan;
         ulong rootHash = XxHash64.HashUtf8(seed, 0UL);
-        var n = NeowReplayPlan.Compile(plan, false);
-        var r = new CapsuleRelicReplay(plan, NeowReplayPlan.Compile(plan, true));
+        var n = NeowReplayPlan.Compile(plan.Model, false);
+        var r = new CapsuleRelicReplay(plan.Model, NeowReplayPlan.Compile(plan.Model, true));
         bool fastKept = NeowFamilyReplay.Matches(rootHash, n) && r.Matches(rootHash);
         if (!TrustedRootHashInput.TryBindCanonicalSeed(
                 Beta110Profile.Instance,
@@ -269,7 +269,7 @@ internal static class Beta110LargeCapsuleSemanticFixture
             return new ExactProbe(true, fastKept, false, string.Empty, "RootHashBindingFailed:" + bindIssue);
         }
 
-        ProductionExactSearchResult exact = ProductionExactSearchEvaluator.Evaluate(plan, input);
+        ProductionExactSearchResult exact = ProductionExactSearchEvaluator.Evaluate(plan.Model, input);
         return new ExactProbe(
             true,
             fastKept,
@@ -280,7 +280,7 @@ internal static class Beta110LargeCapsuleSemanticFixture
                 : "ExactEvaluationReturnedNoDisposition");
     }
 
-    private static ExactSearchExecutionCompileResult Compile(
+    private static SearchPreparationResult Compile(
         NeowSearchFilter filter,
         RuntimeContextAuthoritySnapshot authority,
         GameVersionDetection detection)
@@ -293,7 +293,7 @@ internal static class Beta110LargeCapsuleSemanticFixture
             detection,
             filter.AncientOptionConditions);
         var compiled = SearchCompiler.Compile(LegacySearchQueryAdapter.FromFilter(filter), context);
-        return ExactSearchExecutionRequestFactory.Compile(compiled,
+        return SearchPreparationCompiler.Compile(compiled,
             new SearchRunOptions("000000000000", 1, 30, 1, IncludeDiagnostics: false));
     }
 

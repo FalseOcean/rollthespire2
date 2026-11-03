@@ -450,7 +450,7 @@ internal static class Beta110FastEffectCatalogCompiler
             potions.Select(potion => dense.GetOrAdd(potion.PotionKey)).ToArray());
     }
 
-    private static Beta110FastRewardRelicCapability BuildRewardRelicCapability(
+    internal static Beta110FastRewardRelicCapability BuildRewardRelicCapability(
         RuntimeProfileId profileId,
         ModelKey relicKey,
         bool nestedAcquisition)

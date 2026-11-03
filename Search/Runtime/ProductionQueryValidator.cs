@@ -15,8 +15,8 @@ using RolltheSpire2.Search.Semantics;
 namespace RolltheSpire2.Search.Runtime;
 
 /// <summary>
-/// Validates Query against authoritative prediction. Initial-room commitments use the
-/// existing pure room predictors with this document's shared bags and actual opening.
+/// Validates Query against authoritative prediction. Treasure commitments use this
+/// document's shared bags and actual opening; Unknown prefixes use the declared opening premise.
 /// The document's OverallStatus is used only for request/document
 /// viability; Query-relevant section/domain status is checked locally before
 /// route-related conditions are evaluated against one OpeningRouteId and a Match
@@ -27,8 +27,8 @@ public static partial class ProductionQueryValidator
     private static readonly ModelKey SeaGlassKey = new(BaseGameModelKeys.Categories.Relic, "SEA_GLASS");
 
     public static SearchQueryEvaluation Evaluate(
-        ExactSearchExecutionRequest plan,
-        SeedPredictionDocument document,
+        SearchModel plan,
+        SeedPredictionFacts document,
         RuntimeContextAuthoritySnapshot? evaluatedAuthority = null)
     {
         SearchQueryEvaluation cheap = EvaluateCheap(plan, document, evaluatedAuthority, out SearchQueryEvaluation opening);
@@ -43,21 +43,21 @@ public static partial class ProductionQueryValidator
     }
 
     public static SearchQueryEvaluation EvaluateCheap(
-        ExactSearchExecutionRequest plan,
-        SeedPredictionDocument document,
+        SearchModel plan,
+        SeedPredictionFacts document,
         RuntimeContextAuthoritySnapshot? evaluatedAuthority = null) => EvaluateCheap(plan, document, evaluatedAuthority, out _);
 
     // Preserve only the actually evaluated N result for C's common-route check.
     // The returned whole-query Unknown carries no borrowed Match witness.
     internal static SearchQueryEvaluation EvaluateCheap(
-        ExactSearchExecutionRequest plan,
-        SeedPredictionDocument document,
+        SearchModel plan,
+        SeedPredictionFacts document,
         RuntimeContextAuthoritySnapshot? evaluatedAuthority,
         out SearchQueryEvaluation opening, ulong? rootHash = null)
     {
         opening = SearchQueryEvaluation.Unknown("OpeningDocumentContextNotValidated");
         RuntimeContextAuthoritySnapshot expectedAuthority = evaluatedAuthority ?? plan.Authority;
-        SearchQueryEvaluation context = ValidateDocumentContextAndViability(plan, document, expectedAuthority);
+        SearchQueryEvaluation context = ValidateFactContextAndInput(plan, document, expectedAuthority);
         if (context.Disposition != SearchDisposition.Match)
         {
             return context;
@@ -76,9 +76,7 @@ public static partial class ProductionQueryValidator
             return neow;
         }
 
-        var initialRooms = HasOpeningInitialRoomConditions(plan.Evaluation)
-            ? SearchQueryEvaluation.Match()
-            : EvaluateInitialRoomBaseline(plan, document, initialRoomRoot);
+        var initialRooms = EvaluateInitialRoomBaseline(plan, document, initialRoomRoot);
         if (initialRooms.Disposition == SearchDisposition.NoMatch) return initialRooms;
         neow = ProductionExactSearchEvaluator.CombineIndependentEvaluations(neow, initialRooms);
         if (neow.Disposition == SearchDisposition.Match && initialRooms.Evidence.Count > 0)
@@ -161,8 +159,8 @@ public static partial class ProductionQueryValidator
     }
 
     public static SearchQueryEvaluation EvaluateRewards(
-        ExactSearchExecutionRequest plan,
-        SeedPredictionDocument rewardDocument,
+        SearchModel plan,
+        SeedPredictionFacts rewardDocument,
         SearchQueryEvaluation cheapEvaluation)
     {
         if (!plan.Evaluation.RequiresNormalCombatRewardDomain)
@@ -174,22 +172,18 @@ public static partial class ProductionQueryValidator
             return cheapEvaluation;
         }
 
-        PredictionSection? section = rewardDocument.Sections.FirstOrDefault(item =>
-            item.Kind == PredictionSectionKind.NormalCombatRewardSequence);
-        NormalCombatRewardSequencePredictionResult? sequence = section?.NormalCombatRewardSequencePrediction;
-        if (section is null || sequence is null)
+        NormalCombatRewardSequencePredictionResult? sequence = rewardDocument.CombatRewards;
+        if (sequence is null)
         {
             return SearchQueryEvaluation.Unknown("NormalCombatRewardSectionMissing");
         }
-        if (section.DomainStatus == SeedDomainEvaluationStatus.Unsupported ||
-            sequence.Status == SeedDomainEvaluationStatus.Unsupported)
+        if (sequence.Status == SeedDomainEvaluationStatus.Unsupported)
         {
-            return SearchQueryEvaluation.Unsupported("NormalCombatRewardDomainUnsupported:" + section.IssueCode);
+            return SearchQueryEvaluation.Unsupported("NormalCombatRewardDomainUnsupported:" + sequence.IssueCode);
         }
-        if (section.DomainStatus != SeedDomainEvaluationStatus.Evaluated ||
-            sequence.Status != SeedDomainEvaluationStatus.Evaluated)
+        if (sequence.Status != SeedDomainEvaluationStatus.Evaluated)
         {
-            return SearchQueryEvaluation.Unknown("NormalCombatRewardDomainUnknown:" + section.IssueCode);
+            return SearchQueryEvaluation.Unknown("NormalCombatRewardDomainUnknown:" + sequence.IssueCode);
         }
 
         if (sequence.NoEligibleSearchRewardRoute)
@@ -332,7 +326,7 @@ public static partial class ProductionQueryValidator
     }
 
     private static bool IsRewardDescriptorEligible(
-        ExactSearchExecutionRequest plan,
+        SearchModel plan,
         NormalCombatRewardRoutePredictionResult routeGroup,
         OpeningRewardRouteDescriptor descriptor)
     {
@@ -361,9 +355,9 @@ public static partial class ProductionQueryValidator
     /// viability contract. This deliberately does not aggregate or reject
     /// unrelated section/domain status; each consumed domain owns that check.
     /// </summary>
-    private static SearchQueryEvaluation ValidateDocumentContextAndViability(
-        ExactSearchExecutionRequest plan,
-        SeedPredictionDocument document,
+    private static SearchQueryEvaluation ValidateFactContextAndInput(
+        SearchModel plan,
+        SeedPredictionFacts document,
         RuntimeContextAuthoritySnapshot expectedAuthority)
     {
         if (document.ProfileId != plan.ProfileId ||
@@ -377,30 +371,28 @@ public static partial class ProductionQueryValidator
         {
             return SearchQueryEvaluation.Unknown("DocumentSnapshotFingerprintMismatch");
         }
-        if (document.OverallStatus == SeedPredictionOverallStatus.Unsupported)
+        if (document.InputStatus == SeedPredictionInputStatus.Unsupported)
         {
             return SearchQueryEvaluation.Unsupported("DocumentUnsupported");
         }
-        if (document.OverallStatus is SeedPredictionOverallStatus.Unknown or SeedPredictionOverallStatus.InvalidRequest)
+        if (document.InputStatus is SeedPredictionInputStatus.Unknown or SeedPredictionInputStatus.InvalidRequest)
         {
-            return SearchQueryEvaluation.Unknown("DocumentNotReliable:" + document.OverallStatus);
+            return SearchQueryEvaluation.Unknown("DocumentNotReliable:" + document.InputStatus);
         }
         return SearchQueryEvaluation.Match();
     }
 
     private static SearchQueryEvaluation EvaluateNeowAndOpeningRoutes(
-        ExactSearchExecutionRequest plan,
-        SeedPredictionDocument document,
+        SearchModel plan,
+        SeedPredictionFacts document,
         RuntimeContextAuthoritySnapshot evaluatedAuthority, ulong initialRoomRoot)
     {
-        PredictionSection? section = document.Sections.FirstOrDefault(item => item.Kind == PredictionSectionKind.NeowIdentity);
-        if (section?.DomainStatus == SeedDomainEvaluationStatus.Unsupported)
+        NeowSeedObservation? section = document.Neow;
+        if (section?.Status == SeedDomainEvaluationStatus.Unsupported)
             return SearchQueryEvaluation.Unsupported("NeowDomainUnsupported:" + section.IssueCode);
-        if (section is not null && section.DomainStatus != SeedDomainEvaluationStatus.Evaluated)
+        if (section is not null && section.Status != SeedDomainEvaluationStatus.Evaluated)
             return SearchQueryEvaluation.Unknown("NeowDomainUnknown:" + section.IssueCode);
-        NeowChoiceResult[] choices = document.Sections
-            .Where(section => section.Kind == PredictionSectionKind.NeowIdentity)
-            .SelectMany(section => section.NeowChoices)
+        NeowChoiceResult[] choices = (document.Neow?.Choices ?? [])
             .OrderBy(choice => choice.SlotIndex)
             .ToArray();
         if (choices.Length == 0 || choices.Any(choice => choice.IdentityPrecision != PredictionPrecision.Exact))
@@ -950,8 +942,8 @@ public static partial class ProductionQueryValidator
         boss.SearchIdentityReplayable;
 
     private static SearchQueryEvaluation EvaluateWorld(
-        ExactSearchExecutionRequest plan,
-        SeedPredictionDocument document,
+        SearchModel plan,
+        SeedPredictionFacts document,
         RuntimeContextAuthoritySnapshot authority)
     {
         if (!plan.Evaluation.RequiresWorldDomain)
@@ -959,18 +951,17 @@ public static partial class ProductionQueryValidator
             return SearchQueryEvaluation.Match();
         }
 
-        PredictionSection? bossSection = document.Sections.FirstOrDefault(section => section.Kind == PredictionSectionKind.BossIdentity);
-        PredictionSection? ancientSection = document.Sections.FirstOrDefault(section => section.Kind == PredictionSectionKind.AncientIdentityAndOptions);
+        WorldPredictionResult? world = document.World;
         var evidence = new List<SearchMatchEvidence>();
-        SearchQueryEvaluation variants = EvaluateVariantBossBranches(plan.Evaluation.VariantBossBranches, bossSection, authority);
+        SearchQueryEvaluation variants = EvaluateVariantBossBranches(plan.Evaluation.VariantBossBranches, world, authority);
         if (variants.Disposition == SearchDisposition.NoMatch) return variants;
         evidence.AddRange(variants.Evidence);
 
         foreach (ActModelKeySetFilter filter in plan.Evaluation.BossFilters)
         {
-            SearchQueryEvaluation status = ValidateSection(bossSection, "Boss");
+            SearchQueryEvaluation status = ValidateDomain(world?.BossStatus, world?.BossIssueCode, "Boss");
             if (status.Disposition != SearchDisposition.Match) return status;
-            BossPredictionResult[] bosses = bossSection!.Bosses.Where(item => item.Act == filter.Act).ToArray();
+            BossPredictionResult[] bosses = world!.Bosses.Where(item => item.Act == filter.Act).ToArray();
             if (bosses.Length == 0 || bosses.Any(item => !IsBossIdentityUsableForSearch(item)))
                 return SearchQueryEvaluation.Unknown("BossIdentityNotReplayable:Act" + filter.Act);
             if (!QueryKeySetPredicate.MatchesKeySet(bosses.Select(item => item.BossKey), filter.Keys))
@@ -988,9 +979,9 @@ public static partial class ProductionQueryValidator
 
         foreach (ActOrdinalModelKeySetFilter filter in plan.Evaluation.BossOrdinalFilters)
         {
-            SearchQueryEvaluation status = ValidateSection(bossSection, "Boss");
+            SearchQueryEvaluation status = ValidateDomain(world?.BossStatus, world?.BossIssueCode, "Boss");
             if (status.Disposition != SearchDisposition.Match) return status;
-            BossPredictionResult? boss = bossSection!.Bosses.FirstOrDefault(item => item.Act == filter.Act && item.Ordinal == filter.Ordinal);
+            BossPredictionResult? boss = world!.Bosses.FirstOrDefault(item => item.Act == filter.Act && item.Ordinal == filter.Ordinal);
             if (boss is null || !IsBossIdentityUsableForSearch(boss))
                 return SearchQueryEvaluation.Unknown($"BossOrdinalNotReplayable:Act{filter.Act}:Ordinal{filter.Ordinal}");
             if (!QueryKeySetPredicate.MatchesKeySet(new[] { boss.BossKey }, filter.Keys))
@@ -1009,10 +1000,10 @@ public static partial class ProductionQueryValidator
         foreach (IGrouping<int, AncientSearchBranchCondition> actBranches in
                  plan.Evaluation.AncientBranchConditions.GroupBy(condition => condition.Act).OrderBy(group => group.Key))
         {
-            SearchQueryEvaluation status = ValidateSection(ancientSection, "Ancient");
+            SearchQueryEvaluation status = ValidateDomain(world?.AncientStatus, world?.AncientIssueCode, "Ancient");
             if (status.Disposition != SearchDisposition.Match) return status;
 
-            AncientPredictionResult? ancient = ancientSection!.Ancients.FirstOrDefault(item => item.Act == actBranches.Key);
+            AncientPredictionResult? ancient = world!.Ancients.FirstOrDefault(item => item.Act == actBranches.Key);
             if (ancient is null || ancient.IdentityPrecision != PredictionPrecision.Exact)
             {
                 return SearchQueryEvaluation.Unknown("AncientBranchIdentityNotExact:Act" + actBranches.Key);
@@ -1115,9 +1106,9 @@ public static partial class ProductionQueryValidator
 
         foreach (ActModelKeySetFilter filter in plan.Evaluation.AncientIdentityFilters)
         {
-            SearchQueryEvaluation status = ValidateSection(ancientSection, "Ancient");
+            SearchQueryEvaluation status = ValidateDomain(world?.AncientStatus, world?.AncientIssueCode, "Ancient");
             if (status.Disposition != SearchDisposition.Match) return status;
-            AncientPredictionResult? ancient = ancientSection!.Ancients.FirstOrDefault(item => item.Act == filter.Act);
+            AncientPredictionResult? ancient = world!.Ancients.FirstOrDefault(item => item.Act == filter.Act);
             if (ancient is null || ancient.IdentityPrecision != PredictionPrecision.Exact)
                 return SearchQueryEvaluation.Unknown("AncientIdentityNotExact:Act" + filter.Act);
             if (!QueryKeySetPredicate.MatchesKeySet(new[] { ancient.AncientKey }, filter.Keys))
@@ -1134,8 +1125,7 @@ public static partial class ProductionQueryValidator
         {
             if (filter.Act == 1)
             {
-                var neow = document.Sections.Where(s => s.Kind == PredictionSectionKind.NeowIdentity)
-                    .SelectMany(s => s.NeowChoices).ToArray();
+                var neow = (document.Neow?.Choices ?? []).ToArray();
                 if (neow.Length == 0 || neow.Any(c => c.IdentityPrecision != PredictionPrecision.Exact))
                     return SearchQueryEvaluation.Unknown("Act1NeowOptionsNotExact");
                 var offered = neow.Select(c => c.RelicKey).ToArray();
@@ -1145,9 +1135,9 @@ public static partial class ProductionQueryValidator
                     OrderedOptionKeys: offered, ConditionId: "ancient-options-act-1"));
                 continue;
             }
-            SearchQueryEvaluation status = ValidateSection(ancientSection, "Ancient");
+            SearchQueryEvaluation status = ValidateDomain(world?.AncientStatus, world?.AncientIssueCode, "Ancient");
             if (status.Disposition != SearchDisposition.Match) return status;
-            AncientPredictionResult? ancient = ancientSection!.Ancients.FirstOrDefault(item => item.Act == filter.Act);
+            AncientPredictionResult? ancient = world!.Ancients.FirstOrDefault(item => item.Act == filter.Act);
             if (ancient is null || !AncientOptionsEvaluated(ancient.OptionsEvaluationStatus) ||
                 ancient.Options.Any(option => option.OptionPrecision != PredictionPrecision.Exact))
                 return SearchQueryEvaluation.Unknown("AncientOptionsNotExact:Act" + filter.Act);
@@ -1172,9 +1162,9 @@ public static partial class ProductionQueryValidator
                     ConditionId: "sea-glass-target-act-1"));
                 continue;
             }
-            SearchQueryEvaluation status = ValidateSection(ancientSection, "Ancient");
+            SearchQueryEvaluation status = ValidateDomain(world?.AncientStatus, world?.AncientIssueCode, "Ancient");
             if (status.Disposition != SearchDisposition.Match) return status;
-            AncientPredictionResult? ancient = ancientSection!.Ancients.FirstOrDefault(item => item.Act == filter.Act);
+            AncientPredictionResult? ancient = world!.Ancients.FirstOrDefault(item => item.Act == filter.Act);
             if (ancient is null || !AncientOptionsEvaluated(ancient.OptionsEvaluationStatus))
                 return SearchQueryEvaluation.Unknown("AncientOptionsNotEvaluatedForSeaGlass:Act" + filter.Act);
             AncientOptionPredictionResult? seaGlass = ancient.Options.FirstOrDefault(option => option.IsVisible && option.OptionKey == SeaGlassKey);
@@ -1204,7 +1194,7 @@ public static partial class ProductionQueryValidator
 
     private static SearchQueryEvaluation EvaluateVariantBossBranches(
         IReadOnlyList<VariantScopedBossBranch> branches,
-        PredictionSection? bossSection,
+        WorldPredictionResult? world,
         RuntimeContextAuthoritySnapshot authority)
     {
         if (branches.Count == 0) return SearchQueryEvaluation.Match();
@@ -1232,9 +1222,9 @@ public static partial class ProductionQueryValidator
             SearchQueryEvaluation Boss(ModelKeySetFilter predicate, int ordinal, bool requiresObservation = false)
             {
                 if (predicate.IsEmpty && !requiresObservation) return SearchQueryEvaluation.Match();
-                SearchQueryEvaluation status = ValidateSection(bossSection, "Boss");
+                SearchQueryEvaluation status = ValidateDomain(world?.BossStatus, world?.BossIssueCode, "Boss");
                 if (status.Disposition != SearchDisposition.Match) return status;
-                var boss = bossSection!.Bosses.FirstOrDefault(b => b.Act == group.Key && b.Ordinal == ordinal);
+                var boss = world!.Bosses.FirstOrDefault(b => b.Act == group.Key && b.Ordinal == ordinal);
                 if (boss is null || !IsBossIdentityUsableForSearch(boss))
                     return SearchQueryEvaluation.Unknown($"VariantBossNotReplayable:Act{group.Key}:Ordinal{ordinal}");
                 return QueryKeySetPredicate.MatchesKeySet([boss.BossKey], predicate)
@@ -1260,17 +1250,16 @@ public static partial class ProductionQueryValidator
     }
 
     private static SearchQueryEvaluation EvaluateRelicSequences(
-        ExactSearchExecutionRequest plan,
-        SeedPredictionDocument document)
+        SearchModel plan,
+        SeedPredictionFacts document)
     {
         if (!plan.Evaluation.RequiresRelicSequenceDomain)
         {
             return SearchQueryEvaluation.Match();
         }
-        PredictionSection? section = document.Sections.FirstOrDefault(item => item.Kind == PredictionSectionKind.RelicSequences);
-        SearchQueryEvaluation status = ValidateSection(section, "RelicSequence");
+        RelicSequencePredictionResult? prediction = document.Relics;
+        SearchQueryEvaluation status = ValidateDomain(prediction?.Status, prediction?.IssueCode, "RelicSequence");
         if (status.Disposition != SearchDisposition.Match) return status;
-        RelicSequencePredictionResult? prediction = section!.RelicSequencePrediction;
         if (prediction is null || prediction.Status != SeedDomainEvaluationStatus.Evaluated)
             return SearchQueryEvaluation.Unknown("RelicSequencePredictionMissingOrUnknown");
 
@@ -1332,17 +1321,16 @@ public static partial class ProductionQueryValidator
         ShopSequenceSemantics.Matches(actual, condition.Count, condition.OrderMode, condition.Slots);
 
     private static SearchQueryEvaluation EvaluateEventSequences(
-        ExactSearchExecutionRequest plan,
-        SeedPredictionDocument document)
+        SearchModel plan,
+        SeedPredictionFacts document)
     {
         if (!plan.Evaluation.RequiresEventSequenceDomain)
         {
             return SearchQueryEvaluation.Match();
         }
-        PredictionSection? section = document.Sections.FirstOrDefault(item => item.Kind == PredictionSectionKind.EventPoolSequences);
-        SearchQueryEvaluation status = ValidateSection(section, "EventSequence");
+        EventPoolSequencePredictionResult? prediction = document.World?.EventPoolSequencePrediction;
+        SearchQueryEvaluation status = ValidateDomain(prediction?.Status, prediction?.IssueCode, "EventSequence");
         if (status.Disposition != SearchDisposition.Match) return status;
-        EventPoolSequencePredictionResult? prediction = section!.EventPoolSequencePrediction;
         if (prediction is null || prediction.Status != SeedDomainEvaluationStatus.Evaluated)
             return SearchQueryEvaluation.Unknown("EventSequencePredictionMissingOrUnknown");
         if (prediction.RawEventOrderPrecision != PredictionPrecision.Exact ||
@@ -1773,20 +1761,13 @@ public static partial class ProductionQueryValidator
         return BattleConditionEvaluation.Match();
     }
 
-    private static SearchQueryEvaluation ValidateSection(PredictionSection? section, string domain)
+    private static SearchQueryEvaluation ValidateDomain(SeedDomainEvaluationStatus? status, string? issue, string domain)
     {
-        if (section is null)
-        {
-            return SearchQueryEvaluation.Unknown(domain + "SectionMissing");
-        }
-        if (section.DomainStatus == SeedDomainEvaluationStatus.Unsupported)
-        {
-            return SearchQueryEvaluation.Unsupported(domain + "DomainUnsupported:" + section.IssueCode);
-        }
-        if (section.DomainStatus != SeedDomainEvaluationStatus.Evaluated)
-        {
-            return SearchQueryEvaluation.Unknown(domain + "DomainUnknown:" + section.IssueCode);
-        }
+        if (status is null) return SearchQueryEvaluation.Unknown(domain + "SectionMissing");
+        if (status == SeedDomainEvaluationStatus.Unsupported)
+            return SearchQueryEvaluation.Unsupported(domain + "DomainUnsupported:" + issue);
+        if (status != SeedDomainEvaluationStatus.Evaluated)
+            return SearchQueryEvaluation.Unknown(domain + "DomainUnknown:" + issue);
         return SearchQueryEvaluation.Match();
     }
 

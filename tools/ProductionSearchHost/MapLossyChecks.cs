@@ -9,17 +9,37 @@ using RolltheSpire2.Search.Runtime;
 
 internal static class MapLossyChecks
 {
-    internal static async Task RunAsync(ExactSearchExecutionRequest basis, string output)
+    internal static async Task RunAsync(PreparedSearch basis, string output)
+    {
+        string? previous = Environment.GetEnvironmentVariable("RT2_MAP_GPU_PIPELINE");
+        try
+        {
+            Environment.SetEnvironmentVariable("RT2_MAP_GPU_PIPELINE", null);
+            await RunModeAsync(basis, Path.Combine(output, "default"), "prefetch");
+            foreach (string mode in MapLossyPipelineChecks.Modes)
+            {
+                Environment.SetEnvironmentVariable("RT2_MAP_GPU_PIPELINE", mode);
+                await RunModeAsync(basis, Path.Combine(output, mode), mode);
+            }
+            File.WriteAllText(Path.Combine(output, "map-lossy-gpu.json"), JsonSerializer.Serialize(new {
+                DefaultMode = "prefetch", PassedDefault = true, PassedModes = MapLossyPipelineChecks.Modes,
+                Meaning = "All original CPU/GPU ordered proposal and FullFinal checks run separately in every pipeline mode; see mode receipts" }));
+        }
+        finally { Environment.SetEnvironmentVariable("RT2_MAP_GPU_PIPELINE", previous); }
+    }
+
+    private static async Task RunModeAsync(PreparedSearch basis, string output, string expectedMode)
     {
         Directory.CreateDirectory(output); int checks = 0;
         void Check(bool ok, string name) { checks++; if (!ok) throw new InvalidDataException("MapLossyGpu:" + name); }
         var batch = new SearchBatch(1146000000000, 16385);
         ulong Root(ulong ordinal) => Beta111Profile.Instance.ComputeRootSeed(VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance, batch.GlobalCandidate(ordinal)));
-        await using var execution = new FamilyExecutionContext(requiresGpu: true);
+        await using var execution = new FilterRuntimeServices(requiresGpu: true);
         MapLossyGpuExecutor? gpu = null;
         try
         {
-            gpu = await execution.ExecuteGpuAsync(rd => new MapLossyGpuExecutor(rd, 16384), CancellationToken.None);
+            gpu = await execution.ExecuteGpuAsync(rd => new MapLossyGpuExecutor(rd, 16384, execution), CancellationToken.None);
+            Check(gpu.PipelineMode == expectedMode, "selected/default pipeline mode");
             bool widePositive = false;
             long bufferBytes = gpu.RetainedBufferBytes;
             foreach (int ascension in new[] { 0, 1 }) foreach (int act in new[] { 1, 2, 3 })
@@ -59,9 +79,22 @@ internal static class MapLossyChecks
             var denseMap = new BoundedActMap(StandardMapFamily.Context(1, 1));
             var denseExpected = dense.EnumerateLogicalOrdinals().Where(i => { denseMap.ReplayAssignmentRound1Root(Root(i)); return denseMap.MatchAssignmentProgram(simpleProgram); }).ToArray();
             Check(denseResult.EnumerateLogicalOrdinals().SequenceEqual(denseExpected), "Dense 16384+1 boundary parity");
+            // Five chunks fill every grouped slot, then reuse the first slot for
+            // a one-root tail. The broad drawing has positive CPU witnesses.
+            var groupedInput = FamilyCandidateSet.Dense(new SearchBatch(batch.BatchBase, 65537));
+            var groupedExpected = groupedInput.EnumerateLogicalOrdinals().Where(i => {
+                denseMap.ReplayAssignmentRound1Root(Beta111Profile.Instance.ComputeRootSeed(
+                    VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance, groupedInput.Batch.GlobalCandidate(i))));
+                return denseMap.MatchAssignmentProgram(simpleProgram);
+            }).ToArray();
+            var groupedActual = await execution.ExecuteGpuAsync(_ => gpu.Propose(groupedInput, p, 1,
+                CancellationToken.None, poisonBitmap: true), CancellationToken.None);
+            Check(groupedExpected.Length > 0 && groupedActual.EnumerateLogicalOrdinals().SequenceEqual(groupedExpected),
+                "five chunks: every grouped slot, positive ordered witnesses and reused one-root poisoned tail");
             using var cancel = new CancellationTokenSource(); cancel.Cancel(); bool cancelled = false;
             try { await execution.ExecuteGpuAsync(_ => gpu.Propose(dense, p, 1, cancel.Token), cancel.Token); } catch (OperationCanceledException) { cancelled = true; }
             Check(cancelled, "cancelled call has no output");
+            await CheckActiveCancellationAsync(gpu, execution, dense, p, denseExpected, Check);
             await CheckPropertyPlansAsync(basis, gpu, execution, batch, Check);
             // Actual selected Family includes complete M after the GPU proposer.
             var route = new StandardMapRouteCondition(1, [new StandardMapRouteGroup([StandardMapRoomType.Monster, StandardMapRoomType.Unknown, StandardMapRoomType.Shop])]);
@@ -71,20 +104,21 @@ internal static class MapLossyChecks
                         new StandardMapSearchCondition(1, StandardMapMetric.ReachableMaxRest, StandardMapComparison.AtMost, 20),
                         new StandardMapSearchCondition(0, StandardMapMetric.ReachableMaxElite, StandardMapComparison.AtLeast, 0, true)
                     }).ToArray() };
-            var request = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(q, basis.CompiledSearch.Context),
+            var request = SearchPreparationCompiler.Compile(SearchCompiler.Compile(q, basis.Model.CompiledSearch.Context),
                 basis.RunOptions with { MapLossy = new(true, 16384) }).Plan!;
             var selected = FamilyExecutionCoordinator.Plan(request, gpuAvailable: true, gpuFloat64Available: true);
-            var family = selected.ExecutionOrderUnits.OfType<StandardMapFamily>().Single();
+            var family = selected.ExecutionOrderUnits.Single(f=>f.FamilyId=="M.StandardMap");
+            var numerical = (StandardMapExecution)HostFilterBindings.Bind(family,execution);
             try
             {
                 Check(family.ConditionPerformance.UsesGpu, "actual M GPU selected");
                 var input = FamilyCandidateSet.FromAbi1(batch, Enumerable.Range(0, 33).Select(i => (ulong)(7 + i * 3)).ToArray());
-                var actual = await family.InvokeAsync(execution, new(batch, request), input, CancellationToken.None);
-                var expected = input.EnumerateLogicalOrdinals().Where(i => family.MatchesLossyRoot(Root(i)) && family.MatchesRoot(Root(i))).ToArray();
+                var actual = await family.ExecuteAsync(execution, input, CancellationToken.None);
+                var expected = input.EnumerateLogicalOrdinals().Where(i => numerical.MatchesLossyRoot(Root(i)) && numerical.MatchesRoot(Root(i))).ToArray();
                 Check(actual.EnumerateLogicalOrdinals().SequenceEqual(expected), "GPU candidate -> FullFinal ordered ABI1");
                 Check(actual.Count > 0, "new Monster/Unknown/Shop family has positive candidate witnesses");
                 foreach (ulong ordinal in actual.EnumerateLogicalOrdinals())
-                    Check(StandardMapExactEvaluator.Evaluate(request, VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance, batch.GlobalCandidate(ordinal)))
+                    Check(StandardMapExactEvaluator.Evaluate(request.Model, VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance, batch.GlobalCandidate(ordinal)))
                         .Disposition == SearchDisposition.Match, "GPU survivors independently satisfy all original properties and drawing");
             }
             finally { await family.DisposeAsync(execution); }
@@ -97,8 +131,31 @@ internal static class MapLossyChecks
         }
     }
 
-    private static async Task CheckPropertyPlansAsync(ExactSearchExecutionRequest basis, MapLossyGpuExecutor gpu,
-        FamilyExecutionContext execution, SearchBatch batch, Action<bool, string> check)
+    private static async Task CheckActiveCancellationAsync(MapLossyGpuExecutor gpu, FilterRuntimeServices execution,
+        FamilyCandidateSet input, MapLossyPredicate predicate, ulong[] expected, Action<bool, string> check)
+    {
+        foreach (string phase in new[] { "Prepared", "Submitted" })
+        {
+            using var cancel = new CancellationTokenSource();
+            bool reached = false, cancelled = false;
+            int observations = 0;
+            int trigger = phase == "Prepared" && gpu.PipelineMode is "grouped" or "combined" ? 2 : 1;
+            gpu.ExecutionProbe = current => { if (current == phase && ++observations == trigger) { reached = true; cancel.Cancel(); } };
+            try
+            {
+                await execution.ExecuteGpuAsync(_ => gpu.Propose(input, predicate, 1, cancel.Token), CancellationToken.None);
+            }
+            catch (OperationCanceledException) { cancelled = true; }
+            finally { gpu.ExecutionProbe = null; }
+            check(reached && cancelled, "active " + phase + " cancellation has no output");
+            var reused = await execution.ExecuteGpuAsync(_ => gpu.Propose(input, predicate, 1, CancellationToken.None,
+                poisonBitmap: true), CancellationToken.None);
+            check(reused.EnumerateLogicalOrdinals().SequenceEqual(expected), "ordered parity after " + phase + " cancellation and buffer reuse");
+        }
+    }
+
+    private static async Task CheckPropertyPlansAsync(PreparedSearch basis, MapLossyGpuExecutor gpu,
+        FilterRuntimeServices execution, SearchBatch batch, Action<bool, string> check)
     {
         ulong Root(ulong ordinal) => Beta111Profile.Instance.ComputeRootSeed(VisibleSeedCandidateCodec.FormatOrdinal(
             Beta111Profile.Instance, batch.GlobalCandidate(ordinal)));
@@ -106,7 +163,7 @@ internal static class MapLossyChecks
         int[] first = new int[27];
         for (int act = 1; act <= 3; act++)
         {
-            var map = new BoundedActMap(StandardMapFamily.Context(act, basis.Ascension));
+            var map = new BoundedActMap(StandardMapFamily.Context(act, basis.Model.Ascension));
             map.ReplayAssignmentRound1Root(Root(7));
             for (int metric = 0; metric < 9; metric++) first[(act - 1) * 9 + metric] = map.EvaluateAssignmentProperty(metric);
         }
@@ -122,7 +179,7 @@ internal static class MapLossyChecks
             new(3, StandardMapMetric.GuaranteedRest, StandardMapComparison.AtMost, 20) ], StandardMapRoutes = [mixed] };
         StandardMapRouteCondition Wide(int act)
         {
-            int count = Beta111StandardMapGenerator.GetNumberOfRooms(StandardMapFamily.Context(act, basis.Ascension).Act, false) - 3;
+            int count = Beta111StandardMapGenerator.GetNumberOfRooms(StandardMapFamily.Context(act, basis.Model.Ascension).Act, false) - 3;
             var rooms = Enum.GetValues<StandardMapRoomType>();
             return new(act, [new StandardMapRouteGroup(Enumerable.Range(0, count).Select(i => rooms[i % rooms.Length]).ToArray())]);
         }
@@ -141,10 +198,11 @@ internal static class MapLossyChecks
             (propertyOnly, "shorter-plan-after-growth"), (SearchQuery.Empty with { StandardMaps = [
                 new(2, StandardMapMetric.ReachableMaxRest, StandardMapComparison.AtMost, 1)] }, "zero-extra-rest") })
         {
-            var request = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, basis.CompiledSearch.Context),
+            var request = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, basis.Model.CompiledSearch.Context),
                 basis.RunOptions with { MapLossy = new(true) }).Plan!;
-            var plan = MapLossyPlan.Create(request);
-            var cpu = new StandardMapFamily(request);
+            var plan = MapLossyPlan.Create(request.Model,request.MapLossy);
+            var cpu = StandardMapFamily.Prepare(request.Model,FilterExecutionPreferences.From(request.RunOptions));
+            var cpuNumerical = (StandardMapExecution)HostFilterBindings.Bind(cpu,execution);
             try
             {
                 if (name == "multiple-drawing-tables") check(plan.Predicates.Sum(p => p.Program.StateCount) > 512,
@@ -154,10 +212,10 @@ internal static class MapLossyChecks
                 foreach (int length in new[] { 33, 1 })
                 {
                     var slice = FamilyCandidateSet.FromAbi1(batch, input.EnumerateLogicalOrdinals().Take(length).ToArray());
-                    var expected = slice.EnumerateLogicalOrdinals().Where(i => cpu.MatchesLossyRoot(Root(i))).ToArray();
+                    var expected = slice.EnumerateLogicalOrdinals().Where(i => cpuNumerical.MatchesLossyRoot(Root(i))).ToArray();
                     if (name == "wide-then-narrow-drawings" && length == 33) check(expected.Length > 0,
                         "positive whole-plan witness forces both wide and narrow drawings to execute");
-                    var actual = await execution.ExecuteGpuAsync(_ => gpu.Propose(slice, plan, request.Ascension,
+                    var actual = await execution.ExecuteGpuAsync(_ => gpu.Propose(slice, plan, request.Model.Ascension,
                         CancellationToken.None, poisonBitmap: true), CancellationToken.None);
                     check(actual.EnumerateLogicalOrdinals().SequenceEqual(expected), "whole-plan CPU/GPU property/drawing AND sparse/tail parity: " + name);
                     if (name == "property-only-nine-equalities") check(actual.Count > 0, "all nine properties have an actual positive combined candidate");

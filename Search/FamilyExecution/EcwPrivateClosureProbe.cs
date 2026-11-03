@@ -3,31 +3,31 @@ using RolltheSpire2.Search.Contracts;
 
 namespace RolltheSpire2.Search.FamilyExecution;
 
-// Explicit ECW connectivity probe only. Three existing bodies, two borrowed
-// ordinal buffers; no ordering economics or generic chain representation.
-internal sealed class EcwPrivateClosureProbe(ExactSearchExecutionRequest request, EventResultFamilyPlan e,
-    CombatRewardGpuPlan c, WorldFamilyGpuPlan w, bool verify) : IFamilyInvocation
+internal static class EcwPrivateClosureProbe
 {
-    private Gpu? _gpu;
-    private bool _faulted;
-    GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => ConditionPerformance.UsesGpu ? GpuNumericRequirements.Int64 | GpuNumericRequirements.Float64 : GpuNumericRequirements.None;
-    public string FamilyId => "E.EventResult";
-    public IReadOnlyList<string> Coverage => ["E.EventResult","C.CombatReward","W.World"];
-    public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId,PrivateOrdinalBuffer.Capacity,[],"ECW.ClosureProbe.Unpriced");
-    public FamilySurvivalProjection Survival => FamilySurvivalProjection.Unresolved(FamilyId,"ECW.ClosureProbe");
-    public FamilyConditionPerformanceProjection ConditionPerformance => new(FamilyId,"ECW.PrivateConnectivity.Probe.20260910.v1" + GpuRngRotation.Revision,"Neutral",1,"ClosureProbe",usesGpu:true);
-    public FamilyPerformanceObservation CapturePerformanceObservation() => new(ConditionPerformance,"",_gpu?.SetupMs??0,0,0,0,0,0,0,0,false,_faulted?"PhysicalFailure":"ClosureProbeNoCalibration");
-    public async ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context,FamilyObservationWindow window,FamilyCandidateSet input,CancellationToken token)
+    internal static FilterBodyDescription Prepare(SearchModel model, EventResultFamilyPlan e,
+        CombatRewardGpuPlan c, WorldFamilyGpuPlan w, bool verify, IReadOnlyList<string> remainders)
     {
-        if(_faulted || window.ExactRequest.SnapshotFingerprint!=request.SnapshotFingerprint)throw new InvalidOperationException("ECW.ObservationInvariant");
-        try {
-            _gpu ??= await context.ExecuteGpuAsync(rd=>new Gpu(rd,e,c,w,verify),token).ConfigureAwait(false);
-            return await context.ExecuteGpuAsync(_=>_gpu.Execute(input,token),token).ConfigureAwait(false);
-        } catch(OperationCanceledException){throw;} catch{_faulted=true;throw;}
-    }
-    public async ValueTask DisposeAsync(FamilyExecutionContext context)
-    {
-        if(_gpu is not null)await context.ExecuteGpuAsync(_=>{_gpu.Dispose();return true;},CancellationToken.None).ConfigureAwait(false);
+        const string id = "E.EventResult";
+        string revision = "ECW.PrivateConnectivity.Probe.20260910.v1" + GpuRngRotation.Revision;
+        var preparation = new PreparedFilter(id) {
+            Coverage = [id, "C.CombatReward", "W.World"],
+            Remainders = remainders,
+            AnalyticalCost = new(id, PrivateOrdinalBuffer.Capacity, [], "ECW.ClosureProbe.Unpriced"),
+            Survival = FamilySurvivalProjection.Unresolved(id, "ECW.ClosureProbe")
+        };
+        return new(preparation, revision, model.ProfileId) {
+            UsesGpu = true, InputModes = FilterInputModes.Dense, InputIdentity = model.SnapshotFingerprint,
+            PlayersCount = model.Authority.PlayersCount, WindowCapacity = PrivateOrdinalBuffer.Capacity,
+            NumericRequirements = GpuNumericRequirements.Int64 | GpuNumericRequirements.Float64,
+            PerformanceProjection = _ => new(id, revision, "Neutral", 1, "ClosureProbe", true),
+            CreateExecution = (body, _) => new GpuExperimentExecution<Gpu>(body, device => new(device, e, c, w, verify),
+                (resource, input, token) => {
+                    var timer = System.Diagnostics.Stopwatch.StartNew();
+                    var output = resource.Execute(input, token);
+                    return new(output, timer.Elapsed.TotalMilliseconds);
+                }, resource => resource.Dispose(), resource => (resource.Device, resource.SetupMs), verify)
+        };
     }
     private sealed class Gpu : IDisposable
     {
@@ -38,6 +38,7 @@ internal sealed class EcwPrivateClosureProbe(ExactSearchExecutionRequest request
         private readonly bool _verify;
         private bool _disposed;
         internal double SetupMs { get; }
+        internal string Device => _e.Device;
         internal Gpu(RenderingDevice rd,EventResultFamilyPlan e,CombatRewardGpuPlan c,WorldFamilyGpuPlan w,bool verify)
         {
             _verify=verify;

@@ -12,12 +12,12 @@ namespace RolltheSpire2.Ui.Workspace;
 internal sealed partial class SearchWorkspaceRuntime
 {
     internal sealed class ManualCandidateValidation(QueryHistoryEntry history, PersistedSearchResult original,
-        ExactSearchExecutionRequest plan, SearchContinuationSnapshot? sourceContinuation,
+        PreparedSearch plan, SearchContinuationSnapshot? sourceContinuation,
         Task<ProductionExactSearchResult> task)
     {
         internal QueryHistoryEntry History { get; } = history;
         internal PersistedSearchResult Original { get; } = original;
-        internal ExactSearchExecutionRequest Plan { get; } = plan;
+        internal PreparedSearch Plan { get; } = plan;
         internal SearchContinuationSnapshot? SourceContinuation { get; } = sourceContinuation;
         internal Task<ProductionExactSearchResult> Task { get; } = task;
         internal bool ExecutionObserved { get; set; }
@@ -57,7 +57,7 @@ internal sealed partial class SearchWorkspaceRuntime
         var frozenPlan = action.ValidationPlan ?? action.Live?.Start.Plan;
         var plan = frozenPlan is { } live ? live with { RunOptions = live.RunOptions with { SkipExactValidation = false } }
             : SearchResultProjection.RebuildSavedValidationPlan(runtime, history, action.Result);
-        if (!SearchWorkspace.ProvesManualValidationSource(history, action.Result, plan.CompiledSearch))
+        if (!SearchWorkspace.ProvesManualValidationSource(history, action.Result, plan.Model.CompiledSearch))
             throw new InvalidOperationException("ManualValidationOriginalAuthorityMismatch");
         var profile = runtime.Profile;
         TrackManualCandidateValidation(history, action.Result, plan, () =>
@@ -65,25 +65,23 @@ internal sealed partial class SearchWorkspaceRuntime
             try
             {
                 var input = TrustedRootHashInput.FromCanonicalSeed(profile, seed);
-                var exact = ProductionExactSearchEvaluator.Evaluate(plan, input);
-                if (exact.Document is { } document) ProductionExactSearchEvaluator.ThrowIfPredictionFailed(document);
-                if (exact.Evaluation.Disposition == SearchDisposition.Match && !exact.IsMatch)
-                    throw new InvalidOperationException("ProductionExact.MatchPayloadMissing:" + seed);
-                if (!exact.IsMatch) { try { ExactRejectionDiagnostics.Log(plan, seed, exact); } catch { } }
+                var exact = ProductionExactSearchEvaluator.Evaluate(plan.Model, input);
+                if (exact.Facts is { } facts) ProductionExactSearchEvaluator.ThrowIfPredictionFailed(facts);
+                if (!exact.IsMatch) { try { ExactRejectionDiagnostics.Log(plan.Model, seed, exact); } catch { } }
                 return exact;
             }
             catch (Exception exception)
             {
                 try { RuntimeIssueLedger.Current.Record(exception, "ManualCandidateValidationFailed", nameof(SearchWorkspaceRuntime), "ExactWorker",
                     "runtime.issue.manual_validation_failed", correlationId:
-                    $"seed={seed};query={plan.CompiledSearch.SemanticFingerprint};attemptSnapshot={plan.SnapshotFingerprint}"); } catch { }
+                    $"seed={seed};query={plan.Model.CompiledSearch.SemanticFingerprint};attemptSnapshot={plan.SnapshotFingerprint}"); } catch { }
                 throw;
             }
         }, tree, action);
     }
 
     internal ManualCandidateValidation TrackManualCandidateValidation(QueryHistoryEntry history,
-        PersistedSearchResult original, ExactSearchExecutionRequest plan, Func<ProductionExactSearchResult> evaluate,
+        PersistedSearchResult original, PreparedSearch plan, Func<ProductionExactSearchResult> evaluate,
         SceneTree? tree = null, SearchResultAction? action = null)
     {
         var prepared = store.PrepareManualValidation(history, original, plan, action);
@@ -108,15 +106,7 @@ internal sealed partial class SearchWorkspaceRuntime
                 try
                 {
                     var exact = operation.Task.GetAwaiter().GetResult();
-                    if (exact.Document is { } document)
-                    {
-                        ProductionExactSearchEvaluator.ThrowIfPredictionFailed(document);
-                        if (document.Diagnostics.Any(diagnostic => diagnostic.Code == PredictionDiagnosticCodes.Exception))
-                            throw new InvalidOperationException("ProductionExact.DocumentException:" + string.Join(" | ",
-                                document.Diagnostics.Where(diagnostic => diagnostic.Code == PredictionDiagnosticCodes.Exception).Select(diagnostic => diagnostic.Value)));
-                    }
-                    if (exact.Evaluation.Disposition == SearchDisposition.Match && !exact.IsMatch)
-                        throw new InvalidOperationException("ProductionExact.MatchPayloadMissing:" + operation.Original.Seed);
+                    if (exact.Facts is { } facts) ProductionExactSearchEvaluator.ThrowIfPredictionFailed(facts);
                     operation.Result = exact;
                 }
                 catch (Exception exception) { operation.ExecutionFailure = exception; }

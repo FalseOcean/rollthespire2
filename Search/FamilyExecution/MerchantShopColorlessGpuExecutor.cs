@@ -10,6 +10,9 @@ using RolltheSpire2.Search.Contracts;
 
 namespace RolltheSpire2.Search.FamilyExecution;
 
+internal sealed record MerchantShopColorlessGpuPreparation(uint[] Plan, uint[] Targets,
+    string IdentityDefines, string PerformanceSuffix, string InputIdentity, bool EarlyRejection);
+
 internal readonly record struct MerchantShopColorlessGpuBatchMetrics(
     MerchantShopColorlessCompactionPath CompactionPath,
     int InputCandidates,
@@ -150,11 +153,19 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
         ? FamilyPhysicalImplementationRevisions.MerchantShopColorlessStableOrderedCompaction
         : FamilyPhysicalImplementationRevisions.MerchantShopColorlessAtomicAppendHostSort) + _performanceSuffix;
 
-    public static MerchantShopColorlessGpuExecutor Create(RenderingDevice rd, ExactSearchExecutionRequest request,
+    internal static MerchantShopColorlessGpuPreparation PrepareInputs(ExactSearchEvaluationProjection evaluation,
+        Beta111MerchantColorlessAuthority authority, string identity)
+    {
+        uint[] plan = PackPlan(evaluation, authority, out var targets, out var defines);
+        return new(plan, targets, defines, PartyEarlyRejectionRevision(evaluation, authority.PlayersCount),
+            identity, HasEarlyRejectionOpportunity(evaluation, authority.PlayersCount));
+    }
+
+    public static MerchantShopColorlessGpuExecutor Create(RenderingDevice rd, MerchantShopColorlessGpuPreparation request,
         MerchantShopColorlessCompactionPath compactionPath) => Create(rd, request, compactionPath, null, null);
     internal static MerchantShopColorlessGpuExecutor Create(
         RenderingDevice rd,
-        ExactSearchExecutionRequest request,
+        MerchantShopColorlessGpuPreparation request,
         MerchantShopColorlessCompactionPath compactionPath,
         PrivateOrdinalBuffer? privateInput, PrivateOrdinalBuffer? privateOutput)
     {
@@ -169,11 +180,11 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
         {
             Rid Add(Rid rid) { owned.Add(rid); return rid; }
             bool stableEnabled = compactionPath == MerchantShopColorlessCompactionPath.StableOrderedCompaction;
-            Beta111MerchantColorlessAuthority authority = Beta111MerchantColorlessAuthority.From(request.Authority);
-            string performanceSuffix = PartyEarlyRejectionRevision(request.Evaluation, authority.PlayersCount);
-            uint[] plan = PackPlan(request.Evaluation, authority, out uint[] targets, out string identityDefines);
+            string performanceSuffix = request.PerformanceSuffix;
+            uint[] plan = request.Plan, targets = request.Targets;
+            string identityDefines = request.IdentityDefines;
             uint planTag = StableTag(
-                request.SnapshotFingerprint + "|" + (stableEnabled
+                request.InputIdentity + "|" + (stableEnabled
                     ? FamilyPhysicalImplementationRevisions.MerchantShopColorlessStableOrderedCompaction
                     : FamilyPhysicalImplementationRevisions.MerchantShopColorlessAtomicAppendHostSort) + performanceSuffix);
 
@@ -188,7 +199,7 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
                 rd, (privateInput is null ? SurvivorCapacity : Capacity) * 2 * sizeof(uint)));
 
             string source = FamilyGpuComputeUtility.LoadFamilyShaderWithVisibleSeedRootHash(ShaderSuffix);
-            source = ConfigureEarlyRejection(source, request.Evaluation, request.Authority.PlayersCount);
+            source = ConfigureEarlyRejection(source, request.EarlyRejection);
             if (identityDefines.Length != 0) source = source.Insert("#version 450".Length, identityDefines);
             // Addressing/emission only; reuse the existing merchant predicate and RNG body.
             if (privateInput is not null)
@@ -646,16 +657,15 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
         return earliestFailure < lastObservation;
     }
 
-    internal static string ConfigureEarlyRejection(string source, ExactSearchEvaluationProjection evaluation, int playersCount)
+    internal static string ConfigureEarlyRejection(string source, ExactSearchEvaluationProjection evaluation, int playersCount) =>
+        ConfigureEarlyRejection(source, HasEarlyRejectionOpportunity(evaluation, playersCount));
+
+    private static string ConfigureEarlyRejection(string source, bool enabled)
     {
         const string version = "#version 450";
         if (!source.StartsWith(version, StringComparison.Ordinal))
             throw new InvalidOperationException("SFamilyEarlyRejectionShaderVersionMarkerMissing");
-        // S family admission owns exact pool and slot inputs for one to four
-        // players. Each child keeps its own root+slot Shops stream; only shapes
-        // with an opportunity before the final merchant use the streaming body.
-        return source.Insert(version.Length, "\n#define RT2_S_EARLY_REJECTION " +
-            (HasEarlyRejectionOpportunity(evaluation, playersCount) ? "1" : "0") + "\n");
+        return source.Insert(version.Length, "\n#define RT2_S_EARLY_REJECTION " + (enabled ? "1" : "0") + "\n");
     }
 
     private static uint[] PackPlan(

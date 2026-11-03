@@ -264,7 +264,7 @@ internal static class Beta110WorldFastPlanCompiler
     private const int MaximumEncounterEntriesPerPool = 512;
     private const int MaximumSharedAncients = 512;
 
-    internal static Beta110WorldFastPlan CompileForFamily(ExactSearchExecutionRequest request, NeowSearchFilter filter,
+    internal static Beta110WorldFastPlan CompileForFamily(SearchModel request, NeowSearchFilter filter,
         IReadOnlyList<RolltheSpire2.Search.Semantics.VariantScopedBossBranch> branches) => CompileCore(
         filter, request.Authority, request.ProfileId, request.Ascension, request.SnapshotFingerprint, true, branches);
 

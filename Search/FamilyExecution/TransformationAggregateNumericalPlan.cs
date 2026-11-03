@@ -27,7 +27,7 @@ internal sealed partial class TransformationAggregateNumericalPlan
     private static readonly ulong TransformationsHash = XxHash64.Hash("transformations"u8, 0);
     private static readonly ulong NicheHash = XxHash64.Hash("niche"u8, 0);
 
-    internal TransformationAggregateNumericalPlan(ExactSearchExecutionRequest request)
+    internal TransformationAggregateNumericalPlan(SearchModel request)
     {
         _condition = request.Evaluation.TransformationAggregate ?? throw new ArgumentException("MissingAggregate");
         var keys = new Dictionary<ModelKey, int>();

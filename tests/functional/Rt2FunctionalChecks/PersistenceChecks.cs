@@ -366,20 +366,21 @@ internal static class PersistenceChecks
             var store = Workspace(directory);
             store.EnsureEnvironment(new() { CaptureComplete = true, Fingerprint = "fixture-environment" });
             store.BindPreparedResultWorkspace(store.PrepareResultWorkspace("candidate-mode", Workbench()));
-            var candidate = PersistableCandidate("000000000007") with { IsUnverified = true, IsUnfiltered = true };
+            var candidate = PersistableCandidate("000000000007") with {
+                Evaluation = SearchQueryEvaluation.NotEvaluatedByPolicy("FixtureSkippedExactValidation"), IsUnfiltered = true };
             store.AppendResult(candidate, "candidate-mode"); store.FlushAll(); store = Workspace(directory);
             Check(store.Workspace.Results.Single() is { IsUnverified: true, IsUnfiltered: true } &&
                 store.RecentQueries.Single().Results.Single() is { IsUnverified: true, IsUnfiltered: true },
                 "Candidate publication retains both unverified and unfiltered facts after restart");
-            store.AppendResult(candidate with { IsUnfiltered = false, ValidationDisposition = SearchDisposition.Unknown,
+            store.AppendResult(candidate with { IsUnfiltered = false, Evaluation = SearchQueryEvaluation.Unknown("FixtureMissingObservation"),
                 ValidationIssue = "FixtureMissingObservation" }, "candidate-mode");
             store.FlushAll(); store = Workspace(directory);
             Check(store.Workspace.Results.Single() is { IsUnverified: true, IsUnfiltered: false,
                 ValidationDisposition: SearchDisposition.Unknown, ValidationIssue: "FixtureMissingObservation" } &&
                 store.RecentQueries.Single().Results.Single().HasIncompleteValidation,
                 "Incomplete checking retains the actual disposition and reason through result/history reload");
-            store.AppendResult(candidate with { IsUnverified = false, IsUnfiltered = false,
-                ValidationDisposition = SearchDisposition.Match, ValidationIssue = "" }, "confirmed-mode");
+            store.AppendResult(candidate with { IsUnfiltered = false,
+                Evaluation = SearchQueryEvaluation.Match(), ValidationIssue = "" }, "confirmed-mode");
             store.FlushAll(); store = Workspace(directory);
             Check(store.Workspace.Results.Single() is { IsUnverified: false, IsUnfiltered: false } &&
                 store.RecentQueries.Single().Results.Single() is { IsUnverified: false, IsUnfiltered: false },
@@ -391,22 +392,22 @@ internal static class PersistenceChecks
             const string selected = "choice.1.opening", alternate = "choice.2.opening", outcome = "taken";
             var candidate = PersistableCandidate("000000000010") with
             {
-                Witnesses = [new("000000000010", selected, [], ["TreasureRelics.Slot1", "TreasureRelics.Slot2"], "", null, []) { OutcomeId = outcome }],
-                MatchEvidence = [
+                Evaluation = SearchQueryEvaluation.Match(witnesses: [new("000000000010", selected, [], ["TreasureRelics.Slot1", "TreasureRelics.Slot2"], "", null, []) { OutcomeId = outcome }],
+                evidence: [
                     new("TreasureRelicAtEncounter", Relic, selected, OutcomeId: outcome, Ordinal: 2, ConditionId: "TreasureRelics.Slot1"),
                     new("TreasureRelicObtainedAtOpening", Missing, selected, OutcomeId: outcome, ConditionId: "TreasureRelics.Slot2"),
                     new("TreasureRelicAtEncounter", Missing, alternate, OutcomeId: outcome, Ordinal: 1, ConditionId: "TreasureRelics.Slot1"),
-                    new("TreasureRelicAtEncounter", Missing, selected, OutcomeId: "skipped", Ordinal: 1, ConditionId: "TreasureRelics.Slot1")]
+                    new("TreasureRelicAtEncounter", Missing, selected, OutcomeId: "skipped", Ordinal: 1, ConditionId: "TreasureRelics.Slot1")])
             };
             PersistedTreasureSource[] expected = [new(Relic.Serialized, 1, 2, false), new(Missing.Serialized, 2, null, true)];
             Check(SearchResultProjection.FromCandidate(candidate, "treasure").TreasureSources.SequenceEqual(expected),
                 "Only the selected opening and outcome supply chest or early-acquisition receipts");
-            var global = candidate with { MatchEvidence = [new("TreasureRelicAtEncounter", Relic,
-                Ordinal: 1, ConditionId: "TreasureRelics.Slot1")] };
+            var global = candidate with { Evaluation = candidate.Evaluation with { Evidence = [new("TreasureRelicAtEncounter", Relic,
+                Ordinal: 1, ConditionId: "TreasureRelics.Slot1")] } };
             Check(SearchResultProjection.TreasureSources(global).SequenceEqual([new(Relic.Serialized, 1, 1, false)]),
                 "Explicit global baseline receipts survive an independent routed witness");
-            Check(SearchResultProjection.TreasureSources(candidate with { ValidationDisposition = SearchDisposition.Unknown }).Count == 0 &&
-                SearchResultProjection.TreasureSources(candidate with { Witnesses = [] }).Count == 0,
+            Check(SearchResultProjection.TreasureSources(candidate with { Evaluation = candidate.Evaluation with { Disposition = SearchDisposition.Unknown } }).Count == 0 &&
+                SearchResultProjection.TreasureSources(candidate with { Evaluation = candidate.Evaluation with { Witnesses = [] } }).Count == 0,
                 "Unresolved or unwitnessed results cannot claim target acquisition");
             var store = Workspace(directory);
             store.EnsureEnvironment(new() { CaptureComplete = true, Fingerprint = "treasure-source-environment" });
@@ -448,7 +449,7 @@ internal static class PersistenceChecks
                 "Results and history retain frozen support reasons and source evidence independently of model validation");
             Check(SeedPredictionRequest.TryCreate(candidate.Seed, authority.Character, 10, 1, 0, authority, false,
                 out var request, out _), "Scope fixture request binds to its authority");
-            var context = SeedPredictionDocument.CreateContext(request!, "0.111.0", RuntimeProfileId.Beta111);
+            var context = PredictionContext.FromRequest(request!, "0.111.0", RuntimeProfileId.Beta111);
             Check(ReferenceEquals(context.SupportScope, authority.SupportScope),
                 "Prediction documents retain the same frozen scope assessment as their request");
             var legacy = JsonSerializer.Deserialize<PersistedSearchResult>("{\"Seed\":\"000000000009\",\"IsUnverified\":false}", Json)!;
@@ -470,7 +471,7 @@ internal static class PersistenceChecks
             store.FlushAll(); store = Workspace(directory);
             Check(store.DisplayResults.Count == 30, "Only bounded rows survive restart");
             store.BindPreparedResultWorkspace(store.PrepareResultWorkspace("different-runtime-fingerprint", draft));
-            store.AppendResult(PersistableCandidate("000000000035") with { IsUnverified = true }, "different-runtime-fingerprint");
+            store.AppendResult(PersistableCandidate("000000000035") with { Evaluation = SearchQueryEvaluation.NotEvaluatedByPolicy("FixtureSkippedExactValidation") }, "different-runtime-fingerprint");
             store.AppendResult(PersistableCandidate("000000000036"), "different-runtime-fingerprint");
             store.SaveResultProgress(new(SearchRunState.Cancelled, 100, 2, 100, 30, 3600, 1, default, "", true));
             Check(store.RecentQueries.Count == 1 && store.RecentQueries[0].RunCount == 2 && store.RecentQueries[0].ElapsedSeconds == 7200,
@@ -671,7 +672,7 @@ internal static class PersistenceChecks
             store.EnsureEnvironment(new() { CaptureComplete = true, Fingerprint = "environment-b" });
             Check(store.ResultCountForQuery(draft) == 0, "Changed environment cannot present old results as current");
             store.BindPreparedResultWorkspace(store.PrepareResultWorkspace("b", draft));
-            store.AppendResult(PersistableCandidate("000000000002") with { IsUnverified = true }, "b");
+            store.AppendResult(PersistableCandidate("000000000002") with { Evaluation = SearchQueryEvaluation.NotEvaluatedByPolicy("FixtureSkippedExactValidation") }, "b");
             Check(store.RecentQueries.Count == 2 && store.ResultAssociation("000000000002") is
                 { Kind: SeedQueryAssociationKind.UnverifiedFromSearch } unverified && unverified.SearchRecordId != first.Id,
                 "Different environments split records; skipped checking preserves origin without match evidence");
@@ -1056,7 +1057,7 @@ internal static class PersistenceChecks
             var store = SearchWorkspace.Open(directory);
             Check(!store.Runtime.IsPolling && !store.Runtime.HasSearchInFlight,
                 "Shared Open/preference access is passive and does not bind a frame receiver");
-            var tail = new TailSession(PersistableCandidate("000000000000") with { IsUnverified = true });
+            var tail = new TailSession(PersistableCandidate("000000000000") with { Evaluation = SearchQueryEvaluation.NotEvaluatedByPolicy("FixtureSkippedExactValidation") });
             store.Runtime.InstallStartedSession(tail, "detached");
             var otherShell = SearchWorkspace.Open(directory);
             Check(ReferenceEquals(store, otherShell) && otherShell.Runtime.HasSearchInFlight,
@@ -1342,7 +1343,7 @@ internal static class PersistenceChecks
                     playerCount == 1 ? WorldGameMode.Singleplayer : WorldGameMode.Multiplayer, 10, players);
                 var draft = Workbench();
                 var candidate = PersistableCandidate("000000000001") with
-                { Witnesses = [new("000000000001", "choice.2.saved-opening", [], [], "", null, [])] };
+                { Evaluation = SearchQueryEvaluation.Match(witnesses: [new("000000000001", "choice.2.saved-opening", [], [], "", null, [])]) };
                 if (playerCount > 1)
                 {
                     draft = draft with { Version = 4, Mode = WorldGameMode.Multiplayer, GameVersion = "0.111.0", Profile = RuntimeProfileId.Beta111,
@@ -1353,14 +1354,13 @@ internal static class PersistenceChecks
                         players.Select(p => new PlayerInitialOffers(p.Slot, p.Character, [Relic]) { UnlockSource = p.UnlockSource }).ToArray())
                     { Transactions = players.Select(p => new RolltheSpire2.Core.Effects.PartyNeowResult(p.Slot, Relic,
                         RolltheSpire2.Core.Effects.PartyNeowIntent.ResultTarget, [], [], []) { OpeningRouteId = "saved-opening-" + p.Slot }).ToArray() };
-                    candidate = candidate with { Document = new SeedPredictionDocument { Context = null!, PredictorId = "fixture",
-                        OriginalSeed = candidate.Seed, CanonicalSeed = candidate.Seed, Sections = [], Warnings = [], Diagnostics = [],
-                        OverallStatus = SeedPredictionOverallStatus.Unknown, Party = party } };
+                    candidate = candidate with { Facts = new SeedPredictionFacts { Context = null!, PredictorId = "fixture",
+                        OriginalSeed = candidate.Seed, CanonicalSeed = candidate.Seed, Party = party } };
                 }
                 store.BindPreparedResultWorkspace(store.PrepareResultWorkspace("retained-" + playerCount, draft, context, skipExactValidation: true));
                 string batchId = store.Workspace.ResultBatchId;
                 store.AppendResult(candidate, store.Workspace.QueryFingerprint);
-                store.AppendResult(PersistableCandidate("000000000002") with { IsUnverified = true }, store.Workspace.QueryFingerprint);
+                store.AppendResult(PersistableCandidate("000000000002") with { Evaluation = SearchQueryEvaluation.NotEvaluatedByPolicy("FixtureSkippedExactValidation") }, store.Workspace.QueryFingerprint);
                 store.SaveResultProgress(new(SearchRunState.Cancelled, 321, 1, 1000, 30, 2, 160,
                     SearchDisposition.Match, "", true));
                 store.SaveWorkbench(Workbench() with { Ascension = 1 });
@@ -2068,24 +2068,23 @@ internal static class PersistenceChecks
         public string MultiplayerConstraint => "None";
     }
     // A real compiled fixture exercises production lookup; explicit legacy identities model old disk records.
-    private static readonly Lazy<ExactSearchExecutionRequest> ContinuationFixture = new(() =>
+    private static readonly Lazy<PreparedSearch> ContinuationFixture = new(() =>
     {
         var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>(Path.Combine(
             Environment.CurrentDirectory, "tools/ProductionSearchHost/Corpus/v1/context.json")).Context;
-        return ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(SearchQuery.Empty, context),
+        return SearchPreparationCompiler.Compile(SearchCompiler.Compile(SearchQuery.Empty, context),
             new("000000000000", 1, 1, 1)).Plan ?? throw new InvalidOperationException("ContinuationFixtureInvalid");
     });
-    private static ExactSearchExecutionRequest LegacyContinuationPlan(string semanticFingerprint, string snapshotFingerprint) =>
+    private static PreparedSearch LegacyContinuationPlan(string semanticFingerprint, string snapshotFingerprint) =>
         ContinuationFixture.Value with { SnapshotFingerprint = snapshotFingerprint,
-            CompiledSearch = ContinuationFixture.Value.CompiledSearch with { SemanticFingerprint = semanticFingerprint } };
+            Model = ContinuationFixture.Value.Model with {
+                CompiledSearch = ContinuationFixture.Value.Model.CompiledSearch with { SemanticFingerprint = semanticFingerprint } } };
     private static SearchWorkspace Workspace(string directory) => new(directory, false);
     private static string WorkbenchPath(string directory) => Path.Combine(directory, "RolltheSpire2", "state", "query_workbench.json");
     private static WorkbenchSearchDraft Workbench() => new(Character, 10, SearchQuery.Empty with { OpeningRoute = new(Relic) }, AncientOptionConditionProfile.BroadDefault);
     // Only AppendResult's persisted DTO fields are populated; no prediction runs.
-    private static SearchCandidate PersistableCandidate(string seed) => new(seed, RuntimeProfileId.Beta111, Character, 10, "fixture", null!,
-        new SeedPredictionDocument { Context = null!, PredictorId = "fixture", OriginalSeed = seed, CanonicalSeed = seed,
-            Sections = [], Warnings = [], Diagnostics = [], OverallStatus = SeedPredictionOverallStatus.Unknown },
-        RolltheSpire2.Tests.FastSearch.Beta110FastSearchFixtureAuthority.CreateBeta111(Character, 10, 0, 1), [], [], []);
+    private static SearchCandidate PersistableCandidate(string seed) => new(seed, RuntimeProfileId.Beta111, Character, 10, "fixture",
+        RolltheSpire2.Tests.FastSearch.Beta110FastSearchFixtureAuthority.CreateBeta111(Character, 10, 0, 1), SearchQueryEvaluation.Match());
     private static SearchPresetCapture Capture(SearchDraft draft) => new(Character, 10, WorkbenchQueryCompiler.CreatePresetIntent(draft, Character, 10), 1, SearchPresetProbabilitySnapshot.Unavailable(Captured), SearchPresetProvenance.Unknown("fixture", Captured), Captured);
     private static SearchPresetDefinition Definition(SearchDraft draft) => SearchPresetStore.Normalize(new SearchPresetStore.PersistedSearchPreset
     { SchemaVersion = 2, Id = "user:fixture", Title = "fixture", CharacterKey = Character.Serialized,

@@ -7,6 +7,7 @@ namespace RolltheSpire2.Core.PredictorRuntime;
 internal sealed record PredictorOperationRewardsScene(ImmutableArray<PredictorReward> Rewards,
     long? SelectedRewardId = null) : PredictorOperationScene
 {
+    public PredictorCombatKind? CombatKind { get; init; }
     internal PredictorOperationEventRng? EventRng { get; init; }
     internal PredictorOperationRewardRemoval? PendingRemoval { get; init; }
     internal ImmutableArray<PredictorOperationLinkedRewardGroup> LinkedGroups { get; init; } = [];

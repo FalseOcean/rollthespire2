@@ -9,7 +9,7 @@ namespace RolltheSpire2.Search.FamilyExecution;
 // In particular M and personal A options never reduce W's input population.
 internal static class PartyStageSurvival
 {
-    internal static FamilySurvivalProjection Project(ExactSearchExecutionRequest request, string familyId)
+    internal static FamilySurvivalProjection Project(SearchModel request, string familyId)
     {
         SearchQuery source = request.CompiledSearch.NormalizedQuery;
         SearchQuery projected = familyId switch

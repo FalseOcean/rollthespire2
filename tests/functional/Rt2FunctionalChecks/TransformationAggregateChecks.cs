@@ -23,6 +23,7 @@ internal static class TransformationAggregateChecks
         string output = Environment.GetEnvironmentVariable("RT2_TRANSFORMATION_FIXTURE_DIR") ?? ".build-evidence/transformation-aggregate";
         var jointFixtures = new List<object>();
         int? jointOffset = null;
+        bool newLeafSnapshotChecked = false, otherBonesSnapshotChecked = false;
         void Check(bool pass, string label) { checks++; if (!pass) throw new InvalidOperationException(label); }
         var json = ProductionSearchReplay.JsonOptions;
         var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/v1/context.json").Context;
@@ -33,27 +34,33 @@ internal static class TransformationAggregateChecks
         var condition = new TransformationAggregateCondition(TransformationOpening.None, TransformationPickupOrder.Any,
             true, true, true, TransformationAggregatePredicate.RareCountAtLeast, 2, []) { EventScenario = scenario };
         var options = new SearchRunOptions("000000000000", 16387, int.MaxValue, 1);
-        ExactSearchExecutionRequest Request(SearchQuery q)
+        PreparedSearch Request(SearchQuery q)
         {
-            var result = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(q, context), options);
+            var result = SearchPreparationCompiler.Compile(SearchCompiler.Compile(q, context), options);
             if (!result.Success) throw new InvalidOperationException(result.Issue);
             return result.Plan!;
         }
-        SearchQuery Query(TransformationAggregateCondition c) => SearchQuery.Empty with { TransformationAggregate = c };
-        void CheckJointNeow(ExactSearchExecutionRequest request, string name)
+        TransformationAggregatePreparation PrepareTransformation(PreparedSearch search, bool preferGpu = true)
         {
-            if(request.Evaluation.NeowRoute is null) {
-                Check(!NeowTransformationComposite.TryCreate(request,NeowReplayPlan.Compile(request,false),out _),"Unbound N identity outside trial");
-                request=Request(request.CompiledSearch.NormalizedQuery with { OpeningRoute=new(BaseGameModelKeys.Relics.NeowsBones),
+            if (!TransformationAggregateFamily.TryPrepare(search.Model, FilterExecutionPreferences.From(search.RunOptions),
+                out var prepared, preferGpu)) throw new InvalidOperationException("T fixture preparation unavailable");
+            return prepared!;
+        }
+        SearchQuery Query(TransformationAggregateCondition c) => SearchQuery.Empty with { TransformationAggregate = c };
+        void CheckJointNeow(PreparedSearch request, string name)
+        {
+            if(request.Model.Evaluation.NeowRoute is null) {
+                Check(!NeowTransformationComposite.TryCreate(request.Model,NeowReplayPlan.Compile(request.Model,false),out _),"Unbound N identity outside trial");
+                request=Request(request.Model.CompiledSearch.NormalizedQuery with { OpeningRoute=new(BaseGameModelKeys.Relics.NeowsBones),
                     OpeningRouteRelicRequirement=new(BaseGameModelKeys.Relics.NeowsBones,[BaseGameModelKeys.Relics.LeafyPoultice,BaseGameModelKeys.Relics.NewLeaf]) });
             }
-            var neow = NeowReplayPlan.Compile(request, false);
-            Check(NeowTransformationComposite.TryCreate(request, neow, out var joint) && joint is not null, "N joint admitted " + name);
+            var neow = NeowReplayPlan.Compile(request.Model, false);
+            Check(NeowTransformationComposite.TryCreate(request.Model, neow, out var joint) && joint is not null, "N joint admitted " + name);
             var nMatch = NeowFamilyReplay.Bind(neow);
             ulong[] expected = Enumerable.Range(0, (int)options.ScanCount).Select(i => (ulong)i).Where(i => {
                 ulong root = Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(i));
                 bool match = nMatch(root) && joint!.Numerical.Matches(root);
-                Check(match == ProductionExactSearchEvaluator.Evaluate(request,
+                Check(match == ProductionExactSearchEvaluator.Evaluate(request.Model,
                     TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, Beta110SeedCodec.FormatOrdinal(i))).IsMatch,
                     "N joint complete CPU/Exact population " + name);
                 return match;
@@ -115,12 +122,12 @@ internal static class TransformationAggregateChecks
             var request = Request(Query(joint) with { OpeningRoute = new(BaseGameModelKeys.Relics.NeowsBones),
                 OpeningRouteRelicRequirement = new(BaseGameModelKeys.Relics.NeowsBones, pair,
                     order == TransformationPickupOrder.Any ? BonesRouteOrderMode.AnyOrder : BonesRouteOrderMode.ExactOrder) });
-            var exact = ProductionExactSearchEvaluator.Evaluate(request, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, "0000000001FA"));
-            Check(exact.IsMatch && new TransformationAggregateNumericalPlan(request).Matches(bonesRoot), "Bones-only partial/full multiset Exact/numerical witness");
+            var exact = ProductionExactSearchEvaluator.Evaluate(request.Model, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, "0000000001FA"));
+            Check(exact.IsMatch && new TransformationAggregateNumericalPlan(request.Model).Matches(bonesRoot), "Bones-only partial/full multiset Exact/numerical witness");
             if (order != TransformationPickupOrder.Any)
                 Check(exact.Evaluation.Evidence.Where(e => e.Code == "TransformationAggregateMatched").All(e => e.AcquisitionOrder!.SequenceEqual(pair)), "Joint evidence binds requested pickup route");
             if (order == TransformationPickupOrder.Any) CheckJointNeow(request, "JointN.M" + count);
-            else Check(!NeowTransformationComposite.TryCreate(request, NeowReplayPlan.Compile(request, false), out _), "N joint pinned outside bounded trial");
+            else Check(!NeowTransformationComposite.TryCreate(request.Model, NeowReplayPlan.Compile(request.Model, false), out _), "N joint pinned outside bounded trial");
             if (count == 3) cases.Add(joint);
         }
         var repeatedBones = new TransformationAggregateCondition(TransformationOpening.BonesLeafyNewLeaf, TransformationPickupOrder.Any,
@@ -138,15 +145,16 @@ internal static class TransformationAggregateChecks
             StructuredOpeningEffects=[new(BaseGameModelKeys.Relics.NeowsBones,
             NeowStructuredConditionKind.ExactSingle,NeowStructuredEffectScope.FinalCurse,NeowStructuredOutputKind.Curse,[finalCurse])] });
         CheckJointNeow(curseRequest, "JointN.FinalCurse");
-        var curseN = new NeowFamily(curseRequest, NeowReplayPlan.Compile(curseRequest, false));
-        var curseT = new TransformationAggregateFamily(curseRequest);
+        var curseN = new NeowFamily(curseRequest.Model, NeowReplayPlan.Compile(curseRequest.Model, false));
+        var curseT = PrepareTransformation(curseRequest);
         double curseMass = JointSelectivityEstimator.EstimateQuery(SearchSelectivityInput.From(curseRequest)).Probability!.Value;
-        Check(Math.Abs(curseN.Survival.SurvivalProbability!.Value * curseT.ResolveSurvival(new HashSet<string>{"N.Neow"}).SurvivalProbability!.Value - curseMass) < 1e-14,
+        Check(Math.Abs(curseN.Survival.SurvivalProbability!.Value * curseT.Body.ResolveSurvival(new HashSet<string>{"N.Neow"}).SurvivalProbability!.Value - curseMass) < 1e-14,
             "N then T counts shared identity and final curse once");
-        Check(Math.Abs(curseT.Survival.SurvivalProbability!.Value * curseN.ResolveSurvival(new HashSet<string>{TransformationAggregateFamily.Id}).SurvivalProbability!.Value - curseMass) < 1e-14,
+        Check(Math.Abs(curseT.Body.Survival.SurvivalProbability!.Value * curseN.ResolveSurvival(new HashSet<string>{TransformationAggregateFamily.Id}).SurvivalProbability!.Value - curseMass) < 1e-14,
             "T then N has the same terminal mass");
-        Check(NeowTransformationComposite.TryCreate(curseRequest, curseN.PricingReplayPlan, out var curseComposite), "Joint allocation remains admitted");
-        var jointOwner = new NeowFamily(curseRequest, curseN.PricingReplayPlan, transformations: curseComposite);
+        Check(NeowTransformationComposite.TryCreate(curseRequest.Model, curseN.Replay, out var curseComposite), "Joint allocation remains admitted");
+        var jointOwner = new NeowFamily(curseRequest.Model, curseN.Replay, transformations: curseComposite);
+        var jointBody = jointOwner.Describe(FilterExecutionPreferences.From(curseRequest.RunOptions));
         Check(jointOwner.Coverage.ToHashSet().SetEquals(["N.Neow", TransformationAggregateFamily.Id]) &&
             Math.Abs(jointOwner.Survival.SurvivalProbability!.Value - curseMass) < 1e-14, "Joint coverage and mass equal serial alternatives");
         Check(curseT.GpuPlan.BonesOptimized == (Environment.GetEnvironmentVariable("RT2_T_BONES_EXPERIMENT") != "baseline"),
@@ -155,19 +163,34 @@ internal static class TransformationAggregateChecks
         try
         {
             SearchPerformanceProfileFoundation.ObserveRenderingBackend("d3d12");
-            IFamilyInvocation[] nt = [curseN, curseT];
-            Check(jointOwner.QuotePhysicalWork(new(false,false,1<<24)) is {NanosecondsPerInput: >0}, "Joint physical owns its dense quote");
-            Check(jointOwner.QuotePhysicalWork(new(true,false,100)) is null, "Unmeasured joint compact remains unpriced");
-            Check(curseT.GpuPlan.PrefixReuse ? curseT.QuotePhysicalWork(new(true,false,100)) is null :
-                curseT.QuotePhysicalWork(new(true,false,100)) is {FixedWindowMilliseconds: >0},
-                "Sparse compact T baseline work charged by window; prefix body remains unpriced");
-            Check(curseT.QuotePhysicalWork(new(true,false,1<<20)) is null, "Sparse T quote does not extrapolate to full compact");
-            var selectedUnits = FamilyPlanner.PlanSimple(nt, [jointOwner]);
+            FilterBodyDescription[] nt = [curseN.Describe(FilterExecutionPreferences.From(curseRequest.RunOptions)), curseT.Body];
+            Check(jointBody.QuotePhysicalWork(new(false,false,1<<24)) is {NanosecondsPerInput: >0}, "Joint physical owns its dense quote");
+            Check(jointBody.QuotePhysicalWork(new(true,false,100)) is null, "Unmeasured joint compact remains unpriced");
+            var compactGeometry = new FamilyPhysicalQuoteRequest(true, false, 100);
+            var sparseWork = curseT.Body.QuotePhysicalWork(compactGeometry);
+            Check(FamilyCoarsePricing.IsEstimate(sparseWork) && sparseWork is {
+                NanosecondsPerInput: > 0, FixedWindowMilliseconds: 0, PublicTransportClass: "Counted32" } &&
+                !FamilyCanonicalMeasuredCost.IsCanonicalQuote(sparseWork),
+                "Sparse T uses its declared numerical work estimate without claiming a measured compact window");
+            Check(FamilyCoarsePricing.ComputationMilliseconds(sparseWork!, compactGeometry) is > 0 &&
+                FamilyCoarsePricing.HostTransferMilliseconds(sparseWork!, compactGeometry, 0) is > 0,
+                "Sparse T charges numerical work and a separate host invocation envelope");
+            var fullCompactWork = curseT.Body.QuotePhysicalWork(new(true, false, 1 << 20));
+            Check(FamilyCoarsePricing.IsEstimate(fullCompactWork) && fullCompactWork is not null &&
+                fullCompactWork.NanosecondsPerInput == sparseWork!.NanosecondsPerInput &&
+                fullCompactWork.WindowCapacity == sparseWork.WindowCapacity &&
+                !FamilyCanonicalMeasuredCost.IsCanonicalQuote(fullCompactWork),
+                "Full compact T retains the same explicit work model rather than extrapolating a sparse measured call");
+            var selectedUnits = FamilyPlanner.PlanSimple(nt, [jointOwner.Describe(FilterExecutionPreferences.From(curseRequest.RunOptions))]);
             Check(selectedUnits.Stages.SelectMany(stage => stage.Coverage).ToHashSet().SetEquals(["N.Neow", TransformationAggregateFamily.Id]),
                 "The fused numerical body competes as one greedy unit without losing serial obligations");
             SearchPerformanceProfileFoundation.ObserveRenderingBackend("vulkan");
-            Check(jointOwner.QuotePhysicalWork(new(false,false,1<<24)) is null && curseT.QuotePhysicalWork(new(false,false,1<<24)) is null,
-                "D3D12 reference quotes do not claim Vulkan measurements");
+            var vulkanWork = curseT.Body.QuotePhysicalWork(new(false, false, 1 << 24));
+            Check(jointBody.QuotePhysicalWork(new(false,false,1<<24)) is null &&
+                FamilyCoarsePricing.IsEstimate(vulkanWork) && !FamilyCanonicalMeasuredCost.IsCanonicalQuote(vulkanWork) &&
+                vulkanWork!.Evidence.Contains("ReferenceBackend=d3d12", StringComparison.Ordinal) &&
+                vulkanWork.Evidence.Contains("NotCurrentDeviceOrBodyMeasurement", StringComparison.Ordinal),
+                "T may retain its declared D3D12 work reference on Vulkan without claiming a current backend measurement");
 
         }
         finally { SearchPerformanceProfileFoundation.ObserveRenderingBackend(string.IsNullOrEmpty(previousBackend) ? "unknown" : previousBackend); }
@@ -185,7 +208,7 @@ internal static class TransformationAggregateChecks
 
         // Saturated target multisets may draw any required identity from Leafy;
         // do not assign a fixed pair to it. Freeze real distinct/duplicate witnesses.
-        var leafyProbe = new TransformationAggregateNumericalPlan(Request(Query(condition with { Opening=TransformationOpening.LeafyPoultice })));
+        var leafyProbe = new TransformationAggregateNumericalPlan((Request(Query(condition with { Opening=TransformationOpening.LeafyPoultice }))).Model);
         var fullKinds = new HashSet<bool>();
         bool leafyDouble=false;
         for(ulong i=0;i<8192 && (fullKinds.Count<2 || !leafyDouble);i++)
@@ -230,7 +253,7 @@ internal static class TransformationAggregateChecks
         }
         // Seven is a benchmark size. Exercise the current larger contributor
         // combinations with authoritative positive witnesses and dynamic packing.
-        var bonesProbe=new TransformationAggregateNumericalPlan(Request(Query(condition with {Opening=TransformationOpening.BonesLeafyNewLeaf})));
+        var bonesProbe=new TransformationAggregateNumericalPlan((Request(Query(condition with {Opening=TransformationOpening.BonesLeafyNewLeaf}))).Model);
         for(ulong ordinal=0;ordinal<262144 && higherFullTargets.Count==0;ordinal++) {
             ulong root=Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(ordinal));
             if(!NeowFamilyReplay.Observe(root,bonesProbe.Neow!).IdentityPass)continue;
@@ -244,10 +267,10 @@ internal static class TransformationAggregateChecks
                 var cards=opening.Concat(Raw(root)).Concat(flags.Sym?sym.Select(x=>x.CardKey):[]).Concat(flags.Trial?t.Select(x=>x.CardKey):[]).ToArray();
                 var c=condition with {Opening=TransformationOpening.BonesLeafyNewLeaf,Symbiote=flags.Sym,TrialNondescript=flags.Trial,
                     Predicate=TransformationAggregatePredicate.ContainsMultiset,MinimumRareCount=0,TargetMultiset=cards};
-                var request=Request(Query(c)); var gpu=new TransformationAggregateGpuPlan(new(request));
+                var request=Request(Query(c)); var gpu=new TransformationAggregateGpuPlan(new(request.Model));
                 Check(c.OpportunityCount==cards.Length && cards.Length is >=8 and <=10 && gpu.Supported,"Larger joint result count and GPU packing admitted");
                 Check(Environment.GetEnvironmentVariable("RT2_T_BONES_EXPERIMENT")=="baseline" || gpu.FullTarget,"Carry8 full-target admission is based on actual opportunity count");
-                Check(ProductionExactSearchEvaluator.Evaluate(request,TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance,Beta110SeedCodec.FormatOrdinal(ordinal))).IsMatch,
+                Check(ProductionExactSearchEvaluator.Evaluate(request.Model,TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance,Beta110SeedCodec.FormatOrdinal(ordinal))).IsMatch,
                     "Larger full-target authoritative positive witness");
                 higherFullTargets.Add(c); cases.Add(c);
                 Console.WriteLine($"TRANSFORMATION_CAPACITY opportunities={cards.Length};groups={gpu.Buffers[0][5]};witness={Beta110SeedCodec.FormatOrdinal(ordinal)};fullTarget={gpu.FullTarget}");
@@ -260,16 +283,16 @@ internal static class TransformationAggregateChecks
                 MorphicGrove=false,AromaOfChaos=false,WhisperingHollow=false,EventScenario=null,MinimumRareCount=1});
         var uncertainCompanion=condition with {Opening=TransformationOpening.BonesLeafyOther,CompanionRelic=BaseGameModelKeys.Relics.LargeCapsule,
             MorphicGrove=false,AromaOfChaos=false,WhisperingHollow=false,EventScenario=null,MinimumRareCount=1};
-        var uncertainPlan=new TransformationAggregateNumericalPlan(Request(Query(uncertainCompanion)));
+        var uncertainPlan=new TransformationAggregateNumericalPlan((Request(Query(uncertainCompanion))).Model);
         Check(!uncertainPlan.Closed && !new TransformationAggregateGpuPlan(uncertainPlan).Supported &&
             uncertainPlan.ProbabilityClosed && TransformationAggregateProbability.Build(uncertainPlan).QueryHitProbability.HasValue,
             "Unspecified companion uses approved marginal probability without widening runtime/GPU continuation proof");
         for (ulong root = 0; root < 32; root++)
             Check(uncertainPlan.Matches(root) == uncertainPlan.MatchesCollected(root),
                 "Probability closure leaves the non-closed runtime collector path intact");
-        Check(new TransformationAggregateGpuPlan(new(Request(Query(uncertainCompanion with {PickupOrder=TransformationPickupOrder.LeafyThenCompanion})))).Supported,
+        Check(new TransformationAggregateGpuPlan(new((Request(Query(uncertainCompanion with {PickupOrder=TransformationPickupOrder.LeafyThenCompanion}))).Model)).Supported,
             "Leafy-first needs no predecessor companion projection");
-        var trialProbability=TransformationAggregateProbability.Build(new(Request(Query(trial))));
+        var trialProbability=TransformationAggregateProbability.Build(new((Request(Query(trial))).Model));
         double rareMass=targets[0].OrderedSourceCandidates!.Count(c=>c.Rarity=="Rare")/(double)targets[0].OrderedSourceCandidates!.Count;
         Check(Math.Abs(trialProbability.QueryHitProbability!.Value-(1-Math.Pow(1-rareMass,2))/3)<1e-12,"Trial case probability paid once");
         // A tiny captured pool allows exhaustive probability checks independent
@@ -281,8 +304,8 @@ internal static class TransformationAggregateChecks
         // the authored product shape. Independent draws identify both endpoints.
         var endpointScenario = new MorphicGroveScenario(context.Authority, scenario.Premises,
             targets.Select(target => target with { OrderedSourceCandidates = tinyPool }).ToArray());
-        var endpoint = new TransformationAggregateNumericalPlan(Request(Query(condition with {
-            AromaOfChaos=false, WhisperingHollow=false, MinimumRareCount=2, EventScenario=endpointScenario })));
+        var endpoint = new TransformationAggregateNumericalPlan((Request(Query(condition with {
+            AromaOfChaos=false, WhisperingHollow=false, MinimumRareCount=2, EventScenario=endpointScenario }))).Model);
         Check(endpoint.UsesStreaming, "Closed endpoint uses streaming");
         bool firstFailure = false, finalFailure = false, bothSatisfy = false;
         for (ulong root = 0; root < 256; root++)
@@ -315,7 +338,7 @@ internal static class TransformationAggregateChecks
                 Check((TransformationAggregateValidator.EvaluateOutputs(c,[new(a.CardKey,a.Rarity=="Rare"),new(b.CardKey,b.Rarity=="Rare"),new(d.CardKey,d.Rarity=="Rare")])==SearchDisposition.Match)==expected,
                     "Mixed predicate uses distinct target instances and requires every remaining result Rare");
             }
-            var prob=TransformationAggregateProbability.Build(new(Request(Query(c))));
+            var prob=TransformationAggregateProbability.Build(new((Request(Query(c))).Model));
             Check(Math.Abs(prob.QueryHitProbability!.Value-hits/64d/3)<1e-12,"Mixed probability equals exhaustive 4^3 pool enumeration, Trial once");
             cases.Add(c);
         }
@@ -335,7 +358,7 @@ internal static class TransformationAggregateChecks
         cases.Add(mixedLeafy);
         // A bound N predicate and T inspect these same two draws, so their
         // probability is a joint event rather than two multiplied marginals.
-        var mixedLeafyPlan = new TransformationAggregateNumericalPlan(Request(Query(mixedLeafy)));
+        var mixedLeafyPlan = new TransformationAggregateNumericalPlan((Request(Query(mixedLeafy))).Model);
         var bound = new NeowStructuredEffectSearchCondition(BaseGameModelKeys.Relics.LeafyPoultice,NeowStructuredConditionKind.ExactSingle,
             NeowStructuredEffectScope.TransformResults,NeowStructuredOutputKind.Card,[rareCards[0].CardKey]);
         var pools = mixedLeafyPlan.DrawGroups.Single().Pools;
@@ -364,48 +387,73 @@ internal static class TransformationAggregateChecks
             Check(fingerprints.Add(request.SnapshotFingerprint), "Contributor/order/predicate fingerprint unique");
             var restored = JsonSerializer.Deserialize<SearchQuery>(JsonSerializer.Serialize(query, json), json)!;
             Check(Request(restored).SnapshotFingerprint == request.SnapshotFingerprint, "JSON cursor identity");
-            var numerical = new TransformationAggregateNumericalPlan(request); var expected = new List<ulong>();
+            var numerical = new TransformationAggregateNumericalPlan(request.Model); var expected = new List<ulong>();
+            if (c.Opening == TransformationOpening.NewLeaf && !newLeafSnapshotChecked ||
+                c.Opening == TransformationOpening.BonesLeafyOther && !otherBonesSnapshotChecked)
+            {
+                string? priorEntry = Environment.GetEnvironmentVariable("RT2_T_ENTRY_IDENTITY");
+                try
+                {
+                    Environment.SetEnvironmentVariable("RT2_T_ENTRY_IDENTITY", "off");
+                    var off = new TransformationAggregateGpuPlan(numerical);
+                    Environment.SetEnvironmentVariable("RT2_T_ENTRY_IDENTITY", null);
+                    Check(new TransformationAggregateGpuPlan(numerical).EntryIdentityTracked, "T eligible entry tracking defaults on");
+                    Environment.SetEnvironmentVariable("RT2_T_ENTRY_IDENTITY", "track");
+                    var track = new TransformationAggregateGpuPlan(numerical);
+                    Environment.SetEnvironmentVariable("RT2_T_ENTRY_IDENTITY", "off");
+                    Check(!off.EntryIdentityTracked && track.EntryIdentityTracked &&
+                        track.ShaderSource().Contains(c.Opening == TransformationOpening.NewLeaf ? "#define T_NEWLEAF_TRACKED" : "#define T_BONES_ENTRY_PREPARED", StringComparison.Ordinal),
+                        "T new entry body is frozen independently of later environment changes");
+                    Check(off.Buffers[1].SequenceEqual(track.Buffers[1]) && off.FullTarget == track.FullTarget && off.Capacity == track.Capacity,
+                        "T identity tracking retains transform/source pools and existing physical allocation");
+                }
+                finally { Environment.SetEnvironmentVariable("RT2_T_ENTRY_IDENTITY", priorEntry); }
+                newLeafSnapshotChecked |= c.Opening == TransformationOpening.NewLeaf;
+                otherBonesSnapshotChecked |= c.Opening == TransformationOpening.BonesLeafyOther;
+            }
             int accepted = 0;
             for (ulong i = 0; i < (ulong)options.ScanCount; i++)
             {
                 string seed = Beta110SeedCodec.FormatOrdinal(i); var root = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed);
-                var exact = ProductionExactSearchEvaluator.Evaluate(request, root);
+                var exact = ProductionExactSearchEvaluator.Evaluate(request.Model, root);
                 Check(exact.Evaluation.Disposition is SearchDisposition.Match or SearchDisposition.NoMatch,
                     $"Exact must resolve case={index} ordinal={i}: {exact.Evaluation.FailureCode}");
                 bool fast = numerical.Matches(root.RootHash);
                 Check(fast == numerical.MatchesCollected(root.RootHash), "Streaming / collector complete population parity");
                 Check(fast == exact.IsMatch, $"Fast/Exact parity case={index} ordinal={i} fast={fast} exact={exact.IsMatch}");
                 if (fast) expected.Add(i);
-                if (exact.IsMatch) { accepted++; Check(exact.Document is not null && exact.Evaluation.Evidence.Any(e => e.Code == "TransformationAggregateMatched"), "Positive aggregate Witness"); }
+                if (exact.IsMatch) { accepted++; Check(exact.Evaluation.Evidence.Any(e => e.Code == "TransformationAggregateMatched"), "Positive aggregate Witness"); }
             }
             Check(accepted > 0 || higherFullTargets.Contains(c) || c.Opening==TransformationOpening.BonesLeafyOther || c is {Opening:TransformationOpening.BonesLeafyNewLeaf,TrialNondescript:true}, "Representative positive interval case=" + index);
-            var execution = new FamilyExecutionContext(false);
-            IFamilyInvocation owner = new TransformationAggregateFamily(request);
+            var execution = new FilterRuntimeServices(false);
+            var preparedTransformation = PrepareTransformation(request);
+            FilterBodyDescription owner = preparedTransformation.Body;
             Check(owner.Coverage.SequenceEqual(new[] { TransformationAggregateFamily.Id }), "Indivisible single Coverage");
             Check(owner.Survival.IsResolved, "T owned modeled survival");
             var probability = TransformationAggregateProbability.Build(numerical);
-            Check(((TransformationAggregateFamily)owner).GpuPlan.Supported, "Closed bounded T GPU admitted");
+            Check(preparedTransformation.GpuPlan.Supported, "Closed bounded T GPU admitted");
             Check(probability.QueryHitProbability == probability.StageSurvival && probability.LocalRareDistributions.All(d => Math.Abs(d.Sum()-1)<1e-12), "Closed T probability/distributions");
             Check(JointSelectivityEstimator.EstimateQuery(SearchSelectivityInput.From(request)).Probability is { } p && Math.Abs(p-probability.QueryHitProbability!.Value)<1e-12, "T-only Query probability");
-            owner = owner.CpuRealizations.Single();
+            owner = owner.CpuAlternatives.Single();
+            var ownerExecution = owner.CreateExecution!(owner, execution);
             var batch = new SearchBatch(0, (int)options.ScanCount); var input = FamilyCandidateSet.Dense(batch);
-            var actual = owner.InvokeAsync(execution, new(batch, request), input, default).GetAwaiter().GetResult();
+            var actual = ownerExecution.FilterAsync(execution, input, default).GetAwaiter().GetResult();
             Check(actual.EnumerateLogicalOrdinals().SequenceEqual(expected), "Real CPU ordered ABI1/tail");
             var zero = FamilyCandidateSet.FromAbi1(batch, []);
-            Check(owner.InvokeAsync(execution, new(batch, request), zero, default).Result.Count == 0, "Zero input");
+            Check(ownerExecution.FilterAsync(execution, zero, default).Result.Count == 0, "Zero input");
             using var canceled = new CancellationTokenSource(); canceled.Cancel();
-            try { owner.InvokeAsync(execution, new(batch, request), input, canceled.Token).GetAwaiter().GetResult(); throw new Exception("Cancellation missing"); }
+            try { ownerExecution.FilterAsync(execution, input, canceled.Token).GetAwaiter().GetResult(); throw new Exception("Cancellation missing"); }
             catch (OperationCanceledException) { checks++; }
             var sparse = FamilyCandidateSet.FromAbi1(batch, expected.Where((_,i) => i % 2 == 0).ToArray());
-            Check(owner.InvokeAsync(execution, new(batch, request), sparse, default).Result.Count == sparse.Count, "Resume sparse survivors");
-            owner.DisposeAsync(execution).GetAwaiter().GetResult(); execution.DisposeAsync().GetAwaiter().GetResult();
+            Check(ownerExecution.FilterAsync(execution, sparse, default).Result.Count == sparse.Count, "Resume sparse survivors");
+            ownerExecution.DisposeAsync(execution).GetAwaiter().GetResult(); execution.DisposeAsync().GetAwaiter().GetResult();
             ulong? additionalWitness = null;
             if(accepted==0 && (higherFullTargets.Contains(c) || c.Opening==TransformationOpening.BonesLeafyOther)) {
                 ulong witness=0;
                 for(ulong i=(ulong)options.ScanCount;i<262144;i++) {
                     var root=TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance,Beta110SeedCodec.FormatOrdinal(i));
                     if(!numerical.Matches(root.RootHash))continue;
-                    Check(ProductionExactSearchEvaluator.Evaluate(request,root).IsMatch,"Additional positive agrees with Exact"); witness=i;break;
+                    Check(ProductionExactSearchEvaluator.Evaluate(request.Model,root).IsMatch,"Additional positive agrees with Exact"); witness=i;break;
                 }
                 Check(witness!=0,"Additional positive found outside fixed main interval");
                 additionalWitness = witness;
@@ -413,26 +461,52 @@ internal static class TransformationAggregateChecks
             // All physical bodies use the same full-population Exact oracle.
             // Native fixture execution must check dense/compact and duplicates
             // for each body, rather than comparing only shader text.
-            foreach(bool prefix in new[]{false,true}) {
-                var gpuPlan = new TransformationAggregateGpuPlan(numerical, prefixReuse: prefix);
+            foreach(bool prefix in new[]{false,true})
+            foreach(bool entry in c.Opening is TransformationOpening.NewLeaf or TransformationOpening.BonesLeafyOther ? new[]{false,true} : new[]{false}) {
+                var gpuPlan = new TransformationAggregateGpuPlan(numerical, prefixReuse: prefix, entryIdentity: entry);
+                var originalEntry = new TransformationAggregateGpuPlan(numerical, prefixReuse: prefix, entryIdentity: false);
+                Check(gpuPlan.EntryIdentityTracked == entry &&
+                    gpuPlan.NewLeafTracked == (entry && c.Opening == TransformationOpening.NewLeaf) &&
+                    gpuPlan.ClosedBonesTracked == (entry && c.Opening == TransformationOpening.BonesLeafyOther),
+                    "T entry tracking covers only the admitted NewLeaf/Closed other-Bones consumers");
+                Check(gpuPlan.BonesOptimized == originalEntry.BonesOptimized && gpuPlan.FullTarget == originalEntry.FullTarget &&
+                    gpuPlan.Capacity == originalEntry.Capacity && gpuPlan.SeedsPerInvocation == originalEntry.SeedsPerInvocation,
+                    "T entry tracking does not promote a different aggregate, Carry8 shape or capacity");
+                Check(gpuPlan.Revision(false).Contains(TransformationAggregateGpuPlan.EntryIdentityRevision, StringComparison.Ordinal) == entry &&
+                    gpuPlan.Revision(true).Contains(TransformationAggregateGpuPlan.EntryIdentityRevision, StringComparison.Ordinal) == entry,
+                    "T entry physical identity is separate for Dense and Compact");
+                if (gpuPlan.NewLeafTracked)
+                {
+                    var m = gpuPlan.Buffers[0]; var data = gpuPlan.Buffers[1];
+                    for (int curseIndex = 0; curseIndex < m[7]; curseIndex++)
+                    {
+                        int at = (int)m[11] + curseIndex * 2, positionAt = (int)m[27] + curseIndex;
+                        uint[] positives = data.Skip((int)m[at]).Take((int)m[at + 1]).ToArray();
+                        int position = Array.IndexOf(positives, m[20]);
+                        Check(positives.Count(id => id == m[20]) <= 1 && m[positionAt] == (position < 0 ? uint.MaxValue : (uint)position),
+                            "T NewLeaf metadata follows the captured unique fixed-positive position for each curse");
+                    }
+                }
                 if (prefix && gpuPlan.FullTarget) continue; // existing Carry8 is a separate body
                 Check(gpuPlan.PrefixReuse == prefix, "T explicit prefix-reuse selection");
-                Check(gpuPlan.Revision(false).EndsWith(TransformationAggregateGpuPlan.PrefixReuseRevision, StringComparison.Ordinal) == prefix &&
-                    gpuPlan.Revision(true).EndsWith(TransformationAggregateGpuPlan.PrefixReuseRevision, StringComparison.Ordinal) == prefix,
+                Check(gpuPlan.Revision(false).Contains(TransformationAggregateGpuPlan.PrefixReuseRevision, StringComparison.Ordinal) == prefix &&
+                    gpuPlan.Revision(true).Contains(TransformationAggregateGpuPlan.PrefixReuseRevision, StringComparison.Ordinal) == prefix,
                     "T prefix physical identity isolated for Dense and Compact");
                 if (prefix) Check(FamilyCoarsePricing.IsEstimate(TransformationAggregatePricing.Gpu(numerical, probability, gpuPlan, new(false,false,4096))),
                     "T prefix body can use declared work estimates without borrowing a baseline measurement identity");
-                string name = $"T-{index}" + (prefix ? "-prefix" : "");
+                string name = $"T-{index}" + (prefix ? "-prefix" : "") + (entry ? "-entry" : "");
                 string shader = name + ".glsl";
                 File.WriteAllText(output+"/"+shader,gpuPlan.ShaderSource());
                 uint[]? prefixTable = prefix ? NeowPrefixHashCache.BuildTable(0, (int)options.ScanCount) : null;
                 if(additionalWitness is { } witness)
                     gpuFixtures.Add(new {name=name+"-positive",family="T",shader,buffers=gpuPlan.Buffers,fullTarget=gpuPlan.FullTarget,
+                        newLeafTracked=gpuPlan.NewLeafTracked,closedBonesTracked=gpuPlan.ClosedBonesTracked,
                         prefixTable = prefix ? NeowPrefixHashCache.BuildTable(witness, 1) : null,
                         batchMeta=new uint[]{(uint)witness,(uint)(witness>>32),1,1,0},ordinals=new uint[]{0},expected=new ulong[]{0}});
                 foreach(bool compact in new[]{false,true}) {
                     uint[] ordinals=Enumerable.Range(0,(int)options.ScanCount).Where(i=>!compact||i%3==0).Select(i=>(uint)i).ToArray();
                     gpuFixtures.Add(new {name,family="T",shader,buffers=gpuPlan.Buffers,fullTarget=gpuPlan.FullTarget,
+                        newLeafTracked=gpuPlan.NewLeafTracked,closedBonesTracked=gpuPlan.ClosedBonesTracked,
                         prefixTable,
                         batchMeta=new uint[]{0,0,(uint)options.ScanCount,(uint)ordinals.Length,compact?1u:0u},ordinals,
                         expected=expected.Where(i=>!compact||i%3==0).ToArray()});
@@ -472,11 +546,13 @@ internal static class TransformationAggregateChecks
                         {
                             var root = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, Beta110SeedCodec.FormatOrdinal(boundary.Base + ordinal));
                             bool match = numerical.MatchesCollected(root.RootHash);
-                            Check(match == ProductionExactSearchEvaluator.Evaluate(request, root).IsMatch, "T prefix boundary semantic oracle");
+                            Check(match == ProductionExactSearchEvaluator.Evaluate(request.Model, root).IsMatch, "T prefix boundary semantic oracle");
                             if (match) positive.Add(ordinal);
                         }
                         gpuFixtures.Add(new { name=name+"-boundary-"+boundary.Base+"-"+boundary.Offset, family="T", shader,
-                            buffers=gpuPlan.Buffers, fullTarget=false, prefixTable=NeowPrefixHashCache.BuildTable(boundary.Base,boundary.Span),
+                            buffers=gpuPlan.Buffers, fullTarget=false,
+                            newLeafTracked=gpuPlan.NewLeafTracked,closedBonesTracked=gpuPlan.ClosedBonesTracked,
+                            prefixTable=NeowPrefixHashCache.BuildTable(boundary.Base,boundary.Span),
                             batchMeta=new uint[]{(uint)boundary.Base,(uint)(boundary.Base>>32),(uint)boundary.Span,257,0,0,(uint)boundary.Offset},
                             ordinals,expected=positive.ToArray() });
                     }
@@ -500,13 +576,13 @@ internal static class TransformationAggregateChecks
             var q = Query(c) with { OpeningRoute=new(c.RequiredOpeningKey),
                 OpeningRouteRelicRequirement=opening==TransformationOpening.BonesLeafyNewLeaf
                     ?new(c.RequiredOpeningKey,[BaseGameModelKeys.Relics.LeafyPoultice,BaseGameModelKeys.Relics.NewLeaf]):null };
-            var req=Request(q); var t=new TransformationAggregateFamily(req);
-            Check(TransformationAggregateCondition.SharedNeowIdentityOnly(req.Evaluation), "Shared opening identity recognized");
+            var req=Request(q); var t=PrepareTransformation(req);
+            Check(TransformationAggregateCondition.SharedNeowIdentityOnly(req.Model.Evaluation), "Shared opening identity recognized");
             var p=JointSelectivityEstimator.EstimateQuery(SearchSelectivityInput.From(req)).Probability;
             Check(p is not null && Math.Abs(p.Value-t.Probability.QueryHitProbability!.Value)<1e-12, "Shared opening not multiplied twice");
-            Check(NeowFamily.TryCreate(req,out var n) && n is not null,"N remains registered beside T");
+            Check(NeowFamily.TryCreate(req.Model,FilterExecutionPreferences.From(req.RunOptions),out var n) && n is not null,"N remains registered beside T");
             Check(n!.ResolveSurvival(new HashSet<string>{TransformationAggregateFamily.Id}).SurvivalProbability==1,"N identity discharged after T");
-            Check(Math.Abs(t.ResolveSurvival(new HashSet<string>{"N.Neow"}).SurvivalProbability!.Value*t.Probability.IdentityProbability-p!.Value)<1e-12,"T survival conditions on N");
+            Check(Math.Abs(t.Body.ResolveSurvival(new HashSet<string>{"N.Neow"}).SurvivalProbability!.Value*t.Probability.IdentityProbability-p!.Value)<1e-12,"T survival conditions on N");
             var extraOffers = q with { LegacyNeow = q.LegacyNeow with {
                 NeowRelics = new([], [BaseGameModelKeys.Relics.Pomander], []) } };
             var extraOffersRequest = Request(extraOffers);
@@ -520,33 +596,33 @@ internal static class TransformationAggregateChecks
             for(ulong i=0;i<1027;i++)
             {
                 var root=TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance,Beta110SeedCodec.FormatOrdinal(i));
-                Check(ProductionExactSearchEvaluator.Evaluate(req,root).IsMatch==ProductionExactSearchEvaluator.Evaluate(pureRequest,root).IsMatch,"Shared N/T Exact parity");
+                Check(ProductionExactSearchEvaluator.Evaluate(req.Model,root).IsMatch==ProductionExactSearchEvaluator.Evaluate(pureRequest.Model,root).IsMatch,"Shared N/T Exact parity");
             }
             File.WriteAllText($"{output}/shared-{opening}.json",JsonSerializer.Serialize(new ProductionSearchReplayWorkload(1,q,options),json));
             if(opening==TransformationOpening.BonesLeafyNewLeaf)
             {
                 var additional=q with { StructuredOpeningEffects=[new(BaseGameModelKeys.Relics.NewLeaf,NeowStructuredConditionKind.ExactSingle,
                     NeowStructuredEffectScope.TransformResults,NeowStructuredOutputKind.Card,[nCards[2]])] };
-                var extraRequest=Request(additional); var extraT=new TransformationAggregateFamily(extraRequest);
-                Check(extraRequest.Evaluation.StructuredNeowEffects.Count==1,"Additional N condition retained beside T");
+                var extraRequest=Request(additional); var extraT=PrepareTransformation(extraRequest);
+                Check(extraRequest.Model.Evaluation.StructuredNeowEffects.Count==1,"Additional N condition retained beside T");
                 var sharedProbability=JointSelectivityEstimator.EstimateQuery(SearchSelectivityInput.From(extraRequest)).Probability;
                 Check(sharedProbability is >0 && sharedProbability<=p,"Overlapping N/T uses a same-draw joint, bounded by T marginal");
                 var redundant = q with { StructuredOpeningEffects=[new(BaseGameModelKeys.Relics.NewLeaf,NeowStructuredConditionKind.ExactSingle,
                     NeowStructuredEffectScope.TransformResults,NeowStructuredOutputKind.Card,[nCards[2]]),
                     new(BaseGameModelKeys.Relics.NewLeaf,NeowStructuredConditionKind.ExactSingle,NeowStructuredEffectScope.TransformResults,NeowStructuredOutputKind.Card,[nCards[2]])] };
                 Check(Math.Abs(JointSelectivityEstimator.EstimateQuery(SearchSelectivityInput.From(Request(redundant))).Probability!.Value-sharedProbability!.Value)<1e-12,"Repeated N fact does not repay shared output");
-                var curses=extraRequest.Authority.EffectAuthority!.GeneratedCursePool!;
+                var curses=extraRequest.Model.Authority.EffectAuthority!.GeneratedCursePool!;
                 var withCurse=additional with {StructuredOpeningEffects=[..additional.StructuredOpeningEffects,
                     new(BaseGameModelKeys.Relics.NeowsBones,NeowStructuredConditionKind.ExactSingle,
                         NeowStructuredEffectScope.FinalCurse,NeowStructuredOutputKind.Curse,[curses[0]])]};
                 double curseJoint=JointSelectivityEstimator.EstimateQuery(SearchSelectivityInput.From(Request(withCurse))).Probability!.Value;
                 Check(Math.Abs(curseJoint-sharedProbability!.Value*curses.Count(k=>k==curses[0])/curses.Count)<1e-12,"T/N final curse is conditional, identity paid once");
-                var extraN = new NeowFamily(extraRequest, NeowReplayPlan.Compile(extraRequest, false));
-                Check(Math.Abs(extraT.ResolveSurvival(new HashSet<string>{"N.Neow"}).SurvivalProbability!.Value * extraN.Survival.SurvivalProbability!.Value - sharedProbability!.Value)<1e-12,
+                var extraN = new NeowFamily(extraRequest.Model, NeowReplayPlan.Compile(extraRequest.Model, false));
+                Check(Math.Abs(extraT.Body.ResolveSurvival(new HashSet<string>{"N.Neow"}).SurvivalProbability!.Value * extraN.Survival.SurvivalProbability!.Value - sharedProbability!.Value)<1e-12,
                     "N-first same-draw target intersection uses existing joint model");
-                Check(Math.Abs(extraN.ResolveSurvival(new HashSet<string>{TransformationAggregateFamily.Id}).SurvivalProbability!.Value * extraT.Survival.SurvivalProbability!.Value - sharedProbability!.Value)<1e-12,
+                Check(Math.Abs(extraN.ResolveSurvival(new HashSet<string>{TransformationAggregateFamily.Id}).SurvivalProbability!.Value * extraT.Body.Survival.SurvivalProbability!.Value - sharedProbability!.Value)<1e-12,
                     "T-first same-draw target intersection equals N-first");
-                Check(ProductionExactSearchEvaluator.Evaluate(extraRequest,TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance,"0000000001FA")).IsMatch,
+                Check(ProductionExactSearchEvaluator.Evaluate(extraRequest.Model,TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance,"0000000001FA")).IsMatch,
                     "Additional N and T share a positive authoritative witness");
                 File.WriteAllText(output+"/shared-extra.json",JsonSerializer.Serialize(new ProductionSearchReplayWorkload(1,additional,options),json));
                 var reversed=q with {OpeningRouteRelicRequirement=new(c.RequiredOpeningKey,[BaseGameModelKeys.Relics.NewLeaf,BaseGameModelKeys.Relics.LeafyPoultice],BonesRouteOrderMode.ExactOrder)};
@@ -562,56 +638,74 @@ internal static class TransformationAggregateChecks
         var unresolvedRelic = Query(condition with { Opening = TransformationOpening.NewLeaf }) with {
             RelicSequenceConstraints = [new(RelicSequenceKind.Shop, SearchSequenceRangeMode.FirstN, 1, new([new("RELIC","ANCHOR")], [], []))] };
         var unresolvedRelicRequest = Request(unresolvedRelic);
-        Check(TransformationAggregateCondition.HasUnresolvedRelicContinuation(unresolvedRelicRequest.CompiledSearch.NormalizedQuery),
+        Check(TransformationAggregateCondition.HasUnresolvedRelicContinuation(unresolvedRelicRequest.Model.CompiledSearch.NormalizedQuery),
             "Unimplemented T relic continuation remains an authored obligation");
         Check(!FamilyExecutionCoordinator.CreateRegisteredFamilies(unresolvedRelicRequest, false).Any(f=>f.Coverage.Contains("R.Relic")),
             "Initial relic bag cannot reject an unresolved T continuation");
         var unclosed = condition with { EventScenario = new(context.Authority, scenario.Premises with { VanillaLocalDependenciesBound = false }, targets) };
         var unknownRequest = Request(Query(unclosed));
-        var unknownNumerical = new TransformationAggregateNumericalPlan(unknownRequest);
+        var unknownNumerical = new TransformationAggregateNumericalPlan(unknownRequest.Model);
         Check(!unknownNumerical.UsesStreaming && unknownNumerical.Matches(bonesRoot), "Unclosed donor conservatively retained outside streaming");
-        Check(TransformationAggregateValidator.Evaluate(unknownRequest, bonesRoot, context.Authority).Disposition == SearchDisposition.Unknown, "Unknown remains Unknown");
-        Check(TransformationAggregateProbability.Build(new(unknownRequest)).QueryHitProbability is null && !new TransformationAggregateFamily(unknownRequest).GpuPlan.Supported, "Unclosed authority has no invented probability or GPU admission");
+        Check(TransformationAggregateValidator.Evaluate(unknownRequest.Model, bonesRoot, context.Authority).Disposition == SearchDisposition.Unknown, "Unknown remains Unknown");
+        Check(TransformationAggregateProbability.Build(new(unknownRequest.Model)).QueryHitProbability is null && !PrepareTransformation(unknownRequest).GpuPlan.Supported, "Unclosed authority has no invented probability or GPU admission");
         Reject(Query(condition with { EventScenario = new(context.Authority, scenario.Premises, [targets[0] with { OrderedSourceCandidates = [] }, targets[1]]) }), "Corrupt empty pool rejected");
         var faultRequest = Request(Query(condition));
+        string? previousEntryControl = Environment.GetEnvironmentVariable("RT2_T_ENTRY_IDENTITY");
+        try
+        {
+            Environment.SetEnvironmentVariable("RT2_T_ENTRY_IDENTITY", "InjectedInvalidEntryControl");
+            var cpuOnly = PrepareTransformation(faultRequest, preferGpu: false);
+            var preparationFailed = PrepareTransformation(faultRequest);
+            Check(!cpuOnly.GpuPlan.Supported && cpuOnly.Body.Preparation.Issues.Count == 0 &&
+                !preparationFailed.GpuPlan.Supported && preparationFailed.Body.Preparation.Issues.Any(issue => issue.Detail.Contains("T.UnknownEntryIdentityExperiment", StringComparison.Ordinal)),
+                "Optional T identity preparation failure retains its cause without changing CPU-only preparation");
+            for (ulong root = 0; root < 32; root++)
+                Check(cpuOnly.Plan.Matches(root) == preparationFailed.Plan.Matches(root), "T identity preparation failure retains all numerical predicates");
+        }
+        finally { Environment.SetEnvironmentVariable("RT2_T_ENTRY_IDENTITY", previousEntryControl); }
         string? previousGpuControl = Environment.GetEnvironmentVariable("RT2_T_BONES_EXPERIMENT");
         try
         {
             Environment.SetEnvironmentVariable("RT2_T_BONES_EXPERIMENT", "InjectedInvalidGpuControl");
-            var cpuOnly = new TransformationAggregateFamily(faultRequest, preferGpu: false);
-            var preparationFailed = new TransformationAggregateFamily(faultRequest);
-            Check(!cpuOnly.GpuPlan.Supported && cpuOnly.GpuPreparationFailureDetail.Length == 0,
+            var cpuOnly = PrepareTransformation(faultRequest, preferGpu: false);
+            var preparationFailed = PrepareTransformation(faultRequest);
+            Check(!cpuOnly.GpuPlan.Supported && cpuOnly.Body.Preparation.Issues.Count == 0,
                 "CPU T preparation does not parse optional GPU controls");
-            Check(!preparationFailed.GpuPlan.Supported && preparationFailed.GpuPreparationFailureDetail.Contains("UnknownTBonesControl"),
+            Check(!preparationFailed.GpuPlan.Supported && preparationFailed.Body.Preparation.Issues.Any(issue => issue.Detail.Contains("UnknownTBonesControl", StringComparison.Ordinal)),
                 "Optional T preparation failure preserves CPU and original cause");
             for (ulong ordinal = 0; ordinal < 32; ordinal++)
                 Check(cpuOnly.Plan.Matches(ordinal) == preparationFailed.Plan.Matches(ordinal), "T preparation failure preserves every CPU predicate");
-            var cpuSelection = FamilyPlanner.InOrder(((IFamilyInvocation)preparationFailed).CpuRealizations.ToArray());
-            Check(FamilyExecutionCoordinator.SelectedPreparationFallbacks([preparationFailed], cpuSelection).Count == 1,
+            var cpuSelection = FamilyPlanner.InOrder([preparationFailed.Body]);
+            Check(FamilyExecutionCoordinator.SelectedPreparationFallbacks([preparationFailed.Body], cpuSelection).Count == 1,
                 "Selected T CPU replacement retains GPU failure evidence");
         }
         finally { Environment.SetEnvironmentVariable("RT2_T_BONES_EXPERIMENT", previousGpuControl); }
-        var ownerForFault = new TransformationAggregateFamily(faultRequest);
-        IFamilyInvocation selectedGpu = new TransformationAggregateFamily(faultRequest);
-        var noDevice = new FamilyExecutionContext(false);
+        var ownerForFault = PrepareTransformation(faultRequest);
+        FilterBodyDescription selectedGpu = PrepareTransformation(faultRequest).Body;
+        var noDevice = new FilterRuntimeServices(false);
+        var selectedGpuExecution = selectedGpu.CreateExecution!(selectedGpu, noDevice);
         var gpuFaultBatch = new SearchBatch(0, 3);
-        try { selectedGpu.InvokeAsync(noDevice,new(gpuFaultBatch,faultRequest),FamilyCandidateSet.Dense(gpuFaultBatch),default).GetAwaiter().GetResult(); throw new Exception("Selected GPU silently recovered"); }
+        try { selectedGpuExecution.FilterAsync(noDevice,FamilyCandidateSet.Dense(gpuFaultBatch),default).GetAwaiter().GetResult(); throw new Exception("Selected GPU silently recovered"); }
         catch (InvalidOperationException ex) when(ex.Message=="FamilyGpuOwnerUnavailable") { checks++; }
-        try { selectedGpu.InvokeAsync(noDevice,new(gpuFaultBatch,faultRequest),FamilyCandidateSet.Dense(gpuFaultBatch),default).GetAwaiter().GetResult(); throw new Exception("Faulted GPU owner reused"); }
-        catch (InvalidOperationException ex) when(ex.Message=="T.InvocationFaulted") { checks++; }
+        try { selectedGpuExecution.FilterAsync(noDevice,FamilyCandidateSet.Dense(gpuFaultBatch),default).GetAwaiter().GetResult(); throw new Exception("Faulted GPU owner reused"); }
+        catch (InvalidOperationException ex) when(ex.Message=="FilterExecutionFaulted:" + TransformationAggregateFamily.Id) { checks++; }
+        selectedGpuExecution.DisposeAsync(noDevice).GetAwaiter().GetResult();
         noDevice.DisposeAsync().GetAwaiter().GetResult();
-        var orderProbabilities = cases.Skip(4).Take(3).Select(c=>TransformationAggregateProbability.Build(new(Request(Query(c)))).QueryHitProbability).ToArray();
+        var orderProbabilities = cases.Skip(4).Take(3).Select(c=>TransformationAggregateProbability.Build(new((Request(Query(c))).Model)).QueryHitProbability).ToArray();
         Check(orderProbabilities.Distinct().Count()==1, "Any/pinned closed Bones routes do not double probability");
-        var knownCpu = ((IFamilyInvocation)ownerForFault).CpuRealizations.Single();
+        var knownCpu = ownerForFault.Body.CpuAlternatives.Single();
         var knownSetup = knownCpu.QuotePhysicalWork(new(false, false, 4096));
-        Check(knownSetup?.SetupMilliseconds==0, "Known CPU setup does not acquire a GPU owner fee");
-        var faultCpu = new FamilyCpuExecution(faultRequest, ownerForFault, "InjectedFault", _ => throw new InvalidOperationException("InjectedNumericalFault"), 1, _ => null);
-        var faultBatch = new SearchBatch(0, 3); var faultInput = FamilyCandidateSet.Dense(faultBatch); var faultContext = new FamilyExecutionContext(false);
-        try { ((IFamilyInvocation)faultCpu).InvokeAsync(faultContext, new(faultBatch, faultRequest), faultInput, default).GetAwaiter().GetResult(); throw new Exception("Fault did not propagate"); }
+        Check(knownSetup is { NanosecondsPerInput: > 0, SetupMilliseconds: null or 0 },
+            "Known CPU work does not acquire a GPU owner fee or invent missing setup evidence");
+        var faultCpu = new CpuFilterExecution(knownCpu with { PhysicalRevision = "InjectedFault" }, Beta111Profile.Instance,
+            _ => throw new InvalidOperationException("InjectedNumericalFault"), numericalRoots: false);
+        var faultBatch = new SearchBatch(0, 3); var faultInput = FamilyCandidateSet.Dense(faultBatch); var faultContext = new FilterRuntimeServices(false);
+        try { faultCpu.FilterAsync(faultContext, faultInput, default).GetAwaiter().GetResult(); throw new Exception("Fault did not propagate"); }
         catch (FamilyCpuMatchException error) when (error.InnerException is InvalidOperationException { Message: "InjectedNumericalFault" } &&
             error.FamilyId == TransformationAggregateFamily.Id && error.Batch == faultBatch && error.GlobalOrdinal == 0) { checks++; }
-        try { ((IFamilyInvocation)faultCpu).InvokeAsync(faultContext, new(faultBatch, faultRequest), faultInput, default).GetAwaiter().GetResult(); throw new Exception("Faulted owner reused"); }
+        try { faultCpu.FilterAsync(faultContext, faultInput, default).GetAwaiter().GetResult(); throw new Exception("Faulted owner reused"); }
         catch (InvalidOperationException) { checks++; }
+        faultCpu.DisposeAsync(faultContext).GetAwaiter().GetResult();
         faultContext.DisposeAsync().GetAwaiter().GetResult();
         var permuted = cases[8] with { TargetMultiset = cases[8].TargetMultiset.Reverse().ToArray() };
         Check(Request(Query(permuted)).SnapshotFingerprint == Request(Query(cases[8])).SnapshotFingerprint, "Multiset canonical order");
@@ -620,13 +714,13 @@ internal static class TransformationAggregateChecks
             EventResultConditions = [new(EventResultConditionKind.TrashHeapGrabCard, Beta111EventResultCatalog.TrashHeapGrabCards[0])] };
         var combinedRequest = Request(combined);
         var registered = FamilyExecutionCoordinator.CreateRegisteredFamilies(combinedRequest);
-        Check(registered.SelectMany(f => f.Coverage).Order().SequenceEqual(new[] { "E.EventResult", "T.TransformationAggregate", "W.World" }.Order()), "T + independent W + unrelated E");
+        Check(registered.SelectMany(f => f.Coverage).Order().SequenceEqual(new[] { "E.EventResult", "T.TransformationAggregate", "V.VariantOpening", "W.World" }.Order()), "T + necessary variant + independent W + unrelated E");
         Check(JointSelectivityEstimator.EstimateQuery(SearchSelectivityInput.From(combinedRequest)).Probability is > 0, "Aggregate composes owned probability with W/E");
         var expectedCombined = new List<string>();
         for (ulong i = 0; i < (ulong)options.ScanCount; i++)
         {
             var root = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, Beta110SeedCodec.FormatOrdinal(i));
-            var result = ProductionExactSearchEvaluator.Evaluate(combinedRequest, root);
+            var result = ProductionExactSearchEvaluator.Evaluate(combinedRequest.Model, root);
             Check(result.Evaluation.Disposition is SearchDisposition.Match or SearchDisposition.NoMatch, "Combined Exact closed");
             if (result.IsMatch) expectedCombined.Add(root.CanonicalSeed);
         }

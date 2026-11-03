@@ -10,8 +10,8 @@ internal sealed partial class FamilyPrivateGpuChain : IDisposable
 {
     private readonly RenderingDevice _rd;
     private readonly FamilyGpuComputeUtility.ShaderReuse _modules;
-    private readonly IFamilyInvocation[] _families;
-    private readonly NeowFamilyGpuExecutor? _denseScratchDonor;
+    private readonly FilterBodyDescription[] _families;
+    private readonly IPrivateGpuScratchLease? _denseScratchDonor;
     private readonly PrivateOrdinalBuffer?[] _buffers;
     private readonly FamilyPrivateGpuExecution?[] _executors;
     private readonly int _ownerThread = System.Environment.CurrentManagedThreadId;
@@ -23,8 +23,8 @@ internal sealed partial class FamilyPrivateGpuChain : IDisposable
     internal long ReadbackBytes { get; private set; }
     internal double DispatchMs { get; private set; }
 
-    internal FamilyPrivateGpuChain(RenderingDevice rd, IFamilyInvocation[] families,
-        NeowFamilyGpuExecutor? denseScratchDonor = null)
+    internal FamilyPrivateGpuChain(RenderingDevice rd, FilterBodyDescription[] families,
+        IPrivateGpuScratchLease? denseScratchDonor = null)
     {
         if (families.Length < 2 || families.Any(f => !f.CanBindPrivateSerial))
             throw new ArgumentException("FamilyParty.PrivateChainNotAdmitted", nameof(families));
@@ -94,9 +94,9 @@ internal sealed partial class FamilyPrivateGpuChain : IDisposable
             PrivateOrdinalBuffer? outgoing = index == _families.Length - 1 ? null :
                 (_buffers[index % 2] ??= new(_rd));
             using var reuse = _modules.Activate();
-            var executor = index == 0 && !compactFirst && _denseScratchDonor is not null && _families[index] is NeowFamily neow
-                ? neow.BindNeowPrivate(_rd, incoming, outgoing, _denseScratchDonor)
-                : _families[index].BindPrivateSerial(_rd, incoming, outgoing);
+            var executor = index == 0 && !compactFirst && _denseScratchDonor is not null
+                ? (_families[index].BindPrivateShared ?? throw new InvalidOperationException("FamilyParty.SharedScratchBindingUnavailable"))(_rd, incoming, outgoing, _denseScratchDonor)
+                : _families[index].BindPrivate!(_rd, incoming, outgoing);
             if (compactFirst) _compactFirst = executor;
             else _executors[index] = executor;
             return executor;

@@ -40,7 +40,7 @@ internal static partial class PartyPhase1Checks
                 bool reverse = shape == "ReverseBones", arrival = shape == "LaterArrival", wildcard = shape == "WildcardFirst";
                 string name = $"MPN3-{players}p-slot{slot}-{shape}";
                 NeowStructuredEffectSearchCondition? prefixObservation = null;
-                ExactSearchExecutionRequest Build(ModelKey? first, ModelKey? second)
+                PreparedSearch Build(ModelKey? first, ModelKey? second)
                 {
                     var local = SearchQuery.Empty with { OpeningRoute = new(reverse ? bones : kalei),
                         OpeningRouteRelicRequirement = reverse ? new(bones, [arcane, kalei], BonesRouteOrderMode.AnyOrder) : null,
@@ -51,11 +51,11 @@ internal static partial class PartyPhase1Checks
                     var query = SearchQuery.Empty with { Players = Enumerable.Range(0, players).Select(i => new PlayerOfferQuery(i, ModelKeySetFilter.Empty)
                         { Conditions = i == slot ? local : arrival && i == 0 ? SearchQuery.Empty with { OpeningRoute = new(leaf),
                             StructuredOpeningEffects = prefixObservation is { } observedPrefix ? [observedPrefix] : [] } : SearchQuery.Empty }).ToArray() };
-                    return ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context), new("000000000000", capacity, 30, 4)).Plan
+                    return SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context), new("000000000000", capacity, 30, 4)).Plan
                         ?? throw new InvalidOperationException("MPN3.QueryCompile:" + name);
                 }
-                NeowReplayPlan Personal(ExactSearchExecutionRequest r) => NeowReplayPlan.Compile(
-                    ExactSearchExecutionRequestFactory.ForPlayer(r, r.CompiledSearch.PlayerSearches[slot]), false);
+                NeowReplayPlan Personal(PreparedSearch r) => NeowReplayPlan.Compile(
+                    SearchPreparationCompiler.ForPlayer(r.Model, r.Model.CompiledSearch.PlayerSearches[slot]), false);
                 var preliminary = Personal(Build(null, null));
                 ulong positive = 0; ModelKey? firstTarget = null, secondTarget = null;
                 for (; positive < 262144; positive++)
@@ -77,12 +77,12 @@ internal static partial class PartyPhase1Checks
                 if (arrival)
                 {
                     var originalRequest = Build(firstTarget, secondTarget);
-                    var originalExact = ProductionExactSearchEvaluator.Evaluate(originalRequest, TrustedRootHashInput.FromCanonicalSeed(
+                    var originalExact = ProductionExactSearchEvaluator.Evaluate(originalRequest.Model, TrustedRootHashInput.FromCanonicalSeed(
                         Beta111Profile.Instance, Beta110SeedCodec.FormatOrdinal(positive)));
                     string originalDetail = MpNExactFailureDetails(name + "-RouteOnlyPrefix", originalRequest, originalExact, output,
                         Beta110SeedCodec.FormatOrdinal(positive));
                     if (originalExact.Evaluation.Disposition != SearchDisposition.Unknown ||
-                        originalExact.Document?.Sections.SelectMany(s => s.NeowChoices).Any(c =>
+                        originalExact.Facts?.Neow?.Choices.Any(c =>
                             c.EffectEvidenceCode.Value == "party.earlier-player-shared-opening-unresolved") != true)
                         throw new InvalidDataException("MPN3.OriginalPrefixUnknownPremise:" + originalDetail);
                     GD.Print($"MP_N3_ORIGINAL_PREFIX_UNKNOWN name={name};positive={positive};originalQueryRetained=true;matchClaimed=false");
@@ -118,12 +118,12 @@ internal static partial class PartyPhase1Checks
                         !NeowPartyReplay.Route(root, plan, observed.BonesSecond, observed.BonesFirst, observed.RewardsAfterBones))
                         throw new InvalidDataException("MPN3.ReversePremise");
                 }
-                var exact = ProductionExactSearchEvaluator.Evaluate(request, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance,
+                var exact = ProductionExactSearchEvaluator.Evaluate(request.Model, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance,
                     Beta110SeedCodec.FormatOrdinal(positive)));
                 if (!exact.IsMatch) throw new InvalidDataException("MPN3.WholeTablePositive:" + MpNExactFailureDetails(name, request, exact, output,
                     Beta110SeedCodec.FormatOrdinal(positive)));
                 ProductionSearchReplay.Write(Path.Combine(output, name + ".json"), new ProductionSearchReplayWorkload(
-                    ProductionSearchReplay.SchemaVersion, request.CompiledSearch.Query,
+                    ProductionSearchReplay.SchemaVersion, request.Model.CompiledSearch.Query,
                     request.RunOptions with { StartSeed = Beta110SeedCodec.FormatOrdinal(positive), ScanCount = 65536 }));
                 MpN3CheckBody(rd, plan, positive, name, capacity, receipts, output, conservativeArrivalBoundary: arrival);
                 if (players == 2 && slot == 0 && shape == "Direct")
@@ -142,11 +142,11 @@ internal static partial class PartyPhase1Checks
         GD.Print($"MP_N3_KERNEL_SUMMARY rows={receipts.Count};output={output};calibration=false");
     }
 
-    private static string MpNExactFailureDetails(string label, ExactSearchExecutionRequest request, ProductionExactSearchResult exact,
+    private static string MpNExactFailureDetails(string label, PreparedSearch request, ProductionExactSearchResult exact,
         string? output = null, string? canonicalSeed = null)
     {
-        string seed = canonicalSeed ?? exact.Document?.CanonicalSeed ?? request.CanonicalStartSeed;
-        string detail = $"{label}:seed={seed}:disposition={exact.Evaluation.Disposition}:failure={exact.FailureCode}:childSlot={exact.Document?.Context.PlayerSlotIndex}:routes=" +
+        string seed = canonicalSeed ?? exact.Facts?.CanonicalSeed ?? request.CanonicalStartSeed;
+        string detail = $"{label}:seed={seed}:disposition={exact.Evaluation.Disposition}:failure={exact.FailureCode}:childSlot={exact.Facts?.Context.PlayerSlotIndex}:routes=" +
             System.Text.Json.JsonSerializer.Serialize(exact.Evaluation.RouteRejections, ProductionSearchReplay.JsonOptions);
         GD.Print("PARTY_N_EXACT_REJECT " + detail);
         try
@@ -161,12 +161,12 @@ internal static partial class PartyPhase1Checks
                 string path = Path.Combine(output, label + "-exact-failure.json");
                 File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(new { label, seed,
                     binaryMvid = typeof(Beta111Profile).Assembly.ManifestModule.ModuleVersionId,
-                    originalOptions = request.RunOptions, exact.FailureCode, exact.Evaluation, exact.Document }, ProductionSearchReplay.JsonOptions));
+                    originalOptions = request.RunOptions, exact.FailureCode, exact.Evaluation, exact.Facts }, ProductionSearchReplay.JsonOptions));
                 ProductionSearchReplay.Write(Path.Combine(output, label + "-failed-workload.json"), new ProductionSearchReplayWorkload(
-                    ProductionSearchReplay.SchemaVersion, request.CompiledSearch.Query,
+                    ProductionSearchReplay.SchemaVersion, request.Model.CompiledSearch.Query,
                     request.RunOptions with { StartSeed = seed, ScanCount = 1, TargetMatchCount = 1 }));
                 ProductionSearchReplay.Write(Path.Combine(output, label + "-failed-context.json"), new ProductionSearchReplayContext(
-                    ProductionSearchReplay.SchemaVersion, "N host Exact failure; original query and authority retained", request.CompiledSearch.Context));
+                    ProductionSearchReplay.SchemaVersion, "N host Exact failure; original query and authority retained", request.Model.CompiledSearch.Context));
                 detail += ":diagnostic=" + path;
             }
         }

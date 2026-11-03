@@ -12,7 +12,7 @@ internal sealed class CombatRewardFamilyModels
     internal FamilySurvivalProjection Survival { get; }
     internal FamilyAnalyticalCostProjection Analytical { get; }
 
-    internal CombatRewardFamilyModels(ExactSearchExecutionRequest request, CombatRewardReplay replay, int capacity)
+    internal CombatRewardFamilyModels(SearchModel request, CombatRewardReplay replay, int capacity)
     {
         var plan = replay.Plan;
         var estimate = FamilyAuxiliaryEvidence.Read(Id, "InitialSurvival", () => CombatRewardSieveProbability.Estimate(request, replay),
@@ -21,7 +21,11 @@ internal sealed class CombatRewardFamilyModels
             ? FamilySurvivalProjection.Resolved(Id, 1d,
                 "C.ConservativeOpeningKeepsAll;PositivePredicatesRemainExact;Cause=" + replay.ConservativeOpeningReason)
             : estimate.PricingClass == SearchSelectivityPricingClass.ExactPriced && estimate.Probability is double p
-            ? FamilySurvivalProjection.Resolved(Id, p, "C.CompletePositiveFilter.OwnerFixedPremises;" + estimate.EvidenceCode)
+            ? FamilySurvivalProjection.Resolved(Id, p, (replay.UsesNeutralWitness
+                ? "C.RealNeutralWitnessNecessaryFilter;ExistingAuthoredPositiveApproximation;UnprovenRootsRetainedForExact;NotMeasuredPhysicalSurvival;"
+                : replay.UsesObservedOpening
+                ? "C.ObservedOpeningNecessaryFilter;ExistingAuthoredPositiveApproximation;UnresolvedRootsRetainedForExact;NotMeasuredPhysicalSurvival;"
+                : "C.CompletePositiveFilter.OwnerFixedPremises;") + estimate.EvidenceCode)
             : FamilySurvivalProjection.Unresolved(Id, estimate.EvidenceCode + ";" + estimate.Notes);
 
         var catalog = replay.Catalog;
@@ -29,6 +33,12 @@ internal sealed class CombatRewardFamilyModels
         void Add(string name, FamilyAnalyticalOperation operation, double units) =>
             segments.Add(new(name, operation, units, 1d));
         Add("Root", FamilyAnalyticalOperation.CandidateReconstruction, 1);
+        if (replay.UsesNeutralWitness)
+            Add("Opening.RealNeutralWitness.IdentityOnFailureEnvelope", FamilyAnalyticalOperation.PredicateProbe,
+                CombatRewardNeutralWitness.MaximumIdentityDraws);
+        if (replay.UsesObservedOpening)
+            Add("Opening.InitialBagShuffles", FamilyAnalyticalOperation.ObservationWrite,
+                replay.RouteCount * replay.ObservedOpening!.ShuffleDraws);
         // Full reference envelope: both authored routes, all combats and pool
         // scans. No unproved early-stop reach discounts, hot-loop savings or ms.
         // CountAvailable + SelectAvailable each scan at most the complete pool,

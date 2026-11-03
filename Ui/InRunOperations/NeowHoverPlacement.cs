@@ -8,7 +8,53 @@ internal static class NeowHoverPlacement
 {
     internal static NeowHoverAreas Plan(Rect2 viewport, Rect2 anchor, IReadOnlyList<Rect2> options,
         IEnumerable<Rect2> occupied, Vector2 summaryDesired, Vector2 cardsDesired, bool bones,
-        Func<float, Vector2>? cardsSizeForWidth = null, Rect2? nativeTextTip = null)
+        Func<float, Vector2>? cardsSizeForWidth = null, Rect2? nativeTextTip = null, bool prioritizeCardSize = false)
+    {
+        var ordinary = PlanCandidate(viewport, anchor, options, occupied, summaryDesired, cardsDesired, bones,
+            cardsSizeForWidth, nativeTextTip, 0);
+        if (!prioritizeCardSize) return ordinary;
+        var edge = PlanCandidate(viewport, anchor, options, occupied, summaryDesired, cardsDesired, bones,
+            cardsSizeForWidth, nativeTextTip, 1);
+        float Fit(NeowHoverAreas areas)
+        {
+            var natural = cardsSizeForWidth?.Invoke(areas.Cards.Size.X) ?? cardsDesired;
+            return Math.Min(1, Math.Min(areas.Cards.Size.X / Math.Max(1, natural.X), areas.Cards.Size.Y / Math.Max(1, natural.Y)));
+        }
+        // Preserve the usual nearby placement unless the alternative actually
+        // retains more of this viewport's normal native card size.
+        return Fit(edge) > Fit(ordinary) + .005f ? edge : ordinary;
+    }
+
+    internal static NeowHoverAreas PlanRightHuntColumn(Rect2 viewport, Rect2 anchor, IReadOnlyList<Rect2> occupied,
+        Vector2 summaryDesired, Rect2? nativeTextTip)
+    {
+        var fallback = PlanCandidate(viewport, anchor, [anchor], occupied,
+            summaryDesired, Vector2.Zero, false, null, nativeTextTip, 2);
+        var safe = new Rect2(viewport.Position + new Vector2(18, 18), viewport.Size - new Vector2(36, 36));
+        var blockers = occupied.Append(anchor).Where(region => region.HasArea()).ToArray();
+        float top = blockers.Where(region => region.Position.Y <= safe.Position.Y && region.Size.Y < viewport.Size.Y / 4)
+            .Select(region => region.End.Y + 12).DefaultIfEmpty(safe.Position.Y).Max();
+        float width = Math.Max(summaryDesired.X, nativeTextTip?.Size.X ?? 0);
+        var summary = new Rect2(new(safe.End.X - width, Math.Max(safe.Position.Y, top)), summaryDesired);
+        bool Clear(Rect2 region) => safe.Encloses(region) && blockers.All(blocker => !region.Intersects(blocker.Grow(12)));
+        if (!Clear(summary)) return fallback;
+        Vector2 shift = Vector2.Zero;
+        if (nativeTextTip is { } tip)
+        {
+            var explanation = new Rect2(new(summary.Position.X, summary.End.Y + 14), tip.Size);
+            // A lower option may split the right column. Keep the full native
+            // explanation below it rather than clipping the prediction by a
+            // few pixels just to force both panels into the upper slot.
+            if (!Clear(explanation)) explanation.Position = new(summary.Position.X, anchor.End.Y + 12);
+            if (!Clear(explanation) || explanation.Intersects(summary.Grow(12))) return fallback;
+            shift = explanation.Position - tip.Position;
+        }
+        return new(summary, new(safe.Position, Vector2.Zero), shift);
+    }
+
+    private static NeowHoverAreas PlanCandidate(Rect2 viewport, Rect2 anchor, IReadOnlyList<Rect2> options,
+        IEnumerable<Rect2> occupied, Vector2 summaryDesired, Vector2 cardsDesired, bool bones,
+        Func<float, Vector2>? cardsSizeForWidth, Rect2? nativeTextTip, int summaryEdge)
     {
         // The caller supplies the current owner and genuine global controls.
         // Other choices and dialogue remain legitimate display space.
@@ -31,14 +77,15 @@ internal static class NeowHoverPlacement
                 // above them. Font and native card scale remain unchanged.
                 var column = FindSlot(safe, protectedRegions, width => new(
                     Math.Max(Math.Max(Math.Min(320, size.X), tip.Size.X), Math.Min(width, columnSize.X)), columnSize.Y),
-                    new(anchor.Position.X - columnSize.X - 14, anchor.GetCenter().Y - columnSize.Y * .5f), true);
+                    summaryEdge == 2 ? new(safe.End.X - columnSize.X, safe.Position.Y) : summaryEdge == 1 ? safe.Position :
+                        new(anchor.Position.X - columnSize.X - 14, anchor.GetCenter().Y - columnSize.Y * .5f), true);
                 summary = new(column.Position, new(Math.Min(size.X, column.Size.X),
                     Math.Min(size.Y, Math.Max(1, column.Size.Y - tip.Size.Y - 14))));
                 tipShift = new Vector2(summary.Position.X, summary.End.Y + 14) - tip.Position;
             }
             else
             {
-                var preferred = bones ? new Vector2(anchor.GetCenter().X - size.X * .5f, anchor.Position.Y - size.Y - 14)
+                var preferred = summaryEdge == 2 ? new Vector2(safe.End.X - size.X, safe.Position.Y) : summaryEdge == 1 ? safe.Position : bones ? new Vector2(anchor.GetCenter().X - size.X * .5f, anchor.Position.Y - size.Y - 14)
                     : new Vector2(anchor.Position.X - size.X - 14, anchor.GetCenter().Y - size.Y * .5f);
                 summary = FindSlot(safe, protectedRegions,
                     width => bones ? size : new(Math.Max(Math.Min(320, size.X), Math.Min(width, size.X)), size.Y),

@@ -24,7 +24,7 @@ internal static partial class EventResultProbabilityEstimator
 
         int grabIndex = IndexOf(Beta111EventResultCatalog.TrashHeapGrabCards, grab.TargetKey);
         int diveIndex = IndexOf(Beta111EventResultCatalog.TrashHeapDiveRelics, dive.TargetKey);
-        double probability = grabIndex >= 0 && diveIndex == grabIndex / 2 ? 1d / 10d : 0d;
+        double probability = grabIndex >= 0 && diveIndex == grabIndex / 2 ? 1d / Beta111EventResultCatalog.TrashHeapGrabCards.Count : 0d;
         return SearchSelectivityEstimate.Exact(
             probability,
             SearchSelectivityMethod.AuthorityPoolMembership,
@@ -176,12 +176,12 @@ internal static partial class EventResultProbabilityEstimator
             var authority = Beta111EventResultAuthority.From(plan.Authority);
             ModelKey[] pool; int take;
             if (first.Kind == EventResultConditionKind.FakeMerchantOfferedFakeRelic)
-            { pool = Beta111EventResultCatalog.FakeMerchantRelics.ToArray(); take = Math.Min(6,pool.Length); }
+            { pool = Beta111EventResultCatalog.FakeMerchantRelics.ToArray(); take = Math.Min(Beta111EventRules.FakeMerchantOfferCount,pool.Length); }
             else
             {
                 if (!authority.ColorfulPoolAuthorityExact) return null;
-                pool = Beta111EventResultCatalog.ColorfulCharacterOrder.Where(k => k != authority.OwnerCharacterKey && authority.UnlockedCharacterCardPoolKeys.Contains(k,ModelKeyComparer.Instance)).ToArray();
-                take = Math.Min(3,pool.Length);
+                pool = Beta111EventRules.ColorfulCandidates(authority.OwnerCharacterKey, authority.UnlockedCharacterCardPoolKeys);
+                take = Math.Min(Beta111EventRules.ColorfulOfferCount,pool.Length);
             }
             var required = group.Select(c => c.TargetKey).Distinct().ToArray();
             p = required.Length > take || required.Any(k => !pool.Contains(k)) ? 0 : 1;
@@ -195,9 +195,17 @@ internal static partial class EventResultProbabilityEstimator
             int types = group.Select(c => c.TinkerCardType).Distinct().Count();
             // Every rider query replays the same post-type shuffle; different
             // card types relabel its three indices, not independent rider draws.
-            int riders = group.Where(c => c.TinkerRider.HasValue).Select(c => (int)c.TinkerRider!.Value % 3).Distinct().Count();
-            static double Contains(int required) => required switch { 0 => 1, 1 => 2d / 3, 2 => 1d / 3, _ => 0 };
-            p = Contains(types) * Contains(riders);
+            int riders = group.Where(c => c.TinkerRider.HasValue).Select(c => (int)c.TinkerRider!.Value % Beta111EventRules.TinkerRidersPerType).Distinct().Count();
+            static double Contains(int required, int candidates) => required switch
+            {
+                0 => 1,
+                1 => (double)Beta111EventRules.TinkerOfferCount / candidates,
+                2 => (double)Beta111EventRules.TinkerOfferCount * (Beta111EventRules.TinkerOfferCount - 1) /
+                    (candidates * (candidates - 1)),
+                _ => 0
+            };
+            p = Contains(types, Beta111EventRules.TinkerTypes.Count) *
+                Contains(riders, Beta111EventRules.TinkerRidersPerType);
         }
         else return null;
         if (double.IsNaN(p)) return null;
@@ -229,27 +237,29 @@ internal static partial class EventResultProbabilityEstimator
                 return EstimateTransformJoint([condition]);
             }
             case EventResultConditionKind.TrialCase:
-                probability = 1d / 3;
+                probability = 1d / Beta111EventRules.TrialCaseCount;
                 evidence = "Probability.EventResult.TrialCase.Conditional";
                 notes = "Accept draws one of three cases; cosmetic Chaotic RNG is excluded.";
                 break;
             case EventResultConditionKind.TinkerTimeTypeAndRider:
-                probability = condition.TinkerRider is null ? 2d / 3 : 4d / 9;
+                double typeProbability = (double)Beta111EventRules.TinkerOfferCount / Beta111EventRules.TinkerTypes.Count;
+                probability = condition.TinkerRider is null ? typeProbability :
+                    typeProbability * Beta111EventRules.TinkerOfferCount / Beta111EventRules.TinkerRidersPerType;
                 evidence = "Probability.EventResult.TinkerTypeRider.Conditional";
                 notes = "Two of three types, then two of three riders for the chosen type on the same local continuation.";
                 break;
             case EventResultConditionKind.TrashHeapGrabCard:
-                probability = Beta111EventResultCatalog.TrashHeapGrabCards.Contains(condition.TargetKey) ? 1d / 10d : 0d;
+                probability = Beta111EventResultCatalog.TrashHeapGrabCards.Contains(condition.TargetKey) ? 1d / Beta111EventResultCatalog.TrashHeapGrabCards.Count : 0d;
                 evidence = "Probability.EventResult.TrashHeapGrab.Conditional";
                 notes = "Conditional on Trash Heap Grab being the observed option result: one uniform pick from the audited ten-card list.";
                 break;
             case EventResultConditionKind.TrashHeapDiveRelic:
-                probability = Beta111EventResultCatalog.TrashHeapDiveRelics.Contains(condition.TargetKey) ? 1d / 5d : 0d;
+                probability = Beta111EventResultCatalog.TrashHeapDiveRelics.Contains(condition.TargetKey) ? 1d / Beta111EventResultCatalog.TrashHeapDiveRelics.Count : 0d;
                 evidence = "Probability.EventResult.TrashHeapDive.Conditional";
                 notes = "Conditional on Trash Heap Dive being the observed option result: one uniform pick from the audited five-relic list.";
                 break;
             case EventResultConditionKind.FakeMerchantOfferedFakeRelic:
-                probability = Beta111EventResultCatalog.FakeMerchantRelics.Contains(condition.TargetKey) ? 6d / 9d : 0d;
+                probability = Beta111EventResultCatalog.FakeMerchantRelics.Contains(condition.TargetKey) ? (double)Beta111EventRules.FakeMerchantOfferCount / Beta111EventResultCatalog.FakeMerchantRelics.Count : 0d;
                 evidence = "Probability.EventResult.FakeMerchantContains.Conditional";
                 notes = "Conditional on Fake Merchant inventory generation: six of nine distinct audited fake relics are retained after a uniform full shuffle.";
                 break;
@@ -262,16 +272,14 @@ internal static partial class EventResultProbabilityEstimator
                         "Probability.EventResult.Colorful.AuthorityMissing",
                         "Exact owner/unlock pool authority is required for the conditional Colorful Philosophers marginal.");
                 }
-                ModelKey[] eligible = Beta111EventResultCatalog.ColorfulCharacterOrder
-                    .Where(key => key != authority.OwnerCharacterKey &&
-                                  authority.UnlockedCharacterCardPoolKeys.Contains(key, ModelKeyComparer.Instance))
-                    .ToArray();
+                ModelKey[] eligible = Beta111EventRules.ColorfulCandidates(authority.OwnerCharacterKey,
+                    authority.UnlockedCharacterCardPoolKeys);
                 if (!eligible.Contains(condition.TargetKey, ModelKeyComparer.Instance))
                     probability = 0d;
-                else if (eligible.Length <= 3)
+                else if (eligible.Length <= Beta111EventRules.ColorfulOfferCount)
                     probability = 1d;
                 else
-                    probability = 3d / eligible.Length;
+                    probability = (double)Beta111EventRules.ColorfulOfferCount / eligible.Length;
                 evidence = "Probability.EventResult.ColorfulContains.Conditional";
                 notes = $"Conditional on Colorful Philosophers offer generation: target membership in a uniform min(3,n)-subset of n={eligible.Length} eligible non-owner colors.";
                 break;

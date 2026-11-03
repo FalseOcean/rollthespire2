@@ -25,6 +25,20 @@ internal sealed record OperationPredictionPreferences
 
     internal OperationPredictionMode Get(string id) => Entries.TryGetValue(id, out var mode) ? mode : OperationPredictionMode.Auto;
 
+    internal OperationPredictionMode? GetAllMode()
+    {
+        var modes = OperationPredictionCatalog.Entries.Select(entry => Get(entry.Id)).Distinct().Take(2).ToArray();
+        return modes.Length == 1 ? modes[0] : null;
+    }
+
+    internal OperationPredictionPreferences WithAll(OperationPredictionMode mode)
+    {
+        if (!Enum.IsDefined(mode)) throw new ArgumentOutOfRangeException(nameof(mode));
+        var updated = this;
+        foreach (var entry in OperationPredictionCatalog.Entries) updated = updated.With(entry.Id, mode);
+        return updated;
+    }
+
     internal OperationPredictionMode Get(OperationPredictionCategory category)
     {
         var modes = OperationPredictionCatalog.ForCategory(category).Select(entry => Get(entry.Id)).Distinct().Take(2).ToArray();
@@ -50,6 +64,7 @@ internal sealed record OperationPredictionPreferences
     internal OperationPredictionPreferences Normalize() => this with
     {
         Entries = (Entries ?? ImmutableDictionary<string, OperationPredictionMode>.Empty)
+            .Remove("extra:philosopher-order")
             .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) && Enum.IsDefined(pair.Value) && pair.Value != OperationPredictionMode.Auto)
             .ToImmutableDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)
     };

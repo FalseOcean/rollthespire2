@@ -132,7 +132,7 @@ internal static class GpuInitializationChecks
                 var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/v1/context.json");
                 var workload = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/v1/cases/S-three-shops.json");
                 var compiled = SearchCompiler.Compile(workload.Query, context.Context);
-                var request = ExactSearchExecutionRequestFactory.Compile(compiled, workload.Options with { ScanCount = 16 }).Plan!;
+                var request = SearchPreparationCompiler.Compile(compiled, workload.Options with { ScanCount = 16 }).Plan!;
                 var plan = FamilyExecutionCoordinator.Plan(request);
                 Require(plan.OrderedFamilies.All(f => !f.ConditionPerformance.UsesGpu), "known creation failure excluded from planning");
                 foreach (bool? availability in new bool?[] { null, false })
@@ -151,16 +151,19 @@ internal static class GpuInitializationChecks
                 Require(global.ObserveVulkanCapabilities(noFloat64), "planner receives current negative observed-main FP64 receipt");
                 var beforePlanning = global.Capture();
                 var neowWorkload = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/v1/cases/N-entry.json");
-                var neowRequest = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(neowWorkload.Query, context.Context),
+                var neowRequest = SearchPreparationCompiler.Compile(SearchCompiler.Compile(neowWorkload.Query, context.Context),
                     neowWorkload.Options with { ScanCount = 16 }).Plan!;
                 var normalPlan = FamilyExecutionCoordinator.Plan(neowRequest);
-                var selectedNeow = normalPlan.OrderedFamilies.OfType<NeowFamily>().SingleOrDefault();
-                Require(selectedNeow is { GpuPlan.NumericalVariant: NeowGpuNumericalVariant.IntegerUnitFloat } &&
-                    selectedNeow.ConditionPerformance.UsesGpu && ((IFamilyInvocation)selectedNeow).GpuNumericRequirements == GpuNumericRequirements.Int64 &&
-                    selectedNeow.QuotePhysicalWork(new(false, false, 16)) is null &&
+                var selectedNeow = normalPlan.OrderedFamilies.SingleOrDefault(body => body.FamilyId == "N.Neow");
+                var integerQuote = selectedNeow?.QuotePhysicalWork(new(false, false, 16));
+                Require(selectedNeow is { UsesGpu: true } && selectedNeow.PhysicalRevision.Contains("IntegerUnitFloat", StringComparison.Ordinal) &&
+                    selectedNeow.ConditionPerformance.UsesGpu && ((FilterBodyDescription)selectedNeow).GpuNumericRequirements == GpuNumericRequirements.Int64 &&
+                    (integerQuote is null || FamilyCoarsePricing.IsEstimate(integerQuote) &&
+                        !FamilyCanonicalMeasuredCost.IsCanonicalQuote(integerQuote) &&
+                        integerQuote.Evidence.Contains("NumericalVariant=IntegerUnitFloat", StringComparison.Ordinal)) &&
                     normalPlan.OrderedFamilies.All(f => (f.GpuNumericRequirements &
                         (GpuNumericRequirements.Float64 | GpuNumericRequirements.Unspecified)) == 0),
-                    "normal planning selects the actual unpriced integer N GPU body from observed Vulkan FP64=false");
+                    "normal planning selects actual integer N GPU with explicit price provenance from observed Vulkan FP64=false");
                 Require(global.Capture() == beforePlanning && normalPlan.DecisionEvidence.Any(e =>
                     e.StartsWith("GpuFloat64Unavailable;", StringComparison.Ordinal)),
                     "managed planning preserves unknown local creation state and records the numeric selection without GPU execution");

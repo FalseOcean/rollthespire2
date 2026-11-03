@@ -1,6 +1,7 @@
 // Single-player core: no party state or multiplayer effect implementation.
 // Adopted numeric functions from Beta110GpuNeowP1Common.glsl.
 // HistoricalNextInt retained; route state is strictly Neow-local. No Relic Bag.
+/*__RT2_NEOW_IDENTITY_FACTS__*/
 struct RngState { uint64_t s0; uint64_t s1; uint64_t s2; uint64_t s3; };
 struct RouteRngState { RngState rewards; RngState niche; RngState transformations; RngState combat_potions; };
 uint64_t make_u64(uint low, uint high) {
@@ -73,23 +74,53 @@ bool draw_neow_curse(
     return curse_id != 0xffffffffu;
 }
 
-bool positive_allowed(uint id, uint curse, uint flags) {
-    bool all_character_pools_unlocked = (flags & 4u) != 0u;
-    bool scroll_boxes_allowed = (flags & 8u) != 0u;
-    if (id == 17u) return false; // Massive Scroll
-    if (id == 14u && !all_character_pools_unlocked) return false; // Kaleidoscope
-    if (id == 22u && !scroll_boxes_allowed) return false; // Scroll Boxes
-    if (curse == 0u && id == 13u) return false; // Cursed Pearl / Golden Pearl
-    if (curse == 2u && id == 10u) return false; // Hefty Tablet / Arcane Scroll
-    if (curse == 4u && id == 19u) return false; // Leafy Poultice / New Leaf
-    if (curse == 7u && id == 21u) return false; // Precarious / Precise Scissors
-    if (curse == 6u && (id == 20u || id == 16u)) return false; // Sacrifice / Phial / Coffer
-    return true;
-}
-
 uint64_t relic_bit(uint id) {
     return uint64_t(1u) << id;
 }
+
+#if N_ENTRY_META_OFFSET >= 0
+// Track one required identity through the same descending Fisher-Yates swaps.
+// A tail at index >= 2 can never return to the two visible offers. Successful
+// candidates consume every original draw, including the final size-two swap,
+// which also preserves the exact first/second selected-route witness.
+bool replay_neow_single_required_identity(inout RngState event_rng, uint curse_id, out uint route_mask) {
+    route_mask = 0u;
+    uint count = plan_value(uint(N_ENTRY_META_OFFSET) + curse_id * 2u);
+    uint position = plan_value(uint(N_ENTRY_META_OFFSET) + curse_id * 2u + 1u);
+    if (curse_id != RT2_NEOW_OPTIONAL_APPEND_CURSE) {
+        uint id = next_int(event_rng, 2u) == 0u ? RT2_NEOW_APPEND0_TRUE : RT2_NEOW_APPEND0_FALSE;
+        if (id == uint(N_ENTRY_TARGET)) position = count;
+        count++;
+    }
+    uint appended1 = next_int(event_rng, 2u) == 0u ? RT2_NEOW_APPEND1_TRUE : RT2_NEOW_APPEND1_FALSE;
+    if (appended1 == uint(N_ENTRY_TARGET)) position = count;
+    count++;
+    uint appended2 = next_int(event_rng, 2u) == 0u ? RT2_NEOW_APPEND2_TRUE : RT2_NEOW_APPEND2_FALSE;
+    if (appended2 == uint(N_ENTRY_TARGET)) position = count;
+    count++;
+    if (position == 0xffffffffu) return false;
+    for (uint remaining = count; remaining > 1u; --remaining) {
+        uint selected = next_int(event_rng, remaining);
+        uint tail = remaining - 1u;
+        if (position == selected) position = tail;
+        else if (position == tail) position = selected;
+        if (position == tail && tail >= 2u) return false;
+    }
+    uint64_t top = relic_bit(uint(N_ENTRY_TARGET)) | relic_bit(curse_id);
+    uint64_t any = plan_u64(40u), all = plan_u64(42u), ban = plan_u64(44u), selected_route = plan_u64(46u);
+    if ((any != uint64_t(0u) && (top & any) == uint64_t(0u)) ||
+        (top & all) != all || (top & ban) != uint64_t(0u) ||
+        (selected_route & top) != selected_route) return false;
+    uint flags = plan_value(56u);
+    bool bones_present = curse_id == 5u;
+    if ((flags & 3u) != 0u && !bones_present) return false;
+    if (selected_route == uint64_t(0u)) route_mask = 7u;
+    else if (selected_route == relic_bit(uint(N_ENTRY_TARGET))) route_mask = 1u << position;
+    else if (selected_route == relic_bit(curse_id)) route_mask = 4u;
+    if (bones_present && ((flags & 1u) != 0u || selected_route == relic_bit(5u))) route_mask = 8u | 16u;
+    return route_mask != 0u;
+}
+#endif
 
 bool replay_neow_top_identity_after_curse(
     inout RngState event_rng,
@@ -97,18 +128,18 @@ bool replay_neow_top_identity_after_curse(
     out uint route_mask)
 {
     uint flags = plan_value(56u);
+    uint profile = rt2_neow_profile(1u, (flags & 4u) != 0u, (flags & 8u) != 0u);
+    uint fixed_mask = rt2_neow_fixed_mask(profile, curse_id);
     uint positives[17];
     uint positive_count = 0u;
-    for (uint id = 10u; id <= 23u; ++id) {
-        if (positive_allowed(id, curse_id, flags)) {
-            positives[positive_count++] = id;
-        }
+    for (uint index = 0u; index < RT2_NEOW_FIXED_COUNT; ++index) {
+        if ((fixed_mask & (1u << index)) != 0u)
+            positives[positive_count++] = rt2_neow_fixed_candidates[index];
     }
-    if (curse_id != 3u) { // Large Capsule suppresses the Lava/Small pair.
-        positives[positive_count++] = next_int(event_rng, 2u) == 0u ? 24u : 28u;
-    }
-    positives[positive_count++] = next_int(event_rng, 2u) == 0u ? 26u : 29u;
-    positives[positive_count++] = next_int(event_rng, 2u) == 0u ? 25u : 27u;
+    if (curse_id != RT2_NEOW_OPTIONAL_APPEND_CURSE)
+        positives[positive_count++] = next_int(event_rng, 2u) == 0u ? RT2_NEOW_APPEND0_TRUE : RT2_NEOW_APPEND0_FALSE;
+    positives[positive_count++] = next_int(event_rng, 2u) == 0u ? RT2_NEOW_APPEND1_TRUE : RT2_NEOW_APPEND1_FALSE;
+    positives[positive_count++] = next_int(event_rng, 2u) == 0u ? RT2_NEOW_APPEND2_TRUE : RT2_NEOW_APPEND2_FALSE;
     if (positive_count < 2u) {
         route_mask = 0u;
         return false;

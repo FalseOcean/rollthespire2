@@ -176,10 +176,11 @@ internal sealed partial class AnalysisPageController
 
             request = request!.WithComplexBonesDeckInteractions(_predictionSettings.EnableComplexBonesDeckInteractions ||
                 _searchOpeningSeed == draft.RawSeed && _searchOpeningQuery.StructuredOpeningEffects.Count > 0);
-            SeedPredictionDocument document = RuntimeProfileRegistry.Predict(_runtime.Detection, request!);
-            ApplySearchOpening(request, document);
+            SeedPredictionFacts facts = RuntimeProfileRegistry.Observe(_runtime.Detection, request!);
+            SeedPredictionDocument document = SeedPredictionDocument.FromFacts(facts);
+            ApplySearchOpening(request, facts);
             if (_strictLibrarySeed == document.CanonicalSeed && _librarySoloSelection is { Explicit: true } savedSelection)
-                ValidateLibrarySelection(document.Sections.SelectMany(s => s.NeowChoices).ToArray(), savedSelection.ChoiceSlot, savedSelection.Route);
+                ValidateLibrarySelection(facts.Neow?.Choices ?? [], savedSelection.ChoiceSlot, savedSelection.Route);
             var predictionFailures = document.Diagnostics.Where(d => d.Code == PredictionDiagnosticCodes.Exception).Select(d => d.Value).ToArray();
             if (predictionFailures.Length > 0)
                 RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.RecordEvidence(
@@ -193,7 +194,7 @@ internal sealed partial class AnalysisPageController
                 _runtime.Detection.DisplayVersion,
                 false,
                 "SingleSeedAnalysis");
-            _page.ShowDocument(request!, document, _lastPredictionUnlocks);
+            _page.ShowFacts(request!, facts, _lastPredictionUnlocks);
             RefreshResultOrigin();
             _setGlobalStatus(
                 document.OverallStatus is SeedPredictionOverallStatus.Completed or SeedPredictionOverallStatus.CompletedWithWarnings
@@ -206,9 +207,7 @@ internal sealed partial class AnalysisPageController
                     : _page.Text(Ui1TextKey.AnalysisFailed),
                 document.CanonicalSeed);
 
-            IReadOnlyList<NeowChoiceResult> choices = document.Sections
-                .SelectMany(section => section.NeowChoices)
-                .ToArray();
+            IReadOnlyList<NeowChoiceResult> choices = facts.Neow?.Choices ?? [];
             if (_runtime.IsCompatibilityFallback)
             {
                 RuntimeLog.Warn(
@@ -247,9 +246,7 @@ internal sealed partial class AnalysisPageController
                     "reason=DiagnosticsOnlyNoPlayerWarningAuthority;" +
                     $"evidence={string.Join("|", suppressedSnapshotWarnings.Select(warning => warning.EvidenceCode.ToString()))}");
             }
-            var eventPrediction = document.Sections
-                .Select(section => section.EventPoolSequencePrediction)
-                .FirstOrDefault(prediction => prediction is not null);
+            var eventPrediction = facts.World?.EventPoolSequencePrediction;
             if (eventPrediction is not null)
             {
                 foreach (var act in eventPrediction.Acts.OrderBy(item => item.Act))

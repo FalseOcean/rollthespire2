@@ -178,10 +178,9 @@ internal static class UnknownRoomChecks
                 FirstActUnknownEventProbability.ConditionalPrefix(3, false)) < 1e-12,
             "The priced prefix and declared treasure factor both participate once");
         var compiled = Input(prefix).CompiledSearch;
-        var request = ExactSearchExecutionRequestFactory.Compile(compiled, new("000000000000", 100, 1, 1));
+        var request = SearchPreparationCompiler.Compile(compiled, new("000000000000", 100, 1, 1));
         Require(request.Success && request.Plan is not null, "Standalone prefix compiles for ETA");
-        var eta = FamilySearchEtaProjectorV1.Project(request.Plan!, FamilyExecutionCoordinator.Plan(request.Plan!, false),
-            liveExactMsPerAttempt: .01);
+        var eta = FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(request.Plan!, FamilyExecutionCoordinator.Plan(request.Plan!, false)), FamilyExecutionCoordinator.Plan(request.Plan!, false), liveExactMsPerAttempt: .01);
         Require(eta.AcceptedResultProbability == FirstActUnknownEventProbability.ConditionalPrefix(3, false) &&
             eta.FirstMeanRootHorizon == 4, "ETA consumes the priced whole-query probability");
     }

@@ -235,7 +235,7 @@ internal sealed partial class PredictorRun
                 ApplyFurCoatObtained(obtainedId);
                 break;
             case "BYRDPIP":
-                ulong rootSeed = RolltheSpire2.Compatibility.Beta111Profile.Instance.ComputeRootSeed(Context.Seed);
+                ulong rootSeed = Context.RuntimeProfile.ComputeRootSeed(Context.Seed);
                 ulong petHash = XxHash64.HashUtf8(key.Entry, 0UL);
                 var petRng = new Xoshiro256StarStar(unchecked(rootSeed + petHash));
                 int skin = petRng.NextInt(4) + 1;
@@ -254,7 +254,7 @@ internal sealed partial class PredictorRun
                 { Transformations = eggChanges.ToImmutable() });
                 break;
             case "PAELS_LEGION":
-                ulong legionRoot = RolltheSpire2.Compatibility.Beta111Profile.Instance.ComputeRootSeed(Context.Seed);
+                ulong legionRoot = Context.RuntimeProfile.ComputeRootSeed(Context.Seed);
                 ulong legionHash = XxHash64.HashUtf8(key.Entry, 0UL);
                 var legionRng = new Xoshiro256StarStar(unchecked(legionRoot + legionHash));
                 string[] legionSkins = ["eyes", "horns", "spikes", "wings"];

@@ -21,9 +21,9 @@ internal static partial class SmallCandidateExactChecks
     {
         var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>(
             Path.Combine(Environment.CurrentDirectory, "tools/ProductionSearchHost/Corpus/v1/context.json")).Context;
-        ExactSearchExecutionRequest Compile(SearchQuery query, int count, bool skip = false)
+        PreparedSearch Compile(SearchQuery query, int count, bool skip = false)
         {
-            var result = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context),
+            var result = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context),
                 new("000000000000", count, 100, 2, SkipExactValidation: skip));
             Check(result.Success && result.Plan is not null, "captured-context request compiles");
             return result.Plan!;
@@ -35,9 +35,9 @@ internal static partial class SmallCandidateExactChecks
             var second = new FixtureFamily("tail", count == 9 ? 8 : count);
             var last = new FixtureFamily("last", 0);
             var policy = new SmallCandidateExactPolicy();
-            await using var execution = new FamilyExecutionContext(requiresGpu: false, cpuWorkerCount: 2);
+            await using var execution = new FilterRuntimeServices(requiresGpu: false, cpuWorkerCount: 2);
             var actual = await LinearFamilyPipeline.FilterAsync(execution,
-                new(new SearchBatch(0, 16), plan), [first, second, last], policy, CancellationToken.None);
+                new SearchBatch(0, 16), [first, second, last], policy, CancellationToken.None);
             Check(first.Calls == 1 && second.Calls == (count == 9 ? 1 : 0) && last.Calls == 0,
                 "0/1/8 stop; 9 runs the next filter before stopping at 8");
             Check(actual.EnumerateLogicalOrdinals().SequenceEqual(Enumerable.Range(0, Math.Min(count, 8)).Select(i => (ulong)i)),
@@ -48,13 +48,13 @@ internal static partial class SmallCandidateExactChecks
         {
             var first = new FixtureFamily("prefix", 1);
             var tail = new FixtureFamily("tail", 0);
-            await using var execution = new FamilyExecutionContext(requiresGpu: false, cpuWorkerCount: 2);
-            var actual = await LinearFamilyPipeline.FilterAsync(execution, new(new SearchBatch(0, 16), plan),
+            await using var execution = new FilterRuntimeServices(requiresGpu: false, cpuWorkerCount: 2);
+            var actual = await LinearFamilyPipeline.FilterAsync(execution, new SearchBatch(0, 16),
                 [first, tail], CancellationToken.None);
             Check(tail.Calls == 1 && actual.Count == 0, "existing explicit pipeline without policy still runs the tail");
             using var cancel = new CancellationTokenSource(); cancel.Cancel();
             bool cancelled = false;
-            try { await LinearFamilyPipeline.FilterAsync(execution, new(new SearchBatch(0, 16), plan),
+            try { await LinearFamilyPipeline.FilterAsync(execution, new SearchBatch(0, 16),
                 [first], new SmallCandidateExactPolicy(), cancel.Token); }
             catch (OperationCanceledException) { cancelled = true; }
             Check(cancelled && first.Calls == 1, "cancelled work never starts another filter");
@@ -66,7 +66,7 @@ internal static partial class SmallCandidateExactChecks
         ulong? match = null, reject = null;
         for (ulong ordinal = 0; ordinal < 512 && (match is null || reject is null); ordinal++)
         {
-            var exact = ProductionExactSearchEvaluator.Evaluate(actualPlan,
+            var exact = ProductionExactSearchEvaluator.Evaluate(actualPlan.Model,
                 TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, Beta110SeedCodec.FormatOrdinal(ordinal)));
             if (exact.IsMatch) match ??= ordinal;
             else if (exact.Evaluation.Disposition == SearchDisposition.NoMatch) reject ??= ordinal;
@@ -139,33 +139,34 @@ internal static partial class SmallCandidateExactChecks
             foreach (bool map in new[] { false, true })
             {
                 var authored = map ? baseQuery with { StandardMaps = [new(1, StandardMapMetric.GuaranteedMonster, StandardMapComparison.AtLeast, 1)] } : baseQuery;
-                ExactSearchExecutionRequest Request(bool skip = false) => ExactSearchExecutionRequestFactory.Compile(
+                PreparedSearch Request(bool skip = false) => SearchPreparationCompiler.Compile(
                     SearchCompiler.Compile(authored, source), new(knownSeed, 64, 100, 2, SkipExactValidation: skip)).Plan
                     ?? throw new InvalidOperationException("SmallCandidateExact.VariantCompile");
                 var request = Request();
-                var positive = ProductionExactSearchEvaluator.Evaluate(request,
+                var positive = ProductionExactSearchEvaluator.Evaluate(request.Model,
                     TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, knownSeed));
                 Check(positive.IsMatch, $"authored known-positive whole request players={players};map={map}");
                 ulong? mismatch = null;
                 for (ulong ordinal = 1; ordinal < 64 && mismatch is null; ordinal++)
                 {
-                    var exact = ProductionExactSearchEvaluator.Evaluate(request, TrustedRootHashInput.FromCanonicalSeed(
+                    var exact = ProductionExactSearchEvaluator.Evaluate(request.Model, TrustedRootHashInput.FromCanonicalSeed(
                         Beta111Profile.Instance, Beta110SeedCodec.FormatOrdinal(ordinal)));
                     if (exact.Evaluation.Disposition == SearchDisposition.NoMatch) mismatch = ordinal;
                 }
                 Check(mismatch.HasValue, "whole request includes a demonstrated Exact reject");
                 var gate = new FixtureFamily("E.EventResult", 2, [0, mismatch!.Value]);
                 var innerTails = new List<FixtureFamily>();
-                IFamilyInvocation selectedGate = gate;
+                FilterBodyDescription selectedGate = gate;
                 if (players > 1)
                 {
-                    var children = request.CompiledSearch.PlayerSearches.Take(players).Select((child, index) =>
+                    var children = request.Model.CompiledSearch.PlayerSearches.Take(players).Select((child, index) =>
                     {
                         var family = index == 0 ? gate : new FixtureFamily("E.EventResult", 0);
                         if (index > 0) innerTails.Add(family);
-                        return (ExactSearchExecutionRequestFactory.ForPlayer(request, child), Family: (IFamilyInvocation)family);
+                        return (SearchPreparationCompiler.ForPlayer(request.Model, child), Family: (FilterBodyDescription)family);
                     }).ToArray();
-                    selectedGate = new PartyFamily(request, children);
+                    selectedGate = PartyFamily.Prepare(request.Model, FilterExecutionPreferences.From(request.RunOptions),
+                        children.Select(child => new PartyFilterStage(child.Item1.Authority.PlayerSlotIndex, child.Family)).ToArray());
                 }
                 var outerTail = new FixtureFamily("outer-tail", 0);
                 var execution = FamilyPlanner.InOrder([selectedGate, outerTail]) with { AllowSmallCandidateExact = true };
@@ -203,10 +204,10 @@ internal static partial class SmallCandidateExactChecks
         Console.WriteLine($"SMALL_CANDIDATE_EXACT_PASS checks={_checks};realMatchAndReject=true;cancelResume=true;skipExactPreserved=true;partyAndMap=true");
         return 0;
     }
-    private static ProductionSearchSession Start(ExactSearchExecutionRequest request, FamilyExecutionPlan execution,
+    private static ProductionSearchSession Start(PreparedSearch request, FamilyExecutionPlan execution,
         int window, SearchContinuationSnapshot? continuation = null,
         Func<int, CancellationToken, ValueTask>? beforePublish = null) =>
-        new(request, execution, FamilySearchEtaProjectorV1.Project(request, execution), window, 100, null, "",
+        new(request, execution, FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(request, execution), execution), window, 100, null, "",
             beforeCandidatePublish: beforePublish, continuation: continuation);
     private static SearchCandidate[] Drain(ProductionSearchSession session)
     {
@@ -214,21 +215,29 @@ internal static partial class SmallCandidateExactChecks
         while (session.TryReadCandidate(out var candidate)) result.Add(candidate!);
         return result.ToArray();
     }
-    private sealed class FixtureFamily(string id, int count, ulong[]? selected = null) : IFamilyInvocation
+    private sealed class FixtureFamily(string id, int count, ulong[]? selected = null) : IFilterExecution
     {
         internal int Calls;
         public string FamilyId => id;
+        private FilterBodyDescription? _body;
+        public FilterBodyDescription Body => _body ??= new(new PreparedFilter(FamilyId)
+        { AnalyticalCost = AnalyticalCost, Survival = Survival }, FamilyId, RolltheSpire2.Compatibility.RuntimeProfileId.Beta111)
+        { PerformanceProjection = _ => ConditionPerformance, CreateExecution = (_, _) => this };
+        public static implicit operator FilterBodyDescription(FixtureFamily fixture) => fixture.Body;
+        public bool ExecutionFaulted => false;
+
         public FamilyAnalyticalCostProjection AnalyticalCost => new(id, 512, [], "TestOnly");
         public FamilySurvivalProjection Survival => FamilySurvivalProjection.Resolved(id, .5, "TestOnly");
         public FamilyConditionPerformanceProjection ConditionPerformance => new(id, id, "TestOnly", 1, "TestOnly", usesGpu: false);
         public FamilyPerformanceObservation CapturePerformanceObservation() => new(ConditionPerformance, "", 0, 0, 0, Calls,
             0, 0, 0, 0, false, "TestOnly");
-        public ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow window,
+        public ValueTask<FamilyCandidateSet> FilterAsync(FilterRuntimeServices context,
             FamilyCandidateSet input, CancellationToken token)
         {
             token.ThrowIfCancellationRequested(); Calls++;
             return ValueTask.FromResult(FamilyCandidateSet.FromAbi1(input.Batch,
                 selected ?? input.EnumerateLogicalOrdinals().Take(count).ToArray()));
         }
+        public ValueTask DisposeAsync(FilterRuntimeServices services) => ValueTask.CompletedTask;
     }
 }

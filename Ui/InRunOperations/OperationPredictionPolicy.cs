@@ -85,6 +85,8 @@ internal static class OperationPredictionPolicy
             return branch with
             {
                 Sections = sections,
+                HuntOutcomes = showPrimary ? branch.HuntOutcomes.Select(outcome => outcome with
+                    { Sections = outcome.Sections.Where(Keep).ToImmutableArray() }).ToImmutableArray() : [],
                 PendingReasons = showPrimary || !sections.IsEmpty ? branch.PendingReasons : [],
                 Label = showPrimary || !sections.IsEmpty ? branch.Label : null
             };

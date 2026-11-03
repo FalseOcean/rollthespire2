@@ -21,6 +21,7 @@ internal sealed class EventResultFamilyPlan
     internal bool NumericalSupported { get; }
     internal bool GpuSupported { get; }
     internal GpuNumericalVariant NumericalVariant { get; }
+    internal bool UsesPreparedGroups { get; }
     internal GpuNumericRequirements GpuNumericRequirements => GpuSupported
         ? GpuIntegerNumerics.Requirements(NumericalVariant) : GpuNumericRequirements.None;
     internal string GpuPreparationFailureDetail { get; } = "";
@@ -31,12 +32,24 @@ internal sealed class EventResultFamilyPlan
     private readonly MorphicGroveContainsPlan?[] _morphic;
     private readonly EventResultSearchCondition[] _ordinary;
     private readonly EventResultNumericPredicate.Compiled _ordinaryNumeric;
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<EventResultConditionKind, byte> _reportedUnresolved = new();
-    internal EventResultFamilyPlan(ExactSearchExecutionRequest request, bool prepareGpu = true,
+    internal EventResultFamilyPlan(SearchModel request, bool prepareGpu = true,
         GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
         NumericalVariant = numericalVariant;
         Conditions = request.Evaluation.EventResultConditions.Distinct().ToArray();
+        // The measured shape has cheap scalar + shared Trash rejection before
+        // inventory generation. Target identities do not select the algorithm.
+        bool preparedDefault = Conditions.Any(c => c.Kind is EventResultConditionKind.TrialCase or EventResultConditionKind.TinkerTimeTypeAndRider) &&
+            Conditions.Any(c => c.Kind is EventResultConditionKind.TrashHeapGrabCard or EventResultConditionKind.TrashHeapDiveRelic) &&
+            Conditions.Any(c => c.Kind is EventResultConditionKind.FakeMerchantOfferedFakeRelic or EventResultConditionKind.ColorfulPhilosophersOfferedColor);
+        // Freeze the physical selection with this plan; CPU preparation and
+        // subsequent environment changes cannot switch a running GPU body.
+        UsesPreparedGroups = prepareGpu && (Environment.GetEnvironmentVariable("RT2_E_PREPARATION")?.Trim().ToLowerInvariant() switch {
+            null or "" or "default" => preparedDefault,
+            "off" => false,
+            "groups" => true,
+            var unknown => throw new InvalidOperationException("E.UnknownGpuPreparationMode:" + unknown)
+        });
         _ordinary = Conditions.Where(c => !EventResultTransformSemantics.IsTransform(c.Kind)).ToArray();
         var morphic = Conditions.Except(_ordinary).ToArray();
         foreach (var c in morphic) MorphicGrovePredictor.ValidateAuthority(request.Detection, request.Authority, c.MorphicGroveScenario!);
@@ -76,15 +89,17 @@ internal sealed class EventResultFamilyPlan
                 : FamilySurvivalProjection.Unresolved("E.EventResult", "EventResultJointModelUnavailable:" + issue);
         }, FamilySurvivalProjection.Unresolved("E.EventResult", "AuxiliarySurvivalFailed"), request.SnapshotFingerprint);
     }
-    internal bool Matches(ulong root)
+    internal bool Matches(ulong root) => MatchesObserved(root, null);
+    internal bool MatchesObserved(ulong root, Action<EventResultConditionKind, string>? onUnresolved)
     {
         if (!HasMorphic) return NumericalSupported
-            ? !EventResultNumericPredicate.RejectsEventResultForFamily(root, _ordinaryNumeric, PlayerSlot) : Reference(root);
+            ? !EventResultNumericPredicate.RejectsEventResultForFamily(root, _ordinaryNumeric, PlayerSlot) : ReferenceObserved(root, onUnresolved);
         foreach (var plan in _morphic) if (plan is not null && !plan.Matches(root)) return false;
         return _ordinary.Length == 0 || (NumericalSupported
-            ? !EventResultNumericPredicate.RejectsEventResultForFamily(root, _ordinaryNumeric, PlayerSlot) : Reference(root));
+            ? !EventResultNumericPredicate.RejectsEventResultForFamily(root, _ordinaryNumeric, PlayerSlot) : ReferenceObserved(root, onUnresolved));
     }
-    internal bool Reference(ulong root)
+    internal bool Reference(ulong root) => ReferenceObserved(root, null);
+    private bool ReferenceObserved(ulong root, Action<EventResultConditionKind, string>? onUnresolved)
     {
         Beta111EventResultProjection? p = null;
         foreach (var c in Conditions)
@@ -126,10 +141,7 @@ internal sealed class EventResultFamilyPlan
             };
             if (precision != PredictionPrecision.Exact)
             {
-                if (_reportedUnresolved.TryAdd(c.Kind, 0))
-                    RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.RecordDegradation(
-                        "EventResultFilterIncomplete", nameof(EventResultFamilyPlan), "Filter." + c.Kind,
-                        "issues.filter_incomplete", $"condition={c.Kind};cause=E.ReferenceAuthorityUnavailable:{p.EvidenceCode};retained=true;filterDecision=Unknown;matchClaimed=false");
+                onUnresolved?.Invoke(c.Kind, p.EvidenceCode);
                 continue;
             }
             if (!pass) return false;
@@ -140,6 +152,7 @@ internal sealed class EventResultFamilyPlan
     {
         string donor = FamilyGpuComputeUtility.LoadEmbeddedShader("Beta111GpuEventResult.comp.glsl");
         string numerical = donor[donor.IndexOf("uint64_t s0;", StringComparison.Ordinal)..donor.IndexOf("void append_output", StringComparison.Ordinal)];
+        if (UsesPreparedGroups) numerical = "#define RT2_E_PREPARED_GROUPS\n" + numerical;
         string source = FamilyGpuComputeUtility.LoadEmbeddedShader("EventResultFamily.comp.glsl").Replace("/*__DONOR__*/", numerical, StringComparison.Ordinal);
         if (NumericalVariant == GpuNumericalVariant.NativeFloat64) return source;
         if (NumericalVariant != GpuNumericalVariant.IntegerRne) throw new InvalidOperationException("E.UnknownGpuNumericalVariant");

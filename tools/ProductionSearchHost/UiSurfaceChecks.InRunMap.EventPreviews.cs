@@ -333,19 +333,19 @@ internal static partial class UiSurfaceChecks
             .Add((1, new(101, 7)), priorNode with { Position = new(2, 7, "fixture.other-act"), Rewards = [PotionReward(poolOnlyBottle)], Event = null });
         typeof(InRunMapPredictionSession).GetProperty(nameof(InRunMapPredictionSession.Nodes), BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(session, incomingNodes);
         var nativeSnapshot = ((InRunMapPredictionSession)DiagnosticField(panel, "_prediction")).Snapshot!;
-        var captured = nativeSnapshot.Run.Working;
-        var detachedCapture = new PredictorRun(nativeSnapshot.Run.Context with
+        var captured = nativeSnapshot.State;
+        var detachedCapture = new PredictorRun(nativeSnapshot.Context with
         { PotionPool = [new(poolOnlyBottle, PredictorPotionRarity.Common)] }, captured with
         { PotionSlots = [new(captured.NextInstanceId, capturedBottle), null], NextInstanceId = captured.NextInstanceId + 1 });
         typeof(InRunMapPredictionSession).GetProperty(nameof(InRunMapPredictionSession.Snapshot), BindingFlags.Instance | BindingFlags.NonPublic)!
-            .SetValue(session, nativeSnapshot with { Run = detachedCapture });
+            .SetValue(session, nativeSnapshot with { Context = detachedCapture.Context, State = detachedCapture.Working, CombatDefaults = detachedCapture.CombatDefaults, AutomaticRewardPickup = detachedCapture.AutomaticRewardPickup });
         var captureBeforePreview = detachedCapture.Working;
         presenter = new(session, names, text);
         potionInput = presenter.Detail((0, point))!.Sections.Single(section => section.EmbeddedEditor != null).EmbeddedEditor!;
         var actualCandidates = potionInput.Selections[0].Options.Select(candidate => candidate.Id).ToHashSet();
         check(actualCandidates.SetEquals(new[] { firstBottle, secondBottle, capturedBottle, previousBottle, branchBottle }.Select(potion => potion.Serialized)) &&
             !actualCandidates.Contains(futureBottle.Serialized) && !actualCandidates.Contains(poolOnlyBottle.Serialized) &&
-            ReferenceEquals(session.Nodes, incomingNodes) && ReferenceEquals(detachedCapture.Working, captureBeforePreview) && session.Plans.IsEmpty,
+            ReferenceEquals(session.Nodes, incomingNodes) && ReferenceEquals(session.Snapshot!.State, captureBeforePreview) && session.Plans.IsEmpty,
             "event potion candidates include captured/entry bottles and possible earlier same-act rewards, excluding pool-only/current/future/other-act output without writing source dictionaries");
         check(!potionInput.Sections.SelectMany(section => section.Choices).Single(choice => choice.Label == text.Get("predictor.map.event_potions.add")).Enabled,
             "an ordered local potion list cannot add bottles beyond known incoming capacity");

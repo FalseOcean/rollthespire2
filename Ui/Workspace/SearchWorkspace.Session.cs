@@ -82,11 +82,11 @@ internal sealed partial class SearchWorkspace
         MarkWorkspaceDirty();
     }
 
-    internal sealed record SearchStartResolution(ExactSearchExecutionRequest Plan,
+    internal sealed record SearchStartResolution(PreparedSearch Plan,
         SearchContinuationSnapshot? Continuation, string ExplicitOriginChangeId,
         SearchContinuationSnapshot? InitialContinuation = null);
 
-    internal SearchStartResolution ResolveSearchStart(global::RolltheSpire2.Ui.Workspace.WorkbenchSearchDraft draft, ExactSearchExecutionRequest plan)
+    internal SearchStartResolution ResolveSearchStart(global::RolltheSpire2.Ui.Workspace.WorkbenchSearchDraft draft, PreparedSearch plan)
     {
         var continuation = ContinuationFor(draft, plan);
         string explicitOrigin = _cursor.PendingOriginChangeId ?? "";
@@ -98,7 +98,7 @@ internal sealed partial class SearchWorkspace
             // A query resumes its own durable frontier unless the player has
             // explicitly requested a new start. Its pending/delivery ledger is
             // still passed to the session independently of ordinary scanning.
-            var execution = ExactSearchExecutionRequestFactory.Compile(plan.CompiledSearch,
+            var execution = SearchPreparationCompiler.Compile(plan.Model.CompiledSearch,
                 plan.RunOptions with { StartSeed = start });
             if (!execution.Success || execution.Plan is null) throw new InvalidOperationException(execution.Issue);
             plan = execution.Plan;
@@ -108,7 +108,7 @@ internal sealed partial class SearchWorkspace
         {
             // Persist the new scan's entrance together with consuming the setting,
             // even if the worker has not produced its first checkpoint yet.
-            initial = new(plan.CompiledSearch.SemanticFingerprint, plan.SnapshotFingerprint,
+            initial = new(plan.Model.CompiledSearch.SemanticFingerprint, plan.SnapshotFingerprint,
                 _cursor.PersistentOrigin, continuation?.PendingCandidates ?? [], continuation?.PublishedOrdinals ?? [])
             {
                 ContinuationFingerprint = SearchContinuationIdentity.For(plan),
@@ -119,7 +119,7 @@ internal sealed partial class SearchWorkspace
     }
 
     internal SearchContinuationSnapshot? ContinuationFor(global::RolltheSpire2.Ui.Workspace.WorkbenchSearchDraft draft,
-        ExactSearchExecutionRequest plan)
+        PreparedSearch plan)
     {
         if (!_environment.CaptureComplete) return null;
         var history = FindCurrentQuery(draft);

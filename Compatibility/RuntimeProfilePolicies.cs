@@ -10,6 +10,13 @@ public enum CardBaseOddsPolicy
     Beta110Cumulative
 }
 
+/// <summary>Lasting Candy's saved counter and the stage that advances it.</summary>
+public enum LastingCandyCounterPolicy
+{
+    CombatEndEven,
+    RewardOfferingOdd
+}
+
 /// <summary>
 /// RNG semantic implementation identity. This is deliberately not the game-version
 /// identity. Multiple audited Beta patches may map to the same semantic implementation.
@@ -29,6 +36,37 @@ public enum RngSemanticProfileId
 /// </summary>
 public static class RuntimeProfilePolicies
 {
+    public static LastingCandyCounterPolicy LastingCandyCounter(RuntimeProfileId profileId) => profileId switch
+    {
+        RuntimeProfileId.Stable107 => LastingCandyCounterPolicy.CombatEndEven,
+        RuntimeProfileId.Beta109 or RuntimeProfileId.Beta110 or RuntimeProfileId.Beta111 =>
+            LastingCandyCounterPolicy.RewardOfferingOdd,
+        _ => throw new NotSupportedException("LastingCandyCounterPolicyUnavailable:" + profileId)
+    };
+
+    // Mechanism selection is separate from the detected version's compatibility
+    // confidence. Selecting a shared mechanism never upgrades that evidence.
+    public static Core.Effects.EffectCatalogRules EffectCatalogRules(RuntimeProfileId profileId) => profileId switch
+    {
+        RuntimeProfileId.Beta110 or RuntimeProfileId.Beta111 => Core.Effects.EffectCatalogRules.Modern,
+        _ => throw new NotSupportedException("EffectCatalogRulesUnavailable:" + profileId)
+    };
+
+    public static bool UsesSlicedAuthorityObservation(RuntimeProfileId profileId) =>
+        profileId == RuntimeProfileId.Beta111;
+
+    public static bool SupportsEventResultModel(RuntimeProfileId profileId) =>
+        profileId == RuntimeProfileId.Beta111;
+
+    public static bool SupportsMerchantColorlessModel(RuntimeProfileId profileId) =>
+        profileId == RuntimeProfileId.Beta111;
+
+    // Full from-seed Predictor initialization has only this audited support
+    // scope. A newer provisional version may run other independent models.
+    public static bool SupportsPredictorSeedInitialization(RuntimeVersionResolution resolution) =>
+        resolution.IsUsable && resolution.ProfileId == RuntimeProfileId.Beta111 &&
+        resolution.GameVersionIdentity.ExactVersion == RuntimeVersionCompatibility.Beta111Version;
+
     public const string Stable107AuthorityId = "runtime-authority:stable107:accepted";
     public const string Beta109HistoricalAuthorityId = "runtime-authority:beta109:historical-donor-only";
     public const string Beta110AuthorityId = "runtime-authority:beta110:source-candidate";

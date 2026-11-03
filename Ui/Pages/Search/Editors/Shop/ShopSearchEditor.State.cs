@@ -15,7 +15,8 @@ internal sealed partial class ShopSearchEditor
     internal bool HasConditions(bool party) => (party ? _partyDrafts : _drafts).Values.Any(d =>
         d.Relic.Slots.Concat(d.Uncommon.Slots).Concat(d.Rare.Slots).Any(k => k.HasValue));
     internal Action ClearConditions(bool party, int? slot = null) =>
-        WorkbenchConditionReset.Swap(party ? _partyDrafts : _drafts, _ => new SeatDraft(), slot);
+        WorkbenchConditionReset.Swap(party ? _partyDrafts : _drafts, _ => new SeatDraft(), slot,
+            (previous, current) => { if (ReferenceEquals(_draft, previous)) _draft = current; });
 
     internal int AuthoredConditionCount() => CountRow(_draft.Relic) + CountRow(_draft.Uncommon) + CountRow(_draft.Rare);
 

@@ -4,10 +4,10 @@ namespace RolltheSpire2.Search.FamilyExecution;
 
 internal static class EventResultPhysicalPricing
 {
-    internal static FamilyPhysicalQuote? QuoteCpuCompiledColor(ExactSearchExecutionRequest request,
+    internal static FamilyPhysicalQuote? QuoteCpuCompiledColor(FilterPricingAuthority request,
         EventResultFamilyPlan plan, EventResultCpuPlan compiled, FamilyPhysicalQuoteRequest g)
     {
-        if (!request.Authority.CanUseCurrentModel || request.Authority.PlayersCount != 1 || plan.PlayerSlot != 0 ||
+        if (!request.CanUseCurrentModel || request.PlayersCount != 1 || plan.PlayerSlot != 0 ||
             !FamilyPhysicalQuote.AdmittedRequest(g) || g.CompactInput || g.PrivateInput || g.PrivateOutput ||
             g.MeanInputPopulation < 1024 || compiled.Remaining.Length > 4) return null;
         double residual = 0;
@@ -104,10 +104,10 @@ internal static class EventResultPhysicalPricing
             (extra > 0 ? "ConservativeCoarse" : "ValidatedOperatorRegion"));
     }
 
-    internal static FamilyPhysicalQuote? QuoteCpu(ExactSearchExecutionRequest request, EventResultFamilyPlan plan, FamilyPhysicalQuoteRequest g)
+    internal static FamilyPhysicalQuote? QuoteCpu(FilterPricingAuthority request, EventResultFamilyPlan plan, FamilyPhysicalQuoteRequest g)
     {
         if (QuoteCpuNew(request, plan, g) is { } newQuote) return newQuote;
-        if (!request.Authority.CanUseCurrentModel || request.Authority.PlayersCount != 1 ||
+        if (!request.CanUseCurrentModel || request.PlayersCount != 1 ||
             !ModelSupported(plan) || !FamilyPhysicalQuote.AdmittedRequest(g) || g.CompactInput ||
             g.PrivateInput || g.PrivateOutput || g.MeanInputPopulation < 4096) return null;
         int scalar = plan.Conditions.Select(c => c.Kind).Distinct().Count(k =>
@@ -125,11 +125,11 @@ internal static class EventResultPhysicalPricing
             OutputAlreadyOrdered: true, PublicTransportClass: "CpuOrderedAbi1");
     }
 
-    private static FamilyPhysicalQuote? QuoteCpuNew(ExactSearchExecutionRequest request,
+    private static FamilyPhysicalQuote? QuoteCpuNew(FilterPricingAuthority request,
         EventResultFamilyPlan plan, FamilyPhysicalQuoteRequest g)
     {
         if (!(plan.HasMorphic || plan.HasNewWhitelist) || !plan.GpuSupported ||
-            request.Authority.PlayersCount != 1 || !request.Authority.CanUseCurrentModel ||
+            request.PlayersCount != 1 || !request.CanUseCurrentModel ||
             !FamilyPhysicalQuote.AdmittedRequest(g) || g.PrivateInput || g.PrivateOutput ||
             plan.Conditions.Length is < 1 or > 16) return null;
         double operators = plan.Conditions.Sum(c => c.Kind switch

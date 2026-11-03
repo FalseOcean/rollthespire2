@@ -16,7 +16,7 @@ internal static partial class FamilyPhysicalMatrix
     // Bounded adaptation of the existing R43/R44 MeasurePartySustained public
     // collector. Uses current registered ordinary N/T and complete InvokeAsync wall time;
     // private transport, Exact, output hashing and setup are outside this price.
-    internal static void MeasureNeowCanonical(ExactSearchExecutionRequest request, string[] args, string output)
+    internal static void MeasureNeowCanonical(PreparedSearch request, string[] args, string output)
     {
         string Arg(string key, string fallback)
         {
@@ -35,8 +35,8 @@ internal static partial class FamilyPhysicalMatrix
         string mode = Arg("--canonical-mode", "both");
         bool integer = args.Contains("--canonical-integer", StringComparer.Ordinal);
         string split = Arg("--canonical-split", "training");
-        if (request.ProfileId != RuntimeProfileId.Beta111 || request.Authority.PlayersCount != 1 ||
-            request.CompiledSearch.Context.Party is not null || populations.Length == 0 ||
+        if (request.Model.ProfileId != RuntimeProfileId.Beta111 || request.Model.Authority.PlayersCount != 1 ||
+            request.Model.CompiledSearch.Context.Party is not null || populations.Length == 0 ||
             populations.Any(n => n < 1 || n > RootCapacity) || populations.Distinct().Count() != populations.Length ||
             repeats is < 1 or > 20 || warmups is < 2 or > 1024 || minMs is < 1 or > 60000 ||
             minBatches is < 1 or > 65536 || mode is not ("both" or "dense" or "compact") ||
@@ -46,7 +46,7 @@ internal static partial class FamilyPhysicalMatrix
         string summaryPath = Path.Combine(output, filePrefix + "-summary.json");
         string recordsPath = Path.Combine(output, filePrefix + "-batches.jsonl");
         if (File.Exists(summaryPath) || File.Exists(recordsPath)) throw new IOException(ownerTag + ".ImmutableOutputExists");
-        var profile = RuntimeProfileRegistry.Select(request.Detection);
+        var profile = RuntimeProfileRegistry.Select(request.Model.Detection);
         if (!VisibleSeedCandidateCodec.TryParseOrdinal(profile, request.CanonicalStartSeed, out ulong nextBase, out _, out string issue))
             throw new ArgumentException(ownerTag + ".StartSeed:" + issue);
         ulong space = VisibleSeedCandidateCodec.SpaceSize(profile);
@@ -62,17 +62,20 @@ internal static partial class FamilyPhysicalMatrix
             ulong first = nextBase;
             ulong[]? compactOrdinals = compact ? Enumerable.Range(0, population)
                 .Select(i => (ulong)i * RootCapacity / (uint)population).ToArray() : null;
-            IReadOnlyList<IFamilyInvocation> owners = [];
-            var execution = new FamilyExecutionContext(requiresGpu: true, failOnPhysicalRecovery: true, cpuWorkerCount: request.WorkerCount);
+            IReadOnlyList<FilterBodyDescription> owners = [];
+            var execution = new FilterRuntimeServices(requiresGpu: true, failOnPhysicalRecovery: true, cpuWorkerCount: request.WorkerCount);
             Exception? primary = null;
             try
             {
                 owners = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, gpuAvailable: true, gpuFloat64Available: !integer);
-                IFamilyInvocation family = canonicalFamily == "N"
-                    ? owners.OfType<NeowFamily>().SingleOrDefault(f => f.Coverage.Count == 1 && f.GpuPlan is not null)
-                        ?? throw new InvalidOperationException("NeowCanonical.OrdinaryRegisteredGpuNRequired")
-                    : owners.OfType<TransformationAggregateFamily>().SingleOrDefault(f => ((IFamilyInvocation)f).Coverage.Count == 1 && f.GpuPlan.Supported)
-                        ?? throw new InvalidOperationException("FamilyCanonical.T.OrdinaryRegisteredGpuTRequired");
+                FilterBodyDescription family = owners.SingleOrDefault(f =>
+                    f.FamilyId == (canonicalFamily == "N" ? "N.Neow" : "T.TransformationAggregate") && f.Coverage.Count == 1 && f.UsesGpu)
+                    ?? throw new InvalidOperationException(ownerTag + ".OrdinaryRegisteredGpuBodyRequired");
+                TransformationAggregatePreparation? transform = null;
+                if (canonicalFamily == "T" && !TransformationAggregateFamily.TryPrepare(request.Model,
+                    FilterExecutionPreferences.From(request.RunOptions), out transform, true,
+                    integer ? GpuNumericalVariant.IntegerRne : GpuNumericalVariant.NativeFloat64))
+                    throw new InvalidOperationException("FamilyCanonical.T.NumericalPreparationUnavailable");
                 FamilyCanonicalCostKey? key = null;
                 // Only N currently owns a source-survival selector in the
                 // canonical lookup. T model q/s is observation metadata, never
@@ -81,22 +84,16 @@ internal static partial class FamilyPhysicalMatrix
                     ? family.ResolveSurvival(new HashSet<string>()).SurvivalProbability : null;
                 if (canonicalFamily == "N" && survival is not (>= 0 and <= 1))
                     throw new InvalidOperationException("NeowCanonical.SourceSurvivalUnavailable");
-                string numericalVariant = family switch {
-                    NeowFamily n => n.GpuPlan!.NumericalVariant.ToString(),
-                    TransformationAggregateFamily t => t.GpuPlan.NumericalVariant.ToString(),
-                    _ => throw new InvalidOperationException(ownerTag + ".UnexpectedFamilyType")
-                };
-                bool actualInteger = family switch {
-                    NeowFamily n => n.UsesCompatibilityGpu,
-                    TransformationAggregateFamily t => t.GpuPlan.NumericalVariant == GpuNumericalVariant.IntegerRne,
-                    _ => false
-                };
-                if (actualInteger != integer || !family.ConditionPerformance.UsesGpu)
+                string numericalVariant = canonicalFamily == "N"
+                    ? (integer ? NeowGpuNumericalVariant.IntegerUnitFloat : NeowGpuNumericalVariant.NativeFloat64).ToString()
+                    : transform!.GpuPlan.NumericalVariant.ToString();
+                bool actualInteger = (family.NumericRequirements & GpuNumericRequirements.Float64) == 0;
+                if (actualInteger != integer || !family.UsesGpu)
                     throw new InvalidOperationException(ownerTag + ".ActualNumericalVariantOrGpuMismatch");
-                bool? tPrefixReuse = family is TransformationAggregateFamily transform ? transform.GpuPlan.PrefixReuse : null;
-                bool? tFullTarget = family is TransformationAggregateFamily full ? full.GpuPlan.FullTarget : null;
+                bool? tPrefixReuse = transform?.GpuPlan.PrefixReuse;
+                bool? tFullTarget = transform?.GpuPlan.FullTarget;
                 static double? Finite(double? value) => value is { } v && double.IsFinite(v) ? v : null;
-                object? modelObservation = family is TransformationAggregateFamily model ? new {
+                object? modelObservation = transform is {} model ? new {
                     QueryHitProbability = Finite(model.Probability.QueryHitProbability), StageSurvival = Finite(model.Probability.StageSurvival),
                     IdentityProbability = Finite(model.Probability.IdentityProbability), model.Probability.Evidence,
                     PriceSelector = false, NonFiniteValuesReportedAsNull = true
@@ -112,16 +109,16 @@ internal static partial class FamilyPhysicalMatrix
                     var batch = new SearchBatch(nextBase, window);
                     nextBase = checked(nextBase + (uint)window);
                     var input = compact ? FamilyCandidateSet.FromSortedAbi1(batch, compactOrdinals!) : FamilyCandidateSet.Dense(batch);
-                    var observation = new FamilyObservationWindow(batch, request);
+
                     long started = Stopwatch.GetTimestamp();
-                    var result = family.InvokeAsync(execution, observation, input, CancellationToken.None).GetAwaiter().GetResult();
+                    var result = family.ExecuteAsync(execution, input, CancellationToken.None).GetAwaiter().GetResult();
                     double ms = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
                     // Device identity is captured by the actual executor, after
                     // creation; never freeze an uninitialized GPU identity.
-                    key ??= FamilyCanonicalCostShape.Describe(request, family, compact, window)
+                    key ??= FamilyCanonicalCostShape.Describe(family, compact, window)
                         ?? throw new InvalidOperationException(ownerTag + ".StructuralPricingKeyUnavailable");
                     if (result.Batch != batch || result.Count > population || !double.IsFinite(ms) || ms <= 0 ||
-                        family.ExecutionFaulted || execution.CaptureFilterIsolations(batch).Count != 0)
+                        HostFilterBindings.Faulted(family) || execution.CaptureFilterIsolations(batch).Count != 0)
                         throw new InvalidDataException(ownerTag + ".InvocationInvalidOrIsolated");
                     // Hash the entire ordered ABI1 outside Invoke timing. This
                     // checks the stored evidence, not an independent CPU oracle.
@@ -185,7 +182,7 @@ internal static partial class FamilyPhysicalMatrix
         File.WriteAllText(summaryPath, JsonSerializer.Serialize(new { SchemaVersion = 1,
             Collector = canonicalFamily == "N" ? "R43R44.PublicInvoke.BoundedNeowAdaptation.20261027.v1" : "R43R44.PublicInvoke.BoundedFamilyAdaptation.20261027.v1",
             CanonicalFamily = canonicalFamily, RequestedTPlanExperiment = requestedTPlanExperiment,
-            RuntimeAssemblySha256 = AssemblySha(typeof(IFamilyInvocation).Assembly),
+            RuntimeAssemblySha256 = AssemblySha(typeof(FilterBodyDescription).Assembly),
             HostAssemblySha256 = AssemblySha(typeof(Main).Assembly), Boundary = FamilyCanonicalMeasuredCost.Boundary,
             IntegerVariant = integer, Split = split, TrainingProhibited = split != "training", MinimumInvokeWallMs = minMs,
             MinimumBatches = minBatches, Warmups = warmups, Repeats = repeats, Populations = populations,

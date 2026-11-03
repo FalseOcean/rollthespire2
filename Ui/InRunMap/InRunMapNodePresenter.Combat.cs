@@ -24,7 +24,7 @@ internal sealed partial class InRunMapNodePresenter
     {
         var node = context.Node;
         var requirements = node.CombatRequirements!;
-        var defaults = _session.Snapshot?.Run.CombatDefaults ?? new PredictorCombatDefaults();
+        var defaults = _session.Snapshot?.CombatDefaults ?? new PredictorCombatDefaults();
         var combat = context.Plan.Combat ?? new();
         var cards = node.CombatCards.Where(c => c.IsKnown && c.Value.Id > 0 &&
             PredictorCombatConsequences.IsTriggeredSource(c.Value)).Select(c => c.Value).ToArray();

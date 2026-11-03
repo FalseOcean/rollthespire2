@@ -29,23 +29,29 @@ internal static class FamilyWorkEstimateCombatPoolChecks
         var unread = context with { Authority = context.Authority.WithEffectAuthority(effects with {
             MerchantColorlessOrderedPool = [.. shop, shop[0]], SnapshotFingerprint = effects.SnapshotFingerprint + ":C-unread-expanded" }) };
 
-        (CombatRewardFamily Family, FamilyPhysicalQuote Quote) Quote(SearchQuery q, SearchContext c, bool gpu = true)
+        (CombatRewardPreparation Family, FamilyPhysicalQuote Quote) Quote(SearchQuery q, SearchContext c, bool gpu = true)
         {
-            var request = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(q, c),
+            var request = SearchPreparationCompiler.Compile(SearchCompiler.Compile(q, c),
                 new("000000000000", 65536, 16, 1)).Plan!;
-            if (!CombatRewardFamily.TryCreate(request, out var invocation, gpu, GpuNumericalVariant.IntegerRne) ||
-                invocation is not CombatRewardFamily family)
+            if (!CombatRewardFamily.TryPrepare(request.Model, FilterExecutionPreferences.From(request.RunOptions),
+                out var family, gpu, GpuNumericalVariant.IntegerRne))
                 throw new InvalidOperationException("CombatPoolWork.FamilyCompilation");
-            var quote = invocation.QuotePhysicalWork(new(false, false, 65536))
+            var quote = family!.Body.QuotePhysicalWork(new(false, false, 65536))
                 ?? throw new InvalidOperationException("CombatPoolWork.MissingQuote");
             Check(FamilyCoarsePricing.IsEstimate(quote) || !gpu && FamilyCanonicalMeasuredCost.IsCanonicalQuote(quote),
-                "actual C entry retains honest estimate or existing CPU measurement priority");
-            return (family, quote);
+                "actual C entry retains honest estimate or existing CPU measurement priority;shape=" + quote.Shape +
+                    ";evidence=" + quote.Evidence);
+            return (family!, quote);
         }
 
         var old = SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity();
+        string? oldPrefixMode = Environment.GetEnvironmentVariable("RT2_C_PREFIX_EXPERIMENT");
         try
         {
+            // This existing pool-cost oracle measures the Generic body. The
+            // production prefix optimization is now enabled by default; freeze
+            // its existing off control without changing neutral Direct HotLoop.
+            Environment.SetEnvironmentVariable("RT2_C_PREFIX_EXPERIMENT", "off");
             SearchPerformanceProfileFoundation.ObserveGpuIdentity("UnmeasuredCombatPoolDevice", "vulkan");
             var genericQuery = query with { OpeningRoute = new(BaseGameModelKeys.Relics.ArcaneScroll) };
             var baseline = Quote(genericQuery, context);
@@ -96,11 +102,27 @@ internal static class FamilyWorkEstimateCombatPoolChecks
                 "unique read-pool expansion retains direct HotLoop selection");
             Check(direct.Quote.NanosecondsPerInput == directExpanded.Quote.NanosecondsPerInput,
                 "direct-index HotLoop receives no linear pool fee");
-            Check(Quote(query, context, false).Quote.NanosecondsPerInput == Quote(query, expanded, false).Quote.NanosecondsPerInput,
-                "CPU reward rank indexes receive no per-root linear pool fee");
+            var cpu = Quote(query, context, false);
+            var cpuExpanded = Quote(query, expanded, false);
+            Console.WriteLine($"CombatPoolWork CPU actual baseline={cpu.Quote.NanosecondsPerInput:G17};shape={cpu.Quote.Shape};evidence={cpu.Quote.Evidence}");
+            Console.WriteLine($"CombatPoolWork CPU actual expanded={cpuExpanded.Quote.NanosecondsPerInput:G17};shape={cpuExpanded.Quote.Shape};evidence={cpuExpanded.Quote.Evidence}");
+            // Actual quote priority above remains authoritative. Expanding the
+            // pool leaves the fixed 20/35/25 neutral-model scope, so its result
+            // cannot be compared to another model or a canonical measurement.
+            // Compare the same full-reward CPU work model on both real replays.
+            var cpuGeometry = new FamilyPhysicalQuoteRequest(false, false, 65536);
+            var cpuModel = CombatRewardWorkEstimate.Cpu(cpu.Family.Replay, cpu.Family.Body.CpuWorkers, cpuGeometry)!;
+            var expandedCpuModel = CombatRewardWorkEstimate.Cpu(cpuExpanded.Family.Replay, cpuExpanded.Family.Body.CpuWorkers, cpuGeometry)!;
+            Check(cpuModel.Shape == FamilyCoarsePricing.Revision + ".C.FullReward.P1" &&
+                expandedCpuModel.Shape == cpuModel.Shape &&
+                FamilyCoarsePricing.IsEstimate(cpuModel) && FamilyCoarsePricing.IsEstimate(expandedCpuModel) &&
+                cpuModel.NanosecondsPerInput == expandedCpuModel.NanosecondsPerInput,
+                "CPU reward rank indexes receive no per-root linear pool fee within the same full-reward CPU model;" +
+                    $"baseline={cpuModel.NanosecondsPerInput:G17};expanded={expandedCpuModel.NanosecondsPerInput:G17}");
         }
         finally
         {
+            Environment.SetEnvironmentVariable("RT2_C_PREFIX_EXPERIMENT", oldPrefixMode);
             SearchPerformanceProfileFoundation.ObserveGpuIdentity(old.GpuIdentity.Length == 0 ? "Unknown" : old.GpuIdentity,
                 old.RenderingBackend.Length == 0 ? "unknown" : old.RenderingBackend);
         }

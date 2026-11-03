@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using RolltheSpire2.Bootstrap;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Prediction.Maps;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.Semantics;
@@ -7,46 +8,70 @@ using RolltheSpire2.Search.Selectivity;
 
 namespace RolltheSpire2.Search.FamilyExecution;
 
-// Full Final remains the Family truth predicate. Optional Assignment proposals
-// run privately first and preserve the ordered batch-local ABI1 boundary.
-internal sealed class StandardMapFamily : IFamilyInvocation
+internal sealed record StandardMapFilterPlan(IReadOnlyList<StandardMapSearchCondition> Conditions,
+    (int Act, MapRouteSequenceQuery Query)[] Routes, int Ascension, int Players, MapLossyPlan Lossy);
+
+internal static class StandardMapFamily
 {
-    private readonly ExactSearchExecutionRequest _request;
-    private readonly FamilyCpuExecution _cpu;
-    private readonly (int Act, MapRouteSequenceQuery Query)[] _routes;
-    // Lease per active worker, not per ThreadPool thread: thread churn across
-    // batches must not retain another multi-megabyte workspace every time.
-    private readonly System.Collections.Concurrent.ConcurrentBag<BoundedActMap[]> _work = new();
-    private readonly MapLossyPlan _lossy;
-    private readonly bool _useGpu;
-    private readonly string _gpuReason;
-    private MapLossyGpuExecutor? _gpu;
-    private bool _parity, _faulted;
-    private int _gpuBatches;
-    private long _gpuInputs, _gpuOutputs;
-    private double _gpuMs;
-    private long _actualProposalInputs, _actualProposalCalls;
-    internal long ActualProposalInputs => Interlocked.Read(ref _actualProposalInputs);
-    internal long ActualProposalCalls => Interlocked.Read(ref _actualProposalCalls);
-    internal MapLossyPlan LossyPlan => _lossy;
-    internal bool UsesLossy => _lossy.Enabled;
-    internal MapLossyExecutionDescription LossyDescription => new(_request.MapLossy.Enabled, _lossy.Enabled,
-        !_lossy.Enabled ? "FullFinal" : _useGpu ? "Gpu" : "Cpu", _lossy.Enabled ? MapLossyPlan.Strategy : "FullFinal",
-        !_lossy.Enabled ? _lossy.Reason : _gpuReason, _lossy.Scope, _lossy.Remainders.ToArray());
-    internal string LossyExecution => !_lossy.Enabled ? _lossy.Reason :
-        (_useGpu ? "Gpu" : "Cpu") + ":" + MapLossyPlan.Strategy + ";scope=" + _lossy.Scope + ";gpu=" + _gpuReason;
-    internal StandardMapFamily(ExactSearchExecutionRequest request, bool preferGpu = false, bool float64Available = true)
+    internal const string Id = "M.StandardMap";
+    internal static FilterBodyDescription Prepare(SearchModel model, FilterExecutionPreferences preferences,
+        bool preferGpu = false, bool float64Available = true)
     {
-        _request = request;
-        _lossy = MapLossyPlan.Create(request);
-        var numeric = FamilyDeviceProfileFoundation.Initialization.Capture();
-        bool int64Available = numeric.VulkanCapabilities?.ShaderInt64 != false;
-        _useGpu = _lossy.Enabled && preferGpu && float64Available && int64Available;
-        _gpuReason = !preferGpu ? "CpuSelectedOrGpuUnavailable" : !float64Available ? "Float64Unavailable" :
-            !int64Available ? "Int64Unavailable" : _lossy.Enabled ? "GpuSelected" : _lossy.Reason;
-        _routes = request.CompiledSearch.NormalizedQuery.StandardMapRoutes.Select(c => (c.Act, c.ToSequenceQuery())).ToArray();
-        _cpu = new(request, FamilyId, (_lossy.Enabled ? "M.StandardMap.Cpu.AssignmentRound1.Property9.Drawing5.Combined.ThenFinal.20261028.v3" : "M.StandardMap.Cpu.Final.EndpointReach.RouteSequence.20261028.v3"), workers: Math.Clamp(request.WorkerCount,1,32), numericalRoots:true);
+        var lossy = MapLossyPlan.Create(model, preferences.MapLossy);
+        bool int64Available = FamilyDeviceProfileFoundation.Initialization.Capture().VulkanCapabilities?.ShaderInt64 != false;
+        bool gpu = lossy.Enabled && preferGpu && float64Available && int64Available;
+        string reason = !preferGpu ? "CpuSelectedOrGpuUnavailable" : !float64Available ? "Float64Unavailable" :
+            !int64Available ? "Int64Unavailable" : lossy.Enabled ? "GpuSelected" : lossy.Reason;
+        var plan = new StandardMapFilterPlan(model.CompiledSearch.NormalizedQuery.StandardMaps,
+            model.CompiledSearch.NormalizedQuery.StandardMapRoutes.Select(c => (c.Act, c.ToSequenceQuery())).ToArray(),
+            model.Ascension, model.Authority.PlayersCount, lossy);
+        var survival = FamilySurvivalProjection.Unresolved(Id, "M.LossyAssignmentSurvivalUnknown;FinalProbabilityIsNotProposalSurvival");
+        if (!lossy.Enabled)
+        {
+            var mapOnly = SearchQuery.Empty with { StandardMaps = model.CompiledSearch.NormalizedQuery.StandardMaps,
+                StandardMapRoutes = model.CompiledSearch.NormalizedQuery.StandardMapRoutes };
+            var compiled = SearchCompiler.Compile(mapOnly, model.CompiledSearch.Context);
+            var estimate = JointSelectivityEstimator.EstimateQuery(SearchSelectivityInput.From(compiled));
+            survival = estimate.JointlyPriced && estimate.Probability is double probability
+                ? FamilySurvivalProjection.Resolved(Id, probability, "M.FinalMapFamilyPredicateProjection;" + estimate.EvidenceCode)
+                : FamilySurvivalProjection.Unresolved(Id, "M.FinalMapProbabilityUnavailable;" + estimate.EvidenceCode);
+        }
+        var prepared = new PreparedFilter(Id)
+        {
+            AnalyticalCost = new(Id, gpu ? preferences.MapLossy.GpuBatchSize : CpuFilterExecution.Capacity, [],
+                "FullFinalReplay;MapPricingDeferredByOwner.20261026"), Survival = survival,
+            Obligations = [new(Id)]
+        };
+        var description = new MapLossyExecutionDescription(preferences.MapLossy.Enabled, lossy.Enabled,
+            !lossy.Enabled ? "FullFinal" : gpu ? "Gpu" : "Cpu", lossy.Enabled ? MapLossyPlan.Strategy : "FullFinal",
+            !lossy.Enabled ? lossy.Reason : reason, lossy.Scope, lossy.Remainders.ToArray());
+        return Describe(prepared, plan, RuntimeProfileRegistry.Select(model.Detection), model.SnapshotFingerprint,
+            Math.Clamp(preferences.WorkerCount, 1, 32), preferences.MapLossy.GpuBatchSize, gpu, description);
     }
+
+    private static FilterBodyDescription Describe(PreparedFilter prepared, StandardMapFilterPlan plan,
+        IRuntimeProfile profile, string identity, int workers, int capacity, bool gpu, MapLossyExecutionDescription description)
+    {
+        string cpuRevision = plan.Lossy.Enabled ? "M.StandardMap.Cpu.AssignmentRound1.Property9.Drawing5.Combined.ThenFinal.20261028.v3" :
+            "M.StandardMap.Cpu.Final.EndpointReach.RouteSequence.20261028.v3";
+        const string gpuRevision = "M.StandardMap.Gpu.AssignmentRound1.Property9.Drawing5.Combined.Bitmap.Persistent.ThenCpuFinal.20261028.v3";
+        FilterBodyDescription? cpu = gpu ? Describe(prepared, plan, profile, identity, workers, capacity, false,
+            description with { Backend = "Cpu", Reason = "CpuSelectedOrGpuUnavailable" }) : null;
+        return new(prepared, gpu ? gpuRevision : cpuRevision, profile.ProfileId)
+        {
+            UsesGpu = gpu, WindowCapacity = gpu ? capacity : CpuFilterExecution.Capacity,
+            CpuWorkers = workers, PlayersCount = plan.Players, InputIdentity = identity,
+            NumericRequirements = gpu ? GpuNumericRequirements.Int64 | GpuNumericRequirements.Float64 : GpuNumericRequirements.None,
+            CpuAlternatives = cpu is null ? [] : [cpu],
+            // Map pricing remains deliberately unavailable under the current Owner decision.
+            PerformanceProjection = compact => gpu ? new(Id, gpuRevision +
+                (compact ? ".CompactAbi1" : ".Dense") + GpuRngRotation.Revision + ".RollingDrawingRows.20261028.v1",
+                MapLossyPlan.Strategy, 1, "Unpriced;LossySurvivalUnknown;CanonicalAbi1Ready", true) :
+                CpuFilterExecution.Describe(Id, cpuRevision, workers, CpuFilterExecution.Capacity, true, false, compact),
+            CreateExecution = (self, _) => new StandardMapExecution(self, plan, profile, capacity, description)
+        };
+    }
+
     internal static ActContext Context(int act, int ascension) => new(
         act switch { 1 => ActKind.Overgrowth, 2 => ActKind.Hive, 3 => ActKind.Glory, _ => throw new ArgumentOutOfRangeException(nameof(act)) },
         act-1, HasSwarmingElites: ascension>=1);
@@ -67,16 +92,67 @@ internal sealed class StandardMapFamily : IFamilyInvocation
         }
         return true;
     }
+}
+
+// Map's asynchronous lookahead/grouped device pipeline remains domain-specific.
+// Its leased workspaces belong to this selected execution, never to preparation.
+internal sealed record MapProposalObservation(MapLossyExecutionDescription Description,
+    long ActualProposalCalls, long ActualProposalInputs);
+
+internal interface IMapProposalObservation
+{
+    MapProposalObservation CaptureMapProposal();
+}
+
+internal sealed class StandardMapExecution : IFilterExecution, IMapProposalObservation
+{
+    public FilterBodyDescription Body { get; }
+    public bool ExecutionFaulted => _faulted;
+    private readonly StandardMapFilterPlan _plan;
+    private readonly IRuntimeProfile _profile;
+    private readonly FilterBodyDescription _cpuFinalBody;
+    private readonly int _capacity;
+    private readonly MapLossyExecutionDescription _description;
+    private readonly System.Collections.Concurrent.ConcurrentBag<BoundedActMap[]> _work = new();
+    private MapLossyGpuExecutor? _gpu;
+    private bool _parity, _faulted;
+    private int _gpuBatches;
+    private long _gpuInputs, _gpuOutputs, _actualProposalInputs, _actualProposalCalls;
+    private double _gpuMs, _fullFinalCpuMs;
+    internal double FullFinalCpuMs => _fullFinalCpuMs;
+    internal MapLossyGpuMetrics GpuPhaseMetrics => _gpu?.CumulativeMetrics ?? MapLossyGpuMetrics.Empty;
+    public MapProposalObservation CaptureMapProposal() => new(_description, ActualProposalCalls, ActualProposalInputs);
+    internal long ActualProposalInputs => Interlocked.Read(ref _actualProposalInputs);
+    internal long ActualProposalCalls => Interlocked.Read(ref _actualProposalCalls);
+    internal MapLossyPlan LossyPlan => _plan.Lossy;
+    internal bool UsesLossy => _plan.Lossy.Enabled;
+    internal MapLossyExecutionDescription LossyDescription => _description;
+    internal string LossyExecution => !_plan.Lossy.Enabled ? _plan.Lossy.Reason :
+        (Body.UsesGpu ? "Gpu" : "Cpu") + ":" + MapLossyPlan.Strategy + ";scope=" + _plan.Lossy.Scope + ";gpu=" + _description.Reason;
+
+    internal StandardMapExecution(FilterBodyDescription body, StandardMapFilterPlan plan, IRuntimeProfile profile,
+        int capacity, MapLossyExecutionDescription description)
+    { Body = body; _plan = plan; _profile = profile; _capacity = capacity; _description = description;
+        _cpuFinalBody = DescribeCpuFinal(body); }
+
+    private static FilterBodyDescription DescribeCpuFinal(FilterBodyDescription body)
+    {
+        string family = body.FamilyId; int workers = body.CpuWorkers;
+        return body with { UsesGpu = false, WindowCapacity = CpuFilterExecution.Capacity, Cost = new(),
+            PerformanceProjection = compact => CpuFilterExecution.Describe(family,
+                "M.StandardMap.Cpu.FullFinalAfterProposal", workers, CpuFilterExecution.Capacity, true, false, compact) };
+    }
+
     internal bool MatchesLossyRoot(ulong root, CancellationToken token = default)
     {
         token.ThrowIfCancellationRequested();
-        if (!_lossy.Enabled) return true;
-        if (_lossy.Predicates.Any(p => p.Program.AlwaysReject)) return false;
-        if (!_work.TryTake(out var maps)) maps = Enumerable.Range(1, 3).Select(act => new BoundedActMap(Context(act, _request.Ascension))).ToArray();
+        if (!_plan.Lossy.Enabled) return true;
+        if (_plan.Lossy.Predicates.Any(p => p.Program.AlwaysReject)) return false;
+        if (!_work.TryTake(out var maps)) maps = Enumerable.Range(1, 3).Select(act => new BoundedActMap(StandardMapFamily.Context(act, _plan.Ascension))).ToArray();
         try
         {
             Span<int> values = stackalloc int[3 * MapPropertyProgram.MetricCount];
-            foreach (var act in _lossy.Acts)
+            foreach (var act in _plan.Lossy.Acts)
             {
                 token.ThrowIfCancellationRequested();
                 var map = maps[act.Act - 1];
@@ -85,14 +161,14 @@ internal sealed class StandardMapFamily : IFamilyInvocation
                     if (!map.MatchAssignmentProgram(predicate.Program, token)) return false;
                 foreach (int metric in act.PropertyMetrics)
                     values[(act.Act - 1) * MapPropertyProgram.MetricCount + metric] = map.EvaluateAssignmentProperty(metric, token);
-                foreach (var property in _lossy.Properties)
+                foreach (var property in _plan.Lossy.Properties)
                 {
                     if (property.Scope != act.Act) continue;
                     int value = values[(act.Act - 1) * MapPropertyProgram.MetricCount + property.Metric];
                     if (property.Comparison == StandardMapComparison.AtLeast ? value < property.Value : value > property.Value) return false;
                 }
             }
-            foreach (var property in _lossy.Properties)
+            foreach (var property in _plan.Lossy.Properties)
             {
                 if (property.Scope != 0) continue;
                 token.ThrowIfCancellationRequested();
@@ -108,7 +184,7 @@ internal sealed class StandardMapFamily : IFamilyInvocation
     {
         token.ThrowIfCancellationRequested();
         if (!_work.TryTake(out var maps)) maps=Enumerable.Range(1,3).Select(act=>new BoundedActMap(
-            Context(act,_request.Ascension) with { IsMultiplayer = _request.Authority.PlayersCount > 1 })).ToArray();
+            StandardMapFamily.Context(act,_plan.Ascension) with { IsMultiplayer = _plan.Players > 1 })).ToArray();
         var cached = new MapOutcomeSignature?[3];
         var replayed = new bool[3];
         void Replay(int act)
@@ -119,13 +195,13 @@ internal sealed class StandardMapFamily : IFamilyInvocation
         }
         try
         {
-            if (!Matches(_request.CompiledSearch.NormalizedQuery.StandardMaps, act =>
+            if (!StandardMapFamily.Matches(_plan.Conditions, act =>
             {
                 if (cached[act-1] is {} value) return value;
                 Replay(act);
                 var result = maps[act-1].EvaluateFinalScalars(); cached[act-1]=result; return result;
             })) return false;
-            foreach (var (act, query) in _routes)
+            foreach (var (act, query) in _plan.Routes)
             {
                 Replay(act);
                 var graph = maps[act-1].SnapshotFinalRouteGraph(token);
@@ -135,67 +211,50 @@ internal sealed class StandardMapFamily : IFamilyInvocation
         }
         finally { _work.Add(maps); }
     }
-    GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => _useGpu
-        ? GpuNumericRequirements.Int64 | GpuNumericRequirements.Float64 : GpuNumericRequirements.None;
-    bool IFamilyInvocation.ExecutionFaulted => _faulted;
-    public string FamilyId => "M.StandardMap";
-    public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId,_useGpu ? _request.RunOptions.MapLossy!.GpuBatchSize : FamilyCpuExecution.Capacity,[],"FullFinalReplay;MapPricingDeferredByOwner.20261026");
-    public FamilySurvivalProjection Survival
-    {
-        get
-        {
-            if (_lossy.Enabled) return FamilySurvivalProjection.Unresolved(FamilyId, "M.LossyAssignmentSurvivalUnknown;FinalProbabilityIsNotProposalSurvival");
-            SearchQuery mapOnly = SearchQuery.Empty with
-            { StandardMaps = _request.CompiledSearch.NormalizedQuery.StandardMaps,
-                StandardMapRoutes = _request.CompiledSearch.NormalizedQuery.StandardMapRoutes };
-            var compiled = SearchCompiler.Compile(mapOnly, _request.CompiledSearch.Context);
-            JointSelectivityResult estimate = JointSelectivityEstimator.EstimateQuery(SearchSelectivityInput.From(compiled));
-            return estimate.JointlyPriced && estimate.Probability is double p
-                ? FamilySurvivalProjection.Resolved(FamilyId, p,
-                    "M.FinalMapFamilyPredicateProjection;" + estimate.EvidenceCode)
-                : FamilySurvivalProjection.Unresolved(FamilyId,
-                    "M.FinalMapProbabilityUnavailable;" + estimate.EvidenceCode);
-        }
-    }
-    // Owner defers map pricing while map work remains unfinished, including
-    // existing references. See Search/README.md, performance exceptions.
-    public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest geometry) => null;
-    public FamilyConditionPerformanceProjection ConditionPerformance => ResolveConditionPerformance(false);
-    public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compact) => !_useGpu ? _cpu.Condition(compact) :
-        new(FamilyId, "M.StandardMap.Gpu.AssignmentRound1.Property9.Drawing5.Combined.Bitmap.Persistent.ThenCpuFinal.20261028.v3" +
-            (compact ? ".CompactAbi1" : ".Dense") + GpuRngRotation.Revision + ".RollingDrawingRows.20261028.v1",
-            MapLossyPlan.Strategy, 1, "Unpriced;LossySurvivalUnknown;CanonicalAbi1Ready", usesGpu: true);
-    IEnumerable<IFamilyInvocation> IFamilyInvocation.CpuRealizations => _useGpu ? [new StandardMapFamily(_request)] : [this];
-    public async ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow window, FamilyCandidateSet input, CancellationToken token)
+
+    public async ValueTask<FamilyCandidateSet> FilterAsync(FilterRuntimeServices services, FamilyCandidateSet input, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        if (window.ExactRequest.SnapshotFingerprint != _request.SnapshotFingerprint) throw new InvalidOperationException("M.ObservationContextMismatch");
         if (_faulted) throw new InvalidOperationException("M.GpuInvocationFaulted");
-        if (!_useGpu)
+        if (!Body.UsesGpu)
         {
-            var cpuResult = _cpu.Execute(window, input, token, root => (!_lossy.Enabled || MatchesLossyRoot(root, token)) && MatchesRoot(root, token), context);
-            if (_lossy.Enabled && input.Count > 0) { Interlocked.Add(ref _actualProposalInputs, input.Count); Interlocked.Increment(ref _actualProposalCalls); }
-            return cpuResult;
+            var cpu = new CpuFilterExecution(Body, _profile,
+                root => (!_plan.Lossy.Enabled || MatchesLossyRoot(root, token)) && MatchesRoot(root, token), true);
+            try
+            {
+                var output = await cpu.FilterAsync(services, input, token).ConfigureAwait(false);
+                if (_plan.Lossy.Enabled && input.Count > 0)
+                { Interlocked.Add(ref _actualProposalInputs, input.Count); Interlocked.Increment(ref _actualProposalCalls); }
+                return output;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch { _faulted = true; throw; }
         }
         if (input.Count == 0) return input;
-        var watch = Stopwatch.StartNew();
+        var timer = Stopwatch.StartNew();
         try
         {
-            _gpu ??= await context.ExecuteGpuAsync(rd => new MapLossyGpuExecutor(rd, _request.RunOptions.MapLossy!.GpuBatchSize), token).ConfigureAwait(false);
+            _gpu ??= await services.ExecuteGpuAsync(device => new MapLossyGpuExecutor(device, _capacity, services), token).ConfigureAwait(false);
             if (!_parity)
             {
                 var sample = FamilyCandidateSet.FromSortedAbi1(input.Batch, input.EnumerateLogicalOrdinals().Take(33).ToArray());
-                var actual = await context.ExecuteGpuAsync(_ => ProposeGpu(sample, token), token).ConfigureAwait(false);
-                var profile = RolltheSpire2.Compatibility.Beta111Profile.Instance;
-                var expected = sample.EnumerateLogicalOrdinals().Where(i => MatchesLossyRoot(profile.ComputeRootSeed(
-                    VisibleSeedCandidateCodec.FormatOrdinal(profile, input.Batch.GlobalCandidate(i))), token));
+                var actual = await services.ExecuteGpuAsync(_ => ProposeGpu(sample, token), token).ConfigureAwait(false);
+                var expected = sample.EnumerateLogicalOrdinals().Where(i => MatchesLossyRoot(_profile.ComputeRootSeed(
+                    VisibleSeedCandidateCodec.FormatOrdinal(_profile, input.Batch.GlobalCandidate(i))), token));
                 if (!actual.EnumerateLogicalOrdinals().SequenceEqual(expected)) throw new InvalidDataException("M.LossyGpuCpuParityMismatch");
                 _parity = true;
             }
-            var proposed = await context.ExecuteGpuAsync(_ => ProposeGpu(input, token), token).ConfigureAwait(false);
+            var proposed = await services.ExecuteGpuAsync(_ => ProposeGpu(input, token), token).ConfigureAwait(false);
             Interlocked.Add(ref _actualProposalInputs, input.Count); Interlocked.Increment(ref _actualProposalCalls);
-            var result = _cpu.Execute(window, proposed, token, root => MatchesRoot(root, token), context);
-            _gpuBatches++; _gpuInputs += input.Count; _gpuOutputs += result.Count; _gpuMs += watch.Elapsed.TotalMilliseconds;
+            // Full Final owns result truth after the proposal. Its CPU workspace
+            // remains local and uses the same bounded session CPU leases.
+            var cpu = new CpuFilterExecution(_cpuFinalBody, _profile, root => MatchesRoot(root, token), true);
+            long finalStarted = Stopwatch.GetTimestamp();
+            FamilyCandidateSet result;
+            try { result = await cpu.FilterAsync(services, proposed, token).ConfigureAwait(false); }
+            finally { _fullFinalCpuMs += Stopwatch.GetElapsedTime(finalStarted).TotalMilliseconds; }
+            _gpuBatches++; _gpuInputs += input.Count; _gpuOutputs += result.Count; _gpuMs += timer.Elapsed.TotalMilliseconds;
+            services.Costs.ObserveCompleted(Body, input, result.Count, timer.Elapsed.TotalMilliseconds, passedCoverage: services.CoverageFor(Body));
             return result;
         }
         catch (OperationCanceledException) { throw; }
@@ -206,17 +265,35 @@ internal sealed class StandardMapFamily : IFamilyInvocation
             throw;
         }
     }
-    private FamilyCandidateSet ProposeGpu(FamilyCandidateSet input, CancellationToken token) =>
-        _gpu!.Propose(input, _lossy, _request.Ascension, token);
-    public FamilyPerformanceObservation CapturePerformanceObservation() => !_useGpu ? _cpu.Observation() :
-        new(ConditionPerformance, "", 0, 0, 0, _gpuBatches, 0, _gpuInputs, _gpuOutputs, _gpuMs, false,
-            "MapPricingDeferred;FullFinalIncluded;LossySurvivalUnknown;CpuProposalParity=" + _parity);
-    public FamilyLivePerformanceSnapshot? CaptureLivePerformanceSnapshot() => !_useGpu ? _cpu.Live() : null;
-    public async ValueTask DisposeAsync(FamilyExecutionContext context)
+
+    private FamilyCandidateSet ProposeGpu(FamilyCandidateSet input, CancellationToken token)
     {
-        _cpu.WriteSummary(); _work.Clear();
-        RuntimeLog.TryBackgroundInfo($"mapLossyExecution=true;enabled={_lossy.Enabled};execution={LossyExecution};remainders={string.Join(',', _lossy.Remainders)};batches={_gpuBatches};input={_gpuInputs};output={_gpuOutputs};actualProposalCalls={ActualProposalCalls};actualProposalInputs={ActualProposalInputs};faulted={_faulted};fullFinalAuthority=true");
-        if (_gpu is not null)
-            await context.ExecuteGpuAsync(_ => { _gpu.Dispose(); return true; }, CancellationToken.None).ConfigureAwait(false);
+        try { return _gpu!.Propose(input, _plan.Lossy, _plan.Ascension, token); }
+        finally
+        {
+            FamilyAuxiliaryEvidence.Read(Body.FamilyId, "MapGpuPhaseTiming", () =>
+            {
+                RuntimeLog.TryBackgroundDetail("mapLossyGpuPhases=true;scope=Call;mode=" + _gpu!.PipelineMode +
+                    ";batchBase=" + input.Batch.BatchBase + ";paritySample=" + !_parity +
+                    ";syncMeaning=HostWait;phasesMayOverlap=true;metrics=" + System.Text.Json.JsonSerializer.Serialize(_gpu.LastMetrics));
+                return true;
+            }, false);
+        }
+    }
+
+    public async ValueTask DisposeAsync(FilterRuntimeServices services)
+    {
+        _work.Clear();
+        RuntimeLog.TryBackgroundInfo($"mapLossyExecution=true;enabled={_plan.Lossy.Enabled};execution={LossyExecution};remainders={string.Join(',', _plan.Lossy.Remainders)};batches={_gpuBatches};input={_gpuInputs};output={_gpuOutputs};actualProposalCalls={ActualProposalCalls};actualProposalInputs={ActualProposalInputs};faulted={_faulted};fullFinalAuthority=true");
+        if (_gpu is null) return;
+        FamilyAuxiliaryEvidence.Read(Body.FamilyId, "MapGpuPhaseSummary", () =>
+        {
+            RuntimeLog.TryBackgroundInfo("mapLossyGpuPhases=true;scope=Cumulative;mode=" + _gpu.PipelineMode +
+                ";syncMeaning=HostWait;phasesMayOverlap=true;includesParitySample=true;fullFinalCpuMs=" +
+                _fullFinalCpuMs.ToString("F4", System.Globalization.CultureInfo.InvariantCulture) +
+                ";metrics=" + System.Text.Json.JsonSerializer.Serialize(_gpu.CumulativeMetrics));
+            return true;
+        }, false);
+        await services.ExecuteGpuAsync(_ => { _gpu.Dispose(); return true; }, CancellationToken.None).ConfigureAwait(false);
     }
 }

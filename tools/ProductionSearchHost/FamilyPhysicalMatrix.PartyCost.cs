@@ -14,9 +14,9 @@ using RolltheSpire2.Search.Semantics;
 internal static partial class FamilyPhysicalMatrix
 {
     // Factory/quote evidence only. No Family invocation, E2E run or calibration.
-    private static void RunPartyOrderPricingProbe(ExactSearchExecutionRequest basis, string output, ulong? rootOrdinal = null)
+    private static void RunPartyOrderPricingProbe(PreparedSearch basis, string output, ulong? rootOrdinal = null)
     {
-        var context = basis.CompiledSearch.Context;
+        var context = basis.Model.CompiledSearch.Context;
         var party = context.Party ?? throw new InvalidDataException("PartyOrderPricing.RealContextRequired");
         ulong ordinal = rootOrdinal ?? 0;
         string seed = VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance, ordinal);
@@ -37,11 +37,10 @@ internal static partial class FamilyPhysicalMatrix
             }).ToArray() };
             var options = basis.RunOptions with { StartSeed = seed, ScanCount = 1L << 34,
                 TargetMatchCount = int.MaxValue, IncludeDiagnostics = true };
-            var request = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context), options).Plan
+            var request = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context), options).Plan
                 ?? throw new InvalidDataException("PartyOrderPricing.Compile");
             // One whole-table Exact call per authored query, never an Exact scan.
-            bool positive = ProductionExactSearchEvaluator.Evaluate(request,
-                TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed)).IsMatch;
+            bool positive = ProductionExactSearchEvaluator.Evaluate(request.Model, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed)).IsMatch;
             if (!positive) throw new InvalidDataException($"PartyOrderPricing.SourcePositiveMissing:seed={seed};ordinal={ordinal};m={merchant}");
             var registered = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, gpuAvailable: true);
             var n = registered.Single(f => f.FamilyId == "N.Neow");
@@ -61,7 +60,7 @@ internal static partial class FamilyPhysicalMatrix
                     var survival = family.ResolveSurvival(passed);
                     double reached = RolltheSpire2.Search.Predictability.SearchPredictabilityMath.ProbabilityAtLeastOne(prefix, population);
                     double? conditional = reached > 0 ? Finite(population * prefix / reached) : null;
-                    var quote = conditional.HasValue && family is (PartyFamily or NeowFamily.PartyInitial)
+                    var quote = conditional.HasValue && family.Cost.ComposedPopulationReference
                         ? FamilyPhysicalQuote.CompleteCall(family, new(stages.Count > 0, false, conditional.Value),
                             null, survival.SurvivalProbability ?? 1, passed) : null;
                     if (quote?.Origin != FamilyUnitCostOrigin.FamilyCompleteReference) quote = null;
@@ -84,11 +83,11 @@ internal static partial class FamilyPhysicalMatrix
                     plan.DecisionEvidence, plan.MissingEvidence, Stages = stages };
             }
             var selected = FamilyExecutionCoordinator.Plan(request, gpuAvailable: true);
-            var slots = request.CompiledSearch.PlayerSearches.Take(party.Players.Count).Select(player =>
+            var slots = request.Model.CompiledSearch.PlayerSearches.Take(party.Players.Count).Select(player =>
             {
-                var child = ExactSearchExecutionRequestFactory.ForPlayer(request, player);
+                var child = SearchPreparationCompiler.ForPlayer(request.Model, player);
                 var authority = Beta111MerchantColorlessAuthority.From(child.Authority);
-                var childFamily = ((PartyFamily)s).PersonalStages.Single(p => p.Slot == child.Authority.PlayerSlotIndex).Family;
+                var childFamily = HostFilterBindings.PartyStages(s).Single(p => p.Slot == child.Authority.PlayerSlotIndex).Family;
                 return new { Slot = child.Authority.PlayerSlotIndex, UncommonPool = authority.UncommonPool,
                     RarePool = authority.RarePool, UncommonPoolCount = authority.UncommonPool.Count,
                     RarePoolCount = authority.RarePool.Count, childFamily.AnalyticalCost,
@@ -114,9 +113,9 @@ internal static partial class FamilyPhysicalMatrix
 
     // An authored diagnostic: tight whole-table offer gates feed a sparse S tail.
     // All conditions derive from one known root, with no selected opening effects.
-    private static void ExportPartyCostFixture(ExactSearchExecutionRequest basis, string output)
+    private static void ExportPartyCostFixture(PreparedSearch basis, string output)
     {
-        var context = basis.CompiledSearch.Context;
+        var context = basis.Model.CompiledSearch.Context;
         var party = context.Party ?? throw new InvalidDataException("PartyCostFixture.RealContextRequired");
         const string seed = "000000000000";
         ulong root = Beta111Profile.Instance.ComputeRootSeed(seed);
@@ -132,9 +131,9 @@ internal static partial class FamilyPhysicalMatrix
                     MerchantColorlessConditions = [new(5, MerchantColorlessSlot.Uncommon, shops.Merchants[4].UncommonColorless)] } };
             }).ToArray() };
         var options = new SearchRunOptions(seed, 1L << 34, int.MaxValue, 16);
-        var request = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context), options).Plan
+        var request = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context), options).Plan
             ?? throw new InvalidDataException("PartyCostFixture.Compile");
-        if (!ProductionExactSearchEvaluator.Evaluate(request, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed)).IsMatch)
+        if (!ProductionExactSearchEvaluator.Evaluate(request.Model, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed)).IsMatch)
             throw new InvalidDataException("PartyCostFixture.WholeTablePositiveMissing");
         var plan = FamilyExecutionCoordinator.Plan(request, true);
         ProductionSearchReplay.Write(Path.Combine(output, "cost-control.json"), new ProductionSearchReplayWorkload(1, query, options));
@@ -147,16 +146,16 @@ internal static partial class FamilyPhysicalMatrix
     // Preserve the N fixture's known whole-table positive and add independent
     // fixed-final-shop checks. S's early-rejection body is disabled for this shape
     // in both baseline and candidate, so a combined E2E pair isolates the N change.
-    private static void ExportPartyRareControl(ExactSearchExecutionRequest basis, string output)
+    private static void ExportPartyRareControl(PreparedSearch basis, string output)
     {
-        var context = basis.CompiledSearch.Context;
+        var context = basis.Model.CompiledSearch.Context;
         var party = context.Party ?? throw new InvalidDataException("PartyRare.RealContextRequired");
         var input = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, basis.CanonicalStartSeed);
-        if (!ProductionExactSearchEvaluator.Evaluate(basis, input).IsMatch)
+        if (!ProductionExactSearchEvaluator.Evaluate(basis.Model, input).IsMatch)
             throw new InvalidDataException("PartyRare.NFixturePositiveMissing");
         ulong root = Beta111Profile.Instance.ComputeRootSeed(basis.CanonicalStartSeed);
-        var query = basis.CompiledSearch.NormalizedQuery with {
-            Players = basis.CompiledSearch.NormalizedQuery.Players.Select(p =>
+        var query = basis.Model.CompiledSearch.NormalizedQuery with {
+            Players = basis.Model.CompiledSearch.NormalizedQuery.Players.Select(p =>
             {
                 if (p.Conditions.MerchantColorlessConditions.Count != 0 || p.Conditions.MerchantColorlessSequenceConditions.Count != 0)
                     throw new InvalidDataException("PartyRare.ExistingShopObligations");
@@ -167,13 +166,13 @@ internal static partial class FamilyPhysicalMatrix
             }).ToArray() };
         var options = basis.RunOptions with { StartSeed = basis.CanonicalStartSeed, ScanCount = 1L << 34,
             TargetMatchCount = int.MaxValue, WorkerCount = 16, IncludeDiagnostics = true };
-        var request = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context), options).Plan
+        var request = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context), options).Plan
             ?? throw new InvalidDataException("PartyRare.Compile");
-        if (!ProductionExactSearchEvaluator.Evaluate(request, input).IsMatch)
+        if (!ProductionExactSearchEvaluator.Evaluate(request.Model, input).IsMatch)
             throw new InvalidDataException("PartyRare.CombinedPositiveMissing");
-        foreach (var p in request.CompiledSearch.PlayerSearches.Take(party.Players.Count))
+        foreach (var p in request.Model.CompiledSearch.PlayerSearches.Take(party.Players.Count))
         {
-            var child = ExactSearchExecutionRequestFactory.ForPlayer(request, p);
+            var child = SearchPreparationCompiler.ForPlayer(request.Model, p);
             if (!MerchantShopColorlessGpuExecutor.ConfigureEarlyRejection("#version 450\n", child.Evaluation,
                 child.Authority.PlayersCount).Contains("#define RT2_S_EARLY_REJECTION 0", StringComparison.Ordinal))
                 throw new InvalidDataException("PartyRare.ShopMustRemainControlBody");
@@ -187,16 +186,16 @@ internal static partial class FamilyPhysicalMatrix
     // C2 E2E control: retain the complete source-authored C query and its known
     // positive. Only slot 0 gets an independent final-shop gate, so the other
     // players' shop predicates do not collapse C's arriving population.
-    private static void ExportPartyCombatE2eFixture(ExactSearchExecutionRequest basis, string output)
+    private static void ExportPartyCombatE2eFixture(PreparedSearch basis, string output)
     {
-        var context = basis.CompiledSearch.Context;
+        var context = basis.Model.CompiledSearch.Context;
         var party = context.Party ?? throw new InvalidDataException("PartyCombatE2e.RealPartyContextRequired");
         if (party.Players.Count is not (2 or 4))
             throw new InvalidDataException("PartyCombatE2e.TwoOrFourPlayersRequired");
-        var sourceQuery = basis.CompiledSearch.Query;
+        var sourceQuery = basis.Model.CompiledSearch.Query;
         bool HasShop(SearchQuery q) => q.MerchantColorlessConditions.Count != 0 ||
             q.MerchantColorlessSequenceConditions.Count != 0 || q.Players.Any(p => HasShop(p.Conditions));
-        if (HasShop(sourceQuery) || HasShop(basis.CompiledSearch.NormalizedQuery))
+        if (HasShop(sourceQuery) || HasShop(basis.Model.CompiledSearch.NormalizedQuery))
             throw new InvalidDataException("PartyCombatE2e.ExistingShopObligations");
         if (!sourceQuery.HasCombatRewardConstraints && !sourceQuery.Players.Any(p => p.Conditions.HasCombatRewardConstraints))
             throw new InvalidDataException("PartyCombatE2e.SourceCombatQueryRequired");
@@ -206,7 +205,7 @@ internal static partial class FamilyPhysicalMatrix
         // workload's StartSeed. Do not substitute root zero or find a new hit.
         string seed = basis.CanonicalStartSeed;
         var input = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed);
-        var sourceExact = ProductionExactSearchEvaluator.Evaluate(basis, input);
+        var sourceExact = ProductionExactSearchEvaluator.Evaluate(basis.Model, input);
         if (!sourceExact.IsMatch)
             throw new InvalidDataException("PartyCombatE2e.SourcePositiveMissing:" + sourceExact.Evaluation.Disposition + ":" + sourceExact.FailureCode);
         var owner = party.Players.Single(p => p.PlayerSlotIndex == 0);
@@ -219,9 +218,9 @@ internal static partial class FamilyPhysicalMatrix
             : p).ToArray() };
         var options = basis.RunOptions with { StartSeed = seed, ScanCount = 1L << 32,
             TargetMatchCount = int.MaxValue, IncludeDiagnostics = true, SkipExactValidation = false };
-        var request = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context), options).Plan
+        var request = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context), options).Plan
             ?? throw new InvalidDataException("PartyCombatE2e.Compile");
-        var combinedExact = ProductionExactSearchEvaluator.Evaluate(request, input);
+        var combinedExact = ProductionExactSearchEvaluator.Evaluate(request.Model, input);
         if (!combinedExact.IsMatch)
             throw new InvalidDataException("PartyCombatE2e.CombinedPositiveMissing:" + combinedExact.Evaluation.Disposition + ":" + combinedExact.FailureCode);
         Directory.CreateDirectory(output);
@@ -243,9 +242,9 @@ internal static partial class FamilyPhysicalMatrix
 
     // Existing complete party Family invocations, not synthesized personal pools.
     // Measures recurring public ABI1 work after a warm invocation. No repricing.
-    private static void RunPartyCostChecks(ExactSearchExecutionRequest request, string output)
+    private static void RunPartyCostChecks(PreparedSearch request, string output)
     {
-        if (request.CompiledSearch.Context.Party is not { Players.Count: >= 2 and <= 4 } party)
+        if (request.Model.CompiledSearch.Context.Party is not { Players.Count: >= 2 and <= 4 } party)
             throw new InvalidDataException("PartyCost.RealPartyContextRequired");
         var cpu = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, gpuAvailable: false);
         var gpu = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, gpuAvailable: true);
@@ -259,20 +258,20 @@ internal static partial class FamilyPhysicalMatrix
             return new { GpuAvailable = available, plan.PlanId, plan.SelectionPolicyId,
                 Stages = plan.Stages.Select(s => new { s.Family.FamilyId, s.ConditionPerformance, s.Survival, s.PerInputTimeMs }).ToArray() };
         }).ToArray();
-        var quotes = new Dictionary<(IFamilyInvocation Family, bool Compact, int Count), FamilyPhysicalQuote?>();
+        var quotes = new Dictionary<(FilterBodyDescription Family, bool Compact, int Count), FamilyPhysicalQuote?>();
         foreach (var family in cpu.Concat(gpu))
         foreach (bool compact in new[] { false, true })
         foreach (int count in new[] { 64, 1024, 8192 })
             quotes[(family, compact, count)] = family.QuotePhysicalWork(new(compact, false, count));
-        var smallShop = gpu.OfType<PartyFamily>().Where(f => f.FamilyId == "S.MerchantShopColorless")
-            .SelectMany(f => ((IFamilyInvocation)f).CpuRealizations).OfType<PartyFamily>().FirstOrDefault();
+        var smallShop = gpu.Where(f => f.FamilyId == "S.MerchantShopColorless")
+            .SelectMany(f => ((FilterBodyDescription)f).CpuAlternatives).FirstOrDefault();
         var smallShopQuotes = new Dictionary<(bool Compact, int Count), FamilyPhysicalQuote?>();
         foreach (bool compact in new[] { false, true })
         foreach (int count in new[] { 64, 1024, 8192 })
             smallShopQuotes[(compact, count)] = smallShop?.QuotePhysicalWork(new(compact, false, count));
         var rows = new List<object>();
         var batch = new SearchBatch(0, 1 << 24);
-        var execution = new FamilyExecutionContext(requiresGpu: true, failOnPhysicalRecovery: true,
+        var execution = new FilterRuntimeServices(requiresGpu: true, failOnPhysicalRecovery: true,
             cpuWorkerCount: request.WorkerCount);
         try
         {
@@ -288,7 +287,7 @@ internal static partial class FamilyPhysicalMatrix
                         ? FamilyCandidateSet.FromSortedAbi1(batch,
                             Enumerable.Range(0, count).Select(i => (ulong)i * (1u << 24) / (uint)count).ToArray())
                         : FamilyCandidateSet.Dense(new SearchBatch(0, count));
-                    var window = new FamilyObservationWindow(input.Batch, request);
+
                     var cpuQuote = quotes[(cpuFamily, compact, count)];
                     var gpuQuote = quotes[(gpuFamily, compact, count)];
                     string? expected = null;
@@ -297,7 +296,7 @@ internal static partial class FamilyPhysicalMatrix
                     {
                         var family = useGpu ? gpuFamily : cpuFamily;
                         var watch = Stopwatch.StartNew();
-                        var result = family.InvokeAsync(execution, window, input, default).GetAwaiter().GetResult();
+                        var result = family.ExecuteAsync(execution, input, default).GetAwaiter().GetResult();
                         double ms = watch.Elapsed.TotalMilliseconds;
                         string digest = Digest(result);
                         expected ??= digest;

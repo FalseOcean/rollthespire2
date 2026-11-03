@@ -25,7 +25,7 @@ internal static partial class UiSurfaceChecks
         // source projection retains explicit unresolved choices for the DAG,
         // reason-button and stale-forecast checks.
         var captured = sourceSession.Snapshot!;
-        var source = captured.Run;
+        var source = captured.CreateRun();
         var run = new PredictorRun(source.Context, source.Working)
         { CombatDefaults = source.CombatDefaults, AutomaticRewardPickup = source.AutomaticRewardPickup };
         var visited = source.Working.Maps.FirstOrDefault(map => map.Act == 1)?.Visited ?? [];
@@ -114,15 +114,14 @@ internal static partial class UiSurfaceChecks
                 [new("test", new PredictorEventOption("test"), null, [potionScope])
                     { AvailabilityPendingCauses = [potionScope] }], [], [], [], [], [potionScope]);
             var eventNode = resolved with { Event = localEvent };
-            var local = InRunMapPrerequisiteProjection.Project(eventNode, Source, text).Single();
-            check(local.Identity == potionScope.Identity && local.AffectedResults.SequenceEqual(new[]
-                { text.Get("predictor.map.prerequisite.branch_availability") }) &&
-                local.Text.Contains(text.Get("predictor.map.prerequisite.cause.MapPotionInventoryNotProjected"), StringComparison.Ordinal),
-                "potion scope is shown when an actual event reader needs it and does not become a player-choice instruction in " + language);
+            check(InRunMapPrerequisiteProjection.Project(eventNode, Source, text).IsEmpty &&
+                localEvent.Options.Single().Enabled == null &&
+                localEvent.Options.Single().AvailabilityPendingCauses.Single().Identity == potionScope.Identity,
+                "normal hints hide potion bookkeeping while the actual event availability remains unknown with its original cause in " + language);
             var health = PredictorRouteCauseEvidence.Create("EventHealthOutcomePending", source, PredictorCombatDomain.Health);
-            check(InRunMapPrerequisiteProjection.Pending([health], text).Single() ==
-                text.Get("predictor.map.prerequisite.cause.EventHealthOutcomePending"),
-                "unmodeled health settlement keeps its actual model-scope meaning in " + language);
+            check(InRunMapPrerequisiteProjection.Pending([health], text).IsEmpty &&
+                InRunMapNodeDiagnosticsFormatter.Pending([health], text).Single().Text.Contains(health.Code, StringComparison.Ordinal),
+                "unmodeled health settlement stays in full diagnostics without a normal missing-health hint in " + language);
             var unknown = PredictorRouteCauseEvidence.CreateExplicit("UntranslatedFixtureCause", source,
                 PredictorCombatDomain.CardRewards, PredictorPendingReasonKind.ExecutionFault,
                 "test: original fault evidence", []);
@@ -153,8 +152,10 @@ internal static partial class UiSurfaceChecks
                 "later applied actions retire parent preview input warnings while unused settled health scope stays in diagnostics in " + language);
             var dependentNode = settledNode with { Event = settledEvent with
                 { Rewards = [new(PredictorRewardKind.Card, null, [health])] } };
-            check(InRunMapPrerequisiteProjection.Project(dependentNode, Source, text, oldParent).Single().Identity == health.Identity,
-                "a current unknown reward still displays its real health dependency after parent input warnings retire in " + language);
+            check(InRunMapPrerequisiteProjection.Project(dependentNode, Source, text, oldParent).IsEmpty &&
+                !dependentNode.Event!.Rewards.Single().IsKnown &&
+                dependentNode.Event.Rewards.Single().PendingCauses.Single().Identity == health.Identity,
+                "hiding a normal health hint never turns the actual dependent reward into a known or invented result in " + language);
             var blockedEvent = settledEvent with { Rewards = [], Advanced = false,
                 NeededInput = PredictorEventNeededInput.Obtain, PendingCauses = [unknown] };
             var blockedParent = oldParent with { NeededInput = PredictorEventNeededInput.Obtain,
@@ -165,8 +166,9 @@ internal static partial class UiSurfaceChecks
             var missingInput = blockedEvent with { PendingCauses = [potionScope] };
             var missingParent = blockedParent with { LocalPendingCauses = [potionScope] };
             check(InRunMapPrerequisiteProjection.Project(settledNode with { Event = missingInput }, Source, text, missingParent)
-                .Single().Identity == potionScope.Identity,
-                "a current non-health missing observation survives at an obtain boundary without requiring HP input in " + language);
+                .IsEmpty && missingInput.NeededInput == PredictorEventNeededInput.Obtain &&
+                missingInput.PendingCauses.Single().Identity == potionScope.Identity,
+                "normal potion hints are hidden while the actual obtain input boundary and missing observation survive in " + language);
             var diagnostic = InRunMapNodeDiagnosticsFormatter.Pending([potionScope], text).Single().Text;
             check(diagnostic.Contains(source, StringComparison.Ordinal) && diagnostic.Contains(potionScope.Code, StringComparison.Ordinal) &&
                 diagnostic.Contains(potionScope.SourceEvidence, StringComparison.Ordinal) && diagnostic.Contains("potions.orderedSlots", StringComparison.Ordinal),
@@ -184,7 +186,7 @@ internal static partial class UiSurfaceChecks
         // node below comes from real Recompute; no output node is substituted.
         string beforeNative = signature(), productionPlans = JsonSerializer.Serialize(production.Plans);
         var captured = production.Snapshot!;
-        var source = captured.Run;
+        var source = captured.CreateRun();
         var state = source.Working;
         int act = state.Position.Act;
         var configured = state with
@@ -205,7 +207,7 @@ internal static partial class UiSurfaceChecks
         var session = new InRunMapPredictionSession();
         const BindingFlags members = BindingFlags.Instance | BindingFlags.NonPublic;
         typeof(InRunMapPredictionSession).GetProperty(nameof(InRunMapPredictionSession.Snapshot), members)!
-            .SetValue(session, captured with { Run = controlled });
+            .SetValue(session, captured with { Context = controlled.Context, State = controlled.Working, CombatDefaults = controlled.CombatDefaults, AutomaticRewardPickup = controlled.AutomaticRewardPickup });
         typeof(InRunMapPredictionSession).GetField("_drafts", members)!
             .SetValue(session, DiagnosticField(production, "_drafts"));
         session.Recompute();
@@ -460,7 +462,7 @@ internal static partial class UiSurfaceChecks
         var isolated = new InRunMapPredictionSession();
         isolated.Update(native, "0.111.0", true, new Dictionary<int, PredictorMapRouteDraft> { [0] = draft });
         var captured = isolated.Snapshot!;
-        var source = captured.Run;
+        var source = captured.CreateRun();
         var state = source.Working;
         long id = state.NextInstanceId;
         var controlled = new PredictorRun(source.Context, state with
@@ -468,7 +470,7 @@ internal static partial class UiSurfaceChecks
             Relics = state.Relics.Add(new(id, new ModelKey("RELIC", "PRAYER_WHEEL"), state.Position.Floor)) })
         { CombatDefaults = source.CombatDefaults, AutomaticRewardPickup = source.AutomaticRewardPickup };
         typeof(InRunMapPredictionSession).GetProperty(nameof(InRunMapPredictionSession.Snapshot),
-            BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(isolated, captured with { Run = controlled });
+            BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(isolated, captured with { Context = controlled.Context, State = controlled.Working, CombatDefaults = controlled.CombatDefaults, AutomaticRewardPickup = controlled.AutomaticRewardPickup });
         isolated.Recompute();
         check(isolated.Nodes[(0, first)].Rewards.Count(reward => reward.Kind == PredictorRewardKind.Card &&
             reward.DefaultSkipped && reward.DispositionOrigin == PredictorKnowledgeOrigin.ApprovedDefault) == 2 && isolated.Plans.IsEmpty,

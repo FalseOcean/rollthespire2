@@ -181,12 +181,12 @@ internal static class PartyPhase1BChecks
                 evidence.Add(new { seed, option = option.Serialized, count, ascension, witness, niche = run.Rng.Niche.ToSerializable(), potions = run.Rng.CombatPotionGeneration.ToSerializable(), rewards = players.Select(p => p.PlayerRng.Rewards.ToSerializable()).ToArray() });
             }
             finally { RunManager.Instance.CleanUp(); LocalContext.NetId = null; TestMode.IsOn = false; }
-            var request = ExactSearchExecutionRequestFactory.Compile(compiled, new(seed!, 1, 1, 1));
+            var request = SearchPreparationCompiler.Compile(compiled, new(seed!, 1, 1, 1));
             Check(request.Success, "production compile:" + request.Issue);
             await using var session = FamilyExecutionCoordinator.Start(request.Plan!, gpuAvailable: false);
             await session.Completion;
-            Check(session.TryReadCandidate(out var candidate) && candidate?.Document?.Party is not null, "production result:" + session.GetProgress().FailureCode);
-            predicted.RequireSameObservation(candidate!.Document!.Party!); checks++;
+            Check(session.TryReadCandidate(out var candidate) && candidate?.Facts?.Party is not null, "production result:" + session.GetProgress().FailureCode);
+            predicted.RequireSameObservation(candidate!.Facts!.Party!); checks++;
             if (option == BaseGameModelKeys.Relics.HeftyTablet)
             {
                 T Field<T>(object value, string key) => (T)value.GetType().GetField(key, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(value)!;
@@ -222,7 +222,7 @@ internal static class PartyPhase1BChecks
                 while (liveStore.Runtime.Receiving) await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
                 frame._Process(1);
                 var hits = liveStore.DisplayResults.Select(row => liveStore.ResultAction(row)).ToArray();
-                Check(hits.Length == 1 && hits[0].Live?.Candidate.Document?.Party?.Transactions.Count == 1, "actual Workbench N result hit");
+                Check(hits.Length == 1 && hits[0].Live?.Candidate.Facts?.Party?.Transactions.Count == 1, "actual Workbench N result hit");
                 await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
                 var open = Field<VBoxContainer>(frame, "_resultRows").FindChildren("*", "Button", true, false)
                     .OfType<Button>().Single(b => b.Text == JsonUiTextProvider.CreateUi13("en").Get("integration.analyze"));
@@ -230,7 +230,7 @@ internal static class PartyPhase1BChecks
                 var information = Field<RolltheSpire2.Ui.Pages.Analysis.AnalysisPage>(shell, "_predictor");
                 Check(information.FindChildren("*", "", true, false).OfType<RolltheSpire2.Ui.Components.NeowChoiceDetailPanel>().Any(),
                     "current shared information detail template reused");
-                Check(information.LastDocument?.CanonicalSeed == hits[0].Result.Seed && information.LastRequest?.PlayersCount == count &&
+                Check(information.LastFacts?.CanonicalSeed == hits[0].Result.Seed && information.LastRequest?.PlayersCount == count &&
                     information.LastRequest?.PlayerSlotIndex == targetSlot, "result opens current information page with party context");
                 // The current page projects the selected player's document, not the
                 // retired whole-table Party DTO. Verify its actual selected reward.

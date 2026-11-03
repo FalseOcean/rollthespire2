@@ -25,38 +25,38 @@ public sealed class Beta111PredictionProfile : ISeedPredictionProfile
     public RuntimeProfileId ProfileId => RuntimeProfileId.Beta111;
     public string PredictorId => "Beta111AnalysisProfile";
 
-    public SeedPredictionDocument Predict(SeedPredictionRequest request, GameVersionDetection detection)
+    public SeedPredictionFacts Observe(SeedPredictionRequest request, GameVersionDetection detection)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(detection);
         if (!ContextMatches(request, detection))
-            return Fail(request, detection, string.Empty, PredictionWarningCode.InvalidRequestContext, SeedPredictionOverallStatus.Unknown);
+            return Fail(request, detection, string.Empty, PredictionWarningCode.InvalidRequestContext, SeedPredictionInputStatus.Unknown);
         if (!ProfileSeedRules.TryCanonicalizePredictionSeed(Beta111Profile.Instance, request.OriginalSeed, out string canonicalSeed, out string issue))
-            return SeedPredictionDocument.Invalid(detection.DisplayVersion, ProfileId, PredictorId, request, issue);
-        return PredictCore(request, detection, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, canonicalSeed));
+            return SeedPredictionFacts.Invalid(detection.DisplayVersion, ProfileId, PredictorId, request, issue);
+        return ObserveCore(request, detection, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, canonicalSeed));
     }
 
-    internal SeedPredictionDocument PredictFromRootHash(SeedPredictionRequest request, GameVersionDetection detection, TrustedRootHashInput input,
+    internal SeedPredictionFacts ObserveFromRootHash(SeedPredictionRequest request, GameVersionDetection detection, TrustedRootHashInput input,
         IReadOnlyList<NeowChoiceResult>? preparedOpeningChoices = null, Beta111NeowIdentityReuse? identityReuse = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(detection);
         if (request.TrustedRootHashInput is not { } requestInput || requestInput != input)
-            return Fail(request, detection, input.SeedIdentity, PredictionWarningCode.InvalidRequestContext, SeedPredictionOverallStatus.Unknown,
+            return Fail(request, detection, input.SeedIdentity, PredictionWarningCode.InvalidRequestContext, SeedPredictionInputStatus.Unknown,
                 new PredictionDiagnostic("trusted-root-hash-request-mismatch", "true"));
         if (input.HasCanonicalSeed && Beta111Profile.Instance.ComputeRootSeed(input.CanonicalSeed) != input.RootHash)
-            return Fail(request, detection, input.SeedIdentity, PredictionWarningCode.InvalidRequestContext, SeedPredictionOverallStatus.Unknown,
+            return Fail(request, detection, input.SeedIdentity, PredictionWarningCode.InvalidRequestContext, SeedPredictionInputStatus.Unknown,
                 new PredictionDiagnostic("trusted-root-hash-forward-validation", "failed"));
-        return PredictCore(request, detection, input, preparedOpeningChoices, identityReuse);
+        return ObserveCore(request, detection, input, preparedOpeningChoices, identityReuse);
     }
 
-    private SeedPredictionDocument PredictCore(SeedPredictionRequest request, GameVersionDetection detection, TrustedRootHashInput input,
+    private SeedPredictionFacts ObserveCore(SeedPredictionRequest request, GameVersionDetection detection, TrustedRootHashInput input,
         IReadOnlyList<NeowChoiceResult>? preparedOpeningChoices = null, Beta111NeowIdentityReuse? identityReuse = null)
     {
         if (!ContextMatches(request, detection))
-            return Fail(request, detection, input.SeedIdentity, PredictionWarningCode.InvalidRequestContext, SeedPredictionOverallStatus.Unknown);
+            return Fail(request, detection, input.SeedIdentity, PredictionWarningCode.InvalidRequestContext, SeedPredictionInputStatus.Unknown);
         if (request.Authority.NoRunModifiers == false)
-            return Fail(request, detection, input.SeedIdentity, PredictionWarningCode.NonVanillaCatalogUnsupported, SeedPredictionOverallStatus.Unsupported);
+            return Fail(request, detection, input.SeedIdentity, PredictionWarningCode.NonVanillaCatalogUnsupported, SeedPredictionInputStatus.Unsupported);
 
         RuntimeVersionResolution compatibility = RuntimeProfileRegistry.Resolve(detection);
         bool requiresNeowIdentity = request.Includes(SeedPredictionDomainSelection.Neow) ||
@@ -96,7 +96,7 @@ public sealed class Beta111PredictionProfile : ISeedPredictionProfile
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                return Fail(request, detection, input.SeedIdentity, PredictionWarningCode.AnalysisFailed, SeedPredictionOverallStatus.Unknown,
+                return Fail(request, detection, input.SeedIdentity, PredictionWarningCode.AnalysisFailed, SeedPredictionInputStatus.Unknown,
                     new PredictionDiagnostic(PredictionDiagnosticCodes.Exception, ex.ToString()));
             }
 
@@ -112,7 +112,7 @@ public sealed class Beta111PredictionProfile : ISeedPredictionProfile
             identityReuse?.Capture(this, request, input, exactAuthority, result);
 
             choices = (preparedOpeningChoices ?? request.PartyOpeningChoices)?.ToArray() ?? result.RelicKeys.Select((key, index) =>
-                SeedPredictionDocumentFactory.Choice(
+                NeowChoiceFacts.Choice(
                     index + 1,
                     key,
                     request,
@@ -120,7 +120,7 @@ public sealed class Beta111PredictionProfile : ISeedPredictionProfile
                     "beta111.shared-modern-neow-identity",
                     request.ShouldProjectNeowEffects(key)
                         ? Beta111NeowEffectProjector.ProjectFromRootHash(key, identityPrecision, request.Authority, input.RootHash, request.EnableComplexBonesDeckInteractions)
-                        : SeedPredictionDocumentFactory.UnrequestedNeowEffects))
+                        : NeowChoiceFacts.UnrequestedNeowEffects))
                 .ToArray();
 
             warnings.AddRange(choices.SelectMany(choice => choice.Warnings));
@@ -183,12 +183,12 @@ public sealed class Beta111PredictionProfile : ISeedPredictionProfile
 
         bool neowAuthorityWarning = result is not null &&
                                     (result.UnknownEligibilityAffectedPool || !result.ExactAuthority);
-        return SeedPredictionDocumentFactory.Create(
+        return SeedPredictionFactsFactory.Create(
             request, detection, ProfileId, PredictorId, input.SeedIdentity, choices, distinctWarnings, diagnostics,
-            SeedPredictionDocumentFactory.ProductFacingOverallStatus(choices, identityPrecision,
-                additionalIdentityAuthorityWarning: neowAuthorityWarning || compatibility.IsFallback || !Beta111ValidationAuthority.RuntimeAccepted),
+            SeedPredictionInputStatus.Ready,
             worldPrediction, relicPrediction, rewardPrediction,
-            requiresNeowIdentity ? neowStatus : null, neowIssueCode);
+            requiresNeowIdentity ? neowStatus : null, neowIssueCode, identityPrecision: identityPrecision,
+            identityAuthorityWarning: neowAuthorityWarning || compatibility.IsFallback || !Beta111ValidationAuthority.RuntimeAccepted);
     }
 
     private bool ContextMatches(SeedPredictionRequest request, GameVersionDetection detection)
@@ -200,8 +200,8 @@ public sealed class Beta111PredictionProfile : ISeedPredictionProfile
                string.Equals(request.Authority.GameVersion, detection.NormalizedVersion, StringComparison.Ordinal);
     }
 
-    private SeedPredictionDocument Fail(SeedPredictionRequest request, GameVersionDetection detection, string canonicalSeed,
-        PredictionWarningCode warning, SeedPredictionOverallStatus status, PredictionDiagnostic? diagnostic = null) =>
-        SeedPredictionDocumentFactory.Create(request, detection, ProfileId, PredictorId, canonicalSeed, Array.Empty<NeowChoiceResult>(),
-            new[] { new PredictionWarning(warning) }, diagnostic is null ? Array.Empty<PredictionDiagnostic>() : new[] { diagnostic }, status);
+    private SeedPredictionFacts Fail(SeedPredictionRequest request, GameVersionDetection detection, string canonicalSeed,
+        PredictionWarningCode warning, SeedPredictionInputStatus status, PredictionDiagnostic? diagnostic = null) =>
+        SeedPredictionFactsFactory.Create(request, detection, ProfileId, PredictorId, canonicalSeed, Array.Empty<NeowChoiceResult>(),
+            new[] { new PredictionWarning(warning) }, diagnostic is null ? Array.Empty<PredictionDiagnostic>() : new[] { diagnostic }, status, inputIssue: warning.ToString());
 }

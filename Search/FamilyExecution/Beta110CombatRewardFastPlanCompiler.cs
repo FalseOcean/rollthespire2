@@ -9,7 +9,7 @@ internal static class Beta110CombatRewardFastPlanCompiler
 {
 
     internal static Beta110CombatRewardFastPlan CompileForFamily(
-        ExactSearchExecutionRequest request, Beta110FastEffectCatalog catalog)
+        SearchModel request, Beta110FastEffectCatalog catalog)
     {
         var cards = request.Evaluation.CombatCardRewardSequence;
         var potions = request.Evaluation.CombatPotionRewardSequence;

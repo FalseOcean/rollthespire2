@@ -38,8 +38,8 @@ internal static class ReleaseCompatibilityChecks
         var modNode=JsonNode.Parse(raw)!;
         modNode["Context"]!["Authority"]!["SourceModId"]="cosmetic-metadata-fixture";
         var cosmetic=modNode.Deserialize<ProductionSearchReplayContext>(options)!.Context;
-        ExactSearchExecutionRequest Compile(ProductionSearchReplayWorkload w,SearchContext c) =>
-            ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(w.Query,c),w.Options with {ScanCount=8193,WorkerCount=1}).Plan
+        PreparedSearch Compile(ProductionSearchReplayWorkload w,SearchContext c) =>
+            SearchPreparationCompiler.Compile(SearchCompiler.Compile(w.Query,c),w.Options with {ScanCount=8193,WorkerCount=1}).Plan
                 ?? throw new InvalidOperationException("Fixture compile rejected");
         foreach(string id in new[]{"N-entry","R-common","W-K4","A-pael","S-three-shops","C-three-potions"})
         {
@@ -52,8 +52,8 @@ internal static class ReleaseCompatibilityChecks
                 for(ulong i=0;i<67;i++)
                 {
                     var input=TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance,Beta110SeedCodec.FormatOrdinal(i));
-                    var a=ProductionExactSearchEvaluator.Evaluate(baseline,input);
-                    var b=ProductionExactSearchEvaluator.Evaluate(p,input);
+                    var a=ProductionExactSearchEvaluator.Evaluate(baseline.Model,input);
+                    var b=ProductionExactSearchEvaluator.Evaluate(p.Model,input);
                     // Unpinned rewards observe proven-neutral real openings only.
                     // An empty subset cannot disprove every actual opening; retain
                     // that specific Unknown and its cause in this metadata check.
@@ -89,11 +89,11 @@ internal static class ReleaseCompatibilityChecks
         Check(ModelKey.TryParseExact(selected[0]["CardKey"]!.GetValue<string>(),out var target),"partial target identity");
         sw=sw with {Query=sw.Query with {MerchantColorlessSequenceConditions=[new(3,CombatRewardSequenceOrderMode.Ordered,
             MerchantColorlessSlot.Uncommon,[target,target,target])]}};
-        var sp=Compile(sw,partial);var fast=MerchantShopColorlessCpuPlan.TryCompile(sp)!;
+        var sp=Compile(sw,partial);var fast=MerchantShopColorlessCpuPlan.TryCompile(sp.Model)!;
         Check(fast is not null,"partial pool execution binding");
-        checks+=RelicCpuChecks.CheckEnvelope(sp,fast!.Matches,root=>MerchantShopColorlessQueryEvaluator.Evaluate(sp.Evaluation,root,sp.Authority).Disposition==SearchDisposition.Match);
-        MerchantShopColorlessFamily.TryCreate(sp,out var owner);
-        var partialQuote = owner!.CpuRealizations.First().QuotePhysicalWork(new(false,false,65536));
+        checks+=RelicCpuChecks.CheckEnvelope(sp,fast!.Matches,root=>MerchantShopColorlessQueryEvaluator.Evaluate(sp.Model.Evaluation,root,sp.Model.Authority).Disposition==SearchDisposition.Match);
+        MerchantShopColorlessFamily.TryCreate(sp.Model, FilterExecutionPreferences.From(sp.RunOptions), out var owner);
+        var partialQuote = owner!.CpuAlternatives.First().QuotePhysicalWork(new(false,false,65536));
         Check(partialQuote is { NanosecondsPerInput: > 0 } &&
             double.IsFinite(partialQuote.NanosecondsPerInput) &&
             partialQuote.Evidence.Contains("PriceQuality=Estimate",StringComparison.Ordinal) &&
@@ -105,7 +105,8 @@ internal static class ReleaseCompatibilityChecks
             var n=JsonNode.Parse(raw)!;n["Context"]!["Authority"]!["VanillaNeowCatalogExact"]=catalog.HasValue?JsonValue.Create(catalog.Value):null;
             var changed=n.Deserialize<ProductionSearchReplayContext>(options)!.Context;
             Check(SeedPredictionRequest.TryCreate("000000000000",changed.Authority.Character,changed.Ascension,1,0,changed.Authority,true,out var prediction,out _),"boundary request");
-            var doc=RuntimeProfileRegistry.Predict(changed.Detection,prediction!);
+            var facts=RuntimeProfileRegistry.Observe(changed.Detection,prediction!);
+            var doc=SeedPredictionDocument.FromFacts(facts);
             var neow=doc.Sections.Single(s=>s.Kind==PredictionSectionKind.NeowIdentity);
             var expectedStatus=catalog.HasValue?SeedDomainEvaluationStatus.Unsupported:SeedDomainEvaluationStatus.Unknown;
             Check(neow.DomainStatus==expectedStatus && neow.NeowChoices.Count==0 &&
@@ -121,7 +122,7 @@ internal static class ReleaseCompatibilityChecks
                 "dependent rewards retain Neow prerequisite instead of inventing continuation");
             // An unrelated S query does not request that unmodeled Neow mechanic.
             var independent=Compile(sw,changed);
-            Check(ProductionExactSearchEvaluator.Evaluate(independent,TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance,"000000000000"))
+            Check(ProductionExactSearchEvaluator.Evaluate(independent.Model,TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance,"000000000000"))
                 .Evaluation.Disposition is SearchDisposition.Match or SearchDisposition.NoMatch,"unrelated S remains executable");
         }
         string output=".build-evidence/release-closure";Directory.CreateDirectory(output);

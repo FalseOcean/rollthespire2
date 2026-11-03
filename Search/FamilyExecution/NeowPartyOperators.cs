@@ -5,25 +5,6 @@ namespace RolltheSpire2.Search.FamilyExecution;
 // Party effect dispatch. Changes to the other mode do not enter this core.
 internal static class NeowPartyOperators
 {
-    internal static bool IsPositiveAllowed(byte id, byte curse, Beta110FastNeowAuthority authority)
-    {
-        if (id == Beta110FastRelicCatalog.Kaleidoscope && !authority.AllCharacterCardPoolsUnlocked) return false;
-        if (id == Beta110FastRelicCatalog.ScrollBoxes && !authority.ScrollBoxesAllowed) return false;
-        if (id == Beta110FastRelicCatalog.WingedBoots) return false;
-        if (curse == Beta110FastRelicCatalog.CursedPearl && id == Beta110FastRelicCatalog.GoldenPearl) return false;
-        if (curse == Beta110FastRelicCatalog.HeftyTablet && id == Beta110FastRelicCatalog.ArcaneScroll) return false;
-        if (curse == Beta110FastRelicCatalog.LeafyPoultice && id == Beta110FastRelicCatalog.NewLeaf) return false;
-        if (curse == Beta110FastRelicCatalog.PrecariousShears && id == Beta110FastRelicCatalog.PreciseScissors) return false;
-        // Preserve the audited top-level Neow three-choice pool eligibility rule.
-        // This is not the Bones acquisition potion-capacity policy: once Sacrifice
-        // and Lost Coffer/Phial Holster are already offered inside Bones, Fast does
-        // not create a potion-slot failure branch and treats Sacrifice as a
-        // non-blocking identity companion.
-        if (curse == Beta110FastRelicCatalog.NeowsSacrifice &&
-            (id == Beta110FastRelicCatalog.PhialHolster || id == Beta110FastRelicCatalog.LostCoffer)) return false;
-        return true;
-    }
-
     internal static bool ExecuteRelic(
         byte relicId,
         bool isActive,

@@ -17,17 +17,16 @@ internal sealed partial class InRunMapPredictionSession
         if (expectedRevision != Revision || Snapshot is not { } snapshot ||
             !Nodes.TryGetValue((actIndex, point), out var observed) || observed.Position.NodeId != plan.NodeId)
             return null;
-        var source = snapshot.Run;
-        int act = source.Working.Position.Act;
+        var source = snapshot;
+        int act = source.State.Position.Act;
         if (actIndex != act - 1 || !_drafts.TryGetValue(actIndex, out var draft)) return null;
         int target = draft.ReadyPrefix.IndexOf(point);
         if (target < 0 || target >= 64) return null;
         PredictorRun.ValidatePlannedNodes([plan]);
         var plans = Plans.Where(saved => !PredictorMapNodeIdentity.TryParse(saved.NodeId, out var identity) ||
             identity.Act != act || identity.Point != point).Append(plan).ToImmutableArray();
-        var run = new PredictorRun(source.Context, source.Working)
-        { CombatDefaults = source.CombatDefaults, AutomaticRewardPickup = source.AutomaticRewardPickup };
-        var visited = source.Working.Maps.FirstOrDefault(map => map.Act == act)?.Visited ?? [];
+        var run = source.CreateRun();
+        var visited = source.State.Maps.FirstOrDefault(map => map.Act == act)?.Visited ?? [];
         var path = visited.AddRange(draft.ReadyPrefix);
         if (run.IsLegalRoute(run.RouteMap(act), path, visited)) run.SetRoute(act, path);
         else run.SetRoutePreviewPrefix(act, path);

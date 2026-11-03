@@ -52,7 +52,7 @@ internal sealed partial class AnalysisPageController
 
     internal (SeedQueryAssociation? Association, SeedLibraryResultProvenance? Provenance) CaptureResultOrigin(SeedLibraryContext context)
     {
-        var origin = _resultOrigin?.ForContext(_page.LastDocument!.CanonicalSeed, context);
+        var origin = _resultOrigin?.ForContext(_page.LastFacts!.CanonicalSeed, context);
         return (origin?.AppliesToCurrentContext == true ? _resultAssociation : null, origin);
     }
 
@@ -64,7 +64,7 @@ internal sealed partial class AnalysisPageController
             try
             {
                 var context = CaptureSeedLibraryContext();
-                provenance = provenance.ForContext(_page.LastDocument!.CanonicalSeed, context);
+                provenance = provenance.ForContext(_page.LastFacts!.CanonicalSeed, context);
             }
             catch (InvalidOperationException) { provenance = provenance with { AppliesToCurrentContext = false }; }
         }
@@ -80,13 +80,13 @@ internal sealed partial class AnalysisPageController
 
     private bool _searchOpeningUnavailable;
 
-    private void ApplySearchOpening(SeedPredictionRequest request, SeedPredictionDocument document)
+    private void ApplySearchOpening(SeedPredictionRequest request, SeedPredictionFacts facts)
     {
         if (!_searchOpeningPending && (_soloExplicitOpening || _librarySoloPremise.OpeningRoute is null)) return;
         _searchOpeningPending = false;
-        _searchOpeningSeed = document.CanonicalSeed;
+        _searchOpeningSeed = facts.CanonicalSeed;
         if (_searchOpeningQuery.OpeningRoute is null) return;
-        var selected = ResolveSearchOpening(document, _searchOpeningQuery);
+        var selected = ResolveSearchOpening(facts, _searchOpeningQuery);
         // This selects a real predicted opening, not a witness that the Query matched.
         // If the requested opening is absent, retain the ordinary view with an explicit notice.
         _searchOpeningUnavailable = !selected.Available;
@@ -96,10 +96,10 @@ internal sealed partial class AnalysisPageController
                 request.AncientOptionConditions, selected.Route, selected.ChoiceSlot, "", notify: false);
     }
 
-    internal static (int? ChoiceSlot, string Route, bool Available) ResolveSearchOpening(SeedPredictionDocument document, SearchQuery query)
+    internal static (int? ChoiceSlot, string Route, bool Available) ResolveSearchOpening(SeedPredictionFacts facts, SearchQuery query)
     {
         if (query.OpeningRoute is not { } opening) return (null, "", false);
-        var choice = document.Sections.SelectMany(s => s.NeowChoices).FirstOrDefault(c => c.RelicKey == opening.RouteRelicKey);
+        var choice = (facts.Neow?.Choices ?? []).FirstOrDefault(c => c.RelicKey == opening.RouteRelicKey);
         string route = "";
         bool unavailable = choice is null;
         if (choice is not null && query.OpeningRouteRelicRequirement is { IsEmpty: false } required)

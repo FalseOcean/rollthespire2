@@ -33,7 +33,7 @@ internal sealed partial record NeowSearchUiCatalog
         string seed = RolltheSpire2.Compatibility.ProfileSeedGenerator.CreateProbeSeed(runtime.Profile);
         var effects = sharedAuthority is not null ? sharedAuthority.EffectAuthority : ReflectionNeowEffectSnapshotAdapter.Capture(runtime.Profile, seed,
             CharacterIdentity.FromKey(character), ascension, players, seat, runtime.Profile.ProfileId,
-            runtime.Detection.DisplayVersion, new ReflectionSnapshotProfileRules(true, true), unlocks).EffectAuthority;
+            runtime.Detection.DisplayVersion, RolltheSpire2.Compatibility.RuntimeProfilePolicies.EffectCatalogRules(runtime.Profile.ProfileId), unlocks).EffectAuthority;
         if (effects is null) throw new InvalidOperationException("Picker candidate capture unavailable");
         var catalog = FromAuthority(runtime.Profile.ProfileId, character, effects);
         var model = ModelDb.GetById<CharacterModel>(new ModelId("CHARACTER", character.Entry));

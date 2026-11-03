@@ -11,7 +11,6 @@ internal readonly record struct NeowReplayObservation(byte First, byte Second, b
 internal static class NeowFamilyReplay
 {
     internal static readonly ulong RewardsHash = NeowSingleplayerReplay.RewardsHash;
-    internal static ReadOnlySpan<byte> Positives => NeowPartyReplay.Positives;
     internal static Func<ulong, bool> Bind(NeowReplayPlan plan)
     {
         plan.ValidateExecutionScope();

@@ -55,6 +55,8 @@ internal sealed partial class PredictorRun
     private ModelKey? _eligibilityCandidate;
     private int _eligibilityExamined;
     private bool _pendingFirstActHooks;
+    private bool _routeEntryInProgress;
+    private bool _routeEntryCompletionPending;
     private (MapPrediction Map, MapPosition? Previous, MapPosition Current)? _pendingEventEntry;
     internal ModelKey? EventEligibilityCandidate => _eligibilityCandidate;
 
@@ -120,7 +122,14 @@ internal sealed partial class PredictorRun
         _nodeEntryRoutes = Routes;
         _nodeReplayAvailable = true;
         var boundary = Working;
-        try { AdvanceRouteCore(token); CompleteRouteRedrawUndo(); }
+        try
+        {
+            _routeEntryInProgress = true;
+            AdvanceRouteCore(token);
+            _routeEntryInProgress = false;
+            if (_routeEntryCompletionPending && Phase == PredictorPhase.Complete) CompleteNode();
+            CompleteRouteRedrawUndo();
+        }
         catch
         {
             // Failed entry has no accepted player input. It cannot leave a
@@ -131,6 +140,7 @@ internal sealed partial class PredictorRun
             _requestId++;
             throw;
         }
+        finally { _routeEntryInProgress = false; _routeEntryCompletionPending = false; }
     }
 
     private void AdvanceRouteCore(CancellationToken token)

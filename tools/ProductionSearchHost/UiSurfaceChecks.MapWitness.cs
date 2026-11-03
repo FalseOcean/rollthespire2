@@ -88,11 +88,18 @@ internal static partial class UiSurfaceChecks
             var draft = new WorkbenchSearchDraft(initial.Character, 1, SearchQuery.Empty with
             { StandardMapRoutes = [new(1, [new(rooms)])] }, initial.AncientPremises);
             var compiled = draft.Compile(runtime, out _);
-            var plan = ExactSearchExecutionRequestFactory.Compile(compiled, new(seed, 1, 1, 1)).Plan!;
-            var exact = ProductionExactSearchEvaluator.Evaluate(plan, TrustedRootHashInput.FromCanonicalSeed(runtime.Profile, seed));
-            Check(exact.IsMatch && exact.Document is not null && exact.Request is not null, "bounded Production Exact fixture matches");
-            var candidate = new SearchCandidate(seed, plan.ProfileId, plan.CharacterKey, plan.Ascension, plan.SnapshotFingerprint,
-                exact.Request!, exact.Document!, exact.Authority, exact.Evaluation.Evidence, exact.Evaluation.MatchedRouteIds, exact.Evaluation.Witnesses);
+            var plan = SearchPreparationCompiler.Compile(compiled, new(seed, 1, 1, 1)).Plan!;
+            var exact = ProductionExactSearchEvaluator.Evaluate(plan.Model, TrustedRootHashInput.FromCanonicalSeed(runtime.Profile, seed));
+            File.WriteAllText(Path.Combine(output, "map-witness-source-exact.json"), JsonSerializer.Serialize(new
+            {
+                seed, Query = draft.Query, exact.Evaluation, exact.FailureCode,
+                HasFacts = exact.Facts is not null, HasRequest = exact.Request is not null
+            }, new JsonSerializerOptions { WriteIndented = true }));
+            // Canonical map-only Exact owns the Match and route receipt directly;
+            // it need not invoke Predictor or populate its optional Request/Facts.
+            Check(exact.IsMatch, "bounded Production Exact fixture matches;disposition=" + exact.Evaluation.Disposition + ";failure=" + exact.FailureCode);
+            var candidate = new SearchCandidate(seed, plan.Model.ProfileId, plan.Model.CharacterKey, plan.Model.Ascension, plan.SnapshotFingerprint,
+                exact.Authority, exact.Evaluation) { Facts = exact.Facts };
             var prepared = store.PrepareSearchStart(draft, plan, SeedLibraryContextCapture.ForSearch(draft, runtime));
             store.BindPreparedResultWorkspace(prepared);
             store.AppendResult(candidate, compiled.SemanticFingerprint);
@@ -112,7 +119,7 @@ internal static partial class UiSurfaceChecks
             await Click(analyze);
             var page = Field<AnalysisPage>(shell, "_predictor");
             var controller = Field<AnalysisPageController>(shell, "_predictorController");
-            await Until(() => page.LastDocument?.CanonicalSeed == seed, "original result opens Analysis");
+            await Until(() => page.LastFacts?.CanonicalSeed == seed, "original result opens Analysis");
             var open = (Button)page.FindChild("OpenMapWitness1", true, false);
             Check(!open.Disabled, "original Act 1 receipt remains available after editor changed to Act 2");
             var tabs = Field<List<Button>>(page, "_wbTabs");
@@ -150,7 +157,7 @@ internal static partial class UiSurfaceChecks
             Check(workspace.PreviewRoute!.SequenceEqual(MapRouteWitnessProjection.Read(receipt, seed, displayedMap)), "highlight is original full witness path");
             Check(displayedMap.Act.Entry == "OVERGROWTH" && displayedMap.Points.Count(point => point.Type == MapPointType.Boss) == 1,
                 "witness graph uses Exact standard context");
-            var variant = Beta111MapPredictor.Predict(seed, plan.ProfileId, new("ACT", "UNDERDOCKS"), 0, plan.Ascension, 1, true, default);
+            var variant = Beta111MapPredictor.Predict(seed, plan.Model.ProfileId, new("ACT", "UNDERDOCKS"), 0, plan.Model.Ascension, 1, true, default);
             bool variantRejected = false;
             try { MapRouteWitnessProjection.Read(receipt, seed, variant); }
             catch (InvalidOperationException exception) when (exception.Message == "MapWitness.NonStandardGraph") { variantRejected = true; }
@@ -188,12 +195,12 @@ internal static partial class UiSurfaceChecks
                 "changed context exposes unavailable original witness");
             var unknown = JsonSerializer.Deserialize<PersistedSearchResult>(JsonSerializer.Serialize(saved, json), json)!;
             unknown.ValidationDisposition = SearchDisposition.Unknown;
-            page.SetSearchSource(SeedLibraryResultProvenance.From(unknown, null) with { SourceSeed = page.LastDocument!.CanonicalSeed }, false);
+            page.SetSearchSource(SeedLibraryResultProvenance.From(unknown, null) with { SourceSeed = page.LastFacts!.CanonicalSeed }, false);
             Check(((Button)page.FindChild("OpenMapWitness1", true, false)).Disabled, "unverified result cannot advertise a confirmed witness");
             // An origin from ordinary/legacy results is not evidence that this
             // Act ever had a map receipt. Missing rows must remain absent even
             // after the retained origin becomes stale.
-            var original = SeedLibraryResultProvenance.From(saved, null) with { SourceSeed = page.LastDocument!.CanonicalSeed };
+            var original = SeedLibraryResultProvenance.From(saved, null) with { SourceSeed = page.LastFacts!.CanonicalSeed };
             foreach (string language in new[] { "zh", "en" })
             {
                 store.SetLanguageOverride(language); Set(shell, "_languageCode", ""); Call(shell, "RefreshLanguage");

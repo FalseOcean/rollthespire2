@@ -73,7 +73,7 @@ internal static partial class PredictorLiveRunCapture
         if (run.VisitedMapCoords.Contains(target)) return null; // Native duplicate entry is a no-op.
         NodeEntries.TryGetValue(run, out var previous);
         NodeEntries.Remove(run);
-        var basis = previous?.Snapshot.Run.Context.GameVersion == version ? previous.Snapshot : null;
+        var basis = previous?.Snapshot.Context.GameVersion == version ? previous.Snapshot : null;
         bool opening = run.CurrentActIndex == 0 && run.TotalFloor == 0 && run.ExtraFields.StartedWithNeow &&
             run.Map.GetPoint(target) is { PointType: MegaCrit.Sts2.Core.Map.MapPointType.Ancient };
         var snapshot = Capture(run, version, true, basis, timing, captureOpeningOptions: opening) with
@@ -86,16 +86,16 @@ internal static partial class PredictorLiveRunCapture
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
         if (!NodeEntries.TryGetValue(run, out var entry) ||
-            entry.Snapshot.Run.Context.GameVersion != version || entry.Snapshot.EntryActIndex != run.CurrentActIndex ||
+            entry.Snapshot.Context.GameVersion != version || entry.Snapshot.EntryActIndex != run.CurrentActIndex ||
             entry.EntryTask is not { IsCompletedSuccessfully: true } || run.CurrentMapCoord != entry.Target ||
-            run.TotalFloor != entry.Snapshot.Run.Working.Position.Floor + 1 ||
+            run.TotalFloor != entry.Snapshot.State.Position.Floor + 1 ||
             run.VisitedMapCoords.Count != entry.Previous.Length + 1 ||
             !run.VisitedMapCoords.Take(entry.Previous.Length).SequenceEqual(entry.Previous)) return null;
         // Native Ancient completion means all option tasks have settled. Neow's
         // actual outcome now owns the future; its before-entry premise must not
         // replay an opening selection after the player has already completed it.
         // Shop/reward travel availability does not provide this completion fact.
-        if (entry.Snapshot.Run.Working is { StartedWithNeow: true, OpeningCompleted: false } &&
+        if (entry.Snapshot.State is { StartedWithNeow: true, OpeningCompleted: false } &&
             run.CurrentActIndex == 0 && run.BaseRoom is EventRoom
             { IsPreFinished: true, CanonicalEvent.Id.Entry: "NEOW" })
         {

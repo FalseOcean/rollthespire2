@@ -132,23 +132,23 @@ internal sealed partial class InRunMapPredictionSession
     private ImmutableDictionary<int, DraftSnapshot> FromSnapshotBoundary(RunState native,
         ImmutableDictionary<int, DraftSnapshot> authored)
     {
-        var source = Snapshot!.Run;
-        int origin = source.Working.Position.Act - 1;
+        var source = Snapshot!;
+        int origin = source.State.Position.Act - 1;
         var result = authored.ToBuilder();
         int actIndex = native.CurrentActIndex;
         // Scope follows the actual Act, including an observed Ancient entry in
         // Acts 2/3. Never bridge an old Act's simulation into the next one.
         if (actIndex != origin) return ImmutableDictionary<int, DraftSnapshot>.Empty;
         authored.TryGetValue(actIndex, out var draft);
-        var capturedMap = source.Working.Maps.FirstOrDefault(m => m.Act == actIndex + 1);
+        var capturedMap = source.State.Maps.FirstOrDefault(m => m.Act == actIndex + 1);
         var visited = capturedMap?.Visited ?? [];
         var observed = native.VisitedMapCoords.Select(InRunMapSnapshot.Position).ToImmutableArray();
         if (observed.Length < visited.Length || !observed.Take(visited.Length).SequenceEqual(visited))
             throw new InvalidOperationException("PredictorLiveSnapshotTravelBridgeChanged");
         var bridge = observed.Skip(visited.Length).ToImmutableArray();
         MapPosition? previous = visited.IsEmpty ? null : visited[^1];
-        var map = capturedMap?.Map ?? source.RouteMap(actIndex + 1);
-        var travel = new PredictorMapTravelAllowance(source.Working.Relics.Where(r => !r.Melted && r.Key.Entry == "WINGED_BOOTS")
+        var map = capturedMap?.Map ?? source.CreateRun().RouteMap(actIndex + 1);
+        var travel = new PredictorMapTravelAllowance(source.State.Relics.Where(r => !r.Melted && r.Key.Entry == "WINGED_BOOTS")
             .Select(r => Math.Max(0, 3 - r.TimesUsed)).DefaultIfEmpty(0).Max(), source.Context.HasRunModifier("FLIGHT"));
         var detached = new PredictorMapRouteDraft(map, previous, travel);
         int after = bridge.IsEmpty ? previous?.Row ?? -1 : bridge[^1].Row;
@@ -212,7 +212,7 @@ internal sealed partial class InRunMapPredictionSession
 
     private void RetainApplicablePlans()
     {
-        var state = Snapshot!.Run.Working;
+        var state = Snapshot!.State;
         bool Applicable(PredictorPlannedNode plan) => PredictorMapNodeIdentity.TryParse(plan.NodeId, out var identity) &&
             identity.Act == state.Position.Act && identity.Floor > state.Position.Floor &&
             _drafts.TryGetValue(identity.Act - 1, out var draft) && draft.Selected.Contains(identity.Point);
@@ -243,11 +243,10 @@ internal sealed partial class InRunMapPredictionSession
 
     private void RecomputeCore()
     {
-        var source = Snapshot!.Run;
-        var run = new PredictorRun(source.Context, source.Working)
-        { CombatDefaults = source.CombatDefaults, AutomaticRewardPickup = source.AutomaticRewardPickup };
-        int currentAct = source.Working.Position.Act;
-        var map = source.Working.Maps.FirstOrDefault(m => m.Act == currentAct);
+        var source = Snapshot!;
+        var run = source.CreateRun();
+        int currentAct = source.State.Position.Act;
+        var map = source.State.Maps.FirstOrDefault(m => m.Act == currentAct);
         var visited = map?.Visited ?? [];
         bool alreadyComplete = !visited.IsEmpty && map!.Map.Points.Any(p => p.Position == visited[^1] &&
             p.Type == MapPointType.Boss && p.Children.Count == 0);

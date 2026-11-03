@@ -33,7 +33,7 @@ internal static partial class SearchFailureContinuationChecks
     {
         var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>(Path.Combine(
             Environment.CurrentDirectory, "tools/ProductionSearchHost/Corpus/v1/context.json")).Context;
-        var compiled = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(SearchQuery.Empty, context),
+        var compiled = SearchPreparationCompiler.Compile(SearchCompiler.Compile(SearchQuery.Empty, context),
             new("000000000000", 4, 10, 1));
         Check(compiled.Success && compiled.Plan is not null, "existing captured-context fixture compiles");
         var plan = compiled.Plan!;
@@ -56,10 +56,10 @@ internal static partial class SearchFailureContinuationChecks
     }
 
     private static async Task<(SearchContinuationSnapshot Partial, SearchContinuationSnapshot Compacted)>
-        CheckPendingAndAcknowledgement(ExactSearchExecutionRequest plan)
+        CheckPendingAndAcknowledgement(PreparedSearch plan)
     {
         var original = new IOException("InjectedCandidateCheckFailure", new InvalidOperationException("OriginalCandidateCause"));
-        ProductionExactSearchResult Evaluate(ExactSearchExecutionRequest request, TrustedRootHashInput input) =>
+        ProductionExactSearchResult Evaluate(SearchModel request, TrustedRootHashInput input) =>
             Ordinal(input.CanonicalSeed) switch
             {
                 0 => throw original,
@@ -95,7 +95,7 @@ internal static partial class SearchFailureContinuationChecks
         Check(pending.Ordinal == 0 && pending.Seed == Seed(0) && pending.Stage == "CandidateCheck" &&
             pending.Attempts == 1 && pending.ExceptionText.Contains("InjectedCandidateCheckFailure", StringComparison.Ordinal) &&
             pending.ExceptionText.Contains("OriginalCandidateCause", StringComparison.Ordinal) &&
-            pending.QueryFingerprint == plan.CompiledSearch.SemanticFingerprint && pending.SnapshotFingerprint == plan.SnapshotFingerprint,
+            pending.QueryFingerprint == plan.Model.CompiledSearch.SemanticFingerprint && pending.SnapshotFingerprint == plan.SnapshotFingerprint,
             "pending preserves original exception chain, seed, stage and frozen request identity");
 
         // P2 is durably received first. P1 remains unacknowledged, so resume must
@@ -127,10 +127,10 @@ internal static partial class SearchFailureContinuationChecks
         return (persisted, acknowledged);
     }
 
-    private static async Task CheckResume(ExactSearchExecutionRequest original, SearchContinuationSnapshot continuation, bool failsAgain)
+    private static async Task CheckResume(PreparedSearch original, SearchContinuationSnapshot continuation, bool failsAgain)
     {
         var calls = new ConcurrentDictionary<ulong, int>();
-        ProductionExactSearchResult Evaluate(ExactSearchExecutionRequest request, TrustedRootHashInput input)
+        ProductionExactSearchResult Evaluate(SearchModel request, TrustedRootHashInput input)
         {
             ulong ordinal = Ordinal(input.CanonicalSeed);
             calls.AddOrUpdate(ordinal, 1, (_, count) => count + 1);
@@ -168,14 +168,14 @@ internal static partial class SearchFailureContinuationChecks
             "resumed ACKs preserve the independent pending obligation");
     }
 
-    private static async Task CheckTwiceResumedUnacknowledgedRetry(ExactSearchExecutionRequest original,
+    private static async Task CheckTwiceResumedUnacknowledgedRetry(PreparedSearch original,
         SearchContinuationSnapshot compacted)
     {
         Check(compacted.NextOrdinal == 4 && compacted.PublishedOrdinals.Count == 0 &&
             compacted.PendingCandidates.Single().Ordinal == 0,
             "first receipt compacts ACKed results 1/2 below frontier 4 while retaining failed seed 0");
         var firstCalls = new ConcurrentDictionary<ulong, int>();
-        ProductionExactSearchResult FirstRetry(ExactSearchExecutionRequest request, TrustedRootHashInput input)
+        ProductionExactSearchResult FirstRetry(SearchModel request, TrustedRootHashInput input)
         {
             firstCalls.AddOrUpdate(Ordinal(input.CanonicalSeed), 1, (_, count) => count + 1);
             return Match(request, input);
@@ -197,7 +197,7 @@ internal static partial class SearchFailureContinuationChecks
 
         unreceivedRetry = JsonSerializer.Deserialize<SearchContinuationSnapshot>(JsonSerializer.Serialize(unreceivedRetry))!;
         var secondCalls = new ConcurrentDictionary<ulong, int>();
-        ProductionExactSearchResult SecondRetry(ExactSearchExecutionRequest request, TrustedRootHashInput input)
+        ProductionExactSearchResult SecondRetry(SearchModel request, TrustedRootHashInput input)
         {
             ulong ordinal = Ordinal(input.CanonicalSeed);
             secondCalls.AddOrUpdate(ordinal, 1, (_, count) => count + 1);
@@ -223,7 +223,7 @@ internal static partial class SearchFailureContinuationChecks
             "ACK of the retry finally removes pending 0 without moving the ordinary frontier backward");
     }
 
-    private static async Task CheckSkippedValidation(ExactSearchExecutionRequest original, SearchContinuationSnapshot continuation)
+    private static async Task CheckSkippedValidation(PreparedSearch original, SearchContinuationSnapshot continuation)
     {
         // A conservative earlier frontier exercises the old failed ordinal in
         // ordinary scanning too; SkipExact must not publish it as a raw result.
@@ -248,14 +248,14 @@ internal static partial class SearchFailureContinuationChecks
             "skipped checking neither resolves nor retries the old pending obligation");
     }
 
-    private static async Task CheckConcurrentReservations(ExactSearchExecutionRequest original)
+    private static async Task CheckConcurrentReservations(PreparedSearch original)
     {
         var bothReserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var failureEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var reservationIds = new ConcurrentBag<int>();
         int reservations = 0;
         var plan = original with { RunOptions = original.RunOptions with { WorkerCount = 3, TargetMatchCount = 2 } };
-        ProductionExactSearchResult Evaluate(ExactSearchExecutionRequest request, TrustedRootHashInput input)
+        ProductionExactSearchResult Evaluate(SearchModel request, TrustedRootHashInput input)
         {
             if (Ordinal(input.CanonicalSeed) != 0) return Match(request, input);
             bothReserved.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
@@ -280,7 +280,7 @@ internal static partial class SearchFailureContinuationChecks
             "target cancellation does not erase the concurrent real candidate failure");
     }
 
-    private static async Task CheckTraceFailure(ExactSearchExecutionRequest original)
+    private static async Task CheckTraceFailure(PreparedSearch original)
     {
         var sink = new ThrowingTraceSink();
         var plan = original with { ResolvedScanCount = 1 };
@@ -291,7 +291,7 @@ internal static partial class SearchFailureContinuationChecks
             "a genuinely throwing trace sink is exercised without taking ownership of result delivery");
     }
 
-    private static async Task CheckCleanupFailure(ExactSearchExecutionRequest original)
+    private static async Task CheckCleanupFailure(PreparedSearch original)
     {
         var family = new FixtureFamily(cleanupFails: true);
         var plan = original with { ResolvedScanCount = 1 };
@@ -303,7 +303,7 @@ internal static partial class SearchFailureContinuationChecks
             "cleanup failure preserves computation Completed and delivered results with a separate CleanupIssue");
     }
 
-    private static async Task CheckUntrustedFamilyOutput(ExactSearchExecutionRequest original)
+    private static async Task CheckUntrustedFamilyOutput(PreparedSearch original)
     {
         var allowFault = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var family = new FixtureFamily(untrustedSecondBatch: allowFault.Task);
@@ -333,19 +333,19 @@ internal static partial class SearchFailureContinuationChecks
         store.SaveCheckpoint(session.GetProgress(), continuation, safe ? next : null, complete && safe && next == Beta110SeedCodec.SpaceSize);
     }
 
-    private static void CheckFrozenResultActions(ExactSearchExecutionRequest original)
+    private static void CheckFrozenResultActions(PreparedSearch original)
     {
         string directory = Path.Combine(Environment.CurrentDirectory, ".build-evidence", "frozen-result-actions", Guid.NewGuid().ToString("N"));
         var store = new SearchWorkspace(directory, false);
         var environment = new SearchEnvironmentSignature { CaptureComplete = true, Fingerprint = "frozen-original-env" };
         store.EnsureEnvironment(environment);
-        var draft = new WorkbenchSearchDraft(original.CharacterKey, original.Ascension, original.CompiledSearch.NormalizedQuery,
+        var draft = new WorkbenchSearchDraft(original.Model.CharacterKey, original.Model.Ascension, original.Model.CompiledSearch.NormalizedQuery,
             AncientOptionConditionProfile.BroadDefault);
-        var players = new SeedLibraryPlayer[] { new(0, original.CharacterKey,
+        var players = new SeedLibraryPlayer[] { new(0, original.Model.CharacterKey,
             JsonSerializer.Deserialize<MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState>("{}")!, "original-unlocks",
             AncientOptionConditionProfile.BroadDefault, SearchQuery.Empty, null) };
-        var context = new SeedLibraryContext(original.Detection.NormalizedVersion, original.ProfileId,
-            WorldGameMode.Singleplayer, original.Ascension, players);
+        var context = new SeedLibraryContext(original.Model.Detection.NormalizedVersion, original.Model.ProfileId,
+            WorldGameMode.Singleplayer, original.Model.Ascension, players);
         Check(store.TrySetPersistentOrigin(Seed(5), out _, out _), "frozen start accepts explicit origin");
         var prepared = store.PrepareSearchStart(draft, original, context);
         var first = prepared.Batch.Start!;
@@ -363,22 +363,21 @@ internal static partial class SearchFailureContinuationChecks
             "binding cannot consume a newer explicit origin token");
         // Restore the same captured environment; the mutable fixture above is no longer the runtime observation.
         store.EnsureEnvironment(first.Environment.Snapshot());
-        SearchCandidate Candidate(ExactSearchExecutionRequest plan, ulong ordinal, string route)
+        SearchCandidate Candidate(PreparedSearch plan, ulong ordinal, string route)
         {
-            var exact = Match(plan, TrustedRootHashInput.FromCanonicalSeed(RuntimeProfileRegistry.Select(plan.Detection), Seed(ordinal)));
-            return new(Seed(ordinal), plan.ProfileId, plan.CharacterKey, plan.Ascension, plan.SnapshotFingerprint,
-                exact.Request!, exact.Document, exact.Authority, exact.Evaluation.Evidence,
-                exact.Evaluation.MatchedRouteIds, [new(Seed(ordinal), route, [], [], "", null, [])]);
+            var exact = Match(plan.Model, TrustedRootHashInput.FromCanonicalSeed(RuntimeProfileRegistry.Select(plan.Model.Detection), Seed(ordinal)));
+            return new(Seed(ordinal), plan.Model.ProfileId, plan.Model.CharacterKey, plan.Model.Ascension, plan.SnapshotFingerprint,
+                exact.Authority, exact.Evaluation with { Witnesses = [new(Seed(ordinal), route, [], [], "", null, [])] }) { Facts = exact.Facts };
         }
-        for (ulong i = 0; i < 35; i++) store.AppendResult(Candidate(first.Plan, i, "choice.1.first"), first.Plan.CompiledSearch.SemanticFingerprint);
+        for (ulong i = 0; i < 35; i++) store.AppendResult(Candidate(first.Plan, i, "choice.1.first"), first.Plan.Model.CompiledSearch.SemanticFingerprint);
         var originalRow = store.DisplayResults.Single(row => row.Seed == Seed(34));
         var action = store.ResultAction(originalRow);
         Check(action.Live is { } live && ReferenceEquals(live.Start.Plan, first.Plan) &&
             action.Context!.Players[0].Selection?.Route == "first" && action.Association?.SearchRecordId == first.HistoryId,
             "row action owns the original live plan/witness/context/history");
-        var other = draft with { Ascension = original.Ascension == 9 ? 8 : 9 };
+        var other = draft with { Ascension = original.Model.Ascension == 9 ? 8 : 9 };
         store.ActivateQueryResults(other);
-        Check(store.DisplayResults.Count == 0 && action.HistoryId == first.HistoryId && action.Draft!.Ascension == original.Ascension,
+        Check(store.DisplayResults.Count == 0 && action.HistoryId == first.HistoryId && action.Draft!.Ascension == original.Model.Ascension,
             "changing the active editor/query cannot relabel a captured action");
         store.ActivateQueryResults(draft);
         Check(store.DisplayResults.Count == 35 && store.ResultAction(store.DisplayResults.Single(row => row.Seed == Seed(0))).Live is not null,
@@ -386,7 +385,7 @@ internal static partial class SearchFailureContinuationChecks
         var secondPlan = Recompile(original, new(Seed(7), 40, 40, 1));
         var next = store.PrepareSearchStart(draft, secondPlan, first.Context);
         store.BindPreparedResultWorkspace(next);
-        store.AppendResult(Candidate(next.Batch.Start!.Plan, 34, "choice.2.second"), secondPlan.CompiledSearch.SemanticFingerprint);
+        store.AppendResult(Candidate(next.Batch.Start!.Plan, 34, "choice.2.second"), secondPlan.Model.CompiledSearch.SemanticFingerprint);
         var replacement = store.ResultAction(store.DisplayResults.Single(row => row.Seed == Seed(34)));
         var staleProjection = store.ResultAction(originalRow);
         Check(staleProjection.Live is null && staleProjection.Context!.Players[0].Selection?.Route == "first" &&
@@ -396,8 +395,8 @@ internal static partial class SearchFailureContinuationChecks
             action.Context!.Players[0].Selection?.Route == "first" && replacement.Context!.Players[0].Selection?.Route == "second",
             "same-history repeated seed replaces display while previously captured action keeps its actual observation/batch/plan");
         var uncheckedCandidate = Candidate(next.Batch.Start.Plan, 34, "stale") with
-            { ValidationDisposition = SearchDisposition.NotEvaluatedByPolicy, Document = null, Witnesses = [] };
-        store.AppendResult(uncheckedCandidate, secondPlan.CompiledSearch.SemanticFingerprint);
+            { Evaluation = SearchQueryEvaluation.NotEvaluatedByPolicy(""), Facts = null };
+        store.AppendResult(uncheckedCandidate, secondPlan.Model.CompiledSearch.SemanticFingerprint);
         Check(store.ResultAction(store.DisplayResults.Single(row => row.Seed == Seed(34))).Live!.Candidate.Witnesses.Single().OpeningRouteId == "choice.2.second",
             "a later unchecked duplicate cannot replace a retained confirmed observation's live payload");
         store.FlushAll();
@@ -407,29 +406,30 @@ internal static partial class SearchFailureContinuationChecks
             "restart loads bounded persisted observations without plans; process display and live payload remain unbounded");
     }
 
-    private static async Task CheckManualValidationPersistence(ExactSearchExecutionRequest original)
+    private static async Task CheckManualValidationPersistence(PreparedSearch original)
     {
         string directory = Path.Combine(Environment.CurrentDirectory, ".build-evidence", "manual-validation", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         var store = new SearchWorkspace(directory, false);
         store.EnsureEnvironment(new() { CaptureComplete = true, Fingerprint = "manual-original-env" });
-        var draft = new WorkbenchSearchDraft(original.CharacterKey, original.Ascension, original.CompiledSearch.NormalizedQuery,
+        var draft = new WorkbenchSearchDraft(original.Model.CharacterKey, original.Model.Ascension, original.Model.CompiledSearch.NormalizedQuery,
             AncientOptionConditionProfile.BroadDefault);
-        var context = new SeedLibraryContext(original.Detection.NormalizedVersion, original.ProfileId, WorldGameMode.Singleplayer,
-            original.Ascension, [new(0, original.CharacterKey,
+        var context = new SeedLibraryContext(original.Model.Detection.NormalizedVersion, original.Model.ProfileId, WorldGameMode.Singleplayer,
+            original.Model.Ascension, [new(0, original.Model.CharacterKey,
                 JsonSerializer.Deserialize<MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState>("{}")!, "captured-original-unlocks",
                 AncientOptionConditionProfile.BroadDefault, SearchQuery.Empty, null)]);
-        store.BindPreparedResultWorkspace(store.PrepareResultWorkspace(original.CompiledSearch.SemanticFingerprint, draft, context, skipExactValidation: true));
-        void AddUnverified(SearchWorkspace target, string seed) => target.AppendResult(new(seed, original.ProfileId,
-            original.CharacterKey, original.Ascension, original.SnapshotFingerprint, null!, null, original.Authority, [], [], [])
-            { ValidationDisposition = SearchDisposition.NotEvaluatedByPolicy, ValidationIssue = "original-skipped-check", IsUnfiltered = true },
-            original.CompiledSearch.SemanticFingerprint);
+        store.BindPreparedResultWorkspace(store.PrepareResultWorkspace(original.Model.CompiledSearch.SemanticFingerprint, draft, context, skipExactValidation: true));
+        void AddUnverified(SearchWorkspace target, string seed) => target.AppendResult(new(seed, original.Model.ProfileId,
+            original.Model.CharacterKey, original.Model.Ascension, original.SnapshotFingerprint, original.Model.Authority,
+                SearchQueryEvaluation.NotEvaluatedByPolicy("original-skipped-check"))
+            { ValidationIssue = "original-skipped-check", IsUnfiltered = true },
+            original.Model.CompiledSearch.SemanticFingerprint);
         AddUnverified(store, Seed(0));
         store.SaveResultProgress(new(SearchRunState.Completed, 4, 0, 4, 10, 1, 1,
             SearchDisposition.NotEvaluatedByPolicy, "", false) { UnverifiedCandidateCount = 1 });
         store.FlushAll();
         string originalRow = JsonSerializer.Serialize(store.DisplayResults.Single());
-        var manual = ExactSearchExecutionRequestFactory.Compile(original.CompiledSearch, new(Seed(0), 1, 1, 1)).Plan!;
+        var manual = SearchPreparationCompiler.Compile(original.Model.CompiledSearch, new(Seed(0), 1, 1, 1)).Plan!;
         Check(manual.SnapshotFingerprint != original.SnapshotFingerprint,
             "a manual check keeps its actual one-seed execution fingerprint instead of borrowing a former scan identity");
         Check(store.TryManualValidationSource(Seed(0), out var history, out var row, out _), "original saved manual source is available");
@@ -441,7 +441,7 @@ internal static partial class SearchFailureContinuationChecks
         var pending = SearchWorkspace.PendingForHistory(history).Single();
         Check(failed.Accepted && !store.Runtime.HasManualCandidateValidation && pending.Ordinal == 0 && pending.Attempts == 1 &&
             pending.ExceptionText.Contains(failure.ToString(), StringComparison.Ordinal) &&
-            pending.QueryFingerprint == original.CompiledSearch.SemanticFingerprint && pending.SnapshotFingerprint == manual.SnapshotFingerprint &&
+            pending.QueryFingerprint == original.Model.CompiledSearch.SemanticFingerprint && pending.SnapshotFingerprint == manual.SnapshotFingerprint &&
             JsonSerializer.Serialize(store.DisplayResults.Single()) == originalRow &&
             store.Workspace.ResultProgress is { MatchCount: 0, UnverifiedCandidateCount: 1 },
             "manual fault persists original cause/identity independently, leaves the old unverified row untouched and receives no target credit");
@@ -461,7 +461,7 @@ internal static partial class SearchFailureContinuationChecks
             "an environment mismatch retains the original pending instead of relabeling it as resolved");
         store.EnsureEnvironment(new() { CaptureComplete = true, Fingerprint = "manual-original-env" });
         Check(store.TryManualValidationSource(Seed(0), out history, out row, out _), "the original matching environment can retry its own pending");
-        var retryPlan = ExactSearchExecutionRequestFactory.Compile(original.CompiledSearch, new(Seed(0), 1, 1, 2)).Plan!;
+        var retryPlan = SearchPreparationCompiler.Compile(original.Model.CompiledSearch, new(Seed(0), 1, 1, 2)).Plan!;
         var retryFailure = new IOException("manual-explicit-retry-failure");
         var retry = store.Runtime.TrackManualCandidateValidation(history, row, retryPlan, () => throw retryFailure);
         try { await retry.Task.WaitAsync(TimeSpan.FromSeconds(10)); } catch (IOException exception) when (ReferenceEquals(exception, retryFailure)) { }
@@ -486,10 +486,10 @@ internal static partial class SearchFailureContinuationChecks
             JsonSerializer.Serialize(store.DisplayResults.Single()) == originalRow,
             "provider-thrown cancellation without a user cancellation source remains a retained execution fault with its original cause");
 
-        var input = TrustedRootHashInput.FromCanonicalSeed(RuntimeProfileRegistry.Select(original.Detection), Seed(0));
+        var input = TrustedRootHashInput.FromCanonicalSeed(RuntimeProfileRegistry.Select(original.Model.Detection), Seed(0));
         int exactCalls = 0;
         var success = store.Runtime.TrackManualCandidateValidation(history, row, retryPlan, () =>
-            { Interlocked.Increment(ref exactCalls); return Match(retryPlan, input); });
+            { Interlocked.Increment(ref exactCalls); return Match(retryPlan.Model, input); });
         await success.Task.WaitAsync(TimeSpan.FromSeconds(10));
         string workspaceFile = Path.Combine(directory, "RolltheSpire2", "state", "search_workspace.json");
         long deliveryNow = Stopwatch.GetTimestamp();
@@ -515,11 +515,11 @@ internal static partial class SearchFailureContinuationChecks
             AddUnverified(store, Seed(2));
             Check(store.TryManualValidationSource(Seed(2), out var otherHistory, out var otherRow, out _),
                 "another seed retains its own valid source while a former result awaits storage");
-            var otherPlan = ExactSearchExecutionRequestFactory.Compile(original.CompiledSearch, new(Seed(2), 1, 1, 1)).Plan!;
+            var otherPlan = SearchPreparationCompiler.Compile(original.Model.CompiledSearch, new(Seed(2), 1, 1, 1)).Plan!;
             otherDelivery = store.Runtime.TrackManualCandidateValidation(otherHistory, otherRow, otherPlan, () =>
             {
                 Interlocked.Increment(ref otherCalls);
-                return new(null, null, otherPlan.Authority, SearchQueryEvaluation.Unknown("independent-check-completed"), "independent-check-completed");
+                return new(null, null, otherPlan.Model.Authority, SearchQueryEvaluation.Unknown("independent-check-completed"), "independent-check-completed");
             });
             await otherDelivery.Task.WaitAsync(TimeSpan.FromSeconds(10));
             store.Runtime.PollManualCandidateValidations(deliveryNow);
@@ -543,17 +543,17 @@ internal static partial class SearchFailureContinuationChecks
         AddUnverified(store, Seed(1));
         Check(store.TryManualValidationSource(Seed(1), out history, out row, out _), "second original source is available");
         string owner = history.Id;
-        var secondPlan = ExactSearchExecutionRequestFactory.Compile(original.CompiledSearch, new(Seed(1), 1, 1, 1)).Plan!;
+        var secondPlan = SearchPreparationCompiler.Compile(original.Model.CompiledSearch, new(Seed(1), 1, 1, 1)).Plan!;
         var completed = new TaskCompletionSource<ProductionExactSearchResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         var detached = store.Runtime.TrackManualCandidateValidation(history, row, secondPlan,
             () => completed.Task.GetAwaiter().GetResult());
-        int otherAscension = original.Ascension == SeedPredictionInputLimits.MaximumAscension ? original.Ascension - 1 : original.Ascension + 1;
+        int otherAscension = original.Model.Ascension == SeedPredictionInputLimits.MaximumAscension ? original.Model.Ascension - 1 : original.Model.Ascension + 1;
         var otherDraft = draft with { Ascension = otherAscension };
         SearchPresetCompatibilityResolver.ValidateWorkbenchShape(otherDraft);
         Check(QueryHistoryIdentity.Key(otherDraft) != QueryHistoryIdentity.Key(draft),
             "the request selected during manual validation is a distinct legal authored query");
         store.BindPreparedResultWorkspace(store.PrepareResultWorkspace("different-editor-query", otherDraft, context with { Ascension = otherAscension }));
-        completed.SetResult(new(null, null, secondPlan.Authority, SearchQueryEvaluation.Unknown("actual-provider-unavailable"), "actual-provider-unavailable"));
+        completed.SetResult(new(null, null, secondPlan.Model.Authority, SearchQueryEvaluation.Unknown("actual-provider-unavailable"), "actual-provider-unavailable"));
         await detached.Task.WaitAsync(TimeSpan.FromSeconds(10));
         store.Runtime.PollManualCandidateValidations();
         store.FlushAll();
@@ -567,16 +567,16 @@ internal static partial class SearchFailureContinuationChecks
             "a genuine Unknown observation is retained in its captured original history after the active request changes");
     }
 
-    private static async Task CheckManualEventSourceRecapture(ExactSearchExecutionRequest original)
+    private static async Task CheckManualEventSourceRecapture(PreparedSearch original)
     {
         using var captured = JsonDocument.Parse(File.ReadAllText("docs/source_audits/AUTHORED_MORPHIC_20260913.evidence.json"));
         var targets = captured.RootElement.GetProperty("Evidence")[0].GetProperty("Targets")
             .Deserialize<MorphicGroveTarget[]>(ProductionSearchReplay.JsonOptions)!
             .Select((target, slot) => target with { InstanceId = "basic:" + slot }).ToArray();
         var time = new DateTimeOffset(2026, 10, 16, 0, 0, 0, TimeSpan.Zero);
-        RolltheSpire2.Core.Authority.RuntimeContextAuthoritySnapshot At(DateTimeOffset capturedAt) => original.Authority
-            .WithEffectAuthority(original.Authority.EffectAuthority! with { CapturedAtUtc = capturedAt })
-            .WithWorldAuthority(original.Authority.WorldAuthority! with { CapturedAtUtc = capturedAt });
+        RolltheSpire2.Core.Authority.RuntimeContextAuthoritySnapshot At(DateTimeOffset capturedAt) => original.Model.Authority
+            .WithEffectAuthority(original.Model.Authority.EffectAuthority! with { CapturedAtUtc = capturedAt })
+            .WithWorldAuthority(original.Model.Authority.WorldAuthority! with { CapturedAtUtc = capturedAt });
         var firstAuthority = At(time);
         var nextAuthority = At(time.AddMinutes(1));
         SearchQuery Query(bool aggregate, RolltheSpire2.Core.Authority.RuntimeContextAuthoritySnapshot authority)
@@ -598,10 +598,10 @@ internal static partial class SearchFailureContinuationChecks
             string directory = Path.Combine(Environment.CurrentDirectory, ".build-evidence", "manual-event-validation",
                 (aggregate ? "T-" : "E-") + Guid.NewGuid().ToString("N"));
             var firstQuery = Query(aggregate, firstAuthority);
-            var firstCompiled = SearchCompiler.Compile(firstQuery, original.CompiledSearch.Context with { Authority = firstAuthority });
-            var nextCompiled = SearchCompiler.Compile(Query(aggregate, nextAuthority), original.CompiledSearch.Context with { Authority = nextAuthority });
-            var firstExecution = ExactSearchExecutionRequestFactory.Compile(firstCompiled, new(Seed(0), 1, 1, 1));
-            var nextExecution = ExactSearchExecutionRequestFactory.Compile(nextCompiled, new(Seed(0), 1, 1, 1));
+            var firstCompiled = SearchCompiler.Compile(firstQuery, original.Model.CompiledSearch.Context with { Authority = firstAuthority });
+            var nextCompiled = SearchCompiler.Compile(Query(aggregate, nextAuthority), original.Model.CompiledSearch.Context with { Authority = nextAuthority });
+            var firstExecution = SearchPreparationCompiler.Compile(firstCompiled, new(Seed(0), 1, 1, 1));
+            var nextExecution = SearchPreparationCompiler.Compile(nextCompiled, new(Seed(0), 1, 1, 1));
             Check(firstExecution.Success && firstExecution.Plan is not null && nextExecution.Success && nextExecution.Plan is not null,
                 "both original and recaptured E/T fixtures compile to admitted Exact requests");
             var firstPlan = firstExecution.Plan ?? throw new InvalidOperationException("Original E/T fixture: " + firstExecution.Issue);
@@ -611,14 +611,14 @@ internal static partial class SearchFailureContinuationChecks
                 "E/T recapture fixture genuinely changes the opaque semantic and attempt fingerprints through capture time");
             var store = new SearchWorkspace(directory, false);
             store.EnsureEnvironment(new() { CaptureComplete = true, Fingerprint = "manual-event-original-env" });
-            var draft = new WorkbenchSearchDraft(original.CharacterKey, original.Ascension, firstQuery, AncientOptionConditionProfile.BroadDefault);
-            var context = new SeedLibraryContext(original.Detection.NormalizedVersion, original.ProfileId, WorldGameMode.Singleplayer,
-                original.Ascension, [new(0, original.CharacterKey,
+            var draft = new WorkbenchSearchDraft(original.Model.CharacterKey, original.Model.Ascension, firstQuery, AncientOptionConditionProfile.BroadDefault);
+            var context = new SeedLibraryContext(original.Model.Detection.NormalizedVersion, original.Model.ProfileId, WorldGameMode.Singleplayer,
+                original.Model.Ascension, [new(0, original.Model.CharacterKey,
                     JsonSerializer.Deserialize<MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState>("{}")!, "original-event-unlocks",
                     AncientOptionConditionProfile.BroadDefault, SearchQuery.Empty, null)]);
             store.BindPreparedResultWorkspace(store.PrepareResultWorkspace(firstCompiled.SemanticFingerprint, draft, context, skipExactValidation: true));
-            store.AppendResult(new(Seed(0), original.ProfileId, original.CharacterKey, original.Ascension, firstPlan.SnapshotFingerprint,
-                null!, null, firstAuthority, [], [], []) { ValidationDisposition = SearchDisposition.NotEvaluatedByPolicy }, firstCompiled.SemanticFingerprint);
+            store.AppendResult(new(Seed(0), original.Model.ProfileId, original.Model.CharacterKey, original.Model.Ascension, firstPlan.SnapshotFingerprint,
+                firstAuthority, SearchQueryEvaluation.NotEvaluatedByPolicy("")), firstCompiled.SemanticFingerprint);
             Check(store.TryManualValidationSource(Seed(0), out var history, out var row, out _), "E/T original source is available");
             var failure = new IOException("manual-event-original-provider-failure");
             var failed = store.Runtime.TrackManualCandidateValidation(history, row, firstPlan, () => throw failure);
@@ -644,7 +644,7 @@ internal static partial class SearchFailureContinuationChecks
             bool rejected = false;
             try
             {
-                var changedPlan = ExactSearchExecutionRequestFactory.Compile(changed, new(Seed(0), 1, 1, 1)).Plan!;
+                var changedPlan = SearchPreparationCompiler.Compile(changed, new(Seed(0), 1, 1, 1)).Plan!;
                 store.Runtime.TrackManualCandidateValidation(history, row, changedPlan, () => throw new Exception("Mismatch must not execute"));
             }
             catch (InvalidOperationException exception) when (exception.Message == "ManualValidationOriginalAuthorityMismatch") { rejected = true; }
@@ -673,9 +673,9 @@ internal static partial class SearchFailureContinuationChecks
         }
     }
 
-    private static ProductionSearchSession Start(ExactSearchExecutionRequest plan,
-        Func<ExactSearchExecutionRequest, TrustedRootHashInput, ProductionExactSearchResult> evaluator,
-        SearchContinuationSnapshot? continuation = null, IFamilyInvocation? family = null, int window = 4,
+    private static ProductionSearchSession Start(PreparedSearch plan,
+        Func<SearchModel, TrustedRootHashInput, ProductionExactSearchResult> evaluator,
+        SearchContinuationSnapshot? continuation = null, FilterBodyDescription? family = null, int window = 4,
         Func<int, CancellationToken, ValueTask>? beforePublish = null,
         IRuntimePredictionDiagnosticSink? sink = null, string traceSeed = "",
         long payloadLimit = ProductionSearchSession.DefaultPendingPayloadLimitBytes,
@@ -686,7 +686,7 @@ internal static partial class SearchFailureContinuationChecks
             AllConditionsUnfiltered = family is null,
             FinalValidationSkipped = plan.RunOptions.SkipExactValidation
         };
-        return new(plan, execution, FamilySearchEtaProjectorV1.Project(plan, execution), window, 16,
+        return new(plan, execution, FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(plan, execution), execution), window, 16,
             sink, traceSeed, exactEvaluator: evaluator, beforeCandidatePublish: beforePublish, continuation: continuation,
             pendingPayloadLimitBytes: payloadLimit, measurePendingPayload: measurePayload,
             recoveryReceiptWaitStarted: receiptWaitStarted);
@@ -711,34 +711,34 @@ internal static partial class SearchFailureContinuationChecks
             await Task.Delay(5, timeout.Token);
         }
     }
-    private static ExactSearchExecutionRequest Recompile(ExactSearchExecutionRequest plan, SearchRunOptions options)
+    private static PreparedSearch Recompile(PreparedSearch plan, SearchRunOptions options)
     {
-        var result = ExactSearchExecutionRequestFactory.Compile(plan.CompiledSearch, options);
+        var result = SearchPreparationCompiler.Compile(plan.Model.CompiledSearch, options);
         Check(result.Success && result.Plan is not null, "actual execution compiler accepts resumed options: " + result.Issue);
         return result.Plan!;
     }
 
-    private static ExactSearchExecutionRequest ResumePlan(ExactSearchExecutionRequest plan, ulong start) =>
+    private static PreparedSearch ResumePlan(PreparedSearch plan, ulong start) =>
         Recompile(plan, plan.RunOptions with { StartSeed = Seed(start), ScanCount = checked(4 - (long)start) });
 
-    private static async Task CheckExplicitOriginPersistence(ExactSearchExecutionRequest original)
+    private static async Task CheckExplicitOriginPersistence(PreparedSearch original)
     {
         foreach (string mode in new[] { "manual-forward", "manual-backward", "random", "manual-restart" })
         {
             string directory = Path.Combine(Environment.CurrentDirectory, ".build-evidence", "explicit-origin", mode, Guid.NewGuid().ToString("N"));
             var environment = new SearchEnvironmentSignature { CaptureComplete = true, Fingerprint = "origin-environment",
-                GameVersionIdentity = original.Authority.GameVersion };
-            var draft = new WorkbenchSearchDraft(original.CharacterKey, original.Ascension,
-                original.CompiledSearch.NormalizedQuery, AncientOptionConditionProfile.BroadDefault);
+                GameVersionIdentity = original.Model.Authority.GameVersion };
+            var draft = new WorkbenchSearchDraft(original.Model.CharacterKey, original.Model.Ascension,
+                original.Model.CompiledSearch.NormalizedQuery, AncientOptionConditionProfile.BroadDefault);
             var store = new SearchWorkspace(directory, false);
             store.EnsureEnvironment(environment);
-            store.BindPreparedResultWorkspace(store.PrepareResultWorkspace(original.CompiledSearch.SemanticFingerprint, draft));
+            store.BindPreparedResultWorkspace(store.PrepareResultWorkspace(original.Model.CompiledSearch.SemanticFingerprint, draft));
             await using (var first = Start(original, (request, input) => Ordinal(input.CanonicalSeed) switch
                 { 0 => throw new IOException("OriginalExplicitOriginFailure"), 3 => Reject(request), _ => Match(request, input) }))
             {
                 await Finish(first);
                 var accepted = Drain(first).Single(candidate => candidate.Seed == Seed(2));
-                store.AppendResult(accepted, original.CompiledSearch.SemanticFingerprint);
+                store.AppendResult(accepted, original.Model.CompiledSearch.SemanticFingerprint);
                 first.AcknowledgeCandidate(accepted.Seed);
                 Checkpoint(store, first, true); store.FlushAll();
             }
@@ -761,7 +761,7 @@ internal static partial class SearchFailureContinuationChecks
             Check(store.ResolveSearchStart(draft, start.Plan).ExplicitOriginChangeId == start.ExplicitOriginChangeId,
                 "Resolving/compiling a start does not consume an intent before a session starts");
             var calls = new ConcurrentDictionary<ulong, int>();
-            ProductionExactSearchResult Evaluate(ExactSearchExecutionRequest request, TrustedRootHashInput input)
+            ProductionExactSearchResult Evaluate(SearchModel request, TrustedRootHashInput input)
             {
                 ulong ordinal = Ordinal(input.CanonicalSeed);
                 calls.AddOrUpdate(ordinal, 1, (_, count) => count + 1);
@@ -801,7 +801,7 @@ internal static partial class SearchFailureContinuationChecks
                 store.BindPreparedResultWorkspace(receiving);
                 await Finish(session);
                 foreach (var output in Drain(session))
-                { store.AppendResult(output, resumed.Plan.CompiledSearch.SemanticFingerprint); session.AcknowledgeCandidate(output.Seed); }
+                { store.AppendResult(output, resumed.Plan.Model.CompiledSearch.SemanticFingerprint); session.AcknowledgeCandidate(output.Seed); }
                 Checkpoint(store, session, true); store.FlushAll();
             }
             store = new(directory, false);
@@ -814,7 +814,7 @@ internal static partial class SearchFailureContinuationChecks
             Check(restored.Plan.CanonicalStartSeed == Seed(own.NextOrdinal),
                 "Without a fresh user request, another query advancing the global cursor cannot steal this query's frontier");
         }
-        var delivery = new SearchContinuationSnapshot(original.CompiledSearch.SemanticFingerprint, original.SnapshotFingerprint,
+        var delivery = new SearchContinuationSnapshot(original.Model.CompiledSearch.SemanticFingerprint, original.SnapshotFingerprint,
             1, [], []) { ContinuationFingerprint = SearchContinuationIdentity.For(original), UnreceivedOrdinals = [1] };
         var faultPlan = Recompile(original, new(Seed(10), 1, 20, 1));
         await using var fault = Start(faultPlan, (request, input) => Ordinal(input.CanonicalSeed) == 1
@@ -826,16 +826,16 @@ internal static partial class SearchFailureContinuationChecks
             "A delivery recovery exception remains pending with its actual cause and no target credit");
     }
 
-    private static async Task CheckRecompiledPersistenceResume(ExactSearchExecutionRequest original)
+    private static async Task CheckRecompiledPersistenceResume(PreparedSearch original)
     {
         string directory = Path.Combine(Environment.CurrentDirectory, ".build-evidence", "compiled-continuation", Guid.NewGuid().ToString("N"));
         var environment = new SearchEnvironmentSignature { CaptureComplete = true, Fingerprint = "compiled-environment",
-            GameVersionIdentity = original.Authority.GameVersion };
-        var draft = new WorkbenchSearchDraft(original.CharacterKey, original.Ascension,
-            original.CompiledSearch.NormalizedQuery, AncientOptionConditionProfile.BroadDefault);
+            GameVersionIdentity = original.Model.Authority.GameVersion };
+        var draft = new WorkbenchSearchDraft(original.Model.CharacterKey, original.Model.Ascension,
+            original.Model.CompiledSearch.NormalizedQuery, AncientOptionConditionProfile.BroadDefault);
         var store = new SearchWorkspace(directory, false);
         store.EnsureEnvironment(environment);
-        store.BindPreparedResultWorkspace(store.PrepareResultWorkspace(original.CompiledSearch.SemanticFingerprint, draft, null));
+        store.BindPreparedResultWorkspace(store.PrepareResultWorkspace(original.Model.CompiledSearch.SemanticFingerprint, draft, null));
         SearchPendingCandidate firstFailure;
         await using (var first = Start(original, (request, input) => Ordinal(input.CanonicalSeed) switch
         { 0 => throw new IOException("CompiledResumeOriginalFailure"), 3 => Reject(request), _ => Match(request, input) }))
@@ -843,7 +843,7 @@ internal static partial class SearchFailureContinuationChecks
             await Finish(first);
             var results = Drain(first);
             var acceptedTail = results.Single(candidate => candidate.Seed == Seed(2));
-            store.AppendResult(acceptedTail, original.CompiledSearch.SemanticFingerprint);
+            store.AppendResult(acceptedTail, original.Model.CompiledSearch.SemanticFingerprint);
             first.AcknowledgeCandidate(acceptedTail.Seed);
             Checkpoint(store, first, true);
             firstFailure = SearchWorkspace.PendingForHistory(store.Workspace.QueryHistory.Single()).Single();
@@ -859,11 +859,11 @@ internal static partial class SearchFailureContinuationChecks
         Check(continuation is not null && continuation.PendingCandidates.Single() == firstFailure &&
             continuation.PublishedOrdinals.SequenceEqual(new ulong[] { 2 }), "restart plus real Compile finds pending and ACK tail");
 
-        var changedQuery = original.CompiledSearch.NormalizedQuery with
-        { LegacyNeow = original.CompiledSearch.NormalizedQuery.LegacyNeow with
+        var changedQuery = original.Model.CompiledSearch.NormalizedQuery with
+        { LegacyNeow = original.Model.CompiledSearch.NormalizedQuery.LegacyNeow with
             { NeowRelics = new ModelKeySetFilter([BaseGameModelKeys.Relics.Kaleidoscope], [], []) } };
-        var changedCompiled = SearchCompiler.Compile(changedQuery, original.CompiledSearch.Context);
-        var changed = ExactSearchExecutionRequestFactory.Compile(changedCompiled, resumed.RunOptions).Plan!;
+        var changedCompiled = SearchCompiler.Compile(changedQuery, original.Model.CompiledSearch.Context);
+        var changed = SearchPreparationCompiler.Compile(changedCompiled, resumed.RunOptions).Plan!;
         Check(changed is not null && store.ContinuationFor(draft, changed) is null,
             "another actual request cannot reuse pending/ACK even under the same history lookup");
         store.EnsureEnvironment(new() { CaptureComplete = true, Fingerprint = "another-content-environment" });
@@ -872,7 +872,7 @@ internal static partial class SearchFailureContinuationChecks
         store.EnsureEnvironment(environment);
 
         var calls = new ConcurrentDictionary<ulong, int>();
-        store.BindPreparedResultWorkspace(store.PrepareResultWorkspace(resumed.CompiledSearch.SemanticFingerprint, draft, null));
+        store.BindPreparedResultWorkspace(store.PrepareResultWorkspace(resumed.Model.CompiledSearch.SemanticFingerprint, draft, null));
         await using (var retry = Start(resumed, (request, input) =>
         {
             ulong ordinal = Ordinal(input.CanonicalSeed);
@@ -886,7 +886,7 @@ internal static partial class SearchFailureContinuationChecks
                 calls.GetValueOrDefault(0UL) == 1 && calls.GetValueOrDefault(1UL) == 1 && calls.GetValueOrDefault(2UL) == 0,
                 "real recompiled resume retries failure once, delivers the unACKed result and never repeats the acknowledged tail");
             foreach (var output in outputs)
-            { store.AppendResult(output, resumed.CompiledSearch.SemanticFingerprint); retry.AcknowledgeCandidate(output.Seed); }
+            { store.AppendResult(output, resumed.Model.CompiledSearch.SemanticFingerprint); retry.AcknowledgeCandidate(output.Seed); }
             Checkpoint(store, retry, true);
             store.FlushAll();
         }
@@ -904,22 +904,22 @@ internal static partial class SearchFailureContinuationChecks
             throw new InvalidOperationException("Fixture seed identity: " + issue);
         return ordinal;
     }
-    private static ProductionExactSearchResult Reject(ExactSearchExecutionRequest request) =>
+    private static ProductionExactSearchResult Reject(SearchModel request) =>
         new(null, null, request.Authority, SearchQueryEvaluation.NoMatch("ExplicitFixtureMismatch"), "ExplicitFixtureMismatch");
-    private static ProductionExactSearchResult Match(ExactSearchExecutionRequest request, TrustedRootHashInput input)
+    private static ProductionExactSearchResult Match(SearchModel request, TrustedRootHashInput input)
     {
         if (!SeedPredictionRequest.TryCreateFromRootHash(input, CharacterIdentity.FromKey(request.CharacterKey), request.Ascension,
             request.Authority.PlayersCount, request.Authority.PlayerSlotIndex, request.Authority,
             request.Evaluation.AncientOptionConditions, SeedPredictionDomainSelection.None,
             SeedPredictionInputLimits.DefaultRelicSequencePreviewCount, true, out var predictionRequest, out var issue))
             throw new InvalidOperationException("FailureContinuationFixtureRequest:" + issue);
-        var document = new SeedPredictionDocument
+        var facts = new SeedPredictionFacts
         {
-            Context = SeedPredictionDocument.CreateContext(predictionRequest!, request.Detection.DisplayVersion, request.ProfileId),
+            Context = PredictionContext.FromRequest(predictionRequest!, request.Detection.DisplayVersion, request.ProfileId),
             PredictorId = "FailureContinuationFixture", OriginalSeed = input.CanonicalSeed, CanonicalSeed = input.CanonicalSeed,
-            Sections = [], Warnings = [], Diagnostics = [], OverallStatus = SeedPredictionOverallStatus.Completed
+            InputStatus = SeedPredictionInputStatus.Ready, Warnings = [], Diagnostics = []
         };
-        return new(predictionRequest, document, request.Authority,
+        return new(predictionRequest, facts, request.Authority,
             SearchQueryEvaluation.Match([new("FixtureEvidence")], ["fixture:" + input.CanonicalSeed]), "");
     }
 
@@ -939,27 +939,34 @@ internal static partial class SearchFailureContinuationChecks
         }
     }
 
-    private sealed class FixtureFamily(bool cleanupFails = false, Task? untrustedSecondBatch = null) : IFamilyInvocation
+    private sealed class FixtureFamily(bool cleanupFails = false, Task? untrustedSecondBatch = null) : IFilterExecution
     {
         private int _calls;
         public string FamilyId => "FailureContinuationFixture";
+        private FilterBodyDescription? _body;
+        public FilterBodyDescription Body => _body ??= new(new PreparedFilter(FamilyId)
+        { AnalyticalCost = AnalyticalCost, Survival = Survival }, FamilyId, RolltheSpire2.Compatibility.RuntimeProfileId.Beta111)
+        { PerformanceProjection = _ => ConditionPerformance, CreateExecution = (_, _) => this };
+        public static implicit operator FilterBodyDescription(FixtureFamily fixture) => fixture.Body;
+        public bool ExecutionFaulted => false;
+
         public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId, 1, [], "fixture");
         public FamilySurvivalProjection Survival => FamilySurvivalProjection.Resolved(FamilyId, 1, "fixture");
         public FamilyConditionPerformanceProjection ConditionPerformance => new(FamilyId, FamilyId, "fixture", 1, "fixture", usesGpu: false);
         public FamilyPerformanceObservation CapturePerformanceObservation() =>
             new(ConditionPerformance, "", 0, 0, 0, _calls, 0, 0, 0, 0, false, "FixtureNoCalibration");
-        public async ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context,
-            FamilyObservationWindow window, FamilyCandidateSet input, CancellationToken token)
+        public async ValueTask<FamilyCandidateSet> FilterAsync(FilterRuntimeServices context,
+            FamilyCandidateSet input, CancellationToken token)
         {
             int call = Interlocked.Increment(ref _calls);
             if (call == 2 && untrustedSecondBatch is not null)
             {
                 await untrustedSecondBatch.WaitAsync(token);
-                return FamilyCandidateSet.Dense(new SearchBatch(window.Batch.BatchBase + 1, window.Batch.BatchCandidateCount));
+                return FamilyCandidateSet.Dense(new SearchBatch(input.Batch.BatchBase + 1, input.Batch.BatchCandidateCount));
             }
             return input;
         }
-        public ValueTask DisposeAsync(FamilyExecutionContext context) => cleanupFails
+        public ValueTask DisposeAsync(FilterRuntimeServices context) => cleanupFails
             ? ValueTask.FromException(new IOException("InjectedFamilyCleanupFailure")) : ValueTask.CompletedTask;
     }
 }

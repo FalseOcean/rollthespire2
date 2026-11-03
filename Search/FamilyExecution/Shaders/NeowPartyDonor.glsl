@@ -1,6 +1,7 @@
 // Multiplayer core, independently maintained from the solo N implementation.
 // Adopted numeric functions from Beta110GpuNeowP1Common.glsl.
 // HistoricalNextInt retained; route state is strictly Neow-local. No Relic Bag.
+/*__RT2_NEOW_IDENTITY_FACTS__*/
 struct RngState { uint64_t s0; uint64_t s1; uint64_t s2; uint64_t s3; };
 struct RouteRngState { RngState rewards; RngState niche; RngState transformations; RngState combat_potions; };
 uint64_t make_u64(uint low, uint high) {
@@ -74,21 +75,6 @@ bool draw_neow_curse(
     return curse_id != 0xffffffffu;
 }
 
-bool positive_allowed(uint id, uint curse, uint players_count, uint flags) {
-    bool all_character_pools_unlocked = (flags & 4u) != 0u;
-    bool scroll_boxes_allowed = (flags & 8u) != 0u;
-    if (id == 17u && players_count <= 1u) return false; // Massive Scroll
-    if (id == 14u && !all_character_pools_unlocked) return false; // Kaleidoscope
-    if (id == 22u && !scroll_boxes_allowed) return false; // Scroll Boxes
-    if (id == 23u && players_count != 1u) return false; // Winged Boots
-    if (curse == 0u && id == 13u) return false; // Cursed Pearl / Golden Pearl
-    if (curse == 2u && id == 10u) return false; // Hefty Tablet / Arcane Scroll
-    if (curse == 4u && id == 19u) return false; // Leafy Poultice / New Leaf
-    if (curse == 7u && id == 21u) return false; // Precarious / Precise Scissors
-    if (curse == 6u && (id == 20u || id == 16u)) return false; // Sacrifice / Phial / Coffer
-    return true;
-}
-
 uint64_t relic_bit(uint id) {
     return uint64_t(1u) << id;
 }
@@ -100,18 +86,18 @@ bool replay_neow_top_identity_after_curse(
 {
     uint players_count = plan_value(6u);
     uint flags = plan_value(56u);
+    uint profile = rt2_neow_profile(players_count, (flags & 4u) != 0u, (flags & 8u) != 0u);
+    uint fixed_mask = rt2_neow_fixed_mask(profile, curse_id);
     uint positives[17];
     uint positive_count = 0u;
-    for (uint id = 10u; id <= 23u; ++id) {
-        if (positive_allowed(id, curse_id, players_count, flags)) {
-            positives[positive_count++] = id;
-        }
+    for (uint index = 0u; index < RT2_NEOW_FIXED_COUNT; ++index) {
+        if ((fixed_mask & (1u << index)) != 0u)
+            positives[positive_count++] = rt2_neow_fixed_candidates[index];
     }
-    if (curse_id != 3u) { // Large Capsule suppresses the Lava/Small pair.
-        positives[positive_count++] = next_int(event_rng, 2u) == 0u ? 24u : 28u;
-    }
-    positives[positive_count++] = next_int(event_rng, 2u) == 0u ? 26u : 29u;
-    positives[positive_count++] = next_int(event_rng, 2u) == 0u ? 25u : 27u;
+    if (curse_id != RT2_NEOW_OPTIONAL_APPEND_CURSE)
+        positives[positive_count++] = next_int(event_rng, 2u) == 0u ? RT2_NEOW_APPEND0_TRUE : RT2_NEOW_APPEND0_FALSE;
+    positives[positive_count++] = next_int(event_rng, 2u) == 0u ? RT2_NEOW_APPEND1_TRUE : RT2_NEOW_APPEND1_FALSE;
+    positives[positive_count++] = next_int(event_rng, 2u) == 0u ? RT2_NEOW_APPEND2_TRUE : RT2_NEOW_APPEND2_FALSE;
     if (positive_count < 2u) {
         route_mask = 0u;
         return false;

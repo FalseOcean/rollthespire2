@@ -49,8 +49,14 @@ internal static class Y2RootCostProbe
     private static Rid Buffer(RenderingDevice rd, byte[] bytes) => rd.StorageBufferCreate((uint)Math.Max(4, bytes.Length), bytes);
     private static string Digest(FamilyCandidateSet set) => Convert.ToHexString(SHA256.HashData(MemoryMarshal.AsBytes(set.ExportAbi1().Span)));
 
-    internal static void Run(ExactSearchExecutionRequest request, string kind, string output)
+    internal static void Run(PreparedSearch request, string kind, string output)
     {
+        if (kind is "E-preparation" or "E-preparation-default")
+        { FamilyPreparationChecks.RunE(request, output, productionDefaultOnly: kind == "E-preparation-default"); return; }
+        if (kind is "T-entry" or "T-entry-default")
+        { FamilyPreparationChecks.RunTEntry(request, output, productionDefaultOnly: kind == "T-entry-default"); return; }
+        if (kind is "N-entry-identity" or "N-entry-default")
+        { NeowEntryIdentityChecks.Run(request, output, productionDefaultOnly: kind == "N-entry-default"); return; }
         if (kind == "N-trials") { ShionNeowOptimizationChecks.Run(request, output); return; }
         if (kind == "N-readback") { NeowSmallReadbackChecks.Run(request, output); return; }
         if (kind == "E-readback") { EventReadbackProbe.Run(request, output); return; }
@@ -61,14 +67,14 @@ internal static class Y2RootCostProbe
         var batch = new SearchBatch(start, count);
         var input = FamilyCandidateSet.Dense(batch);
         var families = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, gpuAvailable: true);
-        IFamilyInvocation Family(string id) => families.Single(f => f.FamilyId == id);
+        FilterBodyDescription Family(string id) => families.Single(f => f.FamilyId == id);
         using var rd = RenderingServer.CreateLocalRenderingDevice() ?? throw new InvalidOperationException("GPU unavailable");
         IDisposable? producer = null, privateBuffer = null;
         IDisposable executor;
         string source, pipelineField = "_pipeline";
         bool compact = kind == "NC";
         uint[] ordinals = [];
-        object NPlan() => Get(Family("N.Neow"), "GpuPlan");
+        object NPlan() => HostFilterBindings.PrepareNeow(request).GpuPlan ?? throw new InvalidDataException("Y2.NPlanMissing");
         if (kind == "N")
         {
             var plan = NPlan();
@@ -80,26 +86,27 @@ internal static class Y2RootCostProbe
         else if (kind.StartsWith("S", StringComparison.Ordinal))
         {
             bool stable = kind == "S-stable";
-            var authority = RolltheSpire2.Core.Merchant.Beta111MerchantColorlessAuthority.From(request.Authority);
+            var authority = RolltheSpire2.Core.Merchant.Beta111MerchantColorlessAuthority.From(request.Model.Authority);
             if (authority.UncommonPool.Distinct(RolltheSpire2.Core.Identity.ModelKeyComparer.Instance).Count() != authority.UncommonPool.Count ||
                 authority.RarePool.Distinct(RolltheSpire2.Core.Identity.ModelKeyComparer.Instance).Count() != authority.RarePool.Count)
                 throw new InvalidOperationException("Y2 S substitutions require unique pools; use s-identity-check for canonical-map fixtures");
-            executor = (IDisposable)StaticCall("MerchantShopColorlessGpuExecutor", "Create", rd, request,
-                Enum.Parse(T("MerchantShopColorlessCompactionPath"), stable ? "StableOrderedCompaction" : "AtomicAppendHostSort"))!;
+            executor = MerchantShopColorlessGpuExecutor.Create(rd, MerchantShopColorlessGpuExecutor.PrepareInputs(request.Model.Evaluation,authority,request.Model.SnapshotFingerprint),
+                stable ? MerchantShopColorlessCompactionPath.StableOrderedCompaction : MerchantShopColorlessCompactionPath.AtomicAppendHostSort);
             source = SharedShader("MerchantShopColorless.comp.glsl");
-            source = MerchantShopColorlessGpuExecutor.ConfigureEarlyRejection(source, request.Evaluation,
-                request.Authority.PlayersCount);
+            source = MerchantShopColorlessGpuExecutor.ConfigureEarlyRejection(source, request.Model.Evaluation,
+                request.Model.Authority.PlayersCount);
             if (stable) { source = (string)StaticCall("MerchantShopColorlessGpuExecutor", "EnableStableOrderedCompaction", source)!; pipelineField = "_stablePhase1Pipeline"; }
         }
         else if (kind == "R")
         {
-            var plan = (RelicFamilyPlan)Get(Family("R.Relic"), "_plan");
-            executor = RelicFamilyGpuExecutor.Create(rd, request, plan);
+            if(!RelicFamily.TryPrepare(request.Model,FilterExecutionPreferences.From(request.RunOptions),out var prepared) || prepared is null) throw new InvalidDataException("Y2.RPlanMissing");
+            var plan = prepared.Plan;
+            executor = RelicFamilyGpuExecutor.Create(rd, request.Model.SnapshotFingerprint, plan);
             source = RelicFamilyGpuExecutor.ShaderSource(false, localStateCapacity: plan.LocalStateCapacity);
         }
         else if (kind is "C" or "NC")
         {
-            var plan = Get(Family("C.CombatReward"), "GpuPlan");
+            if(!CombatRewardFamily.TryPrepare(request.Model,FilterExecutionPreferences.From(request.RunOptions),out var prepared) || prepared?.GpuPlan is not {} plan) throw new InvalidDataException("Y2.CPlanMissing");
             if (compact)
             {
                 privateBuffer = (IDisposable)New("PrivateOrdinalBuffer", rd);
@@ -118,7 +125,7 @@ internal static class Y2RootCostProbe
         }
         else if (kind == "W")
         {
-            var plan = New("WorldFamilyGpuPlan", Get(Family("W.World"), "Replay"));
+            var plan = new WorldFamilyGpuPlan(new WorldFamilyReplay(request.Model));
             executor = (IDisposable)New("WorldFamilyGpuExecutor", rd, plan, null, null);
             source = (string)Call(plan, "ShaderSource")!;
         }

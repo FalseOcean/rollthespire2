@@ -7,10 +7,6 @@ namespace RolltheSpire2.Search.FamilyExecution;
 // consumes only its local Rewards draws here. No bag or relic state is accepted.
 internal static class NeowLocalOperators
 {
-    internal static bool IsPositiveAllowed(byte id, byte curse, Beta110FastNeowAuthority authority) =>
-        authority.PlayersCount == 1 ? NeowSingleplayerOperators.IsPositiveAllowed(id, curse, authority)
-            : NeowPartyOperators.IsPositiveAllowed(id, curse, authority);
-
     internal static bool ExecuteRelic(
         byte relicId,
         bool isActive,

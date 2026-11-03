@@ -16,7 +16,7 @@ internal sealed class WorldFamilyReplay
             $"h={a.EventPredicates.Select(p => (int)p.RangeValue).DefaultIfEmpty(0).Max()}:boss={a.HasBossPredicate}:ancient={a.HasAncientPredicate}"));
     private static readonly ulong UpFrontHash = XxHash64.Hash("up_front"u8, 0);
 
-    internal static NeowSearchFilter Filter(ExactSearchExecutionRequest request)
+    internal static NeowSearchFilter Filter(SearchModel request)
     {
         var q = request.CompiledSearch.NormalizedQuery;
         return NeowSearchFilter.Empty with
@@ -29,7 +29,7 @@ internal sealed class WorldFamilyReplay
         };
     }
 
-    internal static bool HasConditions(ExactSearchExecutionRequest request)
+    internal static bool HasConditions(SearchModel request)
     {
         var f = Filter(request);
         return request.CompiledSearch.NormalizedQuery.VariantBossBranches.Any(b => !b.FirstBoss.IsEmpty || !b.SecondBoss.IsEmpty) ||
@@ -38,9 +38,9 @@ internal sealed class WorldFamilyReplay
             f.EventSequenceConditions.Any(p => !p.IsEmpty);
     }
 
-    internal WorldFamilyReplay(ExactSearchExecutionRequest request) : this(request, Compile(request)) { }
+    internal WorldFamilyReplay(SearchModel request) : this(request, Compile(request)) { }
 
-    internal static Beta110WorldFastPlan Compile(ExactSearchExecutionRequest request)
+    internal static Beta110WorldFastPlan Compile(SearchModel request)
     {
         var filter = Filter(request);
         var branches = request.CompiledSearch.NormalizedQuery.VariantBossBranches;
@@ -57,7 +57,7 @@ internal sealed class WorldFamilyReplay
         return plan;
     }
 
-    internal WorldFamilyReplay(ExactSearchExecutionRequest request, Beta110WorldFastPlan plan)
+    internal WorldFamilyReplay(SearchModel request, Beta110WorldFastPlan plan)
     {
         Plan = plan;
         VariantFilterMigrated = request.CompiledSearch.NormalizedQuery.VariantBossBranches.Count > 0;
@@ -73,13 +73,13 @@ internal sealed class WorldFamilyReplay
             .Select(b => checked((uint)b.OrderedRelics.Count)).ToArray();
     }
 
-    internal static void ValidateRelicAuthority(ExactSearchExecutionRequest request)
+    internal static void ValidateRelicAuthority(SearchModel request)
     {
         if (!HasRelicAuthority(request))
             throw new InvalidOperationException("W.RootRelicInitializationAuthorityIncomplete");
     }
 
-    private static bool HasRelicAuthority(ExactSearchExecutionRequest request)
+    private static bool HasRelicAuthority(SearchModel request)
     {
         var generation = request.Authority.WorldAuthority?.Beta109Generation;
         return generation is not null && generation.RelicInitializationExact && generation.SharedRelicPoolOrderExact &&

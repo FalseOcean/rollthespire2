@@ -4,12 +4,12 @@ namespace RolltheSpire2.Search.FamilyExecution;
 
 internal static partial class RelicPhysicalPricing
 {
-    internal static FamilyPhysicalQuote? QuoteMixedModel(ExactSearchExecutionRequest request, RelicFamilyPlan plan,
+    internal static FamilyPhysicalQuote? QuoteMixedModel(FilterPricingAuthority request, RelicFamilyPlan plan,
         FamilyExpectedFilteringCostProjection expected, FamilyPhysicalQuoteRequest g)
     {
         if (!FamilyPhysicalQuote.AdmittedRequest(g) || !FamilyPhysicalQuote.HasReferenceBackend() ||
-            request.ProfileId != Compatibility.RuntimeProfileId.Beta111 || !request.Authority.CanUseCurrentModel ||
-            request.Authority.PlayersCount != 1 || request.Authority.AllCharacterCardPoolsUnlocked != true ||
+            request.ProfileId != Compatibility.RuntimeProfileId.Beta111 || !request.CanUseCurrentModel ||
+            request.PlayersCount != 1 || request.AllCharacterCardPoolsUnlocked != true ||
             plan.AlwaysReject || !expected.IsResolved || plan.Predicates.Length is < 1 or > 5 ||
             plan.Predicates.Any(p=>p.Lane>2) || plan.TrackedInitialPositions.Length is < 1 or > 12 ||
             plan.ShopPredicates is not [{ Count: >= 1 and <= 5 } shop] || plan.LastRequiredBucket != 9 ||

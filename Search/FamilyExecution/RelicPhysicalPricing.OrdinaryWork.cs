@@ -7,13 +7,13 @@ internal static partial class RelicPhysicalPricing
     // Ordinary tracked-position body only. The existing finite-sequence ledger
     // owns bucket reach; these independently measured CPU/GPU coefficients map
     // that R-owned work to reference time. Shop and Capsule are different bodies.
-    internal static FamilyPhysicalQuote? QuoteOrdinaryModel(ExactSearchExecutionRequest request,
+    internal static FamilyPhysicalQuote? QuoteOrdinaryModel(FilterPricingAuthority request,
         RelicFamilyPlan plan, FamilyExpectedFilteringCostProjection expected,
         FamilyPhysicalQuoteRequest geometry, bool cpu)
     {
         if (!FamilyPhysicalQuote.AdmittedRequest(geometry) ||
-            request.ProfileId != Compatibility.RuntimeProfileId.Beta111 || !request.Authority.CanUseCurrentModel ||
-            request.Authority.PlayersCount != 1 || request.Authority.AllCharacterCardPoolsUnlocked != true ||
+            request.ProfileId != Compatibility.RuntimeProfileId.Beta111 || !request.CanUseCurrentModel ||
+            request.PlayersCount != 1 || request.AllCharacterCardPoolsUnlocked != true ||
             plan.AlwaysReject || !expected.IsResolved || plan.ShopPredicates.Length != 0 ||
             plan.Predicates.Length is < 1 or > 5 || plan.Predicates.Any(p => p.Lane > 2) ||
             plan.TrackedInitialPositions.Length is < 1 or > 12 ||

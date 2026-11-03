@@ -249,6 +249,7 @@ internal static class PredictorEventChecks
         var context = new PredictorContext("SKDPGF6RC1PC", "0.111.0", new("CHARACTER", "IRONCLAD"),
             0, "events-test-catalog", "events-test-unlocks", [], [], [], 1) { Catalog = catalog };
         var seed = PredictorSeedState.Create(context, [a, b], [], 110, 2, new(-.05f, .4f));
+        SharedOptionEffectTransactions(context, seed);
         var tailSeed = PredictorSeedState.Create(context, [a, b],
             [new ModelKey("RELIC", "LIZARD_TAIL")], 110, 2, new(-.05f, .4f));
         var tailFairy = new PredictorPotion(tailSeed.NextInstanceId, new("POTION", "FAIRY_IN_A_BOTTLE"));
@@ -934,6 +935,9 @@ internal static class PredictorEventChecks
             grafter.Working.Card(seed.Deck[0]).UpgradeLevel == 1 &&
             grafter.Checkpoints[^1].CompletedNode!.Inputs.SelectMany(i => i.EventHealthConsequences).Sum(h => h.HpDelta) == -10,
             "SpiritGrafter upgrade then damage");
+        Check(grafter.Checkpoints[^1].CompletedNode!.Inputs.FindIndex(i => i.Action == "EventUpgrade") <
+            grafter.Checkpoints[^1].CompletedNode!.Inputs.FindIndex(i => i.Action == "EventHealth"),
+            "Shared Grafter deferred health command remains after the actual chosen upgrade");
         var exhausted = new PredictorCard(0, new("CARD", "EXHAUST_TEST"), EffectCardType.Skill, 0, 1, true, 1)
         { HasExhaustKeyword = true };
         var graveCatalog = new PredictorCatalog([], []) { CardDefinitions =
@@ -1016,5 +1020,75 @@ internal static class PredictorEventChecks
             "Crystal native price, payment, eleven-square board and default Big tool");
         Console.WriteLine("Predictor event transaction checks PASS: ordered Fairy/LizardTail inventory, Grimoire removal cancel/rewind, temporary card source ordering, Aroma rollback, Morphic health, TinkerTime, Symbiote, local RNG, ThisOrThat Obtain/Tungsten survival, Trial modal/obtains, Zen ordering, Courier rewards, Reflections, Wellspring, SlipperyBridge, TeaMaster, FuturePotion trade, Stone, Unrest low-maxHP death, SunkenStatue, Holes, TeaParty, AbyssalBaths, Beacon low-maxHP death, Tablet forced-Kill prevention, Choir, Wisp, Amalgamator, Flower, Bugslayer, Treasury, Wood, Ranwid, RelicTrader, Dense trudge/rest handoff, SelfHelpBook, Whirlpool, Doors, FakeMerchant stock UI, Cheese grid, Scriptorium, BrainLeech grid, Doll selection, Grafter, Grave per-level Exhaust, Conveyor first roll, Jungle gold, Wongo pre-pull/purchase/Badge, Crystal board entry.");
         return 0;
+    }
+
+    private static void SharedOptionEffectTransactions(PredictorContext context, PredictorState seed)
+    {
+        var poorTea = new PredictorRun(context, seed with { GoldBudget = 49 });
+        poorTea.BeginEvent(new(2, 20, "event:tea:poor"), new("EVENT", "TEA_MASTER"));
+        Check(!poorTea.EventOptions.Single(o => o.Key == "BONE_TEA").Enabled &&
+            !poorTea.EventOptions.Single(o => o.Key == "EMBER_TEA").Enabled &&
+            poorTea.EventOptions.Single(o => o.Key == "TEA_OF_DISCOURTESY").Enabled &&
+            poorTea.Submit(poorTea.Request!, new ChooseEventOption("BONE_TEA")) == PredictorInputResult.Invalid &&
+            poorTea.Working.GoldBudget == 49 && poorTea.Working.Relics.IsEmpty,
+            "Tea shared affordability prevents payment and product below the boundary");
+        var ember = new PredictorRun(context, seed with { GoldBudget = 150 });
+        ember.BeginEvent(new(2, 20, "event:tea:ember"), new("EVENT", "TEA_MASTER"));
+        Check(ember.Submit(ember.Request!, new ChooseEventOption("EMBER_TEA")) == PredictorInputResult.Accepted &&
+            ember.Phase == PredictorPhase.Complete && ember.Working.GoldBudget == 0 &&
+            ember.Working.Relics.Single().Key.Entry == "EMBER_TEA", "Tea exact-boundary payment produces its chosen native relic");
+        var breathing = new PredictorRun(context, seed with { GoldBudget = 0 });
+        breathing.BeginEvent(new(1, 2, "event:zen:poor"), new("EVENT", "ZEN_WEAVER"));
+        breathing.RefreshEventOptionsAfterBudgetCorrection();
+        Check(breathing.EventOptions.Single(o => o.Key == "BREATHING_TECHNIQUES").Enabled &&
+            !breathing.EventOptions.Single(o => o.Key == "EMOTIONAL_AWARENESS").Enabled &&
+            breathing.Submit(breathing.Request!, new ChooseEventOption("BREATHING_TECHNIQUES")) == PredictorInputResult.Accepted &&
+            breathing.Phase == PredictorPhase.Complete && breathing.Working.GoldBudget == 0 &&
+            breathing.Working.Deck.TakeLast(2).All(id => breathing.Working.Card(id).Key.Entry == "ENLIGHTENMENT") &&
+            breathing.Working.Deck.Length == seed.Deck.Length + 2,
+            "Zen native always-offered Breathing preserves clamped payment and two actual card products");
+        var quill = new PredictorRun(context, seed with { GoldBudget = 55 });
+        quill.BeginEvent(new(1, 2, "event:scriptorium:quill"), new("EVENT", "WATERLOGGED_SCRIPTORIUM"));
+        Check(quill.EventOptions.Single(o => o.Key == "TENTACLE_QUILL").Enabled &&
+            !quill.EventOptions.Single(o => o.Key == "PRICKLY_SPONGE").Enabled &&
+            quill.Submit(quill.Request!, new ChooseEventOption("TENTACLE_QUILL")) == PredictorInputResult.Accepted &&
+            quill.Phase == PredictorPhase.EventCards && quill.Working.GoldBudget == 0 &&
+            quill.EventCardsRequired == 1 && quill.Working.Cards.All(c => c.Enchantment == null),
+            "Scriptorium exact-boundary payment precedes its one-card selection");
+        Check(quill.Submit(quill.Request!, new SelectEventCards([seed.Deck[0]])) == PredictorInputResult.Accepted &&
+            quill.Phase == PredictorPhase.Complete &&
+            quill.Working.Card(seed.Deck[0]).Enchantment == new ModelKey("ENCHANTMENT", "STEADY") &&
+            quill.Working.Card(seed.Deck[0]).EnchantmentAmount == 1 && quill.Working.Card(seed.Deck[1]).Enchantment == null,
+            "Scriptorium applies the shared enchantment product only to the selected card");
+        var ink = new PredictorRun(context, seed);
+        ink.BeginEvent(new(1, 2, "event:scriptorium:ink"), new("EVENT", "WATERLOGGED_SCRIPTORIUM"));
+        Check(ink.EventOptions.Single(o => o.Key == "BLOODY_INK").HealthHeal == 6 &&
+            ink.Submit(ink.Request!, new ChooseEventOption("BLOODY_INK")) == PredictorInputResult.Accepted && ink.EventNeedsHealthFact &&
+            ink.Submit(ink.Request!, new ProvideEventHealthFact(new(20, 40))) == PredictorInputResult.Accepted &&
+            ink.Checkpoints[^1].CompletedNode!.Inputs.SelectMany(i => i.EventHealthConsequences)
+                .Single() == new PredictorEventHealthDelta(6, 6), "Scriptorium offer, health input and GainMaxHp healing share one effect");
+        var beacon = new PredictorRun(context, seed);
+        beacon.BeginEvent(new(2, 20, "event:beacon:survive"), new("EVENT", "DROWNING_BEACON"));
+        Check(beacon.Submit(beacon.Request!, new ChooseEventOption("CLIMB")) == PredictorInputResult.Accepted && beacon.EventNeedsHealthFact &&
+            beacon.Submit(beacon.Request!, new ProvideEventHealthFact(new(40, 80))) == PredictorInputResult.Accepted &&
+            beacon.Phase == PredictorPhase.Complete && beacon.Working.Relics.Single().Key.Entry == "FRESNEL_LENS" &&
+            beacon.Checkpoints[^1].CompletedNode!.Inputs.SelectMany(i => i.EventHealthConsequences).Single().MaxHpDelta == -13,
+            "Beacon surviving health command obtains the same product as the shared option rule");
+        var doll = new PredictorRun(context, seed);
+        doll.BeginEvent(new(2, 20, "event:doll:lethal"), new("EVENT", "DOLL_ROOM"));
+        Check(doll.EventOptions.Single(o => o.Key == "TAKE_SOME_TIME").HealthDamage == 5 &&
+            doll.EventOptions.Single(o => o.Key == "EXAMINE").HealthDamage == 15 &&
+            doll.Submit(doll.Request!, new ChooseEventOption("TAKE_SOME_TIME")) == PredictorInputResult.Accepted && doll.EventNeedsHealthFact &&
+            doll.Submit(doll.Request!, new ProvideEventHealthFact(new(4, 40))) == PredictorInputResult.Accepted &&
+            doll.Working.Outcome == PredictorRunOutcome.Death && doll.Working.Relics.IsEmpty && doll.EventOptions.IsEmpty,
+            "Doll shared health cost kills before sampling or obtaining an alternative");
+        var hollow = new PredictorRun(context, seed);
+        hollow.BeginEvent(new(2, 20, "event:hollow:lethal"), new("EVENT", "WHISPERING_HOLLOW"));
+        Check(hollow.Submit(hollow.Request!, new ChooseEventOption("HUG")) == PredictorInputResult.Accepted && hollow.EventNeedsHealthFact &&
+            hollow.Submit(hollow.Request!, new ProvideEventHealthFact(new(8, 40))) == PredictorInputResult.Accepted &&
+            hollow.Phase == PredictorPhase.EventCards &&
+            hollow.Submit(hollow.Request!, new SelectEventCards([seed.Deck[0]])) == PredictorInputResult.Accepted &&
+            hollow.Working.Outcome == PredictorRunOutcome.Death && hollow.Phase == PredictorPhase.Complete,
+            "Hollow deferred damage finishes death after the chosen transform without reading a retired event parent");
     }
 }

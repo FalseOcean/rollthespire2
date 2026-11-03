@@ -93,6 +93,72 @@ public static class RuntimePredictionDiagnosticReporter
                 ("diagnosticFileFailure", sink.LastFailureCode))));
     }
 
+    // Search publishes its actual model disposition independently of optional
+    // analysis observations. Missing facts or request context remain explicit.
+    public static void EmitSearch(
+        IRuntimePredictionDiagnosticSink? sink,
+        SeedPredictionRequest? request,
+        SeedPredictionFacts? facts,
+        string detectedGameVersion,
+        string disposition,
+        string failureCode,
+        bool forceTrace = false,
+        string source = "SearchExact",
+        RuntimeContextAuthoritySnapshot? authority = null,
+        string? seed = null)
+    {
+        if (sink is null || (!sink.Enabled && !forceTrace)) return;
+        authority ??= request?.Authority;
+        string requestId = request?.RequestId.Serialized ?? facts?.Context.RequestId.Serialized ?? "";
+        string profile = (facts?.ProfileId ?? authority?.ProfileId)?.ToString() ?? "Unknown";
+        string canonicalSeed = seed ?? facts?.CanonicalSeed ?? request?.OriginalSeed ?? "";
+        Write(sink, forceTrace, RuntimePredictionDiagnosticEvent.Create(requestId, profile, canonicalSeed,
+            RuntimePredictionDiagnosticLevel.Info, "Search", source, RuntimePredictionDiagnosticStatus.Started,
+            details: Details(("gameVersion", detectedGameVersion), ("requestObserved", request is not null),
+                ("factsObserved", facts is not null), ("context", facts?.Context),
+                ("supportScope", authority?.SupportScope), ("snapshotFingerprint", authority?.WorldSnapshotFingerprint))));
+        if (facts is not null)
+        {
+            Write(sink, forceTrace, RuntimePredictionDiagnosticEvent.Create(requestId, profile, canonicalSeed,
+                RuntimePredictionDiagnosticLevel.Info, "Observation", "SeedFacts", RuntimePredictionDiagnosticStatus.Completed,
+                facts.InputIssue, Details(("inputStatus", facts.InputStatus.ToString()), ("predictorId", facts.PredictorId),
+                    ("warningCodes", facts.Warnings.Select(warning => warning.Code.ToString()).ToArray()),
+                    ("diagnostics", facts.Diagnostics))));
+            if (facts.Neow is { } neow) Domain("Neow", neow.Status, neow.IssueCode, neow);
+            if (facts.World is { } world)
+            {
+                Domain("Boss", world.BossStatus, world.BossIssueCode, world.Bosses);
+                Domain("Ancient", world.AncientStatus, world.AncientIssueCode, world.Ancients);
+                if (world.EncounterSequences.Count > 0)
+                    Domain("Encounters", SeedDomainEvaluationStatus.Evaluated, "", world.EncounterSequences);
+                if (world.EventPoolSequencePrediction is { } events)
+                    Domain("EventPoolSequence", events.Status, events.IssueCode, events);
+            }
+            if (facts.Relics is { } relics) Domain("RelicSequence", relics.Status, relics.IssueCode, relics);
+            if (facts.CombatRewards is { } rewards) Domain("CombatRewards", rewards.Status, rewards.IssueCode, rewards);
+            if (facts.Party is { } party)
+                Write(sink, forceTrace, RuntimePredictionDiagnosticEvent.Create(requestId, profile, canonicalSeed,
+                    RuntimePredictionDiagnosticLevel.Info, "Observation", "Party", RuntimePredictionDiagnosticStatus.Completed,
+                    details: Details(("observation", party))));
+        }
+        RuntimePredictionDiagnosticStatus status = disposition switch
+        {
+            "Match" or "NoMatch" => RuntimePredictionDiagnosticStatus.Succeeded,
+            "Cancelled" => RuntimePredictionDiagnosticStatus.Skipped,
+            _ => RuntimePredictionDiagnosticStatus.Partial
+        };
+        Write(sink, forceTrace, RuntimePredictionDiagnosticEvent.Create(requestId, profile, canonicalSeed,
+            RuntimePredictionDiagnosticLevel.Info, "Search", "ExactDisposition", status, failureCode,
+            Details(("disposition", disposition), ("source", source),
+                ("confirmed", disposition == "Match"), ("diagnosticFileFailure", sink.LastFailureCode))));
+
+        void Domain(string name, SeedDomainEvaluationStatus domainStatus, string issue, object observations) =>
+            Write(sink, forceTrace, RuntimePredictionDiagnosticEvent.Create(requestId, profile, canonicalSeed,
+                RuntimePredictionDiagnosticLevel.Info, "Observation", name,
+                domainStatus == SeedDomainEvaluationStatus.Evaluated ? RuntimePredictionDiagnosticStatus.Succeeded : RuntimePredictionDiagnosticStatus.Partial,
+                issue, Details(("domainStatus", domainStatus.ToString()), ("observation", observations))));
+    }
+
     public static RuntimePredictionDiagnosticEvent SearchSessionStarted(
         string sessionId,
         string profile,

@@ -22,7 +22,14 @@ internal static class PredictorInitialization
     internal static PredictorRun FromSeed(PredictorContext context, RuntimeContextAuthoritySnapshot authority,
         ImmutableArray<PredictorCard> startingDeck, ImmutableArray<ModelKey> startingRelics, int startingGold)
     {
-        if (context.Crystal is not null || authority.Character.CharacterKey != context.Character || authority.Ascension != context.Ascension ||
+        ArgumentNullException.ThrowIfNull(context);
+        if (!RuntimeProfilePolicies.SupportsPredictorSeedInitialization(context.VersionResolution))
+            throw new InvalidOperationException("PredictorSeedInitializationVersionUnsupported:" + context.GameVersion);
+        PredictorSeedState.ValidateContext(context);
+        if (context.Crystal is not null || context.Live is not null || context.Operation is not null ||
+            authority.ProfileId != context.RuntimeProfile.ProfileId ||
+            RuntimeProfileRegistry.Resolve(authority.GameVersion).GameVersionIdentity != context.VersionResolution.GameVersionIdentity ||
+            authority.Character.CharacterKey != context.Character || authority.Ascension != context.Ascension ||
             authority.CatalogFingerprint != context.CatalogFingerprint || authority.UnlockSnapshotFingerprint != context.UnlockFingerprint ||
             authority.PlayerSlotIndex != 0 || authority.PlayersCount != 1 || authority.NoRunModifiers != true)
             throw new InvalidOperationException("PredictorInitializationContextMismatch");
@@ -64,13 +71,15 @@ internal static class PredictorInitialization
         ImmutableArray<ModelKey> neowOptions = [];
         if (runtimeWorld.StartedWithNeow && context.Modifiers.IsEmpty)
         {
-            var neow = ModernNeowIdentityPredictor.PredictModernCore(context.Seed, authority, Beta111Profile.Instance, true);
+            var neow = ModernNeowIdentityPredictor.PredictModernCore(context.Seed, authority, context.RuntimeProfile, true);
             if (neow.UnknownEligibilityAffectedPool) throw new InvalidOperationException("PredictorOpeningEligibilityMissing");
             neowOptions = neow.RelicKeys.ToImmutableArray();
         }
+        // No map point has been recorded at this boundary. EnterOpening or
+        // AdvanceRoute records Neow (or the no-Neow first Monster) at floor 1.
         state = state with { PersonalBag = personal, SharedBag = shared, Acts = runtimeWorld.Acts,
             StartedWithNeow = runtimeWorld.StartedWithNeow, OpeningCompleted = !runtimeWorld.StartedWithNeow,
-            OpeningOptions = neowOptions, Position = new(1, 1, "opening-entry") };
+            OpeningOptions = neowOptions, Position = new(1, 0, "opening-entry") };
         if (context.HasRunModifier("DEADLY_EVENTS"))
         {
             var juzu = new ModelKey("RELIC", "JUZU_BRACELET");

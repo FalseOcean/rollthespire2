@@ -65,7 +65,7 @@ internal static class ProductionReplayChecks
         {
             var workload = new ProductionSearchReplayWorkload(1, sample.Value, new("000000000000", 4096, int.MaxValue, 1));
             ProductionSearchReplay.Write(Path.Combine(dir, sample.Key + ".json"), workload);
-            var compiled = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(sample.Value, context), workload.Options);
+            var compiled = SearchPreparationCompiler.Compile(SearchCompiler.Compile(sample.Value, context), workload.Options);
             if (!compiled.Success) throw new Exception("Smoke compile:" + sample.Key + ":" + compiled.Issue);
             string compact = ProductionSearchReplay.SerializeWorkload(compiled.Plan!);
             var logged = JsonSerializer.Deserialize<ProductionSearchReplayWorkload>(compact, ProductionSearchReplay.JsonOptions)!;
@@ -79,7 +79,7 @@ internal static class ProductionReplayChecks
             {
                 string seed = Beta110SeedCodec.FormatOrdinal(i);
                 if (!TrustedRootHashInput.TryBindCanonicalSeed(Beta111Profile.Instance, Beta111Profile.Instance.ComputeRootSeed(seed), seed, out var input, out var issue)) throw new Exception(issue);
-                var exact = ProductionExactSearchEvaluator.Evaluate(compiled.Plan!, input);
+                var exact = ProductionExactSearchEvaluator.Evaluate(compiled.Plan!.Model, input);
                 if (exact.IsMatch) expected.WriteLine(JsonSerializer.Serialize(new { Seed = seed,
                     MatchEvidence = exact.Evaluation.Evidence, MatchedRouteIds = exact.Evaluation.MatchedRouteIds,
                     Witnesses = exact.Evaluation.Witnesses }, new JsonSerializerOptions(ProductionSearchReplay.JsonOptions) { WriteIndented = false }));

@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.Json;
 using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.World;
@@ -19,10 +18,10 @@ internal static class RelicShopCpuChecks
         if (!string.IsNullOrWhiteSpace(prepare)) return PrepareMixedFixtures(prepare);
         var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/v1/context.json");
         var w = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/family-pricing-matrix-v1/R-shop.json");
-        ExactSearchExecutionRequest Compile(SearchQuery q) => ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(q, context.Context), w.Options).Plan
+        PreparedSearch Compile(SearchQuery q) => SearchPreparationCompiler.Compile(SearchCompiler.Compile(q, context.Context), w.Options).Plan
             ?? throw new InvalidDataException("shop query compile");
         var basis = Compile(w.Query);
-        RelicFamilyPlanCompiler.TryCompilePool(basis, out _, out var dense, out var lanes, out _);
+        RelicFamilyPlanCompiler.TryCompilePool(basis.Model, out _, out var dense, out var lanes, out _);
         var keys = dense.Where(p => lanes[3].ContainsKey(p.Value)).Take(3).Select(p => p.Key).ToArray();
         var queries = new List<SearchQuery> { w.Query };
         foreach (int depth in new[] { 1, 2, 3, 5 })
@@ -50,10 +49,11 @@ internal static class RelicShopCpuChecks
         foreach (var q in queries)
         {
             var request = Compile(q);
-            if (!RelicFamilyPlanCompiler.TryCompile(request, out var plan, out string issue)) throw new InvalidDataException(issue);
+            if (!RelicFamilyPlanCompiler.TryCompile(request.Model, out var plan, out string issue)) throw new InvalidDataException(issue);
             var fast = RelicShopCpuPlan.TryCompile(plan!) ?? throw new InvalidDataException("shop not admitted");
-            RelicFamily.TryCreate(request, out var family);
-            var reference = typeof(RelicFamily).GetMethod("MatchesCpuReference", BindingFlags.Instance | BindingFlags.NonPublic)!.CreateDelegate<Func<ulong, bool>>(family);
+            var referencePlan = new RelicReferencePlan(RelicReferencePlan.ProjectEvaluation(request.Model),
+                request.Model.Authority.WorldAuthority, RuntimeProfileRegistry.Select(request.Model.Detection));
+            Func<ulong, bool> reference = referencePlan.Reference;
             var random = new Random(77);
             int kept = 0;
             for (int i = 0; i < 9217; i++)
@@ -72,7 +72,7 @@ internal static class RelicShopCpuChecks
         }
         // Confront filtered eligibility independently of the captured all-eligible
         // shop pool: shuffle the entire bag, filter, reverse, then inspect its head.
-        RelicFamilyPlanCompiler.TryCompile(basis, out var original, out _);
+        RelicFamilyPlanCompiler.TryCompile(basis.Model, out var original, out _);
         int bucket = Enumerable.Range(0, original!.Pool.BucketCount).Single(i => original.Pool.BucketScopes[i] == 1 && original.Pool.BucketKinds[i] == 4);
         int offset = original.Pool.BucketOffsets[bucket], length = original.Pool.BucketLengths[bucket];
         ushort target = original.ShopPredicates[0].TargetIds[0];
@@ -92,8 +92,9 @@ internal static class RelicShopCpuChecks
                 checks++;
             }
         }
-        RelicFamily.TryCreate(basis, out var referenceFamily);
-        var basisReference = typeof(RelicFamily).GetMethod("MatchesCpuReference", BindingFlags.Instance | BindingFlags.NonPublic)!.CreateDelegate<Func<ulong, bool>>(referenceFamily);
+        var basisReferencePlan = new RelicReferencePlan(RelicReferencePlan.ProjectEvaluation(basis.Model),
+            basis.Model.Authority.WorldAuthority, RuntimeProfileRegistry.Select(basis.Model.Detection));
+        Func<ulong, bool> basisReference = basisReferencePlan.Reference;
         checks += RelicCpuChecks.CheckEnvelope(basis, RelicShopCpuPlan.TryCompile(original)!.Matches, basisReference);
         // No-replacement unordered multiplicity: two copies of one identity cannot occur.
         var duplicateDepth = (byte[])original.PositiveDepthByLane.Clone(); duplicateDepth[3] = 2;
@@ -165,10 +166,10 @@ internal static class RelicShopCpuChecks
                 var workload = new ProductionSearchReplayWorkload(ProductionSearchReplay.SchemaVersion, query,
                     new(seed, 1L << 34, int.MaxValue, 16));
                 ProductionSearchReplay.Write((string)row["Workload"]!, workload);
-                var compiled = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context), workload.Options);
+                var compiled = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context), workload.Options);
                 var parent = compiled.Plan ?? throw new InvalidDataException("R02 compile: " + compiled.Issue);
-                var request = context.Party is null ? parent : ExactSearchExecutionRequestFactory.ForPlayer(parent,
-                    parent.CompiledSearch.PlayerSearches[specimen.Slot]);
+                var request = context.Party is null ? parent.Model : SearchPreparationCompiler.ForPlayer(parent.Model,
+                    parent.Model.CompiledSearch.PlayerSearches[specimen.Slot]);
                 if (!RelicFamilyPlanCompiler.TryCompile(request, out var candidate, out string issue) || candidate is null)
                     throw new InvalidDataException("R02 personal R plan: " + issue);
                 var plan = candidate;
@@ -188,9 +189,11 @@ internal static class RelicShopCpuChecks
                     Predicates = plan.Predicates.Where(p => p.Lane != 3).ToArray(), ShopPredicates = [], LastRequiredBucket = last
                 }) ?? throw new InvalidDataException("R02 ordinary plan missing");
                 var fast = RelicShopCpuPlan.TryCompile(plan) ?? throw new InvalidDataException("R02 mixed plan not admitted");
-                if (!RelicFamily.TryCreate(request, out var family)) throw new InvalidDataException("R02 reference Family missing");
-                var reference = typeof(RelicFamily).GetMethod("MatchesCpuReference", BindingFlags.Instance | BindingFlags.NonPublic)!
-                    .CreateDelegate<Func<ulong, bool>>(family);
+                if (!RelicFamily.TryCreate(request, FilterExecutionPreferences.From(parent.RunOptions), out _))
+                    throw new InvalidDataException("R02 reference Family missing");
+                var referencePlan = new RelicReferencePlan(RelicReferencePlan.ProjectEvaluation(request),
+                    request.Authority.WorldAuthority, RuntimeProfileRegistry.Select(request.Detection));
+                Func<ulong, bool> reference = referencePlan.Reference;
                 var roots = Enumerable.Range(0, 1025).Select(i => profile.ComputeRootSeed(
                     VisibleSeedCandidateCodec.FormatOrdinal(profile, (ulong)i))).ToList();
                 var random = new Random(2077);

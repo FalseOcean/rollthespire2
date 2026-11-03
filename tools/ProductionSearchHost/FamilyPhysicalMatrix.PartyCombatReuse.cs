@@ -24,10 +24,10 @@ internal static partial class FamilyPhysicalMatrix
         "MP-C2 latent Capsule bag experiment retired by PartyQueryLiteralOpening.20261027.v1; " +
         "validate current C through the family-combat exported GPU parity fixtures.");
 
-    internal static void RunPartyCombatReuseChecks(ExactSearchExecutionRequest basis, string output, int capacity = 4099)
+    internal static void RunPartyCombatReuseChecks(PreparedSearch basis, string output, int capacity = 4099)
     {
         RequireLatentCapsuleBagExperiment();
-        var context = basis.CompiledSearch.Context;
+        var context = basis.Model.CompiledSearch.Context;
         var party = context.Party ?? throw new InvalidDataException("MpC2.RealPartyContextRequired");
         if (party.Players.Count is < 2 or > 4 || capacity is < 65 or > CombatRewardGpuExecutor.Capacity)
             throw new ArgumentOutOfRangeException(nameof(capacity));
@@ -46,7 +46,7 @@ internal static partial class FamilyPhysicalMatrix
         {
             ModelKey[] pair = capsule ? [small, large] : [BaseGameModelKeys.Relics.NewLeaf, BaseGameModelKeys.Relics.Kaleidoscope];
             string shape = $"{party.Players.Count}p-slot{slot}-" + (capsule ? "BonesCapsules" : "PrefixOnly");
-            ExactSearchExecutionRequest Build(ModelKey? target, int order = 0)
+            PreparedSearch Build(ModelKey? target, int order = 0)
             {
                 ModelKey[] ordered = order == 3 ? [small] : order == 2 ? pair.AsEnumerable().Reverse().ToArray() : pair;
                 var local = SearchQuery.Empty with { OpeningRoute = new(bones),
@@ -54,13 +54,13 @@ internal static partial class FamilyPhysicalMatrix
                     CombatCardRewards = target is { } card ? new(1, CombatRewardSequenceOrderMode.Ordered, [card]) : null };
                 var query = SearchQuery.Empty with { Players = Enumerable.Range(0, party.Players.Count).Select(i =>
                     new PlayerOfferQuery(i, ModelKeySetFilter.Empty) { Conditions = i == slot ? local : SearchQuery.Empty }).ToArray() };
-                return ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context),
+                return SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context),
                     new("000000000000", capacity, 30, 4)).Plan ?? throw new InvalidDataException("MpC2.Compile:" + shape);
             }
             foreach (int order in capsule && slot == 0 && party.Players.Count == 2 ? new[] { 0, 1, 2, 3 } : new[] { 0 })
             {
                 var preliminary = Build(null, order);
-                var personal = ExactSearchExecutionRequestFactory.ForPlayer(preliminary, preliminary.CompiledSearch.PlayerSearches[slot]);
+                var personal = SearchPreparationCompiler.ForPlayer(preliminary.Model, preliminary.Model.CompiledSearch.PlayerSearches[slot]);
                 var identity = NeowReplayPlan.Compile(personal, false);
                 ModelKey[] acquisitionOrder = order is 0 or 3 ? [] : order == 2 ? pair.AsEnumerable().Reverse().ToArray() : pair;
                 ulong positive = 0; ModelKey? target = null; ModelKey[] sourceActualPair = [];
@@ -90,7 +90,7 @@ internal static partial class FamilyPhysicalMatrix
                     target = route.Battles[0].Cards[0].CardKey;
                     // The partial query independently authors its actual root
                     // pair and target. Never borrow the fixed-pair witness.
-                    if (order == 3 && !ProductionExactSearchEvaluator.Evaluate(Build(target, order), input).IsMatch)
+                    if (order == 3 && !ProductionExactSearchEvaluator.Evaluate(Build(target, order).Model, input).IsMatch)
                     { target = null; continue; }
                     if (order == 3) sourceActualPair = route.EquivalentRoutes.First(e =>
                         e.AcquisitionOrder.Count == 2 && e.AcquisitionOrder.Contains(small)).AcquisitionOrder.ToArray();
@@ -98,19 +98,19 @@ internal static partial class FamilyPhysicalMatrix
                 }
                 Check(target.HasValue, "BoundedRealPositive:" + shape + ":" + order);
                 var request = Build(target, order);
-                var child = ExactSearchExecutionRequestFactory.ForPlayer(request, request.CompiledSearch.PlayerSearches[slot]);
+                var child = SearchPreparationCompiler.ForPlayer(request.Model, request.Model.CompiledSearch.PlayerSearches[slot]);
                 var replay = new CombatRewardReplay(child, precedingNicheDraws: 0);
                 var plan = CombatRewardGpuPlan.TryCreate(child, replay, out string issue) ?? throw new InvalidDataException("MpC2.GpuPlan:" + issue);
                 Check(!replay.ConservativelyKeeps && !plan.UsesHotLoop && plan.Routes == (order == 0 ? 2 : 1) &&
                     plan.Meta[51] == 0u && plan.Meta[54] == 0u && replay.UsesQueryLiteralPartyOpening == (capsule || order == 3),
                     "ActualCompiledShape:" + shape);
                 string name = shape + (order == 0 ? "-Any" : order == 1 ? "-AB-Control" : order == 2 ? "-BA-Control" : "-PartialActualPair");
-                var exact = ProductionExactSearchEvaluator.Evaluate(request, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance,
+                var exact = ProductionExactSearchEvaluator.Evaluate(request.Model, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance,
                     VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance, positive)));
                 if (!exact.IsMatch) throw new InvalidDataException($"MpC2.ExactPositive:{name}:{positive}:{exact.Evaluation.Disposition}:{exact.FailureCode}:" +
                     JsonSerializer.Serialize(exact.Evaluation.RouteRejections, ProductionSearchReplay.JsonOptions));
                 ProductionSearchReplay.Write(Path.Combine(output, name + "-workload.json"), new ProductionSearchReplayWorkload(1,
-                    request.CompiledSearch.Query, request.RunOptions with { StartSeed = VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance, positive), ScanCount = 65536 }));
+                    request.Model.CompiledSearch.Query, request.RunOptions with { StartSeed = VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance, positive), ScanCount = 65536 }));
                 ProductionSearchReplay.Write(Path.Combine(output, name + "-context.json"), new ProductionSearchReplayContext(1,
                     "Real captured party pools; independently source-authored Bones/C positive; C2 bag capacity", context));
                 var variants = MpC2Plans(plan);
@@ -184,7 +184,7 @@ internal static partial class FamilyPhysicalMatrix
                     // The independently authored AB source/Exact witness proves
                     // route 0, rather than borrowing an Any-order union success.
                     var faultRequest = Build(target, 0);
-                    var faultChild = ExactSearchExecutionRequestFactory.ForPlayer(faultRequest, faultRequest.CompiledSearch.PlayerSearches[slot]);
+                    var faultChild = SearchPreparationCompiler.ForPlayer(faultRequest.Model, faultRequest.Model.CompiledSearch.PlayerSearches[slot]);
                     var faultReplay = new CombatRewardReplay(faultChild);
                     ulong faultRoot = Beta111Profile.Instance.ComputeRootSeed(VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance, positive));
                     var firstOpening = faultReplay.Opening(faultRoot, 0);
@@ -226,10 +226,10 @@ internal static partial class FamilyPhysicalMatrix
 
     // Uses the exported workload unchanged. Compact inputs are the registered
     // whole-table N output of this same root window, never tiled/spread samples.
-    internal static void RunPartyCombatReuseBench(ExactSearchExecutionRequest basis, string output, int rootPopulation = 1 << 20)
+    internal static void RunPartyCombatReuseBench(PreparedSearch basis, string output, int rootPopulation = 1 << 20)
     {
         RequireLatentCapsuleBagExperiment();
-        var party = basis.CompiledSearch.Context.Party ?? throw new InvalidDataException("MpC2Bench.RealPartyRequired");
+        var party = basis.Model.CompiledSearch.Context.Party ?? throw new InvalidDataException("MpC2Bench.RealPartyRequired");
         if (party.Players.Count is < 2 or > 4 || (rootPopulation != (1 << 16) && rootPopulation != (1 << 20) && rootPopulation != (1 << 22)))
             throw new ArgumentOutOfRangeException(nameof(rootPopulation));
         const string alphabet = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -237,26 +237,28 @@ internal static partial class FamilyPhysicalMatrix
         foreach (char c in basis.CanonicalStartSeed) start = checked(start * 34 + (uint)alphabet.IndexOf(c));
         var batch = new SearchBatch(start, rootPopulation);
         var positive = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, basis.CanonicalStartSeed);
-        var exact = ProductionExactSearchEvaluator.Evaluate(basis, positive);
+        var exact = ProductionExactSearchEvaluator.Evaluate(basis.Model, positive);
         if (!exact.IsMatch) throw new InvalidDataException($"MpC2Bench.ExactPositive:{exact.FailureCode}:{exact.Evaluation.Disposition}");
         Directory.CreateDirectory(output);
         var families = FamilyExecutionCoordinator.CreateRegisteredFamilies(basis, true);
-        var execution = new FamilyExecutionContext(requiresGpu: true, failOnPhysicalRecovery: true, cpuWorkerCount: basis.WorkerCount);
+        var execution = new FilterRuntimeServices(requiresGpu: true, failOnPhysicalRecovery: true, cpuWorkerCount: basis.WorkerCount);
         try
         {
             var c = families.Single(f => f.FamilyId == "C.CombatReward");
-            var active = c is PartyFamily table ? table.PersonalStages.ToArray() : throw new InvalidDataException("MpC2Bench.PartyWrapperRequired");
-            if (active.Length != 1 || active[0].Family is not CombatRewardFamily child)
+            var active = HostFilterBindings.PartyStages(c);
+            if (active.Length != 1 || active[0].Family.FamilyId != "C.CombatReward")
                 throw new InvalidDataException("MpC2Bench.UniqueActiveCombatChildRequired");
+            var child = HostFilterBindings.PartyCombat(basis,active[0].Slot,true);
+            if(child.Body.PhysicalRevision != active[0].Family.PhysicalRevision) throw new InvalidDataException("MpC2Bench.PreparedBodyChanged");
             var plan = child.GpuPlan ?? throw new InvalidDataException("MpC2Bench.OriginalGpuPlanUnavailable");
             if (plan.UsesHotLoop || child.Replay.ConservativelyKeeps || plan.Meta[3] <= 1)
                 throw new InvalidDataException("MpC2Bench.OutsideGenericPartyShape");
             var n = families.Single(f => f.FamilyId == "N.Neow");
             if (!n.ConditionPerformance.UsesGpu) throw new InvalidDataException("MpC2Bench.RegisteredNGpuRequired");
             var dense = FamilyCandidateSet.Dense(batch);
-            var afterN = Task.Run(async () => await n.InvokeAsync(execution, new(batch, basis), dense, default)
+            var afterN = Task.Run(async () => await n.ExecuteAsync(execution, dense, default)
                 .ConfigureAwait(false)).GetAwaiter().GetResult();
-            if (n.ExecutionFaulted || afterN.Batch != batch || !afterN.EnumerateLogicalOrdinals().Contains(0UL))
+            if (HostFilterBindings.Faulted(n) || afterN.Batch != batch || !afterN.EnumerateLogicalOrdinals().Contains(0UL))
                 throw new InvalidDataException("MpC2Bench.ActualNInputOrPositiveFailed");
             var compact = FamilyCandidateSet.FromSortedAbi1(batch, afterN.EnumerateLogicalOrdinals().ToArray());
             using var rd = RenderingServer.CreateLocalRenderingDevice() ?? throw new InvalidDataException("MpC2Bench.DeviceUnavailable");
@@ -303,19 +305,19 @@ internal static partial class FamilyPhysicalMatrix
             // the timer. InvokeAsync includes worker permits, filtering, canonical
             // ordering, wrapper composition and the returned ABI1 boundary.
             var cpuFamilies = FamilyExecutionCoordinator.CreateRegisteredFamilies(basis, false);
-            var cpuExecution = new FamilyExecutionContext(requiresGpu: false, failOnPhysicalRecovery: true, cpuWorkerCount: basis.WorkerCount);
+            var cpuExecution = new FilterRuntimeServices(requiresGpu: false, failOnPhysicalRecovery: true, cpuWorkerCount: basis.WorkerCount);
             var cpuRows = new List<object>();
             var cpuSamples = new List<double>();
             string cpuRevision = "", cpuChildRevision = "";
-            int cpuWorkers = FamilyCpuExecution.ConfiguredWorkers(basis);
+            int cpuWorkers = Math.Clamp(basis.WorkerCount, 1, 32);
             try
             {
                 var cpu = cpuFamilies.Single(f => f.FamilyId == "C.CombatReward");
-                if (cpu is not PartyFamily cpuTable || cpu.ConditionPerformance.UsesGpu)
+                if (cpu.PhysicalBodies.Count == 0 || cpu.ConditionPerformance.UsesGpu)
                     throw new InvalidDataException("MpC2Bench.RegisteredCpuWrapperRequired");
-                var cpuStages = cpuTable.PersonalStages.ToArray();
+                var cpuStages = HostFilterBindings.PartyStages(cpu);
                 if (cpuStages.Length != 1 || cpuStages[0].Slot != active[0].Slot ||
-                    cpuStages[0].Family is not FamilyCpuExecution cpuChild || cpuChild.Workers != cpuWorkers)
+                    cpuStages[0].Family.UsesGpu || cpuStages[0].Family.CpuWorkers != cpuWorkers)
                     throw new InvalidDataException("MpC2Bench.CpuSlotOrConfiguredWorkers");
                 cpuRevision = cpu.ResolveConditionPerformance(true).PhysicalImplementationRevision;
                 cpuChildRevision = cpuStages[0].Family.ResolveConditionPerformance(true).PhysicalImplementationRevision;
@@ -324,10 +326,10 @@ internal static partial class FamilyPhysicalMatrix
                     var measured = Task.Run(async () =>
                     {
                         long begin = Stopwatch.GetTimestamp();
-                        var result = await cpu.InvokeAsync(cpuExecution, new(batch, basis), compact, default).ConfigureAwait(false);
+                        var result = await cpu.ExecuteAsync(cpuExecution, compact, default).ConfigureAwait(false);
                         return (Result: result, CanonicalMs: Stopwatch.GetElapsedTime(begin).TotalMilliseconds);
                     }).GetAwaiter().GetResult();
-                    if (cpu.ExecutionFaulted || cpuExecution.CaptureFilterIsolations(batch).Count != 0 ||
+                    if (HostFilterBindings.Faulted(cpu) || cpuExecution.CaptureFilterIsolations(batch).Count != 0 ||
                         compactStable is null || measured.Result.Batch != batch ||
                         !measured.Result.ExportAbi1().Span.SequenceEqual(compactStable.ExportAbi1().Span))
                         throw new InvalidDataException("MpC2Bench.RegisteredCpuFullAbi1Parity");
@@ -350,9 +352,9 @@ internal static partial class FamilyPhysicalMatrix
             string Hash(CombatRewardGpuPlan p) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
                 System.Text.Encoding.UTF8.GetBytes(p.ShaderSource())));
             ProductionSearchReplay.Write(Path.Combine(output, "mp-c1-bench-workload.json"), new ProductionSearchReplayWorkload(1,
-                basis.CompiledSearch.Query, basis.RunOptions with { StartSeed = basis.CanonicalStartSeed, ScanCount = rootPopulation }));
+                basis.Model.CompiledSearch.Query, basis.RunOptions with { StartSeed = basis.CanonicalStartSeed, ScanCount = rootPopulation }));
             ProductionSearchReplay.Write(Path.Combine(output, "mp-c1-bench-context.json"), new ProductionSearchReplayContext(1,
-                "Original exported request; registered real party N input; production executor C2 capacity A/B", basis.CompiledSearch.Context));
+                "Original exported request; registered real party N input; production executor C2 capacity A/B", basis.Model.CompiledSearch.Context));
             File.WriteAllText(Path.Combine(output, "mp-c1-bench.json"), JsonSerializer.Serialize(new {
                 Players = party.Players.Count, Slot = active[0].Slot, RootBatchBase = start, RootWindow = rootPopulation,
                 PositiveBatchLocalOrdinal = 0, WholeTableExactPositive = true, NSurvivors = compact.Count,

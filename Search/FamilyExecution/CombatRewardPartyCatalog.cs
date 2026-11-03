@@ -9,7 +9,7 @@ namespace RolltheSpire2.Search.FamilyExecution;
 // has solo combat pools, while the captured opening pools already contain MP cards.
 internal static class CombatRewardPartyCatalog
 {
-    internal static Beta110FastEffectCatalog Project(ExactSearchExecutionRequest request, Beta110FastEffectCatalog catalog)
+    internal static Beta110FastEffectCatalog Project(SearchModel request, Beta110FastEffectCatalog catalog)
     {
         var authority = request.Authority.EffectAuthority ?? throw new InvalidOperationException("C.PartyEffectAuthorityMissing");
         var cards = (authority.CharacterRewardPool ?? [])

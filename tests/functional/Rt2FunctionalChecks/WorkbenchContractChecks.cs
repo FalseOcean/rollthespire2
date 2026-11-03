@@ -509,11 +509,12 @@ internal static class WorkbenchContractChecks
             double? probability = null;
             foreach (int workers in new[] { 1, 3, 4, 7, 8, 16 })
             {
-                var request = ExactSearchExecutionRequestFactory.Compile(compiled,
+                var request = SearchPreparationCompiler.Compile(compiled,
                     new("000000000000", long.MaxValue, 30, workers)).Plan!;
                 var family = FamilyExecutionCoordinator.CreateRegisteredFamilies(request).Single(f => f.FamilyId == familyId);
-                var configured = FamilyCpuExecution.ConfiguredRealizations(family).ToArray();
-                check(configured.Length > 0 && configured.All(f => f is FamilyCpuExecution cpu && cpu.Workers == workers),
+                var configured = (family.CpuAlternatives.Count > 0 ? family.CpuAlternatives :
+                    family.UsesGpu ? [] : new[] { family }).ToArray();
+                check(configured.Length > 0 && configured.All(body => !body.UsesGpu && body.CpuWorkers == workers),
                     $"Preview fixture follows actual CPU budget: {familyId}/P{workers}");
                 var calibration = GpuCostCalibration.Capture();
                 var quotes = configured.Select(f => FamilyPhysicalQuote.Computation(f, geometry, calibration)).ToArray();
@@ -674,12 +675,12 @@ internal static class WorkbenchContractChecks
             Check(SeedPredictionRequest.TryCreate("000000000001", authority.Character, 10, 1, 0, authority, false,
                 out var request, out _), "Retained candidate request");
             var candidate = new SearchCandidate("000000000001", RuntimeProfileId.Beta111, draft.Character, 10,
-                "retained-result-fixture", request!, null, authority, [], [], []);
-            var retainedPlan = ExactSearchExecutionRequestFactory.Compile(draft.Compile(runtime, out _), new("000000000001", 1, 1, 1)).Plan!;
+                "retained-result-fixture", authority, SearchQueryEvaluation.Match());
+            var retainedPlan = SearchPreparationCompiler.Compile(draft.Compile(runtime, out _), new("000000000001", 1, 1, 1)).Plan!;
             var receiving = store.PrepareSearchStart(draft, retainedPlan, SeedLibraryContextCapture.ForSearch(draft, runtime));
             store.BindPreparedResultWorkspace(receiving);
             Call("SyncSavedResults");
-            store.AppendResult(candidate, retainedPlan.CompiledSearch.SemanticFingerprint);
+            store.AppendResult(candidate, retainedPlan.Model.CompiledSearch.SemanticFingerprint);
             var context = store.ResultBatch?.Context;
             var frozenDraft = store.ResultBatch?.Draft;
             Check(context is not null, "Original result context captured");
@@ -687,15 +688,15 @@ internal static class WorkbenchContractChecks
                          SearchDisposition.Unsupported, SearchDisposition.Cancelled, SearchDisposition.NotEvaluatedByPolicy })
             {
                 // Exercise the actual result-action/favorite boundary with an observed non-Match.
-                var checkedCandidate = candidate with { IsUnverified = true, IsUnfiltered = false,
-                    ValidationDisposition = disposition, ValidationIssue = "actual-cause:" + disposition,
-                    Document = null, MatchEvidence = [], MatchedRouteIds = [], Witnesses = [] };
+                var checkedCandidate = candidate with { IsUnfiltered = false,
+                    Evaluation = new SearchQueryEvaluation(disposition, [], [], [], "actual-cause:" + disposition),
+                    ValidationIssue = "actual-cause:" + disposition, Facts = null };
                 SeedLibraryContext? transportedContext = null;
                 SeedLibraryResultProvenance? transported = null;
                 void Transport(RolltheSpire2.Ui.Workspace.SearchResultAction action)
                     { transportedContext = action.Context; transported = action.Provenance; }
                 frame.FavoriteSeedRequested += Transport;
-                var liveRow = RolltheSpire2.Ui.Workspace.SearchResultProjection.FromCandidate(checkedCandidate, retainedPlan.CompiledSearch.SemanticFingerprint);
+                var liveRow = RolltheSpire2.Ui.Workspace.SearchResultProjection.FromCandidate(checkedCandidate, retainedPlan.Model.CompiledSearch.SemanticFingerprint);
                 liveRow.Context = context;
                 var button = (Godot.Button)typeof(QueryWorkbenchFrame).GetMethod("FavoriteResultButton", flags)!.Invoke(frame, [store.ResultAction(liveRow)])!;
                 try
@@ -947,13 +948,13 @@ internal static class WorkbenchContractChecks
                 frame.Refresh("en", text);
                 var draft = frame.CaptureDraft();
                 var compiled = draft.Compile(runtime, out _);
-                var priorPlan = ExactSearchExecutionRequestFactory.Compile(compiled,
+                var priorPlan = SearchPreparationCompiler.Compile(compiled,
                     new("000000000005", 1, 1, 1, SkipExactValidation: true)).Plan!;
                 const ulong oldFrontier = 17;
-                var priorContinuation = new SearchContinuationSnapshot(priorPlan.CompiledSearch.SemanticFingerprint,
+                var priorContinuation = new SearchContinuationSnapshot(priorPlan.Model.CompiledSearch.SemanticFingerprint,
                     priorPlan.SnapshotFingerprint, oldFrontier, [], []) {
                     ContinuationFingerprint = SearchContinuationIdentity.For(priorPlan), UnreceivedOrdinals = [] };
-                store.BindPreparedResultWorkspace(store.PrepareResultWorkspace(priorPlan.CompiledSearch.SemanticFingerprint, draft, skipExactValidation: true));
+                store.BindPreparedResultWorkspace(store.PrepareResultWorkspace(priorPlan.Model.CompiledSearch.SemanticFingerprint, draft, skipExactValidation: true));
                 store.RecentQueries.Single().Continuation = priorContinuation;
                 store.Workspace.ResultContinuation = priorContinuation;
                 store.ObserveSafeNextCursor(oldFrontier); store.FlushAll();
@@ -1547,7 +1548,7 @@ internal static class WorkbenchContractChecks
                 executionQuery=executionQuery with {TransformationAggregate=t with {EventScenario=Beta111MorphicGroveAuthorityCapture.CaptureAuthoredInitialBasics(archived.Authority)}};
             bool archivedWorld=Environment.GetEnvironmentVariable("RT2_WORKBENCH_AUTHORITY")=="corpus"||name.StartsWith("W.",StringComparison.Ordinal)||name.StartsWith("A.",StringComparison.Ordinal)||name=="T.event";
             var executionCompiled=archivedWorld?SearchCompiler.Compile(executionQuery,archived with {EvaluationAssumptions=new(saved.AncientPremises)}):after;
-            var request=ExactSearchExecutionRequestFactory.Compile(executionCompiled,new("000000000000",64,int.MaxValue,2));
+            var request=SearchPreparationCompiler.Compile(executionCompiled,new("000000000000",64,int.MaxValue,2));
             Check(request.Success,"Execution compile: "+name+" "+request.Issue);
             var plan=request.Plan!;
             var probability=RolltheSpire2.Search.Selectivity.JointSelectivityEstimator.EstimateQuery(RolltheSpire2.Search.Selectivity.SearchSelectivityInput.From(executionCompiled));
@@ -1559,25 +1560,45 @@ internal static class WorkbenchContractChecks
             if(name.StartsWith("C.h",StringComparison.Ordinal))
             {
                 Check(probability.JointlyPriced,"C4-6 chronological probability is connected");
-                var combatFamily = (CombatRewardFamily)FamilyExecutionCoordinator.CreateRegisteredFamilies(plan).Single(f=>f.FamilyId=="C.CombatReward");
-                var pool = combatFamily.Replay.Catalog.CombatRewardCardPool;
+                var combatFamily = FamilyExecutionCoordinator.CreateRegisteredFamilies(plan).Single(f=>f.FamilyId=="C.CombatReward");
+                var combatReplay = new CombatRewardReplay(plan.Model);
+                var pool = combatReplay.Catalog.CombatRewardCardPool;
                 // Native fresh profiles may have partial unlocks. A full-pool
                 // reference is distinct from the explicitly pool-independent CPU envelope.
                 bool measuredPool = pool.Common.Length == 20 && pool.Uncommon.Length == 35 && pool.Rare.Length == 25;
                 var calibration = GpuCostCalibration.Capture();
-                var quotes = ((IFamilyInvocation)combatFamily).CpuRealizations.Select(cpu =>
+                var cpuBodies = (combatFamily.CpuAlternatives.Count > 0 ? combatFamily.CpuAlternatives :
+                    combatFamily.UsesGpu ? [] : new[] { combatFamily }).Where(cpu => cpu.CpuWorkers == combatFamily.CpuWorkers).ToArray();
+                Check(cpuBodies.Length > 0 && cpuBodies.All(cpu => !cpu.UsesGpu &&
+                    cpu.CpuWorkers == Math.Clamp(plan.RunOptions.WorkerCount, 1, 32)),
+                    "C4-6 quote uses actual configured CPU bodies, including a CPU-only prepared body's own quote");
+                var quotes = cpuBodies.Select(cpu =>
                     FamilyPhysicalQuote.Computation(cpu, new(false, false, 1 << 20), calibration)).OfType<FamilyPhysicalQuote>().ToArray();
                 Check(quotes.Length > 0 && quotes.All(q => q is { NanosecondsPerInput: > 0 } &&
                     double.IsFinite(q.NanosecondsPerInput) && q.FamilyId == "C.CombatReward"),
                     $"C4-6 has an applicable finite CPU quote;pool={pool.Common.Length}/{pool.Uncommon.Length}/{pool.Rare.Length}");
+                foreach (var quote in quotes)
+                    Console.WriteLine($"WORKBENCH_C_HORIZON_QUOTE name={name};pool={pool.Common.Length}/{pool.Uncommon.Length}/{pool.Rare.Length};fullReferencePool={measuredPool};shape={quote.Shape};nsPerInput={quote.NanosecondsPerInput:R};transport={quote.PublicTransportClass};evidence={quote.Evidence}");
                 if (!measuredPool)
+                {
+                    // Unpinned C now owns a real-opening proof in addition to
+                    // reward generation. Its separate body revision and unmeasured
+                    // proof envelope must not be mistaken for the old measured body.
                     Check(quotes.All(q => FamilyCoarsePricing.IsEstimate(q) &&
-                        q.Shape.StartsWith(FamilyCoarsePricing.Revision + ".C.FullReward.P", StringComparison.Ordinal) &&
+                        q.Shape.StartsWith(FamilyCoarsePricing.Revision + ".C.FullReward", StringComparison.Ordinal) &&
+                        q.Shape.EndsWith($".P{combatFamily.CpuWorkers}", StringComparison.Ordinal) &&
+                        q.Shape.Contains(CombatRewardNeutralWitness.Revision, StringComparison.Ordinal) == combatReplay.UsesNeutralWitness &&
+                        q.PublicTransportClass == "CpuOrderedAbi1" &&
+                        q.Evidence.Contains($"Workers={combatFamily.CpuWorkers};", StringComparison.Ordinal) &&
                         q.Evidence.Contains("NotCurrentDeviceOrBodyMeasurement", StringComparison.Ordinal) &&
-                        q.Evidence.Contains($"H={combatFamily.Replay.Plan.MaximumBattleOrdinal};Routes={combatFamily.Replay.RouteCount};", StringComparison.Ordinal) &&
-                        q.Evidence.Contains("NoTargetOrPoolFingerprintKey;FullGenerationEnvelope", StringComparison.Ordinal)),
+                        q.Evidence.Contains($"H={combatReplay.Plan.MaximumBattleOrdinal};Routes={combatReplay.RouteCount};", StringComparison.Ordinal) &&
+                        q.Evidence.Contains("NoTargetOrPoolFingerprintKey;FullGenerationEnvelope", StringComparison.Ordinal) &&
+                        (!combatReplay.UsesNeutralWitness ||
+                            q.Evidence.Contains($"RealNeutralWitnessIdentityDrawEnvelope={CombatRewardNeutralWitness.MaximumIdentityDraws};", StringComparison.Ordinal) &&
+                            q.Evidence.Contains("OnFailureReachNotMeasured;", StringComparison.Ordinal) &&
+                            q.Evidence.Contains("NewBodyNotMeasured;", StringComparison.Ordinal))),
                         "Partial-pool C4-6 quotes declare the actual horizon/routes and a coarse CPU envelope, never a full-pool measurement");
-                Console.WriteLine($"WORKBENCH_C_HORIZON_QUOTE name={name};pool={pool.Common.Length}/{pool.Uncommon.Length}/{pool.Rare.Length};fullReferencePool={measuredPool};evidence={quotes[0].Evidence}");
+                }
             }
             if(name.StartsWith("M.",StringComparison.Ordinal))
             {
@@ -1615,9 +1636,11 @@ internal static class WorkbenchContractChecks
                 Check(SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity().RenderingBackend=="d3d12","New shell captures real D3D12 backend before pricing");
                 var id=name.StartsWith("N.")?"N.Neow":name.StartsWith("T.")?"T.TransformationAggregate":"C.CombatReward";
                 var family=FamilyExecutionCoordinator.CreateRegisteredFamilies(plan).Single(f=>f.FamilyId==id);
+                Check(family.UsesGpu,"GPU-required quote belongs to an actual GPU body: "+name);
                 var geometry=new FamilyPhysicalQuoteRequest(false,false,1<<20);
                 var gpu=family.QuotePhysicalWork(geometry);
-                var cpu=family.CpuRealizations.Select(f=>f.QuotePhysicalWork(geometry)).FirstOrDefault(q=>q is not null);
+                var cpu=family.CpuAlternatives.Where(f=>f.CpuWorkers==family.CpuWorkers)
+                    .Select(f=>f.QuotePhysicalWork(geometry)).FirstOrDefault(q=>q is not null);
                 Check(gpu is {NanosecondsPerInput:>0},"Restored GPU reference quote: "+name);
                 var local=GpuCostCalibration.Capture().Local(family,gpu!,geometry);
                 Check(QueryWorkbenchFrame.PreferGpuQuote(cpu?.NanosecondsPerInput,local.NanosecondsPerInput),"GPU wins representative display quote: "+name);
@@ -1625,7 +1648,9 @@ internal static class WorkbenchContractChecks
             }
             coverage.Add(new {name,probability.Probability,probability.EvidenceCode,probability.UnknownComponents,
                 rows=quick.Rows, costs=FamilyExecutionCoordinator.CreateRegisteredFamilies(plan).Select(f=>new {
-                    f.FamilyId, survival=f.Survival, cpu=f.CpuRealizations.Select(c=>c.QuotePhysicalWork(new(false,false,1<<20))).ToArray(),
+                    f.FamilyId, survival=f.Survival, cpu=(f.CpuAlternatives.Count>0?f.CpuAlternatives:
+                        f.UsesGpu?[]:new[]{f}).Where(c=>c.CpuWorkers==f.CpuWorkers)
+                        .Select(c=>c.QuotePhysicalWork(new(false,false,1<<20))).ToArray(),
                     gpu=f.ConditionPerformance.UsesGpu?f.QuotePhysicalWork(new(false,false,1<<20)):null}).ToArray()});
             var exactSeeds=new List<string>();
             var exactBySeed=new Dictionary<string,ProductionExactSearchResult>(StringComparer.Ordinal);
@@ -1633,7 +1658,7 @@ internal static class WorkbenchContractChecks
             {
                 string seed=Beta110SeedCodec.FormatOrdinal(i);
                 Check(TrustedRootHashInput.TryBindCanonicalSeed(Beta111Profile.Instance,Beta111Profile.Instance.ComputeRootSeed(seed),seed,out var input,out _),"root bind");
-                var exact=ProductionExactSearchEvaluator.Evaluate(plan,input);
+                var exact=ProductionExactSearchEvaluator.Evaluate(plan.Model,input);
                 exactBySeed.Add(seed,exact);
                 if(exact.IsMatch) exactSeeds.Add(seed);
                 parityRoots++;
@@ -1646,7 +1671,11 @@ internal static class WorkbenchContractChecks
                 var reference=exactBySeed[hit.Seed];
                 if(!hit.IsUnverified)
                 {
-                    Check(reference.IsMatch && hit.ValidationDisposition==SearchDisposition.Match && hit.Document is not null && hit.Witnesses.Count>0,
+                    Check(reference.IsMatch && hit.ValidationDisposition==SearchDisposition.Match &&
+                        hit.Facts?.CanonicalSeed==reference.Facts?.CanonicalSeed &&
+                        JsonSerializer.Serialize(hit.MatchEvidence,ProductionSearchReplay.JsonOptions)==JsonSerializer.Serialize(reference.Evaluation.Evidence,ProductionSearchReplay.JsonOptions) &&
+                        JsonSerializer.Serialize(hit.MatchedRouteIds,ProductionSearchReplay.JsonOptions)==JsonSerializer.Serialize(reference.Evaluation.MatchedRouteIds,ProductionSearchReplay.JsonOptions) &&
+                        JsonSerializer.Serialize(hit.Witnesses,ProductionSearchReplay.JsonOptions)==JsonSerializer.Serialize(reference.Evaluation.Witnesses,ProductionSearchReplay.JsonOptions),
                         "Confirmed delivery agrees with model Match and retains proof: "+name+":"+hit.Seed);
                     actual.Add(hit.Seed);
                     return;
@@ -1659,12 +1688,16 @@ internal static class WorkbenchContractChecks
                 if(reference.Evaluation.RouteRejections.Count>0)
                     reason+="\n"+string.Join("\n",reference.Evaluation.RouteRejections.Select(r=>
                         $"route={r.RouteId};disposition={r.Disposition};reason={r.Reason}"));
-                Check(hit.ValidationIssue==reason && hit.Document is null && hit.MatchEvidence.Count==0 &&
-                    hit.MatchedRouteIds.Count==0 && hit.Witnesses.Count==0 && hit.PredictionRequest.OriginalSeed==hit.Seed &&
-                    hit.PredictionRequest.TrustedRootHashInput is { } bound && bound.CanonicalSeed==hit.Seed,
+                // Independent Exact calls own distinct immutable authority objects.
+                // Compare their complete captured values, not reference identity.
+                bool sameAuthority=JsonSerializer.Serialize(hit.Authority,ProductionSearchReplay.JsonOptions)==
+                    JsonSerializer.Serialize(reference.Authority,ProductionSearchReplay.JsonOptions);
+                Check(hit.ValidationIssue==reason && hit.MatchEvidence.Count==0 && hit.MatchedRouteIds.Count==0 && hit.Witnesses.Count==0 &&
+                    hit.Facts?.CanonicalSeed==reference.Facts?.CanonicalSeed && sameAuthority,
                     "Unconfirmed delivery preserves reason and seed identity without a proof payload: "+name+":"+hit.Seed+
-                    ";actualReason="+hit.ValidationIssue+";expectedReason="+reason+";document="+(hit.Document is not null)+
-                    ";evidence/routes/witness="+hit.MatchEvidence.Count+"/"+hit.MatchedRouteIds.Count+"/"+hit.Witnesses.Count);
+                    ";actualReason="+hit.ValidationIssue+";expectedReason="+reason+";document="+(hit.Facts is not null)+
+                    ";evidence/routes/witness="+hit.MatchEvidence.Count+"/"+hit.MatchedRouteIds.Count+"/"+hit.Witnesses.Count+
+                    ";authorityEqual="+sameAuthority+";factsSeed="+hit.Facts?.CanonicalSeed+";referenceSeed="+reference.Facts?.CanonicalSeed);
                 unverified++;
             }
             var timeout=System.Diagnostics.Stopwatch.StartNew();
@@ -1682,16 +1715,18 @@ internal static class WorkbenchContractChecks
                 "Confirmed/unconfirmed/delivered counts agree: "+name);
             if(name.StartsWith("M.",StringComparison.Ordinal))
             {
-                var mapInvocation=new StandardMapFamily(plan);var batch=new SearchBatch(0,64);
+                var mapServices=new FilterRuntimeServices(false);
+                var mapBody=StandardMapFamily.Prepare(plan.Model,FilterExecutionPreferences.From(plan.RunOptions));
+                var mapInvocation=mapBody.CreateExecution!(mapBody,mapServices);var batch=new SearchBatch(0,64);
                 var sparse=FamilyCandidateSet.FromSortedAbi1(batch,Enumerable.Range(0,64).Where(i=>i%3==0).Select(i=>(ulong)i).ToArray());
-                var window=new FamilyObservationWindow(batch,plan);
-                var filtered=mapInvocation.InvokeAsync(null!,window,sparse,default).GetAwaiter().GetResult();
+                var window=batch;
+                var filtered=mapInvocation.FilterAsync(mapServices,sparse,default).GetAwaiter().GetResult();
                 Check(filtered.EnumerateLogicalOrdinals().Select(i=>Beta110SeedCodec.FormatOrdinal(i)).SequenceEqual(
                     sparse.EnumerateLogicalOrdinals().Select(i=>Beta110SeedCodec.FormatOrdinal(i)).Where(exactSeeds.Contains)),"Map sparse ABI1 Exact parity");
                 using var mapCancellation=new CancellationTokenSource();mapCancellation.Cancel();
-                bool stopped=false;try { mapInvocation.InvokeAsync(null!,window,sparse,mapCancellation.Token).GetAwaiter().GetResult(); }
+                bool stopped=false;try { mapInvocation.FilterAsync(mapServices,sparse,mapCancellation.Token).GetAwaiter().GetResult(); }
                 catch(OperationCanceledException){stopped=true;}
-                Check(stopped,"Map cancellation propagates");mapInvocation.DisposeAsync(null!).GetAwaiter().GetResult();
+                Check(stopped,"Map cancellation propagates");mapInvocation.DisposeAsync(mapServices).GetAwaiter().GetResult();mapServices.DisposeAsync().GetAwaiter().GetResult();
             }
             session.DisposeAsync().AsTask().GetAwaiter().GetResult(); returned+=actual.Count;
             Console.WriteLine($"WORKBENCH_CASE {name};roots=64;matches={actual.Count};unconfirmed={unverified};roundtrip=true;ExactParity=true;authority={(archivedWorld?"GameRuntimeCaptureCorpus":"NativeRuntimeCapture")}");
@@ -1851,7 +1886,7 @@ internal static class WorkbenchContractChecks
             "Switching to default keeps the offered group in its separate draft");
         frame.RestoreDraft(empty,render:false);
         File.WriteAllText(".build-evidence/capability-coverage.json",JsonSerializer.Serialize(coverage,ProductionSearchReplay.JsonOptions));
-        var cancelledRequest=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(SearchQuery.Empty,archived),new("000000000000",1_000_000,int.MaxValue,1)).Plan!;
+        var cancelledRequest=SearchPreparationCompiler.Compile(SearchCompiler.Compile(SearchQuery.Empty,archived),new("000000000000",1_000_000,int.MaxValue,1)).Plan!;
         var cancelled=FamilyExecutionCoordinator.Start(cancelledRequest,gpuAvailable:false);
         cancelled.Cancel();
         Check(cancelled.Completion.Wait(TimeSpan.FromSeconds(30)),"Cancellation completes");
@@ -1974,12 +2009,12 @@ internal static class WorkbenchContractChecks
         ModelKey[] Cards(IEnumerable<RolltheSpire2.Core.Effects.PredictedEffectGroup> groups)=>groups.SelectMany(g=>g.OrderedItems)
             .Where(i=>i.Kind==RolltheSpire2.Core.Effects.PredictedEffectKind.TransformCard).Select(i=>i.TargetKey!.Value).ToArray();
         var cards=Cards(routes[0].RelicScopedResults.SelectMany(r=>r.EffectGroups));
-        ExactSearchExecutionRequest Request(SearchQuery q)=>ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(q,context),new(seed,64,30,1)).Plan!;
+        PreparedSearch Request(SearchQuery q)=>SearchPreparationCompiler.Compile(SearchCompiler.Compile(q,context),new(seed,64,30,1)).Plan!;
         var baseQuery=SearchQuery.Empty with {OpeningRoute=new(bones),OpeningRouteRelicRequirement=new(bones,[leafy,leaf]),
             TransformationAggregate=new(TransformationOpening.BonesLeafyNewLeaf,TransformationPickupOrder.Any,false,false,false,TransformationAggregatePredicate.ContainsMultiset,0,[cards[0]])};
         var probe=baseQuery with {CombatCardRewards=new(6,CombatRewardSequenceOrderMode.Ordered,[context.Authority.EffectAuthority!.CharacterRewardPool![0].CardKey,null,null,null,null,null])};
-        var probeResult=ProductionExactSearchEvaluator.Evaluate(Request(probe),root);
-        var reward=probeResult.Document?.Sections.FirstOrDefault(s=>s.NormalCombatRewardSequencePrediction is not null)?.NormalCombatRewardSequencePrediction;
+        var probeResult=ProductionExactSearchEvaluator.Evaluate(Request(probe).Model,root);
+        var reward=probeResult.Facts?.CombatRewards;
         Check(reward is not null,"Fixed Bones+C reaches reward Predictor: "+probeResult.FailureCode);
         var battles=reward!.Routes[0].Battles;
         var continuations=routes.Select(r=>r.OpeningRewardContinuation!).ToArray();
@@ -1994,9 +2029,9 @@ internal static class WorkbenchContractChecks
             var q=baseQuery with {OpeningRouteRelicRequirement=new(bones,pair,order==TransformationPickupOrder.Any?BonesRouteOrderMode.AnyOrder:BonesRouteOrderMode.ExactOrder),
                 TransformationAggregate=baseQuery.TransformationAggregate! with {PickupOrder=order,TargetMultiset=cards.Take(count).Reverse().ToArray()},
                 CombatCardRewards=new(6,combatOrder,combatTargets)};
-            var request=Request(q);var exact=ProductionExactSearchEvaluator.Evaluate(request,root);
+            var request=Request(q);var exact=ProductionExactSearchEvaluator.Evaluate(request.Model,root);
             Check(exact.IsMatch,"Partial/full joint with C6 "+order+"/"+count+"/"+combatOrder+": "+exact.FailureCode);
-            var c=new CombatRewardReplay(request);var t=new TransformationAggregateNumericalPlan(request);
+            var c=new CombatRewardReplay(request.Model);var t=new TransformationAggregateNumericalPlan(request.Model);
             Check(c.Plan.OpeningConsumption.ReplayBonesOffer && c.Matches(root.RootHash) && t.Matches(root.RootHash),"C and aggregate numerical retain positive witness");
             var checkpoint=c.Opening(root.RootHash,0).Rewards.CaptureCheckpoint();var state=continuations[0].RewardsRngState!;
             Check(checkpoint.S0==state.S0 && checkpoint.S1==state.S1 && checkpoint.S2==state.S2 && checkpoint.S3==state.S3,"C Fast arrives at vanilla Rewards checkpoint");
@@ -2007,12 +2042,12 @@ internal static class WorkbenchContractChecks
         }
         // Match an actual C1 output for bounded real CPU/GPU integration and session checks.
         var query=baseQuery with {CombatCardRewards=new(1,CombatRewardSequenceOrderMode.Ordered,[battles[0].Cards[0].CardKey])};
-        var plan=Request(query);var replay=new CombatRewardReplay(plan);var aggregate=new TransformationAggregateNumericalPlan(plan);
+        var plan=Request(query);var replay=new CombatRewardReplay(plan.Model);var aggregate=new TransformationAggregateNumericalPlan(plan.Model);
         var batch=FamilyCandidateSet.Dense(new SearchBatch(startOrdinal,64));
         var expected=new List<ulong>();
         for(ulong i=0;i<64;i++){
             string candidate=Beta110SeedCodec.FormatOrdinal(startOrdinal+i);var input=TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance,candidate);
-            bool fast=aggregate.Matches(input.RootHash)&&replay.Matches(input.RootHash);var exact=ProductionExactSearchEvaluator.Evaluate(plan,input);
+            bool fast=aggregate.Matches(input.RootHash)&&replay.Matches(input.RootHash);var exact=ProductionExactSearchEvaluator.Evaluate(plan.Model,input);
             Check(fast==exact.IsMatch,"Joint+C bounded Fast/Exact parity at "+candidate);if(fast)expected.Add(i);
         }
         Check(expected.Count>0,"Joint+C nonvacuous interval");
@@ -2022,15 +2057,15 @@ internal static class WorkbenchContractChecks
         var sourceBound=query with {TransformationAggregate=null,StructuredOpeningEffects=routes[0].RelicScopedResults.Select(r=>
             new NeowStructuredEffectSearchCondition(r.SourceRelicKey,r.SourceRelicKey==leafy?NeowStructuredConditionKind.ExactUnorderedPair:NeowStructuredConditionKind.ExactSingle,
                 NeowStructuredEffectScope.TransformResults,NeowStructuredOutputKind.Card,Cards(r.EffectGroups),AllowDuplicateOutputs:r.SourceRelicKey==leafy)).ToArray()};
-        Check(ProductionExactSearchEvaluator.Evaluate(Request(sourceBound),root).IsMatch,"Separately assigned N+C donor remains valid");
+        Check(ProductionExactSearchEvaluator.Evaluate(Request(sourceBound).Model,root).IsMatch,"Separately assigned N+C donor remains valid");
         var repeated=query with {TransformationAggregate=query.TransformationAggregate! with {TargetMultiset=[cards[0],cards[0],cards[0]]}};
-        Check(ProductionExactSearchEvaluator.Evaluate(Request(repeated),root).IsMatch==cards.All(k=>k==cards[0]),"Joint+C preserves duplicate multiplicity");
+        Check(ProductionExactSearchEvaluator.Evaluate(Request(repeated).Model,root).IsMatch==cards.All(k=>k==cards[0]),"Joint+C preserves duplicate multiplicity");
         var lateOnly=battles[5].Cards.Select(c=>c.CardKey).First(k=>!battles.Take(3).SelectMany(b=>b.Cards).Any(c=>c.CardKey==k));
         var ordinarySix=sourceBound with {CombatCardRewards=new(6,CombatRewardSequenceOrderMode.Unordered,[lateOnly,null,null,null,null,null])};
-        Check(ProductionExactSearchEvaluator.Evaluate(Request(ordinarySix),root).IsMatch,"Ordinary typed C6 does not inherit legacy three-battle rejection");
+        Check(ProductionExactSearchEvaluator.Evaluate(Request(ordinarySix).Model,root).IsMatch,"Ordinary typed C6 does not inherit legacy three-battle rejection");
         var legacyThree=ordinarySix with {LegacyCombatRewardConstraints=[new(0,new([lateOnly],[],[]),NormalCombatPotionRequirement.Any,ModelKeySetFilter.Empty,null,null)]};
-        Check(!ProductionExactSearchEvaluator.Evaluate(Request(legacyThree),root).IsMatch,"Actual legacy any-battle condition retains three-battle scope");
-        var cancelRequest=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query,context),new(seed,1_000_000,int.MaxValue,1)).Plan!;
+        Check(!ProductionExactSearchEvaluator.Evaluate(Request(legacyThree).Model,root).IsMatch,"Actual legacy any-battle condition retains three-battle scope");
+        var cancelRequest=SearchPreparationCompiler.Compile(SearchCompiler.Compile(query,context),new(seed,1_000_000,int.MaxValue,1)).Plan!;
         var cancelled=FamilyExecutionCoordinator.Start(cancelRequest,gpuAvailable:false);cancelled.Cancel();
         Check(cancelled.Completion.Wait(TimeSpan.FromSeconds(30)) && cancelled.GetProgress().State==SearchRunState.Cancelled,"Joint+C Stop completes via existing session");
         cancelled.DisposeAsync().AsTask().GetAwaiter().GetResult();
@@ -2040,13 +2075,13 @@ internal static class WorkbenchContractChecks
         var tProbability=TransformationAggregateProbability.Build(aggregate).QueryHitProbability;
         Check(estimate.Probability.HasValue && cProbability.Probability.HasValue && tProbability.HasValue &&
             Math.Abs(estimate.Probability.Value-cProbability.Probability.Value*tProbability.Value)<1e-12,"Joint probability charges opening once and C distribution once");
-        var attribution=RolltheSpire2.Presentation.Ui1.SearchProbabilityPresentationBuilder.Build(plan.CompiledSearch);
+        var attribution=RolltheSpire2.Presentation.Ui1.SearchProbabilityPresentationBuilder.Build(plan.Model.CompiledSearch);
         double nContribution=attribution.Rows.Single(r=>r.Kind==RolltheSpire2.Presentation.Ui1.SearchProbabilityRowKind.Neow).Probability!.Value;
         double tContribution=attribution.Rows.Single(r=>r.Kind==RolltheSpire2.Presentation.Ui1.SearchProbabilityRowKind.TransformationAggregate).Probability!.Value;
         Check(Math.Abs(nContribution-TransformationAggregateProbability.Build(aggregate).IdentityProbability)<1e-12 &&
             Math.Abs(nContribution*tContribution-tProbability!.Value)<1e-12,"N identity and conditional T contribution are visible and charged once");
         var merge=typeof(ProductionExactSearchEvaluator).GetMethod("MergeCanonicalGlobalEvidence",BindingFlags.Static|BindingFlags.NonPublic)!;
-        var positive=ProductionExactSearchEvaluator.Evaluate(plan,root).Evaluation;
+        var positive=ProductionExactSearchEvaluator.Evaluate(plan.Model,root).Evaluation;
         var proof=positive.Evidence.First(e=>e.Code=="TransformationAggregateMatched");
         var oppositeWitness=positive.Witnesses[0] with {AcquisitionOrder=proof.AcquisitionOrder!.Reverse().ToArray()};
         var incompatible=SearchQueryEvaluation.Match([], [oppositeWitness.OpeningRouteId], [oppositeWitness]);
@@ -2060,7 +2095,7 @@ internal static class WorkbenchContractChecks
             var survivors=tgpu.Execute(batch,default,out _);
             var cpuT=Enumerable.Range(0,64).Select(i=>(ulong)i).Where(i=>aggregate.Matches(Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(startOrdinal+i))));
             Check(survivors.EnumerateLogicalOrdinals().SequenceEqual(cpuT),"Aggregate GPU retains CPU candidates");
-            using var cgpu=new CombatRewardGpuExecutor(rd!,CombatRewardGpuPlan.TryCreate(plan,replay,out _) !);
+            using var cgpu=new CombatRewardGpuExecutor(rd!,CombatRewardGpuPlan.TryCreate(plan.Model,replay,out _) !);
             var gpuResult=cgpu.Execute(survivors,default,out _);
             Check(gpuResult.EnumerateLogicalOrdinals().SequenceEqual(expected),"T GPU to C GPU compact handoff equals Exact");
             Console.WriteLine("BONES_C_GPU_PASS roots=64;compactHandoff=true;falseNegative=0");
@@ -2082,21 +2117,24 @@ internal static class WorkbenchContractChecks
         {
             ModelKey?[] slots=new ModelKey?[horizon]; slots[0]=common; slots[^1]=rare;
             var compiled=SearchCompiler.Compile(SearchQuery.Empty with {CombatCardRewards=new(horizon,CombatRewardSequenceOrderMode.Ordered,slots)},context);
-            var request=ExactSearchExecutionRequestFactory.Compile(compiled,new("000000000000",1<<18,int.MaxValue,1)).Plan!;
-            var replay=new CombatRewardReplay(request);
+            var request=SearchPreparationCompiler.Compile(compiled,new("000000000000",1<<18,int.MaxValue,1)).Plan!;
+            var replay=new CombatRewardReplay(request.Model);
             var batch=FamilyCandidateSet.Dense(new SearchBatch(0,1<<18));
-            var cpu=new FamilyCpuExecution(request,"C.CombatReward","C6.Evidence",windowCapacity:65536,numericalRoots:true);
-            var observation=new FamilyObservationWindow(batch.Batch,request);
+            var cpuServices=new FilterRuntimeServices(false);
+            var cpuBody=new FilterBodyDescription(new PreparedFilter("C.CombatReward"),"C6.Evidence",request.Model.ProfileId)
+            { WindowCapacity=65536 };
+            var cpu=new CpuFilterExecution(cpuBody,RuntimeProfileRegistry.Select(request.Model.Detection),replay.Matches,true);
+            var observation=batch.Batch;
             var times=new List<double>(); FamilyCandidateSet? expected=null;
             for(int round=0;round<4;round++)
             {
-                var watch=System.Diagnostics.Stopwatch.StartNew();expected=cpu.Execute(observation,batch,default,replay.Matches);watch.Stop();
+                var watch=System.Diagnostics.Stopwatch.StartNew();expected=cpu.FilterAsync(cpuServices,batch,default).GetAwaiter().GetResult();watch.Stop();
                 if(round>0)times.Add(watch.Elapsed.TotalMilliseconds);
             }
             double? deviceMs=null, canonicalMs=null;
             if(rd is not null)
             {
-                var gpuPlan=CombatRewardGpuPlan.TryCreate(request,replay,out _) !;
+                var gpuPlan=CombatRewardGpuPlan.TryCreate(request.Model,replay,out _) !;
                 using var gpu=new CombatRewardGpuExecutor(rd,gpuPlan);
                 var device=new List<double>();var canonical=new List<double>();
                 for(int round=0;round<4;round++)
@@ -2112,7 +2150,7 @@ internal static class WorkbenchContractChecks
             {
                 string seed=Beta110SeedCodec.FormatOrdinal(ordinal);
                 TrustedRootHashInput.TryBindCanonicalSeed(Beta111Profile.Instance,Beta111Profile.Instance.ComputeRootSeed(seed),seed,out var input,out _);
-                var proof=ProductionExactSearchEvaluator.Evaluate(request,input);
+                var proof=ProductionExactSearchEvaluator.Evaluate(request.Model,input);
                 if(proof.IsMatch)accepted++; else Check(proof.FailureCode=="NoEligibleUnpinnedRewardRoute","Unexpected C6 Exact rejection: "+proof.FailureCode);
             }
             exactWatch.Stop();

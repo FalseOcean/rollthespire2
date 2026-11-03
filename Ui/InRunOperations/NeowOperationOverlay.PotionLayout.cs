@@ -1,12 +1,13 @@
 using Godot;
+using RolltheSpire2.Ui.Settings;
 
 namespace RolltheSpire2.Ui.InRunOperations;
 
 internal sealed partial class NeowOperationOverlay
 {
-    private readonly record struct PotionGroupLayoutKey(int Count, string Caption, bool Stacked, bool SingleRow, bool HasPrice, string PotionUseOrder);
+    private readonly record struct PotionGroupLayoutKey(int Count, string Caption, bool Stacked, bool SingleRow, bool HasPrice, string IconPaths, string Language);
     private sealed record PotionGroupLayoutCache(Rect2 Viewport, Rect2 Anchor, Rect2? NativeTip,
-        Rect2[] Occupied, PotionGroupLayoutKey[] Groups, float Scale, float Factor, Rect2[]? Regions);
+        Rect2[] Occupied, PotionGroupLayoutKey[] Groups, bool PreferRows, float Scale, float Factor, Rect2[]? Regions);
     // One current UI layout only, including an impossible-layout decision.
     // Rectangles and metric inputs are copied values, never native controls.
     private PotionGroupLayoutCache? _potionGroupLayoutCache;
@@ -19,9 +20,15 @@ internal sealed partial class NeowOperationOverlay
     internal Rect2[]? PlanPotionGroupRegions(Rect2 viewport, Rect2 anchor,
         IReadOnlyList<Rect2> occupied, Rect2? nativeTextTip)
     {
-        if (_preview?.Source.Category != "POTION" || _stacks.Count < 2 || _iconGroups.Count != 0 || _summary != null)
+        if ((_preview?.Source.Category != "POTION" && !_rerollCardLayout && !_stacks.Any(stack => !stack.IconPaths.IsDefaultOrEmpty)) ||
+            _stacks.Count == 0 || _iconGroups.Count != 0 || _summary != null)
         { _potionGroupScale = 1f; return null; }
-        for (int i = 0; i < _stacks.Count; i++) if (!_stacks[i].Stacked) { _potionGroupScale = 1f; return null; }
+        // One bottle spreads its candidates rather than layering them. It
+        // needs the same whole-row placement and uniform scale negotiation as
+        // multiple recipe stacks, instead of wrapping in a narrow free region.
+        for (int i = 0; i < _stacks.Count; i++)
+            if (!_stacks[i].Stacked && !(_stacks.Count == 1 && _stacks[i].ForceSingleRow))
+            { _potionGroupScale = 1f; return null; }
         // CardDisplayScale includes the previously selected factor. Cache and
         // plan against the native viewport scale, preventing cumulative shrink.
         float scale = CardDisplayScale / _potionGroupScale;
@@ -30,15 +37,20 @@ internal sealed partial class NeowOperationOverlay
         return RecomputePotionGroupRegions(viewport, anchor, occupied, nativeTextTip, scale);
     }
 
+    private bool PreferGroupedRows => _rerollCardLayout || _preview?.Source.Category != "POTION" &&
+        _stacks.Any(stack => !stack.IconPaths.IsDefaultOrEmpty);
+
     private static PotionGroupLayoutKey PotionGroupKey(CardStack stack) => new(stack.Cards.Length, stack.Caption,
         stack.Stacked, stack.ForceSingleRow, stack.Price.HasValue,
-        stack.PotionUseOrder.IsDefaultOrEmpty ? "" : string.Join("|", stack.PotionUseOrder.Select(key => key.Serialized)));
+        stack.PathSignature ??= stack.IconPaths.IsDefaultOrEmpty ? "" : string.Join(";", stack.IconPaths.Select(path =>
+            string.Join("/", path.Segments.Select(segment => string.Join("|", segment.Select(key => key.Serialized)))))),
+        UiLanguagePreferences.LanguageCode);
 
     private bool PotionGroupLayoutMatches(Rect2 viewport, Rect2 anchor, IReadOnlyList<Rect2> occupied,
         Rect2? nativeTextTip, float scale)
     {
         var cache = _potionGroupLayoutCache;
-        if (cache == null || cache.Viewport != viewport || cache.Anchor != anchor || cache.NativeTip != nativeTextTip ||
+        if (cache == null || cache.PreferRows != PreferGroupedRows || cache.Viewport != viewport || cache.Anchor != anchor || cache.NativeTip != nativeTextTip ||
             Math.Abs(cache.Scale - scale) > .00001f || cache.Occupied.Length != occupied.Count || cache.Groups.Length != _stacks.Count) return false;
         for (int i = 0; i < occupied.Count; i++) if (cache.Occupied[i] != occupied[i]) return false;
         for (int i = 0; i < _stacks.Count; i++) if (cache.Groups[i] != PotionGroupKey(_stacks[i])) return false;
@@ -54,6 +66,11 @@ internal sealed partial class NeowOperationOverlay
         {
             _potionGroupScale = (20 - attempt) / 20f;
             var regions = TrySingleRow(scale * _potionGroupScale);
+            // Reroll groups keep their reading order even without path icons.
+            // Prefer neighbouring rows before reducing every native card face
+            // to squeeze all outcomes into one row. Potions retain row priority.
+            if (regions == null && PreferGroupedRows)
+                regions = TryAtScale(scale * _potionGroupScale);
             if (regions != null) return Remember(regions);
         }
         for (int attempt = 0; attempt < 20; attempt++)
@@ -67,7 +84,7 @@ internal sealed partial class NeowOperationOverlay
 
         Rect2[]? TrySingleRow(float cardScale)
         {
-            var sizes = _stacks.Select(stack => GroupMetrics(stack, float.PositiveInfinity, cardScale).Size).ToArray();
+            var sizes = AlignGroupSizes(NaturalGroupSizes(cardScale), Enumerable.Range(0, _stacks.Count));
             var rowSize = new Vector2(sizes.Sum(size => size.X) + GroupGap * (sizes.Length - 1),
                 sizes.Max(size => size.Y));
             var safe = new Rect2(viewport.Position + new Vector2(18, 18), viewport.Size - new Vector2(36, 36));
@@ -104,8 +121,10 @@ internal sealed partial class NeowOperationOverlay
 
         Rect2[]? TryAtScale(float cardScale)
         {
-            var sizes = _stacks.Select(stack => GroupMetrics(stack, float.PositiveInfinity, cardScale).Size).ToArray();
-            var cell = new Vector2(sizes.Max(size => size.X), sizes.Max(size => size.Y));
+            var sizes = NaturalGroupSizes(cardScale);
+            float header = Enumerable.Range(0, sizes.Length).Max(index => StackHeaderHeight(_stacks[index], sizes[index].X));
+            float body = Enumerable.Range(0, sizes.Length).Max(index => sizes[index].Y - StackHeaderHeight(_stacks[index], sizes[index].X));
+            var cell = new Vector2(sizes.Max(size => size.X), header + body);
             var safe = new Rect2(viewport.Position + new Vector2(18, 18), viewport.Size - new Vector2(36, 36));
             if (cell.X <= 0 || cell.Y <= 0 || cell.X > safe.Size.X || cell.Y > safe.Size.Y) return null;
             var blockers = occupied.Append(anchor).Concat(nativeTextTip is { } tip ? [tip] : Array.Empty<Rect2>())
@@ -139,14 +158,17 @@ internal sealed partial class NeowOperationOverlay
                 bestScore = score;
                 // Reserve equal grid cells during packing; return the actual host
                 // size so caption/card metrics and hit regions remain truthful.
-                best = selected.Select((rect, index) => new Rect2(rect.Position, sizes[index])).ToArray();
+                var aligned = sizes.ToArray();
+                foreach (var row in Enumerable.Range(0, selected.Length).GroupBy(index => selected[index].Position.Y))
+                    AlignGroupSizes(aligned, row);
+                best = selected.Select((rect, index) => new Rect2(rect.Position, aligned[index])).ToArray();
             }
             return best;
         }
 
         Rect2[]? Remember(Rect2[]? regions)
         {
-            _potionGroupLayoutCache = new(viewport, anchor, nativeTextTip, copiedOccupied, groups, scale, _potionGroupScale, regions);
+            _potionGroupLayoutCache = new(viewport, anchor, nativeTextTip, copiedOccupied, groups, PreferGroupedRows, scale, _potionGroupScale, regions);
             return regions;
         }
     }

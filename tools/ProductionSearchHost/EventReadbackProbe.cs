@@ -12,11 +12,12 @@ using RolltheSpire2.Search.FamilyExecution;
 // producer; full-population verification is separate from measured calls.
 internal static class EventReadbackProbe
 {
-    internal static void Run(ExactSearchExecutionRequest request, string output)
+    internal static void Run(PreparedSearch request, string output)
     {
-        var family = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, gpuAvailable: true).OfType<EventResultFamily>().Single();
-        var plan = family.Plan;
-        var profile = RuntimeProfileRegistry.Select(request.Detection);
+        if(!EventResultFamily.TryPrepare(request.Model,FilterExecutionPreferences.From(request.RunOptions),out var prepared) || prepared is null || !prepared.Body.UsesGpu)
+            throw new InvalidOperationException("EReadback.GpuPreparationUnavailable");
+        var plan = prepared.Plan;
+        var profile = RuntimeProfileRegistry.Select(request.Model.Detection);
         if (!VisibleSeedCandidateCodec.TryParseOrdinal(profile, request.CanonicalStartSeed, out ulong first, out _, out var issue))
             throw new InvalidDataException(issue);
         using var rd = RenderingServer.CreateLocalRenderingDevice() ?? throw new InvalidOperationException("EReadback.NoDevice");
@@ -106,7 +107,7 @@ internal static class EventReadbackProbe
             Equal(buffer.ReadForVerification(cancelBatch, resumed), reference.Execute(FamilyCandidateSet.Dense(cancelBatch), CancellationToken.None, out _), "CancelReuse");
         }
         File.WriteAllText(Path.Combine(output, "event-readback.json"), JsonSerializer.Serialize(new { passed = true, parity,
-            device = rd.GetDeviceName(), conditions = request.Evaluation.EventResultConditions, rows,
+            device = rd.GetDeviceName(), conditions = request.Model.Evaluation.EventResultConditions, rows,
             diagnosticOnly = true, productionPrice = false, performanceSample = !parity }, new JsonSerializerOptions { WriteIndented = true }));
         Console.WriteLine($"eventReadback=PASS;parity={parity};rows={rows.Count};numericalBodyChanged=false");
     }

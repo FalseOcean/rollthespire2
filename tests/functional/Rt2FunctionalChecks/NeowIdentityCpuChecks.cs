@@ -19,10 +19,11 @@ internal static class NeowIdentityCpuChecks
     {
         var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/v1/context.json");
         var w = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/classic-product-v1/B-SourceCapsules-positive.json");
-        var request = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(w.Query, context.Context), w.Options).Plan!;
-        var plan = NeowReplayPlan.Compile(request, false);
+        var request = SearchPreparationCompiler.Compile(SearchCompiler.Compile(w.Query, context.Context), w.Options).Plan!;
+        var plan = NeowReplayPlan.Compile(request.Model, false);
         var pool = plan.Authority.BonesEligibleRelicIds;
-        int checks = CheckEmptyExclusionSelection() + CheckDirectLocalPlans() + CheckMinimalObservationPlans() + CheckRoundedRarityEndpoint(), kept = 0;
+        int checks = CheckEmptyExclusionSelection() + CheckDirectLocalPlans() + CheckMinimalObservationPlans() + CheckRoundedRarityEndpoint() +
+            CheckPositivePositionPlans(), kept = 0;
         // All possible pair identities: this is a compiled pair shape, not a
         // Small/Large identity special case. Variants also confront Any/Ban/order.
         var random = new Random(20260912);
@@ -74,8 +75,8 @@ internal static class NeowIdentityCpuChecks
         {
             var ctx=ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/"+item.Item2);
             var workload=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/"+item.Item1);
-            var r=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(workload.Query,ctx.Context),workload.Options).Plan!;
-            var p=NeowReplayPlan.Compile(r,false);
+            var r=SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query,ctx.Context),workload.Options).Plan!;
+            var p=NeowReplayPlan.Compile(r.Model,false);
             var gate=NeowCpuPreGate.TryCompile(p) ?? throw new InvalidDataException("N gate not admitted:"+item.Item1);
             if (item.Item1.EndsWith("NN-Leafy.json", StringComparison.Ordinal))
             {
@@ -134,6 +135,182 @@ internal static class NeowIdentityCpuChecks
         return 0;
     }
 
+    private static int CheckPositivePositionPlans()
+    {
+        var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/owner-nwae-v1/context.json").Context;
+        PreparedSearch Request(SearchQuery query) => SearchPreparationCompiler.Compile(
+            SearchCompiler.Compile(query, context), new("000000000000", 8193, 1, 1)).Plan!;
+        var request = Request(SearchQuery.Empty with { OpeningRoute = new(BaseGameModelKeys.Relics.GoldenPearl) });
+        var original = NeowReplayPlan.Compile(request.Model, false);
+        byte[] variants = [Beta110FastRelicCatalog.LavaRock, Beta110FastRelicCatalog.SmallCapsule,
+            Beta110FastRelicCatalog.NutritiousOyster, Beta110FastRelicCatalog.StoneHumidifier,
+            Beta110FastRelicCatalog.NeowsTalisman, Beta110FastRelicCatalog.Pomander];
+        byte[] targets = [..NeowIdentityOfferFacts.For(1, true, true).AdmittedFixedCandidates, ..variants];
+        int checks = 0, first = 0, second = 0, passed = 0, rejected = 0;
+        Span<byte> positive = stackalloc byte[17];
+        foreach (byte target in targets)
+        {
+            var plan = original with { Selected = target,
+                Authority = original.Authority with { AllCharacterCardPoolsUnlocked = target % 2 == 0,
+                    ScrollBoxesAllowed = target % 3 != 0,
+                    EligibleCurseRelicIds = original.Authority.EligibleCurseRelicIds.AsEnumerable().Reverse().ToArray() } };
+            var fast = NeowCpuPositiveIdentityPlan.TryCompile(plan, true) ?? throw new InvalidDataException("N positive target admission");
+            foreach (ulong start in new[] { 0UL, ulong.MaxValue - 4095 })
+            for (ulong i = 0; i < 4096; i++)
+            {
+                ulong root = start + i;
+                bool truth = NeowSingleplayerReplay.Observe(root, plan).IdentityPass;
+                bool actual = fast.ObserveIdentity(root, out byte curse, out int position, out var state);
+                if (actual != truth || fast.Matches(root) != truth) throw new InvalidDataException("N positive position population");
+                checks++;
+                if (!actual) { rejected++; continue; }
+                passed++;
+                byte expectedCurse = NeowSingleplayerReplay.ObserveCurse(root, plan, out var rng);
+                int count = 0;
+                foreach (byte id in plan.Authority.Identity.ForCurse(expectedCurse).FixedCandidates)
+                    positive[count++] = id;
+                if (expectedCurse != Beta110FastRelicCatalog.LargeCapsule)
+                    positive[count++] = rng.NextBool() ? Beta110FastRelicCatalog.LavaRock : Beta110FastRelicCatalog.SmallCapsule;
+                positive[count++] = rng.NextBool() ? Beta110FastRelicCatalog.NutritiousOyster : Beta110FastRelicCatalog.StoneHumidifier;
+                positive[count++] = rng.NextBool() ? Beta110FastRelicCatalog.NeowsTalisman : Beta110FastRelicCatalog.Pomander;
+                rng.UnstableShuffle(positive[..count]);
+                if (curse != expectedCurse || position is < 0 or > 1 || positive[position] != target || state != rng.CaptureCheckpoint())
+                    throw new InvalidDataException("N positive position successful shuffle/checkpoint");
+                if (position == 0) first++; else second++;
+                checks++;
+            }
+        }
+        if (passed == 0 || rejected == 0 || first == 0 || second == 0) throw new InvalidDataException("N positive position witnesses");
+        ulong wanted = Beta110FastRelicCatalog.Bit(Beta110FastRelicCatalog.GoldenPearl);
+        foreach (var plan in new[] { original with { Selected = 255, TopAny = wanted },
+            original with { Selected = 255, TopAll = wanted },
+            original with { TopAny = wanted | Beta110FastRelicCatalog.Bit(Beta110FastRelicCatalog.LeafyPoultice) },
+            original with { TopAll = wanted | Beta110FastRelicCatalog.Bit(Beta110FastRelicCatalog.LeafyPoultice) } })
+        {
+            var fast = NeowCpuPositiveIdentityPlan.TryCompile(plan, true) ?? throw new InvalidDataException("N positive Any/All admission");
+            for (ulong root = 0; root < 4096; root++)
+            {
+                if (fast.Matches(root) != NeowSingleplayerReplay.Matches(root, plan)) throw new InvalidDataException("N positive Any/All parity");
+                checks++;
+            }
+        }
+        foreach (var unsupported in new[] { original with { TopBan = 1 }, original with { Bones = true },
+            original with { RequireBones = true }, original with { BonesAny = 1 }, original with { First = 0 },
+            original with { TopAll = wanted | Beta110FastRelicCatalog.Bit(Beta110FastRelicCatalog.WingedBoots) },
+            original with { Selected = 255, TopAny = wanted | Beta110FastRelicCatalog.Bit(Beta110FastRelicCatalog.LeafyPoultice) },
+            original with { DirectNestedVanilla111 = false },
+            original with { Authority = original.Authority with { PlayersCount = 2 } },
+            original with { Authority = original.Authority with { IdentityAuthorityExact = false } },
+            original with { Authority = original.Authority with { EligibleCurseRelicIds = [] } },
+            original with { Authority = original.Authority with { EligibleCurseRelicIds = [0, 0] } } })
+        {
+            if (NeowCpuPositiveIdentityPlan.TryCompile(unsupported, true) is not null) throw new InvalidDataException("N positive unsupported shape admitted");
+            checks++;
+        }
+        foreach (string path in new[] { "n-direct-v1/NewLeaf.json", "n-direct-v1/K-same-pool.json", "n-rewards-v1/Lost-potion-rare.json" })
+        {
+            var workload = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/" + path);
+            var r = SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, context), workload.Options).Plan!;
+            var plan = NeowReplayPlan.Compile(r.Model, false);
+            var fast = NeowCpuPositiveIdentityPlan.TryCompile(plan, true) ?? throw new InvalidDataException("N positive local identity admission");
+            var local = NeowSingleplayerLocalCpuPlan.TryCompile(plan, fast) ?? throw new InvalidDataException("N positive preserves local body");
+            for (ulong root = 0; root < 4096; root++)
+            {
+                bool truth = NeowSingleplayerReplay.Matches(root, plan);
+                if (fast.Matches(root) != truth || local.Matches(root) != truth) throw new InvalidDataException("N positive local ordering/parity");
+                checks++;
+            }
+            if (plan.Selected != Beta110FastRelicCatalog.NewLeaf) continue;
+            var broken = plan with { Authority = plan.Authority with { EffectCatalog = plan.Authority.EffectCatalog with { NewLeafTransformAuthorityExact = false } } };
+            var brokenFast = NeowCpuPositiveIdentityPlan.TryCompile(broken, true)!;
+            if (NeowSingleplayerLocalCpuPlan.TryCompile(broken, brokenFast) is not null) throw new InvalidDataException("N positive local failure proof widened");
+            ulong witness = 0;
+            while (witness < 4096 && !brokenFast.PassesIdentity(witness)) witness++;
+            if (witness == 4096) throw new InvalidDataException("N positive continuation fault witness");
+            string Failure(Func<bool> run)
+            {
+                try { _ = run(); }
+                catch (InvalidOperationException error) { return error.Message; }
+                throw new InvalidDataException("N positive continuation fault hidden");
+            }
+            if (Failure(() => brokenFast.Matches(witness)) != Failure(() => NeowSingleplayerReplay.Matches(witness, broken)))
+                throw new InvalidDataException("N positive continuation cause changed");
+            checks++;
+        }
+        checks += CheckPositivePositionPhysical(request, original);
+        Console.WriteLine($"N_POSITIVE_POSITION PASS checks={checks};targets={targets.Length};passed={passed};rejected={rejected};first={first};second={second};fullSuccessRng=true;localFaultRetained=true");
+        return checks;
+    }
+
+    private static int CheckPositivePositionPhysical(PreparedSearch request, NeowReplayPlan plan)
+    {
+        string? saved = Environment.GetEnvironmentVariable(NeowCpuPositiveIdentityPlan.EnvironmentVariable);
+        int checks=0;
+        var preferences=FilterExecutionPreferences.From(request.RunOptions);
+        try
+        {
+            Environment.SetEnvironmentVariable(NeowCpuPositiveIdentityPlan.EnvironmentVariable,null);
+            if(!NeowCpuPositiveIdentityPlan.Capture() || NeowCpuPositiveIdentityPlan.TryCompile(plan,false) is not null)
+                throw new InvalidDataException("N positive tracking defaults on while explicit off retains the original body");
+            Environment.SetEnvironmentVariable(NeowCpuPositiveIdentityPlan.EnvironmentVariable,"off");
+            var off=new NeowFamily(request.Model,plan,preferGpu:false);
+            Environment.SetEnvironmentVariable(NeowCpuPositiveIdentityPlan.EnvironmentVariable,"track");
+            var on=new NeowFamily(request.Model,plan,preferGpu:false);
+            var offCpu=off.Describe(preferences).CpuAlternatives.Single();
+            Environment.SetEnvironmentVariable(NeowCpuPositiveIdentityPlan.EnvironmentVariable,"off");
+            var onCpu=on.Describe(preferences).CpuAlternatives.Single();
+            if(offCpu.ConditionPerformance.PhysicalImplementationRevision.Contains(NeowCpuPositiveIdentityPlan.Revision,StringComparison.Ordinal) ||
+                !onCpu.ConditionPerformance.PhysicalImplementationRevision.Contains(NeowCpuPositiveIdentityPlan.Revision,StringComparison.Ordinal) ||
+                !on.ConditionPerformance.PhysicalImplementationRevision.Contains(NeowCpuPositiveIdentityPlan.Revision,StringComparison.Ordinal))
+                throw new InvalidDataException("N positive physical request capture/revision");
+            foreach(ulong start in new[]{0UL,VisibleSeedCandidateCodec.SpaceSize(Beta111Profile.Instance)-1027})
+            foreach(bool compact in new[]{false,true})
+            {
+                var batch=new SearchBatch(start,1027);
+                var input=compact ? FamilyCandidateSet.FromSortedAbi1(batch,[0,3,17,511,1026]) : FamilyCandidateSet.Dense(batch);
+                var context=new FilterRuntimeServices(false);
+                var offRun=offCpu.CreateExecution!(offCpu,context);var onRun=onCpu.CreateExecution!(onCpu,context);
+                try
+                {
+                    var left=offRun.FilterAsync(context,input,default).GetAwaiter().GetResult();
+                    var right=onRun.FilterAsync(context,input,default).GetAwaiter().GetResult();
+                    if(!left.EnumerateLogicalOrdinals().SequenceEqual(right.EnumerateLogicalOrdinals()))throw new InvalidDataException("N positive physical ABI1");
+                    try{onRun.FilterAsync(context,input,new CancellationToken(true)).GetAwaiter().GetResult();throw new InvalidDataException("N positive cancellation");}
+                    catch(OperationCanceledException){}
+                    checks+=2;
+                }
+                finally{offRun.DisposeAsync(context).GetAwaiter().GetResult();onRun.DisposeAsync(context).GetAwaiter().GetResult();context.DisposeAsync().GetAwaiter().GetResult();}
+            }
+            var curseQuery=SearchQuery.Empty with{OpeningRoute=new(BaseGameModelKeys.Relics.LeafyPoultice),
+                LegacyNeow=LegacyNeowSemanticConstraints.Empty with{NeowRelics=new([],[BaseGameModelKeys.Relics.GoldenPearl],[])}};
+            var compiled=SearchCompiler.Compile(curseQuery,request.Model.CompiledSearch.Context);
+            var curseRequest=SearchPreparationCompiler.Compile(compiled,request.RunOptions).Plan!;
+            var cursePlan=NeowReplayPlan.Compile(curseRequest.Model,false);
+            Environment.SetEnvironmentVariable(NeowCpuPositiveIdentityPlan.EnvironmentVariable,"off");
+            var fourOffBody=new NeowFamily(curseRequest.Model,cursePlan,preferGpu:false).Describe(preferences).CpuAlternatives.Single();
+            Environment.SetEnvironmentVariable(NeowCpuPositiveIdentityPlan.EnvironmentVariable,"track");
+            var fourOnBody=new NeowFamily(curseRequest.Model,cursePlan,preferGpu:false).Describe(preferences).CpuAlternatives.Single();
+            var fourContext=new FilterRuntimeServices(false);
+            var fourOff=(CpuFilterExecution)fourOffBody.CreateExecution!(fourOffBody,fourContext);
+            var fourOn=(CpuFilterExecution)fourOnBody.CreateExecution!(fourOnBody,fourContext);
+            try
+            {
+                if(fourOff.UsesFourWayPreGate!=fourOn.UsesFourWayPreGate ||
+                    fourOffBody.Cost.OptimizationShape?.Invoke(false)!=fourOnBody.Cost.OptimizationShape?.Invoke(false) ||
+                    !fourOnBody.ConditionPerformance.PhysicalImplementationRevision.Contains(NeowCpuPositiveIdentityPlan.Revision,StringComparison.Ordinal))
+                    throw new InvalidDataException("N positive displaced existing four-way body/cost");
+                var batch=new SearchBatch(0,8193);var input=FamilyCandidateSet.Dense(batch);
+                var left=fourOff.FilterAsync(fourContext,input,default).GetAwaiter().GetResult();
+                var right=fourOn.FilterAsync(fourContext,input,default).GetAwaiter().GetResult();
+                if(!left.EnumerateLogicalOrdinals().SequenceEqual(right.EnumerateLogicalOrdinals()))throw new InvalidDataException("N positive four-way population");
+                checks++;
+            }
+            finally{fourOff.DisposeAsync(fourContext).GetAwaiter().GetResult();fourOn.DisposeAsync(fourContext).GetAwaiter().GetResult();fourContext.DisposeAsync().GetAwaiter().GetResult();}
+        }
+        finally{Environment.SetEnvironmentVariable(NeowCpuPositiveIdentityPlan.EnvironmentVariable,saved);}
+        return checks;
+    }
+
     private static int CheckRoundedRarityEndpoint()
     {
         int checks = 0;
@@ -143,8 +320,9 @@ internal static class NeowIdentityCpuChecks
         {
             foreach (float roll in new[] { MathF.BitDecrement(1f), 1f })
             {
-                if (CardBaseOddsPolicyEvaluator.Evaluate(roll, type, ascension, policy) != EffectCardRarity.Common)
-                    throw new InvalidDataException("Rounded rarity endpoint must retain the game's Common result");
+                var expected = type == CardBaseOddsType.Boss && roll < 1f ? EffectCardRarity.Rare : EffectCardRarity.Common;
+                if (CardBaseOddsPolicyEvaluator.Evaluate(roll, type, ascension, policy) != expected)
+                    throw new InvalidDataException("Rounded rarity endpoint must retain the game's source-specific result");
                 checks++;
             }
         }
@@ -180,9 +358,9 @@ internal static class NeowIdentityCpuChecks
         var query = SearchQuery.Empty with { OpeningRoute = new(BaseGameModelKeys.Relics.LostCoffer), StructuredOpeningEffects =
             [new(BaseGameModelKeys.Relics.LostCoffer, NeowStructuredConditionKind.ExactSingle,
                 NeowStructuredEffectScope.SelectableOfferGroups, NeowStructuredOutputKind.Card, [afterlife])] };
-        var compiled = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context), new(seed, 1, 1, 1));
+        var compiled = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context), new(seed, 1, 1, 1));
         var request = compiled.Plan ?? throw new InvalidDataException("LostCoffer endpoint query failed compilation: " + compiled.Issue);
-        var exact = ProductionExactSearchEvaluator.Evaluate(request, TrustedRootHashInput.FromCanonicalSeed(profile, seed));
+        var exact = ProductionExactSearchEvaluator.Evaluate(request.Model, TrustedRootHashInput.FromCanonicalSeed(profile, seed));
         if (!exact.IsMatch) throw new InvalidDataException("LostCoffer real-seed Production Exact failed: " + exact.FailureCode);
         checks += 2;
         Console.WriteLine($"N_ROUNDED_RARITY_ENDPOINT PASS checks={checks};seed={seed};rarityDraw=4;common=true;productionExact=true");
@@ -199,8 +377,8 @@ internal static class NeowIdentityCpuChecks
             "n-direct-v1/K-same-pool.json", "n-direct-v1/K-cross-pool.json", "n-direct-v1/K-repeated.json" })
         {
             var workload = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/" + path);
-            var request = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(workload.Query, context.Context), workload.Options).Plan!;
-            var p = NeowReplayPlan.Compile(request, false);
+            var request = SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, context.Context), workload.Options).Plan!;
+            var p = NeowReplayPlan.Compile(request.Model, false);
             var fast = NeowSingleplayerLocalCpuPlan.TryCompile(p) ?? throw new InvalidDataException("N minimal observation not admitted: " + path);
             var c = p.Authority.EffectCatalog;
             string expectedRevision = p.Selected == Beta110FastRelicCatalog.LostCoffer
@@ -301,8 +479,8 @@ internal static class NeowIdentityCpuChecks
         foreach (string path in new[] { "physical-composition-v1/Arcane27.json", "n-direct-v1/NewLeaf.json" })
         {
             var workload = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/" + path);
-            var request = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(workload.Query, context.Context), workload.Options).Plan!;
-            var p = NeowReplayPlan.Compile(request, false);
+            var request = SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, context.Context), workload.Options).Plan!;
+            var p = NeowReplayPlan.Compile(request.Model, false);
             var fast = NeowSingleplayerLocalCpuPlan.TryCompile(p) ?? throw new InvalidDataException("N direct local plan not admitted: " + path);
             for (ulong root = 0; root < 65536; root++)
             {

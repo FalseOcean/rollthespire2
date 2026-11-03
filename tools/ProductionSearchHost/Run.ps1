@@ -15,6 +15,7 @@ param(
         'NWAE-verify-ENAW','NWAE-verify-NEAW','NWAE-verify-EANW')][string]$PrivateOrdinalCandidate,
     [switch]$PrivateOrdinalChecks,
     [switch]$SmallCandidateExactChecks,
+    [switch]$GpuPrefixTransportChecks,
     [switch]$FamilyPricingInventory,
     [string]$FamilyPhysicalMatrix,
     [switch]$NeowCanonicalCost,
@@ -27,6 +28,12 @@ param(
     [ValidateSet('training','validation')][string]$CanonicalSplit = 'training',
     [switch]$CanonicalInteger,
     [switch]$DirectNeowChecks,
+    [switch]$BonesHiddenUpgradeChecks,
+    [switch]$BonesHiddenUpgradeExpanded,
+    [int]$BonesHiddenUpgradeWindow = 65539,
+    [int]$BonesHiddenUpgradeDiscovery = 4194304,
+    [string]$BonesHiddenUpgradeCompare,
+    [string]$BonesHiddenUpgradeSparseChecks,
     [switch]$PartyBonesPoolChecks,
     [switch]$PartyNeowAuthoringChecks,
     [switch]$PartyCpuCorpus,
@@ -53,11 +60,12 @@ param(
     [switch]$MapWitnessUi,
     [switch]$MapLossyPersistence,
     [switch]$MapLossyGpu,
+    [switch]$MapLossyPipeline,
     [switch]$CardCollectionEditorUi,
     [switch]$CardCollectionFlow,
     [switch]$StartupChecks,
     [string]$ResourceBaseline,
-    [ValidateSet('N','N-readback','N-trials','E-readback','N-readyT','S','S-stable','R','C','W','NC')][string]$Y2Probe,
+    [ValidateSet('N','N-readback','N-trials','N-entry-identity','N-entry-default','E-readback','E-preparation','E-preparation-default','T-entry','T-entry-default','N-readyT','S','S-stable','R','C','W','NC')][string]$Y2Probe,
     [ValidateSet('ordinary','private-ordinal','verify-ordinal','ordinary-nc','ordinary-cn','private-nc','verify-nc')][string]$NcExperiment,
     [ValidateSet('ordinary-ew','ordinary-we','private-ordinal','verify-ordinal','ordinary-ecw','private-ecw','verify-ecw')][string]$EwExperiment,
     [string]$NwaeExperiment,
@@ -125,6 +133,7 @@ if ($DraftSnapshot) { $arguments += @('--draft-snapshot',(Quote-Argument (Resolv
 if ($GamePck) { $arguments += @('--game-pck',(Quote-Argument (Resolve-Path -LiteralPath $GamePck).Path)) }
 if ($PrivateOrdinalChecks) { $arguments += '--private-ordinal-checks' }
 if ($SmallCandidateExactChecks) { $arguments += '--small-candidate-exact-checks' }
+if ($GpuPrefixTransportChecks) { $arguments += '--gpu-prefix-transport-checks' }
 if ($CpuOnly) { $arguments += '--cpu-only' }
 if ($CompatNoFp64) { $arguments += '--compat-no-fp64' }
 if ($CompatibilityChecks) { $arguments += '--compatibility-checks' }
@@ -141,6 +150,10 @@ if ($NeowCanonicalCost) {
     if ($CanonicalInteger) { $arguments += '--canonical-integer' }
 }
 if ($DirectNeowChecks -or $NeowInitializationChecks -or $GpuResourceFailureChecks) { $arguments += '--direct-neow-checks' }
+if ($BonesHiddenUpgradeChecks) { $arguments += @('--bones-hidden-upgrade-checks', '--bones-hidden-upgrade-window', $BonesHiddenUpgradeWindow) }
+if ($BonesHiddenUpgradeExpanded) { $arguments += @('--bones-hidden-upgrade-expanded', '--bones-hidden-upgrade-window', $BonesHiddenUpgradeWindow, '--bones-hidden-upgrade-discovery', $BonesHiddenUpgradeDiscovery) }
+if ($BonesHiddenUpgradeCompare) { $arguments += @('--bones-hidden-upgrade-compare', (Quote-Argument (Resolve-Path -LiteralPath $BonesHiddenUpgradeCompare).Path)) }
+if ($BonesHiddenUpgradeSparseChecks) { $arguments += @('--bones-hidden-upgrade-sparse-checks', (Quote-Argument (Resolve-Path -LiteralPath $BonesHiddenUpgradeSparseChecks).Path)) }
 if ($PartyNeowAuthoringChecks) { $arguments += '--party-neow-authoring' }
 if ($PartyCpuCorpus) { $arguments += '--party-cpu-corpus' }
 if ($PartyKaleidoscopeOrderChecks) { $arguments += '--party-kaleidoscope-order' }
@@ -166,6 +179,7 @@ if ($MapEditorUi) { $arguments += '--map-editor-ui-only' }
 if ($MapWitnessUi) { $arguments += '--map-witness-ui-only' }
 if ($MapLossyPersistence) { $arguments += '--map-lossy-persistence-only' }
 if ($MapLossyGpu) { $arguments += '--map-lossy-gpu' }
+if ($MapLossyPipeline) { $arguments += '--map-lossy-pipeline' }
 if ($CardCollectionEditorUi) { $arguments += @('--preset-library-surface-checks', '--card-collections-only', '--card-collection-editor-only') }
 if ($CardCollectionFlow -and (-not $GamePck -or $Headless)) { throw '-CardCollectionFlow requires -GamePck and a rendering-enabled native host.' }
 if ($StartupChecks) { $arguments += '--startup-checks' }

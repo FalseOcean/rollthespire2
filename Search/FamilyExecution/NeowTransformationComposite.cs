@@ -16,7 +16,7 @@ internal sealed class NeowTransformationComposite
     private NeowTransformationComposite(TransformationAggregateNumericalPlan numerical, NeowFamilyGpuPlan gpu)
     { Numerical = numerical; Probability = TransformationAggregateProbability.Build(numerical); Gpu = gpu; }
 
-    internal static bool TryCreate(ExactSearchExecutionRequest request, NeowReplayPlan neow,
+    internal static bool TryCreate(SearchModel request, NeowReplayPlan neow,
         out NeowTransformationComposite? composite)
     {
         composite = null;

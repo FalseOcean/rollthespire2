@@ -26,8 +26,8 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
     private SearchWorkspace _preferences = null!;
     internal event Action<CrystalSphereLiveSnapshot,string,PredictorCrystalSolution>? GuideRequested;
     private string T(string key) => _text.Get("predictor.crystal."+key);
-    private PredictorCrystalSnapshot Source => _snapshot!.Branches[_branch.Selected].Snapshot;
-    private string Mode => _snapshot!.Branches[_branch.Selected].Mode;
+    private PredictorCrystalSnapshot Source => Calculation.Source;
+    private string Mode => Calculation.Snapshot!.Branches[Calculation.Branch].Mode;
     internal void ApplyLanguage(string language)
     {
         if(_language==language) return;
@@ -36,9 +36,9 @@ internal sealed partial class CrystalSphereAssistantPanel : VBoxContainer
         foreach(var (control,key) in _labels) control.Text=T(key);
         foreach(var (control,key) in _buttons) control.Text=T(key);
         ApplyOptionText();
-        if(_snapshot!=null) for(int i=0;i<_snapshot.Branches.Length;i++)
+        if(Calculation.Snapshot!=null) for(int i=0;i<Calculation.Snapshot.Branches.Length;i++)
         {
-            var branch=_snapshot.Branches[i];_branch.SetItemText(i,T(branch.Mode)+(branch.Mode=="Remaining"?" · "+string.Format(T("remaining"),branch.Snapshot.Remaining):""));
+            var branch=Calculation.Snapshot.Branches[i];_branch.SetItemText(i,T(branch.Mode)+(branch.Mode=="Remaining"?" · "+string.Format(T("remaining"),branch.Snapshot.Remaining):""));
         }
         _contentRevision++;_renderedTargets=default;
         Render();

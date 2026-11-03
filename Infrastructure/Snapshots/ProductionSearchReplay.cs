@@ -20,20 +20,20 @@ public static class ProductionSearchReplay
     public static JsonSerializerOptions JsonOptions { get; } = CreateOptions();
     private static JsonSerializerOptions CompactJsonOptions { get; } = new(JsonOptions) { WriteIndented = false };
 
-    internal static string SerializeWorkload(ExactSearchExecutionRequest request) => JsonSerializer.Serialize(
-        new ProductionSearchReplayWorkload(SchemaVersion, request.CompiledSearch.Query,
+    internal static string SerializeWorkload(PreparedSearch request) => JsonSerializer.Serialize(
+        new ProductionSearchReplayWorkload(SchemaVersion, request.Model.CompiledSearch.Query,
             request.RunOptions with { StartSeed = request.CanonicalStartSeed, ScanCount = request.ScanCount }), CompactJsonOptions);
 
     // One complete typed Query per attempted session, including automatic cursor segments.
     // Existing five-item UI history is not an audit archive. No live game objects are logged.
-    internal static void LogSessionWorkload(ExactSearchExecutionRequest request, string sessionId)
+    internal static void LogSessionWorkload(PreparedSearch request, string sessionId)
     {
         try
         {
             string fingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
                 System.Text.Encoding.UTF8.GetBytes(request.SnapshotFingerprint)));
             Bootstrap.RuntimeLog.Info($"productionSearchWorkload=true;phase=CompiledBeforeSessionStart;sessionId={sessionId};" +
-                $"game={request.Detection.DisplayVersion};character={request.CharacterKey.Serialized};ascension={request.Ascension};profile={request.ProfileId};" +
+                $"game={request.Model.Detection.DisplayVersion};character={request.Model.CharacterKey.Serialized};ascension={request.Model.Ascension};profile={request.Model.ProfileId};" +
                 $"snapshotFingerprintSha256={fingerprint};workloadJson={SerializeWorkload(request)}");
         }
         catch (Exception ex) { Bootstrap.RuntimeLog.Warn($"productionSearchWorkloadFailed=true;sessionId={sessionId};issue={ex.GetType().Name}:{ex.Message};searchContinues=true"); }

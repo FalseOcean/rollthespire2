@@ -25,7 +25,8 @@ internal sealed record OperationPreviewCardGroup(long Id, ImmutableArray<Predict
     internal bool EarliestFirst { get; init; }
     internal bool ForceSingleRow { get; init; }
     internal bool SuppressPossiblePrefix { get; init; }
-    internal ImmutableArray<ModelKey> PotionUseOrder { get; init; } = [];
+    internal int? SequenceOrdinal { get; init; }
+    internal ImmutableArray<OperationIconPath> IconPaths { get; init; } = [];
 }
 internal sealed record OperationPreviewSection(ModelKey Source, ImmutableArray<OperationPreviewRow> Rows,
     ImmutableArray<OperationPreviewCardGroup> CardGroups)
@@ -37,11 +38,13 @@ internal sealed record OperationPreviewSection(ModelKey Source, ImmutableArray<O
     internal string? EmptyReason { get; init; }
     internal OperationDisplayStyle? Style { get; init; }
 }
+internal sealed record OperationPreviewHuntOutcome(int Triggers, ImmutableArray<OperationPreviewSection> Sections);
 internal sealed record OperationPreviewBranch(ImmutableArray<ModelKey> Order, ImmutableArray<OperationPreviewSection> Sections,
     ImmutableArray<string> PendingReasons, int PathsExamined, bool FullyEnumerated)
 {
     internal bool Faulted { get; init; }
     internal string? Label { get; init; }
+    internal ImmutableArray<OperationPreviewHuntOutcome> HuntOutcomes { get; init; } = [];
 }
 internal sealed record OperationPreviewFault(string Stage, ImmutableArray<PredictorInput> InputPath, Exception Exception);
 // Bones lifts a curse here only when every order has the same certain visible

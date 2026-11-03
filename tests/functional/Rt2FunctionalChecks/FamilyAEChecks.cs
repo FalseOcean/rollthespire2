@@ -31,12 +31,12 @@ internal static class FamilyAEChecks
   authority=authority.WithEffectAuthority(authority.EffectAuthority! with {EventResultStaticCatalogExact=true,EventColorfulCharacterPoolsExact=true,UnlockedCharacterCardPoolKeys=BaseGameModelKeys.Characters.All});
   var context=new SearchContext(RuntimeProfileId.Beta111,authority.Character.CharacterKey,10,authority,
     new("0.111.0","0.111.0","beta","AE-synthetic",true,""),SearchEvaluationAssumptions.BroadDefault);
-  ExactSearchExecutionRequest Request(NeowSearchFilter f){var c=SearchCompiler.Compile(LegacySearchQueryAdapter.FromFilter(f),context);return new(c,new("000000000000",10000,30,1),"000000000000",10000,CompiledSearchEvaluationProjector.Project(c).Evaluation,CombatRewardRoutePolicyContract.None,c.SemanticFingerprint);}
+  PreparedSearch Request(NeowSearchFilter f){var c=SearchCompiler.Compile(LegacySearchQueryAdapter.FromFilter(f),context);return new(new SearchModel(c,CompiledSearchEvaluationProjector.Project(c).Evaluation,CombatRewardRoutePolicyContract.None,c.SemanticFingerprint),new("000000000000",10000,30,1),"000000000000",10000,c.SemanticFingerprint);}
   var empty=NeowSearchFilter.Empty;
   // Same-offer All must use the source distribution, not a product of marginals.
   foreach(var ancient in g.AncientEventContexts.Where(c=>c.AncientKey.Entry is "NONUPEIPE" or "TANX")) {
    var row=new AncientSearchBranchCondition(ancient.Act,ancient.AncientKey,[],[]);
-   var input=SearchSelectivityInput.From(Request(empty with {AncientBranchConditions=[row]}));
+   var input=SearchSelectivityInput.From(Request(empty with {AncientBranchConditions=[row]}).Model);
    var method=typeof(AncientOptionProbabilityEstimator).GetMethod(ancient.AncientKey.Entry=="TANX"?"BuildTanxPool":"BuildNonupeipePool",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Static)!;
    var pool=(IReadOnlyList<ModelKey>)method.Invoke(null,[input,ancient.Catalog!])!;
    if(pool.Count<3 || pool.Distinct().Count()!=pool.Count) throw new Exception("All fixture requires distinct shuffle pool");
@@ -49,13 +49,13 @@ internal static class FamilyAEChecks
     var compiled=SearchCompiler.Compile(allQuery,context);
     var full=AncientProbabilityEstimator.Estimate(SearchSelectivityInput.From(compiled));
     if(full?.JointlyPriced!=true)throw new Exception("Workbench All query probability unclosed");
-    var rq=new ExactSearchExecutionRequest(compiled,new("000000000000",64,30,1),"000000000000",64,CompiledSearchEvaluationProjector.Project(compiled).Evaluation,CombatRewardRoutePolicyContract.None,compiled.SemanticFingerprint);
-    if(Math.Abs(new AncientOptionFamilyPlan(rq).Survival.SurvivalProbability!.Value-expected)>1e-12)throw new Exception("All physical survival");
+    var rq=new PreparedSearch(new SearchModel(compiled, CompiledSearchEvaluationProjector.Project(compiled).Evaluation, CombatRewardRoutePolicyContract.None, compiled.SemanticFingerprint), new("000000000000",64,30,1), "000000000000", 64, compiled.SemanticFingerprint);
+    if(Math.Abs(new AncientOptionFamilyPlan(rq.Model).Survival.SurvivalProbability!.Value-expected)>1e-12)throw new Exception("All physical survival");
    }
   }
   foreach(var ancient in g.AncientEventContexts.Where(c=>c.AncientKey.Entry is "PAEL" or "TEZCATARA" or "VAKUU")) {
    var row=new AncientSearchBranchCondition(ancient.Act,ancient.AncientKey,[],[]);
-   var input=SearchSelectivityInput.From(Request(empty with {AncientBranchConditions=[row]}));
+   var input=SearchSelectivityInput.From(Request(empty with {AncientBranchConditions=[row]}).Model);
    IReadOnlyList<IReadOnlyList<ModelKey>> pools=ancient.AncientKey.Entry=="VAKUU"
     ? new[]{ancient.Catalog!.Pool("vakuu.pool1"),ancient.Catalog.Pool("vakuu.pool2"),ancient.Catalog.Pool("vakuu.pool3")}
     : (IReadOnlyList<IReadOnlyList<ModelKey>>)typeof(AncientOptionProbabilityEstimator).GetMethod(ancient.AncientKey.Entry=="PAEL"?"BuildPaelPools":"BuildTezcataraPools",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Static)!.Invoke(null,[input,ancient.Catalog!])!;
@@ -69,7 +69,7 @@ internal static class FamilyAEChecks
   foreach(var ancient in g.AncientEventContexts.Where(c=>c.AncientKey.Entry=="OROBAS")) {
    var sea=new ModelKey("RELIC","SEA_GLASS"); var other=ancient.Catalog!.Pool("orobas.pool2")[0];
    var row=new AncientSearchBranchCondition(ancient.Act,ancient.AncientKey,[sea],[BaseGameModelKeys.Characters.Silent]);
-   var input=SearchSelectivityInput.From(Request(empty with {AncientBranchConditions=[row]}));
+   var input=SearchSelectivityInput.From(Request(empty with {AncientBranchConditions=[row]}).Model);
    double seaP=AncientOptionProbabilityEstimator.EstimateConditional(input,row).Probability!.Value;
    var all=AncientOptionProbabilityEstimator.EstimateConditionalAll(input,row,[sea,other]);
    if(all.Probability is not {} p || Math.Abs(p-seaP/ancient.Catalog.Pool("orobas.pool2").Count)>1e-12)
@@ -146,8 +146,8 @@ internal static class FamilyAEChecks
   var conflict=bonesQuery with {LegacyNeow=LegacyNeowSemanticConstraints.Empty with {NeowRelics=new([],[BaseGameModelKeys.Relics.LeafyPoultice],[])}};
   if(!SearchFeasibilityAnalyzer.Analyze(CompileN(conflict)).IsImpossible || PriceN(conflict)!=0)throw new Exception("Conflicting opening pages not rejected");
   var merged=bonesQuery with {LegacyNeow=LegacyNeowSemanticConstraints.Empty with {NeowRelics=new([],[BaseGameModelKeys.Relics.NutritiousOyster],[])}};
-  var mergedExecution=RolltheSpire2.Search.Compilation.ExactSearchExecutionRequestFactory.Compile(CompileN(merged),new("000000000000",100,1,1)).Plan!;
-  var mergedReplay=NeowReplayPlan.Compile(mergedExecution,false);
+  var mergedExecution=RolltheSpire2.Search.Compilation.SearchPreparationCompiler.Compile(CompileN(merged),new("000000000000",100,1,1)).Plan!;
+  var mergedReplay=NeowReplayPlan.Compile(mergedExecution.Model,false);
   double expectedOffer=NeowFamilyProjections.IdentityProbability(mergedReplay,mergedReplay.Filter);
   if(PriceN(merged)<=0 || PriceN(merged)>=PriceN(bonesQuery) || Math.Abs(PriceN(merged)-expectedOffer)>1e-12)throw new Exception("Opening conjunction differs from finite replay model");
   var curse=authority.EffectAuthority!.GeneratedCursePool!.First();
@@ -166,7 +166,7 @@ internal static class FamilyAEChecks
    throw new Exception("Variant mixture loses known dashboard factors");
   if(dashboard.Rows.Single(r=>r.Kind==RolltheSpire2.Presentation.Ui1.SearchProbabilityRowKind.WorldEvent).Probability is not {} dashboardWorld || Math.Abs(dashboardWorld-.5)>1e-12)
    throw new Exception("W dashboard must retain its own Variant prior when other families are present");
-  var dashboardRequest=RolltheSpire2.Search.Compilation.ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(dashboardQuery with {VariantBossBranches=[]},context),new("000000000000",100,1,1)).Plan!;
+  var dashboardRequest=RolltheSpire2.Search.Compilation.SearchPreparationCompiler.Compile(SearchCompiler.Compile(dashboardQuery with {VariantBossBranches=[]},context),new("000000000000",100,1,1)).Plan!;
   var dashboardPlan=FamilyExecutionCoordinator.Plan(dashboardRequest,true);
   var dashboardCoverage=FamilyExecutionCoordinator.CreateRegisteredFamilies(dashboardRequest,true)
    .SelectMany(f=>f.Coverage).ToHashSet(StringComparer.Ordinal);
@@ -176,7 +176,7 @@ internal static class FamilyAEChecks
    !dashboardPlan.Stages.SelectMany(stage=>stage.Coverage).ToHashSet(StringComparer.Ordinal).SetEquals(dashboardCoverage))
    throw new Exception("Ordinary map planning must use greedy ordering without dropping registered filtering obligations");
   Console.WriteLine("OPENING_JOINT_AND_MIXTURE_ATTRIBUTION_PASS;MAP_GREEDY_COVERAGE_PRESERVED");
-  var eventInput=SearchSelectivityInput.From(Request(empty));
+  var eventInput=SearchSelectivityInput.From(Request(empty).Model);
   var fakeTargets=Beta111EventResultCatalog.FakeMerchantRelics.Take(2).ToArray();
   var fakeJoint=EventResultProbabilityEstimator.EstimateBlock(eventInput,fakeTargets.Select(k=>new EventResultSearchCondition(EventResultConditionKind.FakeMerchantOfferedFakeRelic,k)).ToArray(),out _);
   if(Math.Abs(fakeJoint!.Probability!.Value-6d/9*5d/8)>1e-12)throw new Exception("Same fake offer joint");
@@ -263,7 +263,7 @@ internal static class FamilyAEChecks
   var seaContext=context;
   double Sea(params ModelKey[] targets) => AncientOptionPhysicalPricing.ResolveSurvival(Request(empty with {
    AncientBranchConditions=[new(2,new("EVENT","OROBAS"),[new("RELIC","SEA_GLASS")],targets)]
-  })).SurvivalProbability ?? throw new InvalidOperationException("SeaGlass survival unavailable");
+  }).Model).SurvivalProbability ?? throw new InvalidOperationException("SeaGlass survival unavailable");
   double seaOne=Sea(BaseGameModelKeys.Characters.Silent);
   double seaTwo=Sea(BaseGameModelKeys.Characters.Silent,BaseGameModelKeys.Characters.Ironclad);
   if(seaOne<=0 || Math.Abs(seaTwo-2*seaOne)>1e-12) throw new InvalidOperationException("SeaGlass target union probability");
@@ -281,7 +281,7 @@ internal static class FamilyAEChecks
   var fake = new EventResultSearchCondition(EventResultConditionKind.FakeMerchantOfferedFakeRelic, Beta111EventResultCatalog.FakeMerchantRelics[0]);
   void Probability(double expected, params EventResultSearchCondition[] conditions)
   {
-   var probability = new EventResultFamilyPlan(Request(empty with {EventResultConditions=conditions})).Survival.SurvivalProbability;
+   var probability = new EventResultFamilyPlan(Request(empty with {EventResultConditions=conditions}).Model).Survival.SurvivalProbability;
    if (!probability.HasValue || Math.Abs(probability.Value-expected)>1e-12) throw new Exception("E modeled selectivity");
    checks++;
   }
@@ -292,22 +292,22 @@ internal static class FamilyAEChecks
   Probability(.1 * 6d/9d, grab, grab, fake); // Duplicate conditions do not introduce a factor.
   Probability(0, grab, fake, new(EventResultConditionKind.TrashHeapDiveRelic, Beta111EventResultCatalog.TrashHeapDiveRelics[4]));
   var inventoryJoint=new EventResultFamilyPlan(Request(empty with {EventResultConditions=[fake,
-      new(EventResultConditionKind.FakeMerchantOfferedFakeRelic, Beta111EventResultCatalog.FakeMerchantRelics[1])]})).Survival.SurvivalProbability;
+      new(EventResultConditionKind.FakeMerchantOfferedFakeRelic, Beta111EventResultCatalog.FakeMerchantRelics[1])]}).Model).Survival.SurvivalProbability;
   if (inventoryJoint is not {} jointMass || Math.Abs(jointMass-6d/9*5d/8)>1e-12)
    throw new Exception("Shared inventory joint must use without-replacement intersection");
   checks++;
   string dir=Path.Combine(Environment.CurrentDirectory,".build-evidence","ae-gpu");Directory.CreateDirectory(dir);
   foreach(var (name,family,filter) in cases){
    var request=Request(filter);
-   var a=family=="A"?new AncientOptionFamilyPlan(request):null;
-   var e=family=="E"?new EventResultFamilyPlan(request):null;
-   var cpuOnly=e is null?null:new EventResultFamilyPlan(request,prepareGpu:false);
-   var cpuOnlyColor=cpuOnly is null?null:EventResultCpuPlan.TryCompile(request,cpuOnly);
+   var a=family=="A"?new AncientOptionFamilyPlan(request.Model):null;
+   var e=family=="E"?new EventResultFamilyPlan(request.Model):null;
+   var cpuOnly=e is null?null:new EventResultFamilyPlan(request.Model,prepareGpu:false);
+   var cpuOnlyColor=cpuOnly is null?null:EventResultCpuPlan.TryCompile(request.Model,cpuOnly);
    if(cpuOnly is not null && (cpuOnly.GpuSupported || cpuOnly.Buffers.Length!=0 || cpuOnly.NumericalSupported!=e!.NumericalSupported))
     throw new Exception("E CPU numerical admission must not prepare GPU: "+name);
    Func<ulong,bool> match=a is not null?a.Matches:e!.Matches;
    Func<ulong,bool> reference=a is not null?a.Reference:e!.Reference;
-   var compiledColor=e is null?null:EventResultCpuPlan.TryCompile(request,e);
+   var compiledColor=e is null?null:EventResultCpuPlan.TryCompile(request.Model,e);
    if(compiledColor is not null)checks+=RelicCpuChecks.CheckEnvelope(request,compiledColor.Matches,e!.Reference);
    bool gpu=a?.GpuSupported??e!.GpuSupported;
    if(family=="A" && name.Contains("All") && !gpu)throw new Exception("A All GPU not admitted: "+name);
@@ -327,7 +327,7 @@ internal static class FamilyAEChecks
      if(cpuOnlyColor is not null && cpuOnlyColor.Matches(root)!=truth)throw new Exception("CPU-only compiled E Reference parity "+name);
      if(compiledColor is not null && compiledColor.Matches(root)!=truth)throw new Exception("Compiled color parity "+name);
      if(truth!=actual)throw new Exception($"Canonical parity {name} {start+i} truth={truth} actual={actual}");
-     if(e is not null && (Beta111CanonicalEventShopSearchEvaluator.Evaluate(request,root,authority).Disposition==SearchDisposition.Match)!=actual)throw new Exception("E Exact parity "+name);
+     if(e is not null && (Beta111CanonicalEventShopSearchEvaluator.Evaluate(request.Model,root,authority).Disposition==SearchDisposition.Match)!=actual)throw new Exception("E Exact parity "+name);
      if(actual)expected.Add(i);checks++;
     }
     if(name=="NeutralAlternative"&&expected.Count!=size)throw new Exception("A implicit actual-identity tightening");
@@ -351,10 +351,10 @@ internal static class FamilyAEChecks
     .SelectMany(stage=>stage.Coverage).ToHashSet(StringComparer.Ordinal);
    string[] ids=label.Split('+').Select(c=>c switch{"A"=>"A.AncientOption","E"=>"E.EventResult","N"=>"N.Neow","R"=>"R.Relic",_=>"W.World"}).ToArray();
    if(ids.Any(id=>!registeredCoverage.Contains(id)))throw new Exception("Mixed registration coverage "+label);
-   var a=request.Evaluation.AncientBranchConditions.Count>0?new AncientOptionFamilyPlan(request):null;
-   var e=request.Evaluation.EventResultConditions.Count>0?new EventResultFamilyPlan(request):null;
-   var np=label.StartsWith("N")?NeowReplayPlan.Compile(request,false):null;
-   var wp=label.StartsWith("W")?new WorldFamilyReplay(request):null;
+   var a=request.Model.Evaluation.AncientBranchConditions.Count>0?new AncientOptionFamilyPlan(request.Model):null;
+   var e=request.Model.Evaluation.EventResultConditions.Count>0?new EventResultFamilyPlan(request.Model):null;
+   var np=label.StartsWith("N")?NeowReplayPlan.Compile(request.Model,false):null;
+   var wp=label.StartsWith("W")?new WorldFamilyReplay(request.Model):null;
    bool L(ulong root)=>label.StartsWith("N")?NeowFamilyReplay.Matches(root,np!):label.StartsWith("W")?wp!.Matches(root):label.StartsWith("R")?
     RelicSequencePredictor.PredictFromRootHash(Beta111Profile.Instance,root,"fixture",world,10).Lanes.First(l=>l.Kind==RelicSequenceKind.Common).Entries.Take(2).Any(x=>x.RelicKey==rTarget):a!.Matches(root);
    bool R(ulong root)=>label.EndsWith("A")?a!.Matches(root):e!.Matches(root);
@@ -369,7 +369,7 @@ internal static class FamilyAEChecks
   var savedContext=context;
   var shared=g with {AncientEventContexts=g.AncientEventContexts.Select(c=>c.AncientKey==a2.AncientKey?c with {IsShared=true,PlayerSlot=2}:c).ToArray()};
   context=context with {Authority=authority.WithWorldAuthority(world with {Beta109Generation=shared})};
-  var sr=Request(af);var sp=new AncientOptionFamilyPlan(sr);
+  var sr=Request(af);var sp=new AncientOptionFamilyPlan(sr.Model);
   var se=new List<uint>();for(uint i=0;i<257;i++){ulong root=Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(i));if(sp.Matches(root)!=sp.Reference(root))throw new Exception("Shared A parity");if(sp.Reference(root))se.Add(i);checks++;}
   if(!sp.GpuSupported)throw new Exception("Shared A GPU applicability");
   File.WriteAllText(Path.Combine(dir,"SharedA.glsl"),sp.ShaderSource());
@@ -392,7 +392,7 @@ internal static class FamilyAEChecks
   context=savedContext with {Authority=authority.WithWorldAuthority(world with {Beta109Generation=raw with {
    AncientEventContexts=raw.AncientEventContexts.Select(c=>c with {Catalog=c.Catalog! with {MutableInstanceProjectionExact=false}}).ToArray()}})};
   var rawFilter=cases.Single(c=>c.Name=="PAELUnion").Filter;
-  var rawPlan=new AncientOptionFamilyPlan(Request(rawFilter));
+  var rawPlan=new AncientOptionFamilyPlan(Request(rawFilter).Model);
   if(!rawPlan.GpuSupported)throw new Exception("Raw capture GPU admission");
   var rawExpected=new List<uint>();for(uint i=0;i<257;i++){ulong root=Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(i));if(rawPlan.Matches(root)!=rawPlan.Reference(root))throw new Exception("Live raw reference parity");if(rawPlan.Reference(root))rawExpected.Add(i);checks++;}
   File.WriteAllText(Path.Combine(dir,"RawCaptureA.glsl"),rawPlan.ShaderSource());
@@ -401,7 +401,7 @@ internal static class FamilyAEChecks
   // The optional sieve retains it for Exact without claiming a model Match.
   var broken=raw with {AncientEventContexts=raw.AncientEventContexts.Select(c=>c with {EventContextExact=false}).ToArray()};
   context=savedContext with {Authority=authority.WithWorldAuthority(world with {Beta109Generation=broken})};
-  var brokenPlan=new AncientOptionFamilyPlan(Request(rawFilter));
+  var brokenPlan=new AncientOptionFamilyPlan(Request(rawFilter).Model);
   var beforeProbe=RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Revision;
   if(brokenPlan.GpuSupported || brokenPlan.ReferenceDisposition(1)!=SearchDisposition.Unknown || !brokenPlan.Reference(1))
    throw new Exception("Missing event authority was rejected or claimed Match");
@@ -410,7 +410,7 @@ internal static class FamilyAEChecks
   checks+=2;
   var missingActContexts=raw with {AncientEventContexts=raw.AncientEventContexts.Where(c=>c.Act!=2).ToArray()};
   context=savedContext with {Authority=authority.WithWorldAuthority(world with {Beta109Generation=missingActContexts})};
-  var missingActPlan=new AncientOptionFamilyPlan(Request(empty with {AncientOptionFilters=[new(2,new([o2],[],[]))]}));
+  var missingActPlan=new AncientOptionFamilyPlan(Request(empty with {AncientOptionFilters=[new(2,new([o2],[],[]))]}).Model);
   if(missingActPlan.GpuSupported || missingActPlan.ReferenceDisposition(1)!=SearchDisposition.Unknown || !missingActPlan.Matches(1))
    throw new Exception("Missing unscoped A contexts falsely proved an empty offer set");
   checks++;
@@ -422,7 +422,7 @@ internal static class FamilyAEChecks
   context=savedContext with {Authority=authority.WithWorldAuthority(world with {Beta109Generation=alternativeGeneration})};
   var alternativesPlan=new AncientOptionFamilyPlan(Request(empty with {AncientBranchConditions=[
    new(first.Act,first.AncientKey,[new("RELIC","FIRST_UNRESOLVED")],[]),
-   new(next.Act,next.AncientKey,next.Catalog!.Pools.SelectMany(p=>p.OrderedOptions).Distinct().ToArray(),[])]}));
+   new(next.Act,next.AncientKey,next.Catalog!.Pools.SelectMany(p=>p.OrderedOptions).Distinct().ToArray(),[])]}).Model);
   if(alternativesPlan.GpuSupported || alternativesPlan.ReferenceDisposition(1)!=SearchDisposition.Match || !alternativesPlan.Matches(1))
    throw new Exception("Unresolved A alternative blocked an independently modeled survivor");
   checks++;
@@ -432,14 +432,22 @@ internal static class FamilyAEChecks
   context=savedContext with {Authority=authority.WithWorldAuthority(world with {Beta109Generation=unknownSeaGeneration})};
   var seaFilter=empty with {AncientBranchConditions=[new(2,new("EVENT","OROBAS"),
    [new("RELIC","SEA_GLASS")],[BaseGameModelKeys.Characters.Silent])]};
-  var unknownSeaPlan=new AncientOptionFamilyPlan(Request(seaFilter));
+  var unknownSeaRequest=Request(seaFilter);
+  var unknownSeaPlan=new AncientOptionFamilyPlan(unknownSeaRequest.Model);
   var rejectSeaPlan=new AncientOptionFamilyPlan(Request(seaFilter with {
-   AncientOptionFilters=[new(2,new([new("RELIC","NEVER")],[],[]))]}));
+   AncientOptionFilters=[new(2,new([new("RELIC","NEVER")],[],[]))]}).Model);
   var sameAncientOr=new AncientOptionFamilyPlan(Request(seaFilter with {AncientBranchConditions=[
-   seaFilter.AncientBranchConditions[0],new(2,new("EVENT","OROBAS"),[new("RELIC","SEA_GLASS")],[])]}));
+   seaFilter.AncientBranchConditions[0],new(2,new("EVENT","OROBAS"),[new("RELIC","SEA_GLASS")],[])]}).Model);
   int unresolvedSea=0,rejectedSea=0;
   long noticeRevision=-1;
+  if(!AncientOptionFamily.TryCreate(unknownSeaRequest.Model,FilterExecutionPreferences.From(unknownSeaRequest.RunOptions),
+      out var unknownSeaCpu,preferGpu:false) || unknownSeaCpu is null || unknownSeaCpu.UsesGpu)
+   throw new Exception("Unresolved A CPU realization unavailable");
+  var seaExecutionContext=new FilterRuntimeServices(false);
+  var seaExecution=unknownSeaCpu.CreateExecution!(unknownSeaCpu,seaExecutionContext);
+  try {
   for(ulong i=0;i<128;i++) {
+   long beforePureProbe=RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Revision;
    ulong root=Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(i));
    var disposition=unknownSeaPlan.ReferenceDisposition(root);
    if(disposition==SearchDisposition.Unknown) {
@@ -447,6 +455,23 @@ internal static class FamilyAEChecks
     if(!unknownSeaPlan.Matches(root) || sameAncientOr.ReferenceDisposition(root)!=SearchDisposition.Match ||
        rejectSeaPlan.ReferenceDisposition(root)!=SearchDisposition.NoMatch || rejectSeaPlan.Matches(root))
      throw new Exception("A Sea Glass Unknown was rejected, claimed Match, or hid a known contradiction");
+   } else {
+    rejectedSea++;
+    if(disposition!=SearchDisposition.NoMatch || unknownSeaPlan.Matches(root))throw new Exception("Absent Sea Glass retained without cause");
+   }
+   if(RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Revision!=beforePureProbe)
+    throw new Exception("A pure Sea Glass probe created an execution notice");
+   var seaInput=FamilyCandidateSet.Dense(new SearchBatch(i,1));
+   var seaActual=seaExecution.FilterAsync(seaExecutionContext,seaInput,default).GetAwaiter().GetResult();
+   ulong[] seaExpected=disposition==SearchDisposition.Unknown?[0UL]:[];
+   if(!seaActual.EnumerateLogicalOrdinals().SequenceEqual(seaExpected))
+    throw new Exception("A Sea Glass CPU execution changed unresolved retention or known rejection");
+   long afterExecution=RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Revision;
+   var seaRepeated=seaExecution.FilterAsync(seaExecutionContext,seaInput,default).GetAwaiter().GetResult();
+   if(!seaRepeated.EnumerateLogicalOrdinals().SequenceEqual(seaExpected) ||
+      RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Revision!=afterExecution)
+    throw new Exception("A repeated Sea Glass CPU execution changed results or flooded the issue ledger");
+   if(disposition==SearchDisposition.Unknown) {
     var notice=RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Snapshot()
      .First(x=>x.Code=="AncientOptionFilterIncomplete" && x.Stage.Contains("OROBAS"));
     if(!notice.ExceptionDetail.Contains("MissingUnlockedCharacterSourceOrderAuthority",StringComparison.Ordinal))
@@ -454,11 +479,12 @@ internal static class FamilyAEChecks
     long revision=RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Revision;
     if(noticeRevision!=-1 && noticeRevision!=revision)throw new Exception("A unresolved row flooded the issue ledger");
     noticeRevision=revision;
-   } else {
-    rejectedSea++;
-    if(disposition!=SearchDisposition.NoMatch || unknownSeaPlan.Matches(root))throw new Exception("Absent Sea Glass retained without cause");
    }
    checks++;
+  }
+  } finally {
+   seaExecution.DisposeAsync(seaExecutionContext).GetAwaiter().GetResult();
+   seaExecutionContext.DisposeAsync().GetAwaiter().GetResult();
   }
   if(unknownSeaPlan.GpuSupported || unresolvedSea==0 || rejectedSea==0)throw new Exception("Unknown Sea Glass GPU admission or outcome coverage");
   checks++;
@@ -467,14 +493,14 @@ internal static class FamilyAEChecks
    c with {Catalog=c.Catalog! with {Pools=c.Catalog!.Pools.Select(p=>p.PoolId=="orobas.pool2"?
     p with {OrderedOptions=[]}:p).ToArray()}}:c).ToArray()};
   context=savedContext with {Authority=authority.WithWorldAuthority(world with {Beta109Generation=faultGeneration})};
-  var faultPlan=new AncientOptionFamilyPlan(Request(seaFilter));
+  var faultPlan=new AncientOptionFamilyPlan(Request(seaFilter).Model);
   try { faultPlan.Matches(1);throw new Exception("A numerical provider fault became survivor retention"); }
   catch(InvalidOperationException ex) when(ex.Message.StartsWith("Beta109WorldCandidatePoolEmpty:",StringComparison.Ordinal)) {checks++;}
   Console.WriteLine($"A_UNRESOLVED_SIEVE_BOUNDARY_PASS seaUnknown={unresolvedSea};seaRejected={rejectedSea};noUnknownMatch=true;faultPreserved=true");
   context=savedContext;
   var mixedWE=Request(w with {EventResultConditions=ef.EventResultConditions});
   var weRegistered=FamilyExecutionCoordinator.CreateRegisteredFamilies(mixedWE);
-  var unknownFamilies=weRegistered.Select(f=>f.FamilyId=="W.World"?(IFamilyInvocation)new UnknownSurvivalProbe(f):f).ToArray();
+  var unknownFamilies=weRegistered.Select(f=>f.FamilyId=="W.World"?(FilterBodyDescription)new UnknownSurvivalProbe(f):f).ToArray();
   var greedy=FamilyPlanner.Plan(unknownFamilies);
   if(!greedy.OrderedFamilies.Select(f=>f.FamilyId).Order().SequenceEqual(unknownFamilies.Select(f=>f.FamilyId).Order()) ||
      greedy.Stages.Single(stage=>stage.Family.FamilyId=="W.World").Survival.HasValue)
@@ -487,11 +513,11 @@ internal static class FamilyAEChecks
   checks+=CheckGpuPreparation(Request(cases.Single(c=>c.Name=="VAKUU_VAKUU_1A").Filter));
    int exactMatches=0,exactRejects=0;
   foreach(var c in cases.Where(c=>c.Name is "PAELUnion" or "VAKUUUnion" or "AZero" or "TrashJoint" or "MixedE" or "MultiParentAll")){
-    var request=Request(c.Filter);var ap=c.Family=="A"?new AncientOptionFamilyPlan(request):null;var ep=c.Family=="E"?new EventResultFamilyPlan(request):null;
+    var request=Request(c.Filter);var ap=c.Family=="A"?new AncientOptionFamilyPlan(request.Model):null;var ep=c.Family=="E"?new EventResultFamilyPlan(request.Model):null;
    for(ulong i=0;i<67;i++){
     string seed=Beta110SeedCodec.FormatOrdinal(i);ulong root=Beta111Profile.Instance.ComputeRootSeed(seed);
     if(!TrustedRootHashInput.TryBindCanonicalSeed(Beta111Profile.Instance,root,seed,out var bound,out _))throw new Exception("Exact seed binding");
-    var exact=ProductionExactSearchEvaluator.Evaluate(request,bound);
+    var exact=ProductionExactSearchEvaluator.Evaluate(request.Model,bound);
     bool pass=ap?.Matches(root)??ep!.Matches(root);
     if(exact.IsMatch){exactMatches++;if(!pass)throw new Exception("Exact false negative "+c.Name);}
     else if(exact.Evaluation.Disposition==SearchDisposition.NoMatch)exactRejects++;
@@ -503,17 +529,18 @@ internal static class FamilyAEChecks
   Console.WriteLine($"AE_EXACT_PASS accepted={exactMatches};rejected={exactRejects};falseNegative=0");
   // Exercise the explicitly selected CPU realization / ABI1 / cancellation.
   var cpuRequest=Request(cases.Single(c=>c.Name=="LegacyAnyAllBan").Filter);
-  AncientOptionFamily.TryCreate(cpuRequest,out var ownerA);
-  var cpu=ownerA!.CpuRealizations.Single();
+  AncientOptionFamily.TryCreate(cpuRequest.Model, FilterExecutionPreferences.From(cpuRequest.RunOptions), out var ownerA);
+  var cpu=ownerA!.CpuAlternatives.Single(cpu => cpu.CpuWorkers == Math.Clamp(ownerA!.CpuWorkers, 1, 32));
   if(FamilyExecutionCoordinator.ResolveExecutionWindowSize(cpuRequest,[cpu!])!=65536)throw new Exception("A CPU-only batch geometry");
-  EventResultFamily.TryCreate(Request(ef),out var gpuE);
+  var eventRequest=Request(ef);
+  EventResultFamily.TryCreate(eventRequest.Model,FilterExecutionPreferences.From(eventRequest.RunOptions),out var gpuE);
   if(FamilyExecutionCoordinator.ResolveExecutionWindowSize(cpuRequest,[cpu!,gpuE!])!=(1<<24))throw new Exception("A CPU must not underfill E GPU");
-  var execution=new FamilyExecutionContext(false);var cb=new SearchBatch(0,67);var ci=FamilyCandidateSet.FromAbi1(cb,[0,3,15,44,66]);
-  var cp=new AncientOptionFamilyPlan(cpuRequest);
-  var co=cpu!.InvokeAsync(execution,new(cb,cpuRequest),ci,default).GetAwaiter().GetResult();
+  var execution=new FilterRuntimeServices(false);var running=cpu.CreateExecution!(cpu,execution);var cb=new SearchBatch(0,67);var ci=FamilyCandidateSet.FromAbi1(cb,[0,3,15,44,66]);
+  var cp=new AncientOptionFamilyPlan(cpuRequest.Model);
+  var co=running.FilterAsync(execution,ci,default).GetAwaiter().GetResult();
   if(!co.EnumerateLogicalOrdinals().SequenceEqual(ci.EnumerateLogicalOrdinals().Where(i=>cp.Reference(Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(i))))))throw new Exception("A CPU ABI1");
-  using(var cancel=new CancellationTokenSource()){cancel.Cancel();try{cpu.InvokeAsync(execution,new(cb,cpuRequest),ci,cancel.Token).GetAwaiter().GetResult();throw new Exception("CPU cancellation");}catch(OperationCanceledException){checks++;}}
-  cpu.DisposeAsync(execution).GetAwaiter().GetResult();execution.DisposeAsync().GetAwaiter().GetResult();
+  using(var cancel=new CancellationTokenSource()){cancel.Cancel();try{running.FilterAsync(execution,ci,cancel.Token).GetAwaiter().GetResult();throw new Exception("CPU cancellation");}catch(OperationCanceledException){checks++;}}
+  running.DisposeAsync(execution).GetAwaiter().GetResult();execution.DisposeAsync().GetAwaiter().GetResult();
   File.WriteAllText(Path.Combine(dir,"fixtures.json"),System.Text.Json.JsonSerializer.Serialize(fixtures));
   Console.WriteLine($"AE_CPU_SUMMARY cases={cases.Count};checks={checks};gpuFixtures={fixtures.Count};failures=0");
   return 0;
@@ -588,11 +615,10 @@ internal static class FamilyAEChecks
   {
    var context=basis with {Authority=authority};
    var compiled=SearchCompiler.Compile(LegacySearchQueryAdapter.FromFilter(NeowSearchFilter.Empty with {EventResultConditions=conditions}),context);
-   var request=new ExactSearchExecutionRequest(compiled,new("000000000000",10000,30,1),"000000000000",10000,
-    CompiledSearchEvaluationProjector.Project(compiled).Evaluation,CombatRewardRoutePolicyContract.None,compiled.SemanticFingerprint);
-   var plan=new EventResultFamilyPlan(request,prepareGpu:false);
+   var request=new PreparedSearch(new SearchModel(compiled, CompiledSearchEvaluationProjector.Project(compiled).Evaluation, CombatRewardRoutePolicyContract.None, compiled.SemanticFingerprint), new("000000000000",10000,30,1), "000000000000", 10000, compiled.SemanticFingerprint);
+   var plan=new EventResultFamilyPlan(request.Model,prepareGpu:false);
    var metadata=new EventResultNumericPredicate.Compiled(conditions,plan.Authority);
-   var compiledColor=EventResultCpuPlan.TryCompile(request,plan);
+   var compiledColor=EventResultCpuPlan.TryCompile(request.Model,plan);
    foreach(ulong root in roots)
    {
     bool oldReject=OriginalEventNumericPredicate.RejectsEventResultForFamily(root,conditions,plan.Authority,0);
@@ -601,7 +627,7 @@ internal static class FamilyAEChecks
     Check(actual==core,"Core projector/Trial/Tinker reference");
     if(plan.NumericalSupported)Check(actual==!oldReject,"request plan vs original numerical");
     if(compiledColor is not null)Check(compiledColor.Matches(root)==core,"compiled color remaining");
-    var disposition=Beta111CanonicalEventShopSearchEvaluator.Evaluate(request,root,authority).Disposition;
+    var disposition=Beta111CanonicalEventShopSearchEvaluator.Evaluate(request.Model,root,authority).Disposition;
     // An unresolved earlier observable can end Exact before a later independent
     // mismatch. Only its definitive decisions constrain this optional sieve.
     if(disposition==SearchDisposition.Match)Check(actual,"canonical Match retained");
@@ -809,9 +835,9 @@ internal static class FamilyAEChecks
   var projected=CompiledSearchEvaluationProjector.Project(typed);
   if(projected.Fidelity!=ProjectionFidelity.Exact||projected.Evaluation.VariantBossBranches.Count!=1||!projected.Evaluation.RequiresWorldDomain)
    throw new Exception("Missing Variant observations must preserve typed final obligations");
-  var typedRequest=RolltheSpire2.Search.Compilation.ExactSearchExecutionRequestFactory.Compile(typed,new("000000000000",1,1,1)).Plan;
-  if(typedRequest is null||typedRequest.Evaluation.VariantBossBranches.Count!=1||!typedRequest.Evaluation.RequiresWorldDomain||
-   typedRequest.CompiledSearch.NormalizedQuery.VariantBossBranches.Single().VariantKey!=new ModelKey("ACT","UNKNOWN_VARIANT"))
+  var typedRequest=RolltheSpire2.Search.Compilation.SearchPreparationCompiler.Compile(typed,new("000000000000",1,1,1)).Plan;
+  if(typedRequest is null||typedRequest.Model.Evaluation.VariantBossBranches.Count!=1||!typedRequest.Model.Evaluation.RequiresWorldDomain||
+   typedRequest.Model.CompiledSearch.NormalizedQuery.VariantBossBranches.Single().VariantKey!=new ModelKey("ACT","UNKNOWN_VARIANT"))
    throw new Exception("Formal Exact request must retain typed Variant obligations without World observations");
   var seaOnly=SearchCompiler.Compile(SearchQuery.Empty with {AncientBranches=[new(2,new("EVENT","OROBAS"),[],[BaseGameModelKeys.Characters.Silent])]},context);
   if(seaOnly.Status!=QueryNormalizationStatus.Legal||seaOnly.NormalizedQuery.AncientBranches.Single().SeaGlassTargetAny.Count!=1)
@@ -829,36 +855,38 @@ internal static class FamilyAEChecks
   var bones=BaseGameModelKeys.Relics.NeowsBones;var kale=BaseGameModelKeys.Relics.Kaleidoscope;var arcane=BaseGameModelKeys.Relics.ArcaneScroll;
   var opening=SearchQuery.Empty with {OpeningRoute=new(bones),OpeningRouteRelicRequirement=new(bones,[kale,arcane]),
    LegacyNeow=LegacyNeowSemanticConstraints.Empty with {RequiredFinalCurse=effect.GeneratedCursePool![0]}};
-  ExactSearchExecutionRequest Bind(SearchQuery query,SearchContext c)=>RolltheSpire2.Search.Compilation.ExactSearchExecutionRequestFactory.Compile(
+  PreparedSearch Bind(SearchQuery query,SearchContext c)=>RolltheSpire2.Search.Compilation.SearchPreparationCompiler.Compile(
    SearchCompiler.Compile(query,c),new("000000000000",32,32,1)).Plan??throw new Exception("Missing-observation request was rejected");
   var complete=Bind(opening,context);
-  if(!NeowFamily.TryCreate(complete,out var valid,false)||valid is null)throw new Exception("Complete N donor path was disabled");
+  if(!NeowFamily.TryCreate(complete.Model, FilterExecutionPreferences.From(complete.RunOptions), out var valid,false)||valid is null)throw new Exception("Complete N donor path was disabled");
   var missing=context with {Authority=context.Authority.WithEffectAuthority(effect with {OtherCharacterPools=[],OtherCharacterPoolsExact=false})};
   var incomplete=Bind(opening,missing);
-  if(!NeowReplayPlan.Compile(incomplete,false).ContinuationIssue().StartsWith("DonorContinuationAuthorityUnavailable:")||
-   NeowFamily.TryCreate(incomplete,out _,false)||incomplete.CompiledSearch.NormalizedQuery.OpeningRouteRelicRequirement!.RequiredRelicKeys.Count!=2)
+  if(!NeowReplayPlan.Compile(incomplete.Model,false).ContinuationIssue().StartsWith("DonorContinuationAuthorityUnavailable:")||
+   NeowFamily.TryCreate(incomplete.Model, FilterExecutionPreferences.From(incomplete.RunOptions), out _,false)||incomplete.Model.CompiledSearch.NormalizedQuery.OpeningRouteRelicRequirement!.RequiredRelicKeys.Count!=2)
    throw new Exception("Missing N companion donor facts were not retained outside filtering");
   var card=effect.CharacterRewardPool![0].CardKey;
   var reward=opening with {LegacyNeow=LegacyNeowSemanticConstraints.Empty,CombatCardRewards=new(1,CombatRewardSequenceOrderMode.Ordered,[card])};
-  if(!CombatRewardFamily.TryCreate(Bind(reward,context),out _,false)||CombatRewardFamily.TryCreate(Bind(reward,missing),out _,false))
+  var rewardReady=Bind(reward,context);var rewardMissing=Bind(reward,missing);
+  if(!CombatRewardFamily.TryCreate(rewardReady.Model,FilterExecutionPreferences.From(rewardReady.RunOptions),out _,false)||CombatRewardFamily.TryCreate(rewardMissing.Model,FilterExecutionPreferences.From(rewardMissing.RunOptions),out _,false))
    throw new Exception("C donor availability changed complete path or admitted absent companion pool");
   var noWorld=context with {Authority=context.Authority.WithWorldAuthority(null)};
   var variant=SearchQuery.Empty with {VariantBossBranches=[new(2,new("ACT","UNKNOWN_VARIANT"),ModelKeySetFilter.Empty,ModelKeySetFilter.Empty,false)]};
-  if(WorldFamily.TryCreate(Bind(variant,noWorld),out _,false))throw new Exception("Missing W observations fabricated a filter");
+  var variantMissing=Bind(variant,noWorld);
+  if(WorldFamily.TryCreate(variantMissing.Model,FilterExecutionPreferences.From(variantMissing.RunOptions),out _,false))throw new Exception("Missing W observations fabricated a filter");
   var events=SearchQuery.Empty with {EventResultConditions=[new(EventResultConditionKind.TrashHeapGrabCard,new("CARD","TEST"))]};
   var eventUnknown=Bind(events,context with {Authority=context.Authority.WithEffectAuthority(effect with {EventResultStaticCatalogExact=false})});
-  if(!new EventResultFamilyPlan(eventUnknown,prepareGpu:false).Reference(1))throw new Exception("Unknown E observation rejected a seed");
+  if(!new EventResultFamilyPlan(eventUnknown.Model,prepareGpu:false).Reference(1))throw new Exception("Unknown E observation rejected a seed");
   Console.WriteLine("FILTER_DONOR_AVAILABILITY_PASS;completeNCPreserved=true;missingPoolRetainsQuery=true;unknownEWRetained=true");
   return 6;
  }
- private static int CheckGpuPreparation(ExactSearchExecutionRequest request)
+ private static int CheckGpuPreparation(PreparedSearch request)
  {
   int calls=0;
   uint[][] Fail(IReadOnlyList<Beta110GpuAncientOptionPreGateGate> gates,int scratch,int capacity)
   { calls++;throw new InvalidOperationException("InjectedAncientGpuPackingFailure"); }
-  var cpu=new AncientOptionFamilyPlan(request,prepareGpu:false,gpuPacker:Fail);
+  var cpu=new AncientOptionFamilyPlan(request.Model,prepareGpu:false,gpuPacker:Fail);
   if(calls!=0||cpu.GpuSupported||cpu.Buffers.Length!=0)throw new Exception("A CPU plan invoked GPU packing");
-  var failed=new AncientOptionFamilyPlan(request,gpuPacker:Fail);
+  var failed=new AncientOptionFamilyPlan(request.Model,gpuPacker:Fail);
   if(calls!=1||failed.GpuSupported||failed.GpuPreparationIssue!="GpuPlanConstructionFailed"||
    !failed.GpuPreparationFailureDetail.Contains("InjectedAncientGpuPackingFailure",StringComparison.Ordinal)||cpu.GpuPreparationFailureDetail.Length!=0)
    throw new Exception("A optional GPU fault lost the CPU plan");
@@ -896,9 +924,8 @@ internal static class FamilyAEChecks
    }
    // PartyInitialQuery uses this same private compiler for each owner context.
    var compiled=players==1?SearchCompiler.Compile(query,context):SearchCompiler.CompilePlayer(query,context);
-   var request=new ExactSearchExecutionRequest(compiled,new("000000000000",67,int.MaxValue,1),"000000000000",67,
-    CompiledSearchEvaluationProjector.Project(compiled).Evaluation,CombatRewardRoutePolicyContract.None,compiled.SemanticFingerprint);
-   var plan=new AncientOptionFamilyPlan(request,prepareGpu:false);
+   var request=new PreparedSearch(new SearchModel(compiled, CompiledSearchEvaluationProjector.Project(compiled).Evaluation, CombatRewardRoutePolicyContract.None, compiled.SemanticFingerprint), new("000000000000",67,int.MaxValue,1), "000000000000", 67, compiled.SemanticFingerprint);
+   var plan=new AncientOptionFamilyPlan(request.Model,prepareGpu:false);
    int act=filter.AncientOptionFilters[0].Act;
    if(plan.UsesNumericalAct(act)!=expectedNumerical)throw new Exception("A strict legacy selector "+name);
    if(expectedNumerical)numerical++;else reference++;
@@ -1003,9 +1030,8 @@ internal static class FamilyAEChecks
   {
    var testContext=context with {Authority=context.Authority.WithWorldAuthority(world with {Beta109Generation=test.Generation})};
    var compiled=SearchCompiler.Compile(LegacySearchQueryAdapter.FromFilter(test.Filter),testContext);
-   var request=new ExactSearchExecutionRequest(compiled,new("000000000000",67,int.MaxValue,1),"000000000000",67,
-    CompiledSearchEvaluationProjector.Project(compiled).Evaluation,CombatRewardRoutePolicyContract.None,compiled.SemanticFingerprint);
-   var current=new AncientOptionFamilyPlan(request,prepareGpu:false);
+   var request=new PreparedSearch(new SearchModel(compiled, CompiledSearchEvaluationProjector.Project(compiled).Evaluation, CombatRewardRoutePolicyContract.None, compiled.SemanticFingerprint), new("000000000000",67,int.MaxValue,1), "000000000000", 67, compiled.SemanticFingerprint);
+   var current=new AncientOptionFamilyPlan(request.Model,prepareGpu:false);
    foreach(ulong root in roots)
    {
     var before=RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Revision;
@@ -1034,9 +1060,9 @@ internal static class FamilyAEChecks
  }
  // Frozen HEAD ReferenceRow/ReferenceDisposition oracle: reselect all static
  // inputs per root, independently of A3's binding, then use the original provider.
- private static SearchDisposition UncachedAncientReference(ExactSearchExecutionRequest request,ulong root)
+ private static SearchDisposition UncachedAncientReference(PreparedSearch request,ulong root)
  {
-  var e=request.Evaluation;var generation=request.Authority.WorldAuthority!.Beta109Generation!;
+  var e=request.Model.Evaluation;var generation=request.Model.Authority.WorldAuthority!.Beta109Generation!;
   var filter=NeowSearchFilter.Empty with {AncientBranchConditions=e.AncientBranchConditions,
    AncientOptionFilters=e.AncientOptionFilters,AncientSeaGlassTargetFilters=e.AncientSeaGlassTargetFilters,
    AncientOptionConditions=e.AncientOptionConditions};
@@ -1067,13 +1093,13 @@ internal static class FamilyAEChecks
    if(branches.Any(b=>b is {OptionAny.Count:0,SeaGlassTargetAny.Count:0})&&
     !filter.AncientOptionFilters.Any(f=>f.Act==act&&!f.IsEmpty)&&!filter.AncientSeaGlassTargetFilters.Any(f=>f.Act==act&&!f.IsEmpty))
     return SearchDisposition.Match;
-   var context=generation.AncientEventContexts.FirstOrDefault(c=>c.Act==act&&c.AncientKey==key&&c.PlayerSlot==request.Authority.PlayerSlotIndex)
+   var context=generation.AncientEventContexts.FirstOrDefault(c=>c.Act==act&&c.AncientKey==key&&c.PlayerSlot==request.Model.Authority.PlayerSlotIndex)
     ??generation.AncientEventContexts.FirstOrDefault(c=>c.Act==act&&c.AncientKey==key&&c.IsShared);
    if(context is null)return SearchDisposition.Unknown;
    var snapshot=generation with {RunSeedRoot=root,AncientEventContexts=[context with {
     EventRngRoot=Beta109WorldRng.DeriveEventLocalSeed(root,context.PlayerSlot,context.IsShared,context.EventIdEntry)}]};
-   var prediction=Beta109AncientOptionProvider.PredictEventLocal(snapshot,act,key,request.Authority.PlayerSlotIndex,
-    request.CharacterKey,filter.AncientOptionConditions);
+   var prediction=Beta109AncientOptionProvider.PredictEventLocal(snapshot,act,key,request.Model.Authority.PlayerSlotIndex,
+    request.Model.CharacterKey,filter.AncientOptionConditions);
    if(prediction.EvaluationStatus is not (AncientOptionsEvaluationStatus.EvaluatedNonEmpty or AncientOptionsEvaluationStatus.EvaluatedKnownEmpty or AncientOptionsEvaluationStatus.EvaluatedLocked)||
     prediction.Options.Any(o=>o.OptionPrecision!=PredictionPrecision.Exact))return SearchDisposition.Unknown;
    var options=prediction.Options.Where(o=>o.IsVisible).ToArray();var sea=options.FirstOrDefault(o=>o.OptionKey.Entry=="SEA_GLASS");
@@ -1104,15 +1130,12 @@ internal static class FamilyAEChecks
     filter.All.All(observed.Contains)&&!filter.Ban.Any(observed.Contains);
   }
  }
- private sealed class UnknownSurvivalProbe(IFamilyInvocation inner) : IFamilyInvocation
+ private sealed class UnknownSurvivalProbe(FilterBodyDescription inner)
  {
-  public string FamilyId=>inner.FamilyId;
-  public FamilyAnalyticalCostProjection AnalyticalCost=>inner.AnalyticalCost;
-  public FamilySurvivalProjection Survival=>FamilySurvivalProjection.Unresolved(FamilyId,"ExplicitUnknownTerminalFixture");
-  public FamilyConditionPerformanceProjection ConditionPerformance=>inner.ConditionPerformance;
-  public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compact)=>inner.ResolveConditionPerformance(compact);
-  public FamilyPerformanceObservation CapturePerformanceObservation()=>inner.CapturePerformanceObservation();
-  public ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context,FamilyObservationWindow window,FamilyCandidateSet input,CancellationToken token)=>inner.InvokeAsync(context,window,input,token);
-  public ValueTask DisposeAsync(FamilyExecutionContext context)=>inner.DisposeAsync(context);
+  private FilterBodyDescription? _body;
+  public FilterBodyDescription Body => _body ??= inner with { Preparation = inner.Preparation with {
+   Survival = FamilySurvivalProjection.Unresolved(inner.FamilyId,"ExplicitUnknownTerminalFixture"),
+   HasConditionalProjections = false, SurvivalResolver = null } };
+  public static implicit operator FilterBodyDescription(UnknownSurvivalProbe probe) => probe.Body;
  }
 }

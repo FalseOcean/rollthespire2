@@ -5,17 +5,17 @@ namespace RolltheSpire2.Search.FamilyExecution;
 
 internal static class MerchantShopColorlessPhysicalPricing
 {
-    internal static FamilyPhysicalQuote? Quote(ExactSearchExecutionRequest request,
+    internal static FamilyPhysicalQuote? Quote(MerchantShopColorlessPreparation request,
         MerchantShopColorlessCompactionDecision publicDecision, FamilyPhysicalQuoteRequest geometry,
         FamilyExpectedFilteringCostProjection expected) => QuoteMeasured(request,publicDecision,geometry) ??
             MerchantShopColorlessWorkEstimate.Quote(request, publicDecision, expected, geometry, cpu: false);
 
-    private static FamilyPhysicalQuote? QuoteMeasured(ExactSearchExecutionRequest request,
+    private static FamilyPhysicalQuote? QuoteMeasured(MerchantShopColorlessPreparation request,
         MerchantShopColorlessCompactionDecision publicDecision, FamilyPhysicalQuoteRequest geometry)
     {
         if (!FamilyPhysicalQuote.AdmittedRequest(geometry) || !FamilyPhysicalQuote.HasReferenceBackend() ||
             request.ProfileId != Compatibility.RuntimeProfileId.Beta111 || request.Authority.PlayersCount != 1 ||
-            request.Authority.CanUseCurrentModel != true) return null;
+            request.PricingAuthority.CanUseCurrentModel != true) return null;
         var e = request.Evaluation;
         var slots = e.MerchantColorlessConditions.OrderBy(c => c.MerchantOrdinal).ToArray();
         bool singleRare = slots is [{ MerchantOrdinal: 1, Slot: MerchantColorlessSlot.Rare }];
@@ -37,14 +37,14 @@ internal static class MerchantShopColorlessPhysicalPricing
             OutputElementBytes: geometry.PrivateOutput ? 4 : 8, OutputAlreadyOrdered: stable);
     }
 
-    private static bool ModelAuthority(ExactSearchExecutionRequest request)
+    private static bool ModelAuthority(MerchantShopColorlessPreparation request)
     {
-        var a=Beta111MerchantColorlessAuthority.From(request.Authority);
-        return request.ProfileId==Compatibility.RuntimeProfileId.Beta111 && request.Authority.CanUseCurrentModel &&
+        var a=request.Authority;
+        return request.ProfileId==Compatibility.RuntimeProfileId.Beta111 && request.PricingAuthority.CanUseCurrentModel &&
             request.Authority.PlayersCount==1 && a.HasExactV1Inputs && a.UncommonPool.Count==32 && a.RarePool.Count==21;
     }
 
-    private static FamilyPhysicalQuote? QuoteModel(ExactSearchExecutionRequest request,
+    private static FamilyPhysicalQuote? QuoteModel(MerchantShopColorlessPreparation request,
         MerchantShopColorlessCompactionDecision decision,FamilyPhysicalQuoteRequest g,FamilyExpectedFilteringCostProjection expected)
     {
         var e=request.Evaluation;
@@ -70,7 +70,7 @@ internal static class MerchantShopColorlessPhysicalPricing
             OutputElementBytes:g.PrivateOutput?4:8,OutputAlreadyOrdered:stable);
     }
 
-    internal static FamilyPhysicalQuote? QuoteCpuSlots(ExactSearchExecutionRequest request,FamilyPhysicalQuoteRequest g)
+    internal static FamilyPhysicalQuote? QuoteCpuSlots(MerchantShopColorlessPreparation request,FamilyPhysicalQuoteRequest g)
     {
         var e=request.Evaluation;
         if(!FamilyPhysicalQuote.AdmittedRequest(g)||!ModelAuthority(request)||g.PrivateInput||g.PrivateOutput||g.CompactInput||
@@ -89,17 +89,17 @@ internal static class MerchantShopColorlessPhysicalPricing
             OutputElementBytes:8,OutputAlreadyOrdered:true,PublicTransportClass:"CpuOrderedAbi1");
     }
 
-    internal static FamilyPhysicalQuote? QuoteCpuSequence(ExactSearchExecutionRequest request, FamilyPhysicalQuoteRequest g,
+    internal static FamilyPhysicalQuote? QuoteCpuSequence(MerchantShopColorlessPreparation request, FamilyPhysicalQuoteRequest g,
         FamilyExpectedFilteringCostProjection? expected = null)
         => QuoteCpuSingleSequence(request, g) ?? QuoteCpuSequenceEnvelope(request, g, expected);
 
-    private static FamilyPhysicalQuote? QuoteCpuSequenceEnvelope(ExactSearchExecutionRequest request, FamilyPhysicalQuoteRequest g,
+    private static FamilyPhysicalQuote? QuoteCpuSequenceEnvelope(MerchantShopColorlessPreparation request, FamilyPhysicalQuoteRequest g,
         FamilyExpectedFilteringCostProjection? expected)
     {
         var e = request.Evaluation;
         if (!FamilyPhysicalQuote.AdmittedRequest(g) || !ModelAuthority(request) || g.PrivateInput || g.PrivateOutput ||
             g.CompactInput || g.MeanInputPopulation < 4096 || e.MerchantColorlessConditions.Count > 5 ||
-            e.MerchantColorlessSequenceConditions.Count is < 1 or > 2 || MerchantShopColorlessCpuPlan.TryCompile(request) is null) return null;
+            e.MerchantColorlessSequenceConditions.Count is < 1 or > 2 || MerchantShopColorlessCpuPlan.TryCompile(request.Evaluation, request.Authority) is null) return null;
         var fixedCalls = new Dictionary<int, int>();
         var observed = new SortedSet<int>();
         double probes = 0;
@@ -135,7 +135,7 @@ internal static class MerchantShopColorlessPhysicalPricing
             OutputElementBytes:8,OutputAlreadyOrdered:true,PublicTransportClass:"CpuOrderedAbi1");
     }
 
-    private static FamilyPhysicalQuote? QuoteCpuSingleSequence(ExactSearchExecutionRequest request, FamilyPhysicalQuoteRequest g)
+    private static FamilyPhysicalQuote? QuoteCpuSingleSequence(MerchantShopColorlessPreparation request, FamilyPhysicalQuoteRequest g)
     {
         var e = request.Evaluation;
         if (!FamilyPhysicalQuote.AdmittedRequest(g) || !ModelAuthority(request) || g.PrivateInput ||

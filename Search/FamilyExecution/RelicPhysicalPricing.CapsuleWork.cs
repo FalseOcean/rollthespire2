@@ -4,14 +4,14 @@ namespace RolltheSpire2.Search.FamilyExecution;
 
 internal static partial class RelicPhysicalPricing
 {
-    internal static FamilyPhysicalQuote? QuoteCapsule(ExactSearchExecutionRequest request,
+    internal static FamilyPhysicalQuote? QuoteCapsule(FilterPricingAuthority request,
         RelicFullGpuPlan? plan, FamilyPhysicalQuoteRequest geometry)
     {
         if (plan?.NumericalVariant == GpuNumericalVariant.IntegerRne) return null;
         if (QuoteSourceCapsules(request, plan, geometry) is { } measured) return measured;
         if (plan is null || !FamilyPhysicalQuote.AdmittedRequest(geometry) || !FamilyPhysicalQuote.HasReferenceBackend() ||
-            request.ProfileId != Compatibility.RuntimeProfileId.Beta111 || !request.Authority.CanUseCurrentModel ||
-            request.Authority.PlayersCount != 1 || request.Authority.AllCharacterCardPoolsUnlocked != true ||
+            request.ProfileId != Compatibility.RuntimeProfileId.Beta111 || !request.CanUseCurrentModel ||
+            request.PlayersCount != 1 || request.AllCharacterCardPoolsUnlocked != true ||
             plan.UsesBonesKBoundary || plan.SequencePlan.AlwaysReject ||
             !plan.SequencePlan.Pool.BucketLengths.SequenceEqual(new[] {30,25,35,25,1,2,32,26,38,26})) return null;
 

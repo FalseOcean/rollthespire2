@@ -19,7 +19,7 @@ namespace RolltheSpire2.Search.Runtime;
 public static class SearchAuthorityProjector
 {
     public static bool TryProjectForSeed(
-        ExactSearchExecutionRequest plan,
+        SearchModel plan,
         string canonicalSeed,
         out RuntimeContextAuthoritySnapshot projected,
         out SearchDisposition disposition,
@@ -43,7 +43,7 @@ public static class SearchAuthorityProjector
     }
 
     internal static bool TryProjectForRootHash(
-        ExactSearchExecutionRequest plan,
+        SearchModel plan,
         ulong rootHash,
         string seedIdentity,
         out RuntimeContextAuthoritySnapshot projected,

@@ -10,7 +10,7 @@ using RolltheSpire2.Search.Runtime;
 internal static partial class SmallCandidateExactChecks
 {
     private static readonly TimeSpan PairTimeout = TimeSpan.FromSeconds(15);
-    private static async Task CheckDenseBatchGroupingAsync(ExactSearchExecutionRequest template)
+    private static async Task CheckDenseBatchGroupingAsync(PreparedSearch template)
     {
         foreach (int count in new[] { 48, 49, 56, 57, 73, 97 })
         {
@@ -59,7 +59,7 @@ internal static partial class SmallCandidateExactChecks
         }
     }
     private sealed record PairRun(string[] Seeds, int Exact, ulong Cursor, long Scanned, int PairCalls, int TailCalls, bool GpuOwnerObserved);
-    private static async Task<PairRun> RunPairComparisonAsync(ExactSearchExecutionRequest request, bool grouped, bool preferGrouping = true)
+    private static async Task<PairRun> RunPairComparisonAsync(PreparedSearch request, bool grouped, bool preferGrouping = true)
     {
         var prefix = new DensePairFixture(grouped, 9) { PreferGrouping = preferGrouping };
         var tail = new FixtureFamily("pair-tail", 9);
@@ -77,7 +77,7 @@ internal static partial class SmallCandidateExactChecks
         return new(candidates.Select(candidate => candidate.Seed).Order(StringComparer.Ordinal).ToArray(), visits.Count,
             session.CaptureContinuation()!.NextOrdinal, session.GetProgress().ScannedCount, prefix.PairCalls, tail.Calls, prefix.GpuOwnerObserved);
     }
-    private static async Task CheckPairHandlesAsync(ExactSearchExecutionRequest request)
+    private static async Task CheckPairHandlesAsync(PreparedSearch request)
     {
         var owner = new DensePairFixture(true, 9);
         var other = new DensePairFixture(true, 9);
@@ -86,38 +86,42 @@ internal static partial class SmallCandidateExactChecks
         var ready = PreparedFamilyBatch.Ready(owner, output);
         var input = FamilyCandidateSet.Dense(batch);
         bool wrongOwner = false;
-        try { await ready.InvokeAsync(other, new(batch, request), input, default); }
+        try { await ready.InvokeAsync(other, input, default); }
         catch (InvalidDataException error) when (error.Message == "PreparedFamilyBatch.OwnerOrBatchMismatch") { wrongOwner = true; }
         Check(wrongOwner, "prepared owner validation rejects another family without consuming the handle");
-        Check(ReferenceEquals(await ready.InvokeAsync(owner, new(batch, request), input, default), output),
+        Check(ReferenceEquals(await ready.InvokeAsync(owner, input, default), output),
             "correct owner consumes its exact immutable prepared result");
         bool reused = false;
-        try { await ready.InvokeAsync(owner, new(batch, request), input, default); }
+        try { await ready.InvokeAsync(owner, input, default); }
         catch (InvalidOperationException error) when (error.Message == "PreparedFamilyBatch.AlreadyConsumed") { reused = true; }
         Check(reused, "prepared handles cannot be consumed twice");
         foreach (bool wrongBatch in new[] { false, true })
         {
             var handle = PreparedFamilyBatch.Ready(owner, output);
-            var observation = new FamilyObservationWindow(wrongBatch ? new SearchBatch(32, 16) : batch, request);
+            var observation = wrongBatch ? new SearchBatch(32, 16) : batch;
             bool invalid = false;
-            try { await handle.InvokeAsync(owner, observation, wrongBatch ? input : output, default); }
+            try { await handle.InvokeAsync(owner, wrongBatch ? FamilyCandidateSet.Dense(observation) : output, default); }
             catch (InvalidDataException error) when (error.Message == "PreparedFamilyBatch.OwnerOrBatchMismatch") { invalid = true; }
             Check(invalid, "prepared handle rejects mismatched observation or Compact input");
         }
         var cancelled = PreparedFamilyBatch.Ready(owner, output);
         bool stopped = false;
-        try { await cancelled.InvokeAsync(owner, new(batch, request), input, new CancellationToken(true)); }
+        try { await cancelled.InvokeAsync(owner, input, new CancellationToken(true)); }
         catch (OperationCanceledException) { stopped = true; }
-        Check(stopped && ReferenceEquals(await cancelled.InvokeAsync(owner, new(batch, request), input, default), output),
+        Check(stopped && ReferenceEquals(await cancelled.InvokeAsync(owner, input, default), output),
             "cancellation before consumption preserves the ready handle");
     }
-    private static async Task CheckPairCpuIsolationAsync(ExactSearchExecutionRequest request)
+    private static async Task CheckPairCpuIsolationAsync(PreparedSearch request)
     {
         var prefix = new DensePairFixture(true, 9);
         int matcherCalls = 0;
         var cause = new IOException("InjectedPairPureCpuMatcher");
-        var cpu = new FamilyCpuExecution(request, new FixtureFamily("pair-cpu-isolation", 0), "PairCpuIsolationFixture", _ =>
-        { Interlocked.Increment(ref matcherCalls); throw cause; }, 2, _ => null);
+        var profile = RuntimeProfileRegistry.Select(request.Model.Detection);
+        Func<ulong, bool> matcher = _ => { Interlocked.Increment(ref matcherCalls); throw cause; };
+        var cpu = new FilterBodyDescription(new PreparedFilter("pair-cpu-isolation"), "PairCpuIsolationFixture", request.Model.ProfileId)
+        { CpuWorkers = 2, WindowCapacity = 65536,
+            PerformanceProjection = compact => CpuFilterExecution.Describe("pair-cpu-isolation", "PairCpuIsolationFixture", 2, 65536, false, false, compact),
+            CreateExecution = (body, _) => new CpuFilterExecution(body, profile, matcher, false) };
         var tail = new FixtureFamily("must-not-run-after-isolation", 0);
         await using var session = PairSession(request, [prefix, cpu, tail]);
         await session.Completion.WaitAsync(PairTimeout);
@@ -129,7 +133,7 @@ internal static partial class SmallCandidateExactChecks
         foreach (var candidate in candidates) session.AcknowledgeCandidate(candidate.Seed);
         Check(session.CaptureContinuation()!.NextOrdinal == 65, "CPU isolation inside grouped flow retains ACK frontier ownership");
     }
-    private static async Task CheckPairTargetAndCancelAsync(ExactSearchExecutionRequest request)
+    private static async Task CheckPairTargetAndCancelAsync(PreparedSearch request)
     {
         var targetPrefix = new DensePairFixture(true, 1);
         await using (var target = PairSession(PairRequest(request, 64, target: 2), [targetPrefix]))
@@ -173,7 +177,7 @@ internal static partial class SmallCandidateExactChecks
         foreach (var candidate in remaining) resumed.AcknowledgeCandidate(candidate.Seed);
         Check(resumed.CaptureContinuation()!.NextOrdinal == 64, "resumed pair ACK frontier reaches the original full range");
     }
-    private static async Task CheckPairSharedFailureAsync(ExactSearchExecutionRequest request)
+    private static async Task CheckPairSharedFailureAsync(PreparedSearch request)
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         CancellationToken exactToken = default;
@@ -195,7 +199,7 @@ internal static partial class SmallCandidateExactChecks
         Check(Drain(session).Length == 0 && session.CaptureContinuation()!.NextOrdinal == 0,
             "untrusted shared failure cannot advance the paused unreceived frontier");
     }
-    private static async Task CheckPairDeferredFaultAsync(ExactSearchExecutionRequest request, string phase, bool targetWins)
+    private static async Task CheckPairDeferredFaultAsync(PreparedSearch request, string phase, bool targetWins)
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -272,24 +276,24 @@ internal static partial class SmallCandidateExactChecks
         object reader = channel.GetType().GetProperty("Reader")!.GetValue(channel)!;
         return (Task)reader.GetType().GetProperty("Completion")!.GetValue(reader)!;
     }
-    private static ExactSearchExecutionRequest PairRequest(ExactSearchExecutionRequest template, int count, int target = 100) =>
-        ExactSearchExecutionRequestFactory.Compile(template.CompiledSearch,
+    private static PreparedSearch PairRequest(PreparedSearch template, int count, int target = 100) =>
+        SearchPreparationCompiler.Compile(template.Model.CompiledSearch,
             template.RunOptions with { ScanCount = count, TargetMatchCount = target }).Plan
         ?? throw new InvalidOperationException("DensePairFixture.RequestCompile");
-    private static ExactSearchExecutionRequest PairResumeRequest(ExactSearchExecutionRequest original, ulong start) =>
-        ExactSearchExecutionRequestFactory.Compile(original.CompiledSearch, original.RunOptions with {
+    private static PreparedSearch PairResumeRequest(PreparedSearch original, ulong start) =>
+        SearchPreparationCompiler.Compile(original.Model.CompiledSearch, original.RunOptions with {
             StartSeed = Beta110SeedCodec.FormatOrdinal(start), ScanCount = checked(original.ScanCount - (long)start)
         }).Plan ?? throw new InvalidOperationException("DensePairFixture.ResumeRequestCompile");
-    private static ProductionSearchSession PairSession(ExactSearchExecutionRequest request, IReadOnlyList<IFamilyInvocation> families,
-        Func<ExactSearchExecutionRequest, TrustedRootHashInput, ProductionExactSearchResult>? evaluator = null,
+    private static ProductionSearchSession PairSession(PreparedSearch request, IReadOnlyList<FilterBodyDescription> families,
+        Func<SearchModel, TrustedRootHashInput, ProductionExactSearchResult>? evaluator = null,
         Func<int, CancellationToken, ValueTask>? beforePublish = null, SearchContinuationSnapshot? continuation = null)
     {
         var execution = FamilyPlanner.InOrder(families) with { AllowSmallCandidateExact = true };
-        return new(request, execution, FamilySearchEtaProjectorV1.Project(request, execution), 16, 128, null, "",
+        return new(request, execution, FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(request, execution), execution), 16, 128, null, "",
             exactEvaluator: evaluator, beforeCandidatePublish: beforePublish, continuation: continuation);
     }
     private enum PairCorruption { None, FirstOwner, SecondBatch }
-    private sealed class DensePairFixture(bool grouped, int population, bool emptyInitial = false) : IFamilyInvocation, IDenseFamilyBatchGrouping
+    private sealed class DensePairFixture(bool grouped, int population, bool emptyInitial = false) : IFilterExecution, IDenseFamilyBatchGrouping
     {
         internal int SingleCalls, PairCalls;
         internal bool GpuOwnerObserved, FailedConsumed;
@@ -298,6 +302,14 @@ internal static partial class SmallCandidateExactChecks
         internal PairCorruption Corruption;
         internal bool PreferGrouping { get; init; } = true;
         public string FamilyId => "N.DensePairFixture";
+        private FilterBodyDescription? _body;
+        public FilterBodyDescription Body => _body ??= new(new PreparedFilter(FamilyId)
+        { AnalyticalCost = AnalyticalCost, Survival = Survival }, FamilyId, RuntimeProfileId.Beta111)
+        { PerformanceProjection = _ => ConditionPerformance, CreateExecution = (_, _) => this };
+        public static implicit operator FilterBodyDescription(DensePairFixture fixture) => fixture.Body;
+        public bool ExecutionFaulted => false;
+        public ValueTask DisposeAsync(FilterRuntimeServices services) => ValueTask.CompletedTask;
+
         public bool CanGroupDenseBatches => grouped && !FailedConsumed;
         public bool PreferDenseBatchGrouping => CanGroupDenseBatches && PreferGrouping;
         public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId, 16, [], "TestOnly");
@@ -307,21 +319,21 @@ internal static partial class SmallCandidateExactChecks
             SingleCalls + PairCalls * 2, 0, 0, 0, 0, false, "TestOnly");
         internal FamilyCandidateSet Select(SearchBatch batch) => FamilyCandidateSet.FromSortedAbi1(batch,
             Enumerable.Range(0, emptyInitial && batch.BatchBase == 0 ? 0 : Math.Min(population, batch.BatchCandidateCount)).Select(i => (ulong)i).ToArray());
-        public ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow window,
+        public ValueTask<FamilyCandidateSet> FilterAsync(FilterRuntimeServices context,
             FamilyCandidateSet input, CancellationToken token)
         {
             token.ThrowIfCancellationRequested(); SingleCalls++;
             GpuOwnerObserved |= context.GpuOwnerThreadId != 0;
             return ValueTask.FromResult(Select(input.Batch));
         }
-        public ValueTask<DenseFamilyBatchGroup> PrepareDensePairAsync(FamilyExecutionContext context,
-            FamilyObservationWindow first, FamilyObservationWindow second, CancellationToken token)
+        public ValueTask<DenseFamilyBatchGroup> PrepareDensePairAsync(FilterRuntimeServices context,
+            SearchBatch first, SearchBatch second, CancellationToken token)
         {
             token.ThrowIfCancellationRequested(); PairCalls++;
             GpuOwnerObserved |= context.GpuOwnerThreadId != 0;
             if (GroupFailure is not null) { BeforeGroupFailure?.Invoke(); throw GroupFailure; }
-            var left = PreparedFamilyBatch.Ready(Corruption == PairCorruption.FirstOwner ? new FixtureFamily("wrong-owner", 1) : this, Select(first.Batch));
-            var rightBatch = Corruption == PairCorruption.SecondBatch ? new SearchBatch(second.Batch.BatchBase + 1, second.Batch.BatchCandidateCount) : second.Batch;
+            var left = PreparedFamilyBatch.Ready(Corruption == PairCorruption.FirstOwner ? new FixtureFamily("wrong-owner", 1) : this, Select(first));
+            var rightBatch = Corruption == PairCorruption.SecondBatch ? new SearchBatch(second.BatchBase + 1, second.BatchCandidateCount) : second;
             var right = RightFailure is null ? PreparedFamilyBatch.Ready(this, Select(rightBatch)) :
                 PreparedFamilyBatch.Failed(this, rightBatch, RightFailure, () => { BeforeRightFailure?.Invoke(); FailedConsumed = true; });
             return ValueTask.FromResult(new DenseFamilyBatchGroup(left, right));

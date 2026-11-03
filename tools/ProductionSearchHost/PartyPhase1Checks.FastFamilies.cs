@@ -14,7 +14,7 @@ using RolltheSpire2.Core.World;
 
 internal static partial class PartyPhase1Checks
 {
-    private static async Task CheckFastFamilies(ExactSearchExecutionRequest request)
+    private static async Task CheckFastFamilies(PreparedSearch request)
     {
         string[] arguments = OS.GetCmdlineUserArgs();
         int workersArg = Array.IndexOf(arguments, "--party-cost-workers");
@@ -23,7 +23,7 @@ internal static partial class PartyPhase1Checks
         request = request with { RunOptions = request.RunOptions with { WorkerCount = workers } };
         int checks = 0;
         void Check(bool condition, string message) { if (!condition) throw new Exception(message); checks++; }
-        var compiled = request.CompiledSearch;
+        var compiled = request.Model.CompiledSearch;
         Check(SearchCompiler.Compile(compiled.NormalizedQuery, compiled.Context).SemanticFingerprint == compiled.SemanticFingerprint,
             "party shared canonicalization idempotent");
         var sharedMap = new StandardMapSearchCondition(1, StandardMapMetric.GuaranteedMonster, StandardMapComparison.AtLeast, 0);
@@ -36,9 +36,9 @@ internal static partial class PartyPhase1Checks
             p.Conditions.LegacyWorld.AncientIdentityFilters.Count == 0), "shared world facts leave personal conditions");
         Check(VisibleSeedCandidateCodec.TryParseOrdinal(Beta111Profile.Instance, request.CanonicalStartSeed,
             out ulong positive, out _, out _), "positive ordinal");
-        if (OS.GetCmdlineUserArgs().Contains("--party-world-fast-checks")) { await CheckWorldFastContexts(request.Detection); return; }
+        if (OS.GetCmdlineUserArgs().Contains("--party-world-fast-checks")) { await CheckWorldFastContexts(request.Model.Detection); return; }
         if (OS.GetCmdlineUserArgs().Contains("--party-event-fast-checks")) { await CheckEventFastSlots(request); return; }
-        if (OS.GetCmdlineUserArgs().Contains("--party-combat-openings") || OS.GetCmdlineUserArgs().Contains("--party-nrc-gpu")) { await CheckPartyCombatOpenings(request.Detection); return; }
+        if (OS.GetCmdlineUserArgs().Contains("--party-combat-openings") || OS.GetCmdlineUserArgs().Contains("--party-nrc-gpu")) { await CheckPartyCombatOpenings(request.Model.Detection); return; }
         var cpu = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, false);
         var gpu = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, true);
         Check(cpu.Select(f => f.FamilyId).Distinct().Count() == cpu.Count, "one CPU invocation per family");
@@ -53,7 +53,7 @@ internal static partial class PartyPhase1Checks
             bool large = arguments.Contains("--party-cost-measure-large");
             bool sparse = arguments.Contains("--party-cost-measure-sparse");
             bool cpuOnly = arguments.Contains("--party-cost-cpu-only");
-            await using var measured = new FamilyExecutionContext(requiresGpu: !cpuOnly && gpu.Any(f => f.ConditionPerformance.UsesGpu),
+            await using var measured = new FilterRuntimeServices(requiresGpu: !cpuOnly && gpu.Any(f => f.ConditionPerformance.UsesGpu),
                 failOnPhysicalRecovery: true);
             try
             {
@@ -67,14 +67,14 @@ internal static partial class PartyPhase1Checks
                 {
                     var batch = new SearchBatch(positive, count);
                     var input = FamilyCandidateSet.Dense(batch);
-                    var window = new FamilyObservationWindow(batch, request);
-                    await family.InvokeAsync(measured, window, input, default);
+
+                    await family.ExecuteAsync(measured, input, default);
                     var times = new double[3];
                     int survivors = 0;
                     for (int repeat = 0; repeat < times.Length; repeat++)
                     {
                         var watch = Stopwatch.StartNew();
-                        var output = await family.InvokeAsync(measured, window, input, default);
+                        var output = await family.ExecuteAsync(measured, input, default);
                         times[repeat] = watch.Elapsed.TotalMilliseconds;
                         survivors = output.Count;
                     }
@@ -99,7 +99,7 @@ internal static partial class PartyPhase1Checks
             }
             foreach (string shape in new[] { "S-only", "M-only", "M-3act" })
             {
-                SearchQuery original = request.CompiledSearch.NormalizedQuery;
+                SearchQuery original = request.Model.CompiledSearch.NormalizedQuery;
                 SearchQuery subset = SearchQuery.Empty with
                 {
                     Players = original.Players.Select(player => player with
@@ -116,12 +116,11 @@ internal static partial class PartyPhase1Checks
                         shape == "M-3act" ? Enumerable.Range(1, 3)
                             .Select(act => original.StandardMaps[0] with { Scope = act }).ToArray() : []
                 };
-                var compiledSubset = SearchCompiler.Compile(subset, request.CompiledSearch.Context);
-                var subsetRequest = ExactSearchExecutionRequestFactory.Compile(compiledSubset,
+                var compiledSubset = SearchCompiler.Compile(subset, request.Model.CompiledSearch.Context);
+                var subsetRequest = SearchPreparationCompiler.Compile(compiledSubset,
                     new(request.CanonicalStartSeed, 1_000_000, 1, request.WorkerCount)).Plan!;
                 var selected = FamilyExecutionCoordinator.Plan(subsetRequest, !cpuOnly);
-                var eta = FamilySearchEtaProjectorV1.Project(subsetRequest, selected,
-                    liveExactMsPerAttempt: shape == "S-only" ? .01 : null);
+                var eta = FamilySearchEtaProjectorV1.Project(RolltheSpire2.Search.Compilation.SearchEstimationPreparation.ForRun(subsetRequest, selected), selected, liveExactMsPerAttempt: shape == "S-only" ? .01 : null);
                 Check(eta.Status == FamilySearchEtaStatus.Ready && eta.TargetSearchMeanMs is > 0 &&
                     eta.FixedScanRangeMs is > 0, "party price and ETA projection: " + shape);
                 GD.Print($"PARTY_COST_ETA shape={shape};plan={selected.PlanId};" +
@@ -135,7 +134,7 @@ internal static partial class PartyPhase1Checks
                     for (ulong i = 0; i < 64; i++)
                     {
                         string seed = VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance, mapStart + i);
-                        _ = ProductionExactSearchEvaluator.Evaluate(subsetRequest,
+                        _ = ProductionExactSearchEvaluator.Evaluate(subsetRequest.Model,
                             TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed));
                     }
                     for (int repeat = 0; repeat < 3; repeat++)
@@ -146,7 +145,7 @@ internal static partial class PartyPhase1Checks
                         {
                             string seed = VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance,
                                 mapStart + (ulong)(repeat + 1) * 64 + i);
-                            if (ProductionExactSearchEvaluator.Evaluate(subsetRequest,
+                            if (ProductionExactSearchEvaluator.Evaluate(subsetRequest.Model,
                                 TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed)).IsMatch) hits++;
                         }
                         GD.Print($"PARTY_MAP_COST shape={shape};repeat={repeat};roots=64;start={mapStart + (ulong)(repeat + 1) * 64};" +
@@ -165,7 +164,7 @@ internal static partial class PartyPhase1Checks
                         Enumerable.Range(0, seats).Select(_ => UnlockState.all.ToSerializable()).ToArray(),
                         10, "0.111.0");
                     var context = SearchContextFactory.From(RuntimeProfileId.Beta111,
-                        party.Players[0].Character.CharacterKey, 10, party.Players[0], request.Detection,
+                        party.Players[0].Character.CharacterKey, 10, party.Players[0], request.Model.Detection,
                         AncientOptionConditionProfile.BroadDefault) with { Party = party };
                     foreach (int acts in new[] { 1, 3 })
                     {
@@ -179,13 +178,13 @@ internal static partial class PartyPhase1Checks
                                     StandardMapComparison.AtLeast, 0)).ToArray()
                         };
                         var compiledMap = SearchCompiler.Compile(map, context);
-                        var mapRequest = ExactSearchExecutionRequestFactory.Compile(compiledMap,
+                        var mapRequest = SearchPreparationCompiler.Compile(compiledMap,
                             new(seed, 1_000_000, 1, workers)).Plan!;
                         for (ulong i = 0; i < 64; i++)
                         {
                             string warmSeed = VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance,
                                 positive + i);
-                            _ = ProductionExactSearchEvaluator.Evaluate(mapRequest,
+                            _ = ProductionExactSearchEvaluator.Evaluate(mapRequest.Model,
                                 TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, warmSeed));
                         }
                         for (int repeat = 0; repeat < 3; repeat++)
@@ -195,7 +194,7 @@ internal static partial class PartyPhase1Checks
                             {
                                 string testSeed = VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance,
                                     positive + (ulong)(repeat + 1) * 64 + i);
-                                _ = ProductionExactSearchEvaluator.Evaluate(mapRequest,
+                                _ = ProductionExactSearchEvaluator.Evaluate(mapRequest.Model,
                                     TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, testSeed));
                             }
                             GD.Print($"PARTY_MAP_SEAT_COST seats={seats};acts={acts};repeat={repeat};" +
@@ -210,7 +209,7 @@ internal static partial class PartyPhase1Checks
         }
         foreach (string family in new[] { "S.MerchantShopColorless", "R.Relic", "A.AncientOption", "E.EventResult" })
             Check(gpu.Any(f => f.FamilyId == family && f.ConditionPerformance.UsesGpu), "GPU registered: " + family);
-        await using var execution = new FamilyExecutionContext(requiresGpu: true, failOnPhysicalRecovery: true);
+        await using var execution = new FilterRuntimeServices(requiresGpu: true, failOnPhysicalRecovery: true);
         try
         {
             var batch = new SearchBatch(positive, 2051);
@@ -218,11 +217,11 @@ internal static partial class PartyPhase1Checks
                 FamilyCandidateSet.FromSortedAbi1(batch, Enumerable.Range(0, 1026).Select(i => (ulong)i * 2).ToArray()),
                 FamilyCandidateSet.FromSortedAbi1(batch, []) })
             {
-                var window = new FamilyObservationWindow(batch, request);
+
                 for (int i = 0; i < gpu.Count; i++)
                 {
-                    var a = await cpu[i].InvokeAsync(execution, window, input, default);
-                    var b = await gpu[i].InvokeAsync(execution, window, input, default);
+                    var a = await cpu[i].ExecuteAsync(execution, input, default);
+                    var b = await gpu[i].ExecuteAsync(execution, input, default);
                     Check(a.EnumerateLogicalOrdinals().SequenceEqual(b.EnumerateLogicalOrdinals()), "CPU/GPU full population: " + gpu[i].FamilyId);
                     if (input.Count > 0) Check(b.EnumerateLogicalOrdinals().Contains(0UL), "Exact-positive retained: " + gpu[i].FamilyId);
                     else Check(b.Count == 0, "empty input: " + gpu[i].FamilyId);
@@ -233,7 +232,7 @@ internal static partial class PartyPhase1Checks
             foreach (var family in gpu)
             {
                 bool cancelled = false;
-                try { await family.InvokeAsync(execution, new(batch, request), FamilyCandidateSet.Dense(batch), cancel.Token); }
+                try { await family.ExecuteAsync(execution, FamilyCandidateSet.Dense(batch), cancel.Token); }
                 catch (OperationCanceledException) { cancelled = true; }
                 Check(cancelled, "cancel: " + family.FamilyId);
             }
@@ -248,22 +247,23 @@ internal static partial class PartyPhase1Checks
         GD.Print($"PARTY_FAST_PASS checks={checks};familyMajor=true;denseCompactEmpty=true;noThroughputClaim=true");
     }
 
-    private static async Task CheckEventFastSlots(ExactSearchExecutionRequest parent)
+    private static async Task CheckEventFastSlots(PreparedSearch parent)
     {
         int cases = 0, positives = 0;
-        await using var execution = new FamilyExecutionContext(requiresGpu: true, failOnPhysicalRecovery: true);
+        await using var execution = new FilterRuntimeServices(requiresGpu: true, failOnPhysicalRecovery: true);
         foreach (int slot in new[] { 1, 3 })
         foreach (var kind in new[] { EventResultConditionKind.MorphicGroveGroupInitialBasicsContains,
             EventResultConditionKind.SymbioteInitialBasicTransform, EventResultConditionKind.AromaOfChaosInitialBasicTransform,
             EventResultConditionKind.WhisperingHollowInitialBasicTransform, EventResultConditionKind.TrialNondescriptInitialBasicsContains })
         {
-            var context = parent.CompiledSearch.PlayerSearches[slot].Context;
+            var context = parent.Model.CompiledSearch.PlayerSearches[slot].Context;
             var scenario = Beta111MorphicGroveAuthorityCapture.CaptureAuthoredEventResult(context.Authority, kind, UnlockState.all);
             var target = scenario.Targets[0].OrderedSourceCandidates![0].CardKey;
             var query = SearchQuery.Empty with { EventResultConditions = [new(kind, target) { MorphicGroveScenario = scenario }] };
-            var request = ExactSearchExecutionRequestFactory.ForPlayer(parent, SearchCompiler.CompilePlayer(query, context));
-            if (!EventResultFamily.TryCreate(request, out var family) || family is not EventResultFamily events || !events.Plan.GpuSupported)
+            var request = SearchPreparationCompiler.ForPlayer(parent.Model, SearchCompiler.CompilePlayer(query, context));
+            if (!EventResultFamily.TryPrepare(request, FilterExecutionPreferences.From(parent.RunOptions), out var events) || events is null || !events.Plan.GpuSupported)
                 throw new Exception("Party event GPU not admitted: " + kind);
+            var family = events.Body;
             try
             {
                 var batch = new SearchBatch(0, 1027);
@@ -272,7 +272,7 @@ internal static partial class PartyPhase1Checks
                 foreach (var input in new[] { FamilyCandidateSet.Dense(batch), FamilyCandidateSet.FromSortedAbi1(batch,
                     Enumerable.Range(0, 514).Select(i => (ulong)i * 2).ToArray()) })
                 {
-                    var result = await family.InvokeAsync(execution, new(batch, request), input, default);
+                    var result = await family.ExecuteAsync(execution, input, default);
                     if (!result.EnumerateLogicalOrdinals().SequenceEqual(expected.Where(i => input.IsDense || i % 2 == 0)))
                         throw new Exception($"Party event source/GPU mismatch: {slot}/{kind}");
                     cases++; positives += result.Count;
@@ -280,16 +280,16 @@ internal static partial class PartyPhase1Checks
                 GD.Print($"PARTY_EVENT_FAST slot={slot};kind={kind};sourceMatches={expected.Length};denseCompact=true");
                 if (slot == 1 && OS.GetCmdlineUserArgs().Contains("--party-event-cost-measure"))
                 {
-                    IFamilyInvocation cpu = ((IFamilyInvocation)family).CpuRealizations.First();
+                    FilterBodyDescription cpu = ((FilterBodyDescription)family).CpuAlternatives.First();
                     try
                     {
                         var cpuBatch = new SearchBatch(0, 8192);
                         var cpuDense = FamilyCandidateSet.Dense(cpuBatch);
-                        await cpu.InvokeAsync(execution, new(cpuBatch, request), cpuDense, default);
+                        await cpu.ExecuteAsync(execution, cpuDense, default);
                         for (int repeat = 0; repeat < 3; repeat++)
                         {
                             var watch = Stopwatch.StartNew();
-                            var result = await cpu.InvokeAsync(execution, new(cpuBatch, request), cpuDense, default);
+                            var result = await cpu.ExecuteAsync(execution, cpuDense, default);
                             GD.Print($"PARTY_EVENT_CPU_COST kind={kind};slot=1;repeat={repeat};" +
                                 $"roots=8192;elapsedMs={watch.Elapsed.TotalMilliseconds:F4};survivors={result.Count};" +
                                 "boundary=InvokeAsyncCanonicalAbi1Ready;warmup=1;noExact");
@@ -298,11 +298,11 @@ internal static partial class PartyPhase1Checks
                     finally { await cpu.DisposeAsync(execution); }
                     var full = new SearchBatch(0, 262144);
                     var dense = FamilyCandidateSet.Dense(full);
-                    await family.InvokeAsync(execution, new(full, request), dense, default);
+                    await family.ExecuteAsync(execution, dense, default);
                     for (int repeat = 0; repeat < 3; repeat++)
                     {
                         var watch = Stopwatch.StartNew();
-                        var result = await family.InvokeAsync(execution, new(full, request), dense, default);
+                        var result = await family.ExecuteAsync(execution, dense, default);
                         GD.Print($"PARTY_EVENT_COST kind={kind};slot=1;repeat={repeat};" +
                             $"roots=262144;elapsedMs={watch.Elapsed.TotalMilliseconds:F4};survivors={result.Count};" +
                             "boundary=InvokeAsyncCanonicalAbi1Ready;warmup=1;noExact");

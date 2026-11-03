@@ -15,10 +15,10 @@ namespace RolltheSpire2.Search.FamilyExecution;
 // makes the actual implementation conservatively retain every input.
 internal static class CombatRewardSieveProbability
 {
-    internal static SearchSelectivityEstimate Estimate(ExactSearchExecutionRequest request, CombatRewardReplay replay) =>
+    internal static SearchSelectivityEstimate Estimate(SearchModel request, CombatRewardReplay replay) =>
         Estimate(request, replay.Plan);
 
-    internal static SearchSelectivityEstimate Estimate(ExactSearchExecutionRequest request, Beta110CombatRewardFastPlan fast) =>
+    internal static SearchSelectivityEstimate Estimate(SearchModel request, Beta110CombatRewardFastPlan fast) =>
         CombatRewardProbabilityEstimator.EstimateOptimizedConditions(SearchSelectivityInput.From(request));
 
     // Exact physical quote scope: these modifiers are modeled after a proved
@@ -31,7 +31,7 @@ internal static class CombatRewardSieveProbability
             Beta110CombatRewardInfluenceFlags.DeterministicUpgradeOnly |
             Beta110CombatRewardInfluenceFlags.DeterministicEnchantmentOnly)) == 0;
 
-    internal static int? FixedAuthoredPrefixDrawCount(ExactSearchExecutionRequest request, Beta110CombatRewardFastPlan fast)
+    internal static int? FixedAuthoredPrefixDrawCount(SearchModel request, Beta110CombatRewardFastPlan fast)
     {
         // The solo query-literal donor replays three rarity rolls for Small+Large,
         // without obtaining latent bag outputs. This existing solo price scope

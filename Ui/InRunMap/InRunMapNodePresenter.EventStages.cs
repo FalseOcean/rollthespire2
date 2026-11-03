@@ -21,7 +21,7 @@ internal sealed partial class InRunMapNodePresenter
     private void SynchronizeEventStages()
     {
         SynchronizeConveyorDrafts();
-        string seed = _session.Snapshot?.Run.Context.Seed ?? "";
+        string seed = _session.Snapshot?.Context.Seed ?? "";
         string capture = _session.Snapshot?.Fingerprint ?? "";
         var liveIds = _session.Nodes.Values.Select(value => value.Position.NodeId).ToHashSet();
         foreach (var stale in _eventStageSnapshots.Keys.Where(value => value.Seed != seed || value.Capture != capture ||
@@ -60,7 +60,7 @@ internal sealed partial class InRunMapNodePresenter
                 { StableId = c.Node.Position.NodeId + "|event-outcome|" + option.Key, OutcomePreview = outcome, LargeCardResults = true });
             }
         }
-        string seed = _session.Snapshot?.Run.Context.Seed ?? "";
+        string seed = _session.Snapshot?.Context.Seed ?? "";
         ChooseEventOccurrence? occurrence = node.Occurrence is { } observed && node.SelectedOccurrence is { } selected
             ? new(selected.Event, selected.QueueEvent, selected.RawOrdinal, observed.Cursor, selected.Cursor) : null;
         // Local event actions append without changing their incoming boundary.

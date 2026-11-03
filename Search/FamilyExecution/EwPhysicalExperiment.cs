@@ -7,7 +7,7 @@ namespace RolltheSpire2.Search.FamilyExecution;
 internal static class EwPhysicalExperiment
 {
     internal static string Mode => Environment.GetEnvironmentVariable("RT2_EW_EXPERIMENT") ?? "";
-    internal static bool TrySelect(ExactSearchExecutionRequest request, IReadOnlyList<IFamilyInvocation> registered,
+    internal static bool TrySelect(PreparedSearch request, IReadOnlyList<FilterBodyDescription> registered,
         FamilyExecutionPlan ordinary, out FamilyExecutionPlan? selected, string? explicitMode = null)
     {
         selected = null;
@@ -15,15 +15,24 @@ internal static class EwPhysicalExperiment
         if (mode.Length == 0) return false;
         if (mode is not ("ordinary-ew" or "ordinary-we" or "private-ordinal" or "verify-ordinal" or "ordinary-ecw" or "private-ecw" or "verify-ecw")) throw new InvalidOperationException("EW.UnknownMode.RootRetentionParked:" + mode);
         bool ecw = mode.EndsWith("-ecw",StringComparison.Ordinal);
-        var combat = ecw ? registered.OfType<CombatRewardFamily>().SingleOrDefault() : null;
-        if (registered.Count != (ecw ? 3 : 2) || (ecw && combat?.GpuPlan is null) || registered.OfType<EventResultFamily>().SingleOrDefault() is not { } e ||
-            registered.OfType<WorldFamily>().SingleOrDefault() is not { } w ||
-            !e.Plan.GpuSupported || !WorldFamilyGpuPlan.Supports(w.Replay))
+        var model = request.Model;
+        var preferences = FilterExecutionPreferences.From(request.RunOptions);
+        var eventBody = registered.SingleOrDefault(f => f.FamilyId == "E.EventResult");
+        var worldBody = registered.SingleOrDefault(f => f.FamilyId == "W.World");
+        var combatBody = registered.SingleOrDefault(f => f.FamilyId == "C.CombatReward");
+        CombatRewardPreparation? combat = null;
+        if (registered.Count != (ecw ? 3 : 2) || eventBody?.UsesGpu != true || worldBody?.UsesGpu != true ||
+            !EventResultFamily.TryPrepare(model, preferences, out var events) || !events!.Plan.GpuSupported ||
+            (ecw && (combatBody?.UsesGpu != true || !CombatRewardFamily.TryPrepare(model, preferences, out combat) || combat!.GpuPlan is null)))
             throw new InvalidOperationException("Y1.RequiresExactlyGpuEWCoverage");
-        IFamilyInvocation[] ordered = mode.StartsWith("private-",StringComparison.Ordinal) || mode.StartsWith("verify-",StringComparison.Ordinal)
-            ? ecw ? [new EcwPrivateClosureProbe(request,e.Plan,combat!.GpuPlan!,new WorldFamilyGpuPlan(w.Replay),mode=="verify-ecw")]
-                  : [new EwPrivateInvocation(request, e.Plan, new WorldFamilyGpuPlan(w.Replay), mode)]
-            : ecw ? [e,combat!,w] : mode == "ordinary-ew" ? [e,w] : [w,e];
+        var replay = new WorldFamilyReplay(model);
+        if (!WorldFamilyGpuPlan.Supports(replay)) throw new InvalidOperationException("Y1.RequiresExactlyGpuEWCoverage");
+        var world = new WorldFamilyGpuPlan(replay);
+        FilterBodyDescription[] ordered = mode.StartsWith("private-", StringComparison.Ordinal) || mode.StartsWith("verify-", StringComparison.Ordinal)
+            ? ecw ? [EcwPrivateClosureProbe.Prepare(model, events.Plan, combat!.GpuPlan!, world, mode == "verify-ecw",
+                        combat.Body.Preparation.Remainders)]
+                  : [EwPrivateInvocation.Prepare(model, events.Plan, world, mode)]
+            : ecw ? [eventBody, combatBody!, worldBody] : mode == "ordinary-ew" ? [eventBody, worldBody] : [worldBody, eventBody];
         var stages = ordered.Select((f, i) =>
         {
             var condition = f.ResolveConditionPerformance(i != 0);

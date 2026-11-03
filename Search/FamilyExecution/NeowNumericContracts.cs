@@ -129,6 +129,10 @@ internal sealed record Beta110FastNeowAuthority(
     bool IdentityAuthorityExact,
     bool BonesAuthorityExact,
     Beta110FastEffectCatalog EffectCatalog,
-    string AuthorityFingerprint);
+    string AuthorityFingerprint)
+{
+    internal NeowIdentityOfferFacts Identity => NeowIdentityOfferFacts.For(PlayersCount,
+        AllCharacterCardPoolsUnlocked, ScrollBoxesAllowed);
+}
 
 internal enum Beta110FastDecision { CandidateReject, CandidateKeep }

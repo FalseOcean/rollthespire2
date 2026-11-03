@@ -10,13 +10,12 @@ using RolltheSpire2.Search.Runtime;
 internal static class FamilyPricingInventory
 {
     private const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-    internal static void Run(ExactSearchExecutionRequest request, string output)
+    internal static void Run(PreparedSearch request, string output)
     {
         var families = FamilyExecutionCoordinator.CreateRegisteredFamilies(request);
-        object Canonical(IFamilyInvocation family, bool compact, int roots, int inputs)
+        object Canonical(FilterBodyDescription family, bool compact, int roots, int inputs)
         {
-            var source = FamilyCanonicalMeasuredCost.SourceRequest(family);
-            var key = source is null ? null : FamilyCanonicalCostShape.Describe(source, family, compact, roots);
+            var key = FamilyCanonicalCostShape.Describe(family, compact, roots);
             return new { RootSpan = roots, Input = inputs, Compact = compact, Key = key,
                 SourceSurvival = family.FamilyId == "N.Neow" ? family.ResolveSurvival(new HashSet<string>()).SurvivalProbability : null,
                 Quote = FamilyCanonicalMeasuredCost.TryQuote(family, new(compact, false, inputs), roots),
@@ -41,22 +40,19 @@ internal static class FamilyPricingInventory
             Physical = f.ConditionPerformance,
             CanonicalReferences = new[] { Canonical(f, false, 16777216, 16777216),
                 Canonical(f, false, 65536, 65536), Canonical(f, true, 16777216, 65536) },
-            ConfiguredCpuReferences = FamilyCpuExecution.ConfiguredRealizations(f).Select(cpu => new {
+            ConfiguredCpuReferences = HostFilterBindings.ConfiguredCpuBodies(f).Select(cpu => new {
                 Physical = cpu.ConditionPerformance,
                 Dense = Canonical(cpu, false, 65536, 65536),
                 Compact = Canonical(cpu, true, 16777216, 65536) }).ToArray(),
-            Signature = new[] {
-                "PricingSignature", "Plan.PricingSignature", "Replay.PricingSignature",
-                "GpuPlan.UsesHotLoop", "GpuPlan.Routes",
-                "GpuPlan.DirectNestedMode", "GpuPlan.UsesStagedDense",
-                "PricingReplayPlan.StructuredConditions", "Plan.ScratchWords", "Plan.Capacity", "Plan.Conditions",
-                "Plan.SingleOptionPlan.Generator", "Plan.SingleOptionPlan.MaxScratchCount", "Plan.OptionPlans", "Replay.RouteCount", "Replay.Plan.MaximumBattleOrdinal",
-                "Replay.Plan.PredicateCount", "Replay.Plan.OpeningConsumption.HasReplay",
-                "Replay.Plan.OpeningConsumption.OrderedRelicIds", "Replay.Plan.MaxRequiredAct",
-                "Replay.Plan.RequiredFarthestStage", "Replay.Plan.RequiresSecondBoss",
-                "_gpuPlan.ScratchWords", "_gpuPlan.Capacity", "_gpuPlan.GroupingK",
-                "_plan.LastRequiredBucket", "_plan.TrackedInitialPositions", "_plan.Predicates", "_plan.ShopPredicates"
-            }.Select(path => new { Path = path, Value = Read(f, path) }).Where(p => p.Value is not null).ToArray(),
+            Signature = new {
+                f.PhysicalRevision, f.NumericRequirements, f.InputModes, f.WindowCapacity, f.CpuChunkCapacity,
+                f.CpuWorkers, f.PreferredRootWindowSize, f.RequiredPassedCoverage, f.Cost.PartyChild,
+                CanonicalDenseShape = f.Cost.CanonicalWorkShape?.Invoke(false),
+                CanonicalCompactShape = f.Cost.CanonicalWorkShape?.Invoke(true),
+                f.Cost.PrivateOutputRevision, f.Cost.PrivateBodyRevision, f.Cost.PublicBoundaryToken,
+                DenseObservationRevision = f.Cost.ObservationRevision?.Invoke(new(false,false,65536)),
+                CompactObservationRevision = f.Cost.ObservationRevision?.Invoke(new(true,false,65536))
+            },
             Quotes = (from compact in new[] { false, true }
                 from privateOutput in new[] { false, true }
                 from population in new[] { 64d, 262144d, 16777216d }

@@ -66,7 +66,7 @@ internal static class RelicFamilyPlanCompiler
     private const int MaximumBuckets = 4096;
     private const int MaximumBucketLength = 4096;
 
-    public static bool TryCompile(ExactSearchExecutionRequest request, out RelicFamilyPlan? plan, out string issue)
+    public static bool TryCompile(SearchModel request, out RelicFamilyPlan? plan, out string issue)
     {
         ArgumentNullException.ThrowIfNull(request);
         plan = null;
@@ -223,7 +223,7 @@ internal static class RelicFamilyPlanCompiler
     }
 
     internal static bool TryCompilePool(
-        ExactSearchExecutionRequest request,
+        SearchModel request,
         out RelicFamilyPool pool,
         out Dictionary<ModelKey, ushort> denseByKey,
         out Dictionary<ushort, ushort>[] lanePositions,

@@ -29,12 +29,14 @@ internal static class InitialRoomExactChecks
         var source = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/classic-product-v1/B-SourceCapsules-positive.json");
         var profile = Beta111Profile.Instance;
         string seed = source.Options.StartSeed;
-        ExactSearchExecutionRequest Compile(SearchQuery query, string? inputSeed = null) =>
-            ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context),
-                source.Options with { StartSeed = inputSeed ?? seed, ScanCount = 1, WorkerCount = 1 }).Plan
-            ?? throw new InvalidDataException("InitialRoomExact compile");
+        PreparedSearch Compile(SearchQuery query, string? inputSeed = null)
+        {
+            var result = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context),
+                source.Options with { StartSeed = inputSeed ?? seed, ScanCount = 1, WorkerCount = 1 });
+            return result.Plan ?? throw new InvalidDataException("InitialRoomExact compile:" + result.Issue);
+        }
         ProductionExactSearchResult Evaluate(SearchQuery query, string? inputSeed = null) =>
-            ProductionExactSearchEvaluator.Evaluate(Compile(query, inputSeed),
+            ProductionExactSearchEvaluator.Evaluate(Compile(query, inputSeed).Model,
                 TrustedRootHashInput.FromCanonicalSeed(profile, inputSeed ?? seed));
         TreasureRelicSearchCondition Condition(int start, int count, TreasureRelicOrderMode order, params ModelKey?[] slots) =>
             new(start, count, order, slots);
@@ -70,9 +72,9 @@ internal static class InitialRoomExactChecks
         }
 
         var actualOpening = Evaluate(source.Query);
-        Check(actualOpening.IsMatch && actualOpening.Document != null && actualOpening.Evaluation.Witnesses.Count > 0,
+        Check(actualOpening.IsMatch && actualOpening.Facts != null && actualOpening.Evaluation.Witnesses.Count > 0,
             "real capsule opening fixture");
-        var bones = actualOpening.Document!.Sections.SelectMany(section => section.NeowChoices)
+        var bones = actualOpening.Facts!.Neow!.Choices
             .Single(choice => choice.RelicKey == BaseGameModelKeys.Relics.NeowsBones);
         var routes = bones.BonesOutcome!.OriginalRoutes;
         var exactNested = routes.SelectMany(route => route.RelicScopedResults).SelectMany(scope => scope.EffectGroups)
@@ -89,23 +91,15 @@ internal static class InitialRoomExactChecks
         // Typed boundary fixtures keep the real document's context and bags.
         // Only the per-route/per-outcome acquisition facts are replaced; these
         // assertions establish binding, not additional native obtain semantics.
-        SeedPredictionDocument DocumentAt(string inputSeed, params NeowChoiceResult[] choices) => new()
+        SeedPredictionFacts DocumentAt(string inputSeed, params NeowChoiceResult[] choices) => actualOpening.Facts! with
         {
-            Context = actualOpening.Document!.Context, PredictorId = actualOpening.Document.PredictorId,
             OriginalSeed = inputSeed, CanonicalSeed = inputSeed,
-            Sections = actualOpening.Document.Sections.Select(section => section.Kind == PredictionSectionKind.NeowIdentity
-                ? section with { NeowChoices = choices } : section.Kind == PredictionSectionKind.RelicSequences
-                    ? section with { RelicSequencePrediction = RelicSequencePredictor.Predict(profile, inputSeed, context.Authority.WorldAuthority) }
-                    : section).ToArray(),
-            Warnings = actualOpening.Document.Warnings, Diagnostics = actualOpening.Document.Diagnostics,
-            OverallStatus = actualOpening.Document.OverallStatus,
-            ProductRelevantProjectionPrecision = actualOpening.Document.ProductRelevantProjectionPrecision,
-            ProductRelevantProjectionStatus = actualOpening.Document.ProductRelevantProjectionStatus,
-            FullEffectSemanticsCompleteness = actualOpening.Document.FullEffectSemanticsCompleteness
+            Neow = actualOpening.Facts.Neow! with { Choices = choices },
+            Relics = RelicSequencePredictor.Predict(profile, inputSeed, context.Authority.WorldAuthority)
         };
-        SeedPredictionDocument Document(params NeowChoiceResult[] choices) => DocumentAt(seed, choices);
-        SearchQueryEvaluation Validate(SearchQuery query, SeedPredictionDocument document) =>
-            ProductionQueryValidator.Evaluate(Compile(query, document.CanonicalSeed), document, actualOpening.Authority);
+        SeedPredictionFacts Document(params NeowChoiceResult[] choices) => DocumentAt(seed, choices);
+        SearchQueryEvaluation Validate(SearchQuery query, SeedPredictionFacts document) =>
+            ProductionQueryValidator.Evaluate(Compile(query, document.CanonicalSeed).Model, document, actualOpening.Authority);
         var routeTarget = new ModelKey("RELIC", "INITIAL_ROOM_ROUTE_ONLY");
         PredictedEffectGroup AcquiredGroup(ModelKey sourceKey, ModelKey key) => new("initial-room-acquisition", 0,
             EffectSelectionPolicy.ForcedObtain, EffectPredictionDomain.Neow, EffectPredictionScope.NestedObtain,
@@ -166,7 +160,7 @@ internal static class InitialRoomExactChecks
             e.Code == "TreasureRelicObtainedAtOpening" && e.OutcomeId == outcomeB.OutcomeId), "chosen outcome owns acquisition evidence");
 
         var silverKey = new ModelKey("RELIC", "SILVER_CRUCIBLE");
-        var silver = SeedPredictionDocumentFactory.Choice(1, silverKey, actualOpening.Request!, PredictionPrecision.Exact,
+        var silver = RolltheSpire2.Core.Neow.NeowChoiceFacts.Choice(1, silverKey, actualOpening.Request!, PredictionPrecision.Exact,
             "initial-room.silver-offered", NeowEffectProjection.ProductExactNoVisibleEffects(silverKey, "initial-room.silver-acquired"));
         var silverDocument = Document(silver);
         var silverQuery = SearchQuery.Empty with { OpeningRoute = new(silverKey),
@@ -176,7 +170,7 @@ internal static class InitialRoomExactChecks
         Check(Validate(silverQuery with { TreasureRelics = Condition(2, 1, TreasureRelicOrderMode.Ordered, first, null) }, silverDocument)
             .Disposition == SearchDisposition.Match, "Silver Crucible second encounter uses first rarity draw");
 
-        // Find a small pure witness where actual Juzu possession changes this
+        // Find a small pure witness where declared Juzu possession changes this
         // prefix's disposition. The typed document's bag is rebuilt for its seed.
         string? juzuSeed = null;
         int juzuPrefix = 0;
@@ -193,7 +187,7 @@ internal static class InitialRoomExactChecks
         }
         Check(juzuSeed is not null, "bounded pure scan finds Juzu Event-prefix witness");
         var juzuKey = new ModelKey("RELIC", "JUZU_BRACELET");
-        var offeredJuzu = SeedPredictionDocumentFactory.Choice(2, juzuKey, actualOpening.Request!, PredictionPrecision.Exact,
+        var offeredJuzu = RolltheSpire2.Core.Neow.NeowChoiceFacts.Choice(2, juzuKey, actualOpening.Request!, PredictionPrecision.Exact,
             "initial-room.juzu-offered", NeowEffectProjection.ProductExactNoVisibleEffects(juzuKey, "initial-room.juzu-typed"));
         var offerDocument = DocumentAt(juzuSeed!, silver, offeredJuzu);
         var offeredOnly = SearchQuery.Empty with { FirstActUnknownEventPrefixCount = juzuPrefix };
@@ -201,52 +195,111 @@ internal static class InitialRoomExactChecks
             "offered-only Juzu identity retains the fresh no-Juzu prefix");
         Check(Validate(SearchQuery.Empty with { OpeningRoute = new(silverKey), FirstActUnknownEventPrefixCount = juzuPrefix }, offerDocument)
             .Disposition == SearchDisposition.NoMatch, "chosen sibling opening cannot borrow an offered Juzu");
+        var directJuzu = offeredOnly with { OpeningRoute = new(juzuKey) };
+        var directMatch = Validate(directJuzu, offerDocument);
+        Check(directMatch.Disposition == SearchDisposition.Match && directMatch.Evidence.Count(e =>
+            e.Code == "FirstActUnknownEventPrefixMatched" && e.RelatedKey == juzuKey && e.RouteId is null && e.OutcomeId is null) == 1,
+            "declared direct Juzu uses one independent prefix observation");
+        ulong juzuRoot = profile.ComputeRootSeed(juzuSeed!);
+        SearchQueryEvaluation Prefix(SearchQuery query) => ProductionQueryValidator.EvaluateInitialRoomBaseline(
+            Compile(query, juzuSeed).Model, null, juzuRoot);
+        foreach (var opening in new[] { BaseGameModelKeys.Relics.NeowsBones, BaseGameModelKeys.Relics.SmallCapsule,
+                     BaseGameModelKeys.Relics.LargeCapsule, silverKey })
+            Check(Prefix(offeredOnly with { OpeningRoute = new(opening) }).Disposition == SearchDisposition.NoMatch,
+                "unspecified opening has no Juzu influence even without pickup observations:" + opening);
+        var bonesJuzu = offeredOnly with { OpeningRoute = new(bones.RelicKey),
+            OpeningRouteRelicRequirement = new(bones.RelicKey, [BaseGameModelKeys.Relics.SmallCapsule], BonesRouteOrderMode.AnyOrder),
+            LegacyNeow = offeredOnly.LegacyNeow with { CapsuleContainedRelics = new([], [juzuKey], []) } };
+        var capsuleJuzu = offeredOnly with { OpeningRoute = new(BaseGameModelKeys.Relics.SmallCapsule),
+            LegacyNeow = offeredOnly.LegacyNeow with { CapsuleContainedRelics = new([], [juzuKey], []) } };
+        Check(Prefix(bonesJuzu).Disposition == SearchDisposition.Match && Prefix(capsuleJuzu).Disposition == SearchDisposition.Match,
+            "declared Bones and Capsule Juzu prefix needs no generated pickup observations");
+        Check(Prefix(capsuleJuzu with { LegacyNeow = capsuleJuzu.LegacyNeow with {
+            CapsuleContainedRelics = new([juzuKey, silverKey], [], []) } }).Disposition == SearchDisposition.NoMatch,
+            "multi-Any nested candidates do not declare held Juzu");
+        Check(Prefix(offeredOnly with { RelicSequenceConstraints = [new(RelicSequenceKind.Common,
+            SearchSequenceRangeMode.FirstN, 3, new([juzuKey], [], []))] }).Disposition == SearchDisposition.NoMatch,
+            "future relic sequence does not declare held Juzu");
+        var unknownNeow = DocumentAt(juzuSeed!, silver, offeredJuzu with { IdentityPrecision = PredictionPrecision.Unknown });
+        Check(Validate(directJuzu, unknownNeow).Disposition == SearchDisposition.Unknown,
+            "declared prefix success cannot confirm an independently unknown N observation");
+        Check(Validate(directJuzu, DocumentAt(juzuSeed!, silver)).Disposition == SearchDisposition.NoMatch,
+            "declared prefix success cannot override N route identity mismatch");
 
         var juzuOnlyRoute = RouteContents(routes[0], [juzuKey]);
         var treasureOnlyRoute = RouteContents(routes[1], [routeTarget]);
         var splitRoutes = DocumentAt(juzuSeed!, bones with { BonesOutcome = bones.BonesOutcome with {
             OriginalRoutes = [juzuOnlyRoute, treasureOnlyRoute], PlayerChoiceImpact = PlayerChoiceImpactAnalysis.Empty } });
-        var juzuRouteQuery = Pinned(juzuOnlyRoute) with { TreasureRelics = null, FirstActUnknownEventPrefixCount = juzuPrefix };
+        var undeclaredRouteQuery = Pinned(juzuOnlyRoute) with { TreasureRelics = null, FirstActUnknownEventPrefixCount = juzuPrefix };
+        Check(Validate(undeclaredRouteQuery, splitRoutes).Disposition == SearchDisposition.NoMatch,
+            "actual nested Juzu is ignored when not declared");
+        var juzuRouteQuery = undeclaredRouteQuery with { LegacyNeow = undeclaredRouteQuery.LegacyNeow with {
+            CapsuleContainedRelics = new([], [juzuKey], []) } };
         var juzuRouteMatch = Validate(juzuRouteQuery, splitRoutes);
         Check(juzuRouteMatch.Disposition == SearchDisposition.Match && juzuRouteMatch.Evidence.Any(e =>
-            e.Code == "FirstActUnknownEventPrefixMatched" && e.RelatedKey == juzuKey &&
-            juzuRouteMatch.Witnesses.Any(w => w.OpeningRouteId == e.RouteId && w.AcquisitionOrder.SequenceEqual(juzuOnlyRoute.AcquisitionOrder))),
-            "actual qualifying Bones route Juzu controls the fresh prefix");
+            e.Code == "FirstActUnknownEventPrefixMatched" && e.RelatedKey == juzuKey && e.RouteId is null) &&
+            juzuRouteMatch.Witnesses.Any(w => w.AcquisitionOrder.SequenceEqual(juzuOnlyRoute.AcquisitionOrder)),
+            "declared nested Juzu controls prefix while N retains its actual route witness");
         Check(Validate(Pinned(treasureOnlyRoute) with { TreasureRelics = null, FirstActUnknownEventPrefixCount = juzuPrefix }, splitRoutes)
-            .Disposition == SearchDisposition.NoMatch, "different Bones order cannot borrow Juzu");
+            .Disposition == SearchDisposition.NoMatch, "unspecified Bones route remains no-Juzu");
         var jointQuery = SearchQuery.Empty with { OpeningRoute = new(bones.RelicKey), FirstActUnknownEventPrefixCount = juzuPrefix,
             TreasureRelics = Condition(1, 1, TreasureRelicOrderMode.Ordered, routeTarget, null) };
         Check(Validate(jointQuery, splitRoutes).Disposition == SearchDisposition.NoMatch,
-            "treasure acquisition and Juzu prefix cannot combine different qualifying orders");
+            "actual Juzu from any qualifying order cannot change an undeclared prefix");
         var jointRoute = RouteContents(routes[0], [juzuKey, routeTarget]);
         var jointDocument = DocumentAt(juzuSeed!, bones with { BonesOutcome = bones.BonesOutcome with {
             OriginalRoutes = [jointRoute], PlayerChoiceImpact = PlayerChoiceImpactAnalysis.Empty } });
-        var jointMatch = Validate(jointQuery, jointDocument);
+        Check(Validate(jointQuery, jointDocument).Disposition == SearchDisposition.NoMatch,
+            "actual joint treasure and Juzu pickups do not invent a Juzu declaration");
+        var jointDeclared = jointQuery with { LegacyNeow = jointQuery.LegacyNeow with { CapsuleContainedRelics = new([], [juzuKey], []) } };
+        var jointMatch = Validate(jointDeclared, jointDocument);
         Check(jointMatch.Disposition == SearchDisposition.Match && jointMatch.Witnesses.Any(w =>
-            jointMatch.Evidence.Any(e => e.Code == "FirstActUnknownEventPrefixMatched" && e.RouteId == w.OpeningRouteId) &&
-            jointMatch.Evidence.Any(e => e.Code == "TreasureRelicObtainedAtOpening" && e.RouteId == w.OpeningRouteId)),
-            "treasure and unknown prefix share one actual route witness");
+            jointMatch.Evidence.Any(e => e.Code == "TreasureRelicObtainedAtOpening" && e.RouteId == w.OpeningRouteId)) &&
+            jointMatch.Evidence.Count(e => e.Code == "FirstActUnknownEventPrefixMatched" && e.RouteId is null) == 1,
+            "treasure keeps its actual route witness alongside one declared prefix observation");
+        Check(Validate(jointDeclared, splitRoutes).Disposition == SearchDisposition.NoMatch,
+            "declared Juzu and treasure acquisition still require one qualifying actual N route");
 
         var optionalJuzu = outcomeB with { OutcomeId = "initial-room.optional-juzu", FinalCurseKey = curseB,
             ChoiceEffectGroups = [AcquiredGroup(outcomeSource, juzuKey)] };
         var optionalTarget = outcomeA with { OutcomeId = "initial-room.optional-target", FinalCurseKey = curseA,
             ChoiceEffectGroups = [AcquiredGroup(outcomeSource, routeTarget)] };
-        SeedPredictionDocument OutcomeDocument(params DistinctPlayerChoiceOutcome[] outcomes) => DocumentAt(juzuSeed!, bones with {
-            BonesOutcome = bones.BonesOutcome with { OriginalRoutes = [withoutTarget], PlayerChoiceImpact = new([
-                new("initial-room.juzu-outcomes", withoutTarget.AcquisitionOrder, outcomeSource, withoutTarget.RouteId,
+        SeedPredictionFacts OutcomeDocument(BonesAcquisitionRouteResult route, params DistinctPlayerChoiceOutcome[] outcomes) => DocumentAt(juzuSeed!, bones with {
+            BonesOutcome = bones.BonesOutcome with { OriginalRoutes = [route], PlayerChoiceImpact = new([
+                new("initial-room.juzu-outcomes", route.AcquisitionOrder, outcomeSource, route.RouteId,
                     outcomes.Length, outcomes.Length, outcomes)]) } });
-        var splitOutcomes = OutcomeDocument(optionalTarget, optionalJuzu);
+        var splitOutcomes = OutcomeDocument(withoutTarget, optionalTarget, optionalJuzu);
         var targetOutcomeQuery = jointQuery with { LegacyNeow = jointQuery.LegacyNeow with { RequiredFinalCurse = curseA } };
         Check(Validate(targetOutcomeQuery, splitOutcomes).Disposition == SearchDisposition.NoMatch,
-            "selected treasure outcome cannot borrow generated optional Juzu sibling");
+            "selected treasure outcome cannot invent a Juzu declaration from its sibling");
         Check(Validate(jointQuery, splitOutcomes).Disposition == SearchDisposition.NoMatch,
-            "different optional outcomes cannot jointly satisfy treasure and Juzu prefix");
+            "actual optional Juzu cannot change an undeclared prefix");
         var chosenJuzu = Validate(jointQuery with { TreasureRelics = null,
             LegacyNeow = jointQuery.LegacyNeow with { RequiredFinalCurse = curseB } }, splitOutcomes);
-        Check(chosenJuzu.Disposition == SearchDisposition.Match && chosenJuzu.Evidence.Any(e =>
-            e.Code == "FirstActUnknownEventPrefixMatched" && e.RelatedKey == juzuKey && e.OutcomeId == optionalJuzu.OutcomeId),
-            "actually chosen optional Juzu outcome owns its prefix evidence");
-        Console.WriteLine($"INITIAL_ROOM_EXACT_PASS checks={checks};baseline-two-chests;window-order;unknown-prefix;actual-N-acquisition;route-outcome-binding;SilverCrucible;Juzu-same-opening seed={juzuSeed};prefix={juzuPrefix}");
+        Check(chosenJuzu.Disposition == SearchDisposition.NoMatch,
+            "even the selected actual optional Juzu outcome has no undeclared prefix influence");
+        var declaredOutcome = jointDeclared with { LegacyNeow = jointDeclared.LegacyNeow with { RequiredFinalCurse = curseB } };
+        var optionalOnlyJuzu = Validate(declaredOutcome with { TreasureRelics = null }, splitOutcomes);
+        Check(optionalOnlyJuzu.Disposition == SearchDisposition.NoMatch,
+            "declared prefix cannot override N's unsatisfied guaranteed Capsule output predicate;actual=" +
+            System.Text.Json.JsonSerializer.Serialize(optionalOnlyJuzu, ProductionSearchReplay.JsonOptions));
+        // The Capsule declaration concerns its guaranteed route output. Optional
+        // acquisitions retain their own outcome ownership for treasure below.
+        var declaredOutcomeDocument = OutcomeDocument(RouteContents(withoutTarget, [juzuKey]), optionalTarget, optionalJuzu);
+        var declaredOptional = Validate(declaredOutcome with { TreasureRelics = null }, declaredOutcomeDocument);
+        Check(declaredOptional.Disposition == SearchDisposition.Match && declaredOptional.Evidence.Count(e =>
+            e.Code == "FirstActUnknownEventPrefixMatched" && e.RelatedKey == juzuKey && e.OutcomeId is null) == 1,
+            "declared route Juzu uses independent prefix evidence after N validates its optional outcome;actual=" +
+            System.Text.Json.JsonSerializer.Serialize(declaredOptional, ProductionSearchReplay.JsonOptions));
+        Check(Validate(declaredOutcome, declaredOutcomeDocument).Disposition == SearchDisposition.NoMatch,
+            "declared prefix does not let one actual outcome borrow another outcome's treasure");
+        var declaredTargetOutcome = Validate(declaredOutcome with { LegacyNeow = declaredOutcome.LegacyNeow with {
+            RequiredFinalCurse = curseA } }, declaredOutcomeDocument);
+        Check(declaredTargetOutcome.Disposition == SearchDisposition.Match && declaredTargetOutcome.Evidence.Any(e =>
+            e.Code == "TreasureRelicObtainedAtOpening" && e.OutcomeId == optionalTarget.OutcomeId),
+            "declared prefix preserves the selected actual treasure outcome witness;actual=" +
+            System.Text.Json.JsonSerializer.Serialize(declaredTargetOutcome, ProductionSearchReplay.JsonOptions));
+        Console.WriteLine($"INITIAL_ROOM_EXACT_PASS checks={checks};baseline-two-chests;window-order;unknown-prefix;actual-N-acquisition;route-outcome-binding;SilverCrucible;DeclaredJuzu seed={juzuSeed};prefix={juzuPrefix}");
         return 0;
     }
 }

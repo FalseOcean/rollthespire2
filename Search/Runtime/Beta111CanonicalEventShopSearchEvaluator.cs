@@ -17,7 +17,7 @@ namespace RolltheSpire2.Search.Runtime;
 internal static class Beta111CanonicalEventShopSearchEvaluator
 {
     public static SearchQueryEvaluation Evaluate(
-        ExactSearchExecutionRequest plan,
+        SearchModel plan,
         ulong rootHash,
         RuntimeContextAuthoritySnapshot authority)
     {
@@ -47,7 +47,7 @@ internal static class Beta111CanonicalEventShopSearchEvaluator
     }
 
     private static SearchQueryEvaluation EvaluateEventResult(
-        ExactSearchExecutionRequest plan,
+        SearchModel plan,
         ulong rootHash,
         RuntimeContextAuthoritySnapshot authority)
     {

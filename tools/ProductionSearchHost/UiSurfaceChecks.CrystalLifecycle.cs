@@ -1,3 +1,4 @@
+using RolltheSpire2.Infrastructure.PredictionSessions;
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Reflection;
@@ -16,8 +17,14 @@ internal static partial class UiSurfaceChecks
         CrystalSphereLiveSnapshot snapshot,CrystalOptionProjection evidence,Action<bool,string> check)
     {
         const BindingFlags flags=BindingFlags.Instance|BindingFlags.NonPublic;
-        object? Field(object instance,string name)=>instance.GetType().GetField(name,flags)!.GetValue(instance);
-        void Set(object instance,string name,object? value)=>instance.GetType().GetField(name,flags)!.SetValue(instance,value);
+        object? Field(object instance,string name)=>instance is CrystalSphereAssistantPanel panel &&
+            typeof(CrystalPredictionSession).GetField(name,flags) is {} stateField?stateField.GetValue(panel.Calculation):instance.GetType().GetField(name,flags)!.GetValue(instance);
+        void Set(object instance,string name,object? value)
+        {
+            if(instance is CrystalSphereAssistantPanel panel && typeof(CrystalPredictionSession).GetField(name,flags) is {} stateField)
+                stateField.SetValue(panel.Calculation,value);
+            else instance.GetType().GetField(name,flags)!.SetValue(instance,value);
+        }
         void Slice(CrystalSphereAssistantPanel panel)=>panel.GetType().GetMethod("ApplyPresentationSlice",flags)!.Invoke(panel,null);
         bool PresentationSettled(CrystalSphereAssistantPanel panel)=>!(bool)Field(panel,"_presentationRequested")! &&
             !(bool)Field(panel,"_presentationInvalidated")! &&
@@ -31,7 +38,7 @@ internal static partial class UiSurfaceChecks
             // The frozen input and witness were supplied by the caller. Clear
             // the index to isolate UI selection from authorizing worker execution.
             Set(panel,"_reachability",null);
-            var queue=(ConcurrentQueue<CrystalSphereAssistantPanel.Update>)Field(panel,"_updates")!;
+            var queue=(ConcurrentQueue<CrystalPredictionSession.Update>)Field(panel,"_updates")!;
             for(int i=1;i<=25;i++) queue.Enqueue(new([],Progress:new(i,0,0,0,i)));
             panel._Process(0);
             check(queue.Count>=17 && queue.Count<25,"Crystal bounds receipt consumption per frame without dropping the backlog");
@@ -108,7 +115,7 @@ internal static partial class UiSurfaceChecks
         finally
         {
             parent.Free();
-            check(((ConcurrentQueue<CrystalSphereAssistantPanel.Update>)Field(panel,"_updates")!).IsEmpty &&
+            check(((ConcurrentQueue<CrystalPredictionSession.Update>)Field(panel,"_updates")!).IsEmpty &&
                 ((Dictionary<CrystalRewardOption,Control>)Field(panel,"_optionTiles")!).Count==0,
                 "Crystal retirement releases panel queues and control references");
         }

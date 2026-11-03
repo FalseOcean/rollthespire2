@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.IO.Compression;
 using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Prediction;
@@ -24,8 +25,8 @@ internal static class FamilyComputationBoundaryChecks
         string? oldCpu = Environment.GetEnvironmentVariable("PROCESSOR_IDENTIFIER");
         var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>(
             "tools/ProductionSearchHost/Corpus/v1/context.json").Context;
-        ExactSearchExecutionRequest Request(SearchQuery query, SearchContext? actual = null,
-            SearchRunOptions? options = null) => ExactSearchExecutionRequestFactory.Compile(
+        PreparedSearch Request(SearchQuery query, SearchContext? actual = null,
+            SearchRunOptions? options = null) => SearchPreparationCompiler.Compile(
                 SearchCompiler.Compile(query, actual ?? context),
                 options ?? new("000000000000", 1 << 24, 30, 16)).Plan
                 ?? throw new InvalidDataException("BoundaryFixture.Compile");
@@ -56,8 +57,11 @@ internal static class FamilyComputationBoundaryChecks
             // Real immutable complete-call evidence remains usable at its own
             // public boundary. Only its use as computation is excluded.
             using var stream = typeof(FamilyCanonicalMeasuredCost).Assembly.GetManifestResourceStream(
-                FamilyCanonicalMeasuredCost.ResourceName)!;
-            var asset = JsonSerializer.Deserialize<FamilyCanonicalCostReference>(stream)!;
+                FamilyCanonicalMeasuredCost.CompressedResourceName)
+                ?? throw new InvalidDataException("FamilyComputationBoundary.EmbeddedAssetMissing");
+            using var gzip = new GZipStream(stream, CompressionMode.Decompress);
+            var asset = JsonSerializer.Deserialize<FamilyCanonicalCostReference>(gzip)
+                ?? throw new InvalidDataException("FamilyComputationBoundary.EmbeddedAssetNull");
             var curves = asset.CompleteCallCurves!.Value.Deserialize<FamilyCompleteCallCurve[]>()!;
             var curve = curves.Single(c => c.Key.ExecutionClass == "GPU" && !c.Key.CompactInput &&
                 c.TrainingCases.Contains("r43t-c-six-terminal"));
@@ -69,16 +73,22 @@ internal static class FamilyComputationBoundaryChecks
                 CombatRewardSequenceOrderMode.Ordered, [null, null, null, null, null, card]) },
                 options: new("000000000000", 1 << 24, 30, curve.Key.ConfiguredWorkers));
             var measuredFamily = FamilyExecutionCoordinator.CreateRegisteredFamilies(measuredRequest)
-                .OfType<CombatRewardFamily>().Single();
+                .Single(body => body.FamilyId == "C.CombatReward");
             var publicGeometry = new FamilyPhysicalQuoteRequest(false, false, 1 << 24);
             var publicQuote = measuredFamily.QuotePhysicalWork(publicGeometry);
             var original = curve.Points.Single(p => p.N == 1 << 24);
             var historical = new FamilyCanonicalCostSnapshot(asset.Rows, asset.CompleteCallCurves)
                 .Quote(curve.Key with { RootWindow = 1 << 24 }, publicGeometry);
+            // The accepted Dense body already includes carry hashing and the
+            // compiled identity facts. Neither revision relabels the old knot.
+            const string historicalPhysical = "C.CombatReward.Gpu.NeutralHotLoop.Dense.CanonicalAbi1Ready.20260907.v1";
+            string currentPhysical = "C.CombatReward.Gpu.NeutralHotLoop.DenseCarry8.20261030.v1.Dense.CanonicalAbi1Ready.20260907.v1" +
+                NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision;
             Check(FamilyCanonicalMeasuredCost.IsCanonicalQuote(historical) &&
                 Math.Abs(historical!.NanosecondsPerInput * (1 << 24) / 1e6 - original.CallMilliseconds) < 1e-9 &&
                 !FamilyCanonicalMeasuredCost.IsCanonicalQuote(publicQuote) && FamilyCoarsePricing.IsEstimate(publicQuote) &&
-                measuredFamily.ConditionPerformance.PhysicalImplementationRevision == curve.Key.PhysicalRevision + GpuRngRotation.Revision,
+                curve.Key.PhysicalRevision == historicalPhysical &&
+                measuredFamily.ConditionPerformance.PhysicalImplementationRevision == currentPhysical,
                 "original complete-call knot retains its old identity while the rotated body uses an explicit estimate");
             var bodyGeometry = publicGeometry with { ComputationOnly = true };
             Check(FamilyCanonicalMeasuredCost.TryQuote(measuredFamily, bodyGeometry, 1 << 24) is null,
@@ -90,7 +100,7 @@ internal static class FamilyComputationBoundaryChecks
             var ranked = GpuCostSnapshot.ComputationReference(snapshot, measuredFamily, measuredFamily.ConditionPerformance, false);
             Check(body is not null && Math.Abs(1e9 / ranked.CurrentQueryReference - body.NanosecondsPerInput) < 1e-9,
                 "actual ranking reference contains computation without public submit/readback/sort");
-            var preview = WorkbenchProbabilityPreview.Compute(measuredRequest.CompiledSearch, 1,
+            var preview = WorkbenchProbabilityPreview.Compute(measuredRequest.Model.CompiledSearch, 1,
                 measuredRequest.WorkerCount, cpuOnly: false);
             var previewBody = measuredFamily.QuotePhysicalWork(new(false, false, 1 << 20) { ComputationOnly = true });
             Check(preview.Issues.Count == 0 && previewBody is not null &&
@@ -130,11 +140,12 @@ internal static class FamilyComputationBoundaryChecks
                         privateQuote.PublicTransportClass != "CompleteCanonicalAbi1",
                         item.Family + " device-output computation does not borrow public complete-call price " + compact);
                 }
-                var cpu = FamilyCpuExecution.ConfiguredRealizations(family).OfType<FamilyCpuExecution>().FirstOrDefault();
+                var cpu = family.CpuAlternatives.FirstOrDefault(alternative =>
+                    alternative.CpuWorkers == Math.Clamp(family.CpuWorkers, 1, 32));
                 if (cpu is not null)
                 {
-                    var full = cpu.Quote(publicGeometry, new HashSet<string>());
-                    var computation = cpu.Quote(bodyGeometry, new HashSet<string>());
+                    var full = cpu.QuotePhysicalWork(publicGeometry, new HashSet<string>());
+                    var computation = cpu.QuotePhysicalWork(bodyGeometry, new HashSet<string>());
                     Check(full is not null && computation is not null &&
                         full.NanosecondsPerInput == computation.NanosecondsPerInput &&
                         computation.PublicTransportClass == "CpuOrderedAbi1",
@@ -156,7 +167,7 @@ internal static class FamilyComputationBoundaryChecks
                 "regression retains Leafy identity, nine Rare opportunities, and all five W requirements");
             var realRequest = Request(realQuery, realContext);
             string[] required = ["N.Neow", "T.TransformationAggregate",
-                ..(realRequest.VariantOpening is { HasVariantRestrictions: true } ? new[] { VariantOpeningFamily.Id } : []), "W.World"];
+                ..(realRequest.Model.VariantOpening is { HasVariantRestrictions: true } ? new[] { VariantOpeningFamily.Id } : []), "W.World"];
             var automatic = FamilyExecutionCoordinator.Plan(realRequest, true);
             Check(automatic.ExecutionOrderUnits.SelectMany(f => f.Coverage).Order().SequenceEqual(
                 required.Order()), "real automatic plan preserves N/T/W and the prepared necessary V gate");

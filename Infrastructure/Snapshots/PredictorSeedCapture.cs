@@ -4,6 +4,7 @@ using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Models.CardPools;
 using MegaCrit.Sts2.Core.Models.Encounters;
 using MegaCrit.Sts2.Core.Unlocks;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Authority;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Prediction;
@@ -15,21 +16,23 @@ internal static class PredictorSeedCapture
 {
     // The analysis page owns the declared unlock context. Account defaults must
     // not replace a search result/favorite's explicitly selected premise.
-    internal static PredictorRun CreateFromPrediction(SeedPredictionRequest request, SerializableUnlockState unlocks)
+    internal static PredictorRun CreateFromSeedContext(string seed, RuntimeContextAuthoritySnapshot authority, SerializableUnlockState unlocks)
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
-        if (request.PlayersCount != 1 || request.PlayerSlotIndex != 0)
+        if (authority.PlayersCount != 1 || authority.PlayerSlotIndex != 0)
             throw new InvalidOperationException("PredictorRouteRequiresSingleplayer");
-        if (!RolltheSpire2.Compatibility.ProfileSeedRules.TryCanonicalizePredictionSeed(RolltheSpire2.Compatibility.Beta111Profile.Instance, request.OriginalSeed,
+        var resolution = RuntimeProfileRegistry.Resolve(authority.GameVersion);
+        if (!RuntimeProfilePolicies.SupportsPredictorSeedInitialization(resolution))
+            throw new InvalidOperationException("PredictorSeedInitializationVersionUnsupported:" + authority.GameVersion);
+        if (!ProfileSeedRules.TryCanonicalizePredictionSeed(RuntimeProfileRegistry.Select(resolution), seed,
                 out string canonicalSeed, out string issue))
             throw new InvalidOperationException("PredictorRouteSeedInvalid:" + issue);
-        var authority = request.Authority;
         var source = authority.WorldAuthority?.Beta109Generation
             ?? throw new InvalidOperationException("PredictorWorldCatalogMissing");
         var discovered = source.ActSelectionGroups.SelectMany(g => g.Candidates)
             .Where(c => c.DiscoveredInSingleplayer).Select(c => c.ActKey).Distinct().ToImmutableArray();
-        var context = new PredictorContext(canonicalSeed, authority.GameVersion, request.Character.CharacterKey,
-            request.Ascension, authority.CatalogFingerprint, authority.UnlockSnapshotFingerprint,
+        var context = new PredictorContext(canonicalSeed, authority.GameVersion, authority.Character.CharacterKey,
+            authority.Ascension, authority.CatalogFingerprint, authority.UnlockSnapshotFingerprint,
             unlocks.UnlockedEpochs.ToImmutableArray(),
             unlocks.EncountersSeen.Select(k => new ModelKey(k.Category, k.Entry)).ToImmutableArray(),
             discovered, unlocks.NumberOfRuns)
@@ -40,16 +43,22 @@ internal static class PredictorSeedCapture
     internal static PredictorRun CreateFromAccount(string seed, ModelKey character, int ascension, string gameVersion)
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
+        var resolution = RuntimeProfileRegistry.Resolve(gameVersion);
+        if (!RuntimeProfilePolicies.SupportsPredictorSeedInitialization(resolution))
+            throw new InvalidOperationException("PredictorSeedInitializationVersionUnsupported:" + gameVersion);
+        var profile = RuntimeProfileRegistry.Select(resolution);
+        if (!ProfileSeedRules.TryCanonicalizePredictionSeed(profile, seed, out string canonicalSeed, out string issue))
+            throw new InvalidOperationException("PredictorRouteSeedInvalid:" + issue);
         var save = MegaCrit.Sts2.Core.Saves.SaveManager.Instance;
         var unlocks = save.GenerateUnlockStateFromProgress();
         var serialized = unlocks.ToSerializable();
         var discovered = save.Progress.DiscoveredActs.Select(k => new ModelKey(k.Category, k.Entry)).ToImmutableArray();
         var authority = RuntimeContextAuthorityCapture.CaptureRuntimeReadOnly(
-            RolltheSpire2.Compatibility.Beta111Profile.Instance, seed, CharacterIdentity.FromKey(character), ascension, gameVersion,
+            profile, canonicalSeed, CharacterIdentity.FromKey(character), ascension, gameVersion,
             predictionGameMode: RolltheSpire2.Core.World.Snapshots.WorldGameMode.Singleplayer,
             predictionGameModeAuthority: RolltheSpire2.Core.Authority.PredictionGameModeAuthority.ExplicitRequest,
             explicitUnlockState: unlocks, explicitDiscoveredActs: discovered);
-        var context = new PredictorContext(seed, gameVersion, character, ascension,
+        var context = new PredictorContext(canonicalSeed, gameVersion, character, ascension,
             authority.CatalogFingerprint, authority.UnlockSnapshotFingerprint, serialized.UnlockedEpochs.ToImmutableArray(),
             serialized.EncountersSeen.Select(k => new ModelKey(k.Category, k.Entry)).ToImmutableArray(), discovered, serialized.NumberOfRuns)
         { AccountWongoPoints = save.Progress.WongoPoints };
@@ -62,11 +71,14 @@ internal static class PredictorSeedCapture
     internal static PredictorRun CreateRun(PredictorContext context)
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
+        ArgumentNullException.ThrowIfNull(context);
+        if (!RuntimeProfilePolicies.SupportsPredictorSeedInitialization(context.VersionResolution))
+            throw new InvalidOperationException("PredictorSeedInitializationVersionUnsupported:" + context.GameVersion);
         PredictorSeedState.ValidateContext(context);
         var unlocks = new UnlockState(context.RevealedEpochs,
             context.SeenEncounters.Select(k => new ModelId(k.Category, k.Entry)), context.NumberOfRuns);
         var authority = RuntimeContextAuthorityCapture.CaptureRuntimeReadOnly(
-            RolltheSpire2.Compatibility.Beta111Profile.Instance, context.Seed,
+            context.RuntimeProfile, context.Seed,
             CharacterIdentity.FromKey(context.Character), context.Ascension, context.GameVersion,
             predictionGameMode: RolltheSpire2.Core.World.Snapshots.WorldGameMode.Singleplayer,
             predictionGameModeAuthority: RolltheSpire2.Core.Authority.PredictionGameModeAuthority.ExplicitRequest,
@@ -96,6 +108,10 @@ internal static class PredictorSeedCapture
     internal static PredictorRun CreateRun(PredictorContext context, RuntimeContextAuthoritySnapshot authority)
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
+        ArgumentNullException.ThrowIfNull(context);
+        if (!RuntimeProfilePolicies.SupportsPredictorSeedInitialization(context.VersionResolution))
+            throw new InvalidOperationException("PredictorSeedInitializationVersionUnsupported:" + context.GameVersion);
+        PredictorSeedState.ValidateContext(context);
         var character = ModelDb.GetById<CharacterModel>(new ModelId(context.Character.Category, context.Character.Entry));
         var relics = character.StartingRelics.Select(r => new ModelKey(r.Id.Category, r.Id.Entry)).ToImmutableArray();
         // From-seed initialization uses the character definition, never a deck
@@ -178,8 +194,10 @@ internal static class PredictorSeedCapture
         var transformPools = definitions.Select(d => d.TransformationPool).Distinct().Select(k => new PredictorCardPool(k,
             ModelDb.GetById<CardPoolModel>(new(k.Category, k.Entry)).GetUnlockedCards(unlocks, CardMultiplayerConstraint.SingleplayerOnly)
                 .Select(c => new ModelKey(c.Id.Category, c.Id.Entry)).ToImmutableArray())).ToImmutableArray();
+        var effectRules = RuntimeProfilePolicies.EffectCatalogRules(context.RuntimeProfile.ProfileId);
         var modifierCurses = ModelDb.CardPool<CurseCardPool>().GetUnlockedCards(unlocks, CardMultiplayerConstraint.SingleplayerOnly)
-            .Where(c => c.CanBeGeneratedByModifiers).Select(c => new ModelKey(c.Id.Category, c.Id.Entry)).ToImmutableArray();
+            .Where(c => effectRules.IsGeneratedCurseEligible(c.CanBeGeneratedByModifiers) == true)
+            .Select(c => new ModelKey(c.Id.Category, c.Id.Entry)).ToImmutableArray();
         var curses = modifierCurses.OrderBy(c => c.Entry, StringComparer.Ordinal).ToImmutableArray();
         var shopRelics = ModelDb.AllRelics.Select(r => new PredictorShopRelicOption(new(r.Id.Category, r.Id.Entry), r.Rarity.ToString(),
             r.MerchantCost, r.IsAllowedInShops)).ToImmutableArray();

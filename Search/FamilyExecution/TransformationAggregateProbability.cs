@@ -12,7 +12,7 @@ internal sealed record TransformationAggregateProbability(double? QueryHitProbab
     // Reuse the query model's SAME-DRAW intersection, including authored transform
     // targets and the final curse. Do not multiply two overlapping marginals.
     // Strip unrelated families so this is an N/T intersection, not full-query mass.
-    internal static double? SharedNeowJoint(RolltheSpire2.Search.Contracts.ExactSearchExecutionRequest request,
+    internal static double? SharedNeowJoint(RolltheSpire2.Search.Contracts.SearchModel request,
         TransformationAggregateNumericalPlan numerical)
     {
         if (!TransformationAggregateCondition.HasSharedNeow(request.Evaluation) || !numerical.ProbabilityClosed ||

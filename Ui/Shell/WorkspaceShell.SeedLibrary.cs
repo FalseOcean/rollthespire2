@@ -140,7 +140,7 @@ internal sealed partial class WorkspaceShell
         {
             var context = _predictorController!.CaptureSeedLibraryContext();
             var origin = _predictorController.CaptureResultOrigin(context);
-            FavoriteSeed(_predictor!.LastDocument!.CanonicalSeed, context, origin.Association, origin.Provenance);
+            FavoriteSeed(_predictor!.LastFacts!.CanonicalSeed, context, origin.Association, origin.Provenance);
         }
         catch (Exception ex) { ShowSeedLibraryReceipt(SeedLibraryIssue(ex)); }
     }

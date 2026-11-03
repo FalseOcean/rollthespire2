@@ -1,32 +1,31 @@
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Search.Contracts;
 
 namespace RolltheSpire2.Search.FamilyExecution;
 
-internal sealed partial class WorldFamily
+internal static partial class WorldFamily
 {
-    // Physical specialization of the existing Family; ABI1 remains ordinals only.
-    internal sealed class PartyInitial : IFamilyInvocation
+    internal static class PartyInitial
     {
-        private readonly FamilyCpuExecution _cpu;
-        internal PartyInitial(ExactSearchExecutionRequest request)
-        { _cpu = new(request, FamilyId, "W.World.PartyInitial.Cpu.v1", workers: FamilyCpuExecution.ConfiguredWorkers(request), numericalRoots: true); }
-        private bool Matches(ulong root)
+        // Conservative pass-through: Exact reconstructs shared W once. This
+        // description never substitutes solo inputs for uncaptured party state.
+        internal static FilterBodyDescription Prepare(SearchModel model, FilterExecutionPreferences preferences)
         {
-            // Conservative pass-through: shared W is reconstructed once at Production Exact.
-            // No SP World fast plan is substituted for uncaptured MP physical inputs.
-            return true;
+            const string revision = "W.World.PartyInitial.Cpu.v1";
+            int workers = Math.Clamp(preferences.WorkerCount, 1, 32);
+            var profile = RuntimeProfileRegistry.Select(model.Detection);
+            return new(new PreparedFilter(Id)
+            {
+                AnalyticalCost = new(Id, CpuFilterExecution.Capacity, [], "PartyInitialCostUncalibrated"),
+                Survival = FamilySurvivalProjection.Unresolved(Id, "PartyCorrelationUnknown")
+            }, revision, model.ProfileId)
+            {
+                WindowCapacity = CpuFilterExecution.Capacity, CpuWorkers = workers,
+                PlayersCount = model.Authority.PlayersCount, InputIdentity = model.SnapshotFingerprint,
+                PerformanceProjection = compact => CpuFilterExecution.Describe(Id, revision, workers,
+                    CpuFilterExecution.Capacity, true, false, compact),
+                CreateExecution = (self, _) => new CpuFilterExecution(self, profile, root => true, numericalRoots: true)
+            };
         }
-        GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => GpuNumericRequirements.None;
-        public string FamilyId => "W.World";
-        public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId, FamilyCpuExecution.Capacity, [], "PartyInitialCostUncalibrated");
-        public FamilySurvivalProjection Survival => FamilySurvivalProjection.Unresolved(FamilyId, "PartyCorrelationUnknown");
-        public FamilyConditionPerformanceProjection ConditionPerformance => _cpu.Condition(false);
-        public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compact) => _cpu.Condition(compact);
-        IEnumerable<IFamilyInvocation> IFamilyInvocation.CpuRealizations => [this];
-        public ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow window, FamilyCandidateSet input, CancellationToken token) =>
-            new(_cpu.Execute(window, input, token, Matches,context));
-        public FamilyPerformanceObservation CapturePerformanceObservation() => _cpu.Observation();
-        public FamilyLivePerformanceSnapshot? CaptureLivePerformanceSnapshot() => _cpu.Live();
-        public ValueTask DisposeAsync(FamilyExecutionContext context) { _cpu.WriteSummary(); return ValueTask.CompletedTask; }
     }
 }

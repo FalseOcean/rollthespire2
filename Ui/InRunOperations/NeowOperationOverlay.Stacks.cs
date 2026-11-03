@@ -12,22 +12,24 @@ internal sealed partial class NeowOperationOverlay
 {
     private const float CardWidth = 350, CardHeight = 470, CardGap = 18, GroupGap = 22;
     private const float OrdinalGap = 8;
-    private const int PotionOrderIconSize = 28;
-    private const float PotionOrderHeight = 34, PotionOrderGap = 5, PotionOrderArrowWidth = 18;
     // One viewport-level size for every option. Placement may wrap groups,
     // but never changes card scale according to the hovered option's height.
     internal float? CardScaleOverride { get; set; }
     internal float CardDisplayScale => _potionGroupScale *
         (CardScaleOverride ?? OperationNativeCardDisplay.ScaleForViewport(GetViewportRect().Size));
     private const int StackLayers = 6;
-    private sealed class CardStack(ImmutableArray<PredictorCard> cards, string caption, int branch, bool stacked, bool spread, bool highlighted, bool earliestFirst, bool forceSingleRow, bool dimmed, bool compact, int? price, bool singleStack, ImmutableArray<ModelKey> potionUseOrder)
+    private sealed class CardStack(ImmutableArray<PredictorCard> cards, string caption, int branch, bool stacked, bool spread, bool highlighted, bool earliestFirst, bool forceSingleRow, bool dimmed, bool compact, int? price, bool singleStack, ImmutableArray<OperationIconPath> iconPaths)
     {
         public readonly ImmutableArray<PredictorCard> Cards = cards;
         public string Caption = caption;
         public readonly int? Price = price;
         public Control? PriceView;
-        public readonly ImmutableArray<ModelKey> PotionUseOrder = potionUseOrder;
-        public Control? PotionOrderView;
+        public readonly ImmutableArray<OperationIconPath> IconPaths = iconPaths;
+        public Control? IconPathsView;
+        public IconPathPresentation? PathPresentation;
+        public string? PathSignature;
+        public float CaptionWidth = -1, CaptionHeightValue;
+        public string? CaptionLanguage;
         public readonly int Branch = branch;
         public bool Stacked = stacked;
         public readonly bool Spread = spread;
@@ -35,6 +37,8 @@ internal sealed partial class NeowOperationOverlay
         public readonly bool Dimmed = dimmed;
         public readonly bool SingleStack = singleStack;
         public readonly float Gap = compact ? OrdinalGap : GroupGap;
+        public HuntTreeRender? HuntTree;
+        public int HuntNodeId;
         public Control Host = null!;
         public Label Label = null!;
         public readonly List<Control> Tiles = [];
@@ -52,7 +56,7 @@ internal sealed partial class NeowOperationOverlay
 
     private void AddCardGroup(ImmutableArray<PredictorCard> cards, string caption, int branch,
         bool stacked, bool spread, bool possible, bool highlighted = false, bool earliestFirst = false, bool forceSingleRow = false,
-        bool dimmed = false, bool compact = false, int? price = null, ImmutableArray<ModelKey> potionUseOrder = default)
+        bool dimmed = false, bool compact = false, int? price = null, ImmutableArray<OperationIconPath> iconPaths = default)
     {
         if (MapCardPresentation && MapSummaryOnly) return;
         if (MapCardPresentation)
@@ -62,7 +66,7 @@ internal sealed partial class NeowOperationOverlay
         }
         _stacks.Add(new(cards, (possible ? UiText.Get("operation.possiblePrefix") : "") + caption, branch,
             MapCardPresentation || stacked, !MapCardPresentation && spread, highlighted,
-            earliestFirst, MapCardPresentation || forceSingleRow, dimmed, compact, price, MapCardPresentation, potionUseOrder));
+            earliestFirst, MapCardPresentation || forceSingleRow, dimmed, compact, price, MapCardPresentation, iconPaths));
     }
 
     private void AddIconGroup(ImmutableArray<ModelKey> models, string caption, bool possible) =>
@@ -71,14 +75,18 @@ internal sealed partial class NeowOperationOverlay
     private static float CaptionHeight(string caption, float width) => caption.Length == 0 ? 0 :
         Math.Max(1, Mathf.Ceil(MainPanelTheme.Regular.GetStringSize(caption, fontSize: 18).X / Math.Max(1, width))) * 26 + 4;
 
-    private static float PotionOrderWidth(CardStack stack) => stack.PotionUseOrder.IsDefaultOrEmpty ? 0 :
-        stack.PotionUseOrder.Length * PotionOrderIconSize +
-        (stack.PotionUseOrder.Length - 1) * (PotionOrderArrowWidth + 2 * PotionOrderGap);
+    private float StackHeaderHeight(CardStack stack, float width)
+    {
+        if (stack.CaptionWidth != width || stack.CaptionLanguage != RolltheSpire2.Ui.Settings.UiLanguagePreferences.LanguageCode)
+        {
+            stack.CaptionWidth = width;
+            stack.CaptionLanguage = RolltheSpire2.Ui.Settings.UiLanguagePreferences.LanguageCode;
+            stack.CaptionHeightValue = stack.HuntTree != null ? HuntCaptionHeight(stack.Caption, width) : CaptionHeight(stack.Caption, width);
+        }
+        return IconPathsSize(stack).Y + stack.CaptionHeightValue;
+    }
 
-    private static float StackHeaderHeight(CardStack stack, float width) =>
-        (stack.PotionUseOrder.IsDefaultOrEmpty ? 0 : PotionOrderHeight) + CaptionHeight(stack.Caption, width);
-
-    private static (Vector2 Size, float Scale, int Columns) GroupMetrics(CardStack stack, float width, float scale)
+    private (Vector2 Size, float Scale, int Columns) GroupMetrics(CardStack stack, float width, float scale)
     {
         int count = stack.Cards.Length;
         float footer = stack.Price.HasValue ? 40 : 0;
@@ -89,7 +97,7 @@ internal sealed partial class NeowOperationOverlay
             int groups = (count + layers - 1) / layers;
             int stackColumns = float.IsPositiveInfinity(width) ? groups : Math.Clamp((int)((width + GroupGap + .1f) / (columnWidth + GroupGap)), 1, groups);
             int stackRows = (groups + stackColumns - 1) / stackColumns;
-            float measuredWidth = Math.Max(PotionOrderWidth(stack), stackColumns * columnWidth + (stackColumns - 1) * GroupGap);
+            float measuredWidth = Math.Max(IconPathsSize(stack).X, stackColumns * columnWidth + (stackColumns - 1) * GroupGap);
             float columnHeight = (CardHeight + (layers - 1) * 45) * scale;
             return (new(measuredWidth, StackHeaderHeight(stack, measuredWidth) + stackRows * columnHeight + (stackRows - 1) * GroupGap + footer), scale, stackColumns);
         }
@@ -97,7 +105,7 @@ internal sealed partial class NeowOperationOverlay
         int columns = stack.ForceSingleRow || float.IsPositiveInfinity(width) ? count : Math.Clamp((int)((width + gap + .1f) / (cardWidth + gap)), 1, count);
         float fitScale = scale;
         int rows = (count + columns - 1) / columns;
-        float gridWidth = Math.Max(PotionOrderWidth(stack), columns * CardWidth * fitScale + (columns - 1) * CardGap * fitScale);
+        float gridWidth = Math.Max(IconPathsSize(stack).X, columns * CardWidth * fitScale + (columns - 1) * CardGap * fitScale);
         return (new(gridWidth, StackHeaderHeight(stack, gridWidth) + rows * CardHeight * fitScale +
             (rows - 1) * CardGap * fitScale + footer), fitScale, columns);
     }
@@ -106,21 +114,76 @@ internal sealed partial class NeowOperationOverlay
     // according to available width; map-owned views apply their count policy.
     public Vector2 CardsSizeForWidth(float width) => MeasureDock(width, CardDisplayScale);
 
-    private Vector2 MeasureDock(float width, float scale)
+    private readonly record struct StackLayout(Vector2 Position, Vector2 Size, float Scale, int Columns, float Header);
+    private sealed record DockLayout(StackLayout[] Stacks, Vector2[] IconPositions, Vector2 Size);
+
+    private Vector2 MeasureDock(float width, float scale) => PlanDock(width, scale).Size;
+
+    // Measure and place from the same rows. Every card group in one visual
+    // row reserves that row's tallest header, including wrapped captions and
+    // route alternatives. A new row starts with its own header requirement.
+    private DockLayout PlanDock(float width, float scale)
     {
-        if (_stacks.Count == 0 && _iconGroups.Count == 0) return Vector2.Zero;
         width = MapCardPresentation || _stacks.Count > 0 && _stacks.All(stack => stack.ForceSingleRow) && _iconGroups.Count == 0
             ? float.PositiveInfinity : Math.Max(1, width);
-        float x = 0, y = 0, rowHeight = 0, usedWidth = 0;
-        foreach (var stack in _stacks) Place(GroupMetrics(stack, width, scale).Size, stack.Gap);
-        foreach (var icons in _iconGroups) Place(IconSize(icons, width), GroupGap);
-        return new(usedWidth, y + rowHeight);
-        void Place(Vector2 size, float gap)
+        var stacks = new StackLayout[_stacks.Count];
+        var iconPositions = new Vector2[_iconGroups.Count];
+        var rowStacks = new List<int>();
+        var rowIcons = new List<(int Index, Vector2 Size)>();
+        float x = 0, y = 0, usedWidth = 0;
+        for (int index = 0; index < _stacks.Count; index++)
         {
-            if (x > 0 && x + size.X > width + .1f) { x = 0; y += rowHeight + GroupGap; rowHeight = 0; }
-            usedWidth = Math.Max(usedWidth, x + size.X); rowHeight = Math.Max(rowHeight, size.Y);
-            x += size.X + gap;
+            var stack = _stacks[index];
+            if (stack.HuntTree != null) continue;
+            var metrics = GroupMetrics(stack, width, scale);
+            if (x > 0 && x + metrics.Size.X > width + .1f) FinishRow();
+            stacks[index] = new(new(x, y), metrics.Size, metrics.Scale, metrics.Columns, StackHeaderHeight(stack, metrics.Size.X));
+            rowStacks.Add(index);
+            usedWidth = Math.Max(usedWidth, x + metrics.Size.X);
+            x += metrics.Size.X + stack.Gap;
         }
+        for (int index = 0; index < _iconGroups.Count; index++)
+        {
+            var size = IconSize(_iconGroups[index], width);
+            if (x > 0 && x + size.X > width + .1f) FinishRow();
+            iconPositions[index] = new(x, y);
+            rowIcons.Add((index, size));
+            usedWidth = Math.Max(usedWidth, x + size.X);
+            x += size.X + GroupGap;
+        }
+        float height = FinishRow();
+        var dockSize = PlanHuntTrees(stacks, height > 0 && _huntTrees.Count > 0 ? height + GroupGap : height, scale, usedWidth);
+        return new(stacks, iconPositions, dockSize);
+
+        float FinishRow()
+        {
+            if (rowStacks.Count == 0 && rowIcons.Count == 0) return y;
+            float header = rowStacks.Count == 0 ? 0 : rowStacks.Max(index => stacks[index].Header);
+            float rowHeight = rowIcons.Count == 0 ? 0 : rowIcons.Max(icon => icon.Size.Y);
+            foreach (int index in rowStacks)
+            {
+                var entry = stacks[index];
+                var size = new Vector2(entry.Size.X, entry.Size.Y + header - entry.Header);
+                stacks[index] = entry with { Size = size, Header = header };
+                rowHeight = Math.Max(rowHeight, size.Y);
+            }
+            float end = y + rowHeight;
+            y = end + GroupGap; x = 0;
+            rowStacks.Clear(); rowIcons.Clear();
+            return end;
+        }
+    }
+
+    private Vector2[] NaturalGroupSizes(float scale) => _stacks.Select(stack =>
+        GroupMetrics(stack, float.PositiveInfinity, scale).Size).ToArray();
+
+    private Vector2[] AlignGroupSizes(Vector2[] sizes, IEnumerable<int> row)
+    {
+        var indices = row.ToArray();
+        float header = indices.Max(index => StackHeaderHeight(_stacks[index], sizes[index].X));
+        foreach (int index in indices)
+            sizes[index] = new(sizes[index].X, sizes[index].Y + header - StackHeaderHeight(_stacks[index], sizes[index].X));
+        return sizes;
     }
 
     private static Vector2 IconSize(IconGroup group, float width) =>
@@ -133,6 +196,7 @@ internal sealed partial class NeowOperationOverlay
         SetMapCardCount(MapCardCount);
         _cardsArea = new Control { Name = "Rt2NeowCardDock", MouseFilter = MouseFilterEnum.Ignore };
         AddChild(_cardsArea);
+        BuildHuntTrees();
         for (int i = 0; i < _stacks.Count; i++)
         {
             var stack = _stacks[i];
@@ -142,11 +206,18 @@ internal sealed partial class NeowOperationOverlay
             stack.Host.SetMeta("rt2_earliest_first", stack.EarliestFirst);
             stack.Host.SetMeta("rt2_highlighted", stack.Highlighted);
             stack.Host.SetMeta("rt2_single_row", stack.ForceSingleRow);
-            _cardsArea.AddChild(stack.Host); _visibleCardRegions.Add(stack.Host);
-            if (!stack.PotionUseOrder.IsDefaultOrEmpty)
+            if (stack.HuntTree is { } tree)
             {
-                stack.PotionOrderView = PotionOrderStrip(stack.PotionUseOrder);
-                stack.Host.AddChild(stack.PotionOrderView);
+                stack.Host.Name = "Rt2HuntTreeNode_" + stack.HuntNodeId;
+                tree.Host.AddChild(stack.Host);
+                HuntMetadata(stack.Host, tree, tree.Tree.Nodes[stack.HuntNodeId]);
+            }
+            else _cardsArea.AddChild(stack.Host);
+            _visibleCardRegions.Add(stack.Host);
+            if (!stack.IconPaths.IsDefaultOrEmpty)
+            {
+                stack.IconPathsView = IconPathsStrip(stack);
+                stack.Host.AddChild(stack.IconPathsView);
             }
             stack.Label = ArtLabel(stack.Caption); stack.Host.AddChild(stack.Label);
             if (stack.Highlighted) stack.Label.AddThemeColorOverride("font_color", GoldInk);
@@ -185,35 +256,17 @@ internal sealed partial class NeowOperationOverlay
         return label;
     }
 
-    private Control PotionOrderStrip(ImmutableArray<ModelKey> order)
-    {
-        var strip = new HBoxContainer { Name = "Rt2PotionUseOrder", MouseFilter = MouseFilterEnum.Ignore };
-        strip.AddThemeConstantOverride("separation", (int)PotionOrderGap);
-        for (int i = 0; i < order.Length; i++)
-        {
-            if (i > 0)
-            {
-                var arrow = Text("→", 18);
-                arrow.CustomMinimumSize = new(PotionOrderArrowWidth, PotionOrderIconSize);
-                arrow.HorizontalAlignment = HorizontalAlignment.Center;
-                arrow.VerticalAlignment = VerticalAlignment.Center;
-                strip.AddChild(arrow);
-            }
-            var icon = ModelIcon(order[i], PotionOrderIconSize);
-            icon.Name = "Rt2PotionUseStep_" + (i + 1);
-            icon.SetMeta("rt2_model", order[i].Serialized);
-            strip.AddChild(icon);
-        }
-        return strip;
-    }
-
     private Control ModelIcon(ModelKey key, int size)
     {
         var kind = key.Category == "POTION" ? GameContentKind.Potion : GameContentKind.Relic;
         var texture = Icons.Resolve(key, kind, IconVariant.RelicLarge).Texture;
-        if (texture != null) return new TextureRect { Texture = texture, Size = new(size, size),
-            CustomMinimumSize = new(size, size), ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-            StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered, MouseFilter = MouseFilterEnum.Ignore };
+        // Disable the texture's native minimum before assigning the requested
+        // rectangle. Manually positioned children have no Container resize pass
+        // to repair a Size that was clamped to the source sprite's dimensions.
+        if (texture != null) return new TextureRect { ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            Texture = texture, CustomMinimumSize = new(size, size),
+            StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered, MouseFilter = MouseFilterEnum.Ignore,
+            Size = new(size, size) };
         var fallback = Text(NameOf(key), 18); fallback.Size = new(size, size);
         fallback.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         return fallback;
@@ -228,24 +281,50 @@ internal sealed partial class NeowOperationOverlay
         float availableWidth = MapCardPresentation || _potionGroupRegions != null || _stacks.Count > 0 && _stacks.All(stack => stack.ForceSingleRow) && _iconGroups.Count == 0
             ? float.PositiveInfinity : _cardsBounds.Size.X;
         float scale = CardDisplayScale;
-        float x = 0, y = 0, rowHeight = 0;
+        var dock = PlanDock(availableWidth, scale);
+        // Event battles can have several correlated reward rows beside the summary.
+        // Placement may grant less height than those rows need at native size.
+        if (!MapCardPresentation && _preview?.Notices.Contains("EventCombatStableContextNoExtraActions") == true)
+        {
+            float fit = Math.Min(1, Math.Min(_cardsBounds.Size.X / Math.Max(1, dock.Size.X),
+                _cardsBounds.Size.Y / Math.Max(1, dock.Size.Y)));
+            _cardsArea.Scale = Vector2.One * fit;
+        }
         int stackIndex = 0;
         foreach (var stack in _stacks)
         {
-            var (size, cardScale, columns) = GroupMetrics(stack, availableWidth, scale);
-            stack.Host.Position = _potionGroupRegions is { } regions
-                ? regions[stackIndex].Position - _cardsBounds.Position : NextPosition(size, stack.Gap);
-            stack.Host.Size = size;
-            stackIndex++;
-            float orderHeight = stack.PotionUseOrder.IsDefaultOrEmpty ? 0 : PotionOrderHeight;
-            if (stack.PotionOrderView is { } orderView)
+            var layout = dock.Stacks[stackIndex];
+            Vector2 size = layout.Size;
+            float cardScale = layout.Scale;
+            int columns = layout.Columns;
+            float caption = layout.Header;
+            if (_potionGroupRegions is { } regions)
             {
-                orderView.Position = Vector2.Zero;
-                orderView.Size = new(PotionOrderWidth(stack), PotionOrderIconSize);
+                var natural = GroupMetrics(stack, float.PositiveInfinity, scale);
+                size = regions[stackIndex].Size;
+                cardScale = natural.Scale; columns = natural.Columns;
+                caption = StackHeaderHeight(stack, natural.Size.X) + size.Y - natural.Size.Y;
+                stack.Host.Position = regions[stackIndex].Position - _cardsBounds.Position;
             }
-            float caption = StackHeaderHeight(stack, size.X);
+            else stack.Host.Position = layout.Position;
+            stack.Host.Size = size;
+            stack.Host.SetMeta("rt2_header_height", caption);
+            stackIndex++;
+            float orderHeight = 0;
+            if (stack.IconPathsView is { } pathsView)
+            {
+                var pathSize = IconPathsSize(stack);
+                // A shared row header aligns the cards. Keep a shorter path
+                // beside its own stack rather than floating at the tallest
+                // neighbour's first line; its existing trailing gap stays six px.
+                float pathTop = Math.Max(0, caption - pathSize.Y - CaptionHeight(stack.Caption, size.X));
+                pathsView.Position = new(0, pathTop);
+                pathsView.Size = pathSize;
+                orderHeight = pathTop + pathSize.Y;
+            }
             stack.Label.Position = new(0, orderHeight);
-            stack.Label.Size = new(size.X, caption - orderHeight);
+            if (stack.HuntTree != null) SizeHuntLabel(stack.Label, new(size.X, caption - orderHeight));
+            else stack.Label.Size = new(size.X, caption - orderHeight);
             int layers = stack.SingleStack ? stack.Cards.Length : Math.Min(stack.Cards.Length, StackLayers);
             for (int i = 0; i < stack.Tiles.Count; i++)
             {
@@ -273,21 +352,16 @@ internal sealed partial class NeowOperationOverlay
                 priceView.Size = priceSize;
             }
         }
-        foreach (var group in _iconGroups)
+        LayoutHuntTrees(dock);
+        for (int iconIndex = 0; iconIndex < _iconGroups.Count; iconIndex++)
         {
+            var group = _iconGroups[iconIndex];
             var size = IconSize(group, availableWidth);
-            group.Host.Position = NextPosition(size, GroupGap); group.Host.Size = size;
+            group.Host.Position = dock.IconPositions[iconIndex]; group.Host.Size = size;
             float caption = CaptionHeight(group.Caption, size.X);
             group.Label.Size = new(size.X, caption);
             int columns = float.IsPositiveInfinity(availableWidth) ? Math.Max(1, group.Models.Length) : Math.Max(1, (int)(availableWidth / 84));
             for (int i = 0; i < group.Icons.Count; i++) group.Icons[i].Position = new(i % columns * 84, caption + i / columns * 84);
-        }
-        Vector2 NextPosition(Vector2 size, float gap)
-        {
-            if (x > 0 && x + size.X > availableWidth + .1f) { x = 0; y += rowHeight + GroupGap; rowHeight = 0; }
-            var position = new Vector2(x, y);
-            rowHeight = Math.Max(rowHeight, size.Y); x += size.X + gap;
-            return position;
         }
     }
 }

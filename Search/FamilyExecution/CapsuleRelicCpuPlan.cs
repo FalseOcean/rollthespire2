@@ -19,7 +19,7 @@ internal sealed class CapsuleRelicCpuPlan
         Requirement[] requirements, RelicCpuPlan? ordinary)
     { _route = route; _pool = pool; _targets = targets; _requirements = requirements; _ordinary = ordinary; _lastBucket = targets.Max(t => t.Bucket); }
 
-    internal static CapsuleRelicCpuPlan? TryCompile(ExactSearchExecutionRequest request, NeowReplayPlan route)
+    internal static CapsuleRelicCpuPlan? TryCompile(SearchModel request, NeowReplayPlan route)
     {
         var e = request.Evaluation;
         if (route.ExactOnly.Length != 0 || !route.DirectNestedVanilla111 ||

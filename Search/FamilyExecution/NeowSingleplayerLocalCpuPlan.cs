@@ -13,17 +13,19 @@ internal sealed class NeowSingleplayerLocalCpuPlan
     private readonly ushort[] _pool;
     private readonly ushort _target;
     private readonly ulong _streamHash;
-    internal string Revision => _operation switch {
+    private readonly NeowCpuPositiveIdentityPlan? _identity;
+    internal string Revision => (_operation switch {
         Operation.Index => "N.Neow.Cpu.DirectLocalFirst.20261015.v1",
         Operation.LostPotion => "N.Neow.Cpu.LostPotionLocalFirst.20261015.v1",
         _ => "N.Neow.Cpu.DirectMinimalObservation.20261015.v1"
-    };
-    private NeowSingleplayerLocalCpuPlan(NeowReplayPlan plan, ushort[] pool, ushort target, ulong streamHash)
-    { _plan = plan; _pool = pool; _target = target; _streamHash = streamHash; }
-    private NeowSingleplayerLocalCpuPlan(NeowReplayPlan plan, Operation operation)
-    { _plan = plan; _pool = []; _target = plan.StructuredConditions[0].Target0; _operation = operation; }
+    }) + (_identity is null ? "" : NeowCpuPositiveIdentityPlan.Revision);
+    private NeowSingleplayerLocalCpuPlan(NeowReplayPlan plan, ushort[] pool, ushort target, ulong streamHash,
+        NeowCpuPositiveIdentityPlan? identity)
+    { _plan = plan; _pool = pool; _target = target; _streamHash = streamHash; _identity = identity; }
+    private NeowSingleplayerLocalCpuPlan(NeowReplayPlan plan, Operation operation, NeowCpuPositiveIdentityPlan? identity)
+    { _plan = plan; _pool = []; _target = plan.StructuredConditions[0].Target0; _operation = operation; _identity = identity; }
 
-    internal static NeowSingleplayerLocalCpuPlan? TryCompile(NeowReplayPlan plan)
+    internal static NeowSingleplayerLocalCpuPlan? TryCompile(NeowReplayPlan plan, NeowCpuPositiveIdentityPlan? identity = null)
     {
         var a = plan.Authority;
         if (a.PlayersCount != 1 || a.PlayerSlotIndex != 0 || !plan.DirectNestedVanilla111 ||
@@ -38,13 +40,13 @@ internal sealed class NeowSingleplayerLocalCpuPlan
             ThreeDistinctValid(c.CharacterRewardPool.Common) && ThreeDistinctValid(c.CharacterRewardPool.Uncommon) &&
             ThreeDistinctValid(c.CharacterRewardPool.Rare) && c.PotionPool.HasEveryRarity &&
             Valid(c.PotionPool.Common) && Valid(c.PotionPool.Uncommon) && Valid(c.PotionPool.Rare))
-            return new(plan, Operation.LostPotion);
+            return new(plan, Operation.LostPotion, identity);
         if (plan.Selected == Beta110FastRelicCatalog.Kaleidoscope && condition.TargetCount == 2 && !condition.OrderedKaleidoscope &&
             condition.Kind == Beta110FastStructuredConditionKind.KaleidoscopeIndependentOfferTargets &&
             plan.EnabledDomains == Beta110FastDomain.KaleidoscopeOffers && c.OtherCharacterCardAuthorityExact &&
             c.OtherCharacterPools.Length is >= 3 and <= 16 && c.OtherCharacterPools.All(p => p.TotalCount > 0 &&
                 Valid(p.Common) && Valid(p.Uncommon) && Valid(p.Rare)))
-            return new(plan, Operation.Kaleidoscope);
+            return new(plan, Operation.Kaleidoscope, identity);
         if (condition.TargetCount != 1) return null;
         ushort[] pool;
         ulong hash;
@@ -60,8 +62,11 @@ internal sealed class NeowSingleplayerLocalCpuPlan
         // The original empty-used draw is exactly one index in the original
         // array, including its duplicate weight. Invalid outputs retain replay.
         if (pool.Length == 0 || pool.Contains(Beta110FastDenseId.Invalid)) return null;
-        return new(plan, pool, condition.Target0, hash);
+        return new(plan, pool, condition.Target0, hash, identity);
     }
+
+    private bool IdentityPass(ulong root) => _identity is null
+        ? NeowSingleplayerReplay.Observe(root, _plan).IdentityPass : _identity.PassesIdentity(root);
 
     private static bool Valid(ushort[] pool) => !pool.Contains(Beta110FastDenseId.Invalid);
     private static bool ThreeDistinctValid(ushort[] pool) => Valid(pool) && pool.Distinct().Take(3).Count() == 3;
@@ -85,13 +90,13 @@ internal sealed class NeowSingleplayerLocalCpuPlan
             var rewards = new Beta110FastRng(unchecked(root + NeowSingleplayerReplay.RewardsHash));
             BurnLostCofferCards(ref rewards);
             if (NeowLocalOperators.RollPotion(_plan.Authority.EffectCatalog.PotionPool, [], ref rewards) != _target) return false;
-            return NeowSingleplayerReplay.Observe(root, _plan).IdentityPass;
+            return IdentityPass(root);
         }
         if (_operation == Operation.Kaleidoscope)
         {
             // K retains N04's offer-first ordering; no new fault proof for the
             // complete two-group operation is claimed by the Lost-only change.
-            if (!NeowSingleplayerReplay.Observe(root, _plan).IdentityPass) return false;
+            if (!IdentityPass(root)) return false;
             var rewards = new Beta110FastRng(unchecked(root + NeowSingleplayerReplay.RewardsHash));
             var niche = new Beta110FastRng(unchecked(root + XxHash64.Hash("niche"u8, 0)));
             Span<ushort> offers = stackalloc ushort[6];
@@ -107,6 +112,6 @@ internal sealed class NeowSingleplayerLocalCpuPlan
         }
         var rng = new Beta110FastRng(unchecked(root + _streamHash));
         if (_pool[rng.NextInt(_pool.Length)] != _target) return false;
-        return NeowSingleplayerReplay.Observe(root, _plan).IdentityPass;
+        return IdentityPass(root);
     }
 }

@@ -117,11 +117,11 @@ internal static class PredictorLiveCaptureChecks
             string before = NativeFacts(native);
             string fingerprint = PredictorLiveRunCapture.Fingerprint(native, true);
             var captured = PredictorLiveRunCapture.Capture(native, baseline.Context.GameVersion, true);
-            var state = captured.Run.Working;
+            var state = captured.State;
             Check(NativeFacts(native) == before && PredictorLiveRunCapture.Fingerprint(native, true) == fingerprint,
                 "capture leaves serialized native inventory, queues, history, maps, odds and all RNG unchanged");
             Check(captured.Fingerprint == fingerprint && captured.CanLeaveCurrentNode, "departure boundary and stable fingerprint");
-            Check(state.Position.Act == 2 && state.Position.Floor == native.TotalFloor && captured.Run.NextRouteAct == 2,
+            Check(state.Position.Act == 2 && state.Position.Floor == native.TotalFloor && captured.CreateRun().NextRouteAct == 2,
                 "actual Act2 and total floor retained without past map reconstruction");
             Check(state.GoldBudget == 413 && state.CardShopRemovalsUsed == 2 && state.WongoPoints == 71, "actual economy copied");
             Check(state.Deck.Length == player.Deck.Cards.Count && state.Cards.Single(c => c.Key.Entry == "DOWSING").RoomsEntered == 4 &&
@@ -140,7 +140,7 @@ internal static class PredictorLiveCaptureChecks
             Check(state.UnknownOdds.Monster == .4f && state.Acts[1] is { NormalCursor: 2, EliteCursor: 1, EventCursor: 3 }, "actual room queues/cursors and unknown odds");
             Check(state.Acts[1].NormalEncounters.Select(k => k.Entry).SequenceEqual(roomSet.normalEncounters.Select(e => e.Id.Entry)),
                 "actual generated encounter order copied");
-            Check(captured.Run.Context.Live!.PreviousVisits.Length == 3 && state.Visits.Length == 1 && state.Maps.Length == 1,
+            Check(captured.Context.Live!.PreviousVisits.Length == 3 && state.Visits.Length == 1 && state.Maps.Length == 1,
                 "prior room facts retained without fabricated previous coordinates/maps");
             var session = new InRunMapPredictionSession();
             var emptyDrafts = new Dictionary<int, PredictorMapRouteDraft>();
@@ -207,22 +207,23 @@ internal static class PredictorLiveCaptureChecks
             long dowsingId = state.Cards.Single(c => c.Key.Entry == "DOWSING").Id;
             var inserted = ModelDb.Card<Anger>().ToMutable(); native.AddCard(inserted, player); player.Deck.AddInternal(inserted, 0);
             var refreshed = PredictorLiveRunCapture.Capture(native, baseline.Context.GameVersion, true);
-            Check(refreshed.Fingerprint != captured.Fingerprint && refreshed.Run.Working.Card(dowsingId).Key.Entry == "DOWSING",
+            Check(refreshed.Fingerprint != captured.Fingerprint && refreshed.State.Card(dowsingId).Key.Entry == "DOWSING",
                 "real deck insertion changes fingerprint while preserving old persistent target identity");
             var waiting = PredictorLiveRunCapture.Capture(native, baseline.Context.GameVersion, false);
             Check(!waiting.CanLeaveCurrentNode && waiting.PendingCauses.Any(c => c.Code == "LiveCurrentNodePending"), "midpoint capture explicitly pending");
-            Check(waiting.Run.PreviewRouteContinuation([], scope: PredictorRoutePreviewScope.AllModeledNodes).Nodes.IsEmpty,
+            Check(waiting.CreateRun().PreviewRouteContinuation([], scope: PredictorRoutePreviewScope.AllModeledNodes).Nodes.IsEmpty,
                 "pending native current node cannot be treated as completed travel boundary");
             typeof(RelicGrabBag).GetField("_originalRelics", Members)!.SetValue(native.SharedRelicGrabBag, null);
             typeof(RelicGrabBag).GetField("_refreshAllowed", Members)!.SetValue(native.SharedRelicGrabBag, false);
             var loaded = PredictorLiveRunCapture.Capture(native, baseline.Context.GameVersion, true);
-            Check(!loaded.Run.Working.SharedBag.HasOriginalCatalog && !loaded.Run.Working.SharedBag.RefreshAllowed,
+            Check(!loaded.State.SharedBag.HasOriginalCatalog && !loaded.State.SharedBag.RefreshAllowed,
                 "restored bag missing original catalog remains missing, with its real refresh policy");
-            var route = loaded.Run.Working.Maps[0].Map.Points.OrderBy(p => p.Position.Row).Select(p => p.Position).ToImmutableArray();
-            loaded.Run.SetRoute(2, route);
+            var route = loaded.State.Maps[0].Map.Points.OrderBy(p => p.Position.Row).Select(p => p.Position).ToImmutableArray();
+            var loadedRun = loaded.CreateRun();
+            loadedRun.SetRoute(2, route);
             before = NativeFacts(native);
-            loaded.Run.AdvanceRoute();
-            Check(loaded.Run.Working.Position.Floor == native.TotalFloor + 1 && loaded.Run.Working.Position.Act == 2,
+            loadedRun.AdvanceRoute();
+            Check(loadedRun.Working.Position.Floor == native.TotalFloor + 1 && loadedRun.Working.Position.Act == 2,
                 "future node starts from live total floor rather than current-act visit count");
             Check(NativeFacts(native) == before, "detached route entry leaves real game state/RNG untouched");
             NodeEntrySessionLifecycle(native, baseline, roomSet);
@@ -256,7 +257,7 @@ internal static class PredictorLiveCaptureChecks
             string before = NativeFacts(native);
             string emptyFingerprint = PredictorLiveRunCapture.Fingerprint(native, true);
             var empty = PredictorLiveRunCapture.Capture(native, version, true);
-            Check(empty.Run.Working.Relics.Single(r => r.Id == PredictorLiveRunCapture.Id(relic)).BingBongCardsToSkip.IsEmpty &&
+            Check(empty.State.Relics.Single(r => r.Id == PredictorLiveRunCapture.Id(relic)).BingBongCardsToSkip.IsEmpty &&
                 field.GetValue(relic) == null && NativeFacts(native) == before &&
                 PredictorLiveRunCapture.Fingerprint(native, true) == emptyFingerprint,
                 "BingBong null backing set captures empty without invoking initializing getter or changing native state");
@@ -267,7 +268,7 @@ internal static class PredictorLiveCaptureChecks
             string skipFingerprint = PredictorLiveRunCapture.Fingerprint(native, true);
             Check(skipFingerprint != emptyFingerprint, "BingBong skip membership participates in native purity fingerprint");
             var populated = PredictorLiveRunCapture.Capture(native, version, true);
-            Check(populated.Run.Working.Relics.Single(r => r.Id == PredictorLiveRunCapture.Id(relic)).BingBongCardsToSkip
+            Check(populated.State.Relics.Single(r => r.Id == PredictorLiveRunCapture.Id(relic)).BingBongCardsToSkip
                 .SequenceEqual([PredictorLiveRunCapture.Id(card)]) && ReferenceEquals(field.GetValue(relic), skip) &&
                 skip.SetEquals([card]) && NativeFacts(native) == before &&
                 PredictorLiveRunCapture.Fingerprint(native, true) == skipFingerprint,
@@ -316,11 +317,11 @@ internal static class PredictorLiveCaptureChecks
         draft.Rebase(draft.Map, identity.Point);
         string before = NativeFacts(native);
         session.Update(native, baseline.Context.GameVersion, false, drafts);
-        Check(ReferenceEquals(snapshot, session.Snapshot) && snapshot.Run.Working.Maps[0].Visited.Length == 1 &&
-            snapshot.Run.Working.Position.Floor < native.TotalFloor && snapshot.Run.Working.GoldBudget != native.Players[0].Gold,
+        Check(ReferenceEquals(snapshot, session.Snapshot) && snapshot.State.Maps[0].Visited.Length == 1 &&
+            snapshot.State.Position.Floor < native.TotalFloor && snapshot.State.GoldBudget != native.Players[0].Gold,
             "entered native coordinate and midpoint inventory do not promote old snapshot to a completed node");
         Check(session.Nodes.ContainsKey((1, identity.Point)) && session.GetPlan(1, identity.Point)?.LeaveRewards == true &&
-            session.Nodes[(1, identity.Point)].Position.Floor == snapshot.Run.Working.Position.Floor + 1,
+            session.Nodes[(1, identity.Point)].Position.Floor == snapshot.State.Position.Floor + 1,
             "old snapshot to entered node bridge is replayed and retains its semantic plan");
         Check(NativeFacts(native) == before, "waiting bridge observation leaves native state and RNG untouched");
         session.Update(native, baseline.Context.GameVersion, false, new Dictionary<int, PredictorMapRouteDraft>());
@@ -345,7 +346,7 @@ internal static class PredictorLiveCaptureChecks
             "drawings before first departure are retained as intent without invented snapshot/forecast");
         session.Update(native, baseline.Context.GameVersion, true, drafts);
         Check(!session.WaitingForBoundary && !ReferenceEquals(snapshot, session.Snapshot) &&
-            session.Snapshot!.Run.Working.Position.Floor == native.TotalFloor && session.GetPlan(1, identity.Point) == null,
+            session.Snapshot!.State.Position.Floor == native.TotalFloor && session.GetPlan(1, identity.Point) == null,
             "real departure replaces old basis and trims the now-completed node plan");
         Check(session.HistoryCount > 0 && session.Plans.All(plan =>
             PredictorMapNodeIdentity.TryParse(plan.NodeId, out var planned) && planned.Floor > native.TotalFloor),
@@ -368,10 +369,10 @@ internal static class PredictorLiveCaptureChecks
         // Keep this lifecycle check independent of unknown-room branch content.
         native.Map.GetAllMapPoints().Single(p => p.coord.row == 2).PointType = MegaCrit.Sts2.Core.Map.MapPointType.Monster;
         var captured = PredictorLiveRunCapture.Capture(native, version, true);
-        var map = captured.Run.Working.Maps[0].Map;
+        var map = captured.State.Maps[0].Map;
         var points = map.Points.Where(p => p.Position.Row is 2 or 3 or 4)
             .OrderBy(p => p.Position.Row).Select(p => p.Position).ToArray();
-        var draft = new PredictorMapRouteDraft(map, captured.Run.Working.Maps[0].Visited[^1]);
+        var draft = new PredictorMapRouteDraft(map, captured.State.Maps[0].Visited[^1]);
         draft.ApplyStroke(points, PredictorMapStrokeMode.Draw);
         var drafts = new Dictionary<int, PredictorMapRouteDraft> { [1] = draft };
         var session = new InRunMapPredictionSession();
@@ -407,8 +408,8 @@ internal static class PredictorLiveCaptureChecks
             session.Nodes.ContainsKey((1, points[0])) && session.GetPlan(1, points[0]) == currentPlan &&
             session.GetPlan(1, points[1]) == futurePlan,
             "observed entry supersedes old basis, replays current node and preserves future intent");
-        Check(entry.Run.Working.GoldBudget != native.Players[0].Gold &&
-            entry.Run.Working.Streams.Single(s => s.Stream == PredictorStream.Niche) != CrystalSphereLiveCapture.RngState(PredictorStream.Niche, native.Rng.Niche),
+        Check(entry.State.GoldBudget != native.Players[0].Gold &&
+            entry.State.Streams.Single(s => s.Stream == PredictorStream.Niche) != CrystalSphereLiveCapture.RngState(PredictorStream.Niche, native.Rng.Niche),
             "mid-node inventory and RNG are not recaptured or passed off as entry");
         var reopened = new InRunMapPredictionSession();
         reopened.Update(native, version, false, new Dictionary<int, PredictorMapRouteDraft>());
@@ -430,12 +431,12 @@ internal static class PredictorLiveCaptureChecks
         Check(nextWork.CatalogLevelReads == 0 && nextWork.CatalogLevelReuses == entryWork.CatalogLevelReads && nextWork.PoolReads > 0,
             "next true entry reuses only same-reference native canonical definitions while rereading actual pools");
         var independentlyCaptured = PredictorLiveRunCapture.Capture(native, version, true);
-        Check(JsonSerializer.Serialize(nextEntry.Run.Context) == JsonSerializer.Serialize(independentlyCaptured.Run.Context) &&
-            JsonSerializer.Serialize(nextEntry.Run.Working) == JsonSerializer.Serialize(independentlyCaptured.Run.Working),
+        Check(JsonSerializer.Serialize(nextEntry.Context) == JsonSerializer.Serialize(independentlyCaptured.Context) &&
+            JsonSerializer.Serialize(nextEntry.State) == JsonSerializer.Serialize(independentlyCaptured.State),
             "definition reuse produces the same context and dynamic entry state as a fresh independent capture");
         Console.WriteLine($"NODE_ENTRY_CAPTURE_REUSE firstLevels={entryWork.CatalogLevelReads};nextLevels={nextWork.CatalogLevelReads};reusedLevels={nextWork.CatalogLevelReuses};firstPools={entryWork.PoolReads};nextPools={nextWork.PoolReads};trueEntryRetained=true");
-        Check(nextEntry.Run.Working.GoldBudget == native.Players[0].Gold &&
-            nextEntry.Run.Working.Streams.Single(s => s.Stream == PredictorStream.Niche) == CrystalSphereLiveCapture.RngState(PredictorStream.Niche, native.Rng.Niche),
+        Check(nextEntry.State.GoldBudget == native.Players[0].Gold &&
+            nextEntry.State.Streams.Single(s => s.Stream == PredictorStream.Niche) == CrystalSphereLiveCapture.RngState(PredictorStream.Niche, native.Rng.Niche),
             "next real departure captures actual outcomes and RNG rather than earlier projected results");
         EnterFixture(points[1]);
         PredictorLiveRunCapture.RecordNodeEntryTask(native, new(points[1].Column, points[1].Row), Task.CompletedTask);
@@ -539,21 +540,31 @@ internal static class PredictorLiveCaptureChecks
         }
         catch (InvalidDataException ex) { Check(ex.Message == "PredictorPlannedNodesMalformed", "failure retains its actual cause"); }
         // Inject one detached source failure after valid observations exist.
-        // Recompute must retain those editing locations, so correcting intent
-        // can recompute normally once the source premise is trustworthy again.
+        // Node failures return an isolated fault, without publishing a failed
+        // node. Intent must survive so a corrected source can recompute normally.
         var snapshot = session.Snapshot!;
+        var retainedPlan = session.GetPlan(1, point);
         var brokenMap = map with { Points = map.Points.Select(value => value.Position == point
             ? value with { Type = RolltheSpire2.Core.Prediction.Maps.MapPointType.Monster } : value).ToArray() };
-        var brokenState = snapshot.Run.Working with
-            { OpeningCompleted = false, Maps = [snapshot.Run.Working.Maps[0] with { Map = brokenMap }] };
+        var brokenState = snapshot.State with
+            { OpeningCompleted = false, Maps = [snapshot.State.Maps[0] with { Map = brokenMap }] };
         typeof(InRunMapPredictionSession).GetProperty(nameof(InRunMapPredictionSession.Snapshot), Members)!
-            .SetValue(session, snapshot with { Run = new PredictorRun(snapshot.Run.Context, brokenState) });
-        InvalidOperationException? failure = null;
+            .SetValue(session, snapshot with { State = brokenState });
         try { session.Recompute(); }
-        catch (InvalidOperationException ex) { failure = ex; }
         finally { typeof(InRunMapPredictionSession).GetProperty(nameof(InRunMapPredictionSession.Snapshot), Members)!.SetValue(session, snapshot); }
-        Check(failure?.Message == "PredictorCombatBoundaryInvalid",
-            "recompute preserves its source failure; actual=" + (failure?.ToString() ?? "no exception"));
+        Check(session.Forecast is { Fault: { Stage: "entry", Error: InvalidOperationException failure } fault } &&
+            failure.Message == "PredictorCombatBoundaryInvalid" &&
+            PredictorMapNodeIdentity.TryParse(fault.Position.NodeId, out var failedNode) && failedNode.Point == point &&
+            session.Forecast.Nodes.IsEmpty && session.Nodes.IsEmpty && session.TerminalBoundaries.IsEmpty &&
+            session.GetPlan(1, point) == retainedPlan,
+            "recompute isolates the original first-node source failure, retains intent and publishes only the empty trusted prefix; actual=" +
+                session.Forecast?.Fault);
+        // The failed-node UI exposes retry before ordinary node editing. Use
+        // that same entry after restoring the injected source observation.
+        session.Recompute();
+        Check(session.Forecast?.Fault == null && Node().Event?.Event?.Entry == "ZEN_WEAVER" &&
+            session.GetPlan(1, point) == retainedPlan && NativeFacts(native) == before,
+            "explicit retry restores the original node and authored intent after its source is trustworthy again");
         Check(Exclude(excludeA, false) && Node().Event?.Event?.Entry == "MORPHIC_GROVE" && NativeFacts(native) == before,
             "explicit correction after rejected edit and recompute failure restores A without mutating native state/RNG");
     }
@@ -565,7 +576,7 @@ internal static class PredictorLiveCaptureChecks
         var start = native.Map.StartingMapPoint.coord;
         string before = NativeFacts(native);
         var entry = PredictorLiveRunCapture.CaptureBeforeNodeEntry(native, version, start)!;
-        Check(entry.Run.Working is { OpeningCompleted: false, OpeningOptions.Length: 3 } && NativeFacts(native) == before,
+        Check(entry.State is { OpeningCompleted: false, OpeningOptions.Length: 3 } && NativeFacts(native) == before,
             "first Neow entry carries genuine generated offers without advancing native RNG");
         native.AddVisitedMapCoord(start);
         native.AppendToMapPointHistory(MegaCrit.Sts2.Core.Map.MapPointType.Ancient, RoomType.Event, ModelDb.Event<Neow>().Id);
@@ -574,7 +585,7 @@ internal static class PredictorLiveCaptureChecks
         var neow = (Neow)ModelDb.Event<Neow>().ToMutable();
         neow.BeginEvent(native.Players[0], null, false).GetAwaiter().GetResult();
         Check(neow.CurrentOptions.Select(option => PredictorLiveRunCapture.Key(option.Relic!))
-            .SequenceEqual(entry.Run.Working.OpeningOptions), "copied first-entry offers match native Neow generation exactly");
+            .SequenceEqual(entry.State.OpeningOptions), "copied first-entry offers match native Neow generation exactly");
         PredictorLiveRunCapture.RecordNodeEntryTask(native, start, Task.CompletedTask);
         var session = new InRunMapPredictionSession();
         session.Update(native, version, false, new Dictionary<int, PredictorMapRouteDraft>());
@@ -600,13 +611,13 @@ internal static class PredictorLiveCaptureChecks
         var drafts = new Dictionary<int, PredictorMapRouteDraft> { [0] = draft };
         session.Update(native, version, true, drafts);
         Check(PredictorLiveRunCapture.CurrentNodeEntry(native, version) == null && !session.IsCurrentNodeReplay &&
-            session.Snapshot!.Run.Working.OpeningCompleted && session.Snapshot.Run.Working.Position.Floor == native.TotalFloor &&
-            session.Snapshot.Run.Working.Relics.Any(relic => relic.Key == PredictorLiveRunCapture.Key(option.Relic!)) &&
+            session.Snapshot!.State.OpeningCompleted && session.Snapshot.State.Position.Floor == native.TotalFloor &&
+            session.Snapshot.State.Relics.Any(relic => relic.Key == PredictorLiveRunCapture.Key(option.Relic!)) &&
             session.Nodes.Keys.All(location => location.Point != new MapPosition(start.col, start.row)),
             "completed Neow retires old opening replay and predicts the future from its actual settled state");
         var reopened = new InRunMapPredictionSession();
         reopened.Update(native, version, true, drafts);
-        Check(reopened.Nodes.ContainsKey((0, point)) && reopened.Snapshot!.Run.Working.OpeningCompleted && NativeFacts(native) == before,
+        Check(reopened.Nodes.ContainsKey((0, point)) && reopened.Snapshot!.State.OpeningCompleted && NativeFacts(native) == before,
             "opening the map again after natural Neow completion leaves inventory and RNG unchanged");
         var save = new SerializableRun
         {
@@ -625,15 +636,15 @@ internal static class PredictorLiveCaptureChecks
         typeof(RunManager).GetProperty("State", Members)!.SetValue(RunManager.Instance, loaded);
         var restored = new InRunMapPredictionSession();
         restored.Update(loaded, version, true, drafts);
-        Check(!restored.IsCurrentNodeReplay && restored.Snapshot!.Run.Working.OpeningCompleted &&
-            restored.Nodes.ContainsKey((0, point)) && restored.Snapshot.Run.Working.Streams.SequenceEqual(session.Snapshot!.Run.Working.Streams),
+        Check(!restored.IsCurrentNodeReplay && restored.Snapshot!.State.OpeningCompleted &&
+            restored.Nodes.ContainsKey((0, point)) && restored.Snapshot.State.Streams.SequenceEqual(session.Snapshot!.State.Streams),
             "saved/reloaded completed Neow continues from actual native streams without inventing an entry receipt");
         // The no-Neow opening is already complete before its first monster.
         var withoutNeow = EntryFixture(baseline, 1);
         withoutNeow.ExtraFields.StartedWithNeow = false;
         withoutNeow.Map.StartingMapPoint.PointType = MegaCrit.Sts2.Core.Map.MapPointType.Monster;
         Check(PredictorLiveRunCapture.CaptureBeforeNodeEntry(withoutNeow, version, withoutNeow.Map.StartingMapPoint.coord)!
-            .Run.Working is { OpeningCompleted: true, OpeningOptions.IsEmpty: true },
+            .State is { OpeningCompleted: true, OpeningOptions.IsEmpty: true },
             "first non-Neow native entry does not replay an absent opening");
     }
 

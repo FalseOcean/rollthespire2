@@ -42,7 +42,10 @@ internal static class NeowSingleplayerGpuPlan
             };
             if (!ready) { issue = "DonorContinuationAuthorityUnavailable:Source" + source; return false; }
         }
-        var rows = new uint[32 * 5 + (plan.AuthoredUpgrades is null ? 0 : 66)];
+        uint[] continuationData = plan.CapsuleNicheContinuation?.Pack() ?? [];
+        int continuationOffset = 32 * 5 + (plan.AuthoredUpgrades is null ? 0 : 66);
+        var rows = new uint[continuationOffset + continuationData.Length];
+        continuationData.CopyTo(rows,continuationOffset);
         if (plan.AuthoredUpgrades is { } upgrades)
             for (int i = 0; i < upgrades.Advances.Length; i++) rows[160 + i] = unchecked((uint)upgrades.Advances[i]);
         for (int i = 0; i < 32; i++) { rows[i * 5 + 1] = rows[i * 5 + 2] = rows[i * 5 + 3] = uint.MaxValue; }
@@ -160,7 +163,9 @@ internal static class NeowSingleplayerGpuPlan
         Append(c.GeneratedCurseIds, trailer + 12);
         gpu = new(meta, poolMeta, cards.ToArray(), c.LeafyStrikeTransformPool.Select(x => (uint)x).ToArray(),
             c.LeafyDefendTransformPool.Concat(c.NewLeafTransformPool).Select(x => (uint)x).ToArray(),
-            a.BonesEligibleRelicIds.Select(x => (uint)x).ToArray(), rows) { HasAuthoredUpgrades = plan.AuthoredUpgrades is not null };
+            a.BonesEligibleRelicIds.Select(x => (uint)x).ToArray(), rows) {
+                HasAuthoredUpgrades = plan.AuthoredUpgrades is not null,
+                CapsuleNicheMetaOffset = continuationData.Length==0 ? -1 : continuationOffset };
         string mode = Environment.GetEnvironmentVariable("RT2_N_DIRECT_EXPERIMENT") ?? "default";
         int selectedMode = mode switch { "default" => -1, "baseline" => 0, "replay" => 1, "continue" => 2, "both" => 3, "local" => 4,
             "new-replay" => 5, "new-pass" => 6, "scroll-first" => 7, "scroll-local" => 8,
@@ -245,6 +250,14 @@ internal static class NeowSingleplayerGpuPlan
                 gpu = gpu with { DirectNestedMode = tracked.Contains(Beta110FastRelicCatalog.PhialHolster) &&
                     plan.StructuredConditions.All(x => x.Kind is Beta110FastStructuredConditionKind.KaleidoscopeIndependentOfferTargets or
                         Beta110FastStructuredConditionKind.PhialHolsterPotions) ? 102 : 0 };
+        }
+        gpu = NeowEntryIdentityOptimization.Apply(plan, gpu, NeowEntryIdentityOptimization.Capture());
+        if(plan.CapsuleNicheContinuation is not null)
+        {
+            // Ordinary direct/local shortcuts predate Capsule-dependent Niche.
+            // The shared route owns every dependent predicate in this body.
+            uint[] continuationMeta=(uint[])gpu.Meta.Clone(); continuationMeta[70]=0;
+            gpu=gpu with { Meta=continuationMeta, DirectNestedMode=0 };
         }
         return true;
     }

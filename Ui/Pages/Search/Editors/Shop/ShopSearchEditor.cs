@@ -129,7 +129,7 @@ internal sealed partial class ShopSearchEditor : Control
         string seed = RolltheSpire2.Compatibility.ProfileSeedGenerator.CreateProbeSeed(_runtime.Profile);
         var captured = ReflectionNeowEffectSnapshotAdapter.Capture(_runtime.Profile, seed,
             CharacterIdentity.FromKey(character), ascension, players, seat, _runtime.Profile.ProfileId,
-            _runtime.Detection.DisplayVersion, new ReflectionSnapshotProfileRules(true, true), unlocks);
+            _runtime.Detection.DisplayVersion, RolltheSpire2.Compatibility.RuntimeProfilePolicies.EffectCatalogRules(_runtime.Profile.ProfileId), unlocks);
         var world = ReflectionNeowEffectSnapshotAdapter.CaptureWorld(_runtime.Profile, seed,
             CharacterIdentity.FromKey(character), ascension, players, seat, noRunModifiers: true,
             captured.EffectAuthority, gameVersion: _runtime.Detection.DisplayVersion);

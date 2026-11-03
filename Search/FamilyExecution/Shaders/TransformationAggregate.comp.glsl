@@ -9,15 +9,20 @@ layout(set=0,binding=2,std430) readonly buffer Pools {uint v[];} pools;
 layout(set=0,binding=3,std430) readonly buffer Input {uint v[];} input_ids;
 layout(set=0,binding=4,std430) buffer Header {uint v[];} header;
 layout(set=0,binding=5,std430) buffer Output {uint v[];} output_ids;
+/*__RT2_NEOW_IDENTITY_FACTS__*/
 /*__RNG__*/
 #ifdef T_BONES_TRACKED
 bool tracked_bones_pair(uint64_t root) {
  rng_initialize(root+make_u64(plan.v[15],plan.v[16]));
  uint count=plan.v[9],p=32u,q=32u;
+#ifdef T_BONES_ENTRY_PREPARED
+ p=plan.v[28];q=plan.v[29];
+#else
  for(uint i=0u;i<count;i++){
   uint id=pools.v[plan.v[10]+i];
   if(id==plan.v[18])p=i;if(id==plan.v[20])q=i;
  }
+#endif
  if(p==32u||q==32u)return false;
  for(uint n=count;n>1u;n--){
   uint j=next_int(n);
@@ -28,6 +33,23 @@ bool tracked_bones_pair(uint64_t root) {
  return (p==0u&&q==1u)||(p==1u&&q==0u);
 }
 #endif
+#ifdef T_NEWLEAF_TRACKED
+// The event RNG is already at the original post-curse checkpoint. Consume all
+// two-choice append draws, then follow the unique fixed target through exactly
+// the original swaps. A frozen tail >=2 cannot return to the visible offers.
+bool tracked_newleaf_offer(uint ci,uint curse) {
+ uint count=plan.v[plan.v[11]+ci*2u+1u],p=plan.v[plan.v[27]+ci];
+ if(curse!=RT2_NEOW_OPTIONAL_APPEND_CURSE){next_int(2u);count++;}
+ next_int(2u);count++;next_int(2u);count++;
+ if(p==0xffffffffu)return false;
+ for(uint n=count;n>1u;n--){
+  uint j=next_int(n),tail=n-1u;
+  if(p==tail)p=j;else if(p==j)p=tail;
+  if(p==tail&&tail>=2u)return false;
+ }
+ return p<2u;
+}
+#endif
 // N-owned offer/pair replay. Only the bounded identity obligation is used here.
 // The accepted transform streams start independently; no state crosses ABI1.
 bool opening(uint64_t root){
@@ -36,6 +58,9 @@ bool opening(uint64_t root){
  uint ci=next_int(plan.v[7]),curse=pools.v[plan.v[8]+ci];
 #ifdef T_BONES_TRACKED
  if(mode==3u)return curse==plan.v[19]&&tracked_bones_pair(root);
+#endif
+#ifdef T_NEWLEAF_TRACKED
+ if(mode==2u)return tracked_newleaf_offer(ci,curse);
 #endif
 #ifdef T_FULL_TARGET
  return curse==plan.v[18];
@@ -49,9 +74,9 @@ bool opening(uint64_t root){
  }else{
   uint at=plan.v[11]+ci*2u;count=plan.v[at+1u];
   for(uint i=0u;i<count;i++)a[i]=pools.v[plan.v[at]+i];
-  if(curse!=plan.v[17])a[count++]=next_int(2u)==0u?plan.v[21]:plan.v[22];
-  a[count++]=next_int(2u)==0u?plan.v[23]:plan.v[24];
-  a[count++]=next_int(2u)==0u?plan.v[25]:plan.v[26];
+  if(curse!=RT2_NEOW_OPTIONAL_APPEND_CURSE)a[count++]=next_int(2u)==0u?RT2_NEOW_APPEND0_TRUE:RT2_NEOW_APPEND0_FALSE;
+  a[count++]=next_int(2u)==0u?RT2_NEOW_APPEND1_TRUE:RT2_NEOW_APPEND1_FALSE;
+  a[count++]=next_int(2u)==0u?RT2_NEOW_APPEND2_TRUE:RT2_NEOW_APPEND2_FALSE;
  }
  for(uint n=count;n>1u;n--){uint j=next_int(n),t=a[j];a[j]=a[n-1u];a[n-1u]=t;}
  return mode==3u ? ((a[0]==plan.v[18]&&a[1]==plan.v[20])||(a[1]==plan.v[18]&&a[0]==plan.v[20]))

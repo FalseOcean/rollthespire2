@@ -76,9 +76,9 @@ internal static class SearchProbabilityPresentationBuilder
         bool sharedOpeningIdentity = TransformationAggregateCondition.SharedNeowIdentityOnly(resolved);
         TransformationAggregateProbability? aggregateAttribution = null;
         if(sharedOpeningIdentity) {
-            var request=new ExactSearchExecutionRequest(compiled,new("000000000000",1,1,1),"000000000000",1,
-                resolved,input.CombatRewardRoutePolicy,compiled.SemanticFingerprint);
-            aggregateAttribution=TransformationAggregateProbability.Build(new(request));
+            var model = new SearchModel(compiled, resolved,
+                input.CombatRewardRoutePolicy, compiled.SemanticFingerprint);
+            aggregateAttribution=TransformationAggregateProbability.Build(new(model));
         }
         bool capsuleRelicShared = joint.DependencyGraph.Nodes.Any(node =>
             string.Equals(node.Id, "shared:relicbag-cur", StringComparison.Ordinal)) ||

@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Effects.Snapshots;
+using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Rng;
 
@@ -18,7 +19,7 @@ internal sealed partial class PredictorRun
                 BeginCrystalSphere(3);
                 return PredictorInputResult.Accepted;
             case ("CRYSTAL_SPHERE", "PAYMENT_PLAN"):
-                var debt = new ModelKey("CARD", "DEBT");
+                var debt = FixedEventCardProduct(choice.OptionKey);
                 PredictorSettlementEffects.RequireImplementedCard(PredictorCardChanges.Definition(Context, debt).Prototype, context: Context);
                 Working = PredictorObtainSources.AddCard(Context, Working, debt);
                 Accept(new("CrystalSphereDebt", Working.Deck[^1], [], null, null));
@@ -30,7 +31,7 @@ internal sealed partial class PredictorRun
 
     private ImmutableArray<PredictorEventOption> CrystalSphereOptions()
     {
-        _eventGoldAmount = 50 + 1 + _eventRng!.NextInt(49);
+        _eventGoldAmount = Beta111EventRules.CrystalSphereGold(_eventRng!);
         return [new("UNCOVER_FUTURE", GoldCost: _eventGoldAmount), new("PAYMENT_PLAN")];
     }
 

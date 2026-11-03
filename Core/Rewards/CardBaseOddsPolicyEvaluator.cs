@@ -10,7 +10,8 @@ public enum CardBaseOddsType
     Regular,
     Elite,
     Shop,
-    Uniform
+    Uniform,
+    Boss
 }
 
 public readonly record struct CardBaseOddsThresholds(float Rare, float Uncommon);
@@ -74,12 +75,13 @@ public static class CardBaseOddsPolicyEvaluator
                 scarcity ? 0.0149f : 0.03f,
                 0.37f),
             CardBaseOddsType.Elite => new CardBaseOddsThresholds(
-                scarcity ? 0.10f : 0.05f,
+                scarcity ? 0.05f : 0.10f,
                 0.40f),
             CardBaseOddsType.Shop => new CardBaseOddsThresholds(
-                scarcity ? 0.09f : 0.045f,
+                scarcity ? 0.045f : 0.09f,
                 0.37f),
             CardBaseOddsType.Uniform => new CardBaseOddsThresholds(0.33f, 0.33f),
+            CardBaseOddsType.Boss => new CardBaseOddsThresholds(1f, 0f),
             _ => throw new ArgumentOutOfRangeException(nameof(type))
         };
     }

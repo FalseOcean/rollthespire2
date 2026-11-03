@@ -20,7 +20,7 @@ namespace RolltheSpire2.Search.Selectivity;
 internal static partial class CombatRewardProbabilityEstimator
 {
     private const int BattleCount = 6;
-    private const int CardsPerReward = 3;
+    private const int CardsPerReward = CombatRewardRelicRules.DefaultCardOptionCount;
     private const double InitialCardRarityOffset = -0.05d;
     private const double CardRarityOffsetCap = 0.4d;
     private const double UncommonBase = 0.37d;
@@ -36,9 +36,11 @@ internal static partial class CombatRewardProbabilityEstimator
         bool LastingCandy,
         bool AmethystAubergine)
     {
-        public int AdditionalCardRewardCount => PrayerWheel ? 1 : 0;
+        public AddedCardReward AdditionalCardReward => PrayerWheel
+            ? CombatRewardRelicRules.PrayerWheel(CombatRewardRoomKind.Monster) : default;
+        public int AdditionalCardRewardCount => AdditionalCardReward.RewardCount;
         public bool ForcePotionReward => WhiteBeastStatue;
-        public int FixedGoldAmount => AmethystAubergine ? 15 : 0;
+        public int FixedGoldAmount => AmethystAubergine ? CombatRewardRelicRules.AmethystGold(CombatRewardRoomKind.Monster, false) : 0;
 
         public RewardInfluenceProfile Add(ModelKey relic)
         {
@@ -558,10 +560,17 @@ internal static partial class CombatRewardProbabilityEstimator
             [new CardBattleState(startingPity, BigInteger.Zero)] = 1d
         };
 
-        bool candy = profile.LastingCandy && battleOrdinal % 2 == 0;
+        // This estimator admits Modern110 profiles only. Its neutral opening
+        // starts Candy at zero; the offered-reward counter is battleOrdinal - 1.
+        int candyCounter = battleOrdinal - 1;
+        bool candy = profile.LastingCandy && CardRewardRelicRules.CandyExtraCardCount(
+            LastingCandyCounterPolicy.RewardOfferingOdd, candyCounter, true, true, true) > 0;
         states = GenerateCardRewardGroup(states, pool, ascension, candy);
+        var addition = profile.AdditionalCardReward;
         for (int extra = 0; extra < profile.AdditionalCardRewardCount; extra++)
-            states = GenerateCardRewardGroup(states, pool, ascension, includeTrailingPowerCard: false);
+            states = GenerateCardRewardGroup(states, pool, ascension, includeTrailingPowerCard: profile.LastingCandy &&
+                CardRewardRelicRules.CandyExtraCardCount(LastingCandyCounterPolicy.RewardOfferingOdd,
+                    candyCounter, true, addition.EncounterSource, addition.IsFromCombat) > 0);
 
         return states.Select(pair => (pair.Key, pair.Value)).ToArray();
     }
@@ -578,7 +587,7 @@ internal static partial class CombatRewardProbabilityEstimator
             sequence[new CardSequenceState(state.PityStreak, state.ObservedMask, default)] = mass;
         }
 
-        int drawCount = CardsPerReward + (includeTrailingPowerCard ? 1 : 0);
+        int drawCount = CardsPerReward + (includeTrailingPowerCard ? CardRewardRelicRules.CandyPowerCardCount : 0);
         for (int ordinal = 0; ordinal < drawCount; ordinal++)
         {
             bool requiredPower = includeTrailingPowerCard && ordinal == drawCount - 1;

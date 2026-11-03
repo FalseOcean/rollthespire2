@@ -54,18 +54,21 @@ internal static class NeowReadyStageProbe
         }
     }
 
-    internal static void Run(ExactSearchExecutionRequest request, string output)
+    internal static void Run(PreparedSearch request, string output)
     {
         Directory.CreateDirectory(output);
         var families = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, gpuAvailable: true);
-        var neow = families.OfType<NeowFamily>().SingleOrDefault(f => f.FamilyId == "N.Neow");
-        var transformation = families.OfType<TransformationAggregateFamily>().SingleOrDefault();
-        if (neow?.GpuPlan is not { NumericalVariant: NeowGpuNumericalVariant.NativeFloat64 } nPlan ||
-            transformation?.GpuPlan is not { Supported: true, NumericalVariant: GpuNumericalVariant.NativeFloat64 } tPlan)
+        var neow = families.SingleOrDefault(f=>f.FamilyId=="N.Neow" && f.Coverage.Count==1);
+        var transformation = families.SingleOrDefault(f=>f.FamilyId==TransformationAggregateFamily.Id && f.Coverage.Count==1);
+        NeowFamily.TryPrepare(request.Model,FilterExecutionPreferences.From(request.RunOptions),out var np);
+        TransformationAggregateFamily.TryPrepare(request.Model,FilterExecutionPreferences.From(request.RunOptions),out var tp);
+        if (neow is null || transformation is null || np?.GpuPlan is not { NumericalVariant: NeowGpuNumericalVariant.NativeFloat64 } nPlan ||
+            tp?.GpuPlan is not { Supported: true, NumericalVariant: GpuNumericalVariant.NativeFloat64 } tPlan ||
+            np.Body.PhysicalRevision != neow.PhysicalRevision || tp.Body.PhysicalRevision!=transformation.PhysicalRevision)
         {
             NotApplicable(output, "Requires actual ordinary Native N and supported Native T plans"); return;
         }
-        var profile = RuntimeProfileRegistry.Select(request.Detection);
+        var profile = RuntimeProfileRegistry.Select(request.Model.Detection);
         if (!VisibleSeedCandidateCodec.TryParseOrdinal(profile, request.CanonicalStartSeed, out ulong start, out _, out string issue))
             throw new InvalidDataException(issue);
         int roots = checked((int)Math.Min(NeowFamilyGpuExecutor.Capacity, request.ScanCount / 2));

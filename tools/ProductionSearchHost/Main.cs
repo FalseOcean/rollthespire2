@@ -136,17 +136,52 @@ public partial class Main : Node
                 Console.WriteLine($"standaloneProduction=true;gpu={device.GetDeviceName()};provenance={context.Provenance};gameProcessRequired=false");
             ProductionSearchReplay.Write(System.IO.Path.Combine(output, "context.json"), context);
             ProductionSearchReplay.Write(System.IO.Path.Combine(output, "workload.json"), workload);
+            if (args.Contains("--combat-recall-search-checks"))
+            {
+                await CompatibilityChecks.RunCombatRecallAsync(context, workload, output,
+                    Arg("--combat-recall-fixtures"), Arg("--combat-recall-solo-context"), session => _session = session,
+                    Arg("--combat-recall-only", ""));
+                _session = null;
+                return;
+            }
+            if (args.Contains("--bones-hidden-upgrade-sparse-checks"))
+            {
+                BonesHiddenUpgradeChecks.CheckSparseRefinement(Arg("--bones-hidden-upgrade-sparse-checks"), output);
+                return;
+            }
+            if (args.Contains("--bones-hidden-upgrade-expanded"))
+            {
+                BonesHiddenUpgradeChecks.GenerateExpanded(output, int.Parse(Arg("--bones-hidden-upgrade-window", "65539")),
+                    int.Parse(Arg("--bones-hidden-upgrade-discovery", "4194304")));
+                return;
+            }
+            if (args.Contains("--bones-hidden-upgrade-checks"))
+            {
+                BonesHiddenUpgradeChecks.Generate(output, int.Parse(Arg("--bones-hidden-upgrade-window", "65539")));
+                return;
+            }
+            if (args.Contains("--bones-hidden-upgrade-compare"))
+            {
+                BonesHiddenUpgradeChecks.Compare(Arg("--bones-hidden-upgrade-compare"), output);
+                return;
+            }
             if (args.Contains("--initial-room-gpu-checks"))
             {
-                var initial = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(workload.Query, context.Context), workload.Options);
+                var initial = SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, context.Context), workload.Options);
                 await InitialRoomGpuChecks.RunAsync(initial.Plan ?? throw new InvalidDataException("InitialRoomsHost.Compile:" + initial.Issue), output);
                 await CompatibilityChecks.CheckInitialRoomsSessionsAsync(output, session => _session = session);
                 _session = null;
                 return;
             }
+            if (args.Contains("--map-lossy-pipeline"))
+            {
+                var compiled = SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, context.Context), workload.Options);
+                await MapLossyPipelineChecks.RunAsync(compiled.Plan ?? throw new InvalidDataException(compiled.Issue), output);
+                return;
+            }
             if (args.Contains("--map-lossy-gpu"))
             {
-                var compiled = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(workload.Query, context.Context), workload.Options);
+                var compiled = SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, context.Context), workload.Options);
                 await MapLossyChecks.RunAsync(compiled.Plan ?? throw new InvalidDataException(compiled.Issue), output);
                 return;
             }
@@ -161,10 +196,10 @@ public partial class Main : Node
             {
                 var preparationWatch = System.Diagnostics.Stopwatch.StartNew();
                 var compiled = SearchCompiler.Compile(workload.Query, context.Context);
-                var result = ExactSearchExecutionRequestFactory.Compile(compiled, workload.Options);
+                var result = SearchPreparationCompiler.Compile(compiled, workload.Options);
                 if (!result.Success || result.Plan is null) throw new InvalidOperationException("ProductionCompile:" + result.Issue);
                 double compilePreparationMs = preparationWatch.Elapsed.TotalMilliseconds;
-                var rewardPoolPreparationBefore = result.Plan.RewardPoolPreparation?.Capture();
+                var rewardPoolPreparationBefore = result.Plan.Model.RewardPoolPreparation?.Capture();
                 if (args.Contains("--neow-canonical-cost", StringComparer.Ordinal))
                 {
                     string canonicalFamily = Arg("--canonical-family", "N");
@@ -205,6 +240,11 @@ public partial class Main : Node
                     await SmallCandidateExactProductionGpuChecks.RunAsync(result.Plan);
                     return;
                 }
+                if (args.Contains("--gpu-prefix-transport-checks"))
+                {
+                    await GpuPrefixTransportChecks.RunAsync(result.Plan, output);
+                    return;
+                }
                 string label = run < 0 ? "warmup" + (-run) : "run" + run;
                 Console.WriteLine($"standaloneRun={label};semanticFingerprint={compiled.SemanticFingerprint}");
                 RolltheSpire2.Search.Runtime.ShionExactTrialMetrics.Reset();
@@ -214,7 +254,12 @@ public partial class Main : Node
                 var completedScanSamples = new List<object> { new { scanned = 0L, elapsedMs = 0d, afterCompletion = false } };
                 long lastSampledScanned = 0;
                 double nextScanObservationMs = 0;
-                await using var session = args.Contains("--cpu-family-workers")
+                bool logProgress = args.Contains("--progress-log");
+                double nextProgressMs = 10000;
+                await using var session = args.Contains("--combat-truth-reference")
+                    ? CompatibilityChecks.StartCombatTruthReference(result.Plan, Arg("--combat-truth-reference"),
+                        !args.Contains("--cpu-only"), !args.Contains("--compat-no-fp64"))
+                    : args.Contains("--cpu-family-workers")
                     ? FamilyPhysicalMatrix.StartCpuWorkerSession(result.Plan, Arg("--cpu-family-workers"), args.Contains("--cpu-only"))
                     : (args.Contains("--logging-exact-fault") || args.Contains("--cpu-fault")) ? OperationalLoggingChecks.CreateExactFaultSession(result.Plan,args.Contains("--cpu-fault")) : FamilyExecutionCoordinator.Start(result.Plan, failOnPhysicalRecovery: true, gpuAvailable: args.Contains("--cpu-only") ? false : null,
                         gpuFloat64Available: args.Contains("--compat-no-fp64") ? false : null);
@@ -225,6 +270,12 @@ public partial class Main : Node
                 using var matches = new StreamWriter(System.IO.Path.Combine(output, label + ".matches.jsonl"));
                 while (!session.Completion.IsCompleted)
                 {
+                    if (logProgress && observationWatch.Elapsed.TotalMilliseconds >= nextProgressMs)
+                    {
+                        var observed = session.GetProgress();
+                        RolltheSpire2.Bootstrap.RuntimeLog.TryBackgroundInfo($"hostObservedProgress=true;run={label};scanned={observed.ScannedCount};requested={observed.RequestedScanCount};matches={observed.MatchCount};unverified={observed.UnverifiedCandidateCount};pending={observed.PendingCandidateCount};elapsedMs={observationWatch.Elapsed.TotalMilliseconds:F1}");
+                        nextProgressMs = observationWatch.Elapsed.TotalMilliseconds + 10000;
+                    }
                     if (observationWatch.Elapsed.TotalMilliseconds >= nextScanObservationMs)
                     {
                         ObserveCompletedScan(afterCompletion: false);

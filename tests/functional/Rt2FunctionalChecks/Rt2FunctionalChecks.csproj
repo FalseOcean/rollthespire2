@@ -15,11 +15,15 @@
   <ItemGroup>
     <CompilerVisibleProperty Include="GodotProjectDir" />
     <Compile Include="Program.cs" />
+    <Compile Include="NeowEntryIdentityChecks.cs" />
+    <Compile Include="NeowIdentityRulesChecks.cs" />
+    <Compile Include="NeowEntryIdentityFixtures.cs" />
     <Compile Include="ShionNeowOptimizationChecks.cs" />
     <Compile Include="ShionExactTrialChecks.cs" />
     <Compile Include="NeowCpuFourWayChecks.cs" />
     <Compile Include="PreparedCombatRewardPoolChecks.cs" />
     <Compile Include="CCompleteMatchingChecks.cs" />
+    <Compile Include="CAssignmentEarlyChecks.cs" />
     <Compile Include="SimpleProbabilityPrinciplesChecks.cs" />
     <Compile Include="EtaCostClosureChecks.cs" />
     <Compile Include="SmallCandidateExactChecks.cs" />
@@ -86,6 +90,7 @@
     <Compile Include="TerminalQueueAccountingChecks.cs" />
     <Compile Include="ProductionReplayChecks.cs" />
     <Compile Include="FamilyNeowChecks.cs" />
+    <Compile Include="RelicOpeningPrefixChecks.cs" />
     <Compile Include="FamilyBonesArcaneChecks.cs" />
     <Compile Include="FamilyCombatRewardChecks.cs" />
     <Compile Include="CExplicitOpeningChecks.cs" />

@@ -36,6 +36,13 @@ pass `-p:Rt2ModsDir="<absolute staging directory>"`; its DLL goes under `Rollthe
 Build target evidence defaults to `.build-evidence`; `Rt2BuildEvidenceDir` remains an
 override. Historical `.rewrite-build-evidence` artifacts are not relocated.
 
+The two cost-reference JSON files under `Search/FamilyExecution` remain readable
+source. `tools/build/CompressCostReferences.targets` uses the .NET SDK to generate
+GZip payloads under the intermediate output directory and embeds only those
+payloads. Clean source exports need no pre-generated files or extra compression
+tool. Canonical runtime loading decompresses before parsing and hashing; the
+`RT2_CANONICAL_COST_REFERENCE_PATH` override still accepts the original JSON.
+
 For a machine-specific path, use an absolute `Sts2ReferenceDir` in the command above,
 `STS2_REFERENCE_DIR`, or root `local.props`; `Sts2Path` in `local.props` may instead
 name the game root. Both runtime DLLs must be present. These settings are local to

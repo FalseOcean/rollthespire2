@@ -64,7 +64,7 @@ internal static partial class UiSurfaceChecks
             Check(control.IsVisibleInTree(), "native control visible " + name);
             await Click(control.GetGlobalRect().GetCenter());
         }
-        async Task Drag(MapRouteDrawingControl drawing, Vector2 start, Vector2 end)
+        async Task Drag(MapRouteDrawingControl drawing, Vector2 start, Vector2 end, bool expectRoomArt = false)
         {
             Vector2 origin = drawing.GetGlobalTransformWithCanvas() * start;
             Vector2 target = drawing.GetGlobalTransformWithCanvas() * end;
@@ -73,15 +73,21 @@ internal static partial class UiSurfaceChecks
                 ButtonMask = MouseButtonMask.Left, Pressed = true });
             await Frames(1);
             for (int i = 1; i <= 4; i++) await Move(origin.Lerp(target, i / 4f), MouseButtonMask.Left);
+            var preview = (TextureRect)drawing.FindChild("MapNodeDragPreview", true, false)!;
+            if (expectRoomArt)
+                Check(preview.IsVisibleInTree() && preview.Texture is not null && preview.Size.IsEqualApprox(new Vector2(26, 26)),
+                    "active native room drag uses real compact 26-pixel art");
             InputEvent(new InputEventMouseButton { Position = target, GlobalPosition = target, ButtonIndex = MouseButton.Left, Pressed = false });
             await Frames();
+            Check(!((TextureRect)Drawing().FindChild("MapNodeDragPreview", true, false)!).Visible,
+                "completed native drag hides its preview");
         }
         async Task Add(StandardMapRoomType room)
         {
             var drawing = Drawing();
             var nodes = Act().Nodes;
             Vector2 point = nodes.Count == 0 ? drawing.AxisRect.GetCenter() : drawing.NodeRects[nodes[^1].Id].End + new Vector2(8, -20);
-            await Drag(drawing, drawing.PaletteRects[room].GetCenter(), point);
+            await Drag(drawing, drawing.PaletteRects[room].GetCenter(), point, expectRoomArt: true);
             Check(Act().Nodes.Count == nodes.Count + 1 && Act().Nodes[^1].Room == room, "palette drag inserts one authored room " + room);
         }
         async Task Box(Vector2 start, Vector2 end) => await Drag(Drawing(), start, end);
@@ -181,9 +187,9 @@ internal static partial class UiSurfaceChecks
             Check(Act().DrawingMode && Act().Daily.Minimum == 3 && frame.CaptureDraft().Query.StandardMaps.All(c => !c.RouteObjective || c.Scope == 0),
                 "drawing suspends daily route and retains total + daily draft");
             Check(Drawing().RoomArt.Count == 5 && Drawing().MissingArtRooms.Count == 0 &&
-                Nodes(Drawing()).OfType<TextureRect>().Count(texture => texture.Texture is not null) >= 7,
+                Nodes(Drawing()).OfType<TextureRect>().Count(texture => texture.IsVisibleInTree() && texture.Texture is not null) >= 7,
                 "native palette and fixed endpoints use all five real game room textures");
-            foreach (var art in Nodes(Drawing()).OfType<TextureRect>())
+            foreach (var art in Nodes(Drawing()).OfType<TextureRect>().Where(art => art.IsVisibleInTree() && art.Texture is not null))
                 Check(art.Size.IsEqualApprox(new Vector2(26, 26)), "room art uses compact 26-pixel layout bound " + art.Name + ":" + art.Size);
             foreach (var room in new[] { StandardMapRoomType.Elite, StandardMapRoomType.RestSite, StandardMapRoomType.Shop, StandardMapRoomType.Unknown }) await Add(room);
             var original = Act().Nodes.Select(n => n.Id).ToArray();
@@ -203,12 +209,12 @@ internal static partial class UiSurfaceChecks
             drawing = Drawing(); first = drawing.NodeRects[original[0]]; second = drawing.NodeRects[original[1]];
             await Box(first.Position - new Vector2(5, 5), second.End + new Vector2(5, 5));
             drawing = Drawing();
-            await Drag(drawing, drawing.NodeRects[original[0]].GetCenter(), new Vector2(drawing.AxisRect.GetCenter().X, drawing.AxisRect.End.Y + 18));
+            await Drag(drawing, drawing.NodeRects[original[0]].GetCenter(), new Vector2(drawing.AxisRect.GetCenter().X, drawing.AxisRect.End.Y + 18), expectRoomArt: true);
             Check(Act().Nodes.Count == 3 && Act().Nodes.All(n => n.Id != original[0]) && Act().Nodes.Single(n => n.Id == original[1]).GroupId == 0,
                 "dragging one group member out deletes only it and dissolves singleton");
             drawing = Drawing();
             var last = Act().Nodes[^1]; var firstRemaining = drawing.NodeRects[Act().Nodes[0].Id];
-            await Drag(drawing, drawing.NodeRects[last.Id].GetCenter(), firstRemaining.Position + new Vector2(-8, 20));
+            await Drag(drawing, drawing.NodeRects[last.Id].GetCenter(), firstRemaining.Position + new Vector2(-8, 20), expectRoomArt: true);
             Check(Act().Nodes[0].Id == last.Id && Act().Nodes.Count == 3, "native node drag moves only the selected node");
             drawing = Drawing();
             first = drawing.NodeRects[Act().Nodes[0].Id]; second = drawing.NodeRects[Act().Nodes[1].Id];

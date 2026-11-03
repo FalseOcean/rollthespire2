@@ -31,29 +31,28 @@ internal static partial class CompatibilityChecks
     }
 
     internal sealed record Invocation(string FamilyId, string Type, string[] Coverage, bool UsesGpu,
-        string PhysicalRevision, string NumericRequirements, int Batches, long Inputs, long Outputs,
-        bool Faulted, Invocation[] Children);
+        string PhysicalRevision, string NumericRequirements, int? Batches, long? Inputs, long? Outputs,
+        bool? Faulted, Invocation[] Children)
+    { public string ObservationScope { get; init; } = ""; }
 
     private sealed record Receipt(string Label, string RequestSnapshotFingerprint, string ContinuationFingerprint,
         string[] SemanticRecords, string[] WarningRecords,
         SearchProgressSnapshot Progress, ulong SafeNextOrdinal, SearchContinuationSnapshot Continuation,
         Invocation[] Invocations);
 
-    private static Invocation Describe(IFamilyInvocation family)
+    private static Invocation Describe(FilterBodyDescription body) => Describe(body, null);
+    private static Invocation Describe(FilterBodyDescription body, ProductionSearchSession? session)
     {
-        var observation = family.CapturePerformanceObservation();
-        IEnumerable<IFamilyInvocation> children = family switch
+        var observation = session?.CaptureFilterObservation(body);
+        return new(body.FamilyId, body.GetType().FullName!, body.Coverage.ToArray(),
+            body.UsesGpu, observation?.Condition.PhysicalImplementationRevision ?? body.ConditionPerformance.PhysicalImplementationRevision,
+            body.GpuNumericRequirements.ToString(), observation?.PhysicalBatchCount,
+            observation?.InputCandidates, observation?.OutputCandidates, session?.IsFilterExecutionFaulted(body),
+            body.PhysicalBodies.Select(child => Describe(child, session)).ToArray())
         {
-            AutomaticPrivateSerialInvocation serial => serial.PhysicalFamilies,
-            PartyFamily party => party.PersonalStages.Select(stage => stage.Family),
-            InitialRoomsInvocation initial => initial.Ordinary is { } ordinary ? [ordinary] : [],
-            _ => []
+            ObservationScope = session is null ? "PreparedBodyDeclaration;NoExecutionObserved" :
+                "SessionCompletedWorkObserver;NullFaultStateMeansNoDirectRuntimeHandle"
         };
-        return new(family.FamilyId, family.GetType().FullName!, family.Coverage.ToArray(),
-            family.ConditionPerformance.UsesGpu, observation.Condition.PhysicalImplementationRevision,
-            family.GpuNumericRequirements.ToString(), observation.PhysicalBatchCount,
-            observation.InputCandidates, observation.OutputCandidates, family.ExecutionFaulted,
-            children.Select(Describe).ToArray());
     }
 
     private static IEnumerable<Invocation> Flatten(IEnumerable<Invocation> rows) =>
@@ -63,7 +62,7 @@ internal static partial class CompatibilityChecks
         string label, bool compatNoFp64, FamilyGpuInitializationSnapshot? ownerInitialization = null)
     {
         var plan = session.ExecutionPlan;
-        var rows = plan.OrderedFamilies.Select(Describe).ToArray();
+        var rows = plan.OrderedFamilies.Select(body => Describe(body, session)).ToArray();
         var actualDevice = SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity();
         WriteEvidence(Path.Combine(output, label + ".invocations.json"), new
         {
@@ -137,9 +136,9 @@ internal static partial class CompatibilityChecks
             NextInt = "Inherited HistoricalShortcut unchanged", TargetMetalExecutionClaimed = false });
     }
 
-    private static ExactSearchExecutionRequest Compile(ProductionSearchReplayWorkload workload, SearchContext context)
+    private static PreparedSearch Compile(ProductionSearchReplayWorkload workload, SearchContext context)
     {
-        var compiled = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(workload.Query, context), workload.Options);
+        var compiled = SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, context), workload.Options);
         return compiled.Plan ?? throw new InvalidDataException("CompatibilityHost.Compile:" + compiled.Issue);
     }
 
@@ -159,7 +158,7 @@ internal static partial class CompatibilityChecks
         var initial = Compile(bounded, captured.Context);
         await CheckExtendedFamiliesAsync(initial, output);
         var root = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, initial.CanonicalStartSeed);
-        Require(ProductionExactSearchEvaluator.Evaluate(initial, root).IsMatch, "InputStartMustBeActualWholeRequestPositive");
+        Require(ProductionExactSearchEvaluator.Evaluate(initial.Model, root).IsMatch, "InputStartMustBeActualWholeRequestPositive");
         var shops = Beta111NormalMerchantColorlessSequenceProjector.Project(root.RootHash,
             Beta111MerchantColorlessAuthority.From(captured.Context.Authority), 1);
         var target = shops.Merchants.Single().UncommonColorless;
@@ -186,7 +185,7 @@ internal static partial class CompatibilityChecks
             (Name: "shop-rejection", Workload: reject, Positive: false) })
         {
             var request = Compile(item.Workload, captured.Context);
-            Require(ProductionExactSearchEvaluator.Evaluate(request, root).Evaluation.Disposition ==
+            Require(ProductionExactSearchEvaluator.Evaluate(request.Model, root).Evaluation.Disposition ==
                 (item.Positive ? SearchDisposition.Match : SearchDisposition.NoMatch),
                 "WholeRequestFixedRootTruth:" + item.Name);
             var cpu = await RunSession(request, output, item.Name + "-cpu", true, false, null, observeSession);
@@ -207,7 +206,7 @@ internal static partial class CompatibilityChecks
                 // still require actual native/integer dispatch for all seven.
                 WriteEvidence(Path.Combine(output, "compatibility-family-participation.json"), new {
                     SelectedGpuCoverage = actual.Where(row => row.UsesGpu).SelectMany(row => row.Coverage).Distinct().ToArray(),
-                    ProductionExecutedGpuCoverage = actual.Where(row => row.UsesGpu && row.Batches > 0 && row.Inputs > 0)
+                    ProductionExecutedGpuCoverage = actual.Where(row => row.UsesGpu && row.Batches is > 0 && row.Inputs is > 0)
                         .SelectMany(row => row.Coverage).Distinct().ToArray(),
                     IndependentDenseGpuParityCoverage = explicitlyExecuted.Order(StringComparer.Ordinal).ToArray(),
                     UnexecutedProductionTails = "ActualSmallCandidateExactHandoff;OriginalQueryExactRetained;NotClaimedAsGpuDispatch"
@@ -243,7 +242,7 @@ internal static partial class CompatibilityChecks
         Console.WriteLine("COMPATIBILITY_CHECKS_PASS actualGpuNRCWAES=true;fullExact=true;positiveAndReject=true;cancelResume=true;injectedCreationFailureRealExact=true;targetMetalExecution=false;throughputClaim=false");
     }
 
-    private static async Task<object> CheckInitialCreationFailureAsync(ExactSearchExecutionRequest request,
+    private static async Task<object> CheckInitialCreationFailureAsync(PreparedSearch request,
         Receipt cpuReference, string output, Action<ProductionSearchSession?> observeSession)
     {
         const string label = "initial-creation-failure-real-exact";
@@ -258,13 +257,13 @@ internal static partial class CompatibilityChecks
         Require(Flatten(originallySelected).Any(row => row.UsesGpu),
             "CreationFailureStartsWithActualGpuAllocation");
         int creations = 0;
-        FamilyExecutionContext? executionContext = null;
+        FilterRuntimeServices? executionContext = null;
         ProductionSearchReplay.LogSessionWorkload(request, label);
         await using var session = new ProductionSearchSession(request, selected,
-            FamilySearchEtaProjectorV1.Project(request, selected),
+            FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(request, selected), selected),
             FamilyExecutionCoordinator.ResolveExecutionWindowSize(request, selected.OrderedFamilies), 64, null, "",
             failOnPhysicalRecovery: false,
-            executionContextFactory: () => executionContext = new FamilyExecutionContext(true,
+            executionContextFactory: () => executionContext = new FilterRuntimeServices(true,
                 failOnPhysicalRecovery: false, cpuWorkerCount: request.WorkerCount,
                 gpuOwnerFactory: () => new FamilyGpuExecutionOwner(() =>
                 {
@@ -287,7 +286,7 @@ internal static partial class CompatibilityChecks
         var progress = session.GetProgress();
         var checkpoint = session.CaptureContinuation() ?? throw new InvalidDataException("CompatibilityHost.MissingContinuation:" + label);
         var failedOwner = localInitialization.Capture();
-        var retired = selected.OrderedFamilies.Select(Describe).ToArray();
+        var retired = selected.OrderedFamilies.Select(body => Describe(body, session)).ToArray();
         var active = WriteInvocationReceipt(session, output, label, true, failedOwner);
         var semantics = candidates.Select(SemanticRecord).Order(StringComparer.Ordinal).ToArray();
         ProductionSearchReplay.Write(Path.Combine(output, label + ".continuation.json"), checkpoint);
@@ -347,7 +346,7 @@ internal static partial class CompatibilityChecks
         }
     }
 
-    private static async Task<Receipt> RunSession(ExactSearchExecutionRequest request, string output, string label,
+    private static async Task<Receipt> RunSession(PreparedSearch request, string output, string label,
         bool cpuOnly, bool cancelBeforePublication, SearchContinuationSnapshot? continuation,
         Action<ProductionSearchSession?> observeSession, bool nativeGpu = false)
     {
@@ -362,7 +361,7 @@ internal static partial class CompatibilityChecks
         {
             var plan = FamilyExecutionCoordinator.Plan(request, gpuFloat64Available: nativeGpu);
             ProductionSearchReplay.LogSessionWorkload(request, label);
-            session = new(request, plan, FamilySearchEtaProjectorV1.Project(request, plan),
+            session = new(request, plan, FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(request, plan), plan),
                 FamilyExecutionCoordinator.ResolveExecutionWindowSize(request, plan.OrderedFamilies), 64, null, "",
                 failOnPhysicalRecovery: true, beforeCandidatePublish: BeforePublish, continuation: continuation);
         }

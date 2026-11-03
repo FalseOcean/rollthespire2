@@ -27,11 +27,14 @@ float next_float(){return float(double(next_u64()>>11u)*1.1102230246251565e-16lf
 bool unknown_match(uint64_t root){
  if(plan.v[1]==0u)return true;
  rng_initialize(root+make_u64(plan.v[5],plan.v[6]));
+ bool juzu=plan.v[7]!=0u;
  precise float monster=.1,treasure=.02,shop=.03;
  for(uint i=0u;i<plan.v[1];i++){
-  precise float total=monster+treasure;total+=shop;
+  // Juzu removes only Monster; preserve source float order and inclusive odds.
+  precise float total=juzu?0.0:monster;total+=treasure;total+=shop;
   if(next_float()<=total)return false;
-  monster+=.1;treasure+=.02;shop+=.03;
+  if(!juzu)monster+=.1;
+  treasure+=.02;shop+=.03;
  }
  return true;
 }

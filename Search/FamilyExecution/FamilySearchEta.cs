@@ -8,6 +8,17 @@ using RolltheSpire2.Search.Semantics;
 
 namespace RolltheSpire2.Search.FamilyExecution;
 
+internal sealed record SearchEtaInput(
+    JointSelectivityResult QueryProbability,
+    SearchVerificationFamily ExactFamily,
+    string ExactTimingImplementationRevision,
+    long ScanCount,
+    int TargetMatchCount,
+    int WorkerCount,
+    bool SkipExactValidation,
+    int ExecutionWindowSize,
+    string CorrelationId);
+
 internal enum FamilySearchEtaStatus
 {
     Ready,
@@ -111,7 +122,7 @@ internal static class FamilySearchEtaProjectorV1
         IReadOnlyList<string> MissingEvidence);
 
     internal static FamilySearchEtaProjectionV1 Project(
-        ExactSearchExecutionRequest request,
+        SearchEtaInput request,
         FamilyExecutionPlan plan,
         IReadOnlyDictionary<string, double>? livePerformanceByPhysicalRevision = null,
         double? liveExactMsPerAttempt = null)
@@ -120,24 +131,24 @@ internal static class FamilySearchEtaProjectorV1
         ArgumentNullException.ThrowIfNull(plan);
         return FamilyAuxiliaryEvidence.Read(nameof(FamilySearchEtaProjectorV1), "Project",
             () => ProjectCore(request, plan, livePerformanceByPhysicalRevision, liveExactMsPerAttempt) with
-            { ExactTimingImplementationRevision = FamilyExactTimingDomains.ImplementationRevision(request) },
+            { ExactTimingImplementationRevision = request.ExactTimingImplementationRevision },
             Build(FamilySearchEtaStatus.Unavailable, null, "EtaProjectionFailed", plan,
                 Math.Max(1, request.TargetMatchCount), request.ScanCount,
                 null, null, null, null, null, null, null, null, null, null, null, [], ["EtaProjectionFailed"]),
-            request.SnapshotFingerprint);
+            request.CorrelationId);
     }
 
     private static FamilySearchEtaProjectionV1 ProjectCore(
-        ExactSearchExecutionRequest request, FamilyExecutionPlan plan,
+        SearchEtaInput request, FamilyExecutionPlan plan,
         IReadOnlyDictionary<string, double>? livePerformanceByPhysicalRevision, double? liveExactMsPerAttempt)
     {
         int targetCount = Math.Max(1, request.TargetMatchCount);
-        JointSelectivityResult joint = JointSelectivityEstimator.EstimateQuery(SearchSelectivityInput.From(request));
-        SearchVerificationFamily exactFamily = FamilyExactTimingDomains.Resolve(request);
+        JointSelectivityResult joint = request.QueryProbability;
+        SearchVerificationFamily exactFamily = request.ExactFamily;
         SearchExactTimingEvidence? exactTiming = FamilyAuxiliaryEvidence.Read<SearchExactTimingEvidence?>(
             nameof(FamilySearchEtaProjectorV1), "ExactTiming", () => SearchPredictabilityVerificationStore.TryGetExactTiming(
-                exactFamily, FamilyExactTimingDomains.ImplementationRevision(request)), null,
-            request.SnapshotFingerprint);
+                exactFamily, request.ExactTimingImplementationRevision), null,
+            request.CorrelationId);
 
         HorizonProjection scan = ProjectHorizon(
             request.ScanCount, request, plan, exactTiming, exactFamily,
@@ -233,12 +244,12 @@ internal static class FamilySearchEtaProjectorV1
     // No new plan is selected here. A private transport wrapper retains the
     // exact unit order and references selected before it was constructed.
     internal static IReadOnlyList<FamilyExecutionPlanStage> EstimationStages(FamilyExecutionPlan plan) =>
-        plan.Stages.SelectMany(stage => stage.Family is AutomaticPrivateSerialInvocation { EstimationStages.Count: > 0 } serial
-            ? serial.EstimationStages : new[] { stage }).ToArray();
+        plan.Stages.SelectMany(stage => stage.Family.EstimationStages.Count > 0
+            ? stage.Family.EstimationStages : new[] { stage }).ToArray();
 
     private static HorizonProjection ProjectHorizon(
         double roots,
-        ExactSearchExecutionRequest request,
+        SearchEtaInput request,
         FamilyExecutionPlan plan,
         SearchExactTimingEvidence? exactTiming,
         SearchVerificationFamily exactFamily,
@@ -250,14 +261,17 @@ internal static class FamilySearchEtaProjectorV1
         bool familyComplete = true;
         bool populationComplete = true;
         double exactPopulation = 0d;
-        int executionWindow = FamilyExecutionCoordinator.ResolveExecutionWindowSize(request, plan.OrderedFamilies);
+        int executionWindow = request.ExecutionWindowSize;
         var selectedStages = EstimationStages(plan);
-        bool privateReference = plan.Stages.Any(stage => stage.Family is AutomaticPrivateSerialInvocation { EstimationStages.Count: > 0 });
+        // The Dense-only wrapper can cover an initial segment rather than the
+        // whole request. Its last output and every later input are public ABI1.
+        int privatePrefixStages = plan.Stages.FirstOrDefault()?.Family is { IsPrivateTransport: true } transport
+            ? transport.EstimationStages.Count : 0;
         var costSnapshot = FamilyAuxiliaryEvidence.Read<GpuCostSnapshot?>(nameof(FamilySearchEtaProjectorV1),
             "TimingCostSnapshot", GpuCostCalibration.Capture, null);
         var totals = selectedStages.Select(stage => new StageTotal(stage,
             stage.Survival ?? (selectedStages.Count == 1 ? plan.EstimatedTerminalSurvival : null))).ToArray();
-        bool earlyExact = plan.AllowSmallCandidateExact && !request.RunOptions.SkipExactValidation;
+        bool earlyExact = plan.AllowSmallCandidateExact && !request.SkipExactValidation;
 
         // At most two fragment shapes: repeated full root windows and one real
         // tail. The <=8 decision uses each window's modeled mean, not the whole
@@ -271,6 +285,7 @@ internal static class FamilySearchEtaProjectorV1
             for (int index = 0; index < selectedStages.Count; index++)
             {
                 FamilyExecutionPlanStage stage = selectedStages[index];
+                bool privateReference = index < privatePrefixStages;
                 StageTotal total = totals[index];
                 string fragment = $"RootFragment={rootPopulation};Windows={repetitions:G17};";
                 handoff |= earlyExact && population is > 0 and <= SmallCandidateExactPolicy.MaximumCandidates;
@@ -304,11 +319,11 @@ internal static class FamilySearchEtaProjectorV1
                     double reach = SearchPredictabilityMath.ProbabilityAtLeastOne(inputFraction, rootPopulation);
                     double inputs = population / reach;
                     var geometry = new FamilyPhysicalQuoteRequest(stage.CompactAbi1Input,
-                        privateReference && index < selectedStages.Count - 1, inputs,
+                        privateReference && index < privatePrefixStages - 1, inputs,
                         PrivateInput: privateReference && index > 0);
                     var price = FamilyPhysicalQuote.CompleteCall(stage.Family, geometry, costSnapshot, survival,
                         passedCoverage, rootPopulation, inputFraction, includeInvokeOverhead: !privateReference || index == 0,
-                        privateInvocation: privateReference, correlationId: request.SnapshotFingerprint);
+                        privateInvocation: privateReference, correlationId: request.CorrelationId);
                     time = price?.Milliseconds;
                     total.Source = price?.Source ?? FamilyPerformanceEvidenceSource.Reference;
                     costEvidence = price?.Evidence ??
@@ -341,7 +356,7 @@ internal static class FamilySearchEtaProjectorV1
         AddFragment((int)(roots - fullWindows * executionWindow), 1d);
 
         double? exactTailMs = null;
-        if (request.RunOptions.SkipExactValidation) exactTailMs = 0d;
+        if (request.SkipExactValidation) exactTailMs = 0d;
         else if (populationComplete && double.IsFinite(exactPopulation))
         {
             double effectiveExactWorkers = Math.Min(Math.Max(1, request.WorkerCount), Math.Max(1, exactPopulation));
@@ -360,7 +375,7 @@ internal static class FamilySearchEtaProjectorV1
             else
             {
                 missing.Add("ProductionExactHardwareEvidenceUnavailable:" + exactFamily +
-                    ":implementation=" + (FamilyExactTimingDomains.ImplementationRevision(request) is { Length: > 0 } revision ? revision : "Legacy"));
+                    ":implementation=" + (request.ExactTimingImplementationRevision is { Length: > 0 } revision ? revision : "Legacy"));
             }
         }
 
@@ -368,7 +383,7 @@ internal static class FamilySearchEtaProjectorV1
         if (familyComplete && exactTailMs.HasValue)
         {
             double windows = Math.Max(1, Math.Ceiling(roots /
-                FamilyExecutionCoordinator.ResolveExecutionWindowSize(request, plan.OrderedFamilies)));
+                request.ExecutionWindowSize));
             // The single window must finish filtering before its Exact work can
             // start. Later windows overlap the bounded producer and consumer.
             search = Math.Max(familyPipelineMs, exactTailMs.Value) +
@@ -436,7 +451,7 @@ internal static class FamilySearchEtaProjectorV1
 
 internal static class FamilyExactTimingDomains
 {
-    internal static string ImplementationRevision(ExactSearchExecutionRequest request)
+    internal static string ImplementationRevision(SearchModel request)
     {
         // Fast C has its own unchanged physical prices. Only the changed solo
         // Exact reward path needs a new timing key; keep other v1 entries usable.
@@ -468,7 +483,7 @@ internal static class FamilyExactTimingDomains
             JsonSerializer.Serialize(query with { Players = [] }) != JsonSerializer.Serialize(SearchQuery.Empty);
     }
 
-    internal static SearchVerificationFamily Resolve(ExactSearchExecutionRequest request)
+    internal static SearchVerificationFamily Resolve(SearchModel request)
     {
         if (request.CompiledSearch.Context.Party is not { } party)
         {
@@ -500,7 +515,7 @@ internal static class FamilyExactTimingDomains
         };
     }
 
-    internal static ExactTimingDomain[] QueryDomains(ExactSearchExecutionRequest request)
+    internal static ExactTimingDomain[] QueryDomains(SearchModel request)
     {
         var domains = new List<ExactTimingDomain>(4);
         if (request.Evaluation.HasNeowConstraints || request.Evaluation.TransformationAggregate is { UsesNeow: true }) domains.Add(ExactTimingDomain.Neow);

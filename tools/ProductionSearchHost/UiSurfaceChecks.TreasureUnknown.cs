@@ -5,7 +5,9 @@ using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.World;
 using RolltheSpire2.Presentation.Localization;
+using RolltheSpire2.Presentation.Ui1;
 using RolltheSpire2.Search.Contracts;
+using RolltheSpire2.Search.FamilyExecution;
 using RolltheSpire2.Search.Semantics;
 using RolltheSpire2.Ui.Controls.Pickers;
 using RolltheSpire2.Ui.Pages.Search;
@@ -181,22 +183,41 @@ internal static partial class UiSurfaceChecks
                 var combinedQuery = frame.CaptureDraft().Query;
                 frame.RestoreDraft(empty with { Query = SearchQuery.Empty with { FirstActUnknownEventPrefixCount = 3 } }, render: false);
                 frame.Refresh(locale, text); Call(frame, "SelectDomain", "events");
-                object? eventEntry = null;
+                var prefixView = SearchProbabilityPresentationBuilder.Build(frame.CaptureDraft().Compile(runtime, out _));
+                var prefixRows = prefixView.Rows.Where(row => row.Kind == SearchProbabilityRowKind.FirstActUnknownEventPrefix).ToArray();
+                Check(prefixRows.Length == 1 && prefixRows[0].Probability is { } prefixQ && Math.Abs(prefixQ - .32725) < .00001 &&
+                    prefixView.TotalProbability is { } totalQ && Math.Abs(totalQ - prefixQ) < .00001,
+                    "prefix-only semantic q is counted once with the conditional no-adjacent-shop estimate");
+                object? variantEntry = null;
                 var previewWait = System.Diagnostics.Stopwatch.StartNew();
                 while (previewWait.Elapsed < TimeSpan.FromSeconds(15))
                 {
                     await Frames(1);
-                    eventEntry = Field<System.Collections.IEnumerable>(frame, "_familyEntries").Cast<object>().FirstOrDefault(entry =>
-                        (string)entry.GetType().GetProperty("Id")!.GetValue(entry)! == "E");
-                    if (eventEntry?.GetType().GetProperty("Probability")!.GetValue(eventEntry) is double) break;
+                    variantEntry = Field<System.Collections.IEnumerable>(frame, "_familyEntries").Cast<object>().FirstOrDefault(entry =>
+                        (string)entry.GetType().GetProperty("Id")!.GetValue(entry)! == "V");
+                    if (variantEntry is not null && !Field<bool>(frame, "_probabilityPending")) break;
                 }
-                var eventProbability = eventEntry?.GetType().GetProperty("Probability")!.GetValue(eventEntry) as double?;
-                Check(eventProbability.HasValue && Math.Abs(eventProbability.Value - .32725) < .00001 &&
-                    ((string)eventEntry!.GetType().GetProperty("Detail")!.GetValue(eventEntry)!).Contains(
-                        text.Get("query.event.unknown.probability_assumption"), StringComparison.Ordinal),
-                    "prefix-only E dashboard has the conditional estimate and explicit no-adjacent-shop premise;compile=" +
+                string conditionText = Field<string>(frame, "_conditionText");
+                Check(conditionText.Contains(text.Get("query.event.unknown.option_3"), StringComparison.Ordinal) &&
+                    conditionText.Contains(QueryWorkbenchFrame.Rarity(prefixRows[0].Probability), StringComparison.Ordinal) &&
+                    conditionText.Contains(text.Get("query.event.unknown.probability_assumption"), StringComparison.Ordinal),
+                    "prefix-only semantic explanation renders q and its explicit no-adjacent-shop premise");
+                var eta = Field<FamilySearchEtaProjectionV1?>(frame, "_previewEta");
+                var variantStage = eta is null ? null : FamilySearchEtaProjectorV1.EstimationStages(eta.Plan)
+                    .SingleOrDefault(stage => stage.Family.FamilyId == VariantOpeningFamily.Id);
+                double? survival = variantStage?.Survival;
+                string pass = survival is { } value && double.IsFinite(value) && value is >= 0 and <= 1
+                    ? (value > 0 && value < .0001 ? (value * 100).ToString("0.###E+0", System.Globalization.CultureInfo.InvariantCulture) + "%" :
+                        value.ToString("0.##%", System.Globalization.CultureInfo.InvariantCulture)) : "";
+                string variantSource = variantEntry is null ? "" : (string)variantEntry.GetType().GetProperty("Source")!.GetValue(variantEntry)!;
+                Check(variantEntry is not null && !Field<bool>(frame, "_probabilityPending") && pass.Length > 0 &&
+                    variantEntry.GetType().GetProperty("Probability")!.GetValue(variantEntry) is null &&
+                    (bool)variantEntry.GetType().GetProperty("JointlyAttributed")!.GetValue(variantEntry)! &&
+                    variantSource.Contains(text.Get("workflow.source.unknown"), StringComparison.Ordinal) &&
+                    variantSource.Contains(text.Format("workflow.variant.survival", pass), StringComparison.Ordinal),
+                    "prefix-only V dashboard shows actual execution survival and source without another q factor;compile=" +
                     Field<string>(frame, "_draftCompileIssue") + ";pending=" + Field<bool>(frame, "_probabilityPending") +
-                    ";entry=" + JsonSerializer.Serialize(eventEntry));
+                    ";entry=" + JsonSerializer.Serialize(variantEntry));
                 await Screenshot($"unknown-probability-{locale}-{size.X}x{size.Y}");
                 frame.RestoreDraft(empty with { Query = combinedQuery }, render: false);
                 frame.Refresh(locale, text); Call(frame, "SelectDomain", "events"); await Frames();

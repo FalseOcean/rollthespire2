@@ -18,17 +18,17 @@ internal static partial class CompatibilityChecks
 
     // New requests, using the caller's unchanged immutable capture. These are
     // separate fixtures, not a weakening of the caller's original workload.
-    internal static async Task CheckExtendedFamiliesAsync(ExactSearchExecutionRequest template, string output)
+    internal static async Task CheckExtendedFamiliesAsync(PreparedSearch template, string output)
     {
-        if (template.ProfileId != RuntimeProfileId.Beta111 || template.CompiledSearch.Context.Party is not null ||
-            template.Authority.PlayersCount != 1 || template.RunOptions.SkipExactValidation)
+        if (template.Model.ProfileId != RuntimeProfileId.Beta111 || template.Model.CompiledSearch.Context.Party is not null ||
+            template.Model.Authority.PlayersCount != 1 || template.RunOptions.SkipExactValidation)
             throw new ArgumentException("CompatibilityExtended.RequiresCapturedSoloBeta111WithExact");
         string directory = Path.Combine(output, "extended-family-parity");
         Directory.CreateDirectory(directory);
-        var context = template.CompiledSearch.Context;
+        var context = template.Model.CompiledSearch.Context;
         var options = template.RunOptions with { StartSeed = "000000000000", ScanCount = 4099,
             TargetMatchCount = int.MaxValue, WorkerCount = 1 };
-        var cases = new List<(string Label, ExactSearchExecutionRequest Request, object Plan)>();
+        var cases = new List<(string Label, PreparedSearch Request, object Plan)>();
 
         // Existing maintained NR fixture shape; use its query without inventing
         // or replacing either World or Effect authority in the caller's capture.
@@ -54,7 +54,7 @@ internal static partial class CompatibilityChecks
             string caseDirectory = Path.Combine(directory, item.Label);
             Directory.CreateDirectory(caseDirectory);
             ExportExtendedRequest(item.Request, caseDirectory, "CallerCapturedImmutableContext;NewBoundedExtendedFixture");
-            var exact = ProductionExactSearchEvaluator.Evaluate(item.Request,
+            var exact = ProductionExactSearchEvaluator.Evaluate(item.Request.Model,
                 TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, item.Request.CanonicalStartSeed));
             Require(exact.IsMatch, "ExtendedFixtureWholeExactPositive:" + item.Label);
             await CheckPublicFamilyParityAsync(item.Request, caseDirectory);
@@ -104,20 +104,20 @@ internal static partial class CompatibilityChecks
             new(1, ModelKeySetFilter.Empty)] };
         var options = new SearchRunOptions(seed, 4099, int.MaxValue, 1);
         var parent = Compile(new(ProductionSearchReplay.SchemaVersion, query, options), context);
-        var child = ExactSearchExecutionRequestFactory.ForPlayer(parent, parent.CompiledSearch.PlayerSearches[0]);
+        var child = ExtendedPersonalRun(parent, parent.Model.CompiledSearch.PlayerSearches[0]);
         child = FindExtendedCapsuleWitness(child, requireWholeExact: false, bindStart: start =>
         {
             var boundParent = Compile(new(ProductionSearchReplay.SchemaVersion, query,
                 options with { StartSeed = start }), context);
-            return ExactSearchExecutionRequestFactory.ForPlayer(boundParent, boundParent.CompiledSearch.PlayerSearches[0]);
+            return ExtendedPersonalRun(boundParent, boundParent.Model.CompiledSearch.PlayerSearches[0]);
         });
         // Recompile the same captured party and project the same seat at the
         // selected start. Never splice an independent personal authority into it.
         parent = Compile(new(ProductionSearchReplay.SchemaVersion, query,
             options with { StartSeed = child.CanonicalStartSeed }), context);
-        child = ExactSearchExecutionRequestFactory.ForPlayer(parent, parent.CompiledSearch.PlayerSearches[0]);
-        Require(child.Authority.PlayersCount == 2 && child.Authority.PlayerSlotIndex == 0 &&
-            ReferenceEquals(child.Authority, party.Players[0]), "ExtendedGenericUsesCapturedPartySeat");
+        child = ExtendedPersonalRun(parent, parent.Model.CompiledSearch.PlayerSearches[0]);
+        Require(child.Model.Authority.PlayersCount == 2 && child.Model.Authority.PlayerSlotIndex == 0 &&
+            ReferenceEquals(child.Model.Authority, party.Players[0]), "ExtendedGenericUsesCapturedPartySeat");
         object plan = CheckExtendedCapsulePlan(child, generic: true);
         string directory = Path.Combine(output, "extended-party-rfull-generic");
         Directory.CreateDirectory(directory);
@@ -125,17 +125,17 @@ internal static partial class CompatibilityChecks
         string personalDirectory = Path.Combine(directory, "personal-module");
         Directory.CreateDirectory(personalDirectory);
         ExportExtendedRequest(child, personalDirectory, "ProductionForPlayerProjectionOfSameCapturedParty;Seat0");
-        var exact = ProductionExactSearchEvaluator.Evaluate(parent,
+        var exact = ProductionExactSearchEvaluator.Evaluate(parent.Model,
             TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, child.CanonicalStartSeed));
         await CheckPublicFamilyParityAsync(child, personalDirectory, float64Available =>
         {
-            if (!CapsuleRelicFamily.TryCreate(child, out var family, preferGpu: true,
+            if (!CapsuleRelicFamily.TryPrepare(child.Model, FilterExecutionPreferences.From(child.RunOptions), out var prepared, preferGpu: true,
                 numericalVariant: float64Available ? GpuNumericalVariant.NativeFloat64 : GpuNumericalVariant.IntegerRne) ||
-                family is not CapsuleRelicFamily { GpuPlan.GenericReplay: true } || !family.ConditionPerformance.UsesGpu)
+                prepared is not { GpuPlan.GenericReplay: true } || !prepared.Body.UsesGpu)
                 throw new InvalidDataException("CompatibilityExtendedParty.ActualGenericGpuFactoryNotAdmitted");
             // This is the actual party child factory used by the registrar,
             // not a whole-query request sent through the solo registrar.
-            return new[] { family };
+            return new[] { prepared.Body };
         });
         WriteEvidence(Path.Combine(directory, "extended-party-generic.json"), new
         {
@@ -152,14 +152,14 @@ internal static partial class CompatibilityChecks
         GD.Print("COMPATIBILITY_EXTENDED_PARTY_RFULL_GENERIC_PASS personalModule=true;wholePartyPipelineClaimed=false");
     }
 
-    private static ExactSearchExecutionRequest FindExtendedTransformationWitness(SearchContext context,
+    private static PreparedSearch FindExtendedTransformationWitness(SearchContext context,
         SearchRunOptions options, TransformationOpening opening)
     {
         var condition = new TransformationAggregateCondition(opening, TransformationPickupOrder.Any,
             false, false, false, TransformationAggregatePredicate.RareCountAtLeast, 1, []);
         var probe = Compile(new(ProductionSearchReplay.SchemaVersion,
             SearchQuery.Empty with { TransformationAggregate = condition }, options), context);
-        var numerical = new TransformationAggregateNumericalPlan(probe);
+        var numerical = new TransformationAggregateNumericalPlan(probe.Model);
         Require(numerical.Neow is not null, "ExtendedTRequiresActualOpeningPlan");
         var source = opening switch
         {
@@ -184,80 +184,85 @@ internal static partial class CompatibilityChecks
             var query = SearchQuery.Empty with { TransformationAggregate = condition with
                 { Predicate = TransformationAggregatePredicate.ContainsMultiset, MinimumRareCount = 0, TargetMultiset = cards } };
             var request = Compile(new(ProductionSearchReplay.SchemaVersion, query, options with { StartSeed = seed }), context);
-            if (new TransformationAggregateNumericalPlan(request).Matches(root) &&
-                ProductionExactSearchEvaluator.Evaluate(request,
+            if (new TransformationAggregateNumericalPlan(request.Model).Matches(root) &&
+                ProductionExactSearchEvaluator.Evaluate(request.Model,
                     TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed)).IsMatch) return request;
         }
         throw new InvalidDataException("CompatibilityExtended.NoBoundedWholeExactTWitness:" + opening);
     }
 
-    private static ExactSearchExecutionRequest FindExtendedCapsuleWitness(ExactSearchExecutionRequest probe, bool requireWholeExact,
-        Func<string, ExactSearchExecutionRequest>? bindStart = null)
+    private static PreparedSearch FindExtendedCapsuleWitness(PreparedSearch probe, bool requireWholeExact,
+        Func<string, PreparedSearch>? bindStart = null)
     {
-        Require(CapsuleRelicFamily.TryCreate(probe, out var invocation, preferGpu: false) &&
-            invocation is CapsuleRelicFamily, "ExtendedCapsuleCpuOwnerAvailable");
-        var cpu = (CapsuleRelicFamily)invocation!;
-        var route = NeowReplayPlan.Compile(probe, true);
+        Require(CapsuleRelicFamily.TryPrepare(probe.Model, FilterExecutionPreferences.From(probe.RunOptions), out var cpu, preferGpu: false) && cpu is not null, "ExtendedCapsuleCpuOwnerAvailable");
+        var route = NeowReplayPlan.Compile(probe.Model, true);
         for (ulong ordinal = 0; ordinal < ExtendedWitnessLimit; ordinal++)
         {
             string seed = VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance, ordinal);
             ulong root = Beta111Profile.Instance.ComputeRootSeed(seed);
-            if (!NeowFamilyReplay.Observe(root, route).IdentityPass || !cpu.MatchesReference(root)) continue;
+            if (!NeowFamilyReplay.Observe(root, route).IdentityPass || !cpu!.Replay.Matches(root)) continue;
             var request = bindStart is not null ? bindStart(seed) :
-                Compile(new(ProductionSearchReplay.SchemaVersion, probe.CompiledSearch.Query,
-                    probe.RunOptions with { StartSeed = seed }), probe.CompiledSearch.Context);
-            if (!requireWholeExact || ProductionExactSearchEvaluator.Evaluate(request,
+                Compile(new(ProductionSearchReplay.SchemaVersion, probe.Model.CompiledSearch.Query,
+                    probe.RunOptions with { StartSeed = seed }), probe.Model.CompiledSearch.Context);
+            if (!requireWholeExact || ProductionExactSearchEvaluator.Evaluate(request.Model,
                 TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed)).IsMatch) return request;
         }
         throw new InvalidDataException("CompatibilityExtended.NoBoundedCapsuleWitness:wholeExactRequired=" + requireWholeExact);
     }
 
-    private static object CheckExtendedCapsulePlan(ExactSearchExecutionRequest request, bool generic)
+    private static object CheckExtendedCapsulePlan(PreparedSearch request, bool generic)
     {
-        Require(CapsuleRelicFamily.TryCreate(request, out var native, preferGpu: true) &&
-            native is CapsuleRelicFamily { GpuPlan: not null }, "ExtendedRfullNativeGpuRequired");
-        Require(CapsuleRelicFamily.TryCreate(request, out var integer, preferGpu: true,
+        Require(CapsuleRelicFamily.TryPrepare(request.Model, FilterExecutionPreferences.From(request.RunOptions), out var native, preferGpu: true) &&
+            native is { GpuPlan: not null }, "ExtendedRfullNativeGpuRequired");
+        Require(CapsuleRelicFamily.TryPrepare(request.Model, FilterExecutionPreferences.From(request.RunOptions), out var integer, preferGpu: true,
             numericalVariant: GpuNumericalVariant.IntegerRne) &&
-            integer is CapsuleRelicFamily { GpuPlan: not null }, "ExtendedRfullIntegerGpuRequired");
-        var n = ((CapsuleRelicFamily)native!).GpuPlan!;
-        var i = ((CapsuleRelicFamily)integer!).GpuPlan!;
+            integer is { GpuPlan: not null }, "ExtendedRfullIntegerGpuRequired");
+        var n = native!.GpuPlan!;
+        var i = integer!.GpuPlan!;
         Require(n.GenericReplay == generic && i.GenericReplay == generic &&
             i.NumericalVariant == GpuNumericalVariant.IntegerRne &&
-            integer!.GpuNumericRequirements == GpuNumericRequirements.Int64 &&
-            (integer.QuotePhysicalWork(new(false, false, 4099)) is not { } rQuote || FamilyCoarsePricing.IsEstimate(rQuote)),
+            integer!.Body.NumericRequirements == GpuNumericRequirements.Int64 &&
+            (integer.Body.QuotePhysicalWork(new(false, false, 4099)) is not { } rQuote || FamilyCoarsePricing.IsEstimate(rQuote)),
             "ExtendedRfullActualVariantAndHonestEstimateOrUnknownPrice");
-        return new { Family = native!.FamilyId, GenericReplay = generic, NativeRevision = n.Revision(false),
+        return new { Family = native!.Body.FamilyId, GenericReplay = generic, NativeRevision = n.Revision(false),
             IntegerRevision = i.Revision(false), i.ConfiguredGenericBagCapacity,
             HistoricalGlobalNextIntPreserved = true, ActualGpuExecutionReceipt = "public-family-parity.json" };
     }
 
-    private static object CheckExtendedTransformationPlan(ExactSearchExecutionRequest request)
+    private static object CheckExtendedTransformationPlan(PreparedSearch request)
     {
-        Require(TransformationAggregateFamily.TryCreate(request, true, out var native) &&
-            native is TransformationAggregateFamily { GpuPlan.Supported: true }, "ExtendedTNativeGpuRequired");
-        Require(TransformationAggregateFamily.TryCreate(request, true, out var integer,
-            GpuNumericalVariant.IntegerRne) && integer is TransformationAggregateFamily { GpuPlan.Supported: true },
+        Require(TransformationAggregateFamily.TryPrepare(request.Model, FilterExecutionPreferences.From(request.RunOptions), out var native, true) &&
+            native is { GpuPlan.Supported: true }, "ExtendedTNativeGpuRequired");
+        Require(TransformationAggregateFamily.TryPrepare(request.Model, FilterExecutionPreferences.From(request.RunOptions), out var integer, true,
+            GpuNumericalVariant.IntegerRne) && integer is { GpuPlan.Supported: true },
             "ExtendedTIntegerGpuRequired");
-        var n = ((TransformationAggregateFamily)native!).GpuPlan;
-        var i = ((TransformationAggregateFamily)integer!).GpuPlan;
-        bool fullTarget = request.Evaluation.TransformationAggregate!.Opening != TransformationOpening.NewLeaf;
+        var n = native!.GpuPlan;
+        var i = integer!.GpuPlan;
+        bool fullTarget = request.Model.Evaluation.TransformationAggregate!.Opening != TransformationOpening.NewLeaf;
         Require(n.FullTarget == fullTarget && i.FullTarget == fullTarget && n.BonesOptimized == i.BonesOptimized,
             "ExtendedTRequiresNewLeafGenericAndLeafyBonesFullTarget;BaselineExperimentControlsNotApplicable");
         Require(i.NumericalVariant == GpuNumericalVariant.IntegerRne &&
-            integer!.GpuNumericRequirements == GpuNumericRequirements.Int64 &&
-            (integer.QuotePhysicalWork(new(false, false, 4099)) is not { } tQuote || FamilyCoarsePricing.IsEstimate(tQuote)),
+            integer!.Body.NumericRequirements == GpuNumericRequirements.Int64 &&
+            (integer.Body.QuotePhysicalWork(new(false, false, 4099)) is not { } tQuote || FamilyCoarsePricing.IsEstimate(tQuote)),
             "ExtendedTActualVariantAndHonestEstimateOrUnknownPrice");
-        return new { Family = native!.FamilyId, request.Evaluation.TransformationAggregate!.Opening,
+        return new { Family = native!.Body.FamilyId, request.Model.Evaluation.TransformationAggregate!.Opening,
             n.FullTarget, n.BonesOptimized, NativeRevision = n.Revision(false), IntegerRevision = i.Revision(false),
             ActualGpuExecutionReceipt = "public-family-parity.json" };
     }
 
-    private static void ExportExtendedRequest(ExactSearchExecutionRequest request, string directory, string provenance)
+    private static PreparedSearch ExtendedPersonalRun(PreparedSearch parent, CompiledSearch player)
+    {
+        var admitted = SearchPreparationCompiler.Compile(player,parent.RunOptions).Plan
+            ?? throw new InvalidDataException("CompatibilityExtended.PersonalRunAdmission");
+        return admitted with { Model = SearchPreparationCompiler.ForPlayer(parent.Model,player) };
+    }
+
+    private static void ExportExtendedRequest(PreparedSearch request, string directory, string provenance)
     {
         ProductionSearchReplay.Write(Path.Combine(directory, "context.json"),
-            new ProductionSearchReplayContext(ProductionSearchReplay.SchemaVersion, provenance, request.CompiledSearch.Context));
+            new ProductionSearchReplayContext(ProductionSearchReplay.SchemaVersion, provenance, request.Model.CompiledSearch.Context));
         ProductionSearchReplay.Write(Path.Combine(directory, "workload.json"),
-            new ProductionSearchReplayWorkload(ProductionSearchReplay.SchemaVersion, request.CompiledSearch.Query,
+            new ProductionSearchReplayWorkload(ProductionSearchReplay.SchemaVersion, request.Model.CompiledSearch.Query,
                 request.RunOptions with { StartSeed = request.CanonicalStartSeed, ScanCount = request.ScanCount }));
     }
 }

@@ -23,11 +23,11 @@ internal sealed partial class SearchWorkspace
         ?? throw new InvalidDataException("SearchResultFreezeFailed");
 
     internal PreparedSearchResultWorkspace PrepareSearchStart(WorkbenchSearchDraft draft,
-        ExactSearchExecutionRequest plan, SeedLibraryContext? context)
+        PreparedSearch plan, SeedLibraryContext? context)
     {
         var frozen = FreezeDraft(draft);
         var resolution = ResolveSearchStart(frozen, plan);
-        var prepared = PrepareResultWorkspace(resolution.Plan.CompiledSearch.SemanticFingerprint, frozen, context,
+        var prepared = PrepareResultWorkspace(resolution.Plan.Model.CompiledSearch.SemanticFingerprint, frozen, context,
             resolution.Plan.RunOptions.SkipExactValidation);
         var history = prepared.History;
         prepared.Batch.Start = new(prepared.Workspace.ResultDraft!, resolution.Plan, _environment.Snapshot(),
@@ -76,7 +76,7 @@ internal sealed partial class SearchWorkspace
         var live = batch?.LiveResults.GetValueOrDefault(result.Seed);
         if (live is not null && (!ReferenceEquals(live.Observation, result) || live.Candidate.IsUnverified != result.IsUnverified ||
             live.Candidate.ValidationDisposition != result.EffectiveValidationDisposition ||
-            live.Start.Plan.CompiledSearch.SemanticFingerprint != result.QueryFingerprint)) live = null;
+            live.Start.Plan.Model.CompiledSearch.SemanticFingerprint != result.QueryFingerprint)) live = null;
         var frozen = FreezeResult(result);
         var context = frozen.Context ?? (live?.Start.Context is { } original ? SeedLibraryStore.CloneContext(original) : null);
         frozen.Context = context;
@@ -106,7 +106,7 @@ internal sealed partial class SearchWorkspace
         var row = batch.Results.FirstOrDefault(result => result.Seed == candidate.Seed);
         // Display de-duplication can retain an earlier confirmed observation.
         // In that case its captured authority and plan must remain paired with it.
-        if (row is null || row.IsUnverified != candidate.IsUnverified || row.QueryFingerprint != start.Plan.CompiledSearch.SemanticFingerprint ||
+        if (row is null || row.IsUnverified != candidate.IsUnverified || row.QueryFingerprint != start.Plan.Model.CompiledSearch.SemanticFingerprint ||
             row.EffectiveValidationDisposition != candidate.ValidationDisposition) return;
         batch.LiveResults[candidate.Seed] = new(candidate, start, row);
     }

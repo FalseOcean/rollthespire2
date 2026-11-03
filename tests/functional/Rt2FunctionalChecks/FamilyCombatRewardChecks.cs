@@ -141,7 +141,7 @@ internal static class FamilyCombatRewardChecks
         return 0;
     }
 
-    internal static int Run(int count, bool exportGpu = false)
+    internal static int Run(int count, bool exportGpu = false, bool openingPrefixOnly = false)
     {
         CheckOpeningSelection();
         CheckPreparedCardSelection();
@@ -154,11 +154,32 @@ internal static class FamilyCombatRewardChecks
             Beta109Generation = world.Beta109Generation! with { Profile = RuntimeProfileId.Beta111 } });
         var context = new SearchContext(RuntimeProfileId.Beta111, authority.Character.CharacterKey, 10, authority,
             new("0.111.0", "0.111.0", "beta", "C0-fixture", true, ""), SearchEvaluationAssumptions.BroadDefault);
-        ExactSearchExecutionRequest Query(NeowSearchFilter filter)
+        PreparedSearch QueryAtAscension(NeowSearchFilter filter, int ascension)
         {
-            var compiled = SearchCompiler.Compile(LegacySearchQueryAdapter.FromFilter(filter), context);
-            return new(compiled, new("000000000000", 10000, 30, 1), "000000000000", 10000,
-                CompiledSearchEvaluationProjector.Project(compiled).Evaluation, CombatRewardRoutePolicyContract.None, compiled.SemanticFingerprint);
+            var queryContext = ascension == 10 ? context : context with { Ascension = ascension,
+                Authority = Beta110FastSearchFixtureAuthority.CreateBeta111(BaseGameModelKeys.Characters.Defect, ascension, 0, 1)
+                    .WithEffectAuthority(authority.EffectAuthority!).WithWorldAuthority(authority.WorldAuthority!) };
+            var compiled = SearchCompiler.Compile(LegacySearchQueryAdapter.FromFilter(filter), queryContext);
+            return new(new SearchModel(compiled, CompiledSearchEvaluationProjector.Project(compiled).Evaluation,
+                CombatRewardRoutePolicyContract.None, compiled.SemanticFingerprint),
+                new("000000000000", 10000, 30, 1), "000000000000", 10000, compiled.SemanticFingerprint);
+        }
+        PreparedSearch Query(NeowSearchFilter filter) => QueryAtAscension(filter, 10);
+        CheckRealNeutralWitness(Query);
+        var openingPrefixFixtures = CheckOpeningPrefixHotLoop(Query, filter => QueryAtAscension(filter, 0));
+        if (openingPrefixOnly)
+        {
+            if (exportGpu)
+            {
+                ExportOpeningPrefixGpu(openingPrefixFixtures.Where(f => !f.Name.StartsWith("ProductionDefault.",
+                    StringComparison.Ordinal) && !f.Name.StartsWith("Followup.", StringComparison.Ordinal)).ToList());
+                ExportOpeningPrefixGpu(openingPrefixFixtures.Where(f => f.Name.StartsWith("ProductionDefault.",
+                    StringComparison.Ordinal)).ToList(), ".build-evidence/c-default-gpu", 515);
+                ExportOpeningPrefixGpu(openingPrefixFixtures.Where(f => f.Name.StartsWith("Followup.",
+                    StringComparison.Ordinal)).ToList(), ".build-evidence/c-followup-gpu", 515);
+            }
+            Console.WriteLine($"C opening-prefix checks={_checks};PASS");
+            return 0;
         }
         var terminalCardFixtures = CheckTerminalCardGate(Query);
         var empty = ModelKeySetFilter.Empty;
@@ -170,13 +191,13 @@ internal static class FamilyCombatRewardChecks
         CheckCapsuleProbabilityConjunctions(Query);
         CheckDeclaredRewardProbabilityPolicy(Query);
         CheckLargeFiniteConjunctions();
-        var neutral = new CombatRewardReplay(Query(basis));
+        var neutral = new CombatRewardReplay((Query(basis)).Model);
         var cOnly = FamilyExecutionCoordinator.Plan(Query(basis));
-        Check(cOnly.OrderedFamilies.Count == 1 && cOnly.OrderedFamilies[0] is CombatRewardFamily, "C-only registration");
+        Check(cOnly.OrderedFamilies.Count == 1 && cOnly.OrderedFamilies[0].FamilyId == CombatRewardFamily.Id, "C-only registration");
         Check(cOnly.Stages[0].Coverage.SequenceEqual(new[] { "C.CombatReward" }) &&
             Math.Abs(cOnly.Stages[0].Survival!.Value - 4d / 9d) < 1e-10, "C Coverage / ordered gold sieve probability");
         Check(FamilyExecutionCoordinator.ResolveExecutionWindowSize(Query(basis), cOnly.OrderedFamilies) == FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize, "C gold GPU window");
-        Check(!CombatRewardFamily.TryCreate(Query(NeowSearchFilter.Empty), out _), "Empty C must not register");
+        Check(!CombatRewardFamily.TryCreate((Query(NeowSearchFilter.Empty)).Model,FilterExecutionPreferences.From((Query(NeowSearchFilter.Empty)).RunOptions), out _), "Empty C must not register");
         var gpuRequest = Query(NeowSearchFilter.Empty with { CombatPotionRewardSequence = new(1,
             CombatRewardSequenceOrderMode.Ordered, [new(CombatPotionSlotRequirement.NoDrop, null)]) });
         var gpuOnly = FamilyExecutionCoordinator.Plan(gpuRequest);
@@ -184,9 +205,10 @@ internal static class FamilyCombatRewardChecks
             "C-only GPU registration without N");
         Check(FamilyExecutionCoordinator.ResolveExecutionWindowSize(gpuRequest, gpuOnly.OrderedFamilies) ==
             FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize, "C GPU preserves normal root batch");
-        IFamilyInvocation Model(NeowSearchFilter filter)
+        FilterBodyDescription Model(NeowSearchFilter filter)
         {
-            Check(CombatRewardFamily.TryCreate(Query(filter), out var value), "C model registration");
+            var request = Query(filter);
+            Check(CombatRewardFamily.TryCreate(request.Model, FilterExecutionPreferences.From(request.RunOptions), out var value), "C model registration");
             return value!;
         }
         // Six unordered duplicate requirements need 64 subset states, not the old byte.
@@ -194,7 +216,7 @@ internal static class FamilyCombatRewardChecks
         var horizonFingerprints=new HashSet<string>();
         foreach(int h in new[]{4,5,6})
         {
-            Check(horizonFingerprints.Add(new CombatRewardReplay(Query(NeowSearchFilter.Empty with {CombatCardRewardSequence=new(h,CombatRewardSequenceOrderMode.Unordered,Enumerable.Repeat<ModelKey?>(null,h-1).Append(probabilityTarget).ToArray())})).Plan.Fingerprint),"Different unordered horizons have different physical fingerprints");
+            Check(horizonFingerprints.Add(new CombatRewardReplay((Query(NeowSearchFilter.Empty with {CombatCardRewardSequence=new(h,CombatRewardSequenceOrderMode.Unordered,Enumerable.Repeat<ModelKey?>(null,h-1).Append(probabilityTarget).ToArray())})).Model).Plan.Fingerprint),"Different unordered horizons have different physical fingerprints");
             double? P(CombatRewardSequenceOrderMode order) => CombatRewardProbabilityEstimator.Estimate(
                 SearchSelectivityInput.From(Query(NeowSearchFilter.Empty with {CombatCardRewardSequence=new(h,order,
                     Enumerable.Repeat((ModelKey?)probabilityTarget,h).ToArray())}))).Probability;
@@ -267,21 +289,21 @@ internal static class FamilyCombatRewardChecks
         foreach (var passed in new[] { new HashSet<string> { "W.World" }, new HashSet<string> { "A.AncientOption", "E.EventResult" } })
             Check(repeatedModel.ResolveSurvival(passed).SurvivalProbability == repeatedModel.Survival.SurvivalProbability,
                 "Unrelated passed W/A/E observations do not invalidate a covered physical C marginal");
-        var repeatedReplay = new CombatRewardReplay(Query(repeatedNeutralPrefix));
-        var oneReplay = new CombatRewardReplay(Query(oneExistential));
+        var repeatedReplay = new CombatRewardReplay((Query(repeatedNeutralPrefix)).Model);
+        var oneReplay = new CombatRewardReplay((Query(oneExistential)).Model);
         for (ulong root = 0; root < 1024; root++)
         {
             Check(repeatedReplay.Opening(root, 0).EquivalentTo(repeatedReplay.Opening(root, 1)), "Neutral prefix pickups have identical C arrival");
             Check(!repeatedReplay.Matches(root) || oneReplay.Matches(root), "Complete repeated matching is a subset of the weaker one-target window union");
         }
-        Check(Query(repeatedNeutralPrefix).CompiledSearch.NormalizedQuery.CombatCardRewards!.Count == 2,
+        Check(Query(repeatedNeutralPrefix).Model.CompiledSearch.NormalizedQuery.CombatCardRewards!.Count == 2,
             "Probability-only matcher projection preserves authored Exact Query");
         var oneDrawPrefix = repeatedNeutralPrefix with
         {
             RequiredBonesCombination = [BaseGameModelKeys.Relics.CursedPearl, BaseGameModelKeys.Relics.ArcaneScroll],
             CombatCardRewardSequence = new(1, CombatRewardSequenceOrderMode.Ordered, [new ModelKey("CARD", "BENCH_CHARACTER_0")])
         };
-        var oneDrawReplay = new CombatRewardReplay(Query(oneDrawPrefix));
+        var oneDrawReplay = new CombatRewardReplay((Query(oneDrawPrefix)).Model);
         Check(Model(oneDrawPrefix).Survival.IsResolved, "Single forced-Rare prefix has a fixed-draw C marginal");
         for (ulong root = 0; root < 1024; root++)
             Check(oneDrawReplay.Opening(root, 0).EquivalentTo(oneDrawReplay.Opening(root, 1)), "One-draw prefix commutes with zero-draw pickup");
@@ -292,29 +314,28 @@ internal static class FamilyCombatRewardChecks
             scroll = BaseGameModelKeys.Relics.ScrollBoxes, large = BaseGameModelKeys.Relics.LargeCapsule,
             small = BaseGameModelKeys.Relics.SmallCapsule;
         var anyFilter = basis with { NeowRoute = new(bones), RequiredBonesCombination = [scroll, arcane] };
-        var any = new CombatRewardReplay(Query(anyFilter));
+        var any = new CombatRewardReplay((Query(anyFilter)).Model);
         var anyModel = Model(anyFilter);
         Check(anyModel.Survival.IsResolved && anyModel.ExpectedFilteringCost!.ExpectedFilteringWorkUnitsPerInput > 0,
             "C authored prefix uses the fixed declared probability model and retains full cost");
         Check(anyModel.ResolveSurvival(new HashSet<string> { "E.EventResult" }).SurvivalProbability == anyModel.Survival.SurvivalProbability,
             "Unrelated Coverage does not modify the fixed C probability model");
-        var ab = new CombatRewardReplay(Query(anyFilter with { RequiredBonesAcquisitionOrder = [scroll, arcane] }));
-        var ba = new CombatRewardReplay(Query(anyFilter with { RequiredBonesAcquisitionOrder = [arcane, scroll] }));
-        var partial = new CombatRewardReplay(Query(basis with { NeowRoute = new(bones), RequiredBonesCombination = [large] }));
-        var direct = new CombatRewardReplay(Query(basis with { NeowRoute = new(large) }));
-        Check(any.RouteCount == 2 && ab.RouteCount == 1 && ba.RouteCount == 1 && partial.RouteCount == 1, "Authored route count");
+        var ab = new CombatRewardReplay((Query(anyFilter with { RequiredBonesAcquisitionOrder = [scroll, arcane] })).Model);
+        var ba = new CombatRewardReplay((Query(anyFilter with { RequiredBonesAcquisitionOrder = [arcane, scroll] })).Model);
+        var partial = new CombatRewardReplay((Query(basis with { NeowRoute = new(bones), RequiredBonesCombination = [large] })).Model);
+        var direct = new CombatRewardReplay((Query(basis with { NeowRoute = new(large) })).Model);
+        Check(any.RouteCount == 2 && ab.RouteCount == 1 && ba.RouteCount == 1 && partial.RouteCount == 2,
+            "Fixed authored pairs retain their order; a partial pair owns two actual opening alternatives");
+        CheckUnavailableObservedFixture(direct, "Solo direct Capsule");
+        CheckUnavailableObservedFixture(partial, "Solo partial Bones Capsule");
         int differing = 0, branchOnly = 0, retained = 0;
         for (ulong ordinal = 0; ordinal < (ulong)Math.Max(1024, count); ordinal++)
         {
             ulong root = Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(ordinal));
             var rng = new Beta110FastRng(unchecked(root + XxHash64.Hash("rewards"u8, 0)));
             Check(neutral.Opening(root, 0).Rewards.CaptureCheckpoint() == rng.CaptureCheckpoint(), "Neutral root RNG");
-            rng.NextFloat(); rng.NextFloat();
-            Check(direct.Opening(root, 0).Rewards.CaptureCheckpoint() == rng.CaptureCheckpoint(), "Direct Capsule consumption");
-            rng = new Beta110FastRng(unchecked(root + XxHash64.Hash("rewards"u8, 0)));
-            rng.ConsumeUnstableShuffle(authority.EffectAuthority!.BonesEligibleRelics!.Count(k => k != bones));
-            rng.NextFloat(); rng.NextFloat();
-            Check(partial.Opening(root, 0).Rewards.CaptureCheckpoint() == rng.CaptureCheckpoint(), "Partial neutral companion");
+            Check(direct.Matches(root) && partial.Matches(root),
+                "Missing actual Capsule/companion observations cannot become a synthetic prefix rejection");
             var a = ab.Opening(root, 0); var b = ba.Opening(root, 0);
             if (!a.EquivalentTo(b)) differing++;
             bool pa = ab.Matches(root), pb = ba.Matches(root), actual = any.Matches(root);
@@ -331,9 +352,9 @@ internal static class FamilyCombatRewardChecks
         // compare both acquisition continuations, irrespective of offer order.
         var bonesAuthority = authority.WithEffectAuthority(authority.EffectAuthority! with { BonesEligibleRelics = [scroll, arcane] });
         var bonesRequest = Query(anyFilter);
-        bonesRequest = bonesRequest with { CompiledSearch = bonesRequest.CompiledSearch with {
-            Context = context with { Authority = bonesAuthority } } };
-        var bonesReplay = new CombatRewardReplay(bonesRequest);
+        bonesRequest = bonesRequest with { Model = bonesRequest.Model with { CompiledSearch = bonesRequest.Model.CompiledSearch with {
+            Context = context with { Authority = bonesAuthority } } } };
+        var bonesReplay = new CombatRewardReplay(bonesRequest.Model);
         for (ulong ordinal = 0; ordinal < 64; ordinal++)
         {
             ulong root = Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(ordinal));
@@ -370,9 +391,9 @@ internal static class FamilyCombatRewardChecks
             Check(product.IsPriced && product.Probability is double mass && Math.Abs(mass - (authoredWbs ? 0 : .6)) < 1e-6,
                 "Capsule empty slots do not penalize P(C); authored grouped WBS still applies");
         }
-        var groupedC = new CombatRewardReplay(Query(groupedFilter));
+        var groupedC = new CombatRewardReplay((Query(groupedFilter)).Model);
         Check(groupedC.Plan.ExplicitContext.AdditionalCardRewardCount == 1, "Grouped PW impact missing");
-        var noPw = new CombatRewardReplay(Query(groupedFilter with { StructuredNeowEffects = [grouped with { OutputKeys = [new("RELIC", "ANCHOR")] }] }));
+        var noPw = new CombatRewardReplay((Query(groupedFilter with { StructuredNeowEffects = [grouped with { OutputKeys = [new("RELIC", "ANCHOR")] }] })).Model);
         Check(noPw.Plan.ExplicitContext.IsEmpty, "Grouped empty slots cannot guess PW");
         var noImpactFilter = groupedFilter with { StructuredNeowEffects = [grouped with { OutputKeys = [new("RELIC", "ANCHOR")] }] };
         double noImpactWork = Model(noImpactFilter).AnalyticalCost.WorkUnitsPerInput;
@@ -386,32 +407,37 @@ internal static class FamilyCombatRewardChecks
         {
             var impactFilter = groupedFilter with { StructuredNeowEffects = [grouped with { OutputKeys = targets }] };
             var impactRequest = Query(impactFilter);
-            var impactReplay = new CombatRewardReplay(impactRequest);
+            var impactReplay = new CombatRewardReplay(impactRequest.Model);
             CheckPreparedCardStage(impactReplay, "Authored impacts: " + string.Join(',', targets.Select(t => t.Entry)));
             Check(CombatRewardSieveProbability.FixedAuthoredPrefixDrawCount(
-                impactRequest, impactReplay.Plan) == 3, "Known reward impacts do not change Capsule prefix consumption");
-            var survival = ((CombatRewardFamily)Model(impactFilter)).ResolveSurvival(new HashSet<string> { "N.Neow", "R.Relic" });
-            Check(survival.SurvivalProbability is double probability && Math.Abs(probability - 4d / 9d) < 1e-10,
-                "Known card/potion impacts preserve gold marginal after passed NR");
+                impactRequest.Model, impactReplay.Plan) == 3, "Known reward impacts do not change Capsule prefix consumption");
+            var survival = Model(impactFilter).ResolveSurvival(new HashSet<string> { "N.Neow", "R.Relic" });
+            var declared = CombatRewardProbabilityEstimator.EstimateOptimizedConditions(SearchSelectivityInput.From(impactRequest));
+            Check(declared.Probability is double probability && Math.Abs(probability - 4d / 9d) < 1e-10,
+                "Declared card/potion impacts preserve their authored gold marginal");
+            Check(impactReplay.ConservativelyKeeps && survival.SurvivalProbability == 1,
+                "Missing real bag keeps the actual physical envelope distinct from the declared gold marginal");
         }
         var wbsNoDrop = groupedFilter with { NormalCombatRewardConditions = [],
             StructuredNeowEffects = [grouped with { OutputKeys = [new("RELIC", "WHITE_BEAST_STATUE")] }],
             CombatPotionRewardSequence = new(1, CombatRewardSequenceOrderMode.Ordered, [noDrop]) };
-        Check(((CombatRewardFamily)Model(wbsNoDrop)).ResolveSurvival(new HashSet<string> { "N.Neow", "R.Relic" })
-            .SurvivalProbability == 0, "WBS forced potion makes no-drop impossible in C model");
+        Check(CombatRewardProbabilityEstimator.EstimateOptimizedConditions(SearchSelectivityInput.From(Query(wbsNoDrop)))
+            .Probability == 0, "Authored WBS makes no-drop impossible in its declared probability model");
+        Check(Model(wbsNoDrop).ResolveSurvival(new HashSet<string> { "N.Neow", "R.Relic" })
+            .SurvivalProbability == 1, "Declared impossibility does not invent missing bag/route observation authority");
         Check(!CombatRewardSieveProbability.HasModeledRewardImpact(
             groupedC.Plan.ExplicitContext with { InfluenceFlags = Beta110CombatRewardInfluenceFlags.UnknownRewardsContinuation }),
             "Unknown continuation must not acquire a modeled impact quote");
-        var dedup = new CombatRewardReplay(Query(groupedFilter with { StructuredNeowEffects = [grouped,
-            grouped with { SourceRelicKey = large, Kind = NeowStructuredConditionKind.ExactSingle }] }));
+        var dedup = new CombatRewardReplay((Query(groupedFilter with { StructuredNeowEffects = [grouped,
+            grouped with { SourceRelicKey = large, Kind = NeowStructuredConditionKind.ExactSingle }] })).Model);
         Check(dedup.Plan.ExplicitContext.AdditionalCardRewardCount == 1 && dedup.Plan.ExplicitContext.SourceRelicKeys.Length == 1,
             "Grouped/source-specific impact dedup");
-        var future = new CombatRewardReplay(Query(basis with { RelicSequenceConditions = [new(RelicSequenceKind.Rare,
-            SearchSequenceRangeMode.ExactSlot, 1, new([pw], [], []))] }));
+        var future = new CombatRewardReplay((Query(basis with { RelicSequenceConditions = [new(RelicSequenceKind.Rare,
+            SearchSequenceRangeMode.ExactSlot, 1, new([pw], [], []))] })).Model);
         Check(future.Plan.ExplicitContext.IsEmpty, "Future relic sequence target is not owned");
         foreach (string entry in OpeningCombatRewardImpactAdapterRegistry.SupportedRelicEntries)
         {
-            var impact = new CombatRewardReplay(Query(groupedFilter with { StructuredNeowEffects = [grouped with { OutputKeys = [new("RELIC", entry)] }] }));
+            var impact = new CombatRewardReplay((Query(groupedFilter with { StructuredNeowEffects = [grouped with { OutputKeys = [new("RELIC", entry)] }] })).Model);
             Check(impact.Plan.ExplicitContext.SourceRelicKeys.Single().Entry == entry, "Registered explicit impact " + entry);
             _ = impact.Matches(123456);
         }
@@ -435,9 +461,8 @@ internal static class FamilyCombatRewardChecks
             // empty slots. Use it for RNG-prefix parity, not strict world recall.
             if (source == large)
             {
-                var checkpoint = direct.Opening(root, 0).Rewards.CaptureCheckpoint();
-                var core = projection.OpeningRewardContinuations!.Routes.Single().RewardsRngState!;
-                Check(checkpoint.S0 == core.S0 && checkpoint.S1 == core.S1 && checkpoint.S2 == core.S2 && checkpoint.S3 == core.S3, "Core Capsule arrival parity");
+                Check(direct.ConservativelyKeeps && direct.Matches(root),
+                    "Seed-bound legacy Core Capsule fixture does not supply the current runtime bag authority");
                 continue;
             }
             var sixPrediction = NormalCombatRewardSequencePredictor.PredictFromRootHash(Beta111Profile.Instance, root,
@@ -453,18 +478,18 @@ internal static class FamilyCombatRewardChecks
                 var targets = six.Take(horizon).Select(b => (ModelKey?)b.Cards[0].CardKey).ToArray();
                 if (order6 == CombatRewardSequenceOrderMode.Unordered) Array.Reverse(targets);
                 var q6 = prefix with { CombatCardRewardSequence = new(horizon, order6, targets) };
-                var rq6 = Query(q6); var replay6 = new CombatRewardReplay(rq6);
+                var rq6 = Query(q6); var replay6 = new CombatRewardReplay(rq6.Model);
 
                 Check(replay6.Plan.MaximumBattleOrdinal == horizon, "C6 Fast actually covers requested horizon");
                 Check(replay6.Matches(root), "C6 source positive + unordered assignment " + source + horizon + order6);
                 // A late-only target must not silently reduce to the first three battles.
                 targets = new ModelKey?[horizon]; targets[^1] = six[horizon-1].Cards[0].CardKey;
-                Check(new CombatRewardReplay(Query(prefix with { CombatCardRewardSequence = new(horizon,
-                    CombatRewardSequenceOrderMode.Ordered, targets) })).Matches(root), "C6 late target");
+                Check(new CombatRewardReplay((Query(prefix with { CombatCardRewardSequence = new(horizon,
+                    CombatRewardSequenceOrderMode.Ordered, targets) })).Model).Matches(root), "C6 late target");
                 targets[^1] = authority.EffectAuthority.CharacterRewardPool!.First(c =>
                     !six[horizon-1].Cards.Any(actual => actual.CardKey == c.CardKey)).CardKey;
-                Check(!new CombatRewardReplay(Query(prefix with { CombatCardRewardSequence = new(horizon,
-                    CombatRewardSequenceOrderMode.Ordered, targets) })).Matches(root), "C6 late rejection");
+                Check(!new CombatRewardReplay((Query(prefix with { CombatCardRewardSequence = new(horizon,
+                    CombatRewardSequenceOrderMode.Ordered, targets) })).Model).Matches(root), "C6 late rejection");
             }
             Check(battles.Count == 3, "Core predictor failed: " + source + ":" + prediction.IssueCode + ":" +
                 string.Join('|', prediction.Routes.Select(r => r.IssueCode)));
@@ -477,16 +502,16 @@ internal static class FamilyCombatRewardChecks
                     CombatPotionRewardSequence = new(3, order, battles.Select(b => new CombatPotionRewardSlotSearchCondition(
                         b.Potion.Generated ? CombatPotionSlotRequirement.DropSpecific : CombatPotionSlotRequirement.NoDrop, b.Potion.PotionKey)).ToArray()) };
                 var request = Query(typed);
-                Check(new CombatRewardReplay(request).Matches(root), "Core Card/Potion positive " + source + order + slot);
+                Check(new CombatRewardReplay(request.Model).Matches(root), "Core Card/Potion positive " + source + order + slot);
                 coreCases++;
                 // Neutral slots and DropAny exercise the same already-advanced stream.
                 var potions = typed.CombatPotionRewardSequence!.Slots.Select(p => p.Requirement == CombatPotionSlotRequirement.DropSpecific
                     ? new CombatPotionRewardSlotSearchCondition(CombatPotionSlotRequirement.DropAny, null) : p).ToArray();
                 potions[(slot + 1) % 3] = new(CombatPotionSlotRequirement.Neutral, null);
-                Check(new CombatRewardReplay(Query(typed with { CombatPotionRewardSequence = new(3, order, potions) })).Matches(root), "DropAny/neutral");
+                Check(new CombatRewardReplay((Query(typed with { CombatPotionRewardSequence = new(3, order, potions) })).Model).Matches(root), "DropAny/neutral");
                 // Three copies require three different battle witnesses.
                 if (order == CombatRewardSequenceOrderMode.Unordered)
-                    Check(new CombatRewardReplay(Query(prefix with { CombatCardRewardSequence = new(3, order, [target, target, target]) })).Matches(root) ==
+                    Check(new CombatRewardReplay((Query(prefix with { CombatCardRewardSequence = new(3, order, [target, target, target]) })).Model).Matches(root) ==
                         battles.All(b => (b.CardRewards.Count > 0 ? b.CardRewards.SelectMany(r => r.Cards) : b.Cards).Any(c => c.CardKey == target)),
                         "Complete duplicate matching agrees with all three Core battle witnesses");
             }
@@ -494,18 +519,18 @@ internal static class FamilyCombatRewardChecks
             {
                 var typed = prefix with { CombatCardRewardSequence = new(length, CombatRewardSequenceOrderMode.Ordered,
                     battles.Take(length).Select(b => (ModelKey?)b.Cards[0].CardKey).ToArray()) };
-                Check(new CombatRewardReplay(Query(typed)).Matches(root), "One/two combat progression");
+                Check(new CombatRewardReplay((Query(typed)).Model).Matches(root), "One/two combat progression");
             }
-            Check(new CombatRewardReplay(Query(prefix with {
+            Check(new CombatRewardReplay((Query(prefix with {
                 CombatCardRewardSequence = new(3, CombatRewardSequenceOrderMode.Unordered,
                     battles.Reverse().Select(b => (ModelKey?)b.Cards[0].CardKey).ToArray()),
                 CombatPotionRewardSequence = new(3, CombatRewardSequenceOrderMode.Unordered,
                     battles.Select(b => new CombatPotionRewardSlotSearchCondition(b.Potion.Generated ?
                         CombatPotionSlotRequirement.DropSpecific : CombatPotionSlotRequirement.NoDrop, b.Potion.PotionKey)).ToArray())
-            })).Matches(root), "Card/Potion permutations remain independent");
+            })).Model).Matches(root), "Card/Potion permutations remain independent");
             var incorrect = prefix with { NormalCombatRewardConditions = [new(3, empty, NormalCombatPotionRequirement.Any, empty,
                 battles[2].Gold + 1, battles[2].Gold + 1)] };
-            Check(!new CombatRewardReplay(Query(incorrect)).Matches(root), "Core negative third battle gold");
+            Check(!new CombatRewardReplay((Query(incorrect)).Model).Matches(root), "Core negative third battle gold");
         }
 
         var requestC = Query(basis);
@@ -513,48 +538,55 @@ internal static class FamilyCombatRewardChecks
         Check(mixed.Stages.Any(s => s.Coverage.Contains("N.Neow")) && mixed.Stages.Any(s => s.Coverage.Contains("C.CombatReward")), "N+C registration");
         Check(FamilyExecutionCoordinator.ResolveExecutionWindowSize(requestC, mixed.OrderedFamilies) ==
             FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize, "C must not underfill mixed GPU batch");
-        Check(!CombatRewardFamily.TryCreate(Query(NeowSearchFilter.Empty with {
+        Check(!CombatRewardFamily.TryCreate((Query(NeowSearchFilter.Empty with {
             CombatCardRewardSequence = new(3, CombatRewardSequenceOrderMode.Ordered, [null, null, null]),
             CombatPotionRewardSequence = new(3, CombatRewardSequenceOrderMode.Ordered,
-                Enumerable.Repeat(new CombatPotionRewardSlotSearchCondition(CombatPotionSlotRequirement.Neutral, null), 3).ToArray()) }), out _), "All-empty typed slots");
-        CombatRewardFamily.TryCreate(requestC, out var family);
-        family = family!.CpuRealizations.First();
+                Enumerable.Repeat(new CombatPotionRewardSlotSearchCondition(CombatPotionSlotRequirement.Neutral, null), 3).ToArray()) })).Model,FilterExecutionPreferences.From((Query(NeowSearchFilter.Empty with {
+            CombatCardRewardSequence = new(3, CombatRewardSequenceOrderMode.Ordered, [null, null, null]),
+            CombatPotionRewardSequence = new(3, CombatRewardSequenceOrderMode.Ordered,
+                Enumerable.Repeat(new CombatPotionRewardSlotSearchCondition(CombatPotionSlotRequirement.Neutral, null), 3).ToArray()) })).RunOptions), out _), "All-empty typed slots");
+        CombatRewardFamily.TryCreate(requestC.Model,FilterExecutionPreferences.From(requestC.RunOptions), out var family);
+        family = family!.CpuAlternatives.First();
         var batch = new SearchBatch(39303, 257);
         var input = FamilyCandidateSet.FromSortedAbi1(batch, [0, 2, 9, 55, 128, 256]);
-        var execution = new FamilyExecutionContext(false);
-        var output = family!.InvokeAsync(execution, new(batch, requestC), input, default).GetAwaiter().GetResult();
+        var execution = new FilterRuntimeServices(false);
+        var familyExecution = family.CreateExecution!(family, execution);
+        var output = familyExecution.FilterAsync(execution, input, default).GetAwaiter().GetResult();
         var expected = input.EnumerateLogicalOrdinals().Where(i => neutral.Matches(
             Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(batch.GlobalCandidate(i)))));
         Check(output.EnumerateLogicalOrdinals().SequenceEqual(expected), "Compact nonzero batch ABI1");
         var denseBatch = new SearchBatch(39303, 8201);
         var denseInput = FamilyCandidateSet.Dense(denseBatch);
-        var denseOutput = family.InvokeAsync(execution, new(denseBatch, requestC), denseInput, default).GetAwaiter().GetResult();
+        var denseOutput = familyExecution.FilterAsync(execution, denseInput, default).GetAwaiter().GetResult();
         Check(denseOutput.EnumerateLogicalOrdinals().SequenceEqual(denseInput.EnumerateLogicalOrdinals().Where(i => neutral.Matches(
             Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(denseBatch.GlobalCandidate(i)))))), "Dense CPU chunk boundary ABI1");
         using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
-        Throws<OperationCanceledException>(() => family.InvokeAsync(execution, new(batch, requestC), input, cancelled.Token).GetAwaiter().GetResult(), "Cancelled C must throw");
-        var cpu = new FamilyCpuExecution(requestC, "C.CombatReward", "test");
+        Throws<OperationCanceledException>(() => familyExecution.FilterAsync(execution, input, cancelled.Token).GetAwaiter().GetResult(), "Cancelled C must throw");
         var injected = new InvalidOperationException("injected");
+        var cpu = new CpuFilterExecution(family with { PhysicalRevision = "test" }, Beta111Profile.Instance,
+            _ => throw injected, numericalRoots: false);
         bool retainedFault = false;
-        try { cpu.Execute(new(batch, requestC), input, default, _ => throw injected); }
+        try { cpu.FilterAsync(execution, input, default).GetAwaiter().GetResult(); }
         catch (FamilyCpuMatchException error)
         {
             retainedFault = ReferenceEquals(error.InnerException, injected) && error.FamilyId == "C.CombatReward" &&
                 error.Batch == batch && error.LogicalOrdinal == 0 && error.GlobalOrdinal == batch.BatchBase;
         }
         Check(retainedFault, "Matcher failure retains original cause and candidate identity without catch-all Keep");
-        Throws<InvalidOperationException>(() => cpu.Execute(new(batch, requestC), input, default, _ => true), "Faulted invocation cannot Keep");
+        Throws<InvalidOperationException>(() => cpu.FilterAsync(execution, input, default).GetAwaiter().GetResult(), "Faulted invocation cannot Keep");
         Throws<InvalidOperationException>(() => Beta110CombatRewardFastStage.EvaluateForFamily(neutral.Opening(1, 0),
             neutral.Plan, neutral.Catalog with { CombatRewardCardPool = new([], [], []) }, 10), "Empty numeric pool must fail");
         var unverified = neutral.Plan with { CardPoolAuthorityExact = false, PotionPoolAuthorityExact = false };
         Check(Beta110CombatRewardFastStage.EvaluateForFamily(neutral.Opening(1, 0), unverified, neutral.Catalog, 10).Status !=
             Beta110CombatRewardRouteProjectionStatus.ConservativeKeep, "Verification flags cannot Gate computation");
-        family.DisposeAsync(execution).GetAwaiter().GetResult();
+        familyExecution.DisposeAsync(execution).GetAwaiter().GetResult();
+        cpu.DisposeAsync(execution).GetAwaiter().GetResult();
         execution.DisposeAsync().GetAwaiter().GetResult();
         if (exportGpu) ExportGpu(Query, terminalCardFixtures);
         foreach(var replay in new[]{neutral,any,ab,ba,partial,direct,groupedC,noPw})
         {
             CheckPreparedCardStage(replay, "Existing opening/route fixture");
+            if (replay.ConservativelyKeeps) continue; // retention/cause asserted by CheckPreparedCardStage
             if(replay.Plan.Predicates.Any(p=>p.IsAnyBattle || p.HasCardPredicate)) continue;
             for(ulong root=0;root<1024;root++)
             for(int route=0;route<replay.RouteCount;route++)
@@ -570,8 +602,8 @@ internal static class FamilyCombatRewardChecks
         foreach(string id in new[]{"C-specific1","C-specific2","C-specific3","C-late3","C-drop3","C-nodrop3"})
         {
             var w=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>($"tools/ProductionSearchHost/Corpus/cpu-numerical-closure-v1/{id}.json");
-            var r=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(w.Query,captured.Context),w.Options).Plan!;
-            var replay=new CombatRewardReplay(r);
+            var r=SearchPreparationCompiler.Compile(SearchCompiler.Compile(w.Query,captured.Context),w.Options).Plan!;
+            var replay=new CombatRewardReplay(r.Model);
             CheckPreparedCardStage(replay, id);
             Check(replay.CanUsePotionPrefix,"C fixed potion prefix admitted");
             for(ulong root=0;root<65536;root++) Check(replay.MatchesPotionPrefix(root)==replay.Matches(root),"C prefix population parity");
@@ -628,6 +660,11 @@ internal static class FamilyCombatRewardChecks
 
     private static void CheckPreparedCardStage(CombatRewardReplay replay, string label)
     {
+        if (replay.ConservativelyKeeps)
+        {
+            CheckUnavailableObservedFixture(replay, label);
+            return;
+        }
         var prepared = new CombatRewardCardSelection(replay.Catalog);
         for (ulong root = 0; root < 64; root++)
         for (int route = 0; route < replay.RouteCount; route++)
@@ -645,9 +682,19 @@ internal static class FamilyCombatRewardChecks
         }
     }
 
-    private static ExactSearchExecutionRequest ForPartySlot(ExactSearchExecutionRequest request, int slot, ModelKey? uncommonReplacement = null, IReadOnlyList<NeowEffectRelicSnapshot>? exactBagPool = null)
+    private static void CheckUnavailableObservedFixture(CombatRewardReplay replay, string label)
     {
-        var effects = request.Authority.EffectAuthority!;
+        Check(replay.ConservativelyKeeps && replay.ConservativeOpeningReason ==
+            "ObservedOpeningBag:UnsupportedOrIncompleteRelicRuntimeAuthority", "Retained fixture has its actual missing-bag cause: " + label);
+        Check(!replay.UsesObservedOpening, "Unavailable actual opening is never claimed as numeric parity: " + label);
+        for (ulong root = 0; root < 16; root++)
+            Check(replay.Matches(root) && replay.MatchesReference(root), "Unobserved fixture retains roots for Exact: " + label);
+        Throws<InvalidOperationException>(() => replay.Opening(0, 0), "Unavailable opening cannot manufacture a checkpoint: " + label);
+    }
+
+    private static PreparedSearch ForPartySlot(PreparedSearch request, int slot, ModelKey? uncommonReplacement = null, IReadOnlyList<NeowEffectRelicSnapshot>? exactBagPool = null)
+    {
+        var effects = request.Model.Authority.EffectAuthority!;
         effects = effects with
         {
             CharacterRewardPool = effects.CharacterRewardPool!.Select((c, i) => c with
@@ -676,7 +723,7 @@ internal static class FamilyCombatRewardChecks
         }
         var playerBuckets = Buckets(shared.Concat(effects.CharacterRelicPoolSource!).Where(r =>
             r.Rarity is EffectRelicRarity.Common or EffectRelicRarity.Uncommon or EffectRelicRarity.Rare or EffectRelicRarity.Shop).DistinctBy(r => r.RelicKey));
-        var world = request.Authority.WorldAuthority!;
+        var world = request.Model.Authority.WorldAuthority!;
         world = world with { Beta109Generation = world.Beta109Generation! with
         {
             GameMode = WorldGameMode.Multiplayer, IsMultiplayer = true, PlayerCount = 4,
@@ -684,18 +731,99 @@ internal static class FamilyCombatRewardChecks
             // explicitly below; the generic world fixture does not assert it.
             RelicShopEligibilityAuthorityExact = true,
             PersonalPlayerSlot = slot, PartyBossDiscoveryExact = true,
-            LobbyPlayers = Enumerable.Range(0, 4).Select(i => new Beta109LobbyPlayerSnapshot(i, request.CharacterKey, false, true)).ToArray(),
+            LobbyPlayers = Enumerable.Range(0, 4).Select(i => new Beta109LobbyPlayerSnapshot(i, request.Model.CharacterKey, false, true)).ToArray(),
             SharedRelicBuckets = Buckets(shared), PlayerRelicBuckets = playerBuckets,
             PartyRelicBuckets = Enumerable.Repeat<IReadOnlyList<Beta109RelicBucketSnapshot>>(playerBuckets, 4).ToArray()
         } };
-        var authority = Beta110FastSearchFixtureAuthority.CreateBeta111(request.CharacterKey, request.Ascension, slot, 4)
+        var authority = Beta110FastSearchFixtureAuthority.CreateBeta111(request.Model.CharacterKey, request.Model.Ascension, slot, 4)
             .WithEffectAuthority(effects)
             .WithWorldAuthority(world);
-        return request with { CompiledSearch = request.CompiledSearch with {
-            Context = request.CompiledSearch.Context with { Authority = authority } } };
+        return request with { Model = request.Model with { CompiledSearch = request.Model.CompiledSearch with {
+            Context = request.Model.CompiledSearch.Context with { Authority = authority } } } };
     }
 
-    private static void CheckPartyDistinctAssignments(Func<NeowSearchFilter, ExactSearchExecutionRequest> query)
+    private static void CheckRealNeutralWitness(Func<NeowSearchFilter, PreparedSearch> query)
+    {
+        var impossible = NeowSearchFilter.Empty with { NormalCombatRewardConditions =
+            [new(1, ModelKeySetFilter.Empty, NormalCombatPotionRequirement.Any, ModelKeySetFilter.Empty, null, 0)] };
+        var source = query(impossible);
+        // The other fixtures deliberately exercise the numeric donor with no
+        // product route policy. This group uses the real prepared no-N contract.
+        SearchModel Product(SearchModel model) => model with { CombatRewardRoutePolicy = new(
+            CombatRewardFastRoutePolicy.UnpinnedAssumeUnperturbed, CombatRewardExactRoutePolicy.UnpinnedVerifyNeutralRealRoute) };
+        int soloRejected = 0, soloRetained = 0, partyRejected = 0, partyRetained = 0;
+        foreach (int slot in new[] { -1, 0, 1, 3 })
+        {
+            var model = Product((slot < 0 ? source : ForPartySlot(source, slot)).Model);
+            var replay = new CombatRewardReplay(model);
+            var proof = replay.NeutralWitness ?? throw new Exception("Real no-N policy needs a neutral witness proof");
+            Check(proof.Available && proof.NeutralMask != 0, "Captured direct producer/identity foundation is available");
+            Check(proof.RequiresAllOffers == (slot >= 0), "Party no-N preserves per-choice unresolved scope");
+            Check(!proof.AllowsRejection(Beta110FastRelicCatalog.ArcaneScroll, Beta110FastRelicCatalog.SmallCapsule,
+                Beta110FastRelicCatalog.NeowsBones), "No pristine synthetic route substitutes for a real neutral offer");
+            Check(proof.AllowsRejection(Beta110FastRelicCatalog.GoldenPearl, Beta110FastRelicCatalog.NutritiousOyster,
+                Beta110FastRelicCatalog.CursedPearl), "Independent known neutral direct opening permits rejection");
+            Check(proof.AllowsRejection(Beta110FastRelicCatalog.GoldenPearl, Beta110FastRelicCatalog.ArcaneScroll,
+                Beta110FastRelicCatalog.CursedPearl) == (slot < 0), "One neutral offer cannot erase a party choice Unknown");
+            foreach (ulong ordinal in new[] { 0UL, 16UL, 128UL })
+            {
+                ulong root = Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(ordinal));
+                for (byte id = 0; id < 30; id++)
+                {
+                    if ((proof.NeutralMask & (1u << id)) == 0) continue;
+                    var projected = new NeowEffectProjectionEngine(Beta111Profile.Instance, "neutral-witness-source",
+                        root, model.Authority).Project(Beta110FastRelicCatalog.KeyOf(id));
+                    Check(projected.OpeningRewardContinuations?.Routes is { Count: 1 } routes &&
+                        OpeningRewardNeutralityClassifier.Classify(routes[0]) == OpeningRewardNeutrality.ProvablyNeutral,
+                        "Every admitted direct producer really publishes an exact neutral continuation");
+                }
+            }
+            for (ulong ordinal = 0; ordinal < 129; ordinal++)
+            {
+                ulong root = Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(ordinal));
+                var real = ModernNeowIdentityPredictor.PredictModernCore(root, model.Authority, Beta111Profile.Instance,
+                    model.Authority.IsBeta111NeowIdentityAuthorityExact);
+                Check(real.ExactAuthority && !real.UnknownEligibilityAffectedPool, "Core real offer identity is exact");
+                bool Trusted(ModelKey key) => CombatRewardNeutralWitness.HasUnconditionalNeutralProducer(model.ProfileId, key);
+                bool expected = slot < 0 ? real.RelicKeys.Any(Trusted) : real.RelicKeys.All(Trusted);
+                Check(proof.AllowsRejection(root) == expected, "Numeric witness binds the actual Core offered identities and slot");
+                Check(replay.Matches(root) == !expected, "Only a proved real opening can reject the impossible reward condition");
+                if (slot < 0) { if (expected) soloRejected++; else soloRetained++; }
+                else { if (expected) partyRejected++; else partyRetained++; }
+            }
+            var gpu = CombatRewardGpuPlan.TryCreate(model, replay, out var issue) ?? throw new Exception(issue);
+            Check(gpu.UsesNeutralWitness && gpu.Meta[51] == (slot < 0 ? 1u : 2u) &&
+                gpu.Meta[52] == proof.NeutralMask && gpu.Revision(false).Contains(CombatRewardNeutralWitness.Revision),
+                "GPU binds the same immutable witness mask, quantifier and physical revision");
+            Check(gpu.ShaderSource().Contains("bool c_numeric_keep_root(uint64_t root)") &&
+                !CombatRewardNeutralWitness.HasUnconditionalNeutralProducer(model.ProfileId, BaseGameModelKeys.Relics.NewLeaf),
+                "Only the guarded body injects proof code; deck-dependent neutral producers are not assumed available");
+            var missingAuthority = model.Authority.WithEffectAuthority(model.Authority.EffectAuthority! with {
+                AuthoritySource = NeowEffectAuthoritySource.Missing });
+            var missing = new CombatRewardNeutralWitness(model with { CompiledSearch = model.CompiledSearch with {
+                Context = model.CompiledSearch.Context with { Authority = missingAuthority } } }, replay.Catalog);
+            Check(!missing.Available && missing.Issue == "RealNeutralOpeningEffectFoundationUnavailable" &&
+                !missing.AllowsRejection(0), "Missing producer foundation retains with its actual cause");
+            var uncertainAuthority = model.Authority.WithEffectAuthority(model.Authority.EffectAuthority! with {
+                SourceAuthority = SourceAuthority.ModdedRuntimeBestEffort });
+            var uncertain = new CombatRewardNeutralWitness(model with { CompiledSearch = model.CompiledSearch with {
+                Context = model.CompiledSearch.Context with { Authority = uncertainAuthority } } }, replay.Catalog);
+            Check(!uncertain.Available && uncertain.Issue == "RealNeutralOpeningEffectAuthorityNotExact",
+                "Model admission does not substitute for neutral-classifier exact continuation authority");
+        }
+        Check(soloRejected > 0 && soloRetained > 0 && partyRejected > 0 && partyRetained > 0,
+            "Real witness guard preserves useful rejection and genuinely unverified roots");
+        var pinned = query(impossible with { NeowRoute = new(BaseGameModelKeys.Relics.GoldenPearl) }).Model;
+        pinned = pinned with { CombatRewardRoutePolicy = new(CombatRewardFastRoutePolicy.UnpinnedAssumeUnperturbed,
+            CombatRewardExactRoutePolicy.PinnedRealRoute) };
+        Check(!new CombatRewardReplay(pinned).UsesNeutralWitness, "Pinned numerical replay is unchanged by the no-N guard");
+        var pinnedReplay = new CombatRewardReplay(pinned);
+        var pinnedGpu = CombatRewardGpuPlan.TryCreate(pinned, pinnedReplay, out var pinnedIssue) ?? throw new Exception(pinnedIssue);
+        Check(!pinnedGpu.UsesNeutralWitness && pinnedGpu.Meta[51] == 0 && pinnedGpu.Meta[52] == 0 &&
+            !pinnedGpu.ShaderSource().Contains("c_numeric_keep_root"), "Pinned shader has no reachable or disabled witness wrapper");
+    }
+
+    private static void CheckPartyDistinctAssignments(Func<NeowSearchFilter, PreparedSearch> query)
     {
         ModelKey card = new("CARD", "BENCH_CHARACTER_0");
         var noDrop = new CombatPotionRewardSlotSearchCondition(CombatPotionSlotRequirement.NoDrop, null);
@@ -708,17 +836,17 @@ internal static class FamilyCombatRewardChecks
                 CombatRewardSequenceOrderMode.Unordered, Enumerable.Repeat((ModelKey?)card, window).ToArray()),
                 CombatPotionRewardSequence = new(6, CombatRewardSequenceOrderMode.Ordered,
                     [neutral, neutral, neutral, neutral, neutral, noDrop]) };
-            var unordered = new CombatRewardReplay(ForPartySlot(query(cards), 3));
-            var ordered = new CombatRewardReplay(ForPartySlot(query(cards with { CombatCardRewardSequence =
-                cards.CombatCardRewardSequence! with { OrderMode = CombatRewardSequenceOrderMode.Ordered } }), 3));
+            var unordered = new CombatRewardReplay((ForPartySlot(query(cards), 3)).Model);
+            var ordered = new CombatRewardReplay((ForPartySlot(query(cards with { CombatCardRewardSequence =
+                cards.CombatCardRewardSequence! with { OrderMode = CombatRewardSequenceOrderMode.Ordered } }), 3)).Model);
             Check(unordered.Plan.CardAssignmentWindow == window && unordered.Plan.CardAssignmentTargets.Length == window,
                 "MP card assignment preserves its own window and duplicate targets");
             var potions = NeowSearchFilter.Empty with { CombatPotionRewardSequence = new(window,
                 CombatRewardSequenceOrderMode.Unordered, Enumerable.Repeat(noDrop, window).ToArray()),
                 CombatCardRewardSequence = new(6, CombatRewardSequenceOrderMode.Ordered, [null, null, null, null, null, card]) };
-            var potionUnordered = new CombatRewardReplay(ForPartySlot(query(potions), 3));
-            var potionOrdered = new CombatRewardReplay(ForPartySlot(query(potions with { CombatPotionRewardSequence =
-                potions.CombatPotionRewardSequence! with { OrderMode = CombatRewardSequenceOrderMode.Ordered } }), 3));
+            var potionUnordered = new CombatRewardReplay((ForPartySlot(query(potions), 3)).Model);
+            var potionOrdered = new CombatRewardReplay((ForPartySlot(query(potions with { CombatPotionRewardSequence =
+                potions.CombatPotionRewardSequence! with { OrderMode = CombatRewardSequenceOrderMode.Ordered } }), 3)).Model);
             for (ulong root = 0; root < 64; root++)
             {
                 Check(unordered.Matches(root) == ordered.Matches(root), "MP duplicate cards require distinct battles inside the card window");
@@ -727,7 +855,7 @@ internal static class FamilyCombatRewardChecks
         }
     }
 
-    private static void CheckProbabilityAssignmentWindows(Func<NeowSearchFilter, ExactSearchExecutionRequest> query)
+    private static void CheckProbabilityAssignmentWindows(Func<NeowSearchFilter, PreparedSearch> query)
     {
         int before = _checks;
         var noDrop = new CombatPotionRewardSlotSearchCondition(CombatPotionSlotRequirement.NoDrop, null);
@@ -735,7 +863,7 @@ internal static class FamilyCombatRewardChecks
         var neutral = new CombatPotionRewardSlotSearchCondition(CombatPotionSlotRequirement.Neutral, null);
         foreach (int slot in new[] { -1, 0, 3 })
         {
-            ExactSearchExecutionRequest Request(NeowSearchFilter filter) => slot < 0 ? query(filter) : ForPartySlot(query(filter), slot);
+            PreparedSearch Request(NeowSearchFilter filter) => slot < 0 ? query(filter) : ForPartySlot(query(filter), slot);
             double P(NeowSearchFilter filter, string label)
             {
                 var result = CombatRewardProbabilityEstimator.Estimate(SearchSelectivityInput.From(Request(filter)));
@@ -748,7 +876,7 @@ internal static class FamilyCombatRewardChecks
             void Near(double actual, double expected, string label, double tolerance = 1e-12) =>
                 Check(Math.Abs(actual - expected) < tolerance,
                     $"C assignment oracle slot={slot};{label};actual={actual:G17};expected={expected:G17}");
-            var pool = Request(NeowSearchFilter.Empty).Authority.EffectAuthority!.CharacterRewardPool!;
+            var pool = Request(NeowSearchFilter.Empty).Model.Authority.EffectAuthority!.CharacterRewardPool!;
             ModelKey a = pool[0].CardKey, b = pool[1].CardKey;
             NeowSearchFilter Cards(int window, CombatRewardSequenceOrderMode order, params ModelKey?[] targets) =>
                 NeowSearchFilter.Empty with { CombatCardRewardSequence = new(window, order, targets) };
@@ -882,7 +1010,7 @@ internal static class FamilyCombatRewardChecks
         }
     }
 
-    private static void CheckDeclaredRewardProbabilityPolicy(Func<NeowSearchFilter, ExactSearchExecutionRequest> query)
+    private static void CheckDeclaredRewardProbabilityPolicy(Func<NeowSearchFilter, PreparedSearch> query)
     {
         int before = _checks;
         var watch = System.Diagnostics.Stopwatch.StartNew();
@@ -896,7 +1024,7 @@ internal static class FamilyCombatRewardChecks
             NeowStructuredEffectScope.NestedRelics, NeowStructuredOutputKind.Relic, targets);
         foreach (int slot in new[] { -1, 0, 3 })
         {
-            ExactSearchExecutionRequest Request(NeowSearchFilter filter) => slot < 0 ? query(filter) : ForPartySlot(query(filter), slot);
+            PreparedSearch Request(NeowSearchFilter filter) => slot < 0 ? query(filter) : ForPartySlot(query(filter), slot);
             SearchSelectivityEstimate Estimate(NeowSearchFilter filter) => CombatRewardProbabilityEstimator.Estimate(SearchSelectivityInput.From(Request(filter)));
             void Probability(NeowSearchFilter filter, double expected, string label)
             {
@@ -926,9 +1054,9 @@ internal static class FamilyCombatRewardChecks
                     BonesRelics = capsule ? ModelKeySetFilter.Empty : keys };
                 Probability(filter, expected, acquisition + " " + label + " preserves guaranteed-acquisition semantics");
                 var request = Request(filter);
-                var guaranteed = ExplicitOpeningRelicFacts.EnumerateGuaranteed(request.CompiledSearch.NormalizedQuery);
+                var guaranteed = ExplicitOpeningRelicFacts.EnumerateGuaranteed(request.Model.CompiledSearch.NormalizedQuery);
                 Check(guaranteed.Contains(white) == (expected == 0) &&
-                    request.CompiledSearch.Relations.Any(relation => relation.Kind == SemanticRelationKind.StateInfluence &&
+                    request.Model.CompiledSearch.Relations.Any(relation => relation.Kind == SemanticRelationKind.StateInfluence &&
                         relation.Source.Kind == SemanticFactKind.RewardInfluenceRelic && relation.Source.Key == white &&
                         relation.Target.Kind == SemanticFactKind.CombatReward) == (expected == 0),
                     "canonical state influence and declared product acquisition facts agree on guaranteed effects");
@@ -938,7 +1066,7 @@ internal static class FamilyCombatRewardChecks
             Probability(basis with { NeowRoute = new(bones), RequiredBonesCombination = [white] }, 0,
                 "explicit Bones White Beast applies while unspecified companion remains neutral");
 
-            var pool = Request(NeowSearchFilter.Empty).Authority.EffectAuthority!.CharacterRewardPool!;
+            var pool = Request(NeowSearchFilter.Empty).Model.Authority.EffectAuthority!.CharacterRewardPool!;
             ModelKey rarePower = pool.First(card => card.Rarity == EffectCardRarity.Rare && card.CardType == EffectCardType.Power).CardKey;
             ModelKey rareAttack = pool.First(card => card.Rarity == EffectCardRarity.Rare && card.CardType == EffectCardType.Attack).CardKey;
             NeowSearchFilter Card(ModelKey target) => NeowSearchFilter.Empty with { CombatCardRewardSequence = new(2,
@@ -966,19 +1094,22 @@ internal static class FamilyCombatRewardChecks
             if (slot >= 0)
             {
                 var capsuleRequest = Request(basis with { NeowRoute = new(small) });
-                Check(CombatRewardFamily.TryCreateParty(capsuleRequest, null, null, out var physical), "actual party Capsule C remains registered");
-                var family = (CombatRewardFamily)physical!;
+                Check(CombatRewardFamily.TryPrepareParty(capsuleRequest.Model,FilterExecutionPreferences.From(capsuleRequest.RunOptions), null, null, out var physical), "actual party Capsule C remains registered");
+                var family = physical!;
                 var declaredCapsule = CombatRewardProbabilityEstimator.EstimateOptimizedConditions(SearchSelectivityInput.From(capsuleRequest));
-                Check(family.Survival.SurvivalProbability == declaredCapsule.Probability &&
-                    family.ResolveSurvival(new HashSet<string> { "W.World", "A.AncientOption", "E.EventResult" }).SurvivalProbability == declaredCapsule.Probability,
-                    "party C scheduling uses the same fixed declared model without latent held-state inference");
+                Check(family.Body.Survival.SurvivalProbability == declaredCapsule.Probability &&
+                    family.Body.ResolveSurvival(new HashSet<string> { "W.World", "A.AncientOption", "E.EventResult" }).SurvivalProbability == declaredCapsule.Probability,
+                    "Scheduling retains its declared approximation separately from actual held replay");
+                Check(family.Replay.UsesObservedOpening, "Physical party Capsule owns its actual held replay");
+                bool observedHeldInfluence = false;
                 for (ulong root = 0; root < 128; root++)
                 {
-                    var authored = family.Replay.Opening(root, 0);
-                    Check(authored.InfluenceFlags == Beta110CombatRewardInfluenceFlags.None &&
-                        authored.AdditionalCardRewardCount == 0 && authored.RewardInfluenceAuthorityExact,
-                        "party sieve uses neutral unspecified Capsule contents as its declared probability does");
+                    var actual = family.Replay.Opening(root, 0);
+                    if (!actual.ExactProjectionAuthority)
+                        Check(family.Replay.Matches(root), "Unknown actual Capsule effects are retained independently of scheduling probability");
+                    else observedHeldInfluence |= actual.InfluenceFlags != Beta110CombatRewardInfluenceFlags.None;
                 }
+                Check(observedHeldInfluence, "Unlisted real Capsule held influences participate in physical filtering");
                 var mp = pool.First(card => card.IsMultiplayerOnly && card.Rarity == EffectCardRarity.Common);
                 Check(Estimate(NeowSearchFilter.Empty with { CombatCardRewardSequence = new(1, CombatRewardSequenceOrderMode.Ordered, [mp.CardKey]) }).Probability is > 0,
                     "product C includes the actual captured multiplayer-only card pool");
@@ -987,7 +1118,7 @@ internal static class FamilyCombatRewardChecks
         Console.WriteLine($"C_DECLARED_PROFILE_POLICY_PASS checks={_checks - before};elapsedMs={watch.Elapsed.TotalMilliseconds:F3};soloParty=true;actualSieveSeparate=true;notSearchThroughput=true");
     }
 
-    private static void CheckCapsuleProbabilityConjunctions(Func<NeowSearchFilter, ExactSearchExecutionRequest> query)
+    private static void CheckCapsuleProbabilityConjunctions(Func<NeowSearchFilter, PreparedSearch> query)
     {
         ModelKey large = BaseGameModelKeys.Relics.LargeCapsule, small = BaseGameModelKeys.Relics.SmallCapsule,
             bones = BaseGameModelKeys.Relics.NeowsBones, a = new("RELIC", "PRAYER_WHEEL"), b = new("RELIC", "LASTING_CANDY");
@@ -1086,45 +1217,62 @@ internal static class FamilyCombatRewardChecks
         Check(Math.Abs(P(any, exact) - brute) < 1e-12, "Large overlapping FirstN and ExactSlot conjunction matches finite enumeration");
     }
 
-    private static void CheckPartyOpeningContinuations(Func<NeowSearchFilter, ExactSearchExecutionRequest> query,
+    private static void CheckPartyOpeningContinuations(Func<NeowSearchFilter, PreparedSearch> query,
         NeowSearchFilter basis)
     {
+        int actualHeldInfluences = 0, reliableCapsuleRoots = 0;
         for (int slot = 0; slot < 4; slot++)
         {
             var unselected = ForPartySlot(query(basis), slot);
-            Check(!CombatRewardFamily.TryCreate(unselected, out _), "Multiplayer cannot enter the solo C factory");
-            Check(CombatRewardFamily.TryCreateParty(unselected, null, null, out var neutralFamily), "Unselected party opening uses neutral C");
-            var neutralReplay = ((CombatRewardFamily)neutralFamily!).Replay;
+            Check(!CombatRewardFamily.TryCreate(unselected.Model,FilterExecutionPreferences.From(unselected.RunOptions), out _), "Multiplayer cannot enter the solo C factory");
+            Check(CombatRewardFamily.TryPrepareParty(unselected.Model,FilterExecutionPreferences.From(unselected.RunOptions), null, null, out var neutralFamily), "Unselected party opening uses neutral C");
+            var neutralReplay = neutralFamily!.Replay;
             Check(!neutralReplay.ConservativelyKeeps && !neutralReplay.Plan.OpeningConsumption.HasReplay,
                 "Neutral C is an effective sieve without invented opening RNG");
             foreach (var key in new[] { BaseGameModelKeys.Relics.SmallCapsule,
                 BaseGameModelKeys.Relics.LargeCapsule })
             {
                 var capsuleRequest = ForPartySlot(query(basis with { NeowRoute = new(key) }), slot);
-                Check(CombatRewardFamily.TryCreateParty(capsuleRequest,
-                    0, 0, out var capsuleFamily), "Authored-only Capsule party continuation registers");
-                var capsule = ((CombatRewardFamily)capsuleFamily!).Replay;
-                var rng = new Beta110FastRng(unchecked((ulong)slot + XxHash64.Hash("rewards"u8, 0)));
-                rng.NextFloat(); if (key == BaseGameModelKeys.Relics.LargeCapsule) rng.NextFloat();
-                Check(!capsule.ConservativelyKeeps && capsule.Opening(0, 0).Rewards.CaptureCheckpoint() == rng.CaptureCheckpoint(),
-                    "Capsule consumes real extraction draws without latent obtain effects");
+                Check(CombatRewardFamily.TryPrepareParty(capsuleRequest.Model,FilterExecutionPreferences.From(capsuleRequest.RunOptions),
+                    0, 0, out var capsuleFamily), "Actual Capsule party continuation registers");
+                var capsule = capsuleFamily!.Replay;
+                Check(!capsule.ConservativelyKeeps && capsule.UsesObservedOpening,
+                    "Complete party bag owns the actual Capsule held observation");
                 for (ulong root = 0; root < 32; root++)
                 {
-                    var expected = new Beta110FastRng(unchecked(root + (ulong)slot + XxHash64.Hash("rewards"u8, 0)));
-                    expected.NextFloat();
-                    if (key == BaseGameModelKeys.Relics.LargeCapsule) expected.NextFloat();
                     var opening = capsule.Opening(root, 0);
-                    Check(opening.RewardInfluenceAuthorityExact && opening.AdditionalCardRewardCount == 0 &&
-                        opening.InfluenceFlags == Beta110CombatRewardInfluenceFlags.None &&
-                        opening.Rewards.CaptureCheckpoint() == expected.CaptureCheckpoint(),
-                        "Unspecified Capsule contents are neutral with exactly their authored rarity consumption");
+                    if (!opening.ExactProjectionAuthority)
+                    {
+                        Check(capsule.Matches(root), "Unresolved actual held effect retains its root without an invented prefix");
+                        continue;
+                    }
+                    var projection = new NeowEffectProjectionEngine(Beta111Profile.Instance, "party-c-actual-held", root,
+                        capsuleRequest.Model.Authority) { AuthoredCapsuleEffects =
+                        PartyInitialQuery.CapsuleEffectPremise(capsuleRequest.Model.CompiledSearch.NormalizedQuery) }.Project(key);
+                    var snapshot = projection.OpeningRewardContinuations!.Routes.Single().RewardsRngState!;
+                    var checkpoint = opening.Rewards.CaptureCheckpoint();
+                    Check(snapshot is not null && checkpoint.S0 == snapshot.S0 && checkpoint.S1 == snapshot.S1 &&
+                        checkpoint.S2 == snapshot.S2 && checkpoint.S3 == snapshot.S3,
+                        "Reliable actual Capsule Rewards prefix agrees with independent Core projection");
+                    ModelKey[] held = projection.EffectGroups.SelectMany(g => g.OrderedItems)
+                        .Where(e => e.Kind == PredictedEffectKind.AddRelic && e.Relation == PredictedEffectRelation.NestedRelic &&
+                            e.TargetKey.HasValue).Select(e => e.TargetKey!.Value).Distinct().ToArray();
+                    var observedQuery = ForPartySlot(query(basis with { NeowRoute = new(key),
+                        CapsuleContainedRelics = new([], held, []) }), slot);
+                    var expectedContext = Beta110CombatRewardExplicitContextProjector.Project(observedQuery.Model.CompiledSearch);
+                    Check(opening.InfluenceFlags == expectedContext.InfluenceFlags &&
+                        opening.AdditionalCardRewardCount == expectedContext.AdditionalCardRewardCount &&
+                        opening.FixedGoldAmount == expectedContext.FixedGoldAmount,
+                        "Unlisted held effects agree with actual Core identities, not an authored neutral placeholder");
+                    reliableCapsuleRoots++;
+                    if (opening.InfluenceFlags != Beta110CombatRewardInfluenceFlags.None) actualHeldInfluences++;
                 }
             }
-            Check(CombatRewardFamily.TryCreateParty(ForPartySlot(query(basis with { NeowRoute = new(BaseGameModelKeys.Relics.NeowsBones) }), slot),
-                0, 0, out var unresolvedBones) && !((CombatRewardFamily)unresolvedBones!).Replay.ConservativelyKeeps &&
-                ((CombatRewardFamily)unresolvedBones!).Replay.UsesQueryLiteralPartyOpening &&
-                ((CombatRewardFamily)unresolvedBones!).Replay.RouteCount == 1,
-                "Unspecified Bones children are neutral; only the required shuffle is replayed");
+            Check(CombatRewardFamily.TryPrepareParty((ForPartySlot(query(basis with { NeowRoute = new(BaseGameModelKeys.Relics.NeowsBones) }), slot)).Model,FilterExecutionPreferences.From((ForPartySlot(query(basis with { NeowRoute = new(BaseGameModelKeys.Relics.NeowsBones) }), slot)).RunOptions),
+                0, 0, out var unresolvedBones) && !unresolvedBones!.Replay.ConservativelyKeeps &&
+                unresolvedBones!.Replay.UsesObservedOpening && !unresolvedBones.Replay.UsesQueryLiteralPartyOpening &&
+                unresolvedBones.Replay.ObservedOpening!.DynamicBones && unresolvedBones.Replay.RouteCount == 2,
+                "Unspecified Bones observes its real pair and both acquisition orders");
 
             foreach (var key in new[] { BaseGameModelKeys.Relics.CursedPearl, BaseGameModelKeys.Relics.ArcaneScroll,
                 BaseGameModelKeys.Relics.ScrollBoxes, BaseGameModelKeys.Relics.Kaleidoscope, BaseGameModelKeys.Relics.MassiveScroll,
@@ -1132,11 +1280,11 @@ internal static class FamilyCombatRewardChecks
             {
                 var request = ForPartySlot(query(basis with { NeowRoute = new(key) }), slot);
                 bool kaleidoscope = key == BaseGameModelKeys.Relics.Kaleidoscope;
-                Check(CombatRewardFamily.TryCreateParty(request, 11, null, out var family), "Direct authored party C registers");
-                Check(CombatRewardFamily.TryCreateParty(request, null, null, out var unknownFamily),
+                Check(CombatRewardFamily.TryPrepareParty(request.Model,FilterExecutionPreferences.From(request.RunOptions), 11, null, out var family), "Direct authored party C registers");
+                Check(CombatRewardFamily.TryPrepareParty(request.Model,FilterExecutionPreferences.From(request.RunOptions), null, null, out var unknownFamily),
                     "Fixed Rewards continuation supports unknown shared arrival");
-                var replay = ((CombatRewardFamily)family!).Replay;
-                var effects = request.Authority.EffectAuthority!;
+                var replay = family!.Replay;
+                var effects = request.Model.Authority.EffectAuthority!;
                 Check(replay.Catalog.CombatRewardCardPool.TotalCount == effects.CharacterRewardPool!.Count(c =>
                     c.EligibleForPostCombatRewardByPoolMembership && c.IsUnlockedInCapturedPool &&
                     c.Rarity is EffectCardRarity.Common or EffectCardRarity.Uncommon or EffectCardRarity.Rare),
@@ -1148,7 +1296,7 @@ internal static class FamilyCombatRewardChecks
                     var rng = NeowEffectRngContext.CreateFromRootHash(Beta111Profile.Instance, root, slot);
                     for (int draw = 0; draw < 11; draw++) rng.Niche.NextDouble();
                     var projection = new NeowEffectProjectionEngine(Beta111Profile.Instance, "party-c-parity", root,
-                        request.Authority).Project(key, rng);
+                        request.Model.Authority).Project(key, rng);
                     var continuation = projection.OpeningRewardContinuations!.Routes.Single();
                     var snapshot = continuation.RewardsRngState!;
                     var checkpoint = replay.Opening(root, 0, out var niche).Rewards.CaptureCheckpoint();
@@ -1160,27 +1308,29 @@ internal static class FamilyCombatRewardChecks
                         Check(niche is { } n && n.S0 == expectedNiche.S0 && n.S1 == expectedNiche.S1 && n.S2 == expectedNiche.S2 && n.S3 == expectedNiche.S3,
                             "Known party shared arrival is advanced without reset");
                     }
-                    var unknown = ((CombatRewardFamily)unknownFamily!).Replay.Opening(root, 0, out var unknownNiche);
+                    var unknown = unknownFamily!.Replay.Opening(root, 0, out var unknownNiche);
                     Check(unknownNiche is null && unknown.Rewards.CaptureCheckpoint() == checkpoint,
                         "Unknown Niche stays unknown while fixed Rewards draws match Core");
                 }
             }
         }
+        Check(reliableCapsuleRoots > 0 && actualHeldInfluences > 0,
+            "Actual party Capsule fixtures exercise reliable non-neutral held observations");
         var bonesKey = BaseGameModelKeys.Relics.NeowsBones;
         var leafKey = BaseGameModelKeys.Relics.NewLeaf;
         var kaleidoKey = BaseGameModelKeys.Relics.Kaleidoscope;
         var bonesRequest = ForPartySlot(query(basis with { NeowRoute = new(bonesKey), RequiredBonesCombination = [leafKey, kaleidoKey] }), 3);
-        var bonesAuthority = bonesRequest.Authority.WithEffectAuthority(bonesRequest.Authority.EffectAuthority! with { BonesEligibleRelics = [leafKey, kaleidoKey] });
-        bonesRequest = bonesRequest with { CompiledSearch = bonesRequest.CompiledSearch with {
-            Context = bonesRequest.CompiledSearch.Context with { Authority = bonesAuthority } } };
-        Check(CombatRewardFamily.TryCreateParty(bonesRequest, 11, 0, out var bonesFamily), "Complete authored Bones party route registers");
-        var bonesReplay = ((CombatRewardFamily)bonesFamily!).Replay;
+        var bonesAuthority = bonesRequest.Model.Authority.WithEffectAuthority(bonesRequest.Model.Authority.EffectAuthority! with { BonesEligibleRelics = [leafKey, kaleidoKey] });
+        bonesRequest = bonesRequest with { Model = bonesRequest.Model with { CompiledSearch = bonesRequest.Model.CompiledSearch with {
+            Context = bonesRequest.Model.CompiledSearch.Context with { Authority = bonesAuthority } } } };
+        Check(CombatRewardFamily.TryPrepareParty(bonesRequest.Model,FilterExecutionPreferences.From(bonesRequest.RunOptions), 11, 0, out var bonesFamily), "Complete authored Bones party route registers");
+        var bonesReplay = bonesFamily!.Replay;
         Check(bonesReplay.RouteCount == 2 && !bonesReplay.ConservativelyKeeps, "Any-order Bones is two effective ordered continuations");
         var actualRequest = ForPartySlot(query(basis with { NeowRoute = new(bonesKey) }), 3);
-        actualRequest = actualRequest with { CompiledSearch = actualRequest.CompiledSearch with {
-            Context = actualRequest.CompiledSearch.Context with { Authority = bonesAuthority } } };
-        Check(CombatRewardFamily.TryCreateParty(actualRequest, null, null, out var actualFamily), "Actual-pair Bones admits unknown shared prefix");
-        var actualReplay = ((CombatRewardFamily)actualFamily!).Replay;
+        actualRequest = actualRequest with { Model = actualRequest.Model with { CompiledSearch = actualRequest.Model.CompiledSearch with {
+            Context = actualRequest.Model.CompiledSearch.Context with { Authority = bonesAuthority } } } };
+        Check(CombatRewardFamily.TryPrepareParty(actualRequest.Model,FilterExecutionPreferences.From(actualRequest.RunOptions), null, null, out var actualFamily), "Actual-pair Bones admits unknown shared prefix");
+        var actualReplay = actualFamily!.Replay;
         bool retained = false, rejected = false;
         for (ulong root = 0; root < 128; root++)
         {
@@ -1188,10 +1338,11 @@ internal static class FamilyCombatRewardChecks
             retained |= pass; rejected |= !pass;
             var expected = new Beta110FastRng(unchecked(root + 3UL + XxHash64.Hash("rewards"u8, 0)));
             expected.ConsumeUnstableShuffle(2);
+            for (int draw = 0; draw < 18; draw++) expected.NextDouble(); // actual Kaleidoscope companion
             Check(actualReplay.Opening(root, 0).Rewards.CaptureCheckpoint() == expected.CaptureCheckpoint(),
-                "Unknown Bones children do not inherit the known eligible pool's mechanics");
+                "Unbound Bones observes the actual Kaleidoscope companion's fixed Rewards consumption");
         }
-        Check(retained && rejected, "Query-literal Bones performs an effective C sieve");
+        Check(retained && rejected, "Observed actual-pair Bones performs an effective C sieve");
         for (ulong root = 0; root < 32; root++)
         for (int order = 0; order < 2; order++)
         {
@@ -1216,22 +1367,510 @@ internal static class FamilyCombatRewardChecks
     private sealed record TerminalCardFixture(string Name, CombatRewardReplay Replay, CombatRewardGpuPlan Plan,
         uint[]? Ordinals = null, bool ExpectedFault = false, ulong Start = 0);
 
-    private static List<TerminalCardFixture> CheckTerminalCardGate(Func<NeowSearchFilter, ExactSearchExecutionRequest> query)
+    private sealed record OpeningPrefixFixture(string Name, CombatRewardReplay Replay, CombatRewardGpuPlan Plan,
+        PreparedSearch Request,
+        ulong Start = 0, bool ExpectedFault = false, bool RequireMixedResults = true);
+
+    private static List<OpeningPrefixFixture> CheckOpeningPrefixHotLoop(Func<NeowSearchFilter, PreparedSearch> query,
+        Func<NeowSearchFilter, PreparedSearch> queryA0)
+    {
+        var fixtures = new List<OpeningPrefixFixture>();
+        ModelKey card = new("CARD", "BENCH_CHARACTER_0"), rare = new("CARD", "BENCH_CHARACTER_16");
+        ModelKey bones = BaseGameModelKeys.Relics.NeowsBones, scroll = BaseGameModelKeys.Relics.ScrollBoxes,
+            arcane = BaseGameModelKeys.Relics.ArcaneScroll, small = BaseGameModelKeys.Relics.SmallCapsule,
+            large = BaseGameModelKeys.Relics.LargeCapsule;
+        var basis = NeowSearchFilter.Empty with { CombatCardRewardSequence = new(6,
+            CombatRewardSequenceOrderMode.Ordered, [null, null, null, null, null, card]) };
+        OpeningPrefixFixture Add(string name, NeowSearchFilter filter, bool eligible = true, bool party = false, ulong start = 0, bool a0 = false)
+        {
+            var request = (a0 ? queryA0 : query)(filter);
+            if (party) request = ForPartySlot(request, 3);
+            var replay = new CombatRewardReplay(request.Model, party ? 11 : 0);
+            Check(!replay.ConservativelyKeeps, "Prefix fixture executes its authored model: " + name);
+            var baseline = CombatRewardGpuPlan.TryCreate(request.Model, replay, out string issue, openingPrefixHotLoop: false,
+                rareOnlyIdentityElision: false, assignmentEarlyRejection: false, unobservedFixedGold: false)
+                ?? throw new Exception("Prefix baseline: " + name + ":" + issue);
+            var trial = CombatRewardGpuPlan.TryCreate(request.Model, replay, out issue, openingPrefixHotLoop: true,
+                rareOnlyIdentityElision: false, assignmentEarlyRejection: false, unobservedFixedGold: false)
+                ?? throw new Exception("Prefix trial: " + name + ":" + issue);
+            Check(!baseline.UsesHotLoop && !baseline.UsesOpeningPrefixHotLoop, "Prefix baseline retained: " + name);
+            Check(trial.UsesOpeningPrefixHotLoop == eligible && trial.UsesHotLoop == eligible,
+                "Prefix structural eligibility: " + name);
+            // Hot flags/tables and their packed offsets are physical metadata.
+            // Compare semantic fields and original pool/predicate order instead.
+            Check(baseline.Meta.Take(29).SequenceEqual(trial.Meta.Take(29)) &&
+                baseline.Meta.Skip(37).Take(20).SequenceEqual(trial.Meta.Skip(37).Take(20)) &&
+                baseline.Meta[58] == trial.Meta[58] && baseline.Meta[59] == trial.Meta[59] &&
+                baseline.Pools.SequenceEqual(trial.Pools) && baseline.Ids.SequenceEqual(trial.Ids) &&
+                baseline.Predicates.SequenceEqual(trial.Predicates) && baseline.Targets.SequenceEqual(trial.Targets),
+                "Prefix semantic metadata: " + name);
+            if (eligible)
+            {
+                Check(trial.Revision(false) != baseline.Revision(false), "Prefix physical revision: " + name);
+                for (ulong root = 0; root < 16; root++)
+                for (int route = 0; route < replay.RouteCount; route++)
+                {
+                    var opening = replay.Opening(root, route);
+                    Check(opening.PotionOdds == .4f && opening.CardRarityOffset == -.05f,
+                        "Prefix retains initial combat probability states: " + name);
+                }
+            }
+            fixtures.Add(new(name + ".Baseline", replay, baseline, request, Start: start));
+            var fixture = new OpeningPrefixFixture(name + ".Trial", replay, trial, request, Start: start);
+            fixtures.Add(fixture);
+            return fixture;
+        }
+        // These are prefix-hot numerical fixtures. Observed Capsule/Bones now
+        // needs actual bag authority, which this solo world fixture does not
+        // provide. Assert its real retained scope separately, not hot parity.
+        foreach (var (name, filter) in new[] {
+                     ("DirectSmall", basis with { NeowRoute = new(small) }),
+                     ("DirectLarge", basis with { NeowRoute = new(large) }),
+                     ("BonesNoChild", basis with { NeowRoute = new(bones) }),
+                     ("BonesSingleCapsule", basis with { NeowRoute = new(bones), RequiredBonesCombination = new[] { small } }) })
+        {
+            var request = query(filter);
+            var replay = new CombatRewardReplay(request.Model);
+            Check(replay.ConservativelyKeeps && replay.ConservativeOpeningReason ==
+                "ObservedOpeningBag:UnsupportedOrIncompleteRelicRuntimeAuthority", "Missing real bag retains its actual cause: " + name);
+            Check(CombatRewardFamily.TryPrepare(request.Model, FilterExecutionPreferences.From(request.RunOptions), out var prepared) &&
+                prepared!.Body.Preparation.Remainders.Contains("C.CombatReward:" + replay.ConservativeOpeningReason),
+                "Missing observed opening is disclosed without claiming numerical coverage: " + name);
+            for (ulong root = 0; root < 16; root++)
+                Check(replay.Matches(root) && replay.MatchesReference(root), "Unavailable opening cannot reject a root: " + name);
+        }
+        foreach (var relic in new[] { BaseGameModelKeys.Relics.GoldenPearl, arcane, scroll,
+                     BaseGameModelKeys.Relics.Kaleidoscope, BaseGameModelKeys.Relics.HeftyTablet,
+                     BaseGameModelKeys.Relics.LeadPaperweight, BaseGameModelKeys.Relics.LostCoffer })
+            Add("Direct" + relic.Entry, basis with { NeowRoute = new(relic) });
+        var pair = basis with { NeowRoute = new(bones), RequiredBonesCombination = [scroll, arcane] };
+        var union = Add("BonesUnion", pair);
+        Check(union.Replay.RouteCount == 2, "Prefix retains both authored predecessors");
+        Add("BonesAB", pair with { RequiredBonesAcquisitionOrder = [scroll, arcane] });
+        Add("BonesBA", pair with { RequiredBonesAcquisitionOrder = [arcane, scroll] });
+        // The existing party fixture supplies complete bucket/eligibility data.
+        // Check its actual observed prefix; the legacy GPU exporter has no
+        // observed-opening buffers and must not call this Capsule hot parity.
+        var partyCapsuleRequest = ForPartySlot(query(basis with { NeowRoute = new(small) }), 3);
+        var partyCapsuleReplay = new CombatRewardReplay(partyCapsuleRequest.Model, 11);
+        var partyCapsulePlan = CombatRewardGpuPlan.TryCreate(partyCapsuleRequest.Model, partyCapsuleReplay,
+            out var partyCapsuleIssue) ?? throw new Exception(partyCapsuleIssue);
+        Check(partyCapsuleReplay.UsesObservedOpening && !partyCapsuleReplay.ConservativelyKeeps &&
+            partyCapsulePlan.UsesObservedOpening && !partyCapsulePlan.UsesOpeningPrefixHotLoop,
+            "Complete party Capsule uses actual observed opening, not the query-literal prefix hot loop");
+        for (ulong root = 0; root < 16; root++)
+        {
+            var expected = new Beta110FastRng(unchecked(root + 3UL + XxHash64.Hash("rewards"u8, 0)));
+            expected.NextFloat();
+            Check(partyCapsuleReplay.Opening(root, 0).Rewards.CaptureCheckpoint() == expected.CaptureCheckpoint(),
+                "Actual party SmallCapsule retains its personal one-draw Rewards prefix");
+        }
+        Add("SixUnordered", basis with { NeowRoute = new(arcane), CombatCardRewardSequence = new(6,
+            CombatRewardSequenceOrderMode.Unordered, [card, card, null, null, rare, null]) });
+        Add("SixRare", basis with { NeowRoute = new(BaseGameModelKeys.Relics.GoldenPearl), CombatCardRewardSequence = new(6,
+            CombatRewardSequenceOrderMode.Unordered, [rare, null, null, null, null, null]) });
+        Add("SixRareA0", basis with { NeowRoute = new(BaseGameModelKeys.Relics.GoldenPearl), CombatCardRewardSequence = new(6,
+            CombatRewardSequenceOrderMode.Unordered, [rare, null, null, null, null, null]) }, a0: true);
+        Add("SixRareDuplicateA0", basis with { NeowRoute = new(arcane), CombatCardRewardSequence = new(6,
+            CombatRewardSequenceOrderMode.Unordered, [rare, rare, null, null, null, null]) }, a0: true);
+        Add("MixedAssignmentWindows", basis with { NeowRoute = new(arcane), CombatCardRewardSequence = new(2,
+            CombatRewardSequenceOrderMode.Unordered, [card, card]), CombatPotionRewardSequence = new(6,
+            CombatRewardSequenceOrderMode.Unordered, [new(CombatPotionSlotRequirement.NoDrop, null),
+                new(CombatPotionSlotRequirement.NoDrop, null), new(CombatPotionSlotRequirement.Neutral, null),
+                new(CombatPotionSlotRequirement.Neutral, null), new(CombatPotionSlotRequirement.Neutral, null),
+                new(CombatPotionSlotRequirement.Neutral, null)]) });
+        Add("OrderedPotionIdentity", basis with { NeowRoute = new(arcane), CombatPotionRewardSequence = new(3,
+            CombatRewardSequenceOrderMode.Ordered, [new(CombatPotionSlotRequirement.Neutral, null),
+                new(CombatPotionSlotRequirement.DropSpecific, new("POTION", "BENCH_COMMON_POTION")),
+                new(CombatPotionSlotRequirement.NoDrop, null)]) });
+        Add("UnorderedPotionIdentity", basis with { NeowRoute = new(arcane), CombatPotionRewardSequence = new(3,
+            CombatRewardSequenceOrderMode.Unordered, [new(CombatPotionSlotRequirement.Neutral, null),
+                new(CombatPotionSlotRequirement.DropSpecific, new("POTION", "BENCH_COMMON_POTION")),
+                new(CombatPotionSlotRequirement.NoDrop, null)]) }, eligible: false);
+        Add("GoldGuard", basis with { NeowRoute = new(arcane), NormalCombatRewardConditions =
+            [new(3, ModelKeySetFilter.Empty, NormalCombatPotionRequirement.Any, ModelKeySetFilter.Empty, 8, 11)] }, eligible: false);
+        foreach (string entry in new[] { "PRAYER_WHEEL", "LASTING_CANDY", "WHITE_BEAST_STATUE" })
+        {
+            // This checks the suffix compiler's state guard, not a fictitious
+            // Capsule obtain. Real Capsule state is covered by the replay host.
+            var declared = query(basis with { NeowRoute = new(small), StructuredNeowEffects =
+                [new(small, NeowStructuredConditionKind.ExactSingle, NeowStructuredEffectScope.NestedRelics,
+                    NeowStructuredOutputKind.Relic, [new("RELIC", entry)])] });
+            var numeric = fixtures.Single(f => f.Name == "DirectARCANE_SCROLL.Trial").Replay;
+            var context = Beta110CombatRewardExplicitContextProjector.Project(declared.Model.CompiledSearch);
+            var guarded = Beta110GpuCombatRewardHotLoopCompiler.Compile(10, numeric.Plan with { ExplicitContext = context },
+                numeric.Catalog, Beta110GpuCombatRewardRoutePolicy.UnpinnedAssumeUnperturbed, allowOpeningPrefix: true);
+            Check(!guarded.Enabled, "Suffix refuses actual structural held state: " + entry);
+        }
+
+        // Explicitly find both rare Defect ScrollBoxes branches. Each ordinary
+        // bundle consumes its test + three selections; a special bundle only its test.
+        var scrollFixture = fixtures.Single(f => f.Name == "DirectSCROLL_BOXES.Trial");
+        var seen = new HashSet<int>();
+        for (ulong ordinal = 0; ordinal < 65536 && seen.Count < 3; ordinal++)
+        {
+            ulong root = Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(ordinal));
+            var rng = new Beta110FastRng(unchecked(root + XxHash64.Hash("rewards"u8, 0)));
+            int specials = 0;
+            for (int bundle = 0; bundle < 2; bundle++)
+                if (rng.NextInt(100) < 1) specials++;
+                else for (int draw = 0; draw < 3; draw++) rng.NextDouble();
+            if (!seen.Add(specials)) continue;
+            Check(scrollFixture.Replay.Opening(root, 0).Rewards.CaptureCheckpoint() == rng.CaptureCheckpoint(),
+                "ScrollBoxes special branch checkpoint: " + specials);
+            fixtures.Add(scrollFixture with { Name = "ScrollBoxesSpecial" + specials, Start = ordinal });
+            Console.WriteLine($"C prefix ScrollBoxes witness specials={specials};ordinal={ordinal};seed={Beta110SeedCodec.FormatOrdinal(ordinal)}");
+            if (specials == 0) continue;
+            // Require this exact GPU lane to distinguish the real special branch
+            // from the tempting but incorrect eight-draw ordinary-only prefix.
+            var wrongOpening = scrollFixture.Replay.Opening(root, 0);
+            wrongOpening.Rewards = new Beta110FastRng(unchecked(root + XxHash64.Hash("rewards"u8, 0)));
+            for (int draw = 0; draw < 8; draw++) wrongOpening.Rewards.NextDouble();
+            NeowSearchFilter? distinguishing = null;
+            foreach (var candidate in query(NeowSearchFilter.Empty).Model.Authority.EffectAuthority!.CharacterRewardPool!)
+            {
+                var filter = basis with { NeowRoute = new(scroll), CombatCardRewardSequence = new(6,
+                    CombatRewardSequenceOrderMode.Ordered, [null, null, null, null, null, candidate.CardKey]) };
+                var replay = new CombatRewardReplay((query(filter)).Model);
+                if (replay.Matches(root) && Beta110CombatRewardFastStage.EvaluateForFamily(wrongOpening,
+                    replay.Plan, replay.Catalog, 10).Status == Beta110CombatRewardRouteProjectionStatus.Rejected)
+                { distinguishing = filter; break; }
+            }
+            Check(distinguishing is not null, "ScrollBoxes special branch has a discriminating card: " + specials);
+            Add("ScrollBoxesSpecial" + specials + "ExactPositive", distinguishing!, start: ordinal);
+        }
+        Check(seen.SetEquals(new[] { 0, 1, 2 }), "ScrollBoxes ordinary, single-special and double-special witnesses");
+
+        CheckTargetOptimizationGuards(fixtures.Single(f => f.Name == "SixRare.Trial"),
+            fixtures.Single(f => f.Name == "SixUnordered.Trial"));
+        foreach (var fixture in fixtures.Where(f => f.Name is "SixRare.Trial" or "SixRareA0.Trial" or
+                     "SixRareDuplicateA0.Trial" or "SixUnordered.Trial" or "MixedAssignmentWindows.Trial").ToArray())
+        foreach (var (suffix, rareOnly, assignment) in new[] { ("RareOnly", true, false), ("Assignment", false, true), ("All", true, true) })
+        {
+            var hot = CombatRewardTargetOptimizations.Apply(fixture.Plan.HotLoop, fixture.Replay.Plan,
+                fixture.Replay.Catalog, rareOnly, assignment);
+            fixtures.Add(fixture with { Name = fixture.Name + "." + suffix, Plan = fixture.Plan with { HotLoop = hot } });
+        }
+
+        // Fault injection at the prefix source pool proves neither the optimized
+        // suffix nor rejection masks a failed authored opening consumption.
+        foreach (var fixture in fixtures.Where(f => f.Name.StartsWith("DirectARCANE_SCROLL.", StringComparison.Ordinal)).ToArray())
+        {
+            var pools = fixture.Plan.Pools.ToArray(); pools[5] = 0;
+            fixtures.Add(fixture with { Name = fixture.Name + ".PrefixPoolFault", Plan = fixture.Plan with { Pools = pools }, ExpectedFault = true });
+        }
+
+        CheckFollowupGpuOptimizations(query, fixtures);
+
+        // A successful empty set cannot validate the state handoff. Anchor each
+        // normal fixture on a real CPU positive and require rejections nearby.
+        foreach (var fixture in fixtures.Where(f => !f.ExpectedFault).ToArray())
+        {
+            ulong? positive = null;
+            for (ulong offset = 0; offset < 65536; offset++)
+            {
+                ulong ordinal = fixture.Start + offset;
+                if (fixture.Replay.Matches(Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(ordinal))))
+                { positive = ordinal; break; }
+            }
+            Check(positive.HasValue, "Prefix fixture has a real positive: " + fixture.Name);
+            // Special-branch anchors must stay at their original ordinal. Add a
+            // separate positive anchor rather than replacing the branch witness.
+            if (fixture.Name is "ScrollBoxesSpecial0" or "ScrollBoxesSpecial1" or "ScrollBoxesSpecial2")
+            {
+                int at = fixtures.IndexOf(fixture);
+                fixtures[at] = fixture with { RequireMixedResults = false };
+                fixtures.Add(fixture with { Name = fixture.Name + ".Positive", Start = positive!.Value });
+            }
+            else
+            {
+                int at = fixtures.IndexOf(fixture);
+                fixtures[at] = fixture with { Start = positive!.Value };
+            }
+        }
+        CheckCombatRewardProductionDefaults(fixtures);
+        return fixtures;
+    }
+
+    private static void CheckCombatRewardProductionDefaults(List<OpeningPrefixFixture> fixtures)
+    {
+        string[] variables = ["RT2_C_PREFIX_EXPERIMENT", "RT2_C_TARGET_EXPERIMENT", "RT2_C_DENSE_EXPERIMENT"];
+        string?[] saved = variables.Select(Environment.GetEnvironmentVariable).ToArray();
+        var rare = fixtures.Single(f => f.Name == "SixRareDuplicateA0.Trial");
+        var assignment = fixtures.Single(f => f.Name == "SixUnordered.Trial");
+        var gold = fixtures.Single(f => f.Name == "GoldGuard.Trial");
+        var eligible = fixtures.Single(f => f.Name == "DirectARCANE_SCROLL.Trial");
+        var cases = new[] {
+            (Fixture: eligible, Hot: true, Rare: false, Assignment: false),
+            (Fixture: rare, Hot: true, Rare: true, Assignment: true),
+            (Fixture: fixtures.Single(f => f.Name == "SixRare.Trial"), Hot: true, Rare: true, Assignment: false),
+            (Fixture: assignment, Hot: true, Rare: false, Assignment: true),
+            (Fixture: gold, Hot: false, Rare: false, Assignment: false),
+            (Fixture: fixtures.Single(f => f.Name == "UnorderedPotionIdentity.Trial"), Hot: false, Rare: false, Assignment: false)
+        };
+        CombatRewardGpuPlan Create(OpeningPrefixFixture fixture, PreparedSearch? request = null) =>
+            CombatRewardGpuPlan.TryCreate((request ?? fixture.Request).Model, fixture.Replay, out string issue)
+                ?? throw new Exception("C production default plan: " + fixture.Name + ":" + issue);
+        void Set(string? prefix, string? target, string? dense)
+        {
+            Environment.SetEnvironmentVariable(variables[0], prefix);
+            Environment.SetEnvironmentVariable(variables[1], target);
+            Environment.SetEnvironmentVariable(variables[2], dense);
+        }
+        try
+        {
+            foreach (string? mode in new string?[] { null, "", "default", "off" })
+            {
+                Set(mode, mode, mode);
+                bool enabled = mode != "off";
+                foreach (var value in cases)
+                {
+                    var plan = Create(value.Fixture);
+                    string label = value.Fixture.Name + ";mode=" + (mode ?? "unset");
+                    Check(plan.UsesHotLoop == (enabled && value.Hot) &&
+                        plan.UsesOpeningPrefixHotLoop == (enabled && value.Hot), "Production prefix eligibility: " + label);
+                    Check(plan.HotLoop.RareOnlyIdentityElisionEnabled == (enabled && value.Rare) &&
+                        plan.HotLoop.AssignmentEarlyRejectionEnabled == (enabled && value.Assignment),
+                        "Production target eligibility: " + label);
+                    Check(plan.UsesDenseCarry8 == enabled, "Production Dense selection: " + label);
+                    // Export only a small set of real default-created plans. The
+                    // existing GPU runner sends Dense and Compact to the same
+                    // shader with their actual 512/64-candidate dispatch sizes.
+                    if ((mode is null && (value.Fixture == rare || value.Fixture == assignment || value.Fixture == gold)) ||
+                        (mode == "off" && value.Fixture == rare))
+                        fixtures.Add(value.Fixture with { Name = "ProductionDefault." + (mode ?? "unset") + "." + value.Fixture.Name,
+                            Plan = plan });
+                }
+                foreach (var (scanCount, target) in new[] { (1L, 1), (8_589_934_592L, int.MaxValue) })
+                {
+                    var request = rare.Request with { ResolvedScanCount = scanCount,
+                        RunOptions = rare.Request.RunOptions with { ScanCount = scanCount, TargetMatchCount = target } };
+                    var plan = Create(rare, request);
+                    Check(plan.UsesDenseCarry8 == enabled && plan.UsesOpeningPrefixHotLoop == enabled &&
+                        plan.HotLoop.RareOnlyIdentityElisionEnabled == enabled &&
+                        plan.HotLoop.AssignmentEarlyRejectionEnabled == enabled,
+                        "Production optimization selection is independent of scan count and target: " + scanCount);
+                }
+            }
+            foreach (var (targetMode, rareOnly, earlyAssignment) in new[] {
+                         ("rare-only", true, false), ("assignment", false, true), ("all", true, true) })
+            {
+                Set("hot", targetMode, "carry8");
+                var plan = Create(rare);
+                Check(plan.UsesOpeningPrefixHotLoop && plan.UsesDenseCarry8 &&
+                    plan.HotLoop.RareOnlyIdentityElisionEnabled == rareOnly &&
+                    plan.HotLoop.AssignmentEarlyRejectionEnabled == earlyAssignment,
+                    "Explicit optimization controls remain selectable: " + targetMode);
+            }
+            Set("hot", "off", "off");
+            var prefixOnly = Create(rare);
+            Check(prefixOnly.UsesOpeningPrefixHotLoop && !prefixOnly.UsesDenseCarry8 &&
+                !prefixOnly.HotLoop.RareOnlyIdentityElisionEnabled && !prefixOnly.HotLoop.AssignmentEarlyRejectionEnabled,
+                "Explicit off controls keep the prepared prefix independently selectable");
+        }
+        finally
+        {
+            for (int i = 0; i < variables.Length; i++) Environment.SetEnvironmentVariable(variables[i], saved[i]);
+        }
+    }
+
+    private static void CheckTargetOptimizationGuards(OpeningPrefixFixture rareFixture, OpeningPrefixFixture assignmentFixture)
+    {
+        var replay = rareFixture.Replay;
+        Beta110GpuCombatRewardHotLoopPlan Apply(Beta110FastEffectCatalog catalog, Beta110CombatRewardFastPlan? plan = null)
+        {
+            var reward = plan ?? replay.Plan;
+            var hot = Beta110GpuCombatRewardHotLoopCompiler.Compile(10, reward, catalog,
+                Beta110GpuCombatRewardRoutePolicy.UnpinnedAssumeUnperturbed, allowOpeningPrefix: true);
+            return CombatRewardTargetOptimizations.Apply(hot, reward, catalog, rareOnly: true, assignment: true);
+        }
+        Check(Apply(replay.Catalog).RareOnlyIdentityElisionEnabled, "Rare-only target enables identity elision");
+        var assignment = assignmentFixture.Replay;
+        Check(CombatRewardTargetOptimizations.Apply(assignmentFixture.Plan.HotLoop, assignment.Plan,
+            assignment.Catalog, true, true).AssignmentEarlyRejectionEnabled, "Distinct-battle assignment enables capacity gate");
+        Check(!CombatRewardTargetOptimizations.Apply(assignmentFixture.Plan.HotLoop, assignment.Plan,
+            assignment.Catalog, true, true).RareOnlyIdentityElisionEnabled, "Mixed common/rare targets retain identities");
+        var predicate = replay.Plan.Predicates[0];
+        var nonrareBan = replay.Plan with { Predicates = [predicate with { CardBan = [replay.Catalog.CombatRewardCardPool.Common[0]] }] };
+        Check(!Apply(replay.Catalog, nonrareBan).RareOnlyIdentityElisionEnabled, "Nonrare ban retains observable identities");
+        var pool = replay.Catalog.CombatRewardCardPool;
+        foreach (var invalid in new[] {
+            pool with { Common = [] },
+            pool with { Common = pool.Common.Append(pool.Common[0]).ToArray() },
+            pool with { Common = pool.Common.Append(pool.Rare[0]).ToArray() },
+            pool with { Common = pool.Common.Append(Beta110FastDenseId.Invalid).ToArray() } })
+        {
+            var hot = Apply(replay.Catalog with { CombatRewardCardPool = invalid }, assignment.Plan);
+            Check(!hot.RareOnlyIdentityElisionEnabled && !hot.AssignmentEarlyRejectionEnabled,
+                "Incomplete/duplicate/overlapping/invalid card pools retain full work and faults");
+        }
+        var incompletePotions = assignment.Catalog with { CombatRewardPotionPool = assignment.Catalog.CombatRewardPotionPool with { Rare = [] } };
+        var noPotionGate = CombatRewardTargetOptimizations.Apply(assignmentFixture.Plan.HotLoop,
+            assignment.Plan, incompletePotions, true, true);
+        Check(!noPotionGate.AssignmentEarlyRejectionEnabled, "Missing potion rarity retains later numeric faults");
+
+        // Independently enumerate adding at most one assignment target per future
+        // battle, including an empty battle. This covers count=6's high mask bit.
+        for (int count = 0; count <= 6; count++)
+        for (int remaining = 0; remaining <= 6; remaining++)
+        {
+            ulong mask = CombatRewardTargetOptimizations.FeasibleAssignmentStates(count, remaining);
+            int full = (1 << count) - 1;
+            for (int subset = 0; subset <= full; subset++)
+            {
+                var reachable = new HashSet<int> { subset };
+                for (int battle = 0; battle < remaining; battle++)
+                {
+                    var next = new HashSet<int>(reachable);
+                    foreach (int state in reachable)
+                    for (int target = 0; target < count; target++) next.Add(state | (1 << target));
+                    reachable = next;
+                }
+                Check(((mask & (1UL << subset)) != 0) == reachable.Contains(full),
+                    "Assignment remaining-battle feasibility matches explicit one-target transitions");
+            }
+        }
+        Check(CombatRewardTargetOptimizations.FeasibleAssignmentStates(6, 0) == 1UL << 63,
+            "Six-target complete state preserves bit 63");
+        Throws<ArgumentOutOfRangeException>(() => CombatRewardTargetOptimizations.FeasibleAssignmentStates(7, 0), "Reject oversized assignment mask");
+    }
+
+    private static void CheckFollowupGpuOptimizations(Func<NeowSearchFilter, PreparedSearch> query,
+        List<OpeningPrefixFixture> fixtures)
+    {
+        var authority = query(NeowSearchFilter.Empty).Model.Authority.EffectAuthority!;
+        ModelKey Key(EffectCardRarity rarity) => authority.CharacterRewardPool!.First(c => c.Rarity == rarity).CardKey;
+        ModelKey common = Key(EffectCardRarity.Common);
+        ModelKey arcane = BaseGameModelKeys.Relics.ArcaneScroll, capsule = BaseGameModelKeys.Relics.SmallCapsule;
+        NeowSearchFilter Cards(params ModelKey?[] slots) => NeowSearchFilter.Empty with {
+            NeowRoute = new(arcane), CombatCardRewardSequence = new(6, CombatRewardSequenceOrderMode.Unordered, slots) };
+        CombatRewardGpuPlan Create(PreparedSearch request, CombatRewardReplay replay, bool gold) =>
+            CombatRewardGpuPlan.TryCreate(request.Model, replay, out string issue, openingPrefixHotLoop: true,
+                rareOnlyIdentityElision: false, assignmentEarlyRejection: false, unobservedFixedGold: gold)
+                ?? throw new Exception("Followup GPU fixture: " + issue);
+        OpeningPrefixFixture Add(string name, NeowSearchFilter filter, Beta110CombatRewardExplicitContext explicitContext)
+        {
+            var request = query(filter);
+            var prefix = new CombatRewardReplay(request.Model);
+            // An explicitly controlled reward state tests the suffix optimizer.
+            // It is not a claim that this query generated a Capsule/Aubergine.
+            var replay = new CombatRewardReplay(request.Model, catalog: prefix.Catalog,
+                plan: prefix.Plan with { ExplicitContext = explicitContext });
+            var baseline = Create(request, replay, false);
+            var trial = Create(request, replay, true);
+            Check(trial.UsesHotLoop && trial.HotLoop.UnobservedFixedGoldEnabled,
+                "Followup fixed-gold admission: " + name);
+            Check(!baseline.HotLoop.UnobservedFixedGoldEnabled,
+                "Followup off preserves baseline: " + name);
+            Check(!baseline.UsesHotLoop && replay.Plan.ExplicitContext.FixedGoldAmount > 0,
+                "Fixed-gold source is authored and blocked only in baseline");
+            Check(trial.Revision(false) != baseline.Revision(false), "Followup physical identity: " + name);
+            Check(baseline.Pools.SequenceEqual(trial.Pools) && baseline.Ids.SequenceEqual(trial.Ids) &&
+                baseline.Predicates.SequenceEqual(trial.Predicates) && baseline.Targets.SequenceEqual(trial.Targets),
+                "Followup retains original pools/predicates: " + name);
+            fixtures.Add(new("Followup." + name + ".Off", replay, baseline, request));
+            var fixture = new OpeningPrefixFixture("Followup." + name + ".On", replay, trial, request);
+            fixtures.Add(fixture);
+            return fixture;
+        }
+        var fixedFilter = Cards(common, null, null, null, null, null) with { NeowRoute = new(capsule), StructuredNeowEffects =
+            [new(capsule, NeowStructuredConditionKind.ExactSingle, NeowStructuredEffectScope.NestedRelics,
+                NeowStructuredOutputKind.Relic, [new("RELIC", "AMETHYST_AUBERGINE")])] };
+        var fixedContext = Beta110CombatRewardExplicitContextProjector.Project(query(fixedFilter).Model.CompiledSearch);
+        var suffixFilter = Cards(common, null, null, null, null, null);
+        var fixedFixture = Add("FixedGoldNumericalSuffix", suffixFilter, fixedContext);
+        foreach (var flag in new[] { Beta110CombatRewardInfluenceFlags.ForcePotionReward, Beta110CombatRewardInfluenceFlags.PrayerWheelExtraReward,
+                     Beta110CombatRewardInfluenceFlags.LastingCandyPowerCard, Beta110CombatRewardInfluenceFlags.UnknownRewardImpact,
+                     Beta110CombatRewardInfluenceFlags.UnknownRewardsContinuation })
+        {
+            var plan = fixedFixture.Replay.Plan with { ExplicitContext = fixedFixture.Replay.Plan.ExplicitContext with {
+                InfluenceFlags = fixedFixture.Replay.Plan.ExplicitContext.InfluenceFlags | flag } };
+            var changed = new CombatRewardReplay(fixedFixture.Request.Model, catalog: fixedFixture.Replay.Catalog, plan: plan);
+            Check(!Create(fixedFixture.Request, changed, true).UsesHotLoop, "Fixed gold retains structural/unknown guard: " + flag);
+        }
+        var extraRewardPlan = fixedFixture.Replay.Plan with { ExplicitContext = fixedFixture.Replay.Plan.ExplicitContext with {
+            AdditionalCardRewardCount = 1 } };
+        Check(!Create(fixedFixture.Request, new CombatRewardReplay(fixedFixture.Request.Model,
+            catalog: fixedFixture.Replay.Catalog, plan: extraRewardPlan), true).UsesHotLoop,
+            "Fixed gold retains additional-card-count guard without relying on its flag");
+        var goldRequest = query(suffixFilter with { NormalCombatRewardConditions =
+            [new(1, ModelKeySetFilter.Empty, NormalCombatPotionRequirement.Any, ModelKeySetFilter.Empty, 0, null)] });
+        var goldPrefix = new CombatRewardReplay(goldRequest.Model);
+        var goldReplay = new CombatRewardReplay(goldRequest.Model, catalog: goldPrefix.Catalog,
+            plan: goldPrefix.Plan with { ExplicitContext = fixedContext });
+        Check(!Create(goldRequest, goldReplay, true).UsesHotLoop,
+            "Observed gold retains generic evaluator");
+
+        string[] variables = ["RT2_C_FIXED_GOLD_HOT"];
+        var saved = variables.Select(Environment.GetEnvironmentVariable).ToArray();
+        try
+        {
+            foreach (string? mode in new string?[] { null, "", "default", "off", "on" })
+            {
+                foreach (string variable in variables) Environment.SetEnvironmentVariable(variable, mode);
+                var goldPlan = CombatRewardGpuPlan.TryCreate(fixedFixture.Request.Model, fixedFixture.Replay, out _, openingPrefixHotLoop: true,
+                    rareOnlyIdentityElision: false, assignmentEarlyRejection: false)!;
+                Check(goldPlan.HotLoop.UnobservedFixedGoldEnabled == (mode != "off"), "Followup immutable capture: " + mode);
+                foreach (string variable in variables) Environment.SetEnvironmentVariable(variable, "off");
+                Check(goldPlan.HotLoop.UnobservedFixedGoldEnabled == (mode != "off"), "Followup plans retain captured selection");
+            }
+        }
+        finally { for (int i = 0; i < variables.Length; i++) Environment.SetEnvironmentVariable(variables[i], saved[i]); }
+    }
+
+    private static void ExportOpeningPrefixGpu(List<OpeningPrefixFixture> cases,
+        string exportDirectory = ".build-evidence/c-prefix-gpu", int size = 259)
+    {
+        if (Environment.GetEnvironmentVariable("RT2_C_GPU_EXPORT_ROOT") is { Length: > 0 } exportRoot)
+            exportDirectory = Path.Combine(exportRoot, Path.GetFileName(exportDirectory));
+        string directory = Path.GetFullPath(exportDirectory); Directory.CreateDirectory(directory);
+        var fixtures = new List<object>();
+        int shaderIndex = 0;
+        foreach (var fixture in cases)
+        foreach (bool forceGeneric in fixture.Plan.UsesOpeningPrefixHotLoop ? new[] { false, true } : new[] { false })
+        foreach (var numerical in new[] { GpuNumericalVariant.NativeFloat64, GpuNumericalVariant.IntegerRne })
+        {
+            Check(!fixture.Replay.UsesObservedOpening && !fixture.Replay.ConservativelyKeeps,
+                "Prefix GPU export owns only available numerical inputs its runner actually binds: " + fixture.Name);
+            var plan = fixture.Plan with { NumericalVariant = numerical };
+            string shader = $"shader{shaderIndex++}.glsl";
+            File.WriteAllText(Path.Combine(directory, shader), plan.ShaderSource(forceGeneric));
+            foreach (bool compact in new[] { false, true })
+            {
+                uint[] ordinals = Enumerable.Range(0, size).Where(i => !compact || i % 3 == 0).Select(i => (uint)i).ToArray();
+                uint[] expected = fixture.ExpectedFault ? [] : ordinals.Where(i => fixture.Replay.MatchesReference(
+                    Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(fixture.Start + i)))).ToArray();
+                if (!fixture.ExpectedFault && fixture.RequireMixedResults)
+                    Check(expected.Length > 0 && expected.Length < ordinals.Length,
+                        "Prefix GPU fixture includes matches and rejections: " + fixture.Name);
+                fixtures.Add(new { name = fixture.Name + "." + numerical + (forceGeneric ? ".ForcedGeneric" : ".Selected"), shader,
+                    batchMeta = new[] { (uint)fixture.Start, (uint)(fixture.Start >> 32), (uint)size, (uint)ordinals.Length,
+                        compact ? 1u : 0u, (uint)size, 0u, (uint)plan.Routes }, plan.Meta, plan.Pools, plan.Ids,
+                    plan.Predicates, plan.Targets, plan.HotLoop, ordinals, expected, expectedFault = fixture.ExpectedFault });
+            }
+        }
+        File.WriteAllText(Path.Combine(directory, "fixtures.json"), System.Text.Json.JsonSerializer.Serialize(fixtures));
+        File.WriteAllText(Path.Combine(directory, "project.godot"), "config_version=5\n[application]\nconfig/name=\"C prefix GPU parity\"\n[rendering]\nrenderer/rendering_method=\"mobile\"\n");
+        File.Copy("tests/functional/Rt2FunctionalChecks/CombatRewardGpuSanity.gd", Path.Combine(directory, "check.gd"), true);
+        Console.WriteLine($"C prefix GPU fixtures exported: {fixtures.Count}; shaders={shaderIndex}; directory={directory}");
+    }
+
+    private static List<TerminalCardFixture> CheckTerminalCardGate(Func<NeowSearchFilter, PreparedSearch> query)
     {
         var fixtures = new List<TerminalCardFixture>();
-        var authority = query(NeowSearchFilter.Empty).Authority;
+        var authority = query(NeowSearchFilter.Empty).Model.Authority;
         ModelKey[] keys = authority.EffectAuthority!.CharacterRewardPool!.Select(c => c.CardKey).Distinct().Take(3).ToArray();
         var filter = NeowSearchFilter.Empty with { NeowRoute = new(BaseGameModelKeys.Relics.SilkenTress),
             CombatCardRewardSequence = new(3, CombatRewardSequenceOrderMode.Unordered, keys.Select(k => (ModelKey?)k).ToArray()) };
         var request = query(filter);
-        var original = new CombatRewardReplay(request);
+        var original = new CombatRewardReplay(request.Model);
         ushort[] ids = keys.Select(k => original.Catalog.TryGetDenseId(k, out var id) ? id : throw new Exception("Terminal target missing")).ToArray();
         Check(ids.Distinct().Count() == 3, "Terminal fixture has three different targets");
         var controlled = original.Catalog with { CombatRewardCardPool = new(ids, [], []) };
 
         CombatRewardGpuPlan Add(string name, CombatRewardReplay replay, bool admitted, uint[]? ordinals = null, bool fault = false)
         {
-            var plan = CombatRewardGpuPlan.TryCreate(request, replay, out string issue) ?? throw new Exception("Terminal fixture: " + issue);
+            var plan = CombatRewardGpuPlan.TryCreate(request.Model, replay, out string issue, openingPrefixHotLoop: false) ?? throw new Exception("Terminal fixture: " + issue);
             Check(plan.UsesTerminalCardGate == admitted, "Terminal gate admission: " + name);
             fixtures.Add(new(name, replay, plan, ordinals, fault));
             return plan;
@@ -1243,7 +1882,7 @@ internal static class FamilyCombatRewardChecks
                 selected = selected with { CardAssignmentWindow = 0, CardAssignmentTargets = [],
                     PotionAssignmentWindow = 0, PotionAssignmentRequirements = [], PotionAssignmentTargets = [],
                     Predicates = selected.Predicates.Select(p => p with { AnyBattleWindow = 0 }).ToArray() };
-            return new(request, catalog: catalog ?? controlled, plan: selected);
+            return new(request.Model, catalog: catalog ?? controlled, plan: selected);
         }
 
         Add("TerminalOriginalPool", original, true);
@@ -1283,15 +1922,15 @@ internal static class FamilyCombatRewardChecks
             var runtimeCatalog = candy ? controlled with { CombatRewardPowerPool = new([fourth], [], []) } :
                 controlled with { CombatRewardCardPool = new([.. ids, fourth], [], []) };
             var replay = With(runtimePlan, runtimeCatalog);
-            var plan = CombatRewardGpuPlan.TryCreate(request, replay, out string issue) ?? throw new Exception(issue);
+            var plan = CombatRewardGpuPlan.TryCreate(request.Model, replay, out string issue) ?? throw new Exception(issue);
             Check(plan.UsesTerminalCardGate, "Terminal body remains present for runtime modifier bypass");
             Check(Enumerable.Range(0, 64).Any(i => replay.Matches(Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal((ulong)i)))),
                 "Extra output supplies target beyond the ordinary terminal group");
             fixtures.Add(new(candy ? "TerminalCandyRuntimeBypass" : "TerminalWheelRuntimeBypass", replay, plan));
         }
         var partyRequest = ForPartySlot(request, 1);
-        var partyReplay = new CombatRewardReplay(partyRequest);
-        var partyPlan = CombatRewardGpuPlan.TryCreate(partyRequest, partyReplay, out string partyIssue) ?? throw new Exception(partyIssue);
+        var partyReplay = new CombatRewardReplay(partyRequest.Model);
+        var partyPlan = CombatRewardGpuPlan.TryCreate(partyRequest.Model, partyReplay, out string partyIssue) ?? throw new Exception(partyIssue);
         Check(!partyPlan.UsesTerminalCardGate, "Terminal gate excludes multiplayer");
 
         void Fault(string name, Beta110FastEffectCatalog catalog, bool admitted)
@@ -1313,16 +1952,32 @@ internal static class FamilyCombatRewardChecks
         Fault("TerminalEmptyPotionFault", controlled with { CombatRewardPotionPool = new([], [], [], []) }, true);
         var captured = ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/v1/context.json");
         var nc = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/owner-rare-nc-v1/NC_RARE_01.json");
-        var ncRequest = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(nc.Query, captured.Context), nc.Options).Plan!;
-        var ncReplay = new CombatRewardReplay(ncRequest);
-        var ncPlan = CombatRewardGpuPlan.TryCreate(ncRequest, ncReplay, out string ncIssue) ?? throw new Exception(ncIssue);
+        var ncRequest = SearchPreparationCompiler.Compile(SearchCompiler.Compile(nc.Query, captured.Context), nc.Options).Plan!;
+        var ncReplay = new CombatRewardReplay(ncRequest.Model);
+        // This suite tests the retained generic terminal gate. Production's
+        // opening-prefix hot body deliberately uses its own rejection path.
+        var ncPlan = CombatRewardGpuPlan.TryCreate(ncRequest.Model, ncReplay, out string ncIssue,
+            openingPrefixHotLoop: false) ?? throw new Exception(ncIssue);
+        Console.WriteLine("C_TERMINAL_OWNER_DETAIL " + System.Text.Json.JsonSerializer.Serialize(new
+        {
+            scope = "GenericTerminalGateFixture",
+            ncPlan.UsesTerminalCardGate,
+            ncPlan.UsesOpeningPrefixHotLoop,
+            hotLoop = ncPlan.HotLoop.Enabled,
+            ncReplay.ConservativelyKeeps,
+            ncReplay.Plan.CardPoolAuthorityExact,
+            predicateCount = ncReplay.Plan.Predicates.Length,
+            allExistential = ncReplay.Plan.Predicates.All(p => p.IsAnyBattle),
+            predicates = ncReplay.Plan.Predicates,
+            compiledOpening = ncRequest.Model.CompiledSearch.Query.OpeningRoute
+        }));
         Check(ncPlan.UsesTerminalCardGate && ncReplay.Plan.Predicates.Length == 6 && ncReplay.Plan.Predicates.All(p => p.IsAnyBattle),
             "Actual NC rare workload retains six existential predicates and uses terminal card gate");
         fixtures.Add(new("TerminalOwnerNcRare01", ncReplay, ncPlan, Start: 1564438048595379352UL));
         return fixtures;
     }
 
-    private static void ExportGpu(Func<NeowSearchFilter,ExactSearchExecutionRequest> query, List<TerminalCardFixture> terminalFixtures)
+    private static void ExportGpu(Func<NeowSearchFilter,PreparedSearch> query, List<TerminalCardFixture> terminalFixtures)
     {
         string directory=Path.GetFullPath(".build-evidence/c1-gpu");Directory.CreateDirectory(directory);
         var fixtures=new List<object>();
@@ -1421,6 +2076,8 @@ internal static class FamilyCombatRewardChecks
         var goldRange = NeowSearchFilter.Empty with { NormalCombatRewardConditions =
             [new(3, ModelKeySetFilter.Empty, NormalCombatPotionRequirement.Any, ModelKeySetFilter.Empty, 9, 12)] };
         cases.Add(("GoldRange", goldRange));
+        cases.Add(("RealNeutralWitness", goldRange));
+        cases.Add(("PartySlot1RealNeutralWitness", goldRange));
         cases.Add(("PartySlot3GoldRange", goldRange));
         cases.Add(("PartySlot3CapsuleGold", goldRange with { NeowRoute = new(large) }));
         cases.Add(("PartySlot3AuthoredFixedGold", goldRange with { NeowRoute = new(small), NormalCombatRewardConditions =
@@ -1428,14 +2085,36 @@ internal static class FamilyCombatRewardChecks
             [new(small, NeowStructuredConditionKind.ExactSingle, NeowStructuredEffectScope.NestedRelics,
                 NeowStructuredOutputKind.Relic, [new("RELIC", "AMETHYST_AUBERGINE")])] }));
         int shaderIndex=0;
+        var observedNotExported = new List<object>();
         foreach(var (name,filter) in cases)
         {
             bool party = name.StartsWith("PartySlot", StringComparison.Ordinal);
             var request=query(filter);
             if (party) request = ForPartySlot(request, name[9] - '0');
-            var replay=new CombatRewardReplay(request, name.EndsWith("UnknownNiche", StringComparison.Ordinal) ? null : party ? 11 : 0);
-            var plan=CombatRewardGpuPlan.TryCreate(request,replay,out string issue)??throw new Exception("GPU fixture admission "+name+":"+issue);
-            Check(!plan.UsesHotLoop||!replay.Plan.OpeningConsumption.HasReplay,"Hot-loop authored prefix exclusion");
+            if (name.EndsWith("RealNeutralWitness", StringComparison.Ordinal))
+                request = request with { Model = request.Model with { CombatRewardRoutePolicy = new(
+                    CombatRewardFastRoutePolicy.UnpinnedAssumeUnperturbed, CombatRewardExactRoutePolicy.UnpinnedVerifyNeutralRealRoute) } };
+            var replay=new CombatRewardReplay(request.Model, name.EndsWith("UnknownNiche", StringComparison.Ordinal) ? null : party ? 11 : 0);
+            if (CombatRewardObservedOpening.Needed(replay.Plan.OpeningConsumption))
+            {
+                // This legacy sanity runner binds [0] to bones/observed data.
+                // Complete real Observed GPU/full-query recall belongs to the
+                // ProductionSearchHost contexts; exporting these toys would
+                // test fabricated inputs or an all-retained missing-bag guard.
+                Check(replay.ConservativelyKeeps || replay.UsesObservedOpening,
+                    "Observed fixture declares either its actual input or its missing observation: " + name);
+                if (replay.ConservativelyKeeps)
+                    Check(replay.ConservativeOpeningReason.Length > 0 && replay.Matches(0),
+                        "Unexported fixture retains its real unavailable cause: " + name);
+                observedNotExported.Add(new { Name = name, replay.ConservativelyKeeps, replay.ConservativeOpeningReason,
+                    replay.UsesObservedOpening, Scope = "NotExportedOrTestedByLegacyGpuRunner",
+                    Reason = replay.ConservativelyKeeps ? replay.ConservativeOpeningReason : "RunnerDoesNotBindActualObservedOpeningInputs",
+                    ActualObservedGpuCoverageOwner = "ProductionSearchHost.CombatRecallSearchChecks" });
+                continue;
+            }
+            var plan=CombatRewardGpuPlan.TryCreate(request.Model,replay,out string issue)??throw new Exception("GPU fixture admission "+name+":"+issue);
+            Check(!plan.UsesHotLoop || !replay.Plan.OpeningConsumption.HasReplay || plan.UsesOpeningPrefixHotLoop,
+                "Hot-loop authored prefix retains its prepared opening continuation");
             foreach(bool generic in plan.UsesHotLoop?new[]{false,true}:new[]{false})
             foreach (var numerical in new[] { GpuNumericalVariant.NativeFloat64, GpuNumericalVariant.IntegerRne })
             {
@@ -1444,7 +2123,7 @@ internal static class FamilyCombatRewardChecks
                 foreach(bool compact in new[]{false,true})
                 {
                     int size=4099;uint[] ordinals=Enumerable.Range(0,size).Where(i=>!compact||i%3==0).Select(i=>(uint)i).ToArray();
-                    var expected=ordinals.Where(i=>replay.Matches(Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(start+i)))).ToArray();
+                    var expected=ordinals.Where(i=>replay.MatchesReference(Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(start+i)))).ToArray();
                     fixtures.Add(new {name=name+"."+numerical+(generic?".ForcedGeneric":".Selected"),shader,batchMeta=new[]{(uint)start,(uint)(start>>32),(uint)size,(uint)ordinals.Length,compact?1u:0u,(uint)size,0u,(uint)plan.Routes},
                         plan.Meta,plan.Pools,plan.Ids,plan.Predicates,plan.Targets,plan.HotLoop,forceGeneric=generic,ordinals,expected});
                 }
@@ -1458,7 +2137,7 @@ internal static class FamilyCombatRewardChecks
             File.WriteAllText(Path.Combine(directory, shader), plan.ShaderSource());
             const int size = 259;
             uint[] ordinals = fixture.Ordinals ?? Enumerable.Range(0, size).Where(i => i % 3 == 0).Select(i => (uint)i).ToArray();
-            uint[] expected = fixture.ExpectedFault ? [] : ordinals.Where(i => fixture.Replay.Matches(
+            uint[] expected = fixture.ExpectedFault ? [] : ordinals.Where(i => fixture.Replay.MatchesReference(
                 Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(fixture.Start + i)))).ToArray();
             fixtures.Add(new { name = fixture.Name + (reference ? ".Reference" : ".Gate"), shader,
                 batchMeta = new[] { (uint)fixture.Start, (uint)(fixture.Start >> 32), (uint)size, (uint)ordinals.Length, 1u, (uint)size, 0u, (uint)plan.Routes },
@@ -1466,8 +2145,9 @@ internal static class FamilyCombatRewardChecks
                 expectedFault = fixture.ExpectedFault });
         }
         File.WriteAllText(Path.Combine(directory,"fixtures.json"),System.Text.Json.JsonSerializer.Serialize(fixtures));
+        File.WriteAllText(Path.Combine(directory,"observed-not-exported.json"),System.Text.Json.JsonSerializer.Serialize(observedNotExported));
         File.WriteAllText(Path.Combine(directory,"project.godot"),"config_version=5\n[application]\nconfig/name=\"C1 Family GPU parity\"\n[rendering]\nrenderer/rendering_method=\"mobile\"\n");
         File.Copy("tests/functional/Rt2FunctionalChecks/CombatRewardGpuSanity.gd",Path.Combine(directory,"check.gd"),true);
-        Console.WriteLine($"C1 GPU fixtures exported: {fixtures.Count}; shaders={shaderIndex}; directory={directory}");
+        Console.WriteLine($"C1 GPU fixtures exported: {fixtures.Count}; shaders={shaderIndex}; observedNotExportedOrClaimed={observedNotExported.Count}; directory={directory}");
     }
 }

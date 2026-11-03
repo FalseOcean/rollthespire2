@@ -32,14 +32,17 @@ internal sealed partial class NeowSearchEditor
 
     internal Action ClearConditions(bool party, int? slot = null)
     {
-        var restore = WorkbenchConditionReset.Swap(party ? _partyCatalogDrafts : _drafts, _ => new SeatDraft(), slot);
+        var restore = WorkbenchConditionReset.Swap(party ? _partyCatalogDrafts : _drafts, _ => new SeatDraft(), slot,
+            (previous, current) => { if (ReferenceEquals(_draft, previous)) _draft = current; });
         if (!party) return restore;
         var offers = WorkbenchConditionReset.Swap(_partyOffers, _ => new HashSet<Core.Identity.ModelKey>(), slot);
         var modes = _partyModes.Where(p => slot is null || p.Key == slot).ToArray(); var choices = _partyChoices.Where(p => slot is null || p.Key == slot).ToArray();
         foreach (var pair in modes) _partyModes.Remove(pair.Key); foreach (var pair in choices) _partyChoices.Remove(pair.Key);
         return () =>
         {
-            restore(); offers(); foreach (var pair in modes) _partyModes.Remove(pair.Key); foreach (var pair in choices) _partyChoices.Remove(pair.Key);
+            restore(); offers();
+            foreach (var key in _partyModes.Keys.Where(key => slot is null || key == slot).ToArray()) _partyModes.Remove(key);
+            foreach (var key in _partyChoices.Keys.Where(key => slot is null || key == slot).ToArray()) _partyChoices.Remove(key);
             foreach (var (slot, mode) in modes) _partyModes[slot] = mode;
             foreach (var (slot, value) in choices) _partyChoices[slot] = value;
         };

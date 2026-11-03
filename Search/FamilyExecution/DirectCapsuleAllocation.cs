@@ -24,14 +24,14 @@ internal static class DirectCapsuleAllocation
 
     // Only this Dense N+R invocation is compared; independent families, scan
     // length, target K and Exact work never participate in the physical choice.
-    internal static bool TryCreateDefaultUnit(ExactSearchExecutionRequest request,
-        IReadOnlyList<IFamilyInvocation> registered, out IFamilyInvocation? unit)
+    internal static bool TryCreateDefaultUnit(SearchModel request, FilterExecutionPreferences preferences,
+        IReadOnlyList<FilterBodyDescription> registered, out FilterBodyDescription? unit)
     {
         unit = null;
-        if (registered.OfType<NeowFamily>().SingleOrDefault() is not { GpuPlan: not null } nf ||
-            !registered.OfType<CapsuleRelicFamily>().Any(f => f.ConditionPerformance.UsesGpu) ||
-            !FamilyPhysicalQuote.HasReferenceBackend()) return false;
-        var n = nf.PricingReplayPlan;
+        var nf = registered.SingleOrDefault(f => f.FamilyId == "N.Neow" && f.UsesGpu && f.Coverage.Count == 1);
+        if (nf is null || !registered.Any(f => f.FamilyId == "R.Relic" && f.UsesGpu) ||
+            !NeowReplayPlan.HasCapsule(request) || !FamilyPhysicalQuote.HasReferenceBackend()) return false;
+        var n = NeowReplayPlan.Compile(request, false);
         if (n.Bones || n.RequireBones || !n.DirectNestedVanilla111 || !request.Authority.CanUseCurrentModel ||
             request.Authority.PlayersCount != 1 || request.Authority.NoRunModifiers != true ||
             request.Authority.AllCharacterCardPoolsUnlocked != true ||
@@ -48,7 +48,7 @@ internal static class DirectCapsuleAllocation
             ? FamilySurvivalProjection.Resolved("N.Neow", nSurvival.Value * rSurvival.Value,
                 "CompositeCoverage=N.Neow,R.Relic;RConditionalOnN")
             : FamilySurvivalProjection.Unresolved("N.Neow", "CompositeJointSurvivalUnavailable");
-        unit = new DirectCapsuleInvocation(request, n, gpu, composite, mode, false, survival);
+        unit = DirectCapsuleInvocation.Prepare(request, n, gpu, composite, mode, false, survival);
         Bootstrap.RuntimeLog.TryBackgroundInfo($"directCapsuleUnitSelected=true;mode={mode};fusedDenseNs={fusedNs:G17};serialDenseNs={serialNs:G17};" +
             "comparisonScope=OneCoupledDenseNrUnit;NoSearchSuffixOrExactTailPrice;transport=ordinalOnly");
         return true;
@@ -74,20 +74,21 @@ internal static class DirectCapsuleAllocation
         return reference;
     }
 
-    internal static bool TrySelect(ExactSearchExecutionRequest request, IReadOnlyList<IFamilyInvocation> registered,
+    internal static bool TrySelect(PreparedSearch request, IReadOnlyList<FilterBodyDescription> registered,
         out FamilyExecutionPlan? selected, string? explicitMode=null)
     {
         selected=null;
+        var model = request.Model;
         string mode=explicitMode ?? System.Environment.GetEnvironmentVariable("RT2_DIRECT_CAPSULE_EXPERIMENT") ?? "";
         if(mode.Length==0)return false;
         bool verify=mode.StartsWith("verify-",StringComparison.Ordinal);
         string path=verify?mode[7..]:mode;
         if(path is not ("keep" or "fused" or "serial" or "pregate-serial" or "pregate-fused" or "serial-direct" or "rarity-serial" or "entry-rarity-serial"))
             throw new InvalidOperationException("DirectCapsule.UnknownExperiment");
-        var n=NeowReplayPlan.Compile(request,false);
-        if(n.Bones || n.RequireBones || !n.DirectNestedVanilla111 || !request.Authority.CanUseCurrentModel || request.Authority.PlayersCount!=1 ||
-            request.Authority.NoRunModifiers!=true || request.Authority.AllCharacterCardPoolsUnlocked!=true ||
-            !NeowCapsuleComposite.TryCreate(request,n,out var composite) || composite is null ||
+        var n=NeowReplayPlan.Compile(model,false);
+        if(n.Bones || n.RequireBones || !n.DirectNestedVanilla111 || !model.Authority.CanUseCurrentModel || model.Authority.PlayersCount!=1 ||
+            model.Authority.NoRunModifiers!=true || model.Authority.AllCharacterCardPoolsUnlocked!=true ||
+            !NeowCapsuleComposite.TryCreate(model,n,out var composite) || composite is null ||
             !NeowFamilyGpuPlan.TryCreate(n,out var gpu,out _) || gpu is null ||
             registered.Any(f=>f.FamilyId is not ("N.Neow" or "R.Relic" or "W.World")))
         {
@@ -104,7 +105,7 @@ internal static class DirectCapsuleAllocation
             mode=(verify?"verify-":"")+path;
             Bootstrap.RuntimeLog.TryBackgroundInfo($"directCapsulePreset=keep;resolvedMode={mode};source={n.Selected};automaticPlannerPromotion=false");
         }
-        IFamilyInvocation[] ordered=[new DirectCapsuleInvocation(request,n,gpu,composite,path,verify),
+        FilterBodyDescription[] ordered=[DirectCapsuleInvocation.Prepare(model,n,gpu,composite,path,verify),
             ..registered.Where(f=>f.FamilyId is not ("N.Neow" or "R.Relic"))];
         var stages=ordered.Select((f,i)=>{
             var condition=f.ResolveConditionPerformance(i!=0);
@@ -118,59 +119,46 @@ internal static class DirectCapsuleAllocation
     }
 }
 
-internal sealed class DirectCapsuleInvocation(ExactSearchExecutionRequest request, NeowReplayPlan replay,
-    NeowFamilyGpuPlan plan, NeowCapsuleComposite composite, string mode, bool verify, FamilySurvivalProjection? modeledSurvival = null) : IFamilyInvocation
+internal static class DirectCapsuleInvocation
 {
-    internal static string PhysicalRevision(string mode) => "N.Neow.Composite.RCapsule.DirectExperiment."+mode+".CanonicalAbi1Ready.20260909.v1" + GpuRngRotation.Revision;
-    private readonly GpuCostSamples _costSamples=new();
-    IEnumerable<GpuLocalPeak> IFamilyInvocation.CostPeaks=>_costSamples.Peaks;
-    void IFamilyInvocation.LogExecutionEvidence() { _costSamples.WriteSummary(); _gpu?.LogEvidence(); }
-    private DirectCapsuleGpu? _gpu;
-    private long _input,_output;
-    private int _batches;
-    private double _ms;
-    private bool _faulted;
-    bool IFamilyInvocation.ExecutionFaulted => _faulted;
-    GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => ConditionPerformance.UsesGpu ? GpuNumericRequirements.Int64 | GpuNumericRequirements.Float64 : GpuNumericRequirements.None;
-    public string FamilyId=>"N.Neow";
-    public IReadOnlyList<string> Coverage=>["N.Neow","R.Relic"];
-    public FamilyAnalyticalCostProjection AnalyticalCost=>new(FamilyId,PrivateOrdinalBuffer.Capacity,[],"DirectCapsule.Unpriced");
-    public FamilySurvivalProjection Survival => modeledSurvival ?? FamilySurvivalProjection.Unresolved(FamilyId,"DirectCapsule.Experiment");
-    public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest geometry)
+    internal static string PhysicalRevision(string mode) => "N.Neow.Composite.RCapsule.DirectExperiment." + mode + ".CanonicalAbi1Ready.20260909.v1" + NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision;
+    internal static FilterBodyDescription Prepare(SearchModel model, NeowReplayPlan replay,
+        NeowFamilyGpuPlan plan, NeowCapsuleComposite composite, string mode, bool verify,
+        FamilySurvivalProjection? modeledSurvival = null)
     {
-        if (geometry.ComputationOnly || geometry.CompactInput || geometry.PrivateInput || geometry.PrivateOutput ||
-            !FamilyPhysicalQuote.AdmittedRequest(geometry) ||
-            DirectCapsuleAllocation.DenseReferenceNanoseconds(replay, composite, mode) is not double ns) return null;
-        return FamilyGpuReadback.Reference(this, new(FamilyId, "DirectCapsule.CoupledDenseUnit", ns, PrivateOrdinalBuffer.Capacity, null,
-            "OfflineCleanDirectCapsule20260909;CanonicalNrIncludesInternalEdges;" + GpuReferenceCostAtlas.Provenance,
-            PublicTransportClass: "CompleteCanonicalAbi1"));
-    }
-    public FamilyConditionPerformanceProjection ConditionPerformance=>new(FamilyId,
-        PhysicalRevision(mode),"Neutral",1,"BoundedDirectCapsule",usesGpu:true);
-    public FamilyPerformanceObservation CapturePerformanceObservation()=>new(ConditionPerformance,_gpu?.Device??"",_gpu?.SetupMs??0,
-        0,0,_batches,0,_input,_output,_ms,false,_faulted?"PhysicalFailureOrRecovery":"CoupledDenseUnitCanonicalBoundary");
-    public async ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context,FamilyObservationWindow observation,FamilyCandidateSet input,CancellationToken token)
-    {
-        if(_faulted||request.SnapshotFingerprint!=observation.ExactRequest.SnapshotFingerprint)throw new InvalidOperationException("DirectCapsule.InvocationInvariant");
-        try {
-            _gpu??=await context.ExecuteGpuAsync(rd=>new DirectCapsuleGpu(rd,plan,replay,composite,mode,verify),token).ConfigureAwait(false);
-            var result=await context.ExecuteGpuAsync(_=>{var output=_gpu.Execute(input,token,out var ms);return(output,ms);},token).ConfigureAwait(false);
-            FamilyAuxiliaryEvidence.Read(FamilyId, "ObserveDirectCapsuleCost", () =>
-            {
-                _costSamples.Record(DirectCapsuleAllocation.CostKey(replay,composite,mode) ?? PhysicalRevision(mode), PrivateOrdinalBuffer.Capacity, input.Count, result.output.Count, -1, result.ms, -1, -1);
-                if(!verify && input.Count==PrivateOrdinalBuffer.Capacity && DirectCapsuleAllocation.CostKey(replay,composite,mode) is string key)
-                    _costSamples.Observe(key,input.Count,result.ms,GpuCostCalibration.DeviceKey());
-                return true;
-            }, false, request.SnapshotFingerprint);
-            _batches++;_input+=input.Count;_output+=result.output.Count;_ms+=result.ms;return result.output;
-        } catch(OperationCanceledException){throw;} catch{_faulted=true;throw;}
-    }
-    public async ValueTask DisposeAsync(FamilyExecutionContext context)
-    {
-        if(_gpu is not null)await context.ExecuteGpuAsync(_=>{_gpu.Dispose();return true;},CancellationToken.None).ConfigureAwait(false);
-        Bootstrap.RuntimeLog.TryBackgroundInfo($"directCapsuleSummary=true;mode={mode};batches={_batches};input={_input};output={_output};canonicalMs={_ms};faulted={_faulted};recovery=None");
+        const string id = "N.Neow";
+        string revision = PhysicalRevision(mode);
+        var preparation = new PreparedFilter(id) {
+            Coverage = [id, "R.Relic"], AnalyticalCost = new(id, PrivateOrdinalBuffer.Capacity, [], "DirectCapsule.Unpriced"),
+            Remainders = replay.FilterRemainders,
+            Survival = modeledSurvival ?? FamilySurvivalProjection.Unresolved(id, "DirectCapsule.Experiment")
+        };
+        return new(preparation, revision, model.ProfileId) {
+            UsesGpu = true, InputModes = FilterInputModes.Dense, InputIdentity = model.SnapshotFingerprint,
+            PlayersCount = model.Authority.PlayersCount, WindowCapacity = PrivateOrdinalBuffer.Capacity,
+            NumericRequirements = GpuNumericRequirements.Int64 | GpuNumericRequirements.Float64,
+            PerformanceProjection = _ => new(id, revision, "Neutral", 1, "BoundedDirectCapsule", true),
+            Cost = new() {
+                CompleteCallPeakKey = DirectCapsuleAllocation.CostKey(replay, composite, mode) ?? "",
+                MinimumComparableInput = _ => int.MaxValue,
+                Quote = (selected, geometry, _) => {
+                    if (geometry.ComputationOnly || geometry.CompactInput || geometry.PrivateInput || geometry.PrivateOutput ||
+                        !FamilyPhysicalQuote.AdmittedRequest(geometry) ||
+                        DirectCapsuleAllocation.DenseReferenceNanoseconds(replay, composite, mode) is not double ns) return null;
+                    return FamilyGpuReadback.Reference(selected, new(id, "DirectCapsule.CoupledDenseUnit", ns,
+                        PrivateOrdinalBuffer.Capacity, null, "OfflineCleanDirectCapsule20260909;CanonicalNrIncludesInternalEdges;" + GpuReferenceCostAtlas.Provenance,
+                        PublicTransportClass: "CompleteCanonicalAbi1"));
+                }
+            },
+            CreateExecution = (body, _) => new GpuExperimentExecution<DirectCapsuleGpu>(body,
+                device => new(device, plan, replay, composite, mode, verify), (resource, input, token) => {
+                    var output = resource.Execute(input, token, out var ms);
+                    return new(output, ms);
+                }, resource => { resource.LogEvidence(); resource.Dispose(); }, resource => (resource.Device, resource.SetupMs), verify)
+        };
     }
 }
+
 
 internal sealed class DirectCapsuleGpu : IDisposable
 {

@@ -141,13 +141,13 @@ internal sealed partial class AnalysisPageController
             if (slot == draft.PlayerSlotIndex)
             {
                 request!.PartyOpeningChoices = choices;
-                var document = RuntimeProfileRegistry.Predict(_runtime.Detection, request);
+                var facts = RuntimeProfileRegistry.Observe(_runtime.Detection, request);
                 _bindingPartyDocument = true;
                 try
                 {
                     _page.SetPredictorContext(owner.Character.CharacterKey, owner.Ascension, owner.PlayersCount, slot,
                         draft.AncientOptionConditions, continuation?.Route.RouteId ?? selection.Route ?? "", choice?.SlotIndex ?? selection.Choice, "", false);
-                    _page.ShowDocument(request, document, players[slot].Unlocks);
+                    _page.ShowFacts(request, facts, players[slot].Unlocks);
                 }
                 finally { _bindingPartyDocument = false; }
                 _page.SetPartyOpeningChoices(selectedRelics);

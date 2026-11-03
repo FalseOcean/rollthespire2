@@ -24,6 +24,7 @@ using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Ui.Shell;
 using RolltheSpire2.Ui.Controllers;
 using RolltheSpire2.Ui.Pages.Analysis;
+using RolltheSpire2.Ui.Persistence;
 
 internal static partial class PartyPhase1Checks
 {
@@ -97,24 +98,24 @@ internal static partial class PartyPhase1Checks
                     StructuredOpeningEffects = [new(kalei, NeowStructuredConditionKind.IndependentOfferGroupTargets,
                         NeowStructuredEffectScope.SelectableOfferGroups, NeowStructuredOutputKind.Card, [target], AllowDuplicateOutputs:true)] }
                 }).ToArray() };
-                var request = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context), new(seed,1,1,1)).Plan!;
-                var result = ProductionExactSearchEvaluator.Evaluate(request, TrustedRootHashInput.FromCanonicalSeed(profile,seed));
+                var request = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context), new(seed,1,1,1)).Plan!;
+                var result = ProductionExactSearchEvaluator.Evaluate(request.Model, TrustedRootHashInput.FromCanonicalSeed(profile,seed));
                 GD.Print($"KALEI_EXACT seed={seed};P1Leaf={p1Leaf};P2Leaf={p2Leaf};match={result.IsMatch}");
                 Check(result.IsMatch == (p1Leaf == requiredP1Leaf && !p2Leaf), "Reported seed order mismatch");
                 if (!result.IsMatch) continue;
                 query = query with { Players = query.Players.Select(p => p with { Conditions = p.Conditions with {
                     OpeningRouteRelicRequirement = p.Conditions.OpeningRouteRelicRequirement! with { OrderMode = BonesRouteOrderMode.AnyOrder } } }).ToArray() };
-                request = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context), new(seed,1,1,1)).Plan!;
-                result = ProductionExactSearchEvaluator.Evaluate(request, TrustedRootHashInput.FromCanonicalSeed(profile,seed));
+                request = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context), new(seed,1,1,1)).Plan!;
+                result = ProductionExactSearchEvaluator.Evaluate(request.Model, TrustedRootHashInput.FromCanonicalSeed(profile,seed));
                 Check(result.IsMatch, "AnyOrder retains a joint witness");
                 var runtime = ModRuntimeSnapshot.NotInitialized with { Profile = profile, Detection = detection,
                     Compatibility = RuntimeProfileRegistry.Resolve(detection) };
                 var draft = new WorkbenchSearchDraft(BaseGameModelKeys.Characters.Defect,10,query,AncientOptionConditionProfile.BroadDefault)
                 { Mode = RolltheSpire2.Core.World.Snapshots.WorldGameMode.Multiplayer, GameVersion = "0.111.0", Profile = profile.ProfileId,
                     Players = Enumerable.Range(0,2).Select(i => new WorkbenchPlayerDraft(i,BaseGameModelKeys.Characters.Defect,
-                        UnlockState.all.ToSerializable(),"AssumedFullyUnlocked")).ToArray() };
-                var candidate = new SearchCandidate(seed, profile.ProfileId, BaseGameModelKeys.Characters.Defect,10,"order-probe",
-                    result.Request!,result.Document!,result.Authority,[],[],[]);
+                        UnlockState.all.ToSerializable(),party.UnlockSources[i])).ToArray() };
+                var candidate = new SearchCandidate(seed, profile.ProfileId, BaseGameModelKeys.Characters.Defect,10,
+                    request.SnapshotFingerprint,result.Authority,result.Evaluation) { Facts=result.Facts };
                 const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
                 object Field(object o, string name) => o.GetType().GetField(name,flags)!.GetValue(o)!;
                 var surface = new Control { Size = new Vector2(1600,900) }; host.AddChild(surface);
@@ -122,13 +123,22 @@ internal static partial class PartyPhase1Checks
                 shell.InitializeWithPersistence(runtime,Path.Combine(output,"ui-state")); surface.AddChild(shell);
                 try
                 {
-                    typeof(WorkspaceShell).GetMethod("ShowPartyResult",flags)!.Invoke(shell,[candidate,draft]);
+                    var persistence = (SearchWorkspace)Field(shell,"_persistence");
+                    Check(persistence.TrySetPersistentOrigin(seed,out _,out _), "result fixture keeps its explicit search origin");
+                    var prepared = persistence.PrepareSearchStart(draft,request,SeedLibraryContextCapture.ForSearch(draft,runtime));
+                    persistence.BindPreparedResultWorkspace(prepared);
+                    persistence.AppendResult(candidate,request.Model.CompiledSearch.SemanticFingerprint);
+                    var action = persistence.ResultAction(persistence.DisplayResults.Single(row => row.Seed == seed));
+                    Check(action.Live is { } live && ReferenceEquals(live.Candidate,candidate) &&
+                        live.Start.Plan.Model.CompiledSearch.SemanticFingerprint == request.Model.CompiledSearch.SemanticFingerprint,
+                        "information action retains its actual search candidate and captured plan");
+                    typeof(WorkspaceShell).GetMethod("ShowPartyResult",flags)!.Invoke(shell,[action]);
                     var controller = (AnalysisPageController)Field(shell,"_predictorController");
                     var page = (AnalysisPage)Field(shell,"_predictor");
                     foreach (int slot in new[] {0,1,0})
                     {
                         typeof(AnalysisPageController).GetMethod("SelectPartyPlayer",flags)!.Invoke(controller,[slot]);
-                        var expectedRoute = result.Document!.Party!.Transactions.Single(t => t.Slot == slot).OpeningRouteId;
+                        var expectedRoute = result.Facts!.Party!.Transactions.Single(t => t.Slot == slot).OpeningRouteId;
                         GD.Print($"KALEI_UI seed={seed};slot={slot};expected={expectedRoute};displayed={page.PreferredOpeningRouteId}");
                         Check(page.PreferredOpeningRouteId == expectedRoute, "Search witness is preserved by information page");
                     }

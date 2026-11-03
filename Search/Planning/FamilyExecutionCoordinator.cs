@@ -1,11 +1,10 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Threading.Channels;
 using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.Diagnostics;
 using RolltheSpire2.Search.Contracts;
+using RolltheSpire2.Search.Compilation;
 using RolltheSpire2.Search.Predictability;
 using RolltheSpire2.Search.Runtime;
 
@@ -24,14 +23,14 @@ public static partial class FamilyExecutionCoordinator
     // a usable single-worker choice on single-processor environments.
     public static int MaximumCpuSearchWorkers(int logicalProcessors) => Math.Clamp(logicalProcessors - 1, 1, 32);
 
-    internal static string FamilyOrderKey(IFamilyInvocation family) =>
+    internal static string FamilyOrderKey(FilterBodyDescription family) =>
         string.Join('+', family.Coverage.Order(StringComparer.Ordinal));
 
-    internal static bool IsDenseOnlyFamilyOrderUnit(IFamilyInvocation family) =>
-        family is BonesCapsuleBoundaryInvocation or DirectCapsuleInvocation;
+    internal static bool IsDenseOnlyFamilyOrderUnit(FilterBodyDescription family) =>
+        family.InputModes == FilterInputModes.Dense;
 
     internal static IReadOnlyList<string> ReconcileFamilyOrder(IReadOnlyList<string> previous,
-        IReadOnlyList<IFamilyInvocation> currentUnits)
+        IReadOnlyList<FilterBodyDescription> currentUnits)
     {
         var ranks = new Dictionary<string, int>(StringComparer.Ordinal);
         for (int index = 0; index < previous.Count; index++)
@@ -53,7 +52,7 @@ public static partial class FamilyExecutionCoordinator
             .Select(item => FamilyOrderKey(item.Unit)).ToArray();
     }
 
-    internal static FamilyExecutionPlan Plan(ExactSearchExecutionRequest plan, bool? gpuAvailable = null,
+    internal static FamilyExecutionPlan Plan(PreparedSearch plan, bool? gpuAvailable = null,
         bool? gpuFloat64Available = null)
     {
         using var logScope = RuntimeLog.PlanningScope();
@@ -79,7 +78,7 @@ public static partial class FamilyExecutionCoordinator
                 var affected = original.ExecutionOrderUnits.Where(f => !CanRunWithoutFloat64(f)).ToArray();
                 // M uses the identical Round1 proposal and full Final predicate on
                 // CPU. This physical substitution needs no extra Exact authority.
-                mapCpuEquivalent = !explicitControl && affected.Length > 0 && affected.All(f => f is StandardMapFamily);
+                mapCpuEquivalent = !explicitControl && affected.Length > 0 && affected.All(f => f.FamilyId == StandardMapFamily.Id);
             }
             // Fused route-aware GPU filters can reject more than separate CPU
             // sieves. Only the unchanged final Exact can establish equivalence.
@@ -89,7 +88,7 @@ public static partial class FamilyExecutionCoordinator
                 throw new InvalidOperationException("GpuFloat64PhysicalSelectionUnavailable:RequestedTrialRequiresUnavailableNumericImplementations");
         }
         FamilyExecutionPlan selected;
-        if (plan.CompiledSearch.Context.Party is not null) selected = PlanParty(plan, registered);
+        if (plan.Model.CompiledSearch.Context.Party is not null) selected = PlanParty(plan, registered);
         else selected = PlanSingleplayer(plan, registered, gpu, allowFloat64Allocations: !numericRestriction);
         if (numericRestriction && selected.OrderedFamilies.Any(f => !CanRunWithoutFloat64(f)))
             throw new InvalidOperationException("GpuNumericRequirementsViolation:RestrictedPlannerSelectedUnavailableBody");
@@ -99,7 +98,7 @@ public static partial class FamilyExecutionCoordinator
                 $"selectedGpu={string.Join(',', selected.OrderedFamilies.Where(f => f.ConditionPerformance.UsesGpu).Select(f => f.FamilyId))};" +
                 $"selectedCpu={string.Join(',', selected.OrderedFamilies.Where(f => !f.ConditionPerformance.UsesGpu).Select(f => f.FamilyId))};" +
                 (plan.RunOptions.SkipExactValidation ? "remainingQueryOwner=UnverifiedOutput;FinalValidationSkipped=true" : "remainingQueryOwner=ProductionExact")] };
-        bool unfiltered = selected.Stages.Count == 0 && FamilyExactTimingDomains.HasQueryWork(plan.CompiledSearch.NormalizedQuery);
+        bool unfiltered = selected.Stages.Count == 0 && FamilyExactTimingDomains.HasQueryWork(plan.Model.CompiledSearch.NormalizedQuery);
         return selected with
         {
             AllConditionsUnfiltered = unfiltered,
@@ -110,7 +109,7 @@ public static partial class FamilyExecutionCoordinator
                 $"AllConditionsUnfiltered={unfiltered};SelectedFilterCount={selected.Stages.Count};FinalValidation={(plan.RunOptions.SkipExactValidation ? "Skipped" : "ProductionExact")}"]
         };
     }
-    private static bool CanRunWithoutFloat64(IFamilyInvocation family) =>
+    private static bool CanRunWithoutFloat64(FilterBodyDescription family) =>
         (family.GpuNumericRequirements & (GpuNumericRequirements.Float64 | GpuNumericRequirements.Unspecified)) == 0;
 
     private static bool HasLocalGpuPhysicalControl()
@@ -140,150 +139,101 @@ public static partial class FamilyExecutionCoordinator
                 .Any(name => !string.IsNullOrEmpty(Environment.GetEnvironmentVariable(name)));
     }
 
-    private static IReadOnlyList<string> DescribeFilterRemainders(ExactSearchExecutionRequest request,
-        FamilyExecutionPlan selected, IReadOnlyList<IFamilyInvocation> registered)
+    private static IReadOnlyList<string> DescribeFilterRemainders(PreparedSearch request,
+        FamilyExecutionPlan selected, IReadOnlyList<FilterBodyDescription> registered)
     {
-        if (request.CompiledSearch.Context.Party is not null)
-            return DescribePartyFilterRemainders(request, selected);
-        var expected = new List<string>();
-        var e = request.Evaluation;
-        void Need(bool required, string family) { if (required) expected.Add(family); }
-        Need(e.HasNeowConstraints || request.CompiledSearch.NormalizedQuery.Players.Any(p => !p.Offers.IsEmpty || NeowFamily.PartyInitial.HasConditions(p)), "N.Neow");
-        Need(e.RelicSequenceConditions.Any(c => !c.IsEmpty) || e.RelicShopSequenceConditions.Any(c => !c.IsEmpty) || NeowReplayPlan.HasCapsule(request) || request.CompiledSearch.PlayerSearches.Any(p => p.NormalizedQuery.RelicSequenceConstraints.Count > 0 || p.NormalizedQuery.RelicShopSequenceConditions.Count > 0), "R.Relic");
-        Need(e.RequiresNormalCombatRewardDomain || request.CompiledSearch.PlayerSearches.Any(p => p.NormalizedQuery.HasCombatRewardConstraints), "C.CombatReward");
-        Need(WorldFamilyReplay.HasConditions(request), "W.World");
-        var prepared = request.VariantOpening ?? VariantOpeningPreparation.Prepare(request.CompiledSearch);
-        Need(prepared.HasConditions, VariantOpeningFamily.Id);
-        Need(e.AncientBranchConditions.Any(b => b.OptionAny.Count > 0 || b.SeaGlassTargetAny.Count > 0) || e.AncientOptionFilters.Any(f => !f.IsEmpty) || e.AncientSeaGlassTargetFilters.Any(f => !f.IsEmpty), "A.AncientOption");
-        Need(e.RequiresEventResultDomain, "E.EventResult"); Need(e.RequiresMerchantColorlessDomain, "S.MerchantShopColorless");
-        Need(e.TransformationAggregate is not null, TransformationAggregateFamily.Id);
-        Need(request.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0 || request.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count > 0, "M.StandardMap");
-        var covered = selected.Stages.SelectMany(s => s.Coverage).ToHashSet(StringComparer.Ordinal);
-        var remainder = expected.Where(f => !covered.Contains(f)).Select(f => f + ":NoSelectedFilter").ToList();
-        // These are Production Exact obligations even when R/N filters cover other predicates.
-        if (e.CombatCardExclusion is { IsEmpty: false }) remainder.Add("CombatCardExclusion:ProductionExactOnly");
-        if (e.TreasureRelics is { IsEmpty: false } && !covered.Contains(InitialRoomsInvocation.TreasureCoverage))
-            remainder.Add("TreasureRelics:ProductionExactOnly");
-        var variant = covered.Contains(VariantOpeningFamily.Id) ? registered.OfType<VariantOpeningFamily>().FirstOrDefault()?.Plan : null;
-        if (request.CompiledSearch.NormalizedQuery.VariantBossBranches.Count > 0 && variant?.CoversVariants != true)
-            remainder.Add("ActVariants:ProductionExactOnly");
-        if (e.FirstActUnknownEventPrefixCount > 0 && (variant?.UnknownPrefixCount ?? 0) < e.FirstActUnknownEventPrefixCount)
-            remainder.Add("FirstActUnknownEventPrefix:ProductionExactOnly");
-        foreach (var n in registered.OfType<NeowFamily>().Where(n => covered.Contains(n.FamilyId)))
-            remainder.AddRange(n.PricingReplayPlan.ExactOnly.Select(c => "N.Neow:" + c));
-        foreach (var c in registered.OfType<CombatRewardFamily>().Where(c => covered.Contains(c.FamilyId) && c.Replay.ConservativelyKeeps))
-            remainder.Add("C.CombatReward:" + c.Replay.ConservativeOpeningReason);
+        var model = request.Model;
+        bool party = model.CompiledSearch.Context.Party is not null;
+        var expected = new List<FilterObligation>();
+        void Need(bool required, string domain, int? slot = null, int? through = null)
+        { if (required) expected.Add(new(domain, slot, through)); }
+        void Personal(SearchModel child, int? slot)
+        {
+            var e = child.Evaluation;
+            Need(e.HasNeowConstraints, "N.Neow", slot);
+            Need(e.RelicSequenceConditions.Any(c => !c.IsEmpty) || e.RelicShopSequenceConditions.Any(c => !c.IsEmpty) ||
+                NeowReplayPlan.HasCapsule(child), "R.Relic", slot);
+            Need(e.RequiresNormalCombatRewardDomain, "C.CombatReward", slot);
+            Need(e.CombatCardExclusion is { IsEmpty: false }, "CombatCardExclusion", slot);
+            Need(e.TreasureRelics is { IsEmpty: false }, InitialRoomsInvocation.TreasureCoverage, slot);
+            Need(e.AncientBranchConditions.Any(b => b.OptionAny.Count > 0 || b.SeaGlassTargetAny.Count > 0) ||
+                e.AncientOptionFilters.Any(f => !f.IsEmpty) || e.AncientSeaGlassTargetFilters.Any(f => !f.IsEmpty), "A.AncientOption", slot);
+            Need(e.RequiresEventResultDomain, "E.EventResult", slot);
+            Need(e.RequiresMerchantColorlessDomain, "S.MerchantShopColorless", slot);
+            Need(e.TransformationAggregate is not null, TransformationAggregateFamily.Id, slot);
+            Need(e.FirstActUnknownEventPrefixCount > 0, InitialRoomsInvocation.UnknownCoverage, slot, e.FirstActUnknownEventPrefixCount);
+        }
+        if (party)
+        {
+            var players = model.CompiledSearch.NormalizedQuery.Players;
+            foreach (var compiled in model.CompiledSearch.PlayerSearches.Take(players.Count))
+            {
+                var child = SearchPreparationCompiler.ForPlayer(model, compiled);
+                int slot = child.Authority.PlayerSlotIndex;
+                Personal(child, slot);
+                Need(NeowFamily.PartyInitial.HasConditions(players[slot]), "N.Neow", slot);
+            }
+            int prefix = model.CompiledSearch.NormalizedQuery.FirstActUnknownEventPrefixCount;
+            Need(prefix > 0, InitialRoomsInvocation.UnknownCoverage, through: prefix);
+        }
+        else Personal(model, null);
+        Need(WorldFamilyReplay.HasConditions(model), "W.World");
+        Need((model.VariantOpening ?? VariantOpeningPreparation.Prepare(model.CompiledSearch)).HasVariantRestrictions, VariantOpeningFamily.Id);
+        var query = model.CompiledSearch.NormalizedQuery;
+        Need(query.StandardMaps.Count > 0 || query.StandardMapRoutes.Count > 0, "M.StandardMap");
+        var bodies = selected.OrderedFamilies;
+        var covered = bodies.SelectMany(body => body.Preparation.EffectiveObligations).ToArray();
+        bool Covers(FilterObligation obligation) => covered.Any(c => c.Domain == obligation.Domain &&
+            (!party || c.PlayerSlot == obligation.PlayerSlot) &&
+            (!obligation.ThroughOrdinal.HasValue || c.ThroughOrdinal >= obligation.ThroughOrdinal));
+        string Scope(FilterObligation obligation) => party ? obligation.PlayerSlot is int slot ? $":slot={slot}" : ":Shared" : "";
+        string Label(string domain) => domain == InitialRoomsInvocation.TreasureCoverage ? "TreasureRelics" :
+            !party && domain == InitialRoomsInvocation.UnknownCoverage ? "FirstActUnknownEventPrefix" :
+            !party && domain == VariantOpeningFamily.Id ? "ActVariants" : domain;
+        var missing = expected.Distinct().Where(e => !Covers(e)).ToArray();
+        var remainder = missing.Select(e => Label(e.Domain) + Scope(e) +
+            (e.Domain is "CombatCardExclusion" or InitialRoomsInvocation.TreasureCoverage or InitialRoomsInvocation.UnknownCoverage or VariantOpeningFamily.Id
+                ? ":ProductionExactOnly" : ":NoSelectedFilter")).ToList();
+        // The retained final duty and the absent filtering unit are separate
+        // facts. A partial V may still check Unknown rooms and report its own
+        // variant cause; only an entirely absent V gets NoSelectedFilter.
+        if (!bodies.Any(body => body.Coverage.Contains(VariantOpeningFamily.Id)))
+            remainder.AddRange(missing.Where(e => e.Domain == VariantOpeningFamily.Id)
+                .Select(e => VariantOpeningFamily.Id + Scope(e) + ":NoSelectedFilter"));
+        foreach (var body in Descendants(bodies))
+        {
+            remainder.AddRange(body.Preparation.Remainders.Select(r => body.Coverage.Any(domain =>
+                r.StartsWith(domain + ":", StringComparison.Ordinal)) ? r : body.FamilyId + ":" + r));
+            remainder.AddRange(body.Preparation.Issues.Where(i => !IsGpuPreparationIssue(i))
+                .Select(i => body.FamilyId + ":" + i.Cause));
+        }
+        if (party && expected.Count > 0) remainder.Add(PartyFilterScopeInfo);
         return remainder.Distinct(StringComparer.Ordinal).ToArray();
     }
 
-    private static IReadOnlyList<string> DescribePartyFilterRemainders(ExactSearchExecutionRequest request,
-        FamilyExecutionPlan selected)
+    private static bool IsGpuPreparationIssue(FilterPreparationIssue issue) =>
+        issue.Stage is "GpuPreparation" or "GpuPlanConstruction";
+
+    private static IEnumerable<FilterBodyDescription> Descendants(IEnumerable<FilterBodyDescription> bodies)
     {
-        var expected = new HashSet<(int? Slot, string Family)>();
-        var covered = new HashSet<(int? Slot, string Family)>();
-        var query = request.CompiledSearch.NormalizedQuery;
-        var players = query.Players;
-        void Need(int? slot, bool required, string family) { if (required) expected.Add((slot, family)); }
-        // Party compilation binds shared world/map declarations once at the table
-        // and keeps personal obligations in each compiled child. The final child
-        // is the shared projection, even though its authority uses slot zero.
-        Need(null, WorldFamilyReplay.HasConditions(request), "W.World");
-        var prepared = request.VariantOpening ?? VariantOpeningPreparation.Prepare(request.CompiledSearch);
-        Need(null, prepared.HasVariantRestrictions, VariantOpeningFamily.Id);
-        Need(null, query.FirstActUnknownEventPrefixCount > 0, InitialRoomsInvocation.UnknownCoverage);
-        Need(null, query.StandardMaps.Count > 0 || query.StandardMapRoutes.Count > 0, "M.StandardMap");
-        foreach (var player in request.CompiledSearch.PlayerSearches.Take(players.Count))
+        foreach (var body in bodies)
         {
-            var child = Compilation.ExactSearchExecutionRequestFactory.ForPlayer(request, player);
-            int slot = child.Authority.PlayerSlotIndex;
-            var e = child.Evaluation;
-            Need(slot, e.HasNeowConstraints || NeowFamily.PartyInitial.HasConditions(players[slot]), "N.Neow");
-            Need(slot, e.RelicSequenceConditions.Any(c => !c.IsEmpty) || e.RelicShopSequenceConditions.Any(c => !c.IsEmpty) || NeowReplayPlan.HasCapsule(child), "R.Relic");
-            Need(slot, e.CombatCardExclusion is { IsEmpty: false }, "CombatCardExclusion");
-            Need(slot, e.TreasureRelics is { IsEmpty: false }, "TreasureRelics");
-            Need(slot, e.FirstActUnknownEventPrefixCount > 0, InitialRoomsInvocation.UnknownCoverage);
-            Need(slot, e.RequiresNormalCombatRewardDomain, "C.CombatReward");
-            Need(slot, e.AncientBranchConditions.Any(b => b.OptionAny.Count > 0 || b.SeaGlassTargetAny.Count > 0) ||
-                e.AncientOptionFilters.Any(f => !f.IsEmpty) || e.AncientSeaGlassTargetFilters.Any(f => !f.IsEmpty), "A.AncientOption");
-            Need(slot, e.RequiresEventResultDomain, "E.EventResult");
-            Need(slot, e.RequiresMerchantColorlessDomain, "S.MerchantShopColorless");
+            yield return body;
+            foreach (var child in Descendants(body.PhysicalBodies)) yield return child;
         }
-        foreach (var family in selected.OrderedFamilies)
-        {
-            var owner = family is FamilyCpuExecution cpu ? cpu.RealizationOwner : family;
-            if (owner is VariantOpeningFamily variant)
-            {
-                if (variant.Plan.CoversVariants) covered.Add((null, VariantOpeningFamily.Id));
-                foreach (var source in PartyInitialRooms.Prefixes(request))
-                    if (variant.Plan.UnknownPrefixCount >= source.Count)
-                        covered.Add((source.Slot, InitialRoomsInvocation.UnknownCoverage));
-            }
-            else if (family is PartyFamily party)
-            {
-                foreach (var (slot, child) in party.PersonalStages)
-                    foreach (string coverage in child.Coverage)
-                        covered.Add((coverage == "W.World" ? null : slot, coverage));
-            }
-            else if (family is NeowFamily.PartyInitial)
-            {
-                // PartyInitial is one table invocation covering the requested N
-                // obligations for every seat; ordinary PartyFamily stages are not.
-                foreach (var player in players.Where(NeowFamily.PartyInitial.HasConditions))
-                    covered.Add((player.Slot, "N.Neow"));
-            }
-            else if (family is InitialRoomsInvocation initial)
-            {
-                if (initial.Coverage.Contains("W.World")) covered.Add((null, "W.World"));
-                if (initial.Coverage.Contains(InitialRoomsInvocation.UnknownCoverage))
-                    foreach (var source in PartyInitialRooms.Prefixes(request))
-                        covered.Add((source.Slot, InitialRoomsInvocation.UnknownCoverage));
-            }
-        }
-        var remainder = expected.Where(e => !covered.Contains(e)).Select(e =>
-            e.Family + (e.Slot is int slot ? $":slot={slot}" : ":Shared") +
-            (e.Family is "TreasureRelics" or InitialRoomsInvocation.UnknownCoverage or "CombatCardExclusion" ? ":ProductionExactOnly" : ":NoSelectedFilter")).ToList();
-        if (expected.Count > 0)
-            remainder.Add(PartyFilterScopeInfo);
-        return remainder.Distinct(StringComparer.Ordinal).ToArray();
     }
+
     internal static IReadOnlyList<FamilyGpuPreparationFallback> SelectedPreparationFallbacks(
-        IReadOnlyList<IFamilyInvocation> registered, FamilyExecutionPlan selected)
+        IReadOnlyList<FilterBodyDescription> registered, FamilyExecutionPlan selected)
     {
-        var evidence = new List<FamilyGpuPreparationFallback>();
-        string Detail(IFamilyInvocation family) => family switch
-        {
-            NeowFamily n => n.GpuPreparationFailureDetail,
-            NeowFamily.PartyInitial n => n.GpuPreparationFailureDetail,
-            AncientOptionFamily a => a.Plan.GpuPreparationFailureDetail,
-            EventResultFamily e => e.Plan.GpuPreparationFailureDetail,
-            WorldFamily w => w.GpuPreparationFailureDetail,
-            CombatRewardFamily c => c.GpuPreparationFailureDetail,
-            TransformationAggregateFamily t => t.GpuPreparationFailureDetail,
-            CapsuleRelicFamily r => r.GpuPreparationFailureDetail,
-            _ => ""
-        };
-        foreach (var family in registered)
-        {
-            if (family is PartyFamily party)
-            {
-                // A party stage may retain GPU work for other slots. Report only
-                // the failed preparation whose own existing CPU body was selected.
-                if (!selected.OrderedFamilies.Contains(party)) continue;
-                foreach (var (slot, child) in party.PersonalStages)
-                {
-                    string detail = Detail(child);
-                    if (detail.Length > 0 && !child.ConditionPerformance.UsesGpu)
-                        evidence.Add(new(child.FamilyId, $"slot={slot};coverage={string.Join(',', child.Coverage)};replacement=CpuExistingFilter", detail));
-                }
-                continue;
-            }
-            string failure = Detail(family);
-            if (failure.Length == 0) continue;
-            if (!selected.Stages.Any(s => !s.ConditionPerformance.UsesGpu &&
-                family.Coverage.All(s.Coverage.Contains))) continue;
-            evidence.Add(new(family.FamilyId, $"coverage={string.Join(',', family.Coverage)};replacement=CpuExistingFilter;remainingQueryOwner=ProductionExact", failure));
-        }
-        return evidence;
+        var selectedCpu = Descendants(selected.OrderedFamilies).Where(b => !b.UsesGpu).ToArray();
+        return Descendants(registered).SelectMany(body => body.Preparation.Issues
+            .Where(issue => IsGpuPreparationIssue(issue) && selectedCpu.Any(cpu =>
+                cpu.FamilyId == body.FamilyId && cpu.InputIdentity == body.InputIdentity &&
+                body.Coverage.All(cpu.Coverage.Contains)))
+            .Select(issue => new FamilyGpuPreparationFallback(body.FamilyId,
+                $"coverage={string.Join(',', body.Coverage)};slots={string.Join(',', body.Preparation.Obligations.Select(o => o.PlayerSlot).Where(slot => slot.HasValue).Distinct())};replacement=CpuExistingFilter;remainingQueryOwner=ProductionExact", issue.Detail)))
+            .Distinct().ToArray();
     }
     private static bool GpuAvailability(bool? requested)
     {
@@ -292,8 +242,8 @@ public static partial class FamilyExecutionCoordinator
         return snapshot.GpuEligible && snapshot.State != FamilyGpuInitializationState.Creating &&
             FamilyDeviceProfileFoundation.RetryTask is not { IsCompleted: false };
     }
-    private static FamilyExecutionPlan PlanSingleplayer(ExactSearchExecutionRequest request,
-        IReadOnlyList<IFamilyInvocation> registered, bool gpu, bool allowFloat64Allocations = true)
+    private static FamilyExecutionPlan PlanSingleplayer(PreparedSearch request,
+        IReadOnlyList<FilterBodyDescription> registered, bool gpu, bool allowFloat64Allocations = true)
     {
         RuntimeLog.TryBackgroundInfo($"searchPhysicalAvailability=true;gpuAvailable={gpu};cpuQuotes=UnitReferences;unpricedNotUnsupported=true");
         if (HasExplicitPhysicalControl())
@@ -309,20 +259,20 @@ public static partial class FamilyExecutionCoordinator
         }
         return PlanSimpleSingleplayer(request, registered, gpu, allowFloat64Allocations);
     }
-    private static IReadOnlyList<IFamilyInvocation> CpuAllocation(IReadOnlyList<IFamilyInvocation> registered)
+    private static IReadOnlyList<FilterBodyDescription> CpuAllocation(IReadOnlyList<FilterBodyDescription> registered)
     {
-        var selected = new List<IFamilyInvocation>();
+        var selected = new List<FilterBodyDescription>();
         foreach (var family in registered)
         {
-            var cpu = FamilyCpuExecution.ConfiguredRealizations(family).FirstOrDefault();
+            var cpu = family.CpuAlternatives.FirstOrDefault(c => c.CpuWorkers == family.CpuWorkers) ?? family.CpuAlternatives.FirstOrDefault();
             if (cpu is not null) selected.Add(cpu);
             else if (!family.ConditionPerformance.UsesGpu) selected.Add(family);
             else RuntimeLog.TryBackgroundWarning($"filterPhysicalUnavailable=true;family={family.FamilyId};requested=CPU;replacement=None;remainingQueryOwner=ProductionExact;replacementCompleteness=NotClaimed");
         }
         return selected;
     }
-    private static FamilyExecutionPlan PlanExplicitPhysicalTrial(ExactSearchExecutionRequest request,
-        IReadOnlyList<IFamilyInvocation> registered)
+    private static FamilyExecutionPlan PlanExplicitPhysicalTrial(PreparedSearch request,
+        IReadOnlyList<FilterBodyDescription> registered)
     {
         // Explicit diagnostics select their requested numerical bodies directly.
         // No automatic allocation optimizer or complete-chain quote participates.
@@ -339,7 +289,7 @@ public static partial class FamilyExecutionCoordinator
     }
 
     public static ProductionSearchSession Start(
-        ExactSearchExecutionRequest plan,
+        PreparedSearch plan,
         int queueCapacity = 64,
         IRuntimePredictionDiagnosticSink? diagnosticSink = null,
         string traceSingleCandidateSeed = "",
@@ -388,114 +338,101 @@ public static partial class FamilyExecutionCoordinator
             RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=AllocationSelected;elapsedMs={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F4};plan={executionPlan.PlanId};processId={Environment.ProcessId}");
             return true;
         }, false, plan.SnapshotFingerprint);
-        IReadOnlyList<IFamilyInvocation> families = executionPlan.OrderedFamilies;
+        IReadOnlyList<FilterBodyDescription> families = executionPlan.OrderedFamilies;
         int executionWindowSize = ResolveExecutionWindowSize(plan, families);
-        FamilySearchEtaProjectionV1 eta = FamilySearchEtaProjectorV1.Project(plan, executionPlan);
+        var unavailableEta = new FamilySearchEtaProjectionV1(FamilySearchEtaStatus.Unavailable, null,
+            "EtaPreparationFailed", executionPlan, Math.Max(1, plan.TargetMatchCount), plan.ScanCount,
+            null, null, null, null, null, null, null, null, null, null, null, [], ["EtaPreparationFailed"]);
+        FamilySearchEtaProjectionV1 eta = FamilyAuxiliaryEvidence.Read(nameof(FamilyExecutionCoordinator), "EtaPreparation",
+            () => FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(plan, executionPlan), executionPlan),
+            unavailableEta, plan.SnapshotFingerprint);
         return new ProductionSearchSession(
             plan, executionPlan, eta, executionWindowSize, queueCapacity, diagnosticSink, traceSingleCandidateSeed, failOnPhysicalRecovery,
             continuation: continuation, allowInitialGpuCreationFallback: !HasExplicitPhysicalControl());
     }
 
-    internal static int ResolveExecutionWindowSize(ExactSearchExecutionRequest plan, IReadOnlyList<IFamilyInvocation> families)
+    internal static int ResolveExecutionWindowSize(PreparedSearch plan, IReadOnlyList<FilterBodyDescription> families)
     {
-        if (plan.CompiledSearch.Context.Party is not null)
-        {
-            if (families.Any(f => f.ConditionPerformance.UsesGpu))
-                return FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize;
-            return families.Count == 1 && families[0] is NeowFamily.PartyInitial neow
-                ? neow.CpuWindowCapacity : FamilyCpuExecution.Capacity;
-        }
-        if (families.Count > 0 && families.All(f=>f is FamilyCpuExecution)) return 65536;
-        MerchantShopColorlessFamily? shop = families.OfType<MerchantShopColorlessFamily>().SingleOrDefault();
-        RelicFamily? relic = families.OfType<RelicFamily>().SingleOrDefault();
-
-        int executionWindowSize = families.Count == 0
-            ? Math.Min(ProductionSearchSession.ExactOnlyMaximumBatchSize, Math.Max(256, plan.WorkerCount * 128))
-            : FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize;
-        if (shop is not null) executionWindowSize = Math.Min(executionWindowSize, shop.PreferredExecutionWindowSize);
-        if (relic is not null) executionWindowSize = Math.Min(executionWindowSize, relic.PreferredExecutionWindowSize);
-        // CPU replay chunks its admitted ordinals privately. It must not shrink
-        // the root batch of an upstream/downstream GPU in the same linear chain.
-        if (!families.Any(family => family.ConditionPerformance.UsesGpu) &&
-            families.Any(family => family is StandardMapFamily or NeowFamily or CapsuleRelicFamily or CombatRewardFamily or WorldFamily or AncientOptionFamily or EventResultFamily or TransformationAggregateFamily))
-            executionWindowSize = Math.Min(executionWindowSize, FamilyCpuExecution.Capacity);
-        return executionWindowSize;
+        if (families.Count == 0)
+            return plan.Model.CompiledSearch.Context.Party is not null ? CpuFilterExecution.Capacity :
+                Math.Min(ProductionSearchSession.ExactOnlyMaximumBatchSize, Math.Max(256, plan.WorkerCount * 128));
+        bool gpu = families.Any(f => f.UsesGpu);
+        // A public root preference is distinct from private CPU chunks and GPU
+        // groups. CPU-only bodies may use their own declared window when no
+        // smaller public boundary was selected.
+        int fallback = gpu ? FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize : families.Min(f => f.WindowCapacity);
+        return families.Where(f => !gpu || f.UsesGpu).Select(f => f.PreferredRootWindowSize).Where(size => size.HasValue)
+            .Select(size => size!.Value).Append(fallback).Min();
     }
 
-    internal static IReadOnlyList<IFamilyInvocation> CreateRegisteredFamilies(ExactSearchExecutionRequest plan, bool? gpuAvailable = null,
+    internal static IReadOnlyList<FilterBodyDescription> CreateRegisteredFamilies(PreparedSearch plan, bool? gpuAvailable = null,
         bool? gpuFloat64Available = null)
     {
         ArgumentNullException.ThrowIfNull(plan);
         bool gpu = GpuAvailability(gpuAvailable);
-        // Numerical variants describe executable GPU bodies. CPU-only registration
-        // retains the native identity independently of backend numeric evidence.
         bool float64 = !gpu || (gpuFloat64Available ?? FamilyDeviceProfileFoundation.Initialization.Capture().CanAttemptFloat64);
-        var registered = plan.CompiledSearch.Context.Party is not null
-            ? CreatePartyFamilies(plan, gpu, float64)
-            : CreateSingleplayerFamilies(plan, gpu, float64);
+        var preferences = FilterExecutionPreferences.From(plan.RunOptions);
+        var registered = plan.Model.CompiledSearch.Context.Party is not null
+            ? CreatePartyFamilies(plan.Model, preferences, gpu, float64)
+            : CreateSingleplayerFamilies(plan.Model, preferences, gpu, float64);
         if (!gpu || float64) return registered;
-        // Inspect actual wrappers/selected bodies, not family letters. In
-        // particular an R wrapper may carry an FP64 InitialRooms body.
-        var compatible = new List<IFamilyInvocation>();
-        foreach (var family in registered)
+        var compatible = new List<FilterBodyDescription>();
+        foreach (var body in registered)
         {
-            if (CanRunWithoutFloat64(family)) { compatible.Add(family); continue; }
-            var cpu = FamilyCpuExecution.ConfiguredRealizations(family).FirstOrDefault(CanRunWithoutFloat64);
+            if (CanRunWithoutFloat64(body)) { compatible.Add(body); continue; }
+            var cpu = body.CpuAlternatives.FirstOrDefault(c => c.CpuWorkers == body.CpuWorkers && CanRunWithoutFloat64(c)) ?? body.CpuAlternatives.FirstOrDefault(CanRunWithoutFloat64);
             if (cpu is not null) compatible.Add(cpu);
-            RuntimeLog.TryBackgroundWarning($"filterNumericUnavailable=true;family={family.FamilyId};" +
-                $"requirements={family.GpuNumericRequirements};replacement={(cpu is null ? "None" : "ExistingCpuFilter")};" +
+            RuntimeLog.TryBackgroundWarning($"filterNumericUnavailable=true;family={body.FamilyId};" +
+                $"requirements={body.NumericRequirements};replacement={(cpu is null ? "None" : "ExistingCpuFilter")};" +
                 "originalQueryRetained=true;remainingQueryOwner=ProductionExact;filterCompletenessNotClaimed=true");
         }
         return compatible;
     }
 
-    // Whole-query entry only. Party child requests go through the party registrar,
-    // which owns shared predicates, slot conjunction and opening continuation.
-    private static IReadOnlyList<IFamilyInvocation> CreateSingleplayerFamilies(ExactSearchExecutionRequest plan, bool preferGpu, bool preferGpuFloat64)
+    private static IReadOnlyList<FilterBodyDescription> CreateSingleplayerFamilies(SearchModel model,
+        FilterExecutionPreferences preferences, bool preferGpu, bool preferGpuFloat64)
     {
-        if (plan.Authority.PlayersCount != 1 || plan.Authority.PlayerSlotIndex != 0)
+        if (model.Authority.PlayersCount != 1 || model.Authority.PlayerSlotIndex != 0)
             throw new InvalidOperationException("SingleplayerFamilyRegistrationRequiresSoloContext");
         long started = Stopwatch.GetTimestamp();
-        var families = new List<IFamilyInvocation>(4);
-        var numericalVariant = preferGpuFloat64 ? GpuNumericalVariant.NativeFloat64 : GpuNumericalVariant.IntegerRne;
-        if (TransformationAggregateFamily.TryCreate(plan, preferGpu, out var transformation, numericalVariant) && transformation is not null) families.Add(transformation);
-        if (NeowFamily.TryCreate(plan, out IFamilyInvocation? neow, preferGpu,
-            gpuPlanFactory: preferGpu && !preferGpuFloat64 ? NeowFamilyGpuPlan.TryCreateIntegerUnitFloat : null) && neow is not null) families.Add(neow);
-        if (MerchantShopColorlessFamily.TryCreate(plan, out IFamilyInvocation? shopFamily) &&
-            shopFamily is MerchantShopColorlessFamily createdShop)
+        var families = new List<FilterBodyDescription>();
+        var numerical = preferGpuFloat64 ? GpuNumericalVariant.NativeFloat64 : GpuNumericalVariant.IntegerRne;
+        if (TransformationAggregateFamily.TryCreate(model, preferences, out var transformation, preferGpu, numerical) && transformation is not null)
+            families.Add(transformation);
+        if (NeowFamily.TryCreate(model, preferences, out var neow, preferGpu,
+            gpuPlanFactory: preferGpu && !preferGpuFloat64 ? NeowFamilyGpuPlan.TryCreateIntegerUnitFloat : null) && neow is not null)
+            families.Add(neow);
+        if (MerchantShopColorlessFamily.TryCreate(model, preferences, out var shop, preferGpu) && shop is not null) families.Add(shop);
+        bool unresolvedRelic = Semantics.TransformationAggregateCondition.HasUnresolvedRelicContinuation(model.CompiledSearch.NormalizedQuery);
+        bool unresolvedReward = Semantics.TransformationAggregateCondition.HasUnresolvedRewardContinuation(model.CompiledSearch.NormalizedQuery);
+        FilterBodyDescription? relic = null;
+        if (!unresolvedRelic)
         {
-            families.Add(createdShop);
+            if (NeowReplayPlan.HasCapsule(model)) CapsuleRelicFamily.TryCreate(model, preferences, out relic, preferGpu, numerical);
+            else RelicFamily.TryCreate(model, preferences, out relic, preferGpu, numerical);
         }
-        bool unresolvedRelic = Semantics.TransformationAggregateCondition.HasUnresolvedRelicContinuation(plan.CompiledSearch.NormalizedQuery);
-        bool unresolvedReward = Semantics.TransformationAggregateCondition.HasUnresolvedRewardContinuation(plan.CompiledSearch.NormalizedQuery);
-        if (unresolvedRelic)
-            RuntimeLog.TryBackgroundInfo("relicFilterUnavailable=true;cause=TransformationContinuationUnresolved;remainingQueryOwner=ProductionExact;matchClaimed=false");
-        else if (NeowReplayPlan.HasCapsule(plan))
-        {
-            if (CapsuleRelicFamily.TryCreate(plan, out IFamilyInvocation? capsule, preferGpu, numericalVariant) && capsule is not null)
-                families.Add(capsule);
-            // Partial R sequence coverage must not impersonate the Capsule R
-            // predicate when N requests a conditional projection by Coverage.
-        }
-        else if (RelicFamily.TryCreate(plan, out IFamilyInvocation? relicFamily, preferGpu, numericalVariant) && relicFamily is not null)
-        {
-            families.Add(relicFamily);
-        }
-        if (!unresolvedReward && CombatRewardFamily.TryCreate(plan, out IFamilyInvocation? combat, preferGpu, numericalVariant) && combat is not null)
+        else RuntimeLog.TryBackgroundInfo("relicFilterUnavailable=true;cause=TransformationContinuationUnresolved;remainingQueryOwner=ProductionExact;matchClaimed=false");
+        // Treasure is an independent bounded predicate. Ordinary-R failure must
+        // not discard it or substitute an unrelated continuation.
+        if (InitialRoomsPlan.TryCompileTreasure(model, numerical) is { } treasure)
+            relic = InitialRoomsInvocation.Prepare(model, preferences, "R.Relic", treasure, relic, preferGpu);
+        if (relic is not null) families.Add(relic);
+        if (!unresolvedReward && CombatRewardFamily.TryCreate(model, preferences, out var combat, preferGpu, numerical) && combat is not null)
             families.Add(combat);
-        if (unresolvedReward)
-            RuntimeLog.TryBackgroundInfo("combatRewardFilterUnavailable=true;cause=TransformationContinuationUnresolved;remainingQueryOwner=ProductionExact;matchClaimed=false");
-        VariantOpeningFamily.TryCreate(plan, out IFamilyInvocation? variant, preferGpu, numericalVariant);
-        if (variant is not null) families.Add(variant);
-        if (WorldFamily.TryCreate(plan, out IFamilyInvocation? world, preferGpu, numericalVariant,
-            (variant as VariantOpeningFamily)?.Plan.CheckedPreparation) && world is not null) families.Add(world);
-        if (AncientOptionFamily.TryCreate(plan, out IFamilyInvocation? ancient, preferGpu, numericalVariant) && ancient is not null) families.Add(ancient);
-        if (EventResultFamily.TryCreate(plan, out IFamilyInvocation? events, preferGpu, numericalVariant) && events is not null) families.Add(events);
-        // Unpriced fallback order: bounded card/relic/world sieves precede full map replay.
-        // This is not a fabricated calibrated map cost or a change to map semantics.
-        if ((plan.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0 || plan.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count > 0) &&
-            plan.ProfileId == RuntimeProfileId.Beta111) families.Add(new StandardMapFamily(plan, preferGpu, preferGpuFloat64));
-        RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=FamilyInvocationsConstructed;elapsedMs={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F4};families={string.Join(',',families.Select(f=>f.FamilyId))};gpuResourcesCreated=false");
+        if (unresolvedReward) RuntimeLog.TryBackgroundInfo("combatRewardFilterUnavailable=true;cause=TransformationContinuationUnresolved;remainingQueryOwner=ProductionExact;matchClaimed=false");
+        VariantOpeningFamily.TryPrepare(model, preferences, out var variant, preferGpu, numerical);
+        if (variant is not null) families.Add(variant.Body);
+        WorldFamily.TryCreate(model, preferences, out var world, preferGpu, numerical, variant?.Plan.CheckedPreparation);
+        int coveredPrefix = variant?.Plan.UnknownPrefixCount ?? 0;
+        if (coveredPrefix < model.Evaluation.FirstActUnknownEventPrefixCount && InitialRoomsPlan.TryCompileUnknown(model, numerical) is { } unknown)
+            world = InitialRoomsInvocation.Prepare(model, preferences, "W.World", unknown, world, preferGpu);
+        if (world is not null) families.Add(world);
+        if (AncientOptionFamily.TryCreate(model, preferences, out var ancient, preferGpu, numerical) && ancient is not null) families.Add(ancient);
+        if (EventResultFamily.TryCreate(model, preferences, out var events, preferGpu, numerical) && events is not null) families.Add(events);
+        if ((model.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0 || model.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count > 0) &&
+            model.ProfileId == RuntimeProfileId.Beta111)
+            families.Add(StandardMapFamily.Prepare(model, preferences, preferGpu, preferGpuFloat64));
+        RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=FamilyDescriptionsPrepared;elapsedMs={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F4};families={string.Join(',',families.Select(f=>f.FamilyId))};gpuResourcesCreated=false");
         return families;
     }
 }

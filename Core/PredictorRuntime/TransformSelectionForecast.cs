@@ -2,7 +2,7 @@ using System.Collections.Immutable;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.PredictorRuntime;
 
-namespace RolltheSpire2.Ui.InRunOperations;
+namespace RolltheSpire2.Core.PredictorRuntime;
 
 // One selected sequence, projected only through the detached operation model.
 // Original IDs are retained explicitly; generated IDs do not encode slot order.

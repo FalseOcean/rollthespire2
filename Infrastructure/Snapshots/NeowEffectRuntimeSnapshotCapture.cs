@@ -39,7 +39,7 @@ internal static class NeowEffectRuntimeSnapshotCapture
         {
             if (frozenUnlockState is not null)
                 return ReflectionNeowEffectSnapshotAdapter.Capture(profile, rawSeed, character, ascension,
-                    playersCount, playerSlotIndex, adapter.ProfileId, gameVersion, new(true, true), frozenUnlockState);
+                    playersCount, playerSlotIndex, adapter.ProfileId, gameVersion, RuntimeProfilePolicies.EffectCatalogRules(profile.ProfileId), frozenUnlockState);
             return adapter.Capture(
                 profile,
                 rawSeed,

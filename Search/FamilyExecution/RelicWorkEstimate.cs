@@ -7,7 +7,7 @@ namespace RolltheSpire2.Search.FamilyExecution;
 // are retained 20260913 shuffle/tracked/Shop references, not new body timings.
 internal static class RelicWorkEstimate
 {
-    internal static FamilyPhysicalQuote? Ordinary(ExactSearchExecutionRequest request, RelicFamilyPlan plan,
+    internal static FamilyPhysicalQuote? Ordinary(RelicFamilyPlan plan,
         FamilyPhysicalQuoteRequest geometry, FamilyExpectedFilteringCostProjection? expected,
         bool cpu, int workers = 1, bool referenceMatcher = false)
     {
@@ -56,7 +56,7 @@ internal static class RelicWorkEstimate
             : quote;
     }
 
-    internal static FamilyPhysicalQuote? Capsule(ExactSearchExecutionRequest request, NeowReplayPlan route,
+    internal static FamilyPhysicalQuote? Capsule(ExactSearchEvaluationProjection evaluation, NeowReplayPlan route,
         RelicFamilyPool pool, RelicFullGpuPlan? gpuPlan, FamilyPhysicalQuoteRequest geometry,
         bool cpu, int workers = 1, bool compiledMatcher = true)
     {
@@ -65,8 +65,8 @@ internal static class RelicWorkEstimate
         double shuffle = pool.BucketLengths.Sum(n => (double)Math.Max(0, n - 1));
         double tracked = Enumerable.Range(0, pool.BucketCount).Where(i => pool.BucketScopes[i] == 1 && pool.BucketKinds[i] is >= 1 and <= 3)
             .Sum(i => (double)Math.Max(0, pool.BucketLengths[i] - 1)) * targets / 3;
-        bool sequence = request.Evaluation.RelicSequenceConditions.Any(c => !c.IsEmpty) ||
-            request.Evaluation.RelicShopSequenceConditions.Any(c => !c.IsEmpty);
+        bool sequence = evaluation.RelicSequenceConditions.Any(c => !c.IsEmpty) ||
+            evaluation.RelicShopSequenceConditions.Any(c => !c.IsEmpty);
         int sourceCount = route.Bones ? 2 : 1;
         bool large = route.Selected == Beta110FastRelicCatalog.LargeCapsule ||
             conditions.Any(c => c.SourceRelicKey.Entry == "LARGE_CAPSULE");
@@ -88,7 +88,7 @@ internal static class RelicWorkEstimate
         {
             ns = (route.Bones || !large ? 1.6 : .28) +
                 (geometry.CompactInput ? 1.55 + .00085 * shuffle + .01175 * tracked : .98 + .00254 * shuffle + .0101 * tracked);
-            if (sequence) ns += .00254 * shuffle + .02 * request.Evaluation.RelicSequenceConditions.Count;
+            if (sequence) ns += .00254 * shuffle + .02 * evaluation.RelicSequenceConditions.Count;
             if (fullBag) ns += .008 * pool.BucketLengths.Sum(n => (double)n);
         }
         string basis = FormattableString.Invariant($"R.CapsuleFoundation.20260913;CpuDirectSmallC268-LargeUR130.20261013;SourceCount={sourceCount};Bones={route.Bones};Large={large};Targets={targets};Shuffle={shuffle:G9};TrackedUpdates={tracked:G9};FullBag={fullBag};WithSequence={sequence};CompanionReplayDraws={companion.Draws:G9};CompanionPoolVisits={companion.PoolVisits:G9};CompanionRoutes={companion.Routes};ReferenceCompanionOnly;NoAdditionalNFilterCharge;NumericalVariant={gpuPlan?.NumericalVariant};SameOperationCoefficientsNotVariantMeasurement;NoSourceSurvivalSelector;NotConditionalAnchorMeasurement");

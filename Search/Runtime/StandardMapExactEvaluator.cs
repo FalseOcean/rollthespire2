@@ -6,7 +6,7 @@ namespace RolltheSpire2.Search.Runtime;
 
 internal static class StandardMapExactEvaluator
 {
-    internal static SearchQueryEvaluation Evaluate(ExactSearchExecutionRequest request, string seed, CancellationToken token = default)
+    internal static SearchQueryEvaluation Evaluate(SearchModel request, string seed, CancellationToken token = default)
     {
         token.ThrowIfCancellationRequested();
         var conditions = request.CompiledSearch.NormalizedQuery.StandardMaps;

@@ -12,12 +12,12 @@ namespace RolltheSpire2.Search.Runtime;
 
 internal sealed record ProductionExactSearchResult(
     SeedPredictionRequest? Request,
-    SeedPredictionDocument? Document,
+    SeedPredictionFacts? Facts,
     RuntimeContextAuthoritySnapshot Authority,
     SearchQueryEvaluation Evaluation,
     string FailureCode)
 {
-    public bool IsMatch => Evaluation.Disposition == SearchDisposition.Match && Request is not null && Document is not null;
+    public bool IsMatch => Evaluation.Disposition == SearchDisposition.Match;
 }
 
 /// <summary>
@@ -28,21 +28,21 @@ internal sealed record ProductionExactSearchResult(
 internal static class ProductionExactSearchEvaluator
 {
     public static ProductionExactSearchResult Evaluate(
-        ExactSearchExecutionRequest plan,
+        SearchModel plan,
         TrustedRootHashInput input) => Evaluate(plan, input, CancellationToken.None);
 
     internal static ProductionExactSearchResult Evaluate(
-        ExactSearchExecutionRequest plan,
+        SearchModel plan,
         TrustedRootHashInput input, CancellationToken cancellationToken) =>
         Evaluate(plan, input, cancellationToken, null, plan.ExactOptions);
 
     internal static ProductionExactSearchResult Evaluate(
-        ExactSearchExecutionRequest plan, TrustedRootHashInput input,
+        SearchModel plan, TrustedRootHashInput input,
         CancellationToken cancellationToken, ShionExactTrialOptions options) =>
         Evaluate(plan, input, cancellationToken, null, options);
 
     private static ProductionExactSearchResult Evaluate(
-        ExactSearchExecutionRequest plan,
+        SearchModel plan,
         TrustedRootHashInput input, CancellationToken cancellationToken,
         Lazy<IReadOnlyList<NeowEffectRelicSnapshot>>? preparedRelicBag, ShionExactTrialOptions options = default)
     {
@@ -112,7 +112,7 @@ internal static class ProductionExactSearchEvaluator
         }
 
         // Canonical Event Result and Merchant Colorless are global/root-local facts.
-        // Prove them directly before document/route evaluation so neither Event
+        // Prove them directly before facts/route evaluation so neither Event
         // occurrence nor OpeningRoute precision can reject an otherwise exact result.
         SearchQueryEvaluation canonicalEvaluation = Beta111CanonicalEventShopSearchEvaluator.Evaluate(
             plan,
@@ -132,6 +132,19 @@ internal static class ProductionExactSearchEvaluator
         if (mapEvaluation.Disposition == SearchDisposition.NoMatch)
             return new(null,null,authority,mapEvaluation,mapEvaluation.FailureCode);
         canonicalEvaluation = CombineIndependentEvaluations(canonicalEvaluation, mapEvaluation, continuationEvaluation);
+
+        // These root-local facts already completed the full request. Analysis
+        // requests and documents are optional consumers, not Match prerequisites.
+        if ((plan.Evaluation.RequiresCanonicalRootLocalDomain || plan.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0 ||
+            plan.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count > 0) &&
+            plan.Evaluation.CheapPredictionDomains == SeedPredictionDomainSelection.None &&
+            !plan.Evaluation.RequiresNormalCombatRewardDomain)
+        {
+            canonicalEvaluation = CombineIndependentEvaluations(canonicalEvaluation,
+                ProductionQueryValidator.EvaluateInitialRoomBaseline(plan,null,input.RootHash));
+            var evaluated=AttachCanonicalGlobalWitness(canonicalEvaluation,input.CanonicalSeed);
+            return new(null,null,authority,evaluated,evaluated.FailureCode);
+        }
 
         CharacterIdentity character = CharacterIdentity.FromKey(plan.CharacterKey);
         int relicSequencePreviewCount = plan.Evaluation.RelicSequenceConditions.Count == 0
@@ -163,33 +176,6 @@ internal static class ProductionExactSearchEvaluator
                 failure);
         }
 
-        // Canonical-only Event/Shop queries do not run the general Predictor at all.
-        // Production truth is already proven by the root-local evaluator above; invoking
-        // unrelated Neow/World analysis here would let non-observable state or invariant
-        // failures reacquire rejection authority. A minimal document is retained only
-        // because SearchCandidate currently carries the shared analysis payload contract.
-        if ((plan.Evaluation.RequiresCanonicalRootLocalDomain || plan.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0 ||
-            plan.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count > 0) &&
-            plan.Evaluation.CheapPredictionDomains == SeedPredictionDomainSelection.None &&
-            !plan.Evaluation.RequiresNormalCombatRewardDomain)
-        {
-            canonicalEvaluation = CombineIndependentEvaluations(canonicalEvaluation,
-                ProductionQueryValidator.EvaluateInitialRoomBaseline(plan, null, input.RootHash));
-            SeedPredictionDocument canonicalDocument = CreateCanonicalOnlyDocument(
-                cheapRequest!,
-                plan,
-                input);
-            SearchQueryEvaluation canonicalOnly = AttachCanonicalGlobalWitness(
-                canonicalEvaluation,
-                canonicalDocument.CanonicalSeed);
-            return new ProductionExactSearchResult(
-                cheapRequest,
-                canonicalDocument,
-                authority,
-                canonicalOnly,
-                canonicalOnly.FailureCode);
-        }
-
         cheapRequest = cheapRequest!.WithComplexBonesDeckInteractions(
             plan.CompiledSearch.RequiresComplexBonesDeckInteractionEvaluation);
         cheapRequest.PartyOpeningChoices = plan.PartyOpeningChoices;
@@ -199,10 +185,10 @@ internal static class ProductionExactSearchEvaluator
             plan.Authority.PlayersCount == 1 && plan.PartyOpeningChoices is null && plan.Evaluation.RequiresNormalCombatRewardDomain
                 ? new() : null;
         if (identityReuse is not null) ShionExactTrialMetrics.Candidate();
-        SeedPredictionDocument cheapDocument = RuntimeProfileRegistry.PredictFromRootHash(plan.Detection, cheapRequest, input,
+        SeedPredictionFacts cheapFacts = RuntimeProfileRegistry.ObserveFromRootHash(plan.Detection, cheapRequest, input,
             identityReuse: identityReuse);
-        ThrowIfPredictionFailed(cheapDocument);
-        SearchQueryEvaluation cheapEvaluation = ProductionQueryValidator.EvaluateCheap(plan, cheapDocument, authority,
+        ThrowIfPredictionFailed(cheapFacts);
+        SearchQueryEvaluation cheapEvaluation = ProductionQueryValidator.EvaluateCheap(plan, cheapFacts, authority,
             out SearchQueryEvaluation openingEvaluation, input.RootHash);
         cheapEvaluation = canonicalEvaluation.Disposition == SearchDisposition.Match
             ? MergeCanonicalGlobalEvidence(cheapEvaluation, canonicalEvaluation)
@@ -218,7 +204,7 @@ internal static class ProductionExactSearchEvaluator
             cheapEvaluation = CombineIndependentEvaluations(cheapEvaluation, canonicalEvaluation, rewardBase);
             return new ProductionExactSearchResult(
                 cheapRequest,
-                cheapDocument,
+                cheapFacts,
                 authority,
                 cheapEvaluation,
                 cheapEvaluation.FailureCode);
@@ -247,7 +233,7 @@ internal static class ProductionExactSearchEvaluator
             string failure = "RewardPathRequestRejected:" + requestError;
             return new ProductionExactSearchResult(
                 cheapRequest,
-                cheapDocument,
+                cheapFacts,
                 authority,
                 SearchQueryEvaluation.Unknown(failure),
                 failure);
@@ -262,15 +248,15 @@ internal static class ProductionExactSearchEvaluator
         // Bones mode and party choices. Reuse the immutable opening projection;
         // the profile still validates identity authority and the full reward
         // sequence. The candidate-local proof avoids only duplicate pure identity work.
-        SeedPredictionDocument rewardDocument = RuntimeProfileRegistry.PredictFromRootHash(plan.Detection, rewardRequest, input,
-            cheapDocument.Sections.SelectMany(section => section.NeowChoices).ToArray(), identityReuse);
+        SeedPredictionFacts rewardFacts = RuntimeProfileRegistry.ObserveFromRootHash(plan.Detection, rewardRequest, input,
+            cheapFacts.Neow?.Choices ?? [], identityReuse);
         if (identityReuse?.WasReused == true) ShionExactTrialMetrics.IdentityReused();
-        ThrowIfPredictionFailed(rewardDocument);
-        SearchQueryEvaluation evaluation = ProductionQueryValidator.EvaluateRewards(plan, rewardDocument, rewardBase);
+        ThrowIfPredictionFailed(rewardFacts);
+        SearchQueryEvaluation evaluation = ProductionQueryValidator.EvaluateRewards(plan, rewardFacts, rewardBase);
         evaluation = CombineIndependentEvaluations(evaluation, cheapEvaluation, canonicalEvaluation);
         return new ProductionExactSearchResult(
             rewardRequest,
-            rewardDocument,
+            rewardFacts,
             authority,
             evaluation,
             evaluation.FailureCode);
@@ -287,7 +273,7 @@ internal static class ProductionExactSearchEvaluator
         return evaluations[0] with { Evidence = evaluations.SelectMany(e => e.Evidence).Distinct().ToArray() };
     }
 
-    private static void SelectRequiredNeowEffects(SeedPredictionRequest request, ExactSearchExecutionRequest plan)
+    private static void SelectRequiredNeowEffects(SeedPredictionRequest request, SearchModel plan)
     {
         request.NeowEffectRoots = !plan.Evaluation.RequiresEffectColdPath
             ? new HashSet<ModelKey>()
@@ -298,15 +284,15 @@ internal static class ProductionExactSearchEvaluator
 
     // Error is not a semantic Unknown/NoMatch. Do not let a failed computation
     // mark its candidate complete and advance the session's committed prefix.
-    internal static void ThrowIfPredictionFailed(SeedPredictionDocument document)
+    internal static void ThrowIfPredictionFailed(SeedPredictionFacts facts)
     {
-        if (!document.Warnings.Any(w => w.Code == PredictionWarningCode.AnalysisFailed)) return;
-        string evidence = string.Join(" | ", document.Diagnostics
+        if (!facts.Warnings.Any(w => w.Code == PredictionWarningCode.AnalysisFailed)) return;
+        string evidence = string.Join(" | ", facts.Diagnostics
             .Where(d => d.Code == PredictionDiagnosticCodes.Exception).Select(d => d.Value));
-        throw new InvalidOperationException($"ProductionExact.AnalysisFailed:{document.PredictorId}:{document.CanonicalSeed}:{evidence}");
+        throw new InvalidOperationException($"ProductionExact.AnalysisFailed:{facts.PredictorId}:{facts.CanonicalSeed}:{evidence}");
     }
 
-    private static ProductionExactSearchResult EvaluatePartyInitial(ExactSearchExecutionRequest plan, TrustedRootHashInput input, CancellationToken cancellationToken)
+    private static ProductionExactSearchResult EvaluatePartyInitial(SearchModel plan, TrustedRootHashInput input, CancellationToken cancellationToken)
     {
         if (plan.CompiledSearch.UsesPartyFamilyProjection)
         {
@@ -321,7 +307,7 @@ internal static class ProductionExactSearchEvaluator
                 foreach (var personal in plan.CompiledSearch.PlayerSearches.Take(plan.CompiledSearch.Context.Party!.Players.Count))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var child = Compilation.ExactSearchExecutionRequestFactory.ForPlayer(plan, personal);
+                    var child = Compilation.SearchPreparationCompiler.ForPlayer(plan, personal);
                     if (!child.Evaluation.RequiresEventResultDomain && !child.Evaluation.RequiresMerchantColorlessDomain) continue;
                     var authority = SearchAuthorityProjector.PreserveSeedIndependentEffectFoundation(child.Authority);
                     var independent = Beta111CanonicalEventShopSearchEvaluator.Evaluate(child, input.RootHash, authority);
@@ -333,7 +319,7 @@ internal static class ProductionExactSearchEvaluator
             if (result.Evaluation.Disposition == SearchDisposition.Match || ReferenceEquals(result.Authority, plan.Authority)) return result;
             // A child owns its observation and unresolved cause. The whole-table
             // result still belongs to the parent request's delivery identity.
-            // Retain the child document/request for diagnostics without relabeling
+            // Retain the child facts/request for diagnostics without relabeling
             // their observed payload or manufacturing a whole-table witness.
             var source = result.Authority;
             var scope = new SearchMatchEvidence("Party.ChildEvaluationScope", RelatedKey: source.Character.CharacterKey,
@@ -359,7 +345,7 @@ internal static class ProductionExactSearchEvaluator
         if (!Semantics.PartyInitialQuery.MatchesWorld(query, observation) || !Semantics.PartyInitialQuery.MatchesOffers(query, observation))
             return new(null, null, plan.Authority, SearchQueryEvaluation.NoMatch("Party.InitialPredicate"), "Party.InitialPredicate");
         var request = SeedPredictionRequest.ForPartyInitialInformation(input, party, plan.IncludeDiagnostics);
-        var document = CreateCanonicalOnlyDocument(request, plan, input, observation);
+        var facts = CreateCanonicalOnlyFacts(request, plan, input, observation);
         var evidence = new List<SearchMatchEvidence>();
         if (Semantics.PartyInitialQuery.HasWorld(query)) evidence.Add(new("W.World.Shared.Initial", AuthorityFingerprint: party.Fingerprint));
         foreach (var p in query.Players.Where(p => !p.Offers.IsEmpty))
@@ -368,10 +354,10 @@ internal static class ProductionExactSearchEvaluator
         foreach (var transaction in observation.Transactions)
             evidence.Add(new($"N.Neow.P{transaction.Slot + 1}.SelectedResult.{transaction.Intent}", AuthorityFingerprint: party.Fingerprint,
                 OrderedOptionKeys: [transaction.Option]));
-        return new(request, document, plan.Authority, SearchQueryEvaluation.Match(evidence), "");
+        return new(request, facts, plan.Authority, SearchQueryEvaluation.Match(evidence), "");
     }
 
-    private static ProductionExactSearchResult EvaluatePartyFamilies(ExactSearchExecutionRequest plan,
+    private static ProductionExactSearchResult EvaluatePartyFamilies(SearchModel plan,
         TrustedRootHashInput input, CancellationToken token)
     {
         var party = plan.CompiledSearch.Context.Party!;
@@ -384,7 +370,7 @@ internal static class ProductionExactSearchEvaluator
             return PartyObservationResult(plan, input, initial, initialStatus);
         if (!Semantics.PartyInitialQuery.MatchesOffers(plan.CompiledSearch.NormalizedQuery, initial))
             return new(null, null, plan.Authority, SearchQueryEvaluation.NoMatch("Party.InitialOffers"), "Party.InitialOffers");
-        var shared = Compilation.ExactSearchExecutionRequestFactory.ForPlayer(plan, plan.CompiledSearch.PlayerSearches[^1]);
+        var shared = Compilation.SearchPreparationCompiler.ForPlayer(plan, plan.CompiledSearch.PlayerSearches[^1]);
         var sharedResult = HasPartyChildObservations(shared) ? Evaluate(shared, input, token) : null;
         if (sharedResult is { IsMatch: false }) return sharedResult;
         var streams = NeowEffectRngContext.CreateFromRootHash(Beta111Profile.Instance, input.RootHash, 0);
@@ -412,7 +398,7 @@ internal static class ProductionExactSearchEvaluator
                 evidence.AddRange(result.Evaluation.Evidence.Select(e => e with { Code = $"P{personal.Context.Authority.PlayerSlotIndex + 1}." + e.Code }));
             }
             var envelope = SeedPredictionRequest.ForPartyInitialInformation(input, party, plan.IncludeDiagnostics);
-            return new(envelope, CreateCanonicalOnlyDocument(envelope, plan, input, initial), plan.Authority,
+            return new(envelope, CreateCanonicalOnlyFacts(envelope, plan, input, initial), plan.Authority,
                 SearchQueryEvaluation.Match(evidence), "");
         }
         ProductionExactSearchResult? unresolved = null;
@@ -422,7 +408,7 @@ internal static class ProductionExactSearchEvaluator
 
         ProductionExactSearchResult? EvaluateUnselected(Semantics.CompiledSearch compiled)
         {
-            var child = Compilation.ExactSearchExecutionRequestFactory.ForPlayer(plan, compiled);
+            var child = Compilation.SearchPreparationCompiler.ForPlayer(plan, compiled);
             // A None-domain general request defaults to N. Do not manufacture
             // that unrelated prediction for a seat with no evaluation obligation.
             if (!HasPartyChildObservations(child)) return null;
@@ -447,7 +433,7 @@ internal static class ProductionExactSearchEvaluator
             if (slot == party.Players.Count)
             {
                 var envelope = SeedPredictionRequest.ForPartyInitialInformation(input, party, plan.IncludeDiagnostics);
-                return new(envelope, CreateCanonicalOnlyDocument(envelope, plan, input, initial with { Transactions = transactions.ToArray() }), plan.Authority,
+                return new(envelope, CreateCanonicalOnlyFacts(envelope, plan, input, initial with { Transactions = transactions.ToArray() }), plan.Authority,
                     SearchQueryEvaluation.Match(evidence.ToArray()), "");
             }
             var compiled = plan.CompiledSearch.PlayerSearches[slot];
@@ -469,7 +455,7 @@ internal static class ProductionExactSearchEvaluator
                 owner.PlayersCount, slot, owner, compiled.Context.EvaluationAssumptions.AncientEligibilityAssumptions,
                 SeedPredictionDomainSelection.Neow, 10, false, out var request, out var error))
                 throw new InvalidOperationException("Party.PlayerRequest:" + error);
-            SelectRequiredNeowEffects(request!, Compilation.ExactSearchExecutionRequestFactory.ForPlayer(plan, compiled));
+            SelectRequiredNeowEffects(request!, Compilation.SearchPreparationCompiler.ForPlayer(plan, compiled));
             var preparedBag = BagForSlot(slot);
             var choices = PartyNeowProjection.ProjectChoices(request!, input.RootHash, niche, potions, sharedRngKnown,
                 Semantics.PartyInitialQuery.CapsuleEffectPremise(compiled.Query), preparedBag);
@@ -482,7 +468,7 @@ internal static class ProductionExactSearchEvaluator
                 var local = selected is not null
                     ? compiled.Query with { OpeningRoute = new(choice.RelicKey) } : compiled.Query;
                 var pinned = local == compiled.Query ? compiled : Semantics.SearchCompiler.CompilePlayer(local, compiled.Context);
-                var child = Compilation.ExactSearchExecutionRequestFactory.ForPlayer(plan, pinned) with { PartyOpeningChoices = [choice] };
+                var child = Compilation.SearchPreparationCompiler.ForPlayer(plan, pinned) with { PartyOpeningChoices = [choice] };
                 var result = Evaluate(child, input, token, preparedBag);
                 if (!result.IsMatch)
                 {
@@ -507,7 +493,7 @@ internal static class ProductionExactSearchEvaluator
         }
     }
 
-    private static bool HasPartyChildObservations(ExactSearchExecutionRequest child) =>
+    private static bool HasPartyChildObservations(SearchModel child) =>
         child.Evaluation.HasNeowConstraints || child.Evaluation.RequiresWorldDomain ||
         child.Evaluation.RequiresRelicSequenceDomain || child.Evaluation.RequiresNormalCombatRewardDomain ||
         child.Evaluation.RequiresCanonicalRootLocalDomain || child.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0 ||
@@ -536,23 +522,19 @@ internal static class ProductionExactSearchEvaluator
             includeBosses: includeWorld && RequiresPartyBosses(query),
             query.Players.Where(RequiresPartyInitialOffers).Select(p => p.Slot).ToHashSet());
 
-    private static SeedPredictionDocument CreateCanonicalOnlyDocument(
+    private static SeedPredictionFacts CreateCanonicalOnlyFacts(
         SeedPredictionRequest request,
-        ExactSearchExecutionRequest plan,
+        SearchModel plan,
         TrustedRootHashInput input, PartySeedInformation? party = null) => new()
     {
         Party = party,
-        Context = SeedPredictionDocument.CreateContext(request, plan.Detection.DisplayVersion, plan.ProfileId),
+        Context = PredictionContext.FromRequest(request, plan.Detection.DisplayVersion, plan.ProfileId),
         PredictorId = party is null ? "Beta111CanonicalEventShopSearchEvaluator" : "Beta111PartyInitialInformation",
         OriginalSeed = request.OriginalSeed,
         CanonicalSeed = input.CanonicalSeed,
-        Sections = Array.Empty<PredictionSection>(),
         Warnings = Array.Empty<PredictionWarning>(),
         Diagnostics = Array.Empty<PredictionDiagnostic>(),
-        OverallStatus = SeedPredictionOverallStatus.Completed,
-        ProductRelevantProjectionPrecision = PredictionPrecision.Exact,
-        ProductRelevantProjectionStatus = ProductRelevantProjectionStatus.Evaluated,
-        FullEffectSemanticsCompleteness = FullEffectSemanticsCompleteness.NotEvaluated
+        InputStatus = SeedPredictionInputStatus.Ready
     };
 
     internal static SearchQueryEvaluation EvaluatePartyObservations(Semantics.SearchQuery query, PartySeedInformation initial, bool includeWorld = true)
@@ -590,14 +572,14 @@ internal static class ProductionExactSearchEvaluator
         return unresolved ?? SearchQueryEvaluation.Match();
     }
 
-    private static ProductionExactSearchResult PartyObservationResult(ExactSearchExecutionRequest plan,
+    private static ProductionExactSearchResult PartyObservationResult(SearchModel plan,
         TrustedRootHashInput input, PartySeedInformation information, SearchQueryEvaluation evaluation)
     {
         var request = SeedPredictionRequest.ForPartyInitialInformation(input, plan.CompiledSearch.Context.Party!, plan.IncludeDiagnostics);
-        return new(request, CreateCanonicalOnlyDocument(request, plan, input, information), plan.Authority, evaluation, evaluation.FailureCode);
+        return new(request, CreateCanonicalOnlyFacts(request, plan, input, information), plan.Authority, evaluation, evaluation.FailureCode);
     }
 
-    private static NormalCombatRewardProjectionRequest BuildRewardProjectionRequest(ExactSearchExecutionRequest plan) =>
+    private static NormalCombatRewardProjectionRequest BuildRewardProjectionRequest(SearchModel plan) =>
         plan.CombatRewardRoutePolicy.ExactPolicy switch
         {
             CombatRewardExactRoutePolicy.PinnedRealRoute when plan.Evaluation.NeowRoute is { IsValid: true } pinned =>
@@ -648,14 +630,14 @@ internal static class ProductionExactSearchEvaluator
     }
 
     internal static SearchQueryEvaluation MergeCanonicalGlobalEvidence(
-        SearchQueryEvaluation documentEvaluation,
+        SearchQueryEvaluation factsEvaluation,
         SearchQueryEvaluation canonicalEvaluation)
     {
-        if (documentEvaluation.Disposition != SearchDisposition.Match ||
+        if (factsEvaluation.Disposition != SearchDisposition.Match ||
             canonicalEvaluation.Disposition != SearchDisposition.Match ||
             canonicalEvaluation.Evidence.Count == 0)
         {
-            return documentEvaluation;
+            return factsEvaluation;
         }
 
         // An aggregate's Bones results are route facts, not global facts. Retain
@@ -665,11 +647,11 @@ internal static class ProductionExactSearchEvaluator
         var aggregateRoutes=canonicalEvaluation.Evidence.Where(e=>e.Code=="TransformationAggregateMatched" && e.AcquisitionOrder is {Count:2}).ToArray();
         if(aggregateRoutes.Length>0)
         {
-            var compatible=documentEvaluation.Witnesses.Where(w=>aggregateRoutes.Any(e=>
+            var compatible=factsEvaluation.Witnesses.Where(w=>aggregateRoutes.Any(e=>
                 w.AcquisitionOrder.SequenceEqual(e.AcquisitionOrder!) &&
                 e.RouteId is { } route && w.OpeningRouteId.EndsWith("."+route["transformation-aggregate:".Length..],StringComparison.Ordinal))).ToArray();
             if(compatible.Length==0) return SearchQueryEvaluation.NoMatch("TransformationAggregate.NoSharedOpeningRoute");
-            documentEvaluation=SearchQueryEvaluation.Match(documentEvaluation.Evidence,
+            factsEvaluation=SearchQueryEvaluation.Match(factsEvaluation.Evidence,
                 compatible.Select(w=>w.OpeningRouteId).Distinct(StringComparer.Ordinal).ToArray(),compatible);
             canonicalEvaluation=SearchQueryEvaluation.Match(canonicalEvaluation.Evidence.Where(e=>
                 e.Code!="TransformationAggregateMatched" || compatible.Any(w=>
@@ -677,7 +659,7 @@ internal static class ProductionExactSearchEvaluator
                     e.RouteId is { } route && w.OpeningRouteId.EndsWith("."+route["transformation-aggregate:".Length..],StringComparison.Ordinal))).ToArray());
         }
 
-        SearchMatchEvidence[] evidence = documentEvaluation.Evidence
+        SearchMatchEvidence[] evidence = factsEvaluation.Evidence
             .Concat(canonicalEvaluation.Evidence)
             .Distinct()
             .ToArray();
@@ -690,7 +672,7 @@ internal static class ProductionExactSearchEvaluator
             .Where(code => !string.IsNullOrWhiteSpace(code.Value))
             .Distinct()
             .ToArray();
-        SearchMatchWitness[] witnesses = documentEvaluation.Witnesses
+        SearchMatchWitness[] witnesses = factsEvaluation.Witnesses
             .Select(witness => witness with
             {
                 MatchedConditions = witness.MatchedConditions
@@ -704,6 +686,6 @@ internal static class ProductionExactSearchEvaluator
             })
             .ToArray();
 
-        return SearchQueryEvaluation.Match(evidence, documentEvaluation.MatchedRouteIds, witnesses);
+        return SearchQueryEvaluation.Match(evidence, factsEvaluation.MatchedRouteIds, witnesses);
     }
 }

@@ -134,7 +134,24 @@ internal static partial class UiSurfaceChecks
                 {
                     int index = AncientOptionConditionProfile.AuthoredOptionKeys.ToList().FindIndex(k => k.Entry == option);
                     if (referenceCopyOnly) { options[index].EmitSignal(Control.SignalName.MouseEntered); await Frames(); }
-                    else await MovePointer(options[index].GetGlobalRect().GetCenter());
+                    else
+                    {
+                        // Global geometry can belong to a clipped, scrolled-out
+                        // control. Reach the real button before testing hover.
+                        for (Node? ancestor = options[index].GetParent(); ancestor != null; ancestor = ancestor.GetParent())
+                            if (ancestor is ScrollContainer scroll)
+                            {
+                                scroll.EnsureControlVisible(options[index]);
+                                await Frames(2);
+                            }
+                        await MovePointer(options[index].GetGlobalRect().GetCenter());
+                        Vector2 pointer = root.GetViewport().GetMousePosition();
+                        Check(options[index].IsVisibleInTree() && options[index].GetGlobalRect().HasPoint(pointer),
+                            $"eligibility physical hover reaches its actual visible button {locale}/{option};pointer={pointer};button={options[index].GetGlobalRect()}");
+                        for (Node? ancestor = options[index].GetParent(); ancestor is Control control; ancestor = ancestor.GetParent())
+                            Check(!control.ClipContents || control.GetGlobalRect().HasPoint(pointer),
+                                $"eligibility physical hover remains inside ancestor clipping {locale}/{option};ancestor={control.Name};pointer={pointer};clip={control.GetGlobalRect()}");
+                    }
                     string expectedAncient = ModelDb.GetById<AncientEventModel>(new("EVENT", owner)).Title.GetFormattedText();
                     string description = ((Label)Field(ancientTooltip, "_description")).Text;
                     Check(((PanelContainer)Field(ancientTooltip, "_panel")).IsVisibleInTree() &&
@@ -221,7 +238,8 @@ internal static partial class UiSurfaceChecks
                 overlay.SetLayout(new(new(40, 30), new(0, 0)), new(new(120, 100), new(1360, 700)));
                 await Frames();
                 var captions = ((IEnumerable)Field(overlay, "_stacks")).Cast<object>().Select(s => (string)Field(s, "Caption")).ToArray();
-                Check(captions.SequenceEqual(Enumerable.Range(1, 3).Select(i => text.Format("operation.rerollStep", i))), "reroll retains each group and only its concise ordinal caption " + locale);
+                Check(captions.SequenceEqual(new[] { text.Get("operation.label.sameRewardRerolls"), "", "" }),
+                    "reroll retains all three groups and explains the same-recipe restriction once " + locale);
                 await Snapshot("owner-content-" + locale + "-reroll-groups");
                 overlay.QueueFree(); await Frames(); shell.Show();
             }

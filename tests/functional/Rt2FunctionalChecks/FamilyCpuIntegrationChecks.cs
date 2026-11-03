@@ -15,7 +15,7 @@ internal static partial class FamilyCpuIntegrationChecks
             "direct-capsule-v1/Small-C-check.json","direct-capsule-v1/Large-UR-check.json","classic-product-v1/B-SourceCapsules.json"})
         {
             var w=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/"+path);
-            var request=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(w.Query,context.Context),
+            var request=SearchPreparationCompiler.Compile(SearchCompiler.Compile(w.Query,context.Context),
                 w.Options with {ScanCount=1<<24,TargetMatchCount=100000,WorkerCount=16}).Plan!;
             var p=FamilyExecutionCoordinator.Plan(request,gpuAvailable:false);
             Check(p.OrderedFamilies.All(f=>!f.ConditionPerformance.UsesGpu),"no GPU owner in CPU-only allocation");
@@ -39,33 +39,35 @@ internal static partial class FamilyCpuIntegrationChecks
             Check(p.OrderedFamilies.Count>0,"Unknown baseline does not collapse into Direct Exact");
             if(path.Contains("Large-UR"))
             {
-                var r=(FamilyCpuExecution)p.OrderedFamilies.Single(f=>f.FamilyId=="R.Relic");
-                Check(r.Workers==request.WorkerCount,"configured R stage follows the user worker count under N");
-                var own = r.Quote(new(true,false,6553.6),new HashSet<string>{"N.Neow"});
-                var otherPrefix = r.Quote(new(true,false,6553.6),new HashSet<string>{"N.Neow","W.World"});
+                var r=p.OrderedFamilies.Single(f=>f.FamilyId=="R.Relic");
+                Check(r.CpuWorkers==request.WorkerCount,"configured R stage follows the user worker count under N");
+                var own = r.QuotePhysicalWork(new(true,false,6553.6),new HashSet<string>{"N.Neow"});
+                var otherPrefix = r.QuotePhysicalWork(new(true,false,6553.6),new HashSet<string>{"N.Neow","W.World"});
                 Check(FamilyCoarsePricing.IsEstimate(own),"unmeasured P16 Capsule execution has an honest local work estimate");
                 Check(FamilyCoarsePricing.IsEstimate(otherPrefix) && own!.NanosecondsPerInput == otherPrefix!.NanosecondsPerInput,
                     "unrelated passed coverage does not reprice unconditional Capsule work");
-                Check(FamilyCoarsePricing.IsEstimate(r.Quote(new(true,false,3000),new HashSet<string>{"N.Neow"})),
+                Check(FamilyCoarsePricing.IsEstimate(r.QuotePhysicalWork(new(true,false,3000),new HashSet<string>{"N.Neow"})),
                     "different Compact occupancy uses an estimate without acquiring anchor measurement identity");
             }
             if(path.Contains("S-three"))
                 Check(p.Stages.Single().PerInputTimeMs is >0,"READY public CPU allocation priced");
             if(path.Contains("R-three") || path.Contains("C-three"))
-                Check(p.OrderedFamilies.Cast<FamilyCpuExecution>().All(cpu=>cpu.Workers==request.WorkerCount),"unpriced CPU configuration remains selected and executable");
+                Check(p.OrderedFamilies.All(cpu=>cpu.CpuWorkers==request.WorkerCount),"unpriced CPU configuration remains selected and executable");
             Console.WriteLine("CPU_INTEGRATION_CASE "+path+" "+p.FormatSummary());
         }
         var sw=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/v1/cases/S-three-shops.json");
         var rw=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/family-pricing-matrix-v1/R-three-common.json");
-        var mixed=ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(sw.Query with {RelicSequenceConstraints=rw.Query.RelicSequenceConstraints},context.Context),sw.Options).Plan!;
-        MerchantShopColorlessFamily.TryCreate(mixed,out var sg); RelicFamily.TryCreate(mixed,out var rg);
-        var sc=sg!.CpuRealizations.First();
+        var mixed=SearchPreparationCompiler.Compile(SearchCompiler.Compile(sw.Query with {RelicSequenceConstraints=rw.Query.RelicSequenceConstraints},context.Context),sw.Options).Plan!;
+        MerchantShopColorlessFamily.TryCreate(mixed.Model, FilterExecutionPreferences.From(mixed.RunOptions), out var sg); RelicFamily.TryCreate(mixed.Model, FilterExecutionPreferences.From(mixed.RunOptions), out var rg);
+        var sc=sg!.CpuAlternatives.First();
         Check(FamilyExecutionCoordinator.ResolveExecutionWindowSize(mixed,[sc,rg!])==FamilyExecutionCoordinator.ResolveExecutionWindowSize(mixed,[sg,rg!]),"CPU internal window never shrinks GPU root batch");
         var batch=new SearchBatch(12345,2*65536+3); var input=FamilyCandidateSet.Dense(batch);
-        var reference=new FamilyCpuExecution(mixed,"Check","ProfileRoot");
-        var numeric=new FamilyCpuExecution(mixed,"Check","ByteRoot",workers:4,windowCapacity:65536,numericalRoots:true);
-        var expected=reference.Execute(new(batch,mixed),input,CancellationToken.None,r=>(r&7)==0);
-        var actual=numeric.Execute(new(batch,mixed),input,CancellationToken.None,r=>(r&7)==0);
+        var reference=Cpu(mixed,"Check","ProfileRoot",r=>(r&7)==0);
+        var numeric=Cpu(mixed,"Check","ByteRoot",r=>(r&7)==0,workers:4,windowCapacity:65536,numericalRoots:true);
+        var execution=new FilterRuntimeServices(false);
+        var expected=reference.FilterAsync(execution,input,CancellationToken.None).GetAwaiter().GetResult();
+        var actual=numeric.FilterAsync(execution,input,CancellationToken.None).GetAwaiter().GetResult();
+        execution.DisposeAsync().GetAwaiter().GetResult();
         Check(actual.ExportAbi1().Span.SequenceEqual(expected.ExportAbi1().Span),"two full CPU windows plus tail preserve global batch ordinals");
         CheckFailureIsolation(mixed, Check);
         CheckResumeManifest(Check);
@@ -73,36 +75,49 @@ internal static partial class FamilyCpuIntegrationChecks
         return 0;
     }
 
-    private static void CheckFailureIsolation(ExactSearchExecutionRequest request, Action<bool, string> check)
+    private static CpuFilterExecution Cpu(PreparedSearch request, string id, string revision, Func<ulong, bool> matcher,
+        int workers = 1, int windowCapacity = 8192, bool numericalRoots = false,
+        Func<FamilyPhysicalQuoteRequest, FamilyPhysicalQuote?>? quote = null)
     {
-        var calibration = new FamilyCpuExecution(request, new BoundaryProbe("Calibration"), "AuxiliaryQuoteFixture",
-            _ => true, 2, _ => throw new IOException("InjectedCpuCalibrationQuoteFailure"));
+        var body = new FilterBodyDescription(new PreparedFilter(id), revision, request.Model.ProfileId)
+        { CpuWorkers = workers, WindowCapacity = windowCapacity,
+            PerformanceProjection = compact => CpuFilterExecution.Describe(id, revision, workers, windowCapacity, numericalRoots, false, compact),
+            Cost = new() { Quote = (_, geometry, _) => quote?.Invoke(geometry), CalibrationQuote = quote } };
+        return new(body, RolltheSpire2.Compatibility.RuntimeProfileRegistry.Select(request.Model.Detection), matcher, numericalRoots);
+    }
+
+    private static void CheckFailureIsolation(PreparedSearch request, Action<bool, string> check)
+    {
+        var calibration = Cpu(request, "Calibration", "AuxiliaryQuoteFixture",
+            _ => true, 2, 65536, quote: _ => throw new IOException("InjectedCpuCalibrationQuoteFailure"));
+        var calibrationServices = new FilterRuntimeServices(false);
         var calibrationBatch = new SearchBatch(12345, 65536);
         for (int i = 0; i < 2; i++)
-            check(calibration.Execute(new(calibrationBatch, request), FamilyCandidateSet.Dense(calibrationBatch), default, _ => true).Count == 65536,
+            check(calibration.FilterAsync(calibrationServices, FamilyCandidateSet.Dense(calibrationBatch), default).GetAwaiter().GetResult().Count == 65536,
                 "CPU calibration quote failure preserves completed numerical output");
-        check(!((IFamilyInvocation)calibration).ExecutionFaulted, "Auxiliary calibration does not fault the CPU invocation");
+        check(!calibration.ExecutionFaulted, "Auxiliary calibration does not fault the CPU invocation");
+        calibrationServices.DisposeAsync().GetAwaiter().GetResult();
 
         bool injectFailure = false;
         int calls = 0, active = 0;
         var prefix = new BoundaryProbe("Prefix", input => FamilyCandidateSet.FromSortedAbi1(input.Batch,
             input.EnumerateLogicalOrdinals().Where(ordinal => ordinal % 2 == 0).ToArray()));
-        var broken = new FamilyCpuExecution(request, new BoundaryProbe("Broken"), "PureMatcherFaultFixture", _ =>
+        var broken = Cpu(request, "Broken", "PureMatcherFaultFixture", _ =>
         {
             Interlocked.Increment(ref calls); Interlocked.Increment(ref active);
             try { if (injectFailure) throw new IOException("InjectedPureCpuMatcherFailure"); return true; }
             finally { Interlocked.Decrement(ref active); }
-        }, 2, _ => null);
+        }, 2, 65536, quote: _ => null);
         var tail = new BoundaryProbe("Tail");
-        IFamilyInvocation[] pipeline = [prefix, broken, tail];
-        var execution = new FamilyExecutionContext(false);
+        IFilterExecution[] pipeline = [prefix, broken, tail];
+        var execution = new FilterRuntimeServices(false) { CorrelationId = request.SnapshotFingerprint };
         try
         {
             var earlier = new SearchBatch(1000, 67);
-            LinearFamilyPipeline.FilterAsync(execution, new(earlier, request), pipeline, default).GetAwaiter().GetResult();
+            LinearFamilyPipeline.FilterAsync(execution, earlier, pipeline, default).GetAwaiter().GetResult();
             injectFailure = true;
             var failed = new SearchBatch(5000, 4096);
-            var restored = LinearFamilyPipeline.FilterAsync(execution, new(failed, request), pipeline, default).GetAwaiter().GetResult();
+            var restored = LinearFamilyPipeline.FilterAsync(execution, failed, pipeline, default).GetAwaiter().GetResult();
             check(active == 0 && restored.Batch == failed && restored.Count == 2048 &&
                 restored.ExportAbi1().Span.SequenceEqual(Enumerable.Range(0, 2048).Select(i => (ulong)i * 2).ToArray()),
                 "CPU partitions join before restoring the exact immutable pre-family ABI1 input");
@@ -118,29 +133,32 @@ internal static partial class FamilyCpuIntegrationChecks
                 "Actual filter computation failure keeps its warning and original cause with Exact enabled");
             int callsAfterFailure = calls;
             var later = new SearchBatch(10000, 67);
-            var skipped = request with { RunOptions = request.RunOptions with { SkipExactValidation = true } };
-            LinearFamilyPipeline.FilterAsync(execution, new(later, skipped), pipeline, default).GetAwaiter().GetResult();
+            LinearFamilyPipeline.FilterAsync(execution, later, pipeline, default).GetAwaiter().GetResult();
             check(calls == callsAfterFailure && execution.CaptureFilterIsolations(earlier).Count == 0 &&
-                execution.CaptureFilterIsolations(later).Single() is { FinalValidationSkipped: true, FailureBatch: var origin } && origin == failed,
-                "Isolated CPU filters are not retried; batch-scoped skip-Exact evidence cannot relabel earlier results");
+                execution.CaptureFilterIsolations(later).Single() is { FinalValidationSkipped: false, FailureBatch: var origin } && origin == failed,
+                "Isolated CPU filters are not retried; fixed session policy and batch-scoped causes cannot relabel earlier results");
             var badIdentity = new BoundaryProbe("BadIdentity", input => FamilyCandidateSet.Dense(new(input.Batch.BatchBase + 1, input.Count)));
             bool rejected = false;
-            try { LinearFamilyPipeline.FilterAsync(execution, new(later, request), [badIdentity], default).GetAwaiter().GetResult(); }
+            try { LinearFamilyPipeline.FilterAsync(execution, later, [badIdentity], default).GetAwaiter().GetResult(); }
             catch (InvalidOperationException) { rejected = true; }
             check(rejected, "Untrusted output batch identity is never treated as a recoverable matcher failure");
         }
         finally { execution.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
     }
 
-    private sealed class BoundaryProbe(string id, Func<FamilyCandidateSet, FamilyCandidateSet>? filter = null) : IFamilyInvocation
+    private sealed class BoundaryProbe(string id, Func<FamilyCandidateSet, FamilyCandidateSet>? filter = null) : IFilterExecution
     {
         internal int Calls;
+        private FilterBodyDescription? _body;
+        public FilterBodyDescription Body => _body ??= new(new PreparedFilter(id)
+        { AnalyticalCost = new(id, 64, [], "CpuBoundaryFixture"), Survival = FamilySurvivalProjection.Unresolved(id, "CpuBoundaryFixture") },
+            id, RolltheSpire2.Compatibility.RuntimeProfileId.Beta111)
+        { PerformanceProjection = _ => new(id, id, "CpuBoundaryFixture", 1, "Fixture", false), CreateExecution = (_, _) => this };
+        public static implicit operator FilterBodyDescription(BoundaryProbe probe) => probe.Body;
         public string FamilyId => id;
-        public FamilyAnalyticalCostProjection AnalyticalCost => new(id, 64, [], "CpuBoundaryFixture");
-        public FamilySurvivalProjection Survival => FamilySurvivalProjection.Unresolved(id, "CpuBoundaryFixture");
-        public FamilyConditionPerformanceProjection ConditionPerformance => new(id, id, "CpuBoundaryFixture", 1, "Fixture", false);
-        public FamilyPerformanceObservation CapturePerformanceObservation() => new(ConditionPerformance, "CPU", 0, 0, 0, Calls, 0, 0, 0, 0, false, "Fixture");
-        public ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow window, FamilyCandidateSet input, CancellationToken token)
+        public bool ExecutionFaulted => false;
+        public ValueTask<FamilyCandidateSet> FilterAsync(FilterRuntimeServices services, FamilyCandidateSet input, CancellationToken token)
         { Calls++; return ValueTask.FromResult(filter is null ? input : filter(input)); }
+        public ValueTask DisposeAsync(FilterRuntimeServices services) => ValueTask.CompletedTask;
     }
 }

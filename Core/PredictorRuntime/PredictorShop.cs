@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Rng;
+using RolltheSpire2.Core.Rewards;
 
 namespace RolltheSpire2.Core.PredictorRuntime;
 
@@ -470,8 +471,8 @@ internal sealed partial class PredictorRun
             var rarityRng = state.Streams.Single(s => s.Stream == PredictorStream.Rewards).Restore();
             float roll = rarityRng.NextFloat();
             state = state.WithRng(PredictorStream.Rewards, rarityRng);
-            rarity = roll < (Context.Ascension >= 7 ? .045f : .09f) + state.Odds.CardRarityOffset ? EffectCardRarity.Rare :
-                roll < (Context.Ascension >= 7 ? .045f : .09f) + state.Odds.CardRarityOffset + .37f ? EffectCardRarity.Uncommon : EffectCardRarity.Common;
+            rarity = CardRarityRules.EvaluateWithOffset(roll, CardBaseOddsType.Shop,
+                Context.Ascension, state.Odds.CardRarityOffset).Rarity;
             var first = rarity;
             while (!pool.Any(c => c.Rarity == rarity && c.CardType == type))
             {

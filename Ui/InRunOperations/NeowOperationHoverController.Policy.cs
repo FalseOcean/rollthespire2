@@ -56,7 +56,6 @@ internal sealed partial class NeowOperationHoverController
         bool transformEffects = Extra("extra:transform-effects");
         bool eventContinuation = Extra("extra:event-continuation"), eventCombat = Extra("extra:event-combat");
         bool courier = player.Relics.Any(r => !r.IsMelted && r.Id.Entry == "THE_COURIER");
-        string sequenceFeature = "extra:reroll-sequence";
         var potionDemand = new OperationPotionDemand(false, false, false);
         switch (request.Kind)
         {
@@ -127,12 +126,11 @@ internal sealed partial class NeowOperationHoverController
                 bool reroll = request.Option == "REROLL";
                 primary = reroll ? "reward:reroll" : "reward:sacrifice";
                 var set = PredictorOperationCapture.CurrentNativeRewards(_run!, player, NRun.Instance);
-                var rewards = set == null ? [] : PredictorOperationCapture.NativeRewardLeaves(set.Rewards).OfType<CardReward>()
-                    .Where(r => !r.SuccessfullySelected).ToArray();
-                bool philosopher = _run!.CurrentRoom is EventRoom { LocalMutableEvent.Id.Entry: "COLORFUL_PHILOSOPHERS" };
-                sequenceFeature = reroll ? philosopher ? "extra:philosopher-order" : "extra:reroll-sequence" : "extra:sacrifice-sequence";
+                string sequenceFeature = reroll ? "extra:reroll-sequence" : "extra:sacrifice-sequence";
                 alternative = Basic(primary);
-                sequence = Extra(sequenceFeature) && (reroll ? rewards.Count(r => r.CanReroll) > 1 : rewards.Length > 1);
+                bool wantSequence = reroll ? Basic(sequenceFeature) : Extra(sequenceFeature);
+                sequence = wantSequence && set != null && PredictorOperationCapture.NativeRewardLeaves(set.Rewards)
+                    .OfType<CardReward>().Where(r => !r.SuccessfullySelected && (!reroll || r.CanReroll)).Skip(1).Any();
                 progress = !reroll && Extra("extra:sacrifice-sequence");
                 bool shopParent = courier && set != null &&
                     PredictorOperationCapture.ObservedRewardSetObtainSource(set)?.Relic.Id.Entry == "ORRERY";
@@ -190,7 +188,7 @@ internal sealed partial class NeowOperationHoverController
         var surface = new OperationSurfaceDemand(IncludeOriginEffect: origin, IncludeBasicRestock: basicRestock,
             IncludeRewardAlternative: alternative, IncludeCardTransforms: transforms, IncludeRewardSequence: sequence,
             IncludeSacrificeProgress: progress, IncludeConditionalRestock: conditional, IncludeRestockWhetstone: whetstone,
-            RewardSequenceFeatureId: sequenceFeature, IncludeObtainContinuation: chain);
+            IncludeObtainContinuation: chain);
         return new(preferences, primary, may, surface, rf.Signature)
         {
             VisibleFeatures = visible.ToImmutable(), Potion = potionDemand, ShowPrimary = showPrimary,

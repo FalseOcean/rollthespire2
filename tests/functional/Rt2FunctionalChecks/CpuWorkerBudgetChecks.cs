@@ -110,7 +110,23 @@ internal static class CpuWorkerBudgetChecks
         Check(rejected, "packed ordinal range matches codec");
     }
 
-    private static void CheckPackedExecution(ExactSearchExecutionRequest request)
+    private static CpuFilterExecution Cpu(PreparedSearch request, string id, string revision, Func<ulong, bool> matcher,
+        int workers = 1, int windowCapacity = 8192, bool numericalRoots = false, bool packedSeedRoots = false)
+    {
+        var body = new FilterBodyDescription(new PreparedFilter(id), revision, request.Model.ProfileId)
+        { CpuWorkers = workers, WindowCapacity = windowCapacity, CpuChunkCapacity = windowCapacity,
+            PerformanceProjection = compact => CpuFilterExecution.Describe(id, revision, workers, windowCapacity, numericalRoots, packedSeedRoots, compact) };
+        return new(body, RuntimeProfileRegistry.Select(request.Model.Detection), matcher, numericalRoots, packedSeedRoots);
+    }
+    private static FamilyCandidateSet Run(CpuFilterExecution cpu, FamilyCandidateSet input, CancellationToken token = default,
+        FilterRuntimeServices? services = null)
+    {
+        var actual = services ?? new FilterRuntimeServices(false);
+        try { return cpu.FilterAsync(actual, input, token).GetAwaiter().GetResult(); }
+        finally { if (services is null) actual.DisposeAsync().GetAwaiter().GetResult(); }
+    }
+
+    private static void CheckPackedExecution(PreparedSearch request)
     {
         foreach (int count in new[] { 1, 2, 3, 4, 5, 7, 17, 1025 })
         foreach (ulong start in new[] { 34UL * 34 * 34 * 34 - 2, Beta110SeedCodec.SpaceSize - (ulong)count })
@@ -119,24 +135,23 @@ internal static class CpuWorkerBudgetChecks
             var batch = new SearchBatch(start, count);
             var input = compact ? FamilyCandidateSet.FromAbi1(batch, Enumerable.Range(0, count)
                 .Where(i => i % 5 is 0 or 3 or 4).Select(i => (ulong)i).ToArray()) : FamilyCandidateSet.Dense(batch);
-            var expected = new FamilyCpuExecution(request, "Check", "PackedOracle")
-                .Execute(new(batch, request), input, default, root => root % 5 < 3).ExportAbi1().ToArray();
+            var expected = Run(Cpu(request, "Check", "PackedOracle", root => root % 5 < 3), input).ExportAbi1().ToArray();
             foreach (int workers in new[] { 1, 3, 7 })
             foreach (bool packed in new[] { false, true })
             {
-                var cpu = new FamilyCpuExecution(request, "Check", "PackedTail", workers, numericalRoots: true,
+                var cpu = Cpu(request, "Check", "PackedTail", root => root % 5 < 3, workers, numericalRoots: true,
                     packedSeedRoots: packed);
-                Check(cpu.Condition(compact).PhysicalImplementationRevision.Contains(packed ? ".RootMode3." : ".RootMode2.", StringComparison.Ordinal),
+                Check(cpu.Body.ResolveConditionPerformance(compact).PhysicalImplementationRevision.Contains(packed ? ".RootMode3." : ".RootMode2.", StringComparison.Ordinal),
                     "explicit root implementation has its own physical identity");
-                var actual = cpu.Execute(new(batch, request), input, default, root => root % 5 < 3).ExportAbi1();
+                var actual = Run(cpu, input).ExportAbi1();
                 Check(actual.Span.SequenceEqual(expected), "byte/packed dense/irregular compact/short tail/high-bit complete ordered ABI1");
             }
         }
     }
 
-    private static ExactSearchExecutionRequest Compile(SearchContext context, SearchQuery query, int workers)
+    private static PreparedSearch Compile(SearchContext context, SearchQuery query, int workers)
     {
-        var compiled = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context),
+        var compiled = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context),
             new("000000000000", 65539, int.MaxValue, workers));
         Check(compiled.Success, "compile: " + compiled.Issue);
         return compiled.Plan!;
@@ -147,7 +162,7 @@ internal static class CpuWorkerBudgetChecks
             .Where(i => i % 3 != 1).Select(i => (ulong)i).ToArray())
         : FamilyCandidateSet.Dense(batch);
 
-    private static string Body(FamilyCpuExecution cpu) => cpu.Condition(false).PhysicalImplementationRevision.Split(".RootMode", StringSplitOptions.None)[0];
+    private static string Body(CpuFilterExecution cpu) => cpu.Body.ResolveConditionPerformance(false).PhysicalImplementationRevision.Split(".RootMode", StringSplitOptions.None)[0];
 
     private static void CheckFamilyPopulation(SearchContext source, SearchQuery query, string name, int count)
     {
@@ -159,7 +174,8 @@ internal static class CpuWorkerBudgetChecks
             var request = Compile(source, query, workers);
             var plan = FamilyExecutionCoordinator.Plan(request, gpuAvailable: false);
             Check(plan.OrderedFamilies.Count > 0, name + " has a CPU filter");
-            var context = new FamilyExecutionContext(false, failOnPhysicalRecovery: true, cpuWorkerCount: workers);
+            var context = new FilterRuntimeServices(false, failOnPhysicalRecovery: true, cpuWorkerCount: workers);
+            var running = plan.OrderedFamilies.ToDictionary(body => body, body => body.CreateExecution!(body, context));
             try
             {
                 foreach (var family in plan.OrderedFamilies)
@@ -167,8 +183,7 @@ internal static class CpuWorkerBudgetChecks
                     Check(!family.ConditionPerformance.UsesGpu, name + " CPU-only selection");
                     string revision = family.ConditionPerformance.PhysicalImplementationRevision;
                     Check(revision.Contains($".P{workers}.B", StringComparison.Ordinal), name + " selected requested P" + workers + ": " + revision);
-                    bool packedNeow = family is FamilyCpuExecution { PricingOwner: NeowFamily n } &&
-                        NeowCpuFourWayPreGate.TryCompile(n.PricingReplayPlan) is not null;
+                    bool packedNeow = family.FamilyId == "N.Neow" && NeowCpuFourWayPreGate.TryCompile(NeowReplayPlan.Compile(request.Model, false)) is not null;
                     Check(revision.Contains(family.FamilyId == TransformationAggregateFamily.Id || packedNeow ? ".RootMode3." : ".RootMode2.", StringComparison.Ordinal),
                         name + " only T and a proven four-way-eligible solo N shape use packed scalar roots");
                     string body = revision.Split(".RootMode", StringSplitOptions.None)[0];
@@ -177,7 +192,7 @@ internal static class CpuWorkerBudgetChecks
                     foreach (bool compact in new[] { false, true })
                     {
                         var input = Input(batch, compact);
-                        var actual = family.InvokeAsync(context, new(batch, request), input, default).GetAwaiter().GetResult().EnumerateLogicalOrdinals().ToArray();
+                        var actual = running[family].FilterAsync(context, input, default).GetAwaiter().GetResult().EnumerateLogicalOrdinals().ToArray();
                         if (workers == 1) expected.Add((family.FamilyId, compact), actual);
                         else Check(expected.TryGetValue((family.FamilyId, compact), out var baseline) && actual.SequenceEqual(baseline),
                             name + "/" + family.FamilyId + " complete ordered ABI1 P" + workers + ";compact=" + compact);
@@ -188,35 +203,64 @@ internal static class CpuWorkerBudgetChecks
             }
             finally
             {
-                foreach (var family in plan.OrderedFamilies) family.DisposeAsync(context).GetAwaiter().GetResult();
+                foreach (var family in running.Values) family.DisposeAsync(context).GetAwaiter().GetResult();
                 context.DisposeAsync().GetAwaiter().GetResult();
             }
         }
 
         // Admission is checked independently from selection and quote availability.
-        // Every numerical body must retain all integer configurations, not just old atlas anchors.
-        var wideRequest = Compile(source, query, 31);
-        foreach (var family in FamilyExecutionCoordinator.CreateRegisteredFamilies(wideRequest, false))
+        // Preparation binds the requested budget instead of retaining every
+        // configuration in one descriptor. Check all budgets independently.
+        var registeredBodies = new Dictionary<string, string[]>();
+        foreach (int workers in Enumerable.Range(1, 31))
         {
-            if (family.FamilyId == TransformationAggregateFamily.Id)
-                Check(family.ConditionPerformance.PhysicalImplementationRevision.Contains(".RootMode3.", StringComparison.Ordinal),
-                    "T embedded CPU and registered realizations bind the same packed implementation");
-            foreach (var body in family.CpuRealizations.OfType<FamilyCpuExecution>().GroupBy(Body))
+            var configuredRequest = Compile(source, query, workers);
+            var registered = FamilyExecutionCoordinator.CreateRegisteredFamilies(configuredRequest, false);
+            foreach (var family in registered)
             {
-                Check(body.Select(c => c.Workers).Order().SequenceEqual(Enumerable.Range(1, 31)), name + " all integer realizations " + body.Key);
-                bool packedNeow = family is NeowFamily n && NeowCpuFourWayPreGate.TryCompile(n.PricingReplayPlan) is not null;
-                Check(body.All(cpu => cpu.Condition(false).PhysicalImplementationRevision.Contains(
-                    family.FamilyId == TransformationAggregateFamily.Id || packedNeow ? ".RootMode3." : ".RootMode2.", StringComparison.Ordinal)),
-                    name + " every registered worker retains the owning Family root implementation");
-                foreach (var cpu in body.Where(c => c.Workers is 3 or 7 or 31))
-                    Check(((IFamilyInvocation)cpu).QuotePhysicalWork(new(false, false, 65536)) is null,
-                        name + " unmeasured odd worker configuration stays unpriced: " + cpu.Workers);
+                if (family.FamilyId == TransformationAggregateFamily.Id)
+                    Check(family.ConditionPerformance.PhysicalImplementationRevision.Contains(".RootMode3.", StringComparison.Ordinal),
+                        "T embedded CPU and registered realizations bind the same packed implementation");
+                IReadOnlyList<FilterBodyDescription> realizations = family.CpuAlternatives.Count > 0 ? family.CpuAlternatives : [family];
+                var groups = realizations.GroupBy(cpu => cpu.PhysicalRevision.Split(".RootMode", StringSplitOptions.None)[0]).ToArray();
+                var keys = groups.Select(group => group.Key).Order(StringComparer.Ordinal).ToArray();
+                if (workers == 1) registeredBodies.Add(family.FamilyId, keys);
+                else Check(registeredBodies.TryGetValue(family.FamilyId, out var baseline) && keys.SequenceEqual(baseline),
+                    name + " every budget retains the same registered numerical bodies: P" + workers);
+                foreach (var body in groups)
+                {
+                    bool completeWorldBudgets = family.FamilyId == WorldFamily.Id &&
+                        body.Select(cpu => cpu.CpuWorkers).Order().SequenceEqual(Enumerable.Range(1, workers));
+                    Check((family.FamilyId == WorldFamily.Id ? completeWorldBudgets : body.Count() == 1) &&
+                        body.Count(cpu => cpu.CpuWorkers == workers) == 1 &&
+                        body.All(cpu => !cpu.UsesGpu && cpu.CpuWorkers >= 1 && cpu.CpuWorkers <= workers),
+                        name + " requested worker realization and only legal owned alternatives P" + workers + ": " + body.Key);
+                    bool packedNeow = family.FamilyId == "N.Neow" && NeowCpuFourWayPreGate.TryCompile(NeowReplayPlan.Compile(configuredRequest.Model, false)) is not null;
+                    Check(body.All(cpu => cpu.ResolveConditionPerformance(false).PhysicalImplementationRevision.Contains(
+                        family.FamilyId == TransformationAggregateFamily.Id || packedNeow ? ".RootMode3." : ".RootMode2.", StringComparison.Ordinal)),
+                        name + " every registered worker retains the owning Family root implementation");
+                    foreach (var cpu in body.Where(c => c.CpuWorkers is 3 or 7 or 31))
+                    {
+                        var geometry = new FamilyPhysicalQuoteRequest(false, false, 65536);
+                        var quote = cpu.QuotePhysicalWork(geometry);
+                        Check(FamilyCanonicalMeasuredCost.TryDenseQuote(cpu, geometry) is null &&
+                            FamilyCanonicalMeasuredCost.TryQuote(cpu, geometry, 65536) is null &&
+                            (quote is null || FamilyCoarsePricing.IsEstimate(quote) && !FamilyCanonicalMeasuredCost.IsCanonicalQuote(quote) &&
+                                double.IsFinite(quote.NanosecondsPerInput) && quote.NanosecondsPerInput > 0 &&
+                                quote.PublicTransportClass == "CpuOrderedAbi1" &&
+                                quote.Evidence.Contains("ExecutionClass=CPU", StringComparison.Ordinal) &&
+                                quote.Evidence.Contains("Workers=" + cpu.CpuWorkers + ";", StringComparison.Ordinal) &&
+                                quote.Evidence.Contains("NotCurrentDeviceOrBodyMeasurement", StringComparison.Ordinal)),
+                            name + " unmeasured odd worker keeps its own declared CPU estimate or missing price without borrowing a canonical measurement: " + cpu.CpuWorkers);
+                    }
+                }
             }
+            Check(registered.Count == registeredBodies.Count, name + " same registered Family coverage at P" + workers);
         }
         Console.WriteLine($"CPU_WORKER_CASE name={name};roots={count};workers=1,3,7,31;completeAbi1=true");
     }
 
-    private static void CheckWindowAndTail(ExactSearchExecutionRequest request)
+    private static void CheckWindowAndTail(PreparedSearch request)
     {
         // Cross a seed carry boundary and two internal windows; preserve original ordinals.
         foreach (int count in new[] { 2 * 8192 + 3, 49157 })
@@ -225,23 +269,22 @@ internal static class CpuWorkerBudgetChecks
             var batch = new SearchBatch((1UL << 32) - 5, count);
             int capacity = count == 49157 ? 65536 : 8192;
             var input = Input(batch, compact);
-            var baseline = new FamilyCpuExecution(request, "Check", "ProfileRoot", windowCapacity: capacity)
-                .Execute(new(batch, request), input, default, root => (root & 3) != 0).ExportAbi1().ToArray();
+            var baseline = Run(Cpu(request, "Check", "ProfileRoot", root => (root & 3) != 0, windowCapacity: capacity), input).ExportAbi1().ToArray();
             Check(baseline.Length > 100, "split-tail comparison covers the full survivor population");
             foreach (int workers in Workers)
             foreach (int rootMode in new[] { 0, 2, 3 })
             {
-                var cpu = new FamilyCpuExecution(request, "Check", "WindowTail", workers, capacity,
+                var cpu = Cpu(request, "Check", "WindowTail", root => (root & 3) != 0, workers, capacity,
                     numericalRoots: rootMode != 0, packedSeedRoots: rootMode == 3);
-                var actual = cpu.Execute(new(batch, request), input, default, root => (root & 3) != 0);
+                var actual = Run(cpu, input);
                 Check(actual.ExportAbi1().Span.SequenceEqual(baseline), $"split tail/carry complete ABI1 P{workers};rootMode={rootMode};compact={compact}");
             }
         }
     }
 
-    private static async Task CheckSharedBudget(ExactSearchExecutionRequest request)
+    private static async Task CheckSharedBudget(PreparedSearch request)
     {
-        await using var context = new FamilyExecutionContext(false, cpuWorkerCount: 3);
+        await using var context = new FilterRuntimeServices(false, cpuWorkerCount: 3);
         var batch = new SearchBatch(0, 8193);
         var input = FamilyCandidateSet.Dense(batch);
         using var entered = new CountdownEvent(2);
@@ -259,14 +302,14 @@ internal static class CpuWorkerBudgetChecks
             try { release.Wait(timeout.Token); return (root & 1) == 0; }
             finally { Interlocked.Decrement(ref active); }
         }
-        Task<FamilyCandidateSet> Start(FamilyCpuExecution cpu) => Task.Factory.StartNew(() =>
-            cpu.Execute(new(batch, request), input, timeout.Token, BlockedMatcher, context),
+        Task<FamilyCandidateSet> Start(CpuFilterExecution cpu) => Task.Factory.StartNew(() =>
+            Run(cpu, input, timeout.Token, context),
             CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
 
         // Reserve one slot as Exact does; two simultaneous Family invocations share the remaining two.
         context.EnterCpu(timeout.Token);
-        var first = Start(new(request, "Check.First", "SharedBudget", workers: 7, numericalRoots: true));
-        var second = Start(new(request, "Check.Second", "SharedBudget", workers: 7, numericalRoots: true));
+        var first = Start(Cpu(request, "Check.First", "SharedBudget", BlockedMatcher, workers: 7, numericalRoots: true));
+        var second = Start(Cpu(request, "Check.Second", "SharedBudget", BlockedMatcher, workers: 7, numericalRoots: true));
         try
         {
             Check(entered.Wait(TimeSpan.FromSeconds(10)), "Family callbacks saturate remaining Exact-shared permits");
@@ -288,20 +331,19 @@ internal static class CpuWorkerBudgetChecks
             await Task.WhenAll(first, second);
         }
         var outputs = await Task.WhenAll(first, second);
-        var expected = new FamilyCpuExecution(request, "Check.P1", "SharedBudgetReference")
-            .Execute(new(batch, request), input, default, root => (root & 1) == 0).ExportAbi1().ToArray();
+        var expected = Run(Cpu(request, "Check.P1", "SharedBudgetReference", root => (root & 1) == 0), input).ExportAbi1().ToArray();
         Check(outputs.All(output => output.ExportAbi1().Span.SequenceEqual(expected)), "concurrent Family budget preserves complete ABI1");
         Check(context.PeakCpuWorkers == 3 && peak <= 3, "concurrent invocations never exceed session CPU cap");
 
         // Cancellation while waiting must neither leak a permit nor poison the invocation.
         for (int i = 0; i < 3; i++) context.EnterCpu(timeout.Token);
-        var reusable = new FamilyCpuExecution(request, "Check.Cancel", "CancelReuse", workers: 7, numericalRoots: true);
+        int callbacks = 0;
+        var reusable = Cpu(request, "Check.Cancel", "CancelReuse", _ => { Interlocked.Increment(ref callbacks); return true; }, workers: 7, numericalRoots: true);
         using var started = new ManualResetEventSlim();
         using var cancellation = new CancellationTokenSource();
-        int callbacks = 0;
         var waiting = Task.Factory.StartNew(() => {
             started.Set();
-            return reusable.Execute(new(batch, request), input, cancellation.Token, _ => { Interlocked.Increment(ref callbacks); return true; }, context);
+            return Run(reusable, input, cancellation.Token, context);
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         try
         {
@@ -313,12 +355,12 @@ internal static class CpuWorkerBudgetChecks
             Check(observed && callbacks == 0, "Family cancelled before permit does no computation");
         }
         finally { for (int i = 0; i < 3; i++) context.ExitCpu(); }
-        Check(reusable.Execute(new(batch, request), input, timeout.Token, _ => true, context).Count == input.Count,
+        Check(Run(reusable, input, timeout.Token, context).Count == input.Count,
             "cancelled invocation reuses released budget");
 
-        var faulted = new FamilyCpuExecution(request, "Check.Fault", "FaultRelease", workers: 7, numericalRoots: true);
+        var faulted = Cpu(request, "Check.Fault", "FaultRelease", _ => throw new InvalidOperationException("WorkerBudgetInjected"), workers: 7, numericalRoots: true);
         bool faultObserved = false;
-        try { faulted.Execute(new(batch, request), input, timeout.Token, _ => throw new InvalidOperationException("WorkerBudgetInjected"), context); }
+        try { Run(faulted, input, timeout.Token, context); }
         catch (Exception ex) when (ex is InvalidOperationException or AggregateException) { faultObserved = true; }
         Check(faultObserved, "matcher fault propagates");
         // Acquire the full capacity after cancellation and fault; a leaked permit times out.
@@ -367,20 +409,21 @@ internal static class CpuWorkerBudgetChecks
                 .All(id => plan.OrderedFamilies.Any(f => f.FamilyId == id)), "party retains N/S/C/W filters");
             Check(FamilyExecutionCoordinator.ResolveExecutionWindowSize(request, plan.OrderedFamilies) == 8192,
                 "mixed Party CPU allocation retains its existing root window");
-            var execution = new FamilyExecutionContext(false, cpuWorkerCount: workers);
+            var execution = new FilterRuntimeServices(false, cpuWorkerCount: workers);
+            var running = plan.OrderedFamilies.ToDictionary(body => body, body => body.CreateExecution!(body, execution));
             try
             {
                 foreach (var family in plan.OrderedFamilies)
                 {
-                    if (family is PartyFamily wrapper)
-                        foreach (var (_, child) in wrapper.PersonalStages)
+                    if (family.PhysicalBodies.Count > 0)
+                        foreach (var child in family.PhysicalBodies)
                             Check(child.ConditionPerformance.PhysicalImplementationRevision.Contains($".P{workers}.B", StringComparison.Ordinal),
                                 "party child selected request workers " + child.FamilyId);
                     else Check(family.ConditionPerformance.PhysicalImplementationRevision.Contains($".P{workers}.B", StringComparison.Ordinal),
                         "party direct selected request workers " + family.FamilyId);
                     foreach (bool compact in new[] { false, true })
                     {
-                        var output = family.InvokeAsync(execution, new(batch, request), Input(batch, compact), default)
+                        var output = running[family].FilterAsync(execution, Input(batch, compact), default)
                             .GetAwaiter().GetResult().EnumerateLogicalOrdinals().ToArray();
                         if (workers == 1) expected.Add((family.FamilyId, compact), output);
                         else Check(output.SequenceEqual(expected[(family.FamilyId, compact)]), $"party {family.FamilyId} complete ABI1 P{workers};compact={compact}");
@@ -390,7 +433,7 @@ internal static class CpuWorkerBudgetChecks
             }
             finally
             {
-                foreach (var family in plan.OrderedFamilies) family.DisposeAsync(execution).GetAwaiter().GetResult();
+                foreach (var family in running.Values) family.DisposeAsync(execution).GetAwaiter().GetResult();
                 execution.DisposeAsync().GetAwaiter().GetResult();
             }
         }
@@ -409,10 +452,10 @@ internal static class CpuWorkerBudgetChecks
         {
             var request = Compile(context, query, workers);
             var plan = FamilyExecutionCoordinator.Plan(request, gpuAvailable: false);
-            Check(plan.OrderedFamilies.Count == 1 && plan.OrderedFamilies[0] is NeowFamily.PartyInitial,
+            Check(plan.OrderedFamilies.Count == 1 && plan.OrderedFamilies[0].FamilyId == "N.Neow",
                 "Party N-only check selects the real PartyInitial wrapper");
-            var family = (NeowFamily.PartyInitial)plan.OrderedFamilies[0];
-            Check(family.CpuWindowCapacity == 65536 && family.AnalyticalCost.InputCapacityPerInvocation == 65536 &&
+            var family = plan.OrderedFamilies[0];
+            Check(family.WindowCapacity == 65536 && family.AnalyticalCost.InputCapacityPerInvocation == 65536 &&
                 FamilyExecutionCoordinator.ResolveExecutionWindowSize(request, plan.OrderedFamilies) == 65536,
                 "Party N-only execution and analytical windows agree");
             Check(FamilyExecutionCoordinator.ResolveExecutionWindowSize(request, []) == 8192,
@@ -422,17 +465,23 @@ internal static class CpuWorkerBudgetChecks
                     $".P{workers}.B65536.", StringComparison.Ordinal), "Party N requested workers and geometry identity");
             if (family.QuotePhysicalWork(new(false, false, 65536)) is { } quote)
                 Check(quote.WindowCapacity == 65536, "Party N available CPU quote matches execution window");
-            var execution = new FamilyExecutionContext(false, cpuWorkerCount: workers);
-            NeowFamily.PartyInitial? reference = workers == 1 ? new(request, optimize: false) : null;
+            var execution = new FilterRuntimeServices(false, cpuWorkerCount: workers);
+            var actual = family.CreateExecution!(family, execution);
+            IFilterExecution? reference = workers == 1 ? CreateReference() : null;
+            IFilterExecution CreateReference()
+            {
+                var body = new NeowFamily.PartyInitial(request.Model, FilterExecutionPreferences.From(request.RunOptions), optimize: false).Describe();
+                return body.CreateExecution!(body, execution);
+            }
             try
             {
                 foreach (bool compact in new[] { false, true })
                 {
                     var input = Input(batch, compact);
                     if (reference is not null)
-                        expected.Add(compact, reference.InvokeAsync(execution, new(batch, request), input, default)
+                        expected.Add(compact, reference.FilterAsync(execution, input, default)
                             .GetAwaiter().GetResult().ExportAbi1().ToArray());
-                    var output = family.InvokeAsync(execution, new(batch, request), input, default)
+                    var output = actual.FilterAsync(execution, input, default)
                         .GetAwaiter().GetResult();
                     var abi1 = output.ExportAbi1().ToArray();
                     Check(output.Batch == batch && abi1.SequenceEqual(expected[compact]),
@@ -446,7 +495,7 @@ internal static class CpuWorkerBudgetChecks
             finally
             {
                 if (reference is not null) reference.DisposeAsync(execution).GetAwaiter().GetResult();
-                foreach (var item in plan.OrderedFamilies) item.DisposeAsync(execution).GetAwaiter().GetResult();
+                actual.DisposeAsync(execution).GetAwaiter().GetResult();
                 execution.DisposeAsync().GetAwaiter().GetResult();
             }
         }

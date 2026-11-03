@@ -16,7 +16,8 @@ internal sealed partial class RelicSequenceSearchEditor
 
     internal bool HasConditions(bool party) => (party ? _partyDrafts : _drafts).Values.Any(d => d.Conditions.Count > 0 || d.TreasureSlots.Any(k => k.HasValue));
     internal Action ClearConditions(bool party, int? slot = null) =>
-        WorkbenchConditionReset.Swap(party ? _partyDrafts : _drafts, _ => new SeatDraft(), slot);
+        WorkbenchConditionReset.Swap(party ? _partyDrafts : _drafts, _ => new SeatDraft(), slot,
+            (previous, current) => { if (ReferenceEquals(_draft, previous)) _draft = current; });
 
     internal int AuthoredConditionCount() => _draft.Conditions.Count + _draft.TreasureSlots.Take(_draft.TreasureCount).Count(k => k.HasValue);
 }

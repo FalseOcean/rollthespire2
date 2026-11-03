@@ -71,11 +71,19 @@ internal static class CombatRewardWorkEstimate
         // Small reusable scan term, not a newly measured curve. Preserve the
         // existing anchors and avoid adding their reference-pool work twice.
         ns += .0025 * (pools.ScanEntries - pools.AnchorScanEntries);
-        return FamilyCoarsePricing.Gpu("C.CombatReward", plan.UsesHotLoop ? "C.HotLoop" : "C.Generic",
+        // Reuse the existing per-entry work coefficient as a coarse shuffle
+        // envelope, never a measurement of the new opening body.
+        double openingDraws = replay.ObservedOpening?.ShuffleDraws ?? 0;
+        ns += .0025 * w.Routes * openingDraws;
+        if (replay.UsesNeutralWitness) ns += .15 * CombatRewardNeutralWitness.MaximumIdentityDraws;
+        return FamilyCoarsePricing.Gpu("C.CombatReward", (plan.UsesHotLoop ? "C.HotLoop" : "C.Generic") +
+            (replay.UsesNeutralWitness ? CombatRewardNeutralWitness.Revision : ""),
             ns, CombatRewardGpuExecutor.Capacity, g,
             $"C.NeutralHorizonAndGenericStreamingAnchors;H={w.Horizon};Routes={w.Routes};" +
             $"Comparisons={w.Comparisons};Assignment={w.Assignment};ExtraGroups={w.ExtraGroups};Prefix={w.Prefix};" +
             $"PoolScanEntries={pools.ScanEntries};AnchorPoolScanEntries={pools.AnchorScanEntries};PoolScanEnvelopeDelta;" +
+            (replay.UsesObservedOpening ? $"ObservedOpeningShuffleDraws={openingDraws};ObservedOpeningNotMeasured;" : "") +
+            (replay.UsesNeutralWitness ? $"RealNeutralWitnessIdentityDrawEnvelope={CombatRewardNeutralWitness.MaximumIdentityDraws};OnFailureReachNotMeasured;NewBodyNotMeasured;" : "") +
             "NoTargetOrUnusedPoolKey;FullGenerationEnvelope;NoEarlyRejectDiscount", 120);
     }
 
@@ -96,9 +104,15 @@ internal static class CombatRewardWorkEstimate
         else ns = 60 + (w.Horizon > 3 ? 850 : 505) * w.Horizon * w.Routes * (1 + w.ExtraGroups) +
             8 * Math.Max(0, w.Comparisons - w.Horizon) + 8 * w.Assignment + 18 * w.Prefix;
         if (g.CompactInput) ns += 17; // Existing compact root-decoding envelope.
-        return FamilyCoarsePricing.Cpu("C.CombatReward", potionPrefix ? "C.PotionPrefix" : "C.FullReward",
+        double openingDraws = replay.ObservedOpening?.ShuffleDraws ?? 0;
+        ns += 8 * w.Routes * openingDraws;
+        if (replay.UsesNeutralWitness) ns += 8 * CombatRewardNeutralWitness.MaximumIdentityDraws;
+        return FamilyCoarsePricing.Cpu("C.CombatReward", (potionPrefix ? "C.PotionPrefix" : "C.FullReward") +
+            (replay.UsesNeutralWitness ? CombatRewardNeutralWitness.Revision : ""),
             ns, workers, g, $"C.CpuHorizon505AndH4To6_850;PotionPrefix60_330_360;" +
             $"H={w.Horizon};Routes={w.Routes};Comparisons={w.Comparisons};Assignment={w.Assignment};" +
-            $"Prefix={w.Prefix};NoTargetOrPoolFingerprintKey;FullGenerationEnvelope", capacity);
+            $"Prefix={w.Prefix};" + (replay.UsesObservedOpening ? $"ObservedOpeningShuffleDraws={openingDraws};ObservedOpeningNotMeasured;" : "") +
+            (replay.UsesNeutralWitness ? $"RealNeutralWitnessIdentityDrawEnvelope={CombatRewardNeutralWitness.MaximumIdentityDraws};OnFailureReachNotMeasured;NewBodyNotMeasured;" : "") +
+            "NoTargetOrPoolFingerprintKey;FullGenerationEnvelope", capacity);
     }
 }

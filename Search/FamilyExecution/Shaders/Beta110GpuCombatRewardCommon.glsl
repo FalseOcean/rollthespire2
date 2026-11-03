@@ -1,4 +1,5 @@
 // Combat Reward GPU R1/R2 shared numeric library.
+/*__RT2_NEOW_IDENTITY_FACTS__*/
 struct RngState { uint64_t s0; uint64_t s1; uint64_t s2; uint64_t s3; };
 struct RewardRouteState {
     RngState rewards;
@@ -113,21 +114,18 @@ uint64_t cr_hash_seed12(uint64_t ordinal){uint64_t f;uint t;cr_encode_seed12(ord
 
 uint64_t cr_plan_u64(uint index){return uint64_t(plan_meta.values[index])|(uint64_t(plan_meta.values[index+1u])<<32u);}
 void cr_consume_shuffle(uint length, inout RngState rng){for(uint count=length;count>1u;--count)cr_next_int(rng,count);}
-bool cr_positive_allowed(uint id,uint curse,uint players,uint flags){
-    if(id==17u&&players<=1u)return false; if(id==14u&&(flags&1u)==0u)return false;
-    if(id==22u&&(flags&2u)==0u)return false; if(id==23u&&players!=1u)return false;
-    if(curse==0u&&id==13u)return false; if(curse==2u&&id==10u)return false;
-    if(curse==4u&&id==19u)return false; if(curse==7u&&id==21u)return false;
-    if(curse==6u&&(id==20u||id==16u))return false; return true;
-}
 bool cr_replay_opening(uint64_t root_hash,out uint first,out uint second,out uint curse){
     uint slot=plan_meta.values[2u],players=plan_meta.values[3u],flags=plan_meta.values[6u];
+    uint profile=rt2_neow_profile(players,(flags&1u)!=0u,(flags&2u)!=0u);
     RngState event_rng=cr_rng_initialize(root_hash+uint64_t(slot)+cr_plan_u64(12u));
-    curse=cr_next_int(event_rng,players==1u?10u:9u); uint positives[17];uint n=0u;
-    for(uint id=10u;id<=23u;++id)if(cr_positive_allowed(id,curse,players,flags))positives[n++]=id;
-    if(curse!=3u)positives[n++]=cr_next_int(event_rng,2u)==0u?24u:28u;
-    positives[n++]=cr_next_int(event_rng,2u)==0u?26u:29u;
-    positives[n++]=cr_next_int(event_rng,2u)==0u?25u:27u;
+    curse=rt2_neow_eligible_curses[profile*RT2_NEOW_CURSE_CAPACITY+cr_next_int(event_rng,rt2_neow_curse_counts[profile])];
+    uint positives[17];uint n=0u,fixed_mask=rt2_neow_fixed_mask(profile,curse);
+    for(uint index=0u;index<RT2_NEOW_FIXED_COUNT;++index)
+        if((fixed_mask&(1u<<index))!=0u)positives[n++]=rt2_neow_fixed_candidates[index];
+    if(curse!=RT2_NEOW_OPTIONAL_APPEND_CURSE)
+        positives[n++]=cr_next_int(event_rng,2u)==0u?RT2_NEOW_APPEND0_TRUE:RT2_NEOW_APPEND0_FALSE;
+    positives[n++]=cr_next_int(event_rng,2u)==0u?RT2_NEOW_APPEND1_TRUE:RT2_NEOW_APPEND1_FALSE;
+    positives[n++]=cr_next_int(event_rng,2u)==0u?RT2_NEOW_APPEND2_TRUE:RT2_NEOW_APPEND2_FALSE;
     if(n<2u)return false;
     for(uint count=n;count>1u;--count){uint s=cr_next_int(event_rng,count),tail=count-1u,tmp=positives[s];positives[s]=positives[tail];positives[tail]=tmp;}
     first=positives[0u];second=positives[1u];return true;

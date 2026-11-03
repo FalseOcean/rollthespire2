@@ -1,5 +1,7 @@
 using System.Reflection;
 using Godot;
+using RolltheSpire2.Core.Merchant;
+using RolltheSpire2.Search.Compilation;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.FamilyExecution;
 
@@ -7,7 +9,7 @@ using RolltheSpire2.Search.FamilyExecution;
 internal static class PrivateOrdinalChecks
 {
     private const BindingFlags Members = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
-    internal static void Run(ExactSearchExecutionRequest request)
+    internal static void Run(PreparedSearch request)
     {
         var assembly = typeof(FamilyCandidateSet).Assembly;
         Type Type(string name) => assembly.GetType("RolltheSpire2.Search.FamilyExecution." + name, true)!;
@@ -84,20 +86,22 @@ internal static class PrivateOrdinalChecks
                 object? aliasExecution = null;
                 try
                 {
-                    var bind = typeof(IFamilyInvocation).GetMethod("BindPrivateSerial", Members)!;
-                    aliasExecution = bind.Invoke(ordered[^1], [rd, alias, alias])!;
+                    aliasExecution = ordered[^1].BindPrivate!(rd,(PrivateOrdinalBuffer)alias,(PrivateOrdinalBuffer)alias);
                     Reject(() => Call(aliasExecution, "Execute", new SearchBatch(0, 1), 1, CancellationToken.None), typeof(InvalidDataException));
                 }
-                catch (TargetInvocationException ex) when (ex.InnerException is ArgumentException or InvalidDataException or InvalidOperationException &&
-                    ex.InnerException.Message.Contains("Alias", StringComparison.OrdinalIgnoreCase))
+                catch (Exception ex) when (ex is ArgumentException or InvalidDataException or InvalidOperationException &&
+                    ex.Message.Contains("Alias", StringComparison.OrdinalIgnoreCase))
                 { checks++; } // Some donors correctly reject the alias at binding.
                 finally { (aliasExecution as IDisposable)?.Dispose(); }
             }
-            var type = Type("AutomaticPrivateSerialInvocation").GetNestedType("Gpu", BindingFlags.NonPublic)!;
-            var serial = (IDisposable)Activator.CreateInstance(type, Members, null, [rd, ordered, null], null)!;
+            var runtime = Type("AutomaticPrivateSerialInvocation").GetNestedType("Runtime", BindingFlags.NonPublic)
+                ?? throw new MissingMemberException("AutomaticPrivateSerialInvocation.Runtime");
+            var type = runtime.GetNestedType("Gpu", BindingFlags.NonPublic)
+                ?? throw new MissingMemberException("AutomaticPrivateSerialInvocation.Runtime.Gpu");
+            var serial = (IDisposable)Activator.CreateInstance(type, Members, null, [rd, ordered, new FilterCostObserver(), null], null)!;
             FamilyCandidateSet RunSerial(int count, CancellationToken token = default)
             {
-                var value = Call(serial, "Execute", FamilyCandidateSet.Dense(new(0, count)), order, true, null, token)!;
+                var value = Call(serial, "Execute", FamilyCandidateSet.Dense(new(0, count)), order, true, null, Array.Empty<string>(), token)!;
                 return (FamilyCandidateSet)value.GetType().GetField("Item1")!.GetValue(value)!;
             }
             try
@@ -107,7 +111,7 @@ internal static class PrivateOrdinalChecks
                 Reject(() => RunSerial(67, cancellation.Token), typeof(OperationCanceledException));
                 var tail = RunSerial(67); checks++;
                 if (!tail.ExportAbi1().Span.SequenceEqual(RunSerial(67).ExportAbi1().Span)) throw new InvalidDataException("Serial.Reuse"); checks++;
-                int capsuleIndex = Array.FindIndex(ordered, f => f.GetType().Name == "CapsuleRelicFamily");
+                int capsuleIndex = Array.FindIndex(ordered, f => f.FamilyId == "R.Relic" && NeowReplayPlan.HasCapsule(request.Model));
                 if (capsuleIndex > 0)
                 {
                     // Existing CPU R replay is the full-population reference,
@@ -116,11 +120,11 @@ internal static class PrivateOrdinalChecks
                     ulong start = 0;
                     foreach (char c in request.CanonicalStartSeed) start = checked(start * 34 + (uint)alphabet.IndexOf(c));
                     var sample = new SearchBatch(start, 1 << 24);
-                    var value = Call(serial, "Execute", FamilyCandidateSet.Dense(sample), order, true, null, CancellationToken.None)!;
+                    var value = Call(serial, "Execute", FamilyCandidateSet.Dense(sample), order, true, null, Array.Empty<string>(), CancellationToken.None)!;
                     var snapshots = (FamilyCandidateSet[])value.GetType().GetField("Item3")!.GetValue(value)!;
                     var predecessors = snapshots[capsuleIndex - 1].EnumerateLogicalOrdinals().ToArray();
                     if (predecessors.Length > 65536) throw new InvalidOperationException("CapsuleReferenceFixtureTooDense");
-                    object replay = ordered[capsuleIndex].GetType().GetField("_replay", Members)!.GetValue(ordered[capsuleIndex])!;
+                    object replay = new CapsuleRelicReplay(request.Model,NeowReplayPlan.Compile(request.Model,true));
                     var matches = (Func<ulong, bool>)replay.GetType().GetMethod("Matches", Members)!.CreateDelegate(typeof(Func<ulong, bool>), replay);
                     var format = (Func<ulong, string>)assembly.GetType("RolltheSpire2.Search.FamilyExecution.Beta110SeedCodec", true)!
                         .GetMethod("FormatOrdinal", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!.CreateDelegate(typeof(Func<ulong, string>));
@@ -155,21 +159,33 @@ internal static class PrivateOrdinalChecks
             if (selection.RootElement.GetProperty("Coverage").GetString() == "NWAE")
                 nwae = "verify-" + selection.RootElement.GetProperty("Order").GetString();
         }
-        IFamilyInvocation Family(string id) => families.Single(f => f.FamilyId == id);
-        object? Plan(string id, string property) => families.Any(f => f.FamilyId == id) ? Property(Family(id), property) : null;
+        object? Plan(string id, string property)
+        {
+            if(!families.Any(f=>f.FamilyId==id))return null;
+            return id switch {
+                "N.Neow"=>HostFilterBindings.PrepareNeow(request).GpuPlan,
+                "A.AncientOption"=>new AncientOptionFamilyPlan(request.Model),
+                "E.EventResult"=>new EventResultFamilyPlan(request.Model),
+                "W.World"=>new WorldFamilyGpuPlan(new WorldFamilyReplay(request.Model)),
+                "C.CombatReward"=>CombatRewardFamily.TryPrepare(request.Model,FilterExecutionPreferences.From(request.RunOptions),out var c) ? c?.GpuPlan : null,
+                _=>throw new InvalidOperationException("PrivateOrdinal.PlanNotMapped:"+id)
+            };
+        }
         string rswMode = System.Environment.GetEnvironmentVariable("RT2_RSW_EXPERIMENT") ?? "";
         if (rswMode.Length != 0)
         {
             string order = rswMode.Split('-')[1];
-            var rPlan = Family("R.Relic").GetType().GetField("_plan", Members)!.GetValue(Family("R.Relic"))!;
-            var wPlan = New("WorldFamilyGpuPlan", Property(Family("W.World"), "Replay"));
+            if(!RelicFamily.TryPrepare(request.Model,FilterExecutionPreferences.From(request.RunOptions),out var r) || r is null) throw new InvalidDataException("RSW.RPlanMissing");
+            var rPlan = r.Plan;
+            var shops = MerchantShopColorlessGpuExecutor.PrepareInputs(request.Model.Evaluation,Beta111MerchantColorlessAuthority.From(request.Model.Authority),request.Model.SnapshotFingerprint);
+            var wPlan = Plan("W.World","GpuPlan")!;
             using var source = (IDisposable)New("PrivateOrdinalBuffer", rd);
             using var output = (IDisposable)New("PrivateOrdinalBuffer", rd);
             object R(object input, object dest) => Type("RelicFamilyGpuExecutor").GetMethods(BindingFlags.Static|BindingFlags.Public|BindingFlags.NonPublic)
-                .Single(m=>m.Name=="Create"&&m.GetParameters().Length==5&&m.GetParameters()[2].ParameterType==rPlan.GetType()).Invoke(null,[rd,request,rPlan,input,dest])!;
+                .Single(m=>m.Name=="Create"&&m.GetParameters().Length==5&&m.GetParameters()[2].ParameterType==rPlan.GetType()).Invoke(null,[rd,request.Model.SnapshotFingerprint,rPlan,input,dest])!;
             var atomic = Enum.Parse(Type("MerchantShopColorlessCompactionPath"),"AtomicAppendHostSort");
             object S(object input, object dest) => Type("MerchantShopColorlessGpuExecutor").GetMethods(BindingFlags.Static|BindingFlags.Public|BindingFlags.NonPublic)
-                .Single(m=>m.Name=="Create"&&m.GetParameters().Length==5).Invoke(null,[rd,request,atomic,input,dest])!;
+                .Single(m=>m.Name=="Create"&&m.GetParameters().Length==5).Invoke(null,[rd,shops,atomic,input,dest])!;
             Reject(()=>R(source,source),typeof(ArgumentException));
             Reject(()=>S(source,source),typeof(ArgumentException));
             Reject(()=>New("WorldFamilyGpuExecutor",rd,wPlan,(Rid)Property(source,"Buffer"),source),typeof(ArgumentException));
@@ -180,7 +196,7 @@ internal static class PrivateOrdinalChecks
                 using var consumer = (IDisposable)(id=="R"?R(source,output):id=="S"?S(source,output):New("WorldFamilyGpuExecutor",rd,wPlan,(Rid)Property(source,"Buffer"),output));
                 Reject(()=>Call(consumer,"ExecutePrivateStage",new SearchBatch(0,1),1,CancellationToken.None,null),typeof(InvalidDataException));
             }
-            var chain = (IDisposable)New("RswPrivateGpuExecutor",rd,request,rPlan,wPlan,order,true);
+            var chain = (IDisposable)New("RswPrivateGpuExecutor",rd,request.Model.SnapshotFingerprint,shops,rPlan,wPlan,order,true);
             FamilyCandidateSet Run(int count,CancellationToken token=default) => (FamilyCandidateSet)Call(chain,"Execute",FamilyCandidateSet.Dense(new SearchBatch(0,count)),token,null)!;
             try
             {
@@ -249,12 +265,12 @@ internal static class PrivateOrdinalChecks
         IDisposable executor = nwae.Length != 0
             ? (IDisposable)New("NwaePrivateGpuExecutor", rd, Plan("N.Neow", "GpuPlan"),
                 Plan("A.AncientOption", "Plan"), Plan("E.EventResult", "Plan"),
-                New("WorldFamilyGpuPlan", Property(Family("W.World"), "Replay")), nwae.Split('-')[1], true)
+                Plan("W.World","GpuPlan")!, nwae.Split('-')[1], true)
             : ew
-            ? (IDisposable)New("EwPrivateGpuExecutor", rd, Property(Family("E.EventResult"), "Plan"),
-                New("WorldFamilyGpuPlan", Property(Family("W.World"), "Replay")), true)
-            : (IDisposable)New("NcPrivateGpuExecutor", rd, Property(Family("C.CombatReward"), "GpuPlan"),
-                Property(Family("N.Neow"), "GpuPlan"), 42u, true, true);
+            ? (IDisposable)New("EwPrivateGpuExecutor", rd, Plan("E.EventResult", "Plan"),
+                Plan("W.World","GpuPlan")!, true)
+            : (IDisposable)New("NcPrivateGpuExecutor", rd, Plan("C.CombatReward", "GpuPlan"),
+                Plan("N.Neow", "GpuPlan"), 42u, true, true);
         FamilyCandidateSet Execute(int count, CancellationToken token = default)
             => (FamilyCandidateSet)Call(executor, "Execute", FamilyCandidateSet.Dense(new SearchBatch(0, count)), token, null)!;
         try

@@ -1,3 +1,4 @@
+using RolltheSpire2.Infrastructure.PredictionSessions;
 using System.Reflection;
 using System.Text.Json;
 using System.Collections.Immutable;
@@ -229,16 +230,15 @@ internal static partial class PartyPhase1Checks
                 for (int i = 0; i < 1000; i++)
                 {
                     typeof(CrystalSphereAssistantPanel).GetMethod("ApplyPresentationSlice",flags)!.Invoke(panel,null);
-                    if ((int)typeof(CrystalSphereAssistantPanel).GetField("_targetPresentationIndex",flags)!.GetValue(panel)! >=
-                        ((System.Collections.Immutable.ImmutableArray<CrystalRewardOption>)typeof(CrystalSphereAssistantPanel)
-                            .GetField("_selected",flags)!.GetValue(panel)!).Length &&
-                        !((bool)typeof(CrystalSphereAssistantPanel).GetField("_presentationRequested",flags)!.GetValue(panel)!) &&
-                        ((Queue<CrystalRewardOption>)typeof(CrystalSphereAssistantPanel).GetField("_optionPresentationQueue",flags)!.GetValue(panel)!).Count == 0)
+                    if ((int)CrystalField(panel,"_targetPresentationIndex")! >=
+                        ((System.Collections.Immutable.ImmutableArray<CrystalRewardOption>)CrystalField(panel,"_selected")!).Length &&
+                        !((bool)CrystalField(panel,"_presentationRequested")!) &&
+                        ((Queue<CrystalRewardOption>)CrystalField(panel,"_optionPresentationQueue")!).Count == 0)
                         return;
                 }
                 throw new InvalidOperationException("Crystal structural presentation did not settle");
             }
-            void ApplyPanelUpdate(CrystalSphereAssistantPanel.Update update)
+            void ApplyPanelUpdate(CrystalPredictionSession.Update update)
             {
                 panel.ApplyUpdate(update);
                 if(!panel.IsVisibleInTree()) SettleCrystalPresentation();
@@ -258,7 +258,7 @@ internal static partial class PartyPhase1Checks
             Check(ReferenceEquals(stack.Peek(), firstEntry) && overlay.Visible,
                 "closing a covering overlay shows the same native entry and surface");
             var ordinaryPage = (AnalysisPage)typeof(WorkspaceShell).GetField("_predictor",flags)!.GetValue(shell)!;
-            var ordinaryDocument = ordinaryPage.LastDocument;
+            var ordinaryDocument = ordinaryPage.LastFacts;
             Check(ordinaryDocument is not null && ordinaryPage.Visible, "ordinary run opens a real Analysis document");
             void CloseOrdinary() => typeof(RunPredictionOverlay).GetMethod("Close",flags)!.Invoke(overlay,null);
             var reuseBefore = CaptureRunEntryReuseProbe(shell, run, runtime);
@@ -272,11 +272,11 @@ internal static partial class PartyPhase1Checks
             // An empty-state first open saves its implicit party defaults after
             // stamping the old key. The installed baseline has the same one-time
             // redundant rebind (run-entry-baseline-r4); keep that limitation visible.
-            GD.Print($"RUN_ENTRY_INITIAL_DEFAULT_REBIND documentReplaced={!ReferenceEquals(ordinaryDocument, ordinaryPage.LastDocument)};baselineReproduced=true");
-            ordinaryDocument = ordinaryPage.LastDocument;
+            GD.Print($"RUN_ENTRY_INITIAL_DEFAULT_REBIND documentReplaced={!ReferenceEquals(ordinaryDocument, ordinaryPage.LastFacts)};baselineReproduced=true");
+            ordinaryDocument = ordinaryPage.LastFacts;
             CloseOrdinary(); overlay.Open();
             Check(ReferenceEquals(ordinaryPage,typeof(WorkspaceShell).GetField("_predictor",flags)!.GetValue(shell)) &&
-                ReferenceEquals(ordinaryDocument,ordinaryPage.LastDocument) && ordinaryPage.Visible,
+                ReferenceEquals(ordinaryDocument,ordinaryPage.LastFacts) && ordinaryPage.Visible,
                 "unchanged ordinary close and reopen after initial defaults retain the Analysis page and exact result document");
             var roster = (List<Player>)typeof(RunState).GetField("_players",flags)!.GetValue(run)!;
             var ascensionProperty = typeof(RunState).GetProperty(nameof(RunState.AscensionLevel))!;
@@ -284,7 +284,7 @@ internal static partial class PartyPhase1Checks
             try
             {
                 CloseOrdinary(); ascensionProperty.SetValue(run, originalAscension - 1); overlay.Open();
-                Check(ordinaryPage.LastDocument is not null && !ReferenceEquals(ordinaryDocument,ordinaryPage.LastDocument) &&
+                Check(ordinaryPage.LastFacts is not null && !ReferenceEquals(ordinaryDocument,ordinaryPage.LastFacts) &&
                     ordinaryPage.LastRequest?.Ascension == originalAscension - 1,
                     "a changed actual run context replaces the cached ordinary answer before display");
             }
@@ -293,7 +293,7 @@ internal static partial class PartyPhase1Checks
                 CloseOrdinary(); roster.Clear(); roster.AddRange(players);
                 ascensionProperty.SetValue(run,originalAscension); overlay.Open();
             }
-            Check(ordinaryPage.LastDocument is not null && ordinaryPage.LastRequest is { } restoredOrdinaryRequest &&
+            Check(ordinaryPage.LastFacts is not null && ordinaryPage.LastRequest is { } restoredOrdinaryRequest &&
                 restoredOrdinaryRequest.Ascension == originalAscension && restoredOrdinaryRequest.OriginalSeed == run.Rng.StringSeed &&
                 (bool)typeof(AnalysisPage).GetField("_wbHasResult",flags)!.GetValue(ordinaryPage)!,
                 "restored live inputs recover their current ordinary prediction context");
@@ -356,28 +356,28 @@ internal static partial class PartyPhase1Checks
             try
             {
                 observationPanel.ShowSnapshot(capture, startDiscovery: true);
-                var observationWorker = (Task)typeof(CrystalSphereAssistantPanel).GetField("_worker", flags)!.GetValue(observationPanel)!;
-                var observationCancel = (CancellationTokenSource)typeof(CrystalSphereAssistantPanel).GetField("_cancel", flags)!.GetValue(observationPanel)!;
-                typeof(CrystalSphereAssistantPanel).GetField("_poll", flags)!.SetValue(observationPanel, .123);
+                var observationWorker = (Task)CrystalField(observationPanel,"_worker")!;
+                var observationCancel = (CancellationTokenSource)CrystalField(observationPanel,"_cancel")!;
+                SetCrystalField(observationPanel,"_poll",.123);
                 observationPanel._Process(1);
                 Check(observationPanel.Visible && !observationPanel.IsVisibleInTree() && !observationCancel.IsCancellationRequested &&
-                    ReferenceEquals(observationWorker, typeof(CrystalSphereAssistantPanel).GetField("_worker", flags)!.GetValue(observationPanel)) &&
-                    !(bool)typeof(CrystalSphereAssistantPanel).GetField("_stale", flags)!.GetValue(observationPanel)! &&
-                    (double)typeof(CrystalSphereAssistantPanel).GetField("_poll", flags)!.GetValue(observationPanel)! == .123,
+                    ReferenceEquals(observationWorker, CrystalField(observationPanel,"_worker")) &&
+                    !(bool)CrystalField(observationPanel,"_stale")! &&
+                    (double)CrystalField(observationPanel,"_poll")! == .123,
                     "ancestor-hidden Crystal skips scene observation and retains its authorized frozen worker");
                 var closedObservation = observationPanel.SuspendSession()!;
                 Check(observationCancel.IsCancellationRequested && ReferenceEquals(closedObservation.Worker, observationWorker),
                     "explicit close still cancels and retains the existing Crystal session");
                 await observationWorker;
-                var lateQueue = new System.Collections.Concurrent.ConcurrentQueue<CrystalSphereAssistantPanel.Update>();
-                lateQueue.Enqueue(new([], CrystalSphereAssistantPanel.DiscoveryStop.UserPaused));
+                var lateQueue = new System.Collections.Concurrent.ConcurrentQueue<CrystalPredictionSession.Update>();
+                lateQueue.Enqueue(new([], CrystalPredictionSession.DiscoveryStop.UserPaused));
                 observationPanel.RestoreSession(closedObservation with { Resume = false, Worker = Task.CompletedTask, Updates = lateQueue });
                 observationPanel._Process(1);
-                Check(lateQueue.IsEmpty && !(bool)typeof(CrystalSphereAssistantPanel).GetField("_stale", flags)!.GetValue(observationPanel)!,
+                Check(lateQueue.IsEmpty && !(bool)CrystalField(observationPanel,"_stale")!,
                     "hidden Crystal consumes late completed-worker updates without certifying the native scene");
                 observationHost.Show();
-                Check((bool)typeof(CrystalSphereAssistantPanel).GetField("_stale", flags)!.GetValue(observationPanel)! &&
-                    ((Button)typeof(CrystalSphereAssistantPanel).GetField("_use", flags)!.GetValue(observationPanel)!).Disabled,
+                Check((bool)CrystalField(observationPanel,"_stale")! &&
+                    ((Button)CrystalField(observationPanel,"_use")!).Disabled,
                     "restoring ancestor visibility immediately rejects a changed board before any process frame, including completed-worker results");
                 GD.Print("CRYSTAL_HIDDEN_OBSERVATION_PASS hiddenPolls=0;workerPreserved=true;closeCancels=true;lateUpdatesConsumed=true;showImmediatelyValidated=true");
             }
@@ -414,7 +414,7 @@ internal static partial class PartyPhase1Checks
             }
             GD.Print("CRYSTAL_EXPECTED_ENTRY_PASS nativeThreeAndSix=true;sameSolver=true;wrongBranchAndClickRejected=true");
             panel!.ShowSnapshot(capture, startDiscovery: false);
-            var includeEnchantments=(CheckButton)typeof(CrystalSphereAssistantPanel).GetField("_includeEnchantments",flags)!.GetValue(panel)!;
+            var includeEnchantments=(CheckButton)CrystalField(panel,"_includeEnchantments")!;
             Check(!includeEnchantments.ButtonPressed,"Enchantment prediction defaults off");
             var plainEnchantmentSession=panel.SuspendSession()!;
             includeEnchantments.ButtonPressed=true;
@@ -434,7 +434,7 @@ internal static partial class PartyPhase1Checks
             panel.ShowSnapshot(capture,startDiscovery:false);
             Check(!panel.FindChildren("*","CheckButton",true,false).OfType<CheckButton>().Any(b=>b.Text is "显示棋盘辅助" or "Show board guidance"),
                 "Board guidance no longer has a visibility toggle");
-            var includeDriftwood=(CheckButton)typeof(CrystalSphereAssistantPanel).GetField("_includeDriftwood",flags)!.GetValue(panel)!;
+            var includeDriftwood=(CheckButton)CrystalField(panel,"_includeDriftwood")!;
             Check(includeDriftwood.ButtonPressed && includeDriftwood.Disabled==!driftwoodUi,
                 "Driftwood prediction defaults on and requires the owned relic");
             includeDriftwood.ButtonPressed=false;
@@ -456,7 +456,7 @@ internal static partial class PartyPhase1Checks
             Check(rerollTable.IncludesRerolls==driftwoodUi && !ReferenceEquals(rerollSession.Reachability,noRerollSession.Reachability),
                 "Re-enabling Driftwood constructs a fresh search with the matching action domain");
             panel.ShowSnapshot(capture,startDiscovery:false);
-            var transparentMask=(CheckButton)typeof(CrystalSphereAssistantPanel).GetField("_transparentMask",flags)!.GetValue(panel)!;
+            var transparentMask=(CheckButton)CrystalField(panel,"_transparentMask")!;
             Check(!transparentMask.ButtonPressed && !CrystalSphereMaskAppearance.Enabled,"panel mask switch defaults off");
             transparentMask.ButtonPressed=true;
             Check(CrystalSphereMaskAppearance.Enabled,"mask switch still opts in independently");
@@ -472,8 +472,8 @@ internal static partial class PartyPhase1Checks
             var goldReceipt=await Task.Run(()=>new PredictorCrystalGoldSearch(goldBoard,[],true).Advance(TimeSpan.FromSeconds(1)));
             Check(goldReceipt.GoldComplete && goldReceipt.Gold==30 && goldReceipt.SelectedPlan!=null,"UI gold receipt comes from exact typed replay");
             panel.ShowSnapshot(capture with { Branches=[("Remaining",goldBoard)] },startDiscovery:false);
-            var guideButton=(Button)typeof(CrystalSphereAssistantPanel).GetField("_use",flags)!.GetValue(panel)!;
-            var goldSummary=(Label)typeof(CrystalSphereAssistantPanel).GetField("_summary",flags)!.GetValue(panel)!;
+            var guideButton=(Button)CrystalField(panel,"_use")!;
+            var goldSummary=(Label)CrystalField(panel,"_summary")!;
             ApplyPanelUpdate(new([],Projection:goldReceipt with { GoldComplete=false,GoldUpperBound=40 },CandidatesComplete:true));
             Check(guideButton.Disabled && panel.SuspendSession()!.Projection.SelectedPlan is not null &&
                 !panel.SuspendSession()!.Complete && panel.SuspendSession()!.Selected.IsEmpty,
@@ -484,7 +484,7 @@ internal static partial class PartyPhase1Checks
             Check(goldSummary.Text!=incumbentSummary && goldSession.Projection.GoldComplete && !goldSession.CandidatesComplete &&
                 !goldSession.Complete && goldSession.GoldProgress.Examined==7,
                 "Gold optimum, candidate closure and their counters remain separate UI receipts");
-            ApplyPanelUpdate(new([],CrystalSphereAssistantPanel.DiscoveryStop.Exhausted,
+            ApplyPanelUpdate(new([],CrystalPredictionSession.DiscoveryStop.Exhausted,
                 Projection:new(System.Collections.Immutable.ImmutableDictionary<CrystalRewardOption,PredictorCrystalSolution>.Empty,null,0),
                 CandidatesComplete:true));
             Check(panel.SuspendSession()!.Complete && panel.SuspendSession()!.Projection.GoldComplete &&
@@ -528,10 +528,10 @@ internal static partial class PartyPhase1Checks
                 do
                 {
                     await host.ToSignal(host.GetTree(),SceneTree.SignalName.ProcessFrame);
-                    var queue=(System.Collections.Concurrent.ConcurrentQueue<CrystalSphereAssistantPanel.Update>)
-                        typeof(CrystalSphereAssistantPanel).GetField("_updates",flags)!.GetValue(panel)!;
+                    var queue=(System.Collections.Concurrent.ConcurrentQueue<CrystalPredictionSession.Update>)
+                        CrystalField(panel,"_updates")!;
                     while(queue.TryDequeue(out var update)) ApplyPanelUpdate(update);
-                } while(typeof(CrystalSphereAssistantPanel).GetField("_worker",flags)!.GetValue(panel) is Task { IsCompleted:false }
+                } while(CrystalField(panel,"_worker") is Task { IsCompleted:false }
                     && timer.Elapsed<TimeSpan.FromSeconds(15));
                 Check(timer.Elapsed<TimeSpan.FromSeconds(15),"UI query worker yields within one discovery round");
                 if(panel.IsVisibleInTree()) await UiSurfaceChecks.AwaitPageReady(host,shell);
@@ -539,7 +539,7 @@ internal static partial class PartyPhase1Checks
             }
             typeof(CrystalSphereAssistantPanel).GetMethod("StartDiscovery",flags)!.Invoke(panel,null);
             await FinishQuery();
-            var projection = (RolltheSpire2.Core.PredictorRuntime.CrystalOptionProjection)typeof(CrystalSphereAssistantPanel).GetField("_projection", flags)!.GetValue(panel)!;
+            var projection = (RolltheSpire2.Core.PredictorRuntime.CrystalOptionProjection)CrystalField(panel,"_projection")!;
             Check(projection.Available.Count>0,"production conditional query supplies the UI without prefilled rows");
             UiSurfaceChecks.RunCrystalLifecycleChecks(host, run, runtime, capture, projection, Check);
             var chosenCard = projection.Available.Keys.First(o => o.Kind == RolltheSpire2.Core.PredictorRuntime.PredictorRewardKind.Card);
@@ -561,7 +561,7 @@ internal static partial class PartyPhase1Checks
             Check(CrystalSphereGuidance.Matches(state,shifted,false) && !CrystalSphereGuidance.Matches(state,shifted,false,observeNiche:true),
                 "ordinary board guidance keeps local snapshot scope while Niche-dependent enchanted guidance detects stream changes");
             var tiles=(Dictionary<RolltheSpire2.Core.PredictorRuntime.CrystalRewardOption,Control>)
-                typeof(CrystalSphereAssistantPanel).GetField("_optionTiles",flags)!.GetValue(panel)!;
+                CrystalField(panel,"_optionTiles")!;
             var chosenTile=tiles[chosenCard];
             var chosenButton=chosenTile.GetChildren().OfType<Button>().First();
             var chosenId=chosenButton.GetInstanceId();
@@ -583,84 +583,83 @@ internal static partial class PartyPhase1Checks
             Check(earlyTiles.Length>0,"Root-slot callback supplies actual visible candidates before the complete initial projection");
             ApplyPanelUpdate(new([],ExcludedCandidates:rootSlotPublication));
             Check(earlyTiles.All(o=>!tiles.ContainsKey(o)) &&
-                !(bool)typeof(CrystalSphereAssistantPanel).GetField("_complete",flags)!.GetValue(panel)!,
+                !(bool)CrystalField(panel,"_complete")!,
                 "An exclusion-only early publication removes tiles without marking the query complete");
             int beforeExclusions=tiles.Count;
             ApplyPanelUpdate(new([],Progress:new(1,0,0,1,.15)));
             Check(tiles.Count==beforeExclusions,"Unfinished slice without negative evidence preserves grey candidates");
             ApplyPanelUpdate(new([],ExcludedCandidates:earlyExclusions.ExcludedCandidates));
             Check(excludedTiles.All(o=>!tiles.ContainsKey(o)) &&
-                ((System.Collections.Immutable.ImmutableArray<RolltheSpire2.Core.PredictorRuntime.CrystalRewardOption>)typeof(CrystalSphereAssistantPanel).GetField("_selected",flags)!.GetValue(panel)!).Contains(chosenCard) &&
-                !(bool)typeof(CrystalSphereAssistantPanel).GetField("_complete",flags)!.GetValue(panel)!,
+                ((System.Collections.Immutable.ImmutableArray<RolltheSpire2.Core.PredictorRuntime.CrystalRewardOption>)CrystalField(panel,"_selected")!).Contains(chosenCard) &&
+                !(bool)CrystalField(panel,"_complete")!,
                 "Certified exclusions disappear immediately while selected plan and unfinished query survive");
             Console.WriteLine($"CRYSTAL_UI_EARLY_EXCLUSION_PASS removed={excludedTiles.Length};queryComplete=false");
-            Check(((RolltheSpire2.Core.PredictorRuntime.CrystalOptionProjection)typeof(CrystalSphereAssistantPanel).GetField("_projection",flags)!.GetValue(panel)!).SelectedPlan!=null,
+            Check(((RolltheSpire2.Core.PredictorRuntime.CrystalOptionProjection)CrystalField(panel,"_projection")!).SelectedPlan!=null,
                 "click immediately retains the verified selected plan before further search");
             await FinishQuery();
-            Check(((RolltheSpire2.Core.PredictorRuntime.CrystalOptionProjection)typeof(CrystalSphereAssistantPanel).GetField("_projection",flags)!.GetValue(panel)!).SelectedPlan != null,
+            Check(((RolltheSpire2.Core.PredictorRuntime.CrystalOptionProjection)CrystalField(panel,"_projection")!).SelectedPlan != null,
                 "selected reward has an executable joint plan");
             // Restore one pending tile before its already-proven exclusion is
             // delivered, as can happen while the background queue is in flight.
-            var pending=(HashSet<CrystalRewardOption>)typeof(CrystalSphereAssistantPanel).GetField("_pendingOptions",flags)!.GetValue(panel)!;
+            var pending=(HashSet<CrystalRewardOption>)CrystalField(panel,"_pendingOptions")!;
             var denied=excludedTiles[0];pending.Add(denied);
-            typeof(CrystalSphereAssistantPanel).GetField("_complete",flags)!.SetValue(panel,false);
-            typeof(CrystalSphereAssistantPanel).GetField("_candidatesComplete",flags)!.SetValue(panel,false);
+            SetCrystalField(panel,"_complete",false);
+            SetCrystalField(panel,"_candidatesComplete",false);
             typeof(CrystalSphereAssistantPanel).GetMethod("Render",flags)!.Invoke(panel,null);
             SettleCrystalPresentation();
-            var oldQueue=typeof(CrystalSphereAssistantPanel).GetField("_updates",flags)!.GetValue(panel);
+            var oldQueue=CrystalField(panel,"_updates");
             tiles[denied].GetChildren().OfType<Button>().First().EmitSignal(Button.SignalName.Pressed);
-            Check(Equals(typeof(CrystalSphereAssistantPanel).GetField("_focusTarget",flags)!.GetValue(panel),denied) &&
-                !ReferenceEquals(oldQueue,typeof(CrystalSphereAssistantPanel).GetField("_updates",flags)!.GetValue(panel)),
+            Check(Equals(CrystalField(panel,"_focusTarget"),denied) &&
+                !ReferenceEquals(oldQueue,CrystalField(panel,"_updates")),
                 "Grey click switches to an exclusive focused queue without accepting stale publications");
-            Check(((System.Collections.Immutable.ImmutableArray<CrystalRewardOption>)typeof(CrystalSphereAssistantPanel).GetField("_selected",flags)!.GetValue(panel)!).SequenceEqual([chosenCard]),
+            Check(((System.Collections.Immutable.ImmutableArray<CrystalRewardOption>)CrystalField(panel,"_selected")!).SequenceEqual([chosenCard]),
                 "Grey click requests verification without selecting an unproven reward");
             await FinishQuery();
-            Check((CrystalFocusVerdict)typeof(CrystalSphereAssistantPanel).GetField("_focusVerdict",flags)!.GetValue(panel)! == CrystalFocusVerdict.Unreachable &&
-                !tiles.ContainsKey(denied) && !(bool)typeof(CrystalSphereAssistantPanel).GetField("_complete",flags)!.GetValue(panel)!,
+            Check((CrystalFocusVerdict)CrystalField(panel,"_focusVerdict")! == CrystalFocusVerdict.Unreachable &&
+                !tiles.ContainsKey(denied) && !(bool)CrystalField(panel,"_complete")!,
                 "Focused negative removes only its candidate, not a global exhaustion claim");
             var focusedSession=panel.SuspendSession()!;
             Check(!focusedSession.Resume && focusedSession.FocusTarget==denied,"Finished focus remains a readable result on reopening");
             panel.RestoreSession(focusedSession with { Resume=true,FocusVerdict=CrystalFocusVerdict.Checking });
-            ApplyPanelUpdate(new([],CrystalSphereAssistantPanel.DiscoveryStop.UserPaused,
+            ApplyPanelUpdate(new([],CrystalPredictionSession.DiscoveryStop.UserPaused,
                 Focus:new(denied,CrystalFocusVerdict.Unreachable,focusedSession.Projection,default)));
             panel._Process(0);
-            Check(Equals(typeof(CrystalSphereAssistantPanel).GetField("_focusTarget",flags)!.GetValue(panel),denied) &&
-                !(bool)typeof(CrystalSphereAssistantPanel).GetField("_resumeOnOpen",flags)!.GetValue(panel)!,
+            Check(Equals(CrystalField(panel,"_focusTarget"),denied) &&
+                !(bool)CrystalField(panel,"_resumeOnOpen")!,
                 "Focus completed during closing stays a verdict instead of silently resuming broad search");
             panel.RestoreSession(focusedSession);
-            var focusedProjection=(CrystalOptionProjection)typeof(CrystalSphereAssistantPanel).GetField("_projection",flags)!.GetValue(panel)!;
+            var focusedProjection=(CrystalOptionProjection)CrystalField(panel,"_projection")!;
             var accepted=focusedProjection.Available.Keys.First();
-            typeof(CrystalSphereAssistantPanel).GetField("_projection",flags)!.SetValue(panel,
-                focusedProjection with { Available=focusedProjection.Available.Remove(accepted) });
+            SetCrystalField(panel,"_projection",focusedProjection with { Available=focusedProjection.Available.Remove(accepted) });
             pending.Add(accepted);typeof(CrystalSphereAssistantPanel).GetMethod("Render",flags)!.Invoke(panel,null);
             SettleCrystalPresentation();
             tiles[accepted].GetChildren().OfType<Button>().First().EmitSignal(Button.SignalName.Pressed);
             await FinishQuery();
-            Check((CrystalFocusVerdict)typeof(CrystalSphereAssistantPanel).GetField("_focusVerdict",flags)!.GetValue(panel)! == CrystalFocusVerdict.Reachable &&
-                ((CrystalOptionProjection)typeof(CrystalSphereAssistantPanel).GetField("_projection",flags)!.GetValue(panel)!).SelectedPlan!=null,
+            Check((CrystalFocusVerdict)CrystalField(panel,"_focusVerdict")! == CrystalFocusVerdict.Reachable &&
+                ((CrystalOptionProjection)CrystalField(panel,"_projection")!).SelectedPlan!=null,
                 "Focused positive is published while the existing selected plan remains usable");
-            ((Button)typeof(CrystalSphereAssistantPanel).GetField("_allCandidates",flags)!.GetValue(panel)!).EmitSignal(Button.SignalName.Pressed);
+            ((Button)CrystalField(panel,"_allCandidates")!).EmitSignal(Button.SignalName.Pressed);
             await FinishQuery();
-            Check(typeof(CrystalSphereAssistantPanel).GetField("_focusTarget",flags)!.GetValue(panel)==null,"Return to all candidates resumes ordinary scheduling");
+            Check(CrystalField(panel,"_focusTarget")==null,"Return to all candidates resumes ordinary scheduling");
             Console.WriteLine("CRYSTAL_FOCUS_UI_PASS greyClick=true;positiveAndNegative=true;selectedPlanRetained=true;reopen=true;backToBroad=true");
-            var statusReceipt = (Label)typeof(CrystalSphereAssistantPanel).GetField("_status",flags)!.GetValue(panel)!;
-            ApplyPanelUpdate(new([],CrystalSphereAssistantPanel.DiscoveryStop.TimeLimit, Progress:new(12345,6789,0,42,10.2)));
+            var statusReceipt = (Label)CrystalField(panel,"_status")!;
+            ApplyPanelUpdate(new([],CrystalPredictionSession.DiscoveryStop.TimeLimit, Progress:new(12345,6789,0,42,10.2)));
             string timedOut=statusReceipt.Text;
             Check(statusReceipt.TooltipText.Contains(12345.ToString("N0")) && statusReceipt.TooltipText.Contains(6789.ToString("N0")),
                 "detailed counters live in tooltip instead of the main status");
-            ApplyPanelUpdate(new([],CrystalSphereAssistantPanel.DiscoveryStop.UserPaused));
+            ApplyPanelUpdate(new([],CrystalPredictionSession.DiscoveryStop.UserPaused));
             Check(statusReceipt.Text!=timedOut,"manual pause and time limit have different visible explanations");
-            ApplyPanelUpdate(new([],CrystalSphereAssistantPanel.DiscoveryStop.Exhausted,RolltheSpire2.Core.PredictorRuntime.CrystalDiscoveryPhase.Complete,
+            ApplyPanelUpdate(new([],CrystalPredictionSession.DiscoveryStop.Exhausted,RolltheSpire2.Core.PredictorRuntime.CrystalDiscoveryPhase.Complete,
                 CandidatesComplete:true));
             Check(statusReceipt.Text!=timedOut && panel.SuspendSession()!.CandidatesComplete &&
                 panel.SuspendSession()!.Complete==panel.SuspendSession()!.Projection.GoldComplete,
                 "candidate exhaustion remains separate from the gold proof and visible stop reason");
-            ApplyPanelUpdate(new([],CrystalSphereAssistantPanel.DiscoveryStop.Failed));
-            Check(!(bool)typeof(CrystalSphereAssistantPanel).GetField("_complete",flags)!.GetValue(panel)! && statusReceipt.Text!=timedOut,
+            ApplyPanelUpdate(new([],CrystalPredictionSession.DiscoveryStop.Failed));
+            Check(!(bool)CrystalField(panel,"_complete")! && statusReceipt.Text!=timedOut,
                 "failure does not display an exhaustion proof");
-            ApplyPanelUpdate(new([],CrystalSphereAssistantPanel.DiscoveryStop.TimeLimit, Progress:new(12345,6789,0,42,10.2)));
+            ApplyPanelUpdate(new([],CrystalPredictionSession.DiscoveryStop.TimeLimit, Progress:new(12345,6789,0,42,10.2)));
             Control canvas = shell;
-            var status = (Label)typeof(CrystalSphereAssistantPanel).GetField("_status", flags)!.GetValue(panel)!;
+            var status = (Label)CrystalField(panel,"_status")!;
             async Task ShowCapturedCrystalPage(Func<Task> observe)
             {
                 // Layout/retargeting uses a board captured from crystalRun;
@@ -691,7 +690,7 @@ internal static partial class PartyPhase1Checks
                     Check(RolltheSpire2.Infrastructure.Snapshots.CrystalSphereLiveCapture.Fingerprint(crystalRun, host.GetTree().Root) == capture.Fingerprint,
                         "navigation fixture supplies the real native event and exact captured board before Show freshness");
                     ((Button)typeof(WorkspaceShell).GetField("_currentPrediction", flags)!.GetValue(shell)!).EmitSignal(Button.SignalName.Pressed);
-                    Check(!(bool)typeof(CrystalSphereAssistantPanel).GetField("_stale", flags)!.GetValue(panel)!,
+                    Check(!(bool)CrystalField(panel,"_stale")!,
                         "showing the unchanged actual Crystal context retains its active query");
                     await UiSurfaceChecks.AwaitPageReady(host,shell);
                     await observe();
@@ -734,7 +733,7 @@ internal static partial class PartyPhase1Checks
                 Check(bounds.Encloses(shell.CloseButton.GetGlobalRect()) && bounds.Encloses(status.GetGlobalRect()),
                     "title/status/close remain inside dialog");
                 Check(status.GetGlobalRect().Position.Y > shell.CloseButton.GetGlobalRect().Position.Y, "status is below header");
-                var targetRow = (Control)typeof(CrystalSphereAssistantPanel).GetField("_targetRow", flags)!.GetValue(panel)!;
+                var targetRow = (Control)CrystalField(panel,"_targetRow")!;
                 Check(bounds.Encloses(targetRow.GetGlobalRect()), "card tiles fit inside dialog");
                 float expectedScale=Math.Min(1f,Math.Min(size.X/1600f,size.Y/900f));
                 Check(Math.Abs(shell.Scale.X-expectedScale)<.001,"in-run and external shells use identical canvas scale");
@@ -751,8 +750,8 @@ internal static partial class PartyPhase1Checks
             });
 
             var savedSelection=(System.Collections.Immutable.ImmutableArray<RolltheSpire2.Core.PredictorRuntime.CrystalRewardOption>)
-                typeof(CrystalSphereAssistantPanel).GetField("_selected",flags)!.GetValue(panel)!;
-            var savedSession=typeof(CrystalSphereAssistantPanel).GetField("_reachability",flags)!.GetValue(panel);
+                CrystalField(panel,"_selected")!;
+            var savedSession=CrystalField(panel,"_reachability");
             MegaCrit.Sts2.Core.TestSupport.TestMode.IsOn=false;
             ((Button)typeof(WorkspaceShell).GetField("_analysis",flags)!.GetValue(shell)!).EmitSignal(Button.SignalName.Pressed);
             MegaCrit.Sts2.Core.TestSupport.TestMode.IsOn=true;
@@ -780,7 +779,7 @@ internal static partial class PartyPhase1Checks
             var fontChoice = (OptionButton)typeof(WorkspaceShell).GetField("_fontChoice", flags)!.GetValue(shell)!;
             var fontStore = (RolltheSpire2.Ui.Workspace.SearchWorkspace)typeof(WorkspaceShell).GetField("_persistence", flags)!.GetValue(shell)!;
             int originalFont = fontStore.Preferences.FontChoice == "game-sans" ? 0 : 1;
-            var retainedProjection = typeof(CrystalSphereAssistantPanel).GetField("_projection", flags)!.GetValue(panel);
+            var retainedProjection = CrystalField(panel,"_projection");
             try
             {
                 foreach (int index in new[] { 0, 1 })
@@ -788,13 +787,13 @@ internal static partial class PartyPhase1Checks
                     fontChoice.Select(index); fontChoice.EmitSignal(OptionButton.SignalName.ItemSelected, (long)index);
                     UiSurfaceChecks.CheckSharedGameFonts(Check);
                     Check(fontStore.Preferences.FontChoice == (index == 0 ? "game-sans" : "game-serif") &&
-                        ReferenceEquals(savedSession, typeof(CrystalSphereAssistantPanel).GetField("_reachability", flags)!.GetValue(panel)) &&
-                        ReferenceEquals(retainedProjection, typeof(CrystalSphereAssistantPanel).GetField("_projection", flags)!.GetValue(panel)) &&
-                        savedSelection.SequenceEqual((ImmutableArray<CrystalRewardOption>)typeof(CrystalSphereAssistantPanel).GetField("_selected", flags)!.GetValue(panel)!),
+                        ReferenceEquals(savedSession, CrystalField(panel,"_reachability")) &&
+                        ReferenceEquals(retainedProjection, CrystalField(panel,"_projection")) &&
+                        savedSelection.SequenceEqual((ImmutableArray<CrystalRewardOption>)CrystalField(panel,"_selected")!),
                         "actual in-run font selection preserves the current query, selection and exact projection");
-                    Check(ReferenceEquals(status, typeof(CrystalSphereAssistantPanel).GetField("_status", flags)!.GetValue(panel)),
+                    Check(ReferenceEquals(status, CrystalField(panel,"_status")),
                         "font selection retains the live Crystal status label instance");
-                    Check(ReferenceEquals(guideButton, typeof(CrystalSphereAssistantPanel).GetField("_use", flags)!.GetValue(panel)),
+                    Check(ReferenceEquals(guideButton, CrystalField(panel,"_use")),
                         "font selection retains the live Crystal guide button instance");
                     GD.Print($"RUN_ENTRY_FONT_OBSERVATION choice={MainPanelTheme.FontChoice};phase=synchronous;status={status.GetThemeFont("font").ResourcePath};guide={guideButton.GetThemeFont("font").ResourcePath}");
                     // Theme resource changes propagate through Godot's deferred
@@ -817,9 +816,9 @@ internal static partial class PartyPhase1Checks
             CrystalRewardOption liveChoice=null!;
             await ShowCapturedCrystalPage(async ()=>
             {
-            Check(panel.Visible && ReferenceEquals(savedSession,typeof(CrystalSphereAssistantPanel).GetField("_reachability",flags)!.GetValue(panel)) &&
+            Check(panel.Visible && ReferenceEquals(savedSession,CrystalField(panel,"_reachability")) &&
                 savedSelection.SequenceEqual((System.Collections.Immutable.ImmutableArray<RolltheSpire2.Core.PredictorRuntime.CrystalRewardOption>)
-                    typeof(CrystalSphereAssistantPanel).GetField("_selected",flags)!.GetValue(panel)!),"navigation retains selected rewards and search session");
+                    CrystalField(panel,"_selected")!),"navigation retains selected rewards and search session");
             var languageChoice=(OptionButton)typeof(WorkspaceShell).GetField("_language",flags)!.GetValue(shell)!;
             int oldLanguage=languageChoice.Selected;
             try
@@ -827,13 +826,13 @@ internal static partial class PartyPhase1Checks
                 languageChoice.Select(1);languageChoice.EmitSignal(OptionButton.SignalName.ItemSelected,1L);
                 await UiSurfaceChecks.AwaitPageReady(host,shell);
                 Check(((Button)typeof(WorkspaceShell).GetField("_currentPrediction",flags)!.GetValue(shell)!).Text=="局内预测" &&
-                    ReferenceEquals(savedSession,typeof(CrystalSphereAssistantPanel).GetField("_reachability",flags)!.GetValue(panel)),
+                    ReferenceEquals(savedSession,CrystalField(panel,"_reachability")),
                     "shared language setting updates scene navigation without resetting search");
                 foreach(var size in new[]{new Vector2I(1280,720),new Vector2I(2560,1340)})
                 {
                     host.GetWindow().Size=size;stack.Size=size;
                     for(int frame=0;frame<5;frame++) await host.ToSignal(host.GetTree(),SceneTree.SignalName.ProcessFrame);
-                    var selectedHost=(Control)typeof(CrystalSphereAssistantPanel).GetField("_targetRow",flags)!.GetValue(panel)!;
+                    var selectedHost=(Control)CrystalField(panel,"_targetRow")!;
                     var selectedButton=selectedHost.GetChildren().OfType<Control>().First();
                     GD.Print($"CRYSTAL_SELECTED_LAYOUT size={size};host={selectedHost.GetGlobalRect()};button={selectedButton.GetGlobalRect()};visible={selectedButton.IsVisibleInTree()};scroll={((Control)selectedHost.GetParent()).GetGlobalRect()}");
                     Check(selectedButton.IsVisibleInTree() && selectedButton.Size.Y>0 && ((Control)selectedHost.GetParent()).GetGlobalRect().Encloses(selectedButton.GetGlobalRect()),"localized selected reward remains visible in target panel");
@@ -857,7 +856,7 @@ internal static partial class PartyPhase1Checks
             }
             finally { languageChoice.Select(oldLanguage);languageChoice.EmitSignal(OptionButton.SignalName.ItemSelected,oldLanguage); }
             panel.SelectOption(chosenCard);
-            Check(((RolltheSpire2.Core.PredictorRuntime.CrystalOptionProjection)typeof(CrystalSphereAssistantPanel).GetField("_projection",flags)!.GetValue(panel)!).Available.Count>0,
+            Check(((RolltheSpire2.Core.PredictorRuntime.CrystalOptionProjection)CrystalField(panel,"_projection")!).Available.Count>0,
                 "return to a cached selection restores verified candidates synchronously");
             await FinishQuery();
             // Retarget while the worker is still starting. Its old queue must not
@@ -866,10 +865,10 @@ internal static partial class PartyPhase1Checks
             panel.SelectOption(chosenCard);
             await FinishQuery();
             Check(((System.Collections.Immutable.ImmutableArray<RolltheSpire2.Core.PredictorRuntime.CrystalRewardOption>)
-                typeof(CrystalSphereAssistantPanel).GetField("_selected",flags)!.GetValue(panel)!).IsEmpty,"deselect retains its own query revision");
+                CrystalField(panel,"_selected")!).IsEmpty,"deselect retains its own query revision");
             Check(typeof(CrystalSphereAssistantPanel).GetMethod("PickTarget",flags)==null &&
                 typeof(CrystalSphereAssistantPanel).GetField("_picker",flags)==null,"Crystal uses candidate tiles without a separate card picker");
-            var groups=(Dictionary<string,(Label Count,HFlowContainer Flow)>)typeof(CrystalSphereAssistantPanel).GetField("_groups",flags)!.GetValue(panel)!;
+            var groups=(Dictionary<string,(Label Count,HFlowContainer Flow)>)CrystalField(panel,"_groups")!;
             Check(groups.Keys.SequenceEqual(new[]{"Relic","Rare","Uncommon","Common","Potion"}),"candidate group order is relic, rare, uncommon, common, potion");
             var upgradedChoice=chosenCard with { UpgradeLevel=1 };
             var upgradeTile=(Control)typeof(CrystalSphereAssistantPanel).GetMethod("Tile",flags)!.Invoke(panel,[upgradedChoice,false])!;
@@ -877,23 +876,23 @@ internal static partial class PartyPhase1Checks
             Check(upgradeTile.FindChildren("*","Label",true,false).OfType<Label>().Any(l=>l.Text.EndsWith("+")),"upgraded tile visibly carries its exact level");
             upgradeTile.Free();
 
-            var branchSelector = (OptionButton)typeof(CrystalSphereAssistantPanel).GetField("_branch",flags)!.GetValue(panel)!;
+            var branchSelector = (OptionButton)CrystalField(panel,"_branch")!;
             Check(branchSelector.ItemCount == 2, "initial paid and Debt budgets remain distinct");
             branchSelector.Select(1); branchSelector.EmitSignal(OptionButton.SignalName.ItemSelected,1L);
-            Check(((RolltheSpire2.Core.PredictorRuntime.CrystalOptionProjection)typeof(CrystalSphereAssistantPanel).GetField("_projection",flags)!.GetValue(panel)!).Available.IsEmpty,
+            Check(((RolltheSpire2.Core.PredictorRuntime.CrystalOptionProjection)CrystalField(panel,"_projection")!).Available.IsEmpty,
                 "switching budget drops the previous branch's certified options");
             var liveTimer=System.Diagnostics.Stopwatch.StartNew();
             RolltheSpire2.Core.PredictorRuntime.CrystalOptionProjection liveProjection;
             do
             {
                 await host.ToSignal(host.GetTree(),SceneTree.SignalName.ProcessFrame);
-                var queue=(System.Collections.Concurrent.ConcurrentQueue<CrystalSphereAssistantPanel.Update>)
-                    typeof(CrystalSphereAssistantPanel).GetField("_updates",flags)!.GetValue(panel)!;
+                var queue=(System.Collections.Concurrent.ConcurrentQueue<CrystalPredictionSession.Update>)
+                    CrystalField(panel,"_updates")!;
                 while(queue.TryDequeue(out var update)) ApplyPanelUpdate(update);
                 liveProjection=(RolltheSpire2.Core.PredictorRuntime.CrystalOptionProjection)
-                    typeof(CrystalSphereAssistantPanel).GetField("_projection",flags)!.GetValue(panel)!;
+                    CrystalField(panel,"_projection")!;
             } while(liveProjection.Available.IsEmpty && liveTimer.Elapsed<TimeSpan.FromSeconds(5));
-            Check(!liveProjection.Available.IsEmpty && typeof(CrystalSphereAssistantPanel).GetField("_worker",flags)!.GetValue(panel) is Task { IsCompleted:false },
+            Check(!liveProjection.Available.IsEmpty && CrystalField(panel,"_worker") is Task { IsCompleted:false },
                 "six-reveal candidates are interactive while the actual worker is running");
             liveChoice=liveProjection.Available.Where(p=>p.Key.Kind==RolltheSpire2.Core.PredictorRuntime.PredictorRewardKind.Card)
                 .OrderByDescending(p=>p.Value.RerollRewardIndices.Length).First().Key;
@@ -906,14 +905,14 @@ internal static partial class PartyPhase1Checks
                 await host.ToSignal(host.GetTree(),SceneTree.SignalName.ProcessFrame);
             }
             var liveButton=tiles[liveChoice].GetChildren().OfType<Button>().First();
-            Check(liveButton.IsVisibleInTree() && typeof(CrystalSphereAssistantPanel).GetField("_worker",flags)!.GetValue(panel) is Task { IsCompleted:false },
+            Check(liveButton.IsVisibleInTree() && CrystalField(panel,"_worker") is Task { IsCompleted:false },
                 "deferred candidate control is interactive while the actual worker is still running");
             ApplyPanelUpdate(new([],Projection:liveProjection));
             Check(!liveButton.IsQueuedForDeletion(),"running refresh preserves a pressed target");
             var retargetTimer=System.Diagnostics.Stopwatch.StartNew();
             liveButton.EmitSignal(Button.SignalName.Pressed);
             double clickMs=retargetTimer.Elapsed.TotalMilliseconds;
-            Check(((RolltheSpire2.Core.PredictorRuntime.CrystalOptionProjection)typeof(CrystalSphereAssistantPanel).GetField("_projection",flags)!.GetValue(panel)!).SelectedPlan!=null,
+            Check(((RolltheSpire2.Core.PredictorRuntime.CrystalOptionProjection)CrystalField(panel,"_projection")!).SelectedPlan!=null,
                 "mid-search click switches query and keeps its executable witness immediately");
             double firstReceiptMs=-1,firstVisibleMs=-1,maxRetargetFrameMs=0,lastRetargetFrameMs=retargetTimer.Elapsed.TotalMilliseconds;
             int retargetFrames=0;
@@ -922,47 +921,47 @@ internal static partial class PartyPhase1Checks
                 await host.ToSignal(host.GetTree(),SceneTree.SignalName.ProcessFrame);
                 double now=retargetTimer.Elapsed.TotalMilliseconds;
                 maxRetargetFrameMs=Math.Max(maxRetargetFrameMs,now-lastRetargetFrameMs);lastRetargetFrameMs=now;retargetFrames++;
-                var actual=(CrystalOptionProjection)typeof(CrystalSphereAssistantPanel).GetField("_projection",flags)!.GetValue(panel)!;
+                var actual=(CrystalOptionProjection)CrystalField(panel,"_projection")!;
                 if(!actual.Available.IsEmpty && firstReceiptMs<0) firstReceiptMs=now;
                 // Observe the real bounded consumer and rendered tile state;
                 // manually draining its queue would hide presentation latency.
                 if(actual.Available.Keys.Any(option=>option!=liveChoice && tiles.TryGetValue(option,out var visible) &&
                     visible.IsVisibleInTree() && visible.Modulate.A>.99f)) firstVisibleMs=now;
             }
-            var firstCompatible=(RolltheSpire2.Core.PredictorRuntime.CrystalOptionProjection)typeof(CrystalSphereAssistantPanel).GetField("_projection",flags)!.GetValue(panel)!;
+            var firstCompatible=(RolltheSpire2.Core.PredictorRuntime.CrystalOptionProjection)CrystalField(panel,"_projection")!;
             Check(!firstCompatible.Available.IsEmpty && firstVisibleMs>=0,"active retarget visibly presents compatible candidates through the production queue promptly");
             GD.Print($"CRYSTAL_UI_RETARGET clickMs={clickMs:F2};firstReceiptMs={firstReceiptMs:F2};firstVisibleMs={firstVisibleMs:F2};maxFrameMs={maxRetargetFrameMs:F2};frames={retargetFrames};options={firstCompatible.Available.Count};actualWorker=true;manualDrain=false");
             while(retargetTimer.Elapsed<TimeSpan.FromSeconds(11))
             {
                 await host.ToSignal(host.GetTree(),SceneTree.SignalName.ProcessFrame);
-                var continuousQueue=(System.Collections.Concurrent.ConcurrentQueue<CrystalSphereAssistantPanel.Update>)typeof(CrystalSphereAssistantPanel).GetField("_updates",flags)!.GetValue(panel)!;
+                var continuousQueue=(System.Collections.Concurrent.ConcurrentQueue<CrystalPredictionSession.Update>)CrystalField(panel,"_updates")!;
                 while(continuousQueue.TryDequeue(out var update)) ApplyPanelUpdate(update);
             }
-            bool stillRunning=(bool)typeof(CrystalSphereAssistantPanel).GetField("_running",flags)!.GetValue(panel)!;
-            Check(stillRunning || (bool)typeof(CrystalSphereAssistantPanel).GetField("_complete",flags)!.GetValue(panel)!,
+            bool stillRunning=(bool)CrystalField(panel,"_running")!;
+            Check(stillRunning || (bool)CrystalField(panel,"_complete")!,
                 "search continues beyond ten seconds unless actually complete");
             GD.Print($"CRYSTAL_CONTINUOUS_SEARCH elapsed={retargetTimer.Elapsed.TotalSeconds:F2};running={stillRunning}");
-            if(stillRunning) ((Button)typeof(CrystalSphereAssistantPanel).GetField("_stop",flags)!.GetValue(panel)!).EmitSignal(Button.SignalName.Pressed);
+            if(stillRunning) ((Button)CrystalField(panel,"_stop")!).EmitSignal(Button.SignalName.Pressed);
             await FinishQuery();
-            Check(!(bool)typeof(CrystalSphereAssistantPanel).GetField("_running",flags)!.GetValue(panel)!,"manual pause joins the continuous worker");
+            Check(!(bool)CrystalField(panel,"_running")!,"manual pause joins the continuous worker");
             if(stillRunning)
             {
                 typeof(CrystalSphereAssistantPanel).GetMethod("StartDiscovery",flags)!.Invoke(panel,null);
-                Check((bool)typeof(CrystalSphereAssistantPanel).GetField("_running",flags)!.GetValue(panel)!,"continuous search can resume after manual pause");
+                Check((bool)CrystalField(panel,"_running")!,"continuous search can resume after manual pause");
             }
             Check(((System.Collections.Immutable.ImmutableArray<RolltheSpire2.Core.PredictorRuntime.CrystalRewardOption>)
-                typeof(CrystalSphereAssistantPanel).GetField("_selected",flags)!.GetValue(panel)!).SequenceEqual([liveChoice]),
+                CrystalField(panel,"_selected")!).SequenceEqual([liveChoice]),
                 "superseded worker cannot overwrite the mid-search selection");
             });
             // Restore the ordinary run/event boundary before intentional stale
             // close/reopen assertions; their mismatched context is the subject.
-            var closeCancel = (CancellationTokenSource)typeof(CrystalSphereAssistantPanel).GetField("_cancel",flags)!.GetValue(panel)!;
+            var closeCancel = (CancellationTokenSource)CrystalField(panel,"_cancel")!;
             typeof(RunPredictionOverlay).GetMethod("Close", flags)!.Invoke(overlay, null);
-            var retainedSession = (CrystalSphereAssistantPanel.Session?)typeof(RunPredictionOverlay).GetField("_session",flags)!.GetValue(overlay);
+            var retainedSession = (CrystalPredictionSession?)typeof(RunPredictionOverlay).GetField("_session",flags)!.GetValue(overlay);
             Check(ReferenceEquals(stack.Peek(),below) && below.Visible, "close restores previous screen");
             Check(closeCancel.IsCancellationRequested && !overlay.IsOpen && !overlay.Visible && overlay.IsInsideTree() &&
                 overlay.ProcessMode == Node.ProcessModeEnum.Disabled &&
-                !(bool)typeof(CrystalSphereAssistantPanel).GetField("_exited",flags)!.GetValue(panel)!,
+                !(bool)CrystalField(panel,"_exited")!,
                 "explicit close cancels work and disables the retained tree without exiting its panel");
             Check(retainedSession!=null && retainedSession.Selected.SequenceEqual([liveChoice]) && retainedSession.Projection.SelectedPlan!=null,
                 "Closing the overlay retains the selected plan and frozen search session");
@@ -985,7 +984,7 @@ internal static partial class PartyPhase1Checks
                 "Reopening reuses controls while preserving the same query, goals and witness");
             // This fixture's live run differs from the captured Crystal run.
             // A changed fingerprint must retain the plan read-only, not erase it.
-            Check(restoredSession!.Stale && ((Button)typeof(CrystalSphereAssistantPanel).GetField("_use",flags)!.GetValue(reopenedPanel)!).Disabled,
+            Check(restoredSession!.Stale && ((Button)CrystalField(reopenedPanel,"_use")!).Disabled,
                 "Changed live context keeps the old plan visible but disables stale execution");
             reopenedPanel.Refresh();
             Check(reopenedPanel.SuspendSession()?.Projection.SelectedPlan==restoredSession.Projection.SelectedPlan,
@@ -1011,7 +1010,7 @@ internal static partial class PartyPhase1Checks
                         "a failed current roster capture clears visible old answers and retires the cached binding");
                 }
                 finally { CloseOrdinary(); roster.Clear(); roster.AddRange(players); overlay.Open(); }
-                Check(ordinaryPage.LastDocument is not null && ordinaryPage.LastRequest is { } recoveredOrdinaryRequest &&
+                Check(ordinaryPage.LastFacts is not null && ordinaryPage.LastRequest is { } recoveredOrdinaryRequest &&
                     recoveredOrdinaryRequest.Ascension == originalAscension && recoveredOrdinaryRequest.OriginalSeed == run.Rng.StringSeed &&
                     (bool)typeof(AnalysisPage).GetField("_wbHasResult",flags)!.GetValue(ordinaryPage)!,
                     "restored live inputs can recover a current ordinary prediction after capture failure");

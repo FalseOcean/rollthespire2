@@ -698,7 +698,7 @@ internal sealed partial class PredictorRun
                     var parent = suspended.ParentRewards.Single(reward => reward.Id == suspended.SourceId);
                     RecordRouteRewardChoice(run, parent, choice, dependencies);
                     if (!ApplyPlannedRewardChildren(run, parent, choice, dependencies, knownInstanceIds, local, token)) return false;
-                    ContinueLiveDefaultCardRewardChildren(run, dependencies, token, parentDepth);
+                    ContinueLiveDefaultCardRewardChildren(run, dependencies, token, parentDepth, parent.Id);
                     used.Add(index);
                     continue;
                 }
@@ -790,7 +790,7 @@ internal sealed partial class PredictorRun
                 RecordRouteRewardChoice(run, originalReward, originalChoice, dependencies);
                 if (run._obtainFrames.Length > childDepth &&
                     !ApplyPlannedRewardChildren(run, originalReward, originalChoice, dependencies, knownInstanceIds, local, token)) return false;
-                ContinueLiveDefaultCardRewardChildren(run, dependencies, token, childDepth);
+                ContinueLiveDefaultCardRewardChildren(run, dependencies, token, childDepth, originalReward.Id);
                 if (run._obtainFrames.Length > childDepth)
                 { local.Add(childCause); return false; }
             }
@@ -831,7 +831,7 @@ internal sealed partial class PredictorRun
                 { pendingReceipts.Add(reward.Id); continue; }
                 int childDepth = run._obtainFrames.Length;
                 if (run.Submit(run.Request!, take, token) != PredictorInputResult.Accepted) break;
-                ContinueLiveDefaultCardRewardChildren(run, dependencies, token, childDepth);
+                ContinueLiveDefaultCardRewardChildren(run, dependencies, token, childDepth, reward.Id);
                 if (run.Phase == PredictorPhase.RestSite) return true;
                 if (run.Phase != PredictorPhase.Rewards || run._obtainFrames.Length > childDepth)
                 {

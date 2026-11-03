@@ -21,11 +21,8 @@ namespace RolltheSpire2.Core.Rewards;
 /// </summary>
 public static class NormalCombatRewardSequencePredictor
 {
-    private const int CardsPerBattle = 3;
+    private const int CardsPerBattle = CombatRewardRelicRules.DefaultCardOptionCount;
     private const float PotionOddsStep = 0.1f;
-    private const float InitialCardRarityOffset = -0.05f;
-    private const float CardRarityOffsetCap = 0.4f;
-    private const float UncommonBase = 0.37f;
     private const string Beta109RewardAuditSha256 =
         "9e3dc19016f535609a5a751e9983523df9b262c1666a6b405ee4779cdcd906a4";
     private const string Beta110RewardAuditSha256 =
@@ -83,8 +80,8 @@ public static class NormalCombatRewardSequencePredictor
         public int GetUpgradeUses(RewardImpactSourceKey source) =>
             CardRewardUpgradeUses.TryGetValue(source, out int uses) ? uses : 0;
 
-        public void IncrementUpgradeUses(RewardImpactSourceKey source) =>
-            CardRewardUpgradeUses[source] = GetUpgradeUses(source) + 1;
+        public void IncrementUpgradeUses(RewardImpactSourceKey source, int limit) =>
+            CardRewardUpgradeUses[source] = CardRewardRelicRules.SilverCrucibleUsesAfterModification(GetUpgradeUses(source), limit);
     }
 
     private sealed record RouteRewardImpactPlan(
@@ -474,9 +471,10 @@ public static class NormalCombatRewardSequencePredictor
 
         Xoshiro256StarStar rewards = continuation.RewardsRngState!.Restore();
         float potionOdds = continuation.PotionRewardState;
-        float cardOffset = InitialCardRarityOffset;
+        float cardOffset = CardRarityRules.InitialOffset;
         var battles = new List<NormalCombatRewardBattleResult>(battleCount);
         RouteRewardImpactState impactState = impactPlan.CreateState();
+        LastingCandyCounterPolicy candyPolicy = RuntimeProfilePolicies.LastingCandyCounter(profileId);
         IReadOnlyList<NormalCombatRewardConditionalAssumption> conditionalAssumptions =
             BuildConditionalAssumptions(impactPlan);
 
@@ -487,9 +485,9 @@ public static class NormalCombatRewardSequencePredictor
             float rarityBefore = cardOffset;
             var trace = new List<NormalCombatRewardRngTraceEntry>();
 
-            if (profileId == RuntimeProfileId.Stable107 && impactPlan.EveryOtherPowerCardImpacts.Count > 0)
+            if (candyPolicy == LastingCandyCounterPolicy.CombatEndEven && impactPlan.EveryOtherPowerCardImpacts.Count > 0)
             {
-                impactState.LastingCandyCounter++;
+                impactState.LastingCandyCounter = CardRewardRelicRules.CandyCounterBeforeReward(candyPolicy, impactState.LastingCandyCounter);
                 trace.Add(new NormalCombatRewardRngTraceEntry(
                     trace.Count,
                     battleOrdinal,
@@ -566,7 +564,7 @@ public static class NormalCombatRewardSequencePredictor
             if (potionDropped)
             {
                 float rarityRoll = NextFloat(rewards, trace, battleOrdinal, "potion-rarity");
-                EffectPotionRarity potionRarity = RollPotionRarity(rarityRoll);
+                EffectPotionRarity potionRarity = PotionRarityRules.Evaluate(rarityRoll);
                 List<NeowEffectPotionSnapshot> candidates = potions
                     .Where(item => item.Rarity == potionRarity)
                     .ToList();
@@ -648,9 +646,9 @@ public static class NormalCombatRewardSequencePredictor
                     ex.Message);
             }
 
-            if (RuntimeProfilePolicies.IsModernCore(profileId) && impactPlan.EveryOtherPowerCardImpacts.Count > 0)
+            if (candyPolicy == LastingCandyCounterPolicy.RewardOfferingOdd && impactPlan.EveryOtherPowerCardImpacts.Count > 0)
             {
-                impactState.LastingCandyCounter++;
+                impactState.LastingCandyCounter = CardRewardRelicRules.CandyCounterBeforeOffering(candyPolicy, impactState.LastingCandyCounter, true);
                 trace.Add(new NormalCombatRewardRngTraceEntry(
                     trace.Count,
                     battleOrdinal,
@@ -749,9 +747,8 @@ public static class NormalCombatRewardSequencePredictor
 
         foreach (EveryOtherPowerCardImpact impact in impactPlan.EveryOtherPowerCardImpacts)
         {
-            bool triggerCounter = RuntimeProfilePolicies.IsModernCore(profileId)
-                ? impactState.LastingCandyCounter % 2 == 1
-                : impactState.LastingCandyCounter > 0 && impactState.LastingCandyCounter % 2 == 0;
+            bool triggerCounter = CardRewardRelicRules.CandyCounterIsTriggering(
+                RuntimeProfilePolicies.LastingCandyCounter(profileId), impactState.LastingCandyCounter);
             if (!triggerCounter || impact.RequiresIsFromCombat && !isFromCombat)
             {
                 continue;
@@ -826,10 +823,13 @@ public static class NormalCombatRewardSequencePredictor
         // The only typed extra card here is Candy: CardCreationSource.Other,
         // base odds and no Encounter pity read/update (including a Rare result).
         bool candy = requiredCardType == EffectCardType.Power;
-        float rare = ascension >= 7 ? .0149f : .03f;
+        // Preserve the donor projection's cumulative Candy formula on archived
+        // profiles as well; this extraction does not revise their reward model.
+        CardRarityEvaluation candyOdds = candy
+            ? CardRarityRules.EvaluateWithOffset(rarityRoll, CardBaseOddsType.Regular, ascension, 0f)
+            : default;
         CardRarityRollOutcome rarityOutcome = candy
-            ? new(rarityRoll < rare ? EffectCardRarity.Rare : rarityRoll < rare + UncommonBase ? EffectCardRarity.Uncommon : EffectCardRarity.Common,
-                cardOffset, rare, rare + UncommonBase, cardOffset)
+            ? new(candyOdds.Rarity, cardOffset, candyOdds.RareThreshold, candyOdds.UncommonThreshold, cardOffset)
             : RollCardRarity(rarityRoll, ascension, ref cardOffset);
         NormalCombatRewardRngTraceEntry rarityTrace = trace[^1];
         trace[^1] = rarityTrace with
@@ -912,9 +912,7 @@ public static class NormalCombatRewardSequencePredictor
             NormalCombatRewardCardResult card = cards[index];
             IReadOnlyList<RewardImpactSourceKey> eggSources =
                 impactPlan.ForcedUpgradeSources(card.CardType);
-            if (card.IsUpgradable &&
-                card.UpgradeState != NormalCombatCardUpgradeState.Upgraded &&
-                eggSources.Count > 0)
+            if (card.IsUpgradable && card.UpgradeState != NormalCombatCardUpgradeState.Upgraded && eggSources.Count > 0)
             {
                 cards[index] = card with
                 {
@@ -928,10 +926,11 @@ public static class NormalCombatRewardSequencePredictor
         // nested Power is already part of that reward before late mutations.
         foreach (RewardImpactSourceKey source in impactPlan.FirstCardRewardGlamSources)
         {
-            if (!impactState.UsedFirstCardRewardEnchantSources.Add(source))
+            if (!CardRewardRelicRules.SilkenTressApplies(true, impactState.UsedFirstCardRewardEnchantSources.Contains(source)))
             {
                 continue;
             }
+            impactState.UsedFirstCardRewardEnchantSources.Add(source);
 
             for (int index = 0; index < cards.Count; index++)
             {
@@ -960,7 +959,7 @@ public static class NormalCombatRewardSequencePredictor
         foreach (LimitedCardRewardUpgradeImpact impact in impactPlan.LimitedCardRewardUpgradeImpacts)
         {
             int usesBefore = impactState.GetUpgradeUses(impact.Source);
-            if (usesBefore >= impact.MaxUses)
+            if (!CardRewardRelicRules.SilverCrucibleApplies(true, usesBefore, impact.MaxUses))
             {
                 continue;
             }
@@ -981,7 +980,7 @@ public static class NormalCombatRewardSequencePredictor
                 };
             }
 
-            impactState.IncrementUpgradeUses(impact.Source);
+            impactState.IncrementUpgradeUses(impact.Source, impact.MaxUses);
             trace.Add(new NormalCombatRewardRngTraceEntry(
                 trace.Count,
                 battleOrdinal,
@@ -1092,9 +1091,7 @@ public static class NormalCombatRewardSequencePredictor
                             return false;
                         }
                         everyOtherPowerImpacts.Add(new EveryOtherPowerCardImpact(
-                            source,
-                            Math.Max(0, operation.Amount),
-                            operation.RequiresIsFromCombat));
+                            source, Math.Max(0, operation.Amount), operation.RequiresIsFromCombat));
                         break;
                     case OpeningCombatRewardImpactOperationKind.EnchantFirstCardRewardWithGlam:
                         if (!continuation.SilkenTressConsumedDuringOpening)
@@ -1383,29 +1380,15 @@ public static class NormalCombatRewardSequencePredictor
         ref float currentOffset)
     {
         float offsetBefore = currentOffset;
-        float baseRare = ascension >= 7 ? 0.0149f : 0.03f;
-        float rareThreshold = baseRare + offsetBefore;
-        float uncommonThreshold = rareThreshold + UncommonBase;
-        EffectCardRarity rarity;
-        if (value < rareThreshold)
-        {
-            currentOffset = InitialCardRarityOffset;
-            rarity = EffectCardRarity.Rare;
-        }
-        else
-        {
-            float growth = ascension >= 7 ? 0.005f : 0.01f;
-            currentOffset = Math.Min(CardRarityOffsetCap, offsetBefore + growth);
-            rarity = value < uncommonThreshold
-                ? EffectCardRarity.Uncommon
-                : EffectCardRarity.Common;
-        }
+        CardRarityEvaluation evaluated = CardRarityRules.EvaluateWithOffset(
+            value, CardBaseOddsType.Regular, ascension, offsetBefore);
+        currentOffset = CardRarityRules.AdvanceOffset(offsetBefore, evaluated.Rarity, ascension);
 
         return new CardRarityRollOutcome(
-            rarity,
+            evaluated.Rarity,
             offsetBefore,
-            rareThreshold,
-            uncommonThreshold,
+            evaluated.RareThreshold,
+            evaluated.UncommonThreshold,
             currentOffset);
     }
 
@@ -1438,13 +1421,6 @@ public static class NormalCombatRewardSequencePredictor
         float scaling = ascension >= 7 ? 0.125f : 0.25f;
         return currentActIndex * scaling;
     }
-
-    private static EffectPotionRarity RollPotionRarity(float value) => value switch
-    {
-        <= 0.1f => EffectPotionRarity.Rare,
-        <= 0.35f => EffectPotionRarity.Uncommon,
-        _ => EffectPotionRarity.Common
-    };
 
     private static float NextFloat(
         Xoshiro256StarStar rng,

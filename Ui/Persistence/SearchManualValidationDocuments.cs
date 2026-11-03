@@ -34,9 +34,9 @@ internal sealed record ManualValidationSourceIdentity(int Version, string Semant
     string SnapshotFingerprint, string QueryKey, string PayloadSignature,
     IReadOnlyList<ManualValidationAuthorityIdentity> Authorities)
 {
-    internal static ManualValidationSourceIdentity Capture(ExactSearchExecutionRequest plan, string queryKey) =>
-        new(2, plan.CompiledSearch.SemanticFingerprint, plan.SnapshotFingerprint, queryKey,
-            SearchContinuationIdentity.For(plan.CompiledSearch, plan.CombatRewardRoutePolicy), AuthorityIdentities(plan.CompiledSearch));
+    internal static ManualValidationSourceIdentity Capture(PreparedSearch plan, string queryKey) =>
+        new(2, plan.Model.CompiledSearch.SemanticFingerprint, plan.SnapshotFingerprint, queryKey,
+            SearchContinuationIdentity.For(plan.Model.CompiledSearch, plan.Model.CombatRewardRoutePolicy), AuthorityIdentities(plan.Model.CompiledSearch));
 
     internal bool Proves(CompiledSearch compiled, string queryKey, CombatRewardRoutePolicyContract? policy = null) =>
         QueryKey == queryKey && (Version == 2 ?

@@ -12,7 +12,7 @@ internal sealed partial class WorkspaceShell
 {
     private PanelContainer? _operationConfiguration;
     private LineEdit? _operationSearch;
-    private Label? _operationRfStatus, _operationNoMatches;
+    private Label? _operationRfStatus, _operationNoMatches, _operationAllStatus;
     private readonly Dictionary<OperationPredictionCategory, VBoxContainer> _operationGroups = [];
     private readonly Dictionary<string, (OperationPredictionEntry Entry, HBoxContainer Row, Label Name, OptionButton Mode)> _operationEntries = [];
     private string _operationNamesLanguage = "";
@@ -55,6 +55,22 @@ internal sealed partial class WorkspaceShell
         var close = SettingsButton("settings.back", CloseOperationPredictionConfiguration);
         close.Name = "SettingsOperationConfigurationBack"; heading.AddChild(close);
         body.AddChild(SettingsLabel("settings.operation.configuration.help", 17, true, wrap: true));
+        var allHeading = new HBoxContainer(); allHeading.AddThemeConstantOverride("separation", 10);
+        body.AddChild(allHeading);
+        var allTitle = SettingsLabel("settings.operation.all", 22);
+        allTitle.SizeFlagsHorizontal = SizeFlags.ExpandFill; allHeading.AddChild(allTitle);
+        _operationAllStatus = _palette.Label("", 16, true);
+        _operationAllStatus.Name = "SettingsOperationAllStatus"; allHeading.AddChild(_operationAllStatus);
+        foreach (var mode in new[] { OperationPredictionMode.Off, OperationPredictionMode.Auto, OperationPredictionMode.On })
+        {
+            var batch = SettingsButton("settings.operation.mode." + mode, () =>
+            {
+                _persistence!.SetAllOperationPredictionModes(mode);
+                RefreshSettings();
+            });
+            batch.Name = "SettingsOperationAll" + mode;
+            allHeading.AddChild(batch);
+        }
         _operationSearch = new LineEdit { Name = "SettingsOperationSearch", CustomMinimumSize = new(0, 44),
             SizeFlagsHorizontal = SizeFlags.ExpandFill, ClearButtonEnabled = true };
         StyleSettingsInput(_operationSearch); body.AddChild(_operationSearch);
@@ -161,6 +177,8 @@ internal sealed partial class WorkspaceShell
                 item.Mode.Select((int)persistence.Preferences.OperationPredictionModes.Get(item.Entry.Id));
         }
         finally { _bindingOperationSettings = false; }
+        var allMode = persistence.Preferences.OperationPredictionModes.GetAllMode();
+        _operationAllStatus!.Text = text.Get(allMode is { } mode ? "settings.operation.mode." + mode : "settings.operation.mode.Mixed");
         string status = RandomForeseerCompatibility.CaptureStatus() switch
         {
             RandomForeseerStatus.NotLoaded => "not_loaded",

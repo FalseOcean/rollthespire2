@@ -472,17 +472,43 @@ internal static class PredictorRouteLivePolicyChecks
         {
             Event = new(new("EVENT", "HUNGRY_FOR_MUSHROOMS"))
             {
-                Actions = [new(PredictorEventActionKind.Option) { ExpectedOption = option },
-                    new(PredictorEventActionKind.Obtain)
-                    { Obtain = new(PredictorObtainChildAction.Health, R("FRAGRANT_MUSHROOM")) { Health = new(70, 80) } }]
+                Actions = [new(PredictorEventActionKind.Option) { ExpectedOption = option }]
             }
         };
         var result = Preview(run, [plan], count: 2);
         Check(result.Nodes.Length == 2 && result.Nodes[0].Advanced && result.Nodes[0].Inventory!.Relics.Any(item =>
             item.IsKnown && item.Value.Key == R("FRAGRANT_MUSHROOM")) &&
             result.Nodes[0].PendingCauses.Any(c => c.Code == Cutoff) &&
+            result.Nodes[0].PendingCauses.Any(c => c.Code == "ObtainHealthOutcomePending") &&
             Fact(result.Nodes[0], "rng.Niche.calls").Status == PredictorKnowledgeStatus.Unknown &&
             result.Nodes[1].Rewards.Any(reward => reward.Kind == PredictorRewardKind.Gold && reward.IsKnown),
-            "chosen Fragrant Mushroom obtains its actual relic and continues into independent combat rewards");
+            "chosen Fragrant Mushroom without a health fact retains its real cutoff and independent combat rewards");
+        var explicitHealth = plan with { Event = plan.Event! with
+        {
+            Actions = plan.Event.Actions.Add(new(PredictorEventActionKind.Obtain)
+                { Obtain = new(PredictorObtainChildAction.Health, R("FRAGRANT_MUSHROOM")) { Health = new(70, 80) } })
+        } };
+        var exact = Preview(run, [explicitHealth], count: 2);
+        Check(exact.Nodes.Length == 2 && exact.Nodes[0].Advanced && exact.Nodes[0].Inventory!.Relics.Any(item =>
+            item.IsKnown && item.Value.Key == R("FRAGRANT_MUSHROOM")) &&
+            !exact.Nodes[0].PendingCauses.Any(c => c.Code == Cutoff || c.Code == "ObtainHealthOutcomePending") &&
+            Fact(exact.Nodes[0], "rng.Niche.calls").Status == PredictorKnowledgeStatus.Known &&
+            exact.Nodes[0].Cards.All(card => card.IsKnown) &&
+            exact.Nodes[1].Rewards.Any(reward => reward.Kind == PredictorRewardKind.Gold && reward.IsKnown),
+            "explicit Fragrant health executes its exact upgrade and preserves independent combat rewards");
+        // Preview resolves occurrence eligibility on its detached scratch run.
+        // The independent ordinary run still owns that explicit entry input.
+        Check(run.Phase == PredictorPhase.EventEligibility && run.EventEligibilityCandidate == new ModelKey("EVENT", "HUNGRY_FOR_MUSHROOMS"),
+            "ordinary Fragrant oracle starts at its actual event eligibility request");
+        Send(run, new DeclareEventEligibility(run.EventEligibilityCandidate!.Value, true));
+        Check(run.Phase == PredictorPhase.EventChoice && run.EventOptions.Any(value => value.Key == option.Key && value.Enabled),
+            "ordinary Fragrant oracle enters the same enabled event option");
+        Send(run, new ChooseEventOption(option.Key));
+        Send(run, new ProvideEventHealthFact(new(70, 80)));
+        Check(exact.Nodes[0].Cards.Select(card => (card.Value.Id, card.Value.UpgradeLevel)).SequenceEqual(
+            run.Working.Deck.Select(id => (id, run.Working.Card(id).UpgradeLevel))) &&
+            Fact(exact.Nodes[0], "rng.Niche.calls").DisplayValue ==
+                run.Working.Streams.Single(stream => stream.Stream == PredictorStream.Niche).Calls.ToString(),
+            "explicit Fragrant route matches ordinary exact settlement on actual card instances and Niche calls");
     }
 }

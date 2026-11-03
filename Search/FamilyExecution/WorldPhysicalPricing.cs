@@ -55,12 +55,12 @@ internal static class WorldPhysicalPricing
             "FamilyMatrix.20260910.WorldGeometry;NumericalDeviceEmission;MeasuredSpecialization");
     }
 
-    internal static FamilyPhysicalQuote? QuoteCpu(ExactSearchExecutionRequest request, WorldFamilyReplay replay,
+    internal static FamilyPhysicalQuote? QuoteCpu(FilterPricingAuthority request, WorldFamilyReplay replay,
         WorldFamilyGpuPlan? plan, FamilyPhysicalQuoteRequest g)
     {
         if (plan is null || !FamilyPhysicalQuote.AdmittedRequest(g) || g.CompactInput || g.PrivateInput ||
-            g.PrivateOutput || g.MeanInputPopulation < 4096 || !request.Authority.CanUseCurrentModel ||
-            request.Authority.PlayersCount != 1 || request.ProfileId != Compatibility.RuntimeProfileId.Beta111) return null;
+            g.PrivateOutput || g.MeanInputPopulation < 4096 || !request.CanUseCurrentModel ||
+            request.PlayersCount != 1 || request.ProfileId != Compatibility.RuntimeProfileId.Beta111) return null;
         var p = replay.Plan;
         double? ns = null;
         string shape = "";
@@ -82,7 +82,7 @@ internal static class WorldPhysicalPricing
             OutputAlreadyOrdered: true, PublicTransportClass: "CpuOrderedAbi1");
     }
 
-    internal static double? ProjectOwnedSurvival(ExactSearchExecutionRequest request, double ancientConditional)
+    internal static double? ProjectOwnedSurvival(SearchModel request, double ancientConditional)
     {
         if (!(ancientConditional > 0 && ancientConditional <= 1)) return null;
         var world = SearchSelectivityEstimator.EstimateStage(SearchSelectivityInput.From(request), SearchSelectivityDomain.WorldEvent);
@@ -91,7 +91,7 @@ internal static class WorldPhysicalPricing
         return owned is >= 0 and <= 1 && double.IsFinite(owned) ? owned : null;
     }
 
-    internal static FamilySurvivalProjection ResolveSurvival(ExactSearchExecutionRequest request)
+    internal static FamilySurvivalProjection ResolveSurvival(SearchModel request)
     {
         var e = request.Evaluation;
         bool hasOptions = e.AncientBranchConditions.Any(r => r.OptionAny.Count > 0 || r.SeaGlassTargetAny.Count > 0) ||

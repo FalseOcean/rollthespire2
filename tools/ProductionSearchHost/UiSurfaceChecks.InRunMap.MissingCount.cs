@@ -17,7 +17,7 @@ internal static partial class UiSurfaceChecks
     {
         string nativeBefore = signature(), plansBefore = JsonSerializer.Serialize(production.Plans);
         var captured = production.Snapshot!;
-        var source = captured.Run;
+        var source = captured.CreateRun();
         var initial = source.Working;
         int act = initial.Position.Act;
         const BindingFlags members = BindingFlags.Instance | BindingFlags.NonPublic;
@@ -40,8 +40,8 @@ internal static partial class UiSurfaceChecks
             };
             var session = new InRunMapPredictionSession();
             typeof(InRunMapPredictionSession).GetProperty(nameof(InRunMapPredictionSession.Snapshot), members)!
-                .SetValue(session, captured with { Run = new PredictorRun(source.Context, configured)
-                { CombatDefaults = new(), AutomaticRewardPickup = source.AutomaticRewardPickup } });
+                .SetValue(session, captured with { Context = source.Context, State = configured,
+                    CombatDefaults = new(), AutomaticRewardPickup = source.AutomaticRewardPickup });
             typeof(InRunMapPredictionSession).GetField("_drafts", members)!
                 .SetValue(session, DiagnosticField(production, "_drafts"));
             session.Recompute();
@@ -84,14 +84,56 @@ internal static partial class UiSurfaceChecks
         var partialCard = firstNode.Rewards.Single(reward => reward.Kind == PredictorRewardKind.Card &&
             !reward.CardOptions.IsEmpty && !reward.PendingCauses.IsEmpty);
         var partialSection = beforeSource.Sections.Single(section =>
-            section.Objects.Select(item => item.CardSnapshot).SequenceEqual(partialCard.CardOptions.Select(option => option.Value)));
-        check(partialSection.Choices.Count == 0 && partialSection.Objects.All(item => item.CardSnapshot?.Id == 0) &&
+            section.Objects.Select(item => (item.Kind, item.Key, item.UpgradeLevel)).SequenceEqual(
+                partialCard.CardOptions.Select(option => (GameContentKind.Card, option.Value.Key, option.Value.UpgradeLevel))));
+        string enchantmentToken = text.Get("predictor.map.card_enchantments_unresolved");
+        var sourceRow = ownRows.Single(row => row.Identity == root.Identity);
+        bool identityChoices = partialCard.OfferBinding is { } binding &&
+            binding.Value.Cards.SequenceEqual(partialCard.CardOptions.Select(option => option.Value)) &&
+            binding.UnresolvedEnchantmentIndices.SequenceEqual(Enumerable.Range(0, partialCard.CardOptions.Length)
+                .Where(index => !partialCard.CardOptions[index].IsKnown)) &&
+            partialSection.Choices.Count == partialCard.CardOptions.Length &&
+            partialSection.Choices.Select(choice => choice.Id).Distinct().Count() == partialCard.CardOptions.Length &&
+            partialSection.Choices.Select((choice, index) => choice.Object is { Kind: GameContentKind.Card } card &&
+                card.Key == partialCard.CardOptions[index].Value.Key && card.UpgradeLevel == partialCard.CardOptions[index].Value.UpgradeLevel &&
+                choice.Label == text.Get("predictor.runtime.plan.take") && choice.Enabled == partialCard.CanChooseCard(index) &&
+                !choice.Selected && (partialCard.CardOptions[index].IsKnown || card.CardSnapshot == null)).All(value => value);
+        Console.WriteLine("MISSING_COUNT_PARTIAL_DIAGNOSTIC " + JsonSerializer.Serialize(new
+        {
+            partialCard, partialCard.IsKnown,
+            partialSection = new { partialSection.Title, partialSection.Text, partialSection.StableId, partialSection.Objects,
+                choices = partialSection.Choices.Select(choice => new { choice.Id, choice.Label, choice.Enabled, choice.Selected, choice.Object }) },
+            ownRows, root, enchantmentToken,
+            noChoices = partialSection.Choices.Count == 0, identityChoices,
+            zeroCandidateIds = partialCard.CardOptions.All(option => option.Value.Id == 0),
+            snapshotBoundary = partialSection.Objects.Zip(partialCard.CardOptions).All(pair => pair.Second.IsKnown
+                ? pair.First.CardSnapshot == pair.Second.Value
+                : pair.First.CardSnapshot == null && pair.First.DisplayName?.Contains(enchantmentToken, StringComparison.Ordinal) == true),
+            noGuessedEnchantments = partialCard.CardOptions.Where(option => !option.EnchantmentPendingCauses.IsEmpty)
+                .All(option => option.Value.Enchantment == null && option.Value.EnchantmentAmount == 0),
+            enchantmentScope = sourceRow.AffectedResults.Contains(text.Get("predictor.map.prerequisite.card_enchantments")),
+            notWholeCardScope = !sourceRow.AffectedResults.Contains(text.Get("predictor.runtime.reward.Card")),
+            objects = partialSection.Objects.Zip(partialCard.CardOptions).Select((pair, index) => new
+            {
+                index, pair.Second.IsKnown, canChoose = partialCard.CanChooseCard(index), pair.Second.Value,
+                pair.Second.EnchantmentPendingCauses, pair.First.DisplayName, pair.First.CardSnapshot,
+                snapshotSameReference = ReferenceEquals(pair.First.CardSnapshot, pair.Second.Value),
+                snapshotSameValue = pair.First.CardSnapshot == pair.Second.Value,
+                snapshotAbsent = pair.First.CardSnapshot == null,
+                displaysUnresolvedToken = pair.First.DisplayName?.Contains(enchantmentToken, StringComparison.Ordinal) == true
+            })
+        }));
+        check(identityChoices && partialCard.CardOptions.All(option => option.Value.Id == 0) &&
+            partialSection.Objects.Zip(partialCard.CardOptions).All(pair => pair.Second.IsKnown
+                ? pair.First.CardSnapshot == pair.Second.Value
+                : pair.First.CardSnapshot == null && pair.First.DisplayName?.Contains(
+                    text.Get("predictor.map.card_enchantments_unresolved"), StringComparison.Ordinal) == true) &&
             partialCard.CardOptions.Where(option => !option.EnchantmentPendingCauses.IsEmpty)
                 .All(option => option.Value.Enchantment == null && option.Value.EnchantmentAmount == 0) &&
             ownRows.Single(row => row.Identity == root.Identity).AffectedResults.Contains(
                 text.Get("predictor.map.prerequisite.card_enchantments")) &&
             !ownRows.Single(row => row.Identity == root.Identity).AffectedResults.Contains(text.Get("predictor.runtime.reward.Card")),
-            "actual partial card reward shows known identities/levels read-only without guessed enchantments and scopes its cause to enchantments");
+            "actual partial card reward retains legal per-identity take bindings without guessed complete snapshots or enchantments and scopes its cause to enchantments");
         check(beforeSource.PrerequisiteSummary?.Contains(enemyLabel, StringComparison.Ordinal) == true &&
             beforeDependent.PrerequisiteSummary?.Contains(enemyLabel, StringComparison.Ordinal) == true,
             "resident presenter summaries expose the actionable missing quantity at source and dependent nodes");

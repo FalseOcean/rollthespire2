@@ -53,7 +53,7 @@ internal sealed partial class AnalysisPageController
         if (!_page.CanFavoriteVisibleSeed || _libraryPredictionIssue.Length > 0) throw new InvalidOperationException("SeedLibrary.ValidPredictionRequired");
         var current = _page.CurrentReactiveDraft;
         if (!ProfileSeedRules.TryCanonicalizePredictionSeed(_runtime.Profile, current.RawSeed, out var seed, out _) ||
-            _page.LastDocument?.CanonicalSeed != seed || _page.LastRequest is not { } request ||
+            _page.LastFacts?.CanonicalSeed != seed || _page.LastRequest is not { } request ||
             request.Character.CharacterKey != current.CharacterKey || request.Ascension != current.Ascension ||
             request.PlayersCount != current.PlayersCount || request.PlayerSlotIndex != current.PlayerSlotIndex)
             throw new InvalidOperationException("SeedLibrary.ValidPredictionRequired");
@@ -125,7 +125,7 @@ internal sealed partial class AnalysisPageController
             SelectPartyPlayer(context.SelectedSlot);
         }
         if (_libraryPredictionIssue.Length > 0) throw new InvalidOperationException(_libraryPredictionIssue);
-        if (_page.LastDocument?.CanonicalSeed != seed) throw new InvalidOperationException("SeedLibrary.PredictionUnavailable");
+        if (_page.LastFacts?.CanonicalSeed != seed) throw new InvalidOperationException("SeedLibrary.PredictionUnavailable");
     }
 
     private static void ValidateLibrarySelection(IReadOnlyList<NeowChoiceResult> choices, int? choice, string? route)

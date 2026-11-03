@@ -88,21 +88,18 @@ internal static partial class UiSurfaceChecks
         var conditional = EventOperationPreview.Build(punch, "I_CAN_TAKE_THEM");
         var expected = PredictorOperation.Preview(punch, [new ChooseEventOption("I_CAN_TAKE_THEM"),
             new ChooseEventOption("FIGHT"), new ResolveCombat(Facts(huntState, 2, false))]);
-        var wantedHunts = expected.Rewards.Where(r => r.Kind == PredictorRewardKind.Card &&
-                r.RerollRecipe is { EncounterSource: true, IsFromCombat: false })
-            .OrderBy(r => r.SubscriptionOrder).Take(2).ToArray();
-        var huntGroups = Groups(conditional).Where(g => g.Label?.StartsWith("EventHuntConditional:", StringComparison.Ordinal) == true).ToArray();
+        var wantedHunts = expected.Rewards.Where(r => r.Kind == PredictorRewardKind.Card).TakeLast(2).ToArray();
+        var huntGroups = Groups(conditional).Where(g => g.Label?.StartsWith("EventHuntMinimum:", StringComparison.Ordinal) == true).ToArray();
         Check(conditional.Faults.IsEmpty && conditional.PendingReasons.IsEmpty && conditional.Branches.Length == 1 &&
-            huntGroups.Length == 2 && huntGroups.Select(g => g.Label).SequenceEqual(new[] { "EventHuntConditional:1", "EventHuntConditional:2" }) &&
+            huntGroups.Length == 2 && huntGroups.Select(g => g.Label).SequenceEqual(new[] { "EventHuntMinimum:1", "EventHuntMinimum:2" }) &&
             huntGroups.All(g => g.Possible) && huntGroups.Select((g, i) => Faces(g.Cards).SequenceEqual(Faces(wantedHunts[i].Cards))).All(v => v),
-            "Hunt adds two ordered conditional groups from the full two-fatal settlement, capped by enemy count");
+            "Hunt adds two marginal visible groups with minimum counts, capped by enemy count");
         Check(conditional.Notices.Contains("EventCombatRoyaltiesNotPlayed"), "Royalties defaults to no play");
         var played = EventOperationPreview.Build(punch, "I_CAN_TAKE_THEM", playRoyalties: true);
         var expectedPlayed = PredictorOperation.Preview(punch, [new ChooseEventOption("I_CAN_TAKE_THEM"),
             new ChooseEventOption("FIGHT"), new ResolveCombat(Facts(huntState, 2, true))]);
-        var wantedPlayed = expectedPlayed.Rewards.Where(r => r.Kind == PredictorRewardKind.Card &&
-                r.RerollRecipe is { EncounterSource: true, IsFromCombat: false }).OrderBy(r => r.SubscriptionOrder).Take(2).ToArray();
-        var playedGroups = Groups(played).Where(g => g.Label?.StartsWith("EventHuntConditional:", StringComparison.Ordinal) == true).ToArray();
+        var wantedPlayed = expectedPlayed.Rewards.Where(r => r.Kind == PredictorRewardKind.Card).TakeLast(2).ToArray();
+        var playedGroups = Groups(played).Where(g => g.Label?.StartsWith("EventHuntMinimum:", StringComparison.Ordinal) == true).ToArray();
         Check(played.Faults.IsEmpty && played.Notices.Contains("EventCombatRoyaltiesPlayed") && playedGroups.Length == 2 &&
             playedGroups.Select((g, i) => Faces(g.Cards).SequenceEqual(Faces(wantedPlayed[i].Cards))).All(v => v) &&
             expectedPlayed.State.Streams.Single(s => s.Stream == PredictorStream.Rewards).Calls ==
@@ -112,10 +109,25 @@ internal static partial class UiSurfaceChecks
         var wheelState = huntState with { Relics = [new(huntState.NextInstanceId, new("RELIC", "PRAYER_WHEEL"), 1)],
             NextInstanceId = huntState.NextInstanceId + 1 };
         var wheel = EventOperationPreview.Build(punch with { State = wheelState }, "I_CAN_TAKE_THEM");
-        Check(wheel.Faults.IsEmpty && wheel.Branches.Length == 2 && wheel.Branches.SelectMany(b => b.Sections)
-                .Any(s => s.Label == "EventCombatNoHunt") && wheel.Branches.SelectMany(b => b.Sections)
-                .Any(s => s.Label == "EventHuntTriggers:2") && Groups(wheel).All(g => g.Possible),
-            "Prayer Wheel's later population retains correlated no-Hunt versus full-Hunt outcomes");
+        foreach (bool royalties in new[] { false, true })
+        {
+            var forecast = EventOperationPreview.Build(punch with { State = wheelState }, "I_CAN_TAKE_THEM", playRoyalties: royalties);
+            var sections = forecast.Branches.Single().Sections;
+            bool correlated = sections.Any(section => section.Label == "EventCombatNoHunt");
+            for (int count = 0; count <= 2; count++)
+            {
+                var explicitCount = PredictorOperation.Preview(punch with { State = wheelState }, [new ChooseEventOption("I_CAN_TAKE_THEM"),
+                    new ChooseEventOption("FIGHT"), new ResolveCombat(Facts(wheelState, count, royalties))]);
+                var relevant = sections.Where(section => section.Label == "EventCombatRewards" ||
+                    correlated && section.Label == (count == 0 ? "EventCombatNoHunt" : "EventHuntTriggers:" + count)).ToArray();
+                var cards = relevant.SelectMany(section => section.CardGroups).Where(group =>
+                    group.Label?.StartsWith("EventHuntMinimum:", StringComparison.Ordinal) != true || int.Parse(group.Label[17..]) <= count)
+                    .SelectMany(group => group.Cards);
+                Check(forecast.Faults.IsEmpty && Faces(cards).SequenceEqual(Faces(explicitCount.Rewards
+                    .Where(reward => reward.Kind == PredictorRewardKind.Card).SelectMany(reward => reward.Cards))),
+                    "Prayer Wheel compact or correlated display reconstructs each exact Hunt count, including one trigger");
+            }
+        }
 
         var doll = Snapshot("DOLL_ROOM", state, new PredictorEventOption("TAKE_SOME_TIME"));
         var dolls = EventOperationPreview.Build(doll, "TAKE_SOME_TIME");
@@ -214,6 +226,8 @@ internal static partial class UiSurfaceChecks
         var originalRunRng = run.Rng.ToSerializable();
         var originalPlayerRng = player.PlayerRng.ToSerializable();
         var originalOdds = player.PlayerOdds.ToSerializable();
+        var originalDiscoveredRelics = player.DiscoveredRelics.ToArray();
+        MegaCrit.Sts2.Core.Models.Relics.PrayerWheel? addedWheel = null;
         var originalCreatureCombat = player.Creature.CombatState;
         var originalCreatureId = player.Creature.CombatId;
         var history = PredictorOperationCapture.Read<List<List<MapPointHistoryEntry>>>(run, "_mapPointHistory");
@@ -255,6 +269,11 @@ internal static partial class UiSurfaceChecks
             foreach (var card in new CardModel[] { ModelDb.Card<Royalties>().ToMutable(),
                 ModelDb.Card<TheHunt>().ToMutable(), ModelDb.Card<TheHunt>().ToMutable() })
             { run.AddCard(card, player); player.Deck.AddInternal(card, silent: true); addedCards.Add(card); }
+            if (!player.Relics.OfType<MegaCrit.Sts2.Core.Models.Relics.PrayerWheel>().Any())
+            {
+                addedWheel = (MegaCrit.Sts2.Core.Models.Relics.PrayerWheel)ModelDb.Relic<MegaCrit.Sts2.Core.Models.Relics.PrayerWheel>().ToMutable();
+                player.AddRelicInternal(addedWheel, silent: true);
+            }
             while (run.TotalFloor < 7)
                 run.AppendToMapPointHistory(MapPointType.Unknown, RoomType.Event, new ModelId("EVENT", "PUNCH_OFF"));
             room = new EventRoom(ModelDb.Event<PunchOff>()); run.PushRoom(room);
@@ -290,16 +309,43 @@ internal static partial class UiSurfaceChecks
                 _neowSeenCalls == seen && ReferenceEquals(run.CurrentRoom, room), reason);
             await Hover(first, false);
             var initial = Preview()!;
-            Verify(initial.Faults.IsEmpty && initial.Branches.SelectMany(branch => branch.Sections)
-                .Where(section => section.Source == new ModelKey("CARD", "THE_HUNT"))
-                .SelectMany(section => section.CardGroups).Count(group => group.Possible) == 2,
-                "native captured two-creature battle renders both conditional Hunt groups");
+            Verify(initial.Faults.IsEmpty && initial.Branches.All(branch => branch.HuntOutcomes.Select(outcome => outcome.Triggers).Order().SequenceEqual(new[] { 0, 1, 2 })),
+                "native captured two-creature battle preserves all complete zero/one/two Hunt settlements");
+            var nativeCatalog = PredictorOperationCapture.Capture(run, runtime.Detection.NormalizedVersion, game).Context.Catalog!;
+            bool initialTree = CheckVisibleHuntTrees(View()!, initial, nativeCatalog, Verify);
             var uiText = JsonUiTextProvider.CreateUi13(UiLanguagePreferences.LanguageCode);
             var captions = Descendants(View()!).OfType<Label>().Select(label => label.Text).ToArray();
-            Verify(captions.Any(text => text.Contains(uiText.Format("operation.label.huntGroup", 1), StringComparison.Ordinal)) &&
-                captions.Any(text => text.Contains(uiText.Format("operation.label.huntGroup", 2), StringComparison.Ordinal)) &&
-                captions.All(text => !text.Contains("EventHuntConditional:", StringComparison.Ordinal)),
+            bool marginalCaptions = captions.Any(text => text.Contains(uiText.Format("operation.label.huntMinimum", 1), StringComparison.Ordinal)) &&
+                captions.Any(text => text.Contains(uiText.Format("operation.label.huntMinimum", 2), StringComparison.Ordinal));
+            Verify((initialTree || marginalCaptions) &&
+                captions.All(text => !text.Contains("EventHuntMinimum:", StringComparison.Ordinal)),
                 "native Hunt artwork captions display localized trigger condition and order");
+            var rewardNames = initial.Branches.SelectMany(branch => branch.Sections).SelectMany(section => section.CardGroups)
+                .SelectMany(group => group.Cards).Select(card =>
+                    new MegaCrit.Sts2.Core.Localization.LocString("cards", card.Key.Entry + ".title").GetFormattedText()).Distinct().ToArray();
+            var compactSummary = Descendants(View()!.GetNode<Control>("Rt2NeowSummary")).OfType<Label>().Select(label => label.Text).ToArray();
+            Verify(rewardNames.All(name => compactSummary.All(text => !text.Contains(name, StringComparison.Ordinal))) &&
+                compactSummary.All(text => !text.Contains(uiText.Format("operation.label.huntMinimum", 1), StringComparison.Ordinal)),
+                "native event side panel omits card names and Hunt count labels already displayed on its card stacks");
+            var fullText = new NeowOperationOverlay(); hoverRoot.AddChild(fullText);
+            try
+            {
+                fullText.SetPreview(initial with { Style = new(OperationTextMode.Complex, OperationCardLayout.Groups) });
+                await Frames();
+                var fullSummary = Descendants(fullText.GetNode<Control>("Rt2NeowSummary")).OfType<Label>().Select(label => label.Text).ToArray();
+                Verify(rewardNames.All(name => fullSummary.Any(text => text.Contains(name, StringComparison.Ordinal))),
+                    "explicit full-text event presentation retains every offered card name");
+                var available = new Rect2(400, 120, 520, 340);
+                Verify(fullText.CardsSizeForWidth(available.Size.X).Y > available.Size.Y,
+                    "event fixture requires multiple card rows in the constrained slot");
+                fullText.SetLayout(new Rect2(), available);
+                var dock = fullText.GetNode<Control>("Rt2NeowCardDock");
+                var stacks = dock.GetChildren().OfType<Control>().ToArray();
+                Verify(stacks.Length == initial.Branches.SelectMany(branch => branch.Sections).Sum(section => section.CardGroups.Length) &&
+                    stacks.All(stack => available.Grow(1).Encloses(stack.GetGlobalRect())),
+                    "all event reward groups including the bottom row fit the space granted beside the summary");
+            }
+            finally { fullText.Free(); }
             Unchanged("initial hover preserves native choices, run, RNG and seen cards");
             Right(first, true);
             await Until(() => Preview()?.Notices.Contains("EventCombatRoyaltiesPlayed") == true &&
@@ -307,6 +353,8 @@ internal static partial class UiSurfaceChecks
             Right(first, false); await Frames(4);
             Verify(Preview()?.Notices.Contains("EventCombatRoyaltiesPlayed") == true,
                 "right release is consumed without a second toggle");
+            Verify(CheckVisibleHuntTrees(View()!, Preview()!, nativeCatalog, Verify),
+                "native Royalties plus Prayer Wheel shows its actual divergent shared-prefix tree");
             Unchanged("right press/release changes only the hypothesis, never selects the native option");
             await root.ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
             viewport.GetTexture().GetImage().SavePng(Path.Combine(output, "operation-royalties-native-right-on-zh.png"));
@@ -359,6 +407,8 @@ internal static partial class UiSurfaceChecks
             set(combatSynchronizer, "CombatStateForLayout", originalCombatLayout);
             player.Creature.CombatState = originalCreatureCombat; player.Creature.CombatId = originalCreatureId;
             foreach (var card in addedCards) { player.Deck.RemoveInternal(card, silent: true); run.RemoveCard(card); }
+            if (addedWheel != null) player.RemoveRelicInternal(addedWheel, silent: true);
+            set(player, nameof(Player.DiscoveredRelics), originalDiscoveredRelics.ToList());
             if (room != null && ReferenceEquals(run.CurrentRoom, room)) run.PopCurrentRoom();
             eventList.Clear(); eventList.AddRange(originalEvents);
             votes.Clear(); votes.AddRange(originalVotes); pendingTasks.Clear(); pendingTasks.AddRange(originalTasks);

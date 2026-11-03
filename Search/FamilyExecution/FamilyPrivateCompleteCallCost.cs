@@ -179,6 +179,7 @@ internal static class FamilyPrivateCompleteCallCost
 {
     internal const string Boundary = "CompleteBindingExecuteWall.CountOrCanonicalAbi1Ready";
     internal const string ResourceName = "RolltheSpire2.Search.FamilyExecution.FamilyPrivateCompleteCallCostReference.json";
+    internal const string CompressedResourceName = ResourceName + ".gz";
     internal const string DenseCountReadyRole = "DensePublicInput.PrivateOutput.CountReady";
     internal const string CompactPublicRole = "PrivateInput.PublicOutput.CanonicalAbi1";
     internal const string CompactCountReadyRole = "PrivateInput.PrivateOutput.CountReady";
@@ -204,39 +205,22 @@ internal static class FamilyPrivateCompleteCallCost
         return FamilyPrivateCompleteCallSnapshot.Parse(document.CompleteCallCurves, assetEvidence);
     }
 
-    internal static FamilyPrivateCompleteCallKey? Describe(IFamilyInvocation family, bool privateInput, bool privateOutput, int rootSpan)
+    internal static FamilyPrivateCompleteCallKey? Describe(FilterBodyDescription family, bool privateInput, bool privateOutput, int rootSpan)
     {
         if (Role(privateInput, privateOutput) is null || rootSpan is < 1 or > 16777216 ||
-            !family.CanBindPrivateSerial || !family.ConditionPerformance.UsesGpu ||
-            FamilyCanonicalMeasuredCost.SourceRequest(family) is not { } request ||
-            request.Authority.PlayersCount != 1 || request.CompiledSearch.Context.Party is not null ||
-            request.CompiledSearch.NormalizedQuery.StandardMaps.Count != 0 ||
-            request.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count != 0 ||
-            family is NeowFamily n && n.Coverage.Count != 1) return null;
-        var invocation = FamilyCanonicalCostShape.Describe(request, family, privateInput, rootSpan);
+            !family.CanBindPrivateSerial || !family.UsesGpu || family.PlayersCount != 1 ||
+            !family.Cost.PrivateCanonicalScope || family.Coverage.Count != 1) return null;
+        var invocation = FamilyCanonicalCostShape.Describe(family, privateInput, rootSpan);
         if (invocation is null) return null;
-        string path = "CurrentFamilyBinding", body = invocation.PhysicalRevision;
-        if (family is MerchantShopColorlessFamily)
+        if (family.Cost.PrivatePhysicalRevision is { } revision)
+            invocation = invocation with { PhysicalRevision = revision(privateInput) };
+        string path = family.Cost.PrivateTransportPath;
+        string body = family.Cost.PrivateBodyRevision.Length > 0 ? family.Cost.PrivateBodyRevision : invocation.PhysicalRevision;
+        if (privateOutput)
         {
-            // Any private port forces Atomic even if public Dense chose Stable.
-            string suffix = MerchantShopColorlessGpuExecutor.PartyEarlyRejectionRevision(request.Evaluation, request.Authority.PlayersCount);
-            invocation = invocation with { PhysicalRevision = (privateInput ?
-                FamilyPhysicalImplementationRevisions.MerchantShopColorlessCompactPerformance :
-                FamilyPhysicalImplementationRevisions.MerchantShopColorlessAtomicDensePerformance) + suffix };
-            path = "AtomicAppendHostSort";
-            body = FamilyPhysicalImplementationRevisions.MerchantShopColorlessAtomicAppendHostSort + suffix;
-        }
-        if (privateOutput && family is NeowFamily { UsesSmallPrivateOutput: true })
-        {
-            path += ".PrivateSmallHeader8";
-            body += NeowFamilyGpuExecutor.SmallOutputRevision;
-        }
-        if (privateOutput && family is EventResultFamily { UsesFinalPrivateHeader: true })
-        {
-            path += ".PrivateFinalHeaderReadback";
-            body += EventResultFamilyGpuExecutor.FinalPrivateHeaderRevision;
+            path += family.Cost.PrivateOutputPathSuffix;
+            body += family.Cost.PrivateOutputRevision;
         }
         return new(invocation, privateInput, privateOutput, path, body);
     }
-
 }

@@ -13,7 +13,7 @@ using RolltheSpire2.Search.FamilyExecution;
 internal static class DirectNeowChecks
 {
     private const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
-    internal static void Run(ExactSearchExecutionRequest request, string output)
+    internal static void Run(PreparedSearch request, string output)
     {
         if (OS.GetCmdlineUserArgs().Contains("--gpu-resource-failure-checks", StringComparer.Ordinal))
         {
@@ -30,7 +30,7 @@ internal static class DirectNeowChecks
         object Get(object obj,string name)=>obj.GetType().GetProperty(name,Flags)?.GetValue(obj)
             ?? obj.GetType().GetField(name,Flags)!.GetValue(obj)!;
         var compile=T("NeowReplayPlan").GetMethod("Compile",Flags)!;
-        object replay=compile.Invoke(null,[request,false])!;
+        object replay=compile.Invoke(null,[request.Model,false])!;
         var root=Expression.Parameter(typeof(ulong));
         var cpu=Expression.Lambda<Func<ulong,bool>>(Expression.Call(T("NeowFamilyReplay").GetMethod("Matches",Flags)!,root,
             Expression.Constant(replay,replay.GetType())),root).Compile();
@@ -241,11 +241,11 @@ internal static class DirectNeowChecks
         Console.WriteLine("GpuResourceFailureChecks=PASS;expectedFailures=3;validControl=42;invalidHandlesNotSubmitted=true");
     }
 
-    private static void RunInitializationChecks(ExactSearchExecutionRequest request, string output)
+    private static void RunInitializationChecks(PreparedSearch request, string output)
     {
         var assembly = typeof(FamilyCandidateSet).Assembly;
         Type T(string name) => assembly.GetType("RolltheSpire2.Search.FamilyExecution." + name, true)!;
-        object replay = T("NeowReplayPlan").GetMethod("Compile", Flags)!.Invoke(null, [request, false])!;
+        object replay = T("NeowReplayPlan").GetMethod("Compile", Flags)!.Invoke(null, [request.Model, false])!;
         object?[] packed = [replay, null, ""];
         if (!(bool)T("NeowFamilyGpuPlan").GetMethod("TryCreate", Flags)!.Invoke(null, packed)!)
             throw new InvalidOperationException("NInitialization.PlanUnavailable:" + packed[2]);
@@ -271,13 +271,18 @@ internal static class DirectNeowChecks
         var pipelineField = executorType.GetField("_pipeline", Flags)!;
         var stagesField = executorType.GetField("_stages", Flags)!;
         var stagedBuffersField = executorType.GetField("_stagedBuffers", Flags)!;
+        var stagedDispatchCountProperty = executorType.GetProperty("StagedDispatchCount", Flags)!;
         var rows = new List<object>();
         using var rd = RenderingServer.CreateLocalRenderingDevice() ?? throw new InvalidOperationException("NInitialization.DeviceMissing");
         foreach (bool compactFirst in new[] { true, false })
         {
             string sequence = compactFirst ? "CompactDenseCompact" : "DenseCompact";
-            using var executor = (IDisposable)executorType.GetConstructors(Flags).Single()
-                .Invoke([rd, plan, 73u, null, null, null, 0, 0, null, null, null]);
+            var constructor = executorType.GetConstructors(Flags).Single();
+            object?[] arguments = constructor.GetParameters().Select(parameter => parameter.HasDefaultValue ? parameter.DefaultValue : null).ToArray();
+            arguments[0] = rd; arguments[1] = plan; arguments[2] = 73u;
+            using var executor = (IDisposable)constructor.Invoke(arguments);
+            int stagedDispatchCount = (int)stagedDispatchCountProperty.GetValue(executor)!;
+            if (stagedDispatchCount is not (3 or 4)) throw new InvalidDataException("NInitialization.UnexpectedStageLayout");
             double Setup() => (double)setupProperty.GetValue(executor)!;
             void CheckState(bool ordinary, int stages)
             {
@@ -319,15 +324,15 @@ internal static class DirectNeowChecks
             if (compactFirst)
             {
                 CheckInput("CompactFirst", compact, true, 0, true);
-                CheckInput("DenseAfterCompact", dense, true, 3, true);
-                CheckInput("CompactReuse", compact, true, 3, false);
+                CheckInput("DenseAfterCompact", dense, true, stagedDispatchCount, true);
+                CheckInput("CompactReuse", compact, true, stagedDispatchCount, false);
             }
             else
             {
-                CheckInput("DenseFirst", dense, false, 3, true);
-                CheckInput("CompactAfterDense", compact, true, 3, true);
+                CheckInput("DenseFirst", dense, false, stagedDispatchCount, true);
+                CheckInput("CompactAfterDense", compact, true, stagedDispatchCount, true);
             }
-            CheckInput("EmptyAfterInitialization", empty, true, 3, false);
+            CheckInput("EmptyAfterInitialization", empty, true, stagedDispatchCount, false);
         }
         File.WriteAllText(Path.Combine(output, "n-initialization-checks.json"), JsonSerializer.Serialize(new
         {

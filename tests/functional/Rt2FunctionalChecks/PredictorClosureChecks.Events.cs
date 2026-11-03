@@ -7,10 +7,13 @@ using MegaCrit.Sts2.Core.Localization.DynamicVars;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Random;
 using NativeEvents = MegaCrit.Sts2.Core.Models.Events;
+using NativeCards = MegaCrit.Sts2.Core.Models.Cards;
+using NativeRelics = MegaCrit.Sts2.Core.Models.Relics;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Prediction;
+using RolltheSpire2.Core.Rng;
 using RolltheSpire2.Infrastructure.Snapshots;
 using RolltheSpire2.Presentation.Localization;
 using RolltheSpire2.Search.Contracts;
@@ -24,7 +27,12 @@ internal static partial class PredictorClosureChecks
     {
         int checks = 0;
         void Check(bool ok, string message) { checks++; if (!ok) throw new InvalidOperationException(message); }
-        using var captured = JsonDocument.Parse(File.ReadAllText("docs/source_audits/AUTHORED_MORPHIC_20260913.evidence.json"));
+        var repository = new DirectoryInfo(Environment.CurrentDirectory);
+        while (repository is not null && !File.Exists(Path.Combine(repository.FullName, "RolltheSpire2.csproj")))
+            repository = repository.Parent;
+        using var captured = JsonDocument.Parse(File.ReadAllText(Path.Combine(
+            repository?.FullName ?? throw new DirectoryNotFoundException("RT2 repository root unavailable"),
+            "docs/source_audits/AUTHORED_MORPHIC_20260913.evidence.json")));
         var targets = captured.RootElement.GetProperty("Evidence")[0].GetProperty("Targets")
             .Deserialize<MorphicGroveTarget[]>(ProductionSearchReplay.JsonOptions)!
             .Select((t, i) => t with { InstanceId = "basic:" + i }).ToArray();
@@ -137,9 +145,261 @@ internal static partial class PredictorClosureChecks
                 Check(text.Get(key) != text.Get("__missing_event_key__") && text.Get(key).Length > 0, "Localized event result: " + language + "/" + suffix);
             }
         }
+        checks += CheckSharedEventRuleContinuations();
+        checks += CheckSharedEventOptionEffects();
         checks += CheckStableEventOptionResults();
         Console.WriteLine($"EventPrediction checks={checks};PASS;nativeRng+TakeRandom+CalculateVars+StableShuffle;solo+fourSlots;full+restrictedPools;Trial+Tinker+stableOptionResults;zh+en");
         return 0;
+    }
+
+    private static int CheckSharedEventRuleContinuations()
+    {
+        int checks = 0;
+        void Check(bool ok, string message) { checks++; if (!ok) throw new InvalidOperationException(message); }
+        void CheckState(Xoshiro256StarStar actual, Rng native, string operation)
+        {
+            var state = native.ToSerializable();
+            Check(actual.CallCount == state.counter &&
+                actual.State == (state.state0, state.state1, state.state2, state.state3),
+                "Shared event rule retains full native RNG continuation: " + operation);
+        }
+        foreach (ulong seed in new[] { 0UL, ulong.MaxValue, 1UL << 63, 12345UL })
+        foreach (int consumed in new[] { 0, 5 })
+        {
+            (Xoshiro256StarStar Actual, Rng Native) Checkpoint()
+            {
+                var actual = new Xoshiro256StarStar(seed);
+                var native = new Rng(seed);
+                for (int i = 0; i < consumed; i++) { actual.NextDouble(); native.NextDouble(); }
+                return (actual, native);
+            }
+            void Compare<T>(string operation, Func<Xoshiro256StarStar, IEnumerable<T>> actualRule,
+                Func<Rng, IEnumerable<T>> nativeRule)
+            {
+                var (actual, native) = Checkpoint();
+                Check(actualRule(actual).SequenceEqual(nativeRule(native)),
+                    "Shared event rule output/order at current checkpoint: " + operation);
+                CheckState(actual, native, operation);
+            }
+            Compare("Trash Grab", rng => new[] { Beta111EventRules.TrashHeapGrab(rng) },
+                rng => new[] { rng.NextItem(Beta111EventResultCatalog.TrashHeapGrabCards)! });
+            Compare("Trash Dive", rng => new[] { Beta111EventRules.TrashHeapDive(rng) },
+                rng => new[] { rng.NextItem(Beta111EventResultCatalog.TrashHeapDiveRelics)! });
+            Compare("Fake inventory", Beta111EventRules.FakeMerchantInventory,
+                rng => Beta111EventResultCatalog.FakeMerchantRelics.ToList().UnstableShuffle(rng).Take(6));
+            Compare("Trial", rng => new[] { Beta111EventRules.TrialCase(rng) }, rng => new[] { rng.NextInt(3) });
+
+            // Reversed/duplicate unlock input must not replace source declaration order.
+            foreach (int unlockedCount in new[] { 0, 3, 5 })
+            foreach (ModelKey owner in new[] { BaseGameModelKeys.Characters.Ironclad, default(ModelKey) })
+            {
+                var unlocked = Beta111EventResultCatalog.ColorfulCharacterOrder.Take(unlockedCount).Reverse()
+                    .Concat(Beta111EventResultCatalog.ColorfulCharacterOrder.Take(unlockedCount)).ToArray();
+                Compare("Colorful candidates=" + unlockedCount, rng => Beta111EventRules.ColorfulOffers(rng, owner, unlocked),
+                    rng =>
+                    {
+                        var options = Beta111EventResultCatalog.ColorfulCharacterOrder
+                            .Where(key => key != owner && unlocked.Contains(key)).ToList();
+                        while (options.Count > 3) options.RemoveAt(rng.NextInt(options.Count));
+                        return options;
+                    });
+            }
+
+            var (tinker, nativeTinker) = Checkpoint();
+            var types = Beta111EventRules.TinkerTypeOffers(tinker);
+            Check(types.SequenceEqual(new[] { 0, 1, 2 }.TakeRandom(2, nativeTinker)), "Tinker current type order");
+            CheckState(tinker, nativeTinker, "Tinker types");
+            foreach (int type in types)
+            {
+                var branch = tinker.Clone();
+                var nativeBranch = new Rng(nativeTinker.ToSerializable());
+                Check(Beta111EventRules.TinkerRiderOffers(branch, type).SequenceEqual(
+                    new[] { type * 3, type * 3 + 1, type * 3 + 2 }.TakeRandom(2, nativeBranch)),
+                    "Tinker alternative uses the independent post-type checkpoint");
+                CheckState(branch, nativeBranch, "Tinker rider branch");
+            }
+            CheckState(tinker, nativeTinker, "Tinker parent unchanged by rider alternatives");
+
+            var (doll, nativeDoll) = Checkpoint();
+            ModelId[] authored = [new("RELIC", "DAUGHTER_OF_THE_WIND"), new("RELIC", "MR_STRUGGLES"), new("RELIC", "BING_BONG")];
+            ModelKey Key(ModelId id) => new(id.Category, id.Entry);
+            var randomBranch = doll.Clone();
+            var nativeRandom = new Rng(nativeDoll.ToSerializable());
+            Check(Beta111EventRules.RandomDoll(randomBranch) == Key(nativeRandom.NextItem(authored)!), "Doll random authored order");
+            CheckState(randomBranch, nativeRandom, "Doll random");
+            foreach (int count in new[] { 2, 3 })
+            {
+                var branch = doll.Clone();
+                var nativeBranch = new Rng(nativeDoll.ToSerializable());
+                Check(Beta111EventRules.DollOffers(branch, count).SequenceEqual(
+                    authored.ToList().StableShuffle(nativeBranch).Take(count).Select(Key)), "Doll sorted offer order");
+                CheckState(branch, nativeBranch, "Doll paid branch");
+            }
+            CheckState(doll, nativeDoll, "Doll parent unchanged by alternatives");
+            Compare("Jungle decimal before settlement", rng => new[]
+                { Beta111EventRules.JungleGold(rng, 150m), Beta111EventRules.JungleGold(rng, 50m) },
+                rng => new[] { 150m + (decimal)rng.NextFloat(-15f, 15f), 50m + (decimal)rng.NextFloat(-15f, 15f) });
+        }
+        return checks;
+    }
+
+    private static int CheckSharedEventOptionEffects()
+    {
+        // CanonicalVars for product-bearing events resolve native ModelDb IDs.
+        // Reuse the existing isolated native fixture, including its mock saves.
+        NativeWorkbenchCheckEnvironment.Initialize("SharedEventOptionEffects");
+        int checks = 0;
+        void Check(bool ok, string message) { checks++; if (!ok) throw new InvalidOperationException(message); }
+        Dictionary<string, DynamicVar> Vars(Type type)
+        {
+            var instance = RuntimeHelpers.GetUninitializedObject(type);
+            var property = type.GetProperty("CanonicalVars", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            return ((IEnumerable<DynamicVar>)property.GetValue(instance)!).ToDictionary(value => value.Name);
+        }
+        var beacon = Vars(typeof(NativeEvents.DrowningBeacon));
+        var unrest = Vars(typeof(NativeEvents.UnrestSite));
+        var dolls = Vars(typeof(NativeEvents.DollRoom));
+        var tablet = Vars(typeof(NativeEvents.TabletOfTruth));
+        var scriptorium = Vars(typeof(NativeEvents.WaterloggedScriptorium));
+        var tea = Vars(typeof(NativeEvents.TeaMaster));
+        var zen = Vars(typeof(NativeEvents.ZenWeaver));
+        EventHealthEffect Health(string entry, string option) => Beta111EventOptionRules.FixedHealth(entry, option)!.Value;
+        Check(-Beta111EventOptionRules.BeaconClimb.Health.MaxHpDelta == beacon["HpLoss"].IntValue &&
+            -Health("UNREST_SITE", "KILL").MaxHpDelta == unrest["MaxHpLoss"].IntValue &&
+            Health("UNREST_SITE", "REST").FullHeal,
+            "Beacon/Unrest shared health commands agree with native vars and full-heal operation");
+        Check(-Health("DOLL_ROOM", "TAKE_SOME_TIME").HpDelta == dolls["TakeTimeHpLoss"].IntValue &&
+            -Health("DOLL_ROOM", "EXAMINE").HpDelta == dolls["ExamineHpLoss"].IntValue &&
+            Health("TABLET_OF_TRUTH", "SMASH").HpDelta == tablet["SmashHPGain"].IntValue &&
+            Health("WATERLOGGED_SCRIPTORIUM", "BLOODY_INK") ==
+                new EventHealthEffect(scriptorium["MaxHp"].IntValue, scriptorium["MaxHp"].IntValue),
+            "Doll/Tablet/Scriptorium effect amounts agree with native canonical vars");
+        var fixedHealthFixtures = new (Type Type, string Entry, string Option, string Var, int HpSign, int MaxHpSign)[]
+        {
+            (typeof(NativeEvents.TheLegendsWereTrue), "THE_LEGENDS_WERE_TRUE", "SLOWLY_FIND_AN_EXIT", "Damage", -1, 0),
+            (typeof(NativeEvents.BrainLeech), "BRAIN_LEECH", "RIP", "RipHpLoss", -1, 0),
+            (typeof(NativeEvents.ByrdonisNest), "BYRDONIS_NEST", "EAT", "MaxHp", 1, 1),
+            (typeof(NativeEvents.DenseVegetation), "DENSE_VEGETATION", "TRUDGE_ON", "HpLoss", -1, 0),
+            (typeof(NativeEvents.RoundTeaParty), "ROUND_TEA_PARTY", "CONTINUE_FIGHT", "Damage", -1, 0),
+            (typeof(NativeEvents.SunkenStatue), "SUNKEN_STATUE", "DIVE_INTO_WATER", "HpLoss", -1, 0),
+            (typeof(NativeEvents.RoomFullOfCheese), "ROOM_FULL_OF_CHEESE", "SEARCH", "Damage", -1, 0),
+            (typeof(NativeEvents.SpiritGrafter), "SPIRIT_GRAFTER", "LET_IT_IN", "LetItInHealAmount", 1, 0),
+            (typeof(NativeEvents.SpiritGrafter), "SPIRIT_GRAFTER", "REJECTION", "RejectionHpLoss", -1, 0),
+            (typeof(NativeEvents.MorphicGrove), "MORPHIC_GROVE", "LONER", "MaxHp", 1, 1),
+            (typeof(NativeEvents.TrashHeap), "TRASH_HEAP", "DIVE_IN", "HpLoss", -1, 0),
+            (typeof(NativeEvents.ThisOrThat), "THIS_OR_THAT", "PLAIN", "HpLoss", -1, 0),
+            (typeof(NativeEvents.SapphireSeed), "SAPPHIRE_SEED", "EAT", "Heal", 1, 0),
+            (typeof(NativeEvents.StoneOfAllTime), "STONE_OF_ALL_TIME", "LIFT", "DrinkMaxHpGain", 1, 1),
+            (typeof(NativeEvents.StoneOfAllTime), "STONE_OF_ALL_TIME", "PUSH", "PushHpLoss", -1, 0),
+            (typeof(NativeEvents.JungleMazeAdventure), "JUNGLE_MAZE_ADVENTURE", "SOLO_QUEST", "SoloHp", -1, 0),
+            (typeof(NativeEvents.WhisperingHollow), "WHISPERING_HOLLOW", "HUG", "HpLoss", -1, 0)
+        };
+        foreach (var fixture in fixedHealthFixtures)
+        {
+            int amount = Vars(fixture.Type)[fixture.Var].IntValue;
+            var effect = Health(fixture.Entry, fixture.Option);
+            Check(effect.HpDelta == fixture.HpSign * amount && effect.MaxHpDelta == fixture.MaxHpSign * amount &&
+                Beta111EventOptionRules.RequiresHealthFact(fixture.Entry, fixture.Option),
+                "Shared chosen effect/input agrees with native vars: " + fixture.Entry + "/" + fixture.Option);
+        }
+        Check(Health("SPIRIT_GRAFTER", "REJECTION").AfterCardSelection &&
+            Health("WHISPERING_HOLLOW", "HUG").AfterCardSelection &&
+            !Health("STONE_OF_ALL_TIME", "PUSH").AfterCardSelection,
+            "Deferred rejection/transform damage remains distinct from damage before selection");
+        foreach (var (option, variable) in new[] { ("BONE_TEA", "BoneTeaCost"), ("EMBER_TEA", "EmberTeaCost") })
+            Check(Beta111EventOptionRules.TeaMaster(option).Cost.Amount == tea[variable].IntValue,
+                "Tea purchase amount from native canonical vars: " + option);
+        foreach (var (option, variable) in new[] { ("BREATHING_TECHNIQUES", "BreathingTechniquesCost"),
+            ("EMOTIONAL_AWARENESS", "EmotionalAwarenessCost"), ("ARACHNID_ACUPUNCTURE", "ArachnidAcupunctureCost") })
+            Check(Beta111EventOptionRules.ZenWeaver(option).Cost.Amount == zen[variable].IntValue,
+                "Zen purchase amount from native canonical vars: " + option);
+        Check(Beta111EventOptionRules.Scriptorium("TENTACLE_QUILL").Cost.Amount == scriptorium["Gold"].IntValue &&
+            Beta111EventOptionRules.Scriptorium("PRICKLY_SPONGE").Cost.Amount == scriptorium["PricklySpongeGold"].IntValue &&
+            Beta111EventOptionRules.Scriptorium("PRICKLY_SPONGE").TargetCount == scriptorium["Cards"].IntValue,
+            "Scriptorium payment and target count agree with native vars");
+        ModelKey Key(AbstractModel model) => new(model.Id.Category, model.Id.Entry);
+        Check(Beta111EventOptionRules.BeaconClimb.Relic == Key(ModelDb.Relic<MegaCrit.Sts2.Core.Models.Relics.FresnelLens>()) &&
+            Beta111EventOptionRules.BeaconBottlePotion == Key(ModelDb.Potion<MegaCrit.Sts2.Core.Models.Potions.GlowwaterPotion>()) &&
+            Beta111EventOptionRules.UnrestRestCurse == Key(ModelDb.Card<MegaCrit.Sts2.Core.Models.Cards.PoorSleep>()) &&
+            Beta111EventOptionRules.ZenWeaver("BREATHING_TECHNIQUES").AddedCard == Key(ModelDb.Card<MegaCrit.Sts2.Core.Models.Cards.Enlightenment>()) &&
+            Beta111EventOptionRules.Scriptorium("TENTACLE_QUILL").Enchantment == Key(ModelDb.Enchantment<MegaCrit.Sts2.Core.Models.Enchantments.Steady>()),
+            "Shared fixed products bind actual native model identities");
+        var relicProducts = new (string Entry, string Option, RelicModel Native)[]
+        {
+            ("SUNKEN_STATUE", "GRAB_SWORD", ModelDb.Relic<NativeRelics.SwordOfStone>()),
+            ("ROUND_TEA_PARTY", "ENJOY_TEA", ModelDb.Relic<NativeRelics.RoyalPoison>()),
+            ("LOST_WISP", "CLAIM", ModelDb.Relic<NativeRelics.LostWisp>()),
+            ("COLOSSAL_FLOWER", "POLLINOUS_CORE", ModelDb.Relic<NativeRelics.PollinousCore>()),
+            ("GRAVE_OF_THE_FORGOTTEN", "ACCEPT", ModelDb.Relic<NativeRelics.ForgottenSoul>()),
+            ("ROOM_FULL_OF_CHEESE", "SEARCH", ModelDb.Relic<NativeRelics.ChosenCheese>()),
+            ("WELCOME_TO_WONGOS", "MYSTERY_BOX", ModelDb.Relic<NativeRelics.WongosMysteryTicket>()),
+            ("WAR_HISTORIAN_REPY", "INITIAL_UNLOCK_CAGE", ModelDb.Relic<NativeRelics.HistoryCourse>()),
+            ("WAR_HISTORIAN_REPY", "SECOND_UNLOCK_CAGE", ModelDb.Relic<NativeRelics.HistoryCourse>()),
+            ("TEA_MASTER", "BONE_TEA", ModelDb.Relic<NativeRelics.BoneTea>()),
+            ("TEA_MASTER", "EMBER_TEA", ModelDb.Relic<NativeRelics.EmberTea>()),
+            ("TEA_MASTER", "TEA_OF_DISCOURTESY", ModelDb.Relic<NativeRelics.TeaOfDiscourtesy>())
+        };
+        foreach (var fixture in relicProducts)
+            Check(Beta111EventOptionRules.FixedRelicProduct(fixture.Entry, fixture.Option) == Key(fixture.Native),
+                "Shared fixed relic identity vs native product: " + fixture.Entry + "/" + fixture.Option);
+        var cardProducts = new (string Entry, string Option, CardModel Native)[]
+        {
+            ("BYRDONIS_NEST", "TAKE", ModelDb.Card<NativeCards.ByrdonisEgg>()),
+            ("THE_LEGENDS_WERE_TRUE", "NAB_THE_MAP", ModelDb.Card<NativeCards.SpoilsMap>()),
+            ("SPIRIT_GRAFTER", "LET_IT_IN", ModelDb.Card<NativeCards.Metamorphosis>()),
+            ("BUGSLAYER", "EXTERMINATION", ModelDb.Card<NativeCards.Exterminate>()),
+            ("BUGSLAYER", "SQUASH", ModelDb.Card<NativeCards.Squash>()),
+            ("CRYSTAL_SPHERE", "PAYMENT_PLAN", ModelDb.Card<NativeCards.Debt>()),
+            ("ZEN_WEAVER", "BREATHING_TECHNIQUES", ModelDb.Card<NativeCards.Enlightenment>()),
+            ("UNREST_SITE", "REST", ModelDb.Card<NativeCards.PoorSleep>()),
+            ("LOST_WISP", "CLAIM", ModelDb.Card<NativeCards.Decay>()),
+            ("GRAVE_OF_THE_FORGOTTEN", "CONFRONT", ModelDb.Card<NativeCards.Decay>()),
+            ("PUNCH_OFF", "NAB", ModelDb.Card<NativeCards.Injury>()),
+            ("TRIAL", "MERCHANT_INNOCENT", ModelDb.Card<NativeCards.Shame>()),
+            ("TRIAL", "MERCHANT_GUILTY", ModelDb.Card<NativeCards.Regret>()),
+            ("TRIAL", "NOBLE_INNOCENT", ModelDb.Card<NativeCards.Regret>()),
+            ("TRIAL", "NONDESCRIPT_INNOCENT", ModelDb.Card<NativeCards.Doubt>()),
+            ("TRIAL", "NONDESCRIPT_GUILTY", ModelDb.Card<NativeCards.Doubt>()),
+            ("WELLSPRING", "BATHE", ModelDb.Card<NativeCards.Guilty>()),
+            ("FIELD_OF_MAN_SIZED_HOLES", "RESIST", ModelDb.Card<NativeCards.Normality>()),
+            ("LUMINOUS_CHOIR", "REACH_INTO_THE_FLESH", ModelDb.Card<NativeCards.SporeMind>()),
+            ("AMALGAMATOR", "COMBINE_STRIKES", ModelDb.Card<NativeCards.UltimateStrike>()),
+            ("AMALGAMATOR", "COMBINE_DEFENDS", ModelDb.Card<NativeCards.UltimateDefend>())
+        };
+        foreach (var fixture in cardProducts)
+            Check(Beta111EventOptionRules.FixedCardProduct(fixture.Entry, fixture.Option) == Key(fixture.Native),
+                "Shared fixed card identity vs native product: " + fixture.Entry + "/" + fixture.Option);
+        foreach (var fixture in cardProducts)
+        {
+            bool after = fixture.Entry is "WELLSPRING" or "FIELD_OF_MAN_SIZED_HOLES" or "LUMINOUS_CHOIR" or "AMALGAMATOR";
+            Check(Beta111EventOptionRules.CardProductAfterSelection(fixture.Entry, fixture.Option) ==
+                (after ? Key(fixture.Native) : (ModelKey?)null),
+                "Post-selector product scope excludes already-added Trial and other pre-selector products: " + fixture.Entry + "/" + fixture.Option);
+        }
+        Check(Beta111EventOptionRules.FixedRelicProduct("DOLL_ROOM", "RANDOM") is null &&
+            Beta111EventOptionRules.FixedRelicProduct("WELCOME_TO_WONGOS", "BARGAIN_BIN") is null &&
+            Beta111EventOptionRules.FixedCardProduct("ROOM_FULL_OF_CHEESE", "GORGE") is null,
+            "Dynamic pool, selected and generated products remain context-owned");
+        Check(Beta111EventOptionRules.TabletMaxHpCost(0, null) == tablet["DecipherMaxHpLoss"].IntValue,
+            "Tablet initial offered cost agrees with native vars before health is known");
+        var nativeTablet = (NativeEvents.TabletOfTruth)RuntimeHelpers.GetUninitializedObject(typeof(NativeEvents.TabletOfTruth));
+        var countField = typeof(NativeEvents.TabletOfTruth).GetField("_decipherCount", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        for (int count = 1; count <= 3; count++)
+        {
+            countField.SetValue(nativeTablet, count);
+            Check(Beta111EventOptionRules.TabletMaxHpCost(count, 80) == nativeTablet.GetDecipherCost(),
+                "Tablet continuation cost agrees with native GetDecipherCost: " + count);
+        }
+        Check(Beta111EventOptionRules.TabletDecipher(4, 31) is { MaxHpCost: 30, UpgradeAll: true, ForcedKill: false } &&
+            Beta111EventOptionRules.TabletDecipher(0, 3) is { ForcedKill: true, UpgradeAll: false } &&
+            Beta111EventOptionRules.TabletDecipher(0, 3).HealthBeforeKill(3).MaxHpDelta == -2,
+            "Tablet final all-upgrade and explicit low-maxHP Kill commands stay distinct");
+        Check(!Beta111EventOptionRules.RequiresHealthFact("DROWNING_BEACON", "BOTTLE") &&
+            Beta111EventOptionRules.RequiresHealthFact("DROWNING_BEACON", "CLIMB") &&
+            Beta111EventOptionRules.RequiresHealthFact("TABLET_OF_TRUTH", "DECIPHER") &&
+            !Beta111EventOptionRules.RequiresHealthFact("DOLL_ROOM", "RANDOM"),
+            "Health input follows the chosen effect rather than the whole event");
+        return checks;
     }
 
     private static int CheckStableEventOptionResults()

@@ -77,7 +77,7 @@ internal static class NeowWorkEstimate
     internal static FamilyPhysicalQuote? Gpu(NeowFamily family, Work work, FamilyPhysicalQuoteRequest g)
     {
         if (family.Coverage.Count != 1 || family.GpuPlan is not { } gpu) return null;
-        var p = family.PricingReplayPlan;
+        var p = family.Replay;
         int bones = p.Authority.BonesEligibleRelicIds.Length;
         int curses = p.Authority.EligibleCurseRelicIds.Length;
         bool local = work.Routes > 0;
@@ -150,7 +150,7 @@ internal static class NeowWorkEstimate
         int capacity = 65536)
     {
         if (family.Coverage.Count != 1) return null;
-        var p = family.PricingReplayPlan;
+        var p = family.Replay;
         double identity = 210 + (p.Bones ? 3d * Math.Max(0, p.Authority.BonesEligibleRelicIds.Length - 1) : 0);
         double local = work.Routes * (12 * work.Draws + .3 * work.PoolVisits + 2 * work.Comparisons);
         string kind = "Replay";

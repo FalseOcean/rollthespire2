@@ -37,15 +37,22 @@ internal sealed partial class QueryWorkbenchFrame
                 AncientPremises = _ancientEditor.OptionConditions,
                 Neow = _neowEditor.ExportEditorState(), Ancient = _ancientEditor.ExportEditorState(),
                 Events = _eventEditor.ExportEditorState(), Transformation = _transformationEditor.ExportEditorState(),
-                CombatRewardEditor = _combatEditor.ExportEditorState()
+                CombatRewardEditor = _combatEditor.ExportEditorState(), MapEditor = _actInformationEditor.ExportMapState()
             });
         }
         catch { return null; }
     }
 
+    // EditorPartyKey owns cache reuse and deliberately changes on every read
+    // when an observation is incomplete. Undo owns authored state instead.
+    // OrderedPartyAuthority's semantic fingerprint includes version, roster,
+    // unlock provenance/sources and shared world; retain effect semantics too.
+    // The full draft stamp below separately checks actual unlocks and sidecars.
     private string ClearConditionsContext() => _multiplayer
-        ? $"party:{_playerCount}:{_partyAscension}:{string.Join(",", _seatCharacters.Take(_playerCount))}:{_editorPartyKey}"
-        : $"solo:{_soloCharacter}:{_soloAscension}";
+        ? $"party:{_runtime.Profile.ProfileId}:{_runtime.Detection.NormalizedVersion}:{_playerCount}:{_partyAscension}:" +
+            $"{string.Join(",", _seatCharacters.Take(_playerCount))}:{_editorParty?.Fingerprint}:" +
+            string.Join(",", _editorParty?.Players.Select(player => player.EffectSnapshotFingerprint) ?? [])
+        : $"solo:{_runtime.Profile.ProfileId}:{_runtime.Detection.NormalizedVersion}:{_soloCharacter}:{_soloAscension}";
 
     private bool HasAuthoredConditions() => _neowEditor.HasConditions(_multiplayer) ||
         _combatEditor.HasConditions(_multiplayer) || _shopEditor.HasConditions(_multiplayer) ||
@@ -139,10 +146,7 @@ internal sealed partial class QueryWorkbenchFrame
             _actInformationEditor.ClearConditions(_multiplayer)
         };
         if (!_multiplayer) restores.Add(_transformationEditor.ClearConditions());
-        _restoreClearedConditions = () => { foreach (var restore in restores) restore(); };
-        _clearConditionsContext = ClearConditionsContext();
-        _clearUndoStamp = null;
-        RefreshAfterConditionChange();
+        RefreshAfterConditionChange(() => { foreach (var restore in restores) restore(); });
     }
 
     internal void UndoClearConditions()
@@ -161,7 +165,7 @@ internal sealed partial class QueryWorkbenchFrame
         var restoreTransformation = !_multiplayer && _selectedDomain is "neow" or "events"
             ? _transformationEditor.PreserveConditionsForUndo() : null;
         int slot = _multiplayer ? _seat : 0;
-        _restoreClearedConditions = _selectedDomain switch
+        Action? restoreCategory = _selectedDomain switch
         {
             "neow" => _neowEditor.ClearConditions(_multiplayer, slot),
             "combat" => _combatEditor.ClearConditions(_multiplayer, slot),
@@ -174,22 +178,29 @@ internal sealed partial class QueryWorkbenchFrame
             "transform" => _transformationEditor.ClearConditions(),
             _ => null
         };
-        if (restoreTransformation is not null && _restoreClearedConditions is { } restorePage)
-            _restoreClearedConditions = () => { restorePage(); restoreTransformation(); };
-        _clearConditionsContext = ClearConditionsContext(); _clearUndoStamp = null;
-        RefreshAfterConditionChange();
+        if (restoreTransformation is not null && restoreCategory is { } restorePage)
+            restoreCategory = () => { restorePage(); restoreTransformation(); };
+        RefreshAfterConditionChange(restoreCategory);
     }
 
-    private void RefreshAfterConditionChange()
+    private void RefreshAfterConditionChange(Action? restoreCleared = null)
     {
+        // Do not publish an undo receipt while dictionary owners, active editor
+        // bindings and context projections are being replaced. Their final
+        // authored state is the comparison boundary, not an intermediate frame.
+        _restoreClearedConditions = null; _clearUndoStamp = null;
         _probabilityPreview.Invalidate(); _probabilityPending = false; _analysisKey = "";
         _familyEntries.Clear(); _draftCompileIssue = ""; _lastIssue = ""; _restoreAdjusted = false;
         _showResults = false;
         Refresh(_language, _text);
         SaveDraft();
         _persistence.FlushAll();
-        if (_restoreClearedConditions is not null) _clearUndoStamp = ConditionUndoStamp();
-        if (_clearUndoStamp is null) _restoreClearedConditions = null;
+        if (restoreCleared is not null)
+        {
+            _clearConditionsContext = ClearConditionsContext();
+            _clearUndoStamp = ConditionUndoStamp();
+            if (_clearUndoStamp is not null) _restoreClearedConditions = restoreCleared;
+        }
         UpdateConditionActions();
     }
 }

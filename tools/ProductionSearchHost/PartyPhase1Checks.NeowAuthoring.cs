@@ -40,8 +40,8 @@ internal static partial class PartyPhase1Checks
         SearchQuery Table(params SearchQuery[] players) => SearchQuery.Empty with
         { Players = Enumerable.Range(0, 2).Select(slot => new PlayerOfferQuery(slot, ModelKeySetFilter.Empty)
             { Conditions = slot < players.Length ? players[slot] : SearchQuery.Empty }).ToArray() };
-        ExactSearchExecutionRequest Compile(SearchQuery table, string seed, int count = 33) =>
-            ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(table, context), new(seed, count, 1, 1)).Plan!;
+        PreparedSearch Compile(SearchQuery table, string seed, int count = 33) =>
+            SearchPreparationCompiler.Compile(SearchCompiler.Compile(table, context), new(seed, count, 1, 1)).Plan!;
         SearchQuery Bones(ModelKey a, ModelKey b, NeowStructuredEffectSearchCondition result) => SearchQuery.Empty with
         { OpeningRoute = new(bones), OpeningRouteRelicRequirement = new(bones, [a,b], BonesRouteOrderMode.AnyOrder),
             StructuredOpeningEffects = [result] };
@@ -54,7 +54,7 @@ internal static partial class PartyPhase1Checks
                 NeowStructuredEffectScope.NestedRelics, NeowStructuredOutputKind.Relic, [new("RELIC", "AMETHYST_AUBERGINE")])));
         foreach (bool gpu in new[] { false, true })
         {
-            await using var execution = new FamilyExecutionContext(requiresGpu: gpu, failOnPhysicalRecovery: true);
+            await using var execution = new FilterRuntimeServices(requiresGpu: gpu, failOnPhysicalRecovery: true);
             var request = Compile(logged, "R93FW4MT75L8");
             var families = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, gpu);
             try
@@ -78,7 +78,7 @@ internal static partial class PartyPhase1Checks
         host.AddChild(picker);
         host.AddChild(editor);
         var names = RuntimeGameContentNameResolver.Create("en");
-        await using var gpuExecution = new FamilyExecutionContext(requiresGpu: true, failOnPhysicalRecovery: true);
+        await using var gpuExecution = new FilterRuntimeServices(requiresGpu: true, failOnPhysicalRecovery: true);
         try
         {
             foreach (bool nested in new[] { false, true })
@@ -86,7 +86,7 @@ internal static partial class PartyPhase1Checks
                 var local = SearchQuery.Empty with { OpeningRoute = new(nested ? bones : massive),
                     OpeningRouteRelicRequirement = nested ? new(bones, [massive, large], BonesRouteOrderMode.ExactOrder) : null };
                 var plainRequest = Compile(Table(local), "000000000000");
-                var child = ExactSearchExecutionRequestFactory.ForPlayer(plainRequest, plainRequest.CompiledSearch.PlayerSearches[0]);
+                var child = SearchPreparationCompiler.ForPlayer(plainRequest.Model, plainRequest.Model.CompiledSearch.PlayerSearches[0]);
                 var replay = NeowReplayPlan.Compile(child, false);
                 ulong ordinal = Enumerable.Range(0, 50000).Select(i => (ulong)i).First(i => NeowPartyReplay.Observe(
                     profile.ComputeRootSeed(VisibleSeedCandidateCodec.FormatOrdinal(profile, i)), replay).IdentityPass);
@@ -120,24 +120,24 @@ internal static partial class PartyPhase1Checks
                 Check(JsonSerializer.Serialize(editor.ExportQuery()) == JsonSerializer.Serialize(exported), "query persistence roundtrip");
                 var positive = Compile(Table(exported), seed);
                 var plain = Compile(Table(local), seed);
-                double? a = JointSelectivityEstimator.EstimateQuery(SearchSelectivityInput.From(plain.CompiledSearch)).Probability;
-                double? b = JointSelectivityEstimator.EstimateQuery(SearchSelectivityInput.From(positive.CompiledSearch)).Probability;
+                double? a = JointSelectivityEstimator.EstimateQuery(SearchSelectivityInput.From(plain.Model.CompiledSearch)).Probability;
+                double? b = JointSelectivityEstimator.EstimateQuery(SearchSelectivityInput.From(positive.Model.CompiledSearch)).Probability;
                 Check(a is > 0 && b is > 0 && b < a, "scroll card result contributes rarity");
                 foreach (bool hit in new[] { true, false })
                 {
                     var query = exported with { StructuredOpeningEffects = [condition with { OutputKeys = [hit ? target : absent] }] };
                     var request = Compile(Table(query), seed);
-                    Check(ProductionExactSearchEvaluator.Evaluate(request, TrustedRootHashInput.FromCanonicalSeed(profile, seed)).IsMatch == hit,
+                    Check(ProductionExactSearchEvaluator.Evaluate(request.Model, TrustedRootHashInput.FromCanonicalSeed(profile, seed)).IsMatch == hit,
                         "Exact enforces scroll target");
-                    var cpu = new NeowFamily.PartyInitial(request);
-                    var gpu = new NeowFamily.PartyInitial(request, preferGpu: true);
+                    var cpu = new NeowFamily.PartyInitial(request.Model, FilterExecutionPreferences.From(request.RunOptions)).Describe();
+                    var gpu = new NeowFamily.PartyInitial(request.Model, FilterExecutionPreferences.From(request.RunOptions) ,preferGpu: true).Describe();
                     try
                     {
                         Check(gpu.ConditionPerformance.UsesGpu, "scroll GPU active");
                         var batch = new SearchBatch(ordinal, 33);
                         var input = FamilyCandidateSet.Dense(batch);
-                        var x = await cpu.InvokeAsync(gpuExecution, new(batch, request), input, default);
-                        var y = await gpu.InvokeAsync(gpuExecution, new(batch, request), input, default);
+                        var x = await cpu.ExecuteAsync(gpuExecution, input, default);
+                        var y = await gpu.ExecuteAsync(gpuExecution, input, default);
                         Check(x.EnumerateLogicalOrdinals().SequenceEqual(y.EnumerateLogicalOrdinals()), "scroll CPU/GPU survivors agree");
                         Check(x.EnumerateLogicalOrdinals().Contains(0UL) == hit, "scroll target changes actual filtering");
                     }

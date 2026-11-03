@@ -27,20 +27,19 @@ public sealed record FamilyPhysicalQuote(
 
     // The shared numerical/device-work entrance. Shape, population and optional
     // CPU root geometry remain explicit; a public GPU call is never a body price.
-    internal static FamilyPhysicalQuote? Computation(IFamilyInvocation family, FamilyPhysicalQuoteRequest geometry,
+    internal static FamilyPhysicalQuote? Computation(FilterBodyDescription family, FamilyPhysicalQuoteRequest geometry,
         GpuCostSnapshot? costs, IReadOnlySet<string>? passedCoverage = null, int? referenceRootWindow = null)
     {
         geometry = geometry with { ComputationOnly = true, CostSnapshot = costs };
         passedCoverage ??= EmptyCoverage;
         FamilyPhysicalQuote? quote = null;
-        if (family is FamilyCpuExecution cpu)
+        if (!family.UsesGpu)
         {
             if (referenceRootWindow is int roots)
-                quote = FamilyCanonicalMeasuredCost.TryQuote(cpu, geometry, roots, passedCoverage);
-            quote ??= cpu.Quote(geometry, passedCoverage);
+                quote = FamilyCanonicalMeasuredCost.TryQuote(family, geometry, roots, passedCoverage);
+            quote ??= family.QuotePhysicalWork(geometry, passedCoverage);
         }
-        else quote = family is PartyFamily party
-            ? party.QuotePhysicalWork(geometry, passedCoverage) : family.QuotePhysicalWork(geometry);
+        else quote = family.QuotePhysicalWork(geometry, passedCoverage);
         if (quote is null || family.ConditionPerformance.UsesGpu && quote.PublicTransportClass == "CompleteCanonicalAbi1")
             return null;
         return costs?.Local(family, quote, geometry) ?? quote;
@@ -48,7 +47,7 @@ public sealed record FamilyPhysicalQuote(
 
     // Timing for one selected family invocation. Root/fraction, when supplied,
     // describe the real reached fragment, not a new planner candidate or q.
-    internal static FamilyUnitCost? CompleteCall(IFamilyInvocation family, FamilyPhysicalQuoteRequest geometry,
+    internal static FamilyUnitCost? CompleteCall(FilterBodyDescription family, FamilyPhysicalQuoteRequest geometry,
         GpuCostSnapshot? costs, double survival, IReadOnlySet<string>? passedCoverage = null,
         int? rootPopulation = null, double inputFraction = 1, bool includeInvokeOverhead = true,
         bool privateInvocation = false, string? correlationId = null)
@@ -64,18 +63,14 @@ public sealed record FamilyPhysicalQuote(
                 rootWindow, passedCoverage);
         if (price is not null) return new(price.Milliseconds, price.SetupMilliseconds, price.Evidence)
             { Source = FamilyPerformanceEvidenceSource.Condition, Origin = FamilyUnitCostOrigin.CanonicalCompleteReference };
-        FamilyUnitCost? partyPrice = privateReference ? null : family switch {
-            PartyFamily party => party.QuoteUnit(geometry.MeanInputPopulation, geometry.CompactInput, passedCoverage),
-            NeowFamily.PartyInitial party => party.QuoteUnit(geometry.MeanInputPopulation, geometry.CompactInput),
-            _ => null
-        };
+        FamilyUnitCost? partyPrice = privateReference ? null : family.Cost.CompleteCallQuote?.Invoke(geometry, passedCoverage);
         if (partyPrice is not null) return partyPrice with {
             Milliseconds = partyPrice.Milliseconds * reach,
             Source = partyPrice.Evidence.Contains("PriceQuality=Estimate", StringComparison.Ordinal)
                 ? FamilyPerformanceEvidenceSource.Reference : FamilyPerformanceEvidenceSource.Condition
         };
         var complete = privateReference ? null : FamilyAuxiliaryEvidence.Read<FamilyPhysicalQuote?>(
-            family.FamilyId, "EtaPublicQuote", () => family.QuotePhysicalWork(geometry), null, correlationId);
+            family.FamilyId, "EtaPublicQuote", () => family.QuotePhysicalWork(geometry, passedCoverage), null, correlationId);
         if (complete is { PublicTransportClass: "CompleteCanonicalAbi1" } &&
             (!FamilyCanonicalMeasuredCost.IsCanonicalQuote(complete) || rootPopulation is null))
         {

@@ -17,7 +17,7 @@ internal static partial class FamilyPhysicalMatrix
     private static object? Get(object value, string name) => value.GetType().GetProperty(name, Instance)!.GetValue(value);
     private static object? Call(object value, string name, params object?[] args) => value.GetType().GetMethod(name, Instance)!.Invoke(value, args);
     private static string Digest(FamilyCandidateSet set) => Convert.ToHexString(SHA256.HashData(MemoryMarshal.AsBytes(set.ExportAbi1().Span)));
-    internal static void Run(ExactSearchExecutionRequest request, string filter, string output)
+    internal static void Run(PreparedSearch request, string filter, string output)
     {
         if (filter == "mp-c-reuse")
         {
@@ -101,8 +101,8 @@ internal static partial class FamilyPhysicalMatrix
         }
         FamilyPricingInventory.Run(request, output);
         var families = FamilyExecutionCoordinator.CreateRegisteredFamilies(request);
-        var bind = typeof(IFamilyInvocation).GetMethod("BindPrivateSerial", Instance)!;
-        var admitted = typeof(IFamilyInvocation).GetProperty("CanBindPrivateSerial", Instance)!;
+
+
         var bufferType = typeof(FamilyCandidateSet).Assembly.GetType("RolltheSpire2.Search.FamilyExecution.PrivateOrdinalBuffer", true)!;
         object Buffer(RenderingDevice rd) => Activator.CreateInstance(bufferType, Instance, null, [rd], null)!;
         const string alphabet = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -113,17 +113,17 @@ internal static partial class FamilyPhysicalMatrix
         using var rd = RenderingServer.CreateLocalRenderingDevice() ?? throw new InvalidOperationException("Matrix.DeviceUnavailable");
         foreach (var family in families.Where(f => filter == "all" || filter.Contains(f.FamilyId[0])))
         {
-            if (!(bool)admitted.GetValue(family)!) { rows.Add(new { family.FamilyId, Status = "PrivateBindingNotAdmitted" }); continue; }
+            if (!family.CanBindPrivateSerial) { rows.Add(new { family.FamilyId, Status = "PrivateBindingNotAdmitted" }); continue; }
             var fingerprints = new Dictionary<(bool Compact, int Count), string>();
             bool transformation = family.FamilyId == "T.TransformationAggregate";
             bool cpuParity = transformation || family.FamilyId == "R.Relic";
-            var cpu = cpuParity ? ((IEnumerable<IFamilyInvocation>)typeof(IFamilyInvocation).GetProperty("CpuRealizations", Instance)!.GetValue(family)!).First() : null;
-            var cpuContext = new FamilyExecutionContext(requiresGpu: false);
+            var cpu = cpuParity ? family.CpuAlternatives.First() : null;
+            var cpuContext = new FilterRuntimeServices(requiresGpu: false);
             if (transformation)
             {
                 using var alias = (IDisposable)Buffer(rd);
-                try { using var invalid = (IDisposable)bind.Invoke(family,[rd,alias,alias])!; throw new InvalidDataException("T.AliasAdmitted"); }
-                catch(TargetInvocationException ex) when(ex.InnerException is ArgumentException e && e.Message=="T.PrivateBuffersAlias") { }
+                try { using var invalid = (IDisposable)family.BindPrivate!(rd,(PrivateOrdinalBuffer)alias,(PrivateOrdinalBuffer)alias); throw new InvalidDataException("T.AliasAdmitted"); }
+                catch(ArgumentException e) when(e.Message=="T.PrivateBuffersAlias") { }
             }
             foreach (bool compact in new[] { false, true })
             foreach (bool privateOutput in new[] { false, true })
@@ -133,7 +133,7 @@ internal static partial class FamilyPhysicalMatrix
                 {
                     if (compact) inputBuffer = Buffer(rd);
                     if (privateOutput) outputBuffer = Buffer(rd);
-                    execution = bind.Invoke(family, [rd, inputBuffer, outputBuffer])!;
+                    execution = family.BindPrivate!(rd,(PrivateOrdinalBuffer?)inputBuffer,(PrivateOrdinalBuffer?)outputBuffer);
                     if (transformation)
                     {
                         var empty = Call(execution, "Execute", new SearchBatch(first, 0), 0, CancellationToken.None)!;
@@ -172,7 +172,7 @@ internal static partial class FamilyPhysicalMatrix
                                     for(int cpuRound=-1;cpuRound<3;cpuRound++)
                                     {
                                         var watch=System.Diagnostics.Stopwatch.StartNew();
-                                        var cpuResult=cpu!.InvokeAsync(cpuContext,new(batch,request),cpuInput,default).GetAwaiter().GetResult();
+                                        var cpuResult=cpu!.ExecuteAsync(cpuContext, cpuInput, default).GetAwaiter().GetResult();
                                         double ms=watch.Elapsed.TotalMilliseconds;
                                         if(Digest(cpuResult)!=digest)throw new InvalidDataException(family.FamilyId+".FullCpuGpuPopulationMismatch");
                                         if(cpuRound>=0) rows.Add(new { family.FamilyId, Cpu=true, CompactInput=compact, Input=population, Output=count, Round=cpuRound, CanonicalMs=ms, Digest=digest });

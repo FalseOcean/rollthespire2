@@ -166,19 +166,32 @@ internal static class PredictorRuntimeSourceChecks
             if (found.Count == 5) break;
         }
         Check(found.Count == 5, "Did not cover each implemented real Opening source");
-        NativeRewardPipeline(context, authority);
-        PredictorPressureChecks.Run(context, authority);
-        ModifierOpeningChecks(context, authority);
-        CombatPremiseChecks(context, authority);
-        ContinuedNodes(context, authority);
-        NativeTransformationAndPotions(context, authority);
-        PredictorShopChecks.Run(context, authority);
-        PredictorObtainChecks.Run(PredictorSeedCapture.CreateRun(context, authority));
-        PredictorAncientChecks.Run(PredictorSeedCapture.CreateRun(context, authority));
-        PredictorCombatRewardFactsChecks.Run(PredictorSeedCapture.CreateRun(context, authority));
-        PredictorEncounterEntryChecks.Run(PredictorSeedCapture.CreateRun(context, authority));
-        PredictorMapChecks.Run(PredictorSeedCapture.CreateRun(context, authority));
-        PredictorEventChecks.RunNative(PredictorSeedCapture.CreateRun(context with { Seed = "00000000000M" }, authority));
+        // Each group starts from the captured immutable inputs. Keep the
+        // original exception and failed overall result while testing independent
+        // groups after a local failure.
+        var failures = new List<Exception>();
+        void RunSourceGroup(string name, Action action)
+        {
+            try { action(); Console.WriteLine("RUNTIME_SOURCE_GROUP_PASS " + name); }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine("RUNTIME_SOURCE_GROUP_FAILED " + name + ": " + error);
+                failures.Add(new InvalidOperationException("Runtime source group: " + name, error));
+            }
+        }
+        RunSourceGroup("NativeRewardPipeline", () => NativeRewardPipeline(context, authority));
+        RunSourceGroup("Pressure", () => PredictorPressureChecks.Run(context, authority));
+        RunSourceGroup("ModifierOpening", () => ModifierOpeningChecks(context, authority));
+        RunSourceGroup("CombatPremises", () => CombatPremiseChecks(context, authority));
+        RunSourceGroup("ContinuedNodes", () => ContinuedNodes(context, authority));
+        RunSourceGroup("NativeTransformationAndPotions", () => NativeTransformationAndPotions(context, authority));
+        RunSourceGroup("Shop", () => PredictorShopChecks.Run(context, authority));
+        RunSourceGroup("Obtain", () => PredictorObtainChecks.Run(PredictorSeedCapture.CreateRun(context, authority)));
+        RunSourceGroup("Ancient", () => PredictorAncientChecks.Run(PredictorSeedCapture.CreateRun(context, authority)));
+        RunSourceGroup("CombatRewardFacts", () => PredictorCombatRewardFactsChecks.Run(PredictorSeedCapture.CreateRun(context, authority)));
+        RunSourceGroup("EncounterEntry", () => PredictorEncounterEntryChecks.Run(PredictorSeedCapture.CreateRun(context, authority)));
+        RunSourceGroup("Map", () => PredictorMapChecks.Run(PredictorSeedCapture.CreateRun(context, authority)));
+        RunSourceGroup("NativeEvents", () => PredictorEventChecks.RunNative(PredictorSeedCapture.CreateRun(context with { Seed = "00000000000M" }, authority)));
         var remainingRelics = new List<string>();
         foreach (var relic in ModelDb.AllRelics)
         {
@@ -186,6 +199,7 @@ internal static class PredictorRuntimeSourceChecks
             catch (NotImplementedException) { remainingRelics.Add(relic.Id.Entry); }
         }
         Console.WriteLine("RUNTIME_RELIC_IMPLEMENTATION_REMAINDER " + string.Join(',', remainingRelics.Order()));
+        if (failures.Count > 0) throw new AggregateException("Runtime source groups failed", failures);
         Console.WriteLine("RUNTIME_SOURCE_PASS openingSources=7 nativeRewardShapes=10 plus transform/potion/rest transitions; no whole-route/UI claim");
         return 0;
     }
@@ -232,7 +246,10 @@ internal static class PredictorRuntimeSourceChecks
             }
             finally { TestMode.IsOn = priorTestMode; }
             if (key == BaseGameModelKeys.Characters.Ironclad)
+            {
+                VersionedInitialization(context, authority);
                 PredictionEntryContext(context, authority, declaredUnlocks);
+            }
             if (key == BaseGameModelKeys.Characters.Ironclad && template.DiscoveredActs.Length > 0)
             {
                 try
@@ -254,6 +271,32 @@ internal static class PredictorRuntimeSourceChecks
                 "Per-character Opening did not settle: " + key);
             Console.WriteLine($"RUNTIME_CHARACTER_START {key.Entry} starter={character.StartingRelics.First().Id.Entry} opening={run.Working.OpeningOptions[0].Entry} PASS");
         }
+    }
+
+    private static void VersionedInitialization(PredictorContext context, RuntimeContextAuthoritySnapshot authority)
+    {
+        void Reject(Action action, string code)
+        {
+            try { action(); }
+            catch (InvalidOperationException ex) when (ex.Message == code) { return; }
+            throw new InvalidOperationException("Predictor version entry accepted unsupported context: " + code);
+        }
+        // Both supported-older and provisional-future identities have usable
+        // shared RNG implementations; neither has this full-init replay contract.
+        foreach (string version in new[] { "0.110.1", "0.112.0" })
+        {
+            var changed = context with { GameVersion = version };
+            string unsupported = "PredictorSeedInitializationVersionUnsupported:" + version;
+            Reject(() => PredictorSeedCapture.CreateRun(changed, authority), unsupported);
+            Reject(() => PredictorInitialization.FromSeed(changed, authority, [], [], 0), unsupported);
+            Reject(() => PredictorWorldInitialization.Generate(changed, authority.WorldAuthority!), unsupported);
+        }
+        var world = authority.WorldAuthority!;
+        var wrongProfile = world with
+        {
+            Beta109Generation = world.Beta109Generation! with { Profile = RolltheSpire2.Compatibility.RuntimeProfileId.Beta110 }
+        };
+        Reject(() => PredictorWorldInitialization.Generate(context, wrongProfile), "PredictorRuntimeWorldAuthorityIncomplete:Profile");
     }
 
     private static void RequestSupportCaptureChecks(PredictorContext template)
@@ -311,7 +354,7 @@ internal static class PredictorRuntimeSourceChecks
             Check(!account.UnlockedEpochs.SequenceEqual(serialized.UnlockedEpochs),
                 "Prediction entry fixture needs different account and declared unlock facts");
             TestMode.IsOn = false;
-            var run = PredictorSeedCapture.CreateFromPrediction(request!, serialized);
+            var run = PredictorSeedCapture.CreateFromSeedContext(request!.OriginalSeed, request.Authority, serialized);
             Check(run.Context.RevealedEpochs.SequenceEqual(serialized.UnlockedEpochs) &&
                 run.Context.SeenEncounters.SequenceEqual(serialized.EncountersSeen.Select(k => new ModelKey(k.Category, k.Entry))) &&
                 run.Context.NumberOfRuns == serialized.NumberOfRuns && run.Context.Crystal is null,
@@ -329,7 +372,7 @@ internal static class PredictorRuntimeSourceChecks
                 out var partyRequest, out issue), "Party prediction entry request: " + issue);
             try
             {
-                PredictorSeedCapture.CreateFromPrediction(partyRequest!, serialized);
+                PredictorSeedCapture.CreateFromSeedContext(partyRequest!.OriginalSeed, partyRequest.Authority, serialized);
                 throw new InvalidOperationException("Prediction entry silently projected multiplayer to a solo route");
             }
             catch (InvalidOperationException ex) when (ex.Message == "PredictorRouteRequiresSingleplayer") { }
@@ -688,32 +731,29 @@ internal static class PredictorRuntimeSourceChecks
 
     private static void ModifierOpeningChecks(PredictorContext context, RolltheSpire2.Core.Authority.RuntimeContextAuthoritySnapshot authority)
     {
-        var terminal = PredictorSeedCapture.CreateRun(context with { Modifiers = [new(new("MODIFIER", "TERMINAL"))] }, authority);
-        var terminalMap = terminal.RouteMap(1);
-        var route = ImmutableArray.CreateBuilder<RolltheSpire2.Core.Prediction.Maps.MapPosition>();
-        var point = terminalMap.Points.OrderBy(p => p.Position.Row).First();
-        while (true)
+        static string State(PredictorRun run) => System.Text.Json.JsonSerializer.Serialize(run.Working);
+        PredictorRun Reload(PredictorRun run)
         {
-            route.Add(point.Position);
-            if (point.Children.Count == 0) break;
-            point = terminalMap.Points.Single(p => p.Position == point.Children[0]);
+            string before = State(run);
+            var restored = PredictorRunStore.Deserialize(PredictorRunStore.Serialize(run), context.CatalogFingerprint, context.UnlockFingerprint);
+            Check(restored.Phase == run.Phase && State(restored) == before && State(run) == before &&
+                System.Text.Json.JsonSerializer.Serialize(restored.Checkpoints) == System.Text.Json.JsonSerializer.Serialize(run.Checkpoints),
+                "Modifier active save/load changed state, RNG or committed entry cut");
+            return restored;
         }
-        terminal.SetRoute(1, route.ToImmutable());
-        terminal.AdvanceRoute();
-        Check(terminal.Phase == PredictorPhase.RoomEntryHealth && terminal.Checkpoints.Length == 1,
-            "Terminal must keep automatic Opening entry uncommitted until required max-HP fact");
-        var beforeAnswer = terminal.Working;
-        Check(terminal.Submit(terminal.Request!, new ProvideRoomMaximumHp(0)) == PredictorInputResult.Invalid &&
-            ReferenceEquals(terminal.Working, beforeAnswer), "Invalid Terminal fact changed working state");
-        var interrupted = PredictorRunStore.Deserialize(PredictorRunStore.Serialize(terminal), context.CatalogFingerprint, context.UnlockFingerprint);
-        Check(interrupted.Phase == PredictorPhase.RoomEntryHealth, "Resume must re-enter unfinished Terminal node from entry");
-        Select(terminal, new ProvideRoomMaximumHp(80));
-        Check(terminal.Phase == PredictorPhase.Complete && terminal.Checkpoints[^1].CompletedNode!.HealthEffects.Single().MaxHpDelta == -1,
-            "Terminal entry completion retains source consequence");
-        terminal.Rewind(0);
-        terminal.AdvanceRoute();
-        Select(terminal, new ProvideRoomMaximumHp(1));
-        Check(terminal.Checkpoints[^1].CompletedNode!.HealthEffects.IsEmpty, "Terminal leaves valid max-HP one state unchanged");
+        void SetFirstRoute(PredictorRun run)
+        {
+            var map = run.RouteMap(1);
+            var route = ImmutableArray.CreateBuilder<RolltheSpire2.Core.Prediction.Maps.MapPosition>();
+            var point = map.Points.OrderBy(p => p.Position.Row).First();
+            while (true)
+            {
+                route.Add(point.Position);
+                if (point.Children.Count == 0) break;
+                point = map.Points.Single(p => p.Position == point.Children[0]);
+            }
+            run.SetRoute(1, route.ToImmutable());
+        }
         foreach (string modifier in new[] { "DRAFT", "SEALED_DECK", "INSANITY", "ALL_STAR", "SPECIALIZED" })
         {
             var run = PredictorSeedCapture.CreateRun(context with { Modifiers = [new(new("MODIFIER", modifier))] }, authority);
@@ -741,6 +781,82 @@ internal static class PredictorRuntimeSourceChecks
             Check(restored.Working.Deck.SequenceEqual(boundary.Deck), "Modifier rewind entry");
         }
         Console.WriteLine("RUNTIME_MODIFIER_OPENING Draft/Sealed/Insanity/AllStar/Specialized actual seed initialization + choices + save/rewind PASS (controlled Runtime behavior)");
+        var passive = PredictorSeedCapture.CreateRun(context with { Modifiers = [new(new("MODIFIER", "VINTAGE"))] }, authority);
+        string passiveBoundary = State(passive);
+        SetFirstRoute(passive);
+        passive.AdvanceRoute();
+        Check(passive.Phase == PredictorPhase.Complete && passive.Checkpoints.Length == 2 &&
+            passive.CaptureNodeDraft() is null &&
+            System.Text.Json.JsonSerializer.Serialize(passive.Checkpoints[^1].State) == State(passive),
+            "Automatic Opening without Terminal must commit exactly once after room entry");
+        passive = Reload(passive);
+        passive.Rewind(0);
+        Check(State(passive) == passiveBoundary, "Automatic modifier Opening rewind changed entry state/RNG");
+        // Exercise Terminal's pending-node lifecycle independently after the
+        // neighboring modifier runs from their own fresh seeds.
+        var terminal = PredictorSeedCapture.CreateRun(context with { Modifiers = [new(new("MODIFIER", "TERMINAL"))] }, authority);
+        string terminalBoundary = State(terminal);
+        SetFirstRoute(terminal);
+        terminal.AdvanceRoute();
+        Check(terminal.Phase == PredictorPhase.RoomEntryHealth && terminal.Checkpoints.Length == 1 &&
+            terminal.CaptureNodeDraft()!.Inputs.IsEmpty,
+            "Terminal must keep automatic Opening entry uncommitted until required max-HP fact");
+        var beforeAnswer = terminal.Working;
+        Check(terminal.Submit(terminal.Request!, new ProvideRoomMaximumHp(0)) == PredictorInputResult.Invalid &&
+            ReferenceEquals(terminal.Working, beforeAnswer), "Invalid Terminal fact changed working state");
+        var interrupted = Reload(terminal);
+        Check(interrupted.Phase == PredictorPhase.RoomEntryHealth, "Resume must re-enter unfinished Terminal node from entry");
+        interrupted.RestartCurrentNode();
+        Check(State(interrupted) == terminalBoundary, "Terminal restart retained uncommitted map entry or RNG");
+        interrupted.AdvanceRoute();
+        Check(State(interrupted) == State(terminal), "Terminal restart/re-entry changed automatic Opening");
+        interrupted = Reload(interrupted);
+        Select(interrupted, new ProvideRoomMaximumHp(80));
+        Select(terminal, new ProvideRoomMaximumHp(80));
+        Check(terminal.Phase == PredictorPhase.Complete && terminal.Checkpoints.Length == 2 &&
+            terminal.Checkpoints[^1].CompletedNode!.HealthEffects.Single().MaxHpDelta == -1 &&
+            System.Text.Json.JsonSerializer.Serialize(interrupted.Checkpoints) == System.Text.Json.JsonSerializer.Serialize(terminal.Checkpoints),
+            "Terminal entry completion retains source consequence");
+        terminal = Reload(terminal);
+        terminal.AdvanceRoute();
+        terminal = Reload(terminal);
+        Select(terminal, new ProvideRoomMaximumHp(80));
+        Check(terminal.Phase == PredictorPhase.CombatFacts && terminal.Checkpoints.Length == 2 &&
+            terminal.CaptureNodeDraft()!.Inputs.Single() is ProvideRoomMaximumHp,
+            "Terminal next room must retain fact replay without prematurely committing combat");
+        terminal = Reload(terminal);
+        terminal.Rewind(0);
+        Check(State(terminal) == terminalBoundary, "Terminal rewind retained downstream map entry, health effect or RNG");
+        terminal.AdvanceRoute();
+        Select(terminal, new ProvideRoomMaximumHp(1));
+        Check(terminal.Checkpoints[^1].CompletedNode!.HealthEffects.IsEmpty, "Terminal leaves valid max-HP one state unchanged");
+        foreach (string modifier in new[] { "DRAFT", "SEALED_DECK", "INSANITY", "ALL_STAR", "SPECIALIZED" })
+        {
+            var run = PredictorSeedCapture.CreateRun(context with
+            { Modifiers = [new(new("MODIFIER", "TERMINAL")), new(new("MODIFIER", modifier))] }, authority);
+            string boundary = State(run);
+            SetFirstRoute(run);
+            run.AdvanceRoute();
+            run = Reload(run);
+            Select(run, new ProvideRoomMaximumHp(80));
+            run = Reload(run);
+            Check(run.OpeningModifierOrdinal == 1, "Terminal resume lost neighboring Opening modifier");
+            Select(run, new ActivateOpeningModifier(1));
+            while (run.Phase == PredictorPhase.OpeningModifierCards)
+            {
+                run = Reload(run);
+                Select(run, new SelectOpeningModifierCards(run.OpeningModifierCards.Take(run.OpeningModifierCardsRequired)
+                    .Select(c => c.Id).ToImmutableArray()));
+            }
+            Check(run.Phase == PredictorPhase.Complete && run.Checkpoints.Length == 2 &&
+                run.Checkpoints[^1].CompletedNode!.HealthEffects.Single().MaxHpDelta == -1 &&
+                run.Checkpoints[^1].CompletedNode!.Inputs.Count(i => i.Action == "TerminalRoomEntry") == 1,
+                "Terminal + Opening modifier must commit once with its real entry consequence");
+            run = Reload(run);
+            run.Rewind(0);
+            Check(State(run) == boundary, "Terminal + Opening modifier rewind changed original state/RNG");
+        }
+        Console.WriteLine("RUNTIME_TERMINAL_OPENING automatic/interactive entry save/load/restart/resume/rewind + next combat replay PASS");
     }
 
     private static void ContinuedNodes(PredictorContext context, RolltheSpire2.Core.Authority.RuntimeContextAuthoritySnapshot authority)

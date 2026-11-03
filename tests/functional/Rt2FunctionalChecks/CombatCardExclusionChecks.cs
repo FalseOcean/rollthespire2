@@ -28,18 +28,18 @@ internal static class CombatCardExclusionChecks
         ModelKey[] identities = [absent, target];
         context = context with { Authority = context.Authority.WithAvailableCardIdentities(identities) };
         SearchQuery Exclude(int n, params ModelKey[] keys) => SearchQuery.Empty with { CombatCardExclusion = new(n, keys) };
-        ExactSearchExecutionRequest Compile(SearchQuery query)
+        PreparedSearch Compile(SearchQuery query)
         {
-            var result = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context),
+            var result = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context),
                 source.Options with { StartSeed = "000000000000", ScanCount = 1, WorkerCount = 1 });
             return result.Plan ?? throw new InvalidDataException("Exclusion compile: " + result.Disposition + ":" + result.Issue);
         }
         var query = Exclude(6, absent);
         var compiled = SearchCompiler.Compile(query, context);
         var plan = Compile(query);
-        Check(compiled.NormalizedQuery.HasCombatRewardConstraints && plan.Evaluation.RequiresNormalCombatRewardDomain,
+        Check(compiled.NormalizedQuery.HasCombatRewardConstraints && plan.Model.Evaluation.RequiresNormalCombatRewardDomain,
             "standalone negative condition requires reward preparation and Exact");
-        Check(plan.Evaluation.CombatCardExclusion!.BattleCount == 6, "projection retains full horizon");
+        Check(plan.Model.Evaluation.CombatCardExclusion!.BattleCount == 6, "projection retains full horizon");
         var physical = FamilyExecutionCoordinator.Plan(plan, gpuAvailable: false);
         Check(physical.FilterRemainders.Contains("CombatCardExclusion:ProductionExactOnly"), "negative condition is explicitly Exact-only");
         var skipped = FamilyExecutionCoordinator.Plan(plan with { RunOptions = plan.RunOptions with { SkipExactValidation = true } }, false);
@@ -71,10 +71,9 @@ internal static class CombatCardExclusionChecks
         // local route fixtures below replace only reward facts to test conjunction binding.
         // Existing CombinationRegressionChecks.CheckCombatAssignments establishes
         // v1/context + zero seed as a real positive neutral-continuation fixture.
-        var baseline = ProductionExactSearchEvaluator.Evaluate(plan, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, plan.CanonicalStartSeed));
+        var baseline = ProductionExactSearchEvaluator.Evaluate(plan.Model, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, plan.CanonicalStartSeed));
         Check(baseline.IsMatch, "standalone negative condition completes Production Exact: " + baseline.FailureCode);
-        var section = baseline.Document!.Sections.Single(s => s.Kind == PredictionSectionKind.NormalCombatRewardSequence);
-        var sequence = section.NormalCombatRewardSequencePrediction!;
+        var sequence = baseline.Facts!.CombatRewards!;
         var original = sequence.Routes.First(r => r.Battles.Count == 6);
         Check(original.Battles.Select(b => b.BattleOrdinal).SequenceEqual(Enumerable.Range(1, 6)), "Exact actually predicts six battles");
         var first = original.Battles[0];
@@ -112,12 +111,8 @@ internal static class CombatCardExclusionChecks
                 [new(1, true, [targetCard with { CardKey = new("CARD", "ANGER") }], b.EvidenceCode)] }).ToArray() };
         SearchQueryEvaluation EvaluateRoutes(params NormalCombatRewardRoutePredictionResult[] routes)
         {
-            var document = new SeedPredictionDocument { Context = baseline.Document!.Context, PredictorId = baseline.Document.PredictorId,
-                OriginalSeed = baseline.Document.OriginalSeed, CanonicalSeed = baseline.Document.CanonicalSeed,
-                Warnings = baseline.Document.Warnings, Diagnostics = baseline.Document.Diagnostics, OverallStatus = baseline.Document.OverallStatus,
-                Sections = baseline.Document.Sections.Select(s => s == section
-                    ? s with { NormalCombatRewardSequencePrediction = sequence with { Routes = routes } } : s).ToArray() };
-            return ProductionQueryValidator.EvaluateRewards(positiveAndNegative, document,
+            var facts = baseline.Facts! with { CombatRewards = sequence with { Routes = routes } };
+            return ProductionQueryValidator.EvaluateRewards(positiveAndNegative.Model, facts,
                 SearchQueryEvaluation.Match(witnesses: [new(plan.CanonicalStartSeed, "", [], [], "", null, [])]));
         }
         Check(EvaluateRoutes(conflicting, noTarget).Disposition == SearchDisposition.NoMatch,
@@ -147,8 +142,8 @@ internal static partial class CombinationRegressionChecks
         var q = Table(2, (1, SearchQuery.Empty with { CombatCardExclusion = new(6, [member]) }));
         var compiled = SearchCompiler.Compile(q, context);
         var plan = Compile(context, q, "000000000000");
-        var child0 = ExactSearchExecutionRequestFactory.ForPlayer(plan, compiled.PlayerSearches[0]);
-        var child1 = ExactSearchExecutionRequestFactory.ForPlayer(plan, compiled.PlayerSearches[1]);
+        var child0 = SearchPreparationCompiler.ForPlayer(plan.Model, compiled.PlayerSearches[0]);
+        var child1 = SearchPreparationCompiler.ForPlayer(plan.Model, compiled.PlayerSearches[1]);
         Assert(!child0.Evaluation.RequiresNormalCombatRewardDomain && child1.Evaluation.CombatCardExclusion?.BattleCount == 6,
             "negative-only condition belongs to selected seat");
         var physical = FamilyExecutionCoordinator.Plan(plan, false);
@@ -157,7 +152,7 @@ internal static partial class CombinationRegressionChecks
         var unknownParty = new OrderedPartyAuthority(unknownPlayers, rawParty.UnlockProvenance, rawParty.World, rawParty.UnlockSources);
         Assert(compiled.SemanticFingerprint != SearchCompiler.Compile(q, context with { Party = unknownParty }).SemanticFingerprint,
             "table fingerprint includes relevant seat's global identity authority");
-        var result = ProductionExactSearchEvaluator.Evaluate(plan, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, plan.CanonicalStartSeed));
+        var result = ProductionExactSearchEvaluator.Evaluate(plan.Model, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, plan.CanonicalStartSeed));
         Assert(result.IsMatch, "negative-only seat participates in joint Exact: " + result.FailureCode);
         return checks;
     }

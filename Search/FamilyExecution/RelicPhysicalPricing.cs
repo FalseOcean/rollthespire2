@@ -4,31 +4,31 @@ namespace RolltheSpire2.Search.FamilyExecution;
 
 internal static partial class RelicPhysicalPricing
 {
-    internal static FamilyPhysicalQuote? QuoteSourceCapsules(ExactSearchExecutionRequest request, RelicFullGpuPlan? plan,
+    internal static FamilyPhysicalQuote? QuoteSourceCapsules(FilterPricingAuthority request, RelicFullGpuPlan? plan,
         FamilyPhysicalQuoteRequest geometry)
     {
         // Old reference constrained both sources. A blank side can admit more heavy work;
         // use the owned full-work envelope rather than aliasing that rarity-band measurement.
         if (plan is not { SourceConstrainedCapsules: true, NumericalVariant: GpuNumericalVariant.NativeFloat64 } || !FamilyPhysicalQuote.AdmittedRequest(geometry) ||
-            !FamilyPhysicalQuote.HasReferenceBackend() || request.Authority.PlayersCount != 1 ||
-            !request.Authority.CanUseCurrentModel || plan.SequencePlan.Predicates.Length != 0 || plan.SequencePlan.ShopPredicates.Length != 0 ||
+            !FamilyPhysicalQuote.HasReferenceBackend() || request.PlayersCount != 1 ||
+            !request.CanUseCurrentModel || plan.SequencePlan.Predicates.Length != 0 || plan.SequencePlan.ShopPredicates.Length != 0 ||
             plan.CapsuleMetadata[24] != 28 || (plan.CapsuleMetadata[16] & 16u) != 0 || plan.CapsuleMetadata[3] < 2 ||
             !plan.SequencePlan.Pool.BucketLengths.SequenceEqual(new[] { 30, 25, 35, 25, 1, 2, 32, 26, 38, 26 })) return null;
         return new("R.Relic", "R.SourceConstrainedSmallLarge.ThreeDraw.Targets" + plan.CapsuleMetadata[3],
             geometry.CompactInput ? 1.65 : 1.4, RelicFamilyGpuExecutor.Capacity, 750,
             "ClassicProductMatrix.20260910.SourceCapsules;MeasuredRarityBand;ArrivalRarityTrackedRank;NoPublicMaterialization");
     }
-    internal static FamilyPhysicalQuote? Quote(ExactSearchExecutionRequest request, RelicFamilyPlan plan,
+    internal static FamilyPhysicalQuote? Quote(FilterPricingAuthority request, RelicFamilyPlan plan,
         FamilyPhysicalQuoteRequest geometry, FamilyExpectedFilteringCostProjection expected) =>
         QuoteMeasured(request, plan, geometry) ??
-        RelicWorkEstimate.Ordinary(request, plan, geometry, expected, cpu: false);
+        RelicWorkEstimate.Ordinary(plan, geometry, expected, cpu: false);
 
-    private static FamilyPhysicalQuote? QuoteMeasured(ExactSearchExecutionRequest request, RelicFamilyPlan plan,
+    private static FamilyPhysicalQuote? QuoteMeasured(FilterPricingAuthority request, RelicFamilyPlan plan,
         FamilyPhysicalQuoteRequest geometry)
     {
         if (!FamilyPhysicalQuote.AdmittedRequest(geometry) || !FamilyPhysicalQuote.HasReferenceBackend() ||
-            request.ProfileId != Compatibility.RuntimeProfileId.Beta111 || request.Authority.PlayersCount != 1 ||
-            request.Authority.CanUseCurrentModel != true || plan.AlwaysReject ||
+            request.ProfileId != Compatibility.RuntimeProfileId.Beta111 || request.PlayersCount != 1 ||
+            request.CanUseCurrentModel != true || plan.AlwaysReject ||
             !plan.Pool.BucketLengths.SequenceEqual(new[] { 30, 25, 35, 25, 1, 2, 32, 26, 38, 26 })) return null;
         if (plan.Predicates.Length == 0 && plan.LastRequiredBucket == 9 &&
             plan.ShopPredicates is [{ Count: 1, TargetIds.Length: 1 }])

@@ -13,6 +13,7 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Rooms;
 using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Infrastructure.Snapshots;
+using RolltheSpire2.Infrastructure.PredictionSessions;
 using RolltheSpire2.Presentation.Localization;
 using RolltheSpire2.Ui.Persistence;
 
@@ -181,7 +182,7 @@ internal sealed partial class RunPredictionOverlay : Control
     private EventModel? _event;
     private int _act, _floor;
     private RunPredictionOverlayStackEntry? _entry;
-    private CrystalSphereAssistantPanel.Session? _session;
+    private CrystalPredictionSession? _session;
     private bool _retired, _openedBefore;
     private bool _hotkeysBlocked, _backPressed;
     private long _openedAt;
@@ -222,6 +223,7 @@ internal sealed partial class RunPredictionOverlay : Control
     private void AttachCurrentPrediction(CrystalSphereAssistantPanel panel)
     {
         _panel = panel;
+        _session = panel.Calculation;
         panel.GuideRequested += (snapshot, mode, solution) => { GuideRequested?.Invoke(snapshot, mode, solution); Close(); };
     }
 
@@ -255,9 +257,8 @@ internal sealed partial class RunPredictionOverlay : Control
     internal void AfterOverlayOpened()
     {
         long started = System.Diagnostics.Stopwatch.GetTimestamp();
-        bool retainedSession = _session is not null;
+        bool retainedSession = _session?.Snapshot is not null;
         if (_isCrystalRoom && _openedBefore) RefreshRuntimeAuthorityAtEntry(_runtime);
-        if (_session is not null) { _panel!.RestoreSession(_session); _session = null; }
         // Validate while the parent is still hidden, before old answers can draw.
         if (_isCrystalRoom) _panel!.OpenSession();
         _shell.Open();
@@ -270,7 +271,7 @@ internal sealed partial class RunPredictionOverlay : Control
         if (_entry is null) return;
         _entry = null;
         ReleaseHotkeys();
-        _session = _panel?.SuspendSession();
+        _session?.Suspend();
         _shell.CleanupForTopLevelClose();
         Hide();
         ProcessMode = ProcessModeEnum.Disabled;

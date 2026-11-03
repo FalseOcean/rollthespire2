@@ -34,52 +34,39 @@ internal static partial class FamilyCanonicalCostShape
 
     // Null means no source-reviewed structural descriptor yet. It is not an
     // execution rejection and must not become a guessed/default canonical price.
-    internal static FamilyCanonicalCostKey? Describe(ExactSearchExecutionRequest request,
-        IFamilyInvocation invocation, bool compact, int rootWindow)
+    internal static FamilyCanonicalCostKey? Describe(FilterBodyDescription body, bool compact, int rootWindow)
     {
-        if (rootWindow <= 0) return null;
-        IFamilyInvocation owner = invocation;
-        if (invocation is FamilyCpuExecution cpu)
-        {
-            request = cpu.PricingRequest;
-            owner = cpu.PricingOwner ?? invocation;
-        }
-        // This port admits only the reviewed solo public call boundary. Other
-        // execution remains legal and continues through its existing pricing.
-        if (!FamilyCanonicalMeasuredCost.InScope(request, invocation)) return null;
-        string? work = WorkShape(request, owner, invocation);
+        if (rootWindow <= 0 || !FamilyCanonicalMeasuredCost.InScope(body)) return null;
+        string? work = body.Cost.CanonicalWorkShape?.Invoke(compact);
         if (work is null) return null;
-        if (invocation is FamilyCpuExecution optimizedCpu) work += optimizedCpu.OptimizationCostShape;
-        else if (owner is NeowFamily optimizedNeow) work += optimizedNeow.PricingOptimizationShape(compact);
-        if (invocation is FamilyCpuExecution { RequiredPassedCoverage: { } required })
+        work += body.Cost.OptimizationShape?.Invoke(compact) ?? "";
+        if (body.RequiredPassedCoverage is { } required)
             work += ";RequiredPassedCoverage=" + string.Join(',', required.Order(StringComparer.Ordinal));
-        string children = "";
-        if (owner is InitialRoomsInvocation { PricingOrdinary: { } child } initial)
-        {
-            var childKey = Describe(initial.PricingOrdinaryRequest, child, compact, rootWindow);
-            if (childKey is null) return null;
-            children = $"body={childKey.PhysicalRevision};workers={childKey.ConfiguredWorkers};shape={childKey.WorkShape};children={childKey.OrderedChildBodies}";
-        }
+        string? children = body.Cost.OrderedChildBodies is null ? "" : body.Cost.OrderedChildBodies(compact, rootWindow);
+        if (children is null) return null;
         var device = SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity();
-        bool gpu = invocation.ConditionPerformance.UsesGpu;
-        return new(SchemaVersion, invocation.FamilyId, gpu ? "GPU" : "CPU", device.RuntimeTarget,
-            device.CpuIdentity, gpu ? device.GpuIdentity : "", gpu ? device.RenderingBackend : "",
-            request.ProfileId.ToString(), invocation.ResolveConditionPerformance(compact).PhysicalImplementationRevision,
-            invocation is FamilyCpuExecution physical ? physical.Workers : request.WorkerCount,
-            request.Authority.PlayersCount, compact, rootWindow, work, children);
+        return new(SchemaVersion, body.FamilyId, body.UsesGpu ? "GPU" : "CPU", device.RuntimeTarget,
+            device.CpuIdentity, body.UsesGpu ? device.GpuIdentity : "", body.UsesGpu ? device.RenderingBackend : "",
+            body.ProfileId.ToString(), body.ResolveConditionPerformance(compact).PhysicalImplementationRevision,
+            body.CpuWorkers, body.PlayersCount, compact, rootWindow, work, children);
     }
 
-    private static string? WorkShape(ExactSearchExecutionRequest request, IFamilyInvocation owner, IFamilyInvocation actual)
+    internal static string? DescribeInitialRooms(string familyId, InitialRoomsPlan plan)
     {
-        if (owner is InitialRoomsInvocation initial)
-        {
-            var shape = initial.Plan.DescribePricingShape();
-            return initial.FamilyId + ".InitialRooms.SourceShape.20261025.v1;" + shape.Key + ";Present=" +
-                string.Join(',', shape.Targets.Select(t => t.PresentInSharedBag));
-        }
-        if (owner is not EventResultFamily events) return TryDescribeFamily(request, owner, actual);
-        if (!events.Plan.NumericalSupported) return null;
-        var plan = events.Plan;
+        var shape = plan.DescribePricingShape();
+        return familyId + ".InitialRooms.SourceShape.20261025.v1;" + shape.Key + ";Present=" +
+            string.Join(',', shape.Targets.Select(t => t.PresentInSharedBag));
+    }
+
+    internal static string? DescribeChildBody(FilterBodyDescription child, bool compact, int rootWindow)
+    {
+        var key = Describe(child, compact, rootWindow);
+        return key is null ? null : $"body={key.PhysicalRevision};workers={key.ConfiguredWorkers};shape={key.WorkShape};children={key.OrderedChildBodies}";
+    }
+
+    internal static string? DescribeEvent(EventResultFamilyPlan plan, uint? compiledColorAllowedMask = null)
+    {
+        if (!plan.NumericalSupported) return null;
         // Several predicates over the same transform share draws. A descriptor
         // needs their joint pool-membership geometry before admitting that case.
         if (plan.Conditions.Where(c => EventResultTransformSemantics.IsTransform(c.Kind))
@@ -124,12 +111,8 @@ internal static partial class FamilyCanonicalCostShape
             $"riderGroup={Group("TinkerRider", (int?)c.TinkerRider)}:case={c.TrialCase}:type={c.TinkerCardType}:" +
             $"rider={c.TinkerRider}:riderIndex={(c.TinkerRider.HasValue ? (int)c.TinkerRider.Value % 3 : -1)}"));
         string compiledColor = "";
-        if (actual.ResolveConditionPerformance(false).PhysicalImplementationRevision.StartsWith("E.EventResult.Cpu.CompiledColor.", StringComparison.Ordinal))
-        {
-            var color = EventResultCpuPlan.TryCompile(request, plan);
-            if (color is null) return null;
-            compiledColor = ";CompiledColorAllowed=" + BitOperations.PopCount(color.AllowedRemovalMask);
-        }
+        if (compiledColorAllowedMask is uint mask)
+            compiledColor = ";CompiledColorAllowed=" + BitOperations.PopCount(mask);
         string revision = compiled.CheapConditions.Length == 0 ? "E.SourceGroups.v1" : "E.SourceGroups.v2";
         return revision + ";slot=" + plan.PlayerSlot + ";canReject=" + compiled.CanReject +
             ";colorKnown=" + compiled.ColorfulPoolKnown + ";colorPool=" + compiled.ColorfulPool.Length +

@@ -22,7 +22,7 @@ internal static partial class UiSurfaceChecks
         var production = new InRunMapPredictionSession();
         production.Update(native, "0.111.0", true, new Dictionary<int, PredictorMapRouteDraft> { [0] = draft });
         var captured = production.Snapshot!;
-        var source = captured.Run;
+        var source = captured.CreateRun();
         var state = source.Working;
         int act = state.Position.Act;
         var location = (act - 1, first);
@@ -49,7 +49,7 @@ internal static partial class UiSurfaceChecks
             { CombatDefaults = source.CombatDefaults, AutomaticRewardPickup = source.AutomaticRewardPickup };
             var session = new InRunMapPredictionSession();
             typeof(InRunMapPredictionSession).GetProperty(nameof(InRunMapPredictionSession.Snapshot), members)!
-                .SetValue(session, captured with { Run = controlled });
+                .SetValue(session, captured with { Context = controlled.Context, State = controlled.Working, CombatDefaults = controlled.CombatDefaults, AutomaticRewardPickup = controlled.AutomaticRewardPickup });
             typeof(InRunMapPredictionSession).GetField("_drafts", members)!
                 .SetValue(session, DiagnosticField(production, "_drafts"));
             session.Recompute();
@@ -60,11 +60,11 @@ internal static partial class UiSurfaceChecks
             var snapshot = session.Snapshot;
             var nodes = session.Nodes;
             var forecast = session.Forecast;
-            string serialized = PredictorRunStore.Serialize(snapshot!.Run), plans = JsonSerializer.Serialize(session.Plans);
+            string serialized = PredictorRunStore.Serialize(snapshot!.CreateRun()), plans = JsonSerializer.Serialize(session.Plans);
             long revision = session.Revision;
             int history = session.HistoryCount;
             return () => check(ReferenceEquals(snapshot, session.Snapshot) && ReferenceEquals(nodes, session.Nodes) &&
-                ReferenceEquals(forecast, session.Forecast) && PredictorRunStore.Serialize(snapshot.Run) == serialized &&
+                ReferenceEquals(forecast, session.Forecast) && PredictorRunStore.Serialize(snapshot.CreateRun()) == serialized &&
                 JsonSerializer.Serialize(session.Plans) == plans && session.Revision == revision && session.HistoryCount == history &&
                 nativeSignature() == nativeBefore,
                 "room detail/hover preserves native state, captured input, plans, revision, history and published forecast");

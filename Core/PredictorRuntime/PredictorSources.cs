@@ -95,7 +95,7 @@ internal sealed partial class PredictorRun
         if (!initialEnemiesAlreadyCreated)
         {
             int initialEnemies = PredictorEncounterEntry.InitialEnemyCount(encounter,
-                RolltheSpire2.Compatibility.Beta111Profile.Instance.ComputeRootSeed(Context.Seed), floor);
+                Context.RuntimeProfile.ComputeRootSeed(Context.Seed), floor);
             state = PredictorEncounterEntry.ConsumeInitialEnemyHp(state, initialEnemies);
         }
         var entrance = PredictorPotionEffects.BeforeCombat(Context, state, cancellationToken);

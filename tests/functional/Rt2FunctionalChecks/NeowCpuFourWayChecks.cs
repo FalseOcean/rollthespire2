@@ -19,29 +19,45 @@ internal static class NeowCpuFourWayChecks
         int checks = 0;
         void Check(bool ok, string why) { checks++; if (!ok) throw new InvalidOperationException("N four-way: " + why); }
         string? saved = Environment.GetEnvironmentVariable(NeowCpuFourWayPreGate.EnvironmentVariable);
+        var bindingServices = new FilterRuntimeServices(false);
         try
         {
             var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/v1/context.json").Context;
-            ExactSearchExecutionRequest Request(string path, int workers)
+            PreparedSearch Request(string path, int workers)
             {
                 var workload = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/" + path);
-                var result = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(workload.Query, context),
+                var result = SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, context),
                     workload.Options with { WorkerCount = workers, ScanCount = 65539, TargetMatchCount = int.MaxValue });
                 Check(result.Success, "fixture compile " + result.Issue);
                 return result.Plan!;
             }
-            NeowFamily Owner(ExactSearchExecutionRequest request)
+            var owners = new Dictionary<NeowFamily, PreparedSearch>();
+            NeowFamily Owner(PreparedSearch request)
             {
-                Check(NeowFamily.TryCreate(request, out var family, false) && family is NeowFamily, "N scalar owner exists");
-                return (NeowFamily)family!;
+                var owner = new NeowFamily(request.Model, NeowReplayPlan.Compile(request.Model, false), preferGpu: false);
+                owners.Add(owner, request);
+                return owner;
             }
-            FamilyCpuExecution Selected(NeowFamily owner, string? setting)
+            CpuFilterExecution Selected(NeowFamily owner, string? setting)
             {
                 Environment.SetEnvironmentVariable(NeowCpuFourWayPreGate.EnvironmentVariable, setting);
-                return FamilyCpuExecution.ConfiguredRealizations(owner).OfType<FamilyCpuExecution>().First();
+                var body = owner.Describe(FilterExecutionPreferences.From(owners[owner].RunOptions)).CpuAlternatives.Single();
+                return (CpuFilterExecution)body.CreateExecution!(body, bindingServices);
+            }
+            CpuFilterExecution Injected(PreparedSearch request, string id, string revision,
+                Func<ulong, bool> matcher, int workers, bool numerical = false,
+                bool packed = false, NeowCpuFourWayPreGate? gate = null)
+            {
+                var body = new FilterBodyDescription(new PreparedFilter(id), revision, request.Model.ProfileId)
+                {
+                    CpuWorkers = workers, WindowCapacity = 65536,
+                    PerformanceProjection = compact => CpuFilterExecution.Describe(id, revision, workers, 65536,
+                        numerical, packed, compact, gate)
+                };
+                return new CpuFilterExecution(body, RuntimeProfileRegistry.Select(request.Model.Detection), matcher, numerical, packed, gate);
             }
             var nonApplicable = Owner(Request("v1/cases/N-entry.json", 1));
-            Check(NeowCpuFourWayPreGate.TryCompile(nonApplicable.PricingReplayPlan, true) is null,
+            Check(NeowCpuFourWayPreGate.TryCompile(nonApplicable.Replay, true) is null,
                 "positive-slot-only shape keeps its scalar path");
             // Validate the setting before shape/hardware admission, so a mistyped
             // experiment cannot silently masquerade as its off control arm.
@@ -49,7 +65,7 @@ internal static class NeowCpuFourWayChecks
             {
                 Environment.SetEnvironmentVariable(NeowCpuFourWayPreGate.EnvironmentVariable, value);
                 bool rejected = false;
-                try { _ = NeowCpuFourWayPreGate.TryCompile(nonApplicable.PricingReplayPlan); }
+                try { _ = NeowCpuFourWayPreGate.TryCompile(nonApplicable.Replay); }
                 catch (InvalidOperationException error)
                 {
                     rejected = error.Message.Contains("InvalidConfiguration", StringComparison.Ordinal) &&
@@ -60,25 +76,25 @@ internal static class NeowCpuFourWayChecks
             foreach (string? value in new string?[] { null, "off", "OFF", "on", "On", "legacy", "LEGACY" })
             {
                 Environment.SetEnvironmentVariable(NeowCpuFourWayPreGate.EnvironmentVariable, value);
-                Check(NeowCpuFourWayPreGate.TryCompile(nonApplicable.PricingReplayPlan) is null,
+                Check(NeowCpuFourWayPreGate.TryCompile(nonApplicable.Replay) is null,
                     "legal flag retains scalar fallback for an inapplicable shape");
             }
             if (!Avx2.IsSupported)
             {
                 var unsupportedOwner = Owner(Request("family-cost-closure-v1/NN-Leafy.json", 1));
-                Check(NeowCpuFourWayPreGate.TryCompile(unsupportedOwner.PricingReplayPlan, true) is null,
+                Check(NeowCpuFourWayPreGate.TryCompile(unsupportedOwner.Replay, true) is null,
                     "unsupported hardware keeps trusted scalar implementation");
                 foreach (string? value in new string?[] { null, "on", "off", "legacy" })
                 {
                     var scalar = Selected(unsupportedOwner, value);
-                    Check(!scalar.UsesFourWayPreGate && scalar.Condition(false).PhysicalImplementationRevision.Contains(".RootMode2.", StringComparison.Ordinal),
+                    Check(!scalar.UsesFourWayPreGate && scalar.Body.ResolveConditionPerformance(false).PhysicalImplementationRevision.Contains(".RootMode2.", StringComparison.Ordinal),
                         "unsupported hardware retains original byte roots for default and explicit controls");
                 }
                 Console.WriteLine($"NEOW_CPU_FOUR_WAY_PASS checks={checks};avx2=false;vector=SkippedHardwareUnavailable");
                 return 0;
             }
 
-            var settingPlan = Owner(Request("family-cost-closure-v1/NN-Leafy.json", 1)).PricingReplayPlan;
+            var settingPlan = Owner(Request("family-cost-closure-v1/NN-Leafy.json", 1)).Replay;
             Environment.SetEnvironmentVariable(NeowCpuFourWayPreGate.EnvironmentVariable, null);
             var defaultGate = NeowCpuFourWayPreGate.TryCompile(settingPlan);
             Check(defaultGate is { Enabled: true }, "missing flag enables the proven four-way gate for an eligible shape");
@@ -132,23 +148,35 @@ internal static class NeowCpuFourWayChecks
             {
                 var request = Request(path, workers);
                 var owner = Owner(request);
-                var gate = NeowCpuFourWayPreGate.TryCompile(owner.PricingReplayPlan, true);
+                var gate = NeowCpuFourWayPreGate.TryCompile(owner.Replay, true);
                 Check(gate is not null, "representative N shape has a proven first-draw gate");
                 var scalar = Selected(owner, "off");
                 var vector = Selected(owner, null);
                 var legacy = Selected(owner, "legacy");
                 Environment.SetEnvironmentVariable(NeowCpuFourWayPreGate.EnvironmentVariable, "off");
-                Check(scalar.Condition(false).PhysicalImplementationRevision.Contains(".RootMode3.", StringComparison.Ordinal) &&
-                    vector.Condition(false).PhysicalImplementationRevision.Contains(NeowCpuFourWayPreGate.Revision, StringComparison.Ordinal) &&
-                    legacy.Condition(false).PhysicalImplementationRevision.Contains(".RootMode2.", StringComparison.Ordinal) &&
+                Check(scalar.Body.ResolveConditionPerformance(false).PhysicalImplementationRevision.Contains(".RootMode3.", StringComparison.Ordinal) &&
+                    vector.Body.ResolveConditionPerformance(false).PhysicalImplementationRevision.Contains(NeowCpuFourWayPreGate.Revision, StringComparison.Ordinal) &&
+                    legacy.Body.ResolveConditionPerformance(false).PhysicalImplementationRevision.Contains(".RootMode2.", StringComparison.Ordinal) &&
                     !legacy.UsesFourWayPreGate && vector.UsesFourWayPreGate,
                     "default vector, packed scalar comparison and original byte-root identities");
-                foreach (IFamilyInvocation body in new IFamilyInvocation[] { scalar, vector })
-                    Check(body.QuotePhysicalWork(new(false, false, 65536)) is not { } quote ||
-                        FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(request, body, quote, 65536),
-                        "changed packed/vector bodies require their actual matching embedded canonical measurement");
-                var original = NeowFamilyReplay.Bind(owner.PricingReplayPlan);
-                var execution = new FamilyExecutionContext(false, cpuWorkerCount: workers);
+                foreach (FilterBodyDescription body in new FilterBodyDescription[] { scalar.Body, vector.Body })
+                {
+                    var quote = body.QuotePhysicalWork(new(false, false, 65536));
+                    string reason = "NoQuote";
+                    // The current local-work model also exposes explicit coarse
+                    // estimates. Only measured quotes may claim an embedded row.
+                    bool coarse = quote is not null &&
+                        quote.Evidence.Contains("PriceQuality=Estimate", StringComparison.Ordinal) &&
+                        quote.Evidence.Contains("N.WorkEstimate.20261028.v1", StringComparison.Ordinal) &&
+                        quote.Evidence.Contains("NotCurrentDeviceOrBodyMeasurement", StringComparison.Ordinal) &&
+                        quote.Evidence.Contains("WorkerConfig=P" + workers, StringComparison.Ordinal) &&
+                        !FamilyCanonicalMeasuredCost.IsCanonicalQuote(quote);
+                    Check(quote is null || coarse || FamilyCanonicalCostChecks.MatchesEmbeddedSingleInvocation(request, body, quote, 65536, out reason),
+                        "changed packed/vector prices retain actual measurement identity or explicit coarse provenance: " +
+                        body.PhysicalRevision + ";reason=" + reason + ";source=" + quote?.LocalCostSource + ";evidence=" + quote?.Evidence);
+                }
+                var original = NeowFamilyReplay.Bind(owner.Replay);
+                var execution = new FilterRuntimeServices(false, cpuWorkerCount: workers);
                 try
                 {
                     foreach (int length in new[] { 1, 2, 3, 4, 5, 7, 17, 1025, 8193, 65539 })
@@ -158,12 +186,12 @@ internal static class NeowCpuFourWayChecks
                         var batch = new SearchBatch(start, length);
                         var input = compact ? FamilyCandidateSet.FromSortedAbi1(batch, Enumerable.Range(0, length)
                             .Where(i => i % 5 is 0 or 3 or 4).Select(i => (ulong)i).ToArray()) : FamilyCandidateSet.Dense(batch);
-                        var oracle = new FamilyCpuExecution(request, "Oracle", "OriginalProfile", workers);
-                        var expected = oracle.Execute(new(batch, request), input, default, original, execution).ExportAbi1().ToArray();
-                        var scalarAbi = ((IFamilyInvocation)scalar).InvokeAsync(execution, new(batch, request), input, default).GetAwaiter().GetResult().ExportAbi1().ToArray();
-                        var legacyAbi = ((IFamilyInvocation)legacy).InvokeAsync(execution, new(batch, request), input, default).GetAwaiter().GetResult().ExportAbi1().ToArray();
+                        var oracle = Injected(request, "Oracle", "OriginalProfile", original, workers);
+                        var expected = oracle.FilterAsync(execution, input, default).GetAwaiter().GetResult().ExportAbi1().ToArray();
+                        var scalarAbi = scalar.FilterAsync(execution, input, default).GetAwaiter().GetResult().ExportAbi1().ToArray();
+                        var legacyAbi = legacy.FilterAsync(execution, input, default).GetAwaiter().GetResult().ExportAbi1().ToArray();
                         long before = vector.FourWayInputs;
-                        var vectorAbi = ((IFamilyInvocation)vector).InvokeAsync(execution, new(batch, request), input, default).GetAwaiter().GetResult().ExportAbi1().ToArray();
+                        var vectorAbi = vector.FilterAsync(execution, input, default).GetAwaiter().GetResult().ExportAbi1().ToArray();
                         Check(vectorAbi.SequenceEqual(expected) && scalarAbi.SequenceEqual(expected) && legacyAbi.SequenceEqual(expected), "default/packed/legacy full matcher/profile ABI1 parity, carry/end-space/tail");
                         if (compact) Check(vector.FourWayInputs == before, "sparse Compact stays scalar");
                     }
@@ -176,7 +204,7 @@ internal static class NeowCpuFourWayChecks
 
             var faultRequest = Request("family-cost-closure-v1/NN-Leafy.json", 1);
             var faultOwner = Owner(faultRequest);
-            var faultGate = NeowCpuFourWayPreGate.TryCompile(faultOwner.PricingReplayPlan, true)!;
+            var faultGate = NeowCpuFourWayPreGate.TryCompile(faultOwner.Replay, true)!;
             bool FirstPass(ulong global)
             {
                 ulong root = CpuPackedSeed12.FromOrdinal(global).Hash();
@@ -191,12 +219,12 @@ internal static class NeowCpuFourWayChecks
                 while (!FirstPass(start + (ulong)at)) start++;
                 var batch = new SearchBatch(start, at == 65537 ? 65539 : 5);
                 ulong root = CpuPackedSeed12.FromOrdinal(start + (ulong)at).Hash();
-                var failed = new FamilyCpuExecution(faultRequest, faultOwner, "InjectedFourWayFault",
-                    candidate => candidate == root ? throw new IOException("InjectedFullMatcherFault") : false, 1, _ => null,
-                    packedSeedRoots: true, fourWayPreGate: faultGate);
+                var failed = Injected(faultRequest, faultOwner.Describe(FilterExecutionPreferences.From(faultRequest.RunOptions)).FamilyId, "InjectedFourWayFault",
+                    candidate => candidate == root ? throw new IOException("InjectedFullMatcherFault") : false, 1,
+                    numerical: true, packed: true, gate: faultGate);
                 Exception? caught = null;
-                var faultExecution = new FamilyExecutionContext(false);
-                try { _ = ((IFamilyInvocation)failed).InvokeAsync(faultExecution, new(batch, faultRequest), FamilyCandidateSet.Dense(batch), default).GetAwaiter().GetResult(); }
+                var faultExecution = new FilterRuntimeServices(false);
+                try { _ = failed.FilterAsync(faultExecution, FamilyCandidateSet.Dense(batch), default).GetAwaiter().GetResult(); }
                 catch (Exception error) { caught = error; }
                 finally { faultExecution.DisposeAsync().GetAwaiter().GetResult(); }
                 Check(caught is not null && FamilyCpuMatchException.IsRecoverable(caught), "full matcher failure keeps isolation certificate");
@@ -205,26 +233,26 @@ internal static class NeowCpuFourWayChecks
                     certificate.RootHash == root && certificate.InnerException is IOException, "vector lane/tail exact failure attribution");
             }
             var cancellation = new CancellationTokenSource(); bool cancel = true;
-            var cancelCpu = new FamilyCpuExecution(faultRequest, faultOwner, "CancelledFourWay",
-                root => { if (cancel) cancellation.Cancel(); return NeowFamilyReplay.Matches(root, faultOwner.PricingReplayPlan); },
-                1, _ => null, packedSeedRoots: true, fourWayPreGate: faultGate);
+            var cancelCpu = Injected(faultRequest, "N", "CancelledFourWay",
+                root => { if (cancel) cancellation.Cancel(); return NeowFamilyReplay.Matches(root, faultOwner.Replay); },
+                1, numerical: true, packed: true, gate: faultGate);
             var cancelBatch = new SearchBatch(1000, 4099);
-            var cancelExecution = new FamilyExecutionContext(false, cpuWorkerCount: 1);
+            var cancelExecution = new FilterRuntimeServices(false, cpuWorkerCount: 1);
             try
             {
                 bool cancelled = false;
-                try { _ = ((IFamilyInvocation)cancelCpu).InvokeAsync(cancelExecution, new(cancelBatch, faultRequest), FamilyCandidateSet.Dense(cancelBatch), cancellation.Token).GetAwaiter().GetResult(); }
+                try { _ = cancelCpu.FilterAsync(cancelExecution, FamilyCandidateSet.Dense(cancelBatch), cancellation.Token).GetAwaiter().GetResult(); }
                 catch (OperationCanceledException) { cancelled = true; }
-                Check(cancelled && !((IFamilyInvocation)cancelCpu).ExecutionFaulted, "cancellation is not a matcher fault");
+                Check(cancelled && !cancelCpu.ExecutionFaulted, "cancellation is not a matcher fault");
                 cancel = false;
-                _ = ((IFamilyInvocation)cancelCpu).InvokeAsync(cancelExecution, new(cancelBatch, faultRequest), FamilyCandidateSet.Dense(cancelBatch), default).GetAwaiter().GetResult();
+                _ = cancelCpu.FilterAsync(cancelExecution, FamilyCandidateSet.Dense(cancelBatch), default).GetAwaiter().GetResult();
                 Check(cancelExecution.PeakCpuWorkers == 1, "cancelled vector partition releases its permit for reuse");
             }
             finally { cancellation.Dispose(); cancelExecution.DisposeAsync().GetAwaiter().GetResult(); }
             Console.WriteLine($"NEOW_CPU_FOUR_WAY_PASS checks={checks};avx2=true;fullAbi1=true;roundingBoundaries=true;faultLanesAndTails=true;cancelReuse=true;native=false");
             return 0;
         }
-        finally { Environment.SetEnvironmentVariable(NeowCpuFourWayPreGate.EnvironmentVariable, saved); }
+        finally { bindingServices.DisposeAsync().GetAwaiter().GetResult(); Environment.SetEnvironmentVariable(NeowCpuFourWayPreGate.EnvironmentVariable, saved); }
     }
 
     private static ulong Inverse(ulong value)

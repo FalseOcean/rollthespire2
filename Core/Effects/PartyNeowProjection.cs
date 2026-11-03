@@ -27,7 +27,7 @@ internal static class PartyNeowProjection
                 (behavior.OnObtainCapabilities & (Core.Rewards.RelicOnObtainRewardEffects.ConsumesNicheRng |
                     Core.Rewards.RelicOnObtainRewardEffects.NestedRelicObtain)) != 0;
             var effect = !request.ShouldProjectNeowEffects(key)
-                ? Core.Prediction.Profiles.SeedPredictionDocumentFactory.UnrequestedNeowEffects
+                ? Core.Neow.NeowChoiceFacts.UnrequestedNeowEffects
                 : !identityExact
                     ? NeowEffectProjection.UnknownAuthority(key, "party.neow-identity-authority-incomplete")
                 : !sharedRngKnown && sharedConsumer
@@ -36,7 +36,7 @@ internal static class PartyNeowProjection
                     enableComplexBonesDeckInteractions: true) { AuthoredCapsuleEffects = authoredCapsuleEffects }.Project(key,
                         NeowEffectRngContext.CreateFromRootHash(Beta111Profile.Instance, root, owner.PlayerSlotIndex)
                             .WithShared(niche.Clone(), potions.Clone()), preparedRelicBag);
-            return Core.Prediction.Profiles.SeedPredictionDocumentFactory.Choice(index + 1, key, request,
+            return Core.Neow.NeowChoiceFacts.Choice(index + 1, key, request,
                 identityExact ? PredictionPrecision.Exact : PredictionPrecision.Unknown,
                 "beta111.party-neow.initial", effect);
         }).ToArray();

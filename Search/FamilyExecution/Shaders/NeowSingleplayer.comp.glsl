@@ -1,5 +1,8 @@
 #version 450
 #define BONES_K_MODE __RT2_BONES_K_MODE__
+#define BONES_HIDDEN_UPGRADES __RT2_BONES_HIDDEN_UPGRADES__
+#define BONES_HIDDEN_OFFSET __RT2_BONES_HIDDEN_OFFSET__
+#define N_CAPSULE_NICHE_OFFSET __RT2_CAPSULE_NICHE_OFFSET__
 #define N_STAGE __RT2_N_STAGE__
 #define N_DIRECT_NESTED __RT2_N_DIRECT_NESTED__
 #define NR_CAPSULE __RT2_NR_CAPSULE__
@@ -8,6 +11,8 @@
 #define N_AUTHORED_UPGRADES __RT2_AUTHORED_UPGRADES__
 #define N_LOCAL_RESULTS __RT2_LOCAL_RESULTS__
 #define N_TRANSFORM_META_OFFSET __RT2_N_TRANSFORM_META_OFFSET__
+#define N_ENTRY_META_OFFSET __RT2_N_ENTRY_META_OFFSET__
+#define N_ENTRY_TARGET __RT2_N_ENTRY_TARGET__
 #define RT2_N_LEAFY_LAZY 0
 #define RT2_PREFIX_HASH_CACHE 0
 #define RT2_N_LEAFY_LOCAL_PREFIX 0
@@ -148,29 +153,68 @@ bool route_at_arrival(uint64_t root, RngState rewards, uint a, uint b, uint adva
     }
     RouteRngState state = initialize_route_rng_state(root,rewards);
     if (!local_operator(a,state)) return false;
-#if N_AUTHORED_UPGRADES
-    for(uint i=0u;i<advance_a;i++) next_u64(state.niche);
+#if N_AUTHORED_UPGRADES || N_CAPSULE_NICHE_OFFSET >= 0 || (BONES_HIDDEN_UPGRADES != 0 && BONES_HIDDEN_UPGRADES != 4)
+    bool niche_unknown=advance_a==0xffffffffu;
+    if(!niche_unknown) for(uint i=0u;i<advance_a;i++) next_u64(state.niche);
+#else
+    bool niche_unknown=false;
 #endif
-    if (!local_operator(b,state)) return false;
-#if N_AUTHORED_UPGRADES
-    for(uint i=0u;i<advance_b;i++) next_u64(state.niche);
+    if(niche_unknown && (b==14u || b==19u)) {
+        // Only the dependent identity is pending. K still consumes its fixed
+        // Rewards prefix; other streams and earlier predicates stay checked.
+        if(b==14u && (plan_value(82u)&1u)!=0u)
+            for(uint i=0u;i<18u;i++) next_u64(state.rewards);
+    } else if (!local_operator(b,state)) return false;
+#if N_AUTHORED_UPGRADES || N_CAPSULE_NICHE_OFFSET >= 0 || (BONES_HIDDEN_UPGRADES != 0 && BONES_HIDDEN_UPGRADES != 4)
+    niche_unknown=niche_unknown || advance_b==0xffffffffu;
+    if(!niche_unknown) for(uint i=0u;i<advance_b;i++) next_u64(state.niche);
 #endif
     if (plan_value(83u) != 0u) {
+        if(niche_unknown) return true;
         uint offset = n1c_meta(12u), count = n1c_meta(13u);
         if (count == 0u) return false;
         return final_curse_matches(other_card_ids.ids[offset+next_int(state.niche,count)]);
     }
     return true;
 }
-// A single player has one opening arrival. Unknown authored advances retain the
-// existing necessary-condition behavior; Production Exact confirms the candidate.
-bool route(uint64_t root, RngState rewards, uint a, uint b) {
+#if N_CAPSULE_NICHE_OFFSET >= 0
+uint capsule_niche_entry(uint source,uint prior) {
+    return uint(N_CAPSULE_NICHE_OFFSET)+2u*((source==28u ? 0u : 33u)+(prior==255u ? 32u : prior));
+}
+uint capsule_niche_count(uint source,uint prior) {
+    return source==3u || source==28u ? conditions.values[capsule_niche_entry(source,prior)+1u] : 1u;
+}
+uint capsule_niche_advance(uint source,uint prior,uint index) {
+    if(source!=3u && source!=28u) return 0u;
+    return conditions.values[uint(N_CAPSULE_NICHE_OFFSET)+conditions.values[capsule_niche_entry(source,prior)]+index];
+}
+#endif
+// Retained single-value donor for fully authored bounded Capsule physicals.
+bool route_authored(uint64_t root,RngState rewards,uint a,uint b) {
     uint da=0u, db=0u;
 #if N_AUTHORED_UPGRADES
     da=authored_upgrade_advance(a,255u); db=authored_upgrade_advance(b,a);
     if(da==0xffffffffu || db==0xffffffffu) return true;
 #endif
     return route_at_arrival(root,rewards,a,b,da,db);
+}
+// A complete route shares one advance combination, including its final curse.
+bool route(uint64_t root, RngState rewards, uint a, uint b) {
+#if N_CAPSULE_NICHE_OFFSET >= 0
+    bool tail=plan_value(83u)!=0u;
+    bool after_a=tail || ((b==14u || b==19u) && (conditions.values[b*5u+4u]&0x80000000u)!=0u);
+    uint ca=after_a ? capsule_niche_count(a,255u) : 1u;
+    uint cb=tail ? capsule_niche_count(b,a) : 1u;
+    for(uint ai=0u;ai<ca;ai++)
+    for(uint bi=0u;bi<cb;bi++) {
+        uint da=after_a ? capsule_niche_advance(a,255u,ai) : 0u;
+        uint db=tail ? capsule_niche_advance(b,a,bi) : 0u;
+        if(route_at_arrival(root,rewards,a,b,da,db)) return true;
+    }
+    return false;
+#else
+    return route_authored(root,rewards,a,b);
+#endif
 }
 
 #endif
@@ -295,7 +339,15 @@ bool matches(uint64_t root) {
     if (!draw_neow_curse(root,event_rng,curse_ordinal,curse)) return false;
     uint bit = 1u << curse_ordinal;
     if ((plan_value(69u) & bit) != 0u) return false;
-    if ((plan_value(68u) & bit) == 0u && !replay_neow_top_identity_after_curse(event_rng,curse,route_mask)) return false;
+    if ((plan_value(68u) & bit) == 0u) {
+#if N_ENTRY_META_OFFSET >= 0
+        // The P9 gate has resolved curse-only acceptances/rejections. In every
+        // remaining single-positive request the tracked identity is mandatory.
+        if (!replay_neow_single_required_identity(event_rng,curse,route_mask)) return false;
+#else
+        if (!replay_neow_top_identity_after_curse(event_rng,curse,route_mask)) return false;
+#endif
+    }
 #if NR_CAPSULE == 1 && CAPSULE_PHYSICAL == 6
     RngState capsule_rewards=rng_initialize(root+plan_u64(33u));
     uint post_entry_rarity0,post_entry_rarity1;

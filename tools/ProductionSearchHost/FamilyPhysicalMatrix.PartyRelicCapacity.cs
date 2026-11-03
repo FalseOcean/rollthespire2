@@ -18,16 +18,16 @@ using RolltheSpire2.Search.Semantics;
 internal static partial class FamilyPhysicalMatrix
 {
     // Capacity-only R3 checks use the actual factory; no 512 pipeline is created.
-    internal static void RunPartyRelicCapacityChecks(ExactSearchExecutionRequest basis, string output,
+    internal static void RunPartyRelicCapacityChecks(PreparedSearch basis, string output,
         int measuredPopulation = 1 << 18) => RunPartyRelicCapacityCore(basis, output, measuredPopulation);
 
     // R3 production composition check. Captured rosters and the actual factory
     // plans are unchanged; no reflection override repairs a factory decision.
-    internal static void RunPartyRelicCapacityWrapperChecks(ExactSearchExecutionRequest basis, string output)
+    internal static void RunPartyRelicCapacityWrapperChecks(PreparedSearch basis, string output)
     {
         const System.Reflection.BindingFlags instance = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         const string prefix = "mp-r3-wrapper-partial-bones";
-        var context = basis.CompiledSearch.Context;
+        var context = basis.Model.CompiledSearch.Context;
         var party = context.Party ?? throw new InvalidDataException("MpR3Wrapper.RealPartyRequired");
         int players = party.Players.Count, checks = 0;
         void Check(bool ok, string label) { checks++; if (!ok) throw new InvalidDataException("MpR3Wrapper." + label); }
@@ -40,18 +40,17 @@ internal static partial class FamilyPhysicalMatrix
         var bones = BaseGameModelKeys.Relics.NeowsBones;
         var large = BaseGameModelKeys.Relics.LargeCapsule;
         var options = new SearchRunOptions("000000000000", 257, int.MaxValue, 16);
-        ExactSearchExecutionRequest Compile(int genericSlot, SearchQuery generic, SearchQuery peer, ulong ordinal = 0)
+        PreparedSearch Compile(int genericSlot, SearchQuery generic, SearchQuery peer, ulong ordinal = 0)
         {
             int peerSlot = genericSlot == 0 ? players - 1 : 0;
             var query = SearchQuery.Empty with { Players = party.Players.Select(p => new PlayerOfferQuery(p.PlayerSlotIndex,
                 ModelKeySetFilter.Empty) { Conditions = p.PlayerSlotIndex == genericSlot ? generic :
                     p.PlayerSlotIndex == peerSlot ? peer : SearchQuery.Empty }).ToArray() };
-            return ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context), options with {
+            return SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context), options with {
                 StartSeed = VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance, ordinal) }).Plan
                 ?? throw new InvalidDataException("MpR3Wrapper.FactoryRejected");
         }
-        ExactSearchExecutionRequest Child(ExactSearchExecutionRequest parent, int slot) => ExactSearchExecutionRequestFactory.ForPlayer(parent,
-            parent.CompiledSearch.PlayerSearches.Take(players).Single(p => p.Context.Authority.PlayerSlotIndex == slot));
+        SearchModel Child(PreparedSearch parent, int slot) => SearchPreparationCompiler.ForPlayer(parent.Model, parent.Model.CompiledSearch.PlayerSearches.Take(players).Single(p => p.Context.Authority.PlayerSlotIndex == slot));
         // Independent new wrapper fixture. The old fixed Arcane+Large failures
         // remain in their original output directories and are not reclassified.
         SearchQuery pair = SearchQuery.Empty with { OpeningRoute = new(bones),
@@ -68,7 +67,7 @@ internal static partial class FamilyPhysicalMatrix
                 // leaves SourceRelicKey null; its owning transaction is the source.
                 (e.SourceRelicKey == large || transaction.Option == large && e.SourceRelicKey is null && e.ParentEffectNodeId is null) &&
                 e.Precision == PredictionPrecision.Exact &&
-                e.TargetKey is { } key && VanillaRelicRewardEffects.TryGet(basis.ProfileId, key, out var effect) &&
+                e.TargetKey is { } key && VanillaRelicRewardEffects.TryGet(basis.Model.ProfileId, key, out var effect) &&
                 effect.NestedOnObtainPreservesRewardContinuation).Select(e => e.TargetKey!.Value).Distinct().ToArray();
         var rows = new List<object>();
         foreach (int genericSlot in new[] { 0, players - 1 })
@@ -78,7 +77,7 @@ internal static partial class FamilyPhysicalMatrix
             var probe = Compile(genericSlot, pair, direct);
             var genericProbe = NeowReplayPlan.Compile(Child(probe, genericSlot), false);
             var peerProbe = NeowReplayPlan.Compile(Child(probe, peerSlot), false);
-            ExactSearchExecutionRequest? request = null;
+            PreparedSearch? request = null;
             ulong positiveOrdinal = 0;
             var savedNonMatch = new HashSet<SearchDisposition>();
             var savedSourceNonMatch = new HashSet<SearchDisposition>();
@@ -97,13 +96,13 @@ internal static partial class FamilyPhysicalMatrix
                 jointIdentity++;
                 // Use the current whole-table source and its actual shared-stream
                 // continuation. Never reset a later player's shared cursor locally.
-                var source = ProductionExactSearchEvaluator.Evaluate(probe, positive);
+                var source = ProductionExactSearchEvaluator.Evaluate(probe.Model, positive);
                 if (!source.IsMatch)
                 {
                     if (savedSourceNonMatch.Add(source.Evaluation.Disposition))
                     {
                         Save($"{prefix}-{role}-source-{source.Evaluation.Disposition}-workload.json", new ProductionSearchReplayWorkload(1,
-                            probe.CompiledSearch.NormalizedQuery, probe.RunOptions with { StartSeed = positive.CanonicalSeed }));
+                            probe.Model.CompiledSearch.NormalizedQuery, probe.RunOptions with { StartSeed = positive.CanonicalSeed }));
                         Save($"{prefix}-{role}-source-{source.Evaluation.Disposition}-exact.json", source);
                     }
                     continue;
@@ -112,10 +111,10 @@ internal static partial class FamilyPhysicalMatrix
                 if (sourceMatch == 1)
                 {
                     Save($"{prefix}-{role}-first-source-match-workload.json", new ProductionSearchReplayWorkload(1,
-                        probe.CompiledSearch.NormalizedQuery, probe.RunOptions with { StartSeed = positive.CanonicalSeed }));
+                        probe.Model.CompiledSearch.NormalizedQuery, probe.RunOptions with { StartSeed = positive.CanonicalSeed }));
                     Save($"{prefix}-{role}-first-source-match-exact.json", source);
                 }
-                var transactions = source.Document!.Party?.Transactions ?? [];
+                var transactions = source.Facts!.Party?.Transactions ?? [];
                 var genericTarget = transactions.Where(t => t.Slot == genericSlot).SelectMany(t => Nested(t)).FirstOrDefault();
                 var peerTarget = transactions.Where(t => t.Slot == peerSlot).SelectMany(t => Nested(t)).FirstOrDefault();
                 if (!genericTarget.IsValid || !peerTarget.IsValid) continue;
@@ -128,13 +127,13 @@ internal static partial class FamilyPhysicalMatrix
                     !RelicFullGpuPlan.TryCreate(peerChild, NeowReplayPlan.Compile(peerChild, true), out var actualPeer, out _) ||
                     actualPeer is not { GenericReplay: false }) continue;
                 genericPlans++;
-                var exact = ProductionExactSearchEvaluator.Evaluate(candidate, positive);
+                var exact = ProductionExactSearchEvaluator.Evaluate(candidate.Model, positive);
                 if (!exact.IsMatch)
                 {
                     if (savedNonMatch.Add(exact.Evaluation.Disposition))
                     {
                         Save($"{prefix}-{role}-original-{exact.Evaluation.Disposition}-workload.json", new ProductionSearchReplayWorkload(1,
-                            candidate.CompiledSearch.NormalizedQuery, candidate.RunOptions));
+                            candidate.Model.CompiledSearch.NormalizedQuery, candidate.RunOptions));
                         Save($"{prefix}-{role}-original-{exact.Evaluation.Disposition}-exact.json", exact);
                     }
                     continue; // Preserve the actual Unknown/NoMatch; never weaken this query.
@@ -150,27 +149,30 @@ internal static partial class FamilyPhysicalMatrix
                 Shape = "PartialBonesLargeAndDirectLarge;WholeTableSourceTargets;SeparateFromFixedArcaneLarge" });
             Check(request is not null, "BoundedSameRootExactPositive:" + role + ";InspectOriginalNonmatchReceiptIfPresent");
             Save($"{prefix}-{role}-workload.json", new ProductionSearchReplayWorkload(1,
-                request!.CompiledSearch.NormalizedQuery, request.RunOptions));
+                request!.Model.CompiledSearch.NormalizedQuery, request.RunOptions));
             var gpuFamilies = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, true);
             var cpuFamilies = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, false);
-            var gpuContext = new FamilyExecutionContext(requiresGpu: true, failOnPhysicalRecovery: true, cpuWorkerCount: 16);
-            var cpuContext = new FamilyExecutionContext(requiresGpu: false, failOnPhysicalRecovery: true, cpuWorkerCount: 16);
+            var gpuContext = new FilterRuntimeServices(requiresGpu: true, failOnPhysicalRecovery: true, cpuWorkerCount: 16);
+            var cpuContext = new FilterRuntimeServices(requiresGpu: false, failOnPhysicalRecovery: true, cpuWorkerCount: 16);
             try
             {
-                var gpu = gpuFamilies.OfType<PartyFamily>().Single(f => f.FamilyId == "R.Relic");
-                var cpu = cpuFamilies.OfType<PartyFamily>().Single(f => f.FamilyId == "R.Relic");
-                var stages = gpu.PersonalStages.ToArray();
+                var gpu = gpuFamilies.Single(f => f.FamilyId == "R.Relic");
+                var cpu = cpuFamilies.Single(f => f.FamilyId == "R.Relic");
+                var stages = HostFilterBindings.PartyStages(gpu).ToArray();
                 Check(stages.Length == 2 && stages.Select(s => s.Slot).SequenceEqual(new[] { 0, players - 1 }) &&
-                    stages.All(s => s.Family is CapsuleRelicFamily && s.Family.CanBindPrivateSerial && s.Family.ConditionPerformance.UsesGpu) &&
-                    cpu.PersonalStages.Select(s => s.Slot).SequenceEqual(stages.Select(s => s.Slot)) && !cpu.ConditionPerformance.UsesGpu &&
-                    stages.All(g => cpu.PersonalStages.All(c => !ReferenceEquals(g.Family, c.Family))),
+                    stages.All(s => s.Family.CanBindPrivateSerial && s.Family.ConditionPerformance.UsesGpu) &&
+                    HostFilterBindings.PartyStages(cpu).Select(s => s.Slot).SequenceEqual(stages.Select(s => s.Slot)) && !cpu.ConditionPerformance.UsesGpu &&
+                    stages.All(g => HostFilterBindings.PartyStages(cpu).All(c => !ReferenceEquals(g.Family, c.Family))),
                     "IndependentCompleteFactoryWrappers:" + role);
-                var gpuPlanField = typeof(CapsuleRelicFamily).GetField("_gpuPlan", instance)!;
+
                 var sourceRows = new List<object>();
                 var bodyRevisions = new List<string>();
                 foreach (var stage in stages)
                 {
-                    var full = (RelicFullGpuPlan?)gpuPlanField.GetValue(stage.Family) ?? throw new InvalidDataException("MpR3Wrapper.GpuPlanMissing");
+                    var stageModel = Child(request, stage.Slot);
+                    if (!CapsuleRelicFamily.TryPrepare(stageModel, FilterExecutionPreferences.From(request.RunOptions), out var prepared) || prepared?.GpuPlan is not {} full ||
+                        prepared.Body.PhysicalRevision != stage.Family.PhysicalRevision)
+                        throw new InvalidDataException("MpR3Wrapper.GpuPlanMissingOrChanged");
                     Check(full.GenericReplay == (stage.Slot == genericSlot) &&
                         full.UseExactGenericBagCapacity == full.GenericReplay && full.CapsuleMetadata[14] == stage.Slot && full.CapsuleMetadata[15] == players,
                         "ActualFactoryPlanAndOriginalSlot:" + stage.Slot);
@@ -180,13 +182,13 @@ internal static partial class FamilyPhysicalMatrix
                         CheckPartyRelicCapacityFactoryScope(request, stage.Slot, Check);
                         Check(full.ConfiguredGenericBagCapacity < 512, "ActualReducedCapacity");
                         Check(full.BagCapacityRevision == $".GenericBagCapacity.Slot{stage.Slot}.B{full.ConfiguredGenericBagCapacity}.20261016.v1" &&
-                            ((CapsuleRelicFamily)stage.Family).GpuBagCapacityRevision == full.BagCapacityRevision &&
+                            stage.Family.Cost.PartyChild.CapacityRevision == full.BagCapacityRevision &&
                             full.Revision(false).Contains(full.BagCapacityRevision, StringComparison.Ordinal) &&
                             full.Revision(true).Contains(full.BagCapacityRevision, StringComparison.Ordinal),
                             "ActualChildBagCapacityRevision");
                         bodyRevisions.Add(full.BagCapacityRevision);
                     }
-                    else Check(full.ConfiguredGenericBagCapacity == 512 && full.BagCapacityRevision.Length == 0 && ((CapsuleRelicFamily)stage.Family).GpuBagCapacityRevision.Length == 0,
+                    else Check(full.ConfiguredGenericBagCapacity == 512 && full.BagCapacityRevision.Length == 0 && stage.Family.Cost.PartyChild.CapacityRevision.Length == 0,
                         "TrackedControlRetains512Identity");
                     sourceRows.Add(new { stage.Slot, full.GenericReplay, Capacity = full.ConfiguredGenericBagCapacity,
                         full.BagCapacityRevision,
@@ -214,11 +216,11 @@ internal static partial class FamilyPhysicalMatrix
                     Enumerable.Range(0, 129).Select(i => (ulong)i * 2).ToArray()) })
                 {
                     var wanted = input.EnumerateLogicalOrdinals().Where(i => expected[(int)i]).ToArray();
-                    var cpuResult = Task.Run(async () => await cpu.InvokeAsync(cpuContext, new(batch, request), input, default).ConfigureAwait(false)).GetAwaiter().GetResult();
-                    var gpuResult = Task.Run(async () => await gpu.InvokeAsync(gpuContext, new(batch, request), input, default).ConfigureAwait(false)).GetAwaiter().GetResult();
+                    var cpuResult = Task.Run(async () => await cpu.ExecuteAsync(cpuContext, input, default).ConfigureAwait(false)).GetAwaiter().GetResult();
+                    var gpuResult = Task.Run(async () => await gpu.ExecuteAsync(gpuContext, input, default).ConfigureAwait(false)).GetAwaiter().GetResult();
                     Check(cpuResult.EnumerateLogicalOrdinals().SequenceEqual(wanted) && gpuResult.EnumerateLogicalOrdinals().SequenceEqual(wanted) &&
                         cpuResult.Batch == batch && gpuResult.Batch == batch && gpuResult.EnumerateLogicalOrdinals().Contains(0UL), "CompleteWrapperPopulationParity:" + role);
-                    Check(typeof(PartyFamily).GetField("_chain", instance)!.GetValue(gpu) is not null, "ActualPrivateChainBound:" + role);
+                    Check(HostFilterBindings.Bind(gpu,gpuContext).GetType().GetField("_chain", instance)!.GetValue(HostFilterBindings.Bind(gpu,gpuContext)) is not null, "ActualPrivateChainBound:" + role);
                     rows.Add(new { Players = players, Role = role, GenericSlot = genericSlot, PeerSlot = peerSlot,
                         PositiveGlobalOrdinal = positiveOrdinal, WholeTableExactPositive = true, Dense = input.IsDense,
                         WrapperInput = input.Count, Output = gpuResult.Count, Digest = Digest(gpuResult), FullCpuGpuPopulationParity = true,
@@ -266,12 +268,11 @@ internal static partial class FamilyPhysicalMatrix
         check(Capacity(lastRange) == 512, "CapacityLastSegmentOutOfRangeRetains512");
     }
 
-    private static void CheckPartyRelicCapacityFactoryScope(ExactSearchExecutionRequest request, int slot, Action<bool, string> check)
+    private static void CheckPartyRelicCapacityFactoryScope(PreparedSearch request, int slot, Action<bool, string> check)
     {
-        var query = request.CompiledSearch.NormalizedQuery;
+        var query = request.Model.CompiledSearch.NormalizedQuery;
         var personal = query.Players.Single(p => p.Slot == slot).Conditions;
-        var originalChild = ExactSearchExecutionRequestFactory.ForPlayer(request,
-            request.CompiledSearch.PlayerSearches.Take(request.CompiledSearch.Context.Party!.Players.Count)
+        var originalChild = SearchPreparationCompiler.ForPlayer(request.Model, request.Model.CompiledSearch.PlayerSearches.Take(request.Model.CompiledSearch.Context.Party!.Players.Count)
                 .Single(p => p.Context.Authority.PlayerSlotIndex == slot));
         var buckets = originalChild.Authority.WorldAuthority!.Beta109Generation!.PlayerRelicBuckets;
         // Match RelicFamilyPlanCompiler.ParseBucketKind, including its token
@@ -291,10 +292,9 @@ internal static partial class FamilyPhysicalMatrix
             // Actual authored queries over the same captured slot/pools; these
             // are packing checks, without claiming a joint Exact positive.
             var mixedQuery = query with { Players = query.Players.Select(p => p.Slot == slot ? p with { Conditions = shape.Query } : p).ToArray() };
-            var mixed = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(mixedQuery, request.CompiledSearch.Context), request.RunOptions).Plan
+            var mixed = SearchPreparationCompiler.Compile(SearchCompiler.Compile(mixedQuery, request.Model.CompiledSearch.Context), request.RunOptions).Plan
                 ?? throw new InvalidDataException("MpR3Wrapper.NonqualFactoryRejected:" + shape.Name);
-            var child = ExactSearchExecutionRequestFactory.ForPlayer(mixed,
-                mixed.CompiledSearch.PlayerSearches.Take(request.CompiledSearch.Context.Party.Players.Count)
+            var child = SearchPreparationCompiler.ForPlayer(mixed.Model, mixed.Model.CompiledSearch.PlayerSearches.Take(request.Model.CompiledSearch.Context.Party.Players.Count)
                     .Single(p => p.Context.Authority.PlayerSlotIndex == slot));
             check(RelicFullGpuPlan.TryCreate(child, NeowReplayPlan.Compile(child, true), out var full, out _) && full is { GenericReplay: true },
                 "ActualNonemptyGenericFactory:" + shape.Name);
@@ -305,19 +305,19 @@ internal static partial class FamilyPhysicalMatrix
         }
         var soloContext = ProductionSearchReplay.Read<ProductionSearchReplayContext>(ProjectSettings.GlobalizePath("res://Corpus/v1/context.json")).Context;
         check(soloContext.Party is null && soloContext.Authority.PlayersCount == 1, "ActualCapturedSoloContext");
-        var solo = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(personal, soloContext), request.RunOptions).Plan
+        var solo = SearchPreparationCompiler.Compile(SearchCompiler.Compile(personal, soloContext), request.RunOptions).Plan
             ?? throw new InvalidDataException("MpR3Wrapper.SoloFactoryRejected");
-        bool admitted = RelicFullGpuPlan.TryCreate(solo, NeowReplayPlan.Compile(solo, true), out var soloPlan, out _);
+        bool admitted = RelicFullGpuPlan.TryCreate(solo.Model, NeowReplayPlan.Compile(solo.Model, true), out var soloPlan, out _);
         check(!admitted || soloPlan is { GenericReplay: false, UseExactGenericBagCapacity: false } &&
             soloPlan.ConfiguredGenericBagCapacity == 512 && soloPlan.BagCapacityRevision.Length == 0, "SoloDoesNotEnterGenericCapacityScope");
     }
 
-    private static void RunPartyRelicCapacityCore(ExactSearchExecutionRequest basis, string output, int measuredPopulation)
+    private static void RunPartyRelicCapacityCore(PreparedSearch basis, string output, int measuredPopulation)
     {
         if (measuredPopulation != 1024 && measuredPopulation != (1 << 18) && measuredPopulation != (1 << 20))
             throw new ArgumentOutOfRangeException(nameof(measuredPopulation));
         const string experiment = "mp-r3", logTag = "MP_R3";
-        var context = basis.CompiledSearch.Context;
+        var context = basis.Model.CompiledSearch.Context;
         var party = context.Party ?? throw new InvalidDataException("MpR3.RealPartyContextRequired");
         int players = party.Players.Count, checks = 0;
         void Check(bool pass, string label)
@@ -334,16 +334,15 @@ internal static partial class FamilyPhysicalMatrix
         SearchQuery Table(int slot, SearchQuery personal) => SearchQuery.Empty with {
             Players = party.Players.Select(p => new PlayerOfferQuery(p.PlayerSlotIndex, ModelKeySetFilter.Empty) {
                 Conditions = p.PlayerSlotIndex == slot ? personal : SearchQuery.Empty }).ToArray() };
-        ExactSearchExecutionRequest Compile(int slot, SearchQuery personal) => ExactSearchExecutionRequestFactory.Compile(
+        PreparedSearch Compile(int slot, SearchQuery personal) => SearchPreparationCompiler.Compile(
             SearchCompiler.Compile(Table(slot, personal), context), options).Plan ?? throw new InvalidDataException("MpR3.FactoryRejected");
-        ExactSearchExecutionRequest Child(ExactSearchExecutionRequest parent, int slot) => ExactSearchExecutionRequestFactory.ForPlayer(parent,
-            parent.CompiledSearch.PlayerSearches.Take(players).Single(p => p.Context.Authority.PlayerSlotIndex == slot));
+        SearchModel Child(PreparedSearch parent, int slot) => SearchPreparationCompiler.ForPlayer(parent.Model, parent.Model.CompiledSearch.PlayerSearches.Take(players).Single(p => p.Context.Authority.PlayerSlotIndex == slot));
         SearchQuery Pair(bool pinned = false) => SearchQuery.Empty with { OpeningRoute = new(bones),
             OpeningRouteRelicRequirement = new(bones, [arcane, large], pinned ? BonesRouteOrderMode.ExactOrder : BonesRouteOrderMode.AnyOrder) };
         SearchQuery WithTarget(SearchQuery query, ModelKey target) => query with { StructuredOpeningEffects = [new(large,
             NeowStructuredConditionKind.ExactUnorderedPair, NeowStructuredEffectScope.NestedRelics,
             NeowStructuredOutputKind.Relic, [target])] };
-        bool ContinuationNeutral(ModelKey key) => key.IsValid && VanillaRelicRewardEffects.TryGet(basis.ProfileId, key, out var effect) &&
+        bool ContinuationNeutral(ModelKey key) => key.IsValid && VanillaRelicRewardEffects.TryGet(basis.Model.ProfileId, key, out var effect) &&
             effect.NestedOnObtainPreservesRewardContinuation;
         ModelKey[] Nested(IEnumerable<PredictedEffectGroup> groups) => groups.SelectMany(g => g.OrderedItems)
             .Where(e => e.Kind == PredictedEffectKind.AddRelic && e.Relation == PredictedEffectRelation.NestedRelic &&
@@ -473,7 +472,7 @@ internal static partial class FamilyPhysicalMatrix
                 var replay = new CapsuleRelicReplay(child, route);
                 var positive = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance,
                     VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance, fixture.Start));
-                Check(replay.Matches(positive.RootHash) && ProductionExactSearchEvaluator.Evaluate(parent, positive).IsMatch,
+                Check(replay.Matches(positive.RootHash) && ProductionExactSearchEvaluator.Evaluate(parent.Model, positive).IsMatch,
                     "WholeTableExactPositive:" + fixture.Name);
                 bool? firstPass = null, secondPass = null;
                 if (fixture.Name is "GenericFirstRoute" or "GenericSecondRoute")
@@ -483,12 +482,12 @@ internal static partial class FamilyPhysicalMatrix
                     Check(fixture.Name == "GenericSecondRoute" ? firstPass == false && secondPass == true : firstPass == true,
                         "ActualForwardReverseWitness:" + fixture.Name);
                 }
-                using var gpu = RelicFamilyGpuExecutor.Create(rd, child, full);
+                using var gpu = RelicFamilyGpuExecutor.Create(rd, child.SnapshotFingerprint, full);
                 var batch = new SearchBatch(fixture.Start, oraclePopulation);
                 var expected = Enumerable.Range(0, oraclePopulation).Select(i => replay.Matches(Beta111Profile.Instance.ComputeRootSeed(
                     VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance, fixture.Start + (ulong)i)))).ToArray();
                 var cpuFamilies = FamilyExecutionCoordinator.CreateRegisteredFamilies(parent, false);
-                var execution = new FamilyExecutionContext(requiresGpu: false, failOnPhysicalRecovery: true, cpuWorkerCount: 16);
+                var execution = new FilterRuntimeServices(requiresGpu: false, failOnPhysicalRecovery: true, cpuWorkerCount: 16);
                 try
                 {
                     var cpu = cpuFamilies.Single(f => f.FamilyId == "R.Relic");
@@ -499,7 +498,7 @@ internal static partial class FamilyPhysicalMatrix
                         // CPU invocation can await worker permits. Start outside
                         // Godot's synchronization context before synchronously
                         // waiting; the RenderingDevice calls stay on this thread.
-                        var cpuResult = Task.Run(async () => await cpu.InvokeAsync(execution, new(batch, parent), input, default)
+                        var cpuResult = Task.Run(async () => await cpu.ExecuteAsync(execution, input, default)
                             .ConfigureAwait(false)).GetAwaiter().GetResult();
                         Check(cpuResult.EnumerateLogicalOrdinals().SequenceEqual(wanted), "RegisteredCpuFullPopulation:" + fixture.Name);
                         {

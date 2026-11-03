@@ -1,5 +1,11 @@
 namespace RolltheSpire2.Search.FamilyExecution;
 
+// A borrowed device workspace. It carries no candidate identity or RNG state.
+internal interface IPrivateGpuScratchLease { }
+
+internal readonly record struct PrivateDensePairOutcome(FamilyPrivateGpuOutcome Left,
+    FamilyPrivateGpuOutcome? Right, Exception? Failure, double ElapsedMs, double SharedDispatchMs);
+
 // Thin binding to one existing Family executor. It is neither a serialized stage
 // representation nor a scheduler: callers own an ordered list of whole Families.
 internal readonly record struct FamilyPrivateGpuOutcome(
@@ -17,7 +23,8 @@ internal sealed class FamilyPrivateGpuExecution(
     Func<SearchBatch, int, CancellationToken, FamilyPrivateGpuOutcome> invoke) : IDisposable
 {
     private bool _disposed;
-    internal NeowFamilyGpuExecutor? NeowExecutor => owner as NeowFamilyGpuExecutor;
+    internal IPrivateGpuScratchLease? ScratchLease { get; init; }
+    internal Func<FamilyPrivateGpuExecution, SearchBatch, SearchBatch, CancellationToken, PrivateDensePairOutcome>? DensePair { get; init; }
     internal string Device => device;
     internal double SetupMs => setupMs;
     internal FamilyPrivateGpuOutcome Execute(SearchBatch batch, int count, CancellationToken token)

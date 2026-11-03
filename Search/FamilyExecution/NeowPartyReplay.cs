@@ -9,24 +9,16 @@ internal static class NeowPartyReplay
     private static readonly ulong NicheHash = XxHash64.Hash("niche"u8, 0);
     private static readonly ulong TransformationsHash = XxHash64.Hash("transformations"u8, 0);
     private static readonly ulong PotionHash = XxHash64.Hash("combat_potion_generation"u8, 0);
-    internal static ReadOnlySpan<byte> Positives => [
-        Beta110FastRelicCatalog.ArcaneScroll, Beta110FastRelicCatalog.BoomingConch, Beta110FastRelicCatalog.FishingRod,
-        Beta110FastRelicCatalog.GoldenPearl, Beta110FastRelicCatalog.Kaleidoscope, Beta110FastRelicCatalog.LeadPaperweight,
-        Beta110FastRelicCatalog.LostCoffer, Beta110FastRelicCatalog.MassiveScroll, Beta110FastRelicCatalog.NeowsTorment,
-        Beta110FastRelicCatalog.NewLeaf, Beta110FastRelicCatalog.PhialHolster, Beta110FastRelicCatalog.PreciseScissors,
-        Beta110FastRelicCatalog.ScrollBoxes, Beta110FastRelicCatalog.WingedBoots];
-
     internal static NeowReplayObservation Observe(ulong root, NeowReplayPlan plan)
     {
         var authority = plan.Authority;
         byte curse = ObserveCurse(root, plan, out var rng);
         Span<byte> positive = stackalloc byte[17];
-        int count = 0;
-        foreach (byte id in Positives) if (NeowPartyOperators.IsPositiveAllowed(id, curse, authority)) positive[count++] = id;
-        if (curse != Beta110FastRelicCatalog.LargeCapsule)
-            positive[count++] = rng.NextBool() ? Beta110FastRelicCatalog.LavaRock : Beta110FastRelicCatalog.SmallCapsule;
-        positive[count++] = rng.NextBool() ? Beta110FastRelicCatalog.NutritiousOyster : Beta110FastRelicCatalog.StoneHumidifier;
-        positive[count++] = rng.NextBool() ? Beta110FastRelicCatalog.NeowsTalisman : Beta110FastRelicCatalog.Pomander;
+        var identity = authority.Identity.ForCurse(curse);
+        identity.FixedCandidates.CopyTo(positive);
+        int count = identity.FixedCandidates.Length;
+        foreach (var choice in identity.AppendChoices)
+            positive[count++] = rng.NextBool() ? choice.TrueCandidate : choice.FalseCandidate;
         rng.UnstableShuffle(positive[..count]);
         return CompleteObservation(root, plan, new(positive[0], positive[1], curse,
             Beta110FastRelicCatalog.InvalidId, Beta110FastRelicCatalog.InvalidId, default, true));

@@ -12,19 +12,29 @@ using RolltheSpire2.Search.Semantics;
 
 internal static class FamilyCpuOnlyChecks
 {
+    private static CpuFilterExecution Cpu(PreparedSearch request, string id, string revision, Func<ulong, bool> matcher,
+        int workers = 1, bool numericalRoots = false)
+    {
+        var body = new FilterBodyDescription(new PreparedFilter(id), revision, request.Model.ProfileId)
+        { CpuWorkers = workers, WindowCapacity = CpuFilterExecution.Capacity,
+            PerformanceProjection = compact => CpuFilterExecution.Describe(id, revision, workers, CpuFilterExecution.Capacity, numericalRoots, false, compact) };
+        return new(body, RuntimeProfileRegistry.Select(request.Model.Detection), matcher, numericalRoots);
+    }
+
     internal static int Run()
     {
         int checks = 0;
         void Check(bool pass, string reason) { if (!pass) throw new InvalidDataException(reason); checks++; }
         var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/v1/context.json");
         var workload = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/v1/cases/S-three-shops.json");
-        ExactSearchExecutionRequest Request(SearchQuery q)
+        PreparedSearch Request(SearchQuery q)
         {
-            var result = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(q, context.Context), workload.Options);
+            var result = SearchPreparationCompiler.Compile(SearchCompiler.Compile(q, context.Context), workload.Options);
             return result.Plan ?? throw new InvalidOperationException(result.Issue + ";conditions=" + string.Join(',', q.MerchantColorlessConditions));
         }
         var request = Request(workload.Query);
         var profile = Beta111Profile.Instance;
+        var cpuServices = new FilterRuntimeServices(false);
         string? rootsBefore = Environment.GetEnvironmentVariable("RT2_CPU_ROOTS");
         string? sBefore = Environment.GetEnvironmentVariable("RT2_S_CPU");
         string? workersBefore = Environment.GetEnvironmentVariable("RT2_CPU_WORKERS");
@@ -45,27 +55,30 @@ internal static class FamilyCpuOnlyChecks
                 foreach (string mode in new[] { "baseline", "dense" })
                 {
                     Environment.SetEnvironmentVariable("RT2_CPU_ROOTS", mode);
-                    var cpu = new FamilyCpuExecution(request, "CPU.Check", "Test", workers: int.Parse(Environment.GetEnvironmentVariable("RT2_CPU_WORKERS") ?? "1"), numericalRoots: Environment.GetEnvironmentVariable("RT2_CPU_ROOTS") != "baseline");
                     int visited = 0;
-                    var output = cpu.Execute(new(batch, request), input, CancellationToken.None, root =>
-                    { Check(root == expectedRoots[visited++], "root identity: " + mode); return (root & 7) == 0; }).ExportAbi1().ToArray();
+                    var cpu = Cpu(request, "CPU.Check", "Test", root =>
+                    { Check(root == expectedRoots[visited++], "root identity: " + mode); return (root & 7) == 0; },
+                        workers: int.Parse(Environment.GetEnvironmentVariable("RT2_CPU_WORKERS") ?? "1"), numericalRoots: Environment.GetEnvironmentVariable("RT2_CPU_ROOTS") != "baseline");
+                    var output = cpu.FilterAsync(cpuServices, input, CancellationToken.None).GetAwaiter().GetResult().ExportAbi1().ToArray();
                     baseline ??= output;
                     Check(output.SequenceEqual(baseline), "CPU ordered population");
                     var empty = FamilyCandidateSet.Dense(new(first, 0));
-                    Check(cpu.Execute(new(empty.Batch, request), empty, CancellationToken.None, _ => true).Count == 0, "zero");
+                    Check(cpu.FilterAsync(cpuServices, empty, CancellationToken.None).GetAwaiter().GetResult().Count == 0, "zero");
                     bool canceled = false;
-                    try { cpu.Execute(new(batch, request), input, new CancellationToken(true), _ => true); }
+                    try { cpu.FilterAsync(cpuServices, input, new CancellationToken(true)).GetAwaiter().GetResult(); }
                     catch (OperationCanceledException) { canceled = true; }
                     Check(canceled, "cancel");
                     foreach (int workers in new[] { 1, 4, 8 })
                     {
                         Environment.SetEnvironmentVariable("RT2_CPU_WORKERS", workers.ToString());
                         Environment.SetEnvironmentVariable("RT2_CPU_PARTITIONED", "1");
-                        var parallel = new FamilyCpuExecution(request, "CPU.Check", "Test", workers: int.Parse(Environment.GetEnvironmentVariable("RT2_CPU_WORKERS") ?? "1"), numericalRoots: Environment.GetEnvironmentVariable("RT2_CPU_ROOTS") != "baseline");
-                        var actual = parallel.Execute(new(batch, request), input, CancellationToken.None, root => (root & 7) == 0);
+                        bool inject = false;
+                        var parallel = Cpu(request, "CPU.Check", "Test", root => inject ? throw new InvalidOperationException("injected") : (root & 7) == 0, workers: int.Parse(Environment.GetEnvironmentVariable("RT2_CPU_WORKERS") ?? "1"), numericalRoots: Environment.GetEnvironmentVariable("RT2_CPU_ROOTS") != "baseline");
+                        var actual = parallel.FilterAsync(cpuServices, input, CancellationToken.None).GetAwaiter().GetResult();
                         Check(actual.ExportAbi1().Span.SequenceEqual(baseline), "partitioned ABI1");
                         bool faulted = false;
-                        try { parallel.Execute(new(batch, request), input, CancellationToken.None, _ => throw new InvalidOperationException("injected")); }
+                        inject = true;
+                        try { parallel.FilterAsync(cpuServices, input, CancellationToken.None).GetAwaiter().GetResult(); }
                         catch (Exception ex) when (FamilyCpuMatchException.IsRecoverable(ex))
                         {
                             faulted = FamilyCpuMatchException.Matches(ex).All(failure =>
@@ -74,7 +87,7 @@ internal static class FamilyCpuOnlyChecks
                         }
                         Check(faulted, "partition failure propagates");
                         bool disabled = false;
-                        try { parallel.Execute(new(batch, request), input, CancellationToken.None, _ => true); }
+                        try { parallel.FilterAsync(cpuServices, input, CancellationToken.None).GetAwaiter().GetResult(); }
                         catch (InvalidOperationException) { disabled = true; }
                         Check(disabled, "faulted invocation cannot resume");
                     }
@@ -82,8 +95,8 @@ internal static class FamilyCpuOnlyChecks
                     Environment.SetEnvironmentVariable("RT2_CPU_PARTITIONED", "0");
                 }
             }
-            var authority = Beta111MerchantColorlessAuthority.From(request.Authority);
-            var cases = new List<IReadOnlyList<MerchantColorlessSlotCondition>> { request.Evaluation.MerchantColorlessConditions };
+            var authority = Beta111MerchantColorlessAuthority.From(request.Model.Authority);
+            var cases = new List<IReadOnlyList<MerchantColorlessSlotCondition>> { request.Model.Evaluation.MerchantColorlessConditions };
             for (int ordinal = 1; ordinal <= 5; ordinal++)
             {
                 var u = new MerchantColorlessSlotCondition(ordinal, MerchantColorlessSlot.Uncommon, authority.UncommonPool[ordinal % authority.UncommonPool.Count]);
@@ -95,7 +108,7 @@ internal static class FamilyCpuOnlyChecks
             foreach (var conditions in cases)
             {
                 var q = workload.Query with { MerchantColorlessConditions = conditions, MerchantColorlessSequenceConditions = [] };
-                var compiled = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(q, context.Context), workload.Options);
+                var compiled = SearchPreparationCompiler.Compile(SearchCompiler.Compile(q, context.Context), workload.Options);
                 if (compiled.Plan is null)
                 {
                     Check(compiled.Issue.Contains("MerchantColorlessSlotConflict", StringComparison.Ordinal) &&
@@ -104,18 +117,18 @@ internal static class FamilyCpuOnlyChecks
                     continue;
                 }
                 var r = compiled.Plan;
-                var fast = MerchantShopColorlessCpuPlan.TryCompile(r);
+                var fast = MerchantShopColorlessCpuPlan.TryCompile(r.Model);
                 Check(fast != null, "S slot compile");
                 for (int i = 0; i < 2048; i++)
                 {
                     ulong root = (ulong)random.NextInt64() ^ ((ulong)random.NextInt64() << 32);
-                    bool expected = MerchantShopColorlessQueryEvaluator.Evaluate(r.Evaluation, root, r.Authority).Disposition != SearchDisposition.NoMatch;
+                    bool expected = MerchantShopColorlessQueryEvaluator.Evaluate(r.Model.Evaluation, root, r.Model.Authority).Disposition != SearchDisposition.NoMatch;
                     Check(fast!.Matches(root) == expected, "S exact predicate parity");
                 }
             }
             var sequence = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>(
                 "tools/ProductionSearchHost/Corpus/family-pricing-matrix-v1/S-unordered.json");
-            Check(MerchantShopColorlessCpuPlan.TryCompile(Request(sequence.Query)) is not null,
+            Check(MerchantShopColorlessCpuPlan.TryCompile(Request(sequence.Query).Model) is not null,
                 "S sequence compiles numerical realization before execution");
             int sequenceCases = 0;
             for (int horizon = 1; horizon <= 5; horizon++)
@@ -131,12 +144,12 @@ internal static class FamilyCpuOnlyChecks
                     if(authored.All(t=>t is null)) continue; // compiler drops empty Product conditions
                     var c = new MerchantColorlessSequenceSearchCondition(horizon,order,lane,authored);
                     var q = sequence.Query with { MerchantColorlessConditions = [], MerchantColorlessSequenceConditions=[c] };
-                    var r = Request(q); var fast=MerchantShopColorlessCpuPlan.TryCompile(r)!;
+                    var r = Request(q); var fast=MerchantShopColorlessCpuPlan.TryCompile(r.Model)!;
                     Check(fast.Matches(witness),"S positive sequence witness");
                     for(int i=0;i<512;i++)
                     {
                         ulong root=(ulong)random.NextInt64();
-                        Check(fast.Matches(root)==(MerchantShopColorlessQueryEvaluator.Evaluate(r.Evaluation,root,r.Authority).Disposition!=SearchDisposition.NoMatch),"S ordered/unordered wildcard parity");
+                        Check(fast.Matches(root)==(MerchantShopColorlessQueryEvaluator.Evaluate(r.Model.Evaluation,root,r.Model.Authority).Disposition!=SearchDisposition.NoMatch),"S ordered/unordered wildcard parity");
                     }
                     sequenceCases++;
                 }
@@ -154,29 +167,29 @@ internal static class FamilyCpuOnlyChecks
             }
             foreach(var q in mixedQueries)
             {
-                var r=Request(q);var fast=MerchantShopColorlessCpuPlan.TryCompile(r)!;
+                var r=Request(q);var fast=MerchantShopColorlessCpuPlan.TryCompile(r.Model)!;
                 for(ulong root=0;root<4096;root++)
-                    Check(fast.Matches(root)==(MerchantShopColorlessQueryEvaluator.Evaluate(r.Evaluation,root,r.Authority).Disposition!=SearchDisposition.NoMatch),"S mixed slot/sequence/lanes/multiplicity parity");
+                    Check(fast.Matches(root)==(MerchantShopColorlessQueryEvaluator.Evaluate(r.Model.Evaluation,root,r.Model.Authority).Disposition!=SearchDisposition.NoMatch),"S mixed slot/sequence/lanes/multiplicity parity");
             }
             CheckDuplicateMerchantPools(context.Context, workload.Options, Check);
             foreach(string id in new[]{"S-O5","S-U5","S-U3","S-high-output"})
             {
                 var w=ProductionSearchReplay.Read<ProductionSearchReplayWorkload>($"tools/ProductionSearchHost/Corpus/family-cost-closure-v1/{id}.json");
-                var r=Request(w.Query);var fast=MerchantShopColorlessCpuPlan.TryCompile(r)!;
+                var r=Request(w.Query);var fast=MerchantShopColorlessCpuPlan.TryCompile(r.Model)!;
                 foreach(bool compact in new[]{false,true})
                 {
                     var batch=new SearchBatch(0,8193);
                     var input=compact?FamilyCandidateSet.FromAbi1(batch,Enumerable.Range(0,8193).Where(i=>i%3==0).Select(i=>(ulong)i).ToArray()):FamilyCandidateSet.Dense(batch);
-                    var cpu=new FamilyCpuExecution(r,"S.MerchantShopColorless","SequenceCheck",numericalRoots:true);
-                    var output=cpu.Execute(new(batch,r),input,CancellationToken.None,fast.Matches);
-                    var expected=input.EnumerateLogicalOrdinals().Where(i=>MerchantShopColorlessQueryEvaluator.Evaluate(r.Evaluation,profile.ComputeRootSeed(VisibleSeedCandidateCodec.FormatOrdinal(profile,i)),r.Authority).Disposition!=SearchDisposition.NoMatch).ToArray();
+                    var cpu=Cpu(r,"S.MerchantShopColorless","SequenceCheck",fast.Matches,numericalRoots:true);
+                    var output=cpu.FilterAsync(cpuServices,input,CancellationToken.None).GetAwaiter().GetResult();
+                    var expected=input.EnumerateLogicalOrdinals().Where(i=>MerchantShopColorlessQueryEvaluator.Evaluate(r.Model.Evaluation,profile.ComputeRootSeed(VisibleSeedCandidateCodec.FormatOrdinal(profile,i)),r.Model.Authority).Disposition!=SearchDisposition.NoMatch).ToArray();
                     Check(output.ExportAbi1().Span.SequenceEqual(expected),"S sequence dense/compact tail ABI1 reference parity");
                     var zero=new SearchBatch(0,0);
-                    Check(cpu.Execute(new(zero,r),FamilyCandidateSet.Dense(zero),CancellationToken.None,fast.Matches).Count==0,"S sequence zero");
+                    Check(cpu.FilterAsync(cpuServices,FamilyCandidateSet.Dense(zero),CancellationToken.None).GetAwaiter().GetResult().Count==0,"S sequence zero");
                     using var cancel=new CancellationTokenSource();cancel.Cancel();
-                    bool cancelled=false;try{cpu.Execute(new(batch,r),input,cancel.Token,fast.Matches);}catch(OperationCanceledException){cancelled=true;}
+                    bool cancelled=false;try{cpu.FilterAsync(cpuServices,input,cancel.Token).GetAwaiter().GetResult();}catch(OperationCanceledException){cancelled=true;}
                     Check(cancelled,"S sequence cancellation");
-                    Check(cpu.Execute(new(batch,r),input,CancellationToken.None,fast.Matches).ExportAbi1().Span.SequenceEqual(expected),"S sequence cancel reuse");
+                    Check(cpu.FilterAsync(cpuServices,input,CancellationToken.None).GetAwaiter().GetResult().ExportAbi1().Span.SequenceEqual(expected),"S sequence cancel reuse");
                 }
             }
             Console.WriteLine($"S_SEQUENCE_PARITY PASS cases={sequenceCases};multiplicity=true;wildcards=true;denseCompactTail=true;cancelReuse=true");
@@ -185,6 +198,7 @@ internal static class FamilyCpuOnlyChecks
         }
         finally
         {
+            cpuServices.DisposeAsync().GetAwaiter().GetResult();
             Environment.SetEnvironmentVariable("RT2_CPU_ROOTS", rootsBefore);
             Environment.SetEnvironmentVariable("RT2_S_CPU", sBefore);
             Environment.SetEnvironmentVariable("RT2_CPU_WORKERS", workersBefore);
@@ -227,9 +241,9 @@ internal static class FamilyCpuOnlyChecks
             // Do not read a user's selection file during the check.
             Environment.SetEnvironmentVariable("RT2_PRIVATE_ORDINAL_SELECTION",
                 Path.Combine(Path.GetTempPath(), "rt2-fp64-planning-absent-" + Guid.NewGuid().ToString("N")));
-            ExactSearchExecutionRequest Request(SearchQuery query, SearchContext? context = null, bool skipExact = false)
+            PreparedSearch Request(SearchQuery query, SearchContext? context = null, bool skipExact = false)
             {
-                var result = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context ?? captured.Context),
+                var result = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context ?? captured.Context),
                     donor.Options with { ScanCount = 16, WorkerCount = 1, SkipExactValidation = skipExact });
                 return result.Plan ?? throw new InvalidDataException("FP64 planning fixture: " + result.Issue);
             }
@@ -241,7 +255,7 @@ internal static class FamilyCpuOnlyChecks
                 check(false, "FP64 request was not explicitly declined: " + reason);
             }
             bool HasFloat64Gpu(FamilyExecutionPlan plan) => plan.OrderedFamilies.Any(UsesFloat64);
-            bool UsesFloat64(IFamilyInvocation family) =>
+            bool UsesFloat64(FilterBodyDescription family) =>
                 (family.GpuNumericRequirements & (GpuNumericRequirements.Float64 | GpuNumericRequirements.Unspecified)) != 0;
             void SamePlan(FamilyExecutionPlan original, FamilyExecutionPlan actual, string reason)
             {
@@ -252,7 +266,7 @@ internal static class FamilyCpuOnlyChecks
                         .SequenceEqual(actual.Stages.Select(s => string.Join(',', s.Coverage))) &&
                     original.FilterRemainders.SequenceEqual(actual.FilterRemainders), reason);
             }
-            void CheckSkippedExact(ExactSearchExecutionRequest request)
+            void CheckSkippedExact(PreparedSearch request)
             {
                 var original = FamilyExecutionCoordinator.Plan(request, gpuAvailable: true, gpuFloat64Available: true);
                 if (HasFloat64Gpu(original))
@@ -261,7 +275,7 @@ internal static class FamilyCpuOnlyChecks
                 else SamePlan(original, FamilyExecutionCoordinator.Plan(request, gpuAvailable: true, gpuFloat64Available: false),
                     "SkipExact retains a selected allocation that was already CPU/integer-only");
             }
-            void CheckExplicitControl(ExactSearchExecutionRequest request, bool allocationSelection = true)
+            void CheckExplicitControl(PreparedSearch request, bool allocationSelection = true)
             {
                 FamilyExecutionPlan? original = null;
                 Exception? originalFailure = null;
@@ -302,22 +316,23 @@ internal static class FamilyCpuOnlyChecks
                 TransformationAggregate = new(TransformationOpening.BonesLeafyNewLeaf, TransformationPickupOrder.Any,
                     false, false, false, TransformationAggregatePredicate.RareCountAtLeast, 1, []) });
             check(FamilyExecutionCoordinator.CreateRegisteredFamilies(Request(cases[0]), gpuAvailable: true, gpuFloat64Available: true)
-                .Any(f => f is NeowFamily && f.ConditionPerformance.UsesGpu),
+                .Any(f => f.FamilyId == "N.Neow" && f.UsesGpu),
                 "unverified non-Metal allowance retains the existing N GPU candidate");
             var compatibleNeow = FamilyExecutionCoordinator.CreateRegisteredFamilies(Request(cases[0]),
-                gpuAvailable: true, gpuFloat64Available: false).OfType<NeowFamily>().Single();
-            check(compatibleNeow.GpuPlan?.NumericalVariant == NeowGpuNumericalVariant.IntegerUnitFloat &&
-                ((IFamilyInvocation)compatibleNeow).GpuNumericRequirements == GpuNumericRequirements.Int64 &&
-                !((IFamilyInvocation)compatibleNeow).CanBindPrivateSerial &&
-                compatibleNeow.QuotePhysicalWork(new(false, false, 65536)) is null &&
+                gpuAvailable: true, gpuFloat64Available: false).Single(body => body.FamilyId == "N.Neow");
+            check(((FilterBodyDescription)compatibleNeow).GpuNumericRequirements == GpuNumericRequirements.Int64 &&
+                !((FilterBodyDescription)compatibleNeow).CanBindPrivateSerial &&
+                (compatibleNeow.QuotePhysicalWork(new(false, false, 65536)) is not { } compatibleQuote ||
+                    FamilyCoarsePricing.IsEstimate(compatibleQuote) && !FamilyCanonicalMeasuredCost.IsCanonicalQuote(compatibleQuote) &&
+                    compatibleQuote.Evidence.Contains("NumericalVariant=IntegerUnitFloat", StringComparison.Ordinal)) &&
                 compatibleNeow.ConditionPerformance.PhysicalImplementationRevision.Contains("IntegerUnitFloat", StringComparison.Ordinal),
-                "compatible N has an actual integer body, independent revision, no native price or private binding");
+                "compatible N has an actual integer body, independent revision, no native measured price or private binding");
             foreach (var query in cases)
             {
                 var request = Request(query);
-                string originalQuery = System.Text.Json.JsonSerializer.Serialize(request.CompiledSearch.NormalizedQuery, ProductionSearchReplay.JsonOptions);
+                string originalQuery = System.Text.Json.JsonSerializer.Serialize(request.Model.CompiledSearch.NormalizedQuery, ProductionSearchReplay.JsonOptions);
                 var registered = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, gpuAvailable: true, gpuFloat64Available: false);
-                check(registered.Any(f => f is CapsuleRelicFamily || f.FamilyId is not ("R.Relic" or "S.MerchantShopColorless")),
+                check(registered.Any(f => f.FamilyId == "R.Relic" && NeowReplayPlan.HasCapsule(request.Model) || f.FamilyId is not ("R.Relic" or "S.MerchantShopColorless")),
                     "affected planning case actually retains FP64-family query work");
                 check(registered.All(f => !UsesFloat64(f)),
                     "restricted registration uses actual integer numerical bodies");
@@ -326,7 +341,7 @@ internal static class FamilyCpuOnlyChecks
                     "default/priced/fused alternatives cannot recreate an FP64 GPU stage");
                 check(selected.DecisionEvidence.Any(e => e.Contains("GpuFloat64Unavailable", StringComparison.Ordinal)) &&
                     !selected.FinalValidationSkipped && originalQuery == System.Text.Json.JsonSerializer.Serialize(
-                        request.CompiledSearch.NormalizedQuery, ProductionSearchReplay.JsonOptions),
+                        request.Model.CompiledSearch.NormalizedQuery, ProductionSearchReplay.JsonOptions),
                     "capability fallback discloses cause and preserves complete authored query for Exact");
                 // In particular, the existing BonesK fixture exercises a fused
                 // same-route filter whose output can be stricter than separate
@@ -340,7 +355,7 @@ internal static class FamilyCpuOnlyChecks
                 var request = Request(query, skipExact: true);
                 var registered = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, gpuAvailable: true, gpuFloat64Available: false);
                 check(registered.Count == 1 && registered[0].ConditionPerformance.UsesGpu &&
-                    registered[0] is RelicFamily or MerchantShopColorlessFamily,
+                    registered[0].FamilyId is "R.Relic" or "S.MerchantShopColorless",
                     "integer-only R/S remain GPU candidates even with Exact skipped");
                 var selected = FamilyExecutionCoordinator.Plan(request, gpuAvailable: true, gpuFloat64Available: false);
                 check(selected.FinalValidationSkipped, "integer-only request retains authored SkipExact choice");
@@ -448,28 +463,73 @@ internal static class FamilyCpuOnlyChecks
                     var query = (shared ? conditions : SearchQuery.Empty) with { Players = players };
                     var request = Request(query, partyContext);
                     var native = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, true, true)
-                        .OfType<PartyFamily>().Single(f => f.FamilyId == familyId);
+                        .Single(f => f.FamilyId == familyId);
                     var integer = FamilyExecutionCoordinator.CreateRegisteredFamilies(request, true, false)
-                        .OfType<PartyFamily>().Single(f => f.FamilyId == familyId);
+                        .Single(f => f.FamilyId == familyId);
                     bool changedNumerics = familyId is not "S.MerchantShopColorless" && conditions != ordinaryRelics;
-                    check(integer.PersonalStages.Count() == 1 && integer.ConditionPerformance.UsesGpu &&
-                        ((IFamilyInvocation)integer).GpuNumericRequirements == GpuNumericRequirements.Int64,
+                    check(integer.PhysicalBodies.Count == 1 && integer.ConditionPerformance.UsesGpu &&
+                        ((FilterBodyDescription)integer).GpuNumericRequirements == GpuNumericRequirements.Int64 &&
+                        integer.Coverage.ToHashSet().SetEquals(native.Coverage),
                         "single personal/shared " + familyId + " remains an executable public integer GPU wrapper");
                     foreach (bool compact in new[] { false, true })
                     {
-                        var nativeQuote = native.QuoteUnit(1048576, compact, new HashSet<string>());
-                        var integerQuote = integer.QuoteUnit(1048576, compact, new HashSet<string>());
+                        var nativeQuote = native.Cost.CompleteCallQuote?.Invoke(new(compact, false, 1048576), new HashSet<string>());
+                        var integerQuote = integer.Cost.CompleteCallQuote?.Invoke(new(compact, false, 1048576), new HashSet<string>());
                         if (nativeQuote is not null) retainedNativeQuotes++;
                         if (changedNumerics)
                         {
-                            var performance = GpuCostSnapshot.ComputationReference(GpuCostCalibration.Capture(), integer,
+                            var geometry = new FamilyPhysicalQuoteRequest(compact, false, 1048576);
+                            var passed = new HashSet<string>();
+                            var child = integer.PhysicalBodies.Single();
+                            var childQuote = child.QuotePhysicalWork(geometry, passed);
+                            var physicalQuote = integer.QuotePhysicalWork(geometry, passed);
+                            var emptyCosts = new GpuCostSnapshot([]);
+                            var performance = GpuCostSnapshot.ComputationReference(emptyCosts, integer,
                                 integer.ResolveConditionPerformance(compact), compact);
-                            check(integerQuote is null && integer.QuotePhysicalWork(new(compact, false, 1048576)) is null &&
-                                performance.CurrentQueryReference == 0 && performance.EvidenceSource == FamilyPerformanceEvidenceSource.Unavailable &&
-                                integer.ResolveConditionPerformance(compact).PhysicalImplementationRevision.Contains(".IntegerRne.20261025.v1", StringComparison.Ordinal) &&
-                                integer.ResolveConditionPerformance(compact).Evidence.Contains("UnmeasuredIntegerRneWrapper", StringComparison.Ordinal) &&
+                            Console.WriteLine("INTEGER_PARTY_QUOTE_DIAGNOSTIC " + System.Text.Json.JsonSerializer.Serialize(new {
+                                familyId, compact, NativeQuote = nativeQuote?.ToString(), IntegerQuote = integerQuote?.ToString(),
+                                PhysicalQuote = physicalQuote?.ToString(),
+                                performance.CurrentQueryReference, performance.EvidenceSource,
+                                integer.ResolveConditionPerformance(compact).PhysicalImplementationRevision,
+                                integer.ResolveConditionPerformance(compact).Evidence }));
+                            check(integer.ResolveConditionPerformance(compact).PhysicalImplementationRevision.Contains(".IntegerRne.20261025.v1", StringComparison.Ordinal) &&
+                                !child.Cost.PartyChild.AllowsHistoricalEnvelope &&
                                 !native.ResolveConditionPerformance(compact).PhysicalImplementationRevision.Contains(".IntegerRne.", StringComparison.Ordinal),
-                                familyId + " integer wrapper keeps independent revision and disclosed missing price in both input modes");
+                                familyId + " integer child forbids historical wrapper pricing and keeps an independent numerical revision in both input modes");
+                            if (childQuote is null)
+                                check(integerQuote is null && physicalQuote is null && performance.CurrentQueryReference == 0 &&
+                                    performance.EvidenceSource == FamilyPerformanceEvidenceSource.Unavailable,
+                                    familyId + " missing child quote remains unavailable without a historical wrapper substitution");
+                            else
+                            {
+                                double? survival = child.ResolveSurvival(passed).SurvivalProbability;
+                                double bound = survival is >= 0 and <= 1 ? survival.Value : 1;
+                                double? expected = FamilyCoarsePricing.PublicMilliseconds(childQuote, geometry, bound);
+                                string childEvidence = "Child0=" + childQuote.Shape + ";InputReach=1;OwnOutputEnvelope=" +
+                                    bound.ToString("G17") + ";" + childQuote.Evidence;
+                                bool SameCost(double actual) => expected is > 0 && double.IsFinite(expected.Value) &&
+                                    double.IsFinite(actual) && Math.Abs(actual - expected.Value) <= Math.Max(1, expected.Value) * 1e-12;
+                                check(integerQuote is not null && physicalQuote is not null && SameCost(integerQuote.Milliseconds) &&
+                                    SameCost(FamilyCoarsePricing.PublicMilliseconds(physicalQuote, geometry, bound) ?? double.NaN) &&
+                                    integerQuote.SetupMilliseconds == childQuote.SetupMilliseconds &&
+                                    integerQuote.Evidence.StartsWith(FamilyCoarsePricing.Revision +
+                                        ";PriceQuality=Estimate;SingleFamilyWrapper;WeightedOwnChildren;", StringComparison.Ordinal) &&
+                                    integerQuote.Evidence.Contains(";PersonalStagesUseTheirOwnUnconditionalS;", StringComparison.Ordinal) &&
+                                    integerQuote.Evidence.EndsWith(childEvidence, StringComparison.Ordinal) &&
+                                    !integerQuote.Evidence.Contains("HistoricalWrapperCoefficients", StringComparison.Ordinal) &&
+                                    !integerQuote.Evidence.Contains("HistoricalGpuReferenceEnvelope", StringComparison.Ordinal) &&
+                                    !FamilyCanonicalMeasuredCost.IsCanonicalQuote(physicalQuote) && FamilyCoarsePricing.IsEstimate(physicalQuote),
+                                    familyId + " integer complete-call estimate is its own child's public cost and unconditional survival, not a native wrapper measurement");
+                                var computationQuote = FamilyPhysicalQuote.Computation(integer, geometry, emptyCosts, passed);
+                                check(computationQuote is not null && FamilyCoarsePricing.IsEstimate(computationQuote) &&
+                                    !FamilyCanonicalMeasuredCost.IsCanonicalQuote(computationQuote) &&
+                                    !computationQuote.Evidence.Contains("HistoricalWrapperCoefficients", StringComparison.Ordinal) &&
+                                    performance.CurrentQueryReference > 0 && double.IsFinite(performance.CurrentQueryReference) &&
+                                    performance.EvidenceSource == FamilyPerformanceEvidenceSource.Reference &&
+                                    performance.Evidence.Contains("WeightedOwnChildren", StringComparison.Ordinal) &&
+                                    performance.Evidence.Contains("ComputationOnly", StringComparison.Ordinal),
+                                    familyId + " empty calibration snapshot retains an explicitly estimated computation reference without canonical measurement credit");
+                            }
                         }
                         else
                             check(nativeQuote == integerQuote && native.ResolveConditionPerformance(compact) == integer.ResolveConditionPerformance(compact),
@@ -477,7 +537,7 @@ internal static class FamilyCpuOnlyChecks
                     }
                     var selected = FamilyExecutionCoordinator.Plan(request, true, gpuFloat64Available: false);
                     check(!HasFloat64Gpu(selected) && selected.Stages.Count > 0 && !selected.FinalValidationSkipped,
-                        "missing wrapper quote does not reject compatible " + familyId + " execution or skip Exact");
+                        "estimated or unavailable wrapper quote does not reject compatible " + familyId + " execution or skip Exact");
                 }
                 check(retainedNativeQuotes > 0, "reference-device native wrapper evidence remains usable");
             }
@@ -491,17 +551,17 @@ internal static class FamilyCpuOnlyChecks
                 new(1, ModelKeySetFilter.Empty) { Conditions = donor.Query }] };
             var partyRequest = Request(partyQuery, partyContext);
             var partyRegistered = FamilyExecutionCoordinator.CreateRegisteredFamilies(partyRequest, gpuAvailable: true, gpuFloat64Available: false);
-            check(partyRegistered.OfType<NeowFamily.PartyInitial>().Any() &&
-                partyRegistered.OfType<NeowFamily.PartyInitial>().All(f => f.ConditionPerformance.UsesGpu &&
-                    ((IFamilyInvocation)f).GpuNumericRequirements == GpuNumericRequirements.Int64 &&
+            check(partyRegistered.Where(body => body.FamilyId == "N.Neow" && body.PlayersCount > 1).Any() &&
+                partyRegistered.Where(body => body.FamilyId == "N.Neow" && body.PlayersCount > 1).All(f => f.ConditionPerformance.UsesGpu &&
+                    ((FilterBodyDescription)f).GpuNumericRequirements == GpuNumericRequirements.Int64 &&
                     f.ConditionPerformance.PhysicalImplementationRevision.Contains(".Public.", StringComparison.Ordinal) &&
                     f.ConditionPerformance.PhysicalImplementationRevision.Contains("IntegerUnitFloat", StringComparison.Ordinal)) &&
-                partyRegistered.OfType<PartyFamily>().Where(f => f.FamilyId == "S.MerchantShopColorless")
-                    .SelectMany(f => f.PersonalStages).Any(s => s.Family.ConditionPerformance.UsesGpu),
+                partyRegistered.Where(f => f.FamilyId == "S.MerchantShopColorless")
+                    .SelectMany(f => f.PhysicalBodies).Any(child => child.UsesGpu),
                 "party N selects public integer GPU while independent integer S remains eligible");
             var partyPlan = FamilyExecutionCoordinator.Plan(partyRequest, gpuAvailable: true, gpuFloat64Available: false);
-            check(!HasFloat64Gpu(partyPlan) && partyPlan.OrderedFamilies.Any(f => f is NeowFamily.PartyInitial &&
-                f.ConditionPerformance.UsesGpu),
+            check(!HasFloat64Gpu(partyPlan) && partyPlan.OrderedFamilies.Any(f => f.FamilyId == "N.Neow" && f.PlayersCount > 1 &&
+                f.UsesGpu),
                 "party private/fused paths inherit compatible child registration");
             // Compatible children in PartyFamily must retain the cause of
             // their physical selection even when there is no N table wrapper.
@@ -519,7 +579,9 @@ internal static class FamilyCpuOnlyChecks
                 RolltheSpire2.Core.Events.Beta111EventResultCatalog.TrashHeapGrabCards[0])] };
             var cpuOnlyEvent = Request(eventQuery, missingEventAuthority, skipExact: true);
             var eventRegistration = FamilyExecutionCoordinator.CreateRegisteredFamilies(cpuOnlyEvent, gpuAvailable: true, gpuFloat64Available: true);
-            check(eventRegistration.OfType<EventResultFamily>().Any(f => !f.Plan.NumericalSupported && !f.Plan.GpuSupported) &&
+            check(EventResultFamily.TryPrepare(cpuOnlyEvent.Model, FilterExecutionPreferences.From(cpuOnlyEvent.RunOptions), out var eventPreparation) &&
+                eventPreparation is { Plan.NumericalSupported: false, Plan.GpuSupported: false } &&
+                eventRegistration.Any(f => f.FamilyId == EventResultFamily.Id && f.PhysicalRevision == eventPreparation.Body.PhysicalRevision) &&
                 eventRegistration.All(f => !f.ConditionPerformance.UsesGpu),
                 "missing event catalog creates an intrinsically CPU-only conservative E filter");
             var originalEvent = FamilyExecutionCoordinator.Plan(cpuOnlyEvent, gpuAvailable: true, gpuFloat64Available: true);
@@ -581,16 +643,16 @@ internal static class FamilyCpuOnlyChecks
 
             void Verify(SearchQuery query)
             {
-                var result = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context), options);
+                var result = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context), options);
                 var request = result.Plan ?? throw new InvalidDataException("S duplicate pool factory: " + result.Issue);
-                var fast = MerchantShopColorlessCpuPlan.TryCompile(request);
+                var fast = MerchantShopColorlessCpuPlan.TryCompile(request.Model);
                 check(fast is not null, "S duplicate pool numerical realization admitted");
-                check(MerchantShopColorlessQueryEvaluator.Evaluate(request.Evaluation, witness, request.Authority).Disposition == SearchDisposition.Match &&
+                check(MerchantShopColorlessQueryEvaluator.Evaluate(request.Model.Evaluation, witness, request.Model.Authority).Disposition == SearchDisposition.Match &&
                     fast!.Matches(witness), "S duplicate source positive oracle witness");
                 foreach (ulong root in new[] { 0UL, 1UL, ulong.MaxValue, 1UL << 63 }.Concat(
                     Enumerable.Range(0, 512).Select(_ => (ulong)random.NextInt64() ^ ((ulong)random.NextInt64() << 32))))
                 {
-                    var expected = MerchantShopColorlessQueryEvaluator.Evaluate(request.Evaluation, root, request.Authority).Disposition;
+                    var expected = MerchantShopColorlessQueryEvaluator.Evaluate(request.Model.Evaluation, root, request.Model.Authority).Disposition;
                     check(expected is SearchDisposition.Match or SearchDisposition.NoMatch, "S duplicate oracle remains exact");
                     check(fast!.Matches(root) == (expected == SearchDisposition.Match), "S duplicate source ModelKey oracle parity");
                 }

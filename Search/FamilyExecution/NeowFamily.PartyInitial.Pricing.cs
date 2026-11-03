@@ -33,9 +33,9 @@ internal sealed partial class NeowFamily
                         count * Math.Max(1, work.Routes) * (12 * (work.Draws + burns) + .3 * work.PoolVisits + 2 * work.Comparisons);
                 }
                 var quote = FamilyCoarsePricing.Cpu(FamilyId, "N.PartyInitial.Cpu", ns,
-                    FamilyCpuExecution.ConfiguredWorkers(_request), geometry,
+                    _workers, geometry,
                     basis + $";OfferSlots={_cpuPlayers.Count};PredicateParts={_cpuPlans.Count};ArrivalAlternatives={arrivals};" +
-                    "CpuOwnReplayAnchors=25,210ns;WorkerRatioIsFamilyReferenceNotPartyMeasurement", _cpu.WindowCapacity);
+                    "CpuOwnReplayAnchors=25,210ns;WorkerRatioIsFamilyReferenceNotPartyMeasurement", CpuCapacity);
                 if (quote is null) return null;
                 // Historical wrapper floor is a conservative scheduling reference,
                 // not a newly measured v6/B65536 worker/arrival combination.

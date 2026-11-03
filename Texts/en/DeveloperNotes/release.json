@@ -4,6 +4,18 @@
   "Blocks": [
     {
       "Type": "Heading",
+      "Text": "RolltheSpire2 1.4.1"
+    },
+    {
+      "Type": "Callout",
+      "Text": "Fixed some performance issues and improved the execution architecture."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "I’ll pause regular RT2 updates after 1.4.1 and look into compatibility once the next game update is out."
+    },
+    {
+      "Type": "Heading",
       "Text": "RolltheSpire2 1.4.0"
     },
     {

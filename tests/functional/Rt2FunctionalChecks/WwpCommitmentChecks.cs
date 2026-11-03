@@ -19,11 +19,37 @@ internal static class WwpCommitmentChecks
         void Check(bool pass, string name) { checks++; if (!pass) throw new Exception(name); }
         var template = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/bones-k-sameroute-v1/counterexample.json");
         var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/n-direct-v1/context-defect-a10.json");
+        // Artificial nonzero xoshiro states isolate the game's inclusive zero
+        // upgrade-roll boundary. These are not natural root-seed witnesses.
+        var rollCard = context.Context.Authority.EffectAuthority!.CharacterRewardPool!
+            .First(c => c.CanUpgrade && c.Rarity == EffectCardRarity.Common);
+        foreach (bool zeroRoll in new[] { false, true })
+        foreach (bool canUpgrade in new[] { false, true })
+        {
+            var reference = RolltheSpire2.Core.Rng.Xoshiro256StarStar.FromState(zeroRoll ? 1UL : 2UL, 1, 0, 0);
+            var actual = reference.Clone();
+            _ = reference.NextInt(1);
+            float roll = reference.NextFloat();
+            var card = rollCard with { CanUpgrade = canUpgrade };
+            var generated = NeowRewardGenerator.CreateCard(actual, [card], 10, [], EffectCardRarity.Common,
+                consumeUpgradeRoll: true, RuntimeProfilePolicies.BaseOddsPolicy(RuntimeProfileId.Beta111));
+            Check((roll == 0f) == zeroRoll, "Synthetic upgrade roll is exactly zero or strictly positive");
+            Check(generated is not null && generated.Card.CardKey == card.CardKey &&
+                generated.Upgraded == (canUpgrade && (decimal)roll <= 0m), "Game inclusive zero upgrade roll and eligibility");
+            Check(actual.CallCount == 2 && actual.State == reference.State,
+                "Upgrade roll consumed for both eligible and ineligible cards; complete RNG state");
+            var noRoll = RolltheSpire2.Core.Rng.Xoshiro256StarStar.FromState(zeroRoll ? 1UL : 2UL, 1, 0, 0);
+            var noRollReference = noRoll.Clone(); _ = noRollReference.NextInt(1);
+            var forced = NeowRewardGenerator.CreateCard(noRoll, [card], 10, [], EffectCardRarity.Common,
+                consumeUpgradeRoll: false, RuntimeProfilePolicies.BaseOddsPolicy(RuntimeProfileId.Beta111));
+            Check(forced is { Upgraded: false } && noRoll.CallCount == 1 && noRoll.State == noRollReference.State,
+                "Forced no-upgrade-roll grant consumes only its card-index draw");
+        }
         var w = BaseGameModelKeys.OrdinaryRelics.Whetstone; var wp = BaseGameModelKeys.OrdinaryRelics.WarPaint;
         var k = BaseGameModelKeys.Relics.Kaleidoscope; var large = BaseGameModelKeys.Relics.LargeCapsule;
         string output = ".build-evidence/wwp-commitment"; Directory.CreateDirectory(output);
-        ExactSearchExecutionRequest Compile(SearchQuery query, SearchContext ctx, string seed = "N9U2V9VPUSR7") =>
-            ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, ctx), new(seed, 1, int.MaxValue, 1)).Plan
+        PreparedSearch Compile(SearchQuery query, SearchContext ctx, string seed = "N9U2V9VPUSR7") =>
+            SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, ctx), new(seed, 1, int.MaxValue, 1)).Plan
                 ?? throw new Exception("WWP compile");
         SearchQuery Query(ModelKey[] relics, ModelKey[] cards) => template.Query with {
             StructuredOpeningEffects = (cards.Length == 0 ? Array.Empty<NeowStructuredEffectSearchCondition>() :
@@ -41,7 +67,7 @@ internal static class WwpCommitmentChecks
             foreach (ModelKey[] relics in new[] { new[] { w }, new[] { wp }, new[] { w, wp } })
             foreach (ModelKey[] picks in new[] { Array.Empty<ModelKey>(), new[] { attack }, new[] { attack, skill } })
             {
-                var p = NeowReplayPlan.Compile(Compile(Query(relics, picks), ctx), false);
+                var p = NeowReplayPlan.Compile(Compile(Query(relics, picks), ctx).Model, false);
                 int Expected(int da, int ds) => (relics.Contains(w) ? NeowAuthoredUpgradeContinuation.Draws(ac + da) : 0) +
                     (relics.Contains(wp) ? NeowAuthoredUpgradeContinuation.Draws(sc + ds) : 0);
                 Check(p.AuthoredUpgrades!.Advance(3, 255) == Expected(0, 0), "Large first constant");
@@ -63,25 +89,28 @@ internal static class WwpCommitmentChecks
             Check(reference.State == (state.S0, state.S1, state.S2, state.S3), "Full RNG state after count quotient");
         }
         var hidden = Compile(template.Query, context.Context);
-        Check(NeowReplayPlan.Compile(hidden, false).AuthoredUpgrades is null, "Hidden War Paint stays out of scope");
+        var hiddenReplay = NeowReplayPlan.Compile(hidden.Model, false);
+        Check(hiddenReplay.AuthoredUpgrades is null, "Hidden War Paint is not an authored-only fact");
+        if (BonesHiddenUpgradeContinuation.CaptureMode() != 0)
+            Check(hiddenReplay.CapsuleNicheContinuation is not null, "Hidden War Paint participates in shared solo Niche continuation");
         var one = Query([wp, new ModelKey("RELIC", "ANCHOR")], [new("CARD", "ANGER")]);
         var explicitPlan = Compile(one, context.Context);
         var root = Beta111Profile.Instance.ComputeRootSeed("N9U2V9VPUSR7");
-        var replay = NeowReplayPlan.Compile(explicitPlan, false);
+        var replay = NeowReplayPlan.Compile(explicitPlan.Model, false);
         var observation = NeowFamilyReplay.Observe(root, replay);
-        Check(!NeowFamilyReplay.Route(root, replay with { AuthoredUpgrades = null }, 3, 14, observation.RewardsAfterBones), "Known old Fast route B rejects");
+        Check(!NeowFamilyReplay.Route(root, replay with { AuthoredUpgrades = null, CapsuleNicheContinuation = null }, 3, 14, observation.RewardsAfterBones), "Known frozen old Fast route B rejects");
         Check(NeowFamilyReplay.Route(root, replay, 3, 14, observation.RewardsAfterBones), "Authored WP now advances before K");
-        ProductionExactSearchResult Exact(ExactSearchExecutionRequest req, string seed)
+        ProductionExactSearchResult Exact(PreparedSearch req, string seed)
         {
             ulong hash = Beta111Profile.Instance.ComputeRootSeed(seed);
             if (!TrustedRootHashInput.TryBindCanonicalSeed(Beta111Profile.Instance, hash, seed, out var input, out _)) throw new Exception("bind");
-            return ProductionExactSearchEvaluator.Evaluate(req, input);
+            return ProductionExactSearchEvaluator.Evaluate(req.Model, input);
         }
         var exact = Exact(explicitPlan, "N9U2V9VPUSR7");
         Check(exact.IsMatch && exact.Evaluation.Witnesses.Count > 0, "Explicit WP Production Exact/Witness");
         Check(exact.Evaluation.Witnesses.All(x => !string.IsNullOrEmpty(x.ChoicePolicyId)), "Late optional pick has real committed trace in Witness");
-        Check(!BonesCapsuleBoundaryGpu.HasExcludedMatchedPickup(exact, explicitPlan), "Authored W/WP mismatch cannot use old waiver");
-        Check(BonesCapsuleBoundaryGpu.HasExcludedMatchedPickup(exact, hidden), "Only hidden W/WP retains diagnostic exclusion");
+        Check(!BonesCapsuleDiagnosticVerification.HasExcludedMatchedPickup(exact, explicitPlan.Model), "Authored W/WP mismatch cannot use old waiver");
+        Check(BonesCapsuleDiagnosticVerification.HasExcludedMatchedPickup(exact, hidden.Model), "Only hidden W/WP retains diagnostic exclusion");
         ProductionSearchReplay.Write(Path.Combine(output, "authored-wp-positive.json"), template with { Query = one, Options = template.Options with { ScanCount = 67 } });
         var skip = new PlayerChoicePolicyDescriptor("skip", PlayerChoicePolicyKind.SkipOfferedCard, [], 0);
         Check(NeowChoiceCommitment.Matches([], k, skip, []), "Unauthored Skip");
@@ -92,7 +121,7 @@ internal static class WwpCommitmentChecks
         // Discover real K-before-Capsule traces, then author precisely their picked
         // cards and final curse; keep the original game deck/shuffle engine as oracle.
         var broad = Compile(Query([wp], []), context.Context);
-        var identity = NeowReplayPlan.Compile(broad, false);
+        var identity = NeowReplayPlan.Compile(broad.Model, false);
         int positives = 0;
         for (ulong ordinal = 0; ordinal < (1UL << 22) && positives < 3; ordinal++)
         {
@@ -100,7 +129,7 @@ internal static class WwpCommitmentChecks
             ulong hash = Beta111Profile.Instance.ComputeRootSeed(seed);
             if (!NeowFamilyReplay.Observe(hash, identity).IdentityPass) continue;
             var result = Exact(broad, seed);
-            var bones = result.Document?.Sections.SelectMany(s => s.NeowChoices).FirstOrDefault(c => c.BonesOutcome is not null)?.BonesOutcome;
+            var bones = result.Facts?.Neow?.Choices.FirstOrDefault(c => c.BonesOutcome is not null)?.BonesOutcome;
             if (bones is null) continue;
             foreach (var route in bones.OriginalRoutes.Where(r => r.AcquisitionOrder.FirstOrDefault() == k))
             {
@@ -115,7 +144,7 @@ internal static class WwpCommitmentChecks
                 var req = Compile(query, context.Context, seed);
                 var truth = Exact(req, seed);
                 Check(truth.IsMatch && truth.Evaluation.Witnesses.Count > 0, "Committed K-first Exact/curse " + positives);
-                Check(NeowFamilyReplay.Matches(hash, NeowReplayPlan.Compile(req, false)), "Committed K-first Fast " + positives);
+                Check(NeowFamilyReplay.Matches(hash, NeowReplayPlan.Compile(req.Model, false)), "Committed K-first Fast " + positives);
                 ProductionSearchReplay.Write(Path.Combine(output, "k-first-" + positives + ".json"), new ProductionSearchReplayWorkload(1, query, req.RunOptions with { ScanCount = 67 }));
                 positives++; break;
             }
@@ -125,7 +154,7 @@ internal static class WwpCommitmentChecks
         {
             var query = Query([w], []) with { OpeningRouteRelicRequirement = new(BaseGameModelKeys.Relics.NeowsBones,
                 kFirst ? [k, large] : [large, k], BonesRouteOrderMode.ExactOrder) };
-            var req = Compile(query, context.Context); var n = NeowReplayPlan.Compile(req, false);
+            var req = Compile(query, context.Context); var n = NeowReplayPlan.Compile(req.Model, false);
             bool found = false;
             for (ulong ordinal = 0; ordinal < (1UL << 22) && !found; ordinal++)
             {
@@ -133,7 +162,7 @@ internal static class WwpCommitmentChecks
                 if (!NeowFamilyReplay.Observe(hash, n).IdentityPass) continue;
                 var result = Exact(req, seed);
                 if (!result.IsMatch) continue;
-                var bones = result.Document!.Sections.SelectMany(s => s.NeowChoices).First(c => c.BonesOutcome is not null).BonesOutcome!;
+                var bones = result.Facts!.Neow!.Choices.First(c => c.BonesOutcome is not null).BonesOutcome!;
                 foreach (var route in bones.OriginalRoutes.Where(r => r.AcquisitionOrder[0] == (kFirst ? k : large)))
                 {
                     if (route.PlayerChoiceSelections?.Any(t => t.ChoicePolicy.SourceCardKeys.Count != 0) == true) continue;
@@ -142,7 +171,7 @@ internal static class WwpCommitmentChecks
                     if (!relics.Contains(w) || relics.Contains(wp) || route.SharedContinuation.FinalCurseKey is not ModelKey curse) continue;
                     var full = query with { LegacyNeow = query.LegacyNeow with { RequiredFinalCurse = curse } };
                     var fullReq = Compile(full, context.Context, seed); var truth = Exact(fullReq, seed);
-                    Check(truth.IsMatch && truth.Evaluation.Witnesses.Count > 0 && NeowFamilyReplay.Matches(hash, NeowReplayPlan.Compile(fullReq, false)), "W only pinned chronology");
+                    Check(truth.IsMatch && truth.Evaluation.Witnesses.Count > 0 && NeowFamilyReplay.Matches(hash, NeowReplayPlan.Compile(fullReq.Model, false)), "W only pinned chronology");
                     ProductionSearchReplay.Write(Path.Combine(output, "w-only-" + (kFirst ? "k-first" : "large-first") + ".json"), new ProductionSearchReplayWorkload(1, full, fullReq.RunOptions with { ScanCount = 67 }));
                     found = true; break;
                 }
@@ -154,11 +183,11 @@ internal static class WwpCommitmentChecks
             var query = Query([w, wp], []);
             var req = Compile(query, context.Context, seed); var result = Exact(req, seed);
             Check(result.IsMatch, "Both W/WP legally reachable Production result");
-            var route = result.Document!.Sections.SelectMany(s => s.NeowChoices).First(c => c.BonesOutcome is not null).BonesOutcome!.OriginalRoutes
+            var route = result.Facts!.Neow!.Choices.First(c => c.BonesOutcome is not null).BonesOutcome!.OriginalRoutes
                 .First(r => r.AcquisitionOrder[0] == k && r.PlayerChoiceSelections!.All(t => t.ChoicePolicy.SourceCardKeys.Count == 0));
             var full = query with { LegacyNeow = query.LegacyNeow with { RequiredFinalCurse = route.SharedContinuation.FinalCurseKey } };
             var fullReq = Compile(full, context.Context, seed);
-            Check(Exact(fullReq, seed).IsMatch && NeowFamilyReplay.Matches(Beta111Profile.Instance.ComputeRootSeed(seed), NeowReplayPlan.Compile(fullReq, false)), "Both W/WP exact curse chronology");
+            Check(Exact(fullReq, seed).IsMatch && NeowFamilyReplay.Matches(Beta111Profile.Instance.ComputeRootSeed(seed), NeowReplayPlan.Compile(fullReq.Model, false)), "Both W/WP exact curse chronology");
             ProductionSearchReplay.Write(Path.Combine(output, "both-final-curse.json"), new ProductionSearchReplayWorkload(1, full, fullReq.RunOptions with { ScanCount = 67 }));
         }
         foreach (var neighbor in new[] { BaseGameModelKeys.Relics.ArcaneScroll, BaseGameModelKeys.Relics.LeafyPoultice,
@@ -168,7 +197,7 @@ internal static class WwpCommitmentChecks
             ModelKey requiredUpgrade = fury ? w : wp;
             var query = Query([requiredUpgrade], []) with { OpeningRouteRelicRequirement = new(BaseGameModelKeys.Relics.NeowsBones, [neighbor, large], BonesRouteOrderMode.ExactOrder) };
             var req = Compile(query, context.Context);
-            var n = NeowReplayPlan.Compile(req, false);
+            var n = NeowReplayPlan.Compile(req.Model, false);
             Beta110FastRelicCatalog.TryGetId(neighbor, out byte id);
             Check(n.AuthoredUpgrades!.Advance(3, id) == (fury ? 4 : NeowChoiceCommitment.IsOptionalCardOffer(neighbor) ? 5 : -1),
                 "Neighbor empty commitment/missing mandatory result: " + neighbor);
@@ -178,7 +207,7 @@ internal static class WwpCommitmentChecks
                 string seed = Beta110SeedCodec.FormatOrdinal(ordinal); ulong hash = Beta111Profile.Instance.ComputeRootSeed(seed);
                 if (!NeowFamilyReplay.Observe(hash, n).IdentityPass) continue;
                 var result = Exact(req, seed);
-                var bones = result.Document?.Sections.SelectMany(s => s.NeowChoices).FirstOrDefault(c => c.BonesOutcome is not null)?.BonesOutcome;
+                var bones = result.Facts?.Neow?.Choices.FirstOrDefault(c => c.BonesOutcome is not null)?.BonesOutcome;
                 if (bones is null) continue;
                 foreach (var route in bones.OriginalRoutes.Where(r => r.AcquisitionOrder.FirstOrDefault() == neighbor))
                 {
@@ -204,7 +233,7 @@ internal static class WwpCommitmentChecks
                             : [condition, query.StructuredOpeningEffects[0] with { OutputKeys = actualUpgrades }],
                         LegacyNeow = query.LegacyNeow with { RequiredFinalCurse = curse } };
                     var fullReq = Compile(full, context.Context, seed);
-                    var fullN = NeowReplayPlan.Compile(fullReq, false);
+                    var fullN = NeowReplayPlan.Compile(fullReq.Model, false);
                     Check(fullN.AuthoredUpgrades!.Advance(3, id) >= 0, "Neighbor closed constant " + neighbor);
                     var truth = Exact(fullReq, seed);
                     Check(truth.IsMatch && truth.Evaluation.Witnesses.Count > 0, "Neighbor Exact/Witness " + neighbor + ":" + truth.FailureCode + ":" + truth.Evaluation.FailureCode);
@@ -219,13 +248,13 @@ internal static class WwpCommitmentChecks
         {
             var ctx = ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/" + path).Context;
             var query = Query([wp], []) with { OpeningRouteRelicRequirement = new(BaseGameModelKeys.Relics.NeowsBones, [k, large], BonesRouteOrderMode.ExactOrder) };
-            var req = Compile(query, ctx); var n = NeowReplayPlan.Compile(req, false); bool found = false;
+            var req = Compile(query, ctx); var n = NeowReplayPlan.Compile(req.Model, false); bool found = false;
             for (ulong ordinal = 0; ordinal < (1UL << 22) && !found; ordinal++)
             {
                 string seed = Beta110SeedCodec.FormatOrdinal(ordinal); ulong hash = Beta111Profile.Instance.ComputeRootSeed(seed);
                 if (!NeowFamilyReplay.Observe(hash, n).IdentityPass) continue;
                 var result = Exact(req, seed); if (!result.IsMatch) continue;
-                var bones = result.Document!.Sections.SelectMany(s => s.NeowChoices).First(c => c.BonesOutcome is not null).BonesOutcome!;
+                var bones = result.Facts!.Neow!.Choices.First(c => c.BonesOutcome is not null).BonesOutcome!;
                 foreach (var route in bones.OriginalRoutes.Where(r => r.AcquisitionOrder[0] == k &&
                              r.PlayerChoiceSelections?.All(t => t.ChoicePolicy.SourceCardKeys.Count == 0) == true))
                 {
@@ -234,7 +263,7 @@ internal static class WwpCommitmentChecks
                     if (!relics.Contains(wp) || relics.Contains(w) || route.SharedContinuation.FinalCurseKey is not ModelKey curse) continue;
                     var full = query with { LegacyNeow = query.LegacyNeow with { RequiredFinalCurse = curse } };
                     var fullReq = Compile(full, ctx, seed); var truth = Exact(fullReq, seed);
-                    Check(truth.IsMatch && truth.Evaluation.Witnesses.Count > 0 && NeowFamilyReplay.Matches(hash, NeowReplayPlan.Compile(fullReq, false)), "Character chronology " + ctx.CharacterKey);
+                    Check(truth.IsMatch && truth.Evaluation.Witnesses.Count > 0 && NeowFamilyReplay.Matches(hash, NeowReplayPlan.Compile(fullReq.Model, false)), "Character chronology " + ctx.CharacterKey);
                     ProductionSearchReplay.Write(Path.Combine(output, "context-" + ctx.CharacterKey.Entry + ".json"), new ProductionSearchReplayWorkload(1, full, fullReq.RunOptions with { ScanCount = 67 }));
                     found = true; break;
                 }

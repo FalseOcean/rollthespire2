@@ -21,35 +21,41 @@ internal static class MapLossyIntegrationChecks
         var authority = Beta110FastSearchFixtureAuthority.CreateBeta111(BaseGameModelKeys.Characters.Ironclad, 1, 0, 1);
         var context = SearchContextFactory.From(RuntimeProfileId.Beta111, BaseGameModelKeys.Characters.Ironclad, 1,
             authority, new("0.111.0", "0.111.0", "beta", "MapLossyChecks", true, ""), AncientOptionConditionProfile.BroadDefault);
-        ExactSearchExecutionRequest Request(SearchQuery q, bool enabled = true) => ExactSearchExecutionRequestFactory.Compile(
+        PreparedSearch Request(SearchQuery q, bool enabled = true) => SearchPreparationCompiler.Compile(
             SearchCompiler.Compile(q, context), new(Seed(1146000000000), 65, 65, 1, MapLossy: new(enabled))).Plan!;
+        MapLossyPlan Proposal(PreparedSearch input) => MapLossyPlan.Create(input.Model, input.MapLossy);
+        StandardMapExecution Map(PreparedSearch input, FilterRuntimeServices services)
+        {
+            var body = StandardMapFamily.Prepare(input.Model, FilterExecutionPreferences.From(input.RunOptions));
+            return (StandardMapExecution)body.CreateExecution!(body, services);
+        }
         StandardMapRouteCondition Route(int act, params StandardMapRoomType[][] groups) => new(act,
             groups.Select(g => new StandardMapRouteGroup(g)).ToArray());
         SearchQuery Query(params StandardMapRouteCondition[] routes) => SearchQuery.Empty with { StandardMapRoutes = routes };
         var shape = Query(Route(1, [StandardMapRoomType.Monster, StandardMapRoomType.Unknown],
             [StandardMapRoomType.Shop, StandardMapRoomType.Elite, StandardMapRoomType.RestSite]));
-        Check(!MapLossyPlan.Create(Request(shape, false)).Enabled, "default off remains complete");
-        Check(MapLossyPlan.Create(Request(shape)).Enabled, "five-type ordered/unordered groups admitted");
+        Check(!Proposal(Request(shape, false)).Enabled, "default off remains complete");
+        Check(Proposal(Request(shape)).Enabled, "five-type ordered/unordered groups admitted");
         foreach (var room in Enum.GetValues<StandardMapRoomType>())
-            Check(MapLossyPlan.Create(Request(Query(Route(1, [room])))).Enabled, "all authored types admitted: " + room);
-        Check(MapLossyPlan.Create(Request(Query(Route(1, Enumerable.Repeat(StandardMapRoomType.Elite, 32).ToArray()))))
+            Check(Proposal(Request(Query(Route(1, [room])))).Enabled, "all authored types admitted: " + room);
+        Check(Proposal(Request(Query(Route(1, Enumerable.Repeat(StandardMapRoomType.Elite, 32).ToArray()))))
             .Predicates.Single().Program.AlwaysReject, "proven room budget rejects without truncating authored request");
         var oversized = MapRouteSequenceQuery.FromGroups([new(Enum.GetValues<StandardMapRoomType>().SelectMany(room =>
             Enumerable.Repeat(Enum.Parse<MapPointType>(room.ToString()), 3)).ToArray())]);
         Check(!MapLossyPlan.TryProgram(oversized, 20, out _, out var capacityReason) && capacityReason == "DrawingProgramExceeds512States",
             "physical table capacity remains unsupported, never a logical impossibility");
         var aggregateQuery = SearchQuery.Empty with { StandardMaps = [new(0, StandardMapMetric.ReachableMaxElite, StandardMapComparison.AtLeast, 4, true)] };
-        var aggregate = MapLossyPlan.Create(Request(aggregateQuery));
+        var aggregate = Proposal(Request(aggregateQuery));
         Check(aggregate.Enabled && aggregate.Predicates.Count == 0 && aggregate.Properties.Single() is { Scope: 0, Metric: 5, Value: 4 } &&
             aggregate.Acts.Select(a => a.Act).SequenceEqual([1, 2, 3]) && aggregate.Acts.All(a => a.PropertyMetrics.SequenceEqual([5])),
             "legal sum remains one property over three same-seed Act contexts");
-        var daily = MapLossyPlan.Create(Request(SearchQuery.Empty with { StandardMaps = [new(1, StandardMapMetric.ReachableMaxRest, StandardMapComparison.AtLeast, 3, true)] }));
+        var daily = Proposal(Request(SearchQuery.Empty with { StandardMaps = [new(1, StandardMapMetric.ReachableMaxRest, StandardMapComparison.AtLeast, 3, true)] }));
         Check(daily.Predicates.Count == 0 && daily.Properties.Single() is { Scope: 1, Metric: 6, Value: 3 },
             "daily Rest uses the original property threshold including fixed rooms");
         foreach (var metric in Enum.GetValues<StandardMapMetric>()) foreach (var comparison in Enum.GetValues<StandardMapComparison>())
         {
             var condition = new StandardMapSearchCondition(1, metric, comparison, 2);
-            var plan = MapLossyPlan.Create(Request(SearchQuery.Empty with { StandardMaps = [condition] }));
+            var plan = Proposal(Request(SearchQuery.Empty with { StandardMaps = [condition] }));
             Check(plan.Properties.Single() is var property && property.Metric == (int)metric && property.Comparison == comparison &&
                 property.Value == 2 && plan.Acts.Single().PropertyMetrics.SequenceEqual([(int)metric]),
                 "all nine property bounds preserve authored comparison: " + metric + "/" + comparison);
@@ -58,12 +64,12 @@ internal static class MapLossyIntegrationChecks
             12, out _, out var countReason) && countReason == "AdditionalCountsFullFinalOnly",
             "unsupported extra route counts remain an explicit Full obligation");
         var supportedRequest = Request(aggregateQuery);
-        var unsupportedRequest = supportedRequest with { CompiledSearch = supportedRequest.CompiledSearch with
-            { Context = supportedRequest.CompiledSearch.Context with { ProfileId = RuntimeProfileId.Beta110 } } };
-        var unsupported = MapLossyPlan.Describe(unsupportedRequest, false, false);
+        var unsupportedRequest = supportedRequest with { Model = supportedRequest.Model with { CompiledSearch = supportedRequest.Model.CompiledSearch with
+            { Context = supportedRequest.Model.CompiledSearch.Context with { ProfileId = RuntimeProfileId.Beta110 } } } };
+        var unsupported = MapLossyPlan.Describe(unsupportedRequest.Model, unsupportedRequest.MapLossy, false, false);
         Check(unsupported is { Requested: true, Applied: false, Backend: "FullFinal" } &&
             unsupported.FullFinalRemainders.SequenceEqual(["Beta111StandardMapsOnly"]) &&
-            unsupportedRequest.CompiledSearch.NormalizedQuery.StandardMaps.SequenceEqual(supportedRequest.CompiledSearch.NormalizedQuery.StandardMaps),
+            unsupportedRequest.Model.CompiledSearch.NormalizedQuery.StandardMaps.SequenceEqual(supportedRequest.Model.CompiledSearch.NormalizedQuery.StandardMaps),
             "unavailable proposal keeps the complete original query and named Full remainder");
         // Every general DFA is checked against the established graph predicate on
         // the exact same private checkpoint, including mixed ordered groups.
@@ -113,7 +119,7 @@ internal static class MapLossyIntegrationChecks
                     var lawAuthority = Beta110FastSearchFixtureAuthority.CreateBeta111(BaseGameModelKeys.Characters.Ironclad, ascension, 0, 1);
                     var lawContext = SearchContextFactory.From(RuntimeProfileId.Beta111, BaseGameModelKeys.Characters.Ironclad, ascension,
                         lawAuthority, context.Detection, AncientOptionConditionProfile.BroadDefault);
-                    ExactSearchExecutionRequest LawRequest(SearchQuery query) => ExactSearchExecutionRequestFactory.Compile(
+                    PreparedSearch LawRequest(SearchQuery query) => SearchPreparationCompiler.Compile(
                         SearchCompiler.Compile(query, lawContext), new(Seed(i), 1, 1, 1, MapLossy: new(true))).Plan!;
                     var bounds = Enum.GetValues<StandardMapMetric>().SelectMany(metric => new[]
                     {
@@ -123,15 +129,15 @@ internal static class MapLossyIntegrationChecks
                     var mixed = MapPropertyProgramChecks.MixedDrawing(graph.Start, graph.Boss, act);
                     var conjunction = Query(mixed) with { StandardMaps = bounds };
                     ulong root = Beta111Profile.Instance.ComputeRootSeed(Seed(i));
-                    var combinedFamily = new StandardMapFamily(LawRequest(conjunction));
-                    await using var lawExecution = new FamilyExecutionContext(requiresGpu: false);
+                    await using var lawExecution = new FilterRuntimeServices(requiresGpu: false);
+                    var combinedFamily = Map(LawRequest(conjunction), lawExecution);
                     try
                     {
                         Check(combinedFamily.LossyPlan.Acts.Single() is var actPlan && actPlan.Act == act &&
                             actPlan.Drawings.Count == 1 && actPlan.PropertyMetrics.SequenceEqual(Enumerable.Range(0, 9)),
                             "one Act owns all nine independent metrics and the mixed drawing");
                         Check(combinedFamily.MatchesLossyRoot(root), "all inclusive lower/upper bounds AND mixed drawing accept their graph witness");
-                        Check(combinedFamily.MatchesRoot(root) == (StandardMapExactEvaluator.Evaluate(LawRequest(conjunction), Seed(i)).Disposition == SearchDisposition.Match),
+                        Check(combinedFamily.MatchesRoot(root) == (StandardMapExactEvaluator.Evaluate(LawRequest(conjunction).Model, Seed(i)).Disposition == SearchDisposition.Match),
                             "complete M keeps every combined obligation even when the candidate differs from Final");
                     }
                     finally { await combinedFamily.DisposeAsync(lawExecution); }
@@ -141,8 +147,8 @@ internal static class MapLossyIntegrationChecks
                         new StandardMapSearchCondition(act, StandardMapMetric.GuaranteedMonster, StandardMapComparison.AtMost, properties[0] - 1)
                     })
                     {
-                        var rejectedFamily = new StandardMapFamily(LawRequest(conjunction with
-                            { StandardMaps = bounds.Where(c => c.Metric != StandardMapMetric.GuaranteedMonster).Append(impossibleBound).ToArray() }));
+                        var rejectedFamily = Map(LawRequest(conjunction with
+                            { StandardMaps = bounds.Where(c => c.Metric != StandardMapMetric.GuaranteedMonster).Append(impossibleBound).ToArray() }), lawExecution);
                         try { Check(!rejectedFamily.MatchesLossyRoot(root), "one opposite bound rejects the entire property/drawing AND"); }
                         finally { await rejectedFamily.DisposeAsync(lawExecution); }
                     }
@@ -161,9 +167,9 @@ internal static class MapLossyIntegrationChecks
             new(1, StandardMapMetric.GuaranteedMonster, StandardMapComparison.AtMost, aggregateValues[0][0]),
             new(2, StandardMapMetric.ReachableMaxUnknown, StandardMapComparison.AtLeast, aggregateValues[1][7]),
             new(3, StandardMapMetric.ForcedMonsterPrefix, StandardMapComparison.AtMost, aggregateValues[2][8])] };
-        var multiFamily = new StandardMapFamily(Request(multiAct));
-        await using (var multiExecution = new FamilyExecutionContext(requiresGpu: false))
+        await using (var multiExecution = new FilterRuntimeServices(requiresGpu: false))
         {
+            var multiFamily = Map(Request(multiAct), multiExecution);
             try
             {
                 Check(aggregateValues.All(values => values[6] < restSum) && multiFamily.MatchesLossyRoot(aggregateRoot),
@@ -187,17 +193,17 @@ internal static class MapLossyIntegrationChecks
             Check(rejected, "stale tail rejected");
         }
         var offRequest = Request(shape, false);
-        var legacyOff = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(shape, context),
+        var legacyOff = SearchPreparationCompiler.Compile(SearchCompiler.Compile(shape, context),
             offRequest.RunOptions with { MapLossy = null }).Plan!;
         Check(legacyOff.SnapshotFingerprint == offRequest.SnapshotFingerprint, "missing legacy option preserves default-off snapshot identity");
-        Check(SearchContinuationIdentity.For(legacyOff) == SearchContinuationIdentity.For(legacyOff.CompiledSearch) &&
+        Check(SearchContinuationIdentity.For(legacyOff) == SearchContinuationIdentity.For(legacyOff.Model.CompiledSearch) &&
             SearchContinuationIdentity.For(legacyOff) == SearchContinuationIdentity.For(offRequest), "off continuation preserves pre-lossy model identity");
         Check(Request(shape).SnapshotFingerprint != offRequest.SnapshotFingerprint &&
             SearchContinuationIdentity.For(Request(shape)) != SearchContinuationIdentity.For(offRequest), "opt-in snapshot and continuation differ from complete search");
         var currentPolicy = Request(shape);
-        var oldStrategy = new SearchContinuationSnapshot(currentPolicy.CompiledSearch.SemanticFingerprint, "old-attempt", 64, [], [])
+        var oldStrategy = new SearchContinuationSnapshot(currentPolicy.Model.CompiledSearch.SemanticFingerprint, "old-attempt", 64, [], [])
         {
-            ContinuationFingerprint = SearchContinuationIdentity.For(currentPolicy.CompiledSearch, currentPolicy.CombatRewardRoutePolicy) +
+            ContinuationFingerprint = SearchContinuationIdentity.For(currentPolicy.Model.CompiledSearch, currentPolicy.Model.CombatRewardRoutePolicy) +
                 ":MapLossy:AssignmentRound1.v1:batch=16384",
             MapSearch = new(new(true), true, "Cpu", "AssignmentRound1.20261028.v1", "", "Act1.Drawing", [], 0, 64, "old-attempt")
         };
@@ -205,10 +211,10 @@ internal static class MapLossyIntegrationChecks
             oldStrategy.MapSearch.Strategy == "AssignmentRound1.20261028.v1", "new drawing scope cannot borrow or rewrite old E/R interval");
         var oldDrawing = oldStrategy with
         {
-            ContinuationFingerprint = SearchContinuationIdentity.For(currentPolicy.CompiledSearch, currentPolicy.CombatRewardRoutePolicy) +
+            ContinuationFingerprint = SearchContinuationIdentity.For(currentPolicy.Model.CompiledSearch, currentPolicy.Model.CombatRewardRoutePolicy) +
                 ":MapLossy:AssignmentRound1.Drawing5.Multiword.20261028.v2:batch=16384",
             PendingCandidates = [new(65, Seed(65), "Exact", "CandidateCheckFailed:IOException", "original property-independent failure",
-                currentPolicy.CompiledSearch.SemanticFingerprint, "old-attempt", DateTimeOffset.UnixEpoch)],
+                currentPolicy.Model.CompiledSearch.SemanticFingerprint, "old-attempt", DateTimeOffset.UnixEpoch)],
             MapSearch = oldStrategy.MapSearch with { Strategy = "AssignmentRound1.Drawing5.Multiword.20261028.v2" }
         };
         var restoredOld = JsonSerializer.Deserialize<SearchContinuationSnapshot>(JsonSerializer.Serialize(oldDrawing))!;
@@ -216,14 +222,14 @@ internal static class MapLossyIntegrationChecks
             restoredOld.NextOrdinal == 64 && restoredOld.PendingCandidates.Single() == oldDrawing.PendingCandidates.Single() &&
             restoredOld.MapSearch!.Strategy == oldDrawing.MapSearch.Strategy && restoredOld.MapSearch.EndOrdinalExclusive == 64,
             "old drawing strategy retains frontier, provenance and original pending cause after save");
-        var offFamily = new StandardMapFamily(offRequest);
-        await using (var offExecution = new FamilyExecutionContext(requiresGpu: false))
+        await using (var offExecution = new FilterRuntimeServices(requiresGpu: false))
         {
+            var offFamily = Map(offRequest, offExecution);
             try
             {
                 var offBatch = new SearchBatch(1146000000000, 9);
                 var offInput = FamilyCandidateSet.Dense(offBatch);
-                var actual = await offFamily.InvokeAsync(offExecution, new(offBatch, offRequest), offInput, CancellationToken.None);
+                var actual = await offFamily.FilterAsync(offExecution, offInput, CancellationToken.None);
                 var expected = offInput.EnumerateLogicalOrdinals().Where(i => offFamily.MatchesRoot(Beta111Profile.Instance.ComputeRootSeed(Seed(offBatch.GlobalCandidate(i)))));
                 Check(actual.EnumerateLogicalOrdinals().SequenceEqual(expected), "disabled actual M executes complete Final");
             }
@@ -237,25 +243,26 @@ internal static class MapLossyIntegrationChecks
             new(0, StandardMapMetric.ReachableMaxRest, StandardMapComparison.AtLeast, 3, true)]).ToArray();
         var combinedShape = shape with { StandardMaps = broadProperties };
         var request = Request(combinedShape); var batch = new SearchBatch(1146000000000, 65);
-        var family = new StandardMapFamily(request); await using var execution = new FamilyExecutionContext(requiresGpu: false);
+        await using var execution = new FilterRuntimeServices(requiresGpu: false);
+        var family = Map(request, execution);
         try
         {
             foreach (var input in new[] { FamilyCandidateSet.Dense(batch), FamilyCandidateSet.FromAbi1(batch, new ulong[] { 2, 8, 31, 32, 64 }) })
             {
-                var output = await family.InvokeAsync(execution, new(batch, request), input, CancellationToken.None);
+                var output = await family.FilterAsync(execution, input, CancellationToken.None);
                 var expected = input.EnumerateLogicalOrdinals().Where(i =>
                 {
                     ulong root = Beta111Profile.Instance.ComputeRootSeed(Seed(batch.GlobalCandidate(i)));
-                    return MapPropertyProgramChecks.ProposalOracle(combinedShape, root, request.Ascension) &&
-                        StandardMapExactEvaluator.Evaluate(request, Seed(batch.GlobalCandidate(i))).Disposition == SearchDisposition.Match;
+                    return MapPropertyProgramChecks.ProposalOracle(combinedShape, root, request.Model.Ascension) &&
+                        StandardMapExactEvaluator.Evaluate(request.Model, Seed(batch.GlobalCandidate(i))).Disposition == SearchDisposition.Match;
                 }).ToArray();
                 Check(output.EnumerateLogicalOrdinals().SequenceEqual(expected), "CPU Dense/Compact keeps original ABI1");
                 foreach (ulong ordinal in output.EnumerateLogicalOrdinals())
-                    Check(StandardMapExactEvaluator.Evaluate(request, Seed(batch.GlobalCandidate(ordinal))).Disposition == SearchDisposition.Match,
+                    Check(StandardMapExactEvaluator.Evaluate(request.Model, Seed(batch.GlobalCandidate(ordinal))).Disposition == SearchDisposition.Match,
                         "candidate survivor independently verified Final");
             }
             using var cancel = new CancellationTokenSource(); cancel.Cancel(); bool cancelled = false;
-            try { await family.InvokeAsync(execution, new(batch, request), FamilyCandidateSet.Dense(batch), cancel.Token); }
+            try { await family.FilterAsync(execution, FamilyCandidateSet.Dense(batch), cancel.Token); }
             catch (OperationCanceledException) { cancelled = true; }
             Check(cancelled, "cancel before invocation publishes no candidates");
         }
@@ -265,21 +272,23 @@ internal static class MapLossyIntegrationChecks
         // actually proposes rather than sending this tiny fixture straight to Exact.
         var simple = Query(Route(1, [StandardMapRoomType.Monster, StandardMapRoomType.Unknown, StandardMapRoomType.Shop])) with
             { StandardMaps = broadProperties };
-        var production = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(simple, context),
+        var production = SearchPreparationCompiler.Compile(SearchCompiler.Compile(simple, context),
             new(Seed(1146000000000), 65, 2, 1, MapLossy: new(true))).Plan!;
-        var skipRequest = ExactSearchExecutionRequestFactory.Compile(production.CompiledSearch,
+        var skipRequest = SearchPreparationCompiler.Compile(production.Model.CompiledSearch,
             production.RunOptions with { SkipExactValidation = true }).Plan!;
         var restrictedPlan = FamilyExecutionCoordinator.Plan(skipRequest, gpuAvailable: true, gpuFloat64Available: false);
-        var restrictedMap = restrictedPlan.ExecutionOrderUnits.OfType<StandardMapFamily>().Single();
-        Check(skipRequest.RunOptions.SkipExactValidation && restrictedPlan.FinalValidationSkipped && !restrictedMap.ConditionPerformance.UsesGpu &&
-            restrictedMap.UsesLossy && restrictedMap.LossyDescription.Reason == "Float64Unavailable",
+        var restrictedBody = restrictedPlan.ExecutionOrderUnits.Single(body => body.FamilyId == StandardMapFamily.Id);
+        var restrictedDescription = MapLossyPlan.Describe(skipRequest.Model, skipRequest.MapLossy, true, false);
+        Check(skipRequest.RunOptions.SkipExactValidation && restrictedPlan.FinalValidationSkipped && !restrictedBody.UsesGpu &&
+            restrictedDescription.Applied && restrictedDescription.Reason == "Float64Unavailable",
             "map-only FP64 absence selects equivalent CPU Round1+Final and preserves explicit SkipExact");
-        await using (var restrictedExecution = new FamilyExecutionContext(requiresGpu: false))
+        await using (var restrictedExecution = new FilterRuntimeServices(requiresGpu: false))
         {
+            var restrictedMap = (StandardMapExecution)restrictedBody.CreateExecution!(restrictedBody, restrictedExecution);
             try
             {
                 var smallInput = FamilyCandidateSet.FromAbi1(batch, new ulong[] { 0, 31, 64 });
-                var output = await restrictedMap.InvokeAsync(restrictedExecution, new(batch, skipRequest), smallInput, CancellationToken.None);
+                var output = await restrictedMap.FilterAsync(restrictedExecution, smallInput, CancellationToken.None);
                 var expected = smallInput.EnumerateLogicalOrdinals().Where(i =>
                 {
                     ulong root = Beta111Profile.Instance.ComputeRootSeed(Seed(batch.GlobalCandidate(i)));
@@ -290,13 +299,14 @@ internal static class MapLossyIntegrationChecks
             }
             finally { await restrictedMap.DisposeAsync(restrictedExecution); }
         }
-        var productionFamily = new StandardMapFamily(production);
-        Check(production.CompiledSearch.NormalizedQuery.StandardMaps.Count == broadProperties.Length &&
-            productionFamily.LossyPlan.Properties.Count == broadProperties.Length && productionFamily.LossyPlan.Acts.Count == 3,
+        var productionFamily = StandardMapFamily.Prepare(production.Model, FilterExecutionPreferences.From(production.RunOptions));
+        var productionProposal = Proposal(production);
+        Check(production.Model.CompiledSearch.NormalizedQuery.StandardMaps.Count == broadProperties.Length &&
+            productionProposal.Properties.Count == broadProperties.Length && productionProposal.Acts.Count == 3,
             "real production request retains every authored property together with the mixed drawing and aggregate");
         var executionPlan = FamilyPlanner.InOrder([productionFamily]) with { AllowSmallCandidateExact = false };
         await using (var session = new ProductionSearchSession(production, executionPlan,
-            FamilySearchEtaProjectorV1.Project(production, executionPlan), 65, 16, null, ""))
+            FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(production, executionPlan), executionPlan), 65, 16, null, ""))
         {
             await session.Completion.WaitAsync(TimeSpan.FromSeconds(30));
             var candidates = new List<SearchCandidate>();
@@ -304,7 +314,7 @@ internal static class MapLossyIntegrationChecks
             { candidates.Add(candidate!); session.AcknowledgeCandidate(candidate!.Seed); }
             Check(candidates.Count == 2 && candidates.All(c => c.ValidationDisposition == SearchDisposition.Match && !c.IsUnverified),
                 "real lossy ProductionSearchSession publishes target two verified matches");
-            Check(productionFamily.ActualProposalCalls == 1 && productionFamily.ActualProposalInputs == 65,
+            Check(candidates.All(candidate => candidate.MapSearch is { ObservedProposalCalls: 1, ObservedProposalInputs: 65 }),
                 "real session executed one CPU proposal over its bounded source window");
             foreach (var candidate in candidates)
             {
@@ -317,7 +327,7 @@ internal static class MapLossyIntegrationChecks
                 Check(receipt.Scope.Contains("Scope0.ReachableMaxRest", StringComparison.Ordinal) &&
                     receipt.Scope.Contains("Scope1.ForcedMonsterPrefix", StringComparison.Ordinal) && receipt.Scope.Contains("Act1.Drawing", StringComparison.Ordinal),
                     "actual provenance records properties, aggregate and drawing together");
-                var exact = StandardMapExactEvaluator.Evaluate(production, candidate.Seed);
+                var exact = StandardMapExactEvaluator.Evaluate(production.Model, candidate.Seed);
                 Check(exact.Disposition == SearchDisposition.Match, "independent Final confirms production candidate");
                 var proof = candidate.MatchEvidence.Single(e => e.ConditionId == "M.StandardMap.RouteSequence.Act1");
                 var independentProof = exact.Evidence.Single(e => e.ConditionId == proof.ConditionId);
@@ -349,7 +359,7 @@ internal static class MapLossyIntegrationChecks
             Check(restored.MapSearch!.AttemptFingerprint == continuation.MapSearch!.AttemptFingerprint &&
                 SearchContinuationIdentity.Matches(restored, production, SearchContinuationIdentity.For(production)),
                 "persisted continuation keeps lossy attempt and resumes only under same policy");
-            var completePolicy = ExactSearchExecutionRequestFactory.Compile(production.CompiledSearch,
+            var completePolicy = SearchPreparationCompiler.Compile(production.Model.CompiledSearch,
                 production.RunOptions with { MapLossy = MapLossyOptions.Default }).Plan!;
             Check(!SearchContinuationIdentity.Matches(restored, completePolicy, SearchContinuationIdentity.For(completePolicy)),
                 "a lossy frontier cannot become a complete-search frontier");

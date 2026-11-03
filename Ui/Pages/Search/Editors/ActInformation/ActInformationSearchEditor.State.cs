@@ -14,38 +14,44 @@ internal sealed partial class ActInformationSearchEditor
 
     internal Action ClearPageConditions(bool party, bool map)
     {
-        if (!_drafts.TryGetValue(party ? -1 : 0, out var draft)) return () => { };
-        if (map)
+        return WorkbenchConditionReset.Swap(_drafts, saved =>
         {
-            var routes = draft.Routes.ToArray(); var properties = draft.Properties.ToArray();
-            var drawings = draft.Drawings.ToArray();
-            draft.Routes.Clear(); draft.Properties.Clear();
-            draft.Drawings.Clear();
-            return () => { foreach (var p in routes) draft.Routes[p.Key] = p.Value; foreach (var p in properties) draft.Properties[p.Key] = p.Value;
-                foreach (var p in drawings) draft.Drawings[p.Key] = p.Value; };
+            var cleared = CopyForConditionReset(saved);
+            if (map) { cleared.Routes.Clear(); cleared.Properties.Clear(); cleared.Drawings.Clear(); }
+            else
+            {
+                foreach (var set in cleared.SelectedVariants.Concat(cleared.SelectedBosses).Concat(cleared.SelectedSecondBosses)) set.Clear();
+                Array.Clear(cleared.IncludesSecondBoss);
+            }
+            return cleared;
+        }, party ? -1 : 0, (previous, current) => { if (ReferenceEquals(_draft, previous)) _draft = current; });
+    }
+
+    private static SeatDraft CopyForConditionReset(SeatDraft saved)
+    {
+        var copy = new SeatDraft { Context = saved.Context, Players = saved.Players, Ascension = saved.Ascension,
+            Catalog = saved.Catalog, MapMode = saved.MapMode, AdvancedProperties = saved.AdvancedProperties, Scope = saved.Scope };
+        for (int index = 0; index < saved.SelectedVariants.Length; index++)
+        {
+            copy.SelectedVariants[index].UnionWith(saved.SelectedVariants[index]);
+            copy.SelectedBosses[index].UnionWith(saved.SelectedBosses[index]);
+            copy.SelectedSecondBosses[index].UnionWith(saved.SelectedSecondBosses[index]);
         }
-        var variants = draft.SelectedVariants.Select(s => s.ToArray()).ToArray();
-        var bosses = draft.SelectedBosses.Select(s => s.ToArray()).ToArray();
-        var secondBosses = draft.SelectedSecondBosses.Select(s => s.ToArray()).ToArray();
-        var includesSecond = draft.IncludesSecondBoss.ToArray();
-        foreach (var set in draft.SelectedVariants.Concat(draft.SelectedBosses).Concat(draft.SelectedSecondBosses)) set.Clear();
-        Array.Clear(draft.IncludesSecondBoss);
-        return () => { for (int i = 0; i < variants.Length; i++) {
-            draft.SelectedVariants[i].UnionWith(variants[i]); draft.SelectedBosses[i].UnionWith(bosses[i]);
-            draft.SelectedSecondBosses[i].UnionWith(secondBosses[i]); draft.IncludesSecondBoss[i] = includesSecond[i]; } };
+        saved.IncludesSecondBoss.CopyTo(copy.IncludesSecondBoss, 0);
+        saved.DrawingModes.CopyTo(copy.DrawingModes, 0);
+        foreach (var pair in saved.Properties) copy.Properties[pair.Key] = pair.Value.ToList();
+        foreach (var pair in saved.Routes) copy.Routes[pair.Key] = pair.Value;
+        foreach (var pair in saved.Drawings) copy.Drawings[pair.Key] = pair.Value.ToList();
+        foreach (var pair in saved.DailyMetrics) copy.DailyMetrics[pair.Key] = pair.Value;
+        return copy;
     }
 
     internal bool HasConditions(bool party) => _drafts.TryGetValue(party ? -1 : 0, out var d) &&
         (Enumerable.Range(0, 4).Any(scope => ScopeConditionCount(d, scope) > 0) ||
          d.SelectedVariants.Concat(d.SelectedBosses).Concat(d.SelectedSecondBosses).Any(keys => keys.Count > 0) ||
          d.IncludesSecondBoss.Any(required => required));
-    internal Action ClearConditions(bool party)
-    {
-        int key = party ? -1 : 0;
-        bool existed = _drafts.TryGetValue(key, out var saved);
-        _drafts[key] = new SeatDraft();
-        return () => { if (existed) _drafts[key] = saved!; else _drafts.Remove(key); };
-    }
+    internal Action ClearConditions(bool party) => WorkbenchConditionReset.Swap(_drafts, _ => new SeatDraft(), party ? -1 : 0,
+        (previous, current) => { if (ReferenceEquals(_draft, previous)) _draft = current; });
 
     internal int BossVariantConditionCount() => Enumerable.Range(0, 3).Sum(act =>
         (_draft.SelectedVariants[act].Count > 0 ? 1 : 0) + (_draft.SelectedBosses[act].Count > 0 ? 1 : 0) +

@@ -57,6 +57,10 @@ internal static partial class UiSurfaceChecks
         int checks = 0;
         void Check(bool condition, string message)
         { checks++; if (!condition) throw new InvalidOperationException("InRunMap: " + message); }
+        string featureDirectory = Path.Combine(OS.GetUserDataDir(), "RolltheSpire2", "state");
+        bool originalMapFeature = InRunFeaturePreferences.MapPredictionEnabled;
+        Check(!originalMapFeature, "fresh map prediction defaults off before this fixture explicitly enables it");
+        InRunFeaturePreferences.SetMap(featureDirectory, true);
         object Field(object obj, string name) => (obj.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new MissingFieldException(obj.GetType().FullName, name)).GetValue(obj)!;
         var oldGame = NGame.Instance;
@@ -406,14 +410,14 @@ internal static partial class UiSurfaceChecks
                     child is Label && (child.Name == "ForecastStatus" || child.Name == "OverviewCardCollectionIssue") ||
                     child is OptionButton && child.Name == "OverviewCardCollectionPicker") &&
                 !((Control)Field(panel, "_forecastStatus")).Visible,
-                "default-enabled map allows the collection picker without resident mode/status chrome before Settings;children=" +
+                "explicitly enabled map allows the collection picker without resident mode/status chrome before Settings;children=" +
                 string.Join(',', panel.GetChildren().Select(child => child.Name + ":" + child.GetClass())) +
                 ";statusVisible=" + ((Control)Field(panel, "_forecastStatus")).Visible +
                 ";status=" + ((Label)Field(panel, "_forecastStatus")).Text);
             await Picture("in-run-map-open.png");
             topBar.AnimHide(); capstone.EnableBackstopInstantly(); await Transition();
             Check(Math.Abs(topBar.Position.Y + 100) < .1f && panel.PredictionEnabled,
-                "real Settings top-bar hide transition retains default-enabled forecast");
+                "real Settings top-bar hide transition retains the explicitly enabled forecast");
             await Picture("in-run-map-settings-hidden.png");
             topBar.AnimShow(); capstone.DisableBackstopInstantly(); await Transition();
             Check(Math.Abs(topBar.Position.Y) < .1f && panel.PredictionEnabled,
@@ -687,6 +691,7 @@ internal static partial class UiSurfaceChecks
             typeof(NGame).GetProperty("Instance")!.SetValue(null, oldGame);
             foreach (Node node in new Node[] { game, sceneContainer, runNode, input, controller, cursor, hotkeys, remoteCursors }) node.Free();
             RunManager.Instance.CleanUp(); LocalContext.NetId = oldLocal; TestMode.IsOn = false;
+            InRunFeaturePreferences.SetMap(featureDirectory, originalMapFeature);
             if (fixtureDebugAction) InputMap.EraseAction("debug_hide_top_bar");
         }
     }

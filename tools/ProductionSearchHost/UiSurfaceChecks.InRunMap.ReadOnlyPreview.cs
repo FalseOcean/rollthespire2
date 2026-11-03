@@ -31,7 +31,7 @@ internal static partial class UiSurfaceChecks
             var session = new InRunMapPredictionSession();
             session.Update(native, "0.111.0", true, new Dictionary<int, PredictorMapRouteDraft> { [0] = draft });
             var captured = session.Snapshot!;
-            var source = captured.Run;
+            var source = captured.CreateRun();
             var state = source.Working;
             long id = state.NextInstanceId;
             var controlled = new PredictorRun(source.Context, state with
@@ -45,7 +45,7 @@ internal static partial class UiSurfaceChecks
                     .Select(rarity => new PredictorBagBucket(rarity, [new("RELIC", fixture.Gift)])).ToImmutableArray(), []) : state.PersonalBag
             }) { CombatDefaults = source.CombatDefaults, AutomaticRewardPickup = source.AutomaticRewardPickup };
             typeof(InRunMapPredictionSession).GetProperty(nameof(InRunMapPredictionSession.Snapshot),
-                BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(session, captured with { Run = controlled });
+                BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(session, captured with { Context = controlled.Context, State = controlled.Working, CombatDefaults = controlled.CombatDefaults, AutomaticRewardPickup = controlled.AutomaticRewardPickup });
             session.Recompute();
             var presenter = new InRunMapNodePresenter(session, names, text);
             var data = presenter.Detail((0, first))!;
@@ -92,7 +92,7 @@ internal static partial class UiSurfaceChecks
             check(session.Revision == revision && session.HistoryCount == history &&
                 ReferenceEquals(forecast, session.Forecast) && ReferenceEquals(nodes, session.Nodes) &&
                 ReferenceEquals(snapshot, session.Snapshot) && JsonSerializer.Serialize(session.Plans) == plansBefore &&
-                PredictorRunStore.Serialize(controlled) == stateBefore && signature() == nativeBefore,
+                PredictorRunStore.Serialize(session.Snapshot!.CreateRun()) == stateBefore && signature() == nativeBefore,
                 "all hover previews preserve native state, captured run, plans, revision, history and published forecast");
             check(presenter.ApplyChoice(data.NodeId, special.Id), "previewing an alternative leaves its actual click usable");
             var accepted = session.Nodes[(0, first)].Rewards.Single(reward => reward.Kind == PredictorRewardKind.Card &&
@@ -174,7 +174,7 @@ internal static partial class UiSurfaceChecks
         var production = new InRunMapPredictionSession();
         production.Update(native, "0.111.0", true, new Dictionary<int, PredictorMapRouteDraft> { [0] = draft });
         var captured = production.Snapshot!;
-        var source = captured.Run;
+        var source = captured.CreateRun();
         var state = source.Working;
         int act = state.Position.Act;
         const BindingFlags members = BindingFlags.Instance | BindingFlags.NonPublic;
@@ -198,7 +198,7 @@ internal static partial class UiSurfaceChecks
             { CombatDefaults = new(), AutomaticRewardPickup = source.AutomaticRewardPickup };
             var isolated = new InRunMapPredictionSession();
             typeof(InRunMapPredictionSession).GetProperty(nameof(InRunMapPredictionSession.Snapshot), members)!
-                .SetValue(isolated, captured with { Run = controlled });
+                .SetValue(isolated, captured with { Context = controlled.Context, State = controlled.Working, CombatDefaults = controlled.CombatDefaults, AutomaticRewardPickup = controlled.AutomaticRewardPickup });
             typeof(InRunMapPredictionSession).GetField("_drafts", members)!
                 .SetValue(isolated, DiagnosticField(production, "_drafts"));
             isolated.Recompute();
@@ -211,12 +211,13 @@ internal static partial class UiSurfaceChecks
             "real detached event route generates Colorful branch identities from the native catalog");
         var presenter = new InRunMapNodePresenter(session, names, text);
         var initial = presenter.Detail(location)!;
-        var optionalBranches = initial.Premises!.Sections.Where(section => section.HeaderChoice != null)
-            .Select(section => section.HeaderChoice!).ToArray();
-        check(!actual.Event!.BusinessChoiceRequired && !initial.Sections.Any(section => section.BranchRow) &&
+        var initialBranchRows = initial.Sections.Where(section => section.BranchRow).ToArray();
+        var optionalBranches = initialBranchRows.SelectMany(section => section.Choices).ToArray();
+        check(!actual.Event!.BusinessChoiceRequired && initialBranchRows.Length == 1 &&
             optionalBranches.Length == actual.Event.EntryOptions.Length && optionalBranches.All(choice => !choice.Selected) &&
+            !(initial.Premises?.Sections ?? []).Any(section => section.BranchRow) &&
             !initial.Sections.Any(section => section.RewardActionsRow) && initial.Sections.Any(section => section.OutcomePreview != null),
-            "unadopted real Colorful route shows conditional outcomes and optional original branches without silently selecting a reward pool");
+            "unadopted real Colorful route shows conditional outcomes and one main row of optional original branches without silently selecting a reward pool");
         check(presenter.ApplyChoice(actual.Position.NodeId, optionalBranches[0].Id),
             "real optional Colorful premise authors its actual option and recomputes the route");
         actual = session.Nodes[location];

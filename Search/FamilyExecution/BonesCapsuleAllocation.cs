@@ -13,29 +13,29 @@ namespace RolltheSpire2.Search.FamilyExecution;
 // No new logical Family or automatic multi-stage pricing.
 internal static class BonesCapsuleAllocation
 {
-    internal const string LocalRevision = "N.Neow.Composite.RCapsule.BonesK.LocalSameRoute.DensePreBones.CanonicalAbi1Ready.20260909.v1" + GpuRngRotation.Revision;
-    internal static bool TryCreateDefaultUnit(ExactSearchExecutionRequest request,
-        IReadOnlyList<IFamilyInvocation> registered, out IFamilyInvocation? unit)
+    internal const string LocalRevision = "N.Neow.Composite.RCapsule.BonesK.LocalSameRoute.DensePreBones.CanonicalAbi1Ready.20260909.v1" + NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision;
+    internal static bool TryCreateDefaultUnit(SearchModel request, FilterExecutionPreferences preferences,
+        IReadOnlyList<FilterBodyDescription> registered, out FilterBodyDescription? unit)
     {
         unit = null;
         string control = System.Environment.GetEnvironmentVariable("RT2_BONES_CAPSULE_BOUNDARY") ?? "";
         if (control is not ("" or "default") ||
-            registered.OfType<NeowFamily>().SingleOrDefault() is not { GpuPlan: not null } ||
-            registered.OfType<CapsuleRelicFamily>().SingleOrDefault() is not { } relic ||
-            relic.GpuPreparationFailureDetail.Length != 0) return false;
+            !registered.Any(f => f.FamilyId == "N.Neow" && f.UsesGpu && f.Coverage.Count == 1) ||
+            registered.SingleOrDefault(f => f.FamilyId == "R.Relic") is not { } relic ||
+            relic.Preparation.Issues.Any(issue => issue.Stage == "GpuPreparation")) return false;
         // Ordinary Rfull deliberately cannot model the K-first continuation.
         // The coupled body below supplies those two same-route arrivals itself;
         // standalone R being CPU-only is therefore not an availability failure.
         return TryCreate(request, registered, "local", true, out unit);
     }
 
-    internal static bool TrySelect(ExactSearchExecutionRequest request,
-        IReadOnlyList<IFamilyInvocation> registered, out FamilyExecutionPlan? selected)
+    internal static bool TrySelect(PreparedSearch request,
+        IReadOnlyList<FilterBodyDescription> registered, out FamilyExecutionPlan? selected)
     {
         selected = null;
         string mode = System.Environment.GetEnvironmentVariable("RT2_BONES_CAPSULE_BOUNDARY") ?? "";
         if (mode is "" or "ordinary" or "default") return false;
-        if (!TryCreate(request, registered, mode, false, out var unit)) return false;
+        if (!TryCreate(request.Model, registered, mode, false, out var unit)) return false;
         selected = FamilyPlanner.InOrder([unit!, ..registered.Where(f => f.FamilyId is not ("N.Neow" or "R.Relic"))])
             with { SelectionPolicyId = "BonesCapsuleBoundary.Explicit.20260909.v1",
                 RankingAuthority = FamilyPlannerRankingAuthority.UnpricedPhysicalTrial,
@@ -43,8 +43,8 @@ internal static class BonesCapsuleAllocation
         return true;
     }
 
-    private static bool TryCreate(ExactSearchExecutionRequest request,
-        IReadOnlyList<IFamilyInvocation> registered, string mode, bool defaultSelection, out IFamilyInvocation? unit)
+    private static bool TryCreate(SearchModel request,
+        IReadOnlyList<FilterBodyDescription> registered, string mode, bool defaultSelection, out FilterBodyDescription? unit)
     {
         unit = null;
         if (mode is not ("private" or "verify" or "mask" or "local" or "recompute" or "verify-mask" or "verify-local" or "verify-recompute"))
@@ -55,11 +55,15 @@ internal static class BonesCapsuleAllocation
         var leafy = effects.FirstOrDefault(c => c.SourceRelicKey == BaseGameModelKeys.Relics.LeafyPoultice);
         var kaleidoscope = effects.FirstOrDefault(c => c.SourceRelicKey == BaseGameModelKeys.Relics.Kaleidoscope);
         bool isK = kaleidoscope is not null && leafy is null;
+        int hiddenMode = isK ? BonesHiddenUpgradeContinuation.CaptureMode() : 0;
+        var pair = request.Evaluation.RequiredBonesAcquisitionOrder.Count == 2
+            ? request.Evaluation.RequiredBonesAcquisitionOrder : request.Evaluation.RequiredBonesCombination;
         var companion = isK ? BaseGameModelKeys.Relics.Kaleidoscope : BaseGameModelKeys.Relics.LeafyPoultice;
         bool applicable = (!defaultSelection || isK) && (mode is "private" or "verify" || isK) && n.Bones && n.DirectNestedVanilla111 && !n.HasFinalCurseFastProjection && n.ExactOnly.Length == 0 &&
             request.Authority.CanUseCurrentModel && request.Authority.PlayersCount == 1 && request.Authority.NoRunModifiers == true &&
-            request.Authority.AllCharacterCardPoolsUnlocked == true && request.Evaluation.RequiredBonesAcquisitionOrder.Count == 0 &&
-            request.Evaluation.RequiredBonesCombination.Count == 2 && request.Evaluation.RequiredBonesCombination.ToHashSet().SetEquals([BaseGameModelKeys.Relics.LargeCapsule, companion]) &&
+            request.Authority.AllCharacterCardPoolsUnlocked == true &&
+            (request.Evaluation.RequiredBonesAcquisitionOrder.Count == 0 || hiddenMode != 0 && request.Evaluation.RequiredBonesAcquisitionOrder.Count == 2) &&
+            pair.Count == 2 && pair.ToHashSet().SetEquals([BaseGameModelKeys.Relics.LargeCapsule, companion]) &&
             effects.Length == 2 && n.StructuredConditions.Length == 1 && capsule is not null && (leafy is not null || kaleidoscope is not null) &&
             NeowReplayPlan.IsCapsule(capsule) && capsule.Kind == NeowStructuredConditionKind.ExactUnorderedPair &&
             capsule.OutputKeys.Count >= (isK ? 1 : 2) && capsule.OutputKeys.Count <= 2 && capsule.OutputKeys.Distinct().Count() == capsule.OutputKeys.Count && !capsule.AllowDuplicateOutputs &&
@@ -70,68 +74,80 @@ internal static class BonesCapsuleAllocation
             request.Evaluation.CapsuleContainedRelics.IsEmpty && !request.Evaluation.RequireWhetstone && !request.Evaluation.RequireWarPaint &&
             registered.Any(f => f.FamilyId == "N.Neow") && registered.Any(f => f.FamilyId == "R.Relic");
         if (!applicable || !NeowFamilyGpuPlan.TryCreate(n, out var np, out _) || np is null ||
-            !CreateR(request, isK, out var rp) || rp is null)
+            !CreateR(request, isK, hiddenMode != 0, out var rp) || rp is null)
         {
             if (!defaultSelection) Bootstrap.RuntimeLog.TryBackgroundInfo("bonesCapsuleBoundaryRequested=true;applicable=false;normalAllocationRetained=true");
             return false;
         }
         // Existing same-route body is indivisible and Dense-only. Its accepted
         // stable local default needs no complete-plan or suffix price.
-        unit = new BonesCapsuleBoundaryInvocation(request, np, rp, mode, defaultSelection);
+        unit = BonesCapsuleBoundaryInvocation.Prepare(request, np, rp, mode, defaultSelection, hiddenMode);
         Bootstrap.RuntimeLog.TryBackgroundInfo($"bonesCapsuleBoundarySelected=true;mode={mode};coverage=N.Neow,R.Relic;order=N>R;intermediate={((mode.EndsWith("mask",StringComparison.Ordinal)) ? "PrivatePackedOrdinalRouteMask" : mode.EndsWith("local",StringComparison.Ordinal) ? "LocalCheckpoint" : "PrivateOrdinal")};localUnitSelection=true;defaultSelection={defaultSelection};physicalRevision={(mode=="local" ? LocalRevision : "ExplicitControl")};pricingDeferred=true");
         return true;
     }
-    private static bool CreateR(ExactSearchExecutionRequest request, bool isK, out RelicFullGpuPlan? plan)
+    private static bool CreateR(SearchModel request, bool isK, bool allowPinned, out RelicFullGpuPlan? plan)
     {
         var route = NeowReplayPlan.Compile(request, true);
-        return isK ? RelicFullGpuPlan.TryCreateBonesKBoundary(request, route, out plan, out _)
+        return isK ? RelicFullGpuPlan.TryCreateBonesKBoundary(request, route, out plan, out _, allowPinned)
             : RelicFullGpuPlan.TryCreate(request, route, out plan, out _);
     }
 
 }
 
-internal sealed class BonesCapsuleBoundaryInvocation(ExactSearchExecutionRequest request, NeowFamilyGpuPlan np,
-    RelicFullGpuPlan rp, string mode, bool defaultSelection = false) : IFamilyInvocation
+internal sealed record BonesCapsuleNumericalInputs(string Identity, NeowFamilyGpuPlan N, RelicFullGpuPlan R,
+    CapsuleRelicReplay Cpu, NeowReplayPlan? NReplay, CapsuleRelicReplay? EarlyCpu, CapsuleRelicReplay? LateCpu,
+    BonesHiddenUpgradeContinuation? HiddenUpgrades);
+
+internal static class BonesCapsuleBoundaryInvocation
 {
-    private BonesCapsuleBoundaryGpu? _gpu;
-    private long _input, _output;
-    private int _batches;
-    private double _ms;
-    private bool _faulted;
-    GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => ConditionPerformance.UsesGpu ? GpuNumericRequirements.Int64 | GpuNumericRequirements.Float64 : GpuNumericRequirements.None;
-    public string FamilyId => "N.Neow";
-    public IReadOnlyList<string> Coverage => ["N.Neow", "R.Relic"];
-    public FamilyAnalyticalCostProjection AnalyticalCost => new(FamilyId, PrivateOrdinalBuffer.Capacity, [], "BonesKLocalAllocation.Unpriced");
-    public FamilySurvivalProjection Survival => FamilySurvivalProjection.Unresolved(FamilyId, "BoundedSameRouteProjectionUnpriced");
-    public FamilyConditionPerformanceProjection ConditionPerformance => new(FamilyId,
-        mode=="local" ? BonesCapsuleAllocation.LocalRevision :
-        "N.Neow.Composite.RCapsule.Bones" + (rp.UsesBonesKBoundary ? "K" : "Leafy") + $".{mode}.CanonicalAbi1Ready.20260909.v2" + GpuRngRotation.Revision,
-        "Neutral", 1, defaultSelection ? "OwnerAcceptedBoundedDefault_Unpriced" : "Explicit", usesGpu:true);
-    public FamilyPerformanceObservation CapturePerformanceObservation() => new(ConditionPerformance, _gpu?.Device ?? "", _gpu?.SetupMs ?? 0,
-        0, 0, _batches, 0, _input, _output, _ms, false, _faulted ? "PhysicalFailure" : defaultSelection ? "CoupledDenseOnlyUnitTimeUnavailable" : "ExplicitExperimentNoCalibration");
-    public async ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow observation,
-        FamilyCandidateSet input, CancellationToken token)
+    internal static FilterBodyDescription Prepare(SearchModel model, NeowFamilyGpuPlan np, RelicFullGpuPlan rp,
+        string mode, bool defaultSelection = false, int hiddenMode = 0)
     {
-        if (_faulted || request.SnapshotFingerprint != observation.ExactRequest.SnapshotFingerprint)
-            throw new InvalidOperationException("BonesBoundary.InvocationInvariant");
-        try {
-            _gpu ??= await context.ExecuteGpuAsync(rd => new BonesCapsuleBoundaryGpu(rd, request, np, rp, mode), token).ConfigureAwait(false);
-            var result = await context.ExecuteGpuAsync(_ => { var output = _gpu.Execute(input, token, out var ms); return (output, ms); }, token).ConfigureAwait(false);
-            _batches++; _input += input.Count; _output += result.output.Count; _ms += result.ms;
-            return result.output;
-        } catch (OperationCanceledException) { throw; } catch { _faulted = true; throw; }
-    }
-    public async ValueTask DisposeAsync(FamilyExecutionContext context)
-    {
-        if (_gpu is not null) await context.ExecuteGpuAsync(_ => { _gpu.Dispose(); return true; }, CancellationToken.None).ConfigureAwait(false);
-        Bootstrap.RuntimeLog.TryBackgroundInfo($"bonesCapsuleBoundarySummary=true;batches={_batches};input={_input};output={_output};canonicalMs={_ms};faulted={_faulted};recovery=None");
+        const string id = "N.Neow";
+        bool verify = mode.StartsWith("verify", StringComparison.Ordinal);
+        if (hiddenMode != 0 && mode is not ("local" or "verify-local" or "recompute" or "verify-recompute"))
+            throw new InvalidOperationException("BonesK.HiddenUpgradeExperimentRequiresLocalOrRecompute");
+        var hidden = hiddenMode == 0 ? null : BonesHiddenUpgradeContinuation.Compile(model, rp, hiddenMode);
+        if (hidden is not null) rp = rp with { CapsuleMetadata = hidden.AppendTo(rp.CapsuleMetadata) };
+        var route = NeowReplayPlan.Compile(model, true);
+        var numeric = new BonesCapsuleNumericalInputs(model.SnapshotFingerprint, np, rp, new(model, route),
+            verify && rp.UsesBonesKBoundary ? NeowReplayPlan.Compile(model, false) : null,
+            verify && rp.UsesBonesKBoundary ? new(model, route with { First = Beta110FastRelicCatalog.LargeCapsule, Second = Beta110FastRelicCatalog.Kaleidoscope }) : null,
+            verify && rp.UsesBonesKBoundary ? new(model, route with { First = Beta110FastRelicCatalog.Kaleidoscope, Second = Beta110FastRelicCatalog.LargeCapsule }) : null, hidden);
+        string revision = mode == "local" ? BonesCapsuleAllocation.LocalRevision :
+            "N.Neow.Composite.RCapsule.Bones" + (rp.UsesBonesKBoundary ? "K" : "Leafy") + $".{mode}.CanonicalAbi1Ready.20260909.v2" + NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision;
+        if (hidden is not null)
+        {
+            revision += BonesHiddenUpgradeContinuation.Revision + "." + hidden.ModeName;
+            if(hidden.KnownFull) revision += BonesHiddenUpgradeContinuation.KnownFullGpuRevision;
+            Bootstrap.RuntimeLog.TryBackgroundInfo($"bonesHiddenUpgradeArrival=true;mode={hidden.ModeName};ready={hidden.Ready};attackDraws={hidden.AttackDraws};skillDraws={hidden.SkillDraws};unknownSlots={hidden.UnknownSlots};explicitMask={hidden.ExplicitMask}");
+        }
+        if(np.CapsuleNicheMetaOffset>=0) revision += NeowCapsuleNicheContinuation.Revision;
+        var preparation = new PreparedFilter(id) {
+            Coverage = [id, "R.Relic"], AnalyticalCost = new(id, PrivateOrdinalBuffer.Capacity, [], "BonesKLocalAllocation.Unpriced"),
+            Survival = FamilySurvivalProjection.Unresolved(id, "BoundedSameRouteProjectionUnpriced")
+        };
+        return new(preparation, revision, model.ProfileId) {
+            UsesGpu = true, InputModes = FilterInputModes.Dense, InputIdentity = model.SnapshotFingerprint,
+            PlayersCount = model.Authority.PlayersCount, WindowCapacity = PrivateOrdinalBuffer.Capacity,
+            NumericRequirements = GpuNumericRequirements.Int64 | GpuNumericRequirements.Float64,
+            RequiresBonesCapsuleDiagnostics = verify,
+            Cost = new() { MinimumComparableInput = _ => int.MaxValue },
+            PerformanceProjection = _ => new(id, revision, "Neutral", 1,
+                defaultSelection ? "OwnerAcceptedBoundedDefault_Unpriced" : "Explicit", true),
+            CreateExecution = (body, services) => new GpuExperimentExecution<BonesCapsuleBoundaryGpu>(body,
+                device => new(device, numeric, mode, verify ? services.BonesCapsuleDiagnostics ??
+                    throw new InvalidOperationException("BonesBoundary.VerifyServiceMissing") : null),
+                (resource, input, token) => { var output = resource.Execute(input, token, out var ms); return new(output, ms); },
+                resource => resource.Dispose(), resource => (resource.Device, resource.SetupMs), verify)
+        };
     }
 }
 
 internal sealed class BonesCapsuleBoundaryGpu : IDisposable
 {
     private readonly RenderingDevice _rd;
-    private readonly ExactSearchExecutionRequest _request;
+    private readonly BonesCapsuleDiagnosticVerification? _diagnostics;
     private readonly string _mode;
     private readonly PrivateOrdinalBuffer? _ordinals;
     private readonly NeowFamilyGpuExecutor _n;
@@ -141,6 +157,8 @@ internal sealed class BonesCapsuleBoundaryGpu : IDisposable
     private readonly CapsuleRelicReplay _cpu;
     private readonly NeowReplayPlan? _nReplay;
     private readonly CapsuleRelicReplay? _earlyCpu, _lateCpu;
+    private readonly BonesHiddenUpgradeContinuation? _hiddenUpgrades;
+    private readonly uint[] _capsuleMetadata;
     private bool _disposed, _checked;
     private long _batches, _inputs, _middle, _outputs, _zero, _pairs;
     private long _aOnly, _bOnly, _both, _evalA, _evalB, _heavyA, _heavyB, _removed;
@@ -150,28 +168,34 @@ internal sealed class BonesCapsuleBoundaryGpu : IDisposable
     private double NeowSetupMs => _n.SetupMs + (_recompute?.SetupMs ?? 0) + (_referenceN?.SetupMs ?? 0);
     internal double SetupMs => _setupBaseMs + NeowSetupMs;
     internal string Device => _n.Device;
-    internal BonesCapsuleBoundaryGpu(RenderingDevice rd, ExactSearchExecutionRequest request, NeowFamilyGpuPlan np, RelicFullGpuPlan rp, string mode)
+    internal BonesCapsuleBoundaryGpu(RenderingDevice rd, BonesCapsuleNumericalInputs inputs, string mode, BonesCapsuleDiagnosticVerification? diagnostics = null)
     {
-        _rd=rd; _request=request;
+        _rd=rd; _diagnostics=diagnostics;
+        var np=inputs.N; var rp=inputs.R;
         bool verify=mode.StartsWith("verify",StringComparison.Ordinal);
         _mode=mode.Replace("verify-", "", StringComparison.Ordinal); if (_mode=="verify") _mode="private";
         var timer=Stopwatch.StartNew();
-        _cpu=new(request,NeowReplayPlan.Compile(request,true));
+        _cpu=inputs.Cpu;
+        _hiddenUpgrades=inputs.HiddenUpgrades; _capsuleMetadata=rp.CapsuleMetadata;
         try {
             if(_mode!="local") _ordinals=new(rd);
-            _n = _mode=="local" ? new(rd,np,1,bonesKMode:2,bonesKMetadata:rp.CapsuleMetadata)
-                : new(rd,np,1,privateOutput:_ordinals,bonesKMode:_mode=="mask" ? 1 : 0);
+            // The repaired recompute donor retains every identity pair. It must
+            // not run the incomplete legacy N predicate before the receiver.
+            var firstN=np;
+            if(_hiddenUpgrades is not null && _mode=="recompute") {
+                uint[] firstMeta=(uint[])np.Meta.Clone(); firstMeta[83]=firstMeta[84]=0;
+                firstN=np with { Meta=firstMeta };
+            }
+            _n = _mode=="local" ? new(rd,np,1,bonesKMode:2,bonesKMetadata:rp.CapsuleMetadata,bonesHiddenUpgrades:_hiddenUpgrades)
+                : new(rd,firstN,1,privateOutput:_ordinals,bonesKMode:_mode=="mask" ? 1 : 0);
             if(_mode=="recompute") {
                 uint[] meta=(uint[])np.Meta.Clone(); meta[66]=0; // Compact receiver has no Dense stages.
-                _recompute=new(rd,np with { Meta=meta },2,privateInput:_ordinals,bonesKMode:2,bonesKMetadata:rp.CapsuleMetadata);
-            } else if(_mode!="local") _r=RelicFamilyGpuExecutor.Create(rd,request,rp,_ordinals,_mode=="mask");
+                _recompute=new(rd,np with { Meta=meta },2,privateInput:_ordinals,bonesKMode:2,bonesKMetadata:rp.CapsuleMetadata,bonesHiddenUpgrades:_hiddenUpgrades);
+            } else if(_mode!="local") _r=RelicFamilyGpuExecutor.Create(rd,inputs.Identity,rp,_ordinals,_mode=="mask");
             if(verify) {
-                _referenceN=new(rd,np,3); _referenceR=RelicFamilyGpuExecutor.Create(rd,request,rp);
+                _referenceN=new(rd,np,3); _referenceR=RelicFamilyGpuExecutor.Create(rd,inputs.Identity,rp);
                 if(rp.UsesBonesKBoundary) {
-                    _nReplay=NeowReplayPlan.Compile(request,false);
-                    var r=NeowReplayPlan.Compile(request,true);
-                    _earlyCpu=new(request,r with {First=Beta110FastRelicCatalog.LargeCapsule,Second=Beta110FastRelicCatalog.Kaleidoscope});
-                    _lateCpu=new(request,r with {First=Beta110FastRelicCatalog.Kaleidoscope,Second=Beta110FastRelicCatalog.LargeCapsule});
+                    _nReplay=inputs.NReplay; _earlyCpu=inputs.EarlyCpu; _lateCpu=inputs.LateCpu;
                 }
             }
             _setupBaseMs=timer.Elapsed.TotalMilliseconds-NeowSetupMs;
@@ -228,6 +252,7 @@ internal sealed class BonesCapsuleBoundaryGpu : IDisposable
     }
     private void Verify(FamilyCandidateSet input,int middle,FamilyCandidateSet output,CancellationToken token)
     {
+        if (_hiddenUpgrades is not null) { VerifyHiddenUpgrades(input,output,token); return; }
         var ordinaryN=_referenceN!.Execute(input,token,out _);
         Dictionary<uint,uint>? masks=null;
         if(_mode=="mask") {
@@ -259,15 +284,15 @@ internal sealed class BonesCapsuleBoundaryGpu : IDisposable
             if(!same) _sameFailure++;
             if(!old.Contains(ordinal)) continue;
             if(!TrustedRootHashInput.TryBindCanonicalSeed(Beta111Profile.Instance,root,seed,out var bound,out var issue)) throw new InvalidDataException(issue);
-            var exact=ProductionExactSearchEvaluator.Evaluate(_request,bound);
+            var exact=(_diagnostics ?? throw new InvalidOperationException("BonesBoundary.VerifyServiceMissing")).Verify(bound);
             if(!same) {
-                if(exact.Evaluation.Disposition==SearchDisposition.NoMatch) _removed++; else _unsafe++;
-                if(_mode!="private" && (exact.IsMatch || exact.Evaluation.Disposition!=SearchDisposition.NoMatch)) {
-                    Bootstrap.RuntimeLog.TryBackgroundInfo($"bonesKCounterexample=true;seed={seed};ordinal={input.Batch.BatchBase+ordinal};na={na};nb={nb};ra={ra};rb={rb};exactMatch={exact.IsMatch};disposition={exact.Evaluation.Disposition};failure={exact.FailureCode};evaluationJson={System.Text.Json.JsonSerializer.Serialize(exact.Evaluation)}");
-                    bool excludedPickup=HasExcludedMatchedPickup(exact, _request);
+                if(exact.Disposition==SearchDisposition.NoMatch) _removed++; else _unsafe++;
+                if(_mode!="private" && (exact.IsMatch || exact.Disposition!=SearchDisposition.NoMatch)) {
+                    Bootstrap.RuntimeLog.TryBackgroundInfo($"bonesKCounterexample=true;seed={seed};ordinal={input.Batch.BatchBase+ordinal};na={na};nb={nb};ra={ra};rb={rb};exactMatch={exact.IsMatch};disposition={exact.Disposition};failure={exact.FailureCode};evaluationJson={exact.EvaluationJson}");
+                    bool excludedPickup=exact.ExcludedMatchedPickup;
                     // Diagnostic classification only, never a simulation/fallback or
                     // a same-run pricing input. Other Exact divergences still fail.
-                    if(!excludedPickup) throw new InvalidDataException("BonesK.RemovedExactNotNoMatch:"+seed+":"+exact.Evaluation.Disposition);
+                    if(!excludedPickup) throw new InvalidDataException("BonesK.RemovedExactNotNoMatch:"+seed+":"+exact.Disposition);
                     Bootstrap.RuntimeLog.TryBackgroundInfo($"bonesKScopedDivergence=true;seed={seed};excludedPickupEvidence=true;knownProductLimitation=WWP;realExactMismatchUnresolved=true");
                 }
             } else if(exact.IsMatch) {
@@ -275,30 +300,32 @@ internal sealed class BonesCapsuleBoundaryGpu : IDisposable
             }
         }
     }
-    // This is evidence classification, not an effect adapter. Only an Exact
-    // witness whose Large->K route actually contains the excluded automatic
-    // pickup qualifies; a W/WP in an unrelated route cannot waive a mismatch.
-    internal static bool HasExcludedMatchedPickup(ProductionExactSearchResult exact, ExactSearchExecutionRequest request)
+    private void VerifyHiddenUpgrades(FamilyCandidateSet input,FamilyCandidateSet output,CancellationToken token)
     {
-        if(!exact.IsMatch || exact.Document is null) return false;
-        bool Authored(ModelKey key) => request.Evaluation.CapsuleContainedRelics.All.Contains(key) ||
-            request.Evaluation.CapsuleContainedRelics.Any.Contains(key) ||
-            (key == BaseGameModelKeys.OrdinaryRelics.Whetstone ? request.Evaluation.RequireWhetstone : request.Evaluation.RequireWarPaint) ||
-            request.Evaluation.StructuredNeowEffects.Any(c => !c.IsEmpty && NeowReplayPlan.IsCapsule(c) && c.OutputKeys.Contains(key));
-        foreach(var choice in exact.Document.Sections.SelectMany(section=>section.NeowChoices)) {
-            if(choice.BonesOutcome is null) continue;
-            foreach(var route in choice.BonesOutcome.OriginalRoutes) {
-                if(route.AcquisitionOrder.Count!=2 || route.AcquisitionOrder[0]!=BaseGameModelKeys.Relics.LargeCapsule ||
-                    route.AcquisitionOrder[1]!=BaseGameModelKeys.Relics.Kaleidoscope) continue;
-                string routeId=$"choice.{choice.SlotIndex}.{route.OpeningRewardContinuation?.Route.RouteId ?? route.RouteId}";
-                if(!exact.Evaluation.MatchedRouteIds.Contains(routeId)) continue;
-                if(route.RelicScopedResults.Where(result=>result.SourceRelicKey==BaseGameModelKeys.Relics.LargeCapsule)
-                    .SelectMany(result=>result.EffectGroups).SelectMany(group=>group.OrderedItems)
-                    .Any(item => item.EvidenceCode.Value == "beta111.neow-effect.war-paint.nested-automatic-effect" && !Authored(BaseGameModelKeys.OrdinaryRelics.WarPaint) ||
-                        item.EvidenceCode.Value == "beta111.neow-effect.whetstone.nested-automatic-effect" && !Authored(BaseGameModelKeys.OrdinaryRelics.Whetstone))) return true;
+        var actual=output.EnumerateLogicalOrdinals().ToHashSet();
+        foreach(var ordinal in input.EnumerateLogicalOrdinals()) {
+            token.ThrowIfCancellationRequested();
+            string seed=Beta110SeedCodec.FormatOrdinal(input.Batch.BatchBase+ordinal);
+            ulong root=Beta111Profile.Instance.ComputeRootSeed(seed);
+            var observation=NeowFamilyReplay.Observe(root,_nReplay!);
+            bool same=false;
+            if(observation.IdentityPass) {
+                bool na=(_capsuleMetadata[29]==0 || _capsuleMetadata[30]==Beta110FastRelicCatalog.Kaleidoscope) &&
+                    NeowFamilyReplay.Route(root,_nReplay!,Beta110FastRelicCatalog.Kaleidoscope,Beta110FastRelicCatalog.LargeCapsule,observation.RewardsAfterBones);
+                bool nb=(_capsuleMetadata[29]==0 || _capsuleMetadata[30]==Beta110FastRelicCatalog.LargeCapsule) &&
+                    _hiddenUpgrades!.LargeFirstMatches(root,_nReplay!,observation.RewardsAfterBones,_capsuleMetadata);
+                same=(na&&_lateCpu!.Matches(root))||(nb&&_earlyCpu!.Matches(root));
             }
+            if(actual.Contains(ordinal)!=same) throw new InvalidDataException("BonesK.HiddenUpgradeCpuMismatch:"+seed);
+            // Check removals from the complete identity domain, including roots
+            // the legacy N predicate incorrectly discarded. No W/WP waiver.
+            if(!observation.IdentityPass || same) continue;
+            if(!TrustedRootHashInput.TryBindCanonicalSeed(Beta111Profile.Instance,root,seed,out var bound,out var issue)) throw new InvalidDataException(issue);
+            var exact=(_diagnostics ?? throw new InvalidOperationException("BonesBoundary.VerifyServiceMissing")).Verify(bound);
+            if(exact.Disposition!=SearchDisposition.NoMatch)
+                throw new InvalidDataException("BonesK.RemovedExactNotNoMatch:"+seed+":"+exact.Disposition);
+            _removed++;
         }
-        return false;
     }
     private void CheckLifecycle(SearchBatch batch)
     {

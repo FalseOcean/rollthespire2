@@ -13,8 +13,8 @@ public sealed class UnsupportedPredictionProfile : ISeedPredictionProfile
     public RuntimeProfileId ProfileId => RuntimeProfileId.Unsupported;
     public string PredictorId => "UnsupportedAnalysisProfile";
 
-    public SeedPredictionDocument Predict(SeedPredictionRequest request, GameVersionDetection detection) =>
-        SeedPredictionDocumentFactory.Create(
+    public SeedPredictionFacts Observe(SeedPredictionRequest request, GameVersionDetection detection) =>
+        SeedPredictionFactsFactory.Create(
             request,
             detection,
             ProfileId,
@@ -23,5 +23,5 @@ public sealed class UnsupportedPredictionProfile : ISeedPredictionProfile
             choices: Array.Empty<NeowChoiceResult>(),
             warnings: new[] { new PredictionWarning(PredictionWarningCode.UnsupportedGameVersion) },
             diagnostics: Array.Empty<PredictionDiagnostic>(),
-            documentViabilityStatus: SeedPredictionOverallStatus.Unsupported);
+            inputStatus: SeedPredictionInputStatus.Unsupported, inputIssue: "UnsupportedGameVersion");
 }

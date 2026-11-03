@@ -4,285 +4,118 @@ using RolltheSpire2.Search.Contracts;
 
 namespace RolltheSpire2.Search.FamilyExecution;
 
-// R owns one initial World Relic Bag for Capsule and sequence observations.
-// Tracked-rank Rfull handles common shapes; multiplayer general arrivals reuse
-// the opening draw donor and full local bag. Coverage and ABI1 remain unchanged.
-internal sealed partial class CapsuleRelicFamily : IFamilyInvocation
+internal sealed record CapsuleRelicPreparation(NeowReplayPlan Route, CapsuleRelicReplay Replay,
+    RelicFullGpuPlan? GpuPlan, FilterBodyDescription Body);
+
+// R owns the shared initial bag and its source-local Capsule observations. These
+// immutable replays are numerical inputs; N never owns their bag state.
+internal static partial class CapsuleRelicFamily
 {
-    private readonly GpuCostSamples _costSamples = new();
-    IEnumerable<GpuLocalPeak> IFamilyInvocation.CostPeaks => _costSamples.Peaks;
-    void IFamilyInvocation.LogExecutionEvidence() => _costSamples.WriteSummary();
-    bool IFamilyInvocation.CanBindPrivateSerial => _gpuPlan is { NumericalVariant: GpuNumericalVariant.NativeFloat64 } && !_gpuDisabled;
-    public FamilyPhysicalQuote? QuotePhysicalWork(FamilyPhysicalQuoteRequest geometry) =>
-        FamilyGpuReadback.Reference(this, FamilyCanonicalMeasuredCost.TryDenseQuote(this, geometry) ??
-            (_gpuPlan is not null ? RelicPhysicalPricing.QuoteSourceCapsules(_request, _gpuPlan, geometry) : null) ??
-            RelicWorkEstimate.Capsule(_request, _pricingRoute, _replay.Pool, _gpuPlan, geometry,
-                cpu: _gpuPlan is null, workers: _cpu.Workers, compiledMatcher: _gpuPlan is not null));
-    FamilyPrivateGpuExecution IFamilyInvocation.BindPrivateSerial(Godot.RenderingDevice rd,
-        PrivateOrdinalBuffer? input, PrivateOrdinalBuffer? output)
-    {
-        if (_gpuPlan is not { NumericalVariant: GpuNumericalVariant.NativeFloat64 } || _gpuDisabled) throw new InvalidOperationException("Rfull.PrivateSerialNotAdmitted");
-        return RelicFamilyGpuExecutor.Create(rd, _request, _gpuPlan, input, false, output).BindPrivateSerial();
-    }
-    private static readonly IReadOnlySet<string> Empty = new HashSet<string>();
-    private const int ReferenceSampleCapacity = 256;
-    private readonly ExactSearchExecutionRequest _request;
-    private readonly CapsuleRelicReplay _replay;
-    private readonly NeowReplayPlan _pricingRoute;
-    internal ExactSearchExecutionRequest PricingRequest => _request;
-    internal NeowReplayPlan PricingReplayPlan => _pricingRoute;
-    internal RelicFamilyPool PricingPool => _replay.Pool;
-    private readonly NeowFamilyProjections _models;
-    private readonly FamilyCpuExecution _cpu;
-    private readonly RelicFullGpuPlan? _gpuPlan;
-    internal RelicFullGpuPlan? GpuPlan => _gpuPlan;
-    internal string GpuBagCapacityRevision => _gpuPlan?.BagCapacityRevision ?? "";
-    private RelicFamilyGpuExecutor? _gpu;
-    private bool _gpuDisabled;
-    private bool _referenceParityPassed;
-    private bool _compactInput;
-    private string _failure = string.Empty;
-    private int _gpuBatches;
-    private int _steadyBatches;
-    private long _inputs;
-    private long _outputs;
-    private long _liveInputs;
-    private double _canonicalMs;
-    private double _liveMs;
-    private double _peak;
-
-    internal string GpuPreparationFailureDetail { get; } = "";
-    private CapsuleRelicFamily(ExactSearchExecutionRequest request, NeowReplayPlan route, bool preferGpu,
-        GpuNumericalVariant numericalVariant)
-    {
-        _request = request;
-        _pricingRoute = route;
-        _replay = new(request, route);
-        _models = new(request, route, true, _replay.Pool);
-        _cpu = new(request, FamilyId, "R.Relic.Cpu.CapsuleAndSequenceReplay.20260905.v1");
-        string issue = "CpuReferenceSelected";
-        if (preferGpu)
-        {
-            try { RelicFullGpuPlan.TryCreate(request, route, out _gpuPlan, out issue, numericalVariant); }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                issue = "GpuPlanConstructionFailed"; GpuPreparationFailureDetail = ex.ToString();
-                RuntimeLog.TryBackgroundWarning("capsuleGpuPreparationFailed=true;selected=CpuCapsuleReplay;exceptionJson=" + RuntimeLog.SafeJson(ex.ToString()));
-            }
-        }
-        RuntimeLog.TryBackgroundInfo(
-            $"rCapsuleFamilyReady=true;physical={(_gpuPlan is null ? "CpuCapsuleAndSequenceReplay" : "GpuRfull")};" +
-            $"physicalIssue={issue};exactOnly={string.Join(',', route.ExactOnly)}");
-    }
-
-    internal bool MatchesReference(ulong root) => _replay.Matches(root);
-
-    bool IFamilyInvocation.ExecutionFaulted => _gpuDisabled;
-    GpuNumericRequirements IFamilyInvocation.GpuNumericRequirements => _gpuPlan?.NumericRequirements ?? GpuNumericRequirements.None;
-    public string FamilyId => "R.Relic";
-    public FamilyAnalyticalCostProjection AnalyticalCost => _models.Full;
-    public FamilySurvivalProjection Survival => ResolveSurvival(Empty);
-    public bool HasConditionalProjections => true;
-    public FamilySurvivalProjection ResolveSurvival(IReadOnlySet<string> passedCoverage) => _models.Survival(passedCoverage);
-    public FamilyExpectedFilteringCostProjection ExpectedFilteringCost => ResolveExpectedFilteringCost(Empty);
-    public FamilyExpectedFilteringCostProjection ResolveExpectedFilteringCost(IReadOnlySet<string> passedCoverage) => _models.Expected(passedCoverage);
-    public FamilyConditionPerformanceProjection ConditionPerformance => ResolveConditionPerformance(false);
-    public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compactAbi1Input) => _gpuPlan is null
-        ? _cpu.Condition(compactAbi1Input)
-        : new FamilyConditionPerformanceProjection(
-            FamilyId,
-            _gpuPlan.Revision(compactAbi1Input),
-            "Rfull.ConditionPerformance.Neutral.CanonicalBoundary.20260906.v4" + _gpuPlan.NumericalRevision,
-            1d,
-            "NoAcceptedWithinPathCurve;timingBoundary=CanonicalAbi1Ready;independentRfullIdentity=true" +
-            (_gpuPlan.NumericalVariant == GpuNumericalVariant.IntegerRne ? ";OperationEstimateAvailable;NoIntegerBodyMeasurement;HistoricalGlobalNextIntPreserved" : ""));
-
-    public FamilyPerformanceObservation CapturePerformanceObservation() => _gpuPlan is null
-        ? _cpu.Observation()
-        : new FamilyPerformanceObservation(
-            ResolveConditionPerformance(_compactInput), _gpu?.DeviceName ?? "not-created", _gpu?.SetupMs ?? 0d,
-            _peak, _peak, _gpuBatches, _steadyBatches, _inputs, _outputs, _canonicalMs,
-            !_gpuDisabled && _referenceParityPassed && _steadyBatches > 0,
-            _gpuDisabled ? "PhysicalFailureOrRecovery" :
-            "RfullCanonicalAbi1Ready;FirstBatchExcluded;CpuCapsuleAndSequenceReplayParity=" + _referenceParityPassed);
-
-    public FamilyLivePerformanceSnapshot? CaptureLivePerformanceSnapshot() =>
-        _gpuPlan is null || _gpuDisabled || !_referenceParityPassed || _gpuBatches < 2 || _liveInputs <= 0 || _liveMs <= 0d
-            ? null
-            : new FamilyLivePerformanceSnapshot(
-                FamilyId, ResolveConditionPerformance(_compactInput).PhysicalImplementationRevision,
-                Interlocked.Read(ref _liveInputs), Volatile.Read(ref _liveMs), _gpuBatches - 1);
-
-    public async ValueTask<FamilyCandidateSet> InvokeAsync(
-        FamilyExecutionContext executionContext,
-        FamilyObservationWindow observationWindow,
-        FamilyCandidateSet input,
-        CancellationToken cancellationToken)
-    {
-        if (observationWindow.ExactRequest.SnapshotFingerprint != _request.SnapshotFingerprint)
-            throw new InvalidOperationException("RfullObservationContextMismatch");
-        cancellationToken.ThrowIfCancellationRequested();
-        if (_gpuPlan is null)
-            return _cpu.Execute(observationWindow, input, cancellationToken, _replay.Matches, executionContext);
-        if (_gpuDisabled) throw new InvalidOperationException("Rfull.SelectedInvocationFaulted");
-        if (input.Count == 0) return input;
-
-        _compactInput = !input.IsDense;
-        try
-        {
-            if (_gpu is null)
-                _gpu = await executionContext.ExecuteGpuAsync(
-                    rd => RelicFamilyGpuExecutor.Create(rd, _request, _gpuPlan), cancellationToken).ConfigureAwait(false);
-            (FamilyCandidateSet survivors, RelicFamilyGpuBatchMetrics metrics) =
-                await executionContext.ExecuteGpuAsync(
-                    _ =>
-                    {
-                        FamilyCandidateSet result = _gpu.Execute(input, cancellationToken, out RelicFamilyGpuBatchMetrics batch);
-                        return (result, batch);
-                    }, cancellationToken).ConfigureAwait(false);
-
-            if (!_referenceParityPassed) ValidateReferenceParity(input, survivors);
-
-            _gpuBatches++;
-            _costSamples.Observe(this, new(!input.IsDense, false, input.Count), input.Count, metrics.CommandMs + metrics.SubmitMs + metrics.SyncMs, outputs: metrics.Survivors, canonicalMs: metrics.CanonicalAbi1ReadyMs, readbackMs: metrics.ReadbackMs, readbackBytes: metrics.ReadbackBytes);
-            _inputs += metrics.InputCandidates;
-            _outputs += metrics.Survivors;
-            _canonicalMs += metrics.CanonicalAbi1ReadyMs;
-            double rate = metrics.CanonicalAbi1ReadyMs <= 0d
-                ? 0d : metrics.InputCandidates * 1000d / metrics.CanonicalAbi1ReadyMs;
-            if (_gpuBatches > 1)
-            {
-                Interlocked.Add(ref _liveInputs, metrics.InputCandidates);
-                _liveMs += metrics.CanonicalAbi1ReadyMs;
-                int steadyMinimum = _compactInput ? RelicFamilyGpuExecutor.CompactInputCapacity / 4 : RelicFamilyGpuExecutor.Capacity;
-                if (metrics.InputCandidates >= steadyMinimum)
-                {
-                    _steadyBatches++;
-                    _peak = Math.Max(_peak, rate);
-                }
-            }
-            if (_gpuBatches <= 3 || _gpuBatches % 256 == 0)
-                RuntimeLog.TryBackgroundInfo(
-                    $"rfullFamilyBatch=true;physicalRevision={ResolveConditionPerformance(_compactInput).PhysicalImplementationRevision};" +
-                    $"arrival={ArrivalName(_gpuPlan.CapsuleMetadata[0])};" +
-                    $"batchBase={input.Batch.BatchBase};input={metrics.InputCandidates};processed={metrics.ProcessedCandidates};" +
-                    $"survivors={metrics.Survivors};groups={metrics.DispatchGroups};readbackBytes={metrics.ReadbackBytes};" +
-                    $"canonicalAbi1ReadyMs={metrics.CanonicalAbi1ReadyMs:F4};parity={_referenceParityPassed};" +
-                    "bagSemantics=InitialWorldBag;capsuleProjection=RarityTrackedRank;legacyFallback=false");
-            return survivors;
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            _gpuDisabled = true;
-            _failure = ex.GetType().Name + ":" + ex.Message;
-            try
-            {
-                if (_gpu is not null)
-                    await executionContext.ExecuteGpuAsync(_ => { _gpu.Dispose(); return true; }, CancellationToken.None)
-                        .ConfigureAwait(false);
-            }
-            catch (Exception cleanupFailure)
-            {
-                executionContext.RecordGpuCleanupFailure(cleanupFailure, FamilyId,
-                    "CapsuleGpuFault.Dispose", _request.SnapshotFingerprint);
-            }
-            _gpu = null;
-            RuntimeLog.TryBackgroundWarning(
-                $"rfullFamilyPhysicalFault=true;failure={Sanitize(_failure)};recovery=None;" +
-                "selectedExecutionFault=true;legacyFallback=false");
-            throw;
-        }
-    }
-
-    private void ValidateReferenceParity(FamilyCandidateSet input, FamilyCandidateSet gpuOutput)
-    {
-        IRuntimeProfile profile = RuntimeProfileRegistry.Select(_request.Detection);
-        ReadOnlySpan<ulong> actual = gpuOutput.ExportAbi1().Span;
-        foreach (ulong ordinal in input.EnumerateLogicalOrdinals().Take(ReferenceSampleCapacity))
-        {
-            ulong global = input.Batch.GlobalCandidate(ordinal);
-            ulong root = profile.ComputeRootSeed(VisibleSeedCandidateCodec.FormatOrdinal(profile, global));
-            bool cpu = _replay.Matches(root);
-            bool gpu = actual.BinarySearch(ordinal) >= 0;
-            if (cpu != gpu)
-                throw new InvalidDataException(
-                    $"RfullCpuReferenceParityMismatch:logicalOrdinal={ordinal};cpu={cpu};gpu={gpu}");
-        }
-        _referenceParityPassed = true;
-        RuntimeLog.TryBackgroundInfo(
-            $"rfullFamilyReferenceParity=true;sampleCandidates={Math.Min(input.Count, ReferenceSampleCapacity)};" +
-            "reference=R.Relic.Cpu.CapsuleAndSequenceReplay.20260905.v1");
-    }
-
-    private static string ArrivalName(uint arrival) => arrival switch
-    {
-        RelicFullGpuPlan.DirectArrival => "Direct",
-        RelicFullGpuPlan.FixedBonesArrival => "FixedBones",
-        RelicFullGpuPlan.GroupedBonesArrival => "GroupedBones",
-        RelicFullGpuPlan.SourceConstrainedBonesArrival => "SourceConstrainedSmallLarge",
-        _ => "Unknown"
-    };
-
-    public async ValueTask DisposeAsync(FamilyExecutionContext executionContext)
-    {
-        if (_gpuPlan is null)
-        {
-            _cpu.WriteSummary();
-            return;
-        }
-        if (_gpu is not null)
-        {
-            try
-            {
-                await executionContext.ExecuteGpuAsync(_ => { _gpu.Dispose(); return true; }, CancellationToken.None)
-                    .ConfigureAwait(false);
-            }
-            catch { _gpuDisabled = true; throw; }
-            _gpu = null;
-        }
-        RuntimeLog.TryBackgroundInfo(
-            $"rfullFamilySummary=true;physicalDense={_gpuPlan?.Revision(false)};physicalCompact={_gpuPlan?.Revision(true)};" +
-            $"batches={_gpuBatches};input={_inputs};survivors={_outputs};canonicalAbi1ReadyMs={_canonicalMs:F3};" +
-            $"parity={_referenceParityPassed};recovery=False;faulted={_gpuDisabled};failure={Sanitize(_failure)};" +
-            "unsupportedShapeFallback=CpuCapsuleAndSequenceReplay;legacyFallback=false");
-    }
-
-    internal static bool TryCreate(ExactSearchExecutionRequest request, out IFamilyInvocation? family)
-        => TryCreate(request, out family, true);
-    internal static bool TryCreate(ExactSearchExecutionRequest request, out IFamilyInvocation? family, bool preferGpu,
+    private const string Id = "R.Relic";
+    private static readonly IReadOnlySet<string> EmptyCoverage = new HashSet<string>(StringComparer.Ordinal);
+    internal static bool TryCreate(SearchModel model, FilterExecutionPreferences preferences,
+        out FilterBodyDescription? body, bool preferGpu = true,
         GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
-        family = null;
-        if (!NeowReplayPlan.HasCapsule(request)) return false;
+        bool accepted = TryPrepare(model, preferences, out var prepared, preferGpu, numericalVariant);
+        body = prepared?.Body;
+        return accepted;
+    }
+    internal static bool TryPrepare(SearchModel model, FilterExecutionPreferences preferences,
+        out CapsuleRelicPreparation? prepared, bool preferGpu = true,
+        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
+    {
+        prepared = null;
+        if (!NeowReplayPlan.HasCapsule(model)) return false;
         try
         {
-            var route = NeowReplayPlan.Compile(request, true);
-            string continuationIssue = route.ContinuationIssue(capsule: true);
-            if (continuationIssue.Length > 0)
+            var route = NeowReplayPlan.Compile(model, true);
+            bool openingPrefix = RelicFullGpuPlan.CaptureOpeningPrefixSelection();
+            string issue = route.ContinuationIssue(capsule: true);
+            if (issue.Length > 0 && openingPrefix && model.Authority.PlayersCount == 1 &&
+                RelicOpeningPrefixPlan.TryCompile(route, out _, out _)) issue = "";
+            if (issue.Length > 0)
             {
-                if (RuntimeLog.SessionId.Length > 0) Infrastructure.Diagnostics.RuntimeIssueLedger.Current.RecordDegradation("CapsuleFilterUnavailable", nameof(CapsuleRelicFamily),
-                    "Filter.Construction", "issues.filter_incomplete", $"cause={continuationIssue};predicatesRetained=true;finalValidationSkipped={request.RunOptions.SkipExactValidation};matchClaimed=false");
+                if (RuntimeLog.SessionId.Length > 0)
+                    RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.RecordDegradation("CapsuleFilterUnavailable", nameof(CapsuleRelicFamily),
+                        "Filter.Construction", "issues.filter_incomplete", $"cause={issue};predicatesRetained=true;finalValidationSkipped={preferences.SkipExactValidation};matchClaimed=false");
                 return false;
             }
-            if (!RelicFamilyPlanCompiler.TryCompilePool(request, out _, out _, out _, out string poolIssue))
+            if (!RelicFamilyPlanCompiler.TryCompilePool(model, out _, out _, out _, out string poolIssue))
             {
                 RuntimeLog.TryBackgroundWarning("rCapsuleFamilyUnavailable=true;cause=" + poolIssue + ";predicatesRetained=true;replacementCompleteness=NotClaimed");
                 return false;
             }
-            family = new CapsuleRelicFamily(request, route, preferGpu, numericalVariant);
+            prepared = Prepare(model, preferences, route, preferGpu, numericalVariant, openingPrefix);
             return true;
         }
-        catch (InvalidOperationException ex) when (ex.Message is "NeowFamilyReplayAuthorityUnavailable" or "NeowFamilyUnmappedIdentity" or
+        catch (InvalidOperationException error) when (error.Message is "NeowFamilyReplayAuthorityUnavailable" or "NeowFamilyUnmappedIdentity" or
             "RFamilyUnboundCapsuleRoute_ExactOnly" or "RFamilyCapsulePredicateUnsupported_ExactOnly")
         {
-            RuntimeLog.TryBackgroundWarning("rCapsuleFamilyUnavailable=true;predicatesRetained=true;replacementCompleteness=NotClaimed;exceptionJson=" + RuntimeLog.SafeJson(ex.ToString()));
+            RuntimeLog.TryBackgroundWarning("rCapsuleFamilyUnavailable=true;predicatesRetained=true;replacementCompleteness=NotClaimed;exceptionJson=" + RuntimeLog.SafeJson(error.ToString()));
             return false;
         }
     }
-
-    private static string Sanitize(string value) => string.IsNullOrWhiteSpace(value)
-        ? "none"
-        : value.Replace(';', '_').Replace('\r', ' ').Replace('\n', ' ').Trim();
+    private static CapsuleRelicPreparation Prepare(SearchModel model, FilterExecutionPreferences preferences,
+        NeowReplayPlan route, bool preferGpu, GpuNumericalVariant numericalVariant, bool openingPrefix)
+    {
+        var replay = new CapsuleRelicReplay(model, route);
+        var projections = new NeowFamilyProjections(model, route, true, replay.Pool);
+        RelicFullGpuPlan? gpu = null;
+        string issue = "CpuReferenceSelected", failure = "";
+        if (preferGpu)
+        {
+            try { RelicFullGpuPlan.TryCreate(model, route, out gpu, out issue, numericalVariant, openingPrefix); }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception error) { issue = "GpuPlanConstructionFailed"; failure = error.ToString(); }
+        }
+        var preparation = new PreparedFilter(Id) {
+            AnalyticalCost = projections.Full, Survival = projections.Survival(EmptyCoverage),
+            ExpectedFilteringCost = projections.Expected(EmptyCoverage), HasConditionalProjections = true,
+            SurvivalResolver = projections.Survival, ExpectedCostResolver = projections.Expected,
+            Obligations = [new(Id, model.Authority.PlayerSlotIndex)],
+            Issues = failure.Length == 0 ? [] : [new("GpuPreparation", issue, failure)]
+        };
+        var profile = RuntimeProfileRegistry.Select(model.Detection);
+        var evaluation = RelicReferencePlan.ProjectEvaluation(model);
+        var pricingAuthority = FilterPricingAuthority.From(model);
+        var conditions = model.Evaluation.StructuredNeowEffects.ToArray();
+        string identity = model.SnapshotFingerprint;
+        var cpu = PrepareCpu(model, preparation, replay, route, gpu, evaluation, conditions, profile, identity,
+            Math.Clamp(preferences.WorkerCount, 1, 32));
+        if (gpu is null) return new(route, replay, null, cpu);
+        var gpuPlan = gpu;
+        var body = new FilterBodyDescription(preparation, gpuPlan.Revision(false), profile.ProfileId) {
+            UsesGpu = true, NumericRequirements = gpuPlan.NumericRequirements,
+            InputIdentity = identity, PlayersCount = model.Authority.PlayersCount, CpuWorkers = preferences.WorkerCount,
+            WindowCapacity = RelicFamilyGpuExecutor.Capacity, CpuAlternatives = [cpu],
+            PerformanceProjection = compact => new(Id, gpuPlan.Revision(compact),
+                "Rfull.ConditionPerformance.Neutral.CanonicalBoundary.20260906.v4" + gpuPlan.NumericalRevision, 1,
+                "NoAcceptedWithinPathCurve;timingBoundary=CanonicalAbi1Ready;independentRfullIdentity=true" +
+                (gpuPlan.NumericalVariant == GpuNumericalVariant.IntegerRne
+                    ? ";OperationEstimateAvailable;NoIntegerBodyMeasurement;HistoricalGlobalNextIntPreserved" : "")),
+            Cost = new() {
+                PartyChild = new(AllowsHistoricalEnvelope: gpuPlan.NumericalVariant != GpuNumericalVariant.IntegerRne,
+                    NumericalRevision: gpuPlan.NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "",
+                    CapacityRevision: gpuPlan.BagCapacityRevision),
+                CanonicalScope = pricingAuthority.PlayersCount == 1,
+                CanonicalWorkShape = _ => FamilyCanonicalCostShape.DescribeCapsule(route, replay.Pool, gpuPlan, conditions),
+                MinimumComparableInput = compact => compact ? RelicFamilyGpuExecutor.CompactInputCapacity / 4 : RelicFamilyGpuExecutor.Capacity,
+                Quote = (selected, geometry, _) => FamilyGpuReadback.Reference(selected,
+                    FamilyCanonicalMeasuredCost.TryDenseQuote(selected, geometry) ??
+                    RelicPhysicalPricing.QuoteSourceCapsules(pricingAuthority, gpuPlan, geometry) ??
+                    RelicWorkEstimate.Capsule(evaluation, route, replay.Pool, gpuPlan, geometry, cpu: false))
+            },
+            CreateExecution = (selected, _) => new GpuFilterExecution<RelicFamilyGpuExecutor>(selected,
+                device => RelicFamilyGpuExecutor.Create(device, identity, gpuPlan), (resource, input, token) => {
+                    var output = resource.Execute(input, token, out var metrics);
+                    return new(output, metrics.CanonicalAbi1ReadyMs, metrics.CommandMs + metrics.SubmitMs + metrics.SyncMs,
+                        metrics.ReadbackMs, metrics.ReadbackBytes);
+                }, resource => resource.Dispose(), replay.Matches, profile, resource => (resource.DeviceName, resource.SetupMs), 256,
+                faultCleanupStage: "CapsuleGpuFault.Dispose"),
+            BindPrivate = gpuPlan.NumericalVariant != GpuNumericalVariant.NativeFloat64 ? null :
+                (device, input, output) => RelicFamilyGpuExecutor.Create(device, identity, gpuPlan, input, false, output).BindPrivateSerial()
+        };
+        return new(route, replay, gpuPlan, body);
+    }
 }

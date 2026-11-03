@@ -33,7 +33,7 @@ internal sealed partial class PredictorRun
                 BeginEventCardSelection(PredictorCardChanges.TransformCandidates(Context, Working), 2, token);
                 return PredictorInputResult.Accepted;
             case ("MORPHIC_GROVE", "LONER"):
-                ApplyEventHealth(5, 5);
+                ApplyFixedEventHealth(choice.OptionKey);
                 FinishEvent();
                 return PredictorInputResult.Accepted;
             case ("WHISPERING_HOLLOW", "GOLD"):
@@ -56,8 +56,7 @@ internal sealed partial class PredictorRun
                 return PredictorInputResult.Accepted;
             case ("TRASH_HEAP", "GRAB"):
                 Working = PredictorSettlementEffects.TakeGold(Working, 100);
-                var cards = Beta111EventResultCatalog.TrashHeapGrabCards;
-                var selected = cards[_eventRng!.NextInt(cards.Count)];
+                var selected = Beta111EventRules.TrashHeapGrab(_eventRng!);
                 var definition = Context.Catalog!.CardDefinitions.Single(d => d.Prototype.Key == selected);
                 PredictorSettlementEffects.RequireImplementedCard(definition.Prototype, context: Context);
                 Working = PredictorObtainSources.AddCard(Context, Working, definition.Prototype);
@@ -65,10 +64,9 @@ internal sealed partial class PredictorRun
                 FinishEvent();
                 return PredictorInputResult.Accepted;
             case ("TRASH_HEAP", "DIVE_IN"):
-                ApplyEventHealth(-8, 0);
+                ApplyFixedEventHealth(choice.OptionKey);
                 if (Phase == PredictorPhase.Complete) return PredictorInputResult.Accepted;
-                var fixedRelics = Beta111EventResultCatalog.TrashHeapDiveRelics;
-                var fixedRelic = fixedRelics[_eventRng!.NextInt(fixedRelics.Count)];
+                var fixedRelic = Beta111EventRules.TrashHeapDive(_eventRng!);
                 Accept(new("TrashHeapRelic", 0, [], null, null));
                 if (BeginObtainRelic(fixedRelic, null, PredictorObtainReturn.Event, 1, token))
                     ResumeEventAfterRelicObtain(1);
@@ -77,9 +75,8 @@ internal sealed partial class PredictorRun
                 BeginEventCardSelection(SymbioteCandidates(), 1, token);
                 return PredictorInputResult.Accepted;
             case ("TINKER_TIME", "CHOOSE_CARD_TYPE"):
-                var types = new List<string> { "ATTACK", "SKILL", "POWER" };
-                _eventRng!.UnstableShuffle(types);
-                EventOptions = types.Take(2).Select(t => new PredictorEventOption(t)).ToImmutableArray();
+                EventOptions = Beta111EventRules.TinkerTypeOffers(_eventRng!)
+                    .Select(t => new PredictorEventOption(Beta111EventRules.TinkerTypes[t])).ToImmutableArray();
                 _requestId++;
                 return PredictorInputResult.Accepted;
             case ("TRIAL", "REJECT"):
@@ -93,7 +90,7 @@ internal sealed partial class PredictorRun
                 _requestId++;
                 return PredictorInputResult.Accepted;
             case ("TRIAL", "ACCEPT"):
-                EventOptions = _eventRng!.NextInt(3) switch
+                EventOptions = Beta111EventRules.TrialCase(_eventRng!) switch
                 {
                     0 => [new("MERCHANT_GUILTY"), new("MERCHANT_INNOCENT")],
                     1 => [new("NOBLE_GUILTY"), new("NOBLE_INNOCENT")],
@@ -102,32 +99,32 @@ internal sealed partial class PredictorRun
                 _requestId++;
                 return PredictorInputResult.Accepted;
             case ("TRIAL", "MERCHANT_INNOCENT"):
-                AddTrialCurse("SHAME");
+                AddTrialCurse(FixedEventCardProduct(choice.OptionKey).Entry);
                 var upgradable = Working.Deck.Where(id => Working.Card(id).UpgradeLevel < Working.Card(id).MaxUpgradeLevel).ToImmutableArray();
                 if (upgradable.IsEmpty) FinishEvent();
                 else BeginEventCardSelection(upgradable, Math.Min(2, upgradable.Length), token);
                 return PredictorInputResult.Accepted;
             case ("TRIAL", "MERCHANT_GUILTY"):
-                AddTrialCurse("REGRET");
+                AddTrialCurse(FixedEventCardProduct(choice.OptionKey).Entry);
                 BeginTrialMerchantRelic(1, token);
                 return PredictorInputResult.Accepted;
             case ("TRIAL", "NOBLE_GUILTY"):
-                ApplyEventHealth(10, 0);
+                ApplyFixedEventHealth(choice.OptionKey);
                 FinishEvent();
                 return PredictorInputResult.Accepted;
             case ("TRIAL", "NOBLE_INNOCENT"):
-                AddTrialCurse("REGRET");
+                AddTrialCurse(FixedEventCardProduct(choice.OptionKey).Entry);
                 Working = PredictorSettlementEffects.TakeGold(Working, 300);
                 FinishEvent();
                 return PredictorInputResult.Accepted;
             case ("TRIAL", "NONDESCRIPT_INNOCENT"):
-                AddTrialCurse("DOUBT");
+                AddTrialCurse(FixedEventCardProduct(choice.OptionKey).Entry);
                 var transforms = PredictorCardChanges.TransformCandidates(Context, Working);
                 if (transforms.IsEmpty) FinishEvent();
                 else BeginEventCardSelection(transforms, Math.Min(2, transforms.Length), token);
                 return PredictorInputResult.Accepted;
             case ("TRIAL", "NONDESCRIPT_GUILTY"):
-                AddTrialCurse("DOUBT");
+                AddTrialCurse(FixedEventCardProduct(choice.OptionKey).Entry);
                 var trialRewards = PredictorRewardGeneration.Generate(Context, Working,
                     [new(PredictorRewardKind.Card), new(PredictorRewardKind.Card)], cancellationToken: token);
                 _eventRewardContinuation = true;
@@ -159,14 +156,9 @@ internal sealed partial class PredictorRun
             case ("TINKER_TIME", "POWER"):
                 _tinkerType = choice.OptionKey switch { "ATTACK" => EffectCardType.Attack,
                     "SKILL" => EffectCardType.Skill, _ => EffectCardType.Power };
-                var riders = (_tinkerType switch
-                {
-                    EffectCardType.Attack => new[] { "SAPPING", "VIOLENCE", "CHOKING" },
-                    EffectCardType.Skill => new[] { "ENERGIZED", "WISDOM", "CHAOS" },
-                    _ => new[] { "EXPERTISE", "CURIOUS", "IMPROVEMENT" }
-                }).ToList();
-                _eventRng!.UnstableShuffle(riders);
-                EventOptions = riders.Take(2).Select(r => new PredictorEventOption(r)).ToImmutableArray();
+                int typeIndex = _tinkerType switch { EffectCardType.Attack => 0, EffectCardType.Skill => 1, _ => 2 };
+                EventOptions = Beta111EventRules.TinkerRiderOffers(_eventRng!, typeIndex)
+                    .Select(r => new PredictorEventOption(Beta111EventRules.TinkerRiders[r])).ToImmutableArray();
                 _requestId++;
                 return PredictorInputResult.Accepted;
         }
@@ -188,11 +180,9 @@ internal sealed partial class PredictorRun
     private ImmutableArray<PredictorEventOption> ColorfulOptions()
     {
         var catalog = Context.Catalog ?? throw new InvalidOperationException("PredictorCatalogMissing");
-        var ordered = new[] { "NECROBINDER", "IRONCLAD", "REGENT", "SILENT", "DEFECT" };
-        var options = ordered.Where(entry => entry != Context.Character.Entry &&
-            catalog.CharacterPools.Any(p => p.Character.Entry == entry)).ToList();
-        while (options.Count > 3) options.RemoveAt(_eventRng!.NextInt(options.Count));
-        return options.Select(entry => new PredictorEventOption(entry)).ToImmutableArray();
+        return Beta111EventRules.ColorfulOffers(_eventRng!, Context.Character,
+                catalog.CharacterPools.Select(pool => pool.Character))
+            .Select(key => new PredictorEventOption(key.Entry)).ToImmutableArray();
     }
 
     private ImmutableArray<long> SymbioteCandidates() => Working.Deck.Where(id =>

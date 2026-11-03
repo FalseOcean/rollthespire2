@@ -15,11 +15,14 @@ uint swap_position(uint p,uint selected,uint tail){return p==selected?tail:p==ta
 bool matches(uint64_t root){
  if(plan.v[0]>0u){
   rng_initialize(root+make_u64(plan.v[8],plan.v[9]));
+  bool juzu=plan.v[27]!=0u;
   precise float monster=.1,treasure=.02,shop=.03;
   for(uint i=0u;i<plan.v[0];i++){
-   precise float total=monster+treasure;total+=shop;
+   // Juzu removes only Monster; preserve source float order and inclusive odds.
+   precise float total=juzu?0.0:monster;total+=treasure;total+=shop;
    if(next_float()<=total)return false;
-   monster+=.1;treasure+=.02;shop+=.03;
+   if(!juzu)monster+=.1;
+   treasure+=.02;shop+=.03;
   }
  }
  if(plan.v[1]==0u)return true;

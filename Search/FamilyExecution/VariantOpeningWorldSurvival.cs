@@ -32,7 +32,7 @@ internal sealed record VariantOpeningWorldSurvival(
             ? Conditional(JointVariantWorldProbability, VariantProbability) : WorldProbability,
             "W.ActualCompiledPredicates;ConditionalOnPassedV;" + Evidence);
 
-    internal static VariantOpeningWorldSurvival Create(ExactSearchExecutionRequest request,
+    internal static VariantOpeningWorldSurvival Create(SearchModel request,
         VariantOpeningPreparation prepared, Beta110WorldFastPlan? actualWorldPlan)
     {
         var generation = request.Authority.WorldAuthority?.Beta109Generation;

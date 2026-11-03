@@ -8,10 +8,13 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Random;
 using MegaCrit.Sts2.Core.Rewards;
 using MegaCrit.Sts2.Core.Runs;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Effects.Snapshots;
+using RolltheSpire2.Core.Effects;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.PredictorRuntime;
 using RolltheSpire2.Core.Rng;
+using RolltheSpire2.Core.Rewards;
 using RolltheSpire2.Infrastructure.Persistence;
 
 internal static class PredictorRuntimeChecks
@@ -56,10 +59,13 @@ internal static class PredictorRuntimeChecks
 
     internal static int Run()
     {
+        VersionedContexts();
         RngContinuation();
         NativeBags();
         GoldAndInputIdentity();
         Potions();
+        RewardScalarContinuation();
+        RewardTriggerStages();
         EntropicUse();
         RewardOrderAndNestedChoice();
         RewardPickupRecommendations();
@@ -70,6 +76,56 @@ internal static class PredictorRuntimeChecks
         LocalCrystalBoundary();
         Console.WriteLine($"Predictor Runtime settlement checks PASS: {_checks}. Native authorities: RunRngSet/PlayerRngSet, GoldReward.Populate, RelicGrabBag, PotionFactory, StableShuffle. No full-node/route UI or complete-hook parity claimed.");
         return 0;
+    }
+
+    private static void VersionedContexts()
+    {
+        Require(Context.RuntimeProfile.ProfileId == RuntimeProfileId.Beta111, "Current seed context profile");
+        // Read the source property before copying: a cached field would carry
+        // Beta111 into the changed identity and silently validate wrong rules.
+        var operation110 = Context with { GameVersion = "0.110.1", Operation = new(1, 0, 1, []) };
+        Require(operation110.RuntimeProfile.ProfileId == RuntimeProfileId.Beta110 &&
+            Context.RuntimeProfile.ProfileId == RuntimeProfileId.Beta111,
+            "Context version with-copy retained a stale runtime profile");
+        var operationState = PredictorSeedState.Create(operation110, [], [], 0, 0, new(0, .4f));
+        var expectedRoot = operation110.RuntimeProfile.ComputeRootSeed(operation110.Seed);
+        var expectedUpFront = new Xoshiro256StarStar(operation110.RuntimeProfile.DeriveNamedStreamSeed(expectedRoot, "up_front"));
+        Require(operationState.Streams.Single(s => s.Stream == PredictorStream.UpFront) ==
+            PredictorStreamState.Capture(PredictorStream.UpFront, expectedUpFront), "Operation entry stream did not use its profile");
+        Throws<InvalidDataException>(() => PredictorSeedState.ValidateContext(operation110 with { Seed = "01_11_2026" }),
+            "Beta110 local operation accepted Beta111 custom-seed rules");
+        Throws<InvalidDataException>(() => PredictorSeedState.ValidateContext(operation110 with { Operation = null }),
+            "Shared RNG incorrectly expanded full seed initialization to Beta110");
+
+        var provisional = Context with { GameVersion = "0.112.0", Live = new(1, true, []) };
+        PredictorSeedState.ValidateContext(provisional);
+        Require(provisional.VersionResolution.IsProvisional && provisional.VersionResolution.DetectedVersion == "0.112.0" &&
+            provisional.RuntimeProfile.ProfileId == RuntimeProfileId.Beta111,
+            "Live entry lost actual future identity or compatibility uncertainty");
+        Throws<InvalidDataException>(() => PredictorSeedState.ValidateContext(provisional with { Live = null }),
+            "Provisional live compatibility incorrectly expanded full seed initialization");
+        void RequiresVersionMechanism(PredictorContext unavailable)
+        {
+            try { PredictorSeedState.ValidateContext(unavailable); }
+            catch (NotSupportedException ex)
+            {
+                Require(ex.Message.Contains(unavailable.GameVersion, StringComparison.Ordinal) &&
+                    ex.Message.Contains(unavailable.VersionResolution.EvidenceCode, StringComparison.Ordinal),
+                    "Unavailable predictor mechanism lost actual version or compatibility evidence");
+                return;
+            }
+            throw new InvalidOperationException("Unavailable predictor version silently selected modern RNG");
+        }
+        RequiresVersionMechanism(provisional with { GameVersion = "unrecognized" });
+        RequiresVersionMechanism(operation110 with { GameVersion = "0.109.1" });
+
+        string saved = PredictorRunStore.Serialize(new PredictorRun(Context, State()));
+        Require(!saved.Contains("\"RuntimeProfile\"", StringComparison.Ordinal) &&
+            !saved.Contains("\"VersionResolution\"", StringComparison.Ordinal), "Computed runtime selection leaked into persisted schema");
+        var reloaded = PredictorRunStore.Deserialize(saved, Context.CatalogFingerprint, Context.UnlockFingerprint).Context;
+        Require(reloaded.RuntimeProfile.ProfileId == RuntimeProfileId.Beta111 &&
+            (reloaded with { GameVersion = "0.110.1" }).RuntimeProfile.ProfileId == RuntimeProfileId.Beta110,
+            "Reloaded context did not resolve from copied game identity");
     }
 
     private static void RewardPickupRecommendations()
@@ -365,6 +421,185 @@ internal static class PredictorRuntimeChecks
         public override MegaCrit.Sts2.Core.Entities.Cards.TargetType TargetType => MegaCrit.Sts2.Core.Entities.Cards.TargetType.AnyPlayer;
         public override bool IsMock => true;
     }
+
+    private static void RewardScalarContinuation()
+    {
+        var pool = new[] { EffectCardRarity.Common, EffectCardRarity.Uncommon, EffectCardRarity.Rare }
+            .SelectMany(rarity => Enumerable.Range(0, 2).Select(i => new NeowEffectCardSnapshot(
+                $"scalar:{rarity}:{i}", new("CARD", $"SCALAR_{rarity}_{i}"), (int)rarity * 2 + i,
+                rarity, EffectCardType.Attack, false, false, false, true, true))).ToImmutableArray();
+        var definitions = pool.Select(c => new PredictorCardDefinition(new(0, c.CardKey, c.CardType, 0, 1, true, 1),
+            c.Rarity.ToString(), new("CARD_POOL", "CONTROLLED"), false, false, false)
+        { Levels = Enumerable.Range(0, 2).Select(level => new PredictorCardLevelMetadata(level, 1,
+            false, false, false, false, false, false)).ToImmutableArray() }).ToImmutableArray();
+        foreach (string version in new[] { "0.110.1", "0.111.0" })
+        foreach (int ascension in new[] { 0, 7 })
+        foreach (var odds in Enum.GetValues<PredictorCardOdds>())
+        foreach (int source in new[] { 0, 1, 2 })
+        foreach (bool eventIdentity in new[] { false, true })
+        {
+            var context = Context with { GameVersion = version, Ascension = ascension,
+                Catalog = new(pool, []) { CardDefinitions = definitions } };
+            var actual = State() with { Position = new(2, 1, "reward-scalar"), Odds = new(.4f, .4f) };
+            var expectedRng = actual.Streams.Single(s => s.Stream == PredictorStream.Rewards).Restore();
+            Xoshiro256StarStar? actualEvent = eventIdentity ? new(12345) : null;
+            var expectedEvent = actualEvent?.Clone();
+            float offset = actual.Odds.CardRarityOffset;
+            var plan = new PredictorRewardPlan(PredictorRewardKind.Card, Odds: odds,
+                EncounterSource: source == 1, ForceRarityOddsChange: source == 2);
+            // Independent replay of the pre-extraction consumer. An event RNG
+            // overrides identity/upgrade only; rarity still belongs to Rewards.
+            for (int i = 0; i < 8; i++)
+            {
+                var choices = pool.ToArray();
+                if (odds != PredictorCardOdds.Uniform)
+                {
+                    float baseRare = odds switch { PredictorCardOdds.Boss => 1f,
+                        PredictorCardOdds.Elite => ascension >= 7 ? .05f : .1f, _ => ascension >= 7 ? .0149f : .03f };
+                    float uncommon = odds switch { PredictorCardOdds.Boss => 0f, PredictorCardOdds.Elite => .4f, _ => .37f };
+                    float usedOffset = source != 0 && odds != PredictorCardOdds.Boss ? offset : 0;
+                    float roll = expectedRng.NextFloat();
+                    var rarity = roll < baseRare + usedOffset ? EffectCardRarity.Rare :
+                        roll < baseRare + usedOffset + uncommon ? EffectCardRarity.Uncommon : EffectCardRarity.Common;
+                    if (source != 0) offset = rarity == EffectCardRarity.Rare ? -.05f : Math.Min(.4f, offset + (ascension >= 7 ? .005f : .01f));
+                    choices = choices.Where(c => c.Rarity == rarity).ToArray();
+                }
+                var identityRng = expectedEvent ?? expectedRng;
+                var selected = choices[identityRng.NextInt(choices.Length)];
+                decimal upgradeRoll = (decimal)identityRng.NextFloat();
+                decimal chance = selected.Rarity == EffectCardRarity.Rare ? 0m : ascension >= 7 ? .125m : .25m;
+                var generated = PredictorRewardGeneration.GenerateCard(context, ref actual, plan, pool, actualEvent);
+                Require(generated.Key == selected.CardKey && generated.UpgradeLevel == (upgradeRoll <= chance ? 1 : 0) && actual.Odds.CardRarityOffset == offset,
+                    "Shared reward rules retain card output, decimal natural upgrade and future rarity offset");
+                var stream = actual.Streams.Single(s => s.Stream == PredictorStream.Rewards);
+                Require(stream.Restore().State == expectedRng.State && stream.Calls == expectedRng.CallCount &&
+                    (actualEvent == null || actualEvent.State == expectedEvent!.State && actualEvent.CallCount == expectedEvent!.CallCount),
+                    "Shared reward rules retain Rewards/event RNG end state and draw ownership");
+            }
+        }
+
+        var potionPool = new[] { PredictorPotionRarity.Common, PredictorPotionRarity.Uncommon, PredictorPotionRarity.Rare }
+            .SelectMany(rarity => Enumerable.Range(0, 4).Select(i => new PredictorPotionOption(Potion($"SCALAR_{rarity}_{i}"), rarity))).ToImmutableArray();
+        var models = potionPool.Select(p =>
+        {
+            var model = (PoolPotion)RuntimeHelpers.GetUninitializedObject(typeof(PoolPotion));
+            typeof(AbstractModel).GetField("<Id>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(model, new ModelId(p.Key.Category, p.Key.Entry));
+            model.TestRarity = Enum.Parse<MegaCrit.Sts2.Core.Entities.Potions.PotionRarity>(p.Rarity.ToString());
+            return model;
+        }).ToArray();
+        var nativeFactory = typeof(MegaCrit.Sts2.Core.Factories.PotionFactory).GetMethod("CreateRandomPotions", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var effectPotions = potionPool.Select((p, i) => new NeowEffectPotionSnapshot(p.Key, i,
+            Enum.Parse<EffectPotionRarity>(p.Rarity.ToString()))).ToArray();
+        for (int skip = 0; skip < 16; skip++)
+        {
+            var actual = State();
+            var rng = actual.Streams.Single(s => s.Stream == PredictorStream.Rewards).Restore();
+            var native = new PlayerRngSet(new RunRngSet(Context.Seed).Seed).Rewards;
+            for (int i = 0; i < skip; i++) { rng.NextFloat(); native.NextFloat(); }
+            actual = actual.WithRng(PredictorStream.Rewards, rng);
+            var expected = ((IEnumerable<PotionModel>)nativeFactory.Invoke(null, [models, 3, native])!).Select(p => p.Id.Entry).ToArray();
+            var generated = PredictorRewardGeneration.GeneratePotions(Context with { PotionPool = potionPool }, ref actual, 3, PredictorStream.Rewards);
+            Require(generated.Select(k => k.Entry).SequenceEqual(expected), "Shared potion rules retain native batch identities and exclusions");
+            CheckRng(actual.Streams.Single(s => s.Stream == PredictorStream.Rewards), native);
+            var excluded = new HashSet<ModelKey>();
+            var effectGenerated = Enumerable.Range(0, 3).Select(_ => NeowRewardGenerator.CreatePotion(rng, effectPotions, excluded)!.PotionKey.Entry).ToArray();
+            Require(effectGenerated.SequenceEqual(expected), "Effect and Predictor potion consumers retain native identities and ordered exclusions");
+            CheckRng(PredictorStreamState.Capture(PredictorStream.Rewards, rng), native);
+        }
+    }
+
+    private static void RewardTriggerStages()
+    {
+        var pool = new[] { EffectCardRarity.Common, EffectCardRarity.Uncommon, EffectCardRarity.Rare }
+            .SelectMany(rarity => new[] { EffectCardType.Attack, EffectCardType.Skill, EffectCardType.Power }
+                .SelectMany(type => Enumerable.Range(0, 3).Select(i => (rarity, type, i))))
+            .Select((item, order) => new NeowEffectCardSnapshot("trigger:" + order,
+                new("CARD", $"TRIGGER_{item.rarity}_{item.type}_{item.i}"), order, item.rarity, item.type,
+                false, false, false, true, true)).ToImmutableArray();
+        var context = Context with { Catalog = new(pool, [])
+        {
+            CardDefinitions = pool.Select(c => new PredictorCardDefinition(new(0, c.CardKey, c.CardType, 0, 1, true, 1),
+                c.Rarity.ToString(), new("CARD_POOL", "CONTROLLED"), false, false, false)
+            { Levels = Enumerable.Range(0, 2).Select(level => new PredictorCardLevelMetadata(level, 1,
+                false, false, false, false, false, false)).ToImmutableArray() }).ToImmutableArray()
+        } };
+        var entry = State("PRAYER_WHEEL", "LASTING_CANDY", "SILVER_CRUCIBLE", "SILKEN_TRESS");
+        entry = entry with { Relics = entry.Relics.Select(r => r.Key.Entry switch
+        {
+            "LASTING_CANDY" => r with { CombatRewardsSeen = 1 },
+            "SILVER_CRUCIBLE" => r with { RewardUpgradeUses = 2 },
+            _ => r
+        }).ToImmutableArray() };
+        string before = JsonSerializer.Serialize(entry);
+        var generated = PredictorRewardGeneration.Generate(context, entry,
+            [new(PredictorRewardKind.Card, EncounterSource: true, IsFromCombat: true)], PredictorCombatKind.Monster);
+        Require(generated.Stages.SequenceEqual(Enum.GetValues<PredictorRewardStage>()), "Shared reward triggers retain every generation stage in order");
+        var cards = generated.Rewards.Where(r => r.Kind == PredictorRewardKind.Card).OrderBy(r => r.SubscriptionOrder).ToArray();
+        Require(cards.Length == 2 && cards[0].Cards.Length == 4 && cards[1].Cards.Length == 3 &&
+            cards[1].RerollRecipe is { EncounterSource: true, IsFromCombat: false, Odds: PredictorCardOdds.Regular },
+            "Prayer Wheel remains an added encounter reward; Candy affects only the combat-flagged original");
+        Require(cards[0].SubscriptionOrder == entry.NextInstanceId && cards[1].SubscriptionOrder == entry.NextInstanceId + 1,
+            "Original subscription precedes added-reward construction and population");
+        Require(cards[0].Cards.All(c => c.Enchantment?.Entry == "GLAM") && cards[1].Cards.All(c => c.Enchantment == null) &&
+            generated.State.Relics.Single(r => r.Key.Entry == "SILKEN_TRESS").SilkenUsed &&
+            generated.State.Relics.Single(r => r.Key.Entry == "SILVER_CRUCIBLE").RewardUpgradeUses == 3 &&
+            generated.State.Relics.Single(r => r.Key.Entry == "LASTING_CANDY").CombatRewardsSeen == 2,
+            "Tress/Crucible after-hook state commits before the added reward; Candy advances once before offering");
+        Require(generated.State.Streams.Single(s => s.Stream == PredictorStream.Rewards).Calls -
+            entry.Streams.Single(s => s.Stream == PredictorStream.Rewards).Calls == 21 && JsonSerializer.Serialize(entry) == before,
+            "Seven cards consume seven rarity/identity/upgrade triples without mutating entry state");
+
+        var empty = State("SILVER_CRUCIBLE", "SILKEN_TRESS");
+        empty = empty with { Relics = empty.Relics.Select(r => r.Key.Entry == "SILVER_CRUCIBLE" ? r with { RewardUpgradeUses = 2 } : r).ToImmutableArray() };
+        var untouched = empty;
+        _ = PredictorRewardGeneration.ModifyManualCardRewardOptions(context, ref untouched, [], isCardReward: false);
+        Require(untouched.Relics.SequenceEqual(empty.Relics), "Non-card creations cannot consume Tress/Crucible charges");
+        _ = PredictorRewardGeneration.ModifyManualCardRewardOptions(context, ref empty, []);
+        Require(empty.Relics.Single(r => r.Key.Entry == "SILVER_CRUCIBLE").RewardUpgradeUses == 3 &&
+            empty.Relics.Single(r => r.Key.Entry == "SILKEN_TRESS").SilkenUsed,
+            "Empty eligible card rewards still consume the successful Tress/Crucible after-hook");
+        foreach (var (relic, type) in new[] { ("MOLTEN_EGG", EffectCardType.Attack), ("TOXIC_EGG", EffectCardType.Skill), ("FROZEN_EGG", EffectCardType.Power) })
+        {
+            var candidate = context.Catalog!.CardDefinitions.First(d => d.Prototype.Type == type).Prototype;
+            Require(PredictorRewardGeneration.UpgradeWithEgg(candidate, relic).UpgradeLevel == 1 &&
+                PredictorRewardGeneration.UpgradeWithEgg(candidate with { UpgradeLevel = 1 }, relic).UpgradeLevel == 1,
+                "Egg listener shares type eligibility and respects the captured upgrade limit");
+        }
+
+        foreach (var (room, entryName, expectedCards, expectedRelics) in new[]
+        {
+            (PredictorCombatKind.Elite, "WHITE_STAR", 1, 0), (PredictorCombatKind.Monster, "WHITE_STAR", 0, 0),
+            (PredictorCombatKind.Elite, "BLACK_STAR", 0, 1), (PredictorCombatKind.Monster, "BLACK_STAR", 0, 0),
+            (PredictorCombatKind.Boss, "LAVA_ROCK", 0, 2), (PredictorCombatKind.Elite, "LAVA_ROCK", 0, 0)
+        })
+        {
+            var state = State(entryName) with { Position = new(1, 1, "trigger") };
+            var result = PredictorRewardGeneration.Generate(context, state, [], room);
+            Require(result.Rewards.Count(r => r.Kind == PredictorRewardKind.Card) == expectedCards &&
+                result.Rewards.Count(r => r.Kind == PredictorRewardKind.Relic) == expectedRelics, "Named reward trigger output: " + entryName);
+            if (entryName == "WHITE_STAR" && expectedCards > 0)
+                Require(result.Rewards.Single().RerollRecipe is { Odds: PredictorCardOdds.Boss, EncounterSource: true, IsFromCombat: false }, "White Star retains Boss source recipe");
+            if (entryName == "LAVA_ROCK" && expectedRelics > 0)
+                Require(result.State.Relics.Single().LavaRockTriggered && PredictorRewardGeneration.Generate(context, result.State, [], room).Rewards.IsEmpty,
+                    "Lava Rock commits its one-shot state and cannot repeat");
+        }
+        var ticket = State("WONGOS_MYSTERY_TICKET");
+        ticket = ticket with { Relics = ticket.Relics.Select(r => r with { CombatsFinished = 5 }).ToImmutableArray() };
+        var ticketRewards = PredictorRewardGeneration.Generate(context, ticket, [], PredictorCombatKind.Monster);
+        Require(ticketRewards.Rewards.Count(r => r.Kind == PredictorRewardKind.Relic) == 3 && ticketRewards.State.Relics.Single().GaveRelic &&
+            PredictorRewardGeneration.Generate(context, ticketRewards.State, [], PredictorCombatKind.Monster).Rewards.IsEmpty,
+            "Wongo still commits GaveRelic in the separate after-modifying path");
+        foreach (var (room, act, gold) in new[] { (PredictorCombatKind.Monster, 3, 15),
+            (PredictorCombatKind.Boss, 1, 15), (PredictorCombatKind.Boss, 3, 0) })
+        {
+            var state = State("AMETHYST_AUBERGINE") with { Position = new(act, 1, "amethyst-trigger") };
+            var result = PredictorRewardGeneration.Generate(context, state, [], room);
+            Require(result.Rewards.Sum(r => r.GoldAmount) == gold && result.State.Streams.SequenceEqual(state.Streams),
+                "Amethyst fixed additions retain final-Boss exclusion and consume no extra population RNG");
+        }
+    }
+
     private static void EntropicUse()
     {
         var pool = ImmutableArray.Create(new PredictorPotionOption(Potion("STRENGTH_POTION"), PredictorPotionRarity.Common),

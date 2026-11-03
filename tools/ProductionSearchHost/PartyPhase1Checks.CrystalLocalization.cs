@@ -1,3 +1,4 @@
+using RolltheSpire2.Infrastructure.PredictionSessions;
 using System.Collections.Immutable;
 using System.Reflection;
 using System.Text.Json;
@@ -17,12 +18,26 @@ using RolltheSpire2.Ui.Workspace;
 
 internal static partial class PartyPhase1Checks
 {
+    private static object? CrystalField(CrystalSphereAssistantPanel panel,string name)
+    {
+        const BindingFlags flags=BindingFlags.Instance|BindingFlags.NonPublic;
+        var sessionField=typeof(CrystalPredictionSession).GetField(name,flags);
+        return sessionField!=null?sessionField.GetValue(panel.Calculation):
+            typeof(CrystalSphereAssistantPanel).GetField(name,flags)!.GetValue(panel);
+    }
+    private static void SetCrystalField(CrystalSphereAssistantPanel panel,string name,object? value)
+    {
+        const BindingFlags flags=BindingFlags.Instance|BindingFlags.NonPublic;
+        var sessionField=typeof(CrystalPredictionSession).GetField(name,flags);
+        if(sessionField!=null) sessionField.SetValue(panel.Calculation,value);
+        else typeof(CrystalSphereAssistantPanel).GetField(name,flags)!.SetValue(panel,value);
+    }
     private static void CheckCrystalLocalization(Node host,ModRuntimeSnapshot runtime,RunState outsideRun,
         RunState crystalRun,EventModel liveEvent,CrystalSphereLiveSnapshot capture,
         PredictorCrystalSolution solution,Action<bool,string> check)
     {
         const BindingFlags flags=BindingFlags.Instance|BindingFlags.NonPublic;
-        object? Field(object instance,string name)=>instance.GetType().GetField(name,flags)!.GetValue(instance);
+        object? Field(object instance,string name)=>instance is CrystalSphereAssistantPanel panel?CrystalField(panel,name):instance.GetType().GetField(name,flags)!.GetValue(instance);
         void Call(object instance,string name,params object?[] args)=>instance.GetType().GetMethod(name,flags)!.Invoke(instance,args);
         string Text(string language,string key)=>JsonUiTextProvider.CreatePredictorUi13(language).Get("predictor.crystal."+key);
         var workspace=SearchWorkspace.Open(OS.GetUserDataDir());
@@ -47,11 +62,11 @@ internal static partial class PartyPhase1Checks
                 "Crystal existing no-snapshot status and empty surface refresh together");
             panel.Refresh();
             string captureKey=(string)Field(panel,"_emptyStatusKey")!;
-            var captureFault=Field(panel,"_fault");
+            var captureFault=Field(panel,"_captureFault");
             check(captureFault is Exception && captureKey!="refresh_first","Crystal unavailable fixture exercises a capture failure");
             panel.ApplyLanguage("en");
             check(status.Text==Text("en",captureKey) && empty.Text==status.Text &&
-                ReferenceEquals(captureFault,Field(panel,"_fault")) && Field(panel,"_snapshot")==null,
+                ReferenceEquals(captureFault,Field(panel,"_captureFault")) && Field(panel,"_snapshot")==null,
                 "Crystal capture failure retranslates without recapture or losing its cause");
 
             panel.ShowSnapshot(capture,startDiscovery:false);
@@ -65,11 +80,11 @@ internal static partial class PartyPhase1Checks
             foreach(string key in new[]{"discovery_failed","projection_failed"})
             {
                 var fault=new InvalidOperationException("CrystalLocalizationRawFault:"+key);
-                if(key=="discovery_failed") panel.ApplyUpdate(new([],CrystalSphereAssistantPanel.DiscoveryStop.Failed,Error:fault));
+                if(key=="discovery_failed") panel.ApplyUpdate(new([],CrystalPredictionSession.DiscoveryStop.Failed,Error:fault));
                 else
                 {
-                    typeof(CrystalSphereAssistantPanel).GetField("_errorKey",flags)!.SetValue(panel,key);
-                    typeof(CrystalSphereAssistantPanel).GetField("_fault",flags)!.SetValue(panel,fault);
+                    SetCrystalField(panel,"_errorKey",key);
+                    SetCrystalField(panel,"_fault",fault);
                 }
                 var before=panel.SuspendSession()!;
                 foreach(string language in new[]{"zh","en"})

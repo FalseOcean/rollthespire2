@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Effects.Snapshots;
+using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Rng;
 
@@ -19,7 +20,7 @@ internal sealed partial class PredictorRun
         switch (_eventKey!.Value.Entry, choice.OptionKey)
         {
             case ("THIS_OR_THAT", "PLAIN"):
-                ApplyEventHealth(-6, 0);
+                ApplyFixedEventHealth(choice.OptionKey);
                 if (Phase == PredictorPhase.Complete) return PredictorInputResult.Accepted;
                 Working = PredictorSettlementEffects.TakeGold(Working, _eventGoldAmount);
                 Accept(new("ThisOrThatGold", 0, [], null, Working.GoldBudget));
@@ -29,41 +30,43 @@ internal sealed partial class PredictorRun
                 BeginEventFrontRelic(4, token);
                 return PredictorInputResult.Accepted;
             case ("UNREST_SITE", "REST"):
-                ApplyEventFullHeal();
-                AddTrialCurse("POOR_SLEEP");
+                ApplyFixedEventHealth(choice.OptionKey);
+                AddTrialCurse(Beta111EventOptionRules.UnrestRestCurse.Entry);
                 FinishEvent();
                 return PredictorInputResult.Accepted;
             case ("UNREST_SITE", "KILL"):
-                ApplyEventHealth(0, -8);
+                ApplyFixedEventHealth(choice.OptionKey);
                 if (Phase == PredictorPhase.Complete) return PredictorInputResult.Accepted;
                 BeginEventFrontRelic(5, token);
                 return PredictorInputResult.Accepted;
             case ("SAPPHIRE_SEED", "EAT"):
-                ApplyEventHealth(9, 0);
+                ApplyFixedEventHealth(choice.OptionKey);
                 BeginEventCardSelection(Working.Deck.Where(id => Working.Card(id).UpgradeLevel < Working.Card(id).MaxUpgradeLevel).ToImmutableArray(), 1, token);
                 return PredictorInputResult.Accepted;
             case ("SAPPHIRE_SEED", "PLANT"):
                 BeginEventCardSelection(SownCandidates(), 1, token);
                 return PredictorInputResult.Accepted;
             case ("ZEN_WEAVER", "BREATHING_TECHNIQUES"):
-                SpendEventGold(50);
-                var enlightenment = Context.Catalog!.CardDefinitions.Single(d => d.Prototype.Key.Entry == "ENLIGHTENMENT").Prototype;
+                var breathing = Beta111EventOptionRules.ZenWeaver(choice.OptionKey);
+                SpendEventGold(breathing.Cost);
+                var enlightenment = Context.Catalog!.CardDefinitions.Single(d => d.Prototype.Key == breathing.AddedCard).Prototype;
                 PredictorSettlementEffects.RequireImplementedCard(enlightenment, context: Context);
-                Working = PredictorObtainSources.AddCard(Context, Working, enlightenment);
-                Working = PredictorObtainSources.AddCard(Context, Working, enlightenment);
-                Accept(new("ZenWeaverCards", 0, Working.Deck.TakeLast(2).ToImmutableArray(), null, null));
+                for (int i = 0; i < breathing.AddedCopies; i++)
+                    Working = PredictorObtainSources.AddCard(Context, Working, enlightenment);
+                Accept(new("ZenWeaverCards", 0, Working.Deck.TakeLast(breathing.AddedCopies).ToImmutableArray(), null, null));
                 FinishEvent();
                 return PredictorInputResult.Accepted;
             case ("ZEN_WEAVER", "EMOTIONAL_AWARENESS"):
             case ("ZEN_WEAVER", "ARACHNID_ACUPUNCTURE"):
-                _eventGoldAmount = choice.OptionKey == "EMOTIONAL_AWARENESS" ? 125 : 250;
+                var zenRemoval = Beta111EventOptionRules.ZenWeaver(choice.OptionKey);
+                _eventGoldAmount = zenRemoval.Cost.Amount;
                 var removable = Working.Deck.Where(id => Working.Card(id).Removable).ToImmutableArray();
                 if (removable.IsEmpty)
                 {
-                    SpendEventGold(_eventGoldAmount);
+                    SpendEventGold(zenRemoval.Cost);
                     FinishEvent();
                 }
-                else BeginEventCardSelection(removable, Math.Min(choice.OptionKey == "EMOTIONAL_AWARENESS" ? 1 : 2, removable.Length), token);
+                else BeginEventCardSelection(removable, Math.Min(zenRemoval.RemovalCount, removable.Length), token);
                 return PredictorInputResult.Accepted;
             case ("REFLECTIONS", "TOUCH_A_MIRROR"):
                 var upgraded = Working.Deck.Where(id => Working.Card(id).UpgradeLevel > 0).ToList();
@@ -111,14 +114,14 @@ internal sealed partial class PredictorRun
                 var bathable = Working.Deck.Where(id => Working.Card(id).Removable).ToImmutableArray();
                 if (bathable.IsEmpty)
                 {
-                    AddTrialCurse("GUILTY");
+                    AddTrialCurse(EventCardProductAfterSelection(choice.OptionKey).Entry);
                     FinishEvent();
                 }
                 else BeginEventCardSelection(bathable, 1, token);
                 return PredictorInputResult.Accepted;
             case ("FIELD_OF_MAN_SIZED_HOLES", "RESIST"):
                 var holesRemovable = Working.Deck.Where(id => Working.Card(id).Removable).ToImmutableArray();
-                if (holesRemovable.IsEmpty) { AddTrialCurse("NORMALITY"); FinishEvent(); }
+                if (holesRemovable.IsEmpty) { AddTrialCurse(EventCardProductAfterSelection(choice.OptionKey).Entry); FinishEvent(); }
                 else BeginEventCardSelection(holesRemovable, Math.Min(2, holesRemovable.Length), token);
                 return PredictorInputResult.Accepted;
             case ("FIELD_OF_MAN_SIZED_HOLES", "ENTER_YOUR_HOLE"):
@@ -126,7 +129,7 @@ internal sealed partial class PredictorRun
                 return PredictorInputResult.Accepted;
             case ("LUMINOUS_CHOIR", "REACH_INTO_THE_FLESH"):
                 var choirRemovable = Working.Deck.Where(id => Working.Card(id).Removable).ToImmutableArray();
-                if (choirRemovable.IsEmpty) { AddTrialCurse("SPORE_MIND"); FinishEvent(); }
+                if (choirRemovable.IsEmpty) { AddTrialCurse(EventCardProductAfterSelection(choice.OptionKey).Entry); FinishEvent(); }
                 else BeginEventCardSelection(choirRemovable, Math.Min(2, choirRemovable.Length), token);
                 return PredictorInputResult.Accepted;
             case ("LUMINOUS_CHOIR", "OFFER_TRIBUTE"):
@@ -145,7 +148,7 @@ internal sealed partial class PredictorRun
                 }).ToImmutableArray();
                 if (basics.IsEmpty)
                 {
-                    AddAmalgamatedCard(strikes);
+                    AddAmalgamatedCard();
                     FinishEvent();
                 }
                 else BeginEventCardSelection(basics, Math.Min(2, basics.Length), token);
@@ -194,43 +197,44 @@ internal sealed partial class PredictorRun
                 BeginEventCardSelection(Working.Deck.Where(id => Working.Card(id).Removable).ToImmutableArray(), 1, token);
                 return PredictorInputResult.Accepted;
             case ("GRAVE_OF_THE_FORGOTTEN", "CONFRONT"):
-                AddTrialCurse("DECAY");
+                AddTrialCurse(FixedEventCardProduct(choice.OptionKey).Entry);
                 BeginEventCardSelection(GraveSoulCandidates(), 1, token);
                 return PredictorInputResult.Accepted;
             case ("GRAVE_OF_THE_FORGOTTEN", "ACCEPT"):
-                if (BeginObtainRelic(new("RELIC", "FORGOTTEN_SOUL"), null, PredictorObtainReturn.Event, 23, token))
+                if (BeginObtainRelic(FixedEventRelicProduct(choice.OptionKey), null, PredictorObtainReturn.Event, 23, token))
                     ResumeEventAfterRelicObtain(23);
                 return PredictorInputResult.Accepted;
             case ("ROOM_FULL_OF_CHEESE", "GORGE"):
                 BeginCheeseGorge();
                 return PredictorInputResult.Accepted;
             case ("ROOM_FULL_OF_CHEESE", "SEARCH"):
-                ApplyEventHealth(-14, 0);
+                ApplyFixedEventHealth(choice.OptionKey);
                 if (Phase == PredictorPhase.Complete) return PredictorInputResult.Accepted;
-                if (BeginObtainRelic(new("RELIC", "CHOSEN_CHEESE"), null, PredictorObtainReturn.Event, 24, token))
+                if (BeginObtainRelic(FixedEventRelicProduct(choice.OptionKey), null, PredictorObtainReturn.Event, 24, token))
                     ResumeEventAfterRelicObtain(24);
                 return PredictorInputResult.Accepted;
             case ("WATERLOGGED_SCRIPTORIUM", "BLOODY_INK"):
-                ApplyEventHealth(6, 6);
+                ApplyFixedEventHealth(choice.OptionKey);
                 FinishEvent();
                 return PredictorInputResult.Accepted;
             case ("WATERLOGGED_SCRIPTORIUM", "TENTACLE_QUILL"):
             case ("WATERLOGGED_SCRIPTORIUM", "PRICKLY_SPONGE"):
-                SpendEventGold(choice.OptionKey == "TENTACLE_QUILL" ? 55 : 99);
+                var scriptorium = Beta111EventOptionRules.Scriptorium(choice.OptionKey);
+                SpendEventGold(scriptorium.Cost);
                 var steady = Working.Deck.Where(id => PredictorObtainSources.CanEnchant(Context, Working.Card(id)))
                     .ToImmutableArray();
                 if (steady.IsEmpty) FinishEvent();
-                else BeginEventCardSelection(steady, Math.Min(choice.OptionKey == "TENTACLE_QUILL" ? 1 : 2, steady.Length), token);
+                else BeginEventCardSelection(steady, Math.Min(scriptorium.TargetCount, steady.Length), token);
                 return PredictorInputResult.Accepted;
             case ("THE_LEGENDS_WERE_TRUE", "NAB_THE_MAP"):
-                var mapCardKey = new ModelKey("CARD", "SPOILS_MAP");
+                var mapCardKey = FixedEventCardProduct(choice.OptionKey);
                 PredictorSettlementEffects.RequireImplementedCard(PredictorCardChanges.Definition(Context, mapCardKey).Prototype, context: Context);
                 Working = PredictorObtainSources.AddCard(Context, Working, mapCardKey);
                 Accept(new("LegendsSpoilsMap", Working.Deck[^1], [], null, null));
                 FinishEvent();
                 return PredictorInputResult.Accepted;
             case ("THE_LEGENDS_WERE_TRUE", "SLOWLY_FIND_AN_EXIT"):
-                ApplyEventHealth(-8, 0);
+                ApplyFixedEventHealth(choice.OptionKey);
                 if (Phase == PredictorPhase.Complete) return PredictorInputResult.Accepted;
                 var availablePotions = Context.PotionPool;
                 if (availablePotions.IsEmpty) { FinishEvent(); return PredictorInputResult.Accepted; }
@@ -243,7 +247,7 @@ internal sealed partial class PredictorRun
                 BeginBrainLeechGrid();
                 return PredictorInputResult.Accepted;
             case ("BRAIN_LEECH", "RIP"):
-                ApplyEventHealth(-5, 0);
+                ApplyFixedEventHealth(choice.OptionKey);
                 if (Phase == PredictorPhase.Complete) return PredictorInputResult.Accepted;
                 OfferEventRewardPlans([new(PredictorRewardKind.Card, CardCount: 3,
                     Colorless: true, NoUpgradeRoll: true, NoCardPoolModifications: true)], token);
@@ -254,8 +258,8 @@ internal sealed partial class PredictorRun
                 FinishEvent();
                 return PredictorInputResult.Accepted;
             case ("SPIRIT_GRAFTER", "LET_IT_IN"):
-                ApplyEventHealth(25, 0);
-                var metamorphosis = new ModelKey("CARD", "METAMORPHOSIS");
+                ApplyFixedEventHealth(choice.OptionKey);
+                var metamorphosis = FixedEventCardProduct(choice.OptionKey);
                 PredictorSettlementEffects.RequireImplementedCard(PredictorCardChanges.Definition(Context, metamorphosis).Prototype, context: Context);
                 Working = PredictorObtainSources.AddCard(Context, Working, metamorphosis);
                 Accept(new("SpiritGrafterMetamorphosis", Working.Deck[^1], [], null, null));
@@ -266,7 +270,7 @@ internal sealed partial class PredictorRun
                     .ToImmutableArray();
                 if (grafterUpgrades.IsEmpty)
                 {
-                    ApplyEventHealth(-10, 0);
+                    ApplyFixedEventHealth(choice.OptionKey);
                     if (Phase != PredictorPhase.Complete) FinishEvent();
                 }
                 else BeginEventCardSelection(grafterUpgrades, 1, token);
@@ -277,16 +281,23 @@ internal sealed partial class PredictorRun
 
     private ImmutableArray<PredictorEventOption> ThisOrThatOptions()
     {
-        _eventGoldAmount = 41 + _eventRng!.NextInt(28);
+        _eventGoldAmount = Beta111EventRules.ThisOrThatGold(_eventRng!);
         return [new("PLAIN", GoldGain: _eventGoldAmount), new("ORNATE")];
     }
 
     private ImmutableArray<PredictorEventOption> ZenWeaverOptions() =>
-    [
-        new("BREATHING_TECHNIQUES", GoldCost: 50),
-        new("EMOTIONAL_AWARENESS", Enabled: Working.GoldBudget >= 125, GoldCost: 125),
-        new("ARACHNID_ACUPUNCTURE", Enabled: Working.GoldBudget >= 250, GoldCost: 250)
-    ];
+        new[] { "BREATHING_TECHNIQUES", "EMOTIONAL_AWARENESS", "ARACHNID_ACUPUNCTURE" }.Select(key =>
+        {
+            var choice = Beta111EventOptionRules.ZenWeaver(key);
+            return new PredictorEventOption(key, Enabled: choice.Cost.CanChoose(Working.GoldBudget), GoldCost: choice.Cost.Amount);
+        }).ToImmutableArray();
+
+    private ImmutableArray<PredictorEventOption> ScriptoriumOptions() =>
+        new[] { "TENTACLE_QUILL", "PRICKLY_SPONGE" }.Select(key =>
+        {
+            var choice = Beta111EventOptionRules.Scriptorium(key);
+            return new PredictorEventOption(key, Enabled: choice.Cost.CanChoose(Working.GoldBudget), GoldCost: choice.Cost.Amount);
+        }).Prepend(FixedEventHealthOption("BLOODY_INK")).ToImmutableArray();
 
     private ImmutableArray<PredictorEventOption> SelfHelpBookOptions()
     {
@@ -414,10 +425,10 @@ internal sealed partial class PredictorRun
             card.Enchantment == null && !PredictorCardChanges.Definition(Context, card.Key).Unplayable;
     }).ToImmutableArray();
 
-    private void AddAmalgamatedCard(bool strikes)
+    private void AddAmalgamatedCard()
     {
-        var key = strikes ? "ULTIMATE_STRIKE" : "ULTIMATE_DEFEND";
-        var prototype = Context.Catalog!.CardDefinitions.Single(d => d.Prototype.Key.Entry == key).Prototype;
+        var key = EventCardProductAfterSelection(_eventBranch!);
+        var prototype = Context.Catalog!.CardDefinitions.Single(d => d.Prototype.Key == key).Prototype;
         PredictorSettlementEffects.RequireImplementedCard(prototype, context: Context);
         Working = PredictorObtainSources.AddCard(Context, Working, prototype);
         Accept(new("AmalgamatorCard", Working.Deck[^1], [], null, null));
@@ -425,7 +436,7 @@ internal sealed partial class PredictorRun
 
     private ImmutableArray<PredictorEventOption> LuminousChoirOptions()
     {
-        _eventGoldAmount = 149 - _eventRng!.NextInt(50);
+        _eventGoldAmount = Beta111EventRules.LuminousChoirGold(_eventRng!);
         return [new("REACH_INTO_THE_FLESH"),
             new("OFFER_TRIBUTE", Enabled: Working.GoldBudget >= _eventGoldAmount, GoldCost: _eventGoldAmount)];
     }

@@ -218,7 +218,7 @@ internal sealed partial class AnalysisPage
         if (keys.Length > 0)
             section.AddChild(WNote(Text(excluded == 0 ? "predictor.design.conditions_default" : "predictor.design.conditions_custom")));
         if (!_ancientConditionsOpen || keys.Length == 0) return;
-        bool canEdit = _ancientPremiseVariants.ContainsKey((ancient.Act, ancient.AncientDisplay.ModelKey));
+        bool canEdit = _ancientPremiseVariants?.HasVariants(ancient.Act, ancient.AncientDisplay.ModelKey) == true;
         section.AddChild(new HSeparator());
         section.AddChild(WNote(Text("predictor.design.conditions_hint")));
         if (!canEdit) section.AddChild(WNote(Text("predictor.unavailable")));

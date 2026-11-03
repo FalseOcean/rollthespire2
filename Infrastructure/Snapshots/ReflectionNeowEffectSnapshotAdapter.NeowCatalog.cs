@@ -44,8 +44,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                 return null;
             }
 
-            ModelKey[] expectedPositives = ModernNeowIdentityPredictor.BasePositivePoolForAuthority.ToArray();
-            ModelKey[] expectedCurses = ModernNeowIdentityPredictor.BaseCursePoolForFiltering.ToArray();
+            ModelKey[] expectedPositives = ModernNeowIdentityRules.PositiveCandidates.ToArray();
+            ModelKey[] expectedCurses = ModernNeowIdentityRules.CurseCandidates.ToArray();
             bool exact = positives.SequenceEqual(expectedPositives) && curses.SequenceEqual(expectedCurses);
             evidence = $"runtime-neow-catalog:{(exact ? "vanilla-exact" : "changed")};positive={positives.Length};curse={curses.Length}";
             return exact;

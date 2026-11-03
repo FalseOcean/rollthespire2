@@ -477,7 +477,6 @@ internal static class NeowOperationPreviewChecks
             PredictorPotion? offered = null, bool inCombat = true, bool hasSozu = false) =>
             new(context, new(offered ?? inventory[held!.Value]!, held, offered == null ? null : 90001), inventory,
                 snapshot.State.Streams.Single(s => s.Stream == PredictorStream.CombatPotionGeneration), inCombat, hasSozu, "detached-potion-fixture");
-        static string CardsKey(IEnumerable<PredictorCard> cards) => string.Join("|", cards.Select(c => c.Key.Entry + ":" + c.UpgradeLevel));
         static IEnumerable<OperationPreviewCardGroup> Groups(OperationPreview result) =>
             result.Branches.SelectMany(b => b.Sections).SelectMany(s => s.CardGroups);
         var attack = new ModelKey("POTION", "ATTACK_POTION");
@@ -489,44 +488,121 @@ internal static class NeowOperationPreviewChecks
         var observation = Observe(mixed);
         string frozen = JsonSerializer.Serialize(observation);
         var sequence = PotionOperationPreview.Build(observation);
-        var expectedByOrdinal = Enumerable.Range(1, mixed.Length).ToDictionary(i => i, _ => new HashSet<string>());
-        // Independent exhaustive order oracle for this tiny actual inventory;
-        // production uses deduplicated predecessor cursors, not permutations.
-        void Orders(PredictorContext current, ImmutableArray<int> remaining, int ordinal)
+        void CheckDisplayedOrders(PredictorOperationPotionObservation observed, OperationPreview preview)
         {
-            foreach (int index in remaining)
+            static string OrderKey(IEnumerable<ModelKey> order) => string.Join("|", order.Select(key => key.Serialized));
+            var expected = new Dictionary<string, (ImmutableArray<ModelKey> Order, PredictorOperationPotionQueryResult Result)>();
+            // Exhaust actual-bottle permutations independently of the producer.
+            // Each concrete order is evaluated before considering display equivalence.
+            void Orders(PredictorContext current, ImmutableArray<ModelKey> remaining, ImmutableArray<ModelKey> prefix)
             {
-                var next = PredictorOperationPotionQueries.Query(current, mixed[index]!.Key);
-                if (index == 0) expectedByOrdinal[ordinal].Add(CardsKey(next.Cards.Select(c => c.Card)));
-                Orders(current with { Operation = current.Operation! with { CombatCardRng = next.RngAfter } }, remaining.Remove(index), ordinal + 1);
+                var result = PredictorOperationPotionQueries.Query(current, observed.Source.Potion.Key);
+                var order = prefix.Add(observed.Source.Potion.Key);
+                string recipeKey = OrderKey(order);
+                if (expected.TryGetValue(recipeKey, out var prior))
+                    Check(prior.Result.Cards.SequenceEqual(result.Cards) &&
+                        prior.Result.RngAfter == result.RngAfter, "unordered predecessor recipe changes its actual result/cursor: " + recipeKey);
+                else expected.Add(recipeKey, (order, result));
+                if (prefix.Length == 2) return;
+                for (int index = 0; index < remaining.Length; index++)
+                {
+                    var next = PredictorOperationPotionQueries.Query(current, remaining[index]);
+                    Orders(current with { Operation = current.Operation! with { CombatCardRng = next.RngAfter } },
+                        remaining.RemoveAt(index), prefix.Add(remaining[index]));
+                }
             }
+            var inventories = observed.Source.HeldSlot is int held
+                ? new[] { (Slots: observed.Inventory, SourceSlot: held) }
+                : Enumerable.Range(0, observed.Inventory.Length).Select(slot =>
+                    (Slots: observed.Inventory.SetItem(slot, observed.Source.Potion), SourceSlot: slot)).ToArray();
+            foreach (var inventory in inventories)
+                Orders(observed.Context, inventory.Slots.Where((potion, slot) => slot != inventory.SourceSlot && potion != null &&
+                    PredictorOperationPotionQueries.Supports(potion.Key)).Select(potion => potion!.Key).ToImmutableArray(), []);
+            bool SameResult(PredictorOperationPotionQueryResult a, PredictorOperationPotionQueryResult b) =>
+                a.RequiresCardChoice == b.RequiresCardChoice && a.Cards.SequenceEqual(b.Cards);
+
+            int admittedDepth = 0, expectedGroups = 0;
+            foreach (var layer in expected.Values.GroupBy(v => v.Order.Length).OrderBy(l => l.Key))
+            {
+                var distinct = new List<PredictorOperationPotionQueryResult>();
+                foreach (var candidate in layer)
+                    if (!distinct.Any(prior => SameResult(prior, candidate.Result))) distinct.Add(candidate.Result);
+                if (expectedGroups + distinct.Count > 8) break;
+                admittedDepth = layer.Key;
+                expectedGroups += distinct.Count;
+            }
+
+            var visible = expected.Where(p => p.Value.Order.Length <= admittedDepth).ToDictionary(p => p.Key, p => p.Value);
+            var actual = Groups(preview).ToArray();
+            Check(actual.Length == expectedGroups, "potion groups must cover each distinct result once per admitted use position");
+            var covered = new HashSet<string>();
+            foreach (var group in actual)
+            {
+                PredictorOperationPotionQueryResult? first = null;
+                Check(!group.IconPaths.IsEmpty, "potion card group lost all ways to reach it");
+                foreach (var path in group.IconPaths)
+                {
+                    // There are at most two predecessors. An unordered pair shows both concrete orders.
+                    Check(!path.Segments.IsEmpty && path.Segments[^1].SequenceEqual([observed.Source.Potion.Key]) &&
+                        path.Segments.All(segment => segment.Length is 1 or 2), "invalid potion path or displayed target");
+                    var prefixes = new List<ModelKey[]> { Array.Empty<ModelKey>() };
+                    foreach (var segment in path.Segments)
+                    {
+                        var options = segment.Length == 2
+                            ? new[] { segment.ToArray(), segment.Reverse().ToArray() } : new[] { segment.ToArray() };
+                        prefixes = prefixes.SelectMany(prefix => options.Select(option => prefix.Concat(option).ToArray())).ToList();
+                    }
+                    foreach (var order in prefixes)
+                    {
+                        string key = OrderKey(order);
+                        Check(visible.ContainsKey(key), "potion path implies an unavailable bottle order: " + key);
+                        var result = visible[key].Result;
+                        first ??= result;
+                        Check(SameResult(first, result), "potion paths with different cards or choice roles share a group: " + key);
+                        int select = result.RequiresCardChoice ? 1 : result.Cards.Length;
+                        Check(group.Cards.SequenceEqual(result.Cards.Select(card => card.Card)) &&
+                            group.MinimumSelect == select && group.MaximumSelect == select && !group.CanSkip && !group.Possible &&
+                            group.EarliestFirst == (admittedDepth > 1) &&
+                            group.Label == (admittedDepth > 1 ? "PotionUseStep:" + order.Length : null),
+                            "incorrect potion result or use position: " + key);
+                        covered.Add(key);
+                    }
+                }
+            }
+            bool complete = expected.Values.All(value => value.Order.Length <= admittedDepth);
+            Check(covered.SetEquals(visible.Keys) && preview.Faults.IsEmpty &&
+                preview.Branches.All(branch => branch.FullyEnumerated == complete && branch.PendingReasons.IsEmpty),
+                "potion orders, display cutoff or missing-input status do not match the independent reference");
         }
-        Orders(context, [0, 1, 2, 3], 1);
-        foreach (var (ordinal, outcomes) in expectedByOrdinal)
-        {
-            var actual = Groups(sequence).Where(group => group.Label == "PotionUseStep:" + ordinal).ToArray();
-            Check(actual.Select(group => CardsKey(group.Cards)).ToHashSet().SetEquals(outcomes) &&
-                actual.All(group => group.EarliestFirst && group.Possible == (outcomes.Count > 1)),
-                "mixed actual potion order lost a distinct prefix cursor or invented slot order: " + ordinal);
-        }
+        CheckDisplayedOrders(observation, sequence);
         Check(sequence.Style!.Cards == OperationCardLayout.Groups && sequence.Faults.IsEmpty &&
             JsonSerializer.Serialize(observation) == frozen &&
             JsonSerializer.Serialize(PotionOperationPreview.Build(observation with { InCombat = false })) == JsonSerializer.Serialize(sequence),
             "potion sequence changed its detached observation or differed across combat/ordinary hover surfaces");
 
         var duplicates = PotionOperationPreview.Build(Observe([new(id, attack), new(id + 1, attack), new(id + 2, attack)]));
+        CheckDisplayedOrders(Observe([new(id, attack), new(id + 1, attack), new(id + 2, attack)]), duplicates);
         Check(Groups(duplicates).Count() == 3 && Groups(duplicates).All(group => !group.Possible),
             "equivalent actual bottles were expanded into duplicate order alternatives");
         var single = PotionOperationPreview.Build(Observe([new(id, attack), new(id + 1, blood)]));
+        CheckDisplayedOrders(Observe([new(id, attack), new(id + 1, blood)]), single);
         Check(single.Style!.Cards == OperationCardLayout.Parallel && Groups(single).Single().Label == null,
             "unrelated potion created a fictional card-generation ordinal");
         var reward = new PredictorPotion(id + 99, acid);
-        var loot = PotionOperationPreview.Build(Observe([new(id, attack), new(id + 1, skill), new(id + 2, blood)], null, reward));
+        var lootObservation = Observe([new(id, attack), new(id + 1, skill), new(id + 2, blood)], null, reward);
+        var loot = PotionOperationPreview.Build(lootObservation);
+        CheckDisplayedOrders(lootObservation, loot);
         Check(loot.Notices.Contains("PotionAfterAcquisition") && loot.Notices.Contains("PotionAcquisitionRequiresSlot") &&
             Groups(loot).All(group => group.Label != "PotionUseStep:4") &&
             Groups(loot).Any(group => group.Label == "PotionUseStep:3") &&
-            Groups(loot).Where(group => group.Label == "PotionUseStep:3").All(group => group.Possible),
+            Groups(loot).All(group => !group.Possible),
             "full-inventory offered potion invented capacity or concealed the required replacement");
+        var crowdedObservation = Observe([new(id, attack), new(id + 1, skill), new(id + 2, acid),
+            new(id + 3, colorless), new(id + 4, new("POTION", "POWER_POTION"))]);
+        var crowded = PotionOperationPreview.Build(crowdedObservation);
+        CheckDisplayedOrders(crowdedObservation, crowded);
+        Check(Groups(sequence).Any(group => group.Label == "PotionUseStep:3") && Groups(crowded).Count() <= 8,
+            "potion display should include available deeper results within the total card-group budget");
 
         var actualBrew = PotionOperationPreview.Build(Observe(snapshot.State.PotionSlots));
         var actualExpected = PredictorSettlementEffects.UseEntropicBrew(snapshot.State, snapshot.Context.PotionPool, 0);

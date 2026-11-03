@@ -23,7 +23,7 @@ internal sealed record NeowCapsuleComposite(uint[] Metadata, CapsuleRelicReplay 
         : UsesBonesCheckpoint
         ? compact ? BonesCompactRevision : staged ? BonesStagedRevision : BonesDenseRevision
         : compact ? CompactRevision : DenseRevision;
-    internal static bool TryCreate(ExactSearchExecutionRequest request, NeowReplayPlan n, out NeowCapsuleComposite? composite)
+    internal static bool TryCreate(SearchModel request, NeowReplayPlan n, out NeowCapsuleComposite? composite)
     {
         composite = null;
         if (TryCreateBonesArcane(request, n, out composite)) return true;
@@ -88,7 +88,7 @@ internal sealed record NeowCapsuleComposite(uint[] Metadata, CapsuleRelicReplay 
         return true;
     }
 
-    private static bool TryCreateBonesArcane(ExactSearchExecutionRequest request, NeowReplayPlan n,
+    private static bool TryCreateBonesArcane(SearchModel request, NeowReplayPlan n,
         out NeowCapsuleComposite? composite)
     {
         composite = null;

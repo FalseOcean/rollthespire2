@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Text.Json;
 using RolltheSpire2.Core.Identity;
+using RolltheSpire2.Core.Events;
 
 namespace RolltheSpire2.Core.PredictorRuntime;
 
@@ -399,17 +400,11 @@ internal sealed partial class PredictorRun
         return true;
     }
 
-    private static bool RouteEventHealthIndependentBranch(string key, string branch) => (key, branch) is
-        ("MORPHIC_GROVE", "LONER") or ("WHISPERING_HOLLOW", "HUG") or ("TRASH_HEAP", "DIVE_IN") or
-        ("TRIAL", "NOBLE_GUILTY") or ("THIS_OR_THAT", "PLAIN") or ("UNREST_SITE", _) or ("SAPPHIRE_SEED", "EAT") or
-        ("SLIPPERY_BRIDGE", "HOLD_ON") or ("STONE_OF_ALL_TIME", _) or ("SUNKEN_STATUE", "DIVE_INTO_WATER") or
-        ("ROUND_TEA_PARTY", "ENJOY_TEA") or ("ROUND_TEA_PARTY", "CONTINUE_FIGHT") or ("ABYSSAL_BATHS", _) or
-        ("DROWNING_BEACON", "CLIMB") or ("TABLET_OF_TRUTH", "SMASH") or
-        ("COLOSSAL_FLOWER", "REACH_DEEPER") or ("COLOSSAL_FLOWER", "POLLINOUS_CORE") or ("DENSE_VEGETATION", _) or
-        ("SPIRALING_WHIRLPOOL", "DRINK") or ("ROOM_FULL_OF_CHEESE", "SEARCH") or
-        ("WATERLOGGED_SCRIPTORIUM", "BLOODY_INK") or ("THE_LEGENDS_WERE_TRUE", "SLOWLY_FIND_AN_EXIT") or
-        ("BRAIN_LEECH", "RIP") or ("BYRDONIS_NEST", "EAT") or ("DOLL_ROOM", "TAKE_SOME_TIME") or ("DOLL_ROOM", "EXAMINE") or
-        ("SPIRIT_GRAFTER", _) or ("JUNGLE_MAZE_ADVENTURE", "SOLO_QUEST");
+    private static bool RouteEventHealthIndependentBranch(string key, string branch) =>
+        Beta111EventOptionRules.FixedHealth(key, branch) is not null || (key, branch) is
+        ("SLIPPERY_BRIDGE", "HOLD_ON") or ("ROUND_TEA_PARTY", "ENJOY_TEA") or
+        ("ABYSSAL_BATHS", _) or ("COLOSSAL_FLOWER", "REACH_DEEPER" or "POLLINOUS_CORE") or
+        ("DENSE_VEGETATION", "REST") or ("SPIRALING_WHIRLPOOL", "DRINK");
 
     private static void PropagateRouteEventHealthPending(PredictorRun run, List<RouteDependency> dependencies)
     {
@@ -418,7 +413,8 @@ internal sealed partial class PredictorRun
         var domains = PredictorCombatDomain.Health;
         bool mayLoseHp = run._preview.Event.PendingHealthCommands.Any(c => c.HpDelta < 0 || c.MaxHpDelta < 0) ||
             run._preview.Event.ProjectHealthIndependently && run.Phase == PredictorPhase.EventCards &&
-                run._eventKey?.Entry is ("WHISPERING_HOLLOW" or "SPIRIT_GRAFTER");
+                Beta111EventOptionRules.FixedHealth(run._eventKey?.Entry ?? "", run._eventBranch ?? "")
+                    is { AfterCardSelection: true } delayed && (delayed.HpDelta < 0 || delayed.MaxHpDelta < 0);
         if (mayLoseHp && (run.Working.PotionSlots.Any(p => p?.Key.Entry == "FAIRY_IN_A_BOTTLE") ||
             !CausesFor(dependencies, PredictorCombatDomain.PotionInventory).IsEmpty))
             domains |= PredictorCombatDomain.PotionInventory;

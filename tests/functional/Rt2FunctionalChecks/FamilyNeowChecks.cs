@@ -17,7 +17,7 @@ using RolltheSpire2.Tests.FastSearch;
 
 internal static partial class FamilyNeowChecks
 {
-    internal static int Run((string Name, ExactSearchExecutionRequest Request)[] scenarios, int count,
+    internal static int Run((string Name, PreparedSearch Request)[] scenarios, int count,
         RuntimeContextAuthoritySnapshot fixedSeedAuthority)
     {
         int checkedSeeds = 0, failures = 0, capsuleShapes = 0;
@@ -49,18 +49,18 @@ internal static partial class FamilyNeowChecks
         }
         // These independent historical seeds belong to the original four-relic
         // source fixture, separate from the broader R numerical-shape fixture.
-        var capsuleFixture = Beta110LargeCapsuleSemanticFixture.Validate(fixedSeedAuthority, scenarios[0].Request.Detection);
+        var capsuleFixture = Beta110LargeCapsuleSemanticFixture.Validate(fixedSeedAuthority, scenarios[0].Request.Model.Detection);
         if (!capsuleFixture.Passed) throw new Exception("Large Capsule semantic fixture failed:" + capsuleFixture.Issue);
         Console.WriteLine("Large Capsule fixed-seed unordered pair, duplicate multiplicity and Bones Exact fixture: PASS");
         foreach (var scenario in scenarios)
         {
             var request = scenario.Request;
-            NeowReplayPlan n = NeowReplayPlan.Compile(request, false);
+            NeowReplayPlan n = NeowReplayPlan.Compile(request.Model, false);
             // Same captured numerical inputs, mod provenance and unaudited flags:
             // policy must admit existing algorithms without rewriting provenance.
-            if (request.Authority.EffectAuthority is { } originalEffects)
+            if (request.Model.Authority.EffectAuthority is { } originalEffects)
             {
-                var a = request.Authority;
+                var a = request.Model.Authority;
                 var modEffects = originalEffects with { CapturedProfileId = RuntimeProfileId.Beta111, SourceAuthority = SourceAuthority.ModdedRuntimeBestEffort,
                     CharacterRewardPoolExact = false, CharacterRewardHooksNoOpExact = false,
                     ColorlessRewardPoolExact = false, ColorlessRewardHooksNoOpExact = false,
@@ -71,9 +71,9 @@ internal static partial class FamilyNeowChecks
                     RuntimeVersionCompatibility.Beta111Version, RuntimeProfileId.Beta111, false, "test-mod", "test-mod",
                     SourceAuthority.ModdedRuntimeBestEffort, SnapshotCompleteness.Partial, IdentityResolutionStatus.Unknown,
                     modEffects, a.WorldAuthority, a.PredictionGameMode, a.PredictionGameModeAuthority);
-                var modCompiled = request.CompiledSearch with { Context = request.CompiledSearch.Context with { Authority = modAuthority, ProfileId = RuntimeProfileId.Beta111 } };
-                var modRequest = request with { CompiledSearch = modCompiled };
-                var modPlan = NeowReplayPlan.Compile(modRequest, false);
+                var modCompiled = request.Model.CompiledSearch with { Context = request.Model.CompiledSearch.Context with { Authority = modAuthority, ProfileId = RuntimeProfileId.Beta111 } };
+                var modRequest = request with { Model = request.Model with { CompiledSearch = modCompiled } };
+                var modPlan = NeowReplayPlan.Compile(modRequest.Model, false);
                 if (!modAuthority.UsesBestEffortModel || modEffects.SourceAuthority != SourceAuthority.ModdedRuntimeBestEffort)
                     throw new Exception("Mod policy/provenance lost");
                 for (ulong sample = 0; sample < 64; sample++)
@@ -85,15 +85,15 @@ internal static partial class FamilyNeowChecks
                     throw new Exception("Mod policy fabricated missing deck");
             }
             var physicalFamilies = FamilyExecutionCoordinator.Plan(request).OrderedFamilies;
-            if (physicalFamilies.Any(f => f is CapsuleRelicFamily) && physicalFamilies.Any(f => f is NeowFamily && f.ConditionPerformance.UsesGpu) &&
+            if (NeowReplayPlan.HasCapsule(request.Model) && physicalFamilies.Any(f => f.FamilyId == "R.Relic") && physicalFamilies.Any(f => f.FamilyId == "N.Neow" && f.UsesGpu) &&
                 FamilyExecutionCoordinator.ResolveExecutionWindowSize(request, physicalFamilies) != FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize)
                 throw new Exception("CPU R underfilled N GPU root geometry");
-            if (request.Evaluation.HasNeowConstraints && !FamilyExecutionCoordinator.Plan(request).Stages.Any(s => s.Coverage.Contains("N.Neow")))
+            if (request.Model.Evaluation.HasNeowConstraints && !FamilyExecutionCoordinator.Plan(request).Stages.Any(s => s.Coverage.Contains("N.Neow")))
                 throw new Exception("Production registration lost N Coverage: " + scenario.Name);
             if (NeowFamilyGpuPlan.TryCreate(n, out var gpu, out _) && gpu is not null)
             {
                 if (scenario.Name == "LeafyPoulticeTransforms") CheckLeafyPreGateAdmission(request, n, gpuFixtures);
-                if (NeowCapsuleComposite.TryCreate(request, n, out var nr) && nr is not null)
+                if (NeowCapsuleComposite.TryCreate(request.Model, n, out var nr) && nr is not null)
                 {
                     AddPositiveNrFixtures(request, n, nr, gpu, "Nr." + scenario.Name, gpuFixtures);
                 }
@@ -128,21 +128,21 @@ internal static partial class FamilyNeowChecks
             }
             if (n.Authority.EffectCatalog.OrdinaryRelics.Length != 0 || n.Authority.EffectCatalog.PlayerRelicBuckets.Length != 0)
                 throw new Exception("N retains a Relic Bag catalog");
-            var models = new NeowFamilyProjections(request, n, false, null);
+            var models = new NeowFamilyProjections(request.Model, n, false, null);
             var cost = models.Expected(new HashSet<string>());
             if (cost.IsResolved && (cost.ExpectedFilteringWorkUnitsPerInput < 0 || cost.ExpectedFilteringWorkUnitsPerInput > cost.FullFilteringWorkUnitsPerInput + 1e-10))
                 throw new Exception("N Cost envelope violated: " + scenario.Name);
-            bool capsule = NeowReplayPlan.HasCapsule(request);
+            bool capsule = NeowReplayPlan.HasCapsule(request.Model);
             CapsuleRelicReplay? r = null;
             if (capsule)
             {
-                try { r = new(request, NeowReplayPlan.Compile(request, true)); }
+                try { r = new(request.Model, NeowReplayPlan.Compile(request.Model, true)); }
                 catch (InvalidOperationException ex) when (ex.Message == "RFamilyUnboundCapsuleRoute_ExactOnly") { }
             }
             if (capsule) capsuleShapes++;
             // Predictor validates the supported N-local query without R predicates.
             // The retired complete Fast executor is not a test dependency.
-            var donorRequest = CompileFixtureRequest(n.Filter, request.CompiledSearch.Context, request.RunOptions);
+            var donorRequest = CompileFixtureRequest(n.Filter, request.Model.CompiledSearch.Context, request.RunOptions);
 
             int mismatches = 0;
             for (int i = 0; i < count; i++)
@@ -156,7 +156,7 @@ internal static partial class FamilyNeowChecks
                 string seed = Beta110SeedCodec.FormatOrdinal((ulong)i);
                 if (!TrustedRootHashInput.TryBindCanonicalSeed(Beta110Profile.Instance, root, seed, out var input, out var issue))
                     throw new Exception(issue);
-                bool exactMatch = ProductionExactSearchEvaluator.Evaluate(donorRequest, input).IsMatch;
+                bool exactMatch = ProductionExactSearchEvaluator.Evaluate(donorRequest.Model, input).IsMatch;
                 if (exactMatch && !actual) mismatches++;
                 if (r is not null) _ = r.Matches(root);
                 checkedSeeds++;
@@ -201,7 +201,7 @@ internal static partial class FamilyNeowChecks
         return failures == 0 ? 0 : 1;
     }
 
-    private static void AddPositiveNrFixtures(ExactSearchExecutionRequest request, NeowReplayPlan n,
+    private static void AddPositiveNrFixtures(PreparedSearch request, NeowReplayPlan n,
         NeowCapsuleComposite nr, NeowFamilyGpuPlan gpu, string name, List<object> fixtures)
     {
         const int window = 4096;
@@ -228,7 +228,7 @@ internal static partial class FamilyNeowChecks
         ulong witnessRoot = Beta110Profile.Instance.ComputeRootSeed(witnessSeed);
         if (!TrustedRootHashInput.TryBindCanonicalSeed(Beta110Profile.Instance, witnessRoot, witnessSeed, out var witnessInput, out string witnessIssue))
             throw new Exception("Nr positive root binding:" + name + ":" + witnessIssue);
-        var witness = ProductionExactSearchEvaluator.Evaluate(request, witnessInput);
+        var witness = ProductionExactSearchEvaluator.Evaluate(request.Model, witnessInput);
         if (!witness.IsMatch)
             throw new Exception($"Nr positive reference lacks whole-query Exact witness:scenario={name};seed={witnessSeed};N={nKept};R={rKept};joint={denseExpected.Length};disposition={witness.Evaluation.Disposition};issue={witness.FailureCode}");
         foreach (bool compactInput in new[] { false, true })
@@ -246,23 +246,23 @@ internal static partial class FamilyNeowChecks
             if (nrExpected.Length == 0)
                 throw new Exception($"Nr fixture lost positive witness:scenario={name};compact={compactInput};start={start};N={nKept};R={rKept};joint={denseExpected.Length}");
         }
-        var accelerator = new NeowFamily(request, n, composite: nr);
-        if (!accelerator.ConditionPerformance.UsesGpu || accelerator.PricingComposite != nr ||
+        var accelerator = new NeowFamily(request.Model, n, composite: nr);
+        if (!accelerator.ConditionPerformance.UsesGpu || !accelerator.Coverage.Contains("R.Relic") ||
             !accelerator.Coverage.ToHashSet().SetEquals(["N.Neow", "R.Relic"]) ||
             !FamilyExecutionCoordinator.Plan(request).OrderedFamilies.SelectMany(f => f.Coverage).ToHashSet().IsSupersetOf(accelerator.Coverage))
             throw new Exception("Nr explicit accelerator or default logical coverage unavailable:" + name);
         Console.WriteLine($"Nr positive Exact witness:scenario={name};seed={witnessSeed};start={start};N={nKept};R={rKept};joint={denseExpected.Length};PASS");
     }
 
-    private static ExactSearchExecutionRequest CompileFixtureRequest(
+    private static PreparedSearch CompileFixtureRequest(
         NeowSearchFilter filter, SearchContext context, SearchRunOptions options)
     {
         var compiled = SearchCompiler.Compile(LegacySearchQueryAdapter.FromFilter(filter), context);
-        var result = ExactSearchExecutionRequestFactory.Compile(compiled, options);
+        var result = SearchPreparationCompiler.Compile(compiled, options);
         return result.Plan ?? throw new InvalidOperationException("NeowFixtureCompileFailed:" + result.Issue);
     }
 
-    private static void CheckLeafyPreGateAdmission(ExactSearchExecutionRequest source, NeowReplayPlan direct, List<object> fixtures)
+    private static void CheckLeafyPreGateAdmission(PreparedSearch source, NeowReplayPlan direct, List<object> fixtures)
     {
         byte leafy = Beta110FastRelicCatalog.LeafyPoultice, golden = Beta110FastRelicCatalog.GoldenPearl;
         byte arcane = Beta110FastRelicCatalog.ArcaneScroll, invalid = Beta110FastRelicCatalog.InvalidId;
@@ -313,25 +313,25 @@ internal static partial class FamilyNeowChecks
             throw new Exception("Proved vanilla any-order companion lost Leafy pre-gate");
 
         RuntimeContextAuthoritySnapshot beta111Authority = Beta110FastSearchFixtureAuthority.CreateBeta111(
-            source.CompiledSearch.Context.CharacterKey, source.CompiledSearch.Context.Ascension,
-            source.CompiledSearch.Context.Authority.PlayerSlotIndex,
-            source.CompiledSearch.Context.Authority.PlayersCount);
+            source.Model.CompiledSearch.Context.CharacterKey, source.Model.CompiledSearch.Context.Ascension,
+            source.Model.CompiledSearch.Context.Authority.PlayerSlotIndex,
+            source.Model.CompiledSearch.Context.Authority.PlayersCount);
         CheckPrecariousShearsLeafyCoreProjection(beta111Authority);
         var beta111Detection = new GameVersionDetection(RuntimeVersionCompatibility.Beta111Version,
             RuntimeVersionCompatibility.Beta111Version, "beta", "leafy-beta111-fixture", true, string.Empty);
-        var beta111Context = source.CompiledSearch.Context with
+        var beta111Context = source.Model.CompiledSearch.Context with
         {
             ProfileId = RuntimeProfileId.Beta111,
             Authority = beta111Authority,
             Detection = beta111Detection
         };
-        var beta111DirectRequest = CompileFixtureRequest(source.Evaluation.ToLegacyFilter(), beta111Context, source.RunOptions);
-        NeowReplayPlan beta111Direct = NeowReplayPlan.Compile(beta111DirectRequest, false);
+        var beta111DirectRequest = CompileFixtureRequest(source.Model.Evaluation.ToLegacyFilter(), beta111Context, source.RunOptions);
+        NeowReplayPlan beta111Direct = NeowReplayPlan.Compile(beta111DirectRequest.Model, false);
         if (!NeowFamilyGpuPlan.TryCreate(beta111Direct, out var beta111DirectGpu, out _) || beta111DirectGpu is null ||
             !beta111DirectGpu.UsesLeafyPreGate || beta111DirectGpu.Meta[58] != 87 || beta111DirectGpu.Meta[59] != 87)
             throw new Exception("Compiled Beta111 source-sized direct Leafy shape did not enable the 87x87 pre-gate");
         AddPositiveWindowFixtures("LeafyPreGate.Beta111Direct.SourceSized", beta111Direct, beta111DirectGpu);
-        NeowSearchFilter beta111BonesFilter = source.Evaluation.ToLegacyFilter() with
+        NeowSearchFilter beta111BonesFilter = source.Model.Evaluation.ToLegacyFilter() with
         {
             NeowRoute = new NeowRouteSearchCondition(BaseGameModelKeys.Relics.NeowsBones),
             RequireNeowsBones = true,
@@ -339,7 +339,7 @@ internal static partial class FamilyNeowChecks
                 BaseGameModelKeys.Relics.ArcaneScroll], [])
         };
         var beta111Request = CompileFixtureRequest(beta111BonesFilter, beta111Context, source.RunOptions);
-        NeowReplayPlan beta111Bones = NeowReplayPlan.Compile(beta111Request, false);
+        NeowReplayPlan beta111Bones = NeowReplayPlan.Compile(beta111Request.Model, false);
         if (!beta111Bones.LeafyBonesInitialTransformInvariant)
             throw new Exception("Compiled audited Beta111 vanilla deck did not prove the Bones Leafy source invariant");
         if (!NeowFamilyGpuPlan.TryCreate(beta111Bones, out var beta111Gpu, out _) || beta111Gpu is null ||
@@ -354,7 +354,7 @@ internal static partial class FamilyNeowChecks
                 BaseGameModelKeys.Relics.PrecariousShears], [])
         };
         var precariousRequest = CompileFixtureRequest(precariousFilter, beta111Context, source.RunOptions);
-        NeowReplayPlan beta111FixedPredecessor = NeowReplayPlan.Compile(precariousRequest, false) with
+        NeowReplayPlan beta111FixedPredecessor = NeowReplayPlan.Compile(precariousRequest.Model, false) with
         {
             First = Beta110FastRelicCatalog.PrecariousShears,
             Second = leafy
@@ -500,9 +500,9 @@ internal static partial class FamilyNeowChecks
             }
             var inputContext = context with { Authority = context.Authority.WithEffectAuthority(effects) };
             var compiled = SearchCompiler.Compile(query, inputContext);
-            var plan = RolltheSpire2.Search.Compilation.ExactSearchExecutionRequestFactory.Compile(compiled, new(seed, 1, 1, 1)).Plan!;
+            var plan = RolltheSpire2.Search.Compilation.SearchPreparationCompiler.Compile(compiled, new(seed, 1, 1, 1)).Plan!;
             var input = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed);
-            var result = ProductionExactSearchEvaluator.Evaluate(plan, input);
+            var result = ProductionExactSearchEvaluator.Evaluate(plan.Model, input);
             if (!result.IsMatch) throw new Exception("Capsule whitelist Exact: " + result.FailureCode);
             // The information projector uses the same observation boundary without a Query premise.
             var projection = Beta111NeowEffectProjector.ProjectFromRootHash(BaseGameModelKeys.Relics.NeowsBones,
@@ -545,11 +545,11 @@ internal static partial class FamilyNeowChecks
         var authority = Beta110FastSearchFixtureAuthority.CreateBeta111(character, 10, 0, 1);
         var context = new SearchContext(RuntimeProfileId.Beta111, character, 10, authority,
             new("0.111.0", "0.111.0", "beta", "N-preparation-fixture", true, ""), SearchEvaluationAssumptions.BroadDefault);
-        ExactSearchExecutionRequest Request(SearchContext input, SearchQuery query)
+        PreparedSearch Request(SearchContext input, SearchQuery query)
         {
             var compiled = SearchCompiler.Compile(query, input);
-            return new(compiled, new("000000000000", 4096, 30, 1), "000000000000", 4096,
-                CompiledSearchEvaluationProjector.Project(compiled).Evaluation, CombatRewardRoutePolicyContract.None, compiled.SemanticFingerprint);
+            return new(new SearchModel(compiled, CompiledSearchEvaluationProjector.Project(compiled).Evaluation,
+                CombatRewardRoutePolicyContract.None, compiled.SemanticFingerprint), new("000000000000", 4096, 30, 1), "000000000000", 4096, compiled.SemanticFingerprint);
         }
         var identityQuery = SearchQuery.Empty with { LegacyNeow = SearchQuery.Empty.LegacyNeow with {
             NeowRelics = new([], [BaseGameModelKeys.Relics.GoldenPearl], []) } };
@@ -559,10 +559,10 @@ internal static partial class FamilyNeowChecks
         {
             Environment.SetEnvironmentVariable("RT2_N_DIRECT_EXPERIMENT", "invalid-preparation-fixture");
             var registered = FamilyExecutionCoordinator.CreateRegisteredFamilies(solo, false);
-            if (registered.Single(f => f.FamilyId == "N.Neow") is not NeowFamily { GpuPlan: null })
+            if (registered.Single(f => f.FamilyId == "N.Neow").UsesGpu)
                 throw new Exception("Explicit CPU registration lost N under an invalid GPU experiment");
-            var gpuAttempt = FamilyExecutionCoordinator.CreateRegisteredFamilies(solo, true).OfType<NeowFamily>().Single();
-            if (!gpuAttempt.GpuPreparationFailed || gpuAttempt.ConditionPerformance.UsesGpu)
+            var gpuAttempt = FamilyExecutionCoordinator.CreateRegisteredFamilies(solo, true).Single(body => body.FamilyId == "N.Neow");
+            if (gpuAttempt.Preparation.Issues.Count == 0 || gpuAttempt.ConditionPerformance.UsesGpu)
                 throw new Exception("GPU construction failure did not retain the N CPU realization");
             var selected = FamilyExecutionCoordinator.Plan(solo, true);
             if (selected.GpuPreparationFallbacks.Count != 1 ||
@@ -597,19 +597,22 @@ internal static partial class FamilyNeowChecks
         var query = SearchQuery.Empty with { Players = [new(0, ModelKeySetFilter.Empty) { Conditions = Personal(19) },
             new(1, ModelKeySetFilter.Empty) { Conditions = Personal(20) }] };
         var request = Request(partyContext, query);
-        ulong[] Execute(IFamilyInvocation family, ExactSearchExecutionRequest input)
+        ulong[] Execute(FilterBodyDescription family, PreparedSearch input)
         {
-            var execution = new FamilyExecutionContext(requiresGpu: false, failOnPhysicalRecovery: true);
+            var execution = new FilterRuntimeServices(requiresGpu: false, failOnPhysicalRecovery: true);
+            var running = family.CreateExecution!(family, execution);
             try
             {
                 var batch = new SearchBatch(0, 4096);
-                return family.InvokeAsync(execution, new(batch, input), FamilyCandidateSet.Dense(batch), default)
+                return running.FilterAsync(execution, FamilyCandidateSet.Dense(batch), default)
                     .AsTask().GetAwaiter().GetResult().EnumerateLogicalOrdinals().ToArray();
             }
-            finally { family.DisposeAsync(execution).AsTask().GetAwaiter().GetResult(); execution.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+            finally { running.DisposeAsync(execution).AsTask().GetAwaiter().GetResult(); execution.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
         }
-        var expected = Execute(new NeowFamily.PartyInitial(request, optimize: false), request);
-        if (!Execute(new NeowFamily.PartyInitial(request), request).SequenceEqual(expected))
+        ulong[] ExecutePrepared(NeowFamily.PartyInitial preparation, PreparedSearch input) =>
+            Execute(preparation.Describe(), input);
+        var expected = ExecutePrepared(new NeowFamily.PartyInitial(request.Model, FilterExecutionPreferences.From(request.RunOptions), optimize: false), request);
+        if (!ExecutePrepared(new NeowFamily.PartyInitial(request.Model, FilterExecutionPreferences.From(request.RunOptions)), request).SequenceEqual(expected))
             throw new Exception("Party numerical offers/local observation reuse changed survivors");
         // This is controlled identity correctness evidence, not a real runtime
         // party throughput fixture. Distinct Any gates must remain an AND.
@@ -640,18 +643,18 @@ internal static partial class FamilyNeowChecks
                         [BaseGameModelKeys.Relics.SmallCapsule, BaseGameModelKeys.Relics.LeafyPoultice], [], []))] }
                 } }).ToArray() };
                 var gateRequest = Request(identityContext, gates);
-                var family = new NeowFamily.PartyInitial(gateRequest);
+                var family = new NeowFamily.PartyInitial(gateRequest.Model, FilterExecutionPreferences.From(gateRequest.RunOptions));
                 for (ulong root = 0; root < 4096; root++)
                     if (family.MatchesInitialOffers(root) != family.MatchesInitialOffersReference(root))
                         throw new Exception($"Party numerical independent-gate parity {count}/{combined}/{root}");
-                if (!Execute(family, gateRequest).SequenceEqual(Execute(new NeowFamily.PartyInitial(gateRequest, optimize: false), gateRequest)))
+                if (!ExecutePrepared(family, gateRequest).SequenceEqual(ExecutePrepared(new NeowFamily.PartyInitial(gateRequest.Model, FilterExecutionPreferences.From(gateRequest.RunOptions), optimize: false), gateRequest)))
                     throw new Exception("Party numerical dense/ordinal envelope differs from rich gates");
             }
         }
         var firstOnlyQuery = query with { Players = query.Players.Select(p => p.Slot == 1
             ? p with { Conditions = p.Conditions with { StructuredOpeningEffects = [] } } : p).ToArray() };
         var firstOnly = Request(partyContext, firstOnlyQuery);
-        if (expected.Length == 0 || !Execute(new NeowFamily.PartyInitial(firstOnly), firstOnly).Except(expected).Any())
+        if (expected.Length == 0 || !ExecutePrepared(new NeowFamily.PartyInitial(firstOnly.Model, FilterExecutionPreferences.From(firstOnly.RunOptions)), firstOnly).Except(expected).Any())
             throw new Exception("Party preparation fixture must expose a later-slot rejection and positive full matches");
         foreach (int failedSlot in new[] { 0, 1 })
         {
@@ -662,12 +665,13 @@ internal static partial class FamilyNeowChecks
                 if (plan.Authority.PlayerSlotIndex == failedSlot) { failures++; throw new InvalidOperationException("InjectedNPreparationFailure"); }
                 return false;
             }
-            var failed = new NeowFamily.PartyInitial(request, preferGpu: true, gpuPlanFactory: Prepare);
-            var selectedFallbacks = FamilyExecutionCoordinator.SelectedPreparationFallbacks([failed], FamilyPlanner.InOrder([failed]));
+            var failed = new NeowFamily.PartyInitial(request.Model, FilterExecutionPreferences.From(request.RunOptions), preferGpu: true, gpuPlanFactory: Prepare);
+            var failedBody = failed.Describe();
+            var selectedFallbacks = FamilyExecutionCoordinator.SelectedPreparationFallbacks([failedBody], FamilyPlanner.InOrder([failedBody]));
             if (selectedFallbacks.Count != 1 || !selectedFallbacks[0].Detail.Contains("InjectedNPreparationFailure", StringComparison.Ordinal) ||
                 !selectedFallbacks[0].Detail.Contains("slot=" + failedSlot, StringComparison.Ordinal))
                 throw new Exception("Party GPU preparation failure lost selected fallback slot/exception evidence");
-            if (failures != 1 || failed.ConditionPerformance.UsesGpu || !Execute(failed, request).SequenceEqual(expected))
+            if (failures != 1 || failed.ResolveConditionPerformance(false).UsesGpu || !ExecutePrepared(failed, request).SequenceEqual(expected))
                 throw new Exception("GPU preparation failure lost whole-party CPU predicates at slot " + failedSlot);
         }
         Console.WriteLine("N physical preparation: CPU ignores invalid GPU experiment; both party failure positions retain all predicates: PASS");
@@ -693,10 +697,10 @@ internal static partial class FamilyNeowChecks
         Console.WriteLine("N singleplayer/party compiled-source isolation: PASS");
     }
 
-    private static void CheckGroupedCapsuleUi(ExactSearchExecutionRequest source, List<object> fixtures)
+    private static void CheckGroupedCapsuleUi(PreparedSearch source, List<object> fixtures)
     {
         var original = source;
-        if (!RelicFamilyPlanCompiler.TryCompilePool(original, out var pool, out var dense, out _, out _))
+        if (!RelicFamilyPlanCompiler.TryCompilePool(original.Model, out var pool, out var dense, out _, out _))
             throw new Exception("Grouped UI pool unavailable");
         ModelKey Key(int rarity)
         {
@@ -710,22 +714,22 @@ internal static partial class FamilyNeowChecks
             var condition = new NeowStructuredEffectSearchCondition(BaseGameModelKeys.Relics.NeowsBones,
                 NeowStructuredConditionKind.ExactGroupedCapsuleMultiset, NeowStructuredEffectScope.NestedRelics,
                 NeowStructuredOutputKind.Relic, Enumerable.Range(1, targets).Select(Key).ToArray(), AllowDuplicateOutputs: false);
-            ExactSearchExecutionRequest Request(bool allowDuplicates)
+            PreparedSearch Request(bool allowDuplicates)
             {
-                var filter = source.Evaluation.ToLegacyFilter() with { NeowRoute = new(BaseGameModelKeys.Relics.NeowsBones),
+                var filter = source.Model.Evaluation.ToLegacyFilter() with { NeowRoute = new(BaseGameModelKeys.Relics.NeowsBones),
                     RequiredBonesCombination = pair, RequiredBonesAcquisitionOrder = pickup == 0 ? [] : pickup == 1 ? pair : pair.AsEnumerable().Reverse().ToArray(),
                     StructuredNeowEffects = [condition with { AllowDuplicateOutputs = allowDuplicates }] };
-                return WithSmallRelicLanes(CompileFixtureRequest(filter, source.CompiledSearch.Context, source.RunOptions));
+                return WithSmallRelicLanes(CompileFixtureRequest(filter, source.Model.CompiledSearch.Context, source.RunOptions));
             }
             var current = Request(false); var legacy = Request(true);
-            var currentRoute = NeowReplayPlan.Compile(current, true); var legacyRoute = NeowReplayPlan.Compile(legacy, true);
-            if (!RelicFullGpuPlan.TryCreate(current, currentRoute, out var gpu, out var issue) || gpu is null ||
-                !RelicFullGpuPlan.TryCreate(legacy, legacyRoute, out var oldGpu, out _) || oldGpu is null ||
+            var currentRoute = NeowReplayPlan.Compile(current.Model, true); var legacyRoute = NeowReplayPlan.Compile(legacy.Model, true);
+            if (!RelicFullGpuPlan.TryCreate(current.Model, currentRoute, out var gpu, out var issue) || gpu is null ||
+                !RelicFullGpuPlan.TryCreate(legacy.Model, legacyRoute, out var oldGpu, out _) || oldGpu is null ||
                 !gpu.CapsuleMetadata.SequenceEqual(oldGpu.CapsuleMetadata))
                 throw new Exception("Grouped UI admission/metadata: " + issue);
             if (pickup == 0)
             {
-                if (!NeowCapsuleComposite.TryCreate(current, NeowReplayPlan.Compile(current, false), out var composite) || composite is null ||
+                if (!NeowCapsuleComposite.TryCreate(current.Model, NeowReplayPlan.Compile(current.Model, false), out var composite) || composite is null ||
                     !FamilyExecutionCoordinator.Plan(current).Stages.SelectMany(s => s.Coverage).ToHashSet().IsSupersetOf(["N.Neow", "R.Relic"]))
                     throw new Exception("Grouped UI lost the joint numerical body or a selected logical obligation");
             }
@@ -733,11 +737,11 @@ internal static partial class FamilyNeowChecks
         }
     }
 
-    private static void CheckNrFixtures(ExactSearchExecutionRequest source, List<object> fixtures, List<object> rfullFixtures)
+    private static void CheckNrFixtures(PreparedSearch source, List<object> fixtures, List<object> rfullFixtures)
     {
         CheckGroupedCapsuleUi(source, rfullFixtures);
         var request = source;
-        if (!RelicFamilyPlanCompiler.TryCompilePool(request, out var pool, out var dense, out _, out _)) throw new Exception("Nr World pool unavailable");
+        if (!RelicFamilyPlanCompiler.TryCompilePool(request.Model, out var pool, out var dense, out _, out _)) throw new Exception("Nr World pool unavailable");
         ModelKey Key(int lane, int position)
         {
             int bucket = Enumerable.Range(0, pool.BucketCount).Single(i => pool.BucketScopes[i] == 1 && pool.BucketKinds[i] == lane);
@@ -750,51 +754,51 @@ internal static partial class FamilyNeowChecks
             ModelKey capsule = small ? BaseGameModelKeys.Relics.SmallCapsule : BaseGameModelKeys.Relics.LargeCapsule;
             ModelKey[] targets = shape >= 4 ? [Key(shape - 2, 0)]
                 : shape < 2 ? [Key(1,0)] : [Key(1,0), Key(shape == 2 ? 1 : 2,1)];
-            var condition = source.Evaluation.ToLegacyFilter().StructuredNeowEffects.Single() with { SourceRelicKey = capsule,
+            var condition = source.Model.Evaluation.ToLegacyFilter().StructuredNeowEffects.Single() with { SourceRelicKey = capsule,
                 Kind = small ? NeowStructuredConditionKind.ExactSingle : NeowStructuredConditionKind.ExactUnorderedPair, OutputKeys = targets };
-            var filter = source.Evaluation.ToLegacyFilter() with { NeowRoute = new NeowRouteSearchCondition(capsule), StructuredNeowEffects = [condition] };
-            var query = CompileFixtureRequest(filter, source.CompiledSearch.Context, source.RunOptions);
-            var n = NeowReplayPlan.Compile(query,false);
-            if (!NeowCapsuleComposite.TryCreate(query,n,out var nr) || nr is null || !NeowFamilyGpuPlan.TryCreate(n,out var gpu,out _))
+            var filter = source.Model.Evaluation.ToLegacyFilter() with { NeowRoute = new NeowRouteSearchCondition(capsule), StructuredNeowEffects = [condition] };
+            var query = CompileFixtureRequest(filter, source.Model.CompiledSearch.Context, source.RunOptions);
+            var n = NeowReplayPlan.Compile(query.Model,false);
+            if (!NeowCapsuleComposite.TryCreate(query.Model,n,out var nr) || nr is null || !NeowFamilyGpuPlan.TryCreate(n,out var gpu,out _) || gpu is null)
                 throw new Exception("Nr positive World-authority fixture unavailable");
             var selected = FamilyExecutionCoordinator.Plan(query);
-            if (!CapsuleRelicFamily.TryCreate(query,out var rFamily) || rFamily is null) throw new Exception("R baseline unavailable");
+            if (!CapsuleRelicFamily.TryCreate(query.Model, FilterExecutionPreferences.From(query.RunOptions), out var rFamily) || rFamily is null) throw new Exception("R baseline unavailable");
             AddRfullFixtures(query, $"CapsuleOnly.Shape{shape}", rfullFixtures);
             if (!selected.Stages.SelectMany(stage => stage.Coverage).ToHashSet().IsSupersetOf(["N.Neow", "R.Relic"]))
                 throw new Exception("Greedy numerical allocation lost an authored capsule obligation");
-            var withSequence = query with { Evaluation = query.Evaluation with {
-                RelicSequenceConditions = [new(RelicSequenceKind.Common, SearchSequenceRangeMode.FirstN, 2, new([], [Key(1,0)], []))] } };
+            var withSequence = query with { Model = query.Model with { Evaluation = query.Model.Evaluation with {
+                RelicSequenceConditions = [new(RelicSequenceKind.Common, SearchSequenceRangeMode.FirstN, 2, new([], [Key(1,0)], []))] } } };
             AddRfullFixtures(withSequence, $"CapsuleOrdinary.Shape{shape}", rfullFixtures);
-            var withShop = query with { Evaluation = query.Evaluation with {
-                RelicShopSequenceConditions = [new(2, CombatRewardSequenceOrderMode.Unordered, [Key(4,0), null])] } };
+            var withShop = query with { Model = query.Model with { Evaluation = query.Model.Evaluation with {
+                RelicShopSequenceConditions = [new(2, CombatRewardSequenceOrderMode.Unordered, [Key(4,0), null])] } } };
             AddRfullFixtures(withShop, $"CapsuleShop.Shape{shape}", rfullFixtures);
             if (shape == 1)
             {
                 var duplicateCondition = condition with { OutputKeys = [targets[0], targets[0]], AllowDuplicateOutputs = true };
                 var duplicateFilter = filter with { StructuredNeowEffects = [duplicateCondition] };
-                var duplicateRequest = CompileFixtureRequest(duplicateFilter, source.CompiledSearch.Context, source.RunOptions);
-                NeowReplayPlan duplicateRoute = NeowReplayPlan.Compile(duplicateRequest, true);
-                if (RelicFullGpuPlan.TryCreate(duplicateRequest, duplicateRoute, out _, out _) ||
-                    !CapsuleRelicFamily.TryCreate(duplicateRequest, out IFamilyInvocation? duplicateFamily) ||
+                var duplicateRequest = CompileFixtureRequest(duplicateFilter, source.Model.CompiledSearch.Context, source.RunOptions);
+                NeowReplayPlan duplicateRoute = NeowReplayPlan.Compile(duplicateRequest.Model, true);
+                if (RelicFullGpuPlan.TryCreate(duplicateRequest.Model, duplicateRoute, out _, out _) ||
+                    !CapsuleRelicFamily.TryCreate(duplicateRequest.Model, FilterExecutionPreferences.From(duplicateRequest.RunOptions), out FilterBodyDescription? duplicateFamily) ||
                     duplicateFamily is null || duplicateFamily.ConditionPerformance.UsesGpu)
                     throw new Exception("Unsupported duplicate Capsule shape did not select explicit CPU R fallback");
 
                 var unboundFilter = filter with { NeowRoute = null };
-                var unboundRequest = CompileFixtureRequest(unboundFilter, source.CompiledSearch.Context, source.RunOptions);
-                if (CapsuleRelicFamily.TryCreate(unboundRequest, out _))
+                var unboundRequest = CompileFixtureRequest(unboundFilter, source.Model.CompiledSearch.Context, source.RunOptions);
+                if (CapsuleRelicFamily.TryCreate(unboundRequest.Model, FilterExecutionPreferences.From(unboundRequest.RunOptions), out _))
                     throw new Exception("Unbound Capsule projection silently entered R filtering");
             }
-            if (NeowCapsuleComposite.TryCreate(withSequence,n,out _))
+            if (NeowCapsuleComposite.TryCreate(withSequence.Model,n,out _))
                 throw new Exception("Nr claimed incomplete R sequence Coverage");
             if (!FamilyExecutionCoordinator.Plan(withSequence).Stages.SelectMany(s => s.Coverage).ToHashSet().IsSupersetOf(["N.Neow", "R.Relic"]))
                 throw new Exception("Sequence query lost an independent logical obligation");
             AddPositiveNrFixtures(query, n, nr, gpu, "Nr.WorldShape" + shape, fixtures);
         }
 
-        ExactSearchExecutionRequest Request(NeowSearchFilter filter) =>
-            CompileFixtureRequest(filter, source.CompiledSearch.Context, source.RunOptions);
+        PreparedSearch Request(NeowSearchFilter filter) =>
+            CompileFixtureRequest(filter, source.Model.CompiledSearch.Context, source.RunOptions);
         NeowSearchFilter BonesFilter(NeowStructuredEffectSearchCondition condition, params ModelKey[] pair) =>
-            source.Evaluation.ToLegacyFilter() with
+            source.Model.Evaluation.ToLegacyFilter() with
             {
                 NeowRoute = new NeowRouteSearchCondition(BaseGameModelKeys.Relics.NeowsBones),
                 RequiredBonesCombination = pair,
@@ -847,7 +851,7 @@ internal static partial class FamilyNeowChecks
         };
         AddRfullFixtures(Request(exactSmallFirst), "BonesSmallExactPickupReverseOffer", rfullFixtures);
 
-        ExactSearchExecutionRequest Grouped(ModelKey[] targets, bool withSequence)
+        PreparedSearch Grouped(ModelKey[] targets, bool withSequence)
         {
             var grouped = new NeowStructuredEffectSearchCondition(
                 BaseGameModelKeys.Relics.NeowsBones,
@@ -858,11 +862,11 @@ internal static partial class FamilyNeowChecks
                 AllowDuplicateOutputs: true);
             NeowSearchFilter filter = BonesFilter(grouped,
                 BaseGameModelKeys.Relics.SmallCapsule, BaseGameModelKeys.Relics.LargeCapsule);
-            ExactSearchExecutionRequest result = Request(filter);
+            PreparedSearch result = Request(filter);
             return withSequence
-                ? result with { Evaluation = result.Evaluation with {
+                ? result with { Model = result.Model with { Evaluation = result.Model.Evaluation with {
                     RelicSequenceConditions = [new(RelicSequenceKind.Common, SearchSequenceRangeMode.FirstN, 2,
-                        new([], [Key(1, 0)], []))] } }
+                        new([], [Key(1, 0)], []))] } } }
                 : result;
         }
         // Closed-form three-item lane oracle, independent of the scenario-union implementation.
@@ -874,18 +878,18 @@ internal static partial class FamilyNeowChecks
             (Targets:new[]{Key(1,0),Key(1,0)}, P:0d) })
         foreach (int pickup in new[]{0,1,2}) {
             var q=WithSmallRelicLanes(Grouped(sample.Targets,false));
-            q=q with {Evaluation=q.Evaluation with {RequiredBonesAcquisitionOrder=pickup==0?[]:pickup==1?
+            q=q with { Model = q.Model with {Evaluation=q.Model.Evaluation with {RequiredBonesAcquisitionOrder=pickup==0?[]:pickup==1?
                 [BaseGameModelKeys.Relics.SmallCapsule,BaseGameModelKeys.Relics.LargeCapsule]:
-                [BaseGameModelKeys.Relics.LargeCapsule,BaseGameModelKeys.Relics.SmallCapsule]}};
+                [BaseGameModelKeys.Relics.LargeCapsule,BaseGameModelKeys.Relics.SmallCapsule]}} };
             if (!RolltheSpire2.Search.Selectivity.CapsuleRelicProbabilityEstimator.TryEstimateBonesNestedCapsules(
-                RolltheSpire2.Search.Selectivity.SearchSelectivityInput.From(q),q.Evaluation.StructuredNeowEffects,false,
+                RolltheSpire2.Search.Selectivity.SearchSelectivityInput.From(q),q.Model.Evaluation.StructuredNeowEffects,false,
                 [BaseGameModelKeys.Relics.SmallCapsule,BaseGameModelKeys.Relics.LargeCapsule],out double p,out _,out string issue) ||
                 Math.Abs(p-sample.P)>1e-10) throw new Exception($"GroupedProbability:{sample.Targets.Length}:{pickup}:{p}!={sample.P}:{issue}");
         }
         var shared=WithSmallRelicLanes(Grouped([Key(1,0)],false));
-        shared=shared with {Evaluation=shared.Evaluation with {RelicSequenceConditions=[new(RelicSequenceKind.Common,SearchSequenceRangeMode.ExactSlot,1,new([], [Key(1,0)], []))]}};
+        shared=shared with { Model = shared.Model with {Evaluation=shared.Model.Evaluation with {RelicSequenceConditions=[new(RelicSequenceKind.Common,SearchSequenceRangeMode.ExactSlot,1,new([], [Key(1,0)], []))]}} };
         if(!RolltheSpire2.Search.Selectivity.CapsuleRelicProbabilityEstimator.TryEstimateBonesNestedCapsules(
-            RolltheSpire2.Search.Selectivity.SearchSelectivityInput.From(shared),shared.Evaluation.StructuredNeowEffects,true,
+            RolltheSpire2.Search.Selectivity.SearchSelectivityInput.From(shared),shared.Model.Evaluation.StructuredNeowEffects,true,
             [BaseGameModelKeys.Relics.SmallCapsule,BaseGameModelKeys.Relics.LargeCapsule],out double sharedP,out _,out string sharedIssue) ||
             Math.Abs(sharedP-(1-Math.Pow(.5,3))/3)>1e-10) throw new Exception($"GroupedSharedBag:{sharedP}:{sharedIssue}");
         Console.WriteLine("GroupedCapsuleProbability=PASS;16 closed-form partial/full/mixed/duplicate/pickup/shared-lane cases");
@@ -927,25 +931,34 @@ internal static partial class FamilyNeowChecks
                 $"BonesSourceConstrained.SmallOnly.Pickup{pickup}.Mixed{mixed}", rfullFixtures);
         }
 
-        void AssertCpuFallback(ExactSearchExecutionRequest unsupported, string expectedIssue)
+        void AssertLegacyCpuFallback(PreparedSearch unsupported, string expectedIssue)
         {
-            NeowReplayPlan unsupportedRoute = NeowReplayPlan.Compile(unsupported, true);
-            if (RelicFullGpuPlan.TryCreate(unsupported, unsupportedRoute, out _, out string issue) ||
-                !issue.StartsWith(expectedIssue, StringComparison.Ordinal) ||
-                !CapsuleRelicFamily.TryCreate(unsupported, out IFamilyInvocation? family) || family is null ||
-                family.ConditionPerformance.UsesGpu)
-                throw new Exception("Unsupported Rfull shape did not retain CPU fallback: " + expectedIssue + ":" + issue);
+            // These are the original body's admission checks. The default
+            // opening-prefix extension has separate selected-body fixtures.
+            string? savedPrefix = Environment.GetEnvironmentVariable("RT2_R_OPENING_PREFIX");
+            try
+            {
+                Environment.SetEnvironmentVariable("RT2_R_OPENING_PREFIX", "off");
+                NeowReplayPlan unsupportedRoute = NeowReplayPlan.Compile(unsupported.Model, true);
+                if (RelicFullGpuPlan.TryCreate(unsupported.Model, unsupportedRoute, out _, out string issue,
+                        openingPrefixSelection: false) ||
+                    !issue.StartsWith(expectedIssue, StringComparison.Ordinal) ||
+                    !CapsuleRelicFamily.TryCreate(unsupported.Model, FilterExecutionPreferences.From(unsupported.RunOptions), out FilterBodyDescription? family) || family is null ||
+                    family.ConditionPerformance.UsesGpu)
+                    throw new Exception("Legacy Rfull shape did not retain CPU fallback: " + expectedIssue + ":" + issue);
+            }
+            finally { Environment.SetEnvironmentVariable("RT2_R_OPENING_PREFIX", savedPrefix); }
         }
         NeowSearchFilter unfixed = BonesFilter(bonesSmall, BaseGameModelKeys.Relics.SmallCapsule, companion) with
             { RequiredBonesCombination = [] };
-        AssertCpuFallback(Request(unfixed), "RfullFixedBonesPairRequired");
+        AssertLegacyCpuFallback(Request(unfixed), "RfullFixedBonesPairRequired");
         NeowSearchFilter preConsumingOrder = BonesFilter(bonesSmall,
             BaseGameModelKeys.Relics.ArcaneScroll, BaseGameModelKeys.Relics.SmallCapsule) with
             { RequiredBonesAcquisitionOrder = [BaseGameModelKeys.Relics.ArcaneScroll, BaseGameModelKeys.Relics.SmallCapsule] };
-        AssertCpuFallback(Request(preConsumingOrder), "RfullPreCapsuleRewardsContinuationUnsupported");
+        AssertLegacyCpuFallback(Request(preConsumingOrder), "RfullPreCapsuleRewardsContinuationUnsupported");
         NeowSearchFilter anyConsumingOrder = BonesFilter(bonesSmall,
             BaseGameModelKeys.Relics.ArcaneScroll, BaseGameModelKeys.Relics.SmallCapsule);
-        AssertCpuFallback(Request(anyConsumingOrder), "RfullPreCapsuleRewardsContinuationUnsupported");
+        AssertLegacyCpuFallback(Request(anyConsumingOrder), "RfullPreCapsuleRewardsContinuationUnsupported");
         AddRfullFixtures(Request(anyConsumingOrder with {
             RequiredBonesAcquisitionOrder = [BaseGameModelKeys.Relics.SmallCapsule, BaseGameModelKeys.Relics.ArcaneScroll] }),
             "BonesCapsuleBeforeConsumingCompanion", rfullFixtures);
@@ -956,25 +969,22 @@ internal static partial class FamilyNeowChecks
             BaseGameModelKeys.Relics.SmallCapsule, BaseGameModelKeys.Relics.LargeCapsule) with
             { RequiredBonesAcquisitionOrder = [BaseGameModelKeys.Relics.SmallCapsule, BaseGameModelKeys.Relics.LargeCapsule] };
         AddRfullFixtures(Request(precedingCapsule), "BonesSourceConstrained.PrecedingUnobservedSmall", rfullFixtures);
-        ExactSearchExecutionRequest groupedOrdered = Grouped([Key(1, 0), Key(2, 0), Key(3, 0)], false) with
-        {
-            Evaluation = Grouped([Key(1, 0), Key(2, 0), Key(3, 0)], false).Evaluation with
-            {
-                RequiredBonesAcquisitionOrder = [BaseGameModelKeys.Relics.SmallCapsule, BaseGameModelKeys.Relics.LargeCapsule]
-            }
-        };
+        var groupedBase = Grouped([Key(1, 0), Key(2, 0), Key(3, 0)], false);
+        PreparedSearch groupedOrdered = groupedBase with { Model = groupedBase.Model with
+        { Evaluation = groupedBase.Model.Evaluation with
+            { RequiredBonesAcquisitionOrder = [BaseGameModelKeys.Relics.SmallCapsule, BaseGameModelKeys.Relics.LargeCapsule] } } };
         AddRfullFixtures(groupedOrdered, "BonesGroupedPinnedSmallFirst", rfullFixtures);
-        AddRfullFixtures(groupedOrdered with { Evaluation = groupedOrdered.Evaluation with {
-            RequiredBonesAcquisitionOrder = [BaseGameModelKeys.Relics.LargeCapsule, BaseGameModelKeys.Relics.SmallCapsule] } },
+        AddRfullFixtures(groupedOrdered with { Model = groupedOrdered.Model with { Evaluation = groupedOrdered.Model.Evaluation with {
+            RequiredBonesAcquisitionOrder = [BaseGameModelKeys.Relics.LargeCapsule, BaseGameModelKeys.Relics.SmallCapsule] } } },
             "BonesGroupedPinnedLargeFirst", rfullFixtures);
 
         Console.WriteLine($"Rfull plan/parity fixtures: {rfullFixtures.Count}; direct, fixed Bones, grouped and sequence shapes: PASS");
     }
 
-    private static void AddRfullFixtures(ExactSearchExecutionRequest request, string name, List<object> fixtures)
+    private static void AddRfullFixtures(PreparedSearch request, string name, List<object> fixtures)
     {
         if (name.StartsWith("Bones", StringComparison.Ordinal)) request = WithSmallRelicLanes(request);
-        NeowReplayPlan route = NeowReplayPlan.Compile(request, true);
+        NeowReplayPlan route = NeowReplayPlan.Compile(request.Model, true);
         // This numerical fixture uses tiny synthetic lanes from the older test
         // authority. Real Beta111 admission is checked separately by Host corpus;
         // only the immutable applicability fact is supplied to this shader test.
@@ -982,14 +992,14 @@ internal static partial class FamilyNeowChecks
         if (sourceFixture) route = route with { DirectNestedVanilla111 = true };
         if (route.Bones)
         {
-            byte[] fixedPair = request.Evaluation.RequiredBonesCombination
+            byte[] fixedPair = request.Model.Evaluation.RequiredBonesCombination
                 .Select(key => { Beta110FastRelicCatalog.TryGetId(key, out byte id); return id; }).ToArray();
             route = route with { Authority = route.Authority with { BonesEligibleRelicIds = fixedPair } };
         }
-        if (!RelicFullGpuPlan.TryCreate(request, route, out RelicFullGpuPlan? plan, out string issue) || plan is null)
+        if (!RelicFullGpuPlan.TryCreate(request.Model, route, out RelicFullGpuPlan? plan, out string issue) || plan is null)
             throw new Exception($"Rfull supported fixture unavailable: {name}:{issue}");
         var selected = FamilyExecutionCoordinator.Plan(request);
-        var r = FamilyExecutionCoordinator.CreateRegisteredFamilies(request).OfType<CapsuleRelicFamily>().SingleOrDefault();
+        var r = FamilyExecutionCoordinator.CreateRegisteredFamilies(request).SingleOrDefault(body => body.FamilyId == "R.Relic");
         // Default greedy ordering may choose a coupled or private transport unit.
         // Registration still exposes the standalone numerical Rfull body.
         if (!sourceFixture && !name.StartsWith("CapsuleOnly", StringComparison.Ordinal) &&
@@ -1000,7 +1010,7 @@ internal static partial class FamilyNeowChecks
         if (!selected.Stages.SelectMany(stage => stage.Coverage).ToHashSet().IsSupersetOf(["N.Neow", "R.Relic"]))
             throw new Exception("Default plan lost a Capsule query obligation:" + name);
 
-        var reference = new CapsuleRelicReplay(request, route);
+        var reference = new CapsuleRelicReplay(request.Model, route);
         uint[][] buffers = RelicFamilyGpuExecutor.PackRfullFixtureBuffers(plan);
         foreach (bool compact in new[] { false, true })
         {
@@ -1018,27 +1028,27 @@ internal static partial class FamilyNeowChecks
         }
     }
 
-    private static void CheckBonesComposite(ExactSearchExecutionRequest request, List<object> fixtures)
+    private static void CheckBonesComposite(PreparedSearch request, List<object> fixtures)
     {
         request = WithSmallRelicLanes(request);
-        var n = NeowReplayPlan.Compile(request, false);
-        if (!NeowCapsuleComposite.TryCreate(request, n, out var composite) || composite?.UsesBonesCheckpoint != true ||
+        var n = NeowReplayPlan.Compile(request.Model, false);
+        if (!NeowCapsuleComposite.TryCreate(request.Model, n, out var composite) || composite?.UsesBonesCheckpoint != true ||
             !NeowFamilyGpuPlan.TryCreate(n, out var fullGpu, out _) || fullGpu is null || !fullGpu.UsesStagedDense)
             throw new Exception("Bounded Bones NR staged admission unavailable");
         if (!FamilyExecutionCoordinator.Plan(request).Stages.SelectMany(stage => stage.Coverage).ToHashSet().IsSupersetOf(["N.Neow", "R.Relic"]))
             throw new Exception("Bounded Bones NR allocation unavailable");
-        var withSequence = request with { Evaluation = request.Evaluation with {
+        var withSequence = request with { Model = request.Model with { Evaluation = request.Model.Evaluation with {
             RelicSequenceConditions = [new(RelicSequenceKind.Common, SearchSequenceRangeMode.FirstN, 1,
-                new([], [request.Evaluation.StructuredNeowEffects.Single().OutputKeys[0]], []))] } };
-        if (NeowCapsuleComposite.TryCreate(withSequence, n, out _)) throw new Exception("Bones NR claimed sequence Coverage");
-        var ordered = request with { Evaluation = request.Evaluation with {
-            RequiredBonesAcquisitionOrder = [BaseGameModelKeys.Relics.SmallCapsule, BaseGameModelKeys.Relics.LargeCapsule] } };
-        if (NeowCapsuleComposite.TryCreate(ordered, n, out _)) throw new Exception("Bones NR admitted ordered grouped shape");
+                new([], [request.Model.Evaluation.StructuredNeowEffects.Single().OutputKeys[0]], []))] } } };
+        if (NeowCapsuleComposite.TryCreate(withSequence.Model, n, out _)) throw new Exception("Bones NR claimed sequence Coverage");
+        var ordered = request with { Model = request.Model with { Evaluation = request.Model.Evaluation with {
+            RequiredBonesAcquisitionOrder = [BaseGameModelKeys.Relics.SmallCapsule, BaseGameModelKeys.Relics.LargeCapsule] } } };
+        if (NeowCapsuleComposite.TryCreate(ordered.Model, n, out _)) throw new Exception("Bones NR admitted ordered grouped shape");
 
         // Exercise all target permutations and all source assignments, with both
         // offer layouts and independently forced CPU pickup orders. Small lanes
         // give positive witnesses without weakening the real-size staged pair.
-        var condition = request.Evaluation.StructuredNeowEffects.Single();
+        var condition = request.Model.Evaluation.StructuredNeowEffects.Single();
         if (condition.OutputKeys.Count == 3 && composite.Metadata[6] != composite.Metadata[9])
             CheckBonesCompositeExactWitness(request, fixtures);
         int permutation = 0;
@@ -1047,17 +1057,17 @@ internal static partial class FamilyNeowChecks
             _ => [new[]{0,1,2}, new[]{0,2,1}, new[]{1,0,2}, new[]{1,2,0}, new[]{2,0,1}, new[]{2,1,0}] };
         foreach (int[] order in orders)
         {
-            var variant = request with { Evaluation = request.Evaluation with {
-                StructuredNeowEffects = [condition with { OutputKeys = order.Select(i => condition.OutputKeys[i]).ToArray() }] } };
-            NeowReplayPlan route = NeowReplayPlan.Compile(variant, true);
-            if (!NeowCapsuleComposite.TryCreate(variant, n, out var nr) || nr is null) throw new Exception("Grouped permutation lost NR");
+            var variant = request with { Model = request.Model with { Evaluation = request.Model.Evaluation with {
+                StructuredNeowEffects = [condition with { OutputKeys = order.Select(i => condition.OutputKeys[i]).ToArray() }] } } };
+            NeowReplayPlan route = NeowReplayPlan.Compile(variant.Model, true);
+            if (!NeowCapsuleComposite.TryCreate(variant.Model, n, out var nr) || nr is null) throw new Exception("Grouped permutation lost NR");
             // Tiny pair exercises fused Dense; real pool exercises resident stage 2.
             foreach (bool tiny in new[] { false, true })
             {
                 NeowReplayPlan np = tiny ? n with { Authority = n.Authority with { BonesEligibleRelicIds = [3, 28] } } : n;
                 NeowReplayPlan rp = tiny ? route with { Authority = route.Authority with { BonesEligibleRelicIds = [3, 28] } } : route;
-                var forward = new CapsuleRelicReplay(variant, rp with { First = 28, Second = 3 });
-                var reverse = new CapsuleRelicReplay(variant, rp with { First = 3, Second = 28 });
+                var forward = new CapsuleRelicReplay(variant.Model, rp with { First = 28, Second = 3 });
+                var reverse = new CapsuleRelicReplay(variant.Model, rp with { First = 3, Second = 28 });
                 if (!NeowFamilyGpuPlan.TryCreate(np, out var gpu, out _) || gpu is null) throw new Exception("Bones NR GPU packing failed");
                 const int count = 65536;
                 uint[] dense = Enumerable.Range(0, count).Select(i => (uint)i).ToArray();
@@ -1102,31 +1112,32 @@ internal static partial class FamilyNeowChecks
 
         // An already selected composite must fault, not return the original input,
         // when its GPU execution context is unavailable. No real device needed.
-        var family = new NeowFamily(request, n, composite: composite);
-        var context = new FamilyExecutionContext(requiresGpu: false);
+        var description = new NeowFamily(request.Model, n, composite: composite).Describe(FilterExecutionPreferences.From(request.RunOptions));
+        var context = new FilterRuntimeServices(requiresGpu: false);
+        var family = description.CreateExecution!(description, context);
         var batch = new SearchBatch(0, 1);
         for (int attempt = 0; attempt < 2; attempt++)
         {
             bool faulted = false;
-            try { family.InvokeAsync(context, new(batch, request), FamilyCandidateSet.Dense(batch), CancellationToken.None).AsTask().GetAwaiter().GetResult(); }
+            try { family.FilterAsync(context, FamilyCandidateSet.Dense(batch), CancellationToken.None).AsTask().GetAwaiter().GetResult(); }
             catch (InvalidOperationException) { faulted = true; }
             if (!faulted) throw new Exception("Selected Bones NR silently recovered after physical fault");
         }
         Console.WriteLine($"Bones NR: targets={condition.OutputKeys.Count};permutations={orders.Length};both pickup orders, staged/fused/compact, split applicability and fail-fast: PASS");
     }
 
-    private static void CheckBonesCompositeExactWitness(ExactSearchExecutionRequest request, List<object> fixtures)
+    private static void CheckBonesCompositeExactWitness(PreparedSearch request, List<object> fixtures)
     {
         // Give Core Exact and R's World pool the same immutable shared/character
         // sources. Ordinary fixture names carry audited no-immediate-effect DTOs.
-        var world = request.Authority.WorldAuthority!;
+        var world = request.Model.Authority.WorldAuthority!;
         var generation = world.Beta109Generation!;
         NeowEffectRelicSnapshot[] Relics(IEnumerable<Beta109RelicBucketSnapshot> buckets) => buckets
             .SelectMany(bucket => bucket.OrderedEntries.Select((entry, index) => new NeowEffectRelicSnapshot(
                 entry.RelicKey, index, Enum.Parse<EffectRelicRarity>(bucket.BucketId.Split(':')[^1]),
                 NestedRelicEffectKind.NoTrackedImmediateEffect, RarityCode: bucket.BucketId.Split(':')[^1],
                 IsAllowedInShops: entry.IsAllowedInShops, ShopEligibilityExact: true))).ToArray();
-        var effects = request.Authority.EffectAuthority! with {
+        var effects = request.Model.Authority.EffectAuthority! with {
             SharedRelicPoolSource = Relics(generation.SharedRelicBuckets),
             CharacterRelicPoolSource = Relics(generation.PlayerRelicBuckets),
             CapturedProfileId = RuntimeProfileId.Beta111
@@ -1136,21 +1147,21 @@ internal static partial class FamilyNeowChecks
             var entries = shared.OrderedEntries.Concat(bucket.OrderedEntries).DistinctBy(entry => entry.RelicKey).ToArray();
             return bucket with { OrderedEntries = entries, OrderedRelics = entries.Select(item => item.RelicKey).ToArray() };
         }).ToArray();
-        var authority = Beta110FastSearchFixtureAuthority.CreateBeta111(request.Authority.Character.CharacterKey,
-            request.Authority.Ascension, 0, 1).WithEffectAuthority(effects).WithWorldAuthority(
+        var authority = Beta110FastSearchFixtureAuthority.CreateBeta111(request.Model.Authority.Character.CharacterKey,
+            request.Model.Authority.Ascension, 0, 1).WithEffectAuthority(effects).WithWorldAuthority(
                 world with { CapturedProfileId = RuntimeProfileId.Beta111,
                     Beta109Generation = generation with { Profile = RuntimeProfileId.Beta111, PlayerRelicBuckets = players } });
-        var context = request.CompiledSearch.Context with { Authority = authority, ProfileId = RuntimeProfileId.Beta111,
+        var context = request.Model.CompiledSearch.Context with { Authority = authority, ProfileId = RuntimeProfileId.Beta111,
             Detection = new GameVersionDetection(RuntimeVersionCompatibility.Beta111Version, RuntimeVersionCompatibility.Beta111Version,
                 "beta", "bones-nr-exact-fixture", true, string.Empty) };
-        request = request with { CompiledSearch = request.CompiledSearch with { Context = context } };
-        var n = NeowReplayPlan.Compile(request, false);
+        request = request with { Model = request.Model with { CompiledSearch = request.Model.CompiledSearch with { Context = context } } };
+        var n = NeowReplayPlan.Compile(request.Model, false);
         for (ulong ordinal = 0; ordinal < 100_000; ordinal++)
         {
             string seed = Beta110SeedCodec.FormatOrdinal(ordinal);
             ulong root = Beta111Profile.Instance.ComputeRootSeed(seed);
             if (!NeowFamilyReplay.Matches(root, n)) continue;
-            if (!SearchAuthorityProjector.TryProjectForRootHash(request, root, seed, out var projected, out _, out string issue))
+            if (!SearchAuthorityProjector.TryProjectForRootHash(request.Model, root, seed, out var projected, out _, out string issue))
                 throw new Exception("Bones Exact authority projection failed: " + issue);
             var outcome = Beta111NeowEffectProjector.ProjectFromRootHash(BaseGameModelKeys.Relics.NeowsBones,
                 PredictionPrecision.Exact, projected, root).BonesOutcome!;
@@ -1177,15 +1188,15 @@ internal static partial class FamilyNeowChecks
                 var filter = NeowSearchFilter.Empty with {
                     NeowRoute = new(BaseGameModelKeys.Relics.NeowsBones),
                     RequiredBonesCombination = [BaseGameModelKeys.Relics.SmallCapsule, BaseGameModelKeys.Relics.LargeCapsule],
-                    StructuredNeowEffects = [request.Evaluation.StructuredNeowEffects.Single() with { OutputKeys = required }]
+                    StructuredNeowEffects = [request.Model.Evaluation.StructuredNeowEffects.Single() with { OutputKeys = required }]
                 };
                 var query = CompileFixtureRequest(filter, context, request.RunOptions);
-                var exact = ProductionExactSearchEvaluator.Evaluate(query, input);
+                var exact = ProductionExactSearchEvaluator.Evaluate(query.Model, input);
                 if (exact.IsMatch != shouldMatch) throw new Exception("Grouped Production Exact witness failed: " + exact.FailureCode);
-                var np = NeowReplayPlan.Compile(query, false);
-                if (!NeowCapsuleComposite.TryCreate(query, np, out var nr) || nr is null)
+                var np = NeowReplayPlan.Compile(query.Model, false);
+                if (!NeowCapsuleComposite.TryCreate(query.Model, np, out var nr) || nr is null)
                 {
-                    RelicFullGpuPlan.TryCreate(query, NeowReplayPlan.Compile(query, true), out _, out string admissionIssue);
+                    RelicFullGpuPlan.TryCreate(query.Model, NeowReplayPlan.Compile(query.Model, true), out _, out string admissionIssue);
                     throw new Exception("Production Exact witness NR admission: " + admissionIssue);
                 }
                 if (nr.Reference.Matches(root) != shouldMatch)
@@ -1201,9 +1212,9 @@ internal static partial class FamilyNeowChecks
         throw new Exception("No bounded Bones Exact witness found");
     }
 
-    private static ExactSearchExecutionRequest WithSmallRelicLanes(ExactSearchExecutionRequest request)
+    private static PreparedSearch WithSmallRelicLanes(PreparedSearch request)
     {
-        WorldAuthoritySnapshot world = request.Authority.WorldAuthority ?? throw new Exception("Rfull fixture World authority missing");
+        WorldAuthoritySnapshot world = request.Model.Authority.WorldAuthority ?? throw new Exception("Rfull fixture World authority missing");
         Beta109WorldGenerationSnapshot generation = world.Beta109Generation ?? throw new Exception("Rfull fixture generation missing");
         Beta109RelicBucketSnapshot[] buckets = generation.PlayerRelicBuckets.Select(bucket =>
         {
@@ -1215,18 +1226,19 @@ internal static partial class FamilyNeowChecks
         }).ToArray();
         WorldAuthoritySnapshot compactWorld = world with { Beta109Generation = generation with {
             PlayerRelicBuckets = buckets, SnapshotFingerprint = generation.SnapshotFingerprint + ":rfull-small-lanes" } };
-        var context = request.CompiledSearch.Context with { Authority = request.Authority.WithWorldAuthority(compactWorld) };
-        return request with { CompiledSearch = request.CompiledSearch with { Context = context } };
+        var context = request.Model.CompiledSearch.Context with { Authority = request.Model.Authority.WithWorldAuthority(compactWorld) };
+        return request with { Model = request.Model with { CompiledSearch = request.Model.CompiledSearch with { Context = context } } };
     }
 
-    private static void CheckCpuFamily(ExactSearchExecutionRequest source)
+    private static void CheckCpuFamily(PreparedSearch source)
     {
         var request = source;
-        var plan = NeowReplayPlan.Compile(request, false);
-        var family = new NeowFamily(request, plan, preferGpu: false);
-        var context = new FamilyExecutionContext(requiresGpu: false);
+        var plan = NeowReplayPlan.Compile(request.Model, false);
+        var description = new NeowFamily(request.Model, plan, preferGpu: false).Describe(FilterExecutionPreferences.From(request.RunOptions));
+        var context = new FilterRuntimeServices(requiresGpu: false);
+        var family = description.CreateExecution!(description, context);
         var batch = new SearchBatch(100, 256);
-        var output = LinearFamilyPipeline.FilterAsync(context, new(batch, request), [family], CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        var output = LinearFamilyPipeline.FilterAsync(context, batch, [family], CancellationToken.None).AsTask().GetAwaiter().GetResult();
         ulong[] expected = Enumerable.Range(0, 256).Select(i => (ulong)i).Where(i => NeowFamilyReplay.Matches(
             Beta110Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(100 + i)), plan)).ToArray();
         if (expected.Length == 0 || !output.ExportAbi1().Span.SequenceEqual(expected)) throw new Exception("CPU Production Family pipeline parity failed");
@@ -1234,52 +1246,60 @@ internal static partial class FamilyNeowChecks
         Console.WriteLine($"CPU real N invocation through linear Family pipeline: survivors={expected.Length};PASS");
     }
 
-    private static void CheckCpuAbi(ExactSearchExecutionRequest source)
+    private static void CheckCpuAbi(PreparedSearch source)
     {
         var request = source;
-        var cpu = new FamilyCpuExecution(request, "N.fixture", "fixture");
-        var batch = new SearchBatch(100, 16);
-        var window = new FamilyObservationWindow(batch, request);
-        var input = FamilyCandidateSet.FromSortedAbi1(batch, [1, 5, 15]);
+        var services = new FilterRuntimeServices(false);
+        var body = new FilterBodyDescription(new PreparedFilter("N.fixture"), "fixture", request.Model.ProfileId) { WindowCapacity = CpuFilterExecution.Capacity };
         ulong acceptedRoot = Beta110Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(105));
-        var output = cpu.Execute(window, input, CancellationToken.None, root => root == acceptedRoot);
+        var cpu = new CpuFilterExecution(body, RuntimeProfileRegistry.Select(request.Model.Detection), root => root == acceptedRoot, false);
+        var batch = new SearchBatch(100, 16);
+        var window = batch;
+        var input = FamilyCandidateSet.FromSortedAbi1(batch, [1, 5, 15]);
+        var output = cpu.FilterAsync(services, input, CancellationToken.None).GetAwaiter().GetResult();
         if (!output.ExportAbi1().Span.SequenceEqual(new ulong[] { 5 })) throw new Exception("CPU changed batch-local ordinal identity");
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        try { cpu.Execute(window, input, cancellation.Token, _ => throw new Exception("Cancelled work ran")); }
+        try { cpu.FilterAsync(services, input, cancellation.Token).GetAwaiter().GetResult(); }
         catch (OperationCanceledException) { Console.WriteLine("CPU ABI1 reconstruction and pre-cancel passed"); return; }
         throw new Exception("CPU ignored cancellation");
     }
 
-    private static void CheckCpuChunks(ExactSearchExecutionRequest source)
+    private static void CheckCpuChunks(PreparedSearch source)
     {
         var request = source;
         var batch = new SearchBatch(39303, FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize);
-        var window = new FamilyObservationWindow(batch, request);
-        ulong[] ordinals = Enumerable.Range(0, 2 * FamilyCpuExecution.Capacity + 3).Select(i => (ulong)(i * 17 + 1)).ToArray();
+        var window = batch;
+        ulong[] ordinals = Enumerable.Range(0, 2 * CpuFilterExecution.Capacity + 3).Select(i => (ulong)(i * 17 + 1)).ToArray();
         var input = FamilyCandidateSet.FromSortedAbi1(batch, ordinals);
-        var cpu = new FamilyCpuExecution(request, "R.chunkFixture", "fixture");
+        var services = new FilterRuntimeServices(false);
         int seen = 0;
-        var output = cpu.Execute(window, input, CancellationToken.None, root => (++seen % 3) == 0);
+        Func<ulong, bool> matcher = _ => (++seen % 3) == 0;
+        var body = new FilterBodyDescription(new PreparedFilter("R.chunkFixture"), "fixture", request.Model.ProfileId) { WindowCapacity = CpuFilterExecution.Capacity };
+        var cpu = new CpuFilterExecution(body, RuntimeProfileRegistry.Select(request.Model.Detection), root => matcher(root), false);
+        var output = cpu.FilterAsync(services, input, CancellationToken.None).GetAwaiter().GetResult();
         if (output.Batch != batch || !output.ExportAbi1().Span.SequenceEqual(ordinals.Where((_, i) => (i+1)%3 == 0).ToArray()))
             throw new Exception("CPU chunk concatenation changed ABI1 identity/order");
         using var cancellation = new CancellationTokenSource();
         seen = 0; bool cancelled = false;
-        try { cpu.Execute(window, input, cancellation.Token, _ => { if (++seen == FamilyCpuExecution.Capacity + 1) cancellation.Cancel(); return true; }); }
+        matcher = _ => { if (++seen == CpuFilterExecution.Capacity + 1) cancellation.Cancel(); return true; };
+        try { cpu.FilterAsync(services, input, cancellation.Token).GetAwaiter().GetResult(); }
         catch (OperationCanceledException) { cancelled = true; }
-        if (!cancelled || seen != FamilyCpuExecution.Capacity + 1) throw new Exception("CPU chunk cancellation published or continued partial work");
+        if (!cancelled || seen != CpuFilterExecution.Capacity + 1) throw new Exception("CPU chunk cancellation published or continued partial work");
         seen = 0;
         bool faulted = false;
-        try { cpu.Execute(window, input, CancellationToken.None, _ => ++seen > FamilyCpuExecution.Capacity ? throw new InvalidOperationException("InjectedChunkFault") : true); }
+        matcher = _ => ++seen > CpuFilterExecution.Capacity ? throw new InvalidOperationException("InjectedChunkFault") : true;
+        try { cpu.FilterAsync(services, input, CancellationToken.None).GetAwaiter().GetResult(); }
         catch (FamilyCpuMatchException ex) when (ex.InnerException is InvalidOperationException { Message: "InjectedChunkFault" })
         {
             faulted = ex.FamilyId == "R.chunkFixture" && ex.Batch == batch &&
-                ex.LogicalOrdinal == ordinals[FamilyCpuExecution.Capacity] &&
+                ex.LogicalOrdinal == ordinals[CpuFilterExecution.Capacity] &&
                 ex.GlobalOrdinal == batch.GlobalCandidate(ex.LogicalOrdinal);
         }
         if (!faulted) throw new Exception("CPU chunk fault returned a population");
         faulted = false;
-        try { cpu.Execute(window, input, CancellationToken.None, _ => true); }
+        matcher = _ => true;
+        try { cpu.FilterAsync(services, input, CancellationToken.None).GetAwaiter().GetResult(); }
         catch (InvalidOperationException ex) when (ex.Message.StartsWith("FamilyCpuInvocationFaulted:", StringComparison.Ordinal)) { faulted = true; }
         if (!faulted) throw new Exception("Faulted CPU invocation was reused");
         Console.WriteLine("CPU multi-chunk sparse ABI1, mid-invocation cancellation and selected fault rejection: PASS");
@@ -1301,24 +1321,26 @@ internal static partial class FamilyNeowChecks
         Console.WriteLine("Conditional Planner: both order choices and joint population passed");
     }
 
-    private sealed class ConditionalFixture(string id, string other, double marginal, double conditional, double ownCost, double conditionalCost) : IFamilyInvocation
+    private sealed class ConditionalFixture(string id, string other, double marginal, double conditional, double ownCost, double conditionalCost)
     {
+        private FilterBodyDescription? _body;
         public string FamilyId => id;
-        public bool HasConditionalProjections => true;
-        public FamilyAnalyticalCostProjection AnalyticalCost => new(id, 8192, [], "fixture");
-        public FamilySurvivalProjection Survival => FamilySurvivalProjection.Resolved(id, marginal, "fixture");
-        public FamilySurvivalProjection ResolveSurvival(IReadOnlySet<string> passed) => FamilySurvivalProjection.Resolved(id, passed.Contains(other) ? conditional : marginal, "fixture");
-        public FamilyExpectedFilteringCostProjection ExpectedFilteringCost => ResolveExpectedFilteringCost(new HashSet<string>());
-        public FamilyExpectedFilteringCostProjection ResolveExpectedFilteringCost(IReadOnlySet<string> passed) =>
-            new(id, 200, passed.Contains(other) ? conditionalCost : ownCost, ResolveSurvival(passed).SurvivalProbability, 1, [], "fixture");
-        public FamilyConditionPerformanceProjection ConditionPerformance => new(id, "fixture.unmeasured", "fixture", 1, "fixture", usesGpu: false);
-        public FamilyPerformanceObservation CapturePerformanceObservation() => throw new NotSupportedException();
-        public ValueTask<FamilyCandidateSet> InvokeAsync(FamilyExecutionContext context, FamilyObservationWindow window, FamilyCandidateSet input, CancellationToken token) => throw new NotSupportedException();
+        public FilterBodyDescription Body => _body ??= new(new PreparedFilter(id)
+        {
+            HasConditionalProjections = true, AnalyticalCost = new(id, 8192, [], "fixture"),
+            Survival = FamilySurvivalProjection.Resolved(id, marginal, "fixture"),
+            SurvivalResolver = passed => FamilySurvivalProjection.Resolved(id, passed.Contains(other) ? conditional : marginal, "fixture"),
+            ExpectedCostResolver = passed => new(id, 200, passed.Contains(other) ? conditionalCost : ownCost,
+                passed.Contains(other) ? conditional : marginal, 1, [], "fixture")
+        }, "fixture.unmeasured", RuntimeProfileId.Beta111)
+        { PerformanceProjection = _ => new(id, "fixture.unmeasured", "fixture", 1, "fixture", usesGpu: false),
+            CreateExecution = (_, _) => throw new NotSupportedException() };
+        public static implicit operator FilterBodyDescription(ConditionalFixture fixture) => fixture.Body;
     }
 
-    private static void CheckCapsuleOracle(ExactSearchExecutionRequest source, int count)
+    private static void CheckCapsuleOracle(PreparedSearch source, int count)
     {
-        var world = source.Authority.WorldAuthority!;
+        var world = source.Model.Authority.WorldAuthority!;
         var preview = RelicSequencePredictor.PredictFromRootHash(Beta110Profile.Instance, 0, "fixture", world, 10);
         ModelKey target = preview.Lanes.First(l => l.Kind == RelicSequenceKind.Common).Entries[0].RelicKey;
         foreach (bool bones in new[] { false, true })
@@ -1333,12 +1355,12 @@ internal static partial class FamilyNeowChecks
                     NeowStructuredEffectScope.NestedRelics, NeowStructuredOutputKind.Relic, [target])],
                 RelicSequenceConditions = [new(RelicSequenceKind.Common, SearchSequenceRangeMode.FirstN, 2, new([], [target], []))]
             };
-            var context = source.CompiledSearch.Context;
-            if (bones) context = context with { Authority = source.Authority.WithEffectAuthority(source.Authority.EffectAuthority! with {
+            var context = source.Model.CompiledSearch.Context;
+            if (bones) context = context with { Authority = source.Model.Authority.WithEffectAuthority(source.Model.Authority.EffectAuthority! with {
                 BonesEligibleRelics = new[] { a, b } }) };
             var request = CompileFixtureRequest(filter, context, source.RunOptions);
-            var plan = NeowReplayPlan.Compile(request, true);
-            var replay = new CapsuleRelicReplay(request, plan);
+            var plan = NeowReplayPlan.Compile(request.Model, true);
+            var replay = new CapsuleRelicReplay(request.Model, plan);
             int positives = 0;
             for (int i = 0; i < count; i++)
             {
@@ -1370,9 +1392,9 @@ internal static partial class FamilyNeowChecks
                 if (actual) positives++;
             }
             if (positives == 0) throw new Exception("R oracle fixture did not exercise positive rejection boundary");
-            var nPlan = NeowReplayPlan.Compile(request, false);
-            var nModel = new NeowFamilyProjections(request, nPlan, false, null);
-            var rModel = new NeowFamilyProjections(request, plan, true, replay.Pool);
+            var nPlan = NeowReplayPlan.Compile(request.Model, false);
+            var nModel = new NeowFamilyProjections(request.Model, nPlan, false, null);
+            var rModel = new NeowFamilyProjections(request.Model, plan, true, replay.Pool);
             var empty = new HashSet<string>();
             double? n = nModel.Survival(empty).SurvivalProbability, r = rModel.Survival(empty).SurvivalProbability;
             double? nr = rModel.Survival(new HashSet<string> { "N.Neow" }).SurvivalProbability;

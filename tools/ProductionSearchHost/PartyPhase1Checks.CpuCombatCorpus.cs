@@ -76,9 +76,9 @@ internal static partial class PartyPhase1Checks
                             ? SearchQuery.Empty with { CombatCardRewards = new(6, CombatRewardSequenceOrderMode.Unordered, slots) }
                             : SearchQuery.Empty }).ToArray() };
                     var compiled = SearchCompiler.Compile(query, context);
-                    var result = ExactSearchExecutionRequestFactory.Compile(compiled, new(seed, 1, 1, 16));
+                    var result = SearchPreparationCompiler.Compile(compiled, new(seed, 1, 1, 16));
                     if (!result.Success) throw new InvalidDataException("PartyCpuCombatCorpus.Compile:" + result.Issue);
-                    var exact = ProductionExactSearchEvaluator.Evaluate(result.Plan!, input);
+                    var exact = ProductionExactSearchEvaluator.Evaluate(result.Plan!.Model, input);
                     if (!exact.IsMatch)
                     {
                         lastOutcome = exact.Evaluation.Disposition + ":" + exact.FailureCode;

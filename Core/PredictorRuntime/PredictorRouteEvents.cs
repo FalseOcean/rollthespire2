@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Text.Json;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Identity;
+using RolltheSpire2.Core.Events;
 
 namespace RolltheSpire2.Core.PredictorRuntime;
 
@@ -543,19 +544,12 @@ internal sealed partial class PredictorRun
         return applied;
     }
 
-    private static bool RouteEventOptionNeedsHealth(string key, string branch) => (key, branch) is
-        ("MORPHIC_GROVE", "LONER") or ("WHISPERING_HOLLOW", "HUG") or ("TRASH_HEAP", "DIVE_IN") or
-        ("TRIAL", "NOBLE_GUILTY") or ("THIS_OR_THAT", "PLAIN") or ("UNREST_SITE", _) or ("SAPPHIRE_SEED", "EAT") or
-        ("SLIPPERY_BRIDGE", "HOLD_ON") or ("STONE_OF_ALL_TIME", _) or ("SUNKEN_STATUE", "DIVE_INTO_WATER") or
-        ("ROUND_TEA_PARTY", "ENJOY_TEA") or ("ROUND_TEA_PARTY", "CONTINUE_FIGHT") or
-        ("ABYSSAL_BATHS", "IMMERSE") or ("ABYSSAL_BATHS", "LINGER") or ("ABYSSAL_BATHS", "ABSTAIN") or
-        ("DROWNING_BEACON", "CLIMB") or ("TABLET_OF_TRUTH", "DECIPHER") or ("TABLET_OF_TRUTH", "SMASH") or
-        ("COLOSSAL_FLOWER", "REACH_DEEPER") or ("COLOSSAL_FLOWER", "POLLINOUS_CORE") or
-        ("DENSE_VEGETATION", "TRUDGE_ON") or ("DENSE_VEGETATION", "REST") or ("SPIRALING_WHIRLPOOL", "DRINK") or
-        ("ROOM_FULL_OF_CHEESE", "SEARCH") or ("WATERLOGGED_SCRIPTORIUM", "BLOODY_INK") or
-        ("THE_LEGENDS_WERE_TRUE", "SLOWLY_FIND_AN_EXIT") or ("BRAIN_LEECH", "RIP") or ("BYRDONIS_NEST", "EAT") or
-        ("DOLL_ROOM", "TAKE_SOME_TIME") or ("DOLL_ROOM", "EXAMINE") or ("SPIRIT_GRAFTER", _) or
-        ("JUNGLE_MAZE_ADVENTURE", "SOLO_QUEST");
+    private static bool RouteEventOptionNeedsHealth(string key, string branch) =>
+        Beta111EventOptionRules.RequiresHealthFact(key, branch) || (key, branch) is
+        ("SLIPPERY_BRIDGE", "HOLD_ON") or ("ROUND_TEA_PARTY", "ENJOY_TEA") or
+        ("ABYSSAL_BATHS", "IMMERSE" or "LINGER" or "ABSTAIN") or
+        ("COLOSSAL_FLOWER", "REACH_DEEPER" or "POLLINOUS_CORE") or
+        ("DENSE_VEGETATION", "REST") or ("SPIRALING_WHIRLPOOL", "DRINK");
 
     private static (ImmutableArray<long> Candidates, int Requested)? RouteEventPicker(PredictorRun run, string key, string branch)
     {
@@ -572,15 +566,18 @@ internal sealed partial class PredictorRun
             ("TRIAL", "MERCHANT_INNOCENT") => (upgrades, 2),
             ("SYMBIOTE", "APPROACH") or ("STONE_OF_ALL_TIME", "PUSH") => (run.SymbioteCandidates(), 1),
             ("SAPPHIRE_SEED", "PLANT") or ("FIELD_OF_MAN_SIZED_HOLES", "ENTER_YOUR_HOLE") => (run.SownCandidates(), 1),
-            ("ZEN_WEAVER", "EMOTIONAL_AWARENESS") or ("WELLSPRING", "BATHE") or ("DOORS_OF_LIGHT_AND_DARK", "DARK") => (removable, 1),
-            ("ZEN_WEAVER", "ARACHNID_ACUPUNCTURE") or ("FIELD_OF_MAN_SIZED_HOLES", "RESIST") or ("LUMINOUS_CHOIR", "REACH_INTO_THE_FLESH") => (removable, 2),
+            ("ZEN_WEAVER", "EMOTIONAL_AWARENESS" or "ARACHNID_ACUPUNCTURE") =>
+                (removable, Beta111EventOptionRules.ZenWeaver(branch).RemovalCount),
+            ("WELLSPRING", "BATHE") or ("DOORS_OF_LIGHT_AND_DARK", "DARK") => (removable, 1),
+            ("FIELD_OF_MAN_SIZED_HOLES", "RESIST") or ("LUMINOUS_CHOIR", "REACH_INTO_THE_FLESH") => (removable, 2),
             ("WOOD_CARVINGS", "BIRD") or ("WOOD_CARVINGS", "TORUS") => (run.WoodBasicCandidates(), 1),
             ("WOOD_CARVINGS", "SNAKE") => (run.WoodSnakeCandidates(), 1),
             ("SELF_HELP_BOOK", _) when branch != "NO_OPTIONS" => (run.SelfHelpBookCandidates(branch), 1),
             ("SPIRALING_WHIRLPOOL", "OBSERVE") => (run.SpiralingWhirlpoolCandidates(), 1),
             ("GRAVE_OF_THE_FORGOTTEN", "CONFRONT") => (run.GraveSoulCandidates(), 1),
-            ("WATERLOGGED_SCRIPTORIUM", "TENTACLE_QUILL") => (deck.Where(id => PredictorObtainSources.CanEnchant(run.Context, run.Working.Card(id))).ToImmutableArray(), 1),
-            ("WATERLOGGED_SCRIPTORIUM", "PRICKLY_SPONGE") => (deck.Where(id => PredictorObtainSources.CanEnchant(run.Context, run.Working.Card(id))).ToImmutableArray(), 2),
+            ("WATERLOGGED_SCRIPTORIUM", "TENTACLE_QUILL" or "PRICKLY_SPONGE") =>
+                (deck.Where(id => PredictorObtainSources.CanEnchant(run.Context, run.Working.Card(id))).ToImmutableArray(),
+                    Beta111EventOptionRules.Scriptorium(branch).TargetCount),
             ("ENDLESS_CONVEYOR", "GRAB_JELLY_LIVER") => (transforms, 1),
             ("AMALGAMATOR", _) => (deck.Where(id => run.Working.Card(id).Removable &&
                 PredictorCardChanges.Definition(run.Context, run.Working.Card(id).Key) is { Rarity: "Basic" } definition &&
@@ -591,23 +588,12 @@ internal sealed partial class PredictorRun
 
     private static ModelKey? RouteEventObtainRelic(PredictorRun run, string key, string branch)
     {
-        string? relic = (key, branch) switch
-        {
-            ("TEA_MASTER", _) => branch,
-            ("SUNKEN_STATUE", "GRAB_SWORD") => "SWORD_OF_STONE",
-            ("ROUND_TEA_PARTY", "ENJOY_TEA") => "ROYAL_POISON",
-            ("DROWNING_BEACON", "CLIMB") => "FRESNEL_LENS",
-            ("LOST_WISP", "CLAIM") => "LOST_WISP",
-            ("COLOSSAL_FLOWER", "POLLINOUS_CORE") => "POLLINOUS_CORE",
-            ("GRAVE_OF_THE_FORGOTTEN", "ACCEPT") => "FORGOTTEN_SOUL",
-            ("ROOM_FULL_OF_CHEESE", "SEARCH") => "CHOSEN_CHEESE",
-            ("HUNGRY_FOR_MUSHROOMS", _) => branch,
-            ("WELCOME_TO_WONGOS", "MYSTERY_BOX") => "WONGOS_MYSTERY_TICKET",
-            ("WAR_HISTORIAN_REPY", "INITIAL_UNLOCK_CAGE") or ("WAR_HISTORIAN_REPY", "SECOND_UNLOCK_CAGE") => "HISTORY_COURSE",
-            ("DOLL_ROOM", _) when branch.StartsWith("DOLL_", StringComparison.Ordinal) => branch[5..],
-            _ => null
-        };
-        if (relic != null) return new("RELIC", relic);
+        if (RolltheSpire2.Core.Events.Beta111EventOptionRules.FixedRelicProduct(key, branch) is { } fixedProduct)
+            return fixedProduct;
+        // Selected/observed products remain owned by this transaction.
+        if (key == "HUNGRY_FOR_MUSHROOMS") return new("RELIC", branch);
+        if (key == "DOLL_ROOM" && branch.StartsWith("DOLL_", StringComparison.Ordinal))
+            return new("RELIC", branch[5..]);
         if (key == "WELCOME_TO_WONGOS" && branch == "FEATURED_ITEM") return run._wongoFeatured;
         if (key == "WELCOME_TO_WONGOS" && branch == "BARGAIN_BIN")
         {
@@ -622,11 +608,9 @@ internal sealed partial class PredictorRun
             var local = PredictorStreamState.Capture(PredictorStream.Niche, run._eventRng!).Restore();
             if (key == "TRASH_HEAP")
             {
-                var relics = RolltheSpire2.Core.Events.Beta111EventResultCatalog.TrashHeapDiveRelics;
-                return relics[local.NextInt(relics.Count)];
+                return RolltheSpire2.Core.Events.Beta111EventRules.TrashHeapDive(local);
             }
-            var entries = new[] { "DAUGHTER_OF_THE_WIND", "MR_STRUGGLES", "BING_BONG" };
-            return new("RELIC", entries[local.NextInt(entries.Length)]);
+            return RolltheSpire2.Core.Events.Beta111EventRules.RandomDoll(local);
         }
         if (key == "FAKE_MERCHANT" && branch.StartsWith("BUY_", StringComparison.Ordinal))
             return run._fakeStock.Single(s => s.Slot == int.Parse(branch.AsSpan(4))).Key;

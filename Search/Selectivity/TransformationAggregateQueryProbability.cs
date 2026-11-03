@@ -11,8 +11,8 @@ internal static partial class TransformationAggregateQueryProbability
         var compiled=input.CompiledSearch;
         // Immutable numerical donor inputs only; no session, GPU owner, pricing
         // or execution is created by probability analysis.
-        var request=new ExactSearchExecutionRequest(compiled,new("000000000000",1,1,1),"000000000000",1,
-            CompiledSearchEvaluationProjector.Project(compiled).Evaluation,input.CombatRewardRoutePolicy,compiled.SemanticFingerprint);
+        var request=new SearchModel(compiled,CompiledSearchEvaluationProjector.Project(compiled).Evaluation,
+            CombatRewardRoutePolicyContract.None,compiled.SemanticFingerprint);
         var numerical = new TransformationAggregateNumericalPlan(request);
         var probability=TransformationAggregateProbability.Build(numerical);
         var query = compiled.NormalizedQuery;

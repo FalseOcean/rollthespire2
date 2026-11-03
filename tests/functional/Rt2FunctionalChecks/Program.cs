@@ -20,6 +20,9 @@ using RolltheSpire2.Tests.FastSearch;
 using RolltheSpire2.Ui.Pages.Search.Neow;
 
 int count = ReadInt(args, "--count", 10_000);
+if (args.Contains("--neow-identity-rules", StringComparer.Ordinal)) return NeowIdentityRulesChecks.Run();
+if (args.Contains("--c-assignment-early", StringComparer.Ordinal)) return CAssignmentEarlyChecks.Run(ReadInt(args, "--count", 256));
+if (args.Contains("--neow-entry-identity", StringComparer.Ordinal)) return NeowEntryIdentityChecks.Run();
 if (args.Contains("--shion-neow-optimization", StringComparer.Ordinal)) return ShionNeowOptimizationChecks.Run();
 if (args.Contains("--shion-exact-trial", StringComparer.Ordinal)) return ShionExactTrialChecks.Run();
 if (args.Contains("--neow-cpu-four-way", StringComparer.Ordinal)) return NeowCpuFourWayChecks.Run();
@@ -37,6 +40,7 @@ if (args.Contains("--family-quote-entry", StringComparer.Ordinal))
     return FamilyQuoteEntryChecks.Run(args.Contains("--quote-baseline", StringComparer.Ordinal)
         ? args[Array.IndexOf(args, "--quote-baseline") + 1] : null);
 if (args.Contains("--eta-cost-closure", StringComparer.Ordinal)) return EtaCostClosureChecks.Run();
+if (args.Contains("--gpu-prefix-transport", StringComparer.Ordinal)) return EtaCostClosureChecks.RunGpuPrefixTransport();
 if (args.Contains("--combat-probability-bench", StringComparer.Ordinal)) return PredictabilityMathChecks.RunCombatProbabilityBench();
 if (args.Contains("--small-candidate-exact", StringComparer.Ordinal)) return SmallCandidateExactChecks.Run();
 if (args.Contains("--search-failure-continuation", StringComparer.Ordinal)) return SearchFailureContinuationChecks.Run();
@@ -142,6 +146,7 @@ if (args.Contains("--authored-morphic-captured")) return RolltheSpire2.Tests.Fas
 if (args.Contains("--release-compatibility")) return ReleaseCompatibilityChecks.Run();
 if (args.Contains("--historical-data")) return HistoricalDataChecks.Run();
 if (args.Contains("--archive-current-runtime")) return HistoricalDataChecks.ArchiveCurrent();
+if (args.Contains("--search-scanning-speed", StringComparer.Ordinal)) return FamilyAllocationPricingChecks.RunScanningSpeed();
 if (args.Contains("--cpu-cost-closure")) return CpuCostClosureChecks.Run();
 if (args.Contains("--cpu-cost-measure")) return CpuCostClosureChecks.Measure(args);
 if (args.Contains("--family-cpu-integration")) return FamilyCpuIntegrationChecks.Run();
@@ -164,9 +169,11 @@ if (args.Contains("--family-ae", StringComparer.Ordinal)) return FamilyAEChecks.
 if (args.Contains("--family-allocation-pricing", StringComparer.Ordinal)) return FamilyAllocationPricingChecks.Run();
 if (args.Contains("--gpu-owner-lifecycle", StringComparer.Ordinal)) return GpuOwnerLifecycleChecks.Run();
 if (args.Contains("--family-world", StringComparer.Ordinal)) return FamilyWorldChecks.Run(count);
+if (args.Contains("--family-c-prefix", StringComparer.Ordinal)) return FamilyCombatRewardChecks.Run(count,
+    args.Contains("--export-combat-gpu", StringComparer.Ordinal), openingPrefixOnly: true);
 if (args.Contains("--family-combat", StringComparer.Ordinal)) return FamilyCombatRewardChecks.Run(count, args.Contains("--export-combat-gpu", StringComparer.Ordinal));
 if (args.Contains("--c-explicit-opening", StringComparer.Ordinal)) return CExplicitOpeningChecks.Run(count);
-if (!args.Contains("--family-neow", StringComparer.Ordinal)) throw new ArgumentException("Select a current --family-* / --predictor-closure / --exact-boundary / --wwp-commitment check; old whole-Fast pipeline checks have retired.");
+if (!args.Contains("--family-neow", StringComparer.Ordinal) && !args.Contains("--r-opening-prefix", StringComparer.Ordinal)) throw new ArgumentException("Select a current --family-* / --predictor-closure / --exact-boundary / --wwp-commitment check; old whole-Fast pipeline checks have retired.");
 ModelKey characterKey = BaseGameModelKeys.Characters.Silent;
 RuntimeContextAuthoritySnapshot authority = Beta110FastSearchFixtureAuthority.Create(characterKey, 10, 0, 1);
 var detection = new GameVersionDetection("0.110.1", "0.110.1", "beta", "parity-fixture", true, string.Empty);
@@ -382,6 +389,13 @@ var c0LossyScenarios = new (string Name, NeowSearchFilter Filter, bool ExpectRis
     }, false)
 };
 
+if (args.Contains("--r-opening-prefix", StringComparer.Ordinal))
+{
+    var source = approximateScenarios.Single(s => s.Name == "LargeCapsuleTwoRelics");
+    return FamilyNeowChecks.RunRelicOpeningPrefix(
+        CompilePlan(source.Name, source.Filter, CreateFamilyAuthority(authority), detection, count), count);
+}
+
 if (args.Contains("--family-neow", StringComparer.Ordinal))
 {
     var familyAuthority = CreateFamilyAuthority(authority);
@@ -418,7 +432,7 @@ static NeowSearchFilter BonesStructured(
     StructuredNeowEffects = conditions
 };
 
-static ExactSearchExecutionRequest CompilePlan(
+static PreparedSearch CompilePlan(
     string name,
     NeowSearchFilter filter,
     RuntimeContextAuthoritySnapshot authority,
@@ -434,7 +448,7 @@ static ExactSearchExecutionRequest CompilePlan(
         detection,
         filter.AncientOptionConditions);
     var compiled = SearchCompiler.Compile(LegacySearchQueryAdapter.FromFilter(filter), context);
-    var result = ExactSearchExecutionRequestFactory.Compile(compiled,
+    var result = SearchPreparationCompiler.Compile(compiled,
         new SearchRunOptions("000000000000", scanCount, 30, workerCount, IncludeDiagnostics: false));
     return result.Plan ?? throw new InvalidOperationException("Compile failed:" + name + ":" + result.Disposition + ":" + result.Issue);
 }

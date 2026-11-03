@@ -1100,8 +1100,8 @@ internal static partial class UiSurfaceChecks
                 Check(SeedPredictionRequest.TryCreate("00000103CP3W", layoutAuthority.Character, 10, 1, 0, layoutAuthority,
                     layoutContext.EvaluationAssumptions.AncientEligibilityAssumptions, SeedPredictionDomainSelection.All,
                     SeedPredictionInputLimits.MaximumRelicSequencePreviewCount, false, out var layoutRequest, out _), "layoutAnalysis layout fixture admitted");
-                var layoutDocument = RuntimeProfileRegistry.Predict(runtime.Detection, layoutRequest!);
-                Call(layoutAnalysis, "ShowDocument", layoutRequest, layoutDocument, null);
+                var layoutDocument = RuntimeProfileRegistry.Observe(runtime.Detection, layoutRequest!);
+                Call(layoutAnalysis, "ShowFacts", layoutRequest, layoutDocument, null);
                 foreach ((string locale, Vector2I size) in new[] { ("zh", new Vector2I(1600, 900)), ("en", new Vector2I(1280, 720)) })
                 {
                     MegaCrit.Sts2.Core.Localization.LocManager.Instance.SetLanguage(locale == "zh" ? "zhs" : "eng");
@@ -1179,8 +1179,7 @@ internal static partial class UiSurfaceChecks
                     var initialChestGrid = (GridContainer)layoutAnalysis.FindChild("InitialTreasureRelicEntries", true, false);
                     var profile = RuntimeProfileRegistry.Select(runtime.Detection);
                     var chestReference = TreasureRelicPredictor.PredictInitialOrderPreview(profile,
-                        profile.ComputeRootSeed(layoutDocument.CanonicalSeed), layoutDocument.Sections
-                            .Select(section => section.RelicSequencePrediction).First(sequence => sequence is not null)!);
+                        profile.ComputeRootSeed(layoutDocument.CanonicalSeed), layoutDocument.Relics!);
                     Check(initialChestGrid.Columns == 3 && initialChestGrid.GetChildCount() == 9,
                         "solo initial chest reference shows nine ordered tiles " + locale);
                     for (int chest = 0; chest < chestReference.Entries.Count; chest++)
@@ -1262,6 +1261,9 @@ internal static partial class UiSurfaceChecks
             var library = Field<SeedLibraryCanvas>(shell, "_seedLibrary");
             Navigate("Search");
             Field<SeedLibraryStore>(library, "_store").Save("000000000111", seedContext, "界面测试 · presentation fixture");
+            var collectionCard = MegaCrit.Sts2.Core.Models.ModelDb.AllCards.First();
+            Field<CardCollectionStore>(library, "_cardCollections").Save(null, "Main panel card collection fixture",
+                [new ModelKey(collectionCard.Id.Category, collectionCard.Id.Entry)]);
             store.BindPreparedResultWorkspace(store.PrepareResultWorkspace("mainpanel-fixture", empty, seedContext));
             // One complete canvas plus one smaller English density sample.
             foreach ((string locale, Vector2I size) in new[] { ("zh", new Vector2I(1600, 900)), ("en", new Vector2I(1280, 720)) })
@@ -1455,10 +1457,10 @@ internal static partial class UiSurfaceChecks
             Navigate("Search"); Call(frame, "SelectDomain", "combat");
             await SettleWorkbenchPreferences();
             var runningDraft = frame.CaptureDraft();
-            var runningPlan = ExactSearchExecutionRequestFactory.Compile(runningDraft.Compile(runtime, out _),
+            var runningPlan = SearchPreparationCompiler.Compile(runningDraft.Compile(runtime, out _),
                 new(store.CurrentNextCursorSeed, 100, 30, 1)).Plan!;
             var prepared = store.PrepareSearchStart(runningDraft, runningPlan, SeedLibraryContextCapture.ForSearch(runningDraft, runtime));
-            store.Runtime.InstallStartedSession(session, runningPlan.CompiledSearch.SemanticFingerprint, prepared, root.GetTree());
+            store.Runtime.InstallStartedSession(session, runningPlan.Model.CompiledSearch.SemanticFingerprint, prepared, root.GetTree());
             sessionInstalled = true;
             Call(frame, "PollProduction", 0d);
             string pendingDraft = Draft(), pendingPreferences = Preferences(); int polls = session.Polls;
@@ -1492,8 +1494,8 @@ internal static partial class UiSurfaceChecks
             Check(SeedPredictionRequest.TryCreate("00000103CP3W", authority.Character, 10, 1, 0, authority,
                 context.EvaluationAssumptions.AncientEligibilityAssumptions, SeedPredictionDomainSelection.All,
                 SeedPredictionInputLimits.MaximumRelicSequencePreviewCount, false, out var request, out _), "fixed analysis fixture admitted");
-            var document = RuntimeProfileRegistry.Predict(runtime.Detection, request!);
-            Call(analysis, "ShowDocument", request, document, null);
+            var document = RuntimeProfileRegistry.Observe(runtime.Detection, request!);
+            Call(analysis, "ShowFacts", request, document, null);
             foreach ((string locale, Vector2I size) in new[] { ("zh", new Vector2I(1600, 900)), ("en", new Vector2I(1280, 720)) })
             {
                 store.SetLanguageOverride(locale); Set(shell, "_languageCode", ""); Call(shell, "RefreshLanguage");

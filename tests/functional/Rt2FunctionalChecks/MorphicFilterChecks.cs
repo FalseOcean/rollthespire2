@@ -33,14 +33,14 @@ internal static partial class MorphicFilterChecks
             new("CARD", "THUNDERCLAP")) { MorphicGroveScenario = scenario };
         var query = LegacySearchQueryAdapter.FromFilter(NeowSearchFilter.Empty with { EventResultConditions = [condition] });
         var options = new SearchRunOptions("000000000000", 4099, int.MaxValue, 1);
-        ExactSearchExecutionRequest Request(SearchQuery q, SearchRunOptions? o = null)
+        PreparedSearch Request(SearchQuery q, SearchRunOptions? o = null)
         {
-            var compiled = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(q, context), o ?? options);
+            var compiled = SearchPreparationCompiler.Compile(SearchCompiler.Compile(q, context), o ?? options);
             if (!compiled.Success) throw new InvalidOperationException(compiled.Issue);
             return compiled.Plan!;
         }
         var request = Request(query);
-        var plan = new EventResultFamilyPlan(request);
+        var plan = new EventResultFamilyPlan(request.Model);
         Check(plan.GpuSupported, "Closed E GPU admitted");
         var roundtrip = JsonSerializer.Deserialize<SearchQuery>(JsonSerializer.Serialize(query, json), json)!;
         Check(Request(roundtrip).SnapshotFingerprint == request.SnapshotFingerprint, "Query/scenario replay fingerprint");
@@ -60,7 +60,7 @@ internal static partial class MorphicFilterChecks
         {
             string seed = Beta110SeedCodec.FormatOrdinal(i);
             var root = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed);
-            var exact = ProductionExactSearchEvaluator.Evaluate(request, root);
+            var exact = ProductionExactSearchEvaluator.Evaluate(request.Model, root);
             Check(exact.Evaluation.Disposition is SearchDisposition.Match or SearchDisposition.NoMatch, "Exact resolved");
             Check(plan.Matches(root.RootHash) == exact.IsMatch && plan.Reference(root.RootHash) == exact.IsMatch, "Full E population parity");
             if (exact.IsMatch) { expected.Add(i); exactSeeds.Add(seed); Check(exact.Evaluation.Witnesses.Count > 0, "Exact Witness"); }
@@ -71,28 +71,29 @@ internal static partial class MorphicFilterChecks
         Check(Math.Abs(plan.Survival.SurvivalProbability!.Value - (1 - (1 - one) * (1 - one))) < 1e-12, "Modeled two-draw survival");
         Console.WriteLine($"MORPHIC_E_PARITY roots={options.ScanCount};accepted={expected.Count};falseNegative=0;referenceMs={watch.Elapsed.TotalMilliseconds:F2}");
 
-        var execution = new FamilyExecutionContext(false);
-        EventResultFamily.TryCreate(request, out var family);
-        var cpu = family!.CpuRealizations.Single();
+        var execution = new FilterRuntimeServices(false);
+        EventResultFamily.TryCreate(request.Model, FilterExecutionPreferences.From(request.RunOptions), out var family);
+        var cpu = family!.CpuAlternatives.Single(cpu => cpu.CpuWorkers == Math.Clamp(family!.CpuWorkers, 1, 32));
         var batch = new SearchBatch(0, (int)options.ScanCount);
         var dense = FamilyCandidateSet.Dense(batch);
-        var actual = cpu.InvokeAsync(execution, new(batch, request), dense, default).GetAwaiter().GetResult();
+        var handle = cpu.CreateExecution!(cpu, execution);
+        var actual = handle.FilterAsync(execution, dense, default).GetAwaiter().GetResult();
         Check(actual.EnumerateLogicalOrdinals().SequenceEqual(expected), "Real CPU E invocation ABI1");
         var sparse = FamilyCandidateSet.FromAbi1(batch, expected.Where((_, i) => i % 2 == 0).ToArray());
-        Check(cpu.InvokeAsync(execution, new(batch, request), sparse, default).GetAwaiter().GetResult().Count == sparse.Count, "Compact input");
+        Check(handle.FilterAsync(execution, sparse, default).GetAwaiter().GetResult().Count == sparse.Count, "Compact input");
         var zero = FamilyCandidateSet.FromAbi1(batch, []);
-        Check(cpu.InvokeAsync(execution, new(batch, request), zero, default).GetAwaiter().GetResult().Count == 0, "Zero input");
+        Check(handle.FilterAsync(execution, zero, default).GetAwaiter().GetResult().Count == 0, "Zero input");
         using var cancel = new CancellationTokenSource(); cancel.Cancel();
-        try { cpu.InvokeAsync(execution, new(batch, request), dense, cancel.Token).GetAwaiter().GetResult(); throw new Exception("Missing cancellation"); }
+        try { handle.FilterAsync(execution, dense, cancel.Token).GetAwaiter().GetResult(); throw new Exception("Missing cancellation"); }
         catch (OperationCanceledException) { checks++; }
-        Check(cpu.InvokeAsync(execution, new(batch, request), dense, default).GetAwaiter().GetResult().Count == expected.Count, "Invocation reuse after cancel");
-        cpu.DisposeAsync(execution).GetAwaiter().GetResult();
+        Check(handle.FilterAsync(execution, dense, default).GetAwaiter().GetResult().Count == expected.Count, "Invocation reuse after cancel");
+        handle.DisposeAsync(execution).GetAwaiter().GetResult();
         execution.DisposeAsync().GetAwaiter().GetResult();
 
         var unknown = condition with { MorphicGroveScenario = new(context.Authority, premises with { VanillaLocalDependenciesBound = false }, targets) };
         var unpriced = Request(query with { EventResultConditions = [unknown] });
-        Check(!new EventResultFamilyPlan(unpriced).GpuSupported && new EventResultFamilyPlan(unpriced).Matches(123), "Missing facts conservative CPU only");
-        Check(ProductionExactSearchEvaluator.Evaluate(unpriced, TrustedRootHashInput.RootOnly(123)).Evaluation.Disposition == SearchDisposition.Unknown, "Unknown cannot become Match");
+        Check(!new EventResultFamilyPlan(unpriced.Model).GpuSupported && new EventResultFamilyPlan(unpriced.Model).Matches(123), "Missing facts conservative CPU only");
+        Check(ProductionExactSearchEvaluator.Evaluate(unpriced.Model, TrustedRootHashInput.RootOnly(123)).Evaluation.Disposition == SearchDisposition.Unknown, "Unknown cannot become Match");
         Check(EventResultPhysicalPricing.Quote(plan, new(false, false, 1048576)) is null, "New work cannot inherit old one-draw quote");
 
         // Independent captured source pools across all five characters. This uses
@@ -109,12 +110,12 @@ internal static partial class MorphicFilterChecks
                 var co = new EventResultSearchCondition(condition.Kind, key) { MorphicGroveScenario = sc };
                 var q = query with { EventResultConditions = [co] };
                 var c = SearchCompiler.Compile(q, context with { Authority = a, CharacterKey = a.Character.CharacterKey });
-                var rq = ExactSearchExecutionRequestFactory.Compile(c, options).Plan!;
-                var ep = new EventResultFamilyPlan(rq);
+                var rq = SearchPreparationCompiler.Compile(c, options).Plan!;
+                var ep = new EventResultFamilyPlan(rq.Model);
                 for (ulong i = 1234567; i < 1234824; i++)
                 {
                     var root = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, Beta110SeedCodec.FormatOrdinal(i));
-                    var exact = ProductionExactSearchEvaluator.Evaluate(rq, root);
+                    var exact = ProductionExactSearchEvaluator.Evaluate(rq.Model, root);
                     Check(exact.Evaluation.Disposition is SearchDisposition.Match or SearchDisposition.NoMatch, "Five-character Exact resolved");
                     Check(ep.Matches(root.RootHash) == exact.IsMatch, "Five-character common/uncommon/rare/absent parity");
                 }
@@ -131,11 +132,12 @@ internal static partial class MorphicFilterChecks
             new ModelKeySetFilter([], [new("EVENT", "MORPHIC_GROVE")], []))] };
         var weRequest = Request(we);
         var wePlan = FamilyExecutionCoordinator.Plan(weRequest, gpuAvailable: false);
-        Check(wePlan.OrderedFamilies.Select(f => f.FamilyId).Order().SequenceEqual(new[] {"E.EventResult", "W.World"}), "Normal W/E registration and CPU allocation");
+        Check(wePlan.OrderedFamilies.Select(f => f.FamilyId).Order().SequenceEqual(new[] {"E.EventResult", "V.VariantOpening", "W.World"}), "Normal E/V/W registration with event-implied variant and CPU allocation");
+        Check(wePlan.OrderedFamilies.All(f => !f.ConditionPerformance.UsesGpu), "E/V/W remain CPU with GPU disabled");
         var weExpected = new List<string>();
         foreach (string seed in exactSeeds)
         {
-            var exact = ProductionExactSearchEvaluator.Evaluate(weRequest, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed));
+            var exact = ProductionExactSearchEvaluator.Evaluate(weRequest.Model, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed));
             Check(exact.Evaluation.Disposition is SearchDisposition.Match or SearchDisposition.NoMatch, "WE Exact resolved");
             if (exact.IsMatch) weExpected.Add(seed);
         }
@@ -153,7 +155,7 @@ internal static partial class MorphicFilterChecks
             var pairQuery = query with { EventResultConditions = [pair] };
             var pairOptions = options with { ScanCount = 65539 };
             var pairRequest = Request(pairQuery, pairOptions);
-            var pairPlan = new EventResultFamilyPlan(pairRequest);
+            var pairPlan = new EventResultFamilyPlan(pairRequest.Model);
             var reversed = pair with { TargetKey = pair.MorphicGroveSecondCard!.Value, MorphicGroveSecondCard = pair.TargetKey };
             Check(Request(query with { EventResultConditions = [reversed] }, pairOptions).SnapshotFingerprint == pairRequest.SnapshotFingerprint, "Unordered pair fingerprint");
             Check(Request(query with { EventResultConditions = [pair with { MorphicGroveSecondCard = null }] }, pairOptions).SnapshotFingerprint != pairRequest.SnapshotFingerprint, "Multiplicity changes Query identity");
@@ -162,7 +164,7 @@ internal static partial class MorphicFilterChecks
             for (ulong i = 0; i < (ulong)pairOptions.ScanCount; i++)
             {
                 var root = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, Beta110SeedCodec.FormatOrdinal(i));
-                var exact = ProductionExactSearchEvaluator.Evaluate(pairRequest, root);
+                var exact = ProductionExactSearchEvaluator.Evaluate(pairRequest.Model, root);
                 Check(exact.Evaluation.Disposition is SearchDisposition.Match or SearchDisposition.NoMatch, "Pair Exact resolved");
                 Check(pairPlan.Matches(root.RootHash) == exact.IsMatch, "Full pair population/Exact parity");
                 if (exact.IsMatch) accepted.Add(root.CanonicalSeed);
@@ -175,7 +177,7 @@ internal static partial class MorphicFilterChecks
             {
                 var mixed = pairQuery with { EventSequenceConstraints = we.EventSequenceConstraints };
                 var mixedRequest = Request(mixed, pairOptions);
-                var both = accepted.Where(seed => ProductionExactSearchEvaluator.Evaluate(mixedRequest,
+                var both = accepted.Where(seed => ProductionExactSearchEvaluator.Evaluate(mixedRequest.Model,
                     TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed)).IsMatch).ToArray();
                 Check(both.Length > 0, "Positive WE pair");
                 File.WriteAllText(output + "/pair-WE.json", JsonSerializer.Serialize(new ProductionSearchReplayWorkload(1, mixed, pairOptions), json));

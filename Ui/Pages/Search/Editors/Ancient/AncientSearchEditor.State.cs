@@ -45,7 +45,8 @@ internal sealed partial class AncientSearchEditor
     {
         var restore = WorkbenchConditionReset.Swap(party ? _partyDrafts : _drafts,
             d => new SeatDraft { Eligibility = d.Eligibility, Mode = d.Mode, LastAdvancedMode = d.LastAdvancedMode,
-                EligibilityExpanded = d.EligibilityExpanded, AdvancedExpanded = d.AdvancedExpanded });
+                EligibilityExpanded = d.EligibilityExpanded, AdvancedExpanded = d.AdvancedExpanded },
+            replaceActive: (previous, current) => { if (ReferenceEquals(_draft, previous)) _draft = current; });
         if (!party) return restore;
         var identities = _partyIdentities.Select(mode => mode.ToDictionary(p => p.Key, p => p.Value.ToArray())).ToArray();
         foreach (var mode in _partyIdentities) foreach (var list in mode.Values) list.Clear();
@@ -53,8 +54,11 @@ internal sealed partial class AncientSearchEditor
         {
             restore();
             for (int i = 0; i < _partyIdentities.Length; i++)
+            {
+                _partyIdentities[i].Clear();
                 foreach (var (act, keys) in identities[i])
-                { _partyIdentities[i][act].Clear(); _partyIdentities[i][act].AddRange(keys); }
+                    _partyIdentities[i][act] = keys.ToList();
+            }
         };
     }
 

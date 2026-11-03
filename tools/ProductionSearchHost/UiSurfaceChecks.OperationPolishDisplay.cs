@@ -39,6 +39,7 @@ internal static partial class UiSurfaceChecks
                 "polish display uses the exact supplied immutable projection");
             check(Descendants(view).OfType<NCard>().All(native => native.Model is { RunState: null, CombatState: null } &&
                 native.MouseFilter == Control.MouseFilterEnum.Ignore), "polish native card faces remain detached and passive");
+            CheckOperationCardRows(view, check);
         }
         async Task Capture(string name)
         {
@@ -131,6 +132,61 @@ internal static partial class UiSurfaceChecks
                 view.GetNode<Control>("Rt2NeowSummary/Rt2OperationPrimaryPanel") != effect,
                 "Whetstone empty result has its own titled effect panel below the Courier restock panel");
             await Capture("whetstone-empty");
+
+            var driftwood = Relic("DRIFTWOOD");
+            var candy = Relic("LASTING_CANDY"); var star = Relic("WHITE_STAR");
+            var mixedGroups = Enumerable.Range(0, 6).Select(index => new OperationPreviewCardGroup(index,
+                [card with { Id = 200000 + index * 3, UpgradeLevel = index % 2 }, nextCard with { Id = 200001 + index * 3 }, card with { Id = 200002 + index * 3 }], 1, 1, true, false)
+                {
+                    Label = index == 0 ? "RewardRerollSameRecipe" : index == 5 ? "RewardRerollOrdinal" : null,
+                    EarliestFirst = true,
+                    SequenceOrdinal = index switch { 0 or 1 => 1, 3 or 4 => 3, _ => 2 },
+                    IconPaths = index switch
+                    {
+                        1 => [new([[driftwood]])],
+                        3 => [new([[candy], [star], [driftwood]]), new([[star], [candy], [driftwood]])],
+                        4 => [new([[candy, star], [driftwood]])],
+                        _ => []
+                    }
+                }).ToImmutableArray();
+            view?.Free(); view = new NeowOperationOverlay { CardScaleOverride = .4f }; hoverRoot.AddChild(view);
+            var mixedPreview = Preview(driftwood, new OperationPreviewSection(driftwood, [], mixedGroups)) with
+                { Style = new(OperationTextMode.None, OperationCardLayout.Groups), OptionKey = "REROLL" };
+            view.SetPreview(mixedPreview); await Frames();
+            view.SetLayout(new(Vector2.Zero, Vector2.Zero), new(new Vector2(30, 200), new Vector2(900, 820))); await Frames();
+            CheckOperationIconPaths(view, mixedPreview, check);
+            var mixedStacks = Descendants(view).OfType<Control>().Where(node => node.Name.ToString().StartsWith("Rt2NeowCardStack_", StringComparison.Ordinal)).ToArray();
+            check(mixedStacks.Select(stack => Math.Round(stack.GlobalPosition.Y, 1)).Distinct().Count() >= 2 &&
+                mixedStacks.Count(stack => Descendants(stack).OfType<Control>().Any(node => node.Name == "Rt2IconPaths")) == 3 &&
+                !Descendants(view).OfType<Label>().Any(node => node.Name.ToString() is "Rt2PathOpenGroup" or "Rt2PathCloseGroup"),
+                "wrapped result rows independently align unequal captions, absent icons, direct icons and complex alternative routes without parentheses");
+            await Capture("mixed-group-headings-wrap");
+            // Explicit display-only eight-step route exercises the continuation
+            // line at the preview's existing maximum ordinal, without claiming a
+            // naturally generated eight-group combat in this fixture.
+            var longPath = new OperationIconPath([[driftwood], [candy], [star], [driftwood], [driftwood], [driftwood], [driftwood], [driftwood]]);
+            var longGroup = new OperationPreviewCardGroup(900, [card, nextCard, card with { Id = 100003 }], 1, 1, true, false)
+                { EarliestFirst = true, SequenceOrdinal = 8, IconPaths = [longPath] };
+            var longAlternative = longGroup with { Id = 901, Cards = [card with { UpgradeLevel = 1 }, nextCard, card], IconPaths = [] };
+            var longPreview = Preview(driftwood, new OperationPreviewSection(driftwood, [], [longGroup, longAlternative])) with
+                { Style = new(OperationTextMode.None, OperationCardLayout.Groups), OptionKey = "REROLL" };
+            var oldViewportSize = viewport.Size; var oldWindowSize = root.GetWindow().Size;
+            try
+            {
+                foreach (var size in new[] { new Vector2I(1920, 1080), new Vector2I(1280, 720) })
+                {
+                    viewport.Size = size; root.GetWindow().Size = size;
+                    view?.Free(); view = new NeowOperationOverlay { CardScaleOverride = .4f }; hoverRoot.AddChild(view);
+                    view.SetPreview(longPreview); await Frames();
+                    view.SetLayout(new(Vector2.Zero, Vector2.Zero), new(new Vector2(40, 150), new Vector2(size.X - 80, size.Y - 180))); await Frames();
+                    CheckOperationIconPaths(view, longPreview, check);
+                    var lines = Descendants(view).OfType<HBoxContainer>().Where(node => node.HasMeta("rt2_continuation")).ToArray();
+                    check(lines.Length >= 2 && lines.Skip(1).Any(node => node.GetMeta("rt2_continuation").AsBool()),
+                        "long outlined path wraps only between complete steps and keeps its target-last expression at " + size.X);
+                    await Capture("long-path-" + size.X);
+                }
+            }
+            finally { viewport.Size = oldViewportSize; root.GetWindow().Size = oldWindowSize; await Frames(); }
             File.WriteAllText(Path.Combine(output, "operation-polish-display-result.json"), JsonSerializer.Serialize(new
             { passed = true, displayOnly = true, nativeRendererAndCardScenes = true, ownerRuntimeAcceptance = false, evidence },
                 new JsonSerializerOptions { WriteIndented = true }));

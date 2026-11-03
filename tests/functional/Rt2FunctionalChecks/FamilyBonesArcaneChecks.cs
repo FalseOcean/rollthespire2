@@ -14,19 +14,19 @@ using RolltheSpire2.Tests.FastSearch;
 
 internal static partial class FamilyNeowChecks
 {
-    private static void CheckBonesArcaneComposite(ExactSearchExecutionRequest source, List<object> fixtures)
+    private static void CheckBonesArcaneComposite(PreparedSearch source, List<object> fixtures)
     {
         var request = WithSmallRelicLanes(source);
         // Match Core's captured source pools to R's World pool, as in the existing
         // grouped Exact fixture. Small immutable lanes make positive tests cheap.
-        var world = request.Authority.WorldAuthority!;
+        var world = request.Model.Authority.WorldAuthority!;
         var generation = world.Beta109Generation!;
         NeowEffectRelicSnapshot[] Relics(IEnumerable<Beta109RelicBucketSnapshot> buckets) => buckets
             .SelectMany(bucket => bucket.OrderedEntries.Select((entry, index) => new NeowEffectRelicSnapshot(
                 entry.RelicKey, index, Enum.Parse<EffectRelicRarity>(bucket.BucketId.Split(':')[^1]),
                 NestedRelicEffectKind.NoTrackedImmediateEffect, RarityCode: bucket.BucketId.Split(':')[^1],
                 IsAllowedInShops: entry.IsAllowedInShops, ShopEligibilityExact: true))).ToArray();
-        var effects = request.Authority.EffectAuthority! with {
+        var effects = request.Model.Authority.EffectAuthority! with {
             SharedRelicPoolSource = Relics(generation.SharedRelicBuckets),
             CharacterRelicPoolSource = Relics(generation.PlayerRelicBuckets), CapturedProfileId = RuntimeProfileId.Beta111,
             CharacterRewardIdentityPoolExact = true
@@ -36,21 +36,21 @@ internal static partial class FamilyNeowChecks
             var entries = shared.OrderedEntries.Concat(bucket.OrderedEntries).DistinctBy(entry => entry.RelicKey).ToArray();
             return bucket with { OrderedEntries = entries, OrderedRelics = entries.Select(e => e.RelicKey).ToArray() };
         }).ToArray();
-        var authority = Beta110FastSearchFixtureAuthority.CreateBeta111(request.Authority.Character.CharacterKey,
-            request.Authority.Ascension, 0, 1).WithEffectAuthority(effects).WithWorldAuthority(world with {
+        var authority = Beta110FastSearchFixtureAuthority.CreateBeta111(request.Model.Authority.Character.CharacterKey,
+            request.Model.Authority.Ascension, 0, 1).WithEffectAuthority(effects).WithWorldAuthority(world with {
                 CapturedProfileId = RuntimeProfileId.Beta111,
                 Beta109Generation = generation with { Profile = RuntimeProfileId.Beta111, PlayerRelicBuckets = players }
             });
-        var context = request.CompiledSearch.Context with { Authority = authority, ProfileId = RuntimeProfileId.Beta111,
+        var context = request.Model.CompiledSearch.Context with { Authority = authority, ProfileId = RuntimeProfileId.Beta111,
             Detection = new GameVersionDetection(RuntimeVersionCompatibility.Beta111Version, RuntimeVersionCompatibility.Beta111Version,
                 "beta", "bones-arcane-nr-fixture", true, string.Empty) };
         ModelKey large = BaseGameModelKeys.Relics.LargeCapsule, arcane = BaseGameModelKeys.Relics.ArcaneScroll;
         var identity = NeowSearchFilter.Empty with { NeowRoute = new(BaseGameModelKeys.Relics.NeowsBones),
             RequiredBonesCombination = [large, arcane] };
-        ExactSearchExecutionRequest Query(NeowSearchFilter filter) =>
+        PreparedSearch Query(NeowSearchFilter filter) =>
             CompileFixtureRequest(filter, context, request.RunOptions);
         request = Query(identity);
-        var identityPlan = NeowReplayPlan.Compile(request, false);
+        var identityPlan = NeowReplayPlan.Compile(request.Model, false);
         var seenOffers = new HashSet<byte>();
         int checks = 0;
         for (ulong ordinal = 0; ordinal < 200_000 && seenOffers.Count < 2; ordinal++)
@@ -59,7 +59,7 @@ internal static partial class FamilyNeowChecks
             ulong root = Beta111Profile.Instance.ComputeRootSeed(seed);
             var observation = NeowFamilyReplay.Observe(root, identityPlan);
             if (!observation.IdentityPass || seenOffers.Contains(observation.BonesFirst)) continue;
-            if (!SearchAuthorityProjector.TryProjectForRootHash(request, root, seed, out var projected, out _, out string issue))
+            if (!SearchAuthorityProjector.TryProjectForRootHash(request.Model, root, seed, out var projected, out _, out string issue))
                 throw new Exception(issue);
             var routes = Beta111NeowEffectProjector.ProjectFromRootHash(BaseGameModelKeys.Relics.NeowsBones,
                 PredictionPrecision.Exact, projected, root).BonesOutcome!.OriginalRoutes;
@@ -88,53 +88,55 @@ internal static partial class FamilyNeowChecks
                         .Concat(effects.SharedRelicPoolSource!.Select(r => r.RelicKey)).Distinct()
                         .Where(k => !relicsA.Contains(k) && !relicsB.Contains(k)).Take(2).ToArray();
                 var card = shape is "B" or "Cross" or "PinnedB" ? cardsB[0] : shape == "NReject" ? neitherCard : cardsA[0];
-                var capsule = source.Evaluation.ToLegacyFilter().StructuredNeowEffects.Single() with { OutputKeys = targets };
+                var capsule = source.Model.Evaluation.ToLegacyFilter().StructuredNeowEffects.Single() with { OutputKeys = targets };
                 var condition = new NeowStructuredEffectSearchCondition(arcane, NeowStructuredConditionKind.ExactSingle,
                     NeowStructuredEffectScope.ProductRelevantEffects, NeowStructuredOutputKind.Card, [card]);
                 var filter = identity with { StructuredNeowEffects = [capsule, condition],
                     RequiredBonesAcquisitionOrder = shape == "PinnedA" ? [large, arcane] : shape == "PinnedB" ? [arcane, large] : [] };
                 var query = Query(filter);
-                var n = NeowReplayPlan.Compile(query, false);
-                var r = NeowReplayPlan.Compile(query, true);
-                bool compositeReady = NeowCapsuleComposite.TryCreate(query, n, out var nr);
+                var n = NeowReplayPlan.Compile(query.Model, false);
+                var r = NeowReplayPlan.Compile(query.Model, true);
+                bool compositeReady = NeowCapsuleComposite.TryCreate(query.Model, n, out var nr);
                 bool gpuReady = NeowFamilyGpuPlan.TryCreate(n, out var gpu, out issue);
                 if (!compositeReady || nr?.UsesBonesArcane != true || !gpuReady || gpu is null)
                     throw new Exception($"Bones Arcane bounded admission failed: {shape};composite={compositeReady};gpu={gpuReady};issue={issue};exactOnly={string.Join(',', n.ExactOnly)};structured={n.StructuredConditions.Length}");
                 bool keep = shape is not ("NReject" or "RReject");
                 bool exactExpected = keep && shape != "Cross";
                 if ((NeowFamilyReplay.Matches(root, n) && nr.Reference.Matches(root)) != keep ||
-                    ProductionExactSearchEvaluator.Evaluate(query, input).IsMatch != exactExpected)
+                    ProductionExactSearchEvaluator.Evaluate(query.Model, input).IsMatch != exactExpected)
                     throw new Exception("Bones Arcane reference/Exact witness failed: " + shape);
                 if (shape == "Cross")
                 {
                     bool na = NeowFamilyReplay.Matches(root, n with { First = 3, Second = 10 });
                     bool nb = NeowFamilyReplay.Matches(root, n with { First = 10, Second = 3 });
-                    bool ra = new CapsuleRelicReplay(query, r with { First = 3, Second = 10 }).Matches(root);
-                    bool rb = new CapsuleRelicReplay(query, r with { First = 10, Second = 3 }).Matches(root);
+                    bool ra = new CapsuleRelicReplay(query.Model, r with { First = 3, Second = 10 }).Matches(root);
+                    bool rb = new CapsuleRelicReplay(query.Model, r with { First = 10, Second = 3 }).Matches(root);
                     if (na || !nb || !ra || rb) throw new Exception("Fixture is not a cross-route witness");
                 }
                 if (shape == "A" && seenOffers.Count == 1)
                 {
                     if (!FamilyExecutionCoordinator.Plan(query).Stages.SelectMany(s => s.Coverage).ToHashSet().IsSupersetOf(["N.Neow", "R.Relic"]))
                         throw new Exception("Bones Arcane NR allocation missing");
-                    if (RelicFullGpuPlan.TryCreate(query, r, out _, out _)) throw new Exception("Standalone Rfull admission widened");
-                    var family = new NeowFamily(query, n, composite: nr);
-                    var noGpu = new FamilyExecutionContext(requiresGpu: false);
+                    if (RelicFullGpuPlan.TryCreate(query.Model, r, out _, out _, openingPrefixSelection: false))
+                        throw new Exception("Legacy standalone Rfull admission widened");
+                    var description = new NeowFamily(query.Model, n, composite: nr).Describe(FilterExecutionPreferences.From(query.RunOptions));
+                    var noGpu = new FilterRuntimeServices(requiresGpu: false);
+                    var family=description.CreateExecution!(description,noGpu);
                     var batch = new SearchBatch(ordinal, 1);
                     for (int attempt = 0; attempt < 2; attempt++)
                     {
                         bool faulted = false;
-                        try { family.InvokeAsync(noGpu, new(batch, query), FamilyCandidateSet.Dense(batch), CancellationToken.None).AsTask().GetAwaiter().GetResult(); }
+                        try { family.FilterAsync(noGpu, FamilyCandidateSet.Dense(batch), CancellationToken.None).AsTask().GetAwaiter().GetResult(); }
                         catch (InvalidOperationException) { faulted = true; }
                         if (!faulted) throw new Exception("Selected Bones Arcane physical silently recovered");
                     }
                     foreach (var rejected in new[] {
-                        query with { Evaluation = query.Evaluation with { StructuredNeowEffects = [capsule with { OutputKeys = targets.Take(1).ToArray() }, condition] } },
-                        query with { Evaluation = query.Evaluation with { RelicSequenceConditions = [new(RolltheSpire2.Core.Relics.RelicSequenceKind.Common,
-                            SearchSequenceRangeMode.FirstN, 1, new([], [targets[0]], []))] } },
-                        query with { Evaluation = query.Evaluation with { RequiredFinalCurse = BaseGameModelKeys.Relics.CursedPearl } }
+                        query with { Model = query.Model with { Evaluation = query.Model.Evaluation with { StructuredNeowEffects = [capsule with { OutputKeys = targets.Take(1).ToArray() }, condition] } } },
+                        query with { Model = query.Model with { Evaluation = query.Model.Evaluation with { RelicSequenceConditions = [new(RolltheSpire2.Core.Relics.RelicSequenceKind.Common,
+                            SearchSequenceRangeMode.FirstN, 1, new([], [targets[0]], []))] } } },
+                        query with { Model = query.Model with { Evaluation = query.Model.Evaluation with { RequiredFinalCurse = BaseGameModelKeys.Relics.CursedPearl } } }
                     })
-                        if (NeowCapsuleComposite.TryCreate(rejected, NeowReplayPlan.Compile(rejected, false), out _))
+                        if (NeowCapsuleComposite.TryCreate(rejected.Model, NeowReplayPlan.Compile(rejected.Model, false), out _))
                             throw new Exception("Bones Arcane out-of-scope admission");
                 }
                 foreach (bool compact in new[] { false, true })
@@ -154,7 +156,7 @@ internal static partial class FamilyNeowChecks
                         fixtures.Add(new { name = $"Nr.BonesArcane.Window.Offer{observation.BonesFirst}", bonesComposite = true, bonesArcane = true,
                             composite = nr.Metadata, compact, start, count, ordinals, expected, gpu });
                     var tinyN = n with { Authority = n.Authority with { BonesEligibleRelicIds = [3, 10] } };
-                    var tinyR = new CapsuleRelicReplay(query, r with { Authority = r.Authority with { BonesEligibleRelicIds = [3, 10] } });
+                    var tinyR = new CapsuleRelicReplay(query.Model, r with { Authority = r.Authority with { BonesEligibleRelicIds = [3, 10] } });
                     if (!NeowFamilyGpuPlan.TryCreate(tinyN, out var tinyGpu, out _) || tinyGpu is null || tinyGpu.UsesStagedDense)
                         throw new Exception("Bones Arcane fused fixture packing failed");
                     var tinyOrdinals = ordinals.Take(4096).ToArray();

@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.IO.Compression;
 using System.Text.Json;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Identity;
@@ -31,9 +32,10 @@ internal static class FamilyQuoteEntryChecks
         { if (!condition) throw new InvalidDataException("FamilyQuoteEntry: " + name); }
         try
         {
-            using var asset = typeof(FamilyCanonicalMeasuredCost).Assembly.GetManifestResourceStream(FamilyCanonicalMeasuredCost.ResourceName)
+            using var asset = typeof(FamilyCanonicalMeasuredCost).Assembly.GetManifestResourceStream(FamilyCanonicalMeasuredCost.CompressedResourceName)
                 ?? throw new InvalidDataException("FamilyQuoteEntry: embedded canonical reference missing");
-            var source = JsonSerializer.Deserialize<FamilyCanonicalCostReference>(asset)!;
+            using var gzip = new GZipStream(asset, CompressionMode.Decompress);
+            var source = JsonSerializer.Deserialize<FamilyCanonicalCostReference>(gzip)!;
             var curve = source.CompleteCallCurves!.Value.Deserialize<FamilyCompleteCallCurve[]>()!
                 .Single(c => c.Key.ExecutionClass == "GPU" && !c.Key.CompactInput && c.TrainingCases.Contains("r43t-c-six-terminal"));
             Environment.SetEnvironmentVariable("PROCESSOR_IDENTIFIER", curve.Key.CpuIdentity);
@@ -41,11 +43,11 @@ internal static class FamilyQuoteEntryChecks
             values["identity"] = new { curve.Key.CpuIdentity, curve.Key.GpuIdentity, curve.Key.RenderingBackend };
             var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>("tools/ProductionSearchHost/Corpus/v1/context.json").Context;
             SearchQuery Read(string file) => ProductionSearchReplay.Read<ProductionSearchReplayWorkload>("tools/ProductionSearchHost/Corpus/" + file).Query;
-            ExactSearchExecutionRequest Request(SearchQuery query, SearchContext? actual = null, int workers = 4) =>
-                ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, actual ?? context),
+            PreparedSearch Request(SearchQuery query, SearchContext? actual = null, int workers = 4) =>
+                SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, actual ?? context),
                     new("000000000000", 1 << 24, 30, workers)).Plan ?? throw new InvalidDataException("FamilyQuoteEntry: compile failed");
             var costs = new GpuCostSnapshot([]);
-            void Quote(string name, IFamilyInvocation family, FamilyPhysicalQuoteRequest geometry)
+            void Quote(string name, FilterBodyDescription family, FamilyPhysicalQuoteRequest geometry)
             {
                 var computationGeometry = geometry with { ComputationOnly = true };
                 var local = FamilyPhysicalQuote.Computation(family, geometry, costs);
@@ -62,10 +64,10 @@ internal static class FamilyQuoteEntryChecks
                 if (local is not null) Check(local.PublicTransportClass != "CompleteCanonicalAbi1",
                     name + " complete GPU call cannot become computation");
             }
-            void Plan(string name, ExactSearchExecutionRequest request, bool gpu)
+            void Plan(string name, PreparedSearch request, bool gpu)
             {
                 var plan = FamilyExecutionCoordinator.Plan(request, gpu);
-                var eta = FamilySearchEtaProjectorV1.Project(request, plan, liveExactMsPerAttempt: .001);
+                var eta = FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(request, plan), plan, liveExactMsPerAttempt: .001);
                 values[name] = new {
                     Order = plan.ExecutionOrderUnits.Select(FamilyExecutionCoordinator.FamilyOrderKey).ToArray(),
                     Stages = plan.Stages.Select(s => new { s.Family.FamilyId, s.Coverage, s.CompactAbi1Input,
@@ -84,11 +86,15 @@ internal static class FamilyQuoteEntryChecks
                 c.Rarity == EffectCardRarity.Common).CardKey;
             var measuredRequest = Request(SearchQuery.Empty with { CombatCardRewards = new(6,
                 CombatRewardSequenceOrderMode.Ordered, [null, null, null, null, null, card]) }, workers: curve.Key.ConfiguredWorkers);
-            var combat = FamilyExecutionCoordinator.CreateRegisteredFamilies(measuredRequest, true).OfType<CombatRewardFamily>().Single();
+            var combat = FamilyExecutionCoordinator.CreateRegisteredFamilies(measuredRequest, true).Single(f => f.FamilyId == "C.CombatReward");
             Quote("canonical-C", combat, new(false, false, 1 << 24));
             var historical = new FamilyCanonicalCostSnapshot(source.Rows, source.CompleteCallCurves);
-            var currentKey = FamilyCanonicalCostShape.Describe(measuredRequest, combat, false, 1 << 24)!;
-            Check(currentKey.PhysicalRevision == curve.Key.PhysicalRevision + GpuRngRotation.Revision &&
+            var currentKey = FamilyCanonicalCostShape.Describe(combat, false, 1 << 24)!;
+            string currentCombatRevision = curve.Key.PhysicalRevision.Replace(".Dense.", ".DenseCarry8.20261030.v1.Dense.", StringComparison.Ordinal) +
+                NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision;
+            Check((currentKey with { PhysicalRevision = curve.Key.PhysicalRevision, RootWindow = curve.Key.RootWindow }) == curve.Key,
+                "C retained work shape and device metadata match the historical body before its explicit physical revisions");
+            Check(currentKey.PhysicalRevision == currentCombatRevision &&
                 FamilyCanonicalMeasuredCost.IsCanonicalQuote(historical.Quote(curve.Key with { RootWindow = 1 << 24 }, new(false, false, 1 << 24))) &&
                 historical.Quote(currentKey, new(false, false, 1 << 24)) is null,
                 "C historical finite reference remains available only for its actual measured body");
@@ -115,11 +121,11 @@ internal static class FamilyQuoteEntryChecks
             var shop = FamilyExecutionCoordinator.CreateRegisteredFamilies(shopRequest, true)
                 .Single(f => f.FamilyId == "S.MerchantShopColorless");
             Quote("ordinary-S-GPU", shop, new(false, false, 1 << 24));
-            var cpu = FamilyCpuExecution.ConfiguredRealizations(shop).OfType<FamilyCpuExecution>().Single();
+            var cpu = shop.CpuAlternatives.Single(cpu => cpu.CpuWorkers == Math.Clamp(shop.CpuWorkers, 1, 32));
             Quote("configured-S-CPU-Compact", cpu, new(true, false, cpu.WindowCapacity));
             Plan("ordinary-S-plan", shopRequest, true);
             Plan("configured-S-CPU-plan", shopRequest, false);
-            var preview = WorkbenchProbabilityPreview.Compute(shopRequest.CompiledSearch, 30, 4, false);
+            var preview = WorkbenchProbabilityPreview.Compute(shopRequest.Model.CompiledSearch, 30, 4, false);
             var previewGeometry = new FamilyPhysicalQuoteRequest(false, false, 1 << 20) { ComputationOnly = true };
             var previewLocal = FamilyPhysicalQuote.Computation(shop, previewGeometry, GpuCostCalibration.Capture())!;
             Check(preview.Issues.Count == 0 && preview.Costs[shop.FamilyId].Gpu == previewLocal.NanosecondsPerInput,
@@ -149,15 +155,15 @@ internal static class FamilyQuoteEntryChecks
                 { Conditions = Read("pricing-hole-v1/S-mixed.json") }).ToArray() };
             var tableRequest = Request(table, partyContext);
             var tableUnits = FamilyExecutionCoordinator.CreateRegisteredFamilies(tableRequest, true);
-            var personal = tableUnits.OfType<PartyFamily>().Single(f => f.FamilyId == "S.MerchantShopColorless");
-            var neow = tableUnits.OfType<NeowFamily.PartyInitial>().Single();
+            var personal = tableUnits.Single(f => f.FamilyId == "S.MerchantShopColorless");
+            var neow = tableUnits.Single(f => f.FamilyId == "N.Neow");
             Quote("party-S", personal, new(false, false, 65536));
             Quote("party-N-Compact", neow, new(true, false, 65536));
             Check(personal.QuotePhysicalWork(new(false, false, 65536))!.Evidence.Contains("HistoricalWrapperCoefficients", StringComparison.Ordinal),
                 "Party complete ETA genuinely exercises retained historical wrapper priority");
             Check(FamilyPhysicalQuote.Computation(neow, new(true, false, 65536), costs)!.Evidence.Contains(
                 "SharedArrivalWitnessUnchanged", StringComparison.Ordinal), "N shared-arrival witness remains explicit");
-            foreach (IFamilyInvocation unit in new IFamilyInvocation[] { personal, neow })
+            foreach (FilterBodyDescription unit in new FilterBodyDescription[] { personal, neow })
             {
                 var geometry = new FamilyPhysicalQuoteRequest(unit == neow, false, 65536);
                 double survival = unit.Survival.SurvivalProbability ?? 1;
@@ -175,8 +181,8 @@ internal static class FamilyQuoteEntryChecks
             var initial = Request(Read("family-pricing-matrix-v1/R-three-common.json") with { TreasureRelics = new(1, 2,
                 TreasureRelicOrderMode.Ordered, [null, new ModelKey("RELIC", "JUZU_BRACELET")]) });
             var initialUnit = FamilyExecutionCoordinator.CreateRegisteredFamilies(initial, true)
-                .OfType<InitialRoomsInvocation>().Single(f => f.FamilyId == "R.Relic");
-            Check(initialUnit.Ordinary is not null, "InitialRooms fixture actually adds work to ordinary R");
+                .Single(f => f.FamilyId == "R.Relic");
+            Check(initialUnit.PhysicalBodies.Any(child => child.FamilyId == "R.Relic"), "InitialRooms fixture actually adds work to ordinary R");
             Quote("initial-R-Compact", initialUnit, new(true, false, 65536));
             Plan("initial-R-plan", initial, true);
             var variant = Request(SearchQuery.Empty with { FirstActUnknownEventPrefixCount = 3 },
@@ -199,8 +205,9 @@ internal static class FamilyQuoteEntryChecks
 
             // Reuse the existing auxiliary-failure fixture, with no execution or
             // cache writes. Broader result publication remains in allocation checks.
-            var fixture = (IFamilyInvocation)Activator.CreateInstance(typeof(FamilyAllocationPricingChecks)
-                .GetNestedType("LifecycleFixture", BindingFlags.NonPublic)!, ["quote", "QuoteEntryAuxiliaryFailure"])!;
+            var fixtureType = typeof(FamilyAllocationPricingChecks).GetNestedType("LifecycleFixture", BindingFlags.NonPublic)!;
+            var fixtureOwner = Activator.CreateInstance(fixtureType, ["quote", "QuoteEntryAuxiliaryFailure"])!;
+            var fixture = (FilterBodyDescription)fixtureType.GetProperty("Body")!.GetValue(fixtureOwner)!;
             var failedCost = FamilyPlanner.PlanSimple([fixture]);
             Check(failedCost.OrderedFamilies.Single() == fixture && failedCost.Stages.Single().PerInputTimeMs is null,
                 "auxiliary quote failure retains executable unit with unknown price");
@@ -267,6 +274,44 @@ internal static class FamilyQuoteEntryChecks
             "C rotated ETA identifies a reference estimate instead of a newly measured body");
     }
 
+    // Exact paths and old bodies from the preserved fixture. Each replacement
+    // is an already-delivered numerical revision; all prices, geometry, work
+    // shape, probability and other fields still pass through Compare below.
+    private static bool KnownPhysicalRevisionDelta(string path, string? expected, string? actual)
+    {
+        const string rotation = ".Rotate45.SplitUInt32.20261028.v1";
+        const string identity = ".IdentityFacts.20261031.v1";
+        (string Prior, string Current)? revision = path switch
+        {
+            "$.Values.canonical-C.Revision" or "$.Values.canonical-C-plan.Stages[0].PhysicalImplementationRevision" =>
+                ("C.CombatReward.Gpu.NeutralHotLoop.Dense.CanonicalAbi1Ready.20260907.v1",
+                 "C.CombatReward.Gpu.NeutralHotLoop.DenseCarry8.20261030.v1.Dense.CanonicalAbi1Ready.20260907.v1" + identity + rotation),
+            "$.Values.initial-R-Compact.Revision" =>
+                ("R.Relic.InitialTreasure.WithOrdinary.Public.20261024.v1.Gpu.CompactAbi1.CanonicalAbi1Ready",
+                 "R.Relic.InitialTreasure.WithOrdinary.Public.DeclaredUnknownJuzu.20261029.v2.Gpu.CompactAbi1.CanonicalAbi1Ready" + rotation),
+            "$.Values.initial-R-plan.Stages[0].PhysicalImplementationRevision" =>
+                ("R.Relic.InitialTreasure.WithOrdinary.Public.20261024.v1.Gpu.Dense.CanonicalAbi1Ready",
+                 "R.Relic.InitialTreasure.WithOrdinary.Public.DeclaredUnknownJuzu.20261029.v2.Gpu.Dense.CanonicalAbi1Ready" + rotation),
+            "$.Values.M-unpriced.Revision" or "$.Values.M-plan.Stages[0].PhysicalImplementationRevision" =>
+                ("M.StandardMap.Cpu.Final.EndpointReach.20261028.v2.RootMode2.P4.B8192.Dense.CanonicalAbi1Ready",
+                 "M.StandardMap.Cpu.Final.EndpointReach.RouteSequence.20261028.v3.RootMode2.P4.B8192.Dense.CanonicalAbi1Ready"),
+            "$.Values.ordinary-S-GPU.Revision" or "$.Values.ordinary-S-plan.Stages[0].PhysicalImplementationRevision" =>
+                ("S.MerchantShopColorless.Atomic.DenseCarry8.CanonicalIdentity.ConditionalPrefixReject.CanonicalAbi1Ready.20261015.v2",
+                 "S.MerchantShopColorless.Atomic.DenseCarry8.CanonicalIdentity.ConditionalPrefixReject.CanonicalAbi1Ready.20261015.v2" + rotation),
+            "$.Values.party-N-Compact.Revision" or "$.Values.party-plan.Stages[1].PhysicalImplementationRevision" =>
+                ("N.Neow.PartyEffects.Gpu.v6.Fused.CompactAbi1.DirectCompactCast.20261016.v1",
+                 "N.Neow.PartyEffects.Gpu.v6.Fused.CompactAbi1.DirectCompactCast.20261016.v1" + identity + rotation),
+            "$.Values.party-S.Revision" or "$.Values.party-plan.Stages[0].PhysicalImplementationRevision" =>
+                ("S.MerchantShopColorless.Party.20260922.v1.PrivateOrdinal.Dense.PartyPrefixReject.20261016.v1.GreedyPlayers.20261026.v1",
+                 "S.MerchantShopColorless.Party.20260922.v1.PrivateOrdinal.Dense.PartyPrefixReject.20261016.v1.GreedyPlayers.20261026.v1" + rotation),
+            "$.Values.V-CPU.Revision" or "$.Values.V-plan.Stages[0].PhysicalImplementationRevision" =>
+                ("V.VariantOpening.Cpu.20261028.v1.RootMode2.P4.B65536.Dense.CanonicalAbi1Ready",
+                 "V.VariantOpening.Cpu.DeclaredOpeningJuzu.20261029.v2.RootMode2.P4.B65536.Dense.CanonicalAbi1Ready"),
+            _ => null
+        };
+        return revision is { } known && expected == known.Prior && actual == known.Current;
+    }
+
     private static void Compare(JsonElement expected, JsonElement actual, string path, Action<bool, string> check)
     {
         check(expected.ValueKind == actual.ValueKind, path + " kind changed");
@@ -279,12 +324,8 @@ internal static class FamilyQuoteEntryChecks
             "$.Values.canonical-C-plan.Eta.Stages[0].SteadyStateMs" or
             "$.Values.canonical-C-plan.Eta.Stages[0].EvidenceSource" or
             "$.Values.canonical-C-plan.Eta.Stages[0].Source") return;
-        if (path is "$.Values.M-unpriced.Revision" or "$.Values.M-plan.Stages[0].PhysicalImplementationRevision" &&
-            expected.GetString() == "M.StandardMap.Cpu.Final.EndpointReach.20261028.v2.RootMode2.P4.B8192.Dense.CanonicalAbi1Ready" &&
-            actual.GetString() == "M.StandardMap.Cpu.Final.EndpointReach.RouteSequence.20261028.v3.RootMode2.P4.B8192.Dense.CanonicalAbi1Ready") return;
         if (expected.ValueKind == JsonValueKind.String &&
-            (path.EndsWith(".Revision", StringComparison.Ordinal) || path.EndsWith(".PhysicalImplementationRevision", StringComparison.Ordinal)) &&
-            actual.GetString() == expected.GetString() + GpuRngRotation.Revision) return;
+            KnownPhysicalRevisionDelta(path, expected.GetString(), actual.GetString())) return;
         if (expected.ValueKind == JsonValueKind.Object)
         {
             var names = expected.EnumerateObject().Select(p => p.Name).ToArray();

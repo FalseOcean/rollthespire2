@@ -10,7 +10,14 @@ bool r_generic_route(uint64_t root,RngState rewards,uint first,uint second){
     for(uint b=0u;b<plan_meta.values[0u];++b){
         uvec4 bucket=bucket_meta.values[b]; uint scope=bucket.z&255u,kind=(bucket.z>>8u)&255u;
         if(scope==0u||kind<1u||kind>3u){consume_shuffle(bucket.y);continue;}
+#ifdef RFULL_OPENING_PREFIX
+        if(total+bucket.y>RT2_R_GENERIC_BAG_CAPACITY){
+            atomicMax(output_header.values[3u],3u);
+            return true;
+        }
+#else
         if(total+bucket.y>512u)return true;
+#endif
         for(uint i=0u;i<bucket.y;++i){bag[total+i]=pool_ids.values[bucket.x+i];rarities[total+i]=kind;}
         for(uint n=bucket.y;n>1u;--n){uint a=total+next_int(n),z=total+n-1u,v=bag[a];bag[a]=bag[z];bag[z]=v;}
         total+=bucket.y;
@@ -31,8 +38,21 @@ bool r_generic_route(uint64_t root,RngState rewards,uint first,uint second){
                 for(uint i=0u;i<rfull_meta(121u);++i)
                     if(key==rfull_meta(rfull_meta(120u)+i))return true;
             }
-        }else if(relic==14u){for(uint i=0u;i<18u;++i)cr_next_double(state.rewards);}
+        }
+#ifdef RFULL_OPENING_PREFIX
+        else {
+            uint rule=relic<30u?rfull_meta(rfull_meta(122u)+relic):0u;
+            if(rule==0u)return false;
+            if(rule==0x80000000u){
+                if(!cr_replay_query_literal_relic_consumption(relic,root,state)){
+                    atomicMax(output_header.values[3u],256u+relic);return true;
+                }
+            }else for(uint i=1u;i<rule;++i)cr_consume_double(state.rewards);
+        }
+#else
+        else if(relic==14u){for(uint i=0u;i<18u;++i)cr_next_double(state.rewards);}
         else if(!cr_replay_query_literal_relic_consumption(relic,root,state))return true;
+#endif
     }
     for(uint row=0u;row<rfull_meta(110u);++row){
         uint at=rfull_meta(109u)+row*4u,source=rfull_meta(at),mode=rfull_meta(at+1u),count=rfull_meta(at+2u),targets=rfull_meta(at+3u);

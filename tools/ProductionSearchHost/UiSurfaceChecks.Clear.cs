@@ -20,13 +20,46 @@ internal static partial class UiSurfaceChecks
     {
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
         object Field(object obj, string name) => obj.GetType().GetField(name, flags)!.GetValue(obj)!;
-        void Set(object obj, string name, object value) => obj.GetType().GetField(name, flags)!.SetValue(obj, value);
         Button Clear() => (Button)Field(frame, "_clearConditions");
         Button Undo() => (Button)Field(frame, "_undoClearConditions");
         int checks = 0;
         void Check(bool condition, string reason) { checks++; if (!condition) throw new InvalidOperationException("ClearConditions:" + reason); }
         string Query() => JsonSerializer.Serialize(frame.CaptureDraft().WithoutCapturedAuthority());
+        bool Same<T>(T left, T right) => System.Text.Json.Nodes.JsonNode.DeepEquals(
+            JsonSerializer.SerializeToNode(left), JsonSerializer.SerializeToNode(right));
+        WorkbenchSearchDraft Draft() => frame.CaptureDraft().WithoutCapturedAuthority();
+        object UndoState()
+        {
+            JsonElement? Stamp(string? value) => value is null ? null : JsonSerializer.Deserialize<JsonElement>(value);
+            return new { Draft = Draft(), HasReceipt = Field(frame, "_restoreClearedConditions") is Action, UndoDisabled = Undo().Disabled,
+                RecordedContext = Field(frame, "_clearConditionsContext"),
+                CurrentContext = frame.GetType().GetMethod("ClearConditionsContext", flags)!.Invoke(frame, null),
+                RecordedStamp = Stamp((string?)Field(frame, "_clearUndoStamp")),
+                CurrentStamp = Stamp((string?)frame.GetType().GetMethod("ConditionUndoStamp", flags)!.Invoke(frame, null)) };
+        }
         async Task Frames() { for (int i = 0; i < 3; i++) await root.ToSignal(root.GetTree(), SceneTree.SignalName.ProcessFrame); }
+        async Task Seat(int slot)
+        {
+            frame.GetNode<Button>("SearchPlayer" + slot).EmitSignal(Button.SignalName.Pressed);
+            await Frames();
+            Check((int)Field(frame, "_seat") == slot, "actual seat button selects P" + (slot + 1));
+        }
+        void CheckActiveBindings(bool party)
+        {
+            foreach (var (editor, dictionary) in new[] {
+                ("_neowEditor", party ? "_partyCatalogDrafts" : "_drafts"),
+                ("_combatEditor", party ? "_partyDrafts" : "_drafts"),
+                ("_shopEditor", party ? "_partyDrafts" : "_drafts"),
+                ("_relicEditor", party ? "_partyDrafts" : "_drafts"),
+                ("_ancientEditor", party ? "_partyDrafts" : "_drafts"),
+                ("_eventEditor", party ? "_partyDrafts" : "_drafts"), ("_actInformationEditor", "_drafts") })
+            {
+                var owner = Field(frame, editor);
+                var drafts = (System.Collections.IDictionary)Field(owner, dictionary);
+                Check(drafts.Values.Cast<object>().Any(value => ReferenceEquals(value, Field(owner, "_draft"))),
+                    editor + " active draft belongs to its current mode dictionary");
+            }
+        }
         var empty = new WorkbenchSearchDraft(BaseGameModelKeys.Characters.Ironclad, 10,
             SearchQuery.Empty, AncientOptionConditionProfile.BroadDefault);
         var conditions = SearchQuery.Empty with
@@ -75,21 +108,91 @@ internal static partial class UiSurfaceChecks
         string solo = Query();
         frame.SetSearchMode(true); await Frames();
         var party = frame.CaptureDraft();
-        var partyQuery = SearchQuery.Empty with { StandardMaps = conditions.StandardMaps,
-            Players = party.Query.Players.Select(p => p with { Conditions = p.Slot == 1
-                ? SearchQuery.Empty with { OpeningRoute = new(BaseGameModelKeys.Relics.SilkenTress), CombatPotionRewards = conditions.CombatPotionRewards }
-                : SearchQuery.Empty }).ToArray() };
-        frame.RestoreDraft(party with { Query = partyQuery }, render: false);
-        Set(frame, "_seat", 1); frame.Refresh("zh", JsonUiTextProvider.CreateUi13("zh")); await Frames();
-        string partyBefore = Query(); var unlocks = Field(frame, "_lobbyUnlocks");
-        Clear().EmitSignal(Button.SignalName.Pressed); await Frames();
-        var cleared = frame.CaptureDraft();
-        Check(cleared.Query.StandardMaps.Count == 0 && cleared.Query.Players.All(p => JsonSerializer.Serialize(p.Conditions) == JsonSerializer.Serialize(SearchQuery.Empty) && p.Offers.IsEmpty),
-            "shared and off-screen player conditions cleared");
-        Check((int)Field(frame, "_seat") == 1 && ReferenceEquals(unlocks, Field(frame, "_lobbyUnlocks")) &&
-            cleared.Players.Select(p => p.Character).SequenceEqual(party.Players.Select(p => p.Character)), "party context retained");
-        Undo().EmitSignal(Button.SignalName.Pressed); await Frames();
-        Check(Query() == partyBefore, "party undo");
+        foreach (int players in new[] { 2, 3, 4 })
+        {
+            var roster = Enumerable.Range(0, players).Select(slot => party.Players[slot % party.Players.Count] with
+                { Slot = slot, NeowEditor = null, AncientEditor = null, EventEditor = null, CombatRewardEditor = null }).ToArray();
+            var partyQuery = SearchQuery.Empty with { StandardMaps = conditions.StandardMaps,
+                Players = Enumerable.Range(0, players).Select(slot => new PlayerOfferQuery(slot,
+                    new([], [BaseGameModelKeys.Relics.SilkenTress], []))
+                { Conditions = SearchQuery.Empty with { CombatPotionRewards = conditions.CombatPotionRewards,
+                    RelicSequenceConstraints = conditions.RelicSequenceConstraints } }).ToArray() };
+            var mapState = new MapEditorStateSnapshot(2,
+                [new(1, false, new(StandardMapMetric.ReachableMaxElite, 2),
+                    [new(21, StandardMapRoomType.Monster, 0, 21), new(22, StandardMapRoomType.Elite, 0, 22)]),
+                 new(2, true, new(StandardMapMetric.ReachableMaxRest, 1), []),
+                 new(3, false, new(StandardMapMetric.ReachableMaxUnknown, null), [])]);
+            frame.RestoreDraft(party with { Players = roster, Query = partyQuery, MapEditor = mapState }, render: false);
+            frame.Refresh("zh", JsonUiTextProvider.CreateUi13("zh")); await Frames();
+            foreach (int slot in Enumerable.Range(0, players))
+            {
+                await Seat(slot);
+                var combatDraft = Field(Field(frame, "_combatEditor"), "_draft");
+                combatDraft.GetType().GetField("ExclusionBattleCount")!.SetValue(combatDraft, slot + 2);
+            }
+            var before = Draft(); var unlocks = Field(frame, "_lobbyUnlocks");
+            CheckActiveBindings(true);
+            Clear().EmitSignal(Button.SignalName.Pressed); await Frames();
+            var cleared = Draft();
+            Check(cleared.Query.StandardMaps.Count == 0 && cleared.Query.Players.All(p => Same(p.Conditions, SearchQuery.Empty) && p.Offers.IsEmpty),
+                "shared and all off-screen personal conditions cleared for " + players + " players");
+            Check((int)Field(frame, "_seat") == players - 1 && ReferenceEquals(unlocks, Field(frame, "_lobbyUnlocks")) &&
+                cleared.Players.Select(p => p.Character).SequenceEqual(roster.Select(p => p.Character)), "party context retained");
+            CheckActiveBindings(true);
+            var afterClear = UndoState();
+            await Seat(0); var afterFirstSeat = UndoState();
+            await Seat(players - 1); var afterLastSeat = UndoState();
+            File.WriteAllText(Path.Combine(output, $"clear-party-navigation-{players}p.json"), JsonSerializer.Serialize(new
+                { Before = before, AfterClear = afterClear, AfterFirstSeat = afterFirstSeat, AfterLastSeat = afterLastSeat },
+                new JsonSerializerOptions { WriteIndented = true }));
+            Check(!Undo().Disabled && Field(frame, "_restoreClearedConditions") is Action,
+                "viewing another seat retains the stable complete undo receipt");
+            Undo().EmitSignal(Button.SignalName.Pressed); await Frames();
+            var restored = Draft();
+            var receipt = new { Players = players, Before = before, Cleared = cleared, Restored = restored,
+                TypedDraftEqual = Same(before, restored), SelectedSeat = (int)Field(frame, "_seat") };
+            File.WriteAllText(Path.Combine(output, players == 2 ? "clear-party-drafts.json" : $"clear-party-{players}p-drafts.json"),
+                JsonSerializer.Serialize(receipt, new JsonSerializerOptions { WriteIndented = true }));
+            Check(Same(before, restored), "party undo restores the full typed draft and every sidecar for " + players + " players");
+            CheckActiveBindings(true);
+            foreach (int slot in Enumerable.Range(0, players))
+            { await Seat(slot); Check(Same(before, Draft()), "restored complete draft survives subsequent seat views"); }
+
+            foreach (string domain in new[] { "combat", "map" })
+            {
+                var domains = (System.Collections.IDictionary)Field(frame, "_domainButtons");
+                ((Button)domains[domain]!).EmitSignal(Button.SignalName.Pressed); await Frames();
+                var categoryBefore = Draft(); int clearedSeat = (int)Field(frame, "_seat");
+                ((Button)Field(frame, "_clearCategory")).EmitSignal(Button.SignalName.Pressed); await Frames();
+                var categoryCleared = Draft();
+                Check(domain == "map"
+                    ? categoryCleared.Query.StandardMaps.Count == 0 && Same(categoryCleared.Query.Players, categoryBefore.Query.Players)
+                    : categoryCleared.Query.Players[clearedSeat].Conditions.CombatPotionRewards == null &&
+                        Same(categoryCleared.Query.StandardMaps, categoryBefore.Query.StandardMaps) &&
+                        Same(categoryCleared.Query.Players.Where(p => p.Slot != clearedSeat).ToArray(),
+                            categoryBefore.Query.Players.Where(p => p.Slot != clearedSeat).ToArray()),
+                    "category clear changes only its real shared/personal owner");
+                await Seat((clearedSeat + 1) % players);
+                Check(!Undo().Disabled, "category undo survives a seat view");
+                Undo().EmitSignal(Button.SignalName.Pressed); await Frames();
+                Check(Same(categoryBefore, Draft()), "category undo restores complete drafts and hidden sidecars: " + domain);
+                CheckActiveBindings(true);
+            }
+            Clear().EmitSignal(Button.SignalName.Pressed); await Frames();
+            await Seat(0);
+            ((CombatRewardSearchEditor)Field(frame, "_combatEditor")).ImportQuery(SearchQuery.Empty with
+                { CombatPotionRewards = new(1, CombatRewardSequenceOrderMode.Ordered, [new(CombatPotionSlotRequirement.NoDrop, null)]) });
+            var newEdit = Draft();
+            Undo().EmitSignal(Button.SignalName.Pressed); await Frames();
+            Check(Same(newEdit, Draft()) && Field(frame, "_restoreClearedConditions") is null,
+                "a new personal edit invalidates whole-table undo without overwriting the new draft");
+            Clear().EmitSignal(Button.SignalName.Pressed); await Frames();
+            Check(!Undo().Disabled, "a new clear owns a fresh undo receipt");
+            frame.GetNode<Button>("SearchMode0").EmitSignal(Button.SignalName.Pressed); await Frames();
+            Check(Field(frame, "_restoreClearedConditions") is null && Query() == solo,
+                "an actual mode/context change invalidates party undo without overwriting solo authoring");
+            frame.GetNode<Button>("SearchMode1").EmitSignal(Button.SignalName.Pressed); await Frames();
+        }
         frame.SetSearchMode(false); await Frames(); Check(Query() == solo, "other mode untouched");
 
         // Clear works even when a partially authored query cannot be exported.

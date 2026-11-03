@@ -33,7 +33,7 @@ public static partial class RuntimeContextAuthorityCapture
     {
         ArgumentNullException.ThrowIfNull(profile);
         RuntimeSnapshotThreadGuard.RequireMainThread();
-        if (profile.ProfileId == RuntimeProfileId.Beta111)
+        if (RuntimeProfilePolicies.UsesSlicedAuthorityObservation(profile.ProfileId))
         {
             using var observation = BeginObservation(profile, rawSeed, character, ascension, gameVersion,
                 playersCount, playerSlotIndex, predictionGameMode, predictionGameModeAuthority,
@@ -47,7 +47,7 @@ public static partial class RuntimeContextAuthorityCapture
         RuntimeEffectSnapshotCaptureResult captured = suppliedUnlockState &&
             profile.ProfileId is RuntimeProfileId.Beta110 or RuntimeProfileId.Beta111
             ? ReflectionNeowEffectSnapshotAdapter.Capture(profile, rawSeed, character, ascension, playersCount,
-                playerSlotIndex, profile.ProfileId, gameVersion, new(true, true), explicitUnlockState)
+                playerSlotIndex, profile.ProfileId, gameVersion, RuntimeProfilePolicies.EffectCatalogRules(profile.ProfileId), explicitUnlockState)
             : NeowEffectRuntimeSnapshotCapture.Capture(
             profile,
             rawSeed,

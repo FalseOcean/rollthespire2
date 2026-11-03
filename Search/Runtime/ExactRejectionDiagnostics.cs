@@ -7,7 +7,7 @@ namespace RolltheSpire2.Search.Runtime;
 internal static class ExactRejectionDiagnostics
 {
     // Called for only six automatic samples per session, or an explicit manual check.
-    internal static void Log(ExactSearchExecutionRequest plan, string seed, ProductionExactSearchResult result)
+    internal static void Log(SearchModel plan, string seed, ProductionExactSearchResult result)
     {
         try
         {
@@ -16,7 +16,7 @@ internal static class ExactRejectionDiagnostics
                 g.GroupId, g.SourceRelicKey, g.SelectionPolicy, g.Scope,
                 totalItems = g.OrderedItems.Count, items = g.OrderedItems.Take(16).ToArray()
             }).ToArray();
-            var observed = result.Document?.Sections.SelectMany(s => s.NeowChoices).Take(3).Select(c => new
+            var observed = result.Facts?.Neow?.Choices.Take(3).Select(c => new
             {
                 c.SlotIndex, c.RelicKey, c.IdentityPrecision, c.EffectPrecision,
                 groups = Groups(c.EffectGroups), bonesRelics = c.BonesOutcome?.OfferedRelics,
@@ -39,8 +39,7 @@ internal static class ExactRejectionDiagnostics
                 result.Authority.WorldSnapshotFingerprint,
                 requested = plan.CompiledSearch.NormalizedQuery,
                 observedNeow = observed,
-                observedRewards = result.Document?.Sections.Where(s => s.NormalCombatRewardSequencePrediction is not null)
-                    .Select(s => s.NormalCombatRewardSequencePrediction!).Select(s => new
+                observedRewards = (result.Facts?.CombatRewards is {} rewards ? new[]{rewards} : []).Select(s => new
                     {
                         s.Status, s.IssueCode, s.AuthorityFingerprint,
                         routes = s.Routes.Take(8).Select(r => new
@@ -56,9 +55,9 @@ internal static class ExactRejectionDiagnostics
                             }).ToArray()
                         }).ToArray()
                     }).ToArray(),
-                observedParty = result.Document?.Party?.Transactions.Take(4).Select(t => new
+                observedParty = result.Facts?.Party?.Transactions.Take(4).Select(t => new
                 { t.Slot, t.Option, t.OpeningRouteId, t.Choices, offers = Groups(t.Offers), results = Groups(t.Results) }).ToArray(),
-                documentAvailable = result.Document is not null,
+                factsAvailable = result.Facts is not null,
                 sampleBounds = "3 offers;8 routes;12 groups;16 items per group;6 battles;4 card rewards;4 child scopes"
             });
             if (json.Length > 65536)

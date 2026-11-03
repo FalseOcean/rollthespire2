@@ -18,7 +18,9 @@ namespace RolltheSpire2.Search.FamilyExecution;
 /// </summary>
 internal sealed class AncientOptionFamilyPlan
 {
-    private readonly ExactSearchExecutionRequest _request;
+    private readonly RolltheSpire2.Compatibility.RuntimeProfileId _profileId;
+    private readonly ModelKey _characterKey;
+    private readonly int _playerSlot, _playersCount;
     private readonly Beta109WorldGenerationSnapshot _generation;
     private readonly NeowSearchFilter _filter;
     private readonly ActBinding[] _acts;
@@ -33,7 +35,6 @@ internal sealed class AncientOptionFamilyPlan
         bool Unconditional, bool HasSeaGlassFilter);
     private readonly Dictionary<ModelKey, ushort> _ids = new(ModelKeyComparer.Instance);
     internal ushort PricingDenseId(ModelKey key) => _ids.TryGetValue(key, out ushort id) ? id : ushort.MaxValue;
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<(int Act, ModelKey? Ancient), byte> _reportedUnresolved = new();
     internal bool GpuSupported { get; }
     internal GpuNumericalVariant NumericalVariant { get; }
     internal GpuNumericRequirements GpuNumericRequirements => GpuSupported
@@ -51,11 +52,12 @@ internal sealed class AncientOptionFamilyPlan
         $"{p.Generator}:s{p.MaxScratchCount}:" + string.Join(',', p.Pools.Select(pool => $"{pool.Role}={pool.Values.Length}"))));
     internal uint[][] Buffers { get; }
     internal FamilySurvivalProjection Survival { get; }
-    internal AncientOptionFamilyPlan(ExactSearchExecutionRequest request, bool prepareGpu = true, GpuPacker? gpuPacker = null,
+    internal AncientOptionFamilyPlan(SearchModel request, bool prepareGpu = true, GpuPacker? gpuPacker = null,
         GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
         NumericalVariant = numericalVariant;
-        _request = request;
+        _profileId = request.ProfileId; _characterKey = request.CharacterKey;
+        _playerSlot = request.Authority.PlayerSlotIndex; _playersCount = request.Authority.PlayersCount;
         _generation = request.Authority.WorldAuthority?.Beta109Generation ??
             throw new InvalidOperationException("A.OptionContextUnavailable");
         var e = request.Evaluation;
@@ -119,7 +121,7 @@ internal sealed class AncientOptionFamilyPlan
             foreach (var key in act.Keys)
             {
                 var branches = _filter.AncientBranchConditions.Where(b => b.Act == act.Act && b.AncientKey == key).ToImmutableArray();
-                var context = _generation.AncientEventContexts.FirstOrDefault(c => c.Act == act.Act && c.AncientKey == key && c.PlayerSlot == _request.Authority.PlayerSlotIndex)
+                var context = _generation.AncientEventContexts.FirstOrDefault(c => c.Act == act.Act && c.AncientKey == key && c.PlayerSlot == _playerSlot)
                     ?? _generation.AncientEventContexts.FirstOrDefault(c => c.Act == act.Act && c.AncientKey == key && c.IsShared);
                 referenceRows.Add((act.Act, key), new(context, branches, optionFilters, seaFilters,
                     branches.Any(b => b is { OptionAny.Count: 0, SeaGlassTargetAny.Count: 0 }) && !hasOptions && !hasSea, hasSea));
@@ -159,31 +161,32 @@ internal sealed class AncientOptionFamilyPlan
     {
         int optionCount = _filter.AncientOptionFilters.Count(f => f.Act == act && !f.IsEmpty);
         if (optionCount == 0 || keys.Length == 0 || fast.AncientOptionPredicates.Length != optionCount ||
-            _generation.Profile != _request.ProfileId || _request.Authority.PlayerSlotIndex < 0 ||
-            _request.Authority.PlayerSlotIndex >= _request.Authority.PlayersCount ||
+            _generation.Profile != _profileId || _playerSlot < 0 ||
+            _playerSlot >= _playersCount ||
             _filter.AncientSeaGlassTargetFilters.Any(f => f.Act == act && !f.IsEmpty) ||
             _filter.AncientBranchConditions.Any(b => b.Act == act && b.SeaGlassTargetAny.Count > 0)) return false;
         foreach (var key in keys)
         {
-            var context = _generation.AncientEventContexts.FirstOrDefault(c => c.Act == act && c.AncientKey == key && c.PlayerSlot == _request.Authority.PlayerSlotIndex)
+            var context = _generation.AncientEventContexts.FirstOrDefault(c => c.Act == act && c.AncientKey == key && c.PlayerSlot == _playerSlot)
                 ?? _generation.AncientEventContexts.FirstOrDefault(c => c.Act == act && c.AncientKey == key && c.IsShared);
             // These provider checks precede generation and identity precision.
             // The existing compiler separately proves generator/catalog/pool,
             // hook, modifier, context and RNG-root authority for the same row.
-            if (context is null || context.CharacterKey != _request.CharacterKey ||
+            if (context is null || context.CharacterKey != _characterKey ||
                 context.Catalog is null || !key.IsValid ||
                 !string.Equals(context.EventIdEntry, context.Catalog.EventIdEntry, StringComparison.Ordinal) ||
                 !fast.AncientOptionPlans.Any(p => p.AncientId == _ids[key] && p.IsExact)) return false;
         }
         return true;
     }
-    internal bool Matches(ulong root)
+    internal bool Matches(ulong root) => MatchesObserved(root, null);
+    internal bool MatchesObserved(ulong root, Action<int, ModelKey?, string>? onUnresolved)
     {
         foreach (var act in _acts)
         {
             if (act.Keys.Length == 0)
             {
-                ReferenceUnresolved(act.Act, null, "A.ReferenceActContextsMissing", reportUnresolved: true);
+                ReferenceUnresolved(act.Act, null, "A.ReferenceActContextsMissing", onUnresolved: onUnresolved);
                 continue;
             }
             bool pass = false;
@@ -200,7 +203,7 @@ internal sealed class AncientOptionFamilyPlan
             }
             else foreach (var key in act.Keys)
             {
-                pass = ReferenceRow(root, act.Act, key, reportUnresolved: true) != SearchDisposition.NoMatch;
+                pass = ReferenceRow(root, act.Act, key, onUnresolved: onUnresolved) != SearchDisposition.NoMatch;
                 if (pass) break;
             }
             if (!pass) return false;
@@ -226,7 +229,7 @@ internal sealed class AncientOptionFamilyPlan
         }
         return unresolved ? SearchDisposition.Unknown : SearchDisposition.Match;
     }
-    private SearchDisposition ReferenceRow(ulong root, int act, ModelKey key, bool reportUnresolved = false)
+    private SearchDisposition ReferenceRow(ulong root, int act, ModelKey key, Action<int, ModelKey?, string>? onUnresolved = null)
     {
         var row = _referenceRows[(act, key)];
         var branches = row.Branches;
@@ -241,8 +244,8 @@ internal sealed class AncientOptionFamilyPlan
             AncientEventContexts = [context with {
             EventRngRoot=Beta109WorldRng.DeriveEventLocalSeed(root,context.PlayerSlot,context.IsShared,context.EventIdEntry)}]
         };
-        var prediction = Beta109AncientOptionProvider.PredictEventLocal(snapshot, act, key, _request.Authority.PlayerSlotIndex,
-            _request.CharacterKey, _filter.AncientOptionConditions);
+        var prediction = Beta109AncientOptionProvider.PredictEventLocal(snapshot, act, key, _playerSlot,
+            _characterKey, _filter.AncientOptionConditions);
         // Like Exact's option predicate, A consumes option identity precision,
         // not completeness of unrelated mutable post-obtain/setup projection.
         if (prediction.EvaluationStatus is not (AncientOptionsEvaluationStatus.EvaluatedNonEmpty or
@@ -281,17 +284,14 @@ internal sealed class AncientOptionFamilyPlan
         }
         return branchMatched ? SearchDisposition.Match : Unresolved("A.SeaGlassTargetNotExact:" + sea?.CharacterTarget?.IssueCode);
 
-        SearchDisposition Unresolved(string cause) => ReferenceUnresolved(act, key, cause, reportUnresolved);
+        SearchDisposition Unresolved(string cause) => ReferenceUnresolved(act, key, cause, onUnresolved);
     }
-    private SearchDisposition ReferenceUnresolved(int act, ModelKey? key, string cause, bool reportUnresolved)
+    private static SearchDisposition ReferenceUnresolved(int act, ModelKey? key, string cause,
+        Action<int, ModelKey?, string>? onUnresolved)
     {
-        // Retention is only a necessary-sieve decision. Production Exact
-        // still owns the final disposition and its original domain causes.
-        // Reference/parity/pricing probes never create execution notices.
-        if (reportUnresolved && _reportedUnresolved.TryAdd((act, key), 0))
-            RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.RecordDegradation(
-                "AncientOptionFilterIncomplete", nameof(AncientOptionFamilyPlan), $"Filter.Act{act}.{key?.Serialized ?? "Unscoped"}",
-                "issues.filter_incomplete", $"act={act};ancient={key?.Serialized};cause={cause};retained=true;filterDecision=Unknown;requiresFinalCheck=true;matchClaimed=false");
+        // A missing reference only keeps this candidate for final model judgment.
+        // Notification deduplication belongs to the selected execution lifetime.
+        onUnresolved?.Invoke(act, key, cause);
         return SearchDisposition.Unknown;
     }
     internal string ShaderSource()

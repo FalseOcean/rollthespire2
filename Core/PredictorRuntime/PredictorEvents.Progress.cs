@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Effects.Snapshots;
+using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Rng;
 
@@ -55,27 +56,26 @@ internal sealed partial class PredictorRun
                 FinishEvent();
                 return PredictorInputResult.Accepted;
             case ("TABLET_OF_TRUTH", "SMASH"):
-                ApplyEventHealth(20, 0);
+                ApplyFixedEventHealth(choice.OptionKey);
                 FinishEvent();
                 return PredictorInputResult.Accepted;
             case ("TABLET_OF_TRUTH", "GIVE_UP"):
                 FinishEvent();
                 return PredictorInputResult.Accepted;
             case ("TABLET_OF_TRUTH", "DECIPHER"):
-                int tabletCost = _tabletCount switch { 0 => 3, 1 => 6, 2 => 12, 3 => 24,
-                    4 => _eventHealth!.MaxHp - 1, _ => throw new InvalidOperationException("PredictorTabletCountInvalid") };
-                bool tabletForcedKill = tabletCost >= _eventHealth!.MaxHp;
+                var tablet = Beta111EventOptionRules.TabletDecipher(_tabletCount, _eventHealth!.MaxHp);
+                bool tabletForcedKill = tablet.ForcedKill;
                 if (tabletForcedKill)
                 {
-                    ApplyEventHealth(0, -(_eventHealth.MaxHp - 1));
+                    ApplyEventHealth(tablet.HealthBeforeKill(_eventHealth.MaxHp));
                     if (Phase != PredictorPhase.Complete) ApplyEventKill();
                 }
-                else ApplyEventHealth(0, -tabletCost);
+                else ApplyEventHealth(tablet.HealthBeforeKill(_eventHealth.MaxHp));
                 if (Phase == PredictorPhase.Complete) return PredictorInputResult.Accepted;
                 if (!tabletForcedKill)
                 {
                     var tabletUpgrades = Working.Deck.Where(id => Working.Card(id).UpgradeLevel < Working.Card(id).MaxUpgradeLevel).ToList();
-                    if (_tabletCount == 4)
+                    if (tablet.UpgradeAll)
                     {
                         foreach (long cardId in tabletUpgrades)
                         {
@@ -98,8 +98,7 @@ internal sealed partial class PredictorRun
                 if (_tabletCount == 5) FinishEvent();
                 else
                 {
-                    int nextCost = _tabletCount switch { 1 => 6, 2 => 12, 3 => 24, 4 => _eventHealth.MaxHp - 1, _ => 3 };
-                    EventOptions = [new("DECIPHER", MaxHpCost: nextCost, WillKill: _eventHealth.MaxHp <= nextCost), new("GIVE_UP")];
+                    EventOptions = [TabletDecipherOption(), new("GIVE_UP")];
                     _requestId++;
                 }
                 return PredictorInputResult.Accepted;
@@ -120,7 +119,7 @@ internal sealed partial class PredictorRun
             case ("COLOSSAL_FLOWER", "POLLINOUS_CORE"):
                 ApplyEventHealth(-7, 0);
                 if (Phase == PredictorPhase.Complete) return PredictorInputResult.Accepted;
-                if (BeginObtainRelic(new("RELIC", "POLLINOUS_CORE"), null, PredictorObtainReturn.Event, 15, token))
+                if (BeginObtainRelic(FixedEventRelicProduct(choice.OptionKey), null, PredictorObtainReturn.Event, 15, token))
                     ResumeEventAfterRelicObtain(15);
                 return PredictorInputResult.Accepted;
             case ("SUNKEN_TREASURY", "FIRST_CHEST"):
@@ -134,7 +133,7 @@ internal sealed partial class PredictorRun
             case ("JUNGLE_MAZE_ADVENTURE", "SOLO_QUEST"):
                 var visualOrder = new List<int> { 0, 1, 2 };
                 _eventRng!.UnstableShuffle(visualOrder);
-                ApplyEventHealth(-18, 0);
+                ApplyFixedEventHealth(choice.OptionKey);
                 if (Phase == PredictorPhase.Complete) return PredictorInputResult.Accepted;
                 GainJungleGold(_jungleSoloGold);
                 FinishEvent();
@@ -145,6 +144,12 @@ internal sealed partial class PredictorRun
                 return PredictorInputResult.Accepted;
         }
         throw new NotImplementedException("PredictorEventBranchPending:" + _eventKey + ":" + choice.OptionKey);
+    }
+
+    private PredictorEventOption TabletDecipherOption()
+    {
+        int cost = Beta111EventOptionRules.TabletMaxHpCost(_tabletCount, _eventHealth?.MaxHp);
+        return new("DECIPHER", MaxHpCost: cost, WillKill: _eventHealth?.MaxHp <= cost);
     }
 
     private ImmutableArray<PredictorEventOption> SlipperyBridgeOptions()
@@ -171,8 +176,8 @@ internal sealed partial class PredictorRun
 
     private ImmutableArray<PredictorEventOption> SunkenTreasuryOptions()
     {
-        _smallTreasuryGold = 52 + _eventRng!.NextInt(16);
-        _largeTreasuryGold = 303 + _eventRng.NextInt(61);
+        _smallTreasuryGold = Beta111EventRules.SunkenTreasurySmallGold(_eventRng!);
+        _largeTreasuryGold = Beta111EventRules.SunkenTreasuryLargeGold(_eventRng!);
         return [new("FIRST_CHEST", GoldGain: _smallTreasuryGold),
             new("SECOND_CHEST", GoldGain: _largeTreasuryGold)];
     }
@@ -181,9 +186,9 @@ internal sealed partial class PredictorRun
     {
         // Rng.NextFloat(min,max) preserves the double arithmetic until its
         // float cast; DynamicVar then stores that float as a decimal.
-        _jungleSoloGold = 150m + (decimal)(float)(_eventRng!.NextDouble() * 30d - 15d);
-        _jungleJoinGold = 50m + (decimal)(float)(_eventRng.NextDouble() * 30d - 15d);
-        return [new("SOLO_QUEST", GoldGain: (int)_jungleSoloGold, HealthDamage: 18),
+        _jungleSoloGold = Beta111EventRules.JungleGold(_eventRng!, 150m);
+        _jungleJoinGold = Beta111EventRules.JungleGold(_eventRng!, 50m);
+        return [FixedEventHealthOption("SOLO_QUEST") with { GoldGain = (int)_jungleSoloGold },
             new("JOIN_FORCES", GoldGain: (int)_jungleJoinGold)];
     }
 

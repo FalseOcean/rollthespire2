@@ -33,7 +33,6 @@ internal static class OperationPredictionCatalog
         }
         Named("reward:reroll", OperationPredictionCategory.RewardReroll);
         Named("extra:reroll-sequence", OperationPredictionCategory.RewardReroll, true);
-        Named("extra:philosopher-order", OperationPredictionCategory.RewardReroll, true);
         Named("reward:sacrifice", OperationPredictionCategory.RewardSacrifice);
         Named("extra:sacrifice-sequence", OperationPredictionCategory.RewardSacrifice, true);
         Named("shop:restock", OperationPredictionCategory.ShopRestock);

@@ -12,7 +12,7 @@ namespace RolltheSpire2.Search.Runtime;
 internal sealed class SearchRecoveryLedger
 {
     private readonly object _gate = new();
-    private readonly ExactSearchExecutionRequest _plan;
+    private readonly PreparedSearch _plan;
     private readonly IRuntimeProfile _profile;
     private readonly string _continuationFingerprint;
     private readonly ulong _scanStart;
@@ -31,7 +31,7 @@ internal sealed class SearchRecoveryLedger
     private long _pendingPayloadBytes;
     private TaskCompletionSource? _receiptChange;
 
-    internal SearchRecoveryLedger(ExactSearchExecutionRequest plan, IRuntimeProfile profile,
+    internal SearchRecoveryLedger(PreparedSearch plan, IRuntimeProfile profile,
         SearchContinuationSnapshot? continuation, Func<SearchPendingCandidate, long>? measurePayload = null)
     {
         _plan = plan;
@@ -140,7 +140,7 @@ internal sealed class SearchRecoveryLedger
             // Immutable lists may be shared by cursor-only checkpoints. A pending
             // mutation replaces the list, so older checkpoints never change.
             _pendingSnapshot ??= Array.AsReadOnly(_pending.Values.ToArray());
-            return _continuationSnapshot = new(_plan.CompiledSearch.SemanticFingerprint, _plan.SnapshotFingerprint, frontier,
+            return _continuationSnapshot = new(_plan.Model.CompiledSearch.SemanticFingerprint, _plan.SnapshotFingerprint, frontier,
                 _pendingSnapshot,
                 Array.AsReadOnly(_acknowledged.Where(o => o >= frontier).Order().ToArray()))
             {
@@ -224,10 +224,10 @@ internal sealed class SearchRecoveryLedger
         {
             _pending.TryGetValue(ordinal, out var previous);
             string details = previous is null ? exception.ToString() : previous.ExceptionText +
-                "\n\nretryQuery=" + _plan.CompiledSearch.SemanticFingerprint +
+                "\n\nretryQuery=" + _plan.Model.CompiledSearch.SemanticFingerprint +
                 ";retrySnapshot=" + _plan.SnapshotFingerprint + "\n" + exception;
             StorePending(new(ordinal, seed, "CandidateCheck", "CandidateCheckFailed:" + exception.GetType().Name, details,
-                previous?.QueryFingerprint ?? _plan.CompiledSearch.SemanticFingerprint,
+                previous?.QueryFingerprint ?? _plan.Model.CompiledSearch.SemanticFingerprint,
                 previous?.SnapshotFingerprint ?? _plan.SnapshotFingerprint,
                 previous?.FirstFailedAtUtc ?? DateTimeOffset.UtcNow, (previous?.Attempts ?? 0) + 1)
             { ContinuationFingerprint = _continuationFingerprint });

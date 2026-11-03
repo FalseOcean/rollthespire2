@@ -16,7 +16,11 @@ internal static partial class UiSurfaceChecks
         DictionaryEntry[] Entries(IDictionary dictionary) => dictionary.Keys.Cast<object>()
             .Select(key => new DictionaryEntry(key, dictionary[key])).ToArray();
         var request = page.LastRequest!;
-        var document = page.LastDocument!;
+        var document = page.LastFacts!;
+        var variantOwner = (SeedAncientPremiseVariants)Field("_ancientPremiseVariants");
+        var variantCache = (IDictionary)typeof(SeedAncientPremiseVariants)
+            .GetField("_variants", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(variantOwner)!;
+        var cachedVariants = Entries(variantCache);
         var maps = Entries((IDictionary)Field("_overviewMaps"));
         var routes = Entries((IDictionary)Field("_overviewRoutes"));
         var selection = page.PreferredOpeningRouteId;
@@ -27,7 +31,7 @@ internal static partial class UiSurfaceChecks
         page.AnalyzeRequested += Analyze;
         try
         {
-            foreach (var entry in Entries((IDictionary)Field("_ancientPremiseVariants")))
+            foreach (var entry in cachedVariants)
             {
                 var table = entry.Value!;
                 var keys = (RolltheSpire2.Core.Identity.ModelKey[])table.GetType().GetProperty("Keys")!.GetValue(table)!;
@@ -40,12 +44,15 @@ internal static partial class UiSurfaceChecks
                     var expected = WorldPredictionEngine.Predict(Beta111Profile.Instance, document.CanonicalSeed,
                         request.Ascension, request.PlayerSlotIndex, request.Character.CharacterKey,
                         request.Authority.WorldAuthority, request.Authority.EffectAuthority, conditions);
-                    var actual = page.LastDocument!.Sections.SelectMany(s => s.Ancients).ToArray();
+                    var actual = page.LastFacts!.World!.Ancients.ToArray();
                     if (JsonSerializer.Serialize(actual) != JsonSerializer.Serialize(expected.Ancients) ||
                         page.LastRequest!.AncientOptionConditions != conditions ||
                         !ReferenceEquals(page.LastRequest.Authority, request.Authority))
                         throw new Exception("Ancient premise cache differs from fresh World prediction");
-                    if (document.Sections.Where(s => s.Ancients.Count == 0).Any(s => !page.LastDocument.Sections.Contains(s)) ||
+                    if (!ReferenceEquals(variantOwner, Field("_ancientPremiseVariants")) || variantCache.Count != cachedVariants.Length ||
+                        cachedVariants.Any(variant => !ReferenceEquals(variantCache[variant.Key], variant.Value)) ||
+                        !ReferenceEquals(document.Neow,page.LastFacts.Neow) || !ReferenceEquals(document.Relics,page.LastFacts.Relics) ||
+                        !ReferenceEquals(document.CombatRewards,page.LastFacts.CombatRewards) ||
                         maps.Any(m => !ReferenceEquals(((IDictionary)Field("_overviewMaps"))[m.Key], m.Value)) ||
                         routes.Any(r => !ReferenceEquals(((IDictionary)Field("_overviewRoutes"))[r.Key], r.Value)) ||
                         selection != page.PreferredOpeningRouteId || analyses != 0 ||

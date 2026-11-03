@@ -4,11 +4,10 @@ using RolltheSpire2.Core.Effects;
 namespace RolltheSpire2.Core.Prediction;
 
 /// <summary>
-/// The immutable Predictor document for one request. <see cref="OverallStatus"/>
+/// The immutable display document projected from bounded seed facts. <see cref="OverallStatus"/>
 /// is intentionally the document/request viability plus the Neow product-facing
 /// aggregate; it is not a summary of every optional World, Relic, or Reward
-/// section. Search Exact checks the sections and domain status that its Query
-/// actually consumes.
+/// section. Exact consumes the source facts and their domain statuses directly.
 /// </summary>
 public sealed class SeedPredictionDocument
 {
@@ -45,55 +44,8 @@ public sealed class SeedPredictionDocument
     public string DetectedGameVersion => Context.GameVersion;
     public RuntimeProfileId ProfileId => Context.ProfileId;
 
-    public static SeedPredictionDocument Invalid(
-        string detectedVersion,
-        RuntimeProfileId profileId,
-        string analyzerId,
-        SeedPredictionRequest request,
-        string technicalIssue) => new()
-    {
-        Context = CreateContext(request, detectedVersion, profileId),
-        PredictorId = analyzerId,
-        OriginalSeed = request.OriginalSeed,
-        CanonicalSeed = string.Empty,
-        Sections = Array.Empty<PredictionSection>(),
-        Warnings = new[] { new PredictionWarning(PredictionWarningCode.InvalidSeed) },
-        Diagnostics = request.IncludeDiagnostics
-            ? new[]
-            {
-                new PredictionDiagnostic(PredictionDiagnosticCodes.RequestId, request.RequestId.Serialized),
-                new PredictionDiagnostic(PredictionDiagnosticCodes.PlayerSlot, request.PlayerSlotIndex.ToString()),
-                new PredictionDiagnostic(PredictionDiagnosticCodes.UnlockSnapshotFingerprint, request.Authority.UnlockSnapshotFingerprint),
-                new PredictionDiagnostic(PredictionDiagnosticCodes.CatalogFingerprint, request.Authority.CatalogFingerprint),
-                new PredictionDiagnostic(PredictionDiagnosticCodes.ValidationIssue, technicalIssue)
-            }
-            : Array.Empty<PredictionDiagnostic>(),
-        OverallStatus = SeedPredictionOverallStatus.InvalidRequest,
-        ProductRelevantProjectionPrecision = PredictionPrecision.Unknown,
-        ProductRelevantProjectionStatus = ProductRelevantProjectionStatus.Unknown,
-        FullEffectSemanticsCompleteness = FullEffectSemanticsCompleteness.Unknown
-    };
+    // Display projection is one-way: calculations and Exact consume Facts directly.
+    public static SeedPredictionDocument FromFacts(SeedPredictionFacts facts) =>
+        Profiles.SeedPredictionDocumentFactory.FromFacts(facts);
 
-    public static PredictionContext CreateContext(
-        SeedPredictionRequest request,
-        string detectedVersion,
-        RuntimeProfileId profileId) => new(
-        request.RequestId,
-        profileId,
-        detectedVersion,
-        request.Character,
-        request.Ascension,
-        request.PlayersCount,
-        request.PlayerSlotIndex,
-        request.Authority.UnlockSnapshotFingerprint,
-        request.Authority.CatalogFingerprint,
-        request.Authority.SourceAuthority,
-        request.Authority.Completeness,
-        request.Authority.ResolutionStatus,
-        request.Authority.IsVanilla,
-        request.Authority.SourceModId,
-        request.Authority.SourceAssembly)
-    {
-        SupportScope = request.Authority.SupportScope
-    };
 }

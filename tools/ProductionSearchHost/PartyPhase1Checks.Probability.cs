@@ -43,9 +43,9 @@ internal static partial class PartyPhase1Checks
         var n = SearchQuery.Empty with { LegacyNeow = SearchQuery.Empty.LegacyNeow with
         { NeowRelics = new([], [BaseGameModelKeys.Relics.LeafyPoultice], []) } };
         var single = Estimate(Table(n)); var both = Estimate(Table(n, n));
-        Check(ModernNeowIdentityPredictor.TryGetEligibleCursePool(party.Players[0], out var curse0) &&
-            ModernNeowIdentityPredictor.TryGetEligibleCursePool(party.Players[1], out _), "captured personal curse pools");
-        ModernNeowIdentityPredictor.TryGetEligibleCursePool(party.Players[1], out var curse1);
+        Check(ModernNeowIdentityRules.TryGetEligibleCursePool(party.Players[0], out var curse0) &&
+            ModernNeowIdentityRules.TryGetEligibleCursePool(party.Players[1], out _), "captured personal curse pools");
+        ModernNeowIdentityRules.TryGetEligibleCursePool(party.Players[1], out var curse1);
         Equal(single.Probability, 1d / curse0.Count, "personal initial curse marginal uses runtime eligible pool");
         Equal(both.Probability, 1d / (curse0.Count * curse1.Count), "two personal N marginals, no pickup-order multiplier");
         Check(both.Confidence == SearchSelectivityConfidence.Medium && both.Assumptions.Contains("SharedFactsPaidOnce=true"), "approximation provenance");
@@ -53,14 +53,14 @@ internal static partial class PartyPhase1Checks
         Equal(Estimate(offered).Probability, single.Probability, "envelope offers are not omitted");
 
         var offerKeys = new HashSet<ModelKey>();
-        Check(ModernNeowIdentityPredictor.TryVisitOfferSpace(party.Players[0], (first, second, third, _) =>
+        Check(ModernNeowIdentityRules.TryVisitOfferSpace(party.Players[0], (first, second, third, _) =>
             { offerKeys.Add(first); offerKeys.Add(second); offerKeys.Add(third); }), "joint offer authority");
         var offerSamples = offerKeys.Take(4).ToArray();
         ModelKeySetFilter offerA = new([offerSamples[0], offerSamples[1]], [], []),
             offerB = new([offerSamples[1], offerSamples[2]], [], []), offerC = new([offerSamples[2], offerSamples[3]], [], []);
         var offerClauses = SearchQuery.Empty with { LegacyNeow = SearchQuery.Empty.LegacyNeow with { NeowRelics = offerB },
             LegacyWorld = SearchQuery.Empty.LegacyWorld with { AncientOptionFilters = [new(1, offerC)] } };
-        ModernNeowIdentityPredictor.TryEstimateOfferProbability(party.Players[0], (first, second, third) =>
+        ModernNeowIdentityRules.TryEstimateOfferProbability(party.Players[0], (first, second, third) =>
             new[] { offerA, offerB, offerC }.All(f => PartyInitialQuery.Matches(f, [first, second, third])), out double offerJoint, out _);
         Equal(Estimate(Table(offerClauses) with { Players = [new(0, offerA) { Conditions = offerClauses }, new(1, ModelKeySetFilter.Empty)] }).Probability,
             offerJoint, "separate initial-offer Any clauses require the same three offers");
@@ -205,8 +205,8 @@ internal static partial class PartyPhase1Checks
             editor.Free(); opening.Free(); picker.Free();
             GD.Print($"PARTY_C_PROBABILITY_PASS checks={checks};noQueryGate=true;potionsUiRoundtrip=true");
         }
-        var request = ExactSearchExecutionRequestFactory.Compile(Compile(Table(n, n)), new("000000000040", 1024, 1, 1)).Plan!;
-        var eta = FamilySearchEtaProjectorV1.Project(request, FamilyExecutionCoordinator.Plan(request, false));
+        var request = SearchPreparationCompiler.Compile(Compile(Table(n, n)), new("000000000040", 1024, 1, 1)).Plan!;
+        var eta = FamilySearchEtaProjectorV1.Project(RolltheSpire2.Search.Compilation.SearchEstimationPreparation.ForRun(request, FamilyExecutionCoordinator.Plan(request, false)), FamilyExecutionCoordinator.Plan(request, false));
         Equal(eta.AcceptedResultProbability, both.Probability, "ETA reads the same probability authority");
         Check(eta.TargetFamilyPipelineMs is null && eta.MissingEvidence.Any(reason => reason.Contains("N.Neow", StringComparison.Ordinal)),
             "A priced party probability does not invent the missing actual N unit cost");

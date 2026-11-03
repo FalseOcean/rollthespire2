@@ -29,10 +29,13 @@ internal sealed partial class WorkspaceShell
             }
         }
 
+        var ancientPremises = action.Context is { Players.Count: 1 } context
+            ? context.Players[0].AncientPremises
+            : (action.Draft ?? action.Live.Start.Draft).AncientPremises;
         _predictor.SetPredictorContext(candidate.CharacterKey, candidate.Ascension, 1, 0,
-            candidate.PredictionRequest.AncientOptionConditions, route, choiceSlot,
+            ancientPremises, route, choiceSlot,
             string.Empty, notify: false);
-        _predictor.SetUnlockState(candidate.PredictionRequest.Authority.AllCharacterCardPoolsUnlocked);
+        _predictor.SetUnlockState(candidate.Authority.AllCharacterCardPoolsUnlocked);
         _predictor.SetSeedText(candidate.Seed, commit: true);
         _predictorController.AnalyzeCurrentDraft();
     }
@@ -41,7 +44,7 @@ internal sealed partial class WorkspaceShell
     {
         var candidate = action.Live!.Candidate;
         SelectTask(Workspace.Analysis);
-        _predictorController?.SetPartyDraft(action.Draft!, candidate.Seed, candidate.Document?.Party);
+        _predictorController?.SetPartyDraft(action.Draft!, candidate.Seed, candidate.Party);
         _predictorController?.ImportSearchOpening(candidate, action.Draft, action.Context, action.Association);
     }
 }

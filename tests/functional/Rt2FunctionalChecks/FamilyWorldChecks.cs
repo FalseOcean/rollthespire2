@@ -71,58 +71,57 @@ internal static class FamilyWorldChecks
         foreach(var (name,q) in cases)
         {
             var compiled=SearchCompiler.Compile(q,context);
-            var request=new ExactSearchExecutionRequest(compiled,new("000000000000",10000,30,1),"000000000000",10000,
-                CompiledSearchEvaluationProjector.Project(compiled).Evaluation,CombatRewardRoutePolicyContract.None,compiled.SemanticFingerprint);
-            if (!WorldFamilyReplay.HasConditions(request))
+            var request=new PreparedSearch(new SearchModel(compiled, CompiledSearchEvaluationProjector.Project(compiled).Evaluation, CombatRewardRoutePolicyContract.None, compiled.SemanticFingerprint), new("000000000000",10000,30,1), "000000000000", 10000, compiled.SemanticFingerprint);
+            if (!WorldFamilyReplay.HasConditions(request.Model))
             {
-                bool created = VariantOpeningFamily.TryCreate(request, out var variant, false);
-                if (WorldFamily.TryCreate(request, out _) ||
+                bool created = VariantOpeningFamily.TryCreate(request.Model, FilterExecutionPreferences.From(request.RunOptions), out var variant, false);
+                if (WorldFamily.TryCreate(request.Model, FilterExecutionPreferences.From(request.RunOptions), out _) ||
                     created != VariantOpeningPreparation.Prepare(compiled).HasConditions ||
-                    created && variant is not VariantOpeningFamily)
+                    created && variant?.FamilyId != VariantOpeningFamily.Id)
                     throw new Exception("Pure variants migrate to V without an empty W");
                 checks++;
                 continue; // V numerical oracle/transport is checked by its focused entry.
             }
-            var replay=new WorldFamilyReplay(request);var gpu=new WorldFamilyGpuPlan(replay, specializeSolo: true);
-            if(!WorldFamily.TryCreate(request,out var family)||family!.Coverage.Single()!="W.World")throw new Exception("W registration");
+            var replay=new WorldFamilyReplay(request.Model);var gpu=new WorldFamilyGpuPlan(replay, specializeSolo: true);
+            if(!WorldFamily.TryCreate(request.Model, FilterExecutionPreferences.From(request.RunOptions), out var family)||family!.Coverage.Single()!="W.World")throw new Exception("W registration");
             var executionPlan=FamilyExecutionCoordinator.Plan(request);
             if(!executionPlan.ExecutionOrderUnits.Any(f=>f.FamilyId=="W.World") || executionPlan.ExecutionOrderUnits.Any(f=>f.FamilyId is not ("W.World" or "V.VariantOpening")))throw new Exception("Production residual W/V registration");
             if (gpu.GroupingK != 4 || !gpu.Revision(false).Contains(".Dense.K4.") || !gpu.Revision(true).Contains(".CompactAbi1.K4."))
                 throw new Exception("W Production physical default/identity");
             if(name=="Boss1")
             {
-                const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
-                var observations = (Array)typeof(WorldFamily).GetField("_observations",flags)!.GetValue(family)!;
-                void Set(string field,object value)=>typeof(WorldFamily).GetField(field,flags)!.SetValue(family,value);
-                void Observe(int mode,int population){
-                    object o=observations.GetValue(mode)!;
-                    var m=new WorldFamilyGpuMetrics(population,0,1,1,1,32,0,0,1,1,10);
-                    o.GetType().GetMethod("Record",flags)!.Invoke(o,[m,gpu.Capacity*4]);
+                var observations = new FilterCostObserver();
+                int capacity = gpu.Capacity * 4;
+                var batch = new SearchBatch(0, capacity);
+                var fullCompact = FamilyCandidateSet.FromSortedAbi1(batch,
+                    Enumerable.Range(0, capacity).Select(ordinal => (ulong)ordinal).ToArray());
+                void Observe(bool compact, int population)
+                {
+                    var input = compact ? population == capacity ? fullCompact : FamilyCandidateSet.FromSortedAbi1(batch, [0]) :
+                        FamilyCandidateSet.Dense(new SearchBatch(0, population));
+                    observations.ObserveCompleted(family, input, 0, 1, 1, 1, 32);
                 }
-                Set("_parity",true);
-                Observe(0,gpu.Capacity*4);
-                if(family.CapturePerformanceObservation().CalibrationEligible)throw new Exception("Cold evidence accepted");
-                Observe(0,1);
-                if(family.CapturePerformanceObservation().CalibrationEligible)throw new Exception("Underfill evidence accepted");
-                Observe(0,gpu.Capacity*4);
-                if(!family.CapturePerformanceObservation().CalibrationEligible)throw new Exception("Full-group evidence missing");
-                Set("_compact",true);
-                if(family.CapturePerformanceObservation().PhysicalBatchCount!=0)throw new Exception("Dense evidence leaked into Compact");
-                Observe(1,1);Observe(1,1);
-                if(family.CapturePerformanceObservation().CalibrationEligible||family.CaptureLivePerformanceSnapshot() is null)
+                Observe(false, capacity);
+                if(observations.Capture(family, false).CalibrationEligible)throw new Exception("Cold evidence accepted");
+                Observe(false,1);
+                if(observations.Capture(family, false).CalibrationEligible)throw new Exception("Underfill evidence accepted");
+                Observe(false,capacity);
+                if(!observations.Capture(family, false).CalibrationEligible)throw new Exception("Full-group evidence missing");
+                if(observations.Capture(family, true).PhysicalBatchCount!=0)throw new Exception("Dense evidence leaked into Compact");
+                Observe(true,1);Observe(true,1);
+                if(observations.Capture(family, true).CalibrationEligible||observations.Live(family, true) is null)
                     throw new Exception("Compact underfill must remain live-only");
-                Observe(1,gpu.Capacity*4);
-                if(!family.CapturePerformanceObservation().CalibrationEligible)throw new Exception("Compact comparable evidence missing");
-                Set("_faulted",true);
-                if(family.CapturePerformanceObservation().CalibrationEligible||family.CaptureLivePerformanceSnapshot() is not null)
+                Observe(true,capacity);
+                if(!observations.Capture(family, true).CalibrationEligible)throw new Exception("Compact comparable evidence missing");
+                observations.Invalidate(family);
+                if(observations.Capture(family, true).CalibrationEligible||observations.Live(family, true) is not null)
                     throw new Exception("Faulted evidence accepted");
                 var mixedQuery=SearchCompiler.Compile(q with {OpeningRoute=new(new ModelKey("RELIC","ARCANE_SCROLL"))},context);
-                var mixedRequest=new ExactSearchExecutionRequest(mixedQuery,request.RunOptions,"000000000000",10000,
-                    CompiledSearchEvaluationProjector.Project(mixedQuery).Evaluation,CombatRewardRoutePolicyContract.None,mixedQuery.SemanticFingerprint);
+                var mixedRequest=new PreparedSearch(new SearchModel(mixedQuery, CompiledSearchEvaluationProjector.Project(mixedQuery).Evaluation, CombatRewardRoutePolicyContract.None, mixedQuery.SemanticFingerprint), request.RunOptions, "000000000000", 10000, mixedQuery.SemanticFingerprint);
                 var mixed=FamilyExecutionCoordinator.Plan(mixedRequest);
                 if(!mixed.ExecutionOrderUnits.Any(f=>f.FamilyId=="N.Neow")||!mixed.ExecutionOrderUnits.Any(f=>f.FamilyId=="W.World")||
                     FamilyExecutionCoordinator.ResolveExecutionWindowSize(mixedRequest,mixed.OrderedFamilies)!=
-                        (mixed.OrderedFamilies.Any(f=>f.ConditionPerformance.UsesGpu) ? 1<<24 : FamilyCpuExecution.Capacity))
+                        (mixed.OrderedFamilies.Any(f=>f.ConditionPerformance.UsesGpu) ? 1<<24 : 65536))
                     throw new Exception("N/W registration or selected CPU/GPU root geometry");
             }
             if(name=="OversizedFirstN")
@@ -130,16 +129,17 @@ internal static class FamilyWorldChecks
                 // Current bounded-pool contract: FirstN beyond the pool observes
                 // the entire pool. The frozen pre-optimization binary also uses GPU.
                 if(!family.ConditionPerformance.UsesGpu)throw new Exception("Oversized FirstN remains bounded-pool GPU work");
-                var cpu=((IFamilyInvocation)family).CpuRealizations.Single();
-                var execution=new FamilyExecutionContext(false);var batch=new SearchBatch(0,67);
+                var cpu=family.CpuAlternatives.Single(body => body.CpuWorkers == request.WorkerCount);
+                var execution=new FilterRuntimeServices(false);var batch=new SearchBatch(0,67);
+                var running=cpu.CreateExecution!(cpu,execution);
                 var input=FamilyCandidateSet.FromAbi1(batch,[0,3,9,37,66]);
-                var actual=cpu.InvokeAsync(execution,new(batch,request),input,default).GetAwaiter().GetResult();
+                var actual=running.FilterAsync(execution,input,default).GetAwaiter().GetResult();
                 var expected=input.EnumerateLogicalOrdinals().Where(i=>replay.Matches(Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(i))));
                 if(!actual.EnumerateLogicalOrdinals().SequenceEqual(expected))throw new Exception("CPU physical subset");
                 using var cts=new CancellationTokenSource();cts.Cancel();
-                try{cpu.InvokeAsync(execution,new(batch,request),input,cts.Token).GetAwaiter().GetResult();throw new Exception("CPU cancellation missing");}
+                try{running.FilterAsync(execution,input,cts.Token).GetAwaiter().GetResult();throw new Exception("CPU cancellation missing");}
                 catch(OperationCanceledException){}
-                cpu.DisposeAsync(execution).GetAwaiter().GetResult();execution.DisposeAsync().GetAwaiter().GetResult();
+                running.DisposeAsync(execution).GetAwaiter().GetResult();execution.DisposeAsync().GetAwaiter().GetResult();
             }
             string shader=name+".glsl";File.WriteAllText(Path.Combine(dir,shader),gpu.ShaderSource());
             foreach(ulong start in new[]{0UL,1564445371644820290UL})

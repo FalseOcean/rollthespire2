@@ -29,8 +29,8 @@ internal sealed partial class AnalysisPage
         // results and receipts for another Act have no witness entry here.
         var matches = source.MapRouteWitnesses.Where(witness => witness.Act == act).Distinct().ToArray();
         if (matches.Length == 0) return (null, "");
-        if (!source.AppliesToCurrentContext || LastDocument is null ||
-            !string.Equals(source.SourceSeed, LastDocument.CanonicalSeed, StringComparison.OrdinalIgnoreCase))
+        if (!source.AppliesToCurrentContext || LastFacts is null ||
+            !string.Equals(source.SourceSeed, LastFacts.CanonicalSeed, StringComparison.OrdinalIgnoreCase))
             return (null, "context");
         if (source.IsUnverified || source.ValidationDisposition != SearchDisposition.Match) return (null, "unverified");
         return matches.Length switch
@@ -56,9 +56,9 @@ internal sealed partial class AnalysisPage
 
     private void OpenMapWitness(int act, Control opener)
     {
-        if (MapWitnessForAct(act).Witness is not { } witness || LastDocument is null || _uiText is null) return;
+        if (MapWitnessForAct(act).Witness is not { } witness || LastFacts is null || _uiText is null) return;
         _mapWitnessRequest = LastRequest;
         _workbenchRoot!.Hide();
-        _mapWorkspace.OpenResultWitness(act, LastDocument.CanonicalSeed, _uiText, opener, witness);
+        _mapWorkspace.OpenResultWitness(act, LastFacts.CanonicalSeed, _uiText, opener, witness);
     }
 }

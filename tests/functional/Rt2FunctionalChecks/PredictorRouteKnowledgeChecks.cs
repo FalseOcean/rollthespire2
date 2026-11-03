@@ -69,7 +69,7 @@ internal static class PredictorRouteKnowledgeChecks
     {
         const string first = "map:1:1:3:2", second = "map:1:2:3:3";
         PredictorRun Fixture(int eggCount = 1, bool removableEgg = false, bool futureEgg = false,
-            ImmutableArray<PredictorCombatPendingCause> incoming = default)
+            ImmutableArray<PredictorCombatPendingCause> incoming = default, bool cloneOriginal = false)
         {
             var types = new[] { MapPointType.Ancient, futureEgg ? MapPointType.Unknown : MapPointType.RestSite, MapPointType.RestSite, MapPointType.Boss };
             var points = types.Select((type, row) => new MapPredictionPoint(new(3, row), type, true,
@@ -91,6 +91,11 @@ internal static class PredictorRouteKnowledgeChecks
             // an assertion that the vanilla Quest card can normally be cooked.
             if (removableEgg) state = state with { Cards = state.Cards.Select(card => card.Key.Entry == "BYRDONIS_EGG"
                 ? card with { Removable = true } : card).ToImmutableArray() };
+            if (cloneOriginal)
+            {
+                var original = state.Deck.Select(state.Card).First(card => card.UpgradeLevel < card.MaxUpgradeLevel);
+                state = state.WithCard(original with { Enchantment = new("ENCHANTMENT", "CLONE"), EnchantmentAmount = 1 });
+            }
             var context = captured.Context with { Live = incoming.IsDefault ? null : new(1, true, incoming), Operation = null };
             var run = new PredictorRun(context, state);
             run.SetRoute(1, points.Select(point => point.Position).ToImmutableArray());
@@ -129,7 +134,13 @@ internal static class PredictorRouteKnowledgeChecks
             smith with { RestActions = [new(PredictorRestAction.Smith), new(PredictorRestAction.Hatch)] });
         Check(!exact.Nodes[0].Advanced && exact.Nodes[0].AppliedRestActions == 0,
             "Authored choices still require the actual Smith target before executing Hatch");
-        var clone = Preview(run, live, smith with { RestActions = [new(PredictorRestAction.Smith), new(PredictorRestAction.Clone)] });
+        var clonePlan = smith with { RestActions = [new(PredictorRestAction.Smith), new(PredictorRestAction.Clone)] };
+        var noOriginal = Preview(run, live, clonePlan);
+        Check(noOriginal.Nodes[0].Advanced && noOriginal.Nodes[0].AppliedRestActions == 2 &&
+            !noOriginal.Nodes[0].PendingCauses.Any(cause => cause.Code == "RestDeckDependentAction") &&
+            noOriginal.Nodes[0].Cards.Select(card => card.Value.Id).SequenceEqual(run.Working.Deck),
+            "Clone with no enchanted originals does not read unrelated unresolved Smith payloads or invent copies");
+        var clone = Preview(Fixture(cloneOriginal: true), live, clonePlan);
         Check(!clone.Nodes[0].Advanced && clone.Nodes[0].PendingCauses.Any(cause => cause.Code == "RestDeckDependentAction"),
             "Clone's full persistent-card copy boundary is not loosened by Hatch's fixed-model qualification");
 

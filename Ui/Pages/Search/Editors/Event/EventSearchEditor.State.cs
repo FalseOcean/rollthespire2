@@ -29,7 +29,8 @@ internal sealed partial class EventSearchEditor
         d.CharacterColor >= 0 || d.TrialCase >= 0 || d.TinkerType >= 0 || d.PrototypeTargets.Count > 0 || d.UnknownEventPrefixCount > 0);
     internal Action ClearConditions(bool party)
     {
-        var restore = WorkbenchConditionReset.Swap(party ? _partyDrafts : _drafts, _ => new SeatDraft());
+        var restore = WorkbenchConditionReset.Swap(party ? _partyDrafts : _drafts, _ => new SeatDraft(),
+            replaceActive: (previous, current) => { if (ReferenceEquals(_draft, previous)) _draft = current; });
         var queue = _partyQueue.ToArray();
         if (party) _partyQueue.Clear();
         return () => { restore(); if (party) { _partyQueue.Clear(); _partyQueue.AddRange(queue); } };

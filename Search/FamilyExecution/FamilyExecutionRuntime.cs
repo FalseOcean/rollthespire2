@@ -11,13 +11,21 @@ internal sealed record FamilyGpuCreationFailure(Exception Error, long Attempt, s
 /// externally asynchronous while the single local RenderingDevice is operated
 /// synchronously by one bounded, dedicated owner thread.
 /// </summary>
-public sealed class FamilyExecutionContext : IAsyncDisposable
+public sealed class FilterRuntimeServices : IAsyncDisposable
 {
     private readonly FamilyGpuExecutionOwner? _gpuOwner;
+    internal FilterCostObserver Costs { get; } = new();
+    internal string CorrelationId { get; init; } = "";
+    internal bool SkipExactValidation { get; init; }
+    internal RolltheSpire2.Search.Runtime.BonesCapsuleDiagnosticVerification? BonesCapsuleDiagnostics { get; set; }
+    private readonly ConcurrentDictionary<FilterBodyDescription,IReadOnlySet<string>> _passedCoverage = new();
+    private static readonly IReadOnlySet<string> EmptyCoverage = new HashSet<string>(StringComparer.Ordinal);
+    internal void BindCoverage(FilterBodyDescription body,IReadOnlySet<string> passed) => _passedCoverage.TryAdd(body,new HashSet<string>(passed,StringComparer.Ordinal));
+    internal IReadOnlySet<string> CoverageFor(FilterBodyDescription body) => _passedCoverage.GetValueOrDefault(body) ?? EmptyCoverage;
     private readonly SemaphoreSlim? _cpuWorkers;
     private int _activeCpuWorkers, _peakCpuWorkers;
     private readonly FamilyPipelineBoundaryAudit? _pipelineBoundaryAudit = FamilyPipelineBoundaryAudit.TryCreate();
-    private readonly ConcurrentDictionary<IFamilyInvocation, Exception> _isolatedCpuFamilies = new(ReferenceEqualityComparer.Instance);
+    private readonly ConcurrentDictionary<IFilterExecution, Exception> _isolatedCpuFamilies = new(ReferenceEqualityComparer.Instance);
     private readonly ConcurrentDictionary<(SearchBatch, string), FamilyFilterIsolation> _filterIsolations = new();
     private readonly ConcurrentQueue<Exception> _gpuCleanupFailures = new();
 
@@ -45,32 +53,32 @@ public sealed class FamilyExecutionContext : IAsyncDisposable
             _filterIsolations.TryRemove(key, out _);
     }
 
-    internal bool TryGetCpuFilterIsolation(IFamilyInvocation family, out Exception error) =>
+    internal bool TryGetCpuFilterIsolation(IFilterExecution family, out Exception error) =>
         _isolatedCpuFamilies.TryGetValue(family, out error!);
 
-    internal void RecordCpuFilterIsolation(IFamilyInvocation family, FamilyObservationWindow window,
+    internal void RecordCpuFilterIsolation(IFilterExecution family, SearchBatch batch,
         FamilyCandidateSet restoredInput, IReadOnlyList<string> unfilteredCoverage, Exception error)
     {
         error = _isolatedCpuFamilies.GetOrAdd(family, error);
         var failures = FamilyCpuMatchException.Matches(error);
-        var record = new FamilyFilterIsolation(family.FamilyId, "CpuMatcher", window.Batch, failures[0].Batch,
+        var record = new FamilyFilterIsolation(family.Body.FamilyId, "CpuMatcher", batch, failures[0].Batch,
             failures.Select(item => item.GlobalOrdinal).Distinct().ToArray(), unfilteredCoverage,
-            restoredInput.Count, window.ExactRequest.RunOptions.SkipExactValidation, error);
-        if (!_filterIsolations.TryAdd((window.Batch, family.FamilyId), record)) return;
-        FamilyAuxiliaryEvidence.Read(family.FamilyId, "RecordFilterIsolation", () =>
+            restoredInput.Count, SkipExactValidation, error);
+        if (!_filterIsolations.TryAdd((batch, family.Body.FamilyId), record)) return;
+        FamilyAuxiliaryEvidence.Read(family.Body.FamilyId, "RecordFilterIsolation", () =>
         {
-            Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Record(error, "FamilyFilterIsolated", family.FamilyId,
+            Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Record(error, "FamilyFilterIsolated", family.Body.FamilyId,
                 "CpuMatcher", "issues.filter_incomplete", Infrastructure.Diagnostics.RuntimeIssueSeverity.Warning,
-                window.ExactRequest.SnapshotFingerprint);
-            RuntimeLog.TryBackgroundWarning("familyFilterIsolated=true;family=" + family.FamilyId +
-                ";stage=CpuMatcher;batchBase=" + window.Batch.BatchBase + ";restoredInputs=" + restoredInput.Count +
+                CorrelationId);
+            RuntimeLog.TryBackgroundWarning("familyFilterIsolated=true;family=" + family.Body.FamilyId +
+                ";stage=CpuMatcher;batchBase=" + batch.BatchBase + ";restoredInputs=" + restoredInput.Count +
                 ";remainingCoverage=" + string.Join(',', unfilteredCoverage) +
                 ";finalValidationSkipped=" + record.FinalValidationSkipped + ";retry=false;exceptionJson=" + RuntimeLog.SafeJson(error.ToString()));
             return true;
-        }, false, window.ExactRequest.SnapshotFingerprint);
+        }, false, CorrelationId);
     }
 
-    internal FamilyExecutionContext(bool requiresGpu, bool failOnPhysicalRecovery = false, int? cpuWorkerCount = null,
+    internal FilterRuntimeServices(bool requiresGpu, bool failOnPhysicalRecovery = false, int? cpuWorkerCount = null,
         Func<FamilyGpuExecutionOwner>? gpuOwnerFactory = null)
     {
         if (cpuWorkerCount is <= 0) throw new ArgumentOutOfRangeException(nameof(cpuWorkerCount));
@@ -156,7 +164,7 @@ public sealed class FamilyExecutionContext : IAsyncDisposable
         }
         catch (Exception failure) { failures.Add(failure); }
         finally { _cpuWorkers?.Dispose(); }
-        if (failures.Count > 0) throw new AggregateException("FamilyExecutionContext.CleanupFailed", failures);
+        if (failures.Count > 0) throw new AggregateException("FilterRuntimeServices.CleanupFailed", failures);
     }
 }
 
@@ -236,11 +244,11 @@ internal sealed class FamilyGpuExecutionOwner : IAsyncDisposable
     public ValueTask<T> ExecuteAsync<T>(Func<RenderingDevice, T> action, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(action);
+        cancellationToken.ThrowIfCancellationRequested();
         Exception? ownerFault = Volatile.Read(ref _ownerFault);
         if (ownerFault is not null)
             return ValueTask.FromException<T>(ownerFault);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        cancellationToken.ThrowIfCancellationRequested();
         var item = new WorkItem<T>(action, cancellationToken);
         try
         {
@@ -420,7 +428,16 @@ internal sealed class FamilyGpuExecutionOwner : IAsyncDisposable
             }
         }
 
-        public void Fail(Exception exception) => _completion.TrySetException(exception);
+        public void Fail(Exception exception)
+        {
+            // Only pending queue entries reach Fail. No native action started,
+            // so cancellation retains its unsubmitted frontier even if owner
+            // creation fails concurrently. Executed action faults stay faults.
+            if (_cancellationToken.IsCancellationRequested)
+                _completion.TrySetCanceled(_cancellationToken);
+            else
+                _completion.TrySetException(exception);
+        }
     }
 
     private static string Sanitize(string value) => string.IsNullOrWhiteSpace(value)

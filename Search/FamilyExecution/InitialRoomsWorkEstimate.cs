@@ -17,7 +17,7 @@ internal static class InitialRoomsWorkEstimate
         if (shape.TreasureCovered)
             ns += gpu ? .85 + .00254 * shape.SharedShuffleDraws + .0101 * updates + .025 * draws :
                 120 + .93 * shape.SharedShuffleDraws + 1.31 * updates + 12 * draws;
-        string basis = FormattableString.Invariant($"I.TrackedSharedFront.20261020;Coefficients=ExistingSRootAndRShuffleTrackedReferences;UnknownPrefix={shape.UnknownPrefixCount};TreasureDraws={draws:G9};SharedShuffle={shape.SharedShuffleDraws};TrackedUpdates={updates:G9};Targets={targets:G9};TreasureOrder={shape.TreasureOrder};RuntimeSharedBagCounts;UncommittedSupportedPlanOnly;NumericalVariant={plan.NumericalVariant};NoNewMeasurement");
+        string basis = FormattableString.Invariant($"I.TrackedSharedFront.20261020;Coefficients=ExistingSRootAndRShuffleTrackedReferences;UnknownPrefix={shape.UnknownPrefixCount};DeclaredJuzu={shape.UnknownJuzuAcquired};TreasureDraws={draws:G9};SharedShuffle={shape.SharedShuffleDraws};TrackedUpdates={updates:G9};Targets={targets:G9};TreasureOrder={shape.TreasureOrder};RuntimeSharedBagCounts;DeclaredUnknownAndUncommittedTreasure;NumericalVariant={plan.NumericalVariant};NoNewMeasurement");
         return gpu ? FamilyCoarsePricing.Gpu(familyId, "InitialRooms.Local", ns, InitialRoomsPlan.Capacity, geometry, basis) :
             FamilyCoarsePricing.Cpu(familyId, "InitialRooms.Local", ns, workers, geometry, basis);
     }

@@ -32,35 +32,35 @@ internal static class PreparedCombatRewardPoolChecks
                 c.Rarity == EffectCardRarity.Common).CardKey;
             var query = SearchQuery.Empty with { CombatCardRewards = new(1,
                 CombatRewardSequenceOrderMode.Ordered, [card]) };
-            ExactSearchExecutionRequest Compile(string? mode)
+            PreparedSearch Compile(string? mode)
             {
                 Environment.SetEnvironmentVariable("RT2_C_PREPARED_REWARD_POOLS", mode);
-                return ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(query, context),
+                return SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, context),
                     new("000000000000", 65536, 30, 1)).Plan
                     ?? throw new InvalidOperationException("PreparedRewardPools.Compile");
             }
             var off = Compile("off");
             var on = Compile("on");
             var defaultPlan = Compile(null);
-            var offOwner = off.RewardPoolPreparation!;
-            var onOwner = on.RewardPoolPreparation!;
+            var offOwner = off.Model.RewardPoolPreparation!;
+            var onOwner = on.Model.RewardPoolPreparation!;
             var pools = onOwner.Pools ?? throw new InvalidOperationException("PreparedRewardPools.SourceNotApplicable");
             Check(!offOwner.Enabled && offOwner.Pools is null && offOwner.Capture().PreparationAttempts == 0,
                 "off captures the switch without fixed-pool preparation");
             Check(onOwner.Enabled && onOwner.Capture().PreparationAttempts == 1 && onOwner.Capture().PreparedCount == 1,
                 "on prepares the compiled request exactly once");
-            Check(defaultPlan.RewardPoolPreparation is { Enabled: true, Pools: not null } &&
-                defaultPlan.RewardPoolPreparation.Capture().PreparationAttempts == 1,
+            Check(defaultPlan.Model.RewardPoolPreparation is { Enabled: true, Pools: not null } &&
+                defaultPlan.Model.RewardPoolPreparation.Capture().PreparationAttempts == 1,
                 "the production default prepares eligible fixed pools without an environment switch");
             Environment.SetEnvironmentVariable("RT2_C_PREPARED_REWARD_POOLS", "off");
             Check(onOwner.Enabled && !offOwner.Enabled, "already compiled requests do not reread the comparison environment");
             var fp64Free = FamilyExecutionCoordinator.CreateRegisteredFamilies(on, true, false);
             Check(fp64Free.Any(f => f.FamilyId == "C.CombatReward") &&
                 fp64Free.All(f => (f.GpuNumericRequirements & GpuNumericRequirements.Float64) == 0) &&
-                ReferenceEquals(on.RewardPoolPreparation?.Pools, pools),
+                ReferenceEquals(on.Model.RewardPoolPreparation?.Pools, pools),
                 "Core fixed-pool preparation is independent of NativeFloat64 and retains the existing FP64-free C body");
             Check(on.SnapshotFingerprint == off.SnapshotFingerprint &&
-                on.Authority.EffectSnapshotFingerprint == off.Authority.EffectSnapshotFingerprint,
+                on.Model.Authority.EffectSnapshotFingerprint == off.Model.Authority.EffectSnapshotFingerprint,
                 "fixed preparation does not rename the semantic or captured authority identity");
             Check(!ReferenceEquals(pools.OwnedAuthority.CharacterRewardPool, source.CharacterRewardPool) &&
                 !ReferenceEquals(pools.OwnedAuthority.PotionPool, source.PotionPool), "raw captured pools are detached");
@@ -86,27 +86,27 @@ internal static class PreparedCombatRewardPoolChecks
             {
                 string seed = VisibleSeedCandidateCodec.FormatOrdinal(profile, i + 1);
                 var input = TrustedRootHashInput.FromCanonicalSeed(profile, seed);
-                SeedPredictionRequest Prediction(ExactSearchExecutionRequest plan)
+                SeedPredictionRequest Prediction(PreparedSearch plan)
                 {
-                    Check(SeedPredictionRequest.TryCreateFromRootHash(input, plan.Authority.Character, plan.Ascension,
-                        1, 0, plan.Authority, plan.Evaluation.AncientOptionConditions,
+                    Check(SeedPredictionRequest.TryCreateFromRootHash(input, plan.Model.Authority.Character, plan.Model.Ascension,
+                        1, 0, plan.Model.Authority, plan.Model.Evaluation.AncientOptionConditions,
                         SeedPredictionDomainSelection.Neow | SeedPredictionDomainSelection.NormalCombatRewards,
                         10, false, out var request, out _), "real copied-data prediction request is valid");
-                    request!.RewardPoolPreparation = plan.RewardPoolPreparation;
+                    request!.RewardPoolPreparation = plan.Model.RewardPoolPreparation;
                     var copy = request.WithComplexBonesDeckInteractions(false);
-                    Check(ReferenceEquals(copy.RewardPoolPreparation, plan.RewardPoolPreparation),
+                    Check(ReferenceEquals(copy.RewardPoolPreparation, plan.Model.RewardPoolPreparation),
                         "request copies preserve the immutable compiled preparation owner");
                     return copy;
                 }
-                var a = RuntimeProfileRegistry.PredictFromRootHash(off.Detection, Prediction(off), input);
-                var b = RuntimeProfileRegistry.PredictFromRootHash(on.Detection, Prediction(on), input);
-                var baselineRewards = a.Sections.Select(s => s.NormalCombatRewardSequencePrediction).Where(r => r is not null).ToArray();
-                var preparedRewards = b.Sections.Select(s => s.NormalCombatRewardSequencePrediction).Where(r => r is not null).ToArray();
+                var a = RuntimeProfileRegistry.ObserveFromRootHash(off.Model.Detection, Prediction(off), input);
+                var b = RuntimeProfileRegistry.ObserveFromRootHash(on.Model.Detection, Prediction(on), input);
+                var baselineRewards = new[] { a.CombatRewards }.Where(r => r is not null).ToArray();
+                var preparedRewards = new[] { b.CombatRewards }.Where(r => r is not null).ToArray();
                 Check(baselineRewards.Length > 0 && JsonSerializer.Serialize(baselineRewards) == JsonSerializer.Serialize(preparedRewards),
                     "complete Core reward outputs, continuation, RNG counts and diagnostics remain identical");
                 projectedRoutes += preparedRewards.Sum(r => r!.Routes.Count(route => route.Battles.Count > 0));
-                var exactA = ProductionExactSearchEvaluator.Evaluate(off, input);
-                var exactB = ProductionExactSearchEvaluator.Evaluate(on, input);
+                var exactA = ProductionExactSearchEvaluator.Evaluate(off.Model, input);
+                var exactB = ProductionExactSearchEvaluator.Evaluate(on.Model, input);
                 Check(exactA.FailureCode == exactB.FailureCode &&
                     JsonSerializer.Serialize(exactA.Evaluation) == JsonSerializer.Serialize(exactB.Evaluation),
                     "actual Production Exact disposition and full match/route evidence remain identical");
@@ -144,9 +144,9 @@ internal static class PreparedCombatRewardPoolChecks
                 mismatched.Capture().CompatibilityMisses == 1 && mismatched.Capture().UnpreparedBuilds == 1,
                 "unowned authority retains the original pool construction instead of consuming cached data");
             var fresh = Compile("on");
-            Check(!ReferenceEquals(fresh.RewardPoolPreparation, onOwner) &&
-                fresh.RewardPoolPreparation!.Capture().PredictionCalls == 0 &&
-                fresh.RewardPoolPreparation.Capture().PreparationAttempts == 1,
+            Check(!ReferenceEquals(fresh.Model.RewardPoolPreparation, onOwner) &&
+                fresh.Model.RewardPoolPreparation!.Capture().PredictionCalls == 0 &&
+                fresh.Model.RewardPoolPreparation.Capture().PreparationAttempts == 1,
                 "a new compiled request has its own bounded preparation lifetime");
 
             // Existing controlled slot fixture: this proves unchanged copied-
@@ -156,21 +156,21 @@ internal static class PreparedCombatRewardPoolChecks
                 .Invoke(null, [context, 2, null, null])!;
             var tableQuery = SearchQuery.Empty with { Players = party.Party!.Players.Select(owner =>
                 new PlayerOfferQuery(owner.PlayerSlotIndex, ModelKeySetFilter.Empty) { Conditions = query }).ToArray() };
-            ExactSearchExecutionRequest CompileParty(string mode)
+            PreparedSearch CompileParty(string mode)
             {
                 Environment.SetEnvironmentVariable("RT2_C_PREPARED_REWARD_POOLS", mode);
-                return ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(tableQuery, party),
+                return SearchPreparationCompiler.Compile(SearchCompiler.Compile(tableQuery, party),
                     new("000000000000", 65536, 30, 1)).Plan
                     ?? throw new InvalidOperationException("PreparedRewardPools.PartyCompile");
             }
             var partyOff = CompileParty("off"); var partyOn = CompileParty("on");
-            Check(partyOff.RewardPoolPreparation is null && partyOn.RewardPoolPreparation is null &&
-                ReferenceEquals(partyOff.Authority, partyOn.Authority),
+            Check(partyOff.Model.RewardPoolPreparation is null && partyOn.Model.RewardPoolPreparation is null &&
+                ReferenceEquals(partyOff.Model.Authority, partyOn.Model.Authority),
                 "Party is outside preparation reuse while retaining its original captured authority");
             for (int slot = 0; slot < party.Party.Players.Count; slot++)
             {
-                var childOff = ExactSearchExecutionRequestFactory.ForPlayer(partyOff, partyOff.CompiledSearch.PlayerSearches[slot]);
-                var childOn = ExactSearchExecutionRequestFactory.ForPlayer(partyOn, partyOn.CompiledSearch.PlayerSearches[slot]);
+                var childOff = SearchPreparationCompiler.ForPlayer(partyOff.Model, partyOff.Model.CompiledSearch.PlayerSearches[slot]);
+                var childOn = SearchPreparationCompiler.ForPlayer(partyOn.Model, partyOn.Model.CompiledSearch.PlayerSearches[slot]);
                 Check(childOn.Evaluation.RequiresNormalCombatRewardDomain && childOn.RewardPoolPreparation is null &&
                     childOff.RewardPoolPreparation is null && ReferenceEquals(childOn.Authority, childOff.Authority) &&
                     !childOn.ExactOptions.OpeningReuse && !childOff.ExactOptions.OpeningReuse &&
@@ -185,8 +185,8 @@ internal static class PreparedCombatRewardPoolChecks
             for (ulong i = 0; i < (ulong)Math.Clamp(count, 1, 4); i++)
             {
                 var input = TrustedRootHashInput.FromCanonicalSeed(profile, VisibleSeedCandidateCodec.FormatOrdinal(profile, i + 1));
-                var a = ProductionExactSearchEvaluator.Evaluate(partyOff, input);
-                var b = ProductionExactSearchEvaluator.Evaluate(partyOn, input);
+                var a = ProductionExactSearchEvaluator.Evaluate(partyOff.Model, input);
+                var b = ProductionExactSearchEvaluator.Evaluate(partyOn.Model, input);
                 Check(a.FailureCode == b.FailureCode && JsonSerializer.Serialize(a.Evaluation) == JsonSerializer.Serialize(b.Evaluation),
                     "Party original Exact predictions retain complete dispositions/evidence across the preparation switch");
             }

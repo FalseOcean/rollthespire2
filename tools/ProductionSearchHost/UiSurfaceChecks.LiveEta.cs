@@ -76,7 +76,7 @@ internal static partial class UiSurfaceChecks
             Require(ReferenceEquals(Field("_runEta"), eta) && eta.Plan == plan && eta.TargetSearchMeanMs == 3000,
                 "live observations leave plan, probability and quote frozen");
             Require(expectationLabels[1]!.Text == (string)Call("Rate", 4d)!, "expected speed retains frozen quote");
-            Observe(Progress(22, 200, 1));
+            Observe(Progress(22.01, 200, 1));
             CheckPredicted("stalled completed-root window");
             foreach (var state in new[] { SearchRunState.Completed, SearchRunState.Cancelled, SearchRunState.Faulted })
             {

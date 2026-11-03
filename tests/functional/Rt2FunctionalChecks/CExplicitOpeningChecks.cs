@@ -27,11 +27,11 @@ internal static class CExplicitOpeningChecks
             var context = Fixture(slot);
             var basis = SearchQuery.Empty with { OpeningRoute = new(bones), CombatPotionRewards = new(1,
                 CombatRewardSequenceOrderMode.Ordered, [new(CombatPotionSlotRequirement.NoDrop, null)]) };
-            var requests = new Dictionary<CombatRewardReplay, ExactSearchExecutionRequest>();
+            var requests = new Dictionary<CombatRewardReplay, PreparedSearch>();
             CombatRewardReplay Replay(SearchQuery q)
             {
                 var request = CCompleteMatchingChecks.Request(q, context);
-                var replay = new CombatRewardReplay(request);
+                var replay = new CombatRewardReplay(request.Model);
                 requests.Add(replay, request);
                 return replay;
             }
@@ -55,7 +55,7 @@ internal static class CExplicitOpeningChecks
                 "guaranteed legacy child becomes an authored consumption opcode");
             var missingPool = context with { Authority = context.Authority.WithEffectAuthority(
                 context.Authority.EffectAuthority! with { BonesEligibilityExact = false }) };
-            var missingReplay = new CombatRewardReplay(CCompleteMatchingChecks.Request(basis, missingPool));
+            var missingReplay = new CombatRewardReplay((CCompleteMatchingChecks.Request(basis, missingPool)).Model);
             Check(missingReplay.ConservativelyKeeps && missingReplay.Matches(0) &&
                 missingReplay.ConservativeOpeningReason == "BonesShufflePoolAuthorityUnavailable",
                 "removing latent identities does not remove the necessary Bones shuffle-count authority check");
@@ -147,13 +147,13 @@ internal static class CExplicitOpeningChecks
             var unresolvedRequest = CCompleteMatchingChecks.Request(nested with { StructuredOpeningEffects = [new(small,
                 NeowStructuredConditionKind.ExactSingle, NeowStructuredEffectScope.NestedRelics,
                 NeowStructuredOutputKind.Relic, [new("RELIC", "RT2_TEST_UNMAPPED_HELD")])] }, context);
-            var unresolved = new CombatRewardReplay(unresolvedRequest);
-            var unresolvedModels = new CombatRewardFamilyModels(unresolvedRequest, unresolved, FamilyCpuExecution.Capacity);
+            var unresolved = new CombatRewardReplay(unresolvedRequest.Model);
+            var unresolvedModels = new CombatRewardFamilyModels(unresolvedRequest.Model, unresolved, CpuFilterExecution.Capacity);
             Check(unresolved.ConservativelyKeeps && unresolved.Matches(0) &&
                 unresolvedModels.Survival.SurvivalProbability == 1 &&
                 unresolvedModels.Survival.Evidence.Contains("PositivePredicatesRemainExact", StringComparison.Ordinal),
                 "explicit unsupported obtain retains its obligation and declares the all-pass sieve population");
-            Check(CombatRewardGpuPlan.TryCreate(unresolvedRequest, unresolved, out _) is { } unresolvedGpu &&
+            Check(CombatRewardGpuPlan.TryCreate(unresolvedRequest.Model, unresolved, out _) is { } unresolvedGpu &&
                 unresolvedGpu.Meta[50] == 1,
                 "explicit unresolved opening has the same conservative GPU coverage as CPU");
 
@@ -191,7 +191,7 @@ internal static class CExplicitOpeningChecks
             }
             void CheckPacked(CombatRewardReplay replay)
             {
-                var gpu = CombatRewardGpuPlan.TryCreate(requests[replay], replay, out string issue)
+                var gpu = CombatRewardGpuPlan.TryCreate((requests[replay]).Model, replay, out string issue)
                     ?? throw new InvalidOperationException("C explicit packed plan: " + issue);
                 Check(gpu.Routes == replay.RouteCount && gpu.Meta[40] == (replay.Plan.OpeningConsumption.ReplayBonesOffer ? 1u : 0u) &&
                     gpu.Meta[41] == replay.Plan.OpeningConsumption.OrderedRelicIds.Length,

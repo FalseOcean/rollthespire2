@@ -38,11 +38,11 @@ internal sealed record MapLossyPlan
     internal string Reason => Enabled ? "AppliedToSupportedConditions;OtherConditionsFullFinal" :
         Remainders.Count > 0 ? string.Join(',', Remainders) : "NoSupportedMapConditions";
 
-    internal static MapLossyPlan Create(ExactSearchExecutionRequest request)
+    internal static MapLossyPlan Create(SearchModel request, MapLossyOptions options)
     {
         var predicates = new List<MapLossyPredicate>(); var properties = new List<MapLossyProperty>();
         var remainders = new List<string>();
-        if (request.RunOptions.MapLossy?.Enabled != true) return new([], ["Disabled"]);
+        if (!options.Enabled) return new([], ["Disabled"]);
         if (request.ProfileId != RolltheSpire2.Compatibility.RuntimeProfileId.Beta111) return new([], ["Beta111StandardMapsOnly"]);
         if (request.Authority.PlayersCount != 1) return new([], ["SingleplayerOnly"]);
         foreach (var route in request.CompiledSearch.NormalizedQuery.StandardMapRoutes)
@@ -73,14 +73,14 @@ internal sealed record MapLossyPlan
         }
     }
 
-    internal static MapLossyExecutionDescription Describe(ExactSearchExecutionRequest request, bool preferGpu, bool float64Available)
+    internal static MapLossyExecutionDescription Describe(SearchModel request, MapLossyOptions options, bool preferGpu, bool float64Available)
     {
-        var plan = Create(request);
+        var plan = Create(request, options);
         bool int64Available = FamilyDeviceProfileFoundation.Initialization.Capture().VulkanCapabilities?.ShaderInt64 != false;
         string backend = !plan.Enabled ? "FullFinal" : preferGpu && float64Available && int64Available ? "Gpu" : "Cpu";
         string reason = !plan.Enabled ? plan.Reason : !preferGpu ? "CpuSelectedOrGpuUnavailable" :
             !float64Available ? "Float64Unavailable" : !int64Available ? "Int64Unavailable" : "GpuSelected";
-        return new(request.MapLossy.Enabled, plan.Enabled, backend, plan.Enabled ? Strategy : "FullFinal",
+        return new(options.Enabled, plan.Enabled, backend, plan.Enabled ? Strategy : "FullFinal",
             reason, plan.Scope, plan.Remainders.ToArray());
     }
 

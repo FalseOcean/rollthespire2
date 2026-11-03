@@ -12,16 +12,16 @@ namespace RolltheSpire2.Search.Compilation;
 // execution SnapshotFingerprint remains the identity of each actual attempt.
 internal static class SearchContinuationIdentity
 {
-    internal static string For(ExactSearchExecutionRequest plan)
+    internal static string For(PreparedSearch plan)
     {
-        string model = For(plan.CompiledSearch, plan.CombatRewardRoutePolicy);
+        string model = For(plan.Model.CompiledSearch, plan.Model.CombatRewardRoutePolicy);
         // Preserve legacy full-search identities; an opt-in lossy frontier must
         // never be resumed as an exhaustively checked full-search frontier.
         return plan.MapLossy.Enabled ? model + ":MapLossy:" + plan.MapLossy.Identity : model;
     }
 
     internal static string For(CompiledSearch compiled) =>
-        For(compiled, ExactSearchExecutionRequestFactory.BuildCombatRewardRoutePolicy(compiled));
+        For(compiled, SearchPreparationCompiler.BuildCombatRewardRoutePolicy(compiled));
 
     internal static string For(CompiledSearch compiled, CombatRewardRoutePolicyContract policy)
     {
@@ -68,10 +68,10 @@ internal static class SearchContinuationIdentity
         _ => node?.ToJsonString() ?? "null"
     };
 
-    internal static bool Matches(SearchContinuationSnapshot continuation, ExactSearchExecutionRequest plan,
+    internal static bool Matches(SearchContinuationSnapshot continuation, PreparedSearch plan,
         string fingerprint) => continuation.ContinuationFingerprint.Length > 0
             ? continuation.ContinuationFingerprint == fingerprint
-            : continuation.SemanticFingerprint == plan.CompiledSearch.SemanticFingerprint &&
+            : continuation.SemanticFingerprint == plan.Model.CompiledSearch.SemanticFingerprint &&
                 continuation.SnapshotFingerprint == plan.SnapshotFingerprint;
 
     internal static bool SameSource(SearchContinuationSnapshot first, SearchContinuationSnapshot second) =>

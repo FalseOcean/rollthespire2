@@ -6,7 +6,9 @@ English | [简体中文](README.zh-CN.md)
 
 RolltheSpire2 (RT2) is an in-game seed search and analysis mod for **Slay the Spire 2**. Combine your desired conditions, search for matching seeds, and inspect their predicted openings, rewards, maps and more.
 
-This source tree is **1.4.0**. The primary tested environment is **Windows, game version 0.111.0**.
+This source tree is **1.4.1**. The primary tested environment is **Windows, game version 0.111.0**.
+
+Fixed some performance issues and improved the execution architecture.
 
 ## What you can do
 

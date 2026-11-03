@@ -42,19 +42,25 @@ internal static class OperationalLoggingChecks
         Log.Info($"loggingChecks=PASS;checks={checks};detail={Log.DetailEnabled};ioFailure={simulateIoFailure}");
         Log.Flush();
     }
-    internal static RolltheSpire2.Search.Runtime.ProductionSearchSession CreateExactFaultSession(RolltheSpire2.Search.Contracts.ExactSearchExecutionRequest request, bool cpuFault = false)
+    internal static RolltheSpire2.Search.Runtime.ProductionSearchSession CreateExactFaultSession(RolltheSpire2.Search.Contracts.PreparedSearch request, bool cpuFault = false)
     {
         // Reuse the current session's existing evaluator injection seam; no Product switch.
         using var scope=Log.SearchScope("logging-exact-fault-check");
         ProductionSearchReplay.LogSessionWorkload(request,"logging-exact-fault-check");
         var plan=RolltheSpire2.Search.FamilyExecution.FamilyExecutionCoordinator.Plan(request, gpuAvailable: cpuFault ? false : null);
-        var eta=RolltheSpire2.Search.FamilyExecution.FamilySearchEtaProjectorV1.Project(request,plan);
+        var eta=RolltheSpire2.Search.FamilyExecution.FamilySearchEtaProjectorV1.Project(RolltheSpire2.Search.Compilation.SearchEstimationPreparation.ForRun(request, plan), plan);
         if(cpuFault)
         {
             var families=plan.OrderedFamilies;
-            var cpu=families.First(f=>f.GetType().Name=="FamilyCpuExecution");
-            cpu.GetType().GetField("_matches",BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(cpu,
-                (Func<ulong,bool>)(_=>throw new InvalidOperationException("CpuSelectedFaultFixture")));
+            var cpu=families.First(f=>!f.UsesGpu);
+            var factory=cpu.CreateExecution!;
+            var fault=cpu with { CreateExecution=(body,services)=> {
+                var runtime=factory(body,services);
+                runtime.GetType().GetField("_matches",BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(runtime,
+                    (Func<ulong,bool>)(_=>throw new InvalidOperationException("CpuSelectedFaultFixture")));
+                return runtime;
+            }};
+            plan=RolltheSpire2.Search.FamilyExecution.FamilyPlanner.InOrder(families.Select(f=>ReferenceEquals(f,cpu)?fault:f).ToArray());
             return new(request,plan,eta,65536,64,null,"",failOnPhysicalRecovery:true);
         }
         return new(request,plan,eta,16777216,64,null,"",failOnPhysicalRecovery:true,

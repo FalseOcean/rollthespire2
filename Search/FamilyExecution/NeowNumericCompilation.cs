@@ -304,7 +304,7 @@ internal static class NeowNumericCompilation
         var eligibleCurseIds = new List<byte>();
         IReadOnlyList<ModelKey> eligibleCursePool = Array.Empty<ModelKey>();
         bool curseIdentityExact = baseIdentityExact &&
-                                  ModernNeowIdentityPredictor.TryGetEligibleCursePool(context.Authority, out eligibleCursePool);
+                                  ModernNeowIdentityRules.TryGetEligibleCursePool(context.Authority, out eligibleCursePool);
         if (curseIdentityExact)
         {
             foreach (ModelKey key in eligibleCursePool)
@@ -390,7 +390,7 @@ internal static class NeowNumericCompilation
             return new Beta110CurseFirstDrawGateP9(0, 0, 0, Beta110CurseFirstDrawGateDispositionP9.Disabled, "CurseAuthorityUnavailable");
 
         ulong knownCurseMask = 0UL;
-        foreach (ModelKey key in ModernNeowIdentityPredictor.BaseCursePoolForFiltering)
+        foreach (ModelKey key in ModernNeowIdentityRules.CurseCandidates)
         {
             if (Beta110FastRelicCatalog.TryGetId(key, out byte id))
                 knownCurseMask |= Beta110FastRelicCatalog.Bit(id);

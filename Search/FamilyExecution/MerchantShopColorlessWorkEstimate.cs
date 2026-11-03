@@ -6,7 +6,7 @@ namespace RolltheSpire2.Search.FamilyExecution;
 
 internal static class MerchantShopColorlessWorkEstimate
 {
-    internal static FamilyPhysicalQuote? Quote(ExactSearchExecutionRequest request,
+    internal static FamilyPhysicalQuote? Quote(MerchantShopColorlessPreparation request,
         MerchantShopColorlessCompactionDecision decision, FamilyExpectedFilteringCostProjection expected,
         FamilyPhysicalQuoteRequest geometry, bool cpu, int workers = 1, bool compiledMatcher = true)
     {

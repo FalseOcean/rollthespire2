@@ -22,7 +22,7 @@ internal static partial class SearchFailureContinuationChecks
     {
         var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>(Path.Combine(
             Environment.CurrentDirectory, "tools/ProductionSearchHost/Corpus/v1/context.json")).Context;
-        var compiled = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(SearchQuery.Empty, context),
+        var compiled = SearchPreparationCompiler.Compile(SearchCompiler.Compile(SearchQuery.Empty, context),
             new("000000000000", 512, 1000, 1));
         Check(compiled.Success && compiled.Plan is not null, "cost fixture uses captured context and real execution compiler");
         var plan = compiled.Plan!;
@@ -39,7 +39,7 @@ internal static partial class SearchFailureContinuationChecks
         return 0;
     }
 
-    private static async Task CheckRecoveryCapacity(ExactSearchExecutionRequest original)
+    private static async Task CheckRecoveryCapacity(PreparedSearch original)
     {
         var plan = Recompile(original, original.RunOptions with { ScanCount = 12 });
         const long allowance = 8192;
@@ -188,7 +188,7 @@ internal static partial class SearchFailureContinuationChecks
                 !resolvedAccounting.GetProgress().ExecutionWarnings.Any(w => w.StartsWith("SearchRecoveryPayloadAccountingIncomplete:", StringComparison.Ordinal)),
                 "restored accounting fault cannot block a retry and incomplete warning clears when its actual pending record resolves");
         }
-        var ledger = new SearchRecoveryLedger(plan, RuntimeProfileRegistry.Select(plan.Detection), null);
+        var ledger = new SearchRecoveryLedger(plan, RuntimeProfileRegistry.Select(plan.Model.Detection), null);
         ledger.RetainFailure(0, Seed(0), new IOException("AccountingFirst"));
         long first = ledger.CapturePendingPayload().Bytes;
         ledger.RetainFailure(0, Seed(0), new IOException("AccountingSecond"));
@@ -214,11 +214,11 @@ internal static partial class SearchFailureContinuationChecks
             "ACK before the consumer begins awaiting cannot lose the wake-up or retain stale accounted bytes");
     }
 
-    private static void MeasureWorkspaceRecoverySave(ExactSearchExecutionRequest plan)
+    private static void MeasureWorkspaceRecoverySave(PreparedSearch plan)
     {
         const int count = 4000;
         long before = GC.GetTotalMemory(forceFullCollection: true);
-        var ledger = new SearchRecoveryLedger(plan, RuntimeProfileRegistry.Select(plan.Detection), null);
+        var ledger = new SearchRecoveryLedger(plan, RuntimeProfileRegistry.Select(plan.Model.Detection), null);
         var injected = new IOException("InjectedWorkspaceRecovery:" + new string('x', 256), new IOException("OriginalWorkspaceCause"));
         long accountingTicks = 0;
         for (int i = 0; i < count; i++)
@@ -242,9 +242,9 @@ internal static partial class SearchFailureContinuationChecks
             $"SEARCH_RECOVERY_ACCOUNTING samples=512;compactRecordBytes={countedBytes};serializeOnlyMs={accountingOnlyMs:F3};serializeOnlyAllocatedBytes={accountingAllocated};excludesRetentionAndDiagnostics=true"));
         string directory = Path.Combine(Environment.CurrentDirectory, ".build-evidence", "recovery-capacity-save", Guid.NewGuid().ToString("N"));
         var store = new SearchWorkspace(directory, false);
-        var draft = new WorkbenchSearchDraft(plan.CharacterKey, plan.Ascension,
-            plan.CompiledSearch.NormalizedQuery, AncientOptionConditionProfile.BroadDefault);
-        store.BindPreparedResultWorkspace(store.PrepareResultWorkspace(plan.CompiledSearch.SemanticFingerprint, draft, null));
+        var draft = new WorkbenchSearchDraft(plan.Model.CharacterKey, plan.Model.Ascension,
+            plan.Model.CompiledSearch.NormalizedQuery, AncientOptionConditionProfile.BroadDefault);
+        store.BindPreparedResultWorkspace(store.PrepareResultWorkspace(plan.Model.CompiledSearch.SemanticFingerprint, draft, null));
         store.SaveCheckpoint(new(SearchRunState.Faulted, count, 0, long.MaxValue, 1000, 0, 0,
             SearchDisposition.NoMatch, "SyntheticRecoveryCapacitySample", false) { PendingCandidateCount = count }, continuation, count);
         long startedFlush = Stopwatch.GetTimestamp();
@@ -270,7 +270,7 @@ internal static partial class SearchFailureContinuationChecks
         GC.KeepAlive(ledger);
     }
 
-    private static async Task MeasureSessionRecoveryCost(ExactSearchExecutionRequest plan, bool injectFaults)
+    private static async Task MeasureSessionRecoveryCost(PreparedSearch plan, bool injectFaults)
     {
         long allocated = GC.GetTotalAllocatedBytes(precise: true);
         long started = Stopwatch.GetTimestamp();
@@ -292,9 +292,9 @@ internal static partial class SearchFailureContinuationChecks
             $"SEARCH_RECOVERY_SESSION fault={injectFaults};attempts=512;elapsedMs={elapsedMs:F3};processAllocatedBytes={processAllocatedBytes};pending={progress.PendingCandidateCount};delivered={progress.DeliveredCandidateCount};next={snapshot.NextOrdinal}"));
     }
 
-    private static void MeasureRecoveryPayload(ExactSearchExecutionRequest plan, int failures)
+    private static void MeasureRecoveryPayload(PreparedSearch plan, int failures)
     {
-        var ledger = new SearchRecoveryLedger(plan, RuntimeProfileRegistry.Select(plan.Detection), null);
+        var ledger = new SearchRecoveryLedger(plan, RuntimeProfileRegistry.Select(plan.Model.Detection), null);
         var injected = new IOException("InjectedRepeatedRecoveryFailure:" + new string('x', 256),
             new InvalidOperationException("InjectedOriginalCause"));
         for (int i = failures - 1; i >= 0; i--) ledger.RetainFailure((ulong)i, Seed((ulong)i), injected);
@@ -364,9 +364,9 @@ internal static partial class SearchFailureContinuationChecks
             $"SEARCH_RECOVERY_COST failures={failures};captures={captures};captureMs={captureMs:F3};captureAllocatedBytes={captureBytes};cursorCaptureMs={cursorCaptureMs:F3};cursorCaptureAllocatedBytes={cursorCaptureBytes};newPendingMs={newPendingMs:F3};newPendingAllocatedBytes={newPendingBytes};newPendingFinalCount={snapshot.PendingCandidates.Count};saves={saves};serializeMs={serializeMs:F3};serializeAllocatedBytes={serializeBytes};serializedBytes={serialized.Length}"));
     }
 
-    private static void CheckRecoverySnapshotFreshness(ExactSearchExecutionRequest plan)
+    private static void CheckRecoverySnapshotFreshness(PreparedSearch plan)
     {
-        var ledger = new SearchRecoveryLedger(plan, RuntimeProfileRegistry.Select(plan.Detection), null);
+        var ledger = new SearchRecoveryLedger(plan, RuntimeProfileRegistry.Select(plan.Model.Detection), null);
         ledger.RetainFailure(7, Seed(7), new IOException("OriginalSeven"));
         ledger.RetainFailure(3, Seed(3), new IOException("OriginalThree"));
         ledger.TryAdvanceCursor(20, out _);
@@ -406,7 +406,7 @@ internal static partial class SearchFailureContinuationChecks
         Check(ledger.CaptureContinuation()!.NextOrdinal == 9, "new publication clamps the cached frontier");
         ledger.AbandonDelivery(9);
         Check(ledger.CaptureContinuation()!.NextOrdinal == 21, "abandoned publication invalidates the clamp");
-        var restored = new SearchRecoveryLedger(plan, RuntimeProfileRegistry.Select(plan.Detection),
+        var restored = new SearchRecoveryLedger(plan, RuntimeProfileRegistry.Select(plan.Model.Detection),
             received with { UnreceivedOrdinals = new ulong[] { 11 } });
         restored.TryAdvanceCursor(21, out _);
         var beforeResolution = restored.CaptureContinuation()!;
@@ -416,12 +416,12 @@ internal static partial class SearchFailureContinuationChecks
             "restored delivery resolution refreshes its cache and retains prior snapshot identity");
     }
 
-    private static async Task CheckRepeatedFailureCancellation(ExactSearchExecutionRequest plan)
+    private static async Task CheckRepeatedFailureCancellation(PreparedSearch plan)
     {
         using var release = new ManualResetEventSlim();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var attempted = new ConcurrentDictionary<ulong, int>();
-        ProductionExactSearchResult Evaluate(ExactSearchExecutionRequest request, TrustedRootHashInput input)
+        ProductionExactSearchResult Evaluate(SearchModel request, TrustedRootHashInput input)
         {
             ulong ordinal = Ordinal(input.CanonicalSeed);
             attempted.AddOrUpdate(ordinal, 1, (_, count) => count + 1);

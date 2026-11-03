@@ -55,7 +55,7 @@ internal sealed partial class PredictorRun
         bool valid = relic.FurCoatCoordsSet && relic.FurCoatQuestCoords.All(coord =>
             map.Points.Any(p => p.Position == coord && p.Type is MapPointType.Monster or MapPointType.Elite));
         if (valid) return;
-        ulong rootSeed = Beta111Profile.Instance.ComputeRootSeed(Context.Seed);
+        ulong rootSeed = Context.RuntimeProfile.ComputeRootSeed(Context.Seed);
         ulong hash = XxHash64.HashUtf8("FUR_COAT", 0UL);
         var rng = new Xoshiro256StarStar(unchecked(rootSeed + hash));
         var occupied = Working.Relics.Where((other, otherIndex) => otherIndex != index &&

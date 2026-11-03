@@ -4,7 +4,7 @@ namespace RolltheSpire2.Search.FamilyExecution;
 
 internal static class AncientOptionWorkEstimate
 {
-    internal static FamilyPhysicalQuote? Quote(ExactSearchExecutionRequest request, AncientOptionFamilyPlan plan,
+    internal static FamilyPhysicalQuote? Quote(AncientOptionPricingInput request, AncientOptionFamilyPlan plan,
         FamilyPhysicalQuoteRequest geometry, bool cpu, int workers = 1)
     {
         double ns = 0;

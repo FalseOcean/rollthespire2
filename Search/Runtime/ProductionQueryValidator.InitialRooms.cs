@@ -5,6 +5,7 @@ using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.Relics;
 using RolltheSpire2.Core.World;
 using RolltheSpire2.Search.Contracts;
+using RolltheSpire2.Search.Semantics;
 
 namespace RolltheSpire2.Search.Runtime;
 
@@ -13,19 +14,39 @@ public static partial class ProductionQueryValidator
     internal static bool HasInitialRoomConditions(ExactSearchEvaluationProjection criteria) =>
         criteria.TreasureRelics is { IsEmpty: false } || criteria.FirstActUnknownEventPrefixCount > 0;
 
-    // An offered identity is not a pickup. Only authored opening commitments
-    // bind these room observations to one actual acquisition path.
+    // Treasure uses actual opening pickups. Unknown-room prefixes instead use
+    // the declared opening premise independently of generated acquisitions.
     internal static bool HasOpeningInitialRoomConditions(ExactSearchEvaluationProjection criteria) =>
-        HasInitialRoomConditions(criteria) &&
+        criteria.TreasureRelics is { IsEmpty: false } &&
         (criteria.NeowRoute is { IsValid: true } || HasRouteScopedNeowConstraints(criteria));
 
-    internal static SearchQueryEvaluation EvaluateInitialRoomBaseline(ExactSearchExecutionRequest plan,
-        SeedPredictionDocument? document, ulong rootHash) =>
-        HasOpeningInitialRoomConditions(plan.Evaluation) ? SearchQueryEvaluation.Match() :
-            EvaluateInitialRooms(plan, document, rootHash, [], true, null);
+    internal static SearchQueryEvaluation EvaluateInitialRoomBaseline(SearchModel plan,
+        SeedPredictionFacts? document, ulong rootHash) =>
+        ProductionExactSearchEvaluator.CombineIndependentEvaluations(
+            EvaluateDeclaredUnknownRooms(plan, rootHash),
+            HasOpeningInitialRoomConditions(plan.Evaluation) ? SearchQueryEvaluation.Match() :
+                EvaluateInitialTreasure(plan, document, rootHash, [], true, null));
 
-    private static SearchQueryEvaluation EvaluateOpeningInitialRooms(ExactSearchExecutionRequest plan,
-        SeedPredictionDocument document, ulong rootHash, OpeningRouteContext route)
+    private static SearchQueryEvaluation EvaluateDeclaredUnknownRooms(SearchModel plan, ulong rootHash)
+    {
+        int count = plan.Evaluation.FirstActUnknownEventPrefixCount;
+        if (count == 0) return SearchQueryEvaluation.Match();
+        if (plan.Authority.PlayersCount != 1)
+            return SearchQueryEvaluation.Unsupported("InitialRooms.SinglePlayerOnly");
+        if (plan.ProfileId != RuntimeProfileId.Beta111)
+            return SearchQueryEvaluation.Unsupported("InitialRooms.ProfileUnsupported");
+        bool juzu = ExplicitOpeningRelicFacts.HasDeclaredJuzuForUnknownRooms(plan.CompiledSearch.NormalizedQuery);
+        var sequence = OrdinaryUnknownRoomPredictor.ForAct1Filter(rootHash, count, juzu);
+        return sequence.Steps.All(step => step.Room == UnknownRoomCategory.Event)
+            ? SearchQueryEvaluation.Match([new SearchMatchEvidence("FirstActUnknownEventPrefixMatched",
+                juzu ? new ModelKey("RELIC", "JUZU_BRACELET") : null,
+                EvidenceCode: "search.initial-rooms.standard-singleplayer", ProfileId: plan.ProfileId,
+                Ordinal: count, ConditionId: "FirstActUnknownEventPrefix")])
+            : SearchQueryEvaluation.NoMatch("FirstActUnknownEventPrefix.NonEventEncounter");
+    }
+
+    private static SearchQueryEvaluation EvaluateOpeningInitialRooms(SearchModel plan,
+        SeedPredictionFacts document, ulong rootHash, OpeningRouteContext route)
     {
         if (route.Choice.RelicKey == BaseGameModelKeys.Relics.NeowsBones && route.BonesRoute is null)
             return SearchQueryEvaluation.Unknown("InitialRooms.BonesAcquisitionsUnavailable");
@@ -46,14 +67,14 @@ public static partial class ProductionQueryValidator
             (acquired.Contains(BaseGameModelKeys.Relics.LargeCapsule) ? 2 : 0);
         complete &= effects.Count(effect => effect.Relation == PredictedEffectRelation.NestedRelic &&
             effect.Precision == PredictionPrecision.Exact && effect.TargetKey.HasValue) >= expectedNested;
-        return EvaluateInitialRooms(plan, document, rootHash, acquired.ToArray(), complete, route);
+        return EvaluateInitialTreasure(plan, document, rootHash, acquired.ToArray(), complete, route);
     }
 
-    private static SearchQueryEvaluation EvaluateInitialRooms(ExactSearchExecutionRequest plan,
-        SeedPredictionDocument? document, ulong rootHash, IReadOnlyList<ModelKey> acquired,
+    private static SearchQueryEvaluation EvaluateInitialTreasure(SearchModel plan,
+        SeedPredictionFacts? document, ulong rootHash, IReadOnlyList<ModelKey> acquired,
         bool acquisitionsExact, OpeningRouteContext? route)
     {
-        if (!HasInitialRoomConditions(plan.Evaluation)) return SearchQueryEvaluation.Match();
+        if (plan.Evaluation.TreasureRelics is not { IsEmpty: false }) return SearchQueryEvaluation.Match();
         if (plan.Authority.PlayersCount != 1)
             return SearchQueryEvaluation.Unsupported("InitialRooms.SinglePlayerOnly");
         if (plan.ProfileId != RuntimeProfileId.Beta111)
@@ -63,20 +84,6 @@ public static partial class ProductionQueryValidator
             new(code, key, route?.RouteId, route?.AcquisitionOrder,
                 "search.initial-rooms.standard-singleplayer", OutcomeId: route?.Outcome?.OutcomeId,
                 ProfileId: plan.ProfileId, Ordinal: ordinal, ConditionId: condition);
-
-        SearchQueryEvaluation UnknownRooms()
-        {
-            int count = plan.Evaluation.FirstActUnknownEventPrefixCount;
-            if (count == 0) return SearchQueryEvaluation.Match();
-            bool juzu = acquired.Contains(new ModelKey("RELIC", "JUZU_BRACELET"));
-            if (!acquisitionsExact && !juzu)
-                return SearchQueryEvaluation.Unknown("FirstActUnknownEventPrefix.OpeningJuzuUnresolved");
-            var sequence = OrdinaryUnknownRoomPredictor.ForAct1Filter(rootHash, count, juzu);
-            return sequence.Steps.All(step => step.Room == UnknownRoomCategory.Event)
-                ? SearchQueryEvaluation.Match([Evidence("FirstActUnknownEventPrefixMatched", "FirstActUnknownEventPrefix",
-                    juzu ? new ModelKey("RELIC", "JUZU_BRACELET") : null, count)])
-                : SearchQueryEvaluation.NoMatch("FirstActUnknownEventPrefix.NonEventEncounter");
-        }
 
         SearchQueryEvaluation Treasure()
         {
@@ -97,8 +104,7 @@ public static partial class ProductionQueryValidator
             if (remaining.Count == 0) return SearchQueryEvaluation.Match(evidence);
             if (!acquisitionsExact)
                 return SearchQueryEvaluation.Unknown("TreasureRelics.OpeningAcquisitionsUnresolved");
-            var initial = document?.Sections.Select(section => section.RelicSequencePrediction)
-                .FirstOrDefault(value => value is not null);
+            var initial = document?.Relics;
             if (initial is null) return SearchQueryEvaluation.Unknown("TreasureRelics.SharedBagUnavailable");
             var prediction = TreasureRelicPredictor.Predict(RuntimeProfileRegistry.Select(plan.Detection), rootHash,
                 initial, acquired, condition.StartOrdinal + condition.Count - 1);
@@ -121,8 +127,6 @@ public static partial class ProductionQueryValidator
             return SearchQueryEvaluation.Match(evidence);
         }
 
-        // Neither a missing observation nor a partial success may hide a proved
-        // independent mismatch; both obligations must match the same opening.
-        return ProductionExactSearchEvaluator.CombineIndependentEvaluations(UnknownRooms(), Treasure());
+        return Treasure();
     }
 }

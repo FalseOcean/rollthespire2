@@ -79,7 +79,7 @@ internal static partial class FamilyCpuIntegrationChecks
                     }
                     var request = ResumeCompile(candidate, captured.Context, seed);
                     var root = TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed);
-                    var exact = ProductionExactSearchEvaluator.Evaluate(request, root);
+                    var exact = ProductionExactSearchEvaluator.Evaluate(request.Model, root);
                     last = exact.Evaluation.Disposition + ":" + exact.FailureCode;
                     if (!exact.IsMatch) continue;
                     var plan = FamilyExecutionCoordinator.Plan(request, gpuAvailable: false);
@@ -89,17 +89,18 @@ internal static partial class FamilyCpuIntegrationChecks
                     check(plan.OrderedFamilies.All(f => !f.ConditionPerformance.UsesGpu), "resume CPU Only plan: " + id);
                     check(request.WorkerCount == 16, "resume shared requested budget preserved: " + id);
                     check(VisibleSeedCandidateCodec.TryParseOrdinal(Beta111Profile.Instance, seed, out ulong ordinal, out _, out _), "resume positive seed ordinal: " + id);
-                    var execution = new FamilyExecutionContext(requiresGpu: false, failOnPhysicalRecovery: true);
+                    var execution = new FilterRuntimeServices(requiresGpu: false, failOnPhysicalRecovery: true);
+                    var running = plan.OrderedFamilies.Select(body => body.CreateExecution!(body, execution)).ToArray();
                     try
                     {
                         var batch = new SearchBatch(ordinal, 1);
-                        var survivors = LinearFamilyPipeline.FilterAsync(execution, new(batch, request), plan.OrderedFamilies, default).GetAwaiter().GetResult();
+                        var survivors = LinearFamilyPipeline.FilterAsync(execution, batch, running, default).GetAwaiter().GetResult();
                         check(survivors.Count == 1 && execution.CaptureFilterIsolations(batch).Count == 0,
                             "resume positive survives actual CPU Family plan without fault isolation: " + id);
                     }
                     finally
                     {
-                        foreach (var family in plan.OrderedFamilies) family.DisposeAsync(execution).GetAwaiter().GetResult();
+                        foreach (var family in running) family.DisposeAsync(execution).GetAwaiter().GetResult();
                         execution.DisposeAsync().AsTask().GetAwaiter().GetResult();
                     }
                     string authoredPath = Path.Combine(output, id + (author ? "-authored-positive.json" : "-positive.json"));
@@ -120,7 +121,7 @@ internal static partial class FamilyCpuIntegrationChecks
                     row["ActualRequestedWorkers"] = request.WorkerCount;
                     row["ActualPlan"] = plan.FormatSummary();
                     row["ActualStages"] = JsonSerializer.SerializeToNode(plan.OrderedFamilies.Select(f => new {
-                        f.FamilyId, Workers = (f as FamilyCpuExecution)?.Workers,
+                        f.FamilyId, Workers = f.UsesGpu ? (int?)null : f.CpuWorkers,
                         f.ConditionPerformance.PhysicalImplementationRevision, f.ConditionPerformance.UsesGpu
                     }), ProductionSearchReplay.JsonOptions);
                     row["CompileEvidence"] = "Production compiler, normal CPU Only plan, positive whole-table Production Exact";
@@ -143,9 +144,9 @@ internal static partial class FamilyCpuIntegrationChecks
         check(pending == 0, "resume manifest retains unresolved compile/positive cases; inspect validated-manifest.json");
     }
 
-    private static ExactSearchExecutionRequest ResumeCompile(ProductionSearchReplayWorkload workload, SearchContext context, string seed)
+    private static PreparedSearch ResumeCompile(ProductionSearchReplayWorkload workload, SearchContext context, string seed)
     {
-        var result = ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(workload.Query, context),
+        var result = SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, context),
             workload.Options with { StartSeed = seed, ScanCount = 1, TargetMatchCount = 1 });
         return result.Plan ?? throw new InvalidDataException("Resume.Compile:" + result.Issue);
     }

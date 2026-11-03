@@ -17,7 +17,7 @@ public sealed class Beta110PredictionProfile : ISeedPredictionProfile
     public RuntimeProfileId ProfileId => RuntimeProfileId.Beta110;
     public string PredictorId => "Beta110AnalysisProfile";
 
-    public SeedPredictionDocument Predict(SeedPredictionRequest request, GameVersionDetection detection)
+    public SeedPredictionFacts Observe(SeedPredictionRequest request, GameVersionDetection detection)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(detection);
@@ -27,18 +27,18 @@ public sealed class Beta110PredictionProfile : ISeedPredictionProfile
             !RuntimeVersionCompatibility.UsesBeta110Profile(request.Authority.GameVersion) ||
             !string.Equals(request.Authority.GameVersion, detection.NormalizedVersion, StringComparison.Ordinal))
         {
-            return Fail(request, detection, string.Empty, PredictionWarningCode.InvalidRequestContext, SeedPredictionOverallStatus.Unknown);
+            return Fail(request, detection, string.Empty, PredictionWarningCode.InvalidRequestContext, SeedPredictionInputStatus.Unknown);
         }
         if (!Beta110Profile.Instance.TryCanonicalizeSeed(request.OriginalSeed, out string canonicalSeed, out string issue))
         {
-            return SeedPredictionDocument.Invalid(detection.DisplayVersion, ProfileId, PredictorId, request, issue);
+            return SeedPredictionFacts.Invalid(detection.DisplayVersion, ProfileId, PredictorId, request, issue);
         }
 
         TrustedRootHashInput input = TrustedRootHashInput.FromCanonicalSeed(Beta110Profile.Instance, canonicalSeed);
-        return PredictCore(request, detection, input);
+        return ObserveCore(request, detection, input);
     }
 
-    internal SeedPredictionDocument PredictFromRootHash(
+    internal SeedPredictionFacts ObserveFromRootHash(
         SeedPredictionRequest request,
         GameVersionDetection detection,
         TrustedRootHashInput input,
@@ -53,7 +53,7 @@ public sealed class Beta110PredictionProfile : ISeedPredictionProfile
                 detection,
                 input.SeedIdentity,
                 PredictionWarningCode.InvalidRequestContext,
-                SeedPredictionOverallStatus.Unknown,
+                SeedPredictionInputStatus.Unknown,
                 new PredictionDiagnostic("trusted-root-hash-request-mismatch", "true"));
         }
         if (input.HasCanonicalSeed &&
@@ -64,13 +64,13 @@ public sealed class Beta110PredictionProfile : ISeedPredictionProfile
                 detection,
                 input.SeedIdentity,
                 PredictionWarningCode.InvalidRequestContext,
-                SeedPredictionOverallStatus.Unknown,
+                SeedPredictionInputStatus.Unknown,
                 new PredictionDiagnostic("trusted-root-hash-forward-validation", "failed"));
         }
-        return PredictCore(request, detection, input, preparedOpeningChoices);
+        return ObserveCore(request, detection, input, preparedOpeningChoices);
     }
 
-    private SeedPredictionDocument PredictCore(
+    private SeedPredictionFacts ObserveCore(
         SeedPredictionRequest request,
         GameVersionDetection detection,
         TrustedRootHashInput input,
@@ -83,13 +83,13 @@ public sealed class Beta110PredictionProfile : ISeedPredictionProfile
             !RuntimeVersionCompatibility.UsesBeta110Profile(request.Authority.GameVersion) ||
             !string.Equals(request.Authority.GameVersion, detection.NormalizedVersion, StringComparison.Ordinal))
         {
-            return Fail(request, detection, seedIdentity, PredictionWarningCode.InvalidRequestContext, SeedPredictionOverallStatus.Unknown);
+            return Fail(request, detection, seedIdentity, PredictionWarningCode.InvalidRequestContext, SeedPredictionInputStatus.Unknown);
         }
 
         bool requiresNeowIdentity = request.Includes(SeedPredictionDomainSelection.Neow) || request.Includes(SeedPredictionDomainSelection.NormalCombatRewards);
         if (request.Authority.NoRunModifiers == false)
         {
-            return Fail(request, detection, seedIdentity, PredictionWarningCode.NonVanillaCatalogUnsupported, SeedPredictionOverallStatus.Unsupported);
+            return Fail(request, detection, seedIdentity, PredictionWarningCode.NonVanillaCatalogUnsupported, SeedPredictionInputStatus.Unsupported);
         }
 
         ModernNeowIdentityResult? result = null;
@@ -129,7 +129,7 @@ public sealed class Beta110PredictionProfile : ISeedPredictionProfile
                     detection,
                     seedIdentity,
                     PredictionWarningCode.AnalysisFailed,
-                    SeedPredictionOverallStatus.Unknown,
+                    SeedPredictionInputStatus.Unknown,
                     new PredictionDiagnostic(PredictionDiagnosticCodes.Exception, ex.ToString()));
             }
 
@@ -145,8 +145,8 @@ public sealed class Beta110PredictionProfile : ISeedPredictionProfile
                     identityPrecision,
                     request.Authority,
                     input.RootHash,
-                    request.EnableComplexBonesDeckInteractions) : SeedPredictionDocumentFactory.UnrequestedNeowEffects;
-                return SeedPredictionDocumentFactory.Choice(
+                    request.EnableComplexBonesDeckInteractions) : NeowChoiceFacts.UnrequestedNeowEffects;
+                return NeowChoiceFacts.Choice(
                     index + 1,
                     key,
                     request,
@@ -223,7 +223,7 @@ public sealed class Beta110PredictionProfile : ISeedPredictionProfile
                     request.CombatRewardProjectionRequest, request.RewardPoolPreparation)
                 : null;
 
-        return SeedPredictionDocumentFactory.Create(
+        return SeedPredictionFactsFactory.Create(
             request,
             detection,
             ProfileId,
@@ -232,18 +232,13 @@ public sealed class Beta110PredictionProfile : ISeedPredictionProfile
             choices,
             distinctWarnings,
             BuildDiagnostics(request, compatibility, result, input),
-            SeedPredictionDocumentFactory.ProductFacingOverallStatus(
-                choices,
-                identityPrecision,
-                additionalIdentityAuthorityWarning:
-                    (result is not null && (result.UnknownEligibilityAffectedPool || !result.ExactAuthority)) ||
-                    compatibility.IsFallback ||
-                    compatibility.IsPendingValidation),
+            SeedPredictionInputStatus.Ready,
             worldPrediction,
             relicSequencePrediction,
             normalCombatRewardPrediction,
             requiresNeowIdentity ? neowStatus : null,
-            neowIssueCode);
+            neowIssueCode, identityPrecision: identityPrecision,
+            identityAuthorityWarning: (result is not null && (result.UnknownEligibilityAffectedPool || !result.ExactAuthority)) || compatibility.IsFallback || compatibility.IsPendingValidation);
     }
 
     private IReadOnlyList<PredictionDiagnostic> BuildDiagnostics(
@@ -283,14 +278,14 @@ public sealed class Beta110PredictionProfile : ISeedPredictionProfile
         return diagnostics;
     }
 
-    private SeedPredictionDocument Fail(
+    private SeedPredictionFacts Fail(
         SeedPredictionRequest request,
         GameVersionDetection detection,
         string canonicalSeed,
         PredictionWarningCode warning,
-        SeedPredictionOverallStatus status,
+        SeedPredictionInputStatus status,
         PredictionDiagnostic? diagnostic = null) =>
-        SeedPredictionDocumentFactory.Create(
+        SeedPredictionFactsFactory.Create(
             request,
             detection,
             ProfileId,
@@ -299,5 +294,5 @@ public sealed class Beta110PredictionProfile : ISeedPredictionProfile
             Array.Empty<NeowChoiceResult>(),
             new[] { new PredictionWarning(warning) },
             diagnostic is null ? Array.Empty<PredictionDiagnostic>() : new[] { diagnostic },
-            status);
+            status, inputIssue: warning.ToString());
 }

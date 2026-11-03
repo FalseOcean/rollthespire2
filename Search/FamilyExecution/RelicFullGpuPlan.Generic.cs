@@ -35,8 +35,8 @@ internal sealed partial record RelicFullGpuPlan
 
     // General R-owned arrival replay supplements the existing tracked-rank fast
     // specialization. No mutable bag or Rewards state leaves this invocation.
-    private static bool TryCreateGeneric(ExactSearchExecutionRequest request, NeowReplayPlan route,
-        out RelicFullGpuPlan? plan, out string issue)
+    private static bool TryCreateGeneric(SearchModel request, NeowReplayPlan route,
+        out RelicFullGpuPlan? plan, out string issue, RelicOpeningPrefixPlan? openingPrefix = null)
     {
         plan = null; issue = "";
         var a = route.Authority; var catalog = a.EffectCatalog;
@@ -47,12 +47,17 @@ internal sealed partial record RelicFullGpuPlan
             return Unsupported("R.GenericCapsuleSource", out issue);
         // K's six independent cards consume exactly 18 Rewards draws, so R
         // does not require a shared Niche checkpoint to observe Capsule contents.
-        if (!catalog.CharacterRewardAuthorityExact || !catalog.ColorlessRewardAuthorityExact || !catalog.PotionAuthorityExact ||
-            catalog.OtherCharacterPools.Length < 3 || catalog.OtherCharacterPools.Any(p => p.TotalCount == 0))
+        if (openingPrefix is null && (!catalog.CharacterRewardAuthorityExact || !catalog.ColorlessRewardAuthorityExact || !catalog.PotionAuthorityExact ||
+            catalog.OtherCharacterPools.Length < 3 || catalog.OtherCharacterPools.Any(p => p.TotalCount == 0)))
             return Unsupported("R.GenericOpeningPools", out issue);
         if (!RelicFamilyPlanCompiler.TryCompilePool(request, out var pool, out var dense, out _, out issue)) return false;
         if (Enumerable.Range(0, pool.BucketCount).Where(i => pool.BucketScopes[i] == 1 && pool.BucketKinds[i] <= 3)
             .Sum(i => pool.BucketLengths[i]) > 512) return Unsupported("R.GenericPersonalBagCapacity", out issue);
+        var circlet = new ModelKey("RELIC", "CIRCLET");
+        if (openingPrefix is not null && Enumerable.Range(0, pool.BucketCount)
+            .Any(i => pool.BucketScopes[i] == 1 && pool.BucketKinds[i] == 3 && pool.BucketLengths[i] < 3) &&
+            catalog.KeyOf(catalog.CapsuleCircletId) != circlet)
+            return Unsupported("R.GenericCircletIdentityUnavailable", out issue);
         RelicFamilyPlan sequence;
         if (request.Evaluation.RequiresRelicSequenceDomain)
         {
@@ -64,7 +69,8 @@ internal sealed partial record RelicFullGpuPlan
         uint Store(IEnumerable<uint> values) { uint at = (uint)meta.Count; meta.AddRange(values); return at; }
         void Hash(int at, ulong value) { meta[at] = (uint)value; meta[at + 1] = (uint)(value >> 32); }
         meta[0] = 4; meta[1] = route.Selected; meta[14] = (uint)a.PlayerSlotIndex; meta[15] = (uint)a.PlayersCount;
-        meta[16] = (a.AllCharacterCardPoolsUnlocked ? 4u : 0) | (a.ScrollBoxesAllowed ? 8u : 0);
+        meta[16] = (a.AllCharacterCardPoolsUnlocked ? 4u : 0) | (a.ScrollBoxesAllowed ? 8u : 0) |
+                   (openingPrefix is not null ? 32u : 0u);
         meta[17] = (uint)a.EligibleCurseRelicIds.Length;
         Hash(18, XxHash64.Hash("NEOW"u8, 0)); Hash(20, NeowFamilyReplay.RewardsHash); Hash(22, XxHash64.Hash("up_front"u8, 0));
         meta[24] = route.Bones ? (uint)a.BonesEligibleRelicIds.Length : 0;
@@ -76,9 +82,22 @@ internal sealed partial record RelicFullGpuPlan
         cmeta[6] = a.UsesDefectScrollBoxesRule ? 4u : 0;
         void CH(int at, ulong value) { cmeta[at] = (uint)value; cmeta[at + 1] = (uint)(value >> 32); }
         CH(14, NeowFamilyReplay.RewardsHash); CH(16, XxHash64.Hash("niche"u8, 0));
-        var pools = CombatRewardGpuPacking.BuildPoolMeta(catalog with { OrdinaryRelics = [], PlayerRelicBuckets = [], SharedRelicConsumeShuffleLengths = [] }, out var ids);
+        var packingCatalog = catalog with { OrdinaryRelics = [], PlayerRelicBuckets = [], SharedRelicConsumeShuffleLengths = [] };
+        if (openingPrefix is not null)
+        {
+            // Fixed-consumption rules do not observe card identities or Niche.
+            // Only the actual branch donor (Scroll Boxes) needs card pool data.
+            packingCatalog = packingCatalog with
+            {
+                CharacterRewardPool = openingPrefix.Rules.Contains(RelicOpeningPrefixPlan.BranchRule) ? catalog.CharacterRewardPool : new([], [], []),
+                ColorlessRewardPool = new([], [], []), OtherCharacterPools = [],
+                PotionPool = new([], [], [], []), CombatRewardCardPool = new([], [], []),
+                CombatRewardPowerPool = new([], [], []), CombatRewardPotionPool = new([], [], [], []),
+                MultiplayerRewardPool = new([], [], [])
+            };
+        }
+        var pools = CombatRewardGpuPacking.BuildPoolMeta(packingCatalog, out var ids);
         meta[106] = Store(cmeta); meta[107] = Store(pools); meta[108] = Store(ids);
-        var circlet = new ModelKey("RELIC", "CIRCLET");
         meta[111] = dense.TryGetValue(circlet, out var ci) ? ci : (uint)dense.Count;
         uint Id(ModelKey key) => key == circlet ? meta[111] : dense.TryGetValue(key, out var id) ? id : uint.MaxValue;
         var rows = new List<uint>();
@@ -98,15 +117,16 @@ internal sealed partial record RelicFullGpuPlan
         if (request.Evaluation.RequireWhetstone) Row(254, 0, [BaseGameModelKeys.OrdinaryRelics.Whetstone]);
         if (request.Evaluation.RequireWarPaint) Row(254, 0, [BaseGameModelKeys.OrdinaryRelics.WarPaint]);
         meta[109] = Store(rows); meta[110] = (uint)(rows.Count / 4);
-        var unresolved = RolltheSpire2.Search.Semantics.PartyInitialQuery.CapsuleEffectPremise(request.CompiledSearch.NormalizedQuery)
+        var unresolved = openingPrefix is not null ? [] : RolltheSpire2.Search.Semantics.PartyInitialQuery.CapsuleEffectPremise(request.CompiledSearch.NormalizedQuery)
             .Values.SelectMany(keys => keys)
             .Where(k => !VanillaRelicRewardEffects.TryGet(request.ProfileId, k, out var e) || !e.NestedOnObtainPreservesRewardContinuation)
             .Distinct().Select(Id).ToArray();
         meta[120] = Store(unresolved); meta[121] = (uint)unresolved.Length;
-        plan = new(sequence, meta.ToArray()) { GenericReplay = true,
+        if (openingPrefix is not null) meta[122] = Store(openingPrefix.Rules);
+        plan = new(sequence, meta.ToArray()) { GenericReplay = true, UsesOpeningPrefix = openingPrefix is not null,
             UseExactGenericBagCapacity = request.ProfileId == RolltheSpire2.Compatibility.RuntimeProfileId.Beta111 &&
-                request.Authority.PlayersCount is >= 2 and <= 4 &&
-                sequence.Predicates.Length == 0 && sequence.ShopPredicates.Length == 0 };
+                (openingPrefix is not null || request.Authority.PlayersCount is >= 2 and <= 4 &&
+                sequence.Predicates.Length == 0 && sequence.ShopPredicates.Length == 0) };
         return true;
     }
 

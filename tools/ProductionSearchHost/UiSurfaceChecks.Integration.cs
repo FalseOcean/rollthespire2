@@ -16,7 +16,7 @@ using RolltheSpire2.Ui.Shell;
 
 internal static partial class UiSurfaceChecks
 {
-    private static async Task RunIntegrationChecks(WorkspaceShell shell, SeedPredictionRequest request, SeedPredictionDocument document)
+    private static async Task RunIntegrationChecks(WorkspaceShell shell, SeedPredictionRequest request, SeedPredictionFacts document)
     {
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
         object Field(object obj, string name) => obj.GetType().GetField(name, flags)!.GetValue(obj)!;
@@ -24,15 +24,17 @@ internal static partial class UiSurfaceChecks
         object? Call(object obj, string name, params object?[] args) => obj.GetType().GetMethod(name, flags)!.Invoke(obj, args);
         void Require(bool ok, string message) { if (!ok) throw new InvalidOperationException("IntegratedUi:" + message); }
         var workbench = (QueryWorkbenchFrame)Field(shell, "_references");
+        ((Button)Field(shell, "_search")).EmitSignal(Button.SignalName.Pressed);
+        await AwaitPageReady(shell, shell);
         RunLiveEtaChecks(workbench);
         var persistence = (SearchWorkspace)Field(shell, "_persistence");
         var candidate = new SearchCandidate(document.CanonicalSeed, request.Authority.ProfileId,
-            request.Character.CharacterKey, request.Ascension, "ui-integration", request, document,
-            request.Authority, [], [], []);
+            request.Character.CharacterKey, request.Ascension, "ui-integration",
+            request.Authority, SearchQueryEvaluation.Match()) { Facts = document };
         var runtime = (ModRuntimeSnapshot)Field(workbench, "_runtime");
         var draft = new WorkbenchSearchDraft(request.Character.CharacterKey, request.Ascension, SearchQuery.Empty, request.AncientOptionConditions);
-        var plan = ExactSearchExecutionRequestFactory.Compile(draft.Compile(runtime, out _), new(candidate.Seed, 1, 1, 1)).Plan!;
-        string fingerprint = plan.CompiledSearch.SemanticFingerprint;
+        var plan = SearchPreparationCompiler.Compile(draft.Compile(runtime, out _), new(candidate.Seed, 1, 1, 1)).Plan!;
+        string fingerprint = plan.Model.CompiledSearch.SemanticFingerprint;
         var prepared = persistence.PrepareSearchStart(draft, plan, SeedLibraryContextCapture.ForSearch(draft, runtime));
         var session = new FinishingUiSession(candidate);
         Set(workbench, "_showResults", true);
@@ -63,11 +65,13 @@ internal static partial class UiSurfaceChecks
         Call(shell, "ShowSingleResult", persistence.ResultAction(persistence.DisplayResults.Single(result => result.Seed == candidate.Seed)));
         Require(Field(controller, "_partyDraft") is null && page.CurrentDraft.PlayersCount == 1 && page.CurrentDraft.PlayerSlotIndex == 0,
             "single result navigation must clear the controller's party mode");
-        Require(page.LastRequest is { PlayersCount: 1, PlayerSlotIndex: 0 } && page.LastDocument?.Party is null,
+        Require(page.LastRequest is { PlayersCount: 1, PlayerSlotIndex: 0 } && page.LastFacts?.Party is null,
             "single result must produce a single-player request and document");
 
         // The explicit recovery control restores editing; persistence checks cover
         // the original-file backups and locked-write failure matrix independently.
+        ((Button)Field(shell, "_search")).EmitSignal(Button.SignalName.Pressed);
+        await AwaitPageReady(shell, shell);
         Set(workbench, "_loadFailed", true);
         Set(workbench, "_showResults", false);
         workbench.Refresh((string)Field(workbench, "_language"),

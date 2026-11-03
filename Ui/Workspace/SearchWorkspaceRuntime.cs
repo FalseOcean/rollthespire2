@@ -64,7 +64,7 @@ internal sealed partial class SearchWorkspaceRuntime(SearchWorkspace store)
         var feasibility = SearchFeasibilityAnalyzer.Analyze(compiled);
         if (feasibility.IsImpossible) return feasibility;
         store.InitializeWorkbenchCursor();
-        var execution = ExactSearchExecutionRequestFactory.Compile(compiled,
+        var execution = SearchPreparationCompiler.Compile(compiled,
             new(store.CurrentNextCursorSeed, long.MaxValue, target, workers, SkipExactValidation: store.Preferences.SkipExactValidation,
                 ManualFamilyOrder: draft.ManualFamilyOrder, MapLossy: store.MapLossyPreferences));
         if (!execution.Success || execution.Plan is null) throw new InvalidOperationException(execution.Issue);
@@ -78,7 +78,7 @@ internal sealed partial class SearchWorkspaceRuntime(SearchWorkspace store)
             gpuAvailable: store.Preferences.SearchMode == "CPU" ? false : null, continuation: start.Resolution.Continuation);
         // The session belongs to this owner before any optional publication,
         // diagnostics, save or frame binding can fail.
-        InstallStartedSession(session, start.Plan.CompiledSearch.SemanticFingerprint, prepared, tree);
+        InstallStartedSession(session, start.Plan.Model.CompiledSearch.SemanticFingerprint, prepared, tree);
         store.ResolvePresentationFailure("QueryAdmission");
         return feasibility;
     }

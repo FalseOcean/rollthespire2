@@ -12,11 +12,6 @@ internal sealed partial class PredictorRun
     {
         if (!Context.HasRunModifier("TERMINAL")) return;
         _terminalResumePhase = Phase;
-        // A mechanically completed Opening is not a completed node until its
-        // room-entry modifiers have finished. Keep disk saves at the prior cut.
-        if (Phase == PredictorPhase.Complete && _checkpoints.Length > 1 &&
-            _checkpoints[^1].CompletedNode?.NodeId == Working.Position.NodeId)
-            _checkpoints = _checkpoints.RemoveAt(_checkpoints.Length - 1);
         Phase = PredictorPhase.RoomEntryHealth;
         _requestId++;
     }

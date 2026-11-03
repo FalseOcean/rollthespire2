@@ -47,7 +47,18 @@ internal static partial class UiSurfaceChecks
         object New(string name, params object?[] args) => Activator.CreateInstance(asm.GetType("RolltheSpire2." + name, true)!, args)!;
         object? Call(object value, string name, params object?[] args)
         {
-            var method = value.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!;
+            var candidates = value.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Where(method => method.Name == name)
+                .Where(method =>
+                {
+                    var signature = method.GetParameters();
+                    return signature.Length >= args.Length && signature.Skip(args.Length).All(parameter => parameter.HasDefaultValue) &&
+                        args.Select((argument, index) => argument == null
+                            ? !signature[index].ParameterType.IsValueType || Nullable.GetUnderlyingType(signature[index].ParameterType) != null
+                            : signature[index].ParameterType.IsInstanceOfType(argument)).All(matches => matches);
+                }).ToArray();
+            int arity = candidates.Min(method => method.GetParameters().Length);
+            var method = candidates.Single(method => method.GetParameters().Length == arity);
             var parameters = method.GetParameters();
             return method.Invoke(value, args.Concat(parameters.Skip(args.Length).Select(p => p.DefaultValue)).ToArray());
         }
@@ -70,8 +81,8 @@ internal static partial class UiSurfaceChecks
         if (!SeedPredictionRequest.TryCreate(layoutSeed ?? "00000103CP3W", context.Authority.Character, 10, 1, 0, fixtureAuthority,
             context.EvaluationAssumptions.AncientEligibilityAssumptions, SeedPredictionDomainSelection.All, SeedPredictionInputLimits.MaximumRelicSequencePreviewCount,
             false, out var request, out var issue)) throw new Exception(issue.ToString());
-        var document = RuntimeProfileRegistry.Predict(detection, request!);
-        if (document.Sections.SelectMany(s => s.EncounterSequences).Sum(a => a.Normal.Count + a.Elite.Count) == 0) throw new Exception("Encounter document not connected");
+        var document = RuntimeProfileRegistry.Observe(detection, request!);
+        if (document.World!.EncounterSequences.Sum(a => a.Normal.Count + a.Elite.Count) == 0) throw new Exception("Encounter document not connected");
         System.Collections.IDictionary Maps() => (System.Collections.IDictionary)Field(page, "_overviewMaps");
         System.Collections.IDictionary Routes() => (System.Collections.IDictionary)Field(page, "_overviewRoutes");
         System.Collections.IDictionary Metrics() => (System.Collections.IDictionary)Field(page, "_overviewRouteMetrics");
@@ -95,7 +106,7 @@ internal static partial class UiSurfaceChecks
                     asm.GetType("RolltheSpire2.Infrastructure.ContentNames.RuntimeGameContentNameResolver")!
                         .GetMethod("Create")!.Invoke(null, [language])!;
                 Call(page, "ApplyLocalization", text, names);
-                Call(page, "ShowDocument", request, document, eventUnlocks);
+                Call(page, "ShowFacts", request, document, eventUnlocks);
                 var model = (SeedAnalysisViewModel)Field(page, "_viewModel");
                 var template = model.EventPoolSequenceDomain.Items.SelectMany(a => a.Entries).First();
                 foreach (string entry in entries)
@@ -215,14 +226,14 @@ internal static partial class UiSurfaceChecks
                 context.EvaluationAssumptions.AncientEligibilityAssumptions, SeedPredictionDomainSelection.All,
                 SeedPredictionInputLimits.MaximumRelicSequencePreviewCount, false, out var routeRequest, out issue))
                 throw new Exception("Declared route request: " + issue);
-            var routeDocument = RuntimeProfileRegistry.Predict(detection, routeRequest!);
+            var routeDocument = RuntimeProfileRegistry.Observe(detection, routeRequest!);
             foreach (string language in new[] { "zh", "en" })
             {
                 MegaCrit.Sts2.Core.Saves.SaveManager.Instance.SettingsSave.Language = language == "zh" ? "zhs" : "eng";
                 MegaCrit.Sts2.Core.Localization.LocManager.Initialize();
                 var names = asm.GetType("RolltheSpire2.Infrastructure.ContentNames.RuntimeGameContentNameResolver")!.GetMethod("Create")!.Invoke(null, [language])!;
                 Call(page, "ApplyLocalization", JsonUiTextProvider.CreatePredictorUi13(language), names);
-                Call(page, "ShowDocument", routeRequest, routeDocument, routeUnlocks);
+                Call(page, "ShowFacts", routeRequest, routeDocument, routeUnlocks);
                 page.GetType().GetField("_routeSubview", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(page, true);
                 Call(page, "RenderWorkbench");
                 for (int frame = 0; frame < 10; frame++) await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
@@ -535,7 +546,7 @@ internal static partial class UiSurfaceChecks
             selectTask.Invoke(layoutShell, [Enum.Parse(selectTask.GetParameters()[0].ParameterType, "Analysis"), null, null]);
             Call(page, "ApplyLocalization", JsonUiTextProvider.CreatePredictorUi13("zh"),
                 asm.GetType("RolltheSpire2.Infrastructure.ContentNames.RuntimeGameContentNameResolver")!.GetMethod("Create")!.Invoke(null, ["zh"]));
-            Call(page, "ShowDocument", request, document, null);
+            Call(page, "ShowFacts", request, document, null);
             var model = (SeedAnalysisViewModel)Field(page, "_viewModel");
             var bones = model.NeowChoices.First(c => c.RelicKey == BaseGameModelKeys.Relics.NeowsBones);
             Call(page, "ApplyOpeningSelection", bones.RelicKey, bones.OpeningRoutes.First().RouteId);
@@ -574,7 +585,7 @@ internal static partial class UiSurfaceChecks
             MegaCrit.Sts2.Core.Localization.LocManager.Initialize();
             var names = asm.GetType("RolltheSpire2.Infrastructure.ContentNames.RuntimeGameContentNameResolver")!.GetMethod("Create")!.Invoke(null, [language])!;
             Call(page, "ApplyLocalization", JsonUiTextProvider.CreatePredictorUi13(language), names);
-            Call(page, "ShowDocument", request, document, null);
+            Call(page, "ShowFacts", request, document, null);
             var tabs = (List<Button>)Field(page, "_wbTabs");
             if (tabs.Count != 4) throw new Exception("Expected four Predictor pages");
             if (Maps().Count != 1 || !((Control)page.FindChild("PredictorAuxiliaryRail", true, false)).Visible)
@@ -819,7 +830,7 @@ internal static partial class UiSurfaceChecks
             if (!SeedPredictionRequest.TryCreate("MSF4M05B3PZQ", context.Authority.Character, 10, 1, 0, fixtureAuthority,
                 context.EvaluationAssumptions.AncientEligibilityAssumptions, SeedPredictionDomainSelection.All, SeedPredictionInputLimits.MaximumRelicSequencePreviewCount,
                 false, out var capsuleRequest, out issue)) throw new Exception(issue.ToString());
-            Call(page, "ShowDocument", capsuleRequest, RuntimeProfileRegistry.Predict(detection, capsuleRequest!));
+            Call(page, "ShowFacts", capsuleRequest, RuntimeProfileRegistry.Observe(detection, capsuleRequest!));
             var capsuleVm = (SeedAnalysisViewModel)Field(page, "_viewModel");
             var capsule = capsuleVm.NeowChoices.Single(c => c.RelicKey == BaseGameModelKeys.Relics.LargeCapsule);
             Call(page, "ApplyOpeningSelection", capsule.RelicKey, capsule.OpeningRoutes.First().RouteId);
@@ -869,8 +880,8 @@ internal static partial class UiSurfaceChecks
             if (!SeedPredictionRequest.TryCreate("K5ET15V6EN5C", context.Authority.Character, 10, 1, 0, fixtureAuthority,
                 context.EvaluationAssumptions.AncientEligibilityAssumptions, SeedPredictionDomainSelection.All, SeedPredictionInputLimits.MaximumRelicSequencePreviewCount,
                 false, out var replacement, out issue)) throw new Exception(issue.ToString());
-            var replacementDocument = RuntimeProfileRegistry.Predict(detection, replacement!);
-            Call(page, "ShowDocument", replacement, replacementDocument);
+            var replacementDocument = RuntimeProfileRegistry.Observe(detection, replacement!);
+            Call(page, "ShowFacts", replacement, replacementDocument);
             if (Maps().Count != 1 || Routes().Count != 0 || Metrics().Count != 0 || ReferenceEquals(oldEvents, Call(page, "BuildEventResultProjection")) ||
                 ReferenceEquals(merchantProjection, Call(page, "BuildMerchantColorlessProjection")))
                 throw new Exception("Changed context reused stale projections");

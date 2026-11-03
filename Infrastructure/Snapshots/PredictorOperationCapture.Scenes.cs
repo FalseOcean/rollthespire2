@@ -138,7 +138,16 @@ internal static partial class PredictorOperationCapture
             var value = rng.ToSerializable();
             eventRng = new(value.state0, value.state1, value.state2, value.state3, value.counter);
         }
-        return new(rewards, selected) { EventRng = eventRng, LinkedGroups = groups.ToImmutable(),
+        // An obtain can open a separate reward set while the player is still
+        // in the combat room. Only this set's own room describes its rewards.
+        PredictorCombatKind? combatKind = set.Room is CombatRoom combatRoom ? combatRoom.RoomType switch
+        {
+            RoomType.Monster => PredictorCombatKind.Monster,
+            RoomType.Elite => PredictorCombatKind.Elite,
+            RoomType.Boss => PredictorCombatKind.Boss,
+            _ => null
+        } : null;
+        return new(rewards, selected) { CombatKind = combatKind, EventRng = eventRng, LinkedGroups = groups.ToImmutable(),
             PendingRemoval = CaptureRewardRemoval(set, root ?? MegaCrit.Sts2.Core.Nodes.NRun.Instance) };
     }
 

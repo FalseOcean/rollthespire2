@@ -49,8 +49,19 @@ internal static partial class MorphicFilterChecks
         cases.Add([new(EventResultConditionKind.FakeMerchantOfferedFakeRelic,Beta111EventResultCatalog.FakeMerchantRelics[0])]);
         cases.Add([new(EventResultConditionKind.TrashHeapDiveRelic,Beta111EventResultCatalog.TrashHeapDiveRelics[0])]);
         cases.Add([new(EventResultConditionKind.ColorfulPhilosophersOfferedColor,new("CHARACTER","SILENT"))]);
+        var grab = new EventResultSearchCondition(EventResultConditionKind.TrashHeapGrabCard, Beta111EventResultCatalog.TrashHeapGrabCards[0]);
+        var dive = new EventResultSearchCondition(EventResultConditionKind.TrashHeapDiveRelic, Beta111EventResultCatalog.TrashHeapDiveRelics[0]);
+        var fake = new EventResultSearchCondition(EventResultConditionKind.FakeMerchantOfferedFakeRelic, Beta111EventResultCatalog.FakeMerchantRelics[0]);
+        var color = new EventResultSearchCondition(EventResultConditionKind.ColorfulPhilosophersOfferedColor,
+            Beta111EventResultCatalog.ColorfulCharacterOrder.First(key => key != context.Authority.Character.CharacterKey));
+        var trialScalar = new EventResultSearchCondition(EventResultConditionKind.TrialCase, new("EVENT", "TRIAL")) {
+            TrialCase = TrialCaseTarget.Nondescript };
+        var tinkerScalar = new EventResultSearchCondition(EventResultConditionKind.TinkerTimeTypeAndRider, new("CARD", "MAD_SCIENCE")) {
+            TinkerCardType = TinkerCardTypeTarget.Attack, TinkerRider = TinkerRiderTarget.Sapping };
+        cases.Add([fake, grab, color, dive, trialScalar, tinkerScalar]);
+        cases.Add([fake, Transform(kinds[3]), grab, trialScalar, tinkerScalar, color]);
         var opts = new SearchRunOptions("000000000000", 4099, int.MaxValue, 1);
-        ExactSearchExecutionRequest Request(SearchQuery q) => ExactSearchExecutionRequestFactory.Compile(SearchCompiler.Compile(q,context),opts).Plan!;
+        PreparedSearch Request(SearchQuery q) => SearchPreparationCompiler.Compile(SearchCompiler.Compile(q,context),opts).Plan!;
         RenderingDevice? rd = Environment.GetEnvironmentVariable("RT2_EVENT_WHITELIST_GPU") == "1" ? RenderingServer.CreateLocalRenderingDevice() : null;
         if (Environment.GetEnvironmentVariable("RT2_EVENT_WHITELIST_GPU") == "1") check(rd is not null,"Vulkan available");
         int totalHits=0; var fingerprints=new HashSet<string>();
@@ -59,8 +70,9 @@ internal static partial class MorphicFilterChecks
             for(int ci=0;ci<cases.Count;ci++)
             {
                 var query=SearchQuery.Empty with {EventResultConditions=cases[ci]};
-                var request=Request(query); var plan=new EventResultFamilyPlan(request);
+                var request=Request(query); var plan=new EventResultFamilyPlan(request.Model);
                 check(plan.GpuSupported,"Whitelist GPU closure");
+                CheckEventPreparationSnapshots(request, check, expectedDefault: ci is 27 or 28);
                 check(fingerprints.Add(request.SnapshotFingerprint),"Distinct typed event fingerprint");
                 var json=JsonSerializer.Serialize(query,ProductionSearchReplay.JsonOptions);
                 check(Request(JsonSerializer.Deserialize<SearchQuery>(json,ProductionSearchReplay.JsonOptions)!).SnapshotFingerprint==request.SnapshotFingerprint,"Whitelist JSON roundtrip");
@@ -69,22 +81,23 @@ internal static partial class MorphicFilterChecks
                 {
                     var root=TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance,Beta110SeedCodec.FormatOrdinal(i));
                     bool expected=cases[ci].All(c=>SourceTruth(root.RootHash,c,plan));
-                    var exact=ProductionExactSearchEvaluator.Evaluate(request,root);
+                    var exact=ProductionExactSearchEvaluator.Evaluate(request.Model,root);
                     check(exact.Evaluation.Disposition is SearchDisposition.Match or SearchDisposition.NoMatch,"Whitelist Exact resolved");
                     check(plan.Matches(root.RootHash)==expected && plan.Reference(root.RootHash)==expected && exact.IsMatch==expected,"Vanilla RNG vs CPU vs Exact");
                     if(expected) accepted.Add(i);
                 }
                 var batch=new SearchBatch(0,(int)opts.ScanCount); var dense=FamilyCandidateSet.Dense(batch);
-                EventResultFamily.TryCreate(request,out var family);
-                var cpu=family!.CpuRealizations.Last();
-                var execution=new FamilyExecutionContext(false);
-                check(cpu.InvokeAsync(execution,new(batch,request),dense,default).GetAwaiter().GetResult().EnumerateLogicalOrdinals().SequenceEqual(accepted),"E CPU ABI1");
+                EventResultFamily.TryCreate(request.Model, FilterExecutionPreferences.From(request.RunOptions), out var family);
+                var cpu=family!.CpuAlternatives.Last();
+                var execution=new FilterRuntimeServices(false);
+                var handle=cpu.CreateExecution!(cpu,execution);
+                check(handle.FilterAsync(execution,dense,default).GetAwaiter().GetResult().EnumerateLogicalOrdinals().SequenceEqual(accepted),"E CPU ABI1");
                 using(var cancelled=new CancellationTokenSource()) {
                     cancelled.Cancel();
-                    try {cpu.InvokeAsync(execution,new(batch,request),dense,cancelled.Token).GetAwaiter().GetResult();throw new Exception("Missing cancellation");}
+                    try {handle.FilterAsync(execution,dense,cancelled.Token).GetAwaiter().GetResult();throw new Exception("Missing cancellation");}
                     catch(OperationCanceledException) {check(true,"E cancellation");}
                 }
-                cpu.DisposeAsync(execution).GetAwaiter().GetResult(); execution.DisposeAsync().GetAwaiter().GetResult();
+                handle.DisposeAsync(execution).GetAwaiter().GetResult(); execution.DisposeAsync().GetAwaiter().GetResult();
                 if(rd is not null)
                 {
                     using var gpu=new EventResultFamilyGpuExecutor(rd,plan);
@@ -95,7 +108,7 @@ internal static partial class MorphicFilterChecks
                 }
                 totalHits+=accepted.Count;
                 if(ci==4) check(accepted.Count>0,"Positive repeated-card Trial witness");
-                if(ci==21) check(Math.Abs(plan.Survival.SurvivalProbability!.Value-new EventResultFamilyPlan(Request(query with {EventResultConditions=[cases[ci][0]]})).Survival.SurvivalProbability!.Value)<1e-12,"Trial case counted once");
+                if(ci==21) check(Math.Abs(plan.Survival.SurvivalProbability!.Value-new EventResultFamilyPlan(Request(query with {EventResultConditions=[cases[ci][0]]}).Model).Survival.SurvivalProbability!.Value)<1e-12,"Trial case counted once");
                 if(ci==22) check(plan.Survival.SurvivalProbability==0,"Trial incompatible case has zero reach");
                 Console.WriteLine($"EVENT_WHITELIST case={ci};kind={string.Join('+',cases[ci].Select(c=>c.Kind))};hits={accepted.Count};gpu={rd is not null}");
             }
@@ -104,8 +117,8 @@ internal static partial class MorphicFilterChecks
         foreach(var k in kinds.Take(3)) {
             var c=Transform(k); var unknown=c with {MorphicGroveScenario=new(donor.Authority,donor.Premises with {VanillaLocalDependenciesBound=false},c.MorphicGroveScenario!.Targets)};
             var rq=Request(SearchQuery.Empty with {EventResultConditions=[unknown]});
-            check(new EventResultFamilyPlan(rq).Matches(12),"Unknown cannot Fast reject");
-            check(ProductionExactSearchEvaluator.Evaluate(rq,TrustedRootHashInput.RootOnly(12)).Evaluation.Disposition==SearchDisposition.Unknown,"Unknown cannot become Exact Match");
+            check(new EventResultFamilyPlan(rq.Model).Matches(12),"Unknown cannot Fast reject");
+            check(ProductionExactSearchEvaluator.Evaluate(rq.Model,TrustedRootHashInput.RootOnly(12)).Evaluation.Disposition==SearchDisposition.Unknown,"Unknown cannot become Exact Match");
         }
         check(!(cases[12][0] with {TinkerCardType=TinkerCardTypeTarget.Attack,TinkerRider=TinkerRiderTarget.Curious}).IsValid,"Cross-type rider invalid");
         foreach(var k in kinds.Skip(1).Take(2)) {
@@ -119,6 +132,56 @@ internal static partial class MorphicFilterChecks
             check(rejected,"T/E cannot double-own a transform source");
         }
         Console.WriteLine($"EVENT_WHITELIST_PASS cases={cases.Count};roots={opts.ScanCount};accepted={totalHits};sourceRng=vanilla;GPU={rd is not null}");
+    }
+
+    private static void CheckEventPreparationSnapshots(PreparedSearch request, Action<bool,string> check, bool expectedDefault)
+    {
+        string? prior = Environment.GetEnvironmentVariable("RT2_E_PREPARATION");
+        try
+        {
+            Environment.SetEnvironmentVariable("RT2_E_PREPARATION", "off");
+            var ordinary = new EventResultFamilyPlan(request.Model);
+            Environment.SetEnvironmentVariable("RT2_E_PREPARATION", null);
+            var defaultPlan = new EventResultFamilyPlan(request.Model);
+            Environment.SetEnvironmentVariable("RT2_E_PREPARATION", "groups");
+            var prepared = new EventResultFamilyPlan(request.Model);
+            var cpu = new EventResultFamilyPlan(request.Model, prepareGpu: false);
+            Environment.SetEnvironmentVariable("RT2_E_PREPARATION", "off");
+            check(!ordinary.UsesPreparedGroups && defaultPlan.UsesPreparedGroups == expectedDefault && prepared.UsesPreparedGroups &&
+                !cpu.UsesPreparedGroups && !cpu.GpuSupported && cpu.Buffers.Length == 0,
+                "E preparation freezes its measured default shape; CPU and ordinary inventory bodies remain unchanged");
+            check(prepared.ShaderSource().StartsWith("#version", StringComparison.Ordinal) &&
+                prepared.ShaderSource().Contains("#define RT2_E_PREPARED_GROUPS\n", StringComparison.Ordinal) &&
+                !ordinary.ShaderSource().Contains("#define RT2_E_PREPARED_GROUPS\n", StringComparison.Ordinal),
+                "E selected shader remains frozen after environment changes");
+            check(prepared.Conditions.SequenceEqual(ordinary.Conditions) &&
+                prepared.Buffers.Zip(ordinary.Buffers).All(pair => pair.First.SequenceEqual(pair.Second)) &&
+                prepared.Survival == ordinary.Survival,
+                "E physical experiment preserves authored conditions, resources and survival model");
+            uint[] meta = prepared.Buffers[0];
+            int count = checked((int)meta[0]), groups = 9 + count * 2;
+            int cheap = checked((int)meta[groups + 1]), trash = checked((int)meta[groups + 2]);
+            uint[] indices = meta.Skip(groups + 3).Take(count).ToArray();
+            check(indices.Length == count && indices.Order().SequenceEqual(Enumerable.Range(0, count).Select(i => (uint)i)),
+                "E request groups retain every original condition exactly once");
+            uint Kind(uint index) => meta[9 + checked((int)index) * 2];
+            check(indices.Take(cheap).All(index => Kind(index) is 7 or 8) &&
+                indices.Skip(cheap).Take(trash).All(index => Kind(index) is 0 or 1) &&
+                indices.Skip(cheap + trash).All(index => Kind(index) is not (0 or 1 or 7 or 8)),
+                "E compiled groups separate cheap scalar, shared Trash and remaining predicates");
+            uint expectedNeeds = 0;
+            foreach (uint index in indices)
+            {
+                uint kind = Kind(index);
+                if (kind <= 3) expectedNeeds |= 1u << (int)kind;
+                if (kind is >= 4 and <= 8)
+                    check(meta[10 + checked((int)index) * 2] >= groups + 3 + count &&
+                        meta[10 + checked((int)index) * 2] < meta.Length,
+                        "E scalar/transform payload pointers remain valid beyond appended preparation metadata");
+            }
+            check(meta[groups] == expectedNeeds, "E request needs agree with all selected inventory and Trash obligations");
+        }
+        finally { Environment.SetEnvironmentVariable("RT2_E_PREPARATION", prior); }
     }
 
     private static bool SourceTruth(ulong root, EventResultSearchCondition c, EventResultFamilyPlan plan)

@@ -1,35 +1,54 @@
+using System.Diagnostics;
 using System.Numerics;
 using Godot;
 
 namespace RolltheSpire2.Search.FamilyExecution;
 
-// RenderingDevice calls are confined to the existing session GPU owner. Buffers
-// persist across calls; the complete bitmap is cleared before every dispatch.
+// RenderingDevice calls remain on the session GPU owner. Each in-flight slot has
+// distinct input, bitmap and count config; plan transitions are immutable until
+// every submitted slot has been drained.
 internal sealed partial class MapLossyGpuExecutor : IDisposable
 {
     private const int MaxStates = 512;
     private const int RoomTypes = 9;
     private readonly RenderingDevice _rd;
     private readonly int _capacity;
-    private Rid _shader, _pipeline, _input, _output, _config, _transitions, _set;
+    private readonly FilterRuntimeServices? _context;
+    private readonly bool _prefetch;
+    private readonly Slot[] _slots;
+    private Rid _shader, _pipeline, _transitions;
     private MapLossyPlan? _uploadedPlan;
     private PackedPlan? _packedPlan;
     private int _shaderWords, _configBytes = 256, _transitionBytes = MaxStates * RoomTypes * sizeof(uint);
-    private bool _pending, _disposed;
+    private bool _pending, _recorded, _disposed;
+    private int _queuedDispatches, _pendingDispatches;
+    private sealed class Slot { internal Rid Input, Output, Config, Set; }
     internal int Capacity => _capacity;
+    internal string PipelineMode { get; }
     internal long Dispatches { get; private set; }
-    internal long RetainedBufferBytes => _capacity * 120L + BitmapBytes + _configBytes + _transitionBytes;
+    internal long RetainedBufferBytes => _slots.Length * (_capacity * 120L + BitmapBytes + _configBytes) + _transitionBytes;
     private int BitmapBytes => (_capacity + 31) / 32 * 4;
-    internal MapLossyGpuExecutor(RenderingDevice rd, int capacity)
+    // Only native checks install a probe. No environment option changes results.
+    internal Action<string>? ExecutionProbe { get; set; }
+    internal MapLossyGpuExecutor(RenderingDevice rd, int capacity, FilterRuntimeServices? context = null)
     {
-        _rd = rd; _capacity = capacity;
+        _rd = rd; _capacity = capacity; _context = context;
         if (capacity is not (8192 or 16384 or 32768 or 65536)) throw new ArgumentOutOfRangeException(nameof(capacity));
+        string mode = (System.Environment.GetEnvironmentVariable("RT2_MAP_GPU_PIPELINE") ?? "prefetch").Trim().ToLowerInvariant();
+        if (mode.Length == 0) mode = "prefetch";
+        if (mode is not ("baseline" or "prefetch" or "grouped" or "combined"))
+            throw new ArgumentException("MapLossy.InvalidPipelineMode:" + mode);
+        PipelineMode = mode; _prefetch = mode is "prefetch" or "combined";
+        _slots = Enumerable.Range(0, mode is "grouped" or "combined" ? 4 : 1).Select(_ => new Slot()).ToArray();
         try
         {
-            // At most three same-seed Acts, each with its own exact RNG prefix.
-            _input = FamilyGpuComputeUtility.AllocateStorageBuffer(rd, capacity * 120, "MapLossy.Input");
-            _output = FamilyGpuComputeUtility.AllocateStorageBuffer(rd, BitmapBytes, "MapLossy.Bitmap");
-            _config = FamilyGpuComputeUtility.AllocateStorageBuffer(rd, _configBytes, "MapLossy.Config");
+            foreach (var slot in _slots)
+            {
+                // At most three same-seed Acts, each with its own exact RNG prefix.
+                slot.Input = FamilyGpuComputeUtility.AllocateStorageBuffer(rd, capacity * 120, "MapLossy.Input");
+                slot.Output = FamilyGpuComputeUtility.AllocateStorageBuffer(rd, BitmapBytes, "MapLossy.Bitmap");
+                slot.Config = FamilyGpuComputeUtility.AllocateStorageBuffer(rd, _configBytes, "MapLossy.Config");
+            }
             _transitions = FamilyGpuComputeUtility.AllocateStorageBuffer(rd, _transitionBytes, "MapLossy.Transitions");
         }
         catch (Exception cause) { try { Dispose(); } catch (Exception cleanup) { cause.Data["MapLossy.CreateCleanup"] = cleanup.ToString(); } throw; }
@@ -43,47 +62,129 @@ internal sealed partial class MapLossyGpuExecutor : IDisposable
         CancellationToken token, bool poisonBitmap = false)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        token.ThrowIfCancellationRequested();
-        if (plan.Predicates.Any(p => p.Program.AlwaysReject) || input.Count == 0)
-            return FamilyCandidateSet.FromSortedAbi1(input.Batch, []);
-        if (!plan.Enabled) return input;
-        PackedPlan packed = EnsurePlan(plan);
-        token.ThrowIfCancellationRequested();
-        ReadOnlyMemory<ulong> compact = input.IsDense ? default : input.ExportAbi1();
-        var result = new List<ulong>();
-        for (int first = 0; first < input.Count; first += _capacity)
+        var metrics = new PhaseMeasurement(input.Count);
+        long started = Stopwatch.GetTimestamp();
+        using var prepareCancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
+        Task<PreparedChunk>? lookahead = null;
+        Exception? failure = null;
+        try
         {
             token.ThrowIfCancellationRequested();
-            int count = Math.Min(_capacity, input.Count - first);
-            var ordinals = new ulong[count];
-            if (input.IsDense) for (int i = 0; i < count; i++) ordinals[i] = (ulong)(first + i);
-            else compact.Span.Slice(first, count).CopyTo(ordinals);
-            byte[] data = Prepare(input.Batch, ordinals, packed.Acts, ascension, token);
-            packed.Config[0] = (uint)count;
-            try
+            if (plan.Predicates.Any(p => p.Program.AlwaysReject) || input.Count == 0)
+                return FamilyCandidateSet.FromSortedAbi1(input.Batch, []);
+            if (!plan.Enabled) return input;
+            long phase = Stopwatch.GetTimestamp();
+            PackedPlan packed;
+            try { packed = EnsurePlan(plan); }
+            finally { metrics.PlanSetupTicks += Stopwatch.GetTimestamp() - phase; }
+            token.ThrowIfCancellationRequested();
+            ReadOnlyMemory<ulong> compact = input.IsDense ? default : input.ExportAbi1();
+            var result = new List<ulong>();
+            int next = 0;
+            PreparedChunk PrepareNext(int first) => PrepareChunk(input, compact, first, packed.Acts, ascension,
+                prepareCancellation.Token, metrics);
+            if (_prefetch) { lookahead = Task.Run(() => PrepareNext(0)); next = Math.Min(_capacity, input.Count); }
+            while (next < input.Count || lookahead is not null)
             {
-                Update(_input, data); Update(_config, FamilyGpuComputeUtility.ToBytes(packed.Config));
-                if (poisonBitmap) { var poison = new byte[BitmapBytes]; Array.Fill(poison, (byte)255); Update(_output, poison); }
-                Check(_rd.BufferClear(_output, 0, (uint)BitmapBytes), "BufferClear");
-                long list = _rd.ComputeListBegin();
-                _rd.ComputeListBindComputePipeline(list, _pipeline);
-                _rd.ComputeListBindUniformSet(list, _set, 0);
-                _rd.ComputeListDispatch(list, (uint)((count + 31) / 32), 1, 1); _rd.ComputeListEnd();
-                // Submitted commands are drained before cancellation or disposal.
-                _rd.Submit(); _pending = true; _rd.Sync(); _pending = false; Dispatches++;
                 token.ThrowIfCancellationRequested();
-                byte[] bitmap = _rd.BufferGetData(_output, 0, (uint)BitmapBytes);
-                if (bitmap.Length != BitmapBytes) throw new InvalidDataException("MapLossy.ReadbackLengthMismatch");
-                foreach (int index in DecodeBitmap(bitmap, count)) result.Add(ordinals[index]);
+                var group = new List<PreparedChunk>(_slots.Length);
+                for (int index = 0; index < _slots.Length && (next < input.Count || lookahead is not null); index++)
+                {
+                    PreparedChunk prepared;
+                    if (lookahead is not null)
+                    {
+                        phase = Stopwatch.GetTimestamp();
+                        try { prepared = lookahead.GetAwaiter().GetResult(); }
+                        finally { metrics.PreparationWaitTicks += Stopwatch.GetTimestamp() - phase; }
+                        lookahead = null;
+                    }
+                    else { prepared = PrepareNext(next); next += prepared.Ordinals.Length; }
+                    token.ThrowIfCancellationRequested();
+                    if (_prefetch && next < input.Count)
+                    {
+                        int first = next; next += Math.Min(_capacity, input.Count - first);
+                        lookahead = Task.Run(() => PrepareNext(first));
+                    }
+                    phase = Stopwatch.GetTimestamp();
+                    try { Record(_slots[index], prepared, packed, poisonBitmap); }
+                    finally { metrics.UploadRecordTicks += Stopwatch.GetTimestamp() - phase; }
+                    group.Add(prepared);
+                }
+                // One fence covers only independent slots. Preserve selected batch
+                // capacity; this groups dispatches rather than changing query geometry.
+                SubmitRecorded(metrics);
+                ExecutionProbe?.Invoke("Submitted");
+                CompletePending(metrics);
+                ExecutionProbe?.Invoke("Synchronized");
+                token.ThrowIfCancellationRequested();
+                phase = Stopwatch.GetTimestamp();
+                try
+                {
+                    for (int index = 0; index < group.Count; index++)
+                    {
+                        byte[] bitmap = _rd.BufferGetData(_slots[index].Output, 0, (uint)BitmapBytes);
+                        if (bitmap.Length != BitmapBytes) throw new InvalidDataException("MapLossy.ReadbackLengthMismatch");
+                        var ordinals = group[index].Ordinals;
+                        foreach (int survivor in DecodeBitmap(bitmap, ordinals.Length)) result.Add(ordinals[survivor]);
+                    }
+                }
+                finally { metrics.ReadbackDecodeTicks += Stopwatch.GetTimestamp() - phase; }
             }
-            catch (Exception cause)
+            token.ThrowIfCancellationRequested();
+            phase = Stopwatch.GetTimestamp();
+            try { return FamilyCandidateSet.FromSortedAbi1(input.Batch, result.ToArray()); }
+            finally { metrics.ReadbackDecodeTicks += Stopwatch.GetTimestamp() - phase; }
+        }
+        catch (Exception cause) { failure = cause; throw; }
+        finally
+        {
+            // Join the one bounded CPU producer even when cancellation/native work
+            // fails. A failed prepare is never interpreted as an empty proposal.
+            prepareCancellation.Cancel();
+            Exception? cleanupFailure = null;
+            try { CompletePending(metrics); }
+            catch (Exception cleanup) { cleanupFailure = cleanup; }
+            if (lookahead is not null)
             {
-                try { CompletePending(); } catch (Exception cleanup) { cause.Data["MapLossy.SyncCleanup"] = cleanup.ToString(); }
-                throw;
+                try { lookahead.GetAwaiter().GetResult(); }
+                catch (OperationCanceledException) when (prepareCancellation.IsCancellationRequested) { }
+                catch (Exception cleanup)
+                { cleanupFailure = cleanupFailure is null ? cleanup : new AggregateException(cleanupFailure, cleanup); }
+            }
+            FamilyAuxiliaryEvidence.Read(nameof(MapLossyGpuExecutor), "PublishPhaseMetrics", () =>
+            { PublishMetrics(metrics.Snapshot(Stopwatch.GetTimestamp() - started)); return true; }, false);
+            if (cleanupFailure is not null)
+            {
+                if (failure is not null) failure.Data["MapLossy.DrainOrPrepareCleanup"] = cleanupFailure.ToString();
+                else System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupFailure).Throw();
             }
         }
-        token.ThrowIfCancellationRequested();
-        return FamilyCandidateSet.FromSortedAbi1(input.Batch, result.ToArray());
+    }
+
+    private void Record(Slot slot, PreparedChunk prepared, PackedPlan packed, bool poisonBitmap)
+    {
+        // The slot owns its count. No mutable count config is shared by commands.
+        uint[] config = (uint[])packed.Config.Clone(); config[0] = (uint)prepared.Ordinals.Length;
+        Update(slot.Input, prepared.Data); Update(slot.Config, FamilyGpuComputeUtility.ToBytes(config));
+        if (poisonBitmap) { var poison = new byte[BitmapBytes]; Array.Fill(poison, (byte)255); Update(slot.Output, poison); }
+        Check(_rd.BufferClear(slot.Output, 0, (uint)BitmapBytes), "BufferClear");
+        _recorded = true;
+        long list = _rd.ComputeListBegin();
+        Exception? recordingFailure = null;
+        try
+        {
+            _rd.ComputeListBindComputePipeline(list, _pipeline);
+            _rd.ComputeListBindUniformSet(list, slot.Set, 0);
+            _rd.ComputeListDispatch(list, (uint)((prepared.Ordinals.Length + 31) / 32), 1, 1);
+            _queuedDispatches++;
+        }
+        catch (Exception cause) { recordingFailure = cause; throw; }
+        finally
+        {
+            try { _rd.ComputeListEnd(); }
+            catch (Exception cleanup) when (recordingFailure is not null)
+            { recordingFailure.Data["MapLossy.RecordEndCleanup"] = cleanup.ToString(); }
+        }
     }
 
     private PackedPlan EnsurePlan(MapLossyPlan plan)
@@ -101,32 +202,40 @@ internal sealed partial class MapLossyGpuExecutor : IDisposable
                 throw new InvalidDataException("MapLossy.DrawingShaderStorageMarkerMissing");
             int words = Math.Max(packed.WordCount, _shaderWords);
             source = source.Replace(marker, "#define STATE_WORDS " + words, StringComparison.Ordinal);
-            Rid shader = default, pipeline = default, set = default;
-            Rid config = growConfig ? default : _config, transitions = growTransitions ? default : _transitions;
+            Rid shader = default, pipeline = default, transitions = growTransitions ? default : _transitions;
+            var configs = _slots.Select(s => growConfig ? default(Rid) : s.Config).ToArray();
+            var sets = new Rid[_slots.Length];
             try
             {
-                if (growConfig) config = FamilyGpuComputeUtility.AllocateStorageBuffer(_rd, configBytes, "MapLossy.Config");
                 if (growTransitions) transitions = FamilyGpuComputeUtility.AllocateStorageBuffer(_rd, transitionBytes, "MapLossy.Transitions");
                 shader = FamilyGpuComputeUtility.CompileShader(_rd, source, "MapLossyDrawingPropertiesRound1");
                 pipeline = FamilyGpuComputeUtility.CreateComputePipeline(_rd, shader, "MapLossy");
-                set = FamilyGpuComputeUtility.CreateUniformSet(_rd, shader, [_input, _output, config, transitions], "MapLossy");
+                for (int i = 0; i < _slots.Length; i++)
+                {
+                    if (growConfig) configs[i] = FamilyGpuComputeUtility.AllocateStorageBuffer(_rd, configBytes, "MapLossy.Config");
+                    sets[i] = FamilyGpuComputeUtility.CreateUniformSet(_rd, shader, [_slots[i].Input, _slots[i].Output, configs[i], transitions], "MapLossy");
+                }
             }
             catch (Exception cause)
             {
-                var failed = new[] { shader, pipeline, growConfig ? config : default, growTransitions ? transitions : default, set };
+                var failed = new[] { shader, pipeline, growTransitions ? transitions : default }
+                    .Concat(growConfig ? configs : []).Concat(sets);
                 try { FreeResources(failed); }
                 catch (Exception cleanup) { cause.Data["MapLossy.ProgramCreateCleanup"] = cleanup.ToString(); }
                 throw;
             }
-            var old = new[] { _shader, _pipeline, growConfig ? _config : default, growTransitions ? _transitions : default, _set };
-            (_shader, _pipeline, _set, _config, _transitions) = (shader, pipeline, set, config, transitions);
+            // FreeAll releases in reverse dependency order: sets must be freed
+            // before a config buffer whose destruction invalidates those sets.
+            var old = new[] { _shader, _pipeline, growTransitions ? _transitions : default }
+                .Concat(growConfig ? _slots.Select(s => s.Config) : []).Concat(_slots.Select(s => s.Set)).ToArray();
+            (_shader, _pipeline, _transitions) = (shader, pipeline, transitions);
+            for (int i = 0; i < _slots.Length; i++) { _slots[i].Set = sets[i]; _slots[i].Config = configs[i]; }
             _shaderWords = words;
             _configBytes = Math.Max(configBytes, _configBytes); _transitionBytes = Math.Max(transitionBytes, _transitionBytes);
             _uploadedPlan = null; _packedPlan = null;
             FreeResources(old);
         }
-        // Re-upload the full active transition table even after a long-to-short
-        // switch. Every route DP starts empty and addresses only its own table.
+        // Re-upload the full active transition table after long-to-short switches.
         _uploadedPlan = null; _packedPlan = null;
         if (packed.Transitions.Length > 0) Update(_transitions, FamilyGpuComputeUtility.ToBytes(packed.Transitions));
         _packedPlan = packed; _uploadedPlan = plan;
@@ -157,12 +266,40 @@ internal sealed partial class MapLossyGpuExecutor : IDisposable
     private static void Check(Error error, string stage)
     { if (error != Error.Ok) throw new InvalidOperationException($"MapLossy.{stage}:{error}"); }
     private void Update(Rid buffer, byte[] bytes) => Check(_rd.BufferUpdate(buffer, 0, (uint)bytes.Length, bytes), "BufferUpdate");
-    private void CompletePending() { if (_pending) { _rd.Sync(); _pending = false; } }
+    private void SubmitRecorded(PhaseMeasurement? metrics)
+    {
+        long submit = Stopwatch.GetTimestamp();
+        try
+        {
+            _rd.Submit(); _pending = true; _recorded = false;
+            _pendingDispatches = _queuedDispatches; _queuedDispatches = 0;
+            if (metrics is not null) metrics.SubmissionGroups++;
+        }
+        finally { if (metrics is not null) metrics.SubmitTicks += Stopwatch.GetTimestamp() - submit; }
+    }
+    private void CompletePending(PhaseMeasurement? metrics = null)
+    {
+        // An exception/cancellation between grouped slots can leave recorded
+        // lists awaiting submission. Drain those too before any buffer reuse.
+        if (_recorded && !_pending)
+            SubmitRecorded(metrics);
+        if (!_pending) return;
+        long phase = Stopwatch.GetTimestamp();
+        try
+        {
+            _rd.Sync(); _pending = false;
+            Dispatches += _pendingDispatches;
+            if (metrics is not null) metrics.Dispatches += _pendingDispatches;
+            _pendingDispatches = 0;
+        }
+        finally { if (metrics is not null) metrics.SyncWaitTicks += Stopwatch.GetTimestamp() - phase; }
+    }
     public void Dispose()
     {
         if (_disposed) return;
         CompletePending();
-        var owned = new[] { _shader, _pipeline, _input, _output, _config, _transitions, _set };
+        var owned = new[] { _shader, _pipeline, _transitions }
+            .Concat(_slots.SelectMany(slot => new[] { slot.Input, slot.Output, slot.Config, slot.Set })).ToArray();
         _disposed = true;
         FreeResources(owned);
     }

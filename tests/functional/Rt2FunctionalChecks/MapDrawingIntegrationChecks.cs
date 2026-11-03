@@ -33,8 +33,8 @@ internal static class MapDrawingIntegrationChecks
         var context = SearchContextFactory.From(RuntimeProfileId.Beta111, BaseGameModelKeys.Characters.Ironclad, 1,
             authority, new("0.111.0", "0.111.0", "beta", "MapDrawingIntegration", true, ""), AncientOptionConditionProfile.BroadDefault);
         CompiledSearch Compile(SearchQuery query) => SearchCompiler.Compile(query, context);
-        ExactSearchExecutionRequest Request(SearchQuery query, ulong first = 0) =>
-            ExactSearchExecutionRequestFactory.Compile(Compile(query), new(Seed(first), 9, 9, 1)).Plan
+        PreparedSearch Request(SearchQuery query, ulong first = 0) =>
+            SearchPreparationCompiler.Compile(Compile(query), new(Seed(first), 9, 9, 1)).Plan
             ?? throw new InvalidOperationException("Map drawing fixture admission");
         SearchQuery Query(params StandardMapRouteCondition[] routes) => SearchQuery.Empty with { StandardMapRoutes = routes };
         string Fingerprint(StandardMapRouteCondition route) => Compile(Query(route)).SemanticFingerprint;
@@ -85,7 +85,7 @@ internal static class MapDrawingIntegrationChecks
             Query(Route(2, [StandardMapRoomType.Elite, StandardMapRoomType.Elite])),
             Query(Route(3, [StandardMapRoomType.Shop], [StandardMapRoomType.Unknown])),
             Query(Route(1, Enumerable.Repeat(StandardMapRoomType.Monster, 40).ToArray()))];
-        Check(StandardMapExactEvaluator.Evaluate(Request(positive), Seed(0)).Disposition == SearchDisposition.Match,
+        Check(StandardMapExactEvaluator.Evaluate(Request(positive).Model, Seed(0)).Disposition == SearchDisposition.Match,
             "complete natural path supplies positive drawing witness");
         foreach (var query in queries)
         {
@@ -93,14 +93,15 @@ internal static class MapDrawingIntegrationChecks
             Check(Compile(query).SemanticFingerprint == Compile(roundTrip).SemanticFingerprint, "query JSON retains authored route identity");
             var request = Request(roundTrip);
             var batch = new SearchBatch(0, 9);
-            bool[] truth = Enumerable.Range(0, 9).Select(i => StandardMapExactEvaluator.Evaluate(request, Seed((ulong)i)).Disposition == SearchDisposition.Match).ToArray();
-            var family = new StandardMapFamily(request);
-            var execution = new FamilyExecutionContext(requiresGpu: false);
+            bool[] truth = Enumerable.Range(0, 9).Select(i => StandardMapExactEvaluator.Evaluate(request.Model, Seed((ulong)i)).Disposition == SearchDisposition.Match).ToArray();
+            var execution = new FilterRuntimeServices(requiresGpu: false);
+            var body = StandardMapFamily.Prepare(request.Model, FilterExecutionPreferences.From(request.RunOptions));
+            var family = (StandardMapExecution)body.CreateExecution!(body, execution);
             try
             {
                 for (int i = 0; i < 9; i++)
                 {
-                    var exact = ProductionExactSearchEvaluator.Evaluate(request,
+                    var exact = ProductionExactSearchEvaluator.Evaluate(request.Model,
                         TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, Seed((ulong)i)));
                     Check(exact.IsMatch == truth[i], "Production Exact agrees with independent map Exact");
                     if (exact.IsMatch) ValidateWitnesses(request, Seed((ulong)i), exact.Evaluation.Evidence);
@@ -109,16 +110,16 @@ internal static class MapDrawingIntegrationChecks
                 {
                     var input = compact ? FamilyCandidateSet.FromAbi1(batch, [0, 2, 5, 8]) : FamilyCandidateSet.Dense(batch);
                     ulong[] expected = input.EnumerateLogicalOrdinals().Where(i => truth[(int)i]).ToArray();
-                    var actual = await family.InvokeAsync(execution, new(batch, request), input, default);
+                    var actual = await family.FilterAsync(execution, input, default);
                     Check(actual.Batch == batch && actual.ExportAbi1().Span.SequenceEqual(expected), "M full CPU ordered batch-local dense/compact ABI1 agrees with independent Exact");
                 }
             }
             finally { await family.DisposeAsync(execution); await execution.DisposeAsync(); }
         }
         var plan = Request(positive);
-        var executionPlan = FamilyPlanner.InOrder([new StandardMapFamily(plan)]);
+        var executionPlan = FamilyPlanner.InOrder([StandardMapFamily.Prepare(plan.Model, FilterExecutionPreferences.From(plan.RunOptions))]);
         await using (var session = new ProductionSearchSession(plan, executionPlan,
-            FamilySearchEtaProjectorV1.Project(plan, executionPlan), 9, 16, null, ""))
+            FamilySearchEtaProjectorV1.Project(SearchEstimationPreparation.ForRun(plan, executionPlan), executionPlan), 9, 16, null, ""))
         {
             await session.Completion.WaitAsync(TimeSpan.FromSeconds(30));
             var candidates = new List<SearchCandidate>();
@@ -147,12 +148,12 @@ internal static class MapDrawingIntegrationChecks
             Check(bound.StandardMapRoutes.Count == 1 && bound.Players.All(p => p.Conditions.StandardMapRoutes.Count == 0),
                 "party seat route is retained once at shared level " + players);
             var compiled = SearchCompiler.Compile(table, context);
-            var request = ExactSearchExecutionRequestFactory.Compile(compiled, new(Seed(0), 1, 1, 1)).Plan
+            var request = SearchPreparationCompiler.Compile(compiled, new(Seed(0), 1, 1, 1)).Plan
                 ?? throw new InvalidOperationException("Party map fixture admission");
-            Check(request.CompiledSearch.NormalizedQuery.StandardMapRoutes.Single().Groups[0].Nodes.Count == 40,
+            Check(request.Model.CompiledSearch.NormalizedQuery.StandardMapRoutes.Single().Groups[0].Nodes.Count == 40,
                 "party request keeps original route multiset " + players);
-            Check(StandardMapExactEvaluator.Evaluate(request, Seed(0)).Disposition == SearchDisposition.NoMatch &&
-                ProductionExactSearchEvaluator.Evaluate(request, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, Seed(0))).Evaluation.Disposition == SearchDisposition.NoMatch,
+            Check(StandardMapExactEvaluator.Evaluate(request.Model, Seed(0)).Disposition == SearchDisposition.NoMatch &&
+                ProductionExactSearchEvaluator.Evaluate(request.Model, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, Seed(0))).Evaluation.Disposition == SearchDisposition.NoMatch,
                 "independent contradiction rejects through whole-table Exact " + players);
             var estimate = JointSelectivityEstimator.EstimateQuery(SearchSelectivityInput.From(compiled));
             Check(estimate.Probability is null && estimate.UnknownComponents.Any(s => s.Contains("RouteSequenceJointMissing")),
@@ -160,24 +161,24 @@ internal static class MapDrawingIntegrationChecks
             var preview = RolltheSpire2.Ui.Pages.Search.WorkbenchProbabilityPreview.Compute(compiled, 1, 1, true);
             Check(preview.Map is { Probability: null } && preview.Map.EvidenceCode.Contains("RouteSequenceJointMissing"),
                 "actual Party workbench preview preserves unknown drawing probability without nested envelope " + players);
-            Check(FamilyExecutionCoordinator.CreateRegisteredFamilies(request, false).All(f => f is not StandardMapFamily),
+            Check(FamilyExecutionCoordinator.CreateRegisteredFamilies(request, false).All(f => f.FamilyId != StandardMapFamily.Id),
                 "party does not acquire a new M registration " + players);
         }
     }
 
-    private static void ValidateWitnesses(ExactSearchExecutionRequest plan, string seed, IReadOnlyList<SearchMatchEvidence> evidence)
+    private static void ValidateWitnesses(PreparedSearch plan, string seed, IReadOnlyList<SearchMatchEvidence> evidence)
     {
         static MapPosition[] Parse(string value) => value.Split('>', StringSplitOptions.RemoveEmptyEntries).Select(piece =>
         {
             string[] pair = piece.Split(':');
             return new MapPosition(int.Parse(pair[1].AsSpan(1)), int.Parse(pair[0].AsSpan(1)));
         }).ToArray();
-        foreach (var route in plan.CompiledSearch.NormalizedQuery.StandardMapRoutes)
+        foreach (var route in plan.Model.CompiledSearch.NormalizedQuery.StandardMapRoutes)
         {
             var proof = evidence.Single(e => e.ConditionId == $"M.StandardMap.RouteSequence.Act{route.Act}");
             var map = Beta111MapPredictor.Predict(seed, RuntimeProfileId.Beta111,
-                new ModelKey("ACT", StandardMapFamily.Context(route.Act, plan.Ascension).Act.ToString().ToUpperInvariant()),
-                route.Act - 1, plan.Ascension, 1, false, default);
+                new ModelKey("ACT", StandardMapFamily.Context(route.Act, plan.Model.Ascension).Act.ToString().ToUpperInvariant()),
+                route.Act - 1, plan.Model.Ascension, 1, false, default);
             string prefix = $"act-{route.Act}:";
             Check(proof.RouteId?.StartsWith(prefix) == true, "drawing proof identifies its Act");
             var path = Parse(proof.RouteId![prefix.Length..]);

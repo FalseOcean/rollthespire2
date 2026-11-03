@@ -10,6 +10,11 @@ internal readonly record struct Beta110CombatRewardRouteEvaluation(
     int Battle3Evaluated,
     string DiagnosticCode);
 
+// Request-owned proof and bounded masks. No seed, RNG or result is retained.
+internal sealed record CombatRewardCpuAssignmentEarlyPlan(
+    Beta110CombatRewardFastPlan Plan, Beta110FastEffectCatalog Catalog,
+    ulong[] CardFeasible, ulong[] PotionFeasible);
+
 /// <summary>
 /// Allocation-free numeric oracle for the current Search-visible normal combat
 /// reward observables. All surviving candidates still enter Production Exact.
@@ -36,8 +41,10 @@ internal static class Beta110CombatRewardFastStage
     // deliberately not part of the Family implementation.
     internal static Beta110CombatRewardRouteEvaluation EvaluateForFamily(
         Beta110OpeningRewardState opening, Beta110CombatRewardFastPlan plan,
-        Beta110FastEffectCatalog catalog, int ascension, CombatRewardCardSelection? cardSelection = null) =>
-        RequireFamilyResult(EvaluateCore(opening, plan, catalog, ascension, false, cardSelection: cardSelection));
+        Beta110FastEffectCatalog catalog, int ascension, CombatRewardCardSelection? cardSelection = null,
+        CombatRewardCpuAssignmentEarlyPlan? assignmentEarly = null) =>
+        RequireFamilyResult(EvaluateCore(opening, plan, catalog, ascension, false, cardSelection: cardSelection,
+            assignmentEarly: assignmentEarly));
 
     internal static Beta110CombatRewardRouteEvaluation EvaluatePotionPrefixForFamily(
         Beta110OpeningRewardState opening, Beta110CombatRewardFastPlan plan,
@@ -55,7 +62,7 @@ internal static class Beta110CombatRewardFastStage
     private static Beta110CombatRewardRouteEvaluation EvaluateCore(
         Beta110OpeningRewardState opening, Beta110CombatRewardFastPlan plan,
         Beta110FastEffectCatalog catalog, int ascension, bool requireAuthority, bool potionPrefix = false,
-        CombatRewardCardSelection? cardSelection = null)
+        CombatRewardCardSelection? cardSelection = null, CombatRewardCpuAssignmentEarlyPlan? assignmentEarly = null)
     {
         if (!plan.Enabled)
             return new(Beta110CombatRewardRouteProjectionStatus.NotApplicable, 0, 0, 0, string.Empty);
@@ -83,6 +90,10 @@ internal static class Beta110CombatRewardFastStage
         battleGold.Clear();
 
         int maxBattle = Math.Clamp(plan.MaximumBattleOrdinal, 1, BattleCount);
+        bool streamAssignments = !requireAuthority && !potionPrefix && assignmentEarly is not null &&
+            ReferenceEquals(assignmentEarly.Plan, plan) && ReferenceEquals(assignmentEarly.Catalog, catalog) &&
+            opening.ExactProjectionAuthority && OrdinaryThreeCardStructure(opening.InfluenceFlags, opening.AdditionalCardRewardCount);
+        ulong streamingCardStates = 1, streamingPotionStates = 1;
         // Keep unresolved/alternative-route and assignment models on the complete
         // evaluation path. The capacity bound also preserves a later Candy fault
         // that an earlier failed predicate must not hide.
@@ -202,6 +213,40 @@ internal static class Beta110CombatRewardFastStage
             else if (battleOrdinal == 2) battle2++;
             else if (battleOrdinal == 3) battle3++;
 
+            if (streamAssignments)
+            {
+                if (battleOrdinal <= plan.CardAssignmentWindow)
+                {
+                    uint matches = 0;
+                    for (int target = 0; target < plan.CardAssignmentTargets.Length; target++)
+                        if (output[..outputCount].Contains(plan.CardAssignmentTargets[target])) matches |= 1u << target;
+                    streamingCardStates = AdvanceAssignmentStates(streamingCardStates, matches, plan.CardAssignmentTargets.Length);
+                }
+                if (battleOrdinal <= plan.PotionAssignmentWindow)
+                {
+                    uint matches = 0;
+                    for (int target = 0; target < plan.PotionAssignmentTargets.Length; target++)
+                    {
+                        bool match = (CombatPotionSlotRequirement)plan.PotionAssignmentRequirements[target] switch
+                        {
+                            CombatPotionSlotRequirement.NoDrop => !potionDropped,
+                            CombatPotionSlotRequirement.DropAny => potionDropped,
+                            CombatPotionSlotRequirement.DropSpecific => potionDropped && battlePotions[battleIndex] == plan.PotionAssignmentTargets[target],
+                            _ => true
+                        };
+                        if (match) matches |= 1u << target;
+                    }
+                    streamingPotionStates = AdvanceAssignmentStates(streamingPotionStates, matches, plan.PotionAssignmentTargets.Length);
+                }
+                // One later battle can fill at most one target in each domain.
+                // These masks are optimistic: only impossibility rejects; full
+                // generation and all final predicates still own every success.
+                if ((streamingCardStates & assignmentEarly!.CardFeasible[battleOrdinal]) == 0 ||
+                    (streamingPotionStates & assignmentEarly.PotionFeasible[battleOrdinal]) == 0)
+                    return new(Beta110CombatRewardRouteProjectionStatus.Rejected,
+                        battle1, battle2, battle3, "DistinctBattleAssignmentRejected");
+            }
+
             if (rejectCompletedFixedBattle && battleOrdinal < maxBattle)
             {
                 // All observables and continuation for this battle are complete.
@@ -215,7 +260,7 @@ internal static class Beta110CombatRewardFastStage
             }
         }
 
-        if (plan.HasDistinctBattleAssignments)
+        if (plan.HasDistinctBattleAssignments && !streamAssignments)
         {
             ulong cardStates = 1, potionStates = 1;
             for (int battle = 0; battle < maxBattle; battle++)
@@ -289,6 +334,54 @@ internal static class Beta110CombatRewardFastStage
     private static Beta110CombatRewardRouteEvaluation PrefixResult(Beta110CombatRewardRouteProjectionStatus status, int observedBattle) =>
         new(status, observedBattle >= 1 ? 1 : 0, observedBattle >= 2 ? 1 : 0, observedBattle >= 3 ? 1 : 0,
             "CpuPotionPrefix");
+
+    internal static CombatRewardCpuAssignmentEarlyPlan? PrepareAssignmentEarly(
+        Beta110CombatRewardFastPlan plan, Beta110FastEffectCatalog catalog)
+    {
+        if (!plan.Enabled || !plan.HasDistinctBattleAssignments || !plan.CardPoolAuthorityExact || !plan.PotionPoolAuthorityExact ||
+            plan.MaximumBattleOrdinal is < 1 or > BattleCount ||
+            plan.CardAssignmentTargets.Length > BattleCount || plan.PotionAssignmentTargets.Length > BattleCount ||
+            plan.PotionAssignmentRequirements.Length != plan.PotionAssignmentTargets.Length ||
+            !ValidWindow(plan.CardAssignmentWindow, plan.CardAssignmentTargets.Length) ||
+            !ValidWindow(plan.PotionAssignmentWindow, plan.PotionAssignmentTargets.Length) ||
+            !OrdinaryThreeCardStructure(plan.ExplicitContext.InfluenceFlags, plan.ExplicitContext.AdditionalCardRewardCount)) return null;
+        bool ValidWindow(int window, int targets) => targets == 0 ? window == 0 : window >= 1 && window <= plan.MaximumBattleOrdinal;
+        bool ValidId(ushort id) => id != Beta110FastDenseId.Invalid && id < catalog.DenseKeys.Length && catalog.DenseKeys[id].IsValid;
+        // Every possible remaining draw must succeed. Three distinct, valid
+        // cards per disjoint rarity lane leave an available identity after the
+        // two earlier picks; all potion rarity branches are nonempty and valid.
+        var cards = catalog.CombatRewardCardPool;
+        if (cards.Common.Length < CardsPerReward || cards.Uncommon.Length < CardsPerReward || cards.Rare.Length < CardsPerReward)
+            return null;
+        var seen = new HashSet<ushort>();
+        foreach (ushort id in cards.Common.Concat(cards.Uncommon).Concat(cards.Rare))
+            if (!ValidId(id) || !seen.Add(id)) return null;
+        var potions = catalog.CombatRewardPotionPool;
+        if (!potions.HasEveryRarity || potions.Common.Concat(potions.Uncommon).Concat(potions.Rare).Any(id => !ValidId(id)))
+            return null;
+        if (plan.CardAssignmentTargets.Any(id => !ValidId(id))) return null;
+        for (int target = 0; target < plan.PotionAssignmentTargets.Length; target++)
+        {
+            var requirement = (CombatPotionSlotRequirement)plan.PotionAssignmentRequirements[target];
+            if (requirement is not (CombatPotionSlotRequirement.NoDrop or CombatPotionSlotRequirement.DropAny or CombatPotionSlotRequirement.DropSpecific) ||
+                requirement == CombatPotionSlotRequirement.DropSpecific && !ValidId(plan.PotionAssignmentTargets[target])) return null;
+        }
+        var cardFeasible = new ulong[plan.MaximumBattleOrdinal + 1];
+        var potionFeasible = new ulong[plan.MaximumBattleOrdinal + 1];
+        for (int battle = 0; battle <= plan.MaximumBattleOrdinal; battle++)
+        {
+            cardFeasible[battle] = CombatRewardTargetOptimizations.FeasibleAssignmentStates(plan.CardAssignmentTargets.Length,
+                Math.Max(0, plan.CardAssignmentWindow - battle));
+            potionFeasible[battle] = CombatRewardTargetOptimizations.FeasibleAssignmentStates(plan.PotionAssignmentTargets.Length,
+                Math.Max(0, plan.PotionAssignmentWindow - battle));
+        }
+        return new(plan, catalog, cardFeasible, potionFeasible);
+    }
+
+    private static bool OrdinaryThreeCardStructure(Beta110CombatRewardInfluenceFlags flags, byte additionalRewards) =>
+        additionalRewards == 0 && (flags & ~(Beta110CombatRewardInfluenceFlags.ForcePotionReward |
+            Beta110CombatRewardInfluenceFlags.AmethystAubergineFixedGold | Beta110CombatRewardInfluenceFlags.DeterministicUpgradeOnly |
+            Beta110CombatRewardInfluenceFlags.DeterministicEnchantmentOnly)) == 0;
 
     internal static ulong AdvanceAssignmentStates(ulong states, uint matches, int count)
     {

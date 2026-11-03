@@ -178,7 +178,7 @@ internal static partial class NeowStructuredEffectProbabilityEstimator
         bool includeExplicitRelicSequence = false)
     {
         var filter = ProbabilitySemanticProjection.From(plan).NumericalFilter;
-        if (!ModernNeowIdentityPredictor.TryGetEligibleCursePool(plan.Authority, out IReadOnlyList<ModelKey> cursePool) ||
+        if (!ModernNeowIdentityRules.TryGetEligibleCursePool(plan.Authority, out IReadOnlyList<ModelKey> cursePool) ||
             !authority.HasExactBonesPools ||
             authority.BonesEligibleRelics is null)
         {
@@ -1029,7 +1029,7 @@ internal static partial class NeowStructuredEffectProbabilityEstimator
         out string evidence)
     {
         var offers = ProbabilitySemanticProjection.From(plan).NumericalFilter.NeowRelics;
-        return ModernNeowIdentityPredictor.TryEstimateOfferProbability(plan.Authority, (a,b,c) =>
+        return ModernNeowIdentityRules.TryEstimateOfferProbability(plan.Authority, (a,b,c) =>
         {
             bool Has(ModelKey key) => key == a || key == b || key == c;
             return (!source.IsValid || Has(source)) && (offers.Any.Count == 0 || offers.Any.Any(Has)) &&

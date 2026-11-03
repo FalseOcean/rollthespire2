@@ -245,7 +245,7 @@ internal sealed partial class InRunMapNodePresenter
         var liveIds = _session.Nodes.Values.Select(n => n.Position.NodeId + "|").ToArray();
         foreach (string key in _selections.Keys.Where(k => !liveIds.Any(k.StartsWith)).ToArray()) _selections.Remove(key);
         foreach (string key in _health.Keys.Where(k => !liveIds.Any(k.StartsWith)).ToArray()) _health.Remove(key);
-        string seed = _session.Snapshot?.Run.Context.Seed ?? "";
+        string seed = _session.Snapshot?.Context.Seed ?? "";
         foreach (var key in _eventPotionDrafts.Keys.Where(k => k.Seed != seed || !liveIds.Contains(k.NodeId + "|")).ToArray())
             _eventPotionDrafts.Remove(key);
     }

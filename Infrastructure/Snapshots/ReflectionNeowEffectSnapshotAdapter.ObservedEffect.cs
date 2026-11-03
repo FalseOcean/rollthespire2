@@ -3,6 +3,7 @@ using System.Reflection;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Authority;
 using RolltheSpire2.Core.Effects.Coverage;
+using RolltheSpire2.Core.Effects;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Prediction;
@@ -15,7 +16,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
     {
         public RuntimeEffectSnapshotCaptureResult? Failure { get; init; }
         public bool FailSoft { get; init; } = true;
-        public ReflectionSnapshotProfileRules Rules { get; init; } = new(true, true);
+        public EffectCatalogRules Rules { get; init; } = null!;
         public DateTimeOffset ObservedAtUtc { get; init; }
         public string CanonicalSeed { get; init; } = "";
         public bool IsAuditedVanilla { get; init; }
@@ -111,9 +112,9 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             out bool relicBagExact,
             out bool nestedRelicHooksExact);
 
-        IReadOnlyList<ModelKey>? generatedCursePool = BuildGeneratedCursePool(
-            curseCards,
-            rules,
+        IReadOnlyList<ModelKey>? generatedCursePool = rules.BuildGeneratedCursePool(
+            curseCards.Cards,
+            curseCards.Exact,
             out bool cursePoolExact);
 
         IReadOnlyList<ModelKey>? bonesEligibleRelics = BuildBonesEligibleRelics(
@@ -131,7 +132,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             .Distinct(ModelKeyComparer.Instance)
             .ToArray();
         bool eventColorfulCharacterPoolsExact =
-            profile.ProfileId == RuntimeProfileId.Beta111 &&
+            RuntimeProfilePolicies.SupportsEventResultModel(profile.ProfileId) &&
             selectedCharacterUnlocked &&
             otherPoolsExact &&
             unlockedCharacterCardPoolKeys.Length > 0;
@@ -140,7 +141,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             .OrderBy(card => card.PoolOrder)
             .ToArray();
         bool merchantColorlessOrderedPoolExact =
-            profile.ProfileId == RuntimeProfileId.Beta111 &&
+            RuntimeProfilePolicies.SupportsMerchantColorlessModel(profile.ProfileId) &&
             colorlessCards.Exact &&
             merchantColorlessOrderedPool is not null &&
             merchantColorlessOrderedPool.All(IsAuditedBaseGameCardSnapshot);
@@ -151,11 +152,11 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         // preserving and Beta111 has no first-party rarity override. Third-party/non-base pool
         // authority remains Unsupported because merchantColorlessOrderedPoolExact is false.
         bool merchantColorlessPoolIdentityHooksExact =
-            profile.ProfileId == RuntimeProfileId.Beta111 &&
+            RuntimeProfilePolicies.SupportsMerchantColorlessModel(profile.ProfileId) &&
             isAuditedVanilla &&
             merchantColorlessOrderedPoolExact;
         bool merchantColorlessRarityIdentityHooksExact =
-            profile.ProfileId == RuntimeProfileId.Beta111 &&
+            RuntimeProfilePolicies.SupportsMerchantColorlessModel(profile.ProfileId) &&
             isAuditedVanilla &&
             merchantColorlessOrderedPoolExact;
 
@@ -165,7 +166,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         // character slots have sufficient distinct Attack/Skill/Power candidates and Colorless
         // U/R are non-empty; external/custom behavior never receives this authority here.
         bool merchantInitialInventoryShapeExact =
-            profile.ProfileId == RuntimeProfileId.Beta111 &&
+            RuntimeProfilePolicies.SupportsMerchantColorlessModel(profile.ProfileId) &&
             isAuditedVanilla &&
             playersCount >= 1 &&
             selectedCards.Exact && selectedCards.Cards is not null &&
@@ -359,7 +360,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         try
         {
             var observed = await ObserveEffectCore(profile, rawSeed, character, ascension, playersCount,
-                playerSlotIndex, gameVersion, explicitUnlockState, schedule, new(true, true)).ConfigureAwait(false);
+                playerSlotIndex, gameVersion, explicitUnlockState, schedule, RuntimeProfilePolicies.EffectCatalogRules(profile.ProfileId)).ConfigureAwait(false);
             return observed with { FailSoft = failSoft };
         }
         catch (OperationCanceledException) { throw; }
@@ -376,7 +377,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
     private static async Task<EffectObservedInputs> ObserveEffectCore(IRuntimeProfile profile, string rawSeed,
         CharacterIdentity character, int ascension, int playersCount, int playerSlotIndex,
         string gameVersion, object? explicitUnlockState, NativeObservationSchedule schedule,
-        ReflectionSnapshotProfileRules rules)
+        EffectCatalogRules rules)
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
         if (!ProfileSeedRules.TryCanonicalizePredictionSeed(profile, rawSeed, out string canonicalSeed, out _))
@@ -412,7 +413,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         var characterRelics = await Pool(PropertyPool("RelicPool","CharacterRelicPool","Relics"), "relic-character", ConvertRelicModel).ConfigureAwait(false);
         await schedule.Checkpoint("UnlockCoverage").ConfigureAwait(false);
         bool? allUnlocked = CaptureAllCharacterCardPoolsUnlocked(assembly, unlockState, out bool allExact);
-        bool events = profile.ProfileId == RuntimeProfileId.Beta111 &&
+        bool events = RuntimeProfilePolicies.SupportsEventResultModel(profile.ProfileId) &&
             ModelDbContainsAll(assembly,"AllCards",Core.Events.Beta111EventResultCatalog.TrashHeapGrabCards) &&
             ModelDbContainsAll(assembly,"AllRelics",Core.Events.Beta111EventResultCatalog.TrashHeapDiveRelics.Concat(Core.Events.Beta111EventResultCatalog.FakeMerchantRelics)) &&
             ModelDbContainsAll(assembly,"AllCharacters",Core.Events.Beta111EventResultCatalog.ColorfulCharacterOrder);
@@ -492,7 +493,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         object unlockState,
         ModelKey selectedCharacter,
         int playersCount,
-        ReflectionSnapshotProfileRules rules,
+        EffectCatalogRules rules,
         NativeObservationSchedule schedule)
     {
         bool exact = true;

@@ -15,6 +15,7 @@ using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
 using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
 using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Runs;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.PredictorRuntime;
 using static RolltheSpire2.Infrastructure.Snapshots.PredictorLiveRunCapture;
 
@@ -118,7 +119,8 @@ internal static partial class PredictorOperationCapture
         var (catalog, _) = CrystalSphereCatalogCapture.Capture(run, player, pools, levels.Capture);
         if (timing != null) timing.CatalogMs = Stopwatch.GetElapsedTime(stage).TotalMilliseconds;
         stage = Stopwatch.GetTimestamp();
-        catalog = CompleteCatalog(catalog, run, player, pools);
+        catalog = CompleteCatalog(catalog, run, player,
+            RuntimeProfilePolicies.EffectCatalogRules(RuntimeVersionCompatibility.Resolve(version).ProfileId), pools);
         if (timing != null) timing.CompleteCatalogMs = Stopwatch.GetElapsedTime(stage).TotalMilliseconds;
         var opaque = ModelDb.All.Where(m => m.GetType().Assembly != typeof(CardModel).Assembly).Select(Key)
             .Concat(player.Deck.Cards.Where(c => c.GetType().Assembly != typeof(CardModel).Assembly).Select(Key))
@@ -258,8 +260,8 @@ internal static partial class PredictorOperationCapture
         // then these six alternatives, in this exact order. Reading the shared
         // identity assets avoids constructing mutable relic offers or invoking
         // any custom IsAllowedAtNeow implementation on the real player.
-        var pool = RolltheSpire2.Core.Neow.ModernNeowIdentityPredictor.BaseCursePoolForFiltering
-            .Concat(RolltheSpire2.Core.Neow.ModernNeowIdentityPredictor.BasePositivePoolForAuthority)
+        var pool = RolltheSpire2.Core.Neow.ModernNeowIdentityRules.CurseCandidates
+            .Concat(RolltheSpire2.Core.Neow.ModernNeowIdentityRules.PositiveCandidates)
             .Concat(new[] { "LAVA_ROCK", "NEOWS_TALISMAN", "NUTRITIOUS_OYSTER", "POMANDER", "SMALL_CAPSULE", "STONE_HUMIDIFIER" }
                 .Select(e => new RolltheSpire2.Core.Identity.ModelKey("RELIC", e)));
         var cards = pools == null
@@ -269,7 +271,7 @@ internal static partial class PredictorOperationCapture
             cards.Count(c => c.Rarity == MegaCrit.Sts2.Core.Entities.Cards.CardRarity.Uncommon) >= 2;
         bool colors = player.UnlockState.CharacterCardPools.Count() == ModelDb.AllCharacters.Count();
         return pool.Where(k => k.Entry != "NEOWS_BONES" &&
-            RolltheSpire2.Core.Neow.ModernNeowIdentityPredictor.IsAllowed(k, run.Players.Count, colors, scrolls) == true).ToImmutableArray();
+            RolltheSpire2.Core.Neow.ModernNeowIdentityRules.IsAllowed(k, run.Players.Count, colors, scrolls) == true).ToImmutableArray();
     }
 
     private static ImmutableArray<PredictorStreamState> Streams(RunState run, Player player) =>

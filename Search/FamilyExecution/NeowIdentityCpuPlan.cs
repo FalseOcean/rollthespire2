@@ -21,7 +21,7 @@ internal sealed class NeowIdentityCpuPlan
             plan.StructuredConditions.Length != 0 || plan.HasFinalCurseFastProjection || plan.ExactOnly.Length != 0 ||
             (plan.TopAny & ~bones) != 0 || (plan.TopAll & ~bones) != 0 || plan.TopBan != 0 ||
             BitOperations.PopCount(plan.BonesAll) != 2 ||
-            NeowFamilyReplay.Positives.Contains(Beta110FastRelicCatalog.NeowsBones)) return null;
+            NeowIdentityOfferFacts.IsPositiveCandidate(Beta110FastRelicCatalog.NeowsBones)) return null;
         // In the audited vanilla identity realization, Bones can only occupy
         // the curse offer. The three appended positive alternatives are not Bones.
         var pool = plan.Authority.BonesEligibleRelicIds;

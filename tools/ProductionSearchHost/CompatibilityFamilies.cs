@@ -10,12 +10,12 @@ using RolltheSpire2.Search.Runtime;
 
 internal static partial class CompatibilityChecks
 {
-    internal static async Task<IReadOnlySet<string>> CheckPublicFamilyParityAsync(ExactSearchExecutionRequest request, string output,
-        Func<bool, IReadOnlyList<IFamilyInvocation>>? createFamilies = null)
+    internal static async Task<IReadOnlySet<string>> CheckPublicFamilyParityAsync(PreparedSearch request, string output,
+        Func<bool, IReadOnlyList<FilterBodyDescription>>? createFamilies = null)
     {
-        if (request.CompiledSearch.Context.Party is not null)
+        if (request.Model.CompiledSearch.Context.Party is not null)
             throw new ArgumentException("Public family parity requires an actual solo request; party wrappers use their existing suite");
-        var profile = RuntimeProfileRegistry.Select(request.Detection);
+        var profile = RuntimeProfileRegistry.Select(request.Model.Detection);
         if (!VisibleSeedCandidateCodec.TryParseOrdinal(profile, request.CanonicalStartSeed, out ulong start, out _, out string issue))
             throw new InvalidDataException("CompatibilityFamilyParity.Start:" + issue);
         int count = (int)Math.Min(4099UL, VisibleSeedCandidateCodec.SpaceSize(profile) - start);
@@ -30,21 +30,20 @@ internal static partial class CompatibilityChecks
         string sourceDirectory = Path.Combine(output, "family-parity-sources");
         Directory.CreateDirectory(sourceDirectory);
 
-        var owned = new Dictionary<IFamilyInvocation, FamilyExecutionContext>(ReferenceEqualityComparer.Instance);
-        var disposed = new HashSet<IFamilyInvocation>(ReferenceEqualityComparer.Instance);
+        var owned = new Dictionary<FilterBodyDescription, FilterRuntimeServices>(ReferenceEqualityComparer.Instance);
+        var disposed = new HashSet<FilterBodyDescription>(ReferenceEqualityComparer.Instance);
         var rows = new List<object>();
         var executedGpuFamilies = new HashSet<string>(StringComparer.Ordinal);
         var sources = new List<object>();
         var cleanupFailures = new List<Exception>();
-        FamilyExecutionContext? cpuContext = null, gpuContext = null;
+        FilterRuntimeServices? cpuContext = null, gpuContext = null;
         Exception? primary = null;
         int comparedFamilies = 0;
         try
         {
             cpuContext = new(requiresGpu: false, failOnPhysicalRecovery: true, cpuWorkerCount: request.WorkerCount);
             gpuContext = new(requiresGpu: true, failOnPhysicalRecovery: true, cpuWorkerCount: request.WorkerCount);
-            var initialExact = ProductionExactSearchEvaluator.Evaluate(request,
-                TrustedRootHashInput.FromCanonicalSeed(profile, request.CanonicalStartSeed));
+            var initialExact = ProductionExactSearchEvaluator.Evaluate(request.Model, TrustedRootHashInput.FromCanonicalSeed(profile, request.CanonicalStartSeed));
             // Families own a session input-mode contract (in particular S).
             // Each role gets new actual invocations; do not switch a running
             // family from dense input to compact input merely for this check.
@@ -78,14 +77,14 @@ internal static partial class CompatibilityChecks
 
                 var (cpuFamily, cpuSelection) = UnconditionedCpuFamily(nativeFamily, request);
                 owned.Add(cpuFamily, cpuContext);
-                if (cpuFamily.ConditionPerformance.UsesGpu || cpuFamily is FamilyCpuExecution { RequiredPassedCoverage: not null } ||
+                if (cpuFamily.ConditionPerformance.UsesGpu || cpuFamily.RequiredPassedCoverage is not null ||
                     !cpuFamily.Coverage.SequenceEqual(nativeFamily.Coverage))
                     throw new InvalidDataException("CompatibilityFamilyParity.CpuPredicateNotUnconditioned:" + nativeFamily.FamilyId);
                 string label = nativeFamily.FamilyId.Replace('.', '-');
                 if (role == 0)
                 {
-                    ExportActualFamilySources(nativeFamily, "native", label, sourceDirectory, sources);
-                    ExportActualFamilySources(compatibleFamily, "integer", label, sourceDirectory, sources);
+                    ExportActualFamilySources(request, nativeFamily, "native", label, sourceDirectory, sources);
+                    ExportActualFamilySources(request, compatibleFamily, "integer", label, sourceDirectory, sources);
                 }
                 ulong[] expected = await InvokePublicFamily(cpuFamily, cpuContext, request, inputs[role]);
                 ulong[] nativeOutput = await InvokePublicFamily(nativeFamily, gpuContext, request, inputs[role]);
@@ -162,7 +161,7 @@ internal static partial class CompatibilityChecks
         WriteEvidence(Path.Combine(output, "public-family-parity.json"), new
         {
             Passed = primary is null && cleanupFailures.Count == 0, ComparedGpuFamilies = comparedFamilies,
-            RequestSnapshotFingerprint = request.SnapshotFingerprint, QueryFingerprint = request.CompiledSearch.SemanticFingerprint,
+            RequestSnapshotFingerprint = request.SnapshotFingerprint, QueryFingerprint = request.Model.CompiledSearch.SemanticFingerprint,
             StartOrdinal = start, DenseRootCount = count, SparseIncludesOrdinalZero = true, IncludesZeroInput = true,
             CompleteOrderedAbi1Compared = true, ActualDevice = SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity(),
             DeviceInitialization = FamilyDeviceProfileFoundation.Initialization.Capture(),
@@ -179,17 +178,17 @@ internal static partial class CompatibilityChecks
         GD.Print($"COMPATIBILITY_PUBLIC_FAMILY_PARITY_PASS families={comparedFamilies};denseRoots={count};compactIncludesZero=true;zeroInput=true;targetMetalClaimed=false");
         return executedGpuFamilies;
 
-        async ValueTask DisposeOne(IFamilyInvocation family)
+        async ValueTask DisposeOne(FilterBodyDescription family)
         {
             if (disposed.Add(family)) await family.DisposeAsync(owned[family]);
         }
     }
 
-    private static async Task<ulong[]> InvokePublicFamily(IFamilyInvocation family, FamilyExecutionContext context,
-        ExactSearchExecutionRequest request, FamilyCandidateSet input)
+    private static async Task<ulong[]> InvokePublicFamily(FilterBodyDescription family, FilterRuntimeServices context,
+        PreparedSearch request, FamilyCandidateSet input)
     {
-        var actual = await family.InvokeAsync(context, new FamilyObservationWindow(input.Batch, request), input, CancellationToken.None);
-        if (actual.Batch != input.Batch || family.ExecutionFaulted)
+        var actual = await family.ExecuteAsync(context, input, CancellationToken.None);
+        if (actual.Batch != input.Batch || HostFilterBindings.Faulted(family))
             throw new InvalidDataException("CompatibilityFamilyParity.InvocationBoundary:" + family.FamilyId);
         ulong[] rows = actual.EnumerateLogicalOrdinals().ToArray();
         var source = input.EnumerateLogicalOrdinals().ToHashSet();
@@ -199,56 +198,93 @@ internal static partial class CompatibilityChecks
         return rows;
     }
 
-    private static (IFamilyInvocation Family, string Selection) UnconditionedCpuFamily(IFamilyInvocation owner,
-        ExactSearchExecutionRequest request)
+    private static (FilterBodyDescription Family, string Selection) UnconditionedCpuFamily(FilterBodyDescription owner,
+        PreparedSearch request)
     {
-        IFamilyInvocation? cpu = null;
+        FilterBodyDescription? cpu = null;
         // Prefer complete public owner calls over optional cheaper necessary
         // pre-gates. In particular, never clear Capsule's GivenN requirement.
-        switch (owner)
+        var model = request.Model;
+        var preferences = FilterExecutionPreferences.From(request.RunOptions);
+        switch (owner.FamilyId)
         {
-            case NeowFamily: NeowFamily.TryCreate(request, out cpu, preferGpu: false); break;
-            case CapsuleRelicFamily: CapsuleRelicFamily.TryCreate(request, out cpu, preferGpu: false); break;
-            case CombatRewardFamily: CombatRewardFamily.TryCreate(request, out cpu, preferGpu: false); break;
-            case WorldFamily: WorldFamily.TryCreate(request, out cpu, preferGpu: false); break;
-            case AncientOptionFamily: AncientOptionFamily.TryCreate(request, out cpu, preferGpu: false); break;
-            case EventResultFamily: EventResultFamily.TryCreate(request, out cpu, preferGpu: false); break;
-            case TransformationAggregateFamily: TransformationAggregateFamily.TryCreate(request, preferGpu: false, out cpu); break;
+            case "N.Neow": NeowFamily.TryCreate(model, preferences, out cpu, preferGpu: false); break;
+            case "R.Relic" when NeowReplayPlan.HasCapsule(model):
+                if (CapsuleRelicFamily.TryPrepare(model, preferences, out var capsule, preferGpu: false) && capsule is not null)
+                {
+                    // This oracle is the complete original replay. It owns no
+                    // conditional price or historical N-after-input calibration.
+                    const string revision = "R.Relic.Cpu.CapsuleAndSequenceReplay.20260905.v1";
+                    var profile = RuntimeProfileRegistry.Select(model.Detection);
+                    int workers = Math.Clamp(preferences.WorkerCount, 1, 32);
+                    bool numericalRoots = model.ProfileId == RuntimeProfileId.Beta111;
+                    cpu = new(capsule.Body.Preparation, revision, model.ProfileId)
+                    {
+                        InputIdentity = model.SnapshotFingerprint, PlayersCount = model.Authority.PlayersCount,
+                        WindowCapacity = 65536, CpuChunkCapacity = CpuFilterExecution.Capacity, CpuWorkers = workers,
+                        PerformanceProjection = compact => CpuFilterExecution.Describe(owner.FamilyId, revision,
+                            workers, 65536, numericalRoots, false, compact),
+                        CreateExecution = (self, _) => new CpuFilterExecution(self, profile, capsule.Replay.Matches, numericalRoots)
+                    };
+                }
+                break;
+            case "R.Relic": RelicFamily.TryCreate(model, preferences, out cpu, preferGpu: false); break;
+            case "C.CombatReward": CombatRewardFamily.TryCreate(model, preferences, out cpu, preferGpu: false); break;
+            case "W.World": WorldFamily.TryCreate(model, preferences, out cpu, preferGpu: false); break;
+            case "A.AncientOption": AncientOptionFamily.TryCreate(model, preferences, out cpu, preferGpu: false); break;
+            case "E.EventResult": EventResultFamily.TryCreate(model, preferences, out cpu, preferGpu: false); break;
+            case "T.TransformationAggregate": TransformationAggregateFamily.TryCreate(model, preferences, out cpu, preferGpu: false); break;
         }
         if (cpu is not null) return (cpu, "ActualOwnerCpuFactory;CompleteUnconditionedPublicCall");
-        cpu = FamilyCpuExecution.ConfiguredRealizations(owner)
-            .FirstOrDefault(family => family is not FamilyCpuExecution { RequiredPassedCoverage: not null });
+        cpu = HostFilterBindings.ConfiguredCpuBodies(owner)
+            .FirstOrDefault(family => family.RequiredPassedCoverage is null);
         return cpu is not null ? (cpu, "ConfiguredUnconditionedCpuRealization") :
             throw new InvalidDataException("CompatibilityFamilyParity.UnconditionedCpuUnavailable:" + owner.FamilyId);
     }
 
-    private static void ExportActualFamilySources(IFamilyInvocation family, string variant, string label,
+    private static void ExportActualFamilySources(PreparedSearch request, FilterBodyDescription family, string variant, string label,
         string directory, List<object> evidence)
     {
         var bodies = new List<(string Name, string Source, string? PriorNative)>();
-        switch (family)
+        var variantMode = variant == "native" ? GpuNumericalVariant.NativeFloat64 : GpuNumericalVariant.IntegerRne;
+        var model = request.Model;
+        var prefs = FilterExecutionPreferences.From(request.RunOptions);
+        bool preparedEventGroups = false;
+        switch (family.FamilyId)
         {
-            case EventResultFamily events:
+            case "E.EventResult":
             {
+                var events = new EventResultFamilyPlan(model, numericalVariant: variantMode);
+                preparedEventGroups = events.UsesPreparedGroups;
                 string donor = FamilyGpuComputeUtility.LoadEmbeddedShader("Beta111GpuEventResult.comp.glsl");
                 string numerical = donor[donor.IndexOf("uint64_t s0;", StringComparison.Ordinal)..donor.IndexOf("void append_output", StringComparison.Ordinal)];
+                if (events.UsesPreparedGroups) numerical = "#define RT2_E_PREPARED_GROUPS\n" + numerical;
                 string prior = FamilyGpuComputeUtility.LoadEmbeddedShader("EventResultFamily.comp.glsl").Replace("/*__DONOR__*/", numerical, StringComparison.Ordinal);
-                bodies.Add(("module", events.Plan.ShaderSource(), prior)); break;
+                bodies.Add(("module", events.ShaderSource(), prior)); break;
             }
-            case AncientOptionFamily ancient:
+            case "A.AncientOption":
             {
+                var ancient = new AncientOptionFamilyPlan(model, numericalVariant: variantMode);
                 string donor = FamilyGpuComputeUtility.LoadEmbeddedShader("Beta110GpuAncientOptionPreGateP3A.comp.glsl");
                 string numerical = donor[donor.IndexOf("struct RngState", StringComparison.Ordinal)..donor.IndexOf("void main()", StringComparison.Ordinal)];
                 string prior = FamilyGpuComputeUtility.LoadEmbeddedShader("AncientOptionFamily.comp.glsl").Replace("/*__DONOR__*/", numerical, StringComparison.Ordinal);
-                bodies.Add(("module", ancient.Plan.ShaderSource(), prior)); break;
+                bodies.Add(("module", ancient.ShaderSource(), prior)); break;
             }
-            case CombatRewardFamily { GpuPlan: { } combatPlan }:
+            case "C.CombatReward":
+                if (!CombatRewardFamily.TryPrepare(model,prefs,out var combat,true,variantMode) || combat?.GpuPlan is not {} combatPlan)
+                    throw new InvalidDataException("CompatibilityFamilyParity.SourcePlanMissing:C");
                 bodies.Add(("module", combatPlan.ShaderSource(), PriorNativeCombatSource(combatPlan))); break;
-            case WorldFamily { GpuPlan: { } worldPlan }:
+            case "W.World":
+                var worldPlan = new WorldFamilyGpuPlan(new WorldFamilyReplay(model),model.Authority.PlayersCount == 1 &&
+                    model.Authority.WorldAuthority?.Beta109Generation is { IsMultiplayer:false },variantMode);
                 bodies.Add(("module", worldPlan.ShaderSource(), PriorNativeWorldSource(worldPlan))); break;
-            case TransformationAggregateFamily transform:
+            case "T.TransformationAggregate":
+                if (!TransformationAggregateFamily.TryPrepare(model,prefs,out var transform,true,variantMode) || transform is null)
+                    throw new InvalidDataException("CompatibilityFamilyParity.SourcePlanMissing:T");
                 bodies.Add(("module", transform.GpuPlan.ShaderSource(), null)); break;
-            case CapsuleRelicFamily { GpuPlan: { } capsulePlan }:
+            case "R.Relic" when NeowReplayPlan.HasCapsule(model):
+                if (!CapsuleRelicFamily.TryPrepare(model,prefs,out var capsule,true,variantMode) || capsule?.GpuPlan is not {} capsulePlan)
+                    throw new InvalidDataException("CompatibilityFamilyParity.SourcePlanMissing:R");
             {
                 string body = RelicFamilyGpuExecutor.ShaderSource(true, capsulePlan.UsesBonesKBoundary,
                     genericReplay: capsulePlan.GenericReplay, localStateCapacity: capsulePlan.SequencePlan.LocalStateCapacity,
@@ -257,7 +293,10 @@ internal static partial class CompatibilityChecks
                     capsulePlan.ConfiguredGenericBagCapacity.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
                 bodies.Add(("module", body, null)); break;
             }
-            case NeowFamily { GpuPlan: { } neowPlan }:
+            case "N.Neow":
+                var factory = variant == "native" ? (NeowFamily.GpuPlanFactory)NeowFamilyGpuPlan.TryCreate : NeowFamilyGpuPlan.TryCreateIntegerUnitFloat;
+                if (!NeowFamily.TryPrepare(model,prefs,out var neowPrepared,gpuPlanFactory:factory) || neowPrepared?.GpuPlan is not {} neowPlan)
+                    throw new InvalidDataException("CompatibilityFamilyParity.SourcePlanMissing:N");
                 foreach (int stage in neowPlan.UsesStagedDense ? new[] { 0, 1, 2, 3 } : new[] { 3 })
                     bodies.Add(("stage" + stage, NeowFamilyGpuExecutor.ShaderSource(stage, leafyPreGate: neowPlan.UsesLeafyPreGate,
                         directNestedMode: neowPlan.DirectNestedMode, authoredUpgrades: neowPlan.HasAuthoredUpgrades,
@@ -272,8 +311,10 @@ internal static partial class CompatibilityChecks
             bool? nativeMatchesPriorAssembler = variant == "native" && priorNative is not null ? source == priorNative : null;
             evidence.Add(new { Family = family.FamilyId, Variant = variant, File = file,
                 SourceSha256 = PublicSourceHash(source), NativeMatchesPriorAssembler = nativeMatchesPriorAssembler,
-                PriorAssemblerBaseline = priorNative is null ? null : family is CombatRewardFamily
-                    ? "4b43a7b008399cd2f757057cbd4b91f7b2921533 C query-literal native expression; same production resources"
+                PriorAssemblerBaseline = priorNative is null ? null : family.FamilyId == "C.CombatReward"
+                    ? "C native assembly with captured DenseCarry8/opening-prefix/observed-opening/neutral-proof operands; same production resources; not historical numerical-source identity"
+                    : preparedEventGroups
+                    ? "E request-groups native assembly with the selected immutable plan; same production resources; not historical numerical-source identity"
                     : "413899657e6748b69acfc129865edc8360686b0e native expression; same production resources",
                 PriorAssemblerSha256 = priorNative is null ? null : PublicSourceHash(priorNative),
                 PhysicalRevision = family.ConditionPerformance.PhysicalImplementationRevision });
@@ -284,18 +325,38 @@ internal static partial class CompatibilityChecks
     }
 
     // Baseline factory expressions retained as narrow source-identity checks.
-    // C follows the already delivered 4b43a7b query-literal body; the removed
-    // Capsule bag defines are not an invariant of that current body. These
-    // expressions supply no executable substitutes or numerical oracles.
-    private static string PriorNativeCombatSource(CombatRewardGpuPlan plan) =>
-        FamilyGpuComputeUtility.LoadEmbeddedShader("CombatRewardFamily.comp.glsl")
+    // C reconstructs the selected immutable plan, including the newer opening
+    // and real-neutral proof operands; it does not assert historical source
+    // bytes. These expressions supply no executable substitutes or oracles.
+    private static string PriorNativeCombatSource(CombatRewardGpuPlan plan)
+    {
+        string source = FamilyGpuComputeUtility.LoadEmbeddedShader("CombatRewardFamily.comp.glsl")
+            .Replace("/*__C_OBSERVED_OPENING__*/", plan.UsesObservedOpening
+                ? "#define RT2_C_OBSERVED_OPENING 1\n#define RT2_C_OBSERVED_HOT " + (plan.UsesObservedOpeningHotLoop ? "1\n" : "0\n") +
+                  "#define RT2_C_BAG_CAPACITY " + Math.Max(1, plan.ObservedOpeningData[8]) + "\n" +
+                  FamilyGpuComputeUtility.LoadEmbeddedShader("CombatRewardOpening.glsl")
+                : "#define RT2_C_OBSERVED_OPENING 0\n", StringComparison.Ordinal)
+            .Replace("/*__C_DENSE_HELPERS__*/", plan.UsesDenseCarry8 ?
+                "uint64_t make_u64(uint lo,uint hi){return cr_make_u64(lo,hi);}\n" +
+                "uint64_t rotl64(uint64_t x,uint n){return cr_rotl64(x,n);}\n" +
+                FamilyGpuComputeUtility.LoadEmbeddedShader("VisibleSeedRootHashCommon.glsl") : "", StringComparison.Ordinal)
             .Replace("/*__C_TERMINAL_CARD_GATE__*/", plan.TerminalCardGateSource, StringComparison.Ordinal)
             .Replace("/*__C_CAPSULE_DEFINES__*/", "#define RT2_C_ASSIGNMENT " + (plan.Meta[56] + plan.Meta[59] > 0 ? "1\n" : "0\n") +
                 "#define RT2_C_MULTIPLAYER " + (plan.Meta[3] > 1 ? "1" : "0"), StringComparison.Ordinal)
-            .Replace("/*__C_HOT_DEFINES__*/", Beta110GpuCombatRewardHotLoopCompiler.BuildShaderDefines(plan.HotLoop,
+            .Replace("/*__C_HOT_DEFINES__*/", "#define RT2_C_DENSE_CARRY8 " + (plan.UsesDenseCarry8 ? "1\n" : "0\n") +
+                "#define RT2_C_HOT_OPENING_PREFIX " + (plan.UsesOpeningPrefixHotLoop ? "1\n" : "0\n") +
+                Beta110GpuCombatRewardHotLoopCompiler.BuildShaderDefines(plan.HotLoop,
                 Beta110GpuCombatRewardRoutePolicy.UnpinnedAssumeUnperturbed, Beta110GpuCombatRewardHotLoopVariant.OptimizedSingleRoute), StringComparison.Ordinal)
             .Replace("/*__C_COMMON__*/", FamilyGpuComputeUtility.LoadEmbeddedShader("Beta110GpuCombatRewardCommon.glsl"), StringComparison.Ordinal)
             .Replace("/*__C_STREAMING__*/", FamilyGpuComputeUtility.LoadEmbeddedShader("Beta110GpuCombatRewardStreamingP10A.glsl"), StringComparison.Ordinal);
+        source = source.Replace("/*__C_NEUTRAL_WITNESS__*/", plan.UsesNeutralWitness ?
+            CombatRewardNeutralWitness.ShaderGuard : "", StringComparison.Ordinal);
+        if (plan.UsesNeutralWitness)
+            source = source.Replace("bool c_keep_root(uint64_t root){", "bool c_numeric_keep_root(uint64_t root){",
+                StringComparison.Ordinal).Replace("bool c_keep_root_proven(uint64_t root){", "bool c_keep_root(uint64_t root){",
+                    StringComparison.Ordinal);
+        return source;
+    }
 
     private static string PriorNativeWorldSource(WorldFamilyGpuPlan plan)
     {

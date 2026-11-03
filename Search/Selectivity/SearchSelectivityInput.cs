@@ -47,7 +47,7 @@ internal sealed class SearchSelectivityInput
             BuildRewardPolicy(compiled));
     }
 
-    public static SearchSelectivityInput From(ExactSearchExecutionRequest request)
+    public static SearchSelectivityInput From(SearchModel request)
     {
         ArgumentNullException.ThrowIfNull(request);
         return new SearchSelectivityInput(
@@ -56,6 +56,8 @@ internal sealed class SearchSelectivityInput
             ProjectionFidelity.Exact,
             request.CombatRewardRoutePolicy);
     }
+
+    public static SearchSelectivityInput From(PreparedSearch request) => From(request.Model);
 
     public static implicit operator SearchSelectivityInput(CompiledSearch compiled) => From(compiled);
 

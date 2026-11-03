@@ -25,6 +25,7 @@ bool cr_family_numeric_failure(){atomicOr(header.values[3],1u);return false;}
 #undef cr_evaluate_rewards
 /*__C_TERMINAL_CARD_GATE__*/
 /*__C_STREAMING__*/
+/*__C_OBSERVED_OPENING__*/
 
 // Query-literal opening: no latent Bones identity or Capsule bag is observed.
 bool c_route(uint64_t root,uint route){
@@ -61,10 +62,93 @@ bool c_route(uint64_t root,uint route){
     }
     if(plan_meta.values[40]!=0u&&niche_known)cr_next_double(state.niche);
     cr_apply_explicit_query_reward_context(state);
+#if RT2_CR_HOT_ENABLED == 1 && RT2_C_HOT_OPENING_PREFIX == 1
+    return cr_evaluate_rewards_unpinned_hot_state(state);
+#else
     return cr_evaluate_rewards(state);
+#endif
 }
 
+/*__C_DENSE_HELPERS__*/
+
+bool c_keep_root(uint64_t root){
+    if(plan_meta.values[50]!=0u){
+#if RT2_C_OBSERVED_HOT == 1
+        atomicAdd(header.values[7],1u);atomicOr(header.values[7],4u<<28u);
+#endif
+        return true;
+    }
+#if RT2_C_OBSERVED_OPENING == 1
+    uint reasons;
+    bool keep=c_observed_route(root,0u,reasons);
+    if(batch_meta.values[7]==2u){
+        uint other_reasons;
+        bool other=c_observed_route(root,1u,other_reasons);
+        keep=keep||other;reasons|=other_reasons;
+    }
+#if RT2_C_OBSERVED_HOT == 1
+    // Count one retained root, including unions whose other route hot-passed.
+    // The low 28 bits count roots; the upper four retain the reason union.
+    if(keep&&reasons!=0u){atomicAdd(header.values[7],1u);atomicOr(header.values[7],reasons<<28u);}
+#endif
+    return keep;
+#else
+#if RT2_CR_HOT_ENABLED == 1 && RT2_C_HOT_OPENING_PREFIX == 0
+    return cr_evaluate_rewards_unpinned_hot(root);
+#else
+    bool keep=c_route(root,0u);
+    if(batch_meta.values[7]==2u){bool other=c_route(root,1u);keep=keep||other;}
+    return keep;
+#endif
+#endif
+}/*__C_NEUTRAL_WITNESS__*/
+
+#if RT2_C_DENSE_CARRY8
+// Adapt the existing N/S continuous-seed preparation method, keeping every
+// reward simulation independent. Eight candidates per Dense invocation do not
+// change Compact ABI1 or the authored opening/reward semantics.
+void c_dense_carry8(){
+    uint lid=gl_LocalInvocationID.x,first=gl_GlobalInvocationID.x*8u;
+    uint keep_mask=0u;
+    if(first<batch_meta.values[3]){
+        uint ordinal=batch_meta.values[6]+first;
+        uint64_t first8;uint tail4;
+        encode_seed12_packed(cr_make_u64(batch_meta.values[0],batch_meta.values[1])+uint64_t(ordinal),first8,tail4);
+        for(uint offset=0u;offset<8u;++offset){
+            if(first+offset>=batch_meta.values[3])break;
+            if(ordinal+offset>=batch_meta.values[2]||plan_meta.values[1]!=header.values[5]||batch_meta.values[7]<1u||batch_meta.values[7]>2u){
+                atomicOr(header.values[3],2u);
+            }else if(c_keep_root(root_hash_for_seed12_packed(first8,tail4)))keep_mask|=1u<<offset;
+            if(offset+1u<8u)advance_seed12_packed(first8,tail4);
+        }
+    }
+    if(lid==0u){pass_count=0u;output_base=0u;}
+    barrier();
+    uint count=uint(bitCount(keep_mask)),rank=0u;
+    if(count>0u)rank=atomicAdd(pass_count,count);
+    barrier();
+    if(lid==0u){
+        atomicAdd(header.values[4],min(512u,batch_meta.values[3]-gl_WorkGroupID.x*512u));
+        if(pass_count>0u){
+            output_base=atomicAdd(header.values[2],pass_count);
+            atomicAdd(header.values[6],1u);
+            if(output_base+pass_count>batch_meta.values[5])atomicOr(header.values[3],4u);
+        }
+    }
+    barrier();
+    for(uint offset=0u;offset<8u;++offset){
+        if((keep_mask&(1u<<offset))==0u)continue;
+        if(output_base+rank<batch_meta.values[5])output_ordinals.values[output_base+rank]=batch_meta.values[6]+first+offset;
+        ++rank;
+    }
+}
+#endif
+
 void main(){
+#if RT2_C_DENSE_CARRY8
+    // Batch input mode is uniform, so all lanes take the same barrier path.
+    if(batch_meta.values[4]==0u){c_dense_carry8();return;}
+#endif
     uint index=gl_GlobalInvocationID.x,lid=gl_LocalInvocationID.x;
     bool valid=index<batch_meta.values[3],keep=false;
     uint ordinal=0u;
@@ -74,15 +158,7 @@ void main(){
             atomicOr(header.values[3],2u);
         }else{
             uint64_t root=cr_hash_seed12(cr_make_u64(batch_meta.values[0],batch_meta.values[1])+uint64_t(ordinal));
-            if(plan_meta.values[50]!=0u)keep=true;
-            else{
-#if RT2_CR_HOT_ENABLED == 1
-            keep=cr_evaluate_rewards_unpinned_hot(root);
-#else
-            keep=c_route(root,0u);
-            if(batch_meta.values[7]==2u){bool other=c_route(root,1u);keep=keep||other;}
-#endif
-            }
+            keep=c_keep_root(root);
         }
     }
     // Every lane, including invalid/tail/failed lanes, reaches every barrier.

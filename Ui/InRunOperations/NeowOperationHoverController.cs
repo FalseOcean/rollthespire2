@@ -459,8 +459,9 @@ internal sealed partial class NeowOperationHoverController : Control
             _view.Modulate = Colors.White; _view.Show();
             return;
         }
-        var areas = NeowHoverPlacement.Plan(viewport, anchor, [anchor], occupied,
-            _view.SummaryDesiredSize, _view.CardsDesiredSize, _view.IsBones, _view.CardsSizeForWidth, nativeTipRect);
+        var areas = _view.PlanNativeHuntAreas(viewport, anchor, occupied, nativeTipRect) ??
+            NeowHoverPlacement.Plan(viewport, anchor, [anchor], occupied,
+            _view.SummaryDesiredSize, _view.CardsDesiredSize, _view.IsBones, _view.CardsSizeForWidth, nativeTipRect, _view.HasHuntTree);
         if (areas.Summary.Size.X <= 0 && areas.Cards.Size.X <= 0) { _view.Hide(); return; }
         _view.SetLayout(areas.Summary, areas.Cards);
         // Wrapped containers need a visible-tree layout pass; hiding the tree

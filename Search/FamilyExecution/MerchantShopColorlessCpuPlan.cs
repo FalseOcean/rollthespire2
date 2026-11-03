@@ -28,12 +28,13 @@ internal sealed class MerchantShopColorlessCpuPlan
     private MerchantShopColorlessCpuPlan(Predicate[] predicates, int slot)
     { _predicates = predicates; _slot = slot; }
 
-    internal static MerchantShopColorlessCpuPlan? TryCompile(ExactSearchExecutionRequest request)
+    internal static MerchantShopColorlessCpuPlan? TryCompile(SearchModel model) =>
+        TryCompile(model.Evaluation, Beta111MerchantColorlessAuthority.From(model.Authority));
+
+    internal static MerchantShopColorlessCpuPlan? TryCompile(ExactSearchEvaluationProjection e, Beta111MerchantColorlessAuthority authority)
     {
-        var e = request.Evaluation;
-        var authority = Beta111MerchantColorlessAuthority.From(request.Authority);
         if (!authority.HasExactV1Inputs) return null;
-        if (e.MerchantColorlessSequenceConditions.Count != 0) return CompileSequences(request, authority);
+        if (e.MerchantColorlessSequenceConditions.Count != 0) return CompileSequences(e, authority);
         if (e.MerchantColorlessConditions.Count == 0) return null;
         var uncommon = authority.UncommonPool.ToArray();
         var rare = authority.RarePool.ToArray();
@@ -83,16 +84,16 @@ internal sealed class MerchantShopColorlessCpuPlan
         return accepted;
     }
 
-    private static MerchantShopColorlessCpuPlan? CompileSequences(ExactSearchExecutionRequest request, Beta111MerchantColorlessAuthority authority)
+    private static MerchantShopColorlessCpuPlan? CompileSequences(ExactSearchEvaluationProjection evaluation, Beta111MerchantColorlessAuthority authority)
     {
-        var fixedSlots = request.Evaluation.MerchantColorlessConditions.ToList();
+        var fixedSlots = evaluation.MerchantColorlessConditions.ToList();
         var unordered = new List<Sequence>();
         var u = authority.UncommonPool.ToArray();
         var r = authority.RarePool.ToArray();
         if (u.Length >= ushort.MaxValue || r.Length >= ushort.MaxValue) return null;
         var canonicalU = CompileCanonicalIndexes(u);
         var canonicalR = CompileCanonicalIndexes(r);
-        foreach (var c in request.Evaluation.MerchantColorlessSequenceConditions)
+        foreach (var c in evaluation.MerchantColorlessSequenceConditions)
         {
             if (c.Count is < 1 or > 5 || c.Slots.Count != c.Count ||
                 c.Slot is not (MerchantColorlessSlot.Uncommon or MerchantColorlessSlot.Rare)) return null;

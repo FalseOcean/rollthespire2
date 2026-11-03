@@ -303,6 +303,127 @@ internal static partial class UiSurfaceChecks
             string colorlessOption = "pool:" + new ModelKey(strictColorless.Id.Category, strictColorless.Id.Entry).Serialized;
             var expectedPools = ModelDb.AllCharacters.Select(character => "character:" + new ModelKey(character.Id.Category, character.Id.Entry).Serialized)
                 .Append(colorlessOption).Prepend("").ToArray();
+            // A native English title may legitimately equal its model token
+            // (FTL/TURBO). The current name policy then displays the full ID;
+            // that visible fallback is distinct from the blank-grid regression.
+            string ExpectedCardName(ModelKey key) => RolltheSpire2.Presentation.ContentNames.GameContentNameResolutionPolicy
+                .PreferRuntimeLocalizedName(key, actualCards[key].Title);
+            var poolMembers = ModelDb.AllCharacters.ToDictionary(
+                character => "character:" + new ModelKey(character.Id.Category, character.Id.Entry).Serialized,
+                character => new HashSet<ModelKey>(character.CardPool.AllCards.Concat(character.StartingDeck).Select(CardKey), ModelKeyComparer.Instance),
+                StringComparer.Ordinal);
+            poolMembers.Add(colorlessOption, new(strictColorless.AllCards.Select(CardKey), ModelKeyComparer.Instance));
+            void CheckFilterSurface(string stage, bool resetScroll = true)
+            {
+                string poolValue = FilterChoices("_pool").Single(button => button.ButtonPressed).GetMeta("filter_value").AsString();
+                string rarity = FilterChoices("_rarity").Single(button => button.ButtonPressed).GetMeta("filter_value").AsString();
+                string type = FilterChoices("_type").Single(button => button.ButtonPressed).GetMeta("filter_value").AsString();
+                string query = Field<LineEdit>(editor!, "_search").Text.Trim();
+                var expected = new HashSet<ModelKey>(eligible.Where(key =>
+                    (poolValue.Length == 0 || poolMembers[poolValue].Contains(key)) &&
+                    (rarity.Length == 0 || actualCards[key].Rarity.ToString() == rarity) &&
+                    (type.Length == 0 || actualCards[key].Type.ToString() == type) &&
+                    (query.Length == 0 || ExpectedCardName(key).Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
+                        key.Serialized.Contains(query, StringComparison.OrdinalIgnoreCase))), ModelKeyComparer.Instance);
+                var rendered = Rows();
+                var scroll = Field<ScrollContainer>(editor!, "_availableScroll");
+                var empty = Field<Label>(editor!, "_emptyAvailable");
+                Require(new HashSet<ModelKey>(IndexedKeys("_filtered"), ModelKeyComparer.Instance).SetEquals(expected),
+                    stage + " independently matches the game catalog's complete active filter intersection");
+                Require(empty.IsVisibleInTree() == (expected.Count == 0) &&
+                    Field<Label>(editor!, "_availableTitle").Text.EndsWith(" · " + expected.Count, StringComparison.Ordinal),
+                    stage + " shows the correct populated or empty state and matching count");
+                Require(!resetScroll || scroll.ScrollVertical == 0, stage + " resets the available viewport to the matching first row");
+                Require(rendered.All(button => expected.Contains(Identity(button))) && (expected.Count == 0 ? rendered.Length == 0 : rendered.Length > 0),
+                    stage + " has actual matching row controls whenever matches exist, rather than a vacuous empty row check");
+                var visibleRows = new List<string>();
+                var identityNamedCards = new List<object>();
+                foreach (object view in Field<System.Collections.IEnumerable>(editor!, "_availableViews"))
+                {
+                    var button = Field<Button>(view, "Button");
+                    if (!button.IsVisibleInTree() || !scroll.GetGlobalRect().Encloses(button.GetGlobalRect())) continue;
+                    var content = Field<Control>(view, "Content");
+                    var title = Field<Label>(view, "Title");
+                    Require(content.IsVisibleInTree() && content.Modulate.A > 0 && title.IsVisibleInTree() && title.Modulate.A > 0 &&
+                        title.Text == ExpectedCardName(Identity(button)) && title.Size.X > 0 && title.Size.Y > 0 &&
+                        scroll.GetGlobalRect().Encloses(title.GetGlobalRect()),
+                        stage + " renders a nontransparent card name under the current name policy inside its actual visible viewport: " +
+                        KeyOf(button) + "; nativeTitle=" + actualCards[Identity(button)].Title + "; displayed=" + title.Text +
+                        "; expected=" + ExpectedCardName(Identity(button)) + "; titleRect=" + title.GetGlobalRect() + "; viewport=" + scroll.GetGlobalRect());
+                    visibleRows.Add(KeyOf(button));
+                    if (actualCards[Identity(button)].Title == Identity(button).Entry)
+                        identityNamedCards.Add(new { Key = KeyOf(button), NativeTitle = actualCards[Identity(button)].Title,
+                            Displayed = title.Text, Expected = ExpectedCardName(Identity(button)) });
+                }
+                Require(expected.Count == 0 || visibleRows.Count > 0,
+                    stage + " has at least one fully on-screen card name when the independently computed intersection is nonempty");
+                searchDiagnostics.Add(new { Stage = "FilterVisibility", Case = stage, Language = language,
+                    Window = host.GetWindow().Size.ToString(), Pool = poolValue, Rarity = rarity, Type = type, Query = query,
+                    ExpectedCount = expected.Count, RenderedCount = rendered.Length, VisibleCardKeys = visibleRows,
+                    EmptyVisible = empty.IsVisibleInTree(), Scroll = scroll.ScrollVertical,
+                    IdentityNamedCards = identityNamedCards });
+            }
+            async Task FilterVisibilityMatrix(string sizeName)
+            {
+                var draftBefore = selected.ToArray();
+                await SearchCards(""); await SetFilter("_pool", 0); await SetFilter("_rarity", 0); await SetFilter("_type", 0);
+                foreach (string option in poolMembers.Keys)
+                {
+                    await SetFilter("_pool", PoolIndex(option));
+                    CheckFilterSurface(sizeName + ":pool:" + option);
+                    for (int rarityIndex = 1; rarityIndex <= 3; rarityIndex++)
+                    {
+                        await SetFilter("_rarity", rarityIndex);
+                        CheckFilterSurface(sizeName + ":pool+rarity:" + option + ":" + rarityIndex);
+                    }
+                    await SetFilter("_rarity", 0);
+                }
+                await SetFilter("_pool", 0);
+                for (int rarityIndex = 1; rarityIndex <= 3; rarityIndex++)
+                {
+                    await SetFilter("_rarity", rarityIndex);
+                    for (int typeIndex = 1; typeIndex <= 3; typeIndex++)
+                    {
+                        await SetFilter("_type", typeIndex);
+                        CheckFilterSurface(sizeName + ":rarity+type:" + rarityIndex + ":" + typeIndex);
+                    }
+                    await SetFilter("_type", 0);
+                }
+                var independentCard = ironclad.CardPool.AllCards.Where(AllowedDimensions).First(card =>
+                    !poolMembers["character:" + new ModelKey(silent.Id.Category, silent.Id.Entry).Serialized].Contains(CardKey(card)));
+                string key = CardKey(independentCard).Serialized;
+                int ownRarity = Array.IndexOf(Field<string[]>(editor!, "_rarities"), independentCard.Rarity.ToString()) + 1;
+                int ownType = Array.IndexOf(Field<string[]>(editor!, "_types"), independentCard.Type.ToString()) + 1;
+                await SetFilter("_pool", ironcladIndex); await SetFilter("_rarity", ownRarity); await SetFilter("_type", ownType);
+                await SearchCards(key);
+                CheckFilterSurface(sizeName + ":three-way-exact-card");
+                await SetFilter("_pool", silentIndex);
+                CheckFilterSurface(sizeName + ":role-change-no-match");
+                await Screenshot("card-collection-filter-empty-" + sizeName + "-" + language);
+                await SetFilter("_pool", ironcladIndex);
+                CheckFilterSurface(sizeName + ":role-change-restored");
+                await SetFilter("_rarity", ownRarity == 1 ? 2 : 1);
+                CheckFilterSurface(sizeName + ":rarity-change-no-match");
+                await SetFilter("_rarity", ownRarity);
+                CheckFilterSurface(sizeName + ":rarity-change-restored");
+                await SetFilter("_type", ownType == 1 ? 2 : 1);
+                CheckFilterSurface(sizeName + ":type-change-no-match");
+                await SetFilter("_type", ownType);
+                CheckFilterSurface(sizeName + ":type-change-restored");
+                await Screenshot("card-collection-filter-restored-" + sizeName + "-" + language);
+                await SearchCards(""); await SetFilter("_pool", 0); await SetFilter("_rarity", 0); await SetFilter("_type", 0);
+                var scroll = Field<ScrollContainer>(editor!, "_availableScroll");
+                scroll.ScrollVertical = 100000; await Frames();
+                Require(scroll.ScrollVertical > 0, sizeName + " starts the recovery case after a real deep catalog scroll");
+                CheckFilterSurface(sizeName + ":deep-scroll", resetScroll: false);
+                await SearchCards("__card_collection_visibility_no_match__");
+                CheckFilterSurface(sizeName + ":deep-scroll-to-empty");
+                await SearchCards("");
+                CheckFilterSurface(sizeName + ":empty-to-all-restored");
+                await Frames(3);
+                CheckFilterSurface(sizeName + ":restored-after-layout-frames");
+                Require(selected.SequenceEqual(draftBefore), sizeName + " filter switching and empty-state recovery preserve the whole draft");
+            }
             string[] actualPools = pool.Select(button => button.GetMeta("filter_value").AsString()).ToArray();
             Require(actualPools.Length == expectedPools.Length && new HashSet<string>(actualPools, StringComparer.Ordinal).SetEquals(expectedPools),
                 "Pool options contain only All, registered character pools and the strict colorless pool");
@@ -319,6 +440,7 @@ internal static partial class UiSurfaceChecks
                 .SetEquals(strictColorless.AllCards.Where(AllowedDimensions).Select(CardKey)),
                 "The colorless option is exactly the strict colorless pool intersected with the allowed metadata");
             await SetFilter("_pool", 0);
+            await FilterVisibilityMatrix("normal");
             searchDiagnostics.Add(new { Stage = "EligibleCatalog", Language = language, RegisteredIdentities = actualCards.Count,
                 EligibleCount = eligible.Count, PoolOptions = actualPools,
                 ExcludedQuestKeys = actualCards.Values.Where(card => card.Rarity.ToString() == "Quest").Select(card => CardKey(card).Serialized).ToArray() });
@@ -428,6 +550,8 @@ internal static partial class UiSurfaceChecks
             await SetFilter("_pool", 0); await SearchCards("");
             await Screenshot("card-collection-editor-selected-" + language);
             await Resize(new(800, 600)); EditorFits();
+            await FilterVisibilityMatrix("narrow");
+            EditorFits();
             Field<ScrollContainer>(editor!, "_filterScroll").ScrollVertical = 0; await Frames();
             await Screenshot("card-collection-editor-browse-small-" + language);
             ModelKey[] membersBeforeFilters = selected.ToArray();

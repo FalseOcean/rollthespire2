@@ -11,7 +11,7 @@ public sealed partial class ProductionSearchSession
     // Counters belong to the compiled request, which may be reused by Host
     // warmup/session runs. Take before/after snapshots for per-session deltas.
     internal RolltheSpire2.Core.Rewards.CombatRewardPoolPreparationEvidence? CaptureRewardPoolPreparationEvidence() =>
-        _plan.RewardPoolPreparation?.Capture();
+        _model.RewardPoolPreparation?.Capture();
 
     private readonly IRuntimePredictionDiagnosticSink? _diagnosticSink;
     private readonly string _traceSingleCandidateSeed;
@@ -49,7 +49,7 @@ public sealed partial class ProductionSearchSession
             RuntimeLog.TryBackgroundWarning($"searchAdditionalFault=true;phase={phase};recordedInIssueLedger=true");
             OperationalFileLog.Flush(); return;
         }
-        RuntimeLog.TryBackgroundWarning($"searchFault=true;phase={phase};plan={ExecutionPlan.PlanId};familyRevisions={string.Join('|',_families.Select(f=>f.ConditionPerformance.PhysicalImplementationRevision))};recordedInIssueLedger=true");
+        RuntimeLog.TryBackgroundWarning($"searchFault=true;phase={phase};plan={ExecutionPlan.PlanId};familyRevisions={string.Join('|',_families.Select(f=>f.Body.ConditionPerformance.PhysicalImplementationRevision))};recordedInIssueLedger=true");
     }
     private void RecordDiagnosticFailure(Exception exception, string stage)
     {
@@ -82,7 +82,7 @@ public sealed partial class ProductionSearchSession
         Interlocked.CompareExchange(ref _firstFailure, new(code, seed), null);
         TryDiagnostic(() => Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Record(exception, code,
             nameof(ProductionSearchSession), stage, "issues.search_failed",
-            correlationId: $"seed={seed};ordinal={ordinal};query={_plan.CompiledSearch.SemanticFingerprint};context={_plan.SnapshotFingerprint};plan={ExecutionPlan.PlanId};pending=true"), stage);
+            correlationId: $"seed={seed};ordinal={ordinal};query={_model.CompiledSearch.SemanticFingerprint};context={_plan.SnapshotFingerprint};plan={ExecutionPlan.PlanId};pending=true"), stage);
     }
 
     private void RecordCleanupFailure(Exception exception, string stage)
@@ -121,17 +121,17 @@ public sealed partial class ProductionSearchSession
         TryDiagnostic(() => {
         RuntimeLog.TryBackgroundInfo(
             $"familyExecutionStarted=true;spine=FamilyExecution;families={_families.Count};" +
-            $"familyIds={string.Join(",", _families.Select(family => family.FamilyId))};abi=ABI1-BatchLocalLogicalOrdinal;" +
+            $"familyIds={string.Join(",", _families.Select(family => family.Body.FamilyId))};abi=ABI1-BatchLocalLogicalOrdinal;" +
             $"start={_plan.CanonicalStartSeed};count={_plan.ScanCount};workers={_plan.WorkerCount};" +
             $"executionWindowSize={_executionWindowSize};skipExactValidation={_plan.RunOptions.SkipExactValidation}");
         RuntimeLog.TryBackgroundInfo("familyPlannerDecision=true;" + _executionPlan.FormatSummary());
-        RuntimeLog.TryBackgroundInfo("searchSupportScopeJson=" + RuntimeLog.SafeJson(_plan.Authority.SupportScope));
+        RuntimeLog.TryBackgroundInfo("searchSupportScopeJson=" + RuntimeLog.SafeJson(_model.Authority.SupportScope));
         RuntimeLog.TryBackgroundInfo(_etaProjection.FormatSummary() + ";phase=SelectedProductionPlan");
         }, "SessionStartEvidence");
         var passedCoverage = new HashSet<string>(StringComparer.Ordinal);
         foreach (FamilyExecutionPlanStage stage in _executionPlan.Stages)
         {
-            IFamilyInvocation family = stage.Family;
+            FilterBodyDescription family = stage.Family;
             try
             {
                 RuntimeLog.TryBackgroundInfo(
@@ -218,7 +218,7 @@ public sealed partial class ProductionSearchSession
     {
         // Bounded evidence is emitted immediately, so an ongoing search/feedback export retains it.
         long sampled = Interlocked.Increment(ref _nonMatchSampleCount);
-        if (sampled <= 6) TryDiagnostic(() => ExactRejectionDiagnostics.Log(_plan, seed, exact), "RejectionEvidence");
+        if (sampled <= 6) TryDiagnostic(() => ExactRejectionDiagnostics.Log(_model, seed, exact), "RejectionEvidence");
         if ((sampled & (sampled - 1)) == 0)
             RuntimeLog.TryBackgroundInfo("searchExactDiagnostics=true;phase=Progress;summaryJson=" + RuntimeLog.SafeJson(GetDiagnosticSummary()));
     }
@@ -229,9 +229,10 @@ public sealed partial class ProductionSearchSession
             string.Equals(seed, _traceSingleCandidateSeed, StringComparison.OrdinalIgnoreCase) &&
             _diagnosticSink is not null)
         {
-            TryDiagnostic(() => RuntimePredictionDiagnosticReporter.EmitAnalysis(
-                _diagnosticSink, exact.Request!, exact.Document!, _plan.Detection.DisplayVersion,
-                forceTrace: true, source: "FamilyExecutionExactTrace"), "CandidateTrace");
+            TryDiagnostic(() => RuntimePredictionDiagnosticReporter.EmitSearch(
+                _diagnosticSink,exact.Request,exact.Facts,_model.Detection.DisplayVersion,
+                exact.Evaluation.Disposition.ToString(),exact.FailureCode,forceTrace:true,source:"FamilyExecutionExactTrace",
+                authority:exact.Authority,seed:seed), "CandidateTrace");
         }
     }
 

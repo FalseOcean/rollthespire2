@@ -29,11 +29,12 @@ internal sealed class VariantOpeningGpuPlan
         Buffers = Enumerable.Range(0, 19).Select(_ => Array.Empty<uint>()).ToArray();
         ulong selection = XxHash64.Hash("act_selection"u8, 0), unknown = XxHash64.Hash("unknown_map_point"u8, 0);
         Buffers[2] = [(uint)plan.Groups.Length, (uint)plan.UnknownPrefixCount, plan.UnknownFirst ? 1u : 0u,
-            (uint)selection, (uint)(selection >> 32), (uint)unknown, (uint)(unknown >> 32)];
+            (uint)selection, (uint)(selection >> 32), (uint)unknown, (uint)(unknown >> 32),
+            plan.UnknownJuzuAcquired ? 1u : 0u];
         Buffers[3] = groups.ToArray(); Buffers[4] = allows.ToArray();
     }
     internal string Revision(bool compact) => "V.VariantOpening.Gpu" + (compact ? ".CompactAbi1" : ".Dense") +
-        ".K4.CanonicalAbi1Ready.20261028.v1" + (NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne" : ".NativeFloat64") + GpuRngRotation.Revision;
+        ".K4.CanonicalAbi1Ready.20261029.v2" + (NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne" : ".NativeFloat64") + GpuRngRotation.Revision;
     internal string ShaderSource()
     {
         // The same numerical donor and compatibility adapter as InitialRooms:

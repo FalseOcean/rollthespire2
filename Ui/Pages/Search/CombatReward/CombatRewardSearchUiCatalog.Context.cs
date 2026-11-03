@@ -16,7 +16,7 @@ internal sealed partial record CombatRewardSearchUiCatalog
         string seed = RolltheSpire2.Compatibility.ProfileSeedGenerator.CreateProbeSeed(runtime.Profile);
         var effects = sharedAuthority is not null ? sharedAuthority.EffectAuthority : ReflectionNeowEffectSnapshotAdapter.Capture(runtime.Profile, seed,
             CharacterIdentity.FromKey(character), ascension, players, seat, runtime.Profile.ProfileId,
-            runtime.Detection.DisplayVersion, new ReflectionSnapshotProfileRules(true, true), unlocks).EffectAuthority;
+            runtime.Detection.DisplayVersion, RolltheSpire2.Compatibility.RuntimeProfilePolicies.EffectCatalogRules(runtime.Profile.ProfileId), unlocks).EffectAuthority;
         return FromAuthority(runtime.Profile.ProfileId, effects,
             includeMultiplayerOnly: players > 1, characterKey: character);
     }

@@ -19,7 +19,7 @@ internal sealed partial class InRunMapNodePresenter
 
     private void SynchronizeConveyorDrafts()
     {
-        string seed = _session.Snapshot?.Run.Context.Seed ?? "", capture = _session.Snapshot?.Fingerprint ?? "";
+        string seed = _session.Snapshot?.Context.Seed ?? "", capture = _session.Snapshot?.Fingerprint ?? "";
         var nodes = _session.Nodes.Values.Select(node => node.Position.NodeId).ToHashSet();
         foreach (var key in _conveyorDrafts.Keys.Where(key => key.Seed != seed || key.Capture != capture || !nodes.Contains(key.NodeId)).ToArray())
             _conveyorDrafts.Remove(key);
@@ -31,7 +31,7 @@ internal sealed partial class InRunMapNodePresenter
         ChooseEventOccurrence? occurrence = node.Occurrence is { } observed && node.SelectedOccurrence is { } selected
             ? new(selected.Event, selected.QueueEvent, selected.RawOrdinal, observed.Cursor, selected.Cursor) :
             EventPlanApplies(c, node) ? c.Plan.Event!.ExpectedOccurrence ?? c.Plan.Event.Occurrence : null;
-        var draftKey = (_session.Snapshot?.Run.Context.Seed ?? "", c.Node.Position.NodeId, occurrence, _session.Snapshot?.Fingerprint ?? "");
+        var draftKey = (_session.Snapshot?.Context.Seed ?? "", c.Node.Position.NodeId, occurrence, _session.Snapshot?.Fingerprint ?? "");
         foreach (var stale in _conveyorDrafts.Keys.Where(key => key.NodeId == draftKey.Item2 && key != draftKey).ToArray())
             _conveyorDrafts.Remove(stale);
         var supplied = node.ConveyorInput;
@@ -106,7 +106,7 @@ internal sealed partial class InRunMapNodePresenter
         if (!authored && !unresolved) return;
         ChooseEventOccurrence? occurrence = node.Occurrence is { } observed && node.SelectedOccurrence is { } selected
             ? new(selected.Event, selected.QueueEvent, selected.RawOrdinal, observed.Cursor, selected.Cursor) : null;
-        var draftKey = (_session.Snapshot?.Run.Context.Seed ?? "", c.Node.Position.NodeId, key, occurrence);
+        var draftKey = (_session.Snapshot?.Context.Seed ?? "", c.Node.Position.NodeId, key, occurrence);
         var inventory = IncomingPotionInventory(c.Node);
         int? capacity = IncomingPotionCapacity(inventory);
         if (!_eventPotionDrafts.TryGetValue(draftKey, out var draft))
@@ -203,7 +203,7 @@ internal sealed partial class InRunMapNodePresenter
         // A captured capacity includes existing native/Mod slot effects. Only
         // a fully known incoming relic inventory can establish the additional
         // vanilla capacity change; an unresolved belt is not a fixed maximum.
-        if (incoming is not { RelicPendingCauses.IsEmpty: true } || _session.Snapshot?.Run.Working is not { } captured) return null;
+        if (incoming is not { RelicPendingCauses.IsEmpty: true } || _session.Snapshot?.State is not { } captured) return null;
         int AddedCapacity(IEnumerable<PredictorRelic> relics) => relics.Where(relic => !relic.Melted)
             .Sum(relic => relic.Key.Entry switch { "POTION_BELT" => 2, "PHIAL_HOLSTER" => 1, _ => 0 });
         return Math.Max(0, captured.PotionSlots.Length + AddedCapacity(incoming.Relics.Where(relic => relic.IsKnown).Select(relic => relic.Value)) - AddedCapacity(captured.Relics));
@@ -211,7 +211,7 @@ internal sealed partial class InRunMapNodePresenter
 
     private IEnumerable<ModelKey> EventIncomingPotionCandidates(Context context, PredictorRouteInventoryKnowledge? incoming)
     {
-        foreach (var potion in _session.Snapshot?.Run.Working.PotionSlots.OfType<PredictorPotion>() ?? []) yield return potion.Key;
+        foreach (var potion in _session.Snapshot?.State.PotionSlots.OfType<PredictorPotion>() ?? []) yield return potion.Key;
         foreach (var slot in incoming?.PotionSlots ?? [])
             if (slot.IsKnown && slot.Value is { } potion) yield return potion.Key;
         // These are possible prior receipts, not one simultaneously owned

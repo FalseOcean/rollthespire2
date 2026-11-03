@@ -18,7 +18,7 @@ internal sealed partial class InRunMapPredictionPanel
     private CardCollectionSnapshot? ResolveOverviewCardCollection()
     {
         if (_overviewCardCollection != null) return _overviewCardCollection;
-        if (_prediction.Snapshot?.Run.Context.Catalog is not { } catalog) return null;
+        if (_prediction.Snapshot?.Context.Catalog is not { } catalog) return null;
         var cards = catalog.CardDefinitions
             .Where(definition => string.Equals(definition.Rarity, "Rare", StringComparison.OrdinalIgnoreCase))
             .Select(definition => definition.Prototype.Key)
