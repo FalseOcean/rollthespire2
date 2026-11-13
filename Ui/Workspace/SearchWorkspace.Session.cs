@@ -84,15 +84,20 @@ internal sealed partial class SearchWorkspace
 
     internal sealed record SearchStartResolution(PreparedSearch Plan,
         SearchContinuationSnapshot? Continuation, string ExplicitOriginChangeId,
-        SearchContinuationSnapshot? InitialContinuation = null);
+        SearchContinuationSnapshot? InitialContinuation = null, string CursorGameVersion = "", ulong? CursorEntrance = null);
 
     internal SearchStartResolution ResolveSearchStart(global::RolltheSpire2.Ui.Workspace.WorkbenchSearchDraft draft, PreparedSearch plan)
     {
         var continuation = ContinuationFor(draft, plan);
+        var version = GameVersionIdentity.From(plan.Model.Detection.NormalizedVersion);
+        var cursorVersion = GameVersionIdentity.From(_cursor.GameVersionIdentity);
+        bool cursorVersionChanged = _cursor.Initialized && version.IsExact && cursorVersion.IsExact && version != cursorVersion;
+        bool bindCursorVersion = version.IsExact && version != cursorVersion;
         string explicitOrigin = _cursor.PendingOriginChangeId ?? "";
         string start = explicitOrigin.Length > 0 ? CurrentPersistentOriginSeed :
             continuation is not null && continuation.NextOrdinal < Beta110SeedCodec.SpaceSize
-                ? Beta110SeedCodec.FormatOrdinal(continuation.NextOrdinal) : plan.CanonicalStartSeed;
+                ? Beta110SeedCodec.FormatOrdinal(continuation.NextOrdinal)
+                : cursorVersionChanged ? CurrentPersistentOriginSeed : plan.CanonicalStartSeed;
         if (plan.CanonicalStartSeed != start)
         {
             // A query resumes its own durable frontier unless the player has
@@ -115,7 +120,8 @@ internal sealed partial class SearchWorkspace
                 UnreceivedOrdinals = continuation?.UnreceivedOrdinals ?? []
             };
         }
-        return new(plan, continuation, explicitOrigin, initial);
+        ulong? entrance = bindCursorVersion && Beta110SeedCodec.TryParseOrdinal(start, out ulong ordinal, out _, out _) ? ordinal : null;
+        return new(plan, continuation, explicitOrigin, initial, version.ExactVersion, entrance);
     }
 
     internal SearchContinuationSnapshot? ContinuationFor(global::RolltheSpire2.Ui.Workspace.WorkbenchSearchDraft draft,

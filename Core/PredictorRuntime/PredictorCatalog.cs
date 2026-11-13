@@ -42,6 +42,10 @@ internal sealed record PredictorCardDefinition(PredictorCard Prototype, string R
     public ImmutableArray<PredictorCardLevelMetadata> Levels { get; init; } = [];
 }
 internal sealed record PredictorCardLevelMetadata(int UpgradeLevel, int LocalCost, bool CostsX, bool Unplayable,
-    bool LocalExhaust, bool Innate, bool Retain, bool Eternal);
+    bool LocalExhaust, bool Innate, bool Retain, bool Eternal)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public PredictorCardSortValues? SortValues { get; init; }
+}
 internal sealed record PredictorCardPool(ModelKey Key, ImmutableArray<ModelKey> Cards);
 

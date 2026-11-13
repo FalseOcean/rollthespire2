@@ -1,4 +1,5 @@
 using System.Numerics;
+using RolltheSpire2.Compatibility;
 
 namespace RolltheSpire2.Core.Rng;
 
@@ -83,6 +84,14 @@ public sealed class Xoshiro256StarStar
     }
 
     public bool NextBool() => NextInt(2) == 0;
+
+    internal void UnstableShuffle<T>(IList<T> values, RngSemanticProfileId semanticProfile)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        var shuffleRng = RuntimeProfilePolicies.UsesChildStreamShuffle(semanticProfile)
+            ? new Xoshiro256StarStar(NextUInt64()) : this;
+        shuffleRng.UnstableShuffle(values);
+    }
 
     public void UnstableShuffle<T>(IList<T> values)
     {

@@ -9,7 +9,9 @@ using RolltheSpire2.Search.Selectivity;
 namespace RolltheSpire2.Search.FamilyExecution;
 
 internal sealed record StandardMapFilterPlan(IReadOnlyList<StandardMapSearchCondition> Conditions,
-    (int Act, MapRouteSequenceQuery Query)[] Routes, int Ascension, int Players, MapLossyPlan Lossy);
+    (int Act, MapRouteSequenceQuery Query)[] Routes, int Ascension, int Players, MapLossyPlan Lossy,
+    ElitePrefixResearchCondition? ElitePrefixResearch,
+    RngSemanticProfileId RngSemantics = RngSemanticProfileId.Modern110);
 
 internal static class StandardMapFamily
 {
@@ -24,12 +26,14 @@ internal static class StandardMapFamily
             !int64Available ? "Int64Unavailable" : lossy.Enabled ? "GpuSelected" : lossy.Reason;
         var plan = new StandardMapFilterPlan(model.CompiledSearch.NormalizedQuery.StandardMaps,
             model.CompiledSearch.NormalizedQuery.StandardMapRoutes.Select(c => (c.Act, c.ToSequenceQuery())).ToArray(),
-            model.Ascension, model.Authority.PlayersCount, lossy);
+            model.Ascension, model.Authority.PlayersCount, lossy, model.CompiledSearch.NormalizedQuery.ElitePrefixResearch,
+            model.Authority.VersionResolution.SemanticProfileId);
         var survival = FamilySurvivalProjection.Unresolved(Id, "M.LossyAssignmentSurvivalUnknown;FinalProbabilityIsNotProposalSurvival");
         if (!lossy.Enabled)
         {
             var mapOnly = SearchQuery.Empty with { StandardMaps = model.CompiledSearch.NormalizedQuery.StandardMaps,
-                StandardMapRoutes = model.CompiledSearch.NormalizedQuery.StandardMapRoutes };
+                StandardMapRoutes = model.CompiledSearch.NormalizedQuery.StandardMapRoutes,
+                ElitePrefixResearch = plan.ElitePrefixResearch };
             var compiled = SearchCompiler.Compile(mapOnly, model.CompiledSearch.Context);
             var estimate = JointSelectivityEstimator.EstimateQuery(SearchSelectivityInput.From(compiled));
             survival = estimate.JointlyPriced && estimate.Probability is double probability
@@ -40,7 +44,7 @@ internal static class StandardMapFamily
         {
             AnalyticalCost = new(Id, gpu ? preferences.MapLossy.GpuBatchSize : CpuFilterExecution.Capacity, [],
                 "FullFinalReplay;MapPricingDeferredByOwner.20261026"), Survival = survival,
-            Obligations = [new(Id)]
+            Obligations = plan.ElitePrefixResearch is null ? [new(Id)] : [new(Id), new("ElitePrefixResearch")]
         };
         var description = new MapLossyExecutionDescription(preferences.MapLossy.Enabled, lossy.Enabled,
             !lossy.Enabled ? "FullFinal" : gpu ? "Gpu" : "Cpu", lossy.Enabled ? MapLossyPlan.Strategy : "FullFinal",
@@ -54,7 +58,22 @@ internal static class StandardMapFamily
     {
         string cpuRevision = plan.Lossy.Enabled ? "M.StandardMap.Cpu.AssignmentRound1.Property9.Drawing5.Combined.ThenFinal.20261028.v3" :
             "M.StandardMap.Cpu.Final.EndpointReach.RouteSequence.20261028.v3";
-        const string gpuRevision = "M.StandardMap.Gpu.AssignmentRound1.Property9.Drawing5.Combined.Bitmap.Persistent.ThenCpuFinal.20261028.v3";
+        string gpuRevision = "M.StandardMap.Gpu.AssignmentRound1.Property9.Drawing5.Combined.Bitmap.Persistent.ThenCpuFinal.20261028.v3";
+        if (plan.RngSemantics == RngSemanticProfileId.Modern113)
+        {
+            cpuRevision += ".Modern113";
+            gpuRevision += ".Modern113";
+        }
+        if (plan.ElitePrefixResearch is not null)
+        {
+            cpuRevision += ".ElitePrefixResearch.FullFinal.20261105.v1";
+            gpuRevision += ".ElitePrefixResearch.FullFinal.20261105.v1";
+            if (plan.ElitePrefixResearch.Mode == ElitePrefixResearchMode.FloorSeven)
+            {
+                cpuRevision += ".FloorSeven.v1";
+                gpuRevision += ".FloorSeven.v1";
+            }
+        }
         FilterBodyDescription? cpu = gpu ? Describe(prepared, plan, profile, identity, workers, capacity, false,
             description with { Backend = "Cpu", Reason = "CpuSelectedOrGpuUnavailable" }) : null;
         return new(prepared, gpu ? gpuRevision : cpuRevision, profile.ProfileId)
@@ -72,9 +91,9 @@ internal static class StandardMapFamily
         };
     }
 
-    internal static ActContext Context(int act, int ascension) => new(
+    internal static ActContext Context(int act, int ascension, RngSemanticProfileId semantics = RngSemanticProfileId.Modern110) => new(
         act switch { 1 => ActKind.Overgrowth, 2 => ActKind.Hive, 3 => ActKind.Glory, _ => throw new ArgumentOutOfRangeException(nameof(act)) },
-        act-1, HasSwarmingElites: ascension>=1);
+        act-1, HasSwarmingElites: ascension>=1, RngSemantics: semantics);
     internal static int Value(MapOutcomeSignature value, StandardMapMetric metric) => metric switch
     {
         StandardMapMetric.GuaranteedMonster => value.Guarantee(0), StandardMapMetric.GuaranteedElite => value.Guarantee(1),
@@ -133,14 +152,19 @@ internal sealed class StandardMapExecution : IFilterExecution, IMapProposalObser
     internal StandardMapExecution(FilterBodyDescription body, StandardMapFilterPlan plan, IRuntimeProfile profile,
         int capacity, MapLossyExecutionDescription description)
     { Body = body; _plan = plan; _profile = profile; _capacity = capacity; _description = description;
-        _cpuFinalBody = DescribeCpuFinal(body); }
+        _cpuFinalBody = DescribeCpuFinal(body, plan.ElitePrefixResearch, plan.RngSemantics); }
 
-    private static FilterBodyDescription DescribeCpuFinal(FilterBodyDescription body)
+    private static FilterBodyDescription DescribeCpuFinal(FilterBodyDescription body, ElitePrefixResearchCondition? eliteResearch,
+        RngSemanticProfileId semantics)
     {
         string family = body.FamilyId; int workers = body.CpuWorkers;
+        string revision = "M.StandardMap.Cpu.FullFinalAfterProposal" +
+            (eliteResearch is not null ? ".ElitePrefixResearch.20261105.v1" : "") +
+            (eliteResearch?.Mode == ElitePrefixResearchMode.FloorSeven ? ".FloorSeven.v1" : "") +
+            (semantics == RngSemanticProfileId.Modern113 ? ".Modern113" : "");
         return body with { UsesGpu = false, WindowCapacity = CpuFilterExecution.Capacity, Cost = new(),
             PerformanceProjection = compact => CpuFilterExecution.Describe(family,
-                "M.StandardMap.Cpu.FullFinalAfterProposal", workers, CpuFilterExecution.Capacity, true, false, compact) };
+                revision, workers, CpuFilterExecution.Capacity, true, false, compact) };
     }
 
     internal bool MatchesLossyRoot(ulong root, CancellationToken token = default)
@@ -148,7 +172,8 @@ internal sealed class StandardMapExecution : IFilterExecution, IMapProposalObser
         token.ThrowIfCancellationRequested();
         if (!_plan.Lossy.Enabled) return true;
         if (_plan.Lossy.Predicates.Any(p => p.Program.AlwaysReject)) return false;
-        if (!_work.TryTake(out var maps)) maps = Enumerable.Range(1, 3).Select(act => new BoundedActMap(StandardMapFamily.Context(act, _plan.Ascension))).ToArray();
+        if (!_work.TryTake(out var maps)) maps = Enumerable.Range(1, 3).Select(act => new BoundedActMap(
+            StandardMapFamily.Context(act, _plan.Ascension, _plan.RngSemantics))).ToArray();
         try
         {
             Span<int> values = stackalloc int[3 * MapPropertyProgram.MetricCount];
@@ -184,9 +209,10 @@ internal sealed class StandardMapExecution : IFilterExecution, IMapProposalObser
     {
         token.ThrowIfCancellationRequested();
         if (!_work.TryTake(out var maps)) maps=Enumerable.Range(1,3).Select(act=>new BoundedActMap(
-            StandardMapFamily.Context(act,_plan.Ascension) with { IsMultiplayer = _plan.Players > 1 })).ToArray();
+            StandardMapFamily.Context(act,_plan.Ascension,_plan.RngSemantics) with { IsMultiplayer = _plan.Players > 1 })).ToArray();
         var cached = new MapOutcomeSignature?[3];
         var replayed = new bool[3];
+        (MapNode Start, MapNode Boss)? firstActGraph = null;
         void Replay(int act)
         {
             if (replayed[act-1]) return;
@@ -195,6 +221,16 @@ internal sealed class StandardMapExecution : IFilterExecution, IMapProposalObser
         }
         try
         {
+            if (_plan.ElitePrefixResearch is { } research)
+            {
+                Replay(1);
+                firstActGraph = maps[0].SnapshotFinalRouteGraph(token);
+                var result = research.Mode == ElitePrefixResearchMode.FloorSeven
+                    ? ElitePrefixResearchEvaluator.EvaluateFloorSeven(firstActGraph.Value.Start, token)
+                    : ElitePrefixResearchEvaluator.Evaluate(firstActGraph.Value.Start, research.ExtraMonsters, research.Unknowns, token);
+                if (!result.Matches)
+                    return false;
+            }
             if (!StandardMapFamily.Matches(_plan.Conditions, act =>
             {
                 if (cached[act-1] is {} value) return value;
@@ -204,7 +240,7 @@ internal sealed class StandardMapExecution : IFilterExecution, IMapProposalObser
             foreach (var (act, query) in _plan.Routes)
             {
                 Replay(act);
-                var graph = maps[act-1].SnapshotFinalRouteGraph(token);
+                var graph = act == 1 && firstActGraph.HasValue ? firstActGraph.Value : maps[act-1].SnapshotFinalRouteGraph(token);
                 if (!MapRouteSequenceEvaluator.Evaluate(graph.Start, graph.Boss, query, token).Matches) return false;
             }
             return true;

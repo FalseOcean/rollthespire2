@@ -23,6 +23,7 @@ internal static class PartyStageSurvival
                     Conditions = SearchQuery.Empty with
                     {
                         OpeningRoute = player.Conditions.OpeningRoute,
+                        NeowOfferWhitelist = player.Conditions.NeowOfferWhitelist,
                         LegacyNeow = SearchQuery.Empty.LegacyNeow with
                         {
                             NeowRelics = player.Conditions.LegacyNeow.NeowRelics

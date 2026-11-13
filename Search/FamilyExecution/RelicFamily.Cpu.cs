@@ -9,13 +9,14 @@ internal static partial class RelicFamily
     {
         var ordinary = RelicCpuPlan.TryCompile(plan);
         var shop = RelicShopCpuPlan.TryCompile(plan);
-        bool referencePool = authority.PlayersCount == 1 && plan.Pool.BucketLengths.SequenceEqual(new[] { 30, 25, 35, 25, 1, 2, 32, 26, 38, 26 });
+        bool referencePool = !plan.Pool.UsesChildShuffle && authority.PlayersCount == 1 && plan.Pool.BucketLengths.SequenceEqual(new[] { 30, 25, 35, 25, 1, 2, 32, 26, 38, 26 });
         bool common = referencePool && ordinary is not null && plan.Predicates is [{ Lane: 0, RangeMode: 0, RangeValue: 3, AnyCount: 0, AllCount: 3, BanCount: 0 }] &&
             plan.LastRequiredBucket == 7 && plan.TrackedInitialPositions.Length == 3;
         bool threeShop = referencePool && shop is not null && plan.Predicates.Length == 0 &&
             plan.ShopPredicates is [{ Count: 3, OrderMode: 0 }] && plan.ShopPredicates[0].TargetIds.Distinct().Count() == 3;
         string revision = shop is not null ? "R.Relic.Cpu.ShopBackPrefix.20261016.v2" : ordinary is not null
             ? "R.Relic.Cpu.TrackedPositions.20261016.v3" : "R.Relic.Cpu.Reference.20260912.v1";
+        if (plan.Pool.UsesChildShuffle) revision += ".Modern113";
         bool numericalRoots = profile.ProfileId == RuntimeProfileId.Beta111;
         FamilyConditionPerformanceProjection Condition(bool compact) => CpuFilterExecution.Describe(Id, revision, workers, 65536, numericalRoots, false, compact);
         var costs = FamilyAuxiliaryEvidence.Read<CpuCostSnapshot?>(Id, "CpuCostSnapshot", CpuCostCalibration.Capture, null);

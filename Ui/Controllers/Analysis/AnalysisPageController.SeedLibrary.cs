@@ -26,6 +26,9 @@ internal sealed partial class AnalysisPageController
 
     internal void ClearSeedLibraryOverrides(bool preserveResultOrigin = false)
     {
+        _capturedRunInformation = null;
+        _capturedRunInformationSeed = "";
+        _page.SetCapturedRunParty(0);
         _librarySoloUnlocks = null; _librarySoloSelection = null;
         _librarySoloPremise = SearchQuery.Empty;
         _soloExplicitOpening = false;
@@ -74,17 +77,30 @@ internal sealed partial class AnalysisPageController
         InstallResultOrigin(entry.ResultProvenance, association, entry.Seed, context);
     }
 
-    // Seed favorites and the in-run shortcut share the existing detached-context import.
     internal void OpenPredictionContext(string rawSeed, SeedLibraryContext context)
+        => OpenPredictionContext(rawSeed, context, capturedRun: false);
+
+    internal void OpenRunPredictionContext(string rawSeed, SeedLibraryContext context)
+        => OpenPredictionContext(rawSeed, context, capturedRun: true);
+
+    private void OpenPredictionContext(string rawSeed, SeedLibraryContext context, bool capturedRun)
     {
-        SeedLibraryStore.ValidateContext(context);
-        SeedLibraryStore.ValidateRuntimeReferences(context, Bootstrap.RuntimeAuthorityEnvironment.Current.Authority);
+        if (capturedRun)
+            SeedLibraryStore.ValidateCapturedRunContext(context, Bootstrap.RuntimeAuthorityEnvironment.Current.Authority);
+        else
+            SeedLibraryStore.ValidateRuntimeReferences(context, Bootstrap.RuntimeAuthorityEnvironment.Current.Authority);
         if (context.GameVersion != _runtime.Detection.NormalizedVersion || context.Profile != _runtime.Profile.ProfileId)
             throw new InvalidOperationException("SeedLibrary.StaleContext: " + context.GameVersion);
         if (!ProfileSeedRules.TryCanonicalizePredictionSeed(_runtime.Profile, rawSeed, out var seed, out var issue)) throw new InvalidOperationException(issue);
         var characters = RuntimeCharacterCatalogCapture.Capture().EffectiveCharacters;
         if (context.Players.Any(p => !characters.Contains(p.Character))) throw new InvalidOperationException("SeedLibrary.CharacterUnavailable");
         ClearSeedLibraryOverrides();
+        if (capturedRun && context.Players.Count > SeedPredictionInputLimits.MaximumPlayers)
+        {
+            _capturedRunInformation = context;
+            _capturedRunInformationSeed = seed;
+            _page.SetCapturedRunParty(context.Players.Count);
+        }
         // Rebuild authority now. Persisted query data contains only N premises and
         // Ancient assumptions; no saved result is treated as current evidence.
         _libraryPredictionIssue = "";
@@ -117,7 +133,8 @@ internal sealed partial class AnalysisPageController
             // Explicitly install every slot before analysis; SetPartyDraft would
             // otherwise analyze P1 before the saved selection table is present.
             draft.Compile(_runtime, out _);
-            _partyDraft = draft; _lastPartyDraft = draft;
+            _partyDraft = draft;
+            if (_capturedRunInformation is null) _lastPartyDraft = draft;
             _partySelectionSeed = seed;
             _sourcePartyDraftKey = System.Text.Json.JsonSerializer.Serialize(draft);
             InstallPartySelections(context, restoreSelections: true);

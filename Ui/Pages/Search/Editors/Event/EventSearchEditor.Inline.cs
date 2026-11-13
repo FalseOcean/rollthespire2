@@ -260,7 +260,7 @@ internal sealed partial class EventSearchEditor
     {
         var events = _draft.Results.Where(pair => pair.Value.Any(key => key.HasValue))
             .Select(pair => ResultEventId(pair.Key)).ToHashSet(StringComparer.Ordinal);
-        if (_draft.CharacterColor >= 0) events.Add("COLORFUL_PHILOSOPHERS");
+        if (_draft.CharacterColor.HasValue) events.Add("COLORFUL_PHILOSOPHERS");
         if (_draft.TrialCase >= 0) events.Add("TRIAL");
         if (_draft.TinkerType >= 0) events.Add("TINKER_TIME");
         return events;
@@ -270,7 +270,7 @@ internal sealed partial class EventSearchEditor
     {
         foreach (var kind in _draft.Results.Keys.Where(kind => ResultEventId(kind) == key.Entry).ToArray()) _draft.Results.Remove(kind);
         if (key.Entry == "TRIAL") _draft.TrialCase = -1;
-        if (key.Entry == "COLORFUL_PHILOSOPHERS") _draft.CharacterColor = -1;
+        if (key.Entry == "COLORFUL_PHILOSOPHERS") _draft.CharacterColor = null;
         if (key.Entry == "TINKER_TIME") { _draft.TinkerType = -1; _draft.TinkerEffect = null; }
         _draft.InactiveResultEvents.Remove(key.Entry);
         _draft.PrototypeTargets.RemoveWhere(k => k.StartsWith(key.Serialized + ":", StringComparison.Ordinal));

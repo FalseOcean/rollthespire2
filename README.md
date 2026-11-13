@@ -6,9 +6,9 @@ English | [简体中文](README.zh-CN.md)
 
 RolltheSpire2 (RT2) is an in-game seed search and analysis mod for **Slay the Spire 2**. Combine your desired conditions, search for matching seeds, and inspect their predicted openings, rewards, maps and more.
 
-This source tree is **1.4.1**. The primary tested environment is **Windows, game version 0.111.0**.
+This source tree is **1.4.2**. The new compatibility work targets **Slay the Spire 2 v0.113.0 on Windows**.
 
-Fixed some performance issues and improved the execution architecture.
+Adapted RT2 to Slay the Spire 2 v0.113.0 and updated as many seed search conditions as possible. Search accuracy still needs further verification, and performance needs more work.
 
 ## What you can do
 
@@ -43,7 +43,7 @@ The in-game encyclopedia explains individual conditions and prediction assumptio
 
 Multiplayer assumes full unlocks by default; you can explicitly read the actual lobby context. Seed Analysis has its own multiplayer configuration. Its Neow pickups follow **P1 → P2 → P3 → P4**, including the displayed default choices, so earlier choices can affect later players' predictions.
 
-Multiplayer transformation combinations are not included. In-run route forecasting covers the current Act, follows vanilla rules and ignores mod-added relics and effects. Drawing a route does not simulate every action in a complete run.
+Multiplayer transformation combinations are not included. Live route forecasting and in-run route drawing remain limited to v0.111.0, for the current Act in single-player. Blitz and Dread modes are outside the v0.113.0 adaptation.
 
 Map filtering uses full evaluation by default. An optional lossy prefilter on the map page supports CPU/GPU execution for standard vanilla single-player maps: lower and upper bounds for all nine map properties, multiple properties together, and combinations with grouped Monster, Unknown-room, Shop, Elite and Rest-Site route requirements. Supported three-Act daily totals retain their original meaning. It can miss matching seeds; surviving candidates still receive full map evaluation, and the Exact-validation setting remains independent. Other conditions retain full evaluation. Advanced parameters are in Settings.
 

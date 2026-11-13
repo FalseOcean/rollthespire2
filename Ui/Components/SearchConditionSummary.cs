@@ -122,6 +122,10 @@ internal sealed partial class SearchConditionSummary : VBoxContainer
             yield return "N · " + string.Join(bones.OrderMode == BonesRouteOrderMode.ExactOrder ? " → " : " + ", bones.RequiredRelicKeys.Select(k => _names!.Resolve(k, GameContentKind.Relic)));
         foreach (string line in query.StructuredOpeningEffects.Select(FormatStructuredEffect)) yield return line;
         if (!query.LegacyNeow.NeowRelics.IsEmpty) yield return "N · " + FormatKeyFilter(query.LegacyNeow.NeowRelics, GameContentKind.Relic);
+        if (query.NeowOfferWhitelist is { } allowed)
+            yield return "A · " + _workbenchText!.Get("query.ancient.neow.only") + " · " +
+                (allowed.AllowedKeys.Count == 0 ? _workbenchText.Get("query.ancient.neow.empty_only") :
+                    string.Join(" / ", allowed.AllowedKeys.Select(key => _names!.Resolve(key, GameContentKind.Relic))));
         if (query.LegacyNeow.RequiredFinalCurse is { } curse) yield return "N · " + _text!.Get(Ui1TextKey.SearchFinalCurse) + " · " + _names!.Resolve(curse, GameContentKind.Card);
         foreach (string line in query.RelicSequenceConstraints.Select(c => "R · " + FormatRelicCondition(c))) yield return line;
         if (query.TreasureRelics is { IsEmpty: false } treasure)
@@ -137,6 +141,9 @@ internal sealed partial class SearchConditionSummary : VBoxContainer
         if (query.FirstActUnknownEventPrefixCount > 0)
             yield return "E · " + _workbenchText!.Get("query.event.unknown.title") + " · " +
                 _workbenchText.Get("query.event.unknown.option_" + query.FirstActUnknownEventPrefixCount);
+        if (query.FirstActUnknownMonsterPrefixCount > 0)
+            yield return "E · " + _workbenchText!.Get("query.event.unknown.title") + " · " +
+                _workbenchText.Get("query.unknown.monster.option_" + query.FirstActUnknownMonsterPrefixCount);
         foreach (string line in query.EventSequenceConstraints.Select(c => "E · " + FormatEventCondition(c))) yield return line;
         foreach (string line in query.EventResultConditions.Select(c => "E · " + FormatEventResult(c))) yield return line;
         foreach (string line in query.AncientBranches.Select(c => $"A · {_text!.Format(Ui1TextKey.SearchPresetSummaryAct, c.Act)} · {_names!.Resolve(c.AncientKey, GameContentKind.Ancient)}" +
@@ -149,7 +156,20 @@ internal sealed partial class SearchConditionSummary : VBoxContainer
             (!c.SecondBoss.IsEmpty ? " · #2 " + FormatKeyFilter(c.SecondBoss, GameContentKind.Encounter) : ""))) yield return line;
         foreach (string line in query.LegacyWorld.BossFilters.Select(c => $"W · {_text!.Format(Ui1TextKey.SearchPresetSummaryAct, c.Act)} · {FormatKeyFilter(c.Keys, GameContentKind.Encounter)}")) yield return line;
         foreach (string line in query.LegacyWorld.BossOrdinalFilters.Select(c => $"W · {_text!.Format(Ui1TextKey.SearchPresetSummaryAct, c.Act)} · #{c.Ordinal} · {FormatKeyFilter(c.Keys, GameContentKind.Encounter)}")) yield return line;
+        foreach (var queue in query.EncounterQueues)
+        {
+            string range = _workbenchText!.Format(queue.RangeMode == SearchSequenceRangeMode.FirstN
+                ? "query.dead_seed.encounters.first" : "query.dead_seed.encounters.position", queue.RangeValue);
+            string variant = queue.VariantKey is { } variantKey ? " · " + _names!.Resolve(variantKey, GameContentKind.Act) : "";
+            yield return $"W · {_text!.Format(Ui1TextKey.SearchPresetSummaryAct, queue.Act)} · " +
+                _workbenchText.Get("query.encounter.kind." + queue.Kind) + " · " + range + variant + " · " +
+                string.Join(" / ", queue.AllowedKeys.Select(key => _names!.Resolve(key, GameContentKind.Encounter)));
+        }
         foreach (string line in query.StandardMaps.Select(FormatMapCondition)) yield return line;
+        if (query.ElitePrefixResearch is { } research)
+            yield return "M · " + (research.Mode == ElitePrefixResearchMode.FloorSeven
+                ? _workbenchText!.Get("query.map.elite_research.floor_seven.summary")
+                : _workbenchText!.Format("query.map.elite_research.summary", research.ExtraMonsters, research.Unknowns));
         foreach (var drawingRoute in query.StandardMapRoutes)
         {
             string Room(StandardMapRoomType room) => room switch
@@ -173,7 +193,8 @@ internal sealed partial class SearchConditionSummary : VBoxContainer
         if (query.CombatCardRewards is { } cards)
             yield return "C · " + _text!.Format(Ui1TextKey.SearchPresetSummaryRewardCards, cards.Count, FormatOrderMode(cards.OrderMode)) + " · " + FormatSlots(cards.Slots.Take(cards.Count), GameContentKind.Card);
         if (query.CombatCardExclusion is { } excluded)
-            yield return "C · " + _workbenchText!.Get("query.combat.exclusion.title") + " · " +
+            yield return "C · " + _workbenchText!.Get(excluded.Mode == CombatCardCollectionMode.Whitelist
+                ? "query.combat.collection.whitelist" : "query.combat.collection.blacklist") + " · " +
                 _workbenchText.Format("query.combat.exclusion.summary", excluded.BattleCount) + " · " +
                 (collection is null ? _workbenchText.Format("query.combat.exclusion.imported", excluded.CardKeys.Count)
                     : _workbenchText.Format("query.combat.exclusion.snapshot", collection.Name, collection.Revision, collection.Cards.Count)) +

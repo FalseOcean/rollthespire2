@@ -15,7 +15,7 @@ internal struct BoundedMapRng
         _s0 = SplitMix64.Next(ref seed); _s1 = SplitMix64.Next(ref seed);
         _s2 = SplitMix64.Next(ref seed); _s3 = SplitMix64.Next(ref seed); Calls = 0;
     }
-    internal double Double()
+    private ulong NextUInt64()
     {
         unchecked
         {
@@ -24,7 +24,27 @@ internal struct BoundedMapRng
             ulong t = _s1 << 17;
             _s2 ^= _s0; _s3 ^= _s1; _s1 ^= _s2; _s0 ^= _s3; _s2 ^= t;
             _s3 = BitOperations.RotateLeft(_s3, 45);
-            return (result >> 11) * 1.1102230246251565E-16;
+            return result;
+        }
+    }
+    internal double Double() => (NextUInt64() >> 11) * 1.1102230246251565E-16;
+    internal void Shuffle<T>(Span<T> values, bool usesChildShuffle)
+    {
+        if (usesChildShuffle)
+        {
+            var child = new BoundedMapRng(NextUInt64());
+            child.ShuffleInPlace(values);
+            return;
+        }
+        ShuffleInPlace(values);
+    }
+
+    private void ShuffleInPlace<T>(Span<T> values)
+    {
+        for (int i = values.Length - 1; i > 0; i--)
+        {
+            int j = Int(i + 1);
+            (values[i], values[j]) = (values[j], values[i]);
         }
     }
     internal int Int(int upper) => (int)(Double() * upper);

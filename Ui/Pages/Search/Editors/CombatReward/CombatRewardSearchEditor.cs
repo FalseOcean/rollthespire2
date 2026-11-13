@@ -59,6 +59,7 @@ internal sealed partial class CombatRewardSearchEditor : Control
         public ModelKey?[] Slots { get; } = new ModelKey?[MaximumBattleRange];
         public int PotionRange = DefaultBattleRange;
         public int ExclusionBattleCount = DefaultBattleRange;
+        public CombatCardCollectionMode CollectionMode;
         public RolltheSpire2.Core.Collections.CardCollectionSnapshot? ExcludedCollection;
         public CombatCardExclusionSearchCondition? Exclusion;
         public bool PotionsUnordered = true;

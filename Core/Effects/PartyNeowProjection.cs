@@ -22,10 +22,11 @@ internal static class PartyNeowProjection
         bool identityExact = offers.ExactAuthority && !offers.UnknownEligibilityAffectedPool;
         return offers.RelicKeys.Select((key, index) =>
         {
-            bool sharedConsumer = key == BaseGameModelKeys.Relics.PhialHolster ||
+            bool sharedConsumer = owner.VersionResolution.SemanticProfileId != RngSemanticProfileId.Modern113 &&
+                (key == BaseGameModelKeys.Relics.PhialHolster ||
                 !Core.Rewards.VanillaRelicRewardEffects.TryGet(owner.ProfileId, key, out var behavior) ||
                 (behavior.OnObtainCapabilities & (Core.Rewards.RelicOnObtainRewardEffects.ConsumesNicheRng |
-                    Core.Rewards.RelicOnObtainRewardEffects.NestedRelicObtain)) != 0;
+                    Core.Rewards.RelicOnObtainRewardEffects.NestedRelicObtain)) != 0);
             var effect = !request.ShouldProjectNeowEffects(key)
                 ? Core.Neow.NeowChoiceFacts.UnrequestedNeowEffects
                 : !identityExact
@@ -34,7 +35,8 @@ internal static class PartyNeowProjection
                 ? NeowEffectProjection.UnknownAuthority(key, "party.earlier-player-shared-opening-unresolved")
                 : new NeowEffectProjectionEngine(Beta111Profile.Instance, "beta111.party-neow", root, owner,
                     enableComplexBonesDeckInteractions: true) { AuthoredCapsuleEffects = authoredCapsuleEffects }.Project(key,
-                        NeowEffectRngContext.CreateFromRootHash(Beta111Profile.Instance, root, owner.PlayerSlotIndex)
+                        NeowEffectRngContext.CreateFromRootHash(Beta111Profile.Instance, root, owner.PlayerSlotIndex,
+                                owner.VersionResolution.SemanticProfileId)
                             .WithShared(niche.Clone(), potions.Clone()), preparedRelicBag);
             return Core.Neow.NeowChoiceFacts.Choice(index + 1, key, request,
                 identityExact ? PredictionPrecision.Exact : PredictionPrecision.Unknown,
@@ -86,7 +88,8 @@ internal static class PartyNeowProjection
             var participant = participants[progress];
             var owner = party.Players[participant.Slot];
             // Only the shared streams are carried. RNG owner remains the actual slot, not progress.
-            var rng = NeowEffectRngContext.CreateFromRootHash(Beta111Profile.Instance, initial.Root, participant.Slot)
+            var rng = NeowEffectRngContext.CreateFromRootHash(Beta111Profile.Instance, initial.Root, participant.Slot,
+                    owner.VersionResolution.SemanticProfileId)
                 .WithShared(niche.Clone(), potions.Clone());
             var nextShared = new HashSet<ModelKey>(remainingShared);
             var personalBag = party.World.Beta109Generation.PartyRelicBuckets[participant.Slot]

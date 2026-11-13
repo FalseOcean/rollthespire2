@@ -165,7 +165,7 @@ internal sealed class NeowCapsuleSparseRefinement
                 if(pickup==0) firstMask=mask; else secondMask=mask;
                 if(--remainingCapsules==0) break;
             }
-            else if(source!=255 && remainingCapsules>0 && !NeowSingleplayerOperators.ExecuteRelic(source,true,_arrival,
+            else if(source!=255 && remainingCapsules>0 && !NeowLocalOperators.ExecuteRelic(source,true,_arrival,
                 _n.Authority.EffectCatalog,true,false,false,false,ref rewards,ref niche,ref transformations,ref potions,Span<byte>.Empty))
                 return new(false,0,0,"CapsuleRewardsArrivalUnavailable:Source"+source);
         }

@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using RolltheSpire2.Compatibility;
 
 namespace RolltheSpire2.Search.FamilyExecution;
 
@@ -62,6 +63,27 @@ internal struct Beta110FastRng
     public void ConsumeUnstableShuffle(int count)
     {
         for (; count > 1; count--) _ = NextInt(count);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void UnstableShuffle<T>(Span<T> values, RngSemanticProfileId semanticProfile)
+    {
+        if (!RuntimeProfilePolicies.UsesChildStreamShuffle(semanticProfile))
+        {
+            UnstableShuffle(values);
+            return;
+        }
+        var child = ForkShuffle();
+        child.UnstableShuffle(values);
+    }
+
+    public Beta110FastRng ForkShuffle() => new(NextUInt64());
+    public void ConsumeShuffleSeed() => _ = NextUInt64();
+
+    public void ConsumeUnstableShuffle(int count, RngSemanticProfileId semanticProfile)
+    {
+        if (RuntimeProfilePolicies.UsesChildStreamShuffle(semanticProfile)) ConsumeShuffleSeed();
+        else ConsumeUnstableShuffle(count);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

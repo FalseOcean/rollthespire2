@@ -33,7 +33,7 @@ internal sealed partial class TransformationAggregateNumericalPlan
 
     private void PrepareStreaming()
     {
-        if (!Closed || _targets.Length > 10) return;
+        if (!Closed || HasTwoSharedTransformOrders || _targets.Length > 10) return;
         var groups = DrawGroups;
         // A malformed output shape must still reach NumericalOutputCount on the
         // collector. Early rejection is safe only after this invariant is proven.
@@ -65,6 +65,7 @@ internal sealed partial class TransformationAggregateNumericalPlan
             var rng = new Beta110FastRng(unchecked(root + group.Hash));
             if (group.Prefix == 1) rng.NextInt(19);
             if (group.Prefix == 2 && rng.NextInt(3) != 2) return false;
+            for (int i = 2; i < group.Prefix; i++) _ = rng.NextDouble();
             foreach (uint[] pool in group.Pools)
             {
                 uint output = pool[rng.NextInt(pool.Length)];

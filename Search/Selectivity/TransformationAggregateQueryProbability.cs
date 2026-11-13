@@ -16,7 +16,7 @@ internal static partial class TransformationAggregateQueryProbability
         var numerical = new TransformationAggregateNumericalPlan(request);
         var probability=TransformationAggregateProbability.Build(numerical);
         var query = compiled.NormalizedQuery;
-        var owned = query.StructuredOpeningEffects.Where(c => numerical.DrawGroups.Any(g => numerical.OwnsGroup(g.Hash,c.SourceRelicKey))).ToArray();
+        var owned = query.StructuredOpeningEffects.Where(c => numerical.DrawGroups.Any(g => numerical.OwnsGroup(g,c.SourceRelicKey))).ToArray();
         if (TransformationAggregateCondition.HasSharedNeow(request.Evaluation) && owned.Length > 0)
         {
             if (TransformationAggregateProbability.WithNeowConditions(numerical,owned) is { } sameDrawJoint)
@@ -60,7 +60,8 @@ internal static partial class TransformationAggregateQueryProbability
         var rest=SearchCompiler.Compile(otherQuery,compiled.Context);
         var baseline=estimateOther(SearchSelectivityInput.From(rest));
         if(probability.QueryHitProbability is not { } p)
-            return JointSelectivityResult.Partial("Probability.TransformationAggregate.Unknown", probability.Evidence, "No empirical fallback", baseline.KnownComponents, baseline.UnknownComponents.Append("T.TransformationAggregate.AuthorityUnclosed").ToArray());
+            return JointSelectivityResult.Partial("Probability.TransformationAggregate.Unknown", probability.Evidence,
+                "No empirical fallback", baseline.KnownComponents, baseline.UnknownComponents.Append(probability.Evidence).ToArray());
         var assumptions=new[]{probability.Evidence,"CrossFamilyRelation=AssumedIndependentUnlessStructuralDependencyRegistered;NotFiniteSeedCount",
             "AdditionalNDependenceUnproved=OwnerApprovedIndependentProduct;SharedIdentityPaidOnce"};
         if (shared && !identityOnly)

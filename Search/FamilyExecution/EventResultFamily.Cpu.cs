@@ -10,9 +10,10 @@ internal static partial class EventResultFamily
         string revision = compiled is not null ? "E.EventResult.Cpu.CompiledColor.20261015.v3" :
             plan.HasNewWhitelist ? "E.EventResult.Cpu.Whitelist.20261016.v4" :
             plan.HasMorphic ? "E.EventResult.Cpu.GroupInitialBasicsContains.20261016.v4" : "E.EventResult.Cpu.EventLocal.20261016.v4";
+        revision += plan.Authority.UsesChildShuffle ? ".Modern113" : "";
         bool numericalRoots = profile.ProfileId == RuntimeProfileId.Beta111;
         var costs = FamilyAuxiliaryEvidence.Read<CpuCostSnapshot?>(Id, "CpuCostSnapshot", CpuCostCalibration.Capture, null);
-        FamilyPhysicalQuote? Raw(FamilyPhysicalQuoteRequest geometry) => (workers == 1
+        FamilyPhysicalQuote? Raw(FamilyPhysicalQuoteRequest geometry) => (workers == 1 && !plan.Authority.UsesChildShuffle
             ? compiled is null ? EventResultPhysicalPricing.QuoteCpu(authority, plan, geometry) :
                 EventResultPhysicalPricing.QuoteCpuCompiledColor(authority, plan, compiled, geometry) : null) ??
             EventResultWorkEstimate.Cpu(plan, workers, geometry, compiled);
@@ -21,8 +22,8 @@ internal static partial class EventResultFamily
             WindowCapacity = 65536, CpuChunkCapacity = CpuFilterExecution.Capacity, CpuWorkers = workers,
             PerformanceProjection = compact => CpuFilterExecution.Describe(Id, revision, workers, 65536, numericalRoots, false, compact),
             Cost = new() {
-                PartyChild = new(WorkUnits: 1),
-                CanonicalScope = authority.PlayersCount == 1,
+                PartyChild = new(WorkUnits: 1, AllowsHistoricalEnvelope: !plan.Authority.UsesChildShuffle),
+                CanonicalScope = authority.PlayersCount == 1 && !plan.Authority.UsesChildShuffle,
                 CanonicalWorkShape = _ => FamilyCanonicalCostShape.DescribeEvent(plan, compiled?.AllowedRemovalMask),
                 CalibrationQuote = Raw,
                 Quote = (selected, geometry, _) => FamilyCanonicalMeasuredCost.TryDenseQuote(selected, geometry) ??

@@ -173,7 +173,7 @@ internal static class PredictorRoutePartialKnowledgeChecks
             live.Nodes[1].Inventory!.PotionSlots.IsEmpty && live.PendingCauses.Any(cause =>
                 cause.Code == "MapPotionInventoryNotProjected" && cause.AffectedDomains == PredictorCombatDomain.PotionInventory),
             "Unprojected slot management is local inventory input, never a receipt choice, RNG uncertainty or continuation gate.");
-        foreach (var stream in Enum.GetValues<PredictorStream>())
+        foreach (var stream in PredictorSeedState.LegacyStreams)
             Check(Known(Fact(live.Nodes[1], "rng." + stream + ".calls", before: true)) ==
                 Known(Fact(authored.Nodes[1], "rng." + stream + ".calls", before: true)),
                 "Potion receipt omission changed source RNG consumption: " + stream);

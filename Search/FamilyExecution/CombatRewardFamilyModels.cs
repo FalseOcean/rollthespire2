@@ -25,7 +25,8 @@ internal sealed class CombatRewardFamilyModels
                 ? "C.RealNeutralWitnessNecessaryFilter;ExistingAuthoredPositiveApproximation;UnprovenRootsRetainedForExact;NotMeasuredPhysicalSurvival;"
                 : replay.UsesObservedOpening
                 ? "C.ObservedOpeningNecessaryFilter;ExistingAuthoredPositiveApproximation;UnresolvedRootsRetainedForExact;NotMeasuredPhysicalSurvival;"
-                : "C.CompletePositiveFilter.OwnerFixedPremises;") + estimate.EvidenceCode)
+                : "C.CompletePositiveFilter.OwnerFixedPremises;") +
+                (plan.CollectionFilterCovered ? "CardCollectionIncludedInJointRewardDp;" : "") + estimate.EvidenceCode)
             : FamilySurvivalProjection.Unresolved(Id, estimate.EvidenceCode + ";" + estimate.Notes);
 
         var catalog = replay.Catalog;

@@ -75,12 +75,13 @@ internal static class TransformationAggregateFamily
         bool packedRoots = profile.ProfileId == RuntimeProfileId.Beta111;
         var costs = FamilyAuxiliaryEvidence.Read<CpuCostSnapshot?>(Id, "CpuCostSnapshot", CpuCostCalibration.Capture, null);
         FamilyPhysicalQuote? CpuRaw(FamilyPhysicalQuoteRequest geometry) => TransformationAggregateWorkEstimate.Cpu(plan, probability, work, geometry, workers);
-        var cpu = new FilterBodyDescription(preparation, CpuRevision, profile.ProfileId) {
+        string cpuRevision = CpuRevision + plan.RuleRevision;
+        var cpu = new FilterBodyDescription(preparation, cpuRevision, profile.ProfileId) {
             InputIdentity = identity, PlayersCount = players, CpuWorkers = workers,
             WindowCapacity = 65536, CpuChunkCapacity = CpuFilterExecution.Capacity,
-            PerformanceProjection = compact => CpuFilterExecution.Describe(Id, CpuRevision, workers, 65536, packedRoots, packedRoots, compact),
+            PerformanceProjection = compact => CpuFilterExecution.Describe(Id, cpuRevision, workers, 65536, packedRoots, packedRoots, compact),
             Cost = new() {
-                CanonicalScope = players == 1, CanonicalWorkShape = _ => FamilyCanonicalCostShape.DescribeTransform(plan, null),
+                CanonicalScope = players == 1 && !plan.UsesModern113, CanonicalWorkShape = _ => FamilyCanonicalCostShape.DescribeTransform(plan, null),
                 CalibrationQuote = CpuRaw,
                 Quote = (selected, geometry, _) => FamilyCanonicalMeasuredCost.TryDenseQuote(selected, geometry) ??
                     (CpuRaw(geometry) is { } raw ? costs?.Local(raw,
@@ -98,7 +99,7 @@ internal static class TransformationAggregateFamily
                 1, "FamilyOwned;LocalAggregate;NoLeafPredicate" +
                 (gpuPlan.NumericalVariant == GpuNumericalVariant.IntegerRne ? ";IntegerRne;NoNativeFloat64PriceReuse" : ""), true),
             Cost = new() {
-                CanonicalScope = players == 1, CanonicalWorkShape = _ => FamilyCanonicalCostShape.DescribeTransform(plan, gpuPlan),
+                CanonicalScope = players == 1 && !plan.UsesModern113, CanonicalWorkShape = _ => FamilyCanonicalCostShape.DescribeTransform(plan, gpuPlan),
                 MinimumComparableInput = _ => gpuPlan.Capacity,
                 ObservationRevision = geometry => !geometry.PrivateInput && !geometry.PrivateOutput ? FamilyGpuReadback.TransformationPublicBoundaryRevision : "",
                 PublicBoundaryToken = "MeasuredTransformationPublicBoundaryRevision=" + FamilyGpuReadback.TransformationPublicBoundaryRevision,

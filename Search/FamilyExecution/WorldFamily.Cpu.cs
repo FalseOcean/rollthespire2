@@ -8,10 +8,12 @@ internal static partial class WorldFamily
         WorldFamilyGpuPlan? gpu, IRuntimeProfile profile, FilterPricingAuthority authority, string identity, int workers)
     {
         bool numericalRoots = profile.ProfileId == RuntimeProfileId.Beta111;
-        return new(prepared, CpuRevision, profile.ProfileId)
+        string revision = CpuRevision + (replay.Plan.Acts.Any(a => a.HasEncounterPredicate) ? ".EncounterQueues.20261105.v1" : "");
+        if (replay.Plan.UsesChildShuffle) revision += ".Modern113";
+        return new(prepared, revision, profile.ProfileId)
         {
             WindowCapacity = 65536, CpuWorkers = workers, PlayersCount = authority.PlayersCount, InputIdentity = identity,
-            PerformanceProjection = compact => CpuFilterExecution.Describe(Id, CpuRevision, workers, 65536, numericalRoots, false, compact),
+            PerformanceProjection = compact => CpuFilterExecution.Describe(Id, revision, workers, 65536, numericalRoots, false, compact),
             Cost = new()
             {
                 CanonicalScope = true,

@@ -35,7 +35,11 @@ internal sealed record ActContext(
     bool IsMultiplayer = false,
     bool HasSwarmingElites = false,
     bool HasSecondBoss = false,
-    bool ReplaceTreasureWithElites = false);
+    bool ReplaceTreasureWithElites = false,
+    RngSemanticProfileId RngSemantics = RngSemanticProfileId.Modern110)
+{
+    internal bool UsesChildShuffle => RuntimeProfilePolicies.UsesChildStreamShuffle(RngSemantics);
+}
 
 internal sealed class MapNode : IComparable<MapNode>
 {
@@ -174,7 +178,8 @@ internal static partial class Beta111StandardMapGenerator
         if (!ProfileSeedRules.TryCanonicalizePredictionSeed(profile, seed, out string canonical, out string issue))
             throw new ArgumentException(issue, nameof(seed));
         cancellationToken.ThrowIfCancellationRequested();
-        ReferenceRng rng = new(profile.DeriveNamedStreamSeed(profile.ComputeRootSeed(canonical), $"act_{context.ActIndex + 1}_map"), cancellationToken, mode);
+        ReferenceRng rng = new(profile.DeriveNamedStreamSeed(profile.ComputeRootSeed(canonical), $"act_{context.ActIndex + 1}_map"),
+            cancellationToken, mode, context.RngSemantics);
         int mapLength = GetNumberOfRooms(context.Act, context.IsMultiplayer) + 1;
         MapNode?[,] grid = new MapNode?[MapWidth, mapLength];
         MapNode boss = new(MapWidth / 2, mapLength);
@@ -282,7 +287,7 @@ internal static partial class Beta111StandardMapGenerator
         }
     }
 
-    // Mirrors StandardActMap.GenerateNextCoord. StableShuffle consumes two RNG calls for the three directions.
+    // Mirrors StandardActMap.GenerateNextCoord, including the versioned StableShuffle.
     private static (int col, int row) GenerateNextCoord(MapNode?[,] grid, ReferenceRng rng, MapNode current)
     {
         int col = current.Col;
@@ -354,19 +359,33 @@ internal static partial class Beta111StandardMapGenerator
             foreach (MapNode node in candidates)
             {
                 if (queue.Count == 0) break;
-                node.PointType = GetNextValidPointType(queue, node, mapLength, counts);
+                node.PointType = GetNextValidPointType(queue, node, mapLength, counts, rng.UsesChildShuffle);
             }
         }
     }
 
     // Mirrors StandardActMap.GetNextValidPointType.
     private static MapPointType GetNextValidPointType(Queue<MapPointType> queue, MapNode node, int mapLength,
-        MapPointTypeCounts counts)
+        MapPointTypeCounts counts, bool preservePriority = false)
     {
+        if (preservePriority)
+        {
+            var ordered = queue.ToArray();
+            for (int i = 0; i < ordered.Length; i++)
+            {
+                MapPointType candidate = ordered[i];
+                if (!counts.ShouldIgnoreMapPointRulesForMapPointType(candidate) &&
+                    !IsValidPointType(node, mapLength, candidate, preservePriority)) continue;
+                queue.Clear();
+                for (int j = 0; j < ordered.Length; j++) if (j != i) queue.Enqueue(ordered[j]);
+                return candidate;
+            }
+            return MapPointType.Unassigned;
+        }
         for (int i = 0; i < queue.Count; i++)
         {
             MapPointType candidate = queue.Dequeue();
-            if (counts.ShouldIgnoreMapPointRulesForMapPointType(candidate) || IsValidPointType(node, mapLength, counts, candidate))
+            if (counts.ShouldIgnoreMapPointRulesForMapPointType(candidate) || IsValidPointType(node, mapLength, candidate))
                 return candidate;
             queue.Enqueue(candidate);
         }
@@ -374,10 +393,10 @@ internal static partial class Beta111StandardMapGenerator
     }
 
     // Mirrors StandardActMap.IsValidPointType and all five predicates.
-    private static bool IsValidPointType(MapNode node, int mapLength, MapPointTypeCounts counts, MapPointType candidate)
+    private static bool IsValidPointType(MapNode node, int mapLength, MapPointType candidate, bool modern113 = false)
     {
         if (node.Row >= mapLength - 3 && UpperRestrictions.Contains(candidate)) return false;
-        if (node.Row < 6 && LowerRestrictions.Contains(candidate)) return false;
+        if (node.Row < (modern113 && candidate == MapPointType.RestSite ? 5 : 6) && LowerRestrictions.Contains(candidate)) return false;
         if (ParentRestrictions.Contains(candidate) && node.Parents.Concat(node.Children).Any(n => n.PointType == candidate)) return false;
         if (ChildRestrictions.Contains(candidate) && node.Children.Any(n => n.PointType == candidate)) return false;
         if (SiblingRestrictions.Contains(candidate) && GetSiblings(node).Any(n => n.PointType == candidate)) return false;
@@ -414,17 +433,23 @@ internal static partial class Beta111StandardMapGenerator
     private static bool RepairPointType(MapNode?[,] grid, MapPointType target, int targetCount, MapPointTypeCounts counts,
         ReferenceRng rng)
     {
-        int missing = targetCount - GridNodes(grid).Count(n => n.PointType == target);
+        int missing = targetCount - GridNodes(grid).Count(n => n.PointType == target && (!rng.UsesChildShuffle || n.CanBeModified));
         if (missing <= 0) return false;
         bool repaired = false;
         List<MapNode> candidates = GridNodes(grid)
             .Where(n => n.PointType == MapPointType.Monster && n.CanBeModified).ToList();
         StableShuffle(candidates, rng);
+        if (rng.UsesChildShuffle && target != MapPointType.Unknown)
+        {
+            var unknowns = GridNodes(grid).Where(n => n.PointType == MapPointType.Unknown && n.CanBeModified).ToList();
+            StableShuffle(unknowns, rng);
+            candidates.AddRange(unknowns);
+        }
         int mapLength = grid.GetLength(1);
         foreach (MapNode node in candidates)
         {
             if (missing == 0) break;
-            if (IsValidPointType(node, mapLength, counts, target))
+            if (IsValidPointType(node, mapLength, target, rng.UsesChildShuffle))
             {
                 node.PointType = target;
                 missing--;
@@ -799,14 +824,5 @@ internal static partial class Beta111StandardMapGenerator
     }
 
     // Mirrors ListExtensions.UnstableShuffle.
-    private static void UnstableShuffle<T>(IList<T> list, ReferenceRng rng)
-    {
-        int count = list.Count;
-        while (count > 1)
-        {
-            count--;
-            int chosen = rng.NextInt(count + 1);
-            (list[chosen], list[count]) = (list[count], list[chosen]);
-        }
-    }
+    private static void UnstableShuffle<T>(IList<T> list, ReferenceRng rng) => rng.Shuffle(list);
 }

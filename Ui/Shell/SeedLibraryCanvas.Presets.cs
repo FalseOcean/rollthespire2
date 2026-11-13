@@ -3,6 +3,7 @@ using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Presentation.ContentNames;
 using RolltheSpire2.Ui.Persistence;
 using RolltheSpire2.Ui.Icons;
+using RolltheSpire2.Infrastructure.Snapshots;
 
 namespace RolltheSpire2.Ui.Shell;
 
@@ -27,7 +28,8 @@ internal sealed partial class SeedLibraryCanvas
 
     private bool CanUse(SearchPresetDefinition preset, out string issue)
     {
-        var resolution = SearchPresetCompatibilityResolver.ResolveWorkbench(preset, RuntimeAuthorityEnvironment.Current.Authority);
+        var resolution = SearchPresetCompatibilityResolver.ResolveWorkbench(preset,
+            RuntimeAuthorityEnvironment.Current.Authority, RuntimeEncounterCatalogCapture.Capture());
         var text = RolltheSpire2.Presentation.Localization.JsonUiTextProvider.CreatePredictorUi13(_language);
         issue = resolution.CanLoad ? "" : text.Get("ui1.preset.intent_unresolved") + "\n" + resolution.Issue;
         if (resolution.Unresolved.Count > 0)

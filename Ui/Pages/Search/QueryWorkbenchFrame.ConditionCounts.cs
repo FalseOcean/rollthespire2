@@ -7,6 +7,7 @@ internal sealed partial class QueryWorkbenchFrame
 {
     private void UpdateDomainCounts()
     {
+        UpdateResearchNavigation();
         if (_domainCountLabels.Count == 0) return;
         var counts = new (string Id, int Count)[]
         {

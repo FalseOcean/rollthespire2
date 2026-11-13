@@ -250,6 +250,7 @@ internal static partial class CompatibilityChecks
         var model = request.Model;
         var prefs = FilterExecutionPreferences.From(request.RunOptions);
         bool preparedEventGroups = false;
+        bool preparedWorldEncounters = false;
         switch (family.FamilyId)
         {
             case "E.EventResult":
@@ -275,9 +276,11 @@ internal static partial class CompatibilityChecks
                     throw new InvalidDataException("CompatibilityFamilyParity.SourcePlanMissing:C");
                 bodies.Add(("module", combatPlan.ShaderSource(), PriorNativeCombatSource(combatPlan))); break;
             case "W.World":
-                var worldPlan = new WorldFamilyGpuPlan(new WorldFamilyReplay(model),model.Authority.PlayersCount == 1 &&
+                var worldReplay = new WorldFamilyReplay(model);
+                var worldPlan = new WorldFamilyGpuPlan(worldReplay,model.Authority.PlayersCount == 1 &&
                     model.Authority.WorldAuthority?.Beta109Generation is { IsMultiplayer:false },variantMode);
-                bodies.Add(("module", worldPlan.ShaderSource(), PriorNativeWorldSource(worldPlan))); break;
+                preparedWorldEncounters = worldReplay.Plan.Acts.Any(act => act.HasEncounterPredicate);
+                bodies.Add(("module", worldPlan.ShaderSource(), PriorNativeWorldSource(worldPlan, worldReplay.Plan))); break;
             case "T.TransformationAggregate":
                 if (!TransformationAggregateFamily.TryPrepare(model,prefs,out var transform,true,variantMode) || transform is null)
                     throw new InvalidDataException("CompatibilityFamilyParity.SourcePlanMissing:T");
@@ -315,6 +318,8 @@ internal static partial class CompatibilityChecks
                     ? "C native assembly with captured DenseCarry8/opening-prefix/observed-opening/neutral-proof operands; same production resources; not historical numerical-source identity"
                     : preparedEventGroups
                     ? "E request-groups native assembly with the selected immutable plan; same production resources; not historical numerical-source identity"
+                    : preparedWorldEncounters
+                    ? "W encounter-aware native assembly with the selected immutable queue plan; same production resources; not historical numerical-source identity"
                     : "413899657e6748b69acfc129865edc8360686b0e native expression; same production resources",
                 PriorAssemblerSha256 = priorNative is null ? null : PublicSourceHash(priorNative),
                 PhysicalRevision = family.ConditionPerformance.PhysicalImplementationRevision });
@@ -358,7 +363,7 @@ internal static partial class CompatibilityChecks
         return source;
     }
 
-    private static string PriorNativeWorldSource(WorldFamilyGpuPlan plan)
+    private static string PriorNativeWorldSource(WorldFamilyGpuPlan plan, Beta110WorldFastPlan world)
     {
         string donor = FamilyGpuComputeUtility.LoadEmbeddedShader("Beta110GpuWorldBossG1.comp.glsl");
         string rng = donor[donor.IndexOf("uint64_t s0;", StringComparison.Ordinal)..donor.IndexOf("void write_shared_state", StringComparison.Ordinal)];
@@ -367,6 +372,13 @@ internal static partial class CompatibilityChecks
             .Replace("/*__W_DONOR__*/", rng + numerical, StringComparison.Ordinal)
             .Replace("uint sharedIds[512]", $"uint sharedIds[{Math.Max(1, plan.Buffers[2][5])}]", StringComparison.Ordinal)
             .Replace("uint maxAct=plan_meta_buffer.values[6u];", plan.VariantOnly ? "return true; uint maxAct=0u;" : "uint maxAct=plan_meta_buffer.values[6u];", StringComparison.Ordinal);
+        // Encounter requests opt into an extension of this same donor. Rebuild
+        // that selected shape before checking assembly identity; ordinary W
+        // still compares against its unchanged historical native expression.
+        if (world.Acts.Any(act => act.HasEncounterPredicate))
+            body = WorldEncounterGpuSource.Extend(body, numerical,
+                Math.Max(1, world.Acts.Max(act => act.WeakEncounterSlots + act.RegularEncounterSlots)),
+                Math.Max(1, world.Acts.Max(act => act.EliteEncounterSlots)));
         if (plan.Revision(false).Contains(".SoloConstants.", StringComparison.Ordinal))
             body = body.Replace("uint maxAct=plan_meta_buffer.values[6u];", "uint maxAct=" +
                 plan.Buffers[2][6].ToString(System.Globalization.CultureInfo.InvariantCulture) + "u;", StringComparison.Ordinal)

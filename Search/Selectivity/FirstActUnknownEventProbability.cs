@@ -10,9 +10,10 @@ internal static class FirstActUnknownEventProbability
 {
     internal const string ComponentId = "E.FirstActUnknownEventPrefix";
 
-    internal static double ConditionalPrefix(int count, bool juzuAcquired)
+    internal static double ConditionalPrefix(int count, bool juzuAcquired, bool requireMonster = false)
     {
         if (count is < 1 or > 3) throw new ArgumentOutOfRangeException(nameof(count));
+        if (requireMonster) return juzuAcquired ? 0 : Math.Pow((double).1f, count);
         float monster = .1f, treasure = .02f, shop = .03f;
         double probability = 1;
         for (int ordinal = 0; ordinal < count; ordinal++)
@@ -33,13 +34,14 @@ internal static class FirstActUnknownEventProbability
     internal static JointSelectivityComponent EstimateComponent(SearchSelectivityInput input)
     {
         var query = input.CompiledSearch.NormalizedQuery;
-        int count = Math.Max(query.FirstActUnknownEventPrefixCount,
-            query.Players.Select(player => player.Conditions.FirstActUnknownEventPrefixCount).DefaultIfEmpty(0).Max());
+        int count = UnknownRoomPrefixRequirements.Count(query);
+        bool monsterPrefix = UnknownRoomPrefixRequirements.MonsterCount(query) > 0;
+        bool conflict = UnknownRoomPrefixRequirements.HasConflict(query);
         bool juzu = ExplicitOpeningRelicFacts.HasDeclaredJuzuForUnknownRooms(query);
         bool supported = input.ProfileId == RuntimeProfileId.Beta111 && count is >= 1 and <= 3;
         string issue = input.ProfileId != RuntimeProfileId.Beta111 ? "ProfileUnsupported" :
             count is < 1 or > 3 ? "CountUnsupported" :
-            "ConditionalEventPrefix";
+            monsterPrefix ? "ConditionalMonsterPrefix" : "ConditionalEventPrefix";
         string[] assumptions =
         [
             "UnknownRoomPremise=Act1;NonTutorial;FreshOdds;EnteredUnknownOrdinal;NoEventSideEffects",
@@ -52,7 +54,7 @@ internal static class FirstActUnknownEventProbability
             "UnknownRoomEstimateDoesNotChangeExactOrAddRoutePredicates=true"
         ];
         return new(ComponentId, "FirstActUnknownEventPrefix", "AuthoredOpening",
-            supported ? ConditionalPrefix(count, juzu) : null,
+            supported ? conflict ? 0 : ConditionalPrefix(count, juzu, monsterPrefix) : null,
             "Probability.FirstActUnknownEventPrefix." + issue,
             JointSelectivityCombinationMethod.ConditionalChain, SearchSelectivityDependencyClass.AssumedIndependent,
             supported, supported, issue, assumptions);
@@ -62,9 +64,15 @@ internal static class FirstActUnknownEventProbability
         Func<SearchSelectivityInput, JointSelectivityResult> estimate)
     {
         var compiled = input.CompiledSearch;
-        var query = compiled.NormalizedQuery with { FirstActUnknownEventPrefixCount = 0,
+        if (UnknownRoomPrefixRequirements.HasConflict(compiled.NormalizedQuery) ||
+            UnknownRoomPrefixRequirements.MonsterCount(compiled.NormalizedQuery) > 0 &&
+            ExplicitOpeningRelicFacts.HasDeclaredJuzuForUnknownRooms(compiled.NormalizedQuery))
+            return JointSelectivityResult.Exact(0, JointSelectivityCombinationMethod.ExactImpossible,
+                "Probability.UnknownRoomPrefix.Contradiction", "The declared room outcomes cannot hold together.",
+                "Event and Monster are exclusive; declared Juzu prevents Monster.");
+        var query = compiled.NormalizedQuery with { FirstActUnknownEventPrefixCount = 0, FirstActUnknownMonsterPrefixCount = 0,
             Players = compiled.NormalizedQuery.Players.Select(player => player with {
-                Conditions = player.Conditions with { FirstActUnknownEventPrefixCount = 0 } }).ToArray() };
+                Conditions = player.Conditions with { FirstActUnknownEventPrefixCount = 0, FirstActUnknownMonsterPrefixCount = 0 } }).ToArray() };
         var remainder = compiled.Context.Party is null ? SearchCompiler.Compile(query, compiled.Context) :
             PartyInitialQuery.Compile(query, compiled.Context);
         var baseline = estimate(SearchSelectivityInput.From(remainder));

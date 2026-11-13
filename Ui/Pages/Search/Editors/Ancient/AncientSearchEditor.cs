@@ -42,6 +42,7 @@ internal sealed partial class AncientSearchEditor : Control
     private IUiTextProvider _text = JsonUiTextProvider.CreateUi13("zh");
     private IGameContentNameResolver _names = RuntimeGameContentNameResolver.Create("zh");
     private bool _guideExpanded;
+    private bool _showNeowResearch;
     private List<ModelKey> SharedAncients(int act) => _partyIdentities[_partyAdvanced ? 1 : 0][act];
 
     private sealed class AncientDraft(ModelKey ancient)
@@ -81,12 +82,16 @@ internal sealed partial class AncientSearchEditor : Control
         public bool OfferedTogether => Mode == 2;
         public bool RequireAll => Mode == 2;
         public bool EligibilityExpanded;
-        public bool AdvancedExpanded;
-        public bool NeowEnabled { get => Current.NeowEnabled; set => Current.NeowEnabled = value; }
         public int SelectedAct { get => Current.SelectedAct; set => Current.SelectedAct = value; }
         public AncientOptionConditionProfile Eligibility = AncientOptionConditionProfile.BroadDefault;
-        public List<ModelKey> NeowOptions => Current.NeowOptions;
         public Dictionary<int, List<AncientDraft>> Acts => Current.Acts;
+        public bool NeowAdvanced;
+        public bool NeowStateExplicit;
+        public bool NeowEmptyWhitelist;
+        public int NeowRelation;
+        public List<ModelKey> NeowBasic { get; } = [];
+        public List<ModelKey>[] NeowRelations { get; } = [[], [], [], []];
+        public List<ModelKey> ActiveNeowOffers => NeowAdvanced ? NeowRelations[NeowRelation] : NeowBasic;
     }
 
     public AncientSearchEditor(ModRuntimeSnapshot runtime)
@@ -114,6 +119,8 @@ internal sealed partial class AncientSearchEditor : Control
     public event Action? GuideRequested;
 
     public AncientOptionConditionProfile OptionConditions => _draft.Eligibility;
+
+    internal void SetNeowResearchPage(bool enabled) => _showNeowResearch = enabled;
 
     public void Refresh(string language, IUiTextProvider text, ModelKey character, int ascension,
         int players, int seat, SerializableUnlockState? unlocks = null, bool render = true,
@@ -187,57 +194,48 @@ internal sealed partial class AncientSearchEditor : Control
         DismissEligibilityTooltip();
         Clear(_body);
         _body.Size = Size;
-        var guide = FamilyGuide(_body, Size.X - 20);
         var scroll = new ScrollContainer { HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
-        void Layout()
+        if (_showNeowResearch) scroll.Size = Size;
+        else
         {
-            float top = guide.Size.Y + 12;
-            scroll.Position = new(0, top);
-            scroll.Size = new(Size.X, Math.Max(0, Size.Y - top));
+            var guide = FamilyGuide(_body, Size.X - 20);
+            void Layout()
+            {
+                float top = guide.Size.Y + 12;
+                scroll.Position = new(0, top);
+                scroll.Size = new(Size.X, Math.Max(0, Size.Y - top));
+            }
+            guide.Resized += Layout;
+            Layout();
         }
-        guide.Resized += Layout;
-        Layout();
         _body.AddChild(scroll);
         var content = new Control { CustomMinimumSize = new(Size.X - 20, 1) };
         scroll.AddChild(content);
         float width = Size.X - 28;
+        if (_showNeowResearch)
+        {
+            content.CustomMinimumSize = new(width, RenderNeowOffers(content, width, 0) + 4);
+            _presentation.Finish();
+            return;
+        }
         var settings = new Control { Name = "AncientMatchingSettings", Size = new(width, 1) };
         content.AddChild(settings);
-        float eligibilityBottom = RenderEligibilityConfiguration(settings, 0);
-        const float disclosureWidth = 112, modeGap = 8;
-        var advanced = ModeButton(settings, _text.Get("query.ancient.advanced"), width - disclosureWidth - 8, 0, disclosureWidth,
-            ToggleAdvancedDisclosure, _draft.AdvancedExpanded, 36);
-        advanced.Name = "AncientAdvancedDisclosure";
-        advanced.AddThemeFontSizeOverride("font_size", 14);
-        float toolbarBottom = eligibilityBottom;
-        if (_draft.AdvancedExpanded)
+        const float modeGap = 8;
+        float modeWidth = (width - 16 - modeGap * 2) / 3;
+        string[] modes = ["default", "option_any", "option_group"];
+        string[] names = ["Basic", "Any", "Group"];
+        for (int i = 0; i < modes.Length; i++)
         {
-            const float basicWidth = 144, anyWidth = 172, groupWidth = 148;
-            float modeLeft = width - disclosureWidth - 16 - (basicWidth + anyWidth + groupWidth + modeGap * 2);
-            float modeTop = 0;
-            if (modeLeft < 188)
-            {
-                modeLeft = width - 8 - (basicWidth + anyWidth + groupWidth + modeGap * 2);
-                modeTop = eligibilityBottom + 8;
-            }
-            var basic = ModeButton(settings, _text.Get("query.ancient.mode.default"), modeLeft, modeTop, basicWidth,
-                () => SelectMode(0), _draft.Mode == 0, 36);
-            basic.Name = "AncientModeBasic";
-            var any = ModeButton(settings, _text.Get("query.ancient.mode.option_any"), modeLeft + basicWidth + modeGap, modeTop, anyWidth,
-                () => SelectMode(1), _draft.Mode == 1, 36);
-            any.Name = "AncientModeAny";
-            var group = ModeButton(settings, _text.Get("query.ancient.mode.option_group"), modeLeft + basicWidth + anyWidth + modeGap * 2, modeTop, groupWidth,
-                () => SelectMode(2), _draft.Mode == 2, 36);
-            group.Name = "AncientModeGroup";
-            group.Disabled = _multiplayer && _partyIdentities[1].Any(pair => pair.Value.Count > 1 &&
+            int mode = i;
+            var button = ModeButton(settings, _text.Get("query.ancient.mode." + modes[i]), 8 + i * (modeWidth + modeGap),
+                0, modeWidth, () => SelectMode(mode), _draft.Mode == i, 36);
+            button.Name = "AncientMode" + names[i];
+            button.AddThemeFontSizeOverride("font_size", 14);
+            button.Disabled = i == 2 && _multiplayer && _partyIdentities[1].Any(pair => pair.Value.Count > 1 &&
                 _draft.Modes[2].Acts[pair.Key].Any(row => pair.Value.Contains(row.Ancient, ModelKeyComparer.Instance) && row.Options.Count > 0));
-            if (group.Disabled) SearchTooltip.Set(group, _text.Get("query.ancient.party.group_requires_one"));
-            basic.AddThemeFontSizeOverride("font_size", 14);
-            any.AddThemeFontSizeOverride("font_size", 14);
-            group.AddThemeFontSizeOverride("font_size", 14);
-            toolbarBottom = Math.Max(toolbarBottom, modeTop + 36);
+            if (button.Disabled) SearchTooltip.Set(button, _text.Get("query.ancient.party.group_requires_one"));
         }
-        float hintTop = toolbarBottom + 8;
+        float hintTop = RenderEligibilityConfiguration(settings, 44) + 8;
         string hintKey = _draft.Mode switch
         {
             1 => "query.ancient.mode.any_hint",
@@ -256,9 +254,7 @@ internal sealed partial class AncientSearchEditor : Control
         }
         float bottom = _draft.Mode == 0
             ? RenderSimple(content, width, editorTop)
-            : _draft.AdvancedExpanded
-                ? RenderAdvanced(content, width, editorTop)
-                : RenderAdvancedSummary(content, width, editorTop);
+            : RenderAdvanced(content, width, editorTop);
         content.CustomMinimumSize = new(width, bottom + 4);
         _presentation.Finish();
     }
@@ -323,70 +319,6 @@ internal sealed partial class AncientSearchEditor : Control
             () => GuideRequested?.Invoke());
     }
 
-    private void ToggleAdvancedDisclosure()
-    {
-        _draft.AdvancedExpanded = !_draft.AdvancedExpanded;
-        Render();
-    }
-
-    private float RenderAdvancedSummary(Control content, float width, float top)
-    {
-        var panel = new Panel { Name = "AncientAdvancedSummary", Position = new(0, top), Size = new(width, 1) };
-        panel.AddThemeStyleboxOverride("panel", _p.ContentBox());
-        content.AddChild(panel);
-        string mode = _text.Get(_draft.Mode == 2 ? "query.ancient.mode.option_group" : "query.ancient.mode.option_any");
-        Text(panel, _text.Format("query.ancient.summary.title", mode), 16, 16, width - 260, 18);
-        var edit = ModeButton(panel, _text.Get("query.ancient.summary.edit"), width - 232, 16, 216,
-            () => { _draft.AdvancedExpanded = true; Render(); }, false, 36);
-        edit.Name = "AncientSummaryEdit";
-        edit.AddThemeFontSizeOverride("font_size", 14);
-        float y = 64;
-        bool any = false;
-        if (_draft.NeowEnabled)
-            AddRow(1, new ModelKey(BaseGameModelKeys.Categories.Event, "NEOW"), _draft.NeowOptions, null);
-        foreach (int act in new[] { 2, 3 })
-        {
-            IEnumerable<ModelKey> identities = _multiplayer
-                ? SharedAncients(act)
-                : _draft.Acts[act].Select(row => row.Ancient);
-            foreach (ModelKey ancient in identities)
-            {
-                AncientDraft? row = _draft.Acts[act].FirstOrDefault(item => item.Ancient == ancient);
-                AddRow(act, ancient, row?.Options ?? [], row?.SeaGlassTarget);
-            }
-        }
-        if (!any)
-        {
-            Text(panel, _text.Get("query.ancient.summary.empty"), 16, y, width - 32, 16, true);
-            y += 32;
-        }
-        panel.Size = new(width, y + 16);
-        return top + panel.Size.Y;
-
-        void AddRow(int act, ModelKey ancient, IReadOnlyList<ModelKey> options, ModelKey? seaGlassTarget)
-        {
-            if (any) y += 12;
-            any = true;
-            Text(panel, _text.Format("query.ancient.act", act) + " · " + _names.Resolve(ancient, GameContentKind.Ancient),
-                16, y, width - 32, 16);
-            y += 32;
-            string names = options.Count == 0 ? _text.Get("common.any")
-                : string.Join(" · ", options.Select(key => _names.Resolve(key, GameContentKind.Relic)));
-            var offered = Text(panel, _text.Format("query.ancient.summary.options", names), 16, y, width - 32, 15, true);
-            offered.Name = "AncientSummaryOfferedOptions";
-            offered.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-            float height = Math.Max(28, offered.GetMinimumSize().Y);
-            offered.Size = new(width - 32, height);
-            y += height;
-            if (seaGlassTarget is { } target)
-            {
-                Text(panel, _text.Format("query.ancient.summary.target", _names.Resolve(target, GameContentKind.Character)),
-                    16, y, width - 32, 14, true);
-                y += 28;
-            }
-        }
-    }
-
     private float RenderSimple(Control content, float width, float top)
     {
         float y = top;
@@ -398,40 +330,17 @@ internal sealed partial class AncientSearchEditor : Control
     private float RenderAdvanced(Control content, float width, float top)
     {
         const float tabWidth = 120, tabGap = 16;
-        for (int index = 0; index < 3; index++)
+        for (int index = 0; index < 2; index++)
         {
-            int act = index + 1;
+            int act = index + 2;
             string title = _text.Format("query.ancient.act", act);
             ModeButton(content, title, 16 + index * (tabWidth + tabGap), top, tabWidth,
                 () => { _draft.SelectedAct = act; Render(); }, _draft.SelectedAct == act, 32);
         }
         float editorTop = top + 40;
         _presentation.Section(content, top, editorTop);
-        return _draft.SelectedAct == 1
-            ? RenderNeowAct(content, width, editorTop, _draft.OfferedTogether ? 3 : int.MaxValue)
-            : RenderAct(content, _draft.SelectedAct, width, editorTop, !_draft.OfferedTogether, _draft.OfferedTogether ? 3 : int.MaxValue, false);
-    }
-
-    private float RenderNeowAct(Control content, float width, float y, int optionLimit)
-    {
-        const float inset = 16;
-        Text(content, _text.Get("query.ancient.act1.neow"), inset, y, width - inset * 2, 20);
-        const float leftWidth = 104, gutter = 16;
-        float rightLeft = inset + leftWidth + gutter;
-        float rightWidth = width - rightLeft - inset;
-        Text(content, _text.Get("layout.sources"), inset, y + 26, leftWidth, 13, true);
-        Text(content, _text.Get("query.ancient.offered_options"), rightLeft, y + 26, rightWidth, 13, true);
-        float rowTop = y + 48;
-        float leftHeight = AddNeowIdentity(content, inset, rowTop);
-        float rightHeight = _draft.NeowEnabled
-            ? AddNeowStrip(content, rightLeft, rowTop, rightWidth, optionLimit)
-            : 0;
-        if (!_draft.NeowEnabled)
-            Text(content, _text.Get("common.any"), rightLeft, rowTop + 14, rightWidth, 16, true);
-        float rowHeight = Math.Max(leftHeight, Math.Max(62, rightHeight));
-        float bottom = rowTop + rowHeight + 8;
-        _presentation.Section(content, y, bottom);
-        return bottom;
+        return RenderAct(content, Math.Max(2, _draft.SelectedAct), width, editorTop,
+            !_draft.OfferedTogether, _draft.OfferedTogether ? 3 : int.MaxValue, false);
     }
 
     private float RenderAct(Control content, int act, float width, float y, bool multipleAncients,
@@ -528,44 +437,6 @@ internal sealed partial class AncientSearchEditor : Control
             AddRelicChoice(content, key, index, x, y, columns, selected,
                 () => ToggleOption(act, row, key, optionLimit),
                 disabled, simpleGrid, true, !eligible);
-        }
-        int rows = Math.Max(1, (int)Math.Ceiling(candidates.Count / (double)columns));
-        return rows * rowPitch - 8;
-    }
-
-    private float AddNeowIdentity(Control content, float x, float y)
-    {
-        ModelKey key = new(BaseGameModelKeys.Categories.Event, "NEOW");
-        var button = ModeButton(content, string.Empty, x, y, 88, ToggleNeow, _draft.NeowEnabled, 72);
-        _p.ApplyCandidateSurface(button, _draft.NeowEnabled);
-        var label = Text(button, _names.Resolve(key, GameContentKind.Ancient), 4, 46, 80, 12);
-        label.Size = new(80, 24);
-        label.HorizontalAlignment = HorizontalAlignment.Center;
-        label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        label.MouseFilter = MouseFilterEnum.Ignore;
-        AddPicture(button, key, GameContentKind.Ancient, IconVariant.WorldCompendiumAncientIcon, 24, 4, 40);
-        return 72;
-    }
-
-    private float AddNeowStrip(Control content, float x, float y, float width, int optionLimit)
-    {
-        IReadOnlyList<ModelKey> candidates = NeowOptionCandidates();
-        const float columnPitch = 152, rowPitch = 56;
-        int columns = Math.Max(1, (int)((width + 8) / columnPitch));
-        for (int index = 0; index < candidates.Count; index++)
-        {
-            ModelKey key = candidates[index];
-            bool selected = _draft.NeowOptions.Contains(key, ModelKeyComparer.Instance);
-            bool disabled = !selected && (_draft.NeowOptions.Count >= optionLimit ||
-                _draft.OfferedTogether && !CanNeowOfferTogether(_draft.NeowOptions.Append(key)));
-            AddRelicChoice(content, key, index, x, y, columns, selected, () =>
-            {
-                if (selected) _draft.NeowOptions.Remove(key);
-                else if (_draft.NeowOptions.Count < optionLimit &&
-                         (!_draft.OfferedTogether || CanNeowOfferTogether(_draft.NeowOptions.Append(key))))
-                    _draft.NeowOptions.Add(key);
-                Render();
-            }, disabled, comfortable: true);
         }
         int rows = Math.Max(1, (int)Math.Ceiling(candidates.Count / (double)columns));
         return rows * rowPitch - 8;
@@ -695,6 +566,7 @@ internal sealed partial class AncientSearchEditor : Control
 
     private void ToggleEligibility(ModelKey option, bool currentlyEligible)
     {
+        if (_draft.NeowBasic.Count > 0 || _draft.NeowRelations.Any(keys => keys.Count > 0)) _draft.NeowStateExplicit = true;
         _draft.Eligibility = _draft.Eligibility.WithOptionEligibility(option, !currentlyEligible);
         if (currentlyEligible)
             foreach (ModeDraft mode in _draft.Modes)
@@ -709,15 +581,10 @@ internal sealed partial class AncientSearchEditor : Control
         Render();
     }
 
-    private void ToggleNeow()
-    {
-        _draft.NeowEnabled = !_draft.NeowEnabled;
-        if (!_draft.NeowEnabled) _draft.NeowOptions.Clear();
-        Render();
-    }
-
     private void SelectMode(int mode)
     {
+        // Neow now owns its mode independently of the later Ancient editor.
+        if (_draft.NeowBasic.Count > 0 || _draft.NeowRelations.Any(keys => keys.Count > 0)) _draft.NeowStateExplicit = true;
         if (_multiplayer)
         {
             if (mode == 0)
@@ -756,22 +623,8 @@ internal sealed partial class AncientSearchEditor : Control
     private bool IsOptionEligible(ModelKey option) =>
         !_draft.Eligibility.TryGetOptionEligibility(option, out bool eligible) || eligible;
 
-    private bool CanNeowOfferTogether(IEnumerable<ModelKey> targets) => _runtime.Profile.ProfileId switch
-    {
-        RuntimeProfileId.Stable107 => Stable107NeowIdentityAnalyzer.CanCoOffer(targets),
-        RuntimeProfileId.Beta109 or RuntimeProfileId.Beta110 or RuntimeProfileId.Beta111 =>
-            ModernNeowIdentityRules.CanCoOffer(targets),
-        _ => false
-    };
-
     private void RevalidateOfferedSelections(ModeDraft mode)
     {
-        var retainedNeow = new List<ModelKey>(3);
-        foreach (ModelKey option in mode.NeowOptions)
-            if (retainedNeow.Count < 3 && CanNeowOfferTogether(retainedNeow.Append(option))) retainedNeow.Add(option);
-        mode.NeowOptions.Clear();
-        mode.NeowOptions.AddRange(retainedNeow);
-
         foreach ((int act, List<AncientDraft> rows) in mode.Acts)
         foreach (AncientDraft row in rows)
         {

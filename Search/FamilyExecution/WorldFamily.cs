@@ -51,7 +51,8 @@ internal static partial class WorldFamily
             Survival = conditional?.ResolveWorld(new HashSet<string>(StringComparer.Ordinal)) ?? survival,
             HasConditionalProjections = conditional is not null,
             SurvivalResolver = conditional is null ? null : conditional.ResolveWorld,
-            Issues = issues
+            Issues = issues,
+            Remainders = WorldFamilyReplay.EncounterRemainders(model)
         };
         var profile = RuntimeProfileRegistry.Select(model.Detection);
         var authority = FilterPricingAuthority.From(model);

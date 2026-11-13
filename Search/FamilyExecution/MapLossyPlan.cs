@@ -1,4 +1,5 @@
 using RolltheSpire2.Core.Prediction.Maps;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.Semantics;
 
@@ -30,6 +31,7 @@ internal sealed record MapLossyPlan
     internal IReadOnlyList<MapLossyPredicate> Predicates { get; }
     internal IReadOnlyList<MapLossyProperty> Properties { get; }
     internal IReadOnlyList<MapLossyActPlan> Acts { get; }
+    internal RngSemanticProfileId RngSemantics { get; init; } = RngSemanticProfileId.Modern110;
     internal IReadOnlyList<string> Remainders { get; }
     internal bool Enabled => Predicates.Count > 0 || Properties.Count > 0;
     internal const string Strategy = MapLossyOptions.CurrentStrategy;
@@ -45,6 +47,8 @@ internal sealed record MapLossyPlan
         if (!options.Enabled) return new([], ["Disabled"]);
         if (request.ProfileId != RolltheSpire2.Compatibility.RuntimeProfileId.Beta111) return new([], ["Beta111StandardMapsOnly"]);
         if (request.Authority.PlayersCount != 1) return new([], ["SingleplayerOnly"]);
+        if (request.CompiledSearch.NormalizedQuery.ElitePrefixResearch is not null)
+            remainders.Add("ElitePrefixResearch:FullFinalOnly");
         foreach (var route in request.CompiledSearch.NormalizedQuery.StandardMapRoutes)
         {
             string source = $"Act{route.Act}.Drawing";
@@ -59,7 +63,7 @@ internal sealed record MapLossyPlan
             // a requirement that every Act separately reaches the total value.
             properties.Add(new(c.Scope, (int)c.Metric, c.Comparison, c.Value, source));
         }
-        return new(predicates, properties, remainders);
+        return new(predicates, properties, remainders) { RngSemantics = request.Authority.VersionResolution.SemanticProfileId };
 
         void Add(int act, MapRouteSequenceQuery query, string source)
         {

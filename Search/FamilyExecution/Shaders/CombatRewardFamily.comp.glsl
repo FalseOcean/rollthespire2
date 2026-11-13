@@ -31,7 +31,7 @@ bool cr_family_numeric_failure(){atomicOr(header.values[3],1u);return false;}
 bool c_route(uint64_t root,uint route){
     RngState unused=cr_rng_initialize(uint64_t(0));
     RewardRouteState state=cr_initialize_route(root,false,unused);
-#if RT2_C_MULTIPLAYER
+#if RT2_C_MULTIPLAYER && !RT2_C_MODERN113
     bool niche_known=plan_meta.values[44]!=0xffffffffu;
     if(niche_known)for(uint draw=0u;draw<plan_meta.values[44];++draw)cr_next_double(state.niche);
 #else
@@ -40,7 +40,11 @@ bool c_route(uint64_t root,uint route){
     if(plan_meta.values[40]!=0u){
         uint count=plan_meta.values[7];
         if(count<2u)return cr_family_numeric_failure();
-        for(uint n=count;n>1u;--n)cr_next_int(state.rewards,n);
+#if RT2_C_MODERN113
+        cr_consume_shuffle(count,state.niche);
+#else
+        cr_consume_shuffle(count,state.rewards);
+#endif
     }
     uint count=plan_meta.values[41];
     if(count>2u)return cr_family_numeric_failure();
@@ -49,18 +53,24 @@ bool c_route(uint64_t root,uint route){
         uint relic=plan_meta.values[42u+at];
         if(relic==14u&&plan_meta.values[49]!=0u){
             for(uint group=0u;group<2u;++group){
-                if(niche_known)for(uint n=pool_meta.values[40];n>1u;--n)cr_next_double(state.niche);
+                if(niche_known)cr_consume_shuffle(pool_meta.values[40],state.niche);
                 for(uint draw=0u;draw<9u;++draw)cr_next_double(state.rewards);
             }
         }else{
             if(!cr_replay_query_literal_relic_consumption(relic,root,state))return cr_family_numeric_failure();
+#if !RT2_C_MODERN113
             if(relic==19u&&niche_known)cr_next_double(state.niche);
+#endif
         }
+#if !RT2_C_MODERN113
         uint advance=plan_meta.values[45u+route*2u+i];
         if(advance==0xffffffffu)niche_known=false;
         else if(niche_known)for(uint draw=0u;draw<advance;++draw)cr_next_double(state.niche);
+#endif
     }
+#if !RT2_C_MODERN113
     if(plan_meta.values[40]!=0u&&niche_known)cr_next_double(state.niche);
+#endif
     cr_apply_explicit_query_reward_context(state);
 #if RT2_CR_HOT_ENABLED == 1 && RT2_C_HOT_OPENING_PREFIX == 1
     return cr_evaluate_rewards_unpinned_hot_state(state);

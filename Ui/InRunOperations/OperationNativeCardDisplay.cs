@@ -1,4 +1,5 @@
 using Godot;
+using MegaCrit.Sts2.addons.mega_text;
 using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Localization;
@@ -9,6 +10,7 @@ using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.PredictorRuntime;
 using RolltheSpire2.Presentation.Localization;
 using RolltheSpire2.Ui.Settings;
+using RolltheSpire2.Ui.Icons;
 using RolltheSpire2.Ui.Theme;
 
 namespace RolltheSpire2.Ui.InRunOperations;
@@ -36,6 +38,7 @@ internal static class OperationNativeCardDisplay
         try
         {
             var model = OperationPreviewCardModel.Create(snapshot);
+            NativeCardPortraits.BindDisplayModel(model);
             var card = PreloadManager.Cache.GetScene("res://scenes/cards/card.tscn").Instantiate<NCard>();
             card.Model = model;
             card.Position = new Vector2(180, 240) * scale;
@@ -49,6 +52,11 @@ internal static class OperationNativeCardDisplay
                 try
                 {
                     card.UpdateVisuals(PileType.None, CardPreviewMode.Normal);
+                    // An unattached display can retain the native single-upgrade
+                    // limit even when its captured state has further upgrades.
+                    if (snapshot.UpgradeLevel > 1 && model.MaxUpgradeLevel <= 1)
+                        card.GetNode<MegaLabel>("%TitleLabel").SetTextAutoSize(
+                            model.TitleLocString.GetFormattedText() + "+" + snapshot.UpgradeLevel);
                     card.GetNode<Control>("%Highlight").Hide();
                     IgnoreInput(card);
                     onNativeReady?.Invoke(tile);
@@ -78,6 +86,7 @@ internal static class OperationNativeCardDisplay
             (snapshot.PermanentCostOverride is { } cost ? "\n" + UiText.Get("operation.cost") + cost : "");
         var keywords = new List<string>();
         if (snapshot.HasEternalKeyword) keywords.Add(UiText.Get("operation.eternal"));
+        if (snapshot.HasEtherealKeyword == true) keywords.Add(UiText.Get("operation.ethereal"));
         if (snapshot.HasExhaustKeyword) keywords.Add(UiText.Get("operation.exhaust"));
         if (snapshot.HasInnateKeyword) keywords.Add(UiText.Get("operation.innate"));
         if (snapshot.HasRetainKeyword) keywords.Add(UiText.Get("operation.retain"));

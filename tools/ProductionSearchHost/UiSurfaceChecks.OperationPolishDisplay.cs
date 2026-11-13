@@ -85,6 +85,31 @@ internal static partial class UiSurfaceChecks
                 summaryLabels.All(label => !label.Text.Contains("123", StringComparison.Ordinal)) &&
                 price.GetParent<Control>().GetChildren().OfType<Label>().All(label => !label.Text.Contains("123", StringComparison.Ordinal)),
                 "pure restock panel is owned by Courier and keeps card price out of title and caption");
+            var badge = price.GetParent<PanelContainer>();
+            var priceBackdrop = (StyleBoxFlat)badge.GetThemeStylebox("panel");
+            var cardCaption = tile.GetParent<Control>().GetChildren().OfType<Label>().Single();
+            var captionBackdrop = (StyleBoxFlat)cardCaption.GetThemeStylebox("normal");
+            await Capture("courier-card-price-before-check");
+            File.WriteAllText(Path.Combine(output, "courier-card-price-geometry.json"), JsonSerializer.Serialize(new {
+                priceColor = priceBackdrop.BgColor.ToString(), captionColor = captionBackdrop.BgColor.ToString(),
+                badge = badge.GetGlobalRect().ToString(), price = price.GetGlobalRect().ToString(),
+                host = badge.GetParent<Control>().GetGlobalRect().ToString(), tile = tile.GetGlobalRect().ToString(),
+                caption = cardCaption.GetGlobalRect().ToString(), badge.MouseFilter, captionMouse = cardCaption.MouseFilter,
+                alpha = priceBackdrop.BgColor.A > .5f && priceBackdrop.BgColor.A < 1,
+                sameColor = captionBackdrop.BgColor == priceBackdrop.BgColor,
+                enclosesPrice = badge.GetGlobalRect().Encloses(price.GetGlobalRect()),
+                belowCard = badge.GetGlobalRect().Position.Y >= tile.GetGlobalRect().End.Y,
+                insideHost = badge.GetParent<Control>().GetGlobalRect().Grow(.5f).Encloses(badge.GetGlobalRect()),
+                captionAbove = cardCaption.GetGlobalRect().End.Y <= tile.GetGlobalRect().Position.Y
+            }, new JsonSerializerOptions { WriteIndented = true }));
+            check(priceBackdrop.BgColor.A > .5f && priceBackdrop.BgColor.A < 1 &&
+                captionBackdrop.BgColor == priceBackdrop.BgColor &&
+                badge.GetGlobalRect().Encloses(price.GetGlobalRect()) &&
+                badge.GetGlobalRect().Position.Y >= tile.GetGlobalRect().End.Y &&
+                badge.GetParent<Control>().GetGlobalRect().Grow(.5f).Encloses(badge.GetGlobalRect()) &&
+                cardCaption.GetGlobalRect().End.Y <= tile.GetGlobalRect().Position.Y &&
+                badge.MouseFilter == Control.MouseFilterEnum.Ignore && cardCaption.MouseFilter == Control.MouseFilterEnum.Ignore,
+                "Courier price and upper-left caption use matching translucent night-blue tabs outside the card face and pass mouse input through");
             await Capture("courier-card-price");
 
             var morphic = Event("MORPHIC_GROVE");

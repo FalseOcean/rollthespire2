@@ -9,18 +9,21 @@ internal sealed class NeowEffectRngContext
         Xoshiro256StarStar rewards,
         Xoshiro256StarStar transformations,
         Xoshiro256StarStar niche,
-        Xoshiro256StarStar combatPotionGeneration)
+        Xoshiro256StarStar combatPotionGeneration,
+        Xoshiro256StarStar? nonCombatGeneration)
     {
         Rewards = rewards;
         Transformations = transformations;
         Niche = niche;
         CombatPotionGeneration = combatPotionGeneration;
+        NonCombatGeneration = nonCombatGeneration;
     }
 
     public Xoshiro256StarStar Rewards { get; }
     public Xoshiro256StarStar Transformations { get; }
     public Xoshiro256StarStar Niche { get; }
     public Xoshiro256StarStar CombatPotionGeneration { get; }
+    public Xoshiro256StarStar? NonCombatGeneration { get; }
 
     public static NeowEffectRngContext Create(
         IRuntimeProfile profile,
@@ -31,7 +34,8 @@ internal sealed class NeowEffectRngContext
     public static NeowEffectRngContext CreateFromRootHash(
         IRuntimeProfile profile,
         ulong rootHash,
-        int playerSlotIndex)
+        int playerSlotIndex,
+        RngSemanticProfileId semanticProfile = RngSemanticProfileId.Modern110)
     {
         ArgumentNullException.ThrowIfNull(profile);
         ulong playerRoot = unchecked(rootHash + (ulong)playerSlotIndex);
@@ -39,15 +43,18 @@ internal sealed class NeowEffectRngContext
             new Xoshiro256StarStar(profile.DeriveNamedStreamSeed(playerRoot, "rewards")),
             new Xoshiro256StarStar(profile.DeriveNamedStreamSeed(playerRoot, "transformations")),
             new Xoshiro256StarStar(profile.DeriveNamedStreamSeed(rootHash, "niche")),
-            new Xoshiro256StarStar(profile.DeriveNamedStreamSeed(rootHash, "combat_potion_generation")));
+            new Xoshiro256StarStar(profile.DeriveNamedStreamSeed(rootHash, "combat_potion_generation")),
+            semanticProfile == RngSemanticProfileId.Modern113
+                ? new Xoshiro256StarStar(profile.DeriveNamedStreamSeed(playerRoot, "non_combat_generation")) : null);
     }
 
     public NeowEffectRngContext Clone() => new(
         Rewards.Clone(),
         Transformations.Clone(),
         Niche.Clone(),
-        CombatPotionGeneration.Clone());
+        CombatPotionGeneration.Clone(),
+        NonCombatGeneration?.Clone());
 
     internal NeowEffectRngContext WithShared(Xoshiro256StarStar niche, Xoshiro256StarStar potions) =>
-        new(Rewards, Transformations, niche, potions);
+        new(Rewards, Transformations, niche, potions, NonCombatGeneration);
 }

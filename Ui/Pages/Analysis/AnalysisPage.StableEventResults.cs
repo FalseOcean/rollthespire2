@@ -15,7 +15,8 @@ internal sealed partial class AnalysisPage
             !TryGetProjectionRoot(out ulong root)) return false;
         if (!_stableEventResults.TryGetValue(entry, out var results))
         {
-            results = Beta111EventOptionResultProjector.Project(root, LastRequest.PlayerSlotIndex, entry);
+            results = Beta111EventOptionResultProjector.Project(root, LastRequest.PlayerSlotIndex, entry,
+                LastRequest.Authority.VersionResolution.SemanticProfileId);
             _stableEventResults[entry] = results;
         }
         if (results.Count == 0) return false;

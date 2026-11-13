@@ -57,7 +57,7 @@ internal sealed partial class PredictorRun
         if (valid) return;
         ulong rootSeed = Context.RuntimeProfile.ComputeRootSeed(Context.Seed);
         ulong hash = XxHash64.HashUtf8("FUR_COAT", 0UL);
-        var rng = new Xoshiro256StarStar(unchecked(rootSeed + hash));
+        var rng = new Xoshiro256StarStar(unchecked(rootSeed + (ulong)(Context.Operation?.PlayerSlot ?? 0) + hash));
         var occupied = Working.Relics.Where((other, otherIndex) => otherIndex != index &&
             other.FurCoatAct == act - 1 && other.FurCoatCoordsSet && (freshMap ? !other.Melted : true))
             .SelectMany(other => other.FurCoatQuestCoords).ToHashSet();
@@ -65,7 +65,7 @@ internal sealed partial class PredictorRun
                 !occupied.Contains(p.Position))
             .OrderBy(p => p.Position.Column).ThenBy(p => p.Position.Row)
             .Select(p => p.Position).ToList();
-        rng.UnstableShuffle(candidates);
+        rng.UnstableShuffle(candidates, Context.VersionResolution.SemanticProfileId);
         Working = Working with { Relics = Working.Relics.SetItem(index, relic with
         { FurCoatCoordsSet = true, FurCoatQuestCoords = candidates.Take(8).ToImmutableArray() }) };
     }

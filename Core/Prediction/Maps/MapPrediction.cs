@@ -16,7 +16,8 @@ internal sealed record MapPrediction(string Seed, ModelKey Act, int ActIndex, in
 internal static class Beta111MapPredictor
 {
     internal static MapPrediction Predict(string seed, RuntimeProfileId profile, ModelKey act,
-        int actIndex, int ascension, int players, bool secondBoss, CancellationToken token)
+        int actIndex, int ascension, int players, bool secondBoss, CancellationToken token,
+        RngSemanticProfileId rngSemantics = RngSemanticProfileId.Modern110)
     {
         if (profile != RuntimeProfileId.Beta111 || players < 1)
             throw new NotSupportedException("Map preview requires Beta111 standard maps and a valid party size.");
@@ -28,7 +29,8 @@ internal static class Beta111MapPredictor
             "HIVE" => ActKind.Hive, "GLORY" => ActKind.Glory,
             _ => throw new NotSupportedException("Unsupported standard Act: " + act.Entry)
         };
-        var context = new ActContext(kind, actIndex, HasSwarmingElites: ascension >= 1, HasSecondBoss: secondBoss, IsMultiplayer: players > 1);
+        var context = new ActContext(kind, actIndex, IsMultiplayer: players > 1, HasSwarmingElites: ascension >= 1,
+            HasSecondBoss: secondBoss, RngSemantics: rngSemantics);
         var generated = Beta111StandardMapGenerator.GenerateStandardMap(seed, context, token);
         MapPosition Position(MapNode n) => new(n.FinalCol, n.FinalRow);
         var nodes = generated.AllNodes().Select(n => new MapPredictionPoint(Position(n), n.PointType, n.CanBeModified,

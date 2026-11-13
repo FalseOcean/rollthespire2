@@ -13,7 +13,7 @@ internal static class EventOperationPreview
         var scene = RequireEvent(snapshot);
         if (!scene.Options.Any(o => o.Key == optionKey && o.Enabled))
             throw new ArgumentException("EventPreviewOptionNotInSnapshot", nameof(optionKey));
-        return MayDisplay(scene, optionKey)
+        return MayDisplay(snapshot.Context, scene, optionKey)
             ? OperationForecastProjection.Project(EventOperationForecast.Build(snapshot, optionKey, token,
                 playRoyalties, includeContinuation, includeCombat))
             : Empty(scene, optionKey);
@@ -26,7 +26,7 @@ internal static class EventOperationPreview
         if (!scene.AwaitingCards || cardIds.IsDefault || cardIds.Length != scene.CardsRequired ||
             cardIds.Distinct().Count() != cardIds.Length || cardIds.Any(id => !scene.CardCandidates.Contains(id)))
             throw new ArgumentException("EventPreviewSelectionNotInSnapshot", nameof(cardIds));
-        return MayDisplay(scene, scene.Branch ?? "")
+        return MayDisplay(snapshot.Context, scene, scene.Branch ?? "")
             ? OperationForecastProjection.Project(EventOperationForecast.BuildSelected(snapshot, cardIds, token,
                 includeContinuation, includeCombat))
             : Empty(scene, scene.Branch ?? "");
@@ -40,9 +40,10 @@ internal static class EventOperationPreview
     private static PredictorOperationEventScene RequireEvent(PredictorOperationSnapshot snapshot) =>
         snapshot.Scene as PredictorOperationEventScene ?? throw new ArgumentException("EventPreviewRequiresActualEventScene");
 
-    private static bool MayDisplay(PredictorOperationEventScene scene, string option) =>
+    private static bool MayDisplay(PredictorContext context, PredictorOperationEventScene scene, string option) =>
         OperationPreviewEligibility.EventMayDisplay(scene.Event.Entry, option, scene.TinkerType != null,
-            scene.TabletCount, scene.Options.Any(o => o.Key == option && o.OfferedRelic != null));
+            scene.TabletCount, scene.Options.Any(o => o.Key == option && o.OfferedRelic != null),
+            context.UsesNonCombatGeneration, scene.Options.Any(o => o.Key == option && o.HasHiddenObtain));
 
     private static OperationPreview Empty(PredictorOperationEventScene scene, string option) =>
         new(scene.Event, [], [], false, [], []) { OptionKey = option };

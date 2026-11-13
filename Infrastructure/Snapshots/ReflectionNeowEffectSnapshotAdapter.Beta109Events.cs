@@ -54,8 +54,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             ? "ActModel.GenerateRooms:Event1>Event2>Event3"
             : string.Join("|", epochs.Select(epoch =>
                 $"{epoch.EpochId}:membership={epoch.MembershipExact}:reveal={epoch.RevealFactExact}"));
-        (int characterCardPoolCount, bool characterCardPoolCountExact) =
-            CaptureCharacterCardPoolCount(unlockState);
+        (int characterCardPoolCount, int nonFoolCharacterCardPoolCount, bool characterCardPoolCountExact) =
+            CaptureCharacterCardPoolCounts(assembly, unlockState);
         return new Beta109EventCatalogAuthoritySnapshot(
             sharedEventsRaw.Keys,
             sharedEventsRaw.Exact,
@@ -64,23 +64,27 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             evidence)
         {
             CharacterCardPoolCount = characterCardPoolCount,
-            CharacterCardPoolCountExact = characterCardPoolCountExact
+            CharacterCardPoolCountExact = characterCardPoolCountExact,
+            NonFoolCharacterCardPoolCount = nonFoolCharacterCardPoolCount,
+            NonFoolCharacterCardPoolCountExact = characterCardPoolCountExact
         };
     }
 
 
-    private static (int Count, bool Exact) CaptureCharacterCardPoolCount(object? unlockState)
+    private static (int Count, int NonFoolCount, bool Exact) CaptureCharacterCardPoolCounts(Assembly assembly, object? unlockState)
     {
-        if (unlockState is null) return (0, false);
+        if (unlockState is null) return (0, 0, false);
         object? pools = ReadProperty(unlockState, "CharacterCardPools");
-        if (pools is null) return (0, false);
+        if (pools is null) return (0, 0, false);
         try
         {
-            return (Enumerate(pools).Count(), true);
+            Type? fool = assembly.GetType("MegaCrit.Sts2.Core.Models.CardPools.FoolCardPool");
+            var ordered = Enumerate(pools).ToArray();
+            return (ordered.Length, ordered.Count(pool => fool?.IsInstanceOfType(pool) != true), true);
         }
         catch
         {
-            return (0, false);
+            return (0, 0, false);
         }
     }
 

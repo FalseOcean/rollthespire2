@@ -177,6 +177,10 @@ internal sealed partial class PredictorRun
                 else ApplyEventHealth((int)(_eventHealth!.MaxHp * .33m), 0);
                 FinishEvent();
                 return PredictorInputResult.Accepted;
+            case ("DOORS_OF_LIGHT_AND_DARK", "LIGHT") when Context.UsesNonCombatGeneration:
+                BeginEventCardSelection(Working.Deck.Where(id =>
+                    Working.Card(id).UpgradeLevel < Working.Card(id).MaxUpgradeLevel).ToImmutableArray(), 1, token);
+                return PredictorInputResult.Accepted;
             case ("DOORS_OF_LIGHT_AND_DARK", "LIGHT"):
                 var lightCards = Working.Deck.Select(Working.Card)
                     .Where(c => c.UpgradeLevel < c.MaxUpgradeLevel)

@@ -93,6 +93,7 @@ public sealed record OpeningRewardContinuation(
 {
     internal RewardsRngStateSnapshot? NicheState { get; init; }
     internal RewardsRngStateSnapshot? CombatPotionGenerationState { get; init; }
+    internal RewardsRngStateSnapshot? NonCombatGenerationState { get; init; }
     public IReadOnlyList<RewardImpactSourceKey> ActiveRewardImpactSources { get; init; } =
         Array.Empty<RewardImpactSourceKey>();
 

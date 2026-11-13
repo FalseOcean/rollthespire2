@@ -1,5 +1,4 @@
 using Godot;
-using System.Reflection;
 using RolltheSpire2.Core.Prediction.Maps;
 using RolltheSpire2.Core.Relics;
 using RolltheSpire2.Core.Identity;
@@ -38,6 +37,7 @@ internal sealed partial class AnalysisPage
         // complete group would exceed its existing full-width tab target.
         void FitCaption()
         {
+            if (!IsInstanceValid(caption) || !IsInstanceValid(row)) return;
             float textWidth = Mathf.Ceil(caption.GetThemeFont("font").GetStringSize(title,
                 fontSize: caption.GetThemeFontSize("font_size")).X);
             float previewWidth = (row.GetChildCount() - 1) * 25;
@@ -72,15 +72,6 @@ internal sealed partial class AnalysisPage
             Icon(boss.BossDisplay.ModelKey, GameContentKind.Encounter, IconVariant.WorldCompendiumBossIcon);
     }
 
-    private static Texture2D? RoomIcon(string kind)
-    {
-        var method = typeof(MegaCrit.Sts2.Core.Nodes.Screens.Map.NNormalMapPoint)
-            .GetMethod("IconName", BindingFlags.NonPublic | BindingFlags.Static);
-        string? name = (string?)method?.Invoke(null, [Enum.Parse<MegaCrit.Sts2.Core.Map.MapPointType>(kind)]);
-        string path = "res://images/atlases/ui_atlas.sprites/map/icons/" + name + ".tres";
-        return ResourceLoader.Exists(path) ? ResourceLoader.Load<Texture2D>(path) : null;
-    }
-
     private HBoxContainer WIconStrip(Node parent, string name)
     {
         var scroll = new ScrollContainer { Name = name, CustomMinimumSize = new Vector2(0, 70),
@@ -96,7 +87,7 @@ internal sealed partial class AnalysisPage
         var tile = _palette.Button("");
         tile.Name = "Encounter" + ordinal;
         tile.CustomMinimumSize = new Vector2(72, 66);
-        var artwork = new TextureRect { Texture = RoomIcon(elite ? "Elite" : "Monster"),
+        var artwork = new TextureRect { Texture = VerticalMapView.ResolveRoomIcon(elite ? MapPointType.Elite : MapPointType.Monster),
             ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
             MouseFilter = MouseFilterEnum.Ignore };
         tile.AddChild(artwork); artwork.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);

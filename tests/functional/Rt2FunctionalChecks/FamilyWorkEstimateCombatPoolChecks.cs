@@ -113,7 +113,11 @@ internal static class FamilyWorkEstimateCombatPoolChecks
             var cpuGeometry = new FamilyPhysicalQuoteRequest(false, false, 65536);
             var cpuModel = CombatRewardWorkEstimate.Cpu(cpu.Family.Replay, cpu.Family.Body.CpuWorkers, cpuGeometry)!;
             var expandedCpuModel = CombatRewardWorkEstimate.Cpu(cpuExpanded.Family.Replay, cpuExpanded.Family.Body.CpuWorkers, cpuGeometry)!;
-            Check(cpuModel.Shape == FamilyCoarsePricing.Revision + ".C.FullReward.P1" &&
+            // Unpinned C acquired a real-neutral opening proof in FT03. That
+            // fixed proof work is part of both models; it is not a pool-size fee.
+            Check(cpu.Family.Replay.UsesNeutralWitness && cpuExpanded.Family.Replay.UsesNeutralWitness,
+                "both unpinned CPU models retain their actual real-neutral opening proof");
+            Check(cpuModel.Shape == FamilyCoarsePricing.Revision + ".C.FullReward" + CombatRewardNeutralWitness.Revision + ".P1" &&
                 expandedCpuModel.Shape == cpuModel.Shape &&
                 FamilyCoarsePricing.IsEstimate(cpuModel) && FamilyCoarsePricing.IsEstimate(expandedCpuModel) &&
                 cpuModel.NanosecondsPerInput == expandedCpuModel.NanosecondsPerInput,

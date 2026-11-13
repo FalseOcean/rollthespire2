@@ -171,7 +171,8 @@ internal static partial class UiSurfaceChecks
                 Check(relics.FindChild("RelicConditionBuilder", true, false) is not null, "existing sequence entry remains available");
                 Check(frame.CaptureDraft().Query.TreasureRelics!.Slots[1] == second, "tab switch preserves treasure targets");
                 Call(frame, "SelectDomain", "events"); await Frames();
-                Check(Find<OptionButton>(events, "FirstActUnknownEventPrefix").ItemCount == 4, "prefix has four choices");
+                Check(Find<OptionButton>(events, "FirstActUnknownEventPrefix").ItemCount == 7,
+                    "prefix offers disabled and three lengths for each event/monster category");
                 for (int prefix = 0; prefix <= 3; prefix++)
                 {
                     Choose(events, "FirstActUnknownEventPrefix", prefix); await Frames();

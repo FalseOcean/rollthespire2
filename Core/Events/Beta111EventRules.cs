@@ -1,3 +1,4 @@
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Rng;
 
@@ -34,24 +35,26 @@ public static class Beta111EventRules
     public static ModelKey TrashHeapDive(Xoshiro256StarStar rng) =>
         Beta111EventResultCatalog.TrashHeapDiveRelics[rng.NextInt(Beta111EventResultCatalog.TrashHeapDiveRelics.Count)];
 
-    public static ModelKey[] FakeMerchantInventory(Xoshiro256StarStar rng)
+    public static ModelKey[] FakeMerchantInventory(Xoshiro256StarStar rng,
+        RngSemanticProfileId semantics = RngSemanticProfileId.Modern110)
     {
         var pool = Beta111EventResultCatalog.FakeMerchantRelics.ToArray();
-        rng.UnstableShuffle(pool);
+        rng.UnstableShuffle(pool, semantics);
         return pool.Take(FakeMerchantOfferCount).ToArray();
     }
 
-    public static ModelKey[] ColorfulCandidates(ModelKey owner, IEnumerable<ModelKey> unlockedCharacters)
+    public static ModelKey[] ColorfulCandidates(ModelKey owner, IEnumerable<ModelKey> unlockedCharacters,
+        RngSemanticProfileId semantics = RngSemanticProfileId.Modern110)
     {
         var unlocked = new HashSet<ModelKey>(unlockedCharacters, ModelKeyComparer.Instance);
-        return Beta111EventResultCatalog.ColorfulCharacterOrder
+        return Beta111EventResultCatalog.ColorfulOrder(semantics)
             .Where(key => key != owner && unlocked.Contains(key)).ToArray();
     }
 
     public static ModelKey[] ColorfulOffers(Xoshiro256StarStar rng, ModelKey owner,
-        IEnumerable<ModelKey> unlockedCharacters)
+        IEnumerable<ModelKey> unlockedCharacters, RngSemanticProfileId semantics = RngSemanticProfileId.Modern110)
     {
-        var candidates = ColorfulCandidates(owner, unlockedCharacters).ToList();
+        var candidates = ColorfulCandidates(owner, unlockedCharacters, semantics).ToList();
         while (candidates.Count > ColorfulOfferCount)
             candidates.RemoveAt(rng.NextInt(candidates.Count));
         return candidates.ToArray();
@@ -60,29 +63,31 @@ public static class Beta111EventRules
     // Trial's cosmetic entrant number uses Rng.Chaotic, not this event-local stream.
     public static int TrialCase(Xoshiro256StarStar rng) => rng.NextInt(TrialCaseCount);
 
-    public static int[] TinkerTypeOffers(Xoshiro256StarStar rng)
+    public static int[] TinkerTypeOffers(Xoshiro256StarStar rng, RngSemanticProfileId semanticProfile = RngSemanticProfileId.Modern110)
     {
         int[] types = [0, 1, 2];
-        rng.UnstableShuffle(types);
+        rng.UnstableShuffle(types, semanticProfile);
         return types.Take(TinkerOfferCount).ToArray();
     }
 
     // IDs follow the authored type-major order used by search's numeric ABI.
-    public static int[] TinkerRiderOffers(Xoshiro256StarStar rng, int type)
+    public static int[] TinkerRiderOffers(Xoshiro256StarStar rng, int type,
+        RngSemanticProfileId semanticProfile = RngSemanticProfileId.Modern110)
     {
         if (type < 0 || type >= TinkerTypes.Count) throw new ArgumentOutOfRangeException(nameof(type));
         int[] riders = [type * 3, type * 3 + 1, type * 3 + 2];
-        rng.UnstableShuffle(riders);
+        rng.UnstableShuffle(riders, semanticProfile);
         return riders.Take(TinkerOfferCount).ToArray();
     }
 
     public static ModelKey RandomDoll(Xoshiro256StarStar rng) => AuthoredDolls[rng.NextInt(AuthoredDolls.Length)];
 
-    public static ModelKey[] DollOffers(Xoshiro256StarStar rng, int count)
+    public static ModelKey[] DollOffers(Xoshiro256StarStar rng, int count,
+        RngSemanticProfileId semanticProfile = RngSemanticProfileId.Modern110)
     {
         // Native StableShuffle sorts by RelicModel.CompareTo/ModelId before shuffling.
         var sorted = AuthoredDolls.OrderBy(key => key.Entry, StringComparer.Ordinal).ToArray();
-        rng.UnstableShuffle(sorted);
+        rng.UnstableShuffle(sorted, semanticProfile);
         return sorted.Take(count).ToArray();
     }
 

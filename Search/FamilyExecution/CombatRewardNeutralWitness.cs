@@ -1,7 +1,9 @@
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Rewards;
 using RolltheSpire2.Core.Authority;
+using RolltheSpire2.Core.Neow;
 using RolltheSpire2.Search.Contracts;
+using RolltheSpire2.Search.Semantics;
 
 namespace RolltheSpire2.Search.FamilyExecution;
 
@@ -31,8 +33,9 @@ bool c_keep_root_proven(uint64_t root){
     internal uint NeutralMask { get; }
     internal bool RequiresAllOffers { get; }
     internal string Issue { get; } = "";
-    internal string Remainder => Issue.Length == 0
-        ? "UnprovenRealNeutralOpeningRetainedForExact" : Issue;
+    private readonly bool _authoredOffersGuaranteeNeutral;
+    internal string Remainder => Issue.Length != 0 ? Issue :
+        Available && _authoredOffersGuaranteeNeutral ? "" : "UnprovenRealNeutralOpeningRetainedForExact";
     internal bool Available => _identity is not null && Issue.Length == 0;
     // Initial curse draw, up to three binary draws and at most sixteen swaps.
     // This is a work envelope on numerical failures, not a measured timing.
@@ -68,6 +71,30 @@ bool c_keep_root_proven(uint64_t root){
         for (byte id = 0; id < 30; id++)
             if (HasUnconditionalNeutralProducer(request.ProfileId, Beta110FastRelicCatalog.KeyOf(id)))
                 NeutralMask |= 1u << id;
+        _authoredOffersGuaranteeNeutral = WhitelistGuaranteesNeutral(request);
+    }
+
+    private bool WhitelistGuaranteesNeutral(SearchModel request)
+    {
+        if (request.Evaluation.NeowOfferWhitelist is not { AllowedKeys.Count: > 0 } whitelist ||
+            whitelist.AllowedKeys.Any(key => !Beta110FastRelicCatalog.TryGetId(key, out _))) return false;
+        bool hasMenu = false, everyMenuProven = true;
+        // Visit the complete bounded menu space once during request preparation.
+        // Shared identity rules own eligibility, curse conflicts, binary exclusions
+        // and the two distinct positive offers. A mixed whitelist can still force
+        // a neutral choice in every solo menu; party requires every choice neutral.
+        // Do not infer coverage from an empty space or discard unknown authored keys.
+        bool complete = ModernNeowIdentityRules.TryVisitOfferSpace(request.Authority, (first, second, curse, _) =>
+        {
+            if (!NeowOfferWhitelist.Matches(whitelist, first, second, curse)) return;
+            hasMenu = true;
+            everyMenuProven &= Beta110FastRelicCatalog.TryGetId(first, out byte a) &&
+                Beta110FastRelicCatalog.TryGetId(second, out byte b) &&
+                Beta110FastRelicCatalog.TryGetId(curse, out byte c) && AllowsRejection(a, b, c);
+        });
+        // Coverage only changes the declared remainder. CPU/GPU per-root proof,
+        // numerical replay and Exact authority remain unchanged.
+        return complete && hasMenu && everyMenuProven;
     }
 
     // These specific producer branches in NeowEffectProjectionEngine execute

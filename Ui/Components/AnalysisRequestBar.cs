@@ -43,6 +43,19 @@ internal sealed partial class AnalysisRequestBar : PanelContainer
     private Button? _railSolo, _railMulti;
     private OptionButton? _partyPlayer;
     private Button? _partyConfig;
+    private int _capturedRunPlayerCount;
+    private bool _busy;
+    internal void SetCapturedRunParty(int count)
+    {
+        _capturedRunPlayerCount = count;
+        bool captured = count > 0;
+        if (_railSolo is not null) _railSolo.Disabled = captured;
+        if (_railMulti is not null) _railMulti.Disabled = captured;
+        if (_partyConfig is not null) _partyConfig.Disabled = captured;
+        if (_railCharacter is not null) _railCharacter.Disabled = captured;
+        _ascension.SetEnabled(!captured);
+        SetBusy(_busy);
+    }
     internal event Action<int>? PartyPlayerSelected;
     internal event Action<bool>? PartyModeSelected;
     internal event Action? PartyConfigurationRequested;
@@ -312,8 +325,18 @@ internal sealed partial class AnalysisRequestBar : PanelContainer
         int playerSlotIndex,
         bool notify)
     {
-        _playersCount = Math.Clamp(playersCount, SeedPredictionInputLimits.MinimumPlayers, SeedPredictionInputLimits.MaximumPlayers);
-        _playerSlotIndex = Math.Clamp(playerSlotIndex, 0, Math.Max(0, _playersCount - 1));
+        if (_capturedRunPlayerCount > 0)
+        {
+            if (playersCount != _capturedRunPlayerCount || playerSlotIndex < 0 || playerSlotIndex >= playersCount)
+                throw new InvalidOperationException("RunPredictionPlayerContextMismatch");
+            _playersCount = playersCount;
+            _playerSlotIndex = playerSlotIndex;
+        }
+        else
+        {
+            _playersCount = Math.Clamp(playersCount, SeedPredictionInputLimits.MinimumPlayers, SeedPredictionInputLimits.MaximumPlayers);
+            _playerSlotIndex = Math.Clamp(playerSlotIndex, 0, Math.Max(0, _playersCount - 1));
+        }
         if (_partyPlayer is { ItemCount: > 0 }) _partyPlayer.Select(Math.Min(_playerSlotIndex, _partyPlayer.ItemCount - 1));
         _characterPicker.Select(_characterPicker.ResolveAvailableSelection(characterKey), notify: false);
         if (_railCharacter is { ItemCount: > 0 })
@@ -328,9 +351,10 @@ internal sealed partial class AnalysisRequestBar : PanelContainer
 
     public void SetBusy(bool busy)
     {
+        _busy = busy;
         _copySeed.Disabled = string.IsNullOrWhiteSpace(_seedInput.Text);
-        _randomSeed.Disabled = busy;
-        _seedInput.Editable = !busy;
+        _randomSeed.Disabled = busy || _capturedRunPlayerCount > 0;
+        _seedInput.Editable = !busy && _capturedRunPlayerCount == 0;
     }
 
     private void HandleSeedTextChanged(string text)
@@ -414,7 +438,7 @@ internal sealed partial class AnalysisRequestBar : PanelContainer
         _partySummary.Text = _uiText is null
             ? $"P{_playerSlotIndex + 1}/{_playersCount}"
             : _uiText.Format(Ui1TextKey.AnalysisPlayerContext, _playerSlotIndex + 1, _playersCount)
-                + "\n" + _uiText.Get("predictor.party.order");
+                + "\n" + _uiText.Format("predictor.party.order", _playersCount);
     }
 
     private static Control NewGroupGap() => new()

@@ -18,6 +18,8 @@ internal sealed record RelicFamilyPool(
     int MaxBucketLength)
 {
     public int BucketCount => BucketOffsets.Length;
+    internal RngSemanticProfileId RngSemantics { get; init; } = RngSemanticProfileId.Modern110;
+    internal bool UsesChildShuffle => RuntimeProfilePolicies.UsesChildStreamShuffle(RngSemantics);
 }
 
 internal readonly record struct RelicFamilyPredicate(
@@ -321,7 +323,8 @@ internal static class RelicFamilyPlanCompiler
                     out pool, out issue);
         }
 
-        pool = new RelicFamilyPool(ids, flags, offsets, lengths, scopes, kinds, directions, maxLength);
+        pool = new RelicFamilyPool(ids, flags, offsets, lengths, scopes, kinds, directions, maxLength)
+        { RngSemantics = generation.RngSemantics };
         issue = string.Empty;
         return true;
     }

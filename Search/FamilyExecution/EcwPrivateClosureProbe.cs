@@ -12,6 +12,7 @@ internal static class EcwPrivateClosureProbe
         string revision = "ECW.PrivateConnectivity.Probe.20260910.v1" + GpuRngRotation.Revision;
         var preparation = new PreparedFilter(id) {
             Coverage = [id, "C.CombatReward", "W.World"],
+            Obligations = c.ChecksCardCollection ? [new(id), new("C.CombatReward"), new("W.World"), new("CombatCardExclusion")] : [],
             Remainders = remainders,
             AnalyticalCost = new(id, PrivateOrdinalBuffer.Capacity, [], "ECW.ClosureProbe.Unpriced"),
             Survival = FamilySurvivalProjection.Unresolved(id, "ECW.ClosureProbe")

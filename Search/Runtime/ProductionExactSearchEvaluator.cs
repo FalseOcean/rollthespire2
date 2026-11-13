@@ -46,6 +46,20 @@ internal static class ProductionExactSearchEvaluator
         TrustedRootHashInput input, CancellationToken cancellationToken,
         Lazy<IReadOnlyList<NeowEffectRelicSnapshot>>? preparedRelicBag, ShionExactTrialOptions options = default)
     {
+        if (plan.Authority.VersionResolution.SemanticProfileId == RngSemanticProfileId.Modern113)
+        {
+            var projection = Compilation.SearchRuleRemainders.For(plan.CompiledSearch);
+            if (projection.Causes.Length != 0)
+            {
+                var executable = Compilation.SearchRuleRemainders.ForExecution(plan, projection);
+                var checkedResult = Evaluate(executable, input, cancellationToken, preparedRelicBag, options);
+                var pending = SearchQueryEvaluation.Unknown(string.Join("|", projection.Causes));
+                var disposition = CombineIndependentEvaluations(checkedResult.Evaluation, pending);
+                if (disposition.Disposition != SearchDisposition.NoMatch && checkedResult.Evaluation.Disposition != SearchDisposition.Match)
+                    disposition = disposition with { FailureCode = disposition.FailureCode + "|" + pending.FailureCode };
+                return checkedResult with { Authority = plan.Authority, Evaluation = disposition, FailureCode = disposition.FailureCode };
+            }
+        }
         if (plan.CompiledSearch.Context.Party is not null)
         {
             bool initialRooms = PartyInitialRooms.HasConditions(plan);
@@ -136,7 +150,7 @@ internal static class ProductionExactSearchEvaluator
         // These root-local facts already completed the full request. Analysis
         // requests and documents are optional consumers, not Match prerequisites.
         if ((plan.Evaluation.RequiresCanonicalRootLocalDomain || plan.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0 ||
-            plan.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count > 0) &&
+            plan.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count > 0 || plan.CompiledSearch.NormalizedQuery.ElitePrefixResearch is not null) &&
             plan.Evaluation.CheapPredictionDomains == SeedPredictionDomainSelection.None &&
             !plan.Evaluation.RequiresNormalCombatRewardDomain)
         {
@@ -190,16 +204,24 @@ internal static class ProductionExactSearchEvaluator
         ThrowIfPredictionFailed(cheapFacts);
         SearchQueryEvaluation cheapEvaluation = ProductionQueryValidator.EvaluateCheap(plan, cheapFacts, authority,
             out SearchQueryEvaluation openingEvaluation, input.RootHash);
+        bool bindAggregateRoute = plan.Authority.VersionResolution.SemanticProfileId != RngSemanticProfileId.Modern113 ||
+            plan.Evaluation.NeowRoute is not null;
+        SearchQueryEvaluation unfilteredRewardBase = cheapEvaluation.Disposition == SearchDisposition.Match
+            ? cheapEvaluation : openingEvaluation;
         cheapEvaluation = canonicalEvaluation.Disposition == SearchDisposition.Match
-            ? MergeCanonicalGlobalEvidence(cheapEvaluation, canonicalEvaluation)
+            ? MergeCanonicalGlobalEvidence(cheapEvaluation, canonicalEvaluation, bindAggregateRoute)
             : cheapEvaluation;
         SearchQueryEvaluation rewardBase = cheapEvaluation.Disposition == SearchDisposition.Match ? cheapEvaluation : openingEvaluation;
         if (cheapEvaluation.Disposition != SearchDisposition.Match && canonicalEvaluation.Disposition == SearchDisposition.Match &&
             rewardBase.Disposition == SearchDisposition.Match)
-            rewardBase = MergeCanonicalGlobalEvidence(rewardBase, canonicalEvaluation);
+            rewardBase = MergeCanonicalGlobalEvidence(rewardBase, canonicalEvaluation, bindAggregateRoute);
+        SearchMatchWitness[] pendingRewardRoutes = rewardBase.RouteRejections.Count == 0
+            ? []
+            : unfilteredRewardBase.Witnesses.Where(w =>
+                rewardBase.RouteRejections.Any(r => IsSameAggregateOpeningRoute(w, r))).ToArray();
         if (cheapEvaluation.Disposition == SearchDisposition.NoMatch || !plan.Evaluation.RequiresNormalCombatRewardDomain ||
-            rewardBase.Disposition != SearchDisposition.Match ||
-            !rewardBase.Witnesses.Any(w => !string.IsNullOrWhiteSpace(w.OpeningRouteId)))
+            (pendingRewardRoutes.Length == 0 && (rewardBase.Disposition != SearchDisposition.Match ||
+                !rewardBase.Witnesses.Any(w => !string.IsNullOrWhiteSpace(w.OpeningRouteId)))))
         {
             cheapEvaluation = CombineIndependentEvaluations(cheapEvaluation, canonicalEvaluation, rewardBase);
             return new ProductionExactSearchResult(
@@ -252,7 +274,20 @@ internal static class ProductionExactSearchEvaluator
             cheapFacts.Neow?.Choices ?? [], identityReuse);
         if (identityReuse?.WasReused == true) ShionExactTrialMetrics.IdentityReused();
         ThrowIfPredictionFailed(rewardFacts);
-        SearchQueryEvaluation evaluation = ProductionQueryValidator.EvaluateRewards(plan, rewardFacts, rewardBase);
+        SearchQueryEvaluation evaluation = rewardBase.Disposition == SearchDisposition.Match
+            ? ProductionQueryValidator.EvaluateRewards(plan, rewardFacts, rewardBase)
+            : SearchQueryEvaluation.NoMatch("TransformationAggregate.NoProvenSharedOpeningRoute");
+        if (evaluation.Disposition == SearchDisposition.NoMatch && pendingRewardRoutes.Length > 0)
+        {
+            // A route with an unresolved T output can still be disproven by C.
+            // Its reward match cannot serve as proof of the combined request.
+            var pending = ProductionQueryValidator.EvaluateRewards(plan, rewardFacts, SearchQueryEvaluation.Match(
+                unfilteredRewardBase.Evidence, pendingRewardRoutes.Select(w => w.OpeningRouteId).Distinct(StringComparer.Ordinal).ToArray(),
+                pendingRewardRoutes));
+            if (pending.Disposition != SearchDisposition.NoMatch)
+                evaluation = SearchQueryEvaluation.Unknown("TransformationAggregate.SharedOpeningRouteOutputUnknown")
+                    with { RouteRejections = rewardBase.RouteRejections };
+        }
         evaluation = CombineIndependentEvaluations(evaluation, cheapEvaluation, canonicalEvaluation);
         return new ProductionExactSearchResult(
             rewardRequest,
@@ -497,14 +532,14 @@ internal static class ProductionExactSearchEvaluator
         child.Evaluation.HasNeowConstraints || child.Evaluation.RequiresWorldDomain ||
         child.Evaluation.RequiresRelicSequenceDomain || child.Evaluation.RequiresNormalCombatRewardDomain ||
         child.Evaluation.RequiresCanonicalRootLocalDomain || child.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0 ||
-        child.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count > 0;
+        child.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count > 0 || child.CompiledSearch.NormalizedQuery.ElitePrefixResearch is not null;
 
     private static bool RequiresPartyInitialOffers(Semantics.PlayerOfferQuery player)
     {
         var n = player.Conditions.LegacyNeow;
         return !player.Offers.IsEmpty || player.SelectedOption is not null ||
             player.Conditions.HasCombatRewardConstraints || player.Conditions.OpeningRoute is not null ||
-            player.Conditions.StructuredOpeningEffects.Count > 0 || !n.NeowRelics.IsEmpty || n.RequireNeowsBones ||
+            player.Conditions.StructuredOpeningEffects.Count > 0 || player.Conditions.NeowOfferWhitelist is not null || !n.NeowRelics.IsEmpty || n.RequireNeowsBones ||
             !n.BonesRelics.IsEmpty || n.RequiredBonesCombination.Count > 0 || n.RequiredBonesAcquisitionOrder.Count > 0 ||
             n.RequireSmallCapsule || n.RequireLargeCapsule || !n.CapsuleContainedRelics.IsEmpty || n.RequireWhetstone ||
             n.RequireWarPaint || n.RequiredFinalCurse.HasValue || n.BannedFinalCurses.Count > 0 ||
@@ -631,7 +666,8 @@ internal static class ProductionExactSearchEvaluator
 
     internal static SearchQueryEvaluation MergeCanonicalGlobalEvidence(
         SearchQueryEvaluation factsEvaluation,
-        SearchQueryEvaluation canonicalEvaluation)
+        SearchQueryEvaluation canonicalEvaluation,
+        bool bindAggregateRoute = true)
     {
         if (factsEvaluation.Disposition != SearchDisposition.Match ||
             canonicalEvaluation.Disposition != SearchDisposition.Match ||
@@ -645,12 +681,20 @@ internal static class ProductionExactSearchEvaluator
         // proven bag facts before C validates its copied Rewards continuation.
         // Never combine two existential routes or report discarded T alternatives.
         var aggregateRoutes=canonicalEvaluation.Evidence.Where(e=>e.Code=="TransformationAggregateMatched" && e.AcquisitionOrder is {Count:2}).ToArray();
-        if(aggregateRoutes.Length>0)
+        SearchRouteRejection[] pending = [];
+        if(bindAggregateRoute && aggregateRoutes.Length>0)
         {
             var compatible=factsEvaluation.Witnesses.Where(w=>aggregateRoutes.Any(e=>
                 w.AcquisitionOrder.SequenceEqual(e.AcquisitionOrder!) &&
                 e.RouteId is { } route && w.OpeningRouteId.EndsWith("."+route["transformation-aggregate:".Length..],StringComparison.Ordinal))).ToArray();
-            if(compatible.Length==0) return SearchQueryEvaluation.NoMatch("TransformationAggregate.NoSharedOpeningRoute");
+            pending = canonicalEvaluation.RouteRejections.Where(r =>
+                factsEvaluation.Witnesses.Any(w => IsSameAggregateOpeningRoute(w, r))).ToArray();
+            if (compatible.Length == 0)
+            {
+                return pending.Length > 0
+                    ? SearchQueryEvaluation.Unknown("TransformationAggregate.SharedOpeningRouteOutputUnknown") with { RouteRejections = pending }
+                    : SearchQueryEvaluation.NoMatch("TransformationAggregate.NoSharedOpeningRoute");
+            }
             factsEvaluation=SearchQueryEvaluation.Match(factsEvaluation.Evidence,
                 compatible.Select(w=>w.OpeningRouteId).Distinct(StringComparer.Ordinal).ToArray(),compatible);
             canonicalEvaluation=SearchQueryEvaluation.Match(canonicalEvaluation.Evidence.Where(e=>
@@ -686,6 +730,10 @@ internal static class ProductionExactSearchEvaluator
             })
             .ToArray();
 
-        return SearchQueryEvaluation.Match(evidence, factsEvaluation.MatchedRouteIds, witnesses);
+        return SearchQueryEvaluation.Match(evidence, factsEvaluation.MatchedRouteIds, witnesses) with { RouteRejections = pending };
     }
+
+    private static bool IsSameAggregateOpeningRoute(SearchMatchWitness witness, SearchRouteRejection rejection) =>
+        witness.AcquisitionOrder.SequenceEqual(rejection.AcquisitionOrder) &&
+        witness.OpeningRouteId.EndsWith("." + rejection.RouteId, StringComparison.Ordinal);
 }

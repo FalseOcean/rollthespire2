@@ -15,6 +15,7 @@ internal sealed class VariantOpeningPlan
     internal VariantOpeningPreparation CheckedPreparation => Preparation;
     internal int UnknownPrefixCount { get; }
     internal bool UnknownJuzuAcquired { get; }
+    internal bool UnknownMonster { get; }
     internal bool CoversVariants => Groups.Length > 0;
     internal string VariantUnavailableReason { get; }
     internal int SelectionDraws => Groups.Count(group => !group.DeterministicFirst);
@@ -23,10 +24,11 @@ internal sealed class VariantOpeningPlan
     // number of primitive draws; this does not impose a global Family order.
     internal bool UnknownFirst => UnknownPrefixCount > 0 && CoversVariants && UnknownPrefixCount < SelectionDraws;
 
-    private VariantOpeningPlan(VariantOpeningPreparation preparation, Group[] groups, int unknown, bool juzu, string unavailable)
+    private VariantOpeningPlan(VariantOpeningPreparation preparation, Group[] groups, int unknown, bool juzu, string unavailable, bool monster)
     {
         Preparation = preparation; Groups = groups; UnknownPrefixCount = unknown;
         UnknownJuzuAcquired = juzu;
+        UnknownMonster = monster;
         VariantUnavailableReason = unavailable;
     }
 
@@ -64,12 +66,12 @@ internal sealed class VariantOpeningPlan
         if (groups.Length == 0 && unknown == 0) return null;
         // Only actually checked variant facts can participate in conditional s.
         var actual = groups.Length > 0 ? preparation : preparation with { Acts = [] };
-        return new(actual, groups, unknown, unknownPlan?.UnknownJuzuAcquired == true, unavailable);
+        return new(actual, groups, unknown, unknownPlan?.UnknownJuzuAcquired == true, unavailable, unknownPlan?.UnknownMonster == true);
     }
 
     internal bool Matches(ulong root)
     {
-        if (UnknownFirst && !InitialRoomsPlan.MatchesUnknown(root, UnknownPrefixCount, UnknownJuzuAcquired)) return false;
+        if (UnknownFirst && !InitialRoomsPlan.MatchesUnknownCategory(root, UnknownPrefixCount, UnknownJuzuAcquired, UnknownMonster)) return false;
         if (CoversVariants)
         {
             var selection = new Beta110FastRng(unchecked(root + SelectionHash));
@@ -80,6 +82,6 @@ internal sealed class VariantOpeningPlan
                 if (!(group.OverrideAllowed ?? group.Allowed[selected])) return false;
             }
         }
-        return UnknownFirst || InitialRoomsPlan.MatchesUnknown(root, UnknownPrefixCount, UnknownJuzuAcquired);
+        return UnknownFirst || InitialRoomsPlan.MatchesUnknownCategory(root, UnknownPrefixCount, UnknownJuzuAcquired, UnknownMonster);
     }
 }

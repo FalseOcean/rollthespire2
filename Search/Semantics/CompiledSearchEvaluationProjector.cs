@@ -37,6 +37,7 @@ public static class CompiledSearchEvaluationProjector
 
         LegacyNeowSemanticConstraints oldNeow = query.LegacyNeow;
         LegacyWorldSemanticConstraints oldWorld = query.LegacyWorld;
+        NeowOfferWhitelist.TryProject(query.NeowOfferWhitelist, authority, oldNeow.NeowRelics, out var offeredRelics);
 
         IReadOnlyList<ModelKey> projectedBonesCombination = oldNeow.RequiredBonesCombination;
         IReadOnlyList<ModelKey> projectedBonesOrder = oldNeow.RequiredBonesAcquisitionOrder;
@@ -97,7 +98,7 @@ public static class CompiledSearchEvaluationProjector
             query.CombatPotionRewards);
 
         var evaluation = new ExactSearchEvaluationProjection(
-            oldNeow.NeowRelics,
+            offeredRelics,
             oldNeow.RequireNeowsBones,
             oldNeow.BonesRelics,
             projectedBonesCombination,
@@ -111,9 +112,11 @@ public static class CompiledSearchEvaluationProjector
             oldNeow.Preset)
         {
             NeowRoute = query.OpeningRoute,
+            NeowOfferWhitelist = query.NeowOfferWhitelist,
             StructuredNeowEffects = query.StructuredOpeningEffects,
             RequiredBonesAcquisitionOrder = projectedBonesOrder,
             EffectOutputConditions = oldNeow.EffectOutputConditions,
+            EncounterQueues = query.EncounterQueues,
             BossFilters = oldWorld.BossFilters,
             BossOrdinalFilters = oldWorld.BossOrdinalFilters,
             VariantBossBranches = query.VariantBossBranches,
@@ -124,6 +127,7 @@ public static class CompiledSearchEvaluationProjector
             AncientOptionConditions = context.EvaluationAssumptions.AncientEligibilityAssumptions,
             TreasureRelics = query.TreasureRelics,
             FirstActUnknownEventPrefixCount = query.FirstActUnknownEventPrefixCount,
+            FirstActUnknownMonsterPrefixCount = query.FirstActUnknownMonsterPrefixCount,
             RelicSequenceConditions = query.RelicSequenceConstraints,
             RelicShopSequenceConditions = query.RelicShopSequenceConditions,
             EventSequenceConditions = query.EventSequenceConstraints,

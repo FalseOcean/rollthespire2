@@ -96,6 +96,14 @@ internal sealed partial class SearchWorkspace
         FlushPreferences();
     }
 
+    internal void SetShowDeadSeedResearch(bool enabled)
+    {
+        if (_preferences.ShowDeadSeedResearch == enabled) return;
+        _preferences.ShowDeadSeedResearch = enabled;
+        MarkPreferencesDirty();
+        FlushPreferences();
+    }
+
     public void SetInRunConsole(bool enabled, double verticalPercent, double scalePercent)
     {
         _preferences.ShowInRunConsole = enabled;

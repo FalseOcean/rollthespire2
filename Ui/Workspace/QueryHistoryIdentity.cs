@@ -16,7 +16,7 @@ internal static class QueryHistoryIdentity
     // and other ordered observations are deliberately left intact.
     private static readonly HashSet<string> Sets = new(StringComparer.Ordinal)
     {
-        "Any", "All", "Ban", "OptionAny", "SeaGlassTargetAny", "EventSequenceConstraints",
+        "Any", "All", "Ban", "AllowedKeys", "OptionAny", "SeaGlassTargetAny", "EventSequenceConstraints",
         "EventResultConditions", "VariantBossBranches", "AncientBranches", "RelicSequenceConstraints",
         "RelicShopSequenceConditions", "MerchantColorlessSequenceConditions", "StandardMaps",
         "BossFilters", "BossOrdinalFilters", "AncientIdentityFilters", "AncientOptionFilters",

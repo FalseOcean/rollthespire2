@@ -1,5 +1,6 @@
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Identity;
+using RolltheSpire2.Core.Relics;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.Semantics;
 
@@ -34,12 +35,18 @@ internal static class TreasureRelicProbability
         string[] rarities = ["Common", "Uncommon", "Rare"];
         var bags = new ModelKey[3][];
         var seen = new HashSet<ModelKey>();
+        bool? allowsCandy = RuntimeProfilePolicies.UsesChildStreamShuffle(generation.RngSemantics)
+            ? StandardOpeningRelicEligibility.AllowsLastingCandy(input.Authority) : true;
         for (int lane = 0; lane < 3; lane++)
         {
             var candidates = generation.SharedRelicBuckets.Where(bucket =>
                 bucket.BucketId.Split(':').Last().Equals(rarities[lane], StringComparison.OrdinalIgnoreCase)).ToArray();
             if (candidates.Length != 1) return Unknown("SharedLaneMissingOrAmbiguous:" + rarities[lane]);
-            bags[lane] = candidates[0].OrderedRelics.Where(key => !acquired.Contains(key) && key.Entry != "MASSIVE_SCROLL").ToArray();
+            var candy = StandardOpeningRelicEligibility.LastingCandy;
+            if (allowsCandy is null && candidates[0].OrderedRelics.Contains(candy) && !acquired.Contains(candy))
+                return Unknown("LastingCandyEligibilityUnavailable");
+            bags[lane] = candidates[0].OrderedRelics.Where(key => !acquired.Contains(key) && key.Entry != "MASSIVE_SCROLL" &&
+                (allowsCandy != false || key != candy)).ToArray();
             if (bags[lane].Any(key => !key.IsValid || !seen.Add(key))) return Unknown("SharedIdentityInvalidOrDuplicated");
         }
         ModelKey[] targets = required.Where(key => key.HasValue).Select(key => key!.Value).Distinct().ToArray();

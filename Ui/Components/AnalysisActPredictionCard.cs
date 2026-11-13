@@ -55,6 +55,7 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
     private string _firstBossLabel = "First Boss";
     private string _secondBossLabel = "Second Boss";
     private RuntimeProfileId _profileId;
+    private RngSemanticProfileId _semantics = RngSemanticProfileId.Modern110;
     private int _playersCount = 1;
     private Beta111EventResultProjection? _eventResults;
     private Func<ModelKey, string>? _getConditionalEventResultText;
@@ -171,9 +172,10 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
     public void SetMapAvailable(bool available) => _mapButton.Disabled = !available;
     internal void BindEventTooltipContext(RuntimeProfileId profileId, int playersCount,
         Beta111EventResultProjection? eventResults, IUiTextProvider uiText,
-        Func<ModelKey, string> getConditionalEventResultText)
+        Func<ModelKey, string> getConditionalEventResultText, RngSemanticProfileId semantics)
     {
         _profileId = profileId;
+        _semantics = semantics;
         _playersCount = Math.Max(1, playersCount);
         _eventResults = eventResults;
         _uiText = uiText;
@@ -360,7 +362,7 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
         if (Beta111EventPresentationKnowledge.ShouldShowRuntimeConditionMarker(
                 _profileId,
                 entry.EventDisplay.ModelKey,
-                _playersCount))
+                _playersCount, _semantics))
         {
             Label conditional = MainPanelTheme.Label(
                 _uiText?.Get(Ui1TextKey.SearchEventConditionalBadge) ?? string.Empty,
@@ -390,7 +392,7 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
         string conditionKey = Beta111EventPresentationKnowledge.RuntimeConditionLocalizationKey(
             _profileId,
             entry.EventDisplay.ModelKey,
-            _playersCount);
+            _playersCount, _semantics);
         if (_uiText is null || string.IsNullOrWhiteSpace(conditionKey))
         {
             _tooltipHost.ShowText(artworkHost, title);

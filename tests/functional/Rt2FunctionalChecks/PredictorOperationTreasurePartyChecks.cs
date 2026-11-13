@@ -21,12 +21,20 @@ internal static class PredictorOperationTreasurePartyChecks
         public int GetPlayerSlotIndex(Player player) => players.ToList().IndexOf(player);
         public Player? GetPlayer(ulong netId) => players.FirstOrDefault(p => p.NetId == netId);
     }
+    private static RunState CreateRun(Player[] players)
+    {
+        var create = typeof(RunState).GetMethods().Single(m => m.Name == "CreateForTest");
+        return (RunState)create.Invoke(null, [players, null, null, GameMode.Standard, false, 0, "000000000013"])!;
+    }
+
     private static void Check(bool condition, string message)
     { if (!condition) throw new InvalidOperationException("OPERATION_TREASURE_PARTY " + message); }
 
     internal static void Run(PredictorRun baseline)
     {
         const BindingFlags members = BindingFlags.Instance | BindingFlags.NonPublic;
+        var nativeConstructor = typeof(TreasureRoomRelicSynchronizer).GetConstructors().Single();
+        bool modern = nativeConstructor.GetParameters()[0].ParameterType == typeof(IRunState);
         var original = baseline.Working.Streams.Single(s => s.Stream == PredictorStream.TreasureRoomRelics);
         var copiedRng = original.Restore();
         bool observedTie = false, observedConsolation = false, observedSkipped = false;
@@ -35,6 +43,7 @@ internal static class PredictorOperationTreasurePartyChecks
             var players = Enumerable.Range(0, count).Select(i => Player.CreateForNewRun<Ironclad>(UnlockState.all, (ulong)(i + 1))).ToArray();
             var models = new RelicModel[] { ModelDb.Relic<Whetstone>(), ModelDb.Relic<WarPaint>(), ModelDb.Relic<OldCoin>(), ModelDb.Relic<Anchor>() }
                 .Take(count).ToList();
+            object owner = modern ? CreateRun(players) : new Party(players);
             var relics = models.Select((r, i) => new PredictorRelic(baseline.Working.NextInstanceId + i,
                 new ModelKey(r.Id.Category, r.Id.Entry), 1)).ToImmutableArray();
             var scenarios = new[]
@@ -60,19 +69,24 @@ internal static class PredictorOperationTreasurePartyChecks
                 foreach (var votes in scenarios)
                 {
                     var scene = new PredictorOperationTreasurePartyScene(players.Select(p => p.NetId).ToImmutableArray(), players[0].NetId,
-                        relics, players.Select((p, i) => new PredictorOperationTreasureVote(p.NetId, true, votes[i])).ToImmutableArray(), cursor, true);
+                        relics, players.Select((p, i) => new PredictorOperationTreasureVote(p.NetId, true, votes[i])).ToImmutableArray(), cursor, true)
+                    { SemanticProfile = baseline.Context.VersionResolution.SemanticProfileId };
                     var predicted = PredictorOperationTreasureParty.Query(scene, votes[0]);
                     var nativeRng = new Rng(new SerializableRng { state0 = cursor.S0, state1 = cursor.S1, state2 = cursor.S2,
                         state3 = cursor.S3, counter = cursor.Calls });
                     // AwardRelics only reads the supplied player collection,
                     // relics/votes and RNG. No native run or lifecycle is used.
-                    var native = new TreasureRoomRelicSynchronizer(new Party(players), players[0].NetId, null!, null!, nativeRng);
-                    typeof(TreasureRoomRelicSynchronizer).GetField("_currentRelics", members)!.SetValue(native, models);
+                    var native = (TreasureRoomRelicSynchronizer)nativeConstructor.Invoke([owner, players[0].NetId, null, null, nativeRng]);
+                    typeof(TreasureRoomRelicSynchronizer).GetField("_currentRelics", members)!.SetValue(native, models.ToList());
                     var nativeVotes = (List<TreasureRoomRelicSynchronizer.PlayerVote>)typeof(TreasureRoomRelicSynchronizer)
                         .GetField("_votes", members)!.GetValue(native)!;
                     nativeVotes.AddRange(votes.Select(v => new TreasureRoomRelicSynchronizer.PlayerVote { index = v, voteReceived = true }));
                     List<RelicPickingResult>? results = null;
-                    native.RelicsAwarded += value => results = value;
+                    var signal = typeof(TreasureRoomRelicSynchronizer).GetEvent(nameof(TreasureRoomRelicSynchronizer.RelicsAwarded))!;
+                    Delegate callback = modern
+                        ? (Action<List<RelicPickingResult>, bool>)((value, _) => results = value)
+                        : (Action<List<RelicPickingResult>>)(value => results = value);
+                    signal.AddEventHandler(native, callback);
                     typeof(TreasureRoomRelicSynchronizer).GetMethod("AwardRelics", members)!.Invoke(native, null);
                     Check(predicted.Status == PredictorOperationTreasureAllocationStatus.Allocated && results != null &&
                         predicted.Awards.Length == results.Count && predicted.Awards.Select(a => a.RelicIndex).Distinct().Count() == relics.Length,
@@ -82,7 +96,8 @@ internal static class PredictorOperationTreasurePartyChecks
                         var expected = results[i]; var actual = predicted.Awards[i];
                         Check(actual.Kind.ToString() == expected.type.ToString() && actual.PlayerId == expected.player?.NetId &&
                             actual.Relic.Key == new ModelKey(expected.relic.Id.Category, expected.relic.Id.Entry) &&
-                            (models.Distinct().Count() != models.Count || actual.RelicIndex == models.IndexOf(expected.relic)), "ordered native award differs");
+                            (modern ? actual.RelicIndex == (int)expected.GetType().GetField("relicIndex")!.GetValue(expected)! :
+                                models.Distinct().Count() != models.Count || actual.RelicIndex == models.IndexOf(expected.relic)), $"ordered native award differs modern={modern} players={count} offset={offset} votes={string.Join(",", votes)} index={i} predicted={actual.Kind}/{actual.PlayerId}/{actual.Relic.Key}/{actual.RelicIndex} expected={expected.type}/{expected.player?.NetId}/{expected.relic.Id}");
                         if (expected.fight is { } fight)
                         {
                             Check(actual.Fight != null && actual.Fight.Players.SequenceEqual(fight.playersInvolved.Select(p => p.NetId)) &&

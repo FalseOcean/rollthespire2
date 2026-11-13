@@ -1,3 +1,4 @@
+using RolltheSpire2.Compatibility;
 using System.Collections;
 using System.Collections.Immutable;
 using Godot;
@@ -22,7 +23,7 @@ namespace RolltheSpire2.Infrastructure.Snapshots;
 
 internal static partial class PredictorOperationCapture
 {
-    private static PredictorOperationScene CaptureScene(RunState run, Player player, PredictorCatalog catalog, Node? root)
+    private static PredictorOperationScene CaptureScene(RunState run, Player player, PredictorCatalog catalog, Node? root, RngSemanticProfileId semanticProfile)
     {
         var inventoryNode = Nodes<NMerchantInventory>(root).LastOrDefault(n => n.Inventory?.Player == player);
         if (inventoryNode?.Inventory is { } inventory) return CaptureLiveShop(run, inventory, catalog, inventoryNode.IsOpen, root);
@@ -40,9 +41,14 @@ internal static partial class PredictorOperationCapture
                 ? PredictorOperationAncientCapture.Capture(run, ancient, catalog, root)
                 : PredictorOperationEventCapture.Capture(run, ev.LocalMutableEvent, catalog, root);
         }
-        if (run.CurrentRoom is MerchantRoom merchant) return CaptureLiveShop(run, merchant.GetLocalInventory(), catalog, false, root);
+        if (run.CurrentRoom is MerchantRoom merchant)
+        {
+            var localInventory = MerchantRuntimeBinding.LocalInventory(run, merchant)
+                ?? throw new InvalidOperationException("OperationShopLocalInventoryUnavailable");
+            return CaptureLiveShop(run, localInventory, catalog, false, root);
+        }
         if (run.CurrentRoom is RestSiteRoom rest) return CaptureRest(run, player, rest, catalog, root);
-        if (run.CurrentRoom is TreasureRoom) return CaptureTreasure(run, player, catalog, root);
+        if (run.CurrentRoom is TreasureRoom) return CaptureTreasure(run, player, catalog, root, semanticProfile);
         if (CaptureRewards(run, player, catalog, root) is { } rewards)
         {
             var origin = ObservedObtainOrigin(player, root);
@@ -209,7 +215,11 @@ internal static partial class PredictorOperationCapture
             PredictorOperationShopRefill? refill = null;
             if (native is MerchantCardEntry)
             {
-                var pool = Read<IEnumerable<CardModel>>(native, "_cardPool").Select((candidate, i) =>
+                var pool = Read<IEnumerable<CardModel>>(native, "_cardPool")
+                    .Where(candidate => inventory.Player.RunState.Players.Count > 1
+                        ? candidate.MultiplayerConstraint != CardMultiplayerConstraint.SingleplayerOnly
+                        : candidate.MultiplayerConstraint != CardMultiplayerConstraint.MultiplayerOnly)
+                    .Select((candidate, i) =>
                     new NeowEffectCardSnapshot(Key(candidate).Serialized, Key(candidate), i,
                         Enum.TryParse<EffectCardRarity>(candidate.Rarity.ToString(), out var rarity) ? rarity : EffectCardRarity.Special,
                         Enum.TryParse<EffectCardType>(candidate.Type.ToString(), out var type) ? type : EffectCardType.Other,

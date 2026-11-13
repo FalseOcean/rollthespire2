@@ -605,14 +605,14 @@ internal static class NeowOperationPreviewChecks
             "potion display should include available deeper results within the total card-group budget");
 
         var actualBrew = PotionOperationPreview.Build(Observe(snapshot.State.PotionSlots));
-        var actualExpected = PredictorSettlementEffects.UseEntropicBrew(snapshot.State, snapshot.Context.PotionPool, 0);
+        var actualExpected = PredictorSettlementEffects.UseEntropicBrew(snapshot.Context, snapshot.State, 0);
         Check(Rows(actualBrew).Single().Models.SequenceEqual(actualExpected.Generated.Select(p => p.Key)) &&
             Rows(actualBrew).Single().Label == "EntropicCurrentSlots:2:2",
             "live Entropic preview cleared actual occupied slots or diverged from settlement");
         var twoBrews = Observe([new(id, brew), new(id + 1, brew), null]);
         var brewSequence = PotionOperationPreview.Build(twoBrews);
-        var firstBrew = PredictorSettlementEffects.UseEntropicBrew(snapshot.State with { PotionSlots = twoBrews.Inventory }, context.PotionPool, 0);
-        var secondBrew = PredictorSettlementEffects.UseEntropicBrew(firstBrew.State, context.PotionPool, 1);
+        var firstBrew = PredictorSettlementEffects.UseEntropicBrew(context, snapshot.State with { PotionSlots = twoBrews.Inventory }, 0);
+        var secondBrew = PredictorSettlementEffects.UseEntropicBrew(context, firstBrew.State, 1);
         var brewRows = Rows(brewSequence).ToArray();
         Check(brewRows.Length == 2 && brewRows[0].Label == "EntropicUseStep:1:2:2" && brewRows[1].Label == "EntropicUseStep:2:1:1" &&
             brewRows[0].Models.SequenceEqual(firstBrew.Generated.Select(p => p.Key)) &&

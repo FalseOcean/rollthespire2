@@ -152,6 +152,8 @@ internal sealed partial class PredictorRun
         {
             if (checkpoint?.State == null) throw new InvalidDataException("PredictorCheckpointInvalid");
             checkpoint.State.Validate();
+            if (checkpoint.State.Streams.Any(s => s.Stream == PredictorStream.NonCombatGeneration) != context.UsesNonCombatGeneration)
+                throw new InvalidDataException("PredictorNonCombatGenerationStreamMismatch");
             if (checkpoint.CompletedNode is { } node && (node.NodeId != checkpoint.State.Position.NodeId ||
                 node.Inputs.IsDefault || node.Rewards.IsDefault ||
                 node.Inputs.Any(i => i == null || string.IsNullOrEmpty(i.Action) || i.Targets.IsDefault || i.GeneratedPotions.IsDefault ||
@@ -568,7 +570,7 @@ internal sealed partial class PredictorRun
             if (potion.Key.Entry != "ENTROPIC_BREW") return PredictorInputResult.NotAllowed;
             // Separate from Discard: remove-before-use, then actual source generation.
             // Procure/Use hooks with future effects will be added with their relic handlers.
-            var used = PredictorSettlementEffects.UseEntropicBrew(Working, Context.PotionPool, use.Slot);
+            var used = PredictorSettlementEffects.UseEntropicBrew(Context, Working, use.Slot);
             Working = used.State;
             Accept(new("UseEntropicBrew", use.PotionId, used.Generated.Select(p => p.Id).ToImmutableArray(), null, null)
             { GeneratedPotions = used.Generated });

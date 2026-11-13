@@ -23,7 +23,7 @@ internal static class PredictorCombatRelicUpgrade
         if (count % 3 != 0) return (state, []);
         var candidates = state.Deck.Where(id => state.Card(id).UpgradeLevel < state.Card(id).MaxUpgradeLevel).ToArray();
         if (candidates.Length == 0) return (state, []);
-        var draw = state.Draw(PredictorStream.Niche, 0, candidates.Length);
+        var draw = state.Draw(context.NonCombatStream(PredictorStream.Niche), 0, candidates.Length);
         state = draw.State;
         long selectedId = candidates[draw.Value];
         var selected = state.Card(selectedId);

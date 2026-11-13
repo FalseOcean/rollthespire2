@@ -65,9 +65,9 @@ bool local_operator(uint source, inout RouteRngState state) {
         if (rewards) return predicate && (flags & 4u) != 0u
             ? execute_kaleidoscope_ordered_route(t0,t1,state)
             : execute_kaleidoscope_route(count,t0,t1,predicate,state);
-        if (niche) { shuffled_pool_order(plan_value(9u),state.niche); shuffled_pool_order(plan_value(9u),state.niche); }
+        if (niche) { shuffled_opening_pool_order(plan_value(9u),state); shuffled_opening_pool_order(plan_value(9u),state); }
     }
-    if (source == 19u && niche) return execute_new_leaf_route(t0,predicate,state);
+    if (source == 19u && (uses_child_shuffle() ? (streams & 4u) != 0u : niche)) return execute_new_leaf_route(t0,predicate,state);
     if (source == 4u && (streams & 4u) != 0u) return execute_leafy_route(count,t0,t1,predicate,state);
     if (source == 20u && (streams & 8u) != 0u) return execute_phial_holster_route(count,t0,t1,predicate,state);
     if (!rewards) return true;
@@ -106,14 +106,20 @@ bool route_at_arrival(uint64_t root, RngState rewards, uint a, uint b, uint adva
 #if N_AUTHORED_UPGRADES
     for(uint i=0u;i<advance_a;i++) next_u64(state.niche);
 #endif
-    if (!local_operator(b,state)) return false;
+    bool child_shuffle = uses_child_shuffle();
+    uint neutral_capsules = plan_value(57u);
+    bool non_combat_unknown = child_shuffle && (a==3u || a==28u) && (neutral_capsules & (1u << a)) == 0u;
+    if (!(non_combat_unknown && (b==14u || b==20u)) && !local_operator(b,state)) return false;
 #if N_AUTHORED_UPGRADES
     for(uint i=0u;i<advance_b;i++) next_u64(state.niche);
 #endif
     if (plan_value(83u) != 0u) {
+        if (non_combat_unknown ||
+            (child_shuffle && (b==3u || b==28u) && (neutral_capsules & (1u << b)) == 0u)) return true;
         uint offset = n1c_meta(12u), count = n1c_meta(13u);
         if (count == 0u) return false;
-        return final_curse_matches(other_card_ids.ids[offset+next_int(state.niche,count)]);
+        uint chosen = uses_child_shuffle() ? next_int(state.non_combat,count) : next_int(state.niche,count);
+        return final_curse_matches(other_card_ids.ids[offset+chosen]);
     }
     return true;
 }
@@ -134,16 +140,22 @@ bool route(uint64_t root, RngState rewards, uint a, uint b) {
 }
 
 #endif
-bool pair_identity(inout RngState rewards, out uint a, out uint b) {
+bool pair_identity(uint64_t root, inout RngState rewards, out uint a, out uint b) {
     bool identity = true;
     a = plan_value(81u); b = 255u;
     bool has_bones = (plan_value(56u) & 2u) != 0u;
     if (has_bones) {
+        bool child_shuffle = uses_child_shuffle();
+        RngState shuffle_rng = rewards;
+        if (child_shuffle) {
+            RngState parent = non_combat_rng(root);
+            shuffle_rng = rng_initialize(next_u64(parent));
+        }
         uint length=plan_value(8u);
         if (plan_value(67u) != 0u) {
             uint p=plan_value(25u), q=plan_value(26u);
             for (uint count=length;count>1u;count--) {
-                uint j=next_int(rewards,count);
+                uint j=next_int(shuffle_rng,count);
                 swap_tracked_position(p,j,count-1u); swap_tracked_position(q,j,count-1u);
             }
             if (p>=2u || q>=2u) return false;
@@ -152,10 +164,11 @@ bool pair_identity(inout RngState rewards, out uint a, out uint b) {
             uint pool[64];
             for (uint i=0u;i<length;i++) pool[i]=bones.values[i];
             for (uint count=length;count>1u;count--) {
-                uint j=next_int(rewards,count); uint temp=pool[j]; pool[j]=pool[count-1u]; pool[count-1u]=temp;
+                uint j=next_int(shuffle_rng,count); uint temp=pool[j]; pool[j]=pool[count-1u]; pool[count-1u]=temp;
             }
             a=pool[0]; b=pool[1];
         }
+        if (!child_shuffle) rewards = shuffle_rng;
         uint64_t pair=relic_bit(a)|relic_bit(b), any=plan_u64(48u), all=plan_u64(50u), ban=plan_u64(52u);
         identity = identity && (any==uint64_t(0u)||(pair&any)!=uint64_t(0u)) && (pair&all)==all && (pair&ban)==uint64_t(0u);
         if (plan_value(12u)!=255u && plan_value(13u)!=255u) {
@@ -317,7 +330,7 @@ bool matches(uint64_t root) {
 #endif
     RngState rewards = rng_initialize(root + uint64_t(plan_value(5u)) + plan_u64(33u));
     uint a,b;
-    return pair_identity(rewards,a,b) && local_matches(root,rewards,a,b);
+    return pair_identity(root,rewards,a,b) && local_matches(root,rewards,a,b);
 }
 void append_ordinal(uint ordinal) {
 #if BONES_K_MODE == 1
@@ -339,7 +352,7 @@ void main() {
         uint64_t root=make_u64(curse_survivors.values[src+1u],curse_survivors.values[src+2u]);
         RngState rewards=rng_initialize(root+uint64_t(plan_value(5u))+plan_u64(33u));
         uint a,b;
-        if (!pair_identity(rewards,a,b)) continue;
+        if (!pair_identity(root,rewards,a,b)) continue;
         uint slot=atomicAdd(header.values[7u],1u);
         if(slot>=batch.values[7u]) { atomicExchange(header.values[3u],1u); continue; }
         uint dst=slot*12u;

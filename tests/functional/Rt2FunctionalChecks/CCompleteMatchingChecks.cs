@@ -30,6 +30,11 @@ internal static class CCompleteMatchingChecks
         var neutral = new CombatPotionRewardSlotSearchCondition(CombatPotionSlotRequirement.Neutral, null);
         SearchQuery Cards(int h, CombatRewardSequenceOrderMode mode, params ModelKey?[] slots) =>
             SearchQuery.Empty with { CombatCardRewards = new(h, mode, slots) };
+        var identities = pool.Select(c => c.CardKey).Distinct(ModelKeyComparer.Instance).ToArray();
+        ModelKey outside = new("CARD", "STRIKE_DEFECT");
+        context = context with { Authority = context.Authority.WithAvailableCardIdentities([..identities, outside]) };
+        SearchQuery Collection(int h, CombatCardCollectionMode mode, params ModelKey[] members) => SearchQuery.Empty with {
+            CombatCardExclusion = new(h, members) { Mode = mode } };
         var queries = new (string Name, SearchQuery Query)[]
         {
             ("Ordered", Cards(3, CombatRewardSequenceOrderMode.Ordered, a, null, b)),
@@ -43,7 +48,16 @@ internal static class CCompleteMatchingChecks
             ("MixedPotionIdentity", Cards(3, CombatRewardSequenceOrderMode.Unordered, a, b, null) with
                 { CombatPotionRewards = new(2, CombatRewardSequenceOrderMode.Unordered,
                     [new(CombatPotionSlotRequirement.DropAny, null), new(CombatPotionSlotRequirement.DropSpecific, potion)]) }),
-            ("SixRepeated", Cards(6, CombatRewardSequenceOrderMode.Unordered, a, a, a, a, a, a))
+            ("SixRepeated", Cards(6, CombatRewardSequenceOrderMode.Unordered, a, a, a, a, a, a)),
+            ("CollectionBlack3", Collection(3, CombatCardCollectionMode.Blacklist, a)),
+            ("CollectionBlackOutside6", Collection(6, CombatCardCollectionMode.Blacklist, outside)),
+            ("CollectionWhite3", Collection(3, CombatCardCollectionMode.Whitelist, identities.Where(k => k != a).ToArray())),
+            ("CollectionWhiteAll6", Collection(6, CombatCardCollectionMode.Whitelist, identities)),
+            ("CollectionWhite6", Collection(6, CombatCardCollectionMode.Whitelist, identities.Where(k => k != b).ToArray())),
+            ("CollectionTargetConflict", Cards(1, CombatRewardSequenceOrderMode.Ordered, a) with {
+                CombatCardExclusion = new(1, identities.Where(k => k != a).ToArray()) { Mode = CombatCardCollectionMode.Whitelist } }),
+            ("CollectionDifferentWindows", Cards(6, CombatRewardSequenceOrderMode.Ordered, null, null, null, null, null, a) with {
+                CombatCardExclusion = new(1, identities.Where(k => k != a).ToArray()) { Mode = CombatCardCollectionMode.Whitelist } })
         };
         return queries.Select(item => new MatchingCase(item.Name, Request(item.Query, context))).ToArray();
     }
@@ -80,6 +94,7 @@ internal static class CCompleteMatchingChecks
             }
         }
         var exports = new List<object>();
+        var collectionExports = new List<(string Name, CombatRewardGpuPlan Plan, uint[] Expected)>();
         foreach (int slot in new[] { -1, 0, 3 })
         {
             var context = Fixture(slot);
@@ -102,7 +117,14 @@ internal static class CCompleteMatchingChecks
                 var replay = new CombatRewardReplay(request.Model);
                 var gpu = CombatRewardGpuPlan.TryCreate(request.Model, replay, out string issue) ?? throw new Exception(issue);
                 var q = request.Model.CompiledSearch.NormalizedQuery;
-                Check(replay.Plan.MaximumBattleOrdinal == Math.Max(q.CombatCardRewards?.Count ?? 0, q.CombatPotionRewards?.Count ?? 0), "Typed horizon " + fixture.Name);
+                Check(replay.Plan.MaximumBattleOrdinal == Math.Max(q.CombatCardExclusion?.BattleCount ?? 0,
+                    Math.Max(q.CombatCardRewards?.Count ?? 0, q.CombatPotionRewards?.Count ?? 0)), "Typed horizon " + fixture.Name);
+                if (q.CombatCardExclusion is { } collection)
+                {
+                    Check(replay.Plan.CollectionFilterCovered && replay.Plan.Predicates.Count(p => !p.IsAnyBattle) >= collection.BattleCount,
+                        "collection universally checks every fixed battle " + fixture.Name);
+                    Check(!replay.CanUsePotionPrefix && gpu.ChecksCardCollection, "collection cannot bypass card observations " + fixture.Name);
+                }
                 if (fixture.Name != "MixedPotionIdentity") Check(gpu.UsesHotLoop, "Complete assignment retains hot loop " + fixture.Name);
                 else Check(!gpu.UsesHotLoop, "Previously unvalidated unordered potion identity stays generic");
                 Check(gpu.ShaderSource().Contains("#define RT2_C_ASSIGNMENT " + (replay.Plan.HasDistinctBattleAssignments ? "1" : "0"), StringComparison.Ordinal),
@@ -124,22 +146,23 @@ internal static class CCompleteMatchingChecks
                     if (expected) expectedOrdinals.Add(ordinal);
                     if (old) oldOrdinals.Add(ordinal);
                 }
-                if (slot == -1)
+                if (slot == -1 && q.CombatCardRewards is not null && q.CombatCardExclusion is null)
                 {
                     var banned = q with { CombatCardExclusion = new(6, [q.CombatCardRewards!.Slots.First(k => k.HasValue)!.Value]) };
                     var withExclusion = new CombatRewardReplay((Request(banned, context)).Model);
-                    Check(withExclusion.Plan.Fingerprint == replay.Plan.Fingerprint, "Exact-only exclusion does not alter optimized C");
-                    Check(withExclusion.Plan.MaximumBattleOrdinal == replay.Plan.MaximumBattleOrdinal, "Exclusion does not extend generation");
+                    Check(withExclusion.Plan.Fingerprint != replay.Plan.Fingerprint && withExclusion.Plan.CollectionFilterCovered,
+                        "collection participates in optimized C");
+                    Check(withExclusion.Plan.MaximumBattleOrdinal == 6, "collection extends its own generation window");
                 }
                 exports.Add(new { name = $"P{slot}.{fixture.Name}", query = q, expected = expectedOrdinals, oldExistentialExpected = oldOrdinals, beforeExpected = slot < 0 ? oldOrdinals : expectedOrdinals,
                     gpu.Meta, gpu.Pools, gpu.Ids, gpu.Predicates, gpu.Targets, gpu.HotLoop, routes = gpu.Routes,
                     shader = gpu.ShaderSource(), integerShader = (gpu with { NumericalVariant = GpuNumericalVariant.IntegerRne }).ShaderSource(),
                     forcedGenericShader = gpu.ShaderSource(forceGeneric: true) });
+                if (q.CombatCardExclusion is not null) collectionExports.Add(($"P{slot}.{fixture.Name}", gpu, expectedOrdinals.ToArray()));
             }
-            var onlyNegative = Request(SearchQuery.Empty with { CombatCardExclusion = new(6,
-                [context.Authority.EffectAuthority!.CharacterRewardPool![0].CardKey]) }, context);
-            Check(!(slot < 0 ? CombatRewardFamily.TryCreate(onlyNegative.Model,FilterExecutionPreferences.From(onlyNegative.RunOptions), out _) : CombatRewardFamily.TryCreateParty(onlyNegative.Model,FilterExecutionPreferences.From(onlyNegative.RunOptions), 0, 0, out _)),
-                "Negative-only remains Exact-only");
+            var onlyNegative = Cases(context).Single(c => c.Name == "CollectionBlack3").Request;
+            Check(slot < 0 ? CombatRewardFamily.TryCreate(onlyNegative.Model,FilterExecutionPreferences.From(onlyNegative.RunOptions), out _) : CombatRewardFamily.TryCreateParty(onlyNegative.Model,FilterExecutionPreferences.From(onlyNegative.RunOptions), 0, 0, out _),
+                "Collection-only has a real C filter");
         }
         Check(strictWitnesses > 0, "Fixtures include real histories rejected by complete matching but accepted by old existential rows");
         if (exportGpu)
@@ -147,10 +170,43 @@ internal static class CCompleteMatchingChecks
             string directory = Path.GetFullPath(".validation/c-complete-matching");
             Directory.CreateDirectory(directory);
             File.WriteAllText(Path.Combine(directory, "vectors.json"), System.Text.Json.JsonSerializer.Serialize(exports));
+            ExportCollectionGpu(directory, collectionExports, count);
             Console.WriteLine("C_COMPLETE_MATCHING_VECTORS " + directory);
         }
         Console.WriteLine($"C_COMPLETE_MATCHING_PASS checks={checks};strictWitnesses={strictWitnesses};cases={exports.Count};coreOracle=true;nativeRun=false");
         return 0;
+    }
+
+    private static void ExportCollectionGpu(string directory,
+        IReadOnlyList<(string Name, CombatRewardGpuPlan Plan, uint[] Expected)> source, int count)
+    {
+        var fixtures = new List<object>();
+        var shaders = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var fixture in source)
+        foreach (bool generic in fixture.Plan.UsesHotLoop ? new[] { false, true } : new[] { false })
+        foreach (var numerical in new[] { GpuNumericalVariant.NativeFloat64, GpuNumericalVariant.IntegerRne })
+        {
+            var plan = fixture.Plan with { NumericalVariant = numerical };
+            string text = plan.ShaderSource(generic);
+            if (!shaders.TryGetValue(text, out string? shader))
+            {
+                shader = "collection" + shaders.Count + ".glsl";
+                shaders.Add(text, shader);
+                File.WriteAllText(Path.Combine(directory, shader), text);
+            }
+            foreach (bool compact in new[] { false, true })
+            {
+                uint[] ordinals = Enumerable.Range(0, count).Where(i => !compact || i % 3 == 0).Select(i => (uint)i).ToArray();
+                var expected = fixture.Expected.Where(i => !compact || i % 3 == 0).ToArray();
+                fixtures.Add(new { name = fixture.Name + "." + numerical + (generic ? ".Generic" : ".Selected"), shader,
+                    batchMeta = new[] { 0u, 0u, (uint)count, (uint)ordinals.Length, compact ? 1u : 0u, (uint)count, 0u, (uint)plan.Routes },
+                    plan.Meta, plan.Pools, plan.Ids, plan.Predicates, plan.Targets, ordinals, expected });
+            }
+        }
+        File.WriteAllText(Path.Combine(directory, "fixtures.json"), System.Text.Json.JsonSerializer.Serialize(fixtures));
+        File.WriteAllText(Path.Combine(directory, "project.godot"), "config_version=5\n[application]\nconfig/name=\"C collection parity\"\n[rendering]\nrenderer/rendering_method=\"mobile\"\n");
+        File.Copy("tests/functional/Rt2FunctionalChecks/CombatRewardGpuSanity.gd", Path.Combine(directory, "check.gd"), true);
+        Console.WriteLine($"C_COLLECTION_GPU fixtures={fixtures.Count};shaders={shaders.Count};directory={directory};nativeRun=false");
     }
 
     private static SearchContext Fixture(int slot)
@@ -164,6 +220,7 @@ internal static class CCompleteMatchingChecks
             Beta109Generation = world.Beta109Generation! with { Profile = RuntimeProfileId.Beta111,
                 IsMultiplayer = players > 1, PlayerCount = players, PersonalPlayerSlot = owner,
                 GameMode = players > 1 ? WorldGameMode.Multiplayer : WorldGameMode.Singleplayer } });
+        authority = authority.WithAvailableCardIdentities(authority.EffectAuthority!.CharacterRewardPool!.Select(c => c.CardKey).Distinct().ToArray());
         return new(RuntimeProfileId.Beta111, authority.Character.CharacterKey, 10, authority,
             new("0.111.0", "0.111.0", "beta", "C-complete-fixture", true, ""), SearchEvaluationAssumptions.BroadDefault);
     }
@@ -186,6 +243,9 @@ internal static class CCompleteMatchingChecks
 
     internal static bool ExactPositiveOracle(SearchQuery query, IReadOnlyList<NormalCombatRewardBattleResult> battles)
     {
+        if (query.CombatCardExclusion is { IsEmpty: false } collection && battles.Take(collection.BattleCount)
+            .SelectMany(CardKeys).Any(key => collection.Mode == CombatCardCollectionMode.Whitelist
+                ? !collection.CardKeys.Contains(key, ModelKeyComparer.Instance) : collection.CardKeys.Contains(key, ModelKeyComparer.Instance))) return false;
         if (query.CombatCardRewards is { IsEmpty: false } cards && !Match(cards.Slots.Where(k => k.HasValue).Select(k => k!.Value).ToArray(),
             cards.OrderMode, cards.Count, (key, battle) => CardKeys(battle).Contains(key),
             cards.Slots.Select((key, i) => !key.HasValue || CardKeys(battles[i]).Contains(key.Value)).All(x => x), battles)) return false;

@@ -8,7 +8,8 @@ public enum KnownVanillaCharacterKind
     Silent,
     Defect,
     Regent,
-    Necrobinder
+    Necrobinder,
+    Fool
 }
 
 public readonly record struct CharacterIdentity(
@@ -43,6 +44,10 @@ public readonly record struct CharacterIdentity(
         else if (key == BaseGameModelKeys.Characters.Necrobinder)
         {
             kind = KnownVanillaCharacterKind.Necrobinder;
+        }
+        else if (key == BaseGameModelKeys.Characters.Fool)
+        {
+            kind = KnownVanillaCharacterKind.Fool;
         }
         return new CharacterIdentity(key, kind);
     }

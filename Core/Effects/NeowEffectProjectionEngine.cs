@@ -14,6 +14,8 @@ internal sealed partial class NeowEffectProjectionEngine
     private readonly IRuntimeProfile _profile;
     private readonly RuntimeProfileId _profileId;
     private readonly CardBaseOddsPolicy _baseOddsPolicy;
+    private readonly RngSemanticProfileId _rngSemantics;
+    private bool UsesNonCombatGeneration => _rngSemantics == RngSemanticProfileId.Modern113;
     private readonly string _evidencePrefix;
     private readonly ulong? _trustedRootHash;
     private readonly RuntimeContextAuthoritySnapshot _analysisAuthority;
@@ -60,6 +62,7 @@ internal sealed partial class NeowEffectProjectionEngine
         _profile = profile;
         _profileId = profile.ProfileId;
         _baseOddsPolicy = RuntimeProfilePolicies.BaseOddsPolicy(_profileId);
+        _rngSemantics = analysisAuthority.VersionResolution.SemanticProfileId;
         _evidencePrefix = evidencePrefix;
         _trustedRootHash = rootHash;
         _analysisAuthority = analysisAuthority;
@@ -102,6 +105,8 @@ internal sealed partial class NeowEffectProjectionEngine
         NeowEffectWorkingState? state = null;
         if (effectAuthority is not null && _trustedRootHash.HasValue)
         {
+            if (openingRng is not null && UsesNonCombatGeneration != (openingRng.NonCombatGeneration is not null))
+                throw new ArgumentException("Opening RNG context uses a different game version.", nameof(openingRng));
             // A concrete-root Predictor call must not need Search to have populated
             // the captured bag for that root. Rebuild only for bag-consuming entries;
             // other Neow domains retain their independent authority requirements.
@@ -138,7 +143,7 @@ internal sealed partial class NeowEffectProjectionEngine
                 openingRng ?? NeowEffectRngContext.CreateFromRootHash(
                     _profile,
                     _trustedRootHash.Value,
-                    _analysisAuthority.PlayerSlotIndex));
+                    _analysisAuthority.PlayerSlotIndex, _rngSemantics));
         }
 
         NeowEffectProjection projection = ProjectInternal(relicKey, state, recursionDepth: 0);
@@ -579,7 +584,7 @@ internal sealed partial class NeowEffectProjectionEngine
             List<CharacterCardPoolSnapshot> pools = state.Authority.OtherCharacterPools
                 .OrderBy(pool => pool.PoolOrder)
                 .ToList();
-            state.Rng.Niche.UnstableShuffle(pools);
+            (state.Rng.NonCombatGeneration ?? state.Rng.Niche).UnstableShuffle(pools, _rngSemantics);
             var effects = new List<PredictedEffect>();
             int itemOrder = 0;
             foreach (CharacterCardPoolSnapshot pool in pools.Take(3))
@@ -710,8 +715,12 @@ internal sealed partial class NeowEffectProjectionEngine
                 PredictionWarningCode.EffectSnapshotIncomplete,
                 evidence) with
             {
-                // CombatPotionGeneration is independent from the Niche curse stream.
-                DependencyImpact = EffectDependencyImpact.None(evidence)
+                DependencyImpact = EffectDependencyImpact.None(evidence) with
+                {
+                    NonCombatGenerationRng = UsesNonCombatGeneration
+                        ? BonesContinuationDomainState.Partial(PredictionWarningCode.EffectSnapshotIncomplete, evidence)
+                        : null
+                }
             };
         }
 
@@ -728,7 +737,7 @@ internal sealed partial class NeowEffectProjectionEngine
         for (int i = 0; i < 2; i++)
         {
             NeowEffectPotionSnapshot? potion = NeowRewardGenerator.CreatePotion(
-                state.Rng.CombatPotionGeneration, state.Authority.PotionPool!, excluded);
+                state.Rng.NonCombatGeneration ?? state.Rng.CombatPotionGeneration, state.Authority.PotionPool!, excluded);
             if (potion is null)
             {
                 // A selected rarity bucket with no eligible potion has no game-source
@@ -949,9 +958,7 @@ internal sealed partial class NeowEffectProjectionEngine
             return Unknown(relicKey, "normalized-basic-strike-transform-pool-empty");
         }
 
-        Xoshiro256StarStar rng = RuntimeProfilePolicies.IsModernCore(_profileId)
-            ? state.Rng.Niche
-            : state.Rng.Transformations;
+        Xoshiro256StarStar rng = NewLeafRng(state.Rng);
         NeowEffectCardSnapshot replacement = canonicalCandidates[rng.NextInt(canonicalCandidates.Length)];
         if (!state.Deck.TryTransform(canonicalTarget.InstanceId, replacement.CardKey))
         {
@@ -1052,7 +1059,8 @@ internal sealed partial class NeowEffectProjectionEngine
         int count,
         bool includeFixedCards,
         int recursionDepth,
-        bool executeNestedAutomaticEffects = true)
+        bool executeNestedAutomaticEffects = true,
+        bool nonCombatStateKnown = true)
     {
         var groups = new List<PredictedEffectGroup>();
         if (state?.Authority.HasExactRelicBag != true || state.RelicBag is null)
@@ -1091,7 +1099,11 @@ internal sealed partial class NeowEffectProjectionEngine
                 {
                     DependencyImpact = EffectDependencyImpact.ConservativeUnknownImmediateHook(
                         PredictionWarningCode.EffectSnapshotIncomplete,
-                        evidence)
+                        evidence) with
+                    {
+                        NonCombatGenerationRng = UsesNonCombatGeneration
+                            ? BonesContinuationDomainState.Unknown(PredictionWarningCode.EffectSnapshotIncomplete, evidence) : null
+                    }
                 };
             }
             return Unknown(relicKey, "ordered-relic-bag-required");
@@ -1103,19 +1115,24 @@ internal sealed partial class NeowEffectProjectionEngine
         ProductRelevantProjectionStatus nestedProductStatus = ProductRelevantProjectionStatus.Evaluated;
         EffectDependencyImpact capsuleImpact = EffectDependencyImpact.None(
             Evidence(relicKey, "capsule-dependency-domains-initial"));
+        Func<NeowEffectRelicSnapshot, bool?>? eligibility = UsesNonCombatGeneration ? IsStandardOpeningRelicEligible : null;
         for (int i = 0; i < count; i++)
         {
             EffectRelicRarity rarity = NeowRewardGenerator.RollRelicRarity(state.Rng.Rewards);
-            NeowEffectRelicSnapshot? pulled = NeowRewardGenerator.PullRelicWithFallback(state.RelicBag, rarity);
+            NeowEffectRelicSnapshot? pulled = NeowRewardGenerator.PullRelicWithFallback(state.RelicBag, rarity, eligibility);
             if (pulled is null)
             {
-                EvidenceCode evidence = Evidence(relicKey, "relic-bag-exhausted");
+                EvidenceCode evidence = Evidence(relicKey, "opening-relic-eligibility-unavailable");
                 return NeowEffectProjection.Partial(relicKey, groups,
-                    PredictionWarningCode.EffectPoolEmpty, evidence) with
+                    PredictionWarningCode.EffectAuthorityIncomplete, evidence) with
                 {
                     DependencyImpact = EffectDependencyImpact.ConservativeUnknownImmediateHook(
-                        PredictionWarningCode.EffectPoolEmpty,
-                        evidence)
+                        PredictionWarningCode.EffectAuthorityIncomplete,
+                        evidence) with
+                    {
+                        NonCombatGenerationRng = UsesNonCombatGeneration
+                            ? BonesContinuationDomainState.Unknown(PredictionWarningCode.EffectAuthorityIncomplete, evidence) : null
+                    }
                 };
             }
 
@@ -1148,10 +1165,21 @@ internal sealed partial class NeowEffectProjectionEngine
             // Whetstone/War Paint targets must not be projected from an invented
             // fallback deck. Keep the nested relic and suppress only the dependent
             // automatic effect.
-            if (!executeNestedAutomaticEffects &&
+            if ((!executeNestedAutomaticEffects || !nonCombatStateKnown) &&
                 pulled.NestedEffectKind is NestedRelicEffectKind.Whetstone or NestedRelicEffectKind.WarPaint)
             {
                 nestedFullExact = false;
+                if (!nonCombatStateKnown)
+                {
+                    nestedProductExact = false;
+                    nestedProductStatus = ProductRelevantProjectionStatus.Unknown;
+                }
+                else if (UsesNonCombatGeneration)
+                    capsuleImpact = capsuleImpact with
+                    {
+                        NonCombatGenerationRng = BonesContinuationDomainState.Invalidated(
+                            PredictionWarningCode.ComplexResultNotEvaluatedByPolicy, Evidence(relicKey, "capsule-upgrade-continuation-skipped"))
+                    };
                 continue;
             }
 
@@ -1160,6 +1188,7 @@ internal sealed partial class NeowEffectProjectionEngine
                 state,
                 recursionDepth + 1,
                 nestedItems.Count);
+            capsuleImpact = capsuleImpact.Merge(ResolveProjectionDependencyImpact(pulled.RelicKey, nested));
             foreach (PredictedEffectGroup nestedGroup in nested.EffectGroups.OrderBy(group => group.GroupOrder))
             {
                 PredictedEffect[] productItems = nestedGroup.OrderedItems
@@ -1231,8 +1260,6 @@ internal sealed partial class NeowEffectProjectionEngine
             {
                 nestedProductStatus = nested.ProductRelevantProjectionStatus;
             }
-            capsuleImpact = capsuleImpact.Merge(
-                ResolveProjectionDependencyImpact(pulled.RelicKey, nested));
         }
 
         bool smallCapsule = relicKey == BaseGameModelKeys.Relics.SmallCapsule;
@@ -1322,6 +1349,14 @@ internal sealed partial class NeowEffectProjectionEngine
         };
     }
 
+    private bool? IsStandardOpeningRelicEligible(NeowEffectRelicSnapshot relic)
+    {
+        if (!string.IsNullOrWhiteSpace(relic.SourceModId) ||
+            !string.Equals(relic.SourceAssembly, "sts2", StringComparison.OrdinalIgnoreCase)) return null;
+        return relic.RelicKey == Relics.StandardOpeningRelicEligibility.LastingCandy
+            ? Relics.StandardOpeningRelicEligibility.AllowsLastingCandy(_analysisAuthority) : true;
+    }
+
     private NeowEffectProjection ProjectOrdinaryNestedRelic(
         NeowEffectRelicSnapshot relic,
         NeowEffectWorkingState state,
@@ -1379,10 +1414,12 @@ internal sealed partial class NeowEffectProjectionEngine
         List<NeowEffectCardSnapshot> candidates = state.Deck.Cards
             .Where(card => card.CardType == type && card.CanUpgrade)
             .OrderBy(card => card.CardKey.Serialized, StringComparer.Ordinal)
+            .ThenBy(card => UsesNonCombatGeneration ? card.UpgradeLevel : 0)
             .ThenBy(card => card.InstanceId, StringComparer.Ordinal)
             .ToList();
         if (candidates.Count == 0)
         {
+            state.Rng.NonCombatGeneration?.UnstableShuffle(candidates, _rngSemantics);
             return NeowEffectProjection.Exact(
                 relicKey,
                 new[] { Group($"{source.ToLowerInvariant()}-no-candidates", 0,
@@ -1394,7 +1431,7 @@ internal sealed partial class NeowEffectProjectionEngine
                     }) },
                 Evidence(relicKey, "exact-no-upgrade-candidates"));
         }
-        state.Rng.Niche.UnstableShuffle(candidates);
+        (state.Rng.NonCombatGeneration ?? state.Rng.Niche).UnstableShuffle(candidates, _rngSemantics);
         var items = new List<PredictedEffect>();
         foreach (NeowEffectCardSnapshot card in candidates.Take(2))
         {
@@ -1913,9 +1950,7 @@ internal sealed partial class NeowEffectProjectionEngine
                     target);
                 if (candidates.Count == 0) continue;
                 NeowEffectWorkingState route = preChoice.Clone();
-                Xoshiro256StarStar rng = RuntimeProfilePolicies.IsModernCore(_profileId)
-                    ? route.Rng.Niche
-                    : route.Rng.Transformations;
+                Xoshiro256StarStar rng = NewLeafRng(route.Rng);
                 NeowEffectCardSnapshot replacement = candidates[rng.NextInt(candidates.Count)];
                 if (!route.Deck!.TryTransform(target.InstanceId, replacement.CardKey)) continue;
                 var policy = new PlayerChoicePolicyDescriptor(
@@ -2053,6 +2088,10 @@ internal sealed partial class NeowEffectProjectionEngine
                 card.IsDefend ? "D" : "-",
                 card.CanUpgrade ? "U" : "-",
                 card.CanRemove ? "R" : "-")));
+
+    private Xoshiro256StarStar NewLeafRng(NeowEffectRngContext rng) =>
+        RuntimeProfilePolicies.IsModernCore(_profileId) && _rngSemantics != RngSemanticProfileId.Modern113
+            ? rng.Niche : rng.Transformations;
 
     private bool TryTransformCard(
         NeowEffectWorkingState state,

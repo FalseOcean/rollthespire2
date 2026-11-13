@@ -46,7 +46,7 @@ internal static class ModRuntime
                 $"compatibility={compatibility.SupportKind}; confidence={compatibility.Confidence}; runtimeAccepted={compatibility.RuntimeAccepted.ToString().ToLowerInvariant()}; " +
                 $"gameVersionIdentity={compatibility.GameVersionIdentity}; reference={compatibility.ReferenceVersion}; " +
                 $"semanticProfile={compatibility.SemanticProfileId}; " +
-                $"semanticFingerprint={RuntimeProfilePolicies.RngSemanticFingerprint(profile.ProfileId)}; " +
+                $"semanticFingerprint={RuntimeProfilePolicies.RngSemanticFingerprint(compatibility.SemanticProfileId)}; " +
                 $"capability={profile.Capability}; versionDetected={detection.IsExact.ToString().ToLowerInvariant()}; " +
                 $"rngVectors={(vectors.Passed ? "Passed" : "Failed")}({vectors.Cases.Count})");
             if (compatibility.IsFallback)
@@ -84,11 +84,20 @@ internal static class ModRuntime
             {
                 var harmony = new Harmony(ModEntry.ModId + ".OperationObservation");
                 Infrastructure.Snapshots.PredictorOperationCapture.Install(harmony);
-                Infrastructure.Snapshots.PredictorOperationEventCapture.Install(harmony);
             }
             catch (Exception ex)
             {
                 RuntimeLog.Fault("startupFault=true;phase=OperationObservationInstallation", ex);
+            }
+
+            try
+            {
+                var harmony = new Harmony(ModEntry.ModId + ".OperationEventObservation");
+                Infrastructure.Snapshots.PredictorOperationEventCapture.Install(harmony);
+            }
+            catch (Exception ex)
+            {
+                RuntimeLog.Fault("startupFault=true;phase=OperationEventObservationInstallation", ex);
             }
 
             try

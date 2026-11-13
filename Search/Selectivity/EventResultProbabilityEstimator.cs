@@ -180,7 +180,7 @@ internal static partial class EventResultProbabilityEstimator
             else
             {
                 if (!authority.ColorfulPoolAuthorityExact) return null;
-                pool = Beta111EventRules.ColorfulCandidates(authority.OwnerCharacterKey, authority.UnlockedCharacterCardPoolKeys);
+                pool = Beta111EventRules.ColorfulCandidates(authority.OwnerCharacterKey, authority.UnlockedCharacterCardPoolKeys, authority.RngSemantics);
                 take = Math.Min(Beta111EventRules.ColorfulOfferCount,pool.Length);
             }
             var required = group.Select(c => c.TargetKey).Distinct().ToArray();
@@ -273,7 +273,7 @@ internal static partial class EventResultProbabilityEstimator
                         "Exact owner/unlock pool authority is required for the conditional Colorful Philosophers marginal.");
                 }
                 ModelKey[] eligible = Beta111EventRules.ColorfulCandidates(authority.OwnerCharacterKey,
-                    authority.UnlockedCharacterCardPoolKeys);
+                    authority.UnlockedCharacterCardPoolKeys, authority.RngSemantics);
                 if (!eligible.Contains(condition.TargetKey, ModelKeyComparer.Instance))
                     probability = 0d;
                 else if (eligible.Length <= Beta111EventRules.ColorfulOfferCount)

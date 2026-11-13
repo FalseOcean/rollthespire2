@@ -23,9 +23,10 @@ internal static class EventResultGpuPacking
 
     internal static uint[] PackForFamily(IReadOnlyList<EventResultSearchCondition> conditions, Beta111EventResultAuthority? eventAuthority, int playerSlot, out uint[] colorfulPool)
     {
+        var colorOrder = eventAuthority?.ColorfulOrder ?? Beta111EventResultCatalog.ColorfulCharacterOrder;
         ValidateFixedPoolGeometry(conditions, Beta111EventResultCatalog.TrashHeapGrabCards.Count,
             Beta111EventResultCatalog.TrashHeapDiveRelics.Count, Beta111EventResultCatalog.FakeMerchantRelics.Count,
-            Beta111EventResultCatalog.ColorfulCharacterOrder.Count);
+            colorOrder.Count);
         var output = new List<uint> { 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u };
         foreach (EventResultSearchCondition condition in conditions)
         {
@@ -34,7 +35,7 @@ internal static class EventResultGpuPacking
                 EventResultConditionKind.TrashHeapGrabCard => IndexOf(Beta111EventResultCatalog.TrashHeapGrabCards, condition.TargetKey),
                 EventResultConditionKind.TrashHeapDiveRelic => IndexOf(Beta111EventResultCatalog.TrashHeapDiveRelics, condition.TargetKey),
                 EventResultConditionKind.FakeMerchantOfferedFakeRelic => IndexOf(Beta111EventResultCatalog.FakeMerchantRelics, condition.TargetKey),
-                EventResultConditionKind.ColorfulPhilosophersOfferedColor => IndexOf(Beta111EventResultCatalog.ColorfulCharacterOrder, condition.TargetKey),
+                EventResultConditionKind.ColorfulPhilosophersOfferedColor => IndexOf(colorOrder, condition.TargetKey),
                 EventResultConditionKind.TrialCase => (int)condition.TrialCase!,
                 EventResultConditionKind.TinkerTimeTypeAndRider => (int)condition.TinkerCardType! * 4 +
                     (condition.TinkerRider is { } rider ? (int)rider % 3 + 1 : 0),
@@ -103,9 +104,9 @@ internal static class EventResultGpuPacking
         if (eventAuthority is { ColorfulPoolAuthorityExact: true } authority)
         {
             foreach (ModelKey key in Beta111EventRules.ColorfulCandidates(authority.OwnerCharacterKey,
-                         authority.UnlockedCharacterCardPoolKeys))
+                         authority.UnlockedCharacterCardPoolKeys, authority.RngSemantics))
             {
-                colors.Add(checked((uint)IndexOf(Beta111EventResultCatalog.ColorfulCharacterOrder, key)));
+                colors.Add(checked((uint)IndexOf(colorOrder, key)));
             }
         }
         output[0] = checked((uint)conditions.Count);
@@ -130,7 +131,7 @@ internal static class EventResultGpuPacking
                 EventResultConditionKind.TrashHeapGrabCard or EventResultConditionKind.TrashHeapDiveRelic
                     when trashGrabCount != 10 || trashDiveCount != 5 => $"TrashHeap:grab={trashGrabCount};dive={trashDiveCount};expected=10/5",
                 EventResultConditionKind.FakeMerchantOfferedFakeRelic when fakeCount != 9 => $"FakeMerchant:count={fakeCount};expected=9",
-                EventResultConditionKind.ColorfulPhilosophersOfferedColor when colorfulCount != 5 => $"ColorfulPhilosophers:count={colorfulCount};expected=5",
+                EventResultConditionKind.ColorfulPhilosophersOfferedColor when colorfulCount is not (5 or 6) => $"ColorfulPhilosophers:count={colorfulCount};expected=5/6",
                 _ => null
             };
             if (issue != null) throw new NotSupportedException("E.GpuFixedPoolGeometryUnsupported:" + issue);

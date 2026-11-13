@@ -265,7 +265,7 @@ internal sealed partial class AnalysisPage
         var details = WColumn(); details.Name = "EventDetails"; section.AddChild(details);
         var tooltipSource = _actCards[act - 1];
         tooltipSource.BindEventTooltipContext(_viewModel!.ProfileId, _viewModel.PlayersCount,
-            BuildEventResultProjection(), _uiText!, ConditionalEventResultTooltipText);
+            BuildEventResultProjection(), _uiText!, ConditionalEventResultTooltipText, LastRequest!.Authority.VersionResolution.SemanticProfileId);
         var buttons = new List<(ModelKey Key, Button Button)>();
         void ShowDetails()
         {
@@ -303,7 +303,8 @@ internal sealed partial class AnalysisPage
     private void RenderEventDetails(Node parent, EventPoolSequenceEntryViewModel entry)
     {
         var detail = WCard(parent, entry.EventDisplay.DisplayName, true);
-        string condition = Beta111EventPresentationKnowledge.RuntimeConditionLocalizationKey(_viewModel!.ProfileId, entry.EventDisplay.ModelKey, _viewModel.PlayersCount);
+        string condition = Beta111EventPresentationKnowledge.RuntimeConditionLocalizationKey(_viewModel!.ProfileId,
+            entry.EventDisplay.ModelKey, _viewModel.PlayersCount, LastRequest!.Authority.VersionResolution.SemanticProfileId);
         if (!string.IsNullOrWhiteSpace(condition)) detail.AddChild(WNote(Text(condition)));
         var results = BuildEventResultProjection();
         var resultItems = WResponsiveGrid(detail, "EventResultItems", 240, 3);

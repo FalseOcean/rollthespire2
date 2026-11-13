@@ -14,6 +14,7 @@ internal sealed partial class AnalysisPageController
 {
     private void OpenPartyConfiguration()
     {
+        if (_capturedRunInformation is not null) return;
         if (_partyDraft is not { } current) return;
         _page.OpenPartyConfiguration(current, next =>
         {
@@ -58,6 +59,7 @@ internal sealed partial class AnalysisPageController
 
     private void PersistPartyConfiguration()
     {
+        if (_capturedRunInformation is not null) return;
         if ((_partyDraft ?? _lastPartyDraft) is not { } draft) return;
         _lastPartyDraft = draft;
         _persistence.SavePredictorParty(PartyContext(draft), _partySelectionSeed, _partyDraft is not null);

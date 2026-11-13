@@ -73,6 +73,11 @@ internal static class RuntimeVersionProfileChecks
         Check(resolution.IsProvisional && resolution.AllowsProductionSearch && !resolution.RuntimeAccepted &&
               ProfileSeedGenerator.CreateProbeSeed(RuntimeProfileRegistry.Select(newer)) == "000000000000",
             "Existing provisional policy remains usable and unverified");
+        var opening113 = RuntimeVersionCompatibility.Resolve("0.113.0");
+        Check(opening113.IsProvisional && opening113.AllowsProductionSearch && !opening113.RuntimeAccepted &&
+            opening113.SemanticProfileId == RngSemanticProfileId.Modern113 &&
+            opening113.SemanticProfileId != RuntimeVersionCompatibility.Resolve("0.111.0").SemanticProfileId,
+            "0.113 uses its own opening rules while remaining provisional");
         Check(Base34SeedEnumerator.ZeroSeed(Beta111Profile.Instance) == "000000000000" &&
               new Base34SeedEnumerator(Beta111Profile.Instance, "000000000000").SeedAt(1) == "000000000001",
             "Supported seed enumeration is unchanged");

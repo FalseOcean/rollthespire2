@@ -10,8 +10,12 @@ internal static class NeowPartyGpuPacking
         if (plans.Any(p => !p.IsMultiplayer)) throw new ArgumentException("PartyN.SingleplayerPlan");
         if (plans.Any(p => p.NumericalVariant != NeowGpuNumericalVariant.NativeFloat64))
             throw new InvalidOperationException("PartyN.FusedNumericalVariantNotAdmitted");
+        bool childShuffle = plans[0].UsesChildShuffle;
+        if (plans.Any(p => p.UsesChildShuffle != childShuffle))
+            throw new InvalidOperationException("PartyN.FusedShuffleRulesDiffer");
         string source = NeowFamilyGpuExecutor.ShaderSource(leafyPreGate: plans.Any(p => p.UsesLeafyPreGate),
-            authoredUpgrades: plans.Any(p => p.HasAuthoredUpgrades), localResults: plans.Any(p => p.HasLocalResults), multiplayer: true);
+            authoredUpgrades: plans.Any(p => p.HasAuthoredUpgrades), localResults: plans.Any(p => p.HasLocalResults),
+            multiplayer: true, childShuffle: childShuffle);
         source = source.Replace("uint plan_value(uint i)", "uint party_plan = 0u;\nuint plan_value(uint i)", StringComparison.Ordinal);
         uint[] Join(Func<NeowFamilyGpuPlan, uint[]> select, string access, int minimum = 1)
         {

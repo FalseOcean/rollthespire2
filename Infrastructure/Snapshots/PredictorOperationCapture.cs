@@ -13,6 +13,7 @@ using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
 using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
+using MegaCrit.Sts2.Core.Random;
 using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Runs;
 using RolltheSpire2.Compatibility;
@@ -26,6 +27,7 @@ namespace RolltheSpire2.Infrastructure.Snapshots;
 internal static partial class PredictorOperationCapture
 {
     private const BindingFlags Members = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+    private static readonly PropertyInfo? NativeNonCombatGeneration = typeof(PlayerRngSet).GetProperty("NonCombatGeneration");
     private static readonly JsonSerializerOptions Json = CreateJsonOptions();
 
     private static JsonSerializerOptions CreateJsonOptions()
@@ -110,7 +112,8 @@ internal static partial class PredictorOperationCapture
         if (!run.Players.Contains(player)) throw new InvalidOperationException("OperationLocalPlayerMismatch");
         long allocated = timing == null ? 0 : GC.GetAllocatedBytesForCurrentThread();
         long stage = Stopwatch.GetTimestamp();
-        string before = NativeStamp(run, player, root);
+        bool captureSort = RuntimeVersionCompatibility.Resolve(version).SemanticProfileId == RngSemanticProfileId.Modern113;
+        string before = NativeStamp(run, player, root, captureSort);
         if (timing != null) timing.NativeStampMs = Stopwatch.GetElapsedTime(stage).TotalMilliseconds;
         var unlocks = player.UnlockState.ToSerializable();
         var pools = new CrystalSphereCatalogCapture.CapturePools(run, player);
@@ -144,6 +147,8 @@ internal static partial class PredictorOperationCapture
             OpeningEligibleRelics = CaptureBonesPool(run, player, pools),
             Operation = new(player.NetId, run.Players.ToList().IndexOf(player), run.Players.Count, opaque)
             {
+                EligibleRelics = ModelDb.AllRelics.Where(r => r.GetType().Assembly == typeof(RelicModel).Assembly && r.IsAllowed(run))
+                    .Select(Key).ToImmutableHashSet(),
                 CombatCardRng = new(combatRng.state0, combatRng.state1, combatRng.state2, combatRng.state3, combatRng.counter),
                 PreviousVisits = previousVisits,
                 CombatCardPools = CapturePotionPools(run, player, catalog, pools)
@@ -154,7 +159,7 @@ internal static partial class PredictorOperationCapture
             PotionPool = MegaCrit.Sts2.Core.Factories.PotionFactory.GetPotionOptions(player).Select(p =>
                 new PredictorPotionOption(Key(p), Enum.Parse<PredictorPotionRarity>(p.Rarity.ToString()), p.CanBeGeneratedInCombat)).ToImmutableArray()
         };
-        var cards = player.Deck.Cards.Select(c => Card(c, catalog)).ToImmutableArray();
+        var cards = player.Deck.Cards.Select(c => Card(c, catalog, captureSort)).ToImmutableArray();
         var extras = new List<PredictorCard>();
         long CardId(CardModel card)
         {
@@ -164,9 +169,9 @@ internal static partial class PredictorOperationCapture
         }
         var relics = player.Relics.Select(r => Relic(r, catalog, CardId)).ToImmutableArray();
         var hoarder = run.Modifiers.OfType<MegaCrit.Sts2.Core.Models.Modifiers.Hoarder>().SingleOrDefault();
-        var hoarderIds = hoarder == null ? ImmutableArray<long>.Empty : Read<HashSet<CardModel>>(hoarder, "_cardsToSkip")
+        var hoarderIds = hoarder == null ? ImmutableArray<long>.Empty : (HoarderSkipCards(hoarder) ?? [])
             .Select(CardId).ToImmutableArray();
-        var scene = CaptureScene(run, player, catalog, root);
+        var scene = CaptureScene(run, player, catalog, root, context.VersionResolution.SemanticProfileId);
         if (HasPendingNativeObtain(player) && scene is not PredictorOperationObtainScene &&
             scene is not PredictorOperationShopScene { PendingRelic: not null })
             throw new NotSupportedException("OperationActiveObtainContinuationNotCaptured");
@@ -179,7 +184,7 @@ internal static partial class PredictorOperationCapture
             "operation:" + Id(run) + ":" + (run.CurrentRoom == null ? 0 : Id(run.CurrentRoom))), player.Gold,
             cards.AddRange(extras), cards.Select(c => c.Id).ToImmutableArray(), relics,
             player.PotionSlots.Select(p => p == null ? null : new PredictorPotion(Id(p), Key(p))).ToImmutableArray(),
-            Streams(run, player), new(odds.CardRarityOddsValue, odds.PotionRewardOddsValue), Bag(player.RelicGrabBag), Bag(run.SharedRelicGrabBag))
+            CaptureStreams(run, player, context), new(odds.CardRarityOddsValue, odds.PotionRewardOddsValue), Bag(player.RelicGrabBag), Bag(run.SharedRelicGrabBag))
         {
             Acts = run.Acts.Select((a, i) => Act(a, i + 1)).ToImmutableArray(),
             Maps = run.Map == null ? [] : [new(run.CurrentActIndex + 1, Map(run), visited)], Visits = visits,
@@ -197,7 +202,7 @@ internal static partial class PredictorOperationCapture
         state = state with { NextInstanceId = NextInstanceId };
         state.Validate();
         stage = Stopwatch.GetTimestamp();
-        if (NativeStamp(run, player, root) != before) throw new InvalidOperationException("OperationSnapshotChanged");
+        if (NativeStamp(run, player, root, captureSort) != before) throw new InvalidOperationException("OperationSnapshotChanged");
         if (timing != null) timing.NativeStampMs += Stopwatch.GetElapsedTime(stage).TotalMilliseconds;
         stage = Stopwatch.GetTimestamp();
         // The complete catalog has already been serialized into CatalogFingerprint.
@@ -235,10 +240,11 @@ internal static partial class PredictorOperationCapture
         RuntimeSnapshotThreadGuard.RequireMainThread();
         ImmutableArray<PredictorOperationPotionCard> Copy(IEnumerable<CardModel> pool) => pool.Select(c =>
             new PredictorOperationPotionCard(Card(c, catalog) with { Id = 0 }, c.Rarity.ToString(), c.CanBeGeneratedInCombat,
-                c.MultiplayerConstraint.ToString())).ToImmutableArray();
+                c.MultiplayerConstraint.ToString()) { MelodyTags = PredictorOperationPotionTargetCapture.MelodyTags(c) }).ToImmutableArray();
         IEnumerable<CardModel> Pool(CardPoolModel pool) => pools == null
             ? pool.GetUnlockedCards(player.UnlockState, ((IRunState)run).CardMultiplayerConstraint) : pools.Read(pool);
-        return new(Copy(Pool(player.Character.CardPool)), Copy(Pool(ModelDb.CardPool<MegaCrit.Sts2.Core.Models.CardPools.ColorlessCardPool>())));
+        return new(Copy(Pool(player.Character.CardPool)), Copy(Pool(ModelDb.CardPool<MegaCrit.Sts2.Core.Models.CardPools.ColorlessCardPool>())))
+        { MelodyCards = Copy(PredictorOperationPotionTargetCapture.MelodyCards(player, Pool)) };
     }
 
     private static IEnumerable<long> SceneRewardIds(PredictorOperationScene scene) => scene switch
@@ -274,12 +280,18 @@ internal static partial class PredictorOperationCapture
             RolltheSpire2.Core.Neow.ModernNeowIdentityRules.IsAllowed(k, run.Players.Count, colors, scrolls) == true).ToImmutableArray();
     }
 
-    private static ImmutableArray<PredictorStreamState> Streams(RunState run, Player player) =>
-        Enum.GetValues<PredictorStream>().Select(s => CrystalSphereLiveCapture.RngState(s, s switch
+    internal static Rng? TryNonCombatGeneration(Player player) => NativeNonCombatGeneration?.GetValue(player.PlayerRng) as Rng;
+
+    internal static Rng NonCombatGeneration(Player player) => TryNonCombatGeneration(player)
+        ?? throw new NotSupportedException("OperationNativeNonCombatGenerationUnavailable");
+
+    internal static ImmutableArray<PredictorStreamState> CaptureStreams(IRunState run, Player player, PredictorContext context) =>
+        PredictorSeedState.Streams(context).Select(s => CrystalSphereLiveCapture.RngState(s, s switch
         {
             PredictorStream.Rewards => player.PlayerRng.Rewards,
             PredictorStream.Shops => player.PlayerRng.Shops,
             PredictorStream.Transformations => player.PlayerRng.Transformations,
+            PredictorStream.NonCombatGeneration => NonCombatGeneration(player),
             PredictorStream.UpFront => run.Rng.UpFront,
             PredictorStream.Niche => run.Rng.Niche,
             PredictorStream.UnknownMapPoint => run.Rng.UnknownMapPoint,
@@ -288,16 +300,20 @@ internal static partial class PredictorOperationCapture
             _ => throw new InvalidOperationException("OperationStreamUnmapped")
         })).ToImmutableArray();
 
-    private static string NativeStamp(RunState run, Player player, Node? root) => Hash(new
+    private static string NativeStamp(RunState run, Player player, Node? root, bool captureSort) => Hash(new
     {
         Run = Id(run), Room = run.CurrentRoom == null ? 0 : Id(run.CurrentRoom), run.CurrentActIndex, run.TotalFloor,
         run.CurrentMapCoord, Players = run.Players.Select(p => p.ToSerializable()).ToArray(),
         Rng = run.Rng.ToSerializable(), PersonalBag = Bag(player.RelicGrabBag), SharedBag = Bag(run.SharedRelicGrabBag),
         Odds = run.Odds.ToSerializable(), Cards = player.Deck.Cards.Select(Id).ToArray(),
+        CardSort = captureSort ? player.Deck.Cards.Where(card => card.GetType().Assembly == typeof(CardModel).Assembly)
+            .Select(card => new { Id = Id(card), Affliction = card.Affliction?.Id, Values = CardSortValues(card) }).ToArray() : null,
+        BingBong = player.Relics.OfType<MegaCrit.Sts2.Core.Models.Relics.BingBong>()
+            .Select(relic => BingBongSkipCards(relic)?.Select(Id).Order().ToArray()).ToArray(),
         Map = run.Map == null ? null : Map(run), Visited = run.VisitedMapCoords, History = run.MapPointHistory,
         Relics = player.Relics.Select(Id).ToArray(), Potions = player.PotionSlots.Select(p => p == null ? 0 : Id(p)).ToArray(),
         Hoarder = run.Modifiers.OfType<MegaCrit.Sts2.Core.Models.Modifiers.Hoarder>()
-            .Select(m => Read<HashSet<CardModel>>(m, "_cardsToSkip").Select(Id).Order().ToArray()).ToArray(),
+            .Select(m => HoarderSkipCards(m)?.Select(Id).Order().ToArray()).ToArray(),
         Selectors = Nodes<NCardGridSelectionScreen>(root).Select(n => new
         {
             Id = Id(n), Type = n.GetType().Name,

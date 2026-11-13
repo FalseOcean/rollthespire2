@@ -17,6 +17,10 @@
     <Compile Include="Program.cs" />
     <Compile Include="NeowEntryIdentityChecks.cs" />
     <Compile Include="NeowIdentityRulesChecks.cs" />
+    <Compile Include="NeowOfferRelationChecks.cs" />
+    <Compile Include="NeowOfferEditorChecks.cs" />
+    <Compile Include="UnknownPrefixRelationChecks.cs" />
+    <Compile Include="UnknownPrefixEditorChecks.cs" />
     <Compile Include="NeowEntryIdentityFixtures.cs" />
     <Compile Include="ShionNeowOptimizationChecks.cs" />
     <Compile Include="ShionExactTrialChecks.cs" />
@@ -64,6 +68,7 @@
     <Compile Include="MapPreviewChecks.cs" />
     <Compile Include="MapFullIntegrationChecks.cs" />
     <Compile Include="MapRouteChecks.cs" />
+    <Compile Include="ElitePrefixResearchChecks.cs" />
     <Compile Include="MapRouteSequenceChecks.cs" />
     <Compile Include="MapDrawingIntegrationChecks.cs" />
     <Compile Include="MapLossyIntegrationChecks.cs" />
@@ -96,6 +101,7 @@
     <Compile Include="CExplicitOpeningChecks.cs" />
     <Compile Include="CombatRarityAuditChecks.cs" />
     <Compile Include="FamilyWorldChecks.cs" />
+    <Compile Include="EncounterQueueChecks.cs" />
     <Compile Include="VariantOpeningPreparationChecks.cs" />
     <Compile Include="VariantOpeningSurvivalChecks.cs" />
     <Compile Include="VariantOpeningExecutionChecks.cs" />

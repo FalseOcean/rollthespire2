@@ -217,7 +217,7 @@ internal static class PredictorRuntimeChecks
             var player = new PlayerRngSet(run.Seed); // single-player slot zero
             var streams = new[] { run.UpFront, player.Rewards, player.Transformations, player.Shops,
                 run.Niche, run.CombatPotionGeneration, run.UnknownMapPoint, run.TreasureRoomRelics };
-            foreach (PredictorStream stream in Enum.GetValues<PredictorStream>())
+            foreach (PredictorStream stream in PredictorSeedState.LegacyStreams)
             {
                 var native = streams[(int)stream];
                 CheckRng(state.Streams[(int)stream], native);

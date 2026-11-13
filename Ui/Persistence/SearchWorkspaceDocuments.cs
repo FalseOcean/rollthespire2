@@ -30,6 +30,7 @@ internal sealed class UserPreferencesDocument
     public int? SearchWorkerBudget { get; set; }
     public int QueryHistoryLimit { get; set; } = 30;
     public bool ShowOfficialPresets { get; set; } = true;
+    public bool ShowDeadSeedResearch { get; set; }
     // Opt-in, including preferences saved before the in-run entry was introduced.
     public bool ShowInRunPredictionEntry { get; set; }
     public bool CrystalSphereAvoidCurse { get; set; } = true;
@@ -161,6 +162,7 @@ internal sealed class SearchCursorDocument
     public ulong NextCursor { get; set; }
     public long WrapCount { get; set; }
     public string PendingOriginChangeId { get; set; } = "";
+    public string GameVersionIdentity { get; set; } = "";
 }
 
 internal sealed class SearchEnvironmentSignature

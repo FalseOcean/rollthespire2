@@ -453,6 +453,11 @@ internal static class FamilyExactTimingDomains
 {
     internal static string ImplementationRevision(SearchModel request)
     {
+        if (request.Authority.VersionResolution.SemanticProfileId == Compatibility.RngSemanticProfileId.Modern113)
+            return "ProductionExact.Modern113.Opening";
+        if (request.CompiledSearch.NormalizedQuery.ElitePrefixResearch is { } research)
+            return "ProductionExact.ElitePrefixResearch.AllPaths.20261105.v1" +
+                (research.Mode == ElitePrefixResearchMode.FloorSeven ? ".FloorSeven.v1" : "");
         // Fast C has its own unchanged physical prices. Only the changed solo
         // Exact reward path needs a new timing key; keep other v1 entries usable.
         if (request.CompiledSearch.Context.Party is not null || request.Authority.PlayersCount != 1 ||
@@ -467,10 +472,10 @@ internal static class FamilyExactTimingDomains
 
     private static bool MapOnly(SearchQuery query)
     {
-        if ((query.StandardMaps.Count == 0 && query.StandardMapRoutes.Count == 0) || query.Players.Count is not (0 or 2 or 3 or 4) ||
+        if ((query.StandardMaps.Count == 0 && query.StandardMapRoutes.Count == 0 && query.ElitePrefixResearch is null) || query.Players.Count is not (0 or 2 or 3 or 4) ||
             query.Players.Any(p => !p.Offers.IsEmpty || p.SelectedOption is not null || p.Results.Count > 0 ||
                 JsonSerializer.Serialize(p.Conditions) != JsonSerializer.Serialize(SearchQuery.Empty))) return false;
-        SearchQuery withoutMap = query with { StandardMaps = [], StandardMapRoutes = [], Players = [] };
+        SearchQuery withoutMap = query with { StandardMaps = [], StandardMapRoutes = [], ElitePrefixResearch = null, Players = [] };
         return JsonSerializer.Serialize(withoutMap) == JsonSerializer.Serialize(SearchQuery.Empty);
     }
 
@@ -487,7 +492,8 @@ internal static class FamilyExactTimingDomains
     {
         if (request.CompiledSearch.Context.Party is not { } party)
         {
-            if (request.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0 || request.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count > 0)
+            if (request.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0 || request.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count > 0 ||
+                request.CompiledSearch.NormalizedQuery.ElitePrefixResearch is not null)
                 return MapOnly(request.CompiledSearch.NormalizedQuery)
                     ? SearchVerificationFamily.MapOnly
                     : request.Evaluation.RequiresNormalCombatRewardDomain
@@ -495,7 +501,8 @@ internal static class FamilyExactTimingDomains
                         : SearchVerificationFamily.MapMixedWithoutReward;
             return SearchPredictabilityVerificationStore.ResolveFamily(QueryDomains(request));
         }
-        bool map = request.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0 || request.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count > 0;
+        bool map = request.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0 || request.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count > 0 ||
+            request.CompiledSearch.NormalizedQuery.ElitePrefixResearch is not null;
         bool reward = request.CompiledSearch.NormalizedQuery.Players.Any(p => p.Conditions.HasCombatRewardConstraints);
         return (party.Players.Count, map, reward) switch
         {

@@ -1,5 +1,6 @@
 using System.Reflection;
 using Godot;
+using MegaCrit.Sts2.Core.Models;
 using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Presentation.ContentNames;
@@ -596,6 +597,11 @@ internal sealed class ReflectionGameIconResolver : IGameIconResolver
         IReadOnlyList<string> preferredNames,
         out string source)
     {
+        if (model is CardModel card && NativeCardPortraits.ResolvePackagedBetaPortrait(card) is { } portrait)
+        {
+            source = "packaged-beta-card-portrait";
+            return portrait;
+        }
         Type type = model.GetType();
         foreach (string name in preferredNames)
         {

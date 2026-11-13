@@ -32,7 +32,7 @@ internal readonly record struct NeowGpuOptimizations(bool LeafyLazy = false, boo
             LeafyLazy = LeafyLazy && plan.UsesLeafyPreGate,
             DrawIntervals = DrawIntervals && NeowFamilyGpuExecutor.SupportsDrawIntervals(plan, compact),
             GpuPrefix = GpuPrefix && !compact && plan.UsesStagedDense,
-            CurseFirst = CurseFirst && !compact && NeowInternalFilterOrder.Compile(plan).Enabled,
+            CurseFirst = CurseFirst && !compact && !plan.UsesChildShuffle && NeowInternalFilterOrder.Compile(plan).Enabled,
             LeafyLocalPrefix = LeafyLocalPrefix && !compact && plan.UsesLeafyPreGate && !plan.UsesStagedDense
         };
     internal string Revision => (LeafyLazy ? ".ShionLeafyLazy.v1" : "") +

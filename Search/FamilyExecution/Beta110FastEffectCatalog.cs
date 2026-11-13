@@ -453,9 +453,9 @@ internal static class Beta110FastEffectCatalogCompiler
     internal static Beta110FastRewardRelicCapability BuildRewardRelicCapability(
         RuntimeProfileId profileId,
         ModelKey relicKey,
-        bool nestedAcquisition)
+        bool nestedAcquisition, Compatibility.RngSemanticProfileId semantics = Compatibility.RngSemanticProfileId.Modern110)
     {
-        if (!VanillaRelicRewardEffects.TryGet(profileId, relicKey, out VanillaRelicRewardEffect capability))
+        if (!VanillaRelicRewardEffects.TryGet(profileId, relicKey, out VanillaRelicRewardEffect capability, semantics))
         {
             return new Beta110FastRewardRelicCapability(
                 false, false,

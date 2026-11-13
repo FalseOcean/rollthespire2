@@ -12,7 +12,10 @@ internal sealed record SelectEventCards(ImmutableArray<long> CardIds) : Predicto
 internal sealed record PredictorEventOption(string Key, bool Enabled = true, int? GoldCost = null, int? GoldGain = null,
     long? CardTargetId = null, int? HealthDamage = null, long? PotionId = null, EffectCardType? CardType = null,
     int? MaxHpCost = null, bool? WillKill = null, long? RelicId = null, ModelKey? OfferedRelic = null,
-    int? HealthHeal = null, int? LocalPotionOrdinal = null, ModelKey? LocalPotionKey = null);
+    int? HealthHeal = null, int? LocalPotionOrdinal = null, ModelKey? LocalPotionKey = null)
+{
+    public bool HasHiddenObtain { get; init; }
+}
 internal sealed record PredictorEventHealthFact(int CurrentHp, int MaxHp);
 internal sealed record PredictorEventHealthDelta(int HpDelta, int MaxHpDelta);
 internal sealed record ProvideEventHealthFact(PredictorEventHealthFact Fact) : PredictorInput;
@@ -265,6 +268,8 @@ internal sealed partial class PredictorRun
             Accept(new("EventOption:" + choice.OptionKey, 0, [], null, null));
             return _eventKey!.Value.Entry switch
             {
+                "MUSEUM_OF_TORTURE" or "WATERFALL_OF_OBVIOUS_SECRETS" or "WUPPY_IN_TROUBLE" or "THERMAE_NONUPEIPE" =>
+                    SubmitModernOperationEvent(choice, option, token),
                 "AROMA_OF_CHAOS" or "SYMBIOTE" or "MORPHIC_GROVE" or
                 "WHISPERING_HOLLOW" or "TRASH_HEAP" or "TINKER_TIME" or
                 "TRIAL" or "COLORFUL_PHILOSOPHERS" =>
@@ -368,7 +373,7 @@ internal sealed partial class PredictorRun
     private void BeginEventFrontRelic(long sourceId, CancellationToken token)
     {
         var state = Working;
-        var key = PredictorRewardGeneration.PullRelic(Context, ref state);
+        var key = PredictorRewardGeneration.PullRelic(Context, ref state, Context.UsesNonCombatGeneration ? _eventRng : null);
         Working = state;
         Accept(new("EventRelicPull", sourceId, [], null, null));
         if (BeginObtainRelic(key, null, PredictorObtainReturn.Event, sourceId, token))
@@ -498,6 +503,7 @@ internal sealed partial class PredictorRun
             else FinishEvent();
             return;
         }
+        if (ResumeModernOperationEventObtain(sourceId)) return;
         throw new InvalidOperationException("PredictorEventObtainContinuationInvalid");
     }
 
@@ -540,9 +546,9 @@ internal sealed partial class PredictorRun
             }
             else if (_eventBranch == "SETTING_2")
             {
-                var cards = Working.Deck.Select(Working.Card).Where(c => c.UpgradeLevel < c.MaxUpgradeLevel)
-                    .OrderBy(c => c.Key.Entry, StringComparer.Ordinal).ThenBy(c => c.UpgradeLevel).ToList();
-                _eventRng!.UnstableShuffle(cards);
+                var cards = Working.Deck.Select(Working.Card).Where(c => c.UpgradeLevel < c.MaxUpgradeLevel).ToList();
+                PredictorCardStableOrder.Sort(cards, Context);
+                _eventRng!.UnstableShuffle(cards, Context.VersionResolution.SemanticProfileId);
                 var ids = cards.Take(2).Select(c => c.Id).ToImmutableArray();
                 foreach (long id in ids)
                 {
@@ -555,7 +561,7 @@ internal sealed partial class PredictorRun
             else if (_eventBranch == "SETTING_3")
             {
                 var state = Working;
-                var key = PredictorRewardGeneration.PullRelic(Context, ref state);
+                var key = PredictorRewardGeneration.PullRelic(Context, ref state, Context.UsesNonCombatGeneration ? _eventRng : null);
                 Working = state;
                 plans.Add(new(PredictorRewardKind.Relic, PrefilledRelicKey: key));
             }
@@ -703,6 +709,7 @@ internal sealed partial class PredictorRun
         _eventKey = null;
         _eventPotionInput = null;
         _eventLocalPotionSlots = default;
+        if (Context.Operation != null) _completedOperationEventRng = OperationEventRng();
         _eventRng = null;
         _eventBranch = null;
         _eventCardsRequired = 0;

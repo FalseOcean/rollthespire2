@@ -89,6 +89,10 @@ public static class SearchCompiler
 
     internal static void ValidateStandardMapConditions(SearchQuery query)
     {
+        if (query.ElitePrefixResearch is { Mode: not (ElitePrefixResearchMode.FixedCounts or ElitePrefixResearchMode.FloorSeven) })
+            throw new ArgumentException("ElitePrefixResearch:InvalidMode");
+        if (query.ElitePrefixResearch is { IsValid: false })
+            throw new ArgumentException("ElitePrefixResearch:InvalidCount");
         if (query.StandardMaps is null || query.StandardMaps.Any(c => c is null || !c.IsValid))
             throw new ArgumentException("StandardMap.InvalidCondition");
         if (query.StandardMapRoutes is null || query.StandardMapRoutes.Any(c => c is null || !c.IsValid))
@@ -116,6 +120,7 @@ public static class SearchCompiler
         static void Sequence(int count, int maximum, CombatRewardSequenceOrderMode order, int slots, string path) =>
             Require(count >= 0 && count <= maximum && slots >= count && Enum.IsDefined(order), path + ":InvalidShape");
         Require(query.FirstActUnknownEventPrefixCount is >= 0 and <= 3, "FirstActUnknownEventPrefix:InvalidCount");
+        Require(query.FirstActUnknownMonsterPrefixCount is >= 0 and <= 3, "FirstActUnknownMonsterPrefix:InvalidCount");
         if (query.TreasureRelics is { } treasure) Require(treasure.IsValid, "TreasureRelics:InvalidShape");
         if (query.OpeningRoute is { } opening) Require(opening.IsValid, "OpeningRoute:InvalidShape");
         if (query.OpeningRouteRelicRequirement is { } route)
@@ -163,6 +168,7 @@ public static class SearchCompiler
             Set(item.Keys, "RelicSequence", BaseGameModelKeys.Categories.Relic);
             Require(Enum.IsDefined(item.Lane) && Enum.IsDefined(item.RangeMode) && item.RangeValue > 0, "RelicSequence:InvalidShape");
         }
+        foreach (var item in query.EncounterQueues) Require(item.IsValid, "EncounterQueue:InvalidShape");
         foreach (var item in query.EventSequenceConstraints)
         {
             Set(item.Keys, "EventSequence", BaseGameModelKeys.Categories.Event);
@@ -204,6 +210,8 @@ public static class SearchCompiler
             Require(item.BattleOrdinal is >= 0 and <= 6 && Enum.IsDefined(item.PotionRequirement), "LegacyReward:InvalidShape");
         }
         var neow = query.LegacyNeow;
+        if (query.NeowOfferWhitelist is { } whitelist)
+            Keys(whitelist.AllowedKeys, "NeowOfferWhitelist", BaseGameModelKeys.Categories.Relic);
         Set(neow.NeowRelics, "LegacyNeow", BaseGameModelKeys.Categories.Relic);
         Set(neow.BonesRelics, "LegacyBones", BaseGameModelKeys.Categories.Relic);
         Set(neow.CapsuleContainedRelics, "LegacyCapsule", BaseGameModelKeys.Categories.Relic);
@@ -328,7 +336,8 @@ public static class SearchCompiler
                 $"{item.Count}:{item.OrderMode}:{item.Slot}:{string.Join(">", item.Slots.Select(key => key?.Serialized ?? "*"))}")),
             "standardMaps=" + Sorted(query.StandardMaps.Select(c => $"{c.Scope}:{c.Metric}:{c.Comparison}:{c.Value}:{c.RouteObjective}")),
             "combatCardExclusion=" + (query.CombatCardExclusion is { IsEmpty: false } exclusion
-                ? $"count={exclusion.BattleCount}:keys={StableKeys(exclusion.CardKeys)}" : string.Empty),
+                ? $"count={exclusion.BattleCount}:keys={StableKeys(exclusion.CardKeys)}" +
+                    (exclusion.Mode == CombatCardCollectionMode.Whitelist ? ":mode=Whitelist" : "") : string.Empty),
             "combatCards=" + (query.CombatCardRewards is { IsEmpty: false } cards
                 ? $"count={cards.Count}:order={cards.OrderMode}:slots={string.Join(">", cards.Slots.Select(key => key?.Serialized ?? "*"))}"
                 : string.Empty),
@@ -359,10 +368,18 @@ public static class SearchCompiler
         };
 
         string identity = string.Join("|", parts);
+        if (query.EncounterQueues.Count > 0) identity += "|encounter=" + Sorted(query.EncounterQueues.Select(item =>
+            $"{item.Act}:{item.VariantKey}:{item.Kind}:{item.RangeMode}:{item.RangeValue}:{StableKeys(item.AllowedKeys)}"));
+        if (query.NeowOfferWhitelist is { } whitelist) identity += "|neowOfferWhitelist=" + StableKeys(whitelist.AllowedKeys);
         if (query.StandardMapRoutes.Count > 0) identity += "|standardMapRoutes=" + Sorted(query.StandardMapRoutes.Select(c => c.Fingerprint));
+        if (query.ElitePrefixResearch is { } research)
+            identity += research.Mode == ElitePrefixResearchMode.FloorSeven
+                ? "|elitePrefixResearch=Act1:AllPaths:FirstEliteFloor7:PrefixMonsterOrUnknown:UnrestrictedCounts"
+                : $"|elitePrefixResearch=Act1:AllPaths:FixedMonster1:ExtraMonsters{research.ExtraMonsters}:Unknowns{research.Unknowns}";
         if (query.TreasureRelics is { } treasure) identity +=
             $"|treasureRelics={treasure.StartOrdinal}:{treasure.Count}:{treasure.OrderMode}:{string.Join(">", treasure.Slots.Select(key => key?.Serialized ?? "*"))}";
         if (query.FirstActUnknownEventPrefixCount > 0) identity += "|unknownEventPrefix=" + query.FirstActUnknownEventPrefixCount;
+        if (query.FirstActUnknownMonsterPrefixCount > 0) identity += "|unknownMonsterPrefix=" + query.FirstActUnknownMonsterPrefixCount;
         return query.TransformationAggregate is { } aggregate
             ? identity + "|transformationAggregate=" + aggregate.SemanticIdentity : identity;
     }
@@ -383,6 +400,8 @@ internal static class SearchQueryNormalizer
         var diagnostics = new List<string>();
         var relations = new List<SemanticRelation>();
         bool impossible = false;
+        if (query.FirstActUnknownEventPrefixCount > 0 && query.FirstActUnknownMonsterPrefixCount > 0)
+        { impossible = true; diagnostics.Add("UnknownRoomPrefix:EventMonsterConflict"); }
 
         ModelKeySetFilter NormalizeSet(ModelKeySetFilter input, string path, bool singleValue) =>
             NormalizeSetCore(input, path, singleValue, ref impossible);
@@ -639,6 +658,8 @@ internal static class SearchQueryNormalizer
 
         var normalized = query with
         {
+            NeowOfferWhitelist = query.NeowOfferWhitelist is { } allowed
+                ? allowed with { AllowedKeys = StableKeys(allowed.AllowedKeys) } : null,
             OpeningRouteRelicRequirement = openingRouteRelics,
             StructuredOpeningEffects = structured,
             VariantBossBranches = variantBranches,
@@ -646,6 +667,8 @@ internal static class SearchQueryNormalizer
             TreasureRelics = query.TreasureRelics is { } treasure ? treasure with { Slots = treasure.Slots.ToArray() } : null,
             RelicSequenceConstraints = relics,
             RelicShopSequenceConditions = relicShopSequences,
+            EncounterQueues = query.EncounterQueues.Select(item => item with { AllowedKeys = StableKeys(item.AllowedKeys) })
+                .DistinctBy(item => System.Text.Json.JsonSerializer.Serialize(item)).OrderBy(item => item.Act).ThenBy(item => item.Kind).ThenBy(item => item.RangeMode).ThenBy(item => item.RangeValue).ToArray(),
             EventSequenceConstraints = events,
             EventResultConditions = eventResults,
             MerchantColorlessConditions = merchantColorless.ToArray(),

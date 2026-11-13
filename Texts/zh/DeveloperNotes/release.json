@@ -4,6 +4,14 @@
   "Blocks": [
     {
       "Type": "Heading",
+      "Text": "RolltheSpire2 1.4.2"
+    },
+    {
+      "Type": "Callout",
+      "Text": "适配游戏 0.113.0，尽量补齐了可筛选条件。正确性仍待进一步验证，速度也有待优化。"
+    },
+    {
+      "Type": "Heading",
       "Text": "RolltheSpire2 1.4.1"
     },
     {

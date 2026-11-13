@@ -1,3 +1,5 @@
+using RolltheSpire2.Search.Contracts;
+using RolltheSpire2.Search.Semantics;
 using RolltheSpire2.Ui.Workspace;
 using RolltheSpire2.Ui.Shell;
 using RolltheSpire2.Ui.Tooltips;
@@ -19,6 +21,8 @@ using RolltheSpire2.Ui.Theme;
 
 namespace RolltheSpire2.Ui.Pages.Search.Editors;
 
+internal enum ActInformationPage { Map, Boss, EliteResearch, EncounterResearch }
+
 internal sealed partial class ActInformationSearchEditor : Control
 {
     private readonly ModRuntimeSnapshot _runtime;
@@ -27,6 +31,9 @@ internal sealed partial class ActInformationSearchEditor : Control
     private readonly SearchWorkspace _persistence;
     private readonly Control _body = new();
     private ScrollContainer? _mapScroll;
+    private ScrollContainer? _pageScroll;
+    private ActInformationPage? _scrollPage;
+    private ActInformationPage Page { get; set; } = ActInformationPage.Map;
     private readonly Dictionary<int, SeatDraft> _drafts = [];
     private SeatDraft _draft = new();
     private IUiTextProvider _text = JsonUiTextProvider.CreateUi13("zh");
@@ -49,7 +56,9 @@ internal sealed partial class ActInformationSearchEditor : Control
         public HashSet<ModelKey>[] SelectedBosses { get; } = NewIdentitySets();
         public HashSet<ModelKey>[] SelectedSecondBosses { get; } = NewIdentitySets();
         public bool[] IncludesSecondBoss { get; } = new bool[3];
-        public bool MapMode = true;
+        public List<EncounterQueueSearchCondition> EncounterQueues { get; } = [];
+        public bool EliteResearchEnabled;
+        public ElitePrefixResearchCondition EliteResearchCounts = ElitePrefixResearchCondition.FloorSeven;
         // Retained for existing workbench UI-state persistence; map properties are now always visible.
         public bool AdvancedProperties;
         public int Scope;
@@ -70,13 +79,17 @@ internal sealed partial class ActInformationSearchEditor : Control
     }
 
     public event Action? GuideRequested;
+    public event Action? UnknownRoomPrefixChanged;
 
     public void SelectPage(bool map)
     {
-        if (_draft.MapMode == map) return;
-        _draft.MapMode = map;
+        var page = map ? ActInformationPage.Map : ActInformationPage.Boss;
+        if (Page == page) return;
+        Page = page;
         Render();
     }
+
+    internal void SetPage(ActInformationPage page) => Page = page;
 
     public void Refresh(string language, IUiTextProvider text, ModelKey character, int ascension,
         int players, int seat, SerializableUnlockState? unlocks = null, bool render = true,
@@ -138,43 +151,58 @@ internal sealed partial class ActInformationSearchEditor : Control
 
     private void Render()
     {
-        int scrollTop = _draft.MapMode && _mapScroll is not null && GodotObject.IsInstanceValid(_mapScroll)
-            ? _mapScroll.ScrollVertical : 0;
+        bool map = Page == ActInformationPage.Map;
+        int scrollTop = _scrollPage == Page && _pageScroll is not null && GodotObject.IsInstanceValid(_pageScroll)
+            ? _pageScroll.ScrollVertical : 0;
         Clear(_body);
         _body.Size = Size;
-        VBoxContainer guide = FamilyGuide(_body, Size.X - 20);
         var scroll = new ScrollContainer { HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
-        void Layout()
+        if (Page is ActInformationPage.Map or ActInformationPage.Boss)
         {
-            float top = guide.Size.Y + 10;
-            scroll.Position = new(0, top);
-            scroll.Size = new(Size.X, Math.Max(0, Size.Y - top));
+            var guide = FamilyGuide(_body, Size.X - 20, map);
+            void Layout()
+            {
+                float top = guide.Size.Y + 10;
+                scroll.Position = new(0, top);
+                scroll.Size = new(Size.X, Math.Max(0, Size.Y - top));
+            }
+            guide.Resized += Layout;
+            Layout();
         }
-        guide.Resized += Layout;
-        Layout();
+        else scroll.Size = Size;
         _body.AddChild(scroll);
         float width = Size.X - 28;
         var content = new Control { CustomMinimumSize = new(width, 1) };
         scroll.AddChild(content);
-        float y = _draft.MapMode ? RenderMap(content, width, 0) : RenderIdentity(content, width, 0);
+        float y = Page switch
+        {
+            ActInformationPage.Map => RenderMap(content, width, 0),
+            ActInformationPage.Boss => RenderIdentity(content, width, 0),
+            ActInformationPage.EliteResearch => RenderEliteResearch(content, width, 0),
+            ActInformationPage.EncounterResearch => RenderEncounterResearch(content, width),
+            _ => throw new InvalidOperationException($"Unsupported act information page {Page}")
+        };
         content.CustomMinimumSize = new(width, y + 16);
-        _mapScroll = _draft.MapMode ? scroll : null;
+        _mapScroll = map ? scroll : null;
+        _pageScroll = scroll;
+        _scrollPage = Page;
         if (scrollTop > 0) scroll.SetDeferred(ScrollContainer.PropertyName.ScrollVertical, scrollTop);
         if (!string.IsNullOrEmpty(_toastMessage)) RenderToast();
     }
 
-    private VBoxContainer FamilyGuide(Control host, float width)
+    private VBoxContainer FamilyGuide(Control host, float width, bool map)
     {
-        bool expanded = _draft.MapMode ? _mapGuideExpanded : _identityGuideExpanded;
-        string titleKey = _draft.MapMode ? "query.map.guide.title" : "query.act_info.identity.guide.title";
-        string summaryKey = _draft.MapMode ? "query.map.guide.summary" : "query.act_info.identity.guide.summary";
-        string usageKey = _draft.MapMode ? "query.map.guide.usage" : "query.act_info.identity.guide.usage";
-        string boundaryKey = _draft.MapMode ? "query.map.guide.boundary" : "query.act_info.identity.guide.boundary";
+        bool expanded = map ? _mapGuideExpanded : _identityGuideExpanded;
+        string titleKey = map ? "query.map.guide.title" : "query.act_info.identity.guide.title";
+        string summaryKey = map ? "query.map.guide.summary" : "query.act_info.identity.guide.summary";
+        string usageKey = map ? "query.map.guide.usage" : "query.act_info.identity.guide.usage";
+        string boundaryKey = map ? "query.map.guide.boundary" : "query.act_info.identity.guide.boundary";
         return SearchEditorGuide.Build(host, _p, width,
-            _text.Get(titleKey), _text.Get(summaryKey), [_text.Get(usageKey), _text.Get(boundaryKey)], expanded,
+            _text.Get(titleKey), _text.Get(summaryKey), [_text.Get(usageKey), _text.Get(boundaryKey),
+                .. map && _draft.Players == 1 ? new[] { _text.Get("query.event.unknown.premise") } : []], expanded,
             () =>
             {
-                if (_draft.MapMode)
+                if (map)
                 {
                     _mapGuideExpanded = !_mapGuideExpanded;
                     _persistence.SetActInformationMapGuideExpanded(_mapGuideExpanded);

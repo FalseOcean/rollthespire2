@@ -17,7 +17,7 @@ internal sealed class NeowIdentityCpuPlan
     internal static NeowIdentityCpuPlan? TryCompile(NeowReplayPlan plan)
     {
         ulong bones = Beta110FastRelicCatalog.Bit(Beta110FastRelicCatalog.NeowsBones);
-        if (!plan.DirectNestedVanilla111 || !plan.Bones || plan.Selected != Beta110FastRelicCatalog.NeowsBones ||
+        if (!plan.AuditedIdentityReplay || !plan.Bones || plan.Selected != Beta110FastRelicCatalog.NeowsBones ||
             plan.StructuredConditions.Length != 0 || plan.HasFinalCurseFastProjection || plan.ExactOnly.Length != 0 ||
             (plan.TopAny & ~bones) != 0 || (plan.TopAll & ~bones) != 0 || plan.TopBan != 0 ||
             BitOperations.PopCount(plan.BonesAll) != 2 ||
@@ -46,7 +46,9 @@ internal sealed class NeowIdentityCpuPlan
         var identity = new Beta110FastRng(unchecked(playerRoot + EventHash));
         if (authority.EligibleCurseRelicIds[identity.NextInt(authority.EligibleCurseRelicIds.Length)] != Beta110FastRelicCatalog.NeowsBones)
             return false;
-        var rewards = new Beta110FastRng(unchecked(playerRoot + NeowFamilyReplay.RewardsHash));
+        var rewards = authority.UsesChildShuffle
+            ? new Beta110FastRng(unchecked(playerRoot + NeowFamilyReplay.NonCombatHash)).ForkShuffle()
+            : new Beta110FastRng(unchecked(playerRoot + NeowFamilyReplay.RewardsHash));
         int a = _first, b = _second;
         for (int count = authority.BonesEligibleRelicIds.Length; count > 2; count--)
         {

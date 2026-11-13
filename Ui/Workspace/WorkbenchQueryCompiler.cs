@@ -226,7 +226,7 @@ internal static class WorkbenchQueryCompiler
         {
             CombatCardRewards = cardRewardSequence,
             CombatCardExclusion = draft.CombatRewardDraft.ExcludedCollection is { } excludedCollection
-                ? new CombatCardExclusionSearchCondition(draft.CombatRewardDraft.ExclusionBattleCount, excludedCollection.Cards.ToArray()) : null,
+                ? new CombatCardExclusionSearchCondition(draft.CombatRewardDraft.ExclusionBattleCount, excludedCollection.Cards.ToArray()) { Mode = draft.CombatRewardDraft.CollectionMode } : null,
             CombatPotionRewards = potionRewardSequence,
             EventResultConditions = draft.EventResultDraft,
             MerchantColorlessConditions = draft.MerchantColorlessDraft,

@@ -36,6 +36,7 @@ internal sealed partial class NeowOperationOverlay : Control
             // it; compact results should not inherit the old fixed 460/620px.
             float width = Math.Clamp(_summaryNaturalWidth + 42, Math.Min(360, screenWidth - 36),
                 Math.Min(IsComplex ? screenWidth * .82f : 620, screenWidth - 36));
+            if (_courierTipWidth is { } courierWidth) width = Math.Min(courierWidth, screenWidth - 36);
             return new(Math.Max(1, width), Mathf.Ceil(_summaryPanels.Sum(panel => panel.Content.GetCombinedMinimumSize().Y + 33) +
                 Math.Max(0, _summaryPanels.Count - 1) * 12));
         }
@@ -467,6 +468,7 @@ internal sealed partial class NeowOperationOverlay : Control
 
     private static string NoticeText(string notice)
     {
+        if (notice.StartsWith("UiText:", StringComparison.Ordinal)) return UiText.Get(notice[7..]);
         if (notice == "Purchase:InsufficientGold") return UiText.Get("operation.insufficientGold");
         if (notice == "Purchase:TooFull") return UiText.Get("operation.potionSlotsFull");
         if (notice.StartsWith("RewardSacrificeProgress:", StringComparison.Ordinal) && int.TryParse(notice[24..], out int progress))
@@ -501,6 +503,7 @@ internal sealed partial class NeowOperationOverlay : Control
     private static string LocalizedLabel(ModelKey source, string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return "";
+        if (value.StartsWith("UiText:", StringComparison.Ordinal)) return UiText.Get(value[7..]);
         if (value == "PotionCombatUse") return UiText.Get("operation.combat.use");
         if (value == "PotionUseOrdinal") return "";
         if (value.StartsWith("PotionUseStep:", StringComparison.Ordinal) && int.TryParse(value[14..], out int potionStep))

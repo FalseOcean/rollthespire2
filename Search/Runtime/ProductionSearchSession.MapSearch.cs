@@ -9,7 +9,7 @@ public sealed partial class ProductionSearchSession
     private MapSearchProvenance? CaptureMapSearch(ulong start, ulong end)
     {
         var query = _model.CompiledSearch.NormalizedQuery;
-        if (!_plan.MapLossy.Enabled && query.StandardMaps.Count == 0 && query.StandardMapRoutes.Count == 0) return null;
+        if (!_plan.MapLossy.Enabled && query.StandardMaps.Count == 0 && query.StandardMapRoutes.Count == 0 && query.ElitePrefixResearch is null) return null;
         var observation = ExecutionPlan.ExecutionOrderUnits.Any(body=>body.Coverage.Contains("M.StandardMap"))
             ? _families.OfType<IMapProposalObservation>().FirstOrDefault()?.CaptureMapProposal() : null;
         var description = observation?.Description;

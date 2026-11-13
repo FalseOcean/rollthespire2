@@ -91,9 +91,23 @@ internal static class SimpleProbabilityPrinciplesChecks
             "excluding captured full pool is impossible in declared distribution");
         var combined = Ban(1, cards[0]) with { CombatCardRewards = new(1, CombatRewardSequenceOrderMode.Ordered, [cards[1]]) };
         Near(CombatRewardProbabilityEstimator.EstimateOptimizedConditions(Input(combined, cardContext)).Probability, .75,
-            "positive optimization strips Exact-only exclusion");
-        Near(CombatRewardProbabilityEstimator.Estimate(Input(combined, cardContext)).Probability, .75 * .25,
-            "positive and exclusion use Owner-approved independent factors");
+            "positive-only projection strips the collection");
+        Near(CombatRewardProbabilityEstimator.Estimate(Input(combined, cardContext)).Probability, .25,
+            "positive and collection share the same reward group");
+        SearchQuery White(int horizon, params ModelKey[] allowed) => SearchQuery.Empty with {
+            CombatCardExclusion = new(horizon, allowed) { Mode = CombatCardCollectionMode.Whitelist } };
+        Near(CombatRewardProbabilityEstimator.Estimate(Input(White(1, cards.Skip(1).ToArray()), cardContext)).Probability, .25,
+            "whitelist checks every distinct offered option against authored set");
+        Near(CombatRewardProbabilityEstimator.Estimate(Input(White(2, cards.Skip(1).ToArray()), cardContext)).Probability, .0625,
+            "whitelist checks every battle, rather than one safe battle");
+        Near(CombatRewardProbabilityEstimator.Estimate(Input(White(1, cards), cardContext)).Probability, 1,
+            "full-pool whitelist retains all probability mass");
+        Near(CombatRewardProbabilityEstimator.Estimate(Input(White(1, cards.Skip(1).ToArray()) with {
+            CombatCardRewards = new(1, CombatRewardSequenceOrderMode.Ordered, [cards[0]]) }, cardContext)).Probability, 0,
+            "target outside whitelist cannot borrow a separate reward witness");
+        Near(CombatRewardProbabilityEstimator.Estimate(Input(White(1, cards.Skip(1).ToArray()) with {
+            CombatCardRewards = new(2, CombatRewardSequenceOrderMode.Ordered, [null, cards[0]]) }, cardContext)).Probability, .1875,
+            "collection window does not constrain later target battles");
         Near(CombatRewardProbabilityEstimator.EstimateOptimizedConditions(Input(Ban(1, cards[0]), cardContext)).Probability, 1,
             "exclusion-only request has no optimized C condition");
         var unknownCards = cardContext with { Authority = cardContext.Authority.WithEffectAuthority(effects with { CharacterRewardPool = null }) };

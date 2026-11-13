@@ -19,14 +19,14 @@ internal static class PredictorStreamKnowledgeChecks
     internal static void Run()
     {
         var domains = Enum.GetValues<PredictorStream>().Select(PredictorRun.StreamKnowledgeDomain).ToArray();
-        Check(domains.Length == 8 && domains.All(d => d != PredictorCombatDomain.None) && domains.Distinct().Count() == 8,
+        Check(domains.Length == 9 && domains.All(d => d != PredictorCombatDomain.None) && domains.Distinct().Count() == 9,
             "Each real stream must have its own nonempty uncertainty domain");
         try { _ = PredictorRun.StreamKnowledgeDomain((PredictorStream)99); throw new InvalidOperationException("Invalid stream mapping was accepted"); }
         catch (ArgumentOutOfRangeException) { }
         UnknownRoomReadsAndTerminal();
         IndependentStreamsStayIsolated();
         LeafyUsesItsActualStream();
-        Console.WriteLine("PREDICTOR_STREAM_KNOWLEDGE_PASS eight stream domains; real unknown-room terminal/forced/tutorial paths; independent stream diagnostics; Leafy actual Transformations reads");
+        Console.WriteLine("PREDICTOR_STREAM_KNOWLEDGE_PASS nine stream domains; real unknown-room terminal/forced/tutorial paths; independent stream diagnostics; Leafy actual Transformations reads");
     }
 
     private static PredictorCard Card(string key, EffectCardType type) => new(0, new("CARD", key), type, 0, 1, true, 1);

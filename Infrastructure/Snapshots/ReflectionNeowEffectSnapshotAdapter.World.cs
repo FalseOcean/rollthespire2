@@ -574,7 +574,9 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         IReadOnlyList<Beta109AncientEventContextSnapshot> ancientEventContexts =
             BuildBeta109AncientEventContexts(
                 profile.ProfileId,
-                authority,
+                authority.OrderedActs,
+                authority.UnlockedSharedAncients,
+                authority.IsVanilla,
                 effects,
                 ancientOptionRelicCatalog,
                 ancientOptionRelicCatalogExact,
@@ -658,6 +660,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             Beta109AcceptedRuntimeValidationAuthority.Resolve(gameVersion);
         IReadOnlyList<string> acceptedFixtureIds = acceptedValidation.FixtureIds;
         Beta109FixtureValidationStatus acceptedFixtureStatus = acceptedValidation.Status;
+        var rngSemantics = RuntimeVersionCompatibility.Resolve(gameVersion).SemanticProfileId;
+        bool childShuffle = RuntimeProfilePolicies.UsesChildStreamShuffle(rngSemantics);
 
         string generationRuleFingerprint = Fingerprint(
             profile.ProfileId switch
@@ -680,7 +684,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             "shared-ancients:unlock-state-subset",
             "events:act-all-events+shared-events",
             "events:epoch-filter-event1>event2>event3",
-            "events:unstable-shuffle-n-minus-one",
+            childShuffle ? "up-front:unstable-shuffle-child-stream" : "events:unstable-shuffle-n-minus-one",
             "encounters:vanilla-generate-all-order",
             "encounters:monster-isweak-classification",
             "encounters:uniform-weight-one",
@@ -798,6 +802,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             SnapshotFingerprint: snapshotFingerprint,
             CaptureDiagnosticCode: authority.DiagnosticCode)
         {
+            RngSemantics = rngSemantics,
             RequestedGameMode = authority.RequestedGameMode,
             RequestedGameModeExact = authority.RequestedGameModeExact,
             GameModeEvidenceCode = authority.GameModeEvidenceCode,

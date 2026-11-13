@@ -62,6 +62,7 @@ internal sealed record ProbabilitySemanticView(
     {
         LegacyNeowSemanticConstraints legacy = NormalizedQuery.LegacyNeow;
         return NormalizedQuery.OpeningRoute is { IsValid: true } ||
+               NormalizedQuery.NeowOfferWhitelist is not null ||
                NormalizedQuery.OpeningRouteRelicRequirement is { IsEmpty: false } ||
                NormalizedQuery.StructuredOpeningEffects.Any(condition => !condition.IsEmpty) ||
                !legacy.NeowRelics.IsEmpty ||
@@ -81,6 +82,7 @@ internal sealed record ProbabilitySemanticView(
     }
 
     private bool HasWorldQuery() =>
+        NormalizedQuery.EncounterQueues.Count > 0 ||
         NormalizedQuery.VariantBossBranches.Any(branch => branch.IsValid) ||
         NormalizedQuery.AncientBranches.Any(branch => branch.IsValid) ||
         NormalizedQuery.EventSequenceConstraints.Any(condition => !condition.IsEmpty) ||

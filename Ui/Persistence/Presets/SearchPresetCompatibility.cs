@@ -8,6 +8,7 @@ using RolltheSpire2.Core.World.Snapshots;
 using RolltheSpire2.Ui.Shell;
 using RolltheSpire2.Ui.Pages.Search.CombatReward;
 using RolltheSpire2.Search.Semantics;
+using RolltheSpire2.Infrastructure.Snapshots;
 
 namespace RolltheSpire2.Ui.Persistence;
 
@@ -26,8 +27,8 @@ internal sealed record SearchPresetWorkbenchLoadResolution(
 
 /// <summary>
 /// B-Compatibility only resolves whether persisted stable content identities still
-/// exist in the current RT2-relevant SemanticUniverse. It deliberately does not
-/// inspect CurrentUnlockState and therefore never becomes Search admission authority.
+/// exist in the current RT2-relevant SemanticUniverse or encounter identity catalog.
+/// It deliberately ignores CurrentUnlockState and never becomes Search admission authority.
 /// Current intent is indivisible: compatibility never removes conditions. Card
 /// exclusion snapshots retain missing identities for Exact's explicit Unknown path;
 /// other unresolved identities still prevent use of the template.
@@ -41,17 +42,20 @@ internal static class SearchPresetCompatibilityResolver
     /// editor catalog still own admission and representability.
     /// </summary>
     internal static SearchPresetWorkbenchLoadResolution ResolveWorkbench(
-        SearchPresetDefinition preset, RuntimeAuthoritySnapshot authority)
+        SearchPresetDefinition preset, RuntimeAuthoritySnapshot authority,
+        RuntimeEncounterCatalogSnapshot encounterCatalog)
     {
         ArgumentNullException.ThrowIfNull(preset);
         ArgumentNullException.ThrowIfNull(authority);
+        ArgumentNullException.ThrowIfNull(encounterCatalog);
         if (preset.Workbench is not { } draft)
             return new(null, preset.UnresolvedAsset?.References ?? [], preset.UnresolvedAsset?.Issue ?? "PresetCurrentIntentRequired");
         var unresolved = new List<SearchPresetUnresolvedReference>();
         try
         {
             ValidateWorkbenchShape(draft);
-            unresolved.AddRange(FindUnresolvedIntentReferences(draft.WithoutCapturedAuthority(), authority, "Workbench", deferActVariants: true));
+            unresolved.AddRange(FindUnresolvedIntentReferences(draft.WithoutCapturedAuthority(), authority,
+                "Workbench", deferActVariants: true, encounterCatalog: encounterCatalog));
         }
         catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException or ArgumentException)
         {
@@ -68,9 +72,11 @@ internal static class SearchPresetCompatibilityResolver
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<RuntimeAuthoritySnapshot, SemanticUniverseIndex> UniverseIndexes = new();
 
     internal static IReadOnlyList<SearchPresetUnresolvedReference> FindUnresolvedIntentReferences(
-        object intent, RuntimeAuthoritySnapshot authority, string rootPath, bool deferActVariants = false)
+        object intent, RuntimeAuthoritySnapshot authority, string rootPath, bool deferActVariants = false,
+        RuntimeEncounterCatalogSnapshot? encounterCatalog = null)
     {
         var universe = UniverseIndexes.GetValue(authority, value => new(value));
+        var encounters = encounterCatalog is null ? null : new HashSet<ModelKey>(encounterCatalog.EncounterKeys, ModelKeyComparer.Instance);
         var unresolved = new List<SearchPresetUnresolvedReference>();
         VisitWorkbenchIntent(intent, rootPath, (key, path) =>
         {
@@ -82,6 +88,16 @@ internal static class SearchPresetCompatibilityResolver
             // proven; compatibility must not drop its unresolved obligations.
             if (path.Contains(".CombatCardExclusion.CardKeys[", StringComparison.Ordinal) ||
                 path.Contains(".CombatRewardEditor.ExcludedCollection.Cards[", StringComparison.Ordinal)) return;
+            if (key.Category == BaseGameModelKeys.Categories.Encounter)
+            {
+                // Schema 1's Bosses domain cannot establish non-boss absence.
+                // This is content existence, not current pool/unlock eligibility.
+                if (encounters?.Contains(key) == true) return;
+                unresolved.Add(new(path, key.Serialized, encounterCatalog?.IdentityCaptureComplete == true
+                    ? "StableIdentityMissingFromCurrentSemanticUniverse:Encounters"
+                    : "CurrentSemanticDomainAuthorityIncomplete:Encounters:" + (encounterCatalog?.EvidenceCode ?? "EncounterCatalogUnavailable")));
+                return;
+            }
             universe.TryResolveAny(key, path, unresolved);
         });
         return unresolved;
@@ -125,7 +141,8 @@ internal static class SearchPresetCompatibilityResolver
         if (exclusion is not null && (!exclusion.HasValidShape() || !exclusion.HasValidCardKeys()))
             throw new InvalidDataException("PresetCardExclusionInvalid");
         if (state is null) return;
-        if (state.ExclusionBattleCount is < 1 or > 6 || exclusion is not null && exclusion.BattleCount != state.ExclusionBattleCount)
+        if (state.ExclusionBattleCount is < 1 or > 6 || !Enum.IsDefined(state.CollectionMode) ||
+            exclusion is not null && (exclusion.BattleCount != state.ExclusionBattleCount || exclusion.Mode != state.CollectionMode))
             throw new InvalidDataException("PresetCardExclusionRangeInvalid");
         if (state.ExcludedCollection is null) return;
         if (!state.HasMatchingExclusionSnapshot(exclusion))
@@ -230,7 +247,6 @@ internal static class SearchPresetCompatibilityResolver
                 BaseGameModelKeys.Categories.Card => new[] { RuntimeAuthorityDomains.Cards },
                 BaseGameModelKeys.Categories.Relic => new[] { RuntimeAuthorityDomains.Relics },
                 BaseGameModelKeys.Categories.Potion => new[] { RuntimeAuthorityDomains.Potions },
-                BaseGameModelKeys.Categories.Encounter => new[] { RuntimeAuthorityDomains.Bosses },
                 // Ancient identities are EVENT:* in the current Beta111 runtime authority,
                 // so EVENT references may legitimately live in either domain.
                 BaseGameModelKeys.Categories.Event => new[] { RuntimeAuthorityDomains.Events, RuntimeAuthorityDomains.Ancients },

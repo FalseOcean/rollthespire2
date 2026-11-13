@@ -3,7 +3,7 @@
 // HistoricalNextInt retained; route state is strictly Neow-local. No Relic Bag.
 /*__RT2_NEOW_IDENTITY_FACTS__*/
 struct RngState { uint64_t s0; uint64_t s1; uint64_t s2; uint64_t s3; };
-struct RouteRngState { RngState rewards; RngState niche; RngState transformations; RngState combat_potions; };
+struct RouteRngState { RngState rewards; RngState niche; RngState transformations; RngState combat_potions; RngState non_combat; };
 uint64_t make_u64(uint low, uint high) {
     return uint64_t(low) | (uint64_t(high) << 32u);
 }
@@ -83,6 +83,7 @@ uint64_t relic_bit(uint id) {
 // A tail at index >= 2 can never return to the two visible offers. Successful
 // candidates consume every original draw, including the final size-two swap,
 // which also preserves the exact first/second selected-route witness.
+bool uses_child_shuffle();
 bool replay_neow_single_required_identity(inout RngState event_rng, uint curse_id, out uint route_mask) {
     route_mask = 0u;
     uint count = plan_value(uint(N_ENTRY_META_OFFSET) + curse_id * 2u);
@@ -99,13 +100,17 @@ bool replay_neow_single_required_identity(inout RngState event_rng, uint curse_i
     if (appended2 == uint(N_ENTRY_TARGET)) position = count;
     count++;
     if (position == 0xffffffffu) return false;
+    bool child_shuffle = uses_child_shuffle();
+    RngState shuffle_rng = event_rng;
+    if (child_shuffle) shuffle_rng = rng_initialize(next_u64(event_rng));
     for (uint remaining = count; remaining > 1u; --remaining) {
-        uint selected = next_int(event_rng, remaining);
+        uint selected = next_int(shuffle_rng, remaining);
         uint tail = remaining - 1u;
         if (position == selected) position = tail;
         else if (position == tail) position = selected;
         if (position == tail && tail >= 2u) return false;
     }
+    if (!child_shuffle) event_rng = shuffle_rng;
     uint64_t top = relic_bit(uint(N_ENTRY_TARGET)) | relic_bit(curse_id);
     uint64_t any = plan_u64(40u), all = plan_u64(42u), ban = plan_u64(44u), selected_route = plan_u64(46u);
     if ((any != uint64_t(0u) && (top & any) == uint64_t(0u)) ||
@@ -121,6 +126,12 @@ bool replay_neow_single_required_identity(inout RngState event_rng, uint curse_i
     return route_mask != 0u;
 }
 #endif
+
+bool uses_child_shuffle() { return __RT2_N_CHILD_SHUFFLE__; }
+
+RngState non_combat_rng(uint64_t root_hash) {
+    return rng_initialize(root_hash + plan_u64(54u));
+}
 
 bool replay_neow_top_identity_after_curse(
     inout RngState event_rng,
@@ -145,14 +156,18 @@ bool replay_neow_top_identity_after_curse(
         return false;
     }
 
+    bool child_shuffle = uses_child_shuffle();
+    RngState shuffle_rng = event_rng;
+    if (child_shuffle) shuffle_rng = rng_initialize(next_u64(event_rng));
     for (uint count = positive_count; count > 1u; --count) {
-        uint selected = next_int(event_rng, count);
+        uint selected = next_int(shuffle_rng, count);
         uint tail = count - 1u;
         uint temporary = positives[selected];
         positives[selected] = positives[tail];
         positives[tail] = temporary;
     }
 
+    if (!child_shuffle) event_rng = shuffle_rng;
     uint first = positives[0u];
     uint second = positives[1u];
     uint64_t top_mask = relic_bit(first) | relic_bit(second) | relic_bit(curse_id);
@@ -245,6 +260,10 @@ RouteRngState initialize_route_rng_state(uint64_t root_hash, RngState rewards_af
     state.niche = rng_initialize(root_hash + plan_u64(35u));
     state.transformations = rng_initialize(root_hash + plan_u64(37u));
     state.combat_potions = rng_initialize(root_hash + plan_u64(62u));
+    if (uses_child_shuffle()) {
+        state.non_combat = non_combat_rng(root_hash);
+        if ((plan_value(56u) & 2u) != 0u) next_u64(state.non_combat);
+    }
 
     return state;
 }
@@ -462,6 +481,12 @@ uint64_t shuffled_pool_order(uint pool_count, inout RngState niche) {
     return packed;
 }
 
+uint64_t shuffled_opening_pool_order(uint pool_count, inout RouteRngState state) {
+    if (!uses_child_shuffle()) return shuffled_pool_order(pool_count, state.niche);
+    RngState child = rng_initialize(next_u64(state.non_combat));
+    return shuffled_pool_order(pool_count, child);
+}
+
 void rarity_slice(uint pool_index, uint requested, uint fallback_index, out uint offset, out uint length) {
     uint rarity;
     if (requested == 1u) rarity = fallback_index == 0u ? 1u : (fallback_index == 1u ? 2u : 3u);
@@ -538,7 +563,7 @@ bool execute_kaleidoscope_route(
     bool group1_target0 = false;
     bool group1_target1 = false;
     for (uint group = 0u; group < 2u; ++group) {
-        uint64_t order = shuffled_pool_order(pool_count, state.niche);
+        uint64_t order = shuffled_opening_pool_order(pool_count, state);
 #if N_DIRECT_NESTED == 2
         for (uint item = group == 0u ? first_slot : 0u; item < 3u; ++item) {
             uint pool=permutation_value(order,item);
@@ -569,7 +594,7 @@ bool execute_kaleidoscope_ordered_route(uint first, uint second, inout RouteRngS
     for (uint group = 0u; group < 2u; ++group) {
         uint target = group == 0u ? first : second;
         bool found = target == 0xffffffffu;
-        uint64_t order = shuffled_pool_order(plan_value(9u), state.niche);
+        uint64_t order = shuffled_opening_pool_order(plan_value(9u), state);
         for (uint item = 0u; item < 3u; ++item) {
             uint card = roll_card(permutation_value(order, item), plan_value(7u), state.rewards);
             found = found || card == target;
@@ -810,9 +835,13 @@ bool execute_phial_holster_route(
     bool predicate_enabled,
     inout RouteRngState state)
 {
-    uint first = roll_potion_from_meta(0xffffffffu, 0u, state.combat_potions);
+    uint first = uses_child_shuffle()
+        ? roll_potion_from_meta(0xffffffffu, 0u, state.non_combat)
+        : roll_potion_from_meta(0xffffffffu, 0u, state.combat_potions);
     if (first == 0xffffffffu) return false;
-    uint second = roll_potion_from_meta(first, 1u, state.combat_potions);
+    uint second = uses_child_shuffle()
+        ? roll_potion_from_meta(first, 1u, state.non_combat)
+        : roll_potion_from_meta(first, 1u, state.combat_potions);
     if (second == 0xffffffffu) return false;
     if (!predicate_enabled) return true;
     if (target_count == 1u) return first == target0 || second == target0;
@@ -824,7 +853,8 @@ bool execute_new_leaf_route(uint target, bool predicate_enabled, inout RouteRngS
     uint offset = plan_value(60u);
     uint length = plan_value(61u);
     if (length == 0u) return false;
-    uint selected = leafy_defend.ids[offset + next_int(state.niche, length)];
+    uint selected = leafy_defend.ids[offset + (uses_child_shuffle()
+        ? next_int(state.transformations, length) : next_int(state.niche, length))];
     return !predicate_enabled || selected == target;
 }
 

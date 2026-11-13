@@ -23,7 +23,8 @@ internal sealed partial class AnalysisPage
         int slot = LastRequest.PlayerSlotIndex;
         if (entry == "TINKER_TIME")
         {
-            return string.Join("\n", Beta111TrialTinkerProjector.TinkerOptions(root, slot).Select(option =>
+            return string.Join("\n", Beta111TrialTinkerProjector.TinkerOptions(root, slot,
+                LastRequest.Authority.VersionResolution.SemanticProfileId).Select(option =>
                 _uiText!.Format("predictor.event.tooltip.tinker",
                     Text($"query.event.results.card_type_{option.CardType + 1}"),
                     string.Join(" / ", option.Riders.Select(rider =>
@@ -61,7 +62,7 @@ internal sealed partial class AnalysisPage
         {
             detail.AddChild(WNote(Text("predictor.event.tinker_scope")));
             var alternatives = WResponsiveGrid(detail, "TinkerOptions", 240, 2);
-            foreach (var option in Beta111TrialTinkerProjector.TinkerOptions(root, slot))
+            foreach (var option in Beta111TrialTinkerProjector.TinkerOptions(root, slot, LastRequest.Authority.VersionResolution.SemanticProfileId))
             {
                 var branch = WCard(alternatives, Text($"query.event.results.card_type_{option.CardType + 1}"));
                 branch.AddChild(WNote(Text("predictor.event.choose_rider")));

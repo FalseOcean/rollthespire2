@@ -8,7 +8,7 @@ using RolltheSpire2.Search.Semantics;
 namespace RolltheSpire2.Search.FamilyExecution;
 
 // The estimate uses the Owner's fixed independent/empty-slot-neutral premises.
-// C checks every positive typed predicate; Exact-only exclusion is not its filter.
+// The captured collection participates only when its numerical projection was proved.
 // Party query-literal opening replay uses these same premises. Removing latent
 // obtains does not add a mixture, recall correction or observed-survival fit.
 // FamilyModels overrides this with s=1 when an unresolved explicit opening
@@ -19,7 +19,9 @@ internal static class CombatRewardSieveProbability
         Estimate(request, replay.Plan);
 
     internal static SearchSelectivityEstimate Estimate(SearchModel request, Beta110CombatRewardFastPlan fast) =>
-        CombatRewardProbabilityEstimator.EstimateOptimizedConditions(SearchSelectivityInput.From(request));
+        fast.CollectionFilterCovered
+            ? CombatRewardProbabilityEstimator.Estimate(SearchSelectivityInput.From(request))
+            : CombatRewardProbabilityEstimator.EstimateOptimizedConditions(SearchSelectivityInput.From(request));
 
     // Exact physical quote scope: these modifiers are modeled after a proved
     // fixed prefix. Product approximations do not widen this list or its bounds.

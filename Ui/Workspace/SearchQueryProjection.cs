@@ -10,9 +10,13 @@ internal static class SearchQueryProjection
     internal static int CountConditions(SearchQuery q) =>
         (q.OpeningRoute is null ? 0 : 1) + (q.OpeningRouteRelicRequirement is null ? 0 : 1) + q.StructuredOpeningEffects.Count +
         q.RelicSequenceConstraints.Count + (q.TreasureRelics is { } treasure ? treasure.Slots.Take(treasure.Count).Count(k => k.HasValue) : 0) +
-        (q.FirstActUnknownEventPrefixCount > 0 ? 1 : 0) + (q.CombatCardRewards is null ? 0 : 1) + (q.CombatPotionRewards is null ? 0 : 1) +
+        (q.FirstActUnknownEventPrefixCount > 0 ? 1 : 0) + (q.FirstActUnknownMonsterPrefixCount > 0 ? 1 : 0) +
+        (q.ElitePrefixResearch is null ? 0 : 1) +
+        q.EncounterQueues.Count +
+        (q.CombatCardRewards is null ? 0 : 1) + (q.CombatPotionRewards is null ? 0 : 1) +
         (q.CombatCardExclusion is null ? 0 : 1) +
         q.AncientBranches.Count + q.LegacyNeow.NeowRelics.Any.Count + q.LegacyNeow.NeowRelics.All.Count +
+        q.LegacyNeow.NeowRelics.Ban.Count + (q.NeowOfferWhitelist is null ? 0 : 1) +
         q.LegacyWorld.AncientIdentityFilters.Count + q.LegacyWorld.AncientOptionFilters.Count + q.EventResultConditions.Count +
         q.EventSequenceConstraints.Count + q.VariantBossBranches.Count + q.LegacyWorld.BossOrdinalFilters.Count + q.StandardMaps.Count + q.StandardMapRoutes.Count +
         q.MerchantColorlessSequenceConditions.Count + q.RelicShopSequenceConditions.Count + (q.TransformationAggregate is null ? 0 : 1) +

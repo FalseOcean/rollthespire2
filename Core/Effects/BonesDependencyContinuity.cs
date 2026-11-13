@@ -65,7 +65,7 @@ public sealed record BonesContinuationDomainState(
 
 /// <summary>
 /// Dependency-domain continuity carried by each raw Bones route. The final curse
-/// depends on GeneratedCursePool + Niche + absence of an unresolved immediate hook
+/// depends on GeneratedCursePool, its version's RNG, absence of an unresolved immediate hook
 /// + completion of all required player-choice branches. Other domains remain visible
 /// for diagnostics and order-impact evidence but do not automatically gate the curse.
 /// </summary>
@@ -80,12 +80,19 @@ public sealed record BonesDependencyContinuity(
     BonesContinuationDomainState NestedObtain,
     BonesContinuationDomainState PlayerChoice)
 {
+    internal BonesContinuationDomainState? NonCombatGenerationRng { get; init; }
+
     public bool CanProjectFinalCurse =>
         NicheRng.IsExact &&
         GeneratedCursePool.IsExact &&
         UnknownHook.IsExact &&
         NestedObtain.IsExact &&
         PlayerChoice.IsExact;
+
+    internal bool CanProjectVersionedFinalCurse(bool usesNonCombat) => usesNonCombat
+        ? NonCombatGenerationRng?.IsExact != false && GeneratedCursePool.IsExact && UnknownHook.IsExact &&
+          NestedObtain.IsExact && PlayerChoice.IsExact
+        : CanProjectFinalCurse;
 
     public IReadOnlyList<PredictionWarningCode> ContinuationWarningCodes =>
         new[] { NicheRng, GeneratedCursePool, UnknownHook, NestedObtain, PlayerChoice }
@@ -100,6 +107,11 @@ public sealed record BonesDependencyContinuity(
             .Distinct()
             .ToArray();
 
+    internal IReadOnlyList<PredictionWarningCode> VersionedContinuationWarnings(bool usesNonCombat) => usesNonCombat
+        ? new[] { NonCombatGenerationRng, GeneratedCursePool, UnknownHook, NestedObtain, PlayerChoice }
+            .OfType<BonesContinuationDomainState>().SelectMany(domain => domain.WarningCodes).Distinct().ToArray()
+        : ContinuationWarningCodes;
+
     public BonesDependencyContinuity Merge(EffectDependencyImpact impact)
     {
         ArgumentNullException.ThrowIfNull(impact);
@@ -112,7 +124,11 @@ public sealed record BonesDependencyContinuity(
             GeneratedCursePool.Merge(impact.GeneratedCursePool),
             UnknownHook.Merge(impact.UnknownHook),
             NestedObtain.Merge(impact.NestedObtain),
-            PlayerChoice.Merge(impact.PlayerChoice));
+            PlayerChoice.Merge(impact.PlayerChoice))
+        {
+            NonCombatGenerationRng = NonCombatGenerationRng is { } before && impact.NonCombatGenerationRng is { } after
+                ? before.Merge(after) : NonCombatGenerationRng ?? impact.NonCombatGenerationRng
+        };
     }
 
     public static BonesDependencyContinuity CreateInitial(
@@ -171,6 +187,8 @@ public sealed record EffectDependencyImpact(
     BonesContinuationDomainState NestedObtain,
     BonesContinuationDomainState PlayerChoice)
 {
+    internal BonesContinuationDomainState? NonCombatGenerationRng { get; init; }
+
     public static EffectDependencyImpact None(EvidenceCode evidenceCode)
     {
         BonesContinuationDomainState exact = BonesContinuationDomainState.Exact(evidenceCode);
@@ -230,7 +248,10 @@ public sealed record EffectDependencyImpact(
     public static EffectDependencyImpact FiniteChoiceNotEvaluated(
         RuntimeProfileId profileId,
         ModelKey relicKey,
-        EvidenceCode evidenceCode)
+        EvidenceCode evidenceCode) => FiniteChoiceNotEvaluated(profileId, relicKey, evidenceCode, false);
+
+    internal static EffectDependencyImpact FiniteChoiceNotEvaluated(
+        RuntimeProfileId profileId, ModelKey relicKey, EvidenceCode evidenceCode, bool usesNonCombat)
     {
         EffectDependencyImpact exact = None(evidenceCode);
         BonesContinuationDomainState invalidChoice = BonesContinuationDomainState.Invalidated(
@@ -244,7 +265,7 @@ public sealed record EffectDependencyImpact(
 
         if (relicKey == BaseGameModelKeys.Relics.NewLeaf)
         {
-            result = RuntimeProfilePolicies.IsModernCore(profileId)
+            result = RuntimeProfilePolicies.IsModernCore(profileId) && !usesNonCombat
                 ? result with { NicheRng = invalidChoice }
                 : result with { TransformationsRng = invalidChoice };
         }
@@ -264,6 +285,10 @@ public sealed record EffectDependencyImpact(
             GeneratedCursePool.Merge(next.GeneratedCursePool),
             UnknownHook.Merge(next.UnknownHook),
             NestedObtain.Merge(next.NestedObtain),
-            PlayerChoice.Merge(next.PlayerChoice));
+            PlayerChoice.Merge(next.PlayerChoice))
+        {
+            NonCombatGenerationRng = NonCombatGenerationRng is { } before && next.NonCombatGenerationRng is { } after
+                ? before.Merge(after) : NonCombatGenerationRng ?? next.NonCombatGenerationRng
+        };
     }
 }

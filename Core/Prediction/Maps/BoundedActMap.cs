@@ -192,7 +192,7 @@ internal sealed partial class BoundedActMap
     private int NextColumn(int node)
     {
         Span<int> direction = stackalloc int[3] { -1, 0, 1 };
-        for (int i = 2; i > 0; i--) { int j = _rng.Int(i + 1); (direction[i], direction[j]) = (direction[j], direction[i]); }
+        _rng.Shuffle(direction, _context.UsesChildShuffle);
         int col = node % 7, row = node / 7;
         foreach (int delta in direction)
         {
@@ -222,6 +222,18 @@ internal sealed partial class BoundedActMap
             for (int i = 0; i < count && _queueCount > 0; i++)
             {
                 int node = _candidates[i], attempts = _queueCount;
+                if (_context.UsesChildShuffle)
+                {
+                    for (int j = 0; j < attempts; j++)
+                    {
+                        byte type = _queue[j];
+                        if (!Valid(node, type)) continue;
+                        _type[node] = type;
+                        _queue.AsSpan(j + 1, --_queueCount - j).CopyTo(_queue.AsSpan(j));
+                        break;
+                    }
+                    continue;
+                }
                 for (int j = 0; j < attempts; j++)
                 {
                     byte type = _queue[_queueHead]; _queueHead = (_queueHead + 1) & 63; _queueCount--;
@@ -241,9 +253,9 @@ internal sealed partial class BoundedActMap
         int n = Cell(col, row); if (n < 0) return;
         _type[n] = (byte)type; _modifiable &= ~Bit(n);
     }
-    private int Candidates(int type, bool modifiable)
+    private int Candidates(int type, bool modifiable, int start = 0)
     {
-        int count = 0;
+        int count = start;
         // Column-major grid order is already exactly the source StableShuffle sort.
         for (int col = 0; col < 7; col++)
         for (int row = 1; row <= _height; row++)
@@ -255,13 +267,13 @@ internal sealed partial class BoundedActMap
     }
     private void ShuffleCandidates(int count)
     {
-        for (int i = count - 1; i > 0; i--) { int j = _rng.Int(i + 1); (_candidates[i], _candidates[j]) = (_candidates[j], _candidates[i]); }
+        _rng.Shuffle(_candidates.AsSpan(0, count), _context.UsesChildShuffle);
     }
     private bool Valid(int node, int type)
     {
         int row = node / 7;
         if (type == 4 && row >= _height - 2) return false;
-        if ((type == 4 || type == 6) && row < 6) return false;
+        if (type == 4 && row < (_context.UsesChildShuffle ? 5 : 6) || type == 6 && row < 6) return false;
         bool adjacentRestricted = type is 2 or 3 or 4 or 6;
         if (adjacentRestricted)
         {
@@ -285,9 +297,19 @@ internal sealed partial class BoundedActMap
     }
     private bool Repair(int type)
     {
-        int have = 0; for (int n = 7; n < _boss; n++) if (Active(n) && _type[n] == type) have++;
+        int have = 0;
+        for (int n = 7; n < _boss; n++)
+            if (Active(n) && _type[n] == type && (!_context.UsesChildShuffle || (_modifiable & Bit(n)) != 0)) have++;
         int missing = _targets[type] - have; if (missing <= 0) return false;
-        int count = Candidates(5, true); ShuffleCandidates(count); bool changed = false;
+        int count = Candidates(5, true);
+        ShuffleCandidates(count);
+        if (_context.UsesChildShuffle && type != 1)
+        {
+            int total = Candidates(1, true, count);
+            _rng.Shuffle(_candidates.AsSpan(count, total - count), true);
+            count = total;
+        }
+        bool changed = false;
         for (int i = 0; i < count && missing > 0; i++)
             if (Valid(_candidates[i], type)) { _type[_candidates[i]] = (byte)type; missing--; changed = true; }
         return changed;
@@ -334,7 +356,7 @@ internal sealed partial class BoundedActMap
         {
             var g = _groups[_duplicates[i]]; int count = 0;
             for (int m = g.First; m >= 0; m = _members[m].Next) matches[count++] = _members[m].Sequence;
-            for (int j = count - 1; j > 0; j--) { int k = _rng.Int(j + 1); (matches[j], matches[k]) = (matches[k], matches[j]); }
+            _rng.Shuffle(matches[..count], _context.UsesChildShuffle);
             int removed = 0;
             for (int j = 0; j < count && removed < count - 1; j++) if (PruneSegment(matches[j])) removed++;
             if (removed != 0) return true;

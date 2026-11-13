@@ -26,7 +26,8 @@ internal static partial class CapsuleRelicFamily
         GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
         prepared = null;
-        if (!NeowReplayPlan.HasCapsule(model)) return false;
+        if (!NeowReplayPlan.HasCapsule(model) || model.Authority.VersionResolution.SemanticProfileId == RngSemanticProfileId.Modern113)
+            return false; // Production Exact owns 0.113 Capsule predicates until the combined R body replays the new opening.
         try
         {
             var route = NeowReplayPlan.Compile(model, true);

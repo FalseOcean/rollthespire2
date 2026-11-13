@@ -17,11 +17,11 @@ internal sealed partial class CombatRewardSearchEditor
     internal void ConfigureCardCollections(CardCollectionStore store) => _collections = store;
 
     internal CombatCardExclusionSearchCondition? ExportExclusionCondition() => _draft.Exclusion is { } exclusion
-        ? exclusion with { BattleCount = _draft.ExclusionBattleCount, CardKeys = exclusion.CardKeys.ToArray() } : null;
+        ? exclusion with { BattleCount = _draft.ExclusionBattleCount, Mode = _draft.CollectionMode, CardKeys = exclusion.CardKeys.ToArray() } : null;
 
     internal CombatCardExclusionSearchCondition? ExportPartyExclusionCondition(int slot) =>
         _partyDrafts.TryGetValue(slot, out var draft) && draft.Exclusion is { } exclusion
-            ? exclusion with { BattleCount = draft.ExclusionBattleCount, CardKeys = exclusion.CardKeys.ToArray() } : null;
+            ? exclusion with { BattleCount = draft.ExclusionBattleCount, Mode = draft.CollectionMode, CardKeys = exclusion.CardKeys.ToArray() } : null;
 
     internal CombatRewardSearchDraft ExportEditorState() => CaptureEditorState(_draft);
     internal CombatRewardSearchDraft? ExportPartyEditorState(int slot) =>
@@ -32,13 +32,13 @@ internal sealed partial class CombatRewardSearchEditor
             draft.Slots.Take(draft.BattleRange).ToArray()),
         new(draft.PotionRange, draft.PotionsUnordered ? CombatRewardSequenceOrderMode.Unordered : CombatRewardSequenceOrderMode.Ordered,
             draft.Potions.Take(draft.PotionRange).Select(p => new CombatRewardPotionSlotDraft(p.Requirement, p.PotionKey)).ToArray()))
-    { ExcludedCollection = draft.ExcludedCollection?.Copy(), ExclusionBattleCount = draft.ExclusionBattleCount };
+    { ExcludedCollection = draft.ExcludedCollection?.Copy(), ExclusionBattleCount = draft.ExclusionBattleCount, CollectionMode = draft.CollectionMode };
 
     // The query owns execution truth. This sidecar restores the collection's name
     // and revision only after their members are checked against the query.
     internal void ImportEditorState(CombatRewardSearchDraft state)
     {
-        if (state.ExclusionBattleCount is < 1 or > 6) throw new InvalidOperationException("integration.load_shape");
+        if (state.ExclusionBattleCount is < 1 or > 6 || !Enum.IsDefined(state.CollectionMode)) throw new InvalidOperationException("integration.load_shape");
         if (state.ExcludedCollection is { } snapshot)
         {
             if (!state.HasMatchingExclusionSnapshot(_draft.Exclusion))
@@ -46,19 +46,30 @@ internal sealed partial class CombatRewardSearchEditor
             _draft.ExcludedCollection = snapshot.Copy();
         }
         _draft.ExclusionBattleCount = _draft.Exclusion?.BattleCount ?? state.ExclusionBattleCount;
+        _draft.CollectionMode = _draft.Exclusion?.Mode ?? state.CollectionMode;
     }
 
     private void SelectExcludedCollection(CardCollectionSnapshot snapshot)
     {
         if (snapshot.Cards.Count == 0) return;
         _draft.ExcludedCollection = snapshot.Copy();
-        _draft.Exclusion = new(_draft.ExclusionBattleCount, snapshot.Cards.ToArray());
+        _draft.Exclusion = new(_draft.ExclusionBattleCount, snapshot.Cards.ToArray()) { Mode = _draft.CollectionMode };
         Render();
     }
 
     private void RenderCardExclusion(Control content, float width, float top)
     {
         Text(content, _text.Get("query.combat.exclusion.title"), 16, top, width - 32, 18);
+        var mode = new OptionButton { Name = "CombatCardCollectionMode", Position = new(316, top + 36), Size = new(Math.Max(160, width - 332), 38) };
+        mode.AddItem(_text.Get("query.combat.collection.blacklist"));
+        mode.AddItem(_text.Get("query.combat.collection.whitelist"));
+        mode.Select((int)_draft.CollectionMode);
+        mode.ItemSelected += index => {
+            _draft.CollectionMode = (CombatCardCollectionMode)index;
+            if (_draft.Exclusion is { } condition) _draft.Exclusion = condition with { Mode = _draft.CollectionMode };
+            Render();
+        };
+        content.AddChild(mode);
         Text(content, _text.Get("query.combat.range"), 16, top + 40, 150, 17, true);
         var decrease = Button(content, "−", 170, top + 36, 38, () => SetExclusionRange(_draft.ExclusionBattleCount - 1), false, 36);
         decrease.Name = "CombatCardExclusionDecrease";

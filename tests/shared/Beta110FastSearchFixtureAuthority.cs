@@ -12,8 +12,9 @@ internal static class Beta110FastSearchFixtureAuthority
     public static RuntimeContextAuthoritySnapshot Create(ModelKey characterKey, int ascension, int playerSlot, int players)
         => Create(characterKey, ascension, playerSlot, players, RuntimeProfileId.Beta110, RuntimeVersionCompatibility.Beta110Version);
 
-    public static RuntimeContextAuthoritySnapshot CreateBeta111(ModelKey characterKey, int ascension, int playerSlot, int players)
-        => Create(characterKey, ascension, playerSlot, players, RuntimeProfileId.Beta111, RuntimeVersionCompatibility.Beta111Version);
+    public static RuntimeContextAuthoritySnapshot CreateBeta111(ModelKey characterKey, int ascension, int playerSlot, int players,
+        string gameVersion = RuntimeVersionCompatibility.Beta111Version)
+        => Create(characterKey, ascension, playerSlot, players, RuntimeProfileId.Beta111, gameVersion);
 
     private static RuntimeContextAuthoritySnapshot Create(ModelKey characterKey, int ascension, int playerSlot, int players,
         RuntimeProfileId profileId, string gameVersion)

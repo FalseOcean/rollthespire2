@@ -64,6 +64,9 @@ internal sealed record Beta110CombatRewardFastPlan(
     bool PotionPoolAuthorityExact,
     string Fingerprint)
 {
+    public bool CollectionFilterRequested { get; init; }
+    public bool CollectionFilterCovered { get; init; }
+    public string CollectionFilterIssue { get; init; } = "";
     public bool NeedsCompleteMatchingReference { get; init; }
     public byte CardAssignmentWindow { get; init; }
     public ushort[] CardAssignmentTargets { get; init; } = [];

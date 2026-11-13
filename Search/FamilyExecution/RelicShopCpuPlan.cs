@@ -52,7 +52,8 @@ internal sealed class RelicShopCpuPlan
             }
         }
         else rng = new Beta110FastRng(unchecked(root + RelicCpuPlan.UpFrontHash));
-        for (int b = nextBucket; b < _bucket; b++) rng.ConsumeUnstableShuffle(pool.BucketLengths[b]);
+        for (int b = nextBucket; b < _bucket; b++) rng.ConsumeUnstableShuffle(pool.BucketLengths[b], pool.RngSemantics);
+        if (pool.UsesChildShuffle) rng = rng.ForkShuffle();
         int length = pool.BucketLengths[_bucket], offset = pool.BucketOffsets[_bucket];
         Span<int> entries = stackalloc int[length];
         Span<int> observed = stackalloc int[_depth];

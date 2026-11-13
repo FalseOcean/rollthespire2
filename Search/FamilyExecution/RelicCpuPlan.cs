@@ -46,14 +46,16 @@ internal sealed class RelicCpuPlan
         {
             int length = pool.BucketLengths[bucket], lane = pool.BucketKinds[bucket] - 1;
             if (pool.BucketScopes[bucket] == 0 || lane is < 0 or > 2 || _plan.TrackedCountsByLane[lane] == 0)
-            { rng.ConsumeUnstableShuffle(length); continue; }
+            { rng.ConsumeUnstableShuffle(length, pool.RngSemantics); continue; }
             int count = _plan.TrackedCountsByLane[lane], offset = _plan.TrackedOffsetsByLane[lane];
             for (int i = 0; i < count; i++) positions[i] = _plan.TrackedInitialPositions[offset + i];
+            var child = pool.UsesChildShuffle ? rng.ForkShuffle() : default;
+            ref var shuffle = ref (pool.UsesChildShuffle ? ref child : ref rng);
             if (_requiredRanges[lane] is { } requiredRanges)
             {
-                if (!ShuffleRequiredPositions(ref rng, length, positions[..count], requiredRanges)) return false;
+                if (!ShuffleRequiredPositions(ref shuffle, length, positions[..count], requiredRanges)) return false;
             }
-            else ShufflePositions(ref rng, length, positions[..count]);
+            else ShufflePositions(ref shuffle, length, positions[..count]);
             foreach (var p in _plan.Predicates)
             {
                 if (p.Lane != lane) continue;

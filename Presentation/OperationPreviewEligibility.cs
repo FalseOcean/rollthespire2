@@ -6,8 +6,11 @@ namespace RolltheSpire2.Presentation;
 internal static class OperationPreviewEligibility
 {
     internal static bool EventMayDisplay(string eventEntry, string optionKey,
-        bool tinkerRiderStage = false, int tabletCount = 0, bool offeredRelic = false) =>
+        bool tinkerRiderStage = false, int tabletCount = 0, bool offeredRelic = false,
+        bool modern = false, bool hiddenObtain = false) =>
         !PublicOnly(eventEntry, optionKey) &&
+        !(modern && (eventEntry, optionKey) == ("DOORS_OF_LIGHT_AND_DARK", "LIGHT")) &&
+        !(eventEntry == "THERMAE_NONUPEIPE" && (optionKey != "DRINK_WATERS" || !hiddenObtain)) &&
         !(eventEntry == "TRIAL" && optionKey is not
             ("MERCHANT_GUILTY" or "NONDESCRIPT_GUILTY" or "NONDESCRIPT_INNOCENT")) &&
         !(eventEntry == "TINKER_TIME" && tinkerRiderStage) &&
@@ -23,6 +26,9 @@ internal static class OperationPreviewEligibility
             ("FAKE_MERCHANT", "THROW_FOUL_POTION");
 
     private static bool PublicOnly(string ev, string option) => (ev, option) is
+        ("MUSEUM_OF_TORTURE", "CONTINUE" or "BREAK_OUT") or
+        ("WATERFALL_OF_OBVIOUS_SECRETS", "ENTER" or "BE_NICE") or
+        ("WUPPY_IN_TROUBLE", "HELP_IMMEDIATELY" or "BE_CAUTIOUS") or
         ("THIS_OR_THAT", "PLAIN") or ("UNREST_SITE", "REST") or
         ("SLIPPERY_BRIDGE", "OVERCOME") or
         ("ROOM_FULL_OF_CHEESE", "SEARCH") or ("WAR_HISTORIAN_REPY", "INITIAL_UNLOCK_CAGE" or "SECOND_UNLOCK_CAGE") or

@@ -3,7 +3,9 @@ using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using RolltheSpire2.Ui;
+using RolltheSpire2.Compatibility.ModPrediction;
 using RolltheSpire2.Ui.Shell;
+using RolltheSpire2.Ui.Icons;
 
 namespace RolltheSpire2.Bootstrap;
 
@@ -23,6 +25,7 @@ internal static class MainMenuPatchInstaller
         InstallFeature(harmony, "CrystalSphereMaskAppearance", () => CrystalSphereMaskAppearance.Install(harmony));
         InstallFeature(harmony, "InRunMapPrediction", () => InRunMapPredictionPatch.Install(harmony, mapTargetResolver));
         InstallFeature(harmony, "InRunConsolePresence", () => InRunConsolePresencePatch.Install(harmony));
+        InstallFeature(harmony, "NativeCardPortraits", () => NativeCardPortraits.Install(harmony));
         InstallFeature(harmony, "RunTopBar", () => harmony.Patch(
             RequiredMethod(typeof(MegaCrit.Sts2.Core.Nodes.CommonUi.NTopBar), "Initialize", [typeof(MegaCrit.Sts2.Core.Runs.IRunState)]),
             postfix: new HarmonyMethod(RequiredMethod(typeof(MainMenuPatchInstaller), nameof(RunTopBarPostfix)))));
@@ -126,6 +129,12 @@ internal static class MainMenuPatchInstaller
             {
                 RuntimeLog.WarnException("runtimeLogPumpBindFailed=true;failSoft=true", ex);
             }
+            try
+            {
+                RolltheSpire2.Infrastructure.Snapshots.RuntimeSnapshotThreadGuard.BindCurrentThread();
+                ModOperationSurfaceObservers.Attach(mainMenu.GetTree(), ModRuntime.Snapshot.Detection.NormalizedVersion);
+            }
+            catch (Exception ex) { RuntimeLog.Fault("operationUiFailed=true;stage=mod-surface-attach", ex); }
             MinimalPanelInjector.EnsureAttached(mainMenu, ModRuntime.Snapshot);
         }
     }
@@ -141,6 +150,12 @@ internal static class MainMenuPatchInstaller
     private static void RunTopBarPostfix(MegaCrit.Sts2.Core.Nodes.CommonUi.NTopBar __instance,
         MegaCrit.Sts2.Core.Runs.IRunState runState)
     {
+        try
+        {
+            RolltheSpire2.Infrastructure.Snapshots.RuntimeSnapshotThreadGuard.BindCurrentThread();
+            ModOperationSurfaceObservers.Attach(__instance.GetTree(), ModRuntime.Snapshot.Detection.NormalizedVersion);
+        }
+        catch (Exception ex) { RuntimeLog.Fault("operationUiFailed=true;stage=mod-surface-attach", ex); }
         try { InRunPredictionLauncher.EnsureAttached(__instance, runState, ModRuntime.Snapshot); }
         catch (Exception ex) { RuntimeLog.WarnException("runPredictionLauncherAttachFailed=true", ex); }
         try { RolltheSpire2.Ui.InRunConsole.InRunConsoleLauncher.EnsureAttached(__instance, runState, ModRuntime.Snapshot); }

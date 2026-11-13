@@ -211,6 +211,19 @@ public sealed record RelicSequenceSearchCondition(
     public bool IsEmpty => RangeValue <= 0 || Keys.IsEmpty;
 }
 
+public enum EncounterQueueKind { Weak, Strong, Elite }
+
+/// <summary>Initial queue positions, independent of map rooms. Every observed position must belong to AllowedKeys.</summary>
+public sealed record EncounterQueueSearchCondition(int Act, EncounterQueueKind Kind,
+    SearchSequenceRangeMode RangeMode, int RangeValue, IReadOnlyList<ModelKey> AllowedKeys)
+{
+    public ModelKey? VariantKey { get; init; }
+    public bool IsValid => Act is >= 1 and <= 3 && Enum.IsDefined(Kind) && Enum.IsDefined(RangeMode) &&
+        RangeValue > 0 && AllowedKeys is not null && AllowedKeys.Count > 0 &&
+        AllowedKeys.All(k => k.IsValid && k.Category == BaseGameModelKeys.Categories.Encounter) &&
+        (VariantKey is null || VariantKey.Value.IsValid && VariantKey.Value.Category == BaseGameModelKeys.Categories.Act);
+}
+
 public sealed record EventSequenceSearchCondition(
     int Act,
     EventPoolSourceKind? Source,
@@ -327,13 +340,22 @@ public sealed record RelicShopSequenceSearchCondition(
     public bool IsEmpty => Count <= 0 || !Slots.Take(Math.Max(0, Count)).Any(key => key.HasValue);
 }
 
-/// <summary>Reject an opening continuation when an initial card reward offers any listed identity.</summary>
+public enum CombatCardCollectionMode
+{
+    Blacklist = 0,
+    Whitelist = 1
+}
+
+/// <summary>Constrain every initial reward option in the first N combats to an authored identity set.</summary>
 public sealed record CombatCardExclusionSearchCondition(int BattleCount, IReadOnlyList<ModelKey> CardKeys)
 {
+    // Absent in older saved requests: retain their blacklist meaning.
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public CombatCardCollectionMode Mode { get; init; } = CombatCardCollectionMode.Blacklist;
     public bool IsEmpty => CardKeys.Count == 0;
 
     // Keep these as methods so validation does not add serialized Query fields.
-    internal bool HasValidShape() => BattleCount is >= 1 and <= 6 && CardKeys is { Count: > 0 };
+    internal bool HasValidShape() => BattleCount is >= 1 and <= 6 && CardKeys is { Count: > 0 } && Enum.IsDefined(Mode);
     internal bool HasValidCardKeys() => CardKeys is not null &&
         CardKeys.All(k => k.IsValid && k.Category == BaseGameModelKeys.Categories.Card);
 }
@@ -448,6 +470,7 @@ public sealed record NeowSearchFilter(
 
     public TreasureRelicSearchCondition? TreasureRelics { get; init; }
     public int FirstActUnknownEventPrefixCount { get; init; }
+    public int FirstActUnknownMonsterPrefixCount { get; init; }
 
     /// <summary>
     /// New route-oriented Neow contract. The legacy Any/All/Ban fields above are
@@ -455,6 +478,7 @@ public sealed record NeowSearchFilter(
     /// populated by the current Neow page.
     /// </summary>
     public NeowRouteSearchCondition? NeowRoute { get; init; }
+    public NeowOfferWhitelistSearchCondition? NeowOfferWhitelist { get; init; }
     public IReadOnlyList<NeowStructuredEffectSearchCondition> StructuredNeowEffects { get; init; } =
         Array.Empty<NeowStructuredEffectSearchCondition>();
 
@@ -462,6 +486,7 @@ public sealed record NeowSearchFilter(
     public IReadOnlyList<NeowEffectOutputSearchCondition> EffectOutputConditions { get; init; } =
         Array.Empty<NeowEffectOutputSearchCondition>();
 
+    public IReadOnlyList<EncounterQueueSearchCondition> EncounterQueues { get; init; } = [];
     public IReadOnlyList<ActModelKeySetFilter> BossFilters { get; init; } = Array.Empty<ActModelKeySetFilter>();
     public IReadOnlyList<ActOrdinalModelKeySetFilter> BossOrdinalFilters { get; init; } =
         Array.Empty<ActOrdinalModelKeySetFilter>();
@@ -497,6 +522,7 @@ public sealed record NeowSearchFilter(
     public CombatPotionRewardSequenceSearchCondition? CombatPotionRewardSequence { get; init; }
 
     public bool HasNeowConstraints =>
+        NeowOfferWhitelist is not null ||
         NeowRoute is { IsValid: true } ||
         !NeowRelics.IsEmpty ||
         RequireNeowsBones ||
@@ -515,6 +541,7 @@ public sealed record NeowSearchFilter(
         Preset != NeowSearchPreset.None;
 
     public bool RequiresWorldDomain =>
+        EncounterQueues.Count > 0 ||
         BossFilters.Any(filter => !filter.IsEmpty) ||
         BossOrdinalFilters.Any(filter => !filter.IsEmpty) ||
         AncientBranchConditions.Any(condition => condition.IsValid) ||
@@ -532,7 +559,7 @@ public sealed record NeowSearchFilter(
     public bool RequiresMerchantColorlessDomain =>
         MerchantColorlessConditions.Any(condition => condition.IsValid) ||
         MerchantColorlessSequenceConditions.Any(condition => !condition.IsEmpty);
-    public bool RequiresCanonicalRootLocalDomain => RequiresEventResultDomain || RequiresMerchantColorlessDomain || FirstActUnknownEventPrefixCount > 0;
+    public bool RequiresCanonicalRootLocalDomain => RequiresEventResultDomain || RequiresMerchantColorlessDomain || FirstActUnknownEventPrefixCount > 0 || FirstActUnknownMonsterPrefixCount > 0;
     // Event Result and canonical Merchant Colorless are root-local/canonical facts.
     // They intentionally do not imply World/event occurrence or opening-route authority.
     public bool RequiresWorldAuthority => RequiresWorldDomain || RequiresRelicSequenceDomain || RequiresNormalCombatRewardDomain;
@@ -542,7 +569,7 @@ public sealed record NeowSearchFilter(
         CombatPotionRewardSequence is { IsEmpty: false };
 
     public bool RequiresEffectColdPath =>
-        (NeowRoute is { IsValid: true } && (TreasureRelics is { IsEmpty: false } || FirstActUnknownEventPrefixCount > 0)) ||
+        (NeowRoute is { IsValid: true } && (TreasureRelics is { IsEmpty: false } || FirstActUnknownEventPrefixCount > 0 || FirstActUnknownMonsterPrefixCount > 0)) ||
         RequireNeowsBones ||
         !BonesRelics.IsEmpty ||
         RequiredBonesCombination.Count > 0 ||
@@ -612,12 +639,15 @@ public sealed record ExactSearchEvaluationProjection(
 
     public TreasureRelicSearchCondition? TreasureRelics { get; init; }
     public int FirstActUnknownEventPrefixCount { get; init; }
+    public int FirstActUnknownMonsterPrefixCount { get; init; }
     public NeowRouteSearchCondition? NeowRoute { get; init; }
+    public NeowOfferWhitelistSearchCondition? NeowOfferWhitelist { get; init; }
     public IReadOnlyList<NeowStructuredEffectSearchCondition> StructuredNeowEffects { get; init; } =
         Array.Empty<NeowStructuredEffectSearchCondition>();
     public IReadOnlyList<ModelKey> RequiredBonesAcquisitionOrder { get; init; } = Array.Empty<ModelKey>();
     public IReadOnlyList<NeowEffectOutputSearchCondition> EffectOutputConditions { get; init; } =
         Array.Empty<NeowEffectOutputSearchCondition>();
+    public IReadOnlyList<EncounterQueueSearchCondition> EncounterQueues { get; init; } = [];
     public IReadOnlyList<ActModelKeySetFilter> BossFilters { get; init; } = Array.Empty<ActModelKeySetFilter>();
     public IReadOnlyList<ActOrdinalModelKeySetFilter> BossOrdinalFilters { get; init; } =
         Array.Empty<ActOrdinalModelKeySetFilter>();
@@ -647,7 +677,7 @@ public sealed record ExactSearchEvaluationProjection(
     public CombatPotionRewardSequenceSearchCondition? CombatPotionRewardSequence { get; init; }
 
     public bool HasNeowConstraints =>
-        NeowRoute is { IsValid: true } || !NeowRelics.IsEmpty || RequireNeowsBones || !BonesRelics.IsEmpty ||
+        NeowOfferWhitelist is not null || NeowRoute is { IsValid: true } || !NeowRelics.IsEmpty || RequireNeowsBones || !BonesRelics.IsEmpty ||
         RequiredBonesCombination.Count > 0 || RequiredBonesAcquisitionOrder.Count > 0 ||
         RequireSmallCapsule || RequireLargeCapsule || !CapsuleContainedRelics.IsEmpty || RequireWhetstone ||
         RequireWarPaint || RequiredFinalCurse.HasValue || BannedFinalCurses.Count > 0 ||
@@ -657,6 +687,7 @@ public sealed record ExactSearchEvaluationProjection(
     public IReadOnlyList<VariantScopedBossBranch> VariantBossBranches { get; init; } = Array.Empty<VariantScopedBossBranch>();
 
     public bool RequiresWorldDomain =>
+        EncounterQueues.Count > 0 ||
         VariantBossBranches.Count > 0 || BossFilters.Any(filter => !filter.IsEmpty) || BossOrdinalFilters.Any(filter => !filter.IsEmpty) ||
         AncientBranchConditions.Any(condition => condition.IsValid) ||
         AncientIdentityFilters.Any(filter => !filter.IsEmpty) || AncientOptionFilters.Any(filter => !filter.IsEmpty) ||
@@ -670,13 +701,13 @@ public sealed record ExactSearchEvaluationProjection(
     public bool RequiresMerchantColorlessDomain =>
         MerchantColorlessConditions.Any(condition => condition.IsValid) ||
         MerchantColorlessSequenceConditions.Any(condition => !condition.IsEmpty);
-    public bool RequiresCanonicalRootLocalDomain => RequiresEventResultDomain || RequiresMerchantColorlessDomain || TransformationAggregate is not null || FirstActUnknownEventPrefixCount > 0;
+    public bool RequiresCanonicalRootLocalDomain => RequiresEventResultDomain || RequiresMerchantColorlessDomain || TransformationAggregate is not null || FirstActUnknownEventPrefixCount > 0 || FirstActUnknownMonsterPrefixCount > 0;
     public bool RequiresNormalCombatRewardDomain =>
         NormalCombatRewardConditions.Any(condition => !condition.IsEmpty) ||
         CombatCardRewardSequence is { IsEmpty: false } || CombatCardExclusion is { IsEmpty: false } || CombatPotionRewardSequence is { IsEmpty: false };
     public bool RequiresWorldAuthority => RequiresWorldDomain || RequiresRelicSequenceDomain || RequiresNormalCombatRewardDomain;
     public bool RequiresEffectColdPath =>
-        (NeowRoute is { IsValid: true } && (TreasureRelics is { IsEmpty: false } || FirstActUnknownEventPrefixCount > 0)) ||
+        (NeowRoute is { IsValid: true } && (TreasureRelics is { IsEmpty: false } || FirstActUnknownEventPrefixCount > 0 || FirstActUnknownMonsterPrefixCount > 0)) ||
         RequireNeowsBones || !BonesRelics.IsEmpty || RequiredBonesCombination.Count > 0 ||
         RequiredBonesAcquisitionOrder.Count > 0 || RequireSmallCapsule || RequireLargeCapsule ||
         !CapsuleContainedRelics.IsEmpty || RequireWhetstone || RequireWarPaint || RequiredFinalCurse.HasValue ||
@@ -703,9 +734,11 @@ public sealed record ExactSearchEvaluationProjection(
         RequireWhetstone, RequireWarPaint, RequiredFinalCurse, BannedFinalCurses, Preset)
     {
         NeowRoute = NeowRoute,
+        NeowOfferWhitelist = NeowOfferWhitelist,
         StructuredNeowEffects = StructuredNeowEffects,
         RequiredBonesAcquisitionOrder = RequiredBonesAcquisitionOrder,
         EffectOutputConditions = EffectOutputConditions,
+        EncounterQueues = EncounterQueues,
         BossFilters = BossFilters,
         BossOrdinalFilters = BossOrdinalFilters,
         AncientBranchConditions = AncientBranchConditions,
@@ -715,6 +748,7 @@ public sealed record ExactSearchEvaluationProjection(
         AncientOptionConditions = AncientOptionConditions,
         TreasureRelics = TreasureRelics,
         FirstActUnknownEventPrefixCount = FirstActUnknownEventPrefixCount,
+        FirstActUnknownMonsterPrefixCount = FirstActUnknownMonsterPrefixCount,
         RelicSequenceConditions = RelicSequenceConditions,
         RelicShopSequenceConditions = RelicShopSequenceConditions,
         EventSequenceConditions = EventSequenceConditions,
@@ -733,9 +767,11 @@ public sealed record ExactSearchEvaluationProjection(
         filter.RequireWhetstone, filter.RequireWarPaint, filter.RequiredFinalCurse, filter.BannedFinalCurses, filter.Preset)
     {
         NeowRoute = filter.NeowRoute,
+        NeowOfferWhitelist = filter.NeowOfferWhitelist,
         StructuredNeowEffects = filter.StructuredNeowEffects,
         RequiredBonesAcquisitionOrder = filter.RequiredBonesAcquisitionOrder,
         EffectOutputConditions = filter.EffectOutputConditions,
+        EncounterQueues = filter.EncounterQueues,
         BossFilters = filter.BossFilters,
         BossOrdinalFilters = filter.BossOrdinalFilters,
         AncientBranchConditions = filter.AncientBranchConditions,
@@ -745,6 +781,7 @@ public sealed record ExactSearchEvaluationProjection(
         AncientOptionConditions = filter.AncientOptionConditions,
         TreasureRelics = filter.TreasureRelics,
         FirstActUnknownEventPrefixCount = filter.FirstActUnknownEventPrefixCount,
+        FirstActUnknownMonsterPrefixCount = filter.FirstActUnknownMonsterPrefixCount,
         RelicSequenceConditions = filter.RelicSequenceConditions,
         RelicShopSequenceConditions = filter.RelicShopSequenceConditions,
         EventSequenceConditions = filter.EventSequenceConditions,

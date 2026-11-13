@@ -2,10 +2,12 @@ using RolltheSpire2.Ui.Shell;
 using RolltheSpire2.Ui.Workspace;
 using Godot;
 using System.Text.Json;
+using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Core.Authority.Runtime;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Infrastructure.ContentNames;
+using RolltheSpire2.Infrastructure.Snapshots;
 using RolltheSpire2.Presentation.ContentNames;
 using RolltheSpire2.Presentation.Localization;
 using RolltheSpire2.Presentation.Ui1;
@@ -276,7 +278,8 @@ internal sealed partial class QueryWorkbenchFrame
 
     private WorkbenchSearchDraft ResolvePresetDraft(SearchPresetDefinition preset)
     {
-        var resolution = SearchPresetCompatibilityResolver.ResolveWorkbench(preset, RuntimeAuthorityEnvironment.Current.Authority);
+        var resolution = SearchPresetCompatibilityResolver.ResolveWorkbench(preset,
+            RuntimeAuthorityEnvironment.Current.Authority, RuntimeEncounterCatalogCapture.Capture());
         var draft = resolution.CanLoad ? resolution.Draft! : throw new InvalidOperationException(
             _text.Get("ui1.preset.intent_unresolved") + "\n" + resolution.Issue + "\n" +
             string.Join("\n", resolution.Unresolved.Select(r => $"{r.Path}: {r.StableIdentity}")));
@@ -314,12 +317,12 @@ internal sealed partial class QueryWorkbenchFrame
                 draft.AncientEditor is not null && JsonSerializer.Serialize(draft.AncientEditor) != JsonSerializer.Serialize(restored.AncientEditor) ||
                 draft.PartyAncientEditor is not null && JsonSerializer.Serialize(draft.PartyAncientEditor) != JsonSerializer.Serialize(restored.PartyAncientEditor) ||
                 draft.NeowEditor is not null && JsonSerializer.Serialize(draft.NeowEditor) != JsonSerializer.Serialize(restored.NeowEditor) ||
-                draft.EventEditor is not null && JsonSerializer.Serialize(draft.EventEditor) != JsonSerializer.Serialize(restored.EventEditor) ||
+                !SameEventEditorState(draft.EventEditor, restored.EventEditor, draft.Query) ||
                 draft.TransformationEditor is not null && JsonSerializer.Serialize(draft.TransformationEditor) != JsonSerializer.Serialize(restored.TransformationEditor) ||
                 !SameCollectionSnapshot(draft.CombatRewardEditor, restored.CombatRewardEditor) ||
                 draft.Players.Any(p => p.AncientEditor is not null && JsonSerializer.Serialize(p.AncientEditor) != JsonSerializer.Serialize(restored.Players[p.Slot].AncientEditor) ||
                     p.NeowEditor is not null && JsonSerializer.Serialize(p.NeowEditor) != JsonSerializer.Serialize(restored.Players[p.Slot].NeowEditor) ||
-                    p.EventEditor is not null && JsonSerializer.Serialize(p.EventEditor) != JsonSerializer.Serialize(restored.Players[p.Slot].EventEditor) ||
+                    !SameEventEditorState(p.EventEditor, restored.Players[p.Slot].EventEditor, draft.Query.Players[p.Slot].Conditions) ||
                     !SameCollectionSnapshot(p.CombatRewardEditor, restored.Players[p.Slot].CombatRewardEditor)))
                 throw new InvalidOperationException("integration.load_shape");
         }
@@ -335,10 +338,21 @@ internal sealed partial class QueryWorkbenchFrame
         if (render) Refresh(_language, _text);
     }
 
+    private static bool SameEventEditorState(EventEditorStateSnapshot? expected, EventEditorStateSnapshot? actual, SearchQuery query)
+    {
+        if (expected is null) return true;
+        // Legacy state could not represent a color present in the semantic query.
+        if (expected is { CharacterColor: -1, CharacterColorKey: null } && actual is { CharacterColor: -1, CharacterColorKey: { } color } &&
+            query.EventResultConditions.Any(condition => condition.Kind == EventResultConditionKind.ColorfulPhilosophersOfferedColor &&
+                condition.TargetKey == color))
+            expected = expected with { CharacterColorKey = color };
+        return JsonSerializer.Serialize(expected) == JsonSerializer.Serialize(actual);
+    }
+
     private static bool SameCollectionSnapshot(CombatReward.CombatRewardSearchDraft? expected, CombatReward.CombatRewardSearchDraft? actual)
     {
         if (expected is null) return true;
-        if (actual is null || expected.ExclusionBattleCount != actual.ExclusionBattleCount) return false;
+        if (actual is null || expected.ExclusionBattleCount != actual.ExclusionBattleCount || expected.CollectionMode != actual.CollectionMode) return false;
         var left = expected.ExcludedCollection;
         var right = actual.ExcludedCollection;
         if (left is null || right is null) return left is null && right is null;

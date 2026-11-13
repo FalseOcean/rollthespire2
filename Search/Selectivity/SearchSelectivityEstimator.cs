@@ -198,7 +198,7 @@ internal static class SearchSelectivityEstimator
                 });
         }
 
-        if (IsSingleLooseNeowIdentity(filter) || !filter.NeowRelics.IsEmpty &&
+        if (IsSingleLooseNeowIdentity(filter) || (!filter.NeowRelics.IsEmpty || filter.NeowOfferWhitelist is not null) &&
             filter.NeowRoute is null && filter.StructuredNeowEffects.Count == 0 && filter.EffectOutputConditions.Count == 0 &&
             !filter.RequireNeowsBones && !filter.RequireSmallCapsule && !filter.RequireLargeCapsule &&
             !filter.RequireWhetstone && !filter.RequireWarPaint && filter.RequiredFinalCurse is null && filter.BannedFinalCurses.Count == 0)
@@ -741,6 +741,8 @@ internal static class SearchSelectivityEstimator
 
     private static SearchSelectivityEstimate EstimateWorld(SearchSelectivityInput plan)
     {
+        if (ProbabilitySemanticProjection.From(plan).NumericalFilter.EncounterQueues.Count > 0)
+            return SearchSelectivityEstimate.Unpriced("Probability.EncounterQueue.Unpriced", "Initial encounter queues include shared no-repeat tags and refill ordering; no joint estimator is available.");
         bool hasAncientIdentity = ProbabilitySemanticProjection.From(plan).NumericalFilter.AncientBranchConditions.Any(branch => branch.IsValid) ||
                                   ProbabilitySemanticProjection.From(plan).NumericalFilter.AncientIdentityFilters.Any(item => !item.IsEmpty);
         bool hasBossOrEvent = ProbabilitySemanticProjection.From(plan).NumericalFilter.BossFilters.Any(item => !item.IsEmpty) ||

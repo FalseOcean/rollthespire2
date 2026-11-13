@@ -17,6 +17,8 @@ using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
 using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Runs;
 using RolltheSpire2.Bootstrap;
+using RolltheSpire2.Compatibility;
+using RolltheSpire2.Compatibility.ModPrediction;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.PredictorRuntime;
 using RolltheSpire2.Infrastructure.Snapshots;
@@ -30,10 +32,10 @@ namespace RolltheSpire2.Ui.InRunOperations;
 internal sealed partial class NeowOperationHoverController : Control
 {
     internal const string NodeName = "RolltheSpire2_OperationHover";
-    private enum Kind { Ancient, Event, Shop, Rest, RewardAlternative, Reward, Potion, CardTarget }
+    private enum Kind { Ancient, Event, Shop, ModOperation, Rest, RewardAlternative, Reward, Potion, CardTarget }
     private sealed record Request(Kind Kind, ModelKey Source, long Id = 0, int Slot = 0,
         string Option = "", long? Wing = null, PredictorRestAction Rest = default,
-        PredictorOperationPotionSource? PotionSource = null);
+        PredictorOperationPotionSource? PotionSource = null, IModOperationPrediction? Mod = null);
     private static NeowOperationHoverController? _active;
     private static WeakReference<Control>? _focusedOwner;
     private static string _focusedVersion = "";
@@ -106,7 +108,7 @@ internal sealed partial class NeowOperationHoverController : Control
         RuntimeSnapshotThreadGuard.BindCurrentThread();
         _focusedOwner = new(owner); _focusedVersion = version;
         if (!InRunFeaturePreferences.OperationPredictionEnabled) return;
-        if (!TryCurrent(owner, out var run, out var request)) return;
+        if (!TryCurrent(owner, version, out var run, out var request)) return;
         if (request?.Kind == Kind.CardTarget) RuntimeLog.Info("operationCardHover=true;stage=base-focus;cardId=" + request.Id);
         if (_active != null && IsInstanceValid(_active) && ReferenceEquals(_active._owner, owner) && _active._request == request) return;
         if (NGame.Instance?.HoverTipsContainer is not { } parent) return;
@@ -128,10 +130,14 @@ internal sealed partial class NeowOperationHoverController : Control
         if (_active != null && IsInstanceValid(_active) && ReferenceEquals(_active._owner, owner)) _active.Clear();
     }
 
-    private static bool TryCurrent(Control owner, out RunState? run, out Request? request)
+    private static bool TryCurrent(Control owner, string version, out RunState? run, out Request? request)
     {
         run = null; request = null;
         if (!IsInstanceValid(owner) || !owner.IsInsideTree() || !owner.IsVisibleInTree() || owner.IsQueuedForDeletion()) return false;
+        if (ModOperationPredictions.Match(owner) is { } mod)
+        {
+            run = mod.Run; request = new(Kind.ModOperation, mod.Source, mod.Identity, Mod: mod.Capability); return true;
+        }
         switch (owner)
         {
             case NEventOptionButton button:
@@ -153,7 +159,8 @@ internal sealed partial class NeowOperationHoverController : Control
                 {
                     if (!PredictorOperationEventCapture.Supports(ev)) return false;
                     var eventOption = PredictorOperationEventCapture.Option(ev, option);
-                    if (!OperationSurfaceHoverCapture.EventMayDisplay(ev, eventOption)) return false;
+                    if (!OperationSurfaceHoverCapture.EventMayDisplay(ev, eventOption,
+                        RuntimeVersionCompatibility.Resolve(version).SemanticProfileId == RngSemanticProfileId.Modern113)) return false;
                     request = new(Kind.Event, PredictorLiveRunCapture.Key(ev), Option: eventOption.Key);
                 }
                 run = actual; return true;
@@ -187,7 +194,7 @@ internal sealed partial class NeowOperationHoverController : Control
             return;
         }
         if (_owner is not NEventOptionButton button || !button.GetGlobalRect().HasPoint(GetGlobalMousePosition()) ||
-            !TryCurrent(button, out var run, out var request) || request?.Kind != Kind.Event ||
+            !TryCurrent(button, _version, out var run, out var request) || request?.Kind != Kind.Event ||
             !InRunFeaturePreferences.OperationPredictionEnabled) return;
         try
         {
@@ -210,7 +217,7 @@ internal sealed partial class NeowOperationHoverController : Control
         try
         {
             if (!InRunFeaturePreferences.OperationPredictionEnabled) { Clear(); return; }
-            if (_owner == null || !TryCurrent(_owner, out var run, out var request) || !ReferenceEquals(run, _run) || request != _request ||
+            if (_owner == null || !TryCurrent(_owner, _version, out var run, out var request) || !ReferenceEquals(run, _run) || request != _request ||
                 _request?.Kind != Kind.Potion && (NMapScreen.Instance?.IsOpen == true || NCapstoneContainer.Instance?.InUse == true) ||
                 NModalContainer.Instance?.OpenModal != null)
             {
@@ -247,7 +254,9 @@ internal sealed partial class NeowOperationHoverController : Control
                     return;
                 }
                 long checking = Stopwatch.GetTimestamp();
-                bool fresh = _directTransformSelector != null
+                bool fresh = _request?.Kind == Kind.ModOperation
+                    ? ModOperationObservationStamp() == _stamp
+                    : _directTransformSelector != null
                     ? PredictorOperationCapture.DirectTransformObservationStamp(_snapshot!, _run!, _directTransformSelector) == _stamp
                     : _potionObservation is { } potion
                     ? PredictorOperationPotionTargetCapture.ObservationStamp(_run!, potion.Context.Operation!.PlayerId, potion.Source) == _stamp
@@ -276,11 +285,13 @@ internal sealed partial class NeowOperationHoverController : Control
             {
                 _poll = .5;
                 long checking = Stopwatch.GetTimestamp();
-                string? current = _directTransformSelector != null
+                string? current = _request?.Kind == Kind.ModOperation
+                    ? ModOperationObservationStamp()
+                    : _directTransformSelector != null
                     ? PredictorOperationCapture.DirectTransformObservationStamp(_snapshot!, _run!, _directTransformSelector)
                     : _potionObservation is { } potion ? PredictorOperationPotionTargetCapture.ObservationStamp(
                         _run!, potion.Context.Operation!.PlayerId, potion.Source) :
-                    PredictorOperationCapture.ObservationStamp(_run!, _snapshot!.Context.Catalog!, NGame.Instance);
+                    PredictorOperationCapture.ObservationStamp(_run!, _snapshot!.Context.Catalog!, NGame.Instance, _snapshot.Context.VersionResolution.SemanticProfileId);
                 _timing.PollObservationMs += Elapsed(checking); _timing.PollCount++;
                 if (_request?.Kind == Kind.CardTarget && _timing.PollCount == 1) LogTiming("first-poll");
                 if (current != _stamp) { QueueRefresh(); return; }
@@ -313,7 +324,12 @@ internal sealed partial class NeowOperationHoverController : Control
         }
         var request = _request!;
         long capture = Stopwatch.GetTimestamp();
-        if (request.Kind == Kind.Potion)
+        if (request.Kind == Kind.ModOperation)
+        {
+            if (!CaptureModOperation()) return;
+            timing.CaptureMs = Elapsed(capture);
+        }
+        else if (request.Kind == Kind.Potion)
         {
             _potionObservation = PredictorOperationPotionTargetCapture.CaptureLive(_run!, LocalContext.GetMe(_run!)!.NetId,
                 _version, request.PotionSource!, _potionObservation);
@@ -337,6 +353,7 @@ internal sealed partial class NeowOperationHoverController : Control
         }
         var snapshot = _snapshot;
         var potionObservation = _potionObservation;
+        var modSnapshot = _modSnapshot;
         bool playRoyalties = _owner is NEventOptionButton eventButton &&
             RoyaltiesChoices.TryGetValue(eventButton.Option, out var hypothesis) && hypothesis.Played;
         if (request.Kind == Kind.CardTarget) RuntimeLog.Info("operationCardHover=true;stage=capture;scene=" + snapshot?.Scene.GetType().Name +
@@ -353,6 +370,7 @@ internal sealed partial class NeowOperationHoverController : Control
                     Kind.Event => EventOperationPreview.Build(snapshot!, request.Option, token, playRoyalties,
                         demand.IncludeEventContinuation, demand.IncludeEventCombat),
                     Kind.Shop => SurfaceOperationPreview.BuildShop(snapshot!, request.Id, token, demand.Surface),
+                    Kind.ModOperation => modSnapshot!.Predict(token),
                     Kind.Rest => SurfaceOperationPreview.BuildRest(snapshot!, request.Rest, token, demand.Surface),
                     Kind.RewardAlternative => SurfaceOperationPreview.BuildRewardAlternative(snapshot!, request.Id, request.Option, request.Wing, token, demand.Surface),
                     Kind.Reward => RelicOperationPreview.Build(snapshot!, [new TakeReward(request.Id)], request.Source, token, demand.IncludeChain),
@@ -364,14 +382,14 @@ internal sealed partial class NeowOperationHoverController : Control
                 result = OperationPredictionPolicy.Filter(result, demand);
                 foreach (var failure in result.Faults)
                     RuntimeLog.Fault("operationPredictionFailed=true;stage=" + failure.Stage + ";source=" + request.Source +
-                        ";fingerprint=" + snapshot?.Fingerprint + ";inputs=" + string.Join(" -> ", failure.InputPath), failure.Exception);
+                        ";fingerprint=" + (modSnapshot?.Fingerprint ?? snapshot?.Fingerprint) + ";inputs=" + string.Join(" -> ", failure.InputPath), failure.Exception);
                 return result;
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
             catch (Exception error)
             {
                 RuntimeLog.Fault("operationPredictionFailed=true;stage=detached-projection;source=" + request.Source +
-                    ";fingerprint=" + snapshot?.Fingerprint, error);
+                    ";fingerprint=" + (modSnapshot?.Fingerprint ?? snapshot?.Fingerprint), error);
                 return new OperationPreview(request.Source, [], [], false, [], [])
                     { Faults = [new("DetachedProjection", [], error)] };
             }
@@ -414,7 +432,7 @@ internal sealed partial class NeowOperationHoverController : Control
     private void QueueRefresh()
     {
         _cancellation?.Cancel(); _cancellation?.Dispose(); _cancellation = null; _work = null;
-        _snapshot = null; _stamp = null; _directTransformSelector = null; HideView(); _captureQueued = true;
+        _snapshot = null; _modSnapshot = null; _stamp = null; _directTransformSelector = null; HideView(); _captureQueued = true;
     }
 
     private void PositionView()
@@ -443,6 +461,7 @@ internal sealed partial class NeowOperationHoverController : Control
             _nativeTextTip = tip; _nativeTextTipPosition = tip.Position;
             nativeTipRect = tip.GetGlobalRect();
         }
+        _view.MatchCourierTooltip(nativeTipRect.HasValue ? nativeTip : null);
         if (NRun.Instance?.GlobalUi is { } global)
         {
             if (global.TopBar is { } top && top.IsVisibleInTree())
@@ -496,7 +515,7 @@ internal sealed partial class NeowOperationHoverController : Control
     private void Clear()
     {
         _cancellation?.Cancel(); _cancellation?.Dispose(); _cancellation = null; _work = null;
-        _snapshot = null; _stamp = null; _directTransformSelector = null; _captureQueued = false; _potionObservation = null;
+        _snapshot = null; _modSnapshot = null; _stamp = null; _directTransformSelector = null; _captureQueued = false; _potionObservation = null;
         _demand = null; _policyPoll = 0;
         _owner = null; _run = null; _request = null; HideView(); SetProcess(false);
     }

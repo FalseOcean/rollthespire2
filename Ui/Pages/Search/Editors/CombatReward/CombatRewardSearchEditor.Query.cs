@@ -30,6 +30,7 @@ internal sealed partial class CombatRewardSearchEditor
     {
         _draft.Exclusion = q.CombatCardExclusion is { } exclusion ? exclusion with { CardKeys = exclusion.CardKeys.ToArray() } : null;
         _draft.ExclusionBattleCount = q.CombatCardExclusion?.BattleCount ?? DefaultBattleRange;
+        _draft.CollectionMode = q.CombatCardExclusion?.Mode ?? CombatCardCollectionMode.Blacklist;
         _draft.ExcludedCollection = null;
         _draft.CardRangeProblem = _draft.PotionRangeProblem = string.Empty;
         Array.Clear(_draft.Slots);

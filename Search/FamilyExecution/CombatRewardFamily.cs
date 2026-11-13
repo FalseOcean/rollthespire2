@@ -26,7 +26,7 @@ internal static partial class CombatRewardFamily
         GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
         prepared = null;
-        if (model.Authority.PlayersCount != 1 || !model.Evaluation.NormalCombatRewardConditions.Any(c => !c.IsEmpty)) return false;
+        if (model.Authority.PlayersCount != 1 || !HasPredicates(model)) return false;
         if (!TryCreateReplay(model, preferences, 0, out var replay)) return false;
         prepared = Prepare(model, preferences, replay!, preferGpu, numericalVariant);
         return true;
@@ -48,7 +48,7 @@ internal static partial class CombatRewardFamily
         if (model.ProfileId != RuntimeProfileId.Beta111 || !model.Authority.CanUseCurrentModel ||
             model.Authority.PlayersCount is < 2 or > 4 || model.Authority.PlayerSlotIndex < 0 ||
             model.Authority.PlayerSlotIndex >= model.Authority.PlayersCount ||
-            !model.Evaluation.NormalCombatRewardConditions.Any(c => !c.IsEmpty)) return false;
+            !HasPredicates(model)) return false;
         if (model.CompiledSearch.NormalizedQuery.OpeningRoute is { } route &&
             (!route.IsValid || !Beta110FastRelicCatalog.TryGetId(route.RouteRelicKey, out _))) return false;
         // Combat potions use personal Rewards. The shared opening-potion arrival
@@ -57,6 +57,9 @@ internal static partial class CombatRewardFamily
         prepared = Prepare(model, preferences, replay!, preferGpu, numericalVariant);
         return true;
     }
+    private static bool HasPredicates(SearchModel model) =>
+        model.Evaluation.NormalCombatRewardConditions.Any(c => !c.IsEmpty) || model.Evaluation.CombatCardExclusion is { IsEmpty: false };
+
     private static bool TryCreateReplay(SearchModel model, FilterExecutionPreferences preferences,
         int? precedingNicheDraws, out CombatRewardReplay? replay)
     {
@@ -105,14 +108,19 @@ internal static partial class CombatRewardFamily
         if (observedRemainder.Length > 0) issues.Add(new("Filtering", observedRemainder));
         string neutralRemainder = replay.NeutralWitness?.Remainder ?? "";
         if (neutralRemainder.Length > 0) issues.Add(new("Filtering", neutralRemainder));
+        string collectionRemainder = replay.Plan.CollectionFilterIssue.Length > 0
+            ? "CombatCardExclusion:" + replay.Plan.CollectionFilterIssue : "";
+        if (collectionRemainder.Length > 0) issues.Add(new("Filtering", collectionRemainder));
         var preparation = new PreparedFilter(Id) {
             AnalyticalCost = projections.Analytical, Survival = projections.Survival,
             ExpectedFilteringCost = projections.Expected(EmptyCoverage), HasConditionalProjections = true,
             SurvivalResolver = projections.ResolveSurvival, ExpectedCostResolver = projections.Expected,
-            Obligations = [new(Id, model.Authority.PlayerSlotIndex)], Issues = issues.ToArray(),
-            Remainders = replay.ConservativelyKeeps ? [Id + ":" + replay.ConservativeOpeningReason] :
+            Obligations = replay.Plan.CollectionFilterCovered
+                ? [new(Id, model.Authority.PlayerSlotIndex), new("CombatCardExclusion", model.Authority.PlayerSlotIndex)]
+                : [new(Id, model.Authority.PlayerSlotIndex)], Issues = issues.ToArray(),
+            Remainders = (replay.ConservativelyKeeps ? new[] { Id + ":" + replay.ConservativeOpeningReason } :
                 new[] { observedRemainder, neutralRemainder }.Where(cause => cause.Length > 0)
-                    .Select(cause => Id + ":" + cause).ToArray()
+                    .Select(cause => Id + ":" + cause)).Concat(collectionRemainder.Length == 0 ? [] : [collectionRemainder]).ToArray()
         };
         var profile = RuntimeProfileRegistry.Select(model.Detection);
         var pricing = CombatRewardPricingInput.From(model, replay);
@@ -135,9 +143,9 @@ internal static partial class CombatRewardFamily
             PerformanceProjection = compact => new(Id, gpuPlan.Revision(compact), "C.Neutral.20260907.v1", 1,
                 "NoAcceptedWithinPathCurve;CanonicalAbi1Ready", true),
             Cost = new() {
-                PartyChild = new(AllowsHistoricalEnvelope: gpuPlan.NumericalVariant != GpuNumericalVariant.IntegerRne && !replay.Plan.NeedsCompleteMatchingReference && !replay.UsesQueryLiteralPartyOpening && !replay.UsesObservedOpening && !replay.UsesNeutralWitness, NumericalRevision: gpuPlan.NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "", CapacityRevision: gpuPlan.BagCapacityRevision, CompleteCombatMatching: replay.Plan.NeedsCompleteMatchingReference, QueryLiteralCombatOpening: replay.UsesQueryLiteralPartyOpening),
+                PartyChild = new(AllowsHistoricalEnvelope: !replay.UsesChildShuffle && gpuPlan.NumericalVariant != GpuNumericalVariant.IntegerRne && !replay.Plan.NeedsCompleteMatchingReference && !replay.UsesQueryLiteralPartyOpening && !replay.UsesObservedOpening && !replay.UsesNeutralWitness, NumericalRevision: gpuPlan.NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "", CapacityRevision: gpuPlan.BagCapacityRevision, CompleteCombatMatching: replay.Plan.NeedsCompleteMatchingReference, QueryLiteralCombatOpening: replay.UsesQueryLiteralPartyOpening),
                 MinimumComparableInput = _ => 1,
-                CanonicalScope = pricing.Authority.PlayersCount == 1,
+                CanonicalScope = pricing.Authority.PlayersCount == 1 && !replay.UsesChildShuffle,
                 CanonicalWorkShape = _ => FamilyCanonicalCostShape.DescribeCombat(replay, gpuPlan),
                 Quote = (selected, geometry, _) => FamilyGpuReadback.Reference(selected,
                     FamilyCanonicalMeasuredCost.TryDenseQuote(selected, geometry) ??

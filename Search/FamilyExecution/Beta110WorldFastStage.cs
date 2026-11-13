@@ -41,6 +41,9 @@ internal readonly record struct WorldFastEventPredicate(
 
 internal readonly record struct WorldFamilyBossBranch(WorldFastDenseSetPredicate First, WorldFastDenseSetPredicate Second);
 
+internal readonly record struct WorldFastEncounterPredicate(EncounterQueueKind Kind, SearchSequenceRangeMode RangeMode,
+    int RangeValue, ushort[] Allowed, bool VariantMismatch);
+
 internal readonly record struct WorldFastEncounterEntry(
     ushort EncounterId,
     int SourceOrdinal,
@@ -73,6 +76,16 @@ internal sealed record WorldFastActPlan(
     WorldFastDenseSetPredicate[] SeaGlassTargetPredicates,
     WorldFastEventPredicate[] EventPredicates)
 {
+    internal WorldFastEncounterPredicate[] EncounterPredicates { get; init; } = [];
+    // 0 = ordinary, 1 = first-run Overgrowth reordering, 2 = discovery facts unavailable.
+    internal int EncounterDiscoveryMode { get; init; }
+    internal int EncounterWeakHorizon { get; init; }
+    internal int EncounterStrongHorizon { get; init; }
+    internal int EncounterEliteHorizon { get; init; }
+    internal bool EncounterRejectsAct { get; init; }
+    internal ushort[] FirstRunNormalPrefix { get; init; } = [];
+    internal ushort[] FirstRunElitePrefix { get; init; } = [];
+    internal bool HasEncounterPredicate => EncounterPredicates.Length > 0;
     internal bool FamilyVariantAllowed { get; init; } = true;
     private WorldFamilyBossBranch[] _familyBossBranches = [];
     private bool _hasFamilyBossPredicate;
@@ -156,6 +169,8 @@ internal sealed record Beta110WorldFastPlan(
     string Fingerprint,
     string DisableReason)
 {
+    internal RngSemanticProfileId RngSemantics { get; init; } = RngSemanticProfileId.Modern110;
+    internal bool UsesChildShuffle => RuntimeProfilePolicies.UsesChildStreamShuffle(RngSemantics);
     public const ushort InvalidDenseId = ushort.MaxValue;
 
     public static Beta110WorldFastPlan Disabled(
@@ -241,7 +256,8 @@ internal enum WorldFastStageDiagnosticCode : byte
     BossPredicateRejected,
     AncientPredicateRejected,
     AncientOptionPredicateRejected,
-    SeaGlassPredicateRejected
+    SeaGlassPredicateRejected,
+    EncounterPredicateRejected
 }
 
 internal readonly record struct Beta110WorldFastStageResult(
@@ -284,7 +300,8 @@ internal static class Beta110WorldFastPlanCompiler
                                          filter.AncientBranchConditions.Any(item => item.IsValid) ||
                                          hasAncientOptionRequest || hasSeaGlassRequest;
         bool hasEventRequest = filter.EventSequenceConditions.Any(item => !item.IsEmpty);
-        if (!hasBossRequest && !hasAncientIdentityRequest && !hasAncientOptionRequest && !hasSeaGlassRequest && !hasEventRequest && branches.Count == 0)
+        bool hasEncounterRequest = family && filter.EncounterQueues.Count > 0;
+        if (!hasBossRequest && !hasAncientIdentityRequest && !hasAncientOptionRequest && !hasSeaGlassRequest && !hasEventRequest && !hasEncounterRequest && branches.Count == 0)
             return Beta110WorldFastPlan.Disabled("NoWorldFastPredicates");
         if (!family && filter.EventSequenceConditions.Any(item => !item.IsEmpty && item.RangeValue > byte.MaxValue))
             hasEventRequest = false;
@@ -331,7 +348,7 @@ internal static class Beta110WorldFastPlanCompiler
         {
             hasEventRequest = false;
         }
-        if (!hasBossRequest && !hasAncientIdentityRequest && !hasAncientOptionRequest && !hasSeaGlassRequest && !hasEventRequest && branches.Count == 0)
+        if (!hasBossRequest && !hasAncientIdentityRequest && !hasAncientOptionRequest && !hasSeaGlassRequest && !hasEventRequest && !hasEncounterRequest && branches.Count == 0)
             return Beta110WorldFastPlan.Disabled(
                 "RequestedWorldPredicatesRemainExactOnly",
                 requestedAncientOptionPredicateCount,
@@ -442,6 +459,7 @@ internal static class Beta110WorldFastPlanCompiler
         bool planAlwaysReject = false;
         int eventPredicateCount = 0;
         int bossPredicateCount = 0;
+        int encounterPredicateCount = 0;
         int ancientIdentityPredicateCount = 0;
         int ancientOptionPredicateCount = 0;
         int seaGlassPredicateCount = 0;
@@ -547,7 +565,7 @@ internal static class Beta110WorldFastPlanCompiler
                         candidate.EventKey,
                         act.Act,
                         profile,
-                        candidate.Source, family ? new EventImmutableEligibilityContext(generation.GameMode, generation.ModeFactsExact, generation.PlayerCount, generation.ModeFactsExact && generation.IsMultiplayerExact, generation.EventAuthority.CharacterCardPoolCount, generation.EventAuthority.CharacterCardPoolCountExact) : null).ShouldReject))
+                        candidate.Source, family ? EventImmutableEligibilityContext.From(generation) : null).ShouldReject))
                     .ToArray();
             }
             maxEvent = Math.Max(maxEvent, Math.Max(eventCandidates.Length, act.OrderedEligibleEvents.Count));
@@ -582,6 +600,19 @@ internal static class Beta110WorldFastPlanCompiler
                 return Beta110WorldFastPlan.Disabled("EncounterPoolCapacityExceeded");
             maxEncounter = Math.Max(maxEncounter, Math.Max(weak.Length, Math.Max(regular.Length, elite.Length)));
 
+            var encounterPredicates = family ? filter.EncounterQueues.Where(p => p.Act == act.Act)
+                .Select(p => new WorldFastEncounterPredicate(p.Kind, p.RangeMode, p.RangeValue, p.AllowedKeys.Select(Add).Distinct().ToArray(),
+                    p.VariantKey is { } v && v != act.ActKey)).ToArray() : [];
+            bool needsDiscovery = act.ActKey.Entry == "OVERGROWTH" && (!generation.TestModeFactExact || generation.TestModeIsOff);
+            int discovery = !needsDiscovery || world.EncounterNumberOfRuns > 0 ? 0 :
+                world.EncounterNumberOfRuns == 0 && profile == RuntimeProfileId.Beta111 && generation.TestModeFactExact &&
+                generation.ModeFactsExact && generation.GameMode == WorldGameMode.Singleplayer ? 1 : 2;
+            ushort[] normalPrefix = encounterPredicates.Length > 0 && discovery == 1
+                ? RolltheSpire2.Core.World.Beta109.Beta109EncounterSequenceProjection.FirstRunPrefix(false).Select(Add).ToArray() : [];
+            ushort[] elitePrefix = encounterPredicates.Length > 0 && discovery == 1
+                ? RolltheSpire2.Core.World.Beta109.Beta109EncounterSequenceProjection.FirstRunPrefix(true).Select(Add).ToArray() : [];
+            if (encounterPredicates.Length > 0) { maxRequiredAct = Math.Max(maxRequiredAct, act.Act); encounterPredicateCount += encounterPredicates.Length; }
+
             actPlans.Add(new WorldFastActPlan(
                 act.Act,
                 Add(act.ActKey),
@@ -607,6 +638,15 @@ internal static class Beta110WorldFastPlanCompiler
                 optionCompilation.LegacySeaGlassPredicates,
                 eventPredicates)
             {
+                EncounterPredicates = encounterPredicates,
+                EncounterWeakHorizon = encounterPredicates.Where(p => p.Kind == EncounterQueueKind.Weak).Select(p => p.RangeValue).DefaultIfEmpty(0).Max(),
+                EncounterStrongHorizon = encounterPredicates.Where(p => p.Kind == EncounterQueueKind.Strong).Select(p => p.RangeValue).DefaultIfEmpty(0).Max(),
+                EncounterEliteHorizon = encounterPredicates.Where(p => p.Kind == EncounterQueueKind.Elite).Select(p => p.RangeValue).DefaultIfEmpty(0).Max(),
+                EncounterRejectsAct = encounterPredicates.Any(p => p.VariantMismatch || p.RangeValue > (p.Kind == EncounterQueueKind.Weak ? act.WeakEncounterSlots :
+                    p.Kind == EncounterQueueKind.Strong ? act.TotalNormalRooms - act.WeakEncounterSlots : act.EliteEncounterSlots)),
+                EncounterDiscoveryMode = discovery,
+                FirstRunNormalPrefix = discovery == 1 ? normalPrefix : [],
+                FirstRunElitePrefix = discovery == 1 ? elitePrefix : [],
                 FamilyVariantAllowed = !family || !branches.Any(b => b.Act == act.Act) || branches.Any(b => b.Act == act.Act && b.VariantKey == act.ActKey),
                 FamilyFirstBossOverride = firstBossOverride,
                 // Shared source conjunction has already been composed into
@@ -623,7 +663,7 @@ internal static class Beta110WorldFastPlanCompiler
         }
 
         if (eventPredicateCount + bossPredicateCount + ancientIdentityPredicateCount +
-            ancientOptionPredicateCount + seaGlassPredicateCount == 0 && branches.Count == 0)
+            ancientOptionPredicateCount + seaGlassPredicateCount + encounterPredicateCount == 0 && branches.Count == 0)
             return Beta110WorldFastPlan.Disabled(
                 "NoAuthorityCompleteWorldPredicate",
                 ancientOptionExactOnlyPredicateCount,
@@ -693,6 +733,9 @@ internal static class Beta110WorldFastPlanCompiler
             string.Join(';', actPlans.Select(act => $"{act.Act}:{act.ActId}:{act.EligibleEventCount}:{act.WeakEncounters.Length}:{act.RegularEncounters.Length}:{act.EliteEncounters.Length}:{act.Bosses.Length}:{act.Ancients.Length}"))
         });
 
+        if (hasEncounterRequest) fingerprint = Fingerprint([fingerprint,
+            System.Text.Json.JsonSerializer.Serialize(filter.EncounterQueues), world.EncounterNumberOfRuns?.ToString() ?? "unknown"]);
+
         string worldAuthorityFingerprint = Fingerprint(new[]
         {
             generation.SnapshotFingerprint,
@@ -724,7 +767,7 @@ internal static class Beta110WorldFastPlanCompiler
             maxRequiredAct,
             requiresSecondBoss,
             eventPredicateCount + bossPredicateCount + ancientIdentityPredicateCount +
-                ancientOptionPredicateCount + seaGlassPredicateCount,
+                ancientOptionPredicateCount + seaGlassPredicateCount + encounterPredicateCount,
             eventPredicateCount,
             bossPredicateCount,
             ancientIdentityPredicateCount,
@@ -746,7 +789,7 @@ internal static class Beta110WorldFastPlanCompiler
             ancientOptionInputFingerprint,
             filter.AncientOptionConditions.Fingerprint,
             fingerprint,
-            string.Empty);
+            string.Empty) { RngSemantics = generation.RngSemantics };
     }
 
     private static WorldFastDenseSetPredicate[] CompileAncientBranchPredicates(
@@ -879,7 +922,7 @@ internal static class Beta110WorldFastStage
             ? Span<ushort>.Empty
             : stackalloc ushort[plan.SharedAncients.Length];
         plan.SharedAncients.AsSpan().CopyTo(assignedShared);
-        upFront.UnstableShuffle(assignedShared);
+        upFront.UnstableShuffle(assignedShared, plan.RngSemantics);
 
         Span<int> assignedOffsets = stackalloc int[selectedActs.Length];
         Span<int> assignedCounts = stackalloc int[selectedActs.Length];
@@ -909,8 +952,8 @@ internal static class Beta110WorldFastStage
                 eventStageInput++;
                 Span<WorldFastEventCandidate> events = eventScratch[..act.EventCandidates.Length];
                 act.EventCandidates.AsSpan().CopyTo(events);
-                upFront.UnstableShuffle(events);
-                eventShuffleCalls += Math.Max(0, events.Length - 1);
+                upFront.UnstableShuffle(events, plan.RngSemantics);
+                eventShuffleCalls += plan.UsesChildShuffle ? 1 : Math.Max(0, events.Length - 1);
                 if (family && act.Ancients.Length + assignedCounts[selectedIndex] == 0)
                     throw new InvalidOperationException("W.OpeningAncientCursorAuthorityMissing");
                 if (!EvaluateEventPredicates(events, act.EventPredicates, ref staticCandidatesVisited, family))
@@ -919,23 +962,33 @@ internal static class Beta110WorldFastStage
             }
             else
             {
-                upFront.ConsumeUnstableShuffle(act.EligibleEventCount);
-                eventShuffleCalls += Math.Max(0, act.EligibleEventCount - 1);
+                if (plan.UsesChildShuffle) upFront.ConsumeShuffleSeed();
+                else upFront.ConsumeUnstableShuffle(act.EligibleEventCount);
+                eventShuffleCalls += plan.UsesChildShuffle ? 1 : Math.Max(0, act.EligibleEventCount - 1);
             }
 
-            bool needBeyondEvents = act.Act < plan.MaxRequiredAct || act.HasBossPredicate ||
+            bool needBeyondEvents = act.HasEncounterPredicate || act.Act < plan.MaxRequiredAct || act.HasBossPredicate ||
                                     act.HasAncientPredicate || plan.RequiresSecondBoss;
             if (!needBeyondEvents) continue;
 
-            WorldFastEncounterEntry? previousNormal = null;
-            ConsumeEncounterQueue(act.WeakEncounters, act.WeakEncounterSlots, act.EncounterConflictSourceOrdinals,
-                ref upFront, ref previousNormal, ref encounterDrawCalls);
-            ConsumeEncounterQueue(act.RegularEncounters, act.RegularEncounterSlots, act.EncounterConflictSourceOrdinals,
-                ref upFront, ref previousNormal, ref encounterDrawCalls);
-            WorldFastEncounterEntry? previousElite = null;
-            ConsumeEncounterQueue(act.EliteEncounters, act.EliteEncounterSlots, act.EncounterConflictSourceOrdinals,
-                ref upFront, ref previousElite, ref encounterDrawCalls);
-
+            bool beyondEncounters = act.Act < plan.MaxRequiredAct || act.HasBossPredicate || act.HasAncientPredicate || plan.RequiresSecondBoss;
+            if (act.HasEncounterPredicate)
+            {
+                if (!EvaluateEncounterQueues(act, beyondEncounters, ref upFront, ref encounterDrawCalls))
+                    return RejectCurrent(WorldFastStageDiagnosticCode.EncounterPredicateRejected);
+                if (!beyondEncounters) continue;
+            }
+            else
+            {
+                WorldFastEncounterEntry? previousNormal = null;
+                ConsumeEncounterQueue(act.WeakEncounters, act.WeakEncounterSlots, act.EncounterConflictSourceOrdinals,
+                    ref upFront, ref previousNormal, ref encounterDrawCalls);
+                ConsumeEncounterQueue(act.RegularEncounters, act.RegularEncounterSlots, act.EncounterConflictSourceOrdinals,
+                    ref upFront, ref previousNormal, ref encounterDrawCalls);
+                WorldFastEncounterEntry? previousElite = null;
+                ConsumeEncounterQueue(act.EliteEncounters, act.EliteEncounterSlots, act.EncounterConflictSourceOrdinals,
+                    ref upFront, ref previousElite, ref encounterDrawCalls);
+            }
             if (act.Bosses.Length == 0)
                 return Keep(WorldFastStageDiagnosticCode.WorldContinuationUnavailable);
             ushort firstBoss = act.Bosses[upFront.NextInt(act.Bosses.Length)];
@@ -1079,6 +1132,127 @@ internal static class Beta110WorldFastStage
             }
             if (predicate.RangeMode == 1 && rangeCount == 0) return false;
             if (!Matches(range[..rangeCount], predicate.Keys)) return false;
+        }
+        return true;
+    }
+
+    private static bool EvaluateEncounterQueues(WorldFastActPlan act, bool downstream, ref Beta110FastRng rng, ref int draws)
+    {
+        var predicates = act.EncounterPredicates;
+        if (act.EncounterDiscoveryMode == 2)
+        {
+            if (downstream)
+            {
+                WorldFastEncounterEntry? cursor = null;
+                ConsumeEncounterQueue(act.WeakEncounters, act.WeakEncounterSlots, act.EncounterConflictSourceOrdinals, ref rng, ref cursor, ref draws);
+                ConsumeEncounterQueue(act.RegularEncounters, act.RegularEncounterSlots, act.EncounterConflictSourceOrdinals, ref rng, ref cursor, ref draws);
+                cursor = null;
+                ConsumeEncounterQueue(act.EliteEncounters, act.EliteEncounterSlots, act.EncounterConflictSourceOrdinals, ref rng, ref cursor, ref draws);
+            }
+            return true; // Missing discovery observations remain with Exact; other acts/predicates still participate.
+        }
+        if (act.EncounterRejectsAct) return false;
+        int weak = act.EncounterWeakHorizon, strong = act.EncounterStrongHorizon, elite = act.EncounterEliteHorizon;
+        bool deferred = act.EncounterDiscoveryMode != 0;
+        if (downstream || elite > 0 || (deferred && (weak > 0 || strong > 0))) { weak = act.WeakEncounterSlots; strong = act.RegularEncounterSlots; }
+        else if (strong > 0) weak = act.WeakEncounterSlots;
+        if (downstream || deferred && elite > 0) elite = act.EliteEncounterSlots;
+        Span<ushort> normal = stackalloc ushort[weak + strong];
+        Span<ushort> elites = stackalloc ushort[elite];
+        WorldFastEncounterEntry? previous = null;
+        if (!ConsumeCheckedEncounterQueue(act.WeakEncounters, weak, act.EncounterConflictSourceOrdinals, ref rng, ref previous,
+            ref draws, normal[..weak], predicates, EncounterQueueKind.Weak, deferred)) return false;
+        if (!ConsumeCheckedEncounterQueue(act.RegularEncounters, strong, act.EncounterConflictSourceOrdinals, ref rng, ref previous,
+            ref draws, normal[weak..], predicates, EncounterQueueKind.Strong, deferred)) return false;
+        previous = null;
+        if (!ConsumeCheckedEncounterQueue(act.EliteEncounters, elite, act.EncounterConflictSourceOrdinals, ref rng, ref previous,
+            ref draws, elites, predicates, EncounterQueueKind.Elite, deferred)) return false;
+        if (deferred)
+        {
+            ApplyPrefix(normal, act.FirstRunNormalPrefix); ApplyPrefix(elites, act.FirstRunElitePrefix);
+            foreach (var p in predicates)
+            {
+                var queue = p.Kind == EncounterQueueKind.Elite ? elites : p.Kind == EncounterQueueKind.Weak ? normal[..act.WeakEncounterSlots] : normal[act.WeakEncounterSlots..];
+                int start = p.RangeMode == SearchSequenceRangeMode.ExactSlot ? p.RangeValue - 1 : 0;
+                for (int index = start; index < p.RangeValue; index++) if (!p.Allowed.Contains(queue[index])) return false;
+            }
+        }
+        return true;
+    }
+
+    private static void ApplyPrefix(Span<ushort> queue, ushort[] prefix)
+    {
+        for (int index = 0; index < Math.Min(queue.Length, prefix.Length); index++)
+        {
+            int found = queue.IndexOf(prefix[index]);
+            if (found >= 0) (queue[index], queue[found]) = (queue[found], queue[index]);
+            else queue[index] = prefix[index];
+        }
+    }
+
+    private static bool ConsumeCheckedEncounterQueue(
+        ReadOnlySpan<WorldFastEncounterEntry> source,
+        int slots,
+        ReadOnlySpan<int> conflicts,
+        ref Beta110FastRng rng,
+        ref WorldFastEncounterEntry? previous,
+        ref int drawCalls, Span<ushort> output, WorldFastEncounterPredicate[] predicates, EncounterQueueKind kind, bool deferred)
+    {
+        if (slots <= 0) return true;
+        Span<int> bag = source.Length == 0 ? Span<int>.Empty : stackalloc int[source.Length];
+        int count = 0;
+        for (int slot = 0; slot < slots; slot++)
+        {
+            if (count == 0 && source.Length > 0)
+            {
+                for (int index = 0; index < source.Length; index++) bag[index] = index;
+                count = source.Length;
+            }
+
+            int selectedBagIndex = -1;
+            bool hasEligible = false;
+            for (int index = 0; index < count; index++)
+            {
+                if (!previous.HasValue || DoesNotRepeat(source[bag[index]], previous.Value, conflicts))
+                {
+                    hasEligible = true;
+                    break;
+                }
+            }
+            if (hasEligible)
+            {
+                while (true)
+                {
+                    int candidateIndex = (int)(rng.NextDouble() * count);
+                    drawCalls++;
+                    WorldFastEncounterEntry candidate = source[bag[candidateIndex]];
+                    if (!previous.HasValue || DoesNotRepeat(candidate, previous.Value, conflicts))
+                    {
+                        selectedBagIndex = candidateIndex;
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                // Source GrabBag performs the no-predicate fallback. It consumes one
+                // NextDouble even when the bag is empty.
+                double sample = rng.NextDouble();
+                drawCalls++;
+                if (count > 0) selectedBagIndex = (int)(sample * count);
+            }
+
+            if (selectedBagIndex < 0) continue;
+            WorldFastEncounterEntry selected = source[bag[selectedBagIndex]];
+            for (int index = selectedBagIndex; index < count - 1; index++) bag[index] = bag[index + 1];
+            count--;
+            previous = selected;
+            output[slot] = selected.EncounterId;
+            if (!deferred)
+                foreach (var predicate in predicates)
+                    if (predicate.Kind == kind && (predicate.RangeMode == SearchSequenceRangeMode.FirstN
+                        ? slot < predicate.RangeValue : slot + 1 == predicate.RangeValue) &&
+                        !predicate.Allowed.Contains(selected.EncounterId)) return false;
         }
         return true;
     }

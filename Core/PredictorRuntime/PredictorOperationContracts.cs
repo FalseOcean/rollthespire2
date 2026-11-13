@@ -9,6 +9,7 @@ internal sealed record PredictorOperationOpaqueAction(string Id, string SourceTy
 internal sealed record PredictorOperationContext(ulong PlayerId, int PlayerSlot, int PlayerCount,
     ImmutableArray<ModelKey> OpaqueModels)
 {
+    internal ImmutableHashSet<ModelKey>? EligibleRelics { get; init; }
     internal PredictorOperationEventRng? CombatCardRng { get; init; }
     internal PredictorOperationPotionPools? CombatCardPools { get; init; }
     internal ImmutableArray<PredictorVisitFact> PreviousVisits { get; init; } = [];
@@ -55,6 +56,7 @@ internal sealed record PredictorOperationResult(string Fingerprint, PredictorInp
 {
     internal ImmutableArray<PredictorInput> Inputs { get; init; } = [];
     internal string ModelPremise => "CapturedPresentState;VanillaRules;ThirdPartyAdditionalEffectsOmitted";
+    internal PredictorOperationEventRng? EventRngAfter { get; init; }
     internal PredictorOperationCrystalScene? CrystalBoard { get; init; }
     internal PredictorOperationTreasurePartyScene? TreasureParty { get; init; }
     internal bool HealthKnown { get; init; } = true;

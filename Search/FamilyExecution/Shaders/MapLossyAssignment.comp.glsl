@@ -10,6 +10,7 @@ layout(set=0,binding=2,std430) readonly buffer Config {
 layout(set=0,binding=3,std430) readonly buffer Transitions { uint transitions[]; };
 // Transport specializes only storage dimensions; query semantics stay in uploaded transitions.
 #define STATE_WORDS 16
+#define RT2_MAP_CHILD_SHUFFLE 0
 // Source-matched topology + Assignment Round1. CPU provides the exact target-draw RNG prefix.
 // Six vanilla SP Act1/2/3 x ordinary/Swarming laws; Full Final and Exact own truth.
 uint kind[119], kids[119], parents[119], exists[119], candidate[119], queue[64];
@@ -20,16 +21,38 @@ uint head, queued, restTarget, unknownTarget, eliteTarget, height, boss;
 uint64_t s0,s1,s2,s3;
 /*__RT2_XOSHIRO_ROTATE45__*/
 uint64_t rol(uint64_t x,uint k){return (x<<k)|(x>>(64u-k));}
-uint draw(uint upper){
+uint64_t draw_raw(){
     uint64_t result=rol(s1*uint64_t(5),7u)*uint64_t(9),t=s1<<17u;
     s2^=s0;s3^=s1;s1^=s2;s0^=s3;s2^=t;s3=rt2_rotate_left45_split32(s3);
-    return uint(double(result>>11u)*double(1.1102230246251565e-16)*double(upper));
+    return result;
 }
+uint draw(uint upper){return uint(double(draw_raw()>>11u)*double(1.1102230246251565e-16)*double(upper));}
+#if RT2_MAP_CHILD_SHUFFLE
+uint64_t splitmix(inout uint64_t seed){
+    seed+=0x9e3779b97f4a7c15ul;
+    uint64_t z=(seed^(seed>>30u))*0xbf58476d1ce4e5b9ul;
+    z=(z^(z>>27u))*0x94d049bb133111ebul;
+    return z^(z>>31u);
+}
+u64vec4 fork_shuffle(){
+    uint64_t seed=draw_raw();
+    u64vec4 parent=u64vec4(s0,s1,s2,s3);
+    s0=splitmix(seed);s1=splitmix(seed);s2=splitmix(seed);s3=splitmix(seed);
+    return parent;
+}
+void restore_parent(u64vec4 parent){s0=parent.x;s1=parent.y;s2=parent.z;s3=parent.w;}
+#endif
 void edge(uint p,uint c){kids[p]|=1u<<(c%7u);parents[c]|=1u<<(p%7u);}
 uint create(uint col,uint row){uint n=row*7u+col;exists[n]=1u;return n;}
 uint nextColumn(uint n){
     int d[3]=int[3](-1,0,1);
+#if RT2_MAP_CHILD_SHUFFLE
+    u64vec4 parent=fork_shuffle();
+#endif
     for(int i=2;i>0;i--){uint j=draw(uint(i+1));int t=d[i];d[i]=d[j];d[j]=t;}
+#if RT2_MAP_CHILD_SHUFFLE
+    restore_parent(parent);
+#endif
     int col=int(n%7u),row=int(n/7u);
     for(int i=0;i<3;i++){
         int target=clamp(col+d[i],0,6),actual=target-col;bool bad=false;
@@ -58,7 +81,7 @@ void topology(){
 bool valid(uint node,uint type){
     uint row=node/7u;
     if(type==4u&&row>=height-2u)return false;
-    if((type==4u||type==6u)&&row<6u)return false;
+    if((type==4u&&row<(RT2_MAP_CHILD_SHUFFLE==1?5u:6u))||(type==6u&&row<6u))return false;
     bool adjacent=type==2u||type==3u||type==4u||type==6u;
     if(adjacent){
         uint bits=parents[node];while(bits!=0u){uint col=uint(findLSB(bits));bits&=bits-1u;if(kind[(row-1u)*7u+col]==type)return false;}
@@ -78,7 +101,13 @@ uint candidates(uint type,bool modify){
         uint n=row*7u+col;
         if(exists[n]!=0u&&kind[n]==type&&(!modify||(row!=1u&&row!=height&&row!=height-6u)))candidate[c++]=n;
     }
+#if RT2_MAP_CHILD_SHUFFLE
+    u64vec4 parent=fork_shuffle();
+#endif
     for(int i=int(c)-1;i>0;i--){uint j=draw(uint(i+1));uint t=candidate[i];candidate[i]=candidate[j];candidate[j]=t;}
+#if RT2_MAP_CHILD_SHUFFLE
+    restore_parent(parent);
+#endif
     return c;
 }
 void enqueue(uint type){queue[(head+queued)&63u]=type;queued++;}
@@ -98,9 +127,18 @@ void assign(){
         for(uint i=0u;i<c&&queued>0u;i++){
             uint node=candidate[i],attempts=queued;
             for(uint j=0u;j<attempts;j++){
+#if RT2_MAP_CHILD_SHUFFLE
+                uint type=queue[j];
+                if(valid(node,type)){
+                    kind[node]=type;queued--;
+                    for(uint k=j;k<queued;k++)queue[k]=queue[k+1u];
+                    break;
+                }
+#else
                 uint type=queue[head];head=(head+1u)&63u;queued--;
                 if(valid(node,type)){kind[node]=type;break;}
                 enqueue(type);
+#endif
             }
         }
     }

@@ -33,7 +33,7 @@ internal static partial class PredictorOperationCapture
     { internal Task? Task; internal int ChildrenStarted; internal int Ordinal; }
     private sealed record RestObservation(RestSiteOption Option, ImmutableArray<RestSiteOption> Options, int Index)
     { internal Task? Task; }
-    private sealed record RemovalObservation(int Quote, bool Cancelable)
+    private sealed record RemovalObservation(int Quote, bool Cancelable, MerchantCardRemovalEntry? Entry)
     { internal Task? Task; }
     private sealed record RewardObservation(Reward Reward)
     { internal Task? Task; }
@@ -43,8 +43,10 @@ internal static partial class PredictorOperationCapture
     private static readonly AsyncLocal<ObtainObservation?> Obtaining = new();
     private static readonly AsyncLocal<Reward?> SelectingReward = new();
     private static readonly AsyncLocal<RestObservation?> Resting = new();
+    private static readonly AsyncLocal<RemovalObservation?> Removing = new();
     private static readonly ConditionalWeakTable<Node, ObtainObservation> SelectionSources = new();
     private static readonly ConditionalWeakTable<Node, Reward> SelectionRewards = new();
+    private static readonly ConditionalWeakTable<NDeckCardSelectScreen, RemovalObservation> RemovalSelections = new();
     private static readonly ConditionalWeakTable<Reward, RewardObservation> RewardSelections = new();
     private static readonly ConditionalWeakTable<Reward, ObtainObservation> RewardObtainSources = new();
     private static readonly ConditionalWeakTable<Reward, RestObservation> RewardRestSources = new();
@@ -57,9 +59,6 @@ internal static partial class PredictorOperationCapture
     // the main thread; no continuation reads game or Godot objects.
     internal static void Install(Harmony harmony)
     {
-        harmony.Patch(AccessTools.Method(typeof(MerchantEntry), nameof(MerchantEntry.OnTryPurchaseWrapper)),
-            prefix: new(typeof(PredictorOperationCapture), nameof(BeforePurchase)),
-            postfix: new(typeof(PredictorOperationCapture), nameof(AfterPurchase)));
         harmony.Patch(AccessTools.Method(typeof(RelicCmd), nameof(RelicCmd.Obtain), [typeof(RelicModel), typeof(Player), typeof(int)]),
             prefix: new(typeof(PredictorOperationCapture), nameof(BeforeObtain)),
             postfix: new(typeof(PredictorOperationCapture), nameof(AfterObtain)),
@@ -77,11 +76,12 @@ internal static partial class PredictorOperationCapture
             prefix: new(typeof(PredictorOperationCapture), nameof(BeforeRest)),
             postfix: new(typeof(PredictorOperationCapture), nameof(AfterRest)),
             finalizer: new(typeof(PredictorOperationCapture), nameof(FinalizeRest)));
-        harmony.Patch(AccessTools.Method(typeof(OneOffSynchronizer), "DoMerchantCardRemoval"),
-            prefix: new(typeof(PredictorOperationCapture), nameof(BeforeRemoval)),
-            postfix: new(typeof(PredictorOperationCapture), nameof(AfterRemoval)));
         harmony.Patch(AccessTools.Method(typeof(NTreasureRoom), "OpenChest"),
             postfix: new(typeof(PredictorOperationCapture), nameof(AfterChestOpening)));
+        harmony.Patch(MerchantRuntimeBinding.Purchase,
+            prefix: new(typeof(PredictorOperationCapture), nameof(BeforePurchase)),
+            postfix: new(typeof(PredictorOperationCapture), nameof(AfterPurchase)));
+        InstallShopRemovalObserver(harmony);
     }
 
     private static void BeforePurchase(MerchantEntry __instance, bool ignoreCost, out PurchaseObservation? __state)
@@ -135,6 +135,11 @@ internal static partial class PredictorOperationCapture
 
     private static void BeforeSelection(Node __instance)
     {
+        if (__instance is NDeckCardSelectScreen selector && Removing.Value is { } removal)
+        {
+            RemovalSelections.Remove(selector);
+            RemovalSelections.Add(selector, removal);
+        }
         if (SelectingReward.Value is { } reward)
         {
             SelectionRewards.Remove(__instance);
@@ -244,16 +249,20 @@ internal static partial class PredictorOperationCapture
         return __exception;
     }
 
-    private static void BeforeRemoval(Player player, int goldCost, bool cancelable, out RemovalObservation? __state)
+    private static void BeforeLegacyRemoval(Player player, int goldCost, bool cancelable, out RemovalObservation? __state)
+        => __state = ObserveRemoval(player, goldCost, cancelable, null);
+
+    private static RemovalObservation? ObserveRemoval(Player player, int quote, bool cancelable, MerchantCardRemovalEntry? entry)
     {
-        __state = null;
         try
         {
             RuntimeSnapshotThreadGuard.RequireMainThread();
-            __state = new(goldCost, cancelable);
-            Observed.GetOrCreateValue(player).Removal = __state;
+            var observation = new RemovalObservation(quote, cancelable, entry);
+            Observed.GetOrCreateValue(player).Removal = observation;
+            return observation;
         }
         catch (Exception ex) { RuntimeLog.WarnException("operationRemovalObservationFailed=true", ex); }
+        return null;
     }
     private static void AfterRemoval(Task<bool> __result, RemovalObservation? __state)
     { if (__state != null) __state.Task = __result; }
@@ -266,10 +275,12 @@ internal static partial class PredictorOperationCapture
     {
         if (!Observed.TryGetValue(inventory.Player, out var observed) || observed.Removal is not { } removal ||
             removal.Task?.IsCompleted == true) return null;
-        var selector = Nodes<NDeckCardSelectScreen>(root).LastOrDefault(n => n.IsVisibleInTree());
+        var entry = inventory.CardRemovalEntry ?? throw new InvalidOperationException("OperationShopRemovalEntryMissing");
+        if (removal.Entry != null && !ReferenceEquals(removal.Entry, entry)) return null;
+        var selector = Nodes<NDeckCardSelectScreen>(root).LastOrDefault(n => n.IsVisibleInTree() &&
+            (removal.Entry == null || (RemovalSelections.TryGetValue(n, out var source) && ReferenceEquals(source, removal))));
         if (selector == null || !SelectionIsPending(selector)) throw new InvalidOperationException("OperationShopRemovalSettling");
-        if (inventory.CardRemovalEntry == null) throw new InvalidOperationException("OperationShopRemovalEntryMissing");
-        return new(Id(inventory.CardRemovalEntry), removal.Quote,
+        return new(Id(entry), removal.Quote,
             Read<IReadOnlyList<CardModel>>(selector, "_cards").Select(Id).ToImmutableArray(), removal.Cancelable);
     }
 
@@ -371,7 +382,9 @@ internal static partial class PredictorOperationCapture
     {
         if (!Observed.TryGetValue(inventory.Player, out var observed)) return null;
         observed.Purchases.RemoveAll(p => p.Task?.IsCompleted == true);
-        var pending = observed.Purchases.Where(p => inventory.AllEntries.Contains(p.Entry)).ToArray();
+        if (observed.Purchases.Count == 0) return null;
+        var entries = MerchantRuntimeBinding.Entries(inventory);
+        var pending = observed.Purchases.Where(p => entries.Contains(p.Entry)).ToArray();
         if (pending.Length == 0) return null;
         if (pending.Length != 1) throw new InvalidOperationException("OperationShopConcurrentPurchases");
         return new(Id(pending[0].Entry), pending[0].BeforeGold, pending[0].IgnoreCost);

@@ -12,11 +12,10 @@ internal static class NeowSingleplayerGpuPlan
         if (a.PlayersCount != 1 || a.PlayerSlotIndex != 0) throw new InvalidOperationException("N.SingleplayerGpuScope");
         if (a.EligibleCurseRelicIds.Length > 10 || a.BonesEligibleRelicIds.Length > 64 || c.OtherCharacterPools.Length > 16)
         { issue = "DonorLocalArrayCapacity"; return false; }
-        bool rewards = (plan.EnabledDomains & ~(Beta110FastDomain.FinalCurse | Beta110FastDomain.NewLeafTransform |
-            Beta110FastDomain.LeafyPoulticeTransforms | Beta110FastDomain.PhialHolsterPotions)) != 0;
-        bool niche = rewards || plan.HasFinalCurseFastProjection || (plan.EnabledDomains & Beta110FastDomain.NewLeafTransform) != 0;
-        bool transform = (plan.EnabledDomains & Beta110FastDomain.LeafyPoulticeTransforms) != 0;
-        bool potion = (plan.EnabledDomains & Beta110FastDomain.PhialHolsterPotions) != 0;
+        bool rewards = plan.NeedsRewards;
+        bool niche = plan.NeedsNicheOrKaleidoscopePools;
+        bool transform = plan.NeedsTransformations;
+        bool potion = plan.NeedsPotions;
         // Require only pools read by a possible acquired source. Direct local
         // predicates must not depend on unrelated card/transform/potion authority.
         byte[] sources = !plan.Bones ? [plan.Selected] : plan.First != 255 && plan.Second != 255
@@ -35,7 +34,7 @@ internal static class NeowSingleplayerGpuPlan
                 Beta110FastRelicCatalog.ScrollBoxes when rewards => c.CharacterCardAuthorityExact && c.CharacterRewardPool.Common.Length >= 4 && c.CharacterRewardPool.Uncommon.Length >= 2,
                 Beta110FastRelicCatalog.Kaleidoscope when rewards || niche => c.OtherCharacterCardAuthorityExact && c.OtherCharacterPools.Length >= 3 &&
                     (!rewards || c.OtherCharacterPools.All(pool => pool.TotalCount > 0)),
-                Beta110FastRelicCatalog.NewLeaf when niche => c.NewLeafTransformAuthorityExact && c.NewLeafTransformPool.Length > 0,
+                Beta110FastRelicCatalog.NewLeaf when (a.UsesChildShuffle ? transform : niche) => c.NewLeafTransformAuthorityExact && c.NewLeafTransformPool.Length > 0,
                 Beta110FastRelicCatalog.LeafyPoultice when transform => c.LeafyTransformAuthorityExact && c.LeafyStrikeTransformPool.Length > 0 && c.LeafyDefendTransformPool.Length > 0,
                 Beta110FastRelicCatalog.PhialHolster when potion => c.PotionAuthorityExact && c.PotionPool.HasAtLeastPerRarity(2),
                 _ => true
@@ -105,7 +104,7 @@ internal static class NeowSingleplayerGpuPlan
             int bonesOrdinal = Array.IndexOf(a.EligibleCurseRelicIds, Beta110FastRelicCatalog.NeowsBones);
             // Tiny synthetic/unusual pools are dense at the pair checkpoint;
             // use the full-capacity fused physical instead of predictable overflow.
-            if (a.BonesEligibleRelicIds.Length >= 16 && bonesOrdinal >= 0 && topGate.AcceptedCurseOrdinalMask == (1u << bonesOrdinal) &&
+            if (!a.UsesChildShuffle && a.BonesEligibleRelicIds.Length >= 16 && bonesOrdinal >= 0 && topGate.AcceptedCurseOrdinalMask == (1u << bonesOrdinal) &&
                 (topGate.AcceptedCurseOrdinalMask | topGate.RejectedCurseOrdinalMask) == (1u << a.EligibleCurseRelicIds.Length) - 1u)
                 meta[66] = 1;
         }
@@ -113,12 +112,14 @@ internal static class NeowSingleplayerGpuPlan
         U64(31, XxHash64.Hash("NEOW"u8, 0)); U64(33, NeowSingleplayerReplay.RewardsHash);
         U64(35, XxHash64.Hash("niche"u8, 0)); U64(37, XxHash64.Hash("transformations"u8, 0));
         U64(62, XxHash64.Hash("combat_potion_generation"u8, 0));
+        U64(54, NeowFamilyReplay.NonCombatHash);
         meta[39] = (uint)a.EligibleCurseRelicIds.Length;
         U64(40, plan.TopAny); U64(42, plan.TopAll); U64(44, plan.TopBan);
         U64(46, plan.Selected == 255 ? 0 : Beta110FastRelicCatalog.Bit(plan.Selected));
         U64(48, plan.BonesAny); U64(50, plan.BonesAll); U64(52, plan.BonesBan);
         meta[56] = (plan.RequireBones ? 1u : 0) | (plan.Bones ? 2u : 0) | (a.AllCharacterCardPoolsUnlocked ? 4u : 0) |
-            (a.ScrollBoxesAllowed ? 8u : 0) | (a.UsesDefectScrollBoxesRule ? 32u : 0);
+            (a.ScrollBoxesAllowed ? 8u : 0) | (a.UsesDefectScrollBoxesRule ? 32u : 0) | (a.UsesChildShuffle ? 64u : 0);
+        meta[NeowCapsuleNonCombatContinuation.GpuMetadataIndex] = plan.CapsulesWithKnownZeroNonCombatAdvance;
         meta[58] = (uint)c.LeafyStrikeTransformPool.Length; meta[59] = meta[60] = (uint)c.LeafyDefendTransformPool.Length;
         meta[61] = (uint)c.NewLeafTransformPool.Length;
         for (int i = 0; i < a.EligibleCurseRelicIds.Length; i++) meta[71 + i] = a.EligibleCurseRelicIds[i];

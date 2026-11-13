@@ -18,6 +18,7 @@ internal static class NeowPartyOperators
         ref Beta110FastRng niche,
         ref Beta110FastRng transformations,
         ref Beta110FastRng combatPotionGeneration,
+        ref Beta110FastRng nonCombat,
         Span<byte> matched)
     {
         if (!isActive)
@@ -92,18 +93,20 @@ internal static class NeowPartyOperators
         if (relicId == Beta110FastRelicCatalog.Kaleidoscope)
         {
             if (!needsNiche && !needsRewards) return true;
+            ref Beta110FastRng poolRng = ref (plan.Authority.UsesChildShuffle ? ref nonCombat : ref niche);
             bool hasCondition = HasStructuredConditionForRelic(plan.StructuredConditions, relicId);
             if (!needsRewards)
             {
                 int poolCount = catalog.OtherCharacterPools.Length;
                 if (!catalog.OtherCharacterCardAuthorityExact || poolCount < 3) return false;
-                niche.ConsumeUnstableShuffle(poolCount);
-                niche.ConsumeUnstableShuffle(poolCount);
+                if (plan.Authority.UsesChildShuffle) { poolRng.ConsumeShuffleSeed(); poolRng.ConsumeShuffleSeed(); }
+                else { poolRng.ConsumeUnstableShuffle(poolCount); poolRng.ConsumeUnstableShuffle(poolCount); }
                 return true;
             }
             Span<ushort> offers = stackalloc ushort[6];
             offers.Fill(Beta110FastDenseId.Invalid);
-            if (!GenerateKaleidoscopeOffers(plan.Authority.Ascension, catalog, ref rewards, ref niche, offers)) return false;
+            if (!GenerateKaleidoscopeOffers(plan.Authority.Ascension, catalog, ref rewards, ref poolRng, offers,
+                    semanticProfile: plan.Authority.RngSemantics)) return false;
             if (hasCondition) MatchKaleidoscopeConditions(plan.StructuredConditions, offers, matched);
             return true;
         }
@@ -132,10 +135,11 @@ internal static class NeowPartyOperators
         {
             if (!needsCombatPotionGeneration) return true;
             if (!catalog.PotionAuthorityExact) return false;
+            ref Beta110FastRng potionRng = ref (plan.Authority.UsesChildShuffle ? ref nonCombat : ref combatPotionGeneration);
             Span<ushort> potions = stackalloc ushort[2];
-            potions[0] = RollPotion(catalog.PotionPool, ReadOnlySpan<ushort>.Empty, ref combatPotionGeneration);
+            potions[0] = RollPotion(catalog.PotionPool, ReadOnlySpan<ushort>.Empty, ref potionRng);
             if (potions[0] == Beta110FastDenseId.Invalid) return false;
-            potions[1] = RollPotion(catalog.PotionPool, potions[..1], ref combatPotionGeneration);
+            potions[1] = RollPotion(catalog.PotionPool, potions[..1], ref potionRng);
             if (potions[1] == Beta110FastDenseId.Invalid) return false;
             MatchOfferConditions(relicId, Beta110FastStructuredConditionKind.PhialHolsterPotions,
                 plan.StructuredConditions, potions, matched);
@@ -156,9 +160,9 @@ internal static class NeowPartyOperators
 
         if (relicId == Beta110FastRelicCatalog.NewLeaf)
         {
-            if (!needsNiche) return true;
+            if (!(plan.Authority.UsesChildShuffle ? needsTransformations : needsNiche)) return true;
             if (!catalog.NewLeafTransformAuthorityExact || catalog.NewLeafTransformPool.Length == 0) return false;
-            ushort replacement = DrawNewLeafTransform(catalog, ref niche);
+            ushort replacement = DrawNewLeafTransform(catalog, ref (plan.Authority.UsesChildShuffle ? ref transformations : ref niche));
             if ((plan.EnabledDomains & Beta110FastDomain.NewLeafTransform) != 0)
             {
                 MatchSingleOfferCondition(relicId, Beta110FastStructuredConditionKind.NewLeafTransform,

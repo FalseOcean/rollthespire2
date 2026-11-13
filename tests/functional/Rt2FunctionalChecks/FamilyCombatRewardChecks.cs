@@ -141,10 +141,13 @@ internal static class FamilyCombatRewardChecks
         return 0;
     }
 
-    internal static int Run(int count, bool exportGpu = false, bool openingPrefixOnly = false)
+    internal static int Run(int count, bool exportGpu = false, bool openingPrefixOnly = false, bool neutralWitnessOnly = false)
     {
-        CheckOpeningSelection();
-        CheckPreparedCardSelection();
+        if (!neutralWitnessOnly)
+        {
+            CheckOpeningSelection();
+            CheckPreparedCardSelection();
+        }
         var authority = Beta110FastSearchFixtureAuthority.CreateBeta111(BaseGameModelKeys.Characters.Defect, 10, 0, 1);
         authority = authority.WithEffectAuthority(authority.EffectAuthority! with { CharacterRewardIdentityPoolExact = true,
             CharacterRewardPool = authority.EffectAuthority!.CharacterRewardPool!.Select(c => c with {
@@ -166,6 +169,11 @@ internal static class FamilyCombatRewardChecks
         }
         PreparedSearch Query(NeowSearchFilter filter) => QueryAtAscension(filter, 10);
         CheckRealNeutralWitness(Query);
+        if (neutralWitnessOnly)
+        {
+            Console.WriteLine($"CombatNeutralWitness checks={_checks};PASS;nativeGpuNotRun=true");
+            return 0;
+        }
         var openingPrefixFixtures = CheckOpeningPrefixHotLoop(Query, filter => QueryAtAscension(filter, 0));
         if (openingPrefixOnly)
         {
@@ -747,6 +755,10 @@ internal static class FamilyCombatRewardChecks
         var impossible = NeowSearchFilter.Empty with { NormalCombatRewardConditions =
             [new(1, ModelKeySetFilter.Empty, NormalCombatPotionRequirement.Any, ModelKeySetFilter.Empty, null, 0)] };
         var source = query(impossible);
+        ModelKey[] actualWhitelist = [BaseGameModelKeys.Relics.CursedPearl, BaseGameModelKeys.Relics.DowsingRod,
+            BaseGameModelKeys.Relics.FishingRod, BaseGameModelKeys.Relics.GoldenPearl,
+            BaseGameModelKeys.Relics.LavaRock, BaseGameModelKeys.Relics.PreciseScissors,
+            BaseGameModelKeys.Relics.StoneHumidifier, BaseGameModelKeys.Relics.WingedBoots];
         // The other fixtures deliberately exercise the numeric donor with no
         // product route policy. This group uses the real prepared no-N contract.
         SearchModel Product(SearchModel model) => model with { CombatRewardRoutePolicy = new(
@@ -758,6 +770,8 @@ internal static class FamilyCombatRewardChecks
             var replay = new CombatRewardReplay(model);
             var proof = replay.NeutralWitness ?? throw new Exception("Real no-N policy needs a neutral witness proof");
             Check(proof.Available && proof.NeutralMask != 0, "Captured direct producer/identity foundation is available");
+            Check(proof.Remainder == "UnprovenRealNeutralOpeningRetainedForExact",
+                "No authored offer constraint retains the genuine unproven-root remainder");
             Check(proof.RequiresAllOffers == (slot >= 0), "Party no-N preserves per-choice unresolved scope");
             Check(!proof.AllowsRejection(Beta110FastRelicCatalog.ArcaneScroll, Beta110FastRelicCatalog.SmallCapsule,
                 Beta110FastRelicCatalog.NeowsBones), "No pristine synthetic route substitutes for a real neutral offer");
@@ -798,12 +812,102 @@ internal static class FamilyCombatRewardChecks
             Check(gpu.ShaderSource().Contains("bool c_numeric_keep_root(uint64_t root)") &&
                 !CombatRewardNeutralWitness.HasUnconditionalNeutralProducer(model.ProfileId, BaseGameModelKeys.Relics.NewLeaf),
                 "Only the guarded body injects proof code; deck-dependent neutral producers are not assumed available");
+            ModelKey[] neutralOffers = [BaseGameModelKeys.Relics.CursedPearl, BaseGameModelKeys.Relics.DowsingRod,
+                BaseGameModelKeys.Relics.FishingRod, BaseGameModelKeys.Relics.GoldenPearl,
+                BaseGameModelKeys.Relics.LavaRock, BaseGameModelKeys.Relics.StoneHumidifier];
+            SearchModel WhitelistModel(IReadOnlyList<ModelKey> allowed)
+            {
+                var prepared = query(impossible with { NeowOfferWhitelist = new(allowed) });
+                return Product((slot < 0 ? prepared : ForPartySlot(prepared, slot)).Model);
+            }
+            var whiteModel = WhitelistModel(neutralOffers);
+            var whiteReplay = new CombatRewardReplay(whiteModel);
+            var whiteProof = whiteReplay.NeutralWitness!;
+            Check(whiteProof.Available && whiteProof.Remainder.Length == 0 &&
+                whiteProof.NeutralMask == proof.NeutralMask && whiteProof.RequiresAllOffers == proof.RequiresAllOffers,
+                "An all-neutral complete-menu whitelist proves coverage without changing the witness quantifier or mask");
+            var whiteGpu = CombatRewardGpuPlan.TryCreate(whiteModel, whiteReplay, out var whiteIssue) ?? throw new Exception(whiteIssue);
+            Check(whiteGpu.Meta.SequenceEqual(gpu.Meta) && whiteGpu.ShaderSource() == gpu.ShaderSource(),
+                "Whitelist coverage changes no C GPU numerical parameters, source or neutral guard");
+            for (ulong ordinal = 0; ordinal < 129; ordinal++)
+            {
+                ulong root = Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(ordinal));
+                var offers = ModernNeowIdentityPredictor.PredictModernCore(root, whiteModel.Authority, Beta111Profile.Instance, true).RelicKeys;
+                Check(!NeowOfferWhitelist.Matches(whiteModel.Evaluation.NeowOfferWhitelist, offers) || whiteProof.AllowsRejection(root),
+                    "Every actual menu satisfying the neutral whitelist owns the required real neutral witness");
+                Check(whiteReplay.Matches(root) == replay.Matches(root),
+                    "Coverage reporting preserves the existing per-root CPU numerical guard");
+            }
+            foreach (var (allowed, soloCovered, label) in new (IReadOnlyList<ModelKey>, bool, string)[] {
+                (actualWhitelist, true, "The player's eight-key whitelist guarantees a neutral curse in solo"),
+                (neutralOffers.Append(BaseGameModelKeys.Relics.ArcaneScroll).ToArray(), true,
+                    "A mixed whitelist can guarantee a neutral curse in solo"),
+                ([BaseGameModelKeys.Relics.NeowsBones, BaseGameModelKeys.Relics.ArcaneScroll,
+                    BaseGameModelKeys.Relics.FishingRod], true,
+                    "Two distinct positives force the sole neutral positive beside a nonneutral curse"),
+                ([BaseGameModelKeys.Relics.NeowsBones, BaseGameModelKeys.Relics.NeowsTalisman,
+                    BaseGameModelKeys.Relics.Pomander, BaseGameModelKeys.Relics.FishingRod], true,
+                    "Mutually exclusive binary positives cannot form a nonneutral pair"),
+                (neutralOffers.Concat(new[] { BaseGameModelKeys.Relics.ArcaneScroll,
+                    BaseGameModelKeys.Relics.LeadPaperweight, BaseGameModelKeys.Relics.NeowsBones }).ToArray(), false,
+                    "A reachable all-nonneutral menu retains the genuine remainder"),
+                ([BaseGameModelKeys.Relics.LargeCapsule, BaseGameModelKeys.Relics.LavaRock,
+                    BaseGameModelKeys.Relics.SmallCapsule], false,
+                    "Curse-suppressed binary positives cannot create vacuous menu coverage") })
+            {
+                var mixedModel = WhitelistModel(allowed);
+                var mixedReplay = new CombatRewardReplay(mixedModel);
+                var mixedProof = mixedReplay.NeutralWitness!;
+                Check(mixedProof.Available && (mixedProof.Remainder.Length == 0) == (soloCovered && slot < 0), label);
+                var mixedGpu = CombatRewardGpuPlan.TryCreate(mixedModel, mixedReplay, out var mixedIssue)
+                    ?? throw new Exception(mixedIssue);
+                Check(mixedGpu.Meta.SequenceEqual(gpu.Meta) && mixedGpu.ShaderSource() == gpu.ShaderSource(),
+                    "General whitelist coverage preserves GPU metadata, source and the per-root quantifier");
+                for (ulong ordinal = 0; ordinal < 129; ordinal++)
+                {
+                    ulong root = Beta111Profile.Instance.ComputeRootSeed(Beta110SeedCodec.FormatOrdinal(ordinal));
+                    var offers = ModernNeowIdentityPredictor.PredictModernCore(root, mixedModel.Authority,
+                        Beta111Profile.Instance, true).RelicKeys;
+                    Check(mixedProof.Remainder.Length != 0 ||
+                        !NeowOfferWhitelist.Matches(mixedModel.Evaluation.NeowOfferWhitelist, offers) ||
+                        mixedProof.AllowsRejection(root), "Declared coverage owns a real neutral witness on actual menus");
+                    Check(mixedReplay.Matches(root) == replay.Matches(root),
+                        "General coverage reporting preserves the existing CPU numerical guard");
+                }
+            }
+            Check(ModernNeowIdentityRules.CanCoOffer([BaseGameModelKeys.Relics.ArcaneScroll,
+                    BaseGameModelKeys.Relics.LeadPaperweight, BaseGameModelKeys.Relics.NeowsBones]) &&
+                !proof.AllowsRejection(Beta110FastRelicCatalog.ArcaneScroll, Beta110FastRelicCatalog.LeadPaperweight,
+                    Beta110FastRelicCatalog.NeowsBones), "The negative mixed case has a concrete permitted nonneutral menu");
+            foreach (var allowed in new IReadOnlyList<ModelKey>[] { [],
+                neutralOffers.Append(new ModelKey("RELIC", "UNKNOWN_ALLOWED_NEUTRAL")).ToArray() })
+            {
+                var retained = new CombatRewardReplay(WhitelistModel(allowed)).NeutralWitness!;
+                Check(retained.Available && retained.Remainder == "UnprovenRealNeutralOpeningRetainedForExact",
+                    "Empty or unknown allowed sets do not acquire a neutral coverage proof");
+            }
             var missingAuthority = model.Authority.WithEffectAuthority(model.Authority.EffectAuthority! with {
                 AuthoritySource = NeowEffectAuthoritySource.Missing });
             var missing = new CombatRewardNeutralWitness(model with { CompiledSearch = model.CompiledSearch with {
                 Context = model.CompiledSearch.Context with { Authority = missingAuthority } } }, replay.Catalog);
             Check(!missing.Available && missing.Issue == "RealNeutralOpeningEffectFoundationUnavailable" &&
                 !missing.AllowsRejection(0), "Missing producer foundation retains with its actual cause");
+            var missingWhiteAuthority = whiteModel.Authority.WithEffectAuthority(whiteModel.Authority.EffectAuthority! with {
+                AuthoritySource = NeowEffectAuthoritySource.Missing });
+            var missingWhite = new CombatRewardNeutralWitness(whiteModel with { CompiledSearch = whiteModel.CompiledSearch with {
+                Context = whiteModel.CompiledSearch.Context with { Authority = missingWhiteAuthority } } }, whiteReplay.Catalog);
+            Check(!missingWhite.Available && missingWhite.Remainder == "RealNeutralOpeningEffectFoundationUnavailable",
+                "A neutral whitelist cannot hide a missing exact effect foundation");
+            var a = whiteModel.Authority;
+            var unknownEligibility = new RuntimeContextAuthoritySnapshot(a.Character, a.Ascension, a.PlayerSlotIndex,
+                a.PlayersCount, a.NoRunModifiers, a.VanillaNeowCatalogExact, null, a.UnlockedCommonCards,
+                a.UnlockedUncommonCards, a.GameVersion, a.ProfileId, a.IsVanilla, a.SourceModId, a.SourceAssembly,
+                a.SourceAuthority, a.Completeness, a.ResolutionStatus, a.EffectAuthority, a.WorldAuthority,
+                a.PredictionGameMode, a.PredictionGameModeAuthority, a.SupportEvidence, a.AvailableCardIdentities);
+            var unknownWhite = new CombatRewardNeutralWitness(whiteModel with { CompiledSearch = whiteModel.CompiledSearch with {
+                Context = whiteModel.CompiledSearch.Context with { Authority = unknownEligibility } } }, whiteReplay.Catalog);
+            Check(!unknownWhite.Available && unknownWhite.Remainder == "RealNeutralOpeningIdentityAuthorityUnavailable",
+                "A whitelist cannot hide missing identity eligibility authority");
             var uncertainAuthority = model.Authority.WithEffectAuthority(model.Authority.EffectAuthority! with {
                 SourceAuthority = SourceAuthority.ModdedRuntimeBestEffort });
             var uncertain = new CombatRewardNeutralWitness(model with { CompiledSearch = model.CompiledSearch with {
@@ -813,6 +917,41 @@ internal static class FamilyCombatRewardChecks
         }
         Check(soloRejected > 0 && soloRetained > 0 && partyRejected > 0 && partyRetained > 0,
             "Real witness guard preserves useful rejection and genuinely unverified roots");
+        // Exercise the normal allocation/remainder path used for the warning,
+        // with the player's opening whitelist and first-three-combat card shape.
+        // The controlled Defect catalog supplies fixture identities, not the
+        // reported Silent card pool; identity coverage above is pool-independent.
+        var plannerSource = query(NeowSearchFilter.Empty with { NeowOfferWhitelist = new(actualWhitelist),
+            CombatCardExclusion = new(3, source.Model.Authority.EffectAuthority!.CharacterRewardPool!
+                .Take(15).Select(card => card.CardKey).ToArray()) { Mode = CombatCardCollectionMode.Whitelist } });
+        var plannerCompiled = SearchCompiler.Compile(plannerSource.Model.CompiledSearch.Query,
+            plannerSource.Model.CompiledSearch.Context with { Authority = plannerSource.Model.Authority.WithAvailableCardIdentities(
+                source.Model.Authority.EffectAuthority!.CharacterRewardPool!.Select(card => card.CardKey).ToArray()) });
+        plannerSource = plannerSource with { Model = new(plannerCompiled,
+            CompiledSearchEvaluationProjector.Project(plannerCompiled).Evaluation,
+            CombatRewardRoutePolicyContract.None, plannerCompiled.SemanticFingerprint) };
+        var soloPlan = FamilyExecutionCoordinator.Plan(plannerSource with { Model = Product(plannerSource.Model) },
+            gpuAvailable: false);
+        const string neutralRemainder = "UnprovenRealNeutralOpeningRetainedForExact";
+        Check(soloPlan.OrderedFamilies.Any(family => family.Coverage.Contains(CombatRewardFamily.Id)) &&
+            !soloPlan.FilterRemainders.Any(remainder => remainder.Contains(neutralRemainder, StringComparison.Ordinal)),
+            "Normal solo allocation selects C without the actual eight-key whitelist's spurious neutral remainder;families=" +
+                string.Join(',', soloPlan.OrderedFamilies.Select(family => family.FamilyId)) + ";remainders=" +
+                string.Join(',', soloPlan.FilterRemainders));
+        var players = Enumerable.Range(0, 4).Select(slot => ForPartySlot(plannerSource, slot).Model.Authority
+            .WithAvailableCardIdentities(plannerSource.Model.Authority.AvailableCardIdentities)).ToArray();
+        var partyAuthority = new OrderedPartyAuthority(players, Enumerable.Repeat("ControlledCombatFixture", 4).ToArray(),
+            players[0].WorldAuthority!);
+        var partyQuery = SearchQuery.Empty with { Players = Enumerable.Range(0, 4).Select(slot =>
+            new PlayerOfferQuery(slot, ModelKeySetFilter.Empty) { Conditions = plannerSource.Model.CompiledSearch.Query }).ToArray() };
+        var partyCompiled = SearchCompiler.Compile(partyQuery, plannerSource.Model.CompiledSearch.Context with {
+            Authority = players[0], Party = partyAuthority });
+        var partyModel = new SearchModel(partyCompiled, CompiledSearchEvaluationProjector.Project(partyCompiled).Evaluation,
+            CombatRewardRoutePolicyContract.None, partyCompiled.SemanticFingerprint);
+        var partyPlan = FamilyExecutionCoordinator.Plan(plannerSource with { Model = partyModel }, gpuAvailable: false);
+        Check(partyPlan.OrderedFamilies.Any(family => family.Coverage.Contains(CombatRewardFamily.Id)) &&
+            partyPlan.FilterRemainders.Any(remainder => remainder.Contains(neutralRemainder, StringComparison.Ordinal)),
+            "Normal party allocation selects C and retains the Scissors choice's genuine neutral remainder");
         var pinned = query(impossible with { NeowRoute = new(BaseGameModelKeys.Relics.GoldenPearl) }).Model;
         pinned = pinned with { CombatRewardRoutePolicy = new(CombatRewardFastRoutePolicy.UnpinnedAssumeUnperturbed,
             CombatRewardExactRoutePolicy.PinnedRealRoute) };

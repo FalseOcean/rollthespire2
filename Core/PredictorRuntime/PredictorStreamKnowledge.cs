@@ -14,6 +14,7 @@ internal sealed partial class PredictorRun
         PredictorStream.CombatPotionGeneration => PredictorCombatDomain.CombatPotionRng,
         PredictorStream.UnknownMapPoint => PredictorCombatDomain.UnknownMapPointRng,
         PredictorStream.TreasureRoomRelics => PredictorCombatDomain.TreasureRng,
+        PredictorStream.NonCombatGeneration => PredictorCombatDomain.NonCombatGenerationRng,
         _ => throw new ArgumentOutOfRangeException(nameof(stream))
     };
 }

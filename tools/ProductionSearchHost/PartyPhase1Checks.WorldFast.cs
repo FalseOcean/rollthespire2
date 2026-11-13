@@ -49,9 +49,17 @@ internal static partial class PartyPhase1Checks
                 "Act 3 source effective queue is exact");
             var bossPredicates = observed.Bosses.Select(b => new ActOrdinalModelKeySetFilter(
                 b.Act, b.Ordinal, new ModelKeySetFilter([b.BossKey], [], []))).ToArray();
+            var encounterQueue = observed.EncounterSequences.Single(a => a.Act == 3);
+            var encounterAct = generation.OrderedActCatalog.Single(a => a.Act == 3 && a.ActKey == encounterQueue.ActKey);
+            Check(encounterQueue.Precision == PredictionPrecision.Exact, "shared encounter queue is exact");
+            EncounterQueueSearchCondition[] encounterPredicates = [
+                new(3, EncounterQueueKind.Weak, SearchSequenceRangeMode.FirstN, 2, encounterQueue.Normal.Take(2).Select(e => e.EncounterKey).ToArray()),
+                new(3, EncounterQueueKind.Strong, SearchSequenceRangeMode.ExactSlot, 1, [encounterQueue.Normal[encounterAct.WeakEncounterSlots].EncounterKey]),
+                new(3, EncounterQueueKind.Elite, SearchSequenceRangeMode.FirstN, 3, encounterQueue.Elite.Take(3).Select(e => e.EncounterKey).ToArray())];
             var query = SearchQuery.Empty with
             {
                 Players = Enumerable.Range(0, count).Select(slot => new PlayerOfferQuery(slot, ModelKeySetFilter.Empty)).ToArray(),
+                EncounterQueues = encounterPredicates,
                 LegacyWorld = SearchQuery.Empty.LegacyWorld with { BossOrdinalFilters = bossPredicates },
                 EventSequenceConstraints = [new(3, eventTarget.Source, SearchSequenceRangeMode.ExactSlot, 1,
                     new([eventTarget.EventKey], [], []))]
@@ -83,6 +91,7 @@ internal static partial class PartyPhase1Checks
                     bool match = bossPredicates.All(p => world.Bosses.Any(b => b.Act == p.Act && b.Ordinal == p.Ordinal &&
                         p.Keys.Any.Contains(b.BossKey))) && sourceQueue.Entries.Any(e => e.Ordinal == 1 &&
                         e.Source == eventTarget.Source && e.EventKey == eventTarget.EventKey);
+                    match &= EncounterQueueMatcher.Evaluate(encounterPredicates, world, party.World).Disposition == SearchDisposition.Match;
                     if (match) sourceMatches.Add(ordinal);
                     var natural = Project(candidate, withoutOverrides);
                     replacedDraws += world.Bosses.Where(b => b.Ordinal == 1).Count(b =>
@@ -104,7 +113,7 @@ internal static partial class PartyPhase1Checks
                 }
                 Check(ProductionExactSearchEvaluator.Evaluate(request.Model, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, seed)).IsMatch,
                     "whole-table Exact accepts source positive");
-                GD.Print($"PARTY_WORLD_FAST players={count};roots={roots};sourceMatches={sourceMatches.Count};overrides={generation.PartyBossDiscoveryOverrides.Count};replacedDraws={replacedDraws};act3Queue=true;secondBoss=true;denseCompact=true");
+                GD.Print($"PARTY_WORLD_FAST players={count};roots={roots};sourceMatches={sourceMatches.Count};overrides={generation.PartyBossDiscoveryOverrides.Count};replacedDraws={replacedDraws};act3Queue=true;secondBoss=true;encounterWeakStrongElite=true;denseCompact=true");
             }
             finally
             {

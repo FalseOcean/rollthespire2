@@ -290,6 +290,23 @@ internal static partial class UiSurfaceChecks
                 await SettleNativeLayout();
             }
             await SettleNativeLayout();
+            if (OS.GetCmdlineUserArgs().Contains("--courier-hover-ui"))
+            {
+                File.WriteAllText(receipt, "{\"passed\":false,\"state\":\"not-run\",\"reason\":\"courier-hover-ui\"}");
+                await RunCourierHoverStandaloneChecks(root, output, runtime, game, nativeViewport, hoverRoot, run, player,
+                    global, fixture, Set, Check);
+                return;
+            }
+            if (OS.GetCmdlineUserArgs().Contains("--hextech-reroll-ui"))
+            {
+                await RunHextechRerollChecks(root, output, runtime, game, nativeViewport, hoverRoot, run, player, Set);
+                return;
+            }
+            if (OS.GetCmdlineUserArgs().Contains("--hextech-forge-ui"))
+            {
+                await RunHextechForgeChecks(root, output, runtime, game, nativeViewport, hoverRoot, run, player, Set);
+                return;
+            }
             if (OS.GetCmdlineUserArgs().Contains("--operation-surfaces-only"))
             {
                 if (!OS.GetCmdlineUserArgs().Contains("--operation-rf-coexistence"))

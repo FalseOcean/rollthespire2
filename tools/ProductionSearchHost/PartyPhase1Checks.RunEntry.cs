@@ -29,6 +29,11 @@ internal static partial class PartyPhase1Checks
 {
     private static async Task CheckRunEntry(Node host, GameVersionDetection detection, string output)
     {
+        if (OS.GetCmdlineUserArgs().Contains("--entry-extended-party"))
+        {
+            await CheckExtendedPartyRunEntry(host, detection, output);
+            return;
+        }
         Godot.Bridge.ScriptManagerBridge.LookupScriptsInAssembly(typeof(MegaCrit.Sts2.Core.Nodes.Cards.NCard).Assembly);
         if(System.Environment.GetEnvironmentVariable("RT2_CRYSTAL_PAELS_WING") is { Length:>0 })
         {

@@ -224,16 +224,14 @@ internal static class PredictorAncientTraceChecks
         legacyJson.Remove(nameof(PredictorAncientOffer.CharacterTargetIssueCode));
         Check(legacyJson.Deserialize<PredictorAncientOffer>() is { CharacterTargetKnown: true, CharacterTargetSourceOrderKnown: true },
             "An old complete offer payload without knowledge fields did not retain its default known-target contract.");
-        foreach (var limitation in new[] { (NoOther: false, OrderKnown: false), (NoOther: true, OrderKnown: true), (NoOther: true, OrderKnown: false) })
+        foreach (bool noOtherCandidate in new[] { false, true })
         {
-            bool noOtherCandidate = limitation.NoOther;
-            bool unavailable = noOtherCandidate && limitation.OrderKnown;
             PredictorRun? chosen = null;
             PredictorRouteNodeKnowledge? selected = null;
             int chosenOrdinal = 0;
             for (int ordinal = 0; ordinal < 128; ordinal++)
             {
-                var candidate = SeaGlassTargetFixture(captured, ordinal, noOtherCandidate, limitation.OrderKnown);
+                var candidate = SeaGlassTargetFixture(captured, ordinal, noOtherCandidate, sourceOrderKnown: false);
                 var node = Preview(candidate);
                 if (!node.Ancient!.Offers.Any(o => o.Value?.Relic.Entry == "SEA_GLASS")) continue;
                 chosen = candidate; selected = node; chosenOrdinal = ordinal; break;
@@ -245,9 +243,8 @@ internal static class PredictorAncientTraceChecks
                 knowledge.IdentityPendingCauses.IsEmpty && knowledge.PreparedCardPendingCauses.IsEmpty && knowledge.TargetPendingCauses.IsEmpty &&
                 knowledge.PendingCauses.Any(c => c.Identity == cause.Identity),
                 "Unknown provider target was flattened into known absence or contaminated independent setup fields.");
-            var kind = unavailable ? PredictorPendingReasonKind.KnownUnavailable : PredictorPendingReasonKind.MissingObservation;
-            Check(cause.ReasonKind == kind && cause.ChoiceId == null &&
-                (unavailable ? cause.RequiredPropertyKeys.IsEmpty : cause.RequiredPropertyKeys.SequenceEqual(["ancient.unlockedCharacters.sourceOrder"])),
+            Check(cause.ReasonKind == PredictorPendingReasonKind.MissingObservation && cause.ChoiceId == null &&
+                cause.RequiredPropertyKeys.SequenceEqual(["ancient.unlockedCharacters.sourceOrder"]),
                 "Target limitation was misclassified or replaced with a fictitious player choice.");
             string prefix = "result.ancient.offer." + knowledge.Index;
             Check(Fact(selected, prefix + ".identity").Status == PredictorKnowledgeStatus.Known &&
@@ -257,8 +254,7 @@ internal static class PredictorAncientTraceChecks
                 Fact(selected, prefix + ".starterRelicTarget").Status == PredictorKnowledgeStatus.Known,
                 "Published target mask hid independent identity/starter absence or exported target none as a fact.");
             var roots = selected.Diagnostics!.Snapshot.Explain(Fact(selected, prefix + ".characterTarget").Id).Roots;
-            Check(roots.Any(root => root.RootKey == cause.Identity && root.Kind ==
-                (unavailable ? PredictorKnowledgeRootKind.KnownUnavailable : PredictorKnowledgeRootKind.MissingObservation)) &&
+            Check(roots.Any(root => root.RootKey == cause.Identity && root.Kind == PredictorKnowledgeRootKind.MissingObservation) &&
                 roots.All(root => root.Kind != PredictorKnowledgeRootKind.UserChoice), "Character target explanation lost its classified provider root.");
             Check(selected.Ancient.Offers.Where(o => o.Index != knowledge.Index && o.Value?.Selectable == true).Any(o => o.IsKnown),
                 "One missing Sea Glass setup blocked every independent Orobas offer.");

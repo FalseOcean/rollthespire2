@@ -93,13 +93,15 @@ internal static class PredictorSeedCapture
     {
         var card = canonical.ToMutable();
         var levels = ImmutableArray.CreateBuilder<PredictorCardLevelMetadata>();
-        for (int level = 0; level <= card.MaxUpgradeLevel; level++)
+        int lastLevel = PredictorCardLevelEffects.HasInvariantLevelMetadata(new(card.Id.Category, card.Id.Entry)) ? 0 : card.MaxUpgradeLevel;
+        for (int level = 0; level <= lastLevel; level++)
         {
             if (level > 0) { card.UpgradeInternal(); card.FinalizeUpgradeInternal(); }
             var keywords = card.GetKeywordsWithSources(KeywordSources.Local).ToHashSet();
             levels.Add(new(level, card.EnergyCost.GetWithModifiers(CostModifiers.Local), card.EnergyCost.CostsX,
                 keywords.Contains(CardKeyword.Unplayable), keywords.Contains(CardKeyword.Exhaust),
-                keywords.Contains(CardKeyword.Innate), keywords.Contains(CardKeyword.Retain), keywords.Contains(CardKeyword.Eternal)));
+                keywords.Contains(CardKeyword.Innate), keywords.Contains(CardKeyword.Retain), keywords.Contains(CardKeyword.Eternal))
+            { SortValues = PredictorLiveRunCapture.CardSortValues(card) });
         }
         return levels.ToImmutable();
     }

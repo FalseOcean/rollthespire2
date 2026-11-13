@@ -33,7 +33,7 @@ internal sealed class NeowTransformationComposite
             !NeowFamilyGpuPlan.TryCreate(neow, out var gpu, out _) || gpu is null)
             return false;
         var numerical = new TransformationAggregateNumericalPlan(request);
-        if (!numerical.Closed || numerical.DrawGroups.Length != 2) return false;
+        if (!numerical.Closed || numerical.UsesModern113 || numerical.DrawGroups.Length != 2) return false;
         // The same immutable pools/target-instance masks used by the aggregate
         // donor are appended to N's buffers. No RNG or observation payload leaves N.
         var meta = gpu.Meta.ToList(); var data = gpu.Cards.ToList();

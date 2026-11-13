@@ -162,18 +162,7 @@ internal static class CrystalSphereLiveCapture
         }).ToImmutableArray();
         var potions = player.PotionSlots.Select(p => p == null ? null : new PredictorPotion(id++, Key(p))).ToImmutableArray();
         var odds = player.PlayerOdds.ToSerializable();
-        var streams = Enum.GetValues<PredictorStream>().Select(s => RngState(s, s switch
-        {
-            PredictorStream.Rewards => player.PlayerRng.Rewards,
-            PredictorStream.Shops => player.PlayerRng.Shops,
-            PredictorStream.Transformations => player.PlayerRng.Transformations,
-            PredictorStream.UpFront => run.Rng.UpFront,
-            PredictorStream.Niche => run.Rng.Niche,
-            PredictorStream.UnknownMapPoint => run.Rng.UnknownMapPoint,
-            PredictorStream.TreasureRoomRelics => run.Rng.TreasureRoomRelics,
-            PredictorStream.CombatPotionGeneration => run.Rng.CombatPotionGeneration,
-            _ => throw new InvalidOperationException("CrystalStreamUnmapped")
-        })).ToImmutableArray();
+        var streams = PredictorOperationCapture.CaptureStreams(run, player, context);
         context = context with { PotionPool = MegaCrit.Sts2.Core.Factories.PotionFactory.GetPotionOptions(player)
             .Select(p => new PredictorPotionOption(Key(p), Enum.Parse<PredictorPotionRarity>(p.Rarity.ToString()), p.CanBeGeneratedInCombat)).ToImmutableArray() };
         var state = new PredictorState(id, new(run.CurrentActIndex + 1, run.TotalFloor, "live:crystal"), player.Gold,

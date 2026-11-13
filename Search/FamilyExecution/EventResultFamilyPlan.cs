@@ -57,7 +57,9 @@ internal sealed class EventResultFamilyPlan
         Authority = Beta111EventResultAuthority.From(request.Authority);
         _ordinaryNumeric = new(_ordinary, Authority);
         PlayerSlot = request.Authority.PlayerSlotIndex;
-        bool numericalSupported = Authority.IsBeta111 && (_ordinary.Length == 0 || Authority.StaticCatalogAuthorityExact) &&
+        bool requiresStaticCatalog = _ordinary.Any(c => c.Kind is EventResultConditionKind.TrashHeapGrabCard or
+            EventResultConditionKind.TrashHeapDiveRelic or EventResultConditionKind.FakeMerchantOfferedFakeRelic);
+        bool numericalSupported = Authority.IsBeta111 && (!requiresStaticCatalog || Authority.StaticCatalogAuthorityExact) &&
             PlayerSlot >= 0 && PlayerSlot < request.Authority.PlayersCount &&
             (!HasMorphic || _morphic.All(p => p is not null)) &&
             Conditions.All(c => Enum.IsDefined(c.Kind)) &&
@@ -116,7 +118,7 @@ internal sealed class EventResultFamilyPlan
             }
             if (c.Kind == EventResultConditionKind.TinkerTimeTypeAndRider)
             {
-                if (!Beta111TrialTinkerProjector.TinkerContains(root, PlayerSlot, (int)c.TinkerCardType!, (int?)c.TinkerRider)) return false;
+                if (!Beta111TrialTinkerProjector.TinkerContains(root, PlayerSlot, (int)c.TinkerCardType!, (int?)c.TinkerRider, Authority.RngSemantics)) return false;
                 continue;
             }
             if (c.Kind == EventResultConditionKind.MorphicGroveGroupInitialBasicsContains)
@@ -141,7 +143,9 @@ internal sealed class EventResultFamilyPlan
             };
             if (precision != PredictionPrecision.Exact)
             {
-                onUnresolved?.Invoke(c.Kind, p.EvidenceCode);
+                onUnresolved?.Invoke(c.Kind, !Authority.IsBeta111 ? p.EvidenceCode :
+                    precision == PredictionPrecision.Unsupported ? Beta111EventResultProjector.StaticCatalogIncomplete :
+                    "EventResultObservableNotExact:" + c.Kind);
                 continue;
             }
             if (!pass) return false;
@@ -152,6 +156,7 @@ internal sealed class EventResultFamilyPlan
     {
         string donor = FamilyGpuComputeUtility.LoadEmbeddedShader("Beta111GpuEventResult.comp.glsl");
         string numerical = donor[donor.IndexOf("uint64_t s0;", StringComparison.Ordinal)..donor.IndexOf("void append_output", StringComparison.Ordinal)];
+        if (Authority.UsesChildShuffle) numerical = "#define RT2_E_CHILD_SHUFFLE\n" + numerical;
         if (UsesPreparedGroups) numerical = "#define RT2_E_PREPARED_GROUPS\n" + numerical;
         string source = FamilyGpuComputeUtility.LoadEmbeddedShader("EventResultFamily.comp.glsl").Replace("/*__DONOR__*/", numerical, StringComparison.Ordinal);
         if (NumericalVariant == GpuNumericalVariant.NativeFloat64) return source;

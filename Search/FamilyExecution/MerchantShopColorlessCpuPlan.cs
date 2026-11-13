@@ -44,8 +44,7 @@ internal sealed class MerchantShopColorlessCpuPlan
             if (c.MerchantOrdinal is < 1 or > 5) return null;
             bool u = c.Slot == MerchantColorlessSlot.Uncommon;
             if (!u && c.Slot != MerchantColorlessSlot.Rare) return null;
-            predicates.Add(new((c.MerchantOrdinal - 1) * Beta111NormalMerchantShopsContinuation.CallsPerMerchant +
-                (u ? Beta111NormalMerchantShopsContinuation.UncommonCallWithinMerchant : Beta111NormalMerchantShopsContinuation.RareCallWithinMerchant),
+            predicates.Add(new(authority.Calls.At(c.MerchantOrdinal, u),
                 c.TargetCardKey, u ? uncommon : rare));
         }
         return new(predicates.GroupBy(p => p.Call).OrderBy(g => g.Key).Select(g =>
@@ -129,8 +128,7 @@ internal sealed class MerchantShopColorlessCpuPlan
             var slot = uncommon ? MerchantColorlessSlot.Uncommon : MerchantColorlessSlot.Rare;
             var targets = fixedSlots.Where(c => c.MerchantOrdinal == merchant && c.Slot == slot).Select(c => c.TargetCardKey).Distinct().ToArray();
             if (targets.Length == 0 && !unordered.Any(c => c.Uncommon == uncommon && c.Count >= merchant)) continue;
-            int call = (merchant - 1) * Beta111NormalMerchantShopsContinuation.CallsPerMerchant +
-                (uncommon ? Beta111NormalMerchantShopsContinuation.UncommonCallWithinMerchant : Beta111NormalMerchantShopsContinuation.RareCallWithinMerchant);
+            int call = authority.Calls.At(merchant, uncommon);
             var pool = uncommon ? u : r;
             observations.Add(new(call, merchant, uncommon, pool.Length,
                 targets.Length == 0 ? null : CompileAcceptedIndexes(pool, targets), uncommon ? canonicalU : canonicalR));

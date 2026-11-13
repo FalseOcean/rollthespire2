@@ -1,9 +1,8 @@
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Models;
-using MegaCrit.Sts2.Core.Models.Events;
-using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Unlocks;
 using RolltheSpire2.Bootstrap;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Infrastructure.Snapshots;
 
@@ -19,7 +18,7 @@ internal sealed partial record NeowSearchUiCatalog
     {
         var model = ModelDb.GetById<CharacterModel>(new ModelId("CHARACTER", character.Entry));
         var players = Enumerable.Range(0, count).Select(i => Player.CreateForNewRun(model, UnlockState.none, (ulong)(i + 1))).ToArray();
-        var run = RunState.CreateForTest(players, ascensionLevel: ascension, seed: "000000000000");
+        var run = DetachedStandardRunBinding.Create(players, ascension, "000000000000");
         // Only the run-mode gate here: do not infer unlock eligibility from UnlockState.none.
         return AllRuntimeIdentities().Where(k => ModelDb.GetById<RelicModel>(new ModelId(k.Category, k.Entry)).IsAllowed(run)).ToHashSet();
     }
@@ -39,7 +38,7 @@ internal sealed partial record NeowSearchUiCatalog
         var model = ModelDb.GetById<CharacterModel>(new ModelId("CHARACTER", character.Entry));
         var temporaryPlayers = Enumerable.Range(0, players)
             .Select(i => Player.CreateForNewRun(model, unlocks, (ulong)(i + 1))).ToArray();
-        var run = RunState.CreateForTest(temporaryPlayers, ascensionLevel: ascension, seed: seed);
+        var run = DetachedStandardRunBinding.Create(temporaryPlayers, ascension, seed);
         var owner = temporaryPlayers[seat];
         var allowed = ModelDb.Event<MegaCrit.Sts2.Core.Models.Events.Neow>().AllPossibleOptions.Where(o => o.Relic is not null && o.Relic.IsAllowedAtNeow(owner))
             .Select(o => new ModelKey("RELIC", o.Relic!.Id.Entry)).Distinct().ToArray();

@@ -321,10 +321,27 @@ internal sealed class SeedLibraryStore
 
     internal static void ValidateContext(SeedLibraryContext context)
     {
+        if (context.Players is null || context.Players.Count > SeedPredictionInputLimits.MaximumPlayers)
+            throw new InvalidDataException("SeedLibraryContextInvalid");
+        ValidatePredictionContextShape(context);
+    }
+
+    // A real run may contain more players than the offline authoring/library range.
+    // Share identity and premise validation, without granting offline persistence admission.
+    internal static void ValidateCapturedRunContext(SeedLibraryContext context, RuntimeAuthoritySnapshot authority)
+    {
+        ValidatePredictionContextShape(context);
+        if (context.Players.Any(player => player.UnlockSource != "CapturedRunSlot"))
+            throw new InvalidDataException("RunPredictionContextNotCaptured");
+        ValidateContextReferences(context, authority);
+    }
+
+    private static void ValidatePredictionContextShape(SeedLibraryContext context)
+    {
         if (string.IsNullOrWhiteSpace(context.GameVersion) || !Enum.IsDefined(context.Profile) ||
             context.Profile == RuntimeProfileId.Unsupported ||
             context.Mode is not (WorldGameMode.Singleplayer or WorldGameMode.Multiplayer) ||
-            context.Players is null || context.Players.Count is < 1 or > SeedPredictionInputLimits.MaximumPlayers ||
+            context.Players is null || context.Players.Count < 1 ||
             (context.Mode == WorldGameMode.Singleplayer) != (context.Players.Count == 1) ||
             context.SelectedSlot < 0 || context.SelectedSlot >= context.Players.Count ||
             context.Ascension is < SeedPredictionInputLimits.MinimumAscension or > SeedPredictionInputLimits.MaximumAscension)
@@ -347,6 +364,11 @@ internal sealed class SeedLibraryStore
     internal static void ValidateRuntimeReferences(SeedLibraryContext context, RuntimeAuthoritySnapshot authority)
     {
         ValidateContext(context);
+        ValidateContextReferences(context, authority);
+    }
+
+    private static void ValidateContextReferences(SeedLibraryContext context, RuntimeAuthoritySnapshot authority)
+    {
         var missing = SearchPresetCompatibilityResolver.FindUnresolvedIntentReferences(context, authority, "SeedLibrary");
         if (missing.Count > 0)
             throw new InvalidDataException("SeedLibrary.ReferenceUnavailable:" + string.Join("; ",

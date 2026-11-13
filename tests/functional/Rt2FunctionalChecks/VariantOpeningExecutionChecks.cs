@@ -61,6 +61,11 @@ internal static class VariantOpeningExecutionChecks
                         ? group with { SelectionMode = Beta109ActSelectionMode.DeterministicFirst } : group).ToArray() } }) }),
             ("UnknownOnly", SearchQuery.Empty with { FirstActUnknownEventPrefixCount = 3 },
                 context with { Authority = context.Authority.WithWorldAuthority(null) }),
+            ("Monster1", SearchQuery.Empty with { FirstActUnknownMonsterPrefixCount = 1 }, context),
+            ("Monster2", SearchQuery.Empty with { FirstActUnknownMonsterPrefixCount = 2 }, context),
+            ("Monster3", SearchQuery.Empty with { FirstActUnknownMonsterPrefixCount = 3 }, context),
+            ("MonsterCombined", SearchQuery.Empty with { FirstActUnknownMonsterPrefixCount = 1,
+                VariantBossBranches = [new(3, act3.ActKey, ModelKeySetFilter.Empty, ModelKeySetFilter.Empty, false)] }, context),
             ("GoldenPearlUnknown3", goldenPrefix, context),
             ("GoldenPearlUnknown3PositiveEvent", goldenEvents, context),
             ("UnspecifiedBonesUnknown3", SearchQuery.Empty with { FirstActUnknownEventPrefixCount = 3,
@@ -81,7 +86,7 @@ internal static class VariantOpeningExecutionChecks
             var family = cpu!;
             bool declaredJuzu = ExplicitOpeningRelicFacts.HasDeclaredJuzuForUnknownRooms(fixture.Query);
             Check(declaredJuzu == fixture.Name.StartsWith("Declared", StringComparison.Ordinal), fixture.Name + ":DeclarationPremise");
-            Check(family.Plan.UnknownPrefixCount == fixture.Query.FirstActUnknownEventPrefixCount &&
+            Check(family.Plan.UnknownPrefixCount == UnknownRoomPrefixRequirements.Count(fixture.Query) &&
                 family.Plan.UnknownJuzuAcquired == declaredJuzu, fixture.Name + ":DeclaredUnknownAdmission");
             if (fixture.Name.StartsWith("GoldenPearl", StringComparison.Ordinal))
                 Check(family.Plan.CoversVariants == (fixture.Query.EventSequenceConstraints.Count > 0), fixture.Name + ":IndependentVariantAndUnknownCoverage");
@@ -108,9 +113,11 @@ internal static class VariantOpeningExecutionChecks
                             (condition.Keys.Any.Count == 0 || condition.Keys.Any.Any(available.Contains));
                     }
                 }
-                return variants && (fixture.Query.FirstActUnknownEventPrefixCount == 0 ||
+                int prefix = UnknownRoomPrefixRequirements.Count(fixture.Query);
+                return variants && (prefix == 0 ||
                     OrdinaryUnknownRoomPredictor.ForAct1Filter(Beta111Profile.Instance.ComputeRootSeed(seed),
-                        fixture.Query.FirstActUnknownEventPrefixCount, declaredJuzu).Steps.All(step => step.Room == UnknownRoomCategory.Event));
+                        prefix, declaredJuzu).Steps.All(step => step.Room ==
+                            (fixture.Query.FirstActUnknownMonsterPrefixCount > 0 ? UnknownRoomCategory.Monster : UnknownRoomCategory.Event)));
             }
             foreach (ulong start in new[] { 0UL, 1564445371644820290UL })
             {

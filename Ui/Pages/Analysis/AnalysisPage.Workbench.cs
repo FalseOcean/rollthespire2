@@ -302,6 +302,7 @@ internal sealed partial class AnalysisPage
 
         // Use the same read-only native card scene as the Neow card picker.
         var model = ModelDb.GetById<CardModel>(new ModelId(key.Category, key.Entry)).ToMutable();
+        NativeCardPortraits.BindDisplayModel(model);
         var card = PreloadManager.Cache.GetScene("res://scenes/cards/card.tscn").Instantiate<NCard>();
         card.Model = model;
         card.Position = new Vector2(width / 2f, height / 2f);
@@ -741,7 +742,7 @@ internal sealed partial class AnalysisPage
             var content = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.Center, MouseFilter = MouseFilterEnum.Ignore };
             content.AddThemeConstantOverride("separation", 5);
             button.AddChild(content); content.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-            content.AddChild(new TextureRect { Texture = RoomIcon(type.ToString()), CustomMinimumSize = new Vector2(24, 24),
+            content.AddChild(new TextureRect { Texture = VerticalMapView.ResolveRoomIcon(type), CustomMinimumSize = new Vector2(24, 24),
                 SizeFlagsVertical = SizeFlags.ShrinkCenter, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
                 StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered, MouseFilter = MouseFilterEnum.Ignore });
             var valueLabel = _palette.Label(maximum.ToString(), 16); valueLabel.Name = "MaximumValue";

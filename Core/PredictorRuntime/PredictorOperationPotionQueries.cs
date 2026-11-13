@@ -8,9 +8,15 @@ namespace RolltheSpire2.Core.PredictorRuntime;
 // Ordered unlocked native pools before the factory's player-count and combat
 // filters. These copies carry no native models and invoke no content lifecycle.
 internal sealed record PredictorOperationPotionCard(PredictorCard Card, string Rarity,
-    bool CanGenerate, string MultiplayerConstraint);
+    bool CanGenerate, string MultiplayerConstraint)
+{
+    internal ImmutableArray<string> MelodyTags { get; init; } = [];
+}
 internal sealed record PredictorOperationPotionPools(ImmutableArray<PredictorOperationPotionCard> CharacterCards,
-    ImmutableArray<PredictorOperationPotionCard> ColorlessCards);
+    ImmutableArray<PredictorOperationPotionCard> ColorlessCards)
+{
+    internal ImmutableArray<PredictorOperationPotionCard> MelodyCards { get; init; }
+}
 internal enum PredictorOperationPotionCardRole { ChoiceCandidate, GeneratedCard }
 internal sealed record PredictorOperationPotionCardResult(int Group, int Ordinal, PredictorCard Card,
     PredictorOperationPotionCardRole Role, bool FreeForTurn, bool FreeIfSelected);
@@ -27,7 +33,7 @@ internal sealed record PredictorOperationPotionQueryResult(ModelKey Potion, ulon
 internal static class PredictorOperationPotionQueries
 {
     internal static bool Supports(ModelKey potion) => potion.Category == "POTION" && potion.Entry is
-        "ATTACK_POTION" or "SKILL_POTION" or "POWER_POTION" or "COLORLESS_POTION" or "COSMIC_CONCOCTION" or "OROBIC_ACID";
+        "ATTACK_POTION" or "SKILL_POTION" or "POWER_POTION" or "COLORLESS_POTION" or "COSMIC_CONCOCTION" or "OROBIC_ACID" or "BOTTLED_SONG";
 
     internal static PredictorOperationPotionQueryResult Query(PredictorContext context, ModelKey potion)
     {
@@ -42,9 +48,11 @@ internal static class PredictorOperationPotionQueries
         if (operation == null) missing.Add("OperationTargetPlayerMissing");
         if (operation?.CombatCardRng == null) missing.Add("CombatCardGenerationStateMissing");
         bool colorless = potion.Entry is "COLORLESS_POTION" or "COSMIC_CONCOCTION";
+        bool melody = potion.Entry == "BOTTLED_SONG";
         var pool = operation?.CombatCardPools is { } pools
-            ? colorless ? pools.ColorlessCards : pools.CharacterCards : default;
-        if (pool.IsDefault) missing.Add(colorless ? "OrderedUnlockedColorlessPoolMissing" : "OrderedUnlockedCharacterPoolMissing");
+            ? melody ? pools.MelodyCards : colorless ? pools.ColorlessCards : pools.CharacterCards : default;
+        if (pool.IsDefault) missing.Add(melody ? "OrderedUnlockedMelodyPoolMissing" :
+            colorless ? "OrderedUnlockedColorlessPoolMissing" : "OrderedUnlockedCharacterPoolMissing");
         if (missing.Count != 0)
             return new(potion, operation?.PlayerId, [], choose, null, preconditions, missing.ToImmutable());
         var cursor = operation!.CombatCardRng!;
@@ -58,14 +66,14 @@ internal static class PredictorOperationPotionQueries
 
         // CardFactory.GetDistinctForCombat filters, deduplicates in incoming
         // order, shuffles the entire remaining pool, then takes the prefix.
-        void Generate(EffectCardType? type, int count, int group)
+        void Generate(EffectCardType? type, int count, int group, string? tag = null)
         {
             var seen = new HashSet<ModelKey>();
-            var candidates = pool.Where(c => type == null || c.Card.Type == type)
+            var candidates = pool.Where(c => (type == null || c.Card.Type == type) && (tag == null || c.MelodyTags.Contains(tag)))
                 .Where(c => operation.PlayerCount > 1 ? c.MultiplayerConstraint != "SingleplayerOnly" : c.MultiplayerConstraint != "MultiplayerOnly")
                 .Where(c => c.CanGenerate && c.Rarity is not ("Basic" or "Ancient" or "Event"))
                 .Where(c => seen.Add(c.Card.Key)).ToList();
-            rng.UnstableShuffle(candidates);
+            rng.UnstableShuffle(candidates, context.VersionResolution.SemanticProfileId);
             int ordinal = 0;
             foreach (var candidate in candidates.Take(count))
             {
@@ -79,11 +87,17 @@ internal static class PredictorOperationPotionQueries
                 }
                 result.Add(new(group, ordinal++, card,
                     choose ? PredictorOperationPotionCardRole.ChoiceCandidate : PredictorOperationPotionCardRole.GeneratedCard,
-                    FreeForTurn: potion.Entry == "OROBIC_ACID", FreeIfSelected: choose));
+                    FreeForTurn: melody || potion.Entry == "OROBIC_ACID", FreeIfSelected: choose));
             }
         }
 
-        if (potion.Entry == "OROBIC_ACID")
+        if (melody)
+        {
+            Generate(null, 1, 0, "Wah");
+            Generate(null, 1, 1, "Cho");
+            Generate(null, 1, 2, "Ki");
+        }
+        else if (potion.Entry == "OROBIC_ACID")
         {
             Generate(EffectCardType.Attack, 1, 0);
             Generate(EffectCardType.Skill, 1, 1);

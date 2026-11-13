@@ -79,11 +79,16 @@ internal static class FamilyComputationBoundaryChecks
             var original = curve.Points.Single(p => p.N == 1 << 24);
             var historical = new FamilyCanonicalCostSnapshot(asset.Rows, asset.CompleteCallCurves)
                 .Quote(curve.Key with { RootWindow = 1 << 24 }, publicGeometry);
-            // The accepted Dense body already includes carry hashing and the
-            // compiled identity facts. Neither revision relabels the old knot.
+            // The current unpinned Dense body owns the FT03 real-neutral proof,
+            // carry hashing and compiled identity facts. None relabels the old knot.
             const string historicalPhysical = "C.CombatReward.Gpu.NeutralHotLoop.Dense.CanonicalAbi1Ready.20260907.v1";
-            string currentPhysical = "C.CombatReward.Gpu.NeutralHotLoop.DenseCarry8.20261030.v1.Dense.CanonicalAbi1Ready.20260907.v1" +
+            string currentPhysical = "C.CombatReward.Gpu.NeutralHotLoop" + CombatRewardNeutralWitness.Revision +
+                ".DenseCarry8.20261030.v1.Dense.CanonicalAbi1Ready.20260907.v1" +
                 NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision;
+            Check(new CombatRewardReplay(measuredRequest.Model).UsesNeutralWitness,
+                "the actual unpinned body retains its real-neutral proof rather than borrowing the old synthetic knot");
+            Console.WriteLine($"FamilyComputationBoundary historical={curve.Key.PhysicalRevision};actual={measuredFamily.ConditionPerformance.PhysicalImplementationRevision};" +
+                $"historicalCanonical={FamilyCanonicalMeasuredCost.IsCanonicalQuote(historical)};currentCanonical={FamilyCanonicalMeasuredCost.IsCanonicalQuote(publicQuote)};currentShape={publicQuote?.Shape}");
             Check(FamilyCanonicalMeasuredCost.IsCanonicalQuote(historical) &&
                 Math.Abs(historical!.NanosecondsPerInput * (1 << 24) / 1e6 - original.CallMilliseconds) < 1e-9 &&
                 !FamilyCanonicalMeasuredCost.IsCanonicalQuote(publicQuote) && FamilyCoarsePricing.IsEstimate(publicQuote) &&

@@ -25,6 +25,7 @@ public static class BaseGameModelKeys
         public static readonly ModelKey Defect = new(Categories.Character, "DEFECT");
         public static readonly ModelKey Regent = new(Categories.Character, "REGENT");
         public static readonly ModelKey Necrobinder = new(Categories.Character, "NECROBINDER");
+        public static readonly ModelKey Fool = new(Categories.Character, "FOOL");
 
         public static IReadOnlyList<ModelKey> All { get; } =
             new[] { Ironclad, Silent, Defect, Regent, Necrobinder };
@@ -86,6 +87,7 @@ public static class BaseGameModelKeys
 
     public static class OrdinaryRelics
     {
+        public static readonly ModelKey OldCoin = new(Categories.Relic, "OLD_COIN");
         public static readonly ModelKey Whetstone = new(Categories.Relic, "WHETSTONE");
         public static readonly ModelKey WarPaint = new(Categories.Relic, "WAR_PAINT");
         public static readonly ModelKey Circlet = new(Categories.Relic, "CIRCLET");

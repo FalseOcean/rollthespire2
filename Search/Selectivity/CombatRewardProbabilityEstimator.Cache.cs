@@ -43,11 +43,14 @@ internal static partial class CombatRewardProbabilityEstimator
             writer.Write((int)entry.Rarity);
             writer.Write((int)entry.Type);
             writer.Write(entry.TargetIndex);
+            writer.Write(entry.CollectionSafe);
         }
         Integers(cards.TotalByRarity);
         Integers(cards.PowerByRarity);
         Indexes(cards.TargetIndexByKey);
         writer.Write(cards.TargetCount);
+        writer.Write(cards.CollectionWindow);
+        if (cards.CollectionWindow > 0) { Integers(cards.SafeTotalByRarity!); Integers(cards.SafePowerByRarity!); }
 
         Integers(potions.TotalByRarity);
         writer.Write(potions.TargetInfoByKey.Count);

@@ -54,10 +54,14 @@ public static class Beta111EventPresentationKnowledge
         eventKey.IsValid &&
         DocumentedConditionalEvents.Contains(Normalize(eventKey.Entry));
 
+    private static readonly IReadOnlySet<string> Modern113RuntimeConditionalEvents = new HashSet<string>(
+        ["wuppyintrouble", "shrineofthewarlord", "thermaenonupeipe"], StringComparer.Ordinal);
+
     public static bool ShouldShowRuntimeConditionMarker(
         RuntimeProfileId profileId,
         ModelKey eventKey,
-        int playersCount)
+        int playersCount,
+        RngSemanticProfileId semantics = RngSemanticProfileId.Modern110)
     {
         if (profileId != RuntimeProfileId.Beta111 || !eventKey.IsValid)
         {
@@ -65,7 +69,8 @@ public static class Beta111EventPresentationKnowledge
         }
 
         string id = Normalize(eventKey.Entry);
-        if (!ResidualRuntimeConditionalEvents.Contains(id))
+        if (!ResidualRuntimeConditionalEvents.Contains(id) &&
+            !(semantics == RngSemanticProfileId.Modern113 && Modern113RuntimeConditionalEvents.Contains(id)))
         {
             return false;
         }
@@ -83,10 +88,14 @@ public static class Beta111EventPresentationKnowledge
     public static string RuntimeConditionLocalizationKey(
         RuntimeProfileId profileId,
         ModelKey eventKey,
-        int playersCount) =>
-        ShouldShowRuntimeConditionMarker(profileId, eventKey, playersCount)
-            ? RuntimeConditionLocalizationPrefix + Normalize(eventKey.Entry)
-            : string.Empty;
+        int playersCount,
+        RngSemanticProfileId semantics = RngSemanticProfileId.Modern110)
+    {
+        if (!ShouldShowRuntimeConditionMarker(profileId, eventKey, playersCount, semantics)) return string.Empty;
+        string id = Normalize(eventKey.Entry);
+        return RuntimeConditionLocalizationPrefix + id +
+            (semantics == RngSemanticProfileId.Modern113 && id == "colorfulphilosophers" ? ".modern113" : "");
+    }
 
     // Broad knowledge lookup retained for documentation/knowledge consumers. Predictor tiles use
     // RuntimeConditionLocalizationKey instead so already-satisfied Act/Epoch gates are not repeated.

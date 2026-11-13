@@ -56,7 +56,8 @@ public static class Beta109AncientOptionProvider
             ["TANX"] = new(Beta109AncientOptionSupport.DeckFactPredicate,
                 (_, _, catalog, rng, conditions) => OptionGenerationResult.Plain(GenerateTanx(catalog, rng, conditions))),
             ["VAKUU"] = new(Beta109AncientOptionSupport.PureShuffleTake,
-                (_, _, catalog, rng, _) => OptionGenerationResult.Plain(GenerateVakuu(catalog, rng)))
+                (snapshot, _, catalog, rng, _) => OptionGenerationResult.Plain(snapshot.RngSemantics == RngSemanticProfileId.Modern113
+                    ? GenerateThreeChoice(catalog, rng, "vakuu") : GenerateVakuu(catalog, rng)))
         };
     public static Beta109AncientOptionPrediction Predict(
         Beta109WorldGenerationSnapshot snapshot,
@@ -180,7 +181,7 @@ public static class Beta109AncientOptionProvider
             snapshot.RunSeedRoot,
             context.PlayerSlot,
             context.IsShared,
-            context.EventIdEntry);
+            context.EventIdEntry, snapshot.RngSemantics);
 
         if (!Generators.TryGetValue(normalizedAncient, out GeneratorRegistration? registration))
         {
@@ -307,6 +308,9 @@ public static class Beta109AncientOptionProvider
         return source.Take(3).Select(key => (key, (string?)null)).ToArray();
     }
 
+    internal static ModelKey[] OrobasOtherCharacters(ModelKey owner, IEnumerable<ModelKey> unlocked) =>
+        unlocked.Where(key => key.IsValid && key.Category == BaseGameModelKeys.Categories.Character && key != owner).ToArray();
+
     private static OptionGenerationResult GenerateOrobas(
         Beta109WorldGenerationSnapshot snapshot,
         Beta109AncientEventContextSnapshot context,
@@ -316,12 +320,7 @@ public static class Beta109AncientOptionProvider
     {
         ModelKey? selectedCharacter = null;
         AncientOptionCharacterTargetProjection targetProjection;
-        ModelKey[] candidates = context.UnlockedCharacters
-            .Where(key =>
-                key.IsValid &&
-                key.Category == BaseGameModelKeys.Categories.Character &&
-                key != context.CharacterKey)
-            .ToArray();
+        ModelKey[] candidates = OrobasOtherCharacters(context.CharacterKey, context.UnlockedCharacters);
         if (candidates.Length > 0)
         {
             int selectedIndex = rng.NextInt(candidates.Length, "orobas:other-character");
@@ -342,7 +341,11 @@ public static class Beta109AncientOptionProvider
         }
         else
         {
-            targetProjection = AncientOptionCharacterTargetProjection.Unknown(
+            if (context.UnlockedCharacterSourceOrderExact)
+                selectedCharacter = context.CharacterKey;
+            targetProjection = selectedCharacter is ModelKey current
+                ? AncientOptionCharacterTargetProjection.Exact(current, Evidence(snapshot, "orobas.sea-glass-target.current-character"))
+                : AncientOptionCharacterTargetProjection.Unknown(
                 Evidence(snapshot, "orobas.sea-glass-target.no-other-character-candidate"),
                 "NoOtherUnlockedCharacterCandidate");
         }

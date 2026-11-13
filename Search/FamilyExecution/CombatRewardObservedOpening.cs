@@ -1,4 +1,5 @@
 using RolltheSpire2.Core.Identity;
+using RolltheSpire2.Core.Relics;
 using RolltheSpire2.Core.Rewards;
 using RolltheSpire2.Core.Seed;
 using RolltheSpire2.Search.Contracts;
@@ -18,13 +19,15 @@ internal sealed class CombatRewardObservedOpening
     private readonly bool[] _invalidatesNiche, _topInvalidatesNiche;
     private readonly int[] _topIdentity, _advances;
     private readonly int _circlet;
+    private readonly int _ineligibleRelic = -1;
     internal byte[] BonesIds { get; }
     internal bool DynamicBones { get; }
     internal string Issue { get; }
     internal bool Available => Issue.Length == 0;
     internal bool HasUnresolvedEffects { get; }
     internal int BagCapacity { get; }
-    internal int ShuffleDraws => _pool is null ? 0 : _pool.BucketLengths.Sum(n => Math.Max(0, n - 1));
+    internal int ShuffleDraws => _pool is null ? 0 : _pool.BucketLengths.Sum(n => Math.Max(0, n - 1)) +
+        (_pool.UsesChildShuffle ? _pool.BucketCount : 0);
     internal uint[] GpuData { get; }
 
     internal static bool Needed(Beta110CombatRewardOpeningConsumptionProjection opening) =>
@@ -44,16 +47,18 @@ internal sealed class CombatRewardObservedOpening
         var caps = new List<Beta110FastRewardRelicCapability>();
         var invalidates = new List<bool>();
         bool party = request.Authority.PlayersCount > 1;
+        var semantics = request.Authority.VersionResolution.SemanticProfileId;
+        bool modern = RolltheSpire2.Compatibility.RuntimeProfilePolicies.UsesChildStreamShuffle(semantics);
         int Identity(ModelKey key)
         {
             if (identities.TryGetValue(key, out int known)) return known;
             int index = identities.Count; identities.Add(key, index);
-            var capability = Beta110FastEffectCatalogCompiler.BuildRewardRelicCapability(request.ProfileId, key, true);
+            var capability = Beta110FastEffectCatalogCompiler.BuildRewardRelicCapability(request.ProfileId, key, true, semantics);
             bool niche = false;
-            if (party)
+            if (party && !modern)
                 capability = capability with { ContinuationSupported = true,
                     InfluenceFlags = capability.InfluenceFlags & ~Beta110CombatRewardInfluenceFlags.UnknownRewardsContinuation };
-            else if (VanillaRelicRewardEffects.TryGet(request.ProfileId, key, out var facts))
+            else if (VanillaRelicRewardEffects.TryGet(request.ProfileId, key, out var facts, semantics))
                 niche = (facts.OnObtainCapabilities & RelicOnObtainRewardEffects.ConsumesNicheRng) != 0 &&
                     !(guaranteed.Contains(key) && key == BaseGameModelKeys.OrdinaryRelics.Whetstone ||
                       guaranteed.Contains(key) && key == BaseGameModelKeys.OrdinaryRelics.WarPaint);
@@ -71,6 +76,13 @@ internal sealed class CombatRewardObservedOpening
             var keys = new ModelKey[dense.Count];
             foreach (var pair in dense) keys[pair.Value] = pair.Key;
             _entries = pool.DenseRelicIds.Select(id => Identity(keys[id])).ToArray();
+            var candy = StandardOpeningRelicEligibility.LastingCandy;
+            if (modern && identities.TryGetValue(candy, out int identity))
+            {
+                bool? allowed = StandardOpeningRelicEligibility.AllowsLastingCandy(request.Authority);
+                if (allowed is null) issue = "ObservedOpeningBag:LastingCandyEligibilityUnavailable";
+                if (allowed == false) _ineligibleRelic = identity;
+            }
         }
         else _entries = [];
         _circlet = Identity(BaseGameModelKeys.OrdinaryRelics.Circlet);
@@ -80,13 +92,13 @@ internal sealed class CombatRewardObservedOpening
         {
             var key = Beta110FastRelicCatalog.KeyOf(id);
             _topIdentity[id] = Identity(key);
-            var top = Beta110FastEffectCatalogCompiler.BuildRewardRelicCapability(request.ProfileId, key, false);
+            var top = Beta110FastEffectCatalogCompiler.BuildRewardRelicCapability(request.ProfileId, key, false, semantics);
             if (id is 2 or 3 or 10 or 14 or 15 or 16 or 17 or 22 or 28)
                 top = top with { ContinuationSupported = true,
                     InfluenceFlags = top.InfluenceFlags & ~Beta110CombatRewardInfluenceFlags.UnknownRewardsContinuation };
             _top[id] = top;
             _topInvalidatesNiche[id] = id is not (14 or 19) &&
-                VanillaRelicRewardEffects.TryGet(request.ProfileId, key, out var facts) &&
+                VanillaRelicRewardEffects.TryGet(request.ProfileId, key, out var facts, semantics) &&
                 (facts.OnObtainCapabilities & RelicOnObtainRewardEffects.ConsumesNicheRng) != 0;
         }
         _caps = caps.ToArray(); _invalidatesNiche = invalidates.ToArray();
@@ -118,7 +130,7 @@ internal sealed class CombatRewardObservedOpening
         int top = cap + _caps.Length * 2, advance = top + 30 * 3;
         var values = new uint[advance + _advances.Length];
         values[0] = 1; values[1] = DynamicBones ? 1u : 0u; values[2] = (uint)buckets;
-        values[3] = (uint)table; values[5] = (uint)cap; values[6] = (uint)top;
+        values[3] = (uint)table; values[4] = unchecked((uint)_ineligibleRelic); values[5] = (uint)cap; values[6] = (uint)top;
         values[7] = (uint)advance; values[8] = (uint)BagCapacity; values[9] = (uint)_circlet;
         for (int i = 0; i < buckets; i++)
         {
@@ -141,6 +153,7 @@ internal sealed class CombatRewardObservedOpening
     {
         var rewards = new Beta110FastRng(unchecked(root + (ulong)playerSlot + XxHash64.Hash("rewards"u8, 0)));
         var niche = new Beta110FastRng(unchecked(root + XxHash64.Hash("niche"u8, 0)));
+        var nonCombat = owner.UsesChildShuffle ? new Beta110FastRng(unchecked(root + (ulong)playerSlot + NeowFamilyReplay.NonCombatHash)) : default;
         bool nicheKnown = precedingNicheDraws.HasValue;
         for (int i = 0; i < precedingNicheDraws.GetValueOrDefault(); i++) _ = niche.NextDouble();
         byte first = owner.Plan.OpeningConsumption.OrderedRelicIds.FirstOrDefault((byte)255);
@@ -151,8 +164,11 @@ internal sealed class CombatRewardObservedOpening
             if (DynamicBones)
             {
                 Span<byte> bones = stackalloc byte[BonesIds.Length]; BonesIds.CopyTo(bones);
-                rewards.UnstableShuffle(bones); first = bones[0]; second = bones[1]; count = 2;
+                if (owner.UsesChildShuffle) nonCombat.UnstableShuffle(bones, owner.RngSemantics);
+                else rewards.UnstableShuffle(bones);
+                first = bones[0]; second = bones[1]; count = 2;
             }
+            else if (owner.UsesChildShuffle) nonCombat.ConsumeShuffleSeed();
             else rewards.ConsumeUnstableShuffle(BonesIds.Length);
         }
         var state = new Beta110OpeningRewardState { PotionOdds = .4f, CardRarityOffset = -.05f,
@@ -183,18 +199,22 @@ internal sealed class CombatRewardObservedOpening
                 bool unlisted = DynamicBones && !owner.Plan.OpeningConsumption.OrderedRelicIds.Contains(relic);
                 if (unlisted && !HasPoolFor(relic, owner.Catalog, playerSlot >= 0 && owner.IsMultiplayer))
                 { state.RewardsContinuationAuthorityExact = false; break; }
-                if (relic == Beta110FastRelicCatalog.Kaleidoscope && !nicheKnown && !owner.KaleidoscopeCountOnly)
+                if (relic == Beta110FastRelicCatalog.Kaleidoscope && !owner.UsesChildShuffle && !nicheKnown && !owner.KaleidoscopeCountOnly)
                 { state.RewardsContinuationAuthorityExact = false; break; }
                 if (!CombatRewardOpeningReplay.TryReplayQueryLiteralRelicRewardsConsumption(relic, owner.Catalog,
-                    ascension, defect, ref rewards, ref niche, false, owner.IsMultiplayer, nicheKnown))
+                    ascension, defect, ref rewards, ref (owner.UsesChildShuffle ? ref nonCombat : ref niche),
+                    false, owner.IsMultiplayer, owner.UsesChildShuffle || nicheKnown, owner.RngSemantics))
                     throw new InvalidOperationException("C.CombatReward.OpeningConsumptionFailed:" + relic);
             }
-            int advance = _advances[relic * 31 + (previous == 255 ? 30 : previous)];
-            if (advance < 0) nicheKnown = false;
-            else if (nicheKnown) for (int draw = 0; draw < advance; draw++) _ = niche.NextDouble();
+            if (!owner.UsesChildShuffle)
+            {
+                int advance = _advances[relic * 31 + (previous == 255 ? 30 : previous)];
+                if (advance < 0) nicheKnown = false;
+                else if (nicheKnown) for (int draw = 0; draw < advance; draw++) _ = niche.NextDouble();
+            }
             previous = relic;
         }
-        if (owner.Plan.OpeningConsumption.ReplayBonesOffer && nicheKnown) _ = niche.NextDouble();
+        if (owner.Plan.OpeningConsumption.ReplayBonesOffer && !owner.UsesChildShuffle && nicheKnown) _ = niche.NextDouble();
         state.Rewards = rewards; nicheState = nicheKnown ? niche.CaptureCheckpoint() : null;
         return state;
     }
@@ -223,11 +243,24 @@ internal sealed class CombatRewardObservedOpening
         {
             int length = pool.BucketLengths[bucket];
             if (pool.BucketScopes[bucket] == 0 || pool.BucketKinds[bucket] == 4)
-            { rng.ConsumeUnstableShuffle(length); continue; }
+            { rng.ConsumeUnstableShuffle(length, pool.RngSemantics); continue; }
             int lane = pool.BucketKinds[bucket] - 1;
             _entries.AsSpan(pool.BucketOffsets[bucket], length).CopyTo(permutation);
-            rng.UnstableShuffle(permutation[..length]); lengths[lane] = length;
-            permutation[..Math.Min(Prefix, length)].CopyTo(prefixes.Slice(lane * Prefix));
+            rng.UnstableShuffle(permutation[..length], pool.RngSemantics);
+            if (_ineligibleRelic < 0)
+            {
+                lengths[lane] = length;
+                permutation[..Math.Min(Prefix, length)].CopyTo(prefixes.Slice(lane * Prefix));
+                continue;
+            }
+            int eligible = 0;
+            foreach (int identity in permutation[..length])
+            {
+                if (identity == _ineligibleRelic) continue;
+                if (eligible < Prefix) prefixes[lane * Prefix + eligible] = identity;
+                eligible++;
+            }
+            lengths[lane] = eligible;
         }
     }
 

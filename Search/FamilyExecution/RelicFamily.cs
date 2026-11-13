@@ -46,8 +46,9 @@ internal static partial class RelicFamily
         string identity = model.SnapshotFingerprint;
         var cpu = PrepareCpu(preparation, plan, reference, authority, profile, identity, workers);
         if (!preferGpu) { prepared = new(plan, cpu); return true; }
-        var dense = RelicConditionPerformance.Project(plan, FamilyPhysicalImplementationRevisions.RelicDensePerformance);
-        var compact = RelicConditionPerformance.Project(plan, FamilyPhysicalImplementationRevisions.RelicCompactPerformance);
+        string ruleRevision = plan.Pool.UsesChildShuffle ? ".Modern113" : "";
+        var dense = RelicConditionPerformance.Project(plan, FamilyPhysicalImplementationRevisions.RelicDensePerformance + ruleRevision);
+        var compact = RelicConditionPerformance.Project(plan, FamilyPhysicalImplementationRevisions.RelicCompactPerformance + ruleRevision);
         var body = new FilterBodyDescription(preparation, dense.PhysicalImplementationRevision, profile.ProfileId) {
             UsesGpu = true, NumericRequirements = GpuNumericRequirements.Int64,
             InputIdentity = identity, PlayersCount = authority.PlayersCount, CpuWorkers = preferences.WorkerCount,

@@ -34,7 +34,7 @@ internal static class VariantOpeningFamily
         if (!preparation.HasConditions || VariantOpeningPlan.TryCompile(model, preparation, numericalVariant) is not { } plan)
             return false;
         double? unknown = plan.UnknownPrefixCount == 0 ? 1 : plan.UnknownPrefixCount is >= 1 and <= 3
-            ? FirstActUnknownEventProbability.ConditionalPrefix(plan.UnknownPrefixCount, plan.UnknownJuzuAcquired) : null;
+            ? FirstActUnknownEventProbability.ConditionalPrefix(plan.UnknownPrefixCount, plan.UnknownJuzuAcquired, plan.UnknownMonster) : null;
         var conditional = PrepareConditionalSurvival(model, plan);
         FamilySurvivalProjection Survival(IReadOnlySet<string> passed) => conditional.ResolveVariant(passed, unknown);
         var obligations = new List<FilterObligation>();
@@ -42,9 +42,9 @@ internal static class VariantOpeningFamily
         if (plan.UnknownPrefixCount > 0)
         {
             var query = model.CompiledSearch.NormalizedQuery;
-            if (query.FirstActUnknownEventPrefixCount > 0)
+            if (query.FirstActUnknownEventPrefixCount > 0 || query.FirstActUnknownMonsterPrefixCount > 0)
                 obligations.Add(new(InitialRoomsInvocation.UnknownCoverage, ThroughOrdinal: plan.UnknownPrefixCount));
-            obligations.AddRange(query.Players.Where(p => p.Conditions.FirstActUnknownEventPrefixCount > 0)
+            obligations.AddRange(query.Players.Where(p => p.Conditions.FirstActUnknownEventPrefixCount > 0 || p.Conditions.FirstActUnknownMonsterPrefixCount > 0)
                 .Select(p => new FilterObligation(InitialRoomsInvocation.UnknownCoverage, p.Slot, plan.UnknownPrefixCount)));
         }
         var prepared = new PreparedFilter(Id)
@@ -61,11 +61,12 @@ internal static class VariantOpeningFamily
         int players = model.Authority.PlayersCount, workers = Math.Clamp(preferences.WorkerCount, 1, 32);
         string identity = model.SnapshotFingerprint;
         bool numericalRoots = profileId == RuntimeProfileId.Beta111;
-        var cpus = Enumerable.Range(1, workers).Select(n => new FilterBodyDescription(prepared, CpuRevision, profileId)
+        string cpuRevision = CpuRevision + (plan.UnknownMonster ? ".MonsterPrefix.20261105.v1" : "");
+        var cpus = Enumerable.Range(1, workers).Select(n => new FilterBodyDescription(prepared, cpuRevision, profileId)
         {
             WindowCapacity = 65536, PreferredRootWindowSize = players > 1 ? CpuFilterExecution.Capacity : null,
             CpuWorkers = n, PlayersCount = players, InputIdentity = identity,
-            PerformanceProjection = compact => CpuFilterExecution.Describe(Id, CpuRevision, n, 65536, numericalRoots, false, compact),
+            PerformanceProjection = compact => CpuFilterExecution.Describe(Id, cpuRevision, n, 65536, numericalRoots, false, compact),
             Cost = new() { Quote = (_, geometry, passed) => Quote(plan, geometry, false, n, numericalVariant),
                 CalibrationQuote = geometry => Quote(plan, geometry, false, n, numericalVariant) },
             CreateExecution = (self, _) => new CpuFilterExecution(self, profile, plan.Matches, numericalRoots)
@@ -117,6 +118,7 @@ internal static class VariantOpeningFamily
         ns += (gpu ? .04 : 12) * plan.UnknownPrefixCount;
         if (!gpu && geometry.CompactInput) ns += 17;
         string evidence = $"V.ShortWork;Variant062nsCpu55nsAndInitialUnknownExistingEnvelopes;SelectionDraws={draws};VariantComparisons={comparisons};UnknownPrefix={plan.UnknownPrefixCount};DeclaredJuzu={plan.UnknownJuzuAcquired};UnknownFirst={plan.UnknownFirst};OneHashAndOutput;NoWorldProgression;NoNewMeasurement;NumericalVariant={numericalVariant}";
+        if (plan.UnknownMonster) evidence += ";UnknownRoomCategory=Monster";
         return gpu ? FamilyCoarsePricing.Gpu(Id, "V.ShortSelectionUnknown", ns,
             VariantOpeningGpuPlan.WindowCapacity * 4, geometry, evidence) :
             FamilyCoarsePricing.Cpu(Id, "V.ShortSelectionUnknown", ns, workers, geometry, evidence);

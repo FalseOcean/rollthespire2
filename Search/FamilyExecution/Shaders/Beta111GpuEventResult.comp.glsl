@@ -111,7 +111,7 @@ bool evaluate_event_results(uint64_t root) {
     int grab = -1;
     int dive = -1;
     uint fake_order[9];
-    uint colorful_order[5];
+    uint colorful_order[6];
     uint colorful_count = event_plan_buffer.values[1u];
     for (uint index = 0u; index < 9u; ++index) fake_order[index] = index;
     bool need_grab = false;
@@ -133,6 +133,9 @@ bool evaluate_event_results(uint64_t root) {
     }
     if (need_fake) {
         rng_initialize(root + fake_hash);
+#ifdef RT2_E_CHILD_SHUFFLE
+        rng_initialize(next_u64());
+#endif
         for (uint count = 9u; count > 1u; --count) {
             uint selected = next_int(count);
             uint tail = count - 1u;
@@ -161,10 +164,19 @@ bool evaluate_event_results(uint64_t root) {
             uint value = event_plan_buffer.values[target + 2u];
             if (kind == 7u) { if (next_int(3u) != value) return false; continue; }
             uint types[3]; for (uint j = 0u; j < 3u; j++) types[j] = j;
+#ifdef RT2_E_CHILD_SHUFFLE
+            uint64_t type_seed = next_u64();
+            u64vec4 parent = u64vec4(s0,s1,s2,s3);
+            rng_initialize(type_seed);
+#endif
             for (uint j = 2u; j > 0u; j--) { uint k = next_int(j + 1u); uint tmp = types[j]; types[j] = types[k]; types[k] = tmp; }
             if (types[0] != value / 4u && types[1] != value / 4u) return false;
             if (value % 4u != 0u) {
                 uint riders[3]; for (uint j = 0u; j < 3u; j++) riders[j] = j;
+#ifdef RT2_E_CHILD_SHUFFLE
+                s0=parent.x; s1=parent.y; s2=parent.z; s3=parent.w;
+                rng_initialize(next_u64());
+#endif
                 for (uint j = 2u; j > 0u; j--) { uint k = next_int(j + 1u); uint tmp = riders[j]; riders[j] = riders[k]; riders[k] = tmp; }
                 if (riders[0] != value % 4u - 1u && riders[1] != value % 4u - 1u) return false;
             }
@@ -230,10 +242,19 @@ bool evaluate_event_results(uint64_t root) {
         uint value = event_plan_buffer.values[target + 2u];
         if (kind == 7u) { if (next_int(3u) != value) return false; continue; }
         uint types[3]; for (uint j = 0u; j < 3u; j++) types[j] = j;
+#ifdef RT2_E_CHILD_SHUFFLE
+        uint64_t type_seed = next_u64();
+        u64vec4 parent = u64vec4(s0,s1,s2,s3);
+        rng_initialize(type_seed);
+#endif
         for (uint j = 2u; j > 0u; j--) { uint k = next_int(j + 1u); uint tmp = types[j]; types[j] = types[k]; types[k] = tmp; }
         if (types[0] != value / 4u && types[1] != value / 4u) return false;
         if (value % 4u != 0u) {
             uint riders[3]; for (uint j = 0u; j < 3u; j++) riders[j] = j;
+#ifdef RT2_E_CHILD_SHUFFLE
+            s0=parent.x; s1=parent.y; s2=parent.z; s3=parent.w;
+            rng_initialize(next_u64());
+#endif
             for (uint j = 2u; j > 0u; j--) { uint k = next_int(j + 1u); uint tmp = riders[j]; riders[j] = riders[k]; riders[k] = tmp; }
             if (riders[0] != value % 4u - 1u && riders[1] != value % 4u - 1u) return false;
         }
@@ -256,12 +277,15 @@ bool evaluate_event_results(uint64_t root) {
     }
 
     uint fake_order[9];
-    uint colorful_order[5];
+    uint colorful_order[6];
     uint colorful_count = event_plan_buffer.values[1u];
     if ((needs & 4u) != 0u) {
         for (uint index = 0u; index < 9u; ++index) fake_order[index] = index;
         uint64_t fake_hash = make_u64(event_plan_buffer.values[5u], event_plan_buffer.values[6u]);
         rng_initialize(root + fake_hash);
+#ifdef RT2_E_CHILD_SHUFFLE
+        rng_initialize(next_u64());
+#endif
         for (uint count = 9u; count > 1u; --count) {
             uint selected = next_int(count);
             uint tail = count - 1u;

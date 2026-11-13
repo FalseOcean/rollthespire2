@@ -49,6 +49,12 @@ bool matches(uint64_t root){
   uint length=plan.v[32u+bucket*2u],lane=plan.v[33u+bucket*2u];
   uint removal=lane<3u?plan.v[21u+lane]:0xffffffffu;
   bool tracks=lane<3u&&(plan.v[17]==lane||plan.v[18]==lane);
+#ifdef RT2_TREASURE_CHILD_SHUFFLE
+  uint64_t seed=next_u64();
+  if(!tracks)continue;
+  u64vec4 parent=u64vec4(s0,s1,s2,s3);
+  rng_initialize(seed);
+#endif
   for(uint count=length;count>1u;count--){
    uint selected=next_int(count),tail=count-1u;
    if(tracks){
@@ -58,6 +64,9 @@ bool matches(uint64_t root){
   }
   if(tracks)for(uint slot=0u;slot<2u;slot++)
    if(plan.v[17u+slot]==lane&&removal!=0xffffffffu&&removal<positions[slot])positions[slot]--;
+#ifdef RT2_TREASURE_CHILD_SHUFFLE
+  s0=parent.x;s1=parent.y;s2=parent.z;s3=parent.w;
+#endif
  }
  uint used=0u;
  for(uint slot=0u;slot<plan.v[3];slot++){

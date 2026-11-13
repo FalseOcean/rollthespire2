@@ -82,6 +82,23 @@ internal sealed partial class NeowOperationOverlay
         return column;
     }
 
+    private static StyleBoxFlat AnnotationStyle() => new()
+    {
+        BgColor = new Color(0.045f, 0.075f, 0.12f, 0.86f),
+        CornerRadiusTopLeft = 4, CornerRadiusTopRight = 4,
+        CornerRadiusBottomLeft = 4, CornerRadiusBottomRight = 4,
+        ContentMarginLeft = 6, ContentMarginRight = 6,
+        ContentMarginTop = 3, ContentMarginBottom = 3
+    };
+
+    private static PanelContainer PriceBadge(int price)
+    {
+        var panel = new PanelContainer { Name = "Rt2OperationPriceBadge", MouseFilter = MouseFilterEnum.Ignore };
+        panel.AddThemeStyleboxOverride("panel", AnnotationStyle());
+        panel.AddChild(PriceDisplay(price));
+        return panel;
+    }
+
     private static HBoxContainer PriceDisplay(int price)
     {
         var row = new HBoxContainer { Name = "Rt2OperationPrice", MouseFilter = MouseFilterEnum.Ignore };

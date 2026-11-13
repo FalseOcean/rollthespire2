@@ -9,14 +9,20 @@ internal static class Beta109EncounterSequenceProjection
 {
     // Vanilla 0.111 Overgrowth.ApplyActDiscoveryOrderModifications. This applies
     // to the completed queue, consumes no RNG and does not modify replay history.
+    internal static ModelKey[] FirstRunPrefix(bool elite)
+    {
+        string[] prefix = elite ? ["BYRDONIS_ELITE", "PHROG_PARASITE_ELITE"] :
+            ["NIBBITS_WEAK", "SLIMES_WEAK", "SHRINKER_BEETLE_WEAK", "INKLETS_NORMAL", "MAWLER_NORMAL", "RUBY_RAIDERS_NORMAL", "NIBBITS_NORMAL"];
+        return prefix.Select(entry => new ModelKey("ENCOUNTER", entry)).ToArray();
+    }
+
     internal static ModelKey[] ApplyFirstRunOrder(IEnumerable<ModelKey> source, bool elite)
     {
         var items = source.ToArray();
-        string[] prefix = elite ? ["BYRDONIS_ELITE", "PHROG_PARASITE_ELITE"] :
-            ["NIBBITS_WEAK", "SLIMES_WEAK", "SHRINKER_BEETLE_WEAK", "INKLETS_NORMAL", "MAWLER_NORMAL", "RUBY_RAIDERS_NORMAL", "NIBBITS_NORMAL"];
+        ModelKey[] prefix = FirstRunPrefix(elite);
         for (int i = 0; i < Math.Min(items.Length, prefix.Length); i++)
         {
-            var key = new ModelKey("ENCOUNTER", prefix[i]);
+            var key = prefix[i];
             int existing = Array.IndexOf(items, key);
             if (existing >= 0) (items[i], items[existing]) = (items[existing], items[i]);
             else items[i] = key;

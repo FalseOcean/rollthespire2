@@ -19,19 +19,21 @@ internal sealed partial class CombatRewardReplay
         ReadOnlySpan<byte> children = Plan.OpeningConsumption.OrderedRelicIds;
         // Only the authored mechanics participate. Unknown grants and Capsule
         // contents are neutral; their identity does not enter C's per-root state.
-        if (Plan.OpeningConsumption.ReplayBonesOffer) rewards.ConsumeUnstableShuffle(_bonesPoolCount);
+        if (Plan.OpeningConsumption.ReplayBonesOffer && !UsesChildShuffle) rewards.ConsumeUnstableShuffle(_bonesPoolCount);
+        var nonCombat = UsesChildShuffle ? CreateNonCombat(root) : default;
         for (int i = 0; i < children.Length; i++)
         {
             byte id = children[route == 0 ? i : children.Length - 1 - i];
             if (!CombatRewardOpeningReplay.TryReplayQueryLiteralRelicRewardsConsumption(
-                    id, Catalog, _ascension, _defect, ref rewards, ref niche, requireAuthority: false, multiplayer: _players > 1,
-                    nicheKnown: nicheKnown))
+                    id, Catalog, _ascension, _defect, ref rewards, ref (UsesChildShuffle ? ref nonCombat : ref niche), requireAuthority: false,
+                    multiplayer: _players > 1, nicheKnown: UsesChildShuffle || nicheKnown, semantics: RngSemantics))
                 throw new InvalidOperationException("C.CombatReward.OpeningConsumptionFailed:" + id);
             int advance = CapsuleNicheAdvances[route * 2 + i];
+            if (UsesChildShuffle) continue;
             if (advance < 0) nicheKnown = false;
             else if (nicheKnown) for (int draw = 0; draw < advance; draw++) _ = niche.NextDouble();
         }
-        if (Plan.OpeningConsumption.ReplayBonesOffer && nicheKnown) _ = niche.NextDouble(); // Final generated curse, after both obtains.
+        if (Plan.OpeningConsumption.ReplayBonesOffer && !UsesChildShuffle && nicheKnown) _ = niche.NextDouble();
         nicheState = nicheKnown ? niche.CaptureCheckpoint() : null;
         return CompleteOpening(rewards, new Beta110OpeningRewardState { RewardInfluenceAuthorityExact = true });
     }

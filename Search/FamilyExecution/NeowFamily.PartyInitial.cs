@@ -36,6 +36,7 @@ internal sealed partial class NeowFamily
         private readonly IRuntimeProfile _profile;
         private readonly int _workers, _requestedWorkers, _playersCount;
         private readonly bool _optimize, _skipExactValidation;
+        private readonly string _rulesRevision;
         private readonly bool? _fuse;
         private readonly FamilySurvivalProjection _survival;
         private readonly NeowPartyProgram _program;
@@ -64,6 +65,7 @@ internal sealed partial class NeowFamily
         {
             _optimize = optimize; _fuse = fuse;
             _identity = request.SnapshotFingerprint; _profile = RuntimeProfileRegistry.Select(request.Detection);
+            _rulesRevision = request.Authority.VersionResolution.SemanticProfileId == RngSemanticProfileId.Modern113 ? ".Modern113" : "";
             _workers = Math.Clamp(preferences.WorkerCount, 1, 32); _requestedWorkers = preferences.WorkerCount;
             _skipExactValidation = preferences.SkipExactValidation;
             _playersCount = request.CompiledSearch.NormalizedQuery.Players.Count;
@@ -137,7 +139,7 @@ internal sealed partial class NeowFamily
                         (Niche: a.Niche + b.Niche, Potions: a.Potions + b.Potions))).Distinct().OrderBy(x => x.Niche).ThenBy(x => x.Potions).ToArray();
                     if (arrivals?.Length > 4096) arrivals = null;
                     preparations.Add(new(player, personal, parts));
-                    var gates = new[] { player.Offers, player.Conditions.LegacyNeow.NeowRelics }
+                    var gates = new[] { player.Offers, personal.Evaluation.NeowRelics }
                         .Concat(player.Conditions.LegacyWorld.AncientOptionFilters.Where(f => f.Act == 1).Select(f => f.Keys)).ToArray();
                     var masks = new List<(ulong Any, ulong All, ulong Ban)>();
                     bool numerical = true;
@@ -161,6 +163,8 @@ internal sealed partial class NeowFamily
                         IdentityOnly(effectPlan) with { Bones = false }, parts, numerical ? masks.ToArray() : null));
                 }
             }
+            if (_cpuPlans.Any(plan => plan.CapsulesWithKnownZeroNonCombatAdvance != 0))
+                _rulesRevision += NeowCapsuleNonCombatContinuation.Revision;
             if (preferGpu) PrepareGpuStages(request, preferences, preparations, gpuPlanFactory);
             _program = new(_cpuPlayers.ToArray(), _cpuPlans.ToArray(), optimize);
         }
@@ -192,7 +196,7 @@ internal sealed partial class NeowFamily
                     var player = preparation.Player;
                     int gateStart = _gpuStages.Count;
                     var route = player.Conditions.OpeningRoute ?? (player.SelectedOption is { } selected ? new(selected.Option) : null);
-                    var gates = new[] { player.Offers, player.Conditions.LegacyNeow.NeowRelics }
+                    var gates = new[] { player.Offers, preparation.Personal.Evaluation.NeowRelics }
                         .Concat(player.Conditions.LegacyWorld.AncientOptionFilters.Where(f => f.Act == 1).Select(f => f.Keys))
                         .Where(f => !f.IsEmpty).ToArray();
                     if (gates.Length == 0 && route is not null) gates = [ModelKeySetFilter.Empty];
@@ -228,7 +232,8 @@ internal sealed partial class NeowFamily
 
         private static NeowReplayPlan IdentityOnly(NeowReplayPlan plan) => plan with
         { StructuredConditions = [], EnabledDomains = Beta110FastDomain.None,
-            RequiredFinalCurseIds = [], BannedFinalCurseIds = [], AuthoredUpgrades = null };
+        RequiredFinalCurseIds = [], BannedFinalCurseIds = [], AuthoredUpgrades = null,
+        CapsulesWithKnownZeroNonCombatAdvance = 0 };
 
         // The GPU body stores one predicate per source. Repeated authored rows
         // form a conjunction of necessary route unions; Exact binds one witness.
@@ -253,7 +258,10 @@ internal sealed partial class NeowFamily
             var relics = (a?.OrderedRelicBag ?? []).Concat(a?.SharedRelicPoolSource ?? []).Concat(a?.CharacterRelicPoolSource ?? []);
             return PartyInitialQuery.CapsuleEffectPremise(request.CompiledSearch.NormalizedQuery).Values
                 .SelectMany(keys => keys).All(k => k == BaseGameModelKeys.OrdinaryRelics.Whetstone ||
-                    k == BaseGameModelKeys.OrdinaryRelics.WarPaint || relics.Any(r => r.RelicKey == k &&
+                    k == BaseGameModelKeys.OrdinaryRelics.WarPaint ||
+                    request.Authority.VersionResolution.SemanticProfileId == RngSemanticProfileId.Modern113 &&
+                        NeowCapsuleNonCombatContinuation.HasZeroAdvance(request.Authority, k) ||
+                    relics.Any(r => r.RelicKey == k &&
                         r.NestedClassificationExact && r.NestedEffectKind == NestedRelicEffectKind.NoTrackedImmediateEffect));
         }
 
@@ -287,6 +295,7 @@ internal sealed partial class NeowFamily
 
         internal static (int? Niche, int? Potions) SharedAdvance(SearchModel request, NeowReplayPlan plan)
         {
+            if (plan.Authority.UsesChildShuffle) return (0, 0);
             if (plan.Selected == 255) return (0, 0);
             var pair = plan.Bones ? KnownBonesPair(plan) : [];
             if (plan.Bones && pair.Length != 2) return (null, null);
@@ -344,7 +353,7 @@ internal sealed partial class NeowFamily
         {
             var q = p.Conditions; var n = q.LegacyNeow;
             return !p.Offers.IsEmpty || p.SelectedOption is not null || p.Results.Count > 0 ||
-                q.OpeningRoute is not null || q.OpeningRouteRelicRequirement is not null ||
+                q.NeowOfferWhitelist is not null || q.OpeningRoute is not null || q.OpeningRouteRelicRequirement is not null ||
                 q.StructuredOpeningEffects.Any(c => !c.IsEmpty) || !n.NeowRelics.IsEmpty || n.RequireNeowsBones ||
                 !n.BonesRelics.IsEmpty || n.RequiredBonesCombination.Count > 0 || n.RequiredBonesAcquisitionOrder.Count > 0 ||
                 n.RequireSmallCapsule || n.RequireLargeCapsule || !n.CapsuleContainedRelics.IsEmpty ||
@@ -373,7 +382,7 @@ internal sealed partial class NeowFamily
             }
             FilterBodyDescription[] children = _gpuStages.Select(s => s.Family).ToArray();
             bool privateEdges = UsesPrivate || UsesFused;
-            if (!UsesCompatibilityGpu && privateEdges)
+            if (_rulesRevision.Length == 0 && !UsesCompatibilityGpu && privateEdges)
             {
                 double work = _gpuStages.Sum(stage => 1 + stage.Replay.StructuredConditions.Length * 3 + (stage.Replay.HasFinalCurseFastProjection ? 1 : 0));
                 var gpuMeasured = PartyMeasuredCost.Price(FamilyId, inputs, children.Length,
@@ -395,12 +404,12 @@ internal sealed partial class NeowFamily
         public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compact) => _gpuStages.Count == 0 ? CpuCondition(compact) :
             new(FamilyId, "N.Neow.PartyEffects.Gpu.v6." + (UsesFused ? "Fused." : UsesPrivate ? "PrivateOrdinal." : "Public.") + (compact ? "CompactAbi1" : "Dense") +
                 (UsesPrivate && compact ? ".DirectCompactCast.20261016.v1" : "") + (HasOrderedKBody ? PartyOrderedKRevision : "") +
-                (UsesCompatibilityGpu ? ".IntegerUnitFloat.Rne.20261025.v1" : "") + NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision,
+                (UsesCompatibilityGpu ? ".IntegerUnitFloat.Rne.20261025.v1" : "") + NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision + _rulesRevision,
                 "OrderedSlotInitialOffers", 1, "InitialOffersAndResolvedEffects;SharedArrival=AuthoredDrawUnion;Remainder=WholeTableExact;" +
                     (UsesCompatibilityGpu ? "GpuNumericalVariant=IntegerUnitFloat;PhysicalQuoteUnavailable=UnmeasuredVariant" : "BoundedLocalPhysicalQuote"),
                 usesGpu: _gpuStages.Any(s => s.Family.ConditionPerformance.UsesGpu));
         private FamilyConditionPerformanceProjection CpuCondition(bool compact) =>
-            CpuFilterExecution.Describe(FamilyId, CpuRevision, _workers, CpuCapacity, true, false, compact);
+            CpuFilterExecution.Describe(FamilyId, CpuRevision + _rulesRevision, _workers, CpuCapacity, true, false, compact);
         public FamilySurvivalProjection Survival => _survival;
         internal bool MatchesInitialOffers(ulong root) => _program.MatchesInitialOffers(root);
         internal bool MatchesInitialOffersReference(ulong root) => _program.MatchesInitialOffersReference(root);
@@ -409,6 +418,7 @@ internal sealed partial class NeowFamily
         {
             _identity = source._identity; _profile = source._profile; _workers = source._workers;
             _requestedWorkers = source._requestedWorkers; _playersCount = source._playersCount;
+            _rulesRevision = source._rulesRevision;
             _optimize = source._optimize; _skipExactValidation = source._skipExactValidation; _fuse = source._fuse;
             _survival = source._survival; _program = source._program;
             _remainders.AddRange(source._remainders);

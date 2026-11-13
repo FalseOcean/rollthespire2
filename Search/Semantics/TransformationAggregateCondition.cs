@@ -124,8 +124,9 @@ public sealed record TransformationAggregateCondition(
         pair.RequiredRelicKeys.Contains(BaseGameModelKeys.Relics.LeafyPoultice) &&
         pair.RequiredRelicKeys.Contains(BaseGameModelKeys.Relics.NewLeaf);
 
-    // Bounded R closure for the same authored fixed pair. Bones shuffles Rewards;
-    // Leafy uses Transformations; New Leaf and the final curse use Niche. None
+    // Bounded R closure for the same authored fixed pair. Bones shuffles Rewards
+    // or NonCombatGeneration, and the transformations and curse consume their
+    // versioned streams. None
     // advances UpFront or draws/removes an entry from the observed personal
     // Common/Uncommon/Rare/Shop bags: all three obtained relics are Ancient.
     // R therefore reuses its initial-bag replay in either pickup order. Exact
@@ -146,7 +147,7 @@ public sealed record TransformationAggregateCondition(
         (!e.RequireNeowsBones || e.TransformationAggregate!.IsBones) &&
         (e.TransformationAggregate!.IsBones ||
             e.RequiredBonesCombination.Count == 0 && e.RequiredBonesAcquisitionOrder.Count == 0) &&
-        e.NeowRelics.IsEmpty && e.BonesRelics.IsEmpty && !e.RequireSmallCapsule && !e.RequireLargeCapsule &&
+        e.NeowOfferWhitelist is null && e.NeowRelics.IsEmpty && e.BonesRelics.IsEmpty && !e.RequireSmallCapsule && !e.RequireLargeCapsule &&
         e.CapsuleContainedRelics.IsEmpty && !e.RequireWhetstone && !e.RequireWarPaint &&
         e.RequiredFinalCurse is null && e.BannedFinalCurses.Count == 0 && e.Preset == NeowSearchPreset.None &&
         e.StructuredNeowEffects.Count == 0 && e.EffectOutputConditions.Count == 0;

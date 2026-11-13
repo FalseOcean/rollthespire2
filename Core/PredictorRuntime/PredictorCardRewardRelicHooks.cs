@@ -22,7 +22,8 @@ internal static class PredictorCardRewardRelicHooks
                     .Where(i => PredictorObtainSources.CanEnchant(context, cards[i])).ToArray();
                 wingCharmEligibility?.Add(eligible.ToImmutableArray());
                 if (eligible.Length == 0) break;
-                (int selected, state) = state.Draw(PredictorStream.Niche, 0, eligible.Length);
+                var stream = context.UsesNonCombatGeneration ? PredictorStream.Rewards : PredictorStream.Niche;
+                (int selected, state) = state.Draw(stream, 0, eligible.Length);
                 int index = eligible[selected];
                 cards[index] = CloneIfNeeded(state, cards[index] with
                 { Enchantment = new("ENCHANTMENT", "SWIFT"), EnchantmentAmount = 1 }, cloneOnChange, out state);

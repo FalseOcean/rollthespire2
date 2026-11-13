@@ -42,6 +42,21 @@ public static class Beta109AcceptedRuntimeValidationAuthority
             .Concat(new[] { "boss:" + Beta110BossValidationId })
             .ToArray());
 
+    internal const string Beta113WorldFixture = "beta113-standard-world-native-20261113";
+
+    private static readonly IReadOnlyList<string> Beta113FixtureIds = Array.AsReadOnly(new[]
+    {
+        "boss:" + Beta113WorldFixture,
+        "ancient-identity:" + Beta113WorldFixture,
+        "ancient-option:OROBAS:" + Beta113WorldFixture,
+        "ancient-option:PAEL:" + Beta113WorldFixture,
+        "ancient-option:TEZCATARA:" + Beta113WorldFixture,
+        "ancient-option:DARV:" + Beta113WorldFixture,
+        "ancient-option:NONUPEIPE:" + Beta113WorldFixture,
+        "ancient-option:TANX:" + Beta113WorldFixture,
+        "ancient-option:VAKUU:" + Beta113WorldFixture
+    });
+
     public static Beta109RuntimeValidationAuthorityDecision Resolve(string gameVersion)
     {
         string normalized = GameVersionDetector.NormalizeVersion(gameVersion);
@@ -80,6 +95,13 @@ public static class Beta109AcceptedRuntimeValidationAuthority
         }
 
         var compatibility = RuntimeVersionCompatibility.Resolve(normalized);
+        if (compatibility.SemanticProfileId == RngSemanticProfileId.Modern113)
+        {
+            return new Beta109RuntimeValidationAuthorityDecision(
+                Beta109FixtureValidationStatus.VerifiedRealGame,
+                Beta113FixtureIds,
+                Beta113WorldFixture);
+        }
         if (compatibility.IsProvisional && compatibility.ProfileId == RuntimeProfileId.Beta111 &&
             compatibility.AllowsProductionSearch && !compatibility.Blocks(CompatibilityDomainMask.WorldEventAncient))
         {

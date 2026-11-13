@@ -105,6 +105,13 @@ public partial class Main : Node
                 await UiSurfaceChecks.RunAsync(this, System.IO.Path.GetFullPath(Arg("--output")));
                 return;
             }
+            if (args.Contains("--elite-floor-seven-research"))
+            {
+                await Task.Run(() => EliteFloorSevenResearch.Run(Path.GetFullPath(Arg("--output")),
+                    ulong.Parse(Arg("--research-begin", "0")), int.Parse(Arg("--research-count", "1000000")),
+                    int.Parse(Arg("--research-target", "10")), int.Parse(Arg("--research-workers", "8"))));
+                return;
+            }
             GD.Print("HostGroup=production-replay;requires=context,workload");
             var context = ProductionSearchReplay.Read<ProductionSearchReplayContext>(Arg("--context"));
             var workload = ProductionSearchReplay.Read<ProductionSearchReplayWorkload>(Arg("--workload"));
@@ -165,6 +172,27 @@ public partial class Main : Node
                 BonesHiddenUpgradeChecks.Compare(Arg("--bones-hidden-upgrade-compare"), output);
                 return;
             }
+            if (args.Contains("--encounter-performance-inputs"))
+            {
+                CompatibilityChecks.ExportEncounterPerformanceInputs(context, workload, Arg("--encounter-performance-anchor"), output,
+                    long.Parse(Arg("--encounter-performance-long-count", "268435459")));
+                return;
+            }
+            if (args.Contains("--encounter-public-parity-only"))
+            {
+                await CompatibilityChecks.CheckEncounterPublicParityAsync(Arg("--encounter-public-parity-only"), output);
+                return;
+            }
+            if (args.Contains("--encounter-complete-checks"))
+            {
+                // This replay suite also captures native party authority. Load the
+                // real catalogs and isolated save fixture before UnlockState's cctor.
+                await UiSurfaceChecks.InitializeNativeWorkspaceAsync(this, output);
+                await CompatibilityChecks.CheckEncounterQueueSessionsAsync(context, workload, output, session => _session = session,
+                    int.Parse(Arg("--encounter-check-count", "129")), args.Contains("--encounter-public-parity"));
+                _session = null;
+                return;
+            }
             if (args.Contains("--initial-room-gpu-checks"))
             {
                 var initial = SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, context.Context), workload.Options);
@@ -177,6 +205,12 @@ public partial class Main : Node
             {
                 var compiled = SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, context.Context), workload.Options);
                 await MapLossyPipelineChecks.RunAsync(compiled.Plan ?? throw new InvalidDataException(compiled.Issue), output);
+                return;
+            }
+            if (args.Contains("--map-elite-research-gpu"))
+            {
+                var compiled = SearchPreparationCompiler.Compile(SearchCompiler.Compile(workload.Query, context.Context), workload.Options);
+                await MapLossyChecks.RunEliteResearchAsync(compiled.Plan ?? throw new InvalidDataException(compiled.Issue), output);
                 return;
             }
             if (args.Contains("--map-lossy-gpu"))

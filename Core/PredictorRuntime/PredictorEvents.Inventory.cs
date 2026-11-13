@@ -150,7 +150,8 @@ internal sealed partial class PredictorRun
             case ("DOLL_ROOM", "EXAMINE"):
                 ApplyFixedEventHealth(choice.OptionKey);
                 if (Phase == PredictorPhase.Complete) return PredictorInputResult.Accepted;
-                EventOptions = Beta111EventRules.DollOffers(_eventRng!, choice.OptionKey == "TAKE_SOME_TIME" ? 2 : 3)
+                EventOptions = Beta111EventRules.DollOffers(_eventRng!, choice.OptionKey == "TAKE_SOME_TIME" ? 2 : 3,
+                        Context.VersionResolution.SemanticProfileId)
                     .Select(k => new PredictorEventOption("DOLL_" + k.Entry, OfferedRelic: k))
                     .ToImmutableArray();
                 _requestId++;
@@ -229,14 +230,14 @@ internal sealed partial class PredictorRun
     private ImmutableArray<PredictorEventOption> RelicTraderOptions()
     {
         var owned = Working.Relics.Where(IsRelicTradable).OrderBy(r => r.Key.Entry, StringComparer.Ordinal).ToList();
-        _eventRng!.UnstableShuffle(owned);
+        _eventRng!.UnstableShuffle(owned, Context.VersionResolution.SemanticProfileId);
         _traderOwned = owned.Take(3).Select(r => r.Id).ToImmutableArray();
         if (_traderOwned.IsEmpty) return [new("DONE")];
         var offers = ImmutableArray.CreateBuilder<ModelKey>(3);
         for (int i = 0; i < 3; i++)
         {
             var state = Working;
-            offers.Add(PredictorRewardGeneration.PullRelic(Context, ref state));
+            offers.Add(PredictorRewardGeneration.PullRelic(Context, ref state, Context.UsesNonCombatGeneration ? _eventRng : null));
             Working = state;
             Accept(new("RelicTraderOfferPull", i, [], null, null));
         }
@@ -251,7 +252,7 @@ internal sealed partial class PredictorRun
     {
         if (initializing)
         {
-            var pool = Beta111EventRules.FakeMerchantInventory(_eventRng!);
+            var pool = Beta111EventRules.FakeMerchantInventory(_eventRng!, Context.VersionResolution.SemanticProfileId);
             var stock = ImmutableArray.CreateBuilder<PredictorFakeMerchantStock>(pool.Length);
             for (int slot = 0; slot < pool.Length; slot++)
             {

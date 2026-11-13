@@ -8,6 +8,8 @@ namespace RolltheSpire2.Ui.Pages.Search.Editors;
 internal sealed partial class ActInformationSearchEditor
 {
     private readonly Dictionary<int, Label> _mapScopeBadges = [];
+    private UnknownRoomPrefixEditorState? _unknownRoomPrefix;
+    internal void BindUnknownRoomPrefix(UnknownRoomPrefixEditorState state) => _unknownRoomPrefix = state;
 
     private static bool DrawingActive(SeatDraft draft, int scope) => scope is >= 1 and <= 3 && draft.DrawingModes[scope];
     private static int ScopeConditionCount(SeatDraft draft, int scope) =>
@@ -27,6 +29,13 @@ internal sealed partial class ActInformationSearchEditor
     private float RenderMap(Control content, float width, float top)
     {
         _mapScopeBadges.Clear();
+        if (_draft.Players == 1 && _unknownRoomPrefix is { } prefix)
+        {
+            Text(content, _text.Get("query.unknown.prefix.title"), 0, top, width, 16, true);
+            Options(content, prefix.Options(_text), prefix.Selection, 0, top + 30,
+                Math.Min(420, width), index => { prefix.Select(index); UnknownRoomPrefixChanged?.Invoke(); Render(); }).Name = "MapUnknownRoomPrefix";
+            top += 84;
+        }
         var lossy = new CheckButton { Name = "MapLossyEnabled", Text = _text.Get("query.map.lossy.enable"),
             Position = new(0, top), Size = new(width, 36), ButtonPressed = _persistence.Preferences.MapLossyEnabled };
         lossy.AddThemeFontSizeOverride("font_size", 17);

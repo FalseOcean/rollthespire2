@@ -14,16 +14,20 @@ namespace RolltheSpire2.Search.Runtime;
 internal static class PartyInitialRooms
 {
     private static readonly ConditionalWeakTable<SearchModel, Lazy<SearchModel>> IndependentProjections = new();
-    internal readonly record struct PrefixRequirement(int? Slot, int Count)
+    internal readonly record struct PrefixRequirement(int? Slot, int Count, UnknownRoomCategory Category = UnknownRoomCategory.Event)
     {
-        internal string ConditionId => Slot is int slot ? $"P{slot + 1}.FirstActUnknownEventPrefix" : "FirstActUnknownEventPrefix";
+        internal string ConditionId => (Slot is int slot ? $"P{slot + 1}." : "") +
+            (Category == UnknownRoomCategory.Monster ? "FirstActUnknownMonsterPrefix" : "FirstActUnknownEventPrefix");
     }
     internal static PrefixRequirement[] Prefixes(SearchModel request)
     {
         var query = request.CompiledSearch.NormalizedQuery;
         return (query.FirstActUnknownEventPrefixCount > 0 ? new[] { new PrefixRequirement(null, query.FirstActUnknownEventPrefixCount) } : [])
             .Concat(query.Players.Where(player => player.Conditions.FirstActUnknownEventPrefixCount > 0)
-                .Select(player => new PrefixRequirement(player.Slot, player.Conditions.FirstActUnknownEventPrefixCount))).ToArray();
+                .Select(player => new PrefixRequirement(player.Slot, player.Conditions.FirstActUnknownEventPrefixCount)))
+            .Concat(query.FirstActUnknownMonsterPrefixCount > 0 ? new[] { new PrefixRequirement(null, query.FirstActUnknownMonsterPrefixCount, UnknownRoomCategory.Monster) } : [])
+            .Concat(query.Players.Where(player => player.Conditions.FirstActUnknownMonsterPrefixCount > 0)
+                .Select(player => new PrefixRequirement(player.Slot, player.Conditions.FirstActUnknownMonsterPrefixCount, UnknownRoomCategory.Monster))).ToArray();
     }
     internal static bool HasTreasure(SearchModel request)
     {
@@ -33,8 +37,8 @@ internal static class PartyInitialRooms
     internal static bool HasConditions(SearchModel request)
     {
         var query = request.CompiledSearch.NormalizedQuery;
-        return query.FirstActUnknownEventPrefixCount > 0 || query.TreasureRelics is { IsEmpty: false } ||
-            query.Players.Any(static player => player.Conditions.FirstActUnknownEventPrefixCount > 0 ||
+        return UnknownRoomPrefixRequirements.HasConditions(query) || query.TreasureRelics is { IsEmpty: false } ||
+            query.Players.Any(static player =>
                 player.Conditions.TreasureRelics is { IsEmpty: false });
     }
 
@@ -59,7 +63,7 @@ internal static class PartyInitialRooms
 
     private static SearchModel CompileIndependentDomains(SearchModel request)
     {
-        SearchQuery Strip(SearchQuery query) => query with { TreasureRelics = null, FirstActUnknownEventPrefixCount = 0 };
+        SearchQuery Strip(SearchQuery query) => query with { TreasureRelics = null, FirstActUnknownEventPrefixCount = 0, FirstActUnknownMonsterPrefixCount = 0 };
         var query = Strip(request.CompiledSearch.NormalizedQuery) with {
             Players = request.CompiledSearch.NormalizedQuery.Players.Select(player => player with { Conditions = Strip(player.Conditions) }).ToArray() };
         var compiled = SearchCompiler.Compile(query, request.CompiledSearch.Context);
@@ -80,16 +84,17 @@ internal static class PartyInitialRooms
             {
                 bool juzu = ExplicitOpeningRelicFacts.HasDeclaredJuzuForUnknownRooms(request.CompiledSearch.NormalizedQuery);
                 var sequence = OrdinaryUnknownRoomPredictor.ForAct1Filter(root, count, juzu);
-                var failed = sequence.Steps.FirstOrDefault(step => step.Room != UnknownRoomCategory.Event);
-                var evidence = requirements.Where(requirement => failed is null || requirement.Count >= failed.Ordinal).Select(requirement =>
-                    new SearchMatchEvidence(requirement.Slot is int slot ? $"P{slot + 1}.FirstActUnknownEventPrefixMatched" : "FirstActUnknownEventPrefixMatched",
-                        EvidenceCode: new(failed is null ? "search.initial-rooms.standard-multiplayer-shared" : "search.initial-rooms.shared-non-event"),
+                var failed = requirements.FirstOrDefault(requirement => sequence.Steps.Take(requirement.Count).Any(step => step.Room != requirement.Category));
+                bool mismatch = failed.Count > 0;
+                var evidence = requirements.Select(requirement =>
+                    new SearchMatchEvidence(requirement.ConditionId + "Matched",
+                        EvidenceCode: new("search.initial-rooms.standard-multiplayer-shared"),
                         ProfileId: request.ProfileId, Act: 1, StreamDomain: "unknown_map_point",
                         AuthorityFingerprint: request.CompiledSearch.Context.Party!.Fingerprint,
-                        Ordinal: failed?.Ordinal ?? requirement.Count, ConditionId: requirement.ConditionId)).ToArray();
-                if (failed is null) unknown = SearchQueryEvaluation.Match(evidence);
-                else unknown = SearchQueryEvaluation.NoMatch("FirstActUnknownEventPrefix.NonEventEncounter") with {
-                    Evidence = evidence.Select(item => item with { Code = item.Code.Replace("Matched", "NonEventEncounter", StringComparison.Ordinal) }).ToArray() };
+                        Ordinal: requirement.Count, ConditionId: requirement.ConditionId)).ToArray();
+                if (!mismatch) unknown = SearchQueryEvaluation.Match(evidence);
+                else unknown = SearchQueryEvaluation.NoMatch(failed.ConditionId +
+                    (failed.Category == UnknownRoomCategory.Monster ? ".NonMonsterEncounter" : ".NonEventEncounter"));
             }
         }
         // A shared Unknown mismatch can reject independently of the disabled

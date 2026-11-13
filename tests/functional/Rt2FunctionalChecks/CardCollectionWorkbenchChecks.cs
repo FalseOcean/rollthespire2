@@ -34,11 +34,11 @@ internal static class CardCollectionWorkbenchChecks
         int checks = 0;
         void Check(bool value, string message)
         { checks++; if (!value) throw new InvalidOperationException("CardCollectionWorkbench: " + message); }
-        WorkbenchSearchDraft Draft(CardCollectionSnapshot snapshot, int count = 3) => new(
+        WorkbenchSearchDraft Draft(CardCollectionSnapshot snapshot, int count = 3, CombatCardCollectionMode mode = CombatCardCollectionMode.Blacklist) => new(
             BaseGameModelKeys.Characters.Ironclad, 10,
-            SearchQuery.Empty with { CombatCardExclusion = new(count, snapshot.Cards.ToArray()) },
+            SearchQuery.Empty with { CombatCardExclusion = new(count, snapshot.Cards.ToArray()) { Mode = mode } },
             AncientOptionConditionProfile.BroadDefault)
-        { CombatRewardEditor = CombatRewardSearchDraft.Empty with { ExcludedCollection = snapshot, ExclusionBattleCount = count } };
+        { CombatRewardEditor = CombatRewardSearchDraft.Empty with { ExcludedCollection = snapshot, ExclusionBattleCount = count, CollectionMode = mode } };
         void Same(WorkbenchSearchDraft draft, CardCollectionSnapshot snapshot, int count, string message)
         {
             Check(draft.Query.CombatCardExclusion is { } exclusion && exclusion.BattleCount == count &&
@@ -57,6 +57,13 @@ internal static class CardCollectionWorkbenchChecks
             selector.Select(1);
             selector.EmitSignal(OptionButton.SignalName.ItemSelected, 1L);
             Same(frame.CaptureDraft(), saved, 3, "actual selector event enables default three-combat request");
+            var modeSelector = (OptionButton)editor.FindChild("CombatCardCollectionMode", true, false);
+            modeSelector.Select(1);
+            modeSelector.EmitSignal(OptionButton.SignalName.ItemSelected, 1L);
+            Check(frame.CaptureDraft().Query.CombatCardExclusion?.Mode == CombatCardCollectionMode.Whitelist &&
+                frame.CaptureDraft().CombatRewardEditor?.CollectionMode == CombatCardCollectionMode.Whitelist,
+                "actual mode control changes query and editor sidecar together");
+            Same(frame.CaptureDraft(), saved, 3, "whitelist toggle preserves authored collection");
             Button RangeButton(string name) => (Button)editor.FindChild(name, true, false);
             RangeButton("CombatCardExclusionIncrease").EmitSignal(BaseButton.SignalName.Pressed);
             Same(frame.CaptureDraft(), saved, 4, "actual increase button updates exported query range");
@@ -74,6 +81,13 @@ internal static class CardCollectionWorkbenchChecks
             Same(frame.CaptureDraft(), saved, 6, "library edits do not change an existing request");
 
             var presetStore = new SearchPresetStore(Path.Combine(directory, "presets"));
+            frame.RestoreDraft(Draft(saved, 5, CombatCardCollectionMode.Whitelist), render: false);
+            var whitelistPreset = presetStore.Save("Whitelist collection", "", [], frame.CapturePreset());
+            frame.ApplyPreset(whitelistPreset, render: false);
+            Same(frame.CaptureDraft(), saved, 5, "whitelist preset keeps original allowed set");
+            Check(frame.CaptureDraft().Query.CombatCardExclusion?.Mode == CombatCardCollectionMode.Whitelist &&
+                frame.CaptureDraft().CombatRewardEditor?.CollectionMode == CombatCardCollectionMode.Whitelist,
+                "whitelist mode survives real preset save and restore");
             var unordered = saved with { Cards = keys.OrderByDescending(k => k.Serialized, StringComparer.Ordinal).ToArray() };
             var beforeNormalization = Draft(unordered, 4);
             var normalizedQuery = beforeNormalization.Compile(runtime, out _).NormalizedQuery;
@@ -98,7 +112,7 @@ internal static class CardCollectionWorkbenchChecks
             var unavailable = saved with { Cards = new[] { keys[0], phantom } };
             frame.RestoreDraft(Draft(unavailable), render: false);
             var missingPreset = presetStore.Save("Unavailable member", "", [], frame.CapturePreset());
-            var resolution = SearchPresetCompatibilityResolver.ResolveWorkbench(missingPreset, RuntimeAuthorityEnvironment.Current.Authority);
+            var resolution = SearchPresetCompatibilityResolver.ResolveWorkbench(missingPreset, RuntimeAuthorityEnvironment.Current.Authority, RolltheSpire2.Infrastructure.Snapshots.RuntimeEncounterCatalogCapture.Capture());
             Check(resolution.CanLoad, "legally authored missing collection member remains executable as unverified");
             frame.ApplyPreset(missingPreset, render: false);
             Same(frame.CaptureDraft(), unavailable, 3, "preset use never filters missing identities");
@@ -144,15 +158,17 @@ internal static class CardCollectionWorkbenchChecks
             Reject(Draft(saved) with { Query = SearchQuery.Empty with { CombatCardExclusion = new(3, null!) } },
                 "null execution members remain invalid input");
             Reject(Draft(saved, 7), "out-of-scope battle range is rejected");
+            Reject(Draft(saved) with { CombatRewardEditor = Draft(saved, 3, CombatCardCollectionMode.Whitelist).CombatRewardEditor },
+                "a sidecar cannot silently switch query collection mode");
 
             var party = new WorkbenchSearchDraft(BaseGameModelKeys.Characters.Ironclad, 10,
                 SearchQuery.Empty with { Players = [new(0, ModelKeySetFilter.Empty) { Conditions = Draft(saved, 2).Query },
-                    new(1, ModelKeySetFilter.Empty) { Conditions = Draft(unavailable, 5).Query }] }, AncientOptionConditionProfile.BroadDefault)
+                    new(1, ModelKeySetFilter.Empty) { Conditions = Draft(unavailable, 5, CombatCardCollectionMode.Whitelist).Query }] }, AncientOptionConditionProfile.BroadDefault)
             { Version = 4, Mode = WorldGameMode.Multiplayer, GameVersion = runtime.Detection.NormalizedVersion, Profile = runtime.Profile.ProfileId,
                 Players = [new(0, BaseGameModelKeys.Characters.Ironclad, UnlockState.all.ToSerializable(), "AssumedFullyUnlocked")
                     { CombatRewardEditor = Draft(saved, 2).CombatRewardEditor },
                     new(1, BaseGameModelKeys.Characters.Silent, UnlockState.all.ToSerializable(), "AssumedFullyUnlocked")
-                    { CombatRewardEditor = Draft(unavailable, 5).CombatRewardEditor }] };
+                    { CombatRewardEditor = Draft(unavailable, 5, CombatCardCollectionMode.Whitelist).CombatRewardEditor }] };
             frame.RestoreDraft(party, render: false);
             var restoredParty = frame.CaptureDraft();
             for (int seat = 0; seat < 2; seat++)
@@ -166,6 +182,9 @@ internal static class CardCollectionWorkbenchChecks
             frame.ApplyPreset(partyPreset, render: false);
             Check(frame.CaptureDraft().Query.Players[1].Conditions.CombatCardExclusion!.CardKeys.Contains(phantom, ModelKeyComparer.Instance),
                 "party preset preserves each seat's missing-card obligation");
+            Check(frame.CaptureDraft().Query.Players[0].Conditions.CombatCardExclusion!.Mode == CombatCardCollectionMode.Blacklist &&
+                frame.CaptureDraft().Query.Players[1].Conditions.CombatCardExclusion!.Mode == CombatCardCollectionMode.Whitelist,
+                "party preset preserves distinct per-seat modes");
             Check(!frame.HasActiveSearch, "all checks leave search stopped");
             Console.WriteLine($"CARD_COLLECTION_WORKBENCH checks={checks};failures=0;fixtures={directory};seedScans=0");
             return 0;

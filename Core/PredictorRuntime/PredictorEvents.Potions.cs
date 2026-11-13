@@ -48,7 +48,8 @@ internal sealed partial class PredictorRun
                     .Select(c => c.CardKey).ToImmutableArray();
                 var futureRewards = PredictorRewardGeneration.Generate(Context, Working,
                     [new(PredictorRewardKind.Card, CardCount: 3, Odds: PredictorCardOdds.Uniform,
-                        Rarity: rarity, CardPoolOverride: cardPool, NoCardPoolModifications: true)
+                        Rarity: rarity, NoUpgradeRoll: true, CardPoolOverride: cardPool,
+                        NoCardPoolModifications: true, NoRarityModification: true)
                         { UpgradeAfterGeneration = true }], cancellationToken: token);
                 _eventRewardContinuation = true;
                 var futureInputs = _inputs;

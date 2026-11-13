@@ -12,6 +12,7 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.CardPools;
 using MegaCrit.Sts2.Core.Models.Cards;
 using MegaCrit.Sts2.Core.Models.Encounters;
+using MegaCrit.Sts2.Core.Models.Modifiers;
 using MegaCrit.Sts2.Core.Models.Relics;
 using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Rewards;
@@ -67,16 +68,30 @@ internal static partial class PredictorLiveRunCapture
             ?? throw new InvalidOperationException("PredictorLiveFieldMissing:" + owner.GetType().Name + "." + name);
         return field.GetValue(owner);
     }
-    // The native lazy getter initializes the real relic; read its backing field
-    // without confusing a changed field type with the legitimate null state.
-    internal static HashSet<CardModel>? BingBongSkipCards(object relic)
+    private static readonly FieldInfo? BingBongExclusions = typeof(BingBong).GetField("_cardsToSkip", Members);
+    private static readonly FieldInfo? HoarderExclusions = typeof(Hoarder).GetField("_cardsToSkip", Members);
+    private static readonly bool NativeRetainsDeckCopyExclusions = RuntimeProfilePolicies.RetainsDeckCopyExclusions(
+        typeof(MegaCrit.Sts2.Core.Random.PlayerRngSet).GetProperty("NonCombatGeneration") is null
+            ? RngSemanticProfileId.Modern110 : RngSemanticProfileId.Modern113);
+
+    // In 0.111, reading the lazy property would mutate the actual relic.
+    // 0.113 relies on clonedBy and has no lifetime set to observe.
+    internal static HashSet<CardModel>? BingBongSkipCards(object relic) => ReadCopyExclusions(relic,
+        relic.GetType() == typeof(BingBong) ? BingBongExclusions : relic.GetType().GetField("_cardsToSkip", Members),
+        required: relic.GetType() != typeof(BingBong) || NativeRetainsDeckCopyExclusions);
+
+    internal static HashSet<CardModel>? HoarderSkipCards(Hoarder modifier) =>
+        ReadCopyExclusions(modifier, HoarderExclusions, NativeRetainsDeckCopyExclusions);
+
+    private static HashSet<CardModel>? ReadCopyExclusions(object owner, FieldInfo? field, bool required)
     {
-        object? value = NullableField(relic, "_cardsToSkip");
+        if (field is null && required) throw new MissingFieldException(owner.GetType().FullName, "_cardsToSkip");
+        object? value = field?.GetValue(owner);
         return value switch
         {
             null => null,
             HashSet<CardModel> cards => cards,
-            _ => throw new InvalidCastException($"PredictorLiveFieldTypeMismatch:{relic.GetType().FullName}._cardsToSkip;expected={typeof(HashSet<CardModel>).FullName};actual={value.GetType().FullName}")
+            _ => throw new InvalidCastException($"PredictorLiveFieldTypeMismatch:{owner.GetType().FullName}._cardsToSkip;expected={typeof(HashSet<CardModel>).FullName};actual={value.GetType().FullName}")
         };
     }
     private static T Property<T>(object owner, string name) => (T)(owner.GetType().GetProperty(name, Members)?.GetValue(owner)
@@ -144,27 +159,16 @@ internal static partial class PredictorLiveRunCapture
         var potions = player.PotionSlots.Select(p => p == null ? null : new PredictorPotion(Id(p), Key(p))).ToImmutableArray();
         var odds = player.PlayerOdds.ToSerializable();
         var unknown = run.Odds.ToSerializable();
-        var streams = Enum.GetValues<PredictorStream>().Select(s => CrystalSphereLiveCapture.RngState(s, s switch
-        {
-            PredictorStream.Rewards => player.PlayerRng.Rewards,
-            PredictorStream.Shops => player.PlayerRng.Shops,
-            PredictorStream.Transformations => player.PlayerRng.Transformations,
-            PredictorStream.UpFront => run.Rng.UpFront,
-            PredictorStream.Niche => run.Rng.Niche,
-            PredictorStream.UnknownMapPoint => run.Rng.UnknownMapPoint,
-            PredictorStream.TreasureRoomRelics => run.Rng.TreasureRoomRelics,
-            PredictorStream.CombatPotionGeneration => run.Rng.CombatPotionGeneration,
-            _ => throw new InvalidOperationException("PredictorLiveStreamUnmapped")
-        })).ToImmutableArray();
+        var streams = PredictorOperationCapture.CaptureStreams(run, player, context);
         int act = run.CurrentActIndex + 1;
         string node = run.CurrentMapCoord is { } coord
             ? $"map:{act}:{coord.row}:{coord.col}:{run.TotalFloor}" : $"map:{act}:entry";
         var map = Map(run);
         var visited = run.VisitedMapCoords.Select(Position).ToImmutableArray();
         var (visits, previousVisits) = Visits(run, visited);
-        var hoarder = run.Modifiers.OfType<MegaCrit.Sts2.Core.Models.Modifiers.Hoarder>().SingleOrDefault();
+        var hoarder = run.Modifiers.OfType<Hoarder>().SingleOrDefault();
         var hoarderIds = hoarder == null ? ImmutableArray<long>.Empty
-            : Field<HashSet<CardModel>>(hoarder, "_cardsToSkip").Select(CardId).ToImmutableArray();
+            : (HoarderSkipCards(hoarder) ?? []).Select(CardId).ToImmutableArray();
         var pending = ImmutableArray.CreateBuilder<PredictorCombatPendingCause>();
         if (!canLeaveCurrentNode)
             pending.Add(new("LiveCurrentNodePending", "The current native room has not reached its departure boundary.",
@@ -275,27 +279,32 @@ internal static partial class PredictorLiveRunCapture
             // rather than lazy getters which create a set on the real relic.
             Bing = player.Relics.OfType<BingBong>().Select(r => BingBongSkipCards(r)?
                 .Select(Id).Order().ToArray()).ToArray(),
-            Hoarder = run.Modifiers.OfType<MegaCrit.Sts2.Core.Models.Modifiers.Hoarder>()
-                .Select(m => Field<HashSet<CardModel>>(m, "_cardsToSkip").Select(Id).Order().ToArray()).ToArray(),
+            Hoarder = run.Modifiers.OfType<Hoarder>().Select(m => HoarderSkipCards(m)?.Select(Id).Order().ToArray()).ToArray(),
             CardSubscriptions = CardRewardSubscriptions(player).Select(r => new
                 { Id = Id(r), Cards = r.Cards.Select(c => c.ToSerializable()).ToArray(), r.CanSkip, r.CanReroll }).ToArray()
         });
     }
 
-    internal static PredictorCard Card(CardModel card, PredictorCatalog catalog)
+    internal static PredictorCard Card(CardModel card, PredictorCatalog catalog, bool captureSort = false)
     {
         var keywords = card.GetKeywordsWithSources(KeywordSources.Local);
         int localBase = Field<int>(card.EnergyCost, "_base");
         int? normalCost = catalog.CardDefinitions.FirstOrDefault(d => d.Prototype.Key == Key(card))?.Levels
             .FirstOrDefault(l => l.UpgradeLevel == card.CurrentUpgradeLevel)?.LocalCost;
+        int? costOverride = normalCost == localBase ? null : localBase;
+        int increasedBlock = card is GeneticAlgorithm ga ? ga.IncreasedBlock : 0;
+        int increasedDamage = card is TheScythe scythe ? scythe.IncreasedDamage : 0;
         return new(Id(card), Key(card), Enum.TryParse<EffectCardType>(card.Type.ToString(), out var type) ? type : EffectCardType.Other,
             card.CurrentUpgradeLevel, card.MaxUpgradeLevel, !keywords.Contains(CardKeyword.Eternal), card.FloorAddedToDeck ?? 0,
             card.Enchantment == null ? null : Key(card.Enchantment), card.Enchantment?.Amount ?? 0,
-            card is GeneticAlgorithm ga ? ga.IncreasedBlock : 0, card is TheScythe scythe ? scythe.IncreasedDamage : 0)
+            increasedBlock, increasedDamage)
         {
             HasEternalKeyword = keywords.Contains(CardKeyword.Eternal), HasExhaustKeyword = keywords.Contains(CardKeyword.Exhaust),
             HasInnateKeyword = keywords.Contains(CardKeyword.Innate), HasRetainKeyword = keywords.Contains(CardKeyword.Retain),
-            PermanentCostOverride = normalCost == localBase ? null : localBase,
+            PermanentCostOverride = costOverride,
+            Affliction = card.Affliction == null ? null : Key(card.Affliction),
+            ObservedSort = captureSort && card.GetType().Assembly == typeof(CardModel).Assembly
+                ? new(card.CurrentUpgradeLevel, costOverride, increasedDamage, increasedBlock, CardSortValues(card)) : null,
             RoomsEntered = card is Dowsing dowsing ? dowsing.RoomsEntered : 0,
             CombatsSeen = card is Guilty guilty ? guilty.CombatsSeen : 0,
             SpoilsActIndex = card is SpoilsMap spoils ? spoils.SpoilsActIndex : -1,
@@ -304,6 +313,10 @@ internal static partial class PredictorLiveRunCapture
             TinkerTimeRider = card is MadScience rider ? Enum.Parse<PredictorMadScienceRider>(rider.TinkerTimeRider.ToString()) : PredictorMadScienceRider.None
         };
     }
+
+    internal static PredictorCardSortValues CardSortValues(CardModel card) => new(
+        card.EnergyCost.CostsX ? card.EnergyCost.CapturedXValue : Math.Max(0, card.EnergyCost.GetWithModifiers(CostModifiers.Local)),
+        card.BaseReplayCount, card.DynamicVars.ToImmutableSortedDictionary(pair => pair.Key, pair => pair.Value.BaseValue, StringComparer.Ordinal));
 
     internal static PredictorRelic Relic(RelicModel relic, PredictorCatalog catalog, Func<CardModel, long> cardId)
     {
@@ -341,7 +354,7 @@ internal static partial class PredictorLiveRunCapture
     {
         var key = Key(card.Id ?? throw new InvalidOperationException("PredictorLiveStoredCardIdentityMissing"));
         var definition = catalog.CardDefinitions.Single(d => d.Prototype.Key == key);
-        var level = definition.Levels.Single(l => l.UpgradeLevel == card.CurrentUpgradeLevel);
+        var level = PredictorCardLevelEffects.ResolveLevel(definition, card.CurrentUpgradeLevel);
         int SavedInt(string name) => card.Props?.ints?.FirstOrDefault(p => p.name == name).value ?? 0;
         var tinkerType = key.Entry == "MAD_SCIENCE"
             ? Enum.Parse<EffectCardType>(((CardType)SavedInt("TinkerTimeType")).ToString()) : EffectCardType.Skill;

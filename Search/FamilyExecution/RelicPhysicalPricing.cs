@@ -28,7 +28,7 @@ internal static partial class RelicPhysicalPricing
     {
         if (!FamilyPhysicalQuote.AdmittedRequest(geometry) || !FamilyPhysicalQuote.HasReferenceBackend() ||
             request.ProfileId != Compatibility.RuntimeProfileId.Beta111 || request.PlayersCount != 1 ||
-            request.CanUseCurrentModel != true || plan.AlwaysReject ||
+            request.CanUseCurrentModel != true || plan.AlwaysReject || plan.Pool.UsesChildShuffle ||
             !plan.Pool.BucketLengths.SequenceEqual(new[] { 30, 25, 35, 25, 1, 2, 32, 26, 38, 26 })) return null;
         if (plan.Predicates.Length == 0 && plan.LastRequiredBucket == 9 &&
             plan.ShopPredicates is [{ Count: 1, TargetIds.Length: 1 }])

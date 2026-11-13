@@ -28,7 +28,18 @@ internal sealed record AncientEditorModeSnapshot(IReadOnlyList<AncientEditorRowS
     bool NeowEnabled, IReadOnlyList<ModelKey> NeowOptions, int SelectedAct);
 
 internal sealed record AncientEditorStateSnapshot(int ActiveMode, int LastAdvancedMode,
-    IReadOnlyList<AncientEditorModeSnapshot> Modes);
+    IReadOnlyList<AncientEditorModeSnapshot> Modes)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public NeowOfferEditorStateSnapshot? NeowOffers { get; init; }
+}
+
+internal sealed record NeowOfferEditorStateSnapshot(bool Advanced, int Relation,
+    IReadOnlyList<ModelKey> BasicSelection, IReadOnlyList<IReadOnlyList<ModelKey>> AdvancedSelections)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool EmptyWhitelistEnabled { get; init; }
+}
 
 internal sealed record PartyAncientIdentitySnapshot(int Act, IReadOnlyList<ModelKey> Ancients);
 internal sealed record PartyAncientEditorStateSnapshot(bool Advanced,
@@ -73,6 +84,20 @@ internal sealed record WorkbenchSearchDraft(ModelKey Character, int Ascension, S
             Players = intent.Players.Select(p => p with { Unlocks = p.UnlockSource == "AssumedFullyUnlocked"
                 ? MegaCrit.Sts2.Core.Unlocks.UnlockState.all.ToSerializable()
                 : LobbyUnlockReadout.Copy(readCurrentUnlocks(p.Slot)) }).ToArray()
+        };
+    }
+
+    internal WorkbenchSearchDraft RefreshAssumedPartyUnlocks(ModRuntimeSnapshot runtime)
+    {
+        var saved = GameVersionIdentity.From(GameVersion);
+        var current = GameVersionIdentity.From(runtime.Detection.NormalizedVersion);
+        if (Players.Count == 0 || !saved.IsExact || !current.IsExact || saved == current ||
+            Players.Any(p => p.UnlockSource != "AssumedFullyUnlocked"))
+            return this;
+        return this with
+        {
+            GameVersion = current.ExactVersion, Profile = runtime.Profile.ProfileId,
+            Players = Players.Select(p => p with { Unlocks = MegaCrit.Sts2.Core.Unlocks.UnlockState.all.ToSerializable() }).ToArray()
         };
     }
     internal WorkbenchSearchDraft WithoutCapturedAuthority() => this with

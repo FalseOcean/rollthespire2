@@ -48,6 +48,7 @@ internal static class InitialRoomsInvocation
         }
         string revision = familyId + (plan.CoversTreasure ? ".InitialTreasure" : ".InitialUnknown") +
             (child is null ? ".Only" : ".WithOrdinary") + ".Public.DeclaredUnknownJuzu.20261029.v2" +
+            (plan.UnknownMonster ? ".MonsterPrefix.20261105.v1" : "") +
             (preferGpu && plan.NumericalVariant != GpuNumericalVariant.NativeFloat64 ? ".IntegerRne.20261025.v1" : "");
         var profile = RuntimeProfileRegistry.Select(model.Detection);
         var localObligations = new List<FilterObligation>();
@@ -55,9 +56,9 @@ internal static class InitialRoomsInvocation
         else
         {
             var query = model.CompiledSearch.NormalizedQuery;
-            if (query.FirstActUnknownEventPrefixCount > 0)
+            if (query.FirstActUnknownEventPrefixCount > 0 || query.FirstActUnknownMonsterPrefixCount > 0)
                 localObligations.Add(new(UnknownCoverage, ThroughOrdinal: plan.UnknownPrefixCount));
-            localObligations.AddRange(query.Players.Where(p => p.Conditions.FirstActUnknownEventPrefixCount > 0)
+            localObligations.AddRange(query.Players.Where(p => p.Conditions.FirstActUnknownEventPrefixCount > 0 || p.Conditions.FirstActUnknownMonsterPrefixCount > 0)
                 .Select(p => new FilterObligation(UnknownCoverage, p.Slot, plan.UnknownPrefixCount)));
         }
         var prepared = new PreparedFilter(familyId)

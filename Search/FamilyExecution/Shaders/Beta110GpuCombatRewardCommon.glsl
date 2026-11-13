@@ -113,7 +113,13 @@ uint64_t cr_xxh_round(uint64_t a,uint64_t v){a+=v*cr_prime2();a=cr_rotl64(a,31u)
 uint64_t cr_hash_seed12(uint64_t ordinal){uint64_t f;uint t;cr_encode_seed12(ordinal,f,t);uint64_t h=cr_prime5()+uint64_t(12u);h^=cr_xxh_round(uint64_t(0u),f);h=cr_rotl64(h,27u)*cr_prime1()+cr_prime4();h^=uint64_t(t)*cr_prime1();h=cr_rotl64(h,23u)*cr_prime2()+cr_prime3();h^=h>>33u;h*=cr_prime2();h^=h>>29u;h*=cr_prime3();h^=h>>32u;return h;}
 
 uint64_t cr_plan_u64(uint index){return uint64_t(plan_meta.values[index])|(uint64_t(plan_meta.values[index+1u])<<32u);}
-void cr_consume_shuffle(uint length, inout RngState rng){for(uint count=length;count>1u;--count)cr_next_int(rng,count);}
+void cr_consume_shuffle(uint length,inout RngState rng){
+#if RT2_C_MODERN113
+    cr_next_u64(rng);
+#else
+    for(uint count=length;count>1u;--count)cr_next_int(rng,count);
+#endif
+}
 bool cr_replay_opening(uint64_t root_hash,out uint first,out uint second,out uint curse){
     uint slot=plan_meta.values[2u],players=plan_meta.values[3u],flags=plan_meta.values[6u];
     uint profile=rt2_neow_profile(players,(flags&1u)!=0u,(flags&2u)!=0u);
@@ -127,6 +133,9 @@ bool cr_replay_opening(uint64_t root_hash,out uint first,out uint second,out uin
     positives[n++]=cr_next_int(event_rng,2u)==0u?RT2_NEOW_APPEND1_TRUE:RT2_NEOW_APPEND1_FALSE;
     positives[n++]=cr_next_int(event_rng,2u)==0u?RT2_NEOW_APPEND2_TRUE:RT2_NEOW_APPEND2_FALSE;
     if(n<2u)return false;
+#if RT2_C_MODERN113
+    event_rng=cr_rng_initialize(cr_next_u64(event_rng));
+#endif
     for(uint count=n;count>1u;--count){uint s=cr_next_int(event_rng,count),tail=count-1u,tmp=positives[s];positives[s]=positives[tail];positives[tail]=tmp;}
     first=positives[0u];second=positives[1u];return true;
 }
@@ -134,7 +143,13 @@ bool cr_replay_bones(uint64_t root_hash,out uint first,out uint second,out RngSt
     uint count=plan_meta.values[7u]; if(count<2u||count>64u)return false;
     uint pool[64];for(uint i=0u;i<count;++i)pool[i]=bones_ids.ids[i];
     rewards_after=cr_rng_initialize(root_hash+uint64_t(plan_meta.values[2u])+cr_plan_u64(14u));
+#if RT2_C_MODERN113
+    RngState parent=cr_rng_initialize(root_hash+uint64_t(plan_meta.values[2u])+cr_plan_u64(16u));
+    RngState child=cr_rng_initialize(cr_next_u64(parent));
+    for(uint n=count;n>1u;--n){uint selected=cr_next_int(child,n),tail=n-1u,tmp=pool[selected];pool[selected]=pool[tail];pool[tail]=tmp;}
+#else
     for(uint n=count;n>1u;--n){uint selected=cr_next_int(rewards_after,n),tail=n-1u,tmp=pool[selected];pool[selected]=pool[tail];pool[tail]=tmp;}
+#endif
     first=pool[0u];second=pool[1u];return true;
 }
 
@@ -155,7 +170,16 @@ uint cr_roll_opening_potion(uint a,uint used,inout RngState rng){float roll=cr_n
 
 uint64_t cr_identity_permutation(uint length){uint64_t p=uint64_t(0u);for(uint i=0u;i<length;++i)p|=uint64_t(i)<<(i*4u);return p;}
 uint cr_perm_value(uint64_t p,uint i){return uint((p>>(i*4u))&uint64_t(15u));} void cr_perm_swap(inout uint64_t p,uint a,uint b){uint sa=a*4u,sb=b*4u;uint64_t va=(p>>sa)&uint64_t(15u),vb=(p>>sb)&uint64_t(15u),mask=~((uint64_t(15u)<<sa)|(uint64_t(15u)<<sb));p=(p&mask)|(va<<sb)|(vb<<sa);}
-uint64_t cr_shuffle_small(uint count,inout RngState rng){uint64_t p=cr_identity_permutation(count);for(uint n=count;n>1u;--n)cr_perm_swap(p,cr_next_int(rng,n),n-1u);return p;}
+uint64_t cr_shuffle_small(uint count,inout RngState rng){
+    uint64_t p=cr_identity_permutation(count);
+#if RT2_C_MODERN113
+    RngState child=cr_rng_initialize(cr_next_u64(rng));
+    for(uint n=count;n>1u;--n)cr_perm_swap(p,cr_next_int(child,n),n-1u);
+#else
+    for(uint n=count;n>1u;--n)cr_perm_swap(p,cr_next_int(rng,n),n-1u);
+#endif
+    return p;
+}
 
 void cr_apply_capability(uint packed,inout RewardRouteState state){
     state.continuation_exact=state.continuation_exact&&((packed&1u)!=0u);
@@ -168,7 +192,13 @@ bool cr_is_capsule(uint relic){return relic==3u||relic==28u;}
 
 RewardRouteState cr_initialize_route(uint64_t root_hash,bool captured,RngState captured_rewards){
     RewardRouteState state;state.rewards=captured?captured_rewards:cr_rng_initialize(root_hash+uint64_t(plan_meta.values[2u])+cr_plan_u64(14u));
-    state.niche=cr_rng_initialize(root_hash+cr_plan_u64(16u));state.potion_odds=0.4f;state.card_offset=-0.05f;
+    // The same storage holds the personal NonCombat stream under 0.113 rules.
+#if RT2_C_MODERN113
+    state.niche=cr_rng_initialize(root_hash+uint64_t(plan_meta.values[2u])+cr_plan_u64(16u));
+#else
+    state.niche=cr_rng_initialize(root_hash+cr_plan_u64(16u));
+#endif
+    state.potion_odds=0.4f;state.card_offset=-0.05f;
     state.influence_flags=0u;state.additional_card_rewards=0u;state.fixed_gold=0u;state.lasting_candy_counter=0u;
     state.continuation_exact=true;state.influence_exact=true;return state;
 }

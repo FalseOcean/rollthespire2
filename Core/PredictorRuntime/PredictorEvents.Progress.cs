@@ -132,7 +132,7 @@ internal sealed partial class PredictorRun
                 return PredictorInputResult.Accepted;
             case ("JUNGLE_MAZE_ADVENTURE", "SOLO_QUEST"):
                 var visualOrder = new List<int> { 0, 1, 2 };
-                _eventRng!.UnstableShuffle(visualOrder);
+                _eventRng!.UnstableShuffle(visualOrder, Context.VersionResolution.SemanticProfileId);
                 ApplyFixedEventHealth(choice.OptionKey);
                 if (Phase == PredictorPhase.Complete) return PredictorInputResult.Accepted;
                 GainJungleGold(_jungleSoloGold);

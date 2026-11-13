@@ -7,6 +7,8 @@ using RolltheSpire2.Core.Neow;
 using RolltheSpire2.Core.Rewards;
 using RolltheSpire2.Search.Contracts;
 
+using RolltheSpire2.Search.Semantics;
+
 namespace RolltheSpire2.Search.Selectivity;
 
 /// <summary>
@@ -1028,12 +1030,14 @@ internal static partial class NeowStructuredEffectProbabilityEstimator
         out double probability,
         out string evidence)
     {
-        var offers = ProbabilitySemanticProjection.From(plan).NumericalFilter.NeowRelics;
+        var filter = ProbabilitySemanticProjection.From(plan).NumericalFilter;
+        var offers = filter.NeowRelics;
         return ModernNeowIdentityRules.TryEstimateOfferProbability(plan.Authority, (a,b,c) =>
         {
             bool Has(ModelKey key) => key == a || key == b || key == c;
             return (!source.IsValid || Has(source)) && (offers.Any.Count == 0 || offers.Any.Any(Has)) &&
-                offers.All.All(Has) && !offers.Ban.Any(Has);
+                offers.All.All(Has) && !offers.Ban.Any(Has) &&
+                NeowOfferWhitelist.Matches(filter.NeowOfferWhitelist, a, b, c);
         }, out probability, out evidence);
     }
 

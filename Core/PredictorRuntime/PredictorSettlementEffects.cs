@@ -13,6 +13,11 @@ internal static class PredictorSettlementEffects
     {
         if (context?.Operation?.IgnoresBehavior(key) == true && key.IsValid && key.Category == "RELIC") return;
         if (crystalBestEffort && key.IsValid && key.Category == "RELIC") return;
+        // These new Fool relics can occur in a standard bag. Their hooks run
+        // in combat; receiving them has no additional local obtain effect.
+        if (context?.Operation != null && key.Category == "RELIC" && key.Entry is
+            ("BIZARRE_LAMP" or "CONDUCTORS_BATON" or "EXERCISE_MAT" or "FERTILIZER" or "OCARINA" or "TWINE" or "WHITTLING_KNIFE"))
+            return;
         if (key.Category != "RELIC" || key.Entry is not ("MASSIVE_SCROLL" or "WHETSTONE" or "WAR_PAINT" or "POTION_BELT" or "EMPTY_CAGE" or "BURNING_BLOOD" or "BOWLER_HAT" or "ECTOPLASM" or "SOZU" or
             "LASTING_CANDY" or "PRAYER_WHEEL" or "WHITE_STAR" or "BLACK_STAR" or "WHITE_BEAST_STATUE" or "MOLTEN_EGG" or "TOXIC_EGG" or "FROZEN_EGG" or
             "DINGY_RUG" or "AMETHYST_AUBERGINE" or "WONGOS_MYSTERY_TICKET" or "CIRCLET" or "GOLDEN_PEARL" or "PRISMATIC_GEM" or "SILVER_CRUCIBLE" or "SILKEN_TRESS" or
@@ -25,7 +30,8 @@ internal static class PredictorSettlementEffects
             "TRI_BOOMERANG" or "PAELS_TOOTH" or "PAELS_CLAW" or "BEAUTIFUL_BRACELET" or "ASTROLABE" or "PANDORAS_BOX" or
             "YUMMY_COOKIE" or "PRESERVED_FOG" or "GLASS_EYE" or "ORRERY" or "SIGNET_RING" or "JEWELRY_BOX" or "BYRDPIP" or
             "WING_CHARM" or "FRESNEL_LENS" or "GLITTER" or "LAVA_LAMP" or "LAVA_ROCK" or "GOLDEN_COMPASS" or "WINGED_BOOTS" or "FORGOTTEN_SOUL" or
-            "RING_OF_THE_SNAKE" or "DIVINE_RIGHT" or "BOUND_PHYLACTERY" or "CRACKED_CORE" or
+            "SONG_BOW" or "STORYTELLER" or "RING_OF_THE_SNAKE" or "DIVINE_RIGHT" or "BOUND_PHYLACTERY" or "CRACKED_CORE" or
+            "OBSIDIAN_VICE" or "THUMBSCREW" or "TORMENTOUS_COLLAR" or
             "SAND_CASTLE" or "LOOMING_FRUIT" or "FRAGRANT_MUSHROOM" or "PRECARIOUS_SHEARS" or
             "BIG_MUSHROOM" or "BIIIG_HUG" or "DISTINGUISHED_CAPE" or "SERE_TALON" or "ELECTRIC_SHRYMP" or "PAELS_WING" or "DRIFTWOOD" or "TOY_BOX" or "FUR_COAT" or
             "CLAWS" or "PAELS_LEGION" or "PAELS_EYE" or "SNECKO_EYE" or "BLOOD_SOAKED_ROSE" or "PAELS_HORN" or "TANXS_WHISTLE" or "STORYBOOK" or "FISHING_ROD" or "WAR_HAMMER" or
@@ -108,7 +114,7 @@ internal static class PredictorSettlementEffects
             NextInstanceId = existingInstanceId == null ? checked(state.NextInstanceId + 1) : state.NextInstanceId };
     }
 
-    internal static PredictorState AfterRelicAdded(PredictorState state, ModelKey key)
+    internal static PredictorState AfterRelicAdded(PredictorState state, ModelKey key, PredictorContext? context = null)
     {
         state = state with {
             PersonalBag = key.Entry == "CIRCLET" ? state.PersonalBag : state.PersonalBag.Remove(key),
@@ -119,23 +125,19 @@ internal static class PredictorSettlementEffects
         if (key.Entry is not ("WHETSTONE" or "WAR_PAINT")) return state;
         EffectCardType type = key.Entry == "WHETSTONE" ? EffectCardType.Attack : EffectCardType.Skill;
         var candidates = state.Deck.Select(state.Card).Where(c => c.Type == type && c.UpgradeLevel < c.MaxUpgradeLevel).ToList();
-        candidates.Sort((a, b) =>
-        {
-            int n = string.Compare(a.Key.Category, b.Key.Category, StringComparison.Ordinal);
-            if (n == 0) n = string.Compare(a.Key.Entry, b.Key.Entry, StringComparison.Ordinal);
-            return n == 0 ? a.UpgradeLevel.CompareTo(b.UpgradeLevel) : n;
-        });
-        var rng = state.Streams.Single(s => s.Stream == PredictorStream.Niche).Restore();
-        rng.UnstableShuffle(candidates);
+        PredictorCardStableOrder.Sort(candidates, context);
+        state = state.Shuffle(context, PredictorStream.Niche, candidates);
         foreach (var card in candidates.Take(2)) state = state.WithCard(card with { UpgradeLevel = card.UpgradeLevel + 1 });
-        return state.WithRng(PredictorStream.Niche, rng);
+        return state;
     }
 
     internal static (PredictorState State, ImmutableArray<PredictorPotion> Generated) UseEntropicBrew(
-        PredictorState state, ImmutableArray<PredictorPotionOption> pool, int slot)
+        PredictorContext context, PredictorState state, int slot)
     {
+        var pool = context.PotionPool;
         if (pool.IsDefaultOrEmpty) throw new InvalidOperationException("PredictorPotionPoolNotInitialized");
-        var rng = state.Streams.Single(s => s.Stream == PredictorStream.CombatPotionGeneration).Restore();
+        var stream = context.NonCombatStream(PredictorStream.CombatPotionGeneration);
+        var rng = state.Streams.Single(s => s.Stream == stream).Restore();
         var generated = ImmutableArray.CreateBuilder<PredictorPotion>();
         state = state with { PotionSlots = state.PotionSlots.SetItem(slot, null) };
         int next;
@@ -149,7 +151,7 @@ internal static class PredictorSettlementEffects
             // Each native call creates one potion with a fresh source pool; repeated
             // identities across the fill loop are legal, not a batch exclusion.
         }
-        state = state.WithRng(PredictorStream.CombatPotionGeneration, rng);
+        state = state.WithRng(stream, rng);
         state.Validate();
         return (state, generated.ToImmutable());
     }

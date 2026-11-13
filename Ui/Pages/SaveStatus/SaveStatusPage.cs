@@ -2,6 +2,7 @@ using Godot;
 using RolltheSpire2.Search.FamilyExecution;
 using RolltheSpire2.Search.Runtime;
 using RolltheSpire2.Bootstrap;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Authority.Runtime;
 using RolltheSpire2.Presentation.ContentNames;
 using RolltheSpire2.Presentation.Localization;
@@ -281,6 +282,8 @@ internal sealed partial class SaveStatusPage : MarginContainer, IAppPage
 
     private string ResolveModelStatus(IUiTextProvider uiText)
     {
+        if (_runtime.Compatibility.SupportKind == RuntimeVersionSupportKind.ProvisionalVersionedRules)
+            return uiText.Get(Ui1TextKey.SaveStatusModelProvisionalVersioned);
         if (_runtime.IsCompatibilityFallback)
             return uiText.Get(Ui1TextKey.SaveStatusModelBestEffort);
         if (_runtime.RequiresCompatibilityWarning || !_runtime.RuntimeAccepted)

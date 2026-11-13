@@ -12,6 +12,7 @@ using MegaCrit.Sts2.Core.Models.CardPools;
 using MegaCrit.Sts2.Core.Models.Relics;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Rewards;
+using MegaCrit.Sts2.Core.Random;
 using MegaCrit.Sts2.Core.Runs;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Identity;
@@ -24,7 +25,7 @@ namespace RolltheSpire2.Infrastructure.Snapshots;
 internal static class PredictorOperationPotionTargetCapture
 {
     internal static PredictorContext Capture(RunState run, ulong targetPlayerId, string version)
-        => CaptureContext(run, Target(run, targetPlayerId), version, null);
+        => CaptureContext(run, Target(run, targetPlayerId), version, null, melody: true);
 
     internal static PredictorOperationPotionObservation CaptureLive(RunState run, ulong targetPlayerId, string version,
         PredictorOperationPotionSource source, PredictorOperationPotionObservation? previous = null)
@@ -33,15 +34,17 @@ internal static class PredictorOperationPotionTargetCapture
         var target = Target(run, targetPlayerId);
         RequireSource(run, target, source);
         bool cards = source.Potion.Key.Entry != "ENTROPIC_BREW";
-        string before = Stamp(run, target, cards);
-        var context = CaptureContext(run, target, version, previous?.Context, cards, verify: false);
-        var cursor = run.Rng.CombatPotionGeneration.ToSerializable();
+        bool melody = source.Potion.Key.Entry == "BOTTLED_SONG" || target.PotionSlots.Any(p => p?.Id.Entry == "BOTTLED_SONG");
+        string before = Stamp(run, target, cards, melody);
+        var context = CaptureContext(run, target, version, previous?.Context, cards, verify: false, melody: melody);
+        var stream = context.NonCombatStream(PredictorStream.CombatPotionGeneration);
+        var cursor = PotionGeneration(run, target, stream).ToSerializable();
         var inventory = target.PotionSlots.Select(p => p == null ? null : new PredictorPotion(Id(p), Key(p))).ToImmutableArray();
         bool blocked = AcquisitionBlocked(target);
-        if (Stamp(run, target, cards) != before) throw new InvalidOperationException("OperationPotionTargetSnapshotChanged");
+        if (Stamp(run, target, cards, melody) != before) throw new InvalidOperationException("OperationPotionTargetSnapshotChanged");
         RequireSource(run, target, source);
         return new(context, source, inventory,
-            new(PredictorStream.CombatPotionGeneration, cursor.state0, cursor.state1, cursor.state2, cursor.state3, cursor.counter),
+            new(stream, cursor.state0, cursor.state1, cursor.state2, cursor.state3, cursor.counter),
             CombatManager.Instance.IsInProgress, blocked, before);
     }
 
@@ -50,7 +53,8 @@ internal static class PredictorOperationPotionTargetCapture
     {
         var target = Target(run, targetPlayerId);
         RequireSource(run, target, source);
-        return Stamp(run, target, source.Potion.Key.Entry != "ENTROPIC_BREW");
+        return Stamp(run, target, source.Potion.Key.Entry != "ENTROPIC_BREW",
+            source.Potion.Key.Entry == "BOTTLED_SONG" || target.PotionSlots.Any(p => p?.Id.Entry == "BOTTLED_SONG"));
     }
     internal static string ObservationStamp(RunState run) => Stamp(run,
         LocalContext.GetMe(run) ?? throw new InvalidOperationException("OperationLocalPlayerMissing"));
@@ -95,8 +99,17 @@ internal static class PredictorOperationPotionTargetCapture
     private static CardModel[] ColorlessCards(RunState run, Player target) => ModelDb.CardPool<ColorlessCardPool>()
         .GetUnlockedCards(target.UnlockState, ((IRunState)run).CardMultiplayerConstraint).ToArray();
 
+    internal static bool IsMelodyTag(CardTag tag) => tag.ToString() is "Wah" or "Cho" or "Ki";
+
+    internal static CardModel[] MelodyCards(Player target, Func<CardPoolModel, IEnumerable<CardModel>> pool) =>
+        target.UnlockState.CharacterCardPools.SelectMany(pool)
+            .Where(card => card.Tags.Any(IsMelodyTag)).ToArray();
+
+    internal static ImmutableArray<string> MelodyTags(CardModel card) =>
+        card.Tags.Where(IsMelodyTag).Select(tag => tag.ToString()).Order(StringComparer.Ordinal).ToImmutableArray();
+
     private static PredictorContext CaptureContext(RunState run, Player target, string version, PredictorContext? previous,
-        bool cards = true, bool verify = true)
+        bool cards = true, bool verify = true, bool melody = false)
     {
         if (string.IsNullOrWhiteSpace(version)) throw new ArgumentException("OperationPotionVersionMissing", nameof(version));
         string? before = verify ? Stamp(run, target, cards) : null;
@@ -104,7 +117,9 @@ internal static class PredictorOperationPotionTargetCapture
         var own = cards ? CharacterCards(run, target) : [];
         var colorless = cards ? ColorlessCards(run, target) : [];
         var levels = new CatalogLevels(previous);
-        var models = own.Concat(colorless).DistinctBy(c => c.Id).ToArray();
+        var melodies = cards && melody ? MelodyCards(target, pool =>
+            pool.GetUnlockedCards(target.UnlockState, ((IRunState)run).CardMultiplayerConstraint)) : [];
+        var models = own.Concat(colorless).Concat(melodies).DistinctBy(c => c.Id).ToArray();
         var definitions = models.Select(c =>
         {
             bool opaque = c.GetType().Assembly != typeof(CardModel).Assembly;
@@ -128,7 +143,7 @@ internal static class PredictorOperationPotionTargetCapture
         var catalog = new PredictorCatalog([], []) { CardDefinitions = definitions };
         ImmutableArray<PredictorOperationPotionCard> Copy(IEnumerable<CardModel> cards) => cards.Select(c =>
             new PredictorOperationPotionCard(Card(c, catalog) with { Id = 0 }, c.Rarity.ToString(), c.CanBeGeneratedInCombat,
-                c.MultiplayerConstraint.ToString())).ToImmutableArray();
+                c.MultiplayerConstraint.ToString()) { MelodyTags = MelodyTags(c) }).ToImmutableArray();
         var cursor = run.Rng.CombatCardGeneration.ToSerializable();
         var opaqueModels = models.Where(c => c.GetType().Assembly != typeof(CardModel).Assembly).Select(Key)
             .Concat(target.Character.GetType().Assembly != typeof(CardModel).Assembly ? [Key(target.Character)] : [])
@@ -143,7 +158,7 @@ internal static class PredictorOperationPotionTargetCapture
             Operation = new(target.NetId, run.Players.ToList().IndexOf(target), run.Players.Count, opaqueModels)
             {
                 CombatCardRng = cards ? new(cursor.state0, cursor.state1, cursor.state2, cursor.state3, cursor.counter) : null,
-                CombatCardPools = cards ? new(Copy(own), Copy(colorless)) : null
+                CombatCardPools = cards ? new(Copy(own), Copy(colorless)) { MelodyCards = Copy(melodies) } : null
             }
         };
         if (verify && Stamp(run, target, cards) != before) throw new InvalidOperationException("OperationPotionTargetSnapshotChanged");
@@ -151,7 +166,7 @@ internal static class PredictorOperationPotionTargetCapture
         return context;
     }
 
-    private static string Stamp(RunState run, Player target, bool cards = true)
+    private static string Stamp(RunState run, Player target, bool cards = true, bool melody = false)
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
         // Observe current source order/metadata on every poll. Only immutable
@@ -173,14 +188,20 @@ internal static class PredictorOperationPotionTargetCapture
             Unlocks = target.UnlockState.ToSerializable(),
             CardRng = cards ? run.Rng.CombatCardGeneration.ToSerializable() : null,
             PotionRng = !cards ? run.Rng.CombatPotionGeneration.ToSerializable() : null,
+            NonCombatPotionRng = !cards ? PredictorOperationCapture.TryNonCombatGeneration(target)?.ToSerializable() : null,
             CharacterCards = cards ? Cards(CharacterCards(run, target)) : null,
             ColorlessCards = cards ? Cards(ColorlessCards(run, target)) : null,
+            MelodyCards = cards && melody ? Cards(MelodyCards(target, pool =>
+                pool.GetUnlockedCards(target.UnlockState, ((IRunState)run).CardMultiplayerConstraint))) : null,
             Potions = !cards ? PotionFactory.GetPotionOptions(target).Select(p => new
                 { Identity = Id(p), Key = Key(p), p.Rarity, p.CanBeGeneratedInCombat }).ToArray() : null,
             Inventory = target.PotionSlots.Select(p => p == null ? null : new PredictorPotion(Id(p), Key(p))).ToArray(),
             InCombat = CombatManager.Instance.IsInProgress, HasSozu = AcquisitionBlocked(target)
         });
     }
+
+    private static Rng PotionGeneration(RunState run, Player target, PredictorStream stream) =>
+        stream == PredictorStream.NonCombatGeneration ? PredictorOperationCapture.NonCombatGeneration(target) : run.Rng.CombatPotionGeneration;
 
     private static string Hash(object value) => Convert.ToHexString(SHA256.HashData(
         Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value, new JsonSerializerOptions { IncludeFields = true }))));

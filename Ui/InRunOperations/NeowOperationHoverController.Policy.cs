@@ -85,6 +85,14 @@ internal sealed partial class NeowOperationHoverController
                 showPrimary = origin; may = origin; transforms = origin;
                 break;
             }
+            case Kind.ModOperation:
+            {
+                var capability = request.Mod!;
+                primary = capability.Setting.Id;
+                origin = showPrimary = may = capability.WantsPrediction(preferences.Get(primary), rf);
+                Show(primary, origin);
+                break;
+            }
             case Kind.Shop:
             {
                 bool relicSlot = _owner is NMerchantRelic;

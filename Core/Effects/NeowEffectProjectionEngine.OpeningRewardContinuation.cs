@@ -61,6 +61,7 @@ internal sealed partial class NeowEffectProjectionEngine
             new[] { projection.EvidenceCode, Evidence(rootRelicKey, "opening-reward-continuation-direct") },
             nestedRewardContextRelics,
             sharedStateExact: impact.NicheRng.IsExact && impact.UnknownHook.IsExact && impact.NestedObtain.IsExact,
+            nonCombatStateExact: impact.NonCombatGenerationRng?.IsExact != false && impact.UnknownHook.IsExact && impact.NestedObtain.IsExact,
             executedNestedObtainRelics: ExecutedNestedObtainRelics(rootRelicKey, projection.EffectGroups));
         return projection with
         {
@@ -85,6 +86,7 @@ internal sealed partial class NeowEffectProjectionEngine
         IReadOnlyList<EvidenceCode> additionalEvidence,
         IReadOnlyList<ModelKey>? nestedRewardContextRelics = null,
         bool sharedStateExact = true,
+        bool nonCombatStateExact = true,
         IReadOnlyList<ModelKey>? executedNestedObtainRelics = null)
     {
         ModelKey[] nestedRelics = (nestedRewardContextRelics ?? Array.Empty<ModelKey>())
@@ -102,7 +104,7 @@ internal sealed partial class NeowEffectProjectionEngine
                 _profileId,
                 obtainedRelics,
                 executedNestedObtainRelics ?? nestedRelics,
-                key => IsKnownModdedRelic(state, key));
+                key => IsKnownModdedRelic(state, key), _analysisAuthority.VersionResolution.SemanticProfileId);
         OpeningRewardSupportFlags capabilities = capabilityEvaluation.Capabilities;
         if (state.Rng.Rewards.CallCount > 0)
         {
@@ -168,6 +170,11 @@ internal sealed partial class NeowEffectProjectionEngine
                 potionRewardState.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
                 rewardContextFingerprint);
 
+        var nonCombatState = nonCombatStateExact && state.Rng.NonCombatGeneration is { } nonCombat
+            ? RewardsRngStateSnapshot.Capture(nonCombat) : null;
+        if (nonCombatState is not null)
+            continuationFingerprint = FingerprintOpeningRewardParts(continuationFingerprint, nonCombatState.Fingerprint);
+
         EvidenceCode[] evidence = rewardsContinuity.EvidenceCodes
             .Concat(unknownHookContinuity.EvidenceCodes)
             .Concat(nestedObtainContinuity.EvidenceCodes)
@@ -215,6 +222,7 @@ internal sealed partial class NeowEffectProjectionEngine
         {
             NicheState = sharedStateExact ? RewardsRngStateSnapshot.Capture(state.Rng.Niche) : null,
             CombatPotionGenerationState = sharedStateExact ? RewardsRngStateSnapshot.Capture(state.Rng.CombatPotionGeneration) : null,
+            NonCombatGenerationState = nonCombatState,
             SilkenTressConsumedDuringOpening = state.SilkenTressConsumed,
             ActiveRewardImpactSources = capabilityEvaluation.SupportedImpactSources,
             RewardImpactFingerprint = capabilityEvaluation.RewardImpactFingerprint

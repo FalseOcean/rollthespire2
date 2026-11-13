@@ -76,7 +76,7 @@ internal static class PredictorCombatPotions
                 throw new ArgumentException("PredictorPotionUseKindInvalid");
             if (change.Action == PredictorCombatPotionAction.Use && potion.Key.Entry == "ENTROPIC_BREW")
             {
-                var result = PredictorSettlementEffects.UseEntropicBrew(state, context.PotionPool, slot);
+                var result = PredictorSettlementEffects.UseEntropicBrew(context, state, slot);
                 state = result.State; generated.AddRange(result.Generated);
             }
             else state = state with { PotionSlots = state.PotionSlots.SetItem(slot, null) };

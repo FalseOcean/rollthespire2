@@ -79,11 +79,15 @@ public static class TreasureRelicPredictor
                 lane.FullEntries.All(entry => entry.Precision == PredictionPrecision.Exact) &&
                 lane.Completeness == SnapshotCompleteness.Complete &&
                 SourceAuthorityRules.SupportsExactIdentity(lane.Authority);
-            // Native Remove removes every matching identity. Native IsAllowed
-            // removes Massive Scroll in single-player; all other vanilla shared
-            // bag restrictions allow this explicit non-tutorial, pre-floor-41 scope.
+            bool CandyNeedsCheck(ModelKey key) => key == StandardOpeningRelicEligibility.LastingCandy &&
+                !acquiredOpeningRelics.Contains(key);
+            if (!initialSequences.EarlyLastingCandyEligible.HasValue && lane.FullEntries.Any(e => CandyNeedsCheck(e.RelicKey)))
+                return Unavailable(profile.ProfileId, "TreasureRelicLastingCandyEligibilityUnavailable");
+            // Native Remove removes every matching identity. IsAllowed removes
+            // Massive Scroll in solo play and Lasting Candy for first-run Ironclad.
             bags[index] = lane.FullEntries.Select(entry => entry.RelicKey)
-                .Where(key => !acquiredOpeningRelics.Contains(key) && key.Entry != "MASSIVE_SCROLL").ToList();
+                .Where(key => !acquiredOpeningRelics.Contains(key) && key.Entry != "MASSIVE_SCROLL" &&
+                    (initialSequences.EarlyLastingCandyEligible != false || !CandyNeedsCheck(key))).ToList();
         }
 
         PredictionPrecision precision = exact ? PredictionPrecision.Exact : PredictionPrecision.Partial;

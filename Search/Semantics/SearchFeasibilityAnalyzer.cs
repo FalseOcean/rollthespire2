@@ -29,7 +29,10 @@ internal static class SearchFeasibilityAnalyzer
         }
 
         var query = compiled.NormalizedQuery;
-        if (compiled.Context.Authority.PlayersCount == 1 && !query.LegacyNeow.NeowRelics.IsEmpty)
+        if (UnknownRoomPrefixRequirements.MonsterCount(query) > 0 && ExplicitOpeningRelicFacts.HasDeclaredJuzuForUnknownRooms(query))
+            return SearchFeasibilityResult.Impossible(new(SearchImpossibilityReasonCode.IncludeExcludeConflict,
+                Diagnostic: "FirstActUnknownMonsterPrefix.DeclaredJuzuBlocksMonster"));
+        if (compiled.Context.Authority.PlayersCount == 1 && (!query.LegacyNeow.NeowRelics.IsEmpty || query.NeowOfferWhitelist is not null))
         {
             bool accepted = false;
             var filter = query.LegacyNeow.NeowRelics;
@@ -38,7 +41,8 @@ internal static class SearchFeasibilityAnalyzer
             {
                 bool Has(ModelKey key) => key == a || key == b || key == c;
                 accepted |= (!selected.HasValue || Has(selected.Value)) &&
-                    (filter.Any.Count == 0 || filter.Any.Any(Has)) && filter.All.All(Has) && !filter.Ban.Any(Has);
+                    (filter.Any.Count == 0 || filter.Any.Any(Has)) && filter.All.All(Has) && !filter.Ban.Any(Has) &&
+                    NeowOfferWhitelist.Matches(query.NeowOfferWhitelist, a, b, c);
             });
             if (exact && !accepted) return SearchFeasibilityResult.Impossible(new(
                 SearchImpossibilityReasonCode.IncludeExcludeConflict, Diagnostic: "NeowOfferedOptionsConflictWithSelectedOpening"));

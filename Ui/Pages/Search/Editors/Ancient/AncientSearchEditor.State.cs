@@ -13,8 +13,6 @@ internal sealed partial class AncientSearchEditor
 {
     internal bool GuideOpen { get => _guideExpanded; set => _guideExpanded = value; }
 
-    internal bool AdvancedOpen { get => _draft.AdvancedExpanded; set => _draft.AdvancedExpanded = value; }
-
     internal PartyAncientEditorStateSnapshot ExportSharedPartyEditorState() => new(_partyAdvanced,
         _partyIdentities[0].OrderBy(pair => pair.Key)
             .Select(pair => new PartyAncientIdentitySnapshot(pair.Key, pair.Value.ToArray())).ToArray(),
@@ -36,16 +34,31 @@ internal sealed partial class AncientSearchEditor
         draft.Modes.Select(mode => new AncientEditorModeSnapshot(
             mode.Acts.SelectMany(pair => pair.Value.Select(row => new AncientEditorRowSnapshot(
                 pair.Key, row.Ancient, row.Options.ToArray(), row.SeaGlassTarget))).ToArray(),
-            mode.NeowEnabled, mode.NeowOptions.ToArray(), mode.SelectedAct)).ToArray());
+            mode.NeowEnabled, mode.NeowOptions.ToArray(), mode.SelectedAct)).ToArray())
+        { NeowOffers = draft.NeowStateExplicit ? ExportNeowOfferState(draft) : null };
+
+    private static bool HasNeowResearchDraft(SeatDraft draft) =>
+        draft.NeowBasic.Count > 0 || draft.NeowEmptyWhitelist || draft.NeowRelations.Any(keys => keys.Count > 0);
+
+    private static bool HasActiveNeowResearch(SeatDraft draft) => draft.ActiveNeowOffers.Count > 0 ||
+        draft.NeowAdvanced && draft.NeowRelation == 2 && draft.NeowEmptyWhitelist;
+
+    internal bool HasResearchDraft(bool party) => (party ? _partyDrafts : _drafts).Values.Any(HasNeowResearchDraft);
+
+    internal int NeowResearchConditionCount(bool party) => (party ? _partyDrafts : _drafts).Values.Count(HasActiveNeowResearch);
 
     internal bool HasConditions(bool party) => (party ? _partyDrafts : _drafts).Values.Any(d =>
-        d.Modes.Any(m => m.NeowEnabled || m.NeowOptions.Count > 0 || m.Acts.Values.Any(rows => rows.Count > 0))) ||
+        HasNeowResearchDraft(d) || d.Modes.Any(m => m.Acts.Values.Any(rows => rows.Count > 0))) ||
         party && _partyIdentities.Any(mode => mode.Values.Any(keys => keys.Count > 0));
-    internal Action ClearConditions(bool party)
+
+    internal Action ClearResearchConditions(bool party) => WorkbenchConditionReset.Swap(party ? _partyDrafts : _drafts,
+        d => CopyForConditionReset(d, keepAncients: true, keepResearch: false),
+        replaceActive: (previous, current) => { if (ReferenceEquals(_draft, previous)) _draft = current; });
+
+    internal Action ClearConditions(bool party, bool keepResearch = false)
     {
         var restore = WorkbenchConditionReset.Swap(party ? _partyDrafts : _drafts,
-            d => new SeatDraft { Eligibility = d.Eligibility, Mode = d.Mode, LastAdvancedMode = d.LastAdvancedMode,
-                EligibilityExpanded = d.EligibilityExpanded, AdvancedExpanded = d.AdvancedExpanded },
+            d => CopyForConditionReset(d, keepAncients: false, keepResearch),
             replaceActive: (previous, current) => { if (ReferenceEquals(_draft, previous)) _draft = current; });
         if (!party) return restore;
         var identities = _partyIdentities.Select(mode => mode.ToDictionary(p => p.Key, p => p.Value.ToArray())).ToArray();
@@ -62,10 +75,49 @@ internal sealed partial class AncientSearchEditor
         };
     }
 
+    private static SeatDraft CopyForConditionReset(SeatDraft draft, bool keepAncients, bool keepResearch)
+    {
+        var copy = new SeatDraft
+        {
+            Context = draft.Context, Problem = draft.Problem, Catalog = draft.Catalog, NeowCatalog = draft.NeowCatalog,
+            Eligibility = draft.Eligibility, EligibilityExpanded = draft.EligibilityExpanded,
+            Mode = draft.Mode, LastAdvancedMode = draft.LastAdvancedMode,
+            NeowAdvanced = draft.NeowAdvanced, NeowRelation = draft.NeowRelation
+        };
+        if (keepAncients)
+            for (int i = 0; i < draft.Modes.Length; i++)
+            {
+                var old = draft.Modes[i];
+                var current = copy.Modes[i];
+                current.SelectedAct = old.SelectedAct;
+                foreach (var (act, rows) in old.Acts)
+                    foreach (var row in rows)
+                    {
+                        var clone = new AncientDraft(row.Ancient) { SeaGlassTarget = row.SeaGlassTarget };
+                        clone.Options.AddRange(row.Options);
+                        current.Acts[act].Add(clone);
+                    }
+            }
+        if (keepResearch)
+        {
+            copy.NeowStateExplicit = draft.NeowStateExplicit;
+            copy.NeowEmptyWhitelist = draft.NeowEmptyWhitelist;
+            copy.NeowBasic.AddRange(draft.NeowBasic);
+            for (int i = 0; i < draft.Modes.Length; i++)
+            {
+                copy.Modes[i].NeowEnabled = draft.Modes[i].NeowEnabled;
+                copy.Modes[i].NeowOptions.AddRange(draft.Modes[i].NeowOptions);
+            }
+            for (int i = 0; i < draft.NeowRelations.Length; i++)
+                copy.NeowRelations[i].AddRange(draft.NeowRelations[i]);
+        }
+        return copy;
+    }
+
     internal int AuthoredConditionCount()
     {
         ModeDraft mode = _draft.Current;
-        int count = _draft.Mode != 0 && mode.NeowEnabled ? 1 + (mode.NeowOptions.Count > 0 ? 1 : 0) : 0;
+        int count = 0;
         if (_multiplayer)
         {
             foreach (int act in new[] { 2, 3 })

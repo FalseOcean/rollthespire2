@@ -7,7 +7,7 @@ internal static partial class AncientOptionFamily
     private static FilterBodyDescription PrepareCpu(PreparedFilter preparation, AncientOptionFamilyPlan plan,
         AncientOptionPricingInput pricing, IRuntimeProfile profile, string identity, int workers)
     {
-        const string revision = "A.AncientOption.Cpu.EventLocal.20261016.v3";
+        string revision = "A.AncientOption.Cpu.EventLocal.20261016.v3" + plan.RuleRevision;
         bool numericalRoots = profile.ProfileId == RuntimeProfileId.Beta111;
         var costs = FamilyAuxiliaryEvidence.Read<CpuCostSnapshot?>(Id, "CpuCostSnapshot", CpuCostCalibration.Capture, null);
         FamilyPhysicalQuote? Raw(FamilyPhysicalQuoteRequest geometry) => AncientOptionPhysicalPricing.QuoteCpu(pricing, plan, geometry, workers);

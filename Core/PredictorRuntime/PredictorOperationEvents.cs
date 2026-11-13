@@ -35,6 +35,7 @@ internal sealed record PredictorOperationEventScene(ModelKey Event, PredictorStr
     public bool AwaitingCards { get; init; }
     public bool MimicRestRewards { get; init; }
     public bool TrialAbandonPending { get; init; }
+    public int FixedCurseCount { get; init; }
     internal override void Restore(PredictorRun run) => run.RestoreOperationEvent(this);
 }
 
@@ -46,7 +47,7 @@ internal sealed partial class PredictorRun
         RequireEmptyOperationScene();
         if (Context.Operation == null || scene.Event.Category != "EVENT" || !scene.Event.IsValid ||
             scene.Options.IsDefault || scene.Health.CurrentHp < 1 || scene.Health.MaxHp < scene.Health.CurrentHp ||
-            scene.TabletCount is < 0 or > 4 || scene.BridgeHoldOns < 0 || scene.ConveyorGrabs < 0 ||
+            scene.FixedCurseCount < 0 || scene.TabletCount is < 0 or > 4 || scene.BridgeHoldOns < 0 || scene.ConveyorGrabs < 0 ||
             scene.CardCandidates.IsDefault || scene.OfferedCards.IsDefault || scene.SelectedCardIds.IsDefault ||
             scene.CardCandidates.Distinct().Count() != scene.CardCandidates.Length ||
             scene.SelectedCardIds.Distinct().Count() != scene.SelectedCardIds.Length ||
@@ -64,6 +65,7 @@ internal sealed partial class PredictorRun
         _eventHealth = scene.Health;
         _eventBranch = scene.Branch;
         _eventGoldAmount = scene.GoldAmount;
+        _operationEventFixedCurseCount = scene.FixedCurseCount;
         _bridgeCard = scene.BridgeCard;
         _bridgeHoldOns = scene.BridgeHoldOns;
         _bridgeSkipped = scene.BridgeSkipped;

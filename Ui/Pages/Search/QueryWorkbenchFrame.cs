@@ -107,6 +107,10 @@ internal sealed partial class QueryWorkbenchFrame : Control
         AddChild(_eventEditor);
         _actInformationEditor = new ActInformationSearchEditor(runtime, persistence) { Visible = false };
         AddChild(_actInformationEditor);
+        // The two controls share authored state; cached hidden controls must be
+        // rebuilt when their peer changes that state.
+        _eventEditor.UnknownRoomPrefixChanged += () => _renderedEditorDomains.Remove("map");
+        _actInformationEditor.UnknownRoomPrefixChanged += () => _renderedEditorDomains.Remove("events");
         _transformationEditor = new TransformationSearchEditor(PickTransformationCards) { Visible = false };
         AddChild(_transformationEditor);
         _neowEditor.TransformTakenOver = (slot, source) => !_multiplayer && _transformationEditor.IsTakenOver(slot, source);

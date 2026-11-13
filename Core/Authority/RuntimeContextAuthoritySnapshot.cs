@@ -56,6 +56,7 @@ public sealed class RuntimeContextAuthoritySnapshot
         UnlockedCommonCards = unlockedCommonCards;
         UnlockedUncommonCards = unlockedUncommonCards;
         GameVersion = gameVersion ?? string.Empty;
+        VersionResolution = RuntimeVersionCompatibility.Resolve(GameVersion);
         ProfileId = profileId;
         IsVanilla = isVanilla;
         SourceModId = string.IsNullOrWhiteSpace(sourceModId) ? null : sourceModId;
@@ -149,6 +150,7 @@ public sealed class RuntimeContextAuthoritySnapshot
         UnlockedCommonCards = source.UnlockedCommonCards;
         UnlockedUncommonCards = source.UnlockedUncommonCards;
         GameVersion = source.GameVersion;
+        VersionResolution = source.VersionResolution;
         ProfileId = source.ProfileId;
         IsVanilla = source.IsVanilla;
         SourceModId = source.SourceModId;
@@ -205,8 +207,7 @@ public sealed class RuntimeContextAuthoritySnapshot
         VersionResolution.AllowsProductionSearch &&
         !VersionResolution.Blocks(CompatibilityDomainMask.Neow);
 
-    public RuntimeVersionResolution VersionResolution =>
-        RuntimeVersionCompatibility.Resolve(GameVersion);
+    public RuntimeVersionResolution VersionResolution { get; }
 
     public bool IsCompatibilityFallback => VersionResolution.IsFallback;
 

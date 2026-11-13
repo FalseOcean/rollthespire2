@@ -1,3 +1,4 @@
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Relics;
 using RolltheSpire2.Core.Rewards;
@@ -43,6 +44,12 @@ internal static class CapsuleBagProbabilityEstimator
         {
             issue = "RuntimeRelicLaneMissing:" + laneIssue;
             detail = "Capsule bag probability could not reconstruct the runtime Common/Uncommon/Rare lanes.";
+            return false;
+        }
+        if (LastingCandyAffectsCapsule(plan, lanes))
+        {
+            issue = "LastingCandyEligibilityChangesCapsulePull";
+            detail = "The Capsule draw can skip Lasting Candy in a lane whose raw order remains observable.";
             return false;
         }
 
@@ -112,7 +119,7 @@ internal static class CapsuleBagProbabilityEstimator
                 // Held reward modifiers do not affect a pure N/R extraction
                 // probability. An explicitly applied obtain that changes pools,
                 // nested extraction or reward continuation still needs authority.
-                if (!VanillaRelicRewardEffects.TryGet(plan.ProfileId, key, out var effect) ||
+                if (!VanillaRelicRewardEffects.TryGet(plan.ProfileId, key, out var effect, plan.Authority.VersionResolution.SemanticProfileId) ||
                     (effect.OnObtainCapabilities & VanillaRelicRewardEffects.NestedRewardBlockingCapabilities) != 0)
                     unmodeled.Add(key);
             }
@@ -179,6 +186,11 @@ internal static class CapsuleBagProbabilityEstimator
         detail = $"OpeningCapsuleBag;draws={totalDraws};acceptedScenarios={acceptedScenarioCount};conditionalMass={probability:G17};NoLatentRewardProfiles";
         return true;
     }
+
+    internal static bool LastingCandyAffectsCapsule(SearchSelectivityInput plan, ModelKey[][] lanes) =>
+        RuntimeProfilePolicies.UsesChildStreamShuffle(plan.Authority.VersionResolution.SemanticProfileId) &&
+        lanes.Any(lane => lane.Contains(StandardOpeningRelicEligibility.LastingCandy)) &&
+        StandardOpeningRelicEligibility.AllowsLastingCandy(plan.Authority) != true;
 
     private static IEnumerable<ModelKey?[]> EnumerateCompressedAssignments(
         IReadOnlyList<CapsuleDrawPosition?> positions,

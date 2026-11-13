@@ -19,6 +19,9 @@ public sealed record Beta111MerchantColorlessAuthority(
     int PlayersCount,
     string AuthorityFingerprint)
 {
+    internal bool UsesModern113 { get; init; }
+    internal Beta111NormalMerchantShopsContinuation.Calls Calls => Beta111NormalMerchantShopsContinuation.For(UsesModern113);
+    internal string RuleRevision => UsesModern113 ? ".Modern113" : "";
     public bool HasExactV1Inputs =>
         ProfileId == RuntimeProfileId.Beta111 &&
         PlayersCount >= 1 &&
@@ -34,6 +37,7 @@ public sealed record Beta111MerchantColorlessAuthority(
     {
         ArgumentNullException.ThrowIfNull(authority);
         NeowEffectAuthoritySnapshot? effects = authority.EffectAuthority;
+        bool modern = authority.VersionResolution.SemanticProfileId == RngSemanticProfileId.Modern113;
         bool modeled = authority.UsesBestEffortModel && effects?.HasCapturedIdentityFoundation == true &&
             effects.CharacterRewardPool is not null && (effects.MerchantColorlessOrderedPool ?? effects.ColorlessRewardPool) is not null;
         IReadOnlyList<NeowEffectCardSnapshot> colorless = effects?.MerchantColorlessOrderedPool ??
@@ -54,11 +58,12 @@ public sealed record Beta111MerchantColorlessAuthority(
             effects?.MerchantColorlessOrderedPoolExact == true || modeled,
             effects?.MerchantColorlessPoolIdentityHooksExact == true || modeled,
             effects?.MerchantColorlessRarityIdentityHooksExact == true || modeled,
-            effects?.MerchantInitialInventoryShapeExact == true || modeled,
+            effects?.MerchantInitialInventoryShapeExact == true || modeled && !modern,
             authority.ProfileId,
             authority.PlayerSlotIndex,
             authority.PlayersCount,
-            effects?.SnapshotFingerprint ?? authority.CatalogFingerprint);
+            effects?.SnapshotFingerprint ?? authority.CatalogFingerprint)
+        { UsesModern113 = modern };
     }
 }
 
@@ -111,12 +116,14 @@ public static class Beta111NormalMerchantColorlessSequenceProjector
                     shops,
                     ordinal,
                     authority.UncommonPool,
-                    authority.RarePool));
+                    authority.RarePool,
+                    authority.Calls));
             }
             return new Beta111ShopColorlessProjection(
                 merchants,
                 PredictionPrecision.Exact,
-                "beta111.normal-merchant-colorless-v1.source-audited");
+                authority.UsesModern113 ? "beta113.normal-merchant-colorless.source-audited" :
+                    "beta111.normal-merchant-colorless-v1.source-audited");
         }
     }
 }

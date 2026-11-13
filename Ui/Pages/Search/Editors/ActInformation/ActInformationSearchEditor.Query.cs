@@ -12,6 +12,7 @@ namespace RolltheSpire2.Ui.Pages.Search.Editors;
 internal sealed partial class ActInformationSearchEditor
 {
     internal static bool CanImportMapConditions(SearchQuery q) =>
+        (q.ElitePrefixResearch is null || q.ElitePrefixResearch.IsValid) &&
         q.StandardMaps is not null && q.StandardMapRoutes is not null &&
         q.StandardMaps.All(condition => condition is not null && condition.IsValid) &&
         q.StandardMaps.Where(condition => condition.RouteObjective).GroupBy(condition => condition.Scope).All(group => group.Count() == 1) &&
@@ -56,7 +57,8 @@ internal sealed partial class ActInformationSearchEditor
         var drawing = Enumerable.Range(1, 3).Where(act => DrawingActive(_draft, act) &&
                 (_draft.Drawings.GetValueOrDefault(act)?.Count ?? 0) > 0)
             .Select(act => new StandardMapRouteCondition(act, DrawingGroups(_draft.Drawings[act]))).ToArray();
-        return q with { VariantBossBranches = branches.ToArray(), StandardMaps = maps, StandardMapRoutes = drawing,
+        return q with { ElitePrefixResearch = _draft.EliteResearchEnabled ? _draft.EliteResearchCounts : null,
+            EncounterQueues = _draft.EncounterQueues.Where(c => c.AllowedKeys.Count > 0).ToArray(), VariantBossBranches = branches.ToArray(), StandardMaps = maps, StandardMapRoutes = drawing,
             LegacyWorld = q.LegacyWorld with { BossOrdinalFilters = bossOnly.ToArray() } };
     }
 
@@ -89,6 +91,9 @@ internal sealed partial class ActInformationSearchEditor
     }
     internal void ImportQuery(SearchQuery q, MapEditorStateSnapshot? mapState = null)
     {
+        _draft.EliteResearchEnabled = q.ElitePrefixResearch is not null;
+        _draft.EliteResearchCounts = q.ElitePrefixResearch ??
+            (mapState?.EliteResearchDraft is { IsValid: true } savedResearch ? savedResearch : ElitePrefixResearchCondition.FloorSeven);
         _draft.Routes.Clear(); _draft.Properties.Clear();
         _draft.Drawings.Clear(); _draft.DailyMetrics.Clear(); Array.Clear(_draft.DrawingModes);
         _draft.Scope = mapState?.SelectedScope is >= 0 and <= 3 ? mapState.SelectedScope : 0;
@@ -145,6 +150,7 @@ internal sealed partial class ActInformationSearchEditor
                 Enum.TryParse(saved.Daily.Metric.ToString(), out MapMetricKind metric) && IsDailyMetric(metric))
                 _draft.Routes[route.Act] = new(metric, saved.Daily.Minimum.Value);
         }
+        _draft.EncounterQueues.Clear(); _draft.EncounterQueues.AddRange(q.EncounterQueues);
         foreach (var set in _draft.SelectedVariants.Concat(_draft.SelectedBosses).Concat(_draft.SelectedSecondBosses)) set.Clear();
         Array.Clear(_draft.IncludesSecondBoss);
         foreach (var b in q.VariantBossBranches)
@@ -172,7 +178,7 @@ internal sealed partial class ActInformationSearchEditor
         var metric = daily?.Metric ?? _draft.DailyMetrics.GetValueOrDefault(act, MapMetricKind.ReachableMaxElite);
         return new MapActEditorStateSnapshot(act, _draft.DrawingModes[act],
             new(Enum.Parse<StandardMapMetric>(metric.ToString()), daily?.Value), DrawingForScope(act).ToArray());
-    }).ToArray());
+    }).ToArray()) { EliteResearchDraft = _draft.EliteResearchCounts };
 
     private static bool IsDailyMetric(MapMetricKind metric) => metric is MapMetricKind.ReachableMaxElite or
         MapMetricKind.ReachableMaxRest or MapMetricKind.ReachableMaxUnknown;

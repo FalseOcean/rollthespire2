@@ -41,16 +41,30 @@ internal static class CombatCardExclusionChecks
             "standalone negative condition requires reward preparation and Exact");
         Check(plan.Model.Evaluation.CombatCardExclusion!.BattleCount == 6, "projection retains full horizon");
         var physical = FamilyExecutionCoordinator.Plan(plan, gpuAvailable: false);
-        Check(physical.FilterRemainders.Contains("CombatCardExclusion:ProductionExactOnly"), "negative condition is explicitly Exact-only");
+        Check(CombatRewardFamily.TryPrepare(plan.Model, FilterExecutionPreferences.From(plan.RunOptions), out var prepared, preferGpu: false) &&
+            prepared!.Replay.Plan.CollectionFilterCovered, "standalone collection has an actual CPU Fast predicate");
+        Check(prepared!.Replay.Plan.MaximumBattleOrdinal == 6 && prepared.Replay.Plan.Predicates.Length == 6 &&
+            prepared.Replay.Plan.Predicates.All(row => !row.IsAnyBattle && row.CardBan.Length == 0),
+            "a registered member outside the reward pool keeps all six fixed rows and coverage even with empty bans");
+        Check(!physical.FilterRemainders.Contains("CombatCardExclusion:ProductionExactOnly"), "compiled collection is not reported as Exact-only");
         var skipped = FamilyExecutionCoordinator.Plan(plan with { RunOptions = plan.RunOptions with { SkipExactValidation = true } }, false);
-        Check(skipped.FinalValidationSkipped && skipped.FilterRemainders.Contains("CombatCardExclusion:ProductionExactOnly"),
-            "skip Exact keeps the unverified obligation visible");
+        Check(skipped.FinalValidationSkipped, "skip Exact never claims final verification");
         var probability = CombatRewardProbabilityEstimator.Estimate(SearchSelectivityInput.From(compiled));
         Check(probability.IsPriced && probability.Probability == 1,
             "an available Basic outside the captured reward pool has exclusion probability one; execution remains Exact-only");
         Check(compiled.SemanticFingerprint != SearchCompiler.Compile(Exclude(5, absent), context).SemanticFingerprint &&
               compiled.SemanticFingerprint != SearchCompiler.Compile(Exclude(6, target), context).SemanticFingerprint,
             "horizon and card members participate in cache identity");
+        var whitelist = query.CombatCardExclusion! with { Mode = CombatCardCollectionMode.Whitelist };
+        Check(compiled.SemanticFingerprint != SearchCompiler.Compile(query with { CombatCardExclusion = whitelist }, context).SemanticFingerprint,
+            "blacklist and whitelist have distinct query identities");
+        Check(System.Text.Json.JsonSerializer.Deserialize<CombatCardExclusionSearchCondition>(
+            "{\"BattleCount\":3,\"CardKeys\":[{\"Category\":\"CARD\",\"Entry\":\"HEADBUTT\"}]}")!.Mode == CombatCardCollectionMode.Blacklist,
+            "saved conditions without a mode retain blacklist behavior");
+        Check(!System.Text.Json.JsonSerializer.Serialize(query.CombatCardExclusion).Contains("\"Mode\"", StringComparison.Ordinal),
+            "default blacklist does not add a field to legacy query JSON");
+        Check(System.Text.Json.JsonSerializer.Serialize(whitelist).Contains("\"Mode\"", StringComparison.Ordinal),
+            "whitelist mode is saved explicitly");
         Check(SearchCompiler.Compile(Exclude(6, target, absent, target), context).SemanticFingerprint ==
               SearchCompiler.Compile(Exclude(6, absent, target), context).SemanticFingerprint,
             "set order and duplicate identities canonicalize");
@@ -85,10 +99,18 @@ internal static class CombatCardExclusionChecks
         SearchDisposition Match(CombatCardExclusionSearchCondition c, NormalCombatRewardRoutePredictionResult r,
             IReadOnlyList<ModelKey>? available) => CombatCardExclusionMatcher.Evaluate(c, r, available).Disposition;
         var condition = query.CombatCardExclusion!;
+        var allowTarget = new CombatCardExclusionSearchCondition(6, [target]) { Mode = CombatCardCollectionMode.Whitelist };
+        Check(Match(allowTarget, clear, context.Authority.AvailableCardIdentities) == SearchDisposition.Match, "whitelist accepts all offered options inside authored set");
+        Check(Match(allowTarget with { CardKeys = [target, missing] }, clear, context.Authority.AvailableCardIdentities) == SearchDisposition.Match,
+            "missing unused allowed identity does not alter the authored set or invent an observation dependency");
+        Check(Match(allowTarget, clear, null) == SearchDisposition.Unknown, "whitelist retains missing identity authority");
         Check(Match(condition, clear, context.Authority.AvailableCardIdentities) == SearchDisposition.Match, "all initial options exclude the registered non-reward member");
         var sixthHit = clear with { Battles = clear.Battles.Select(b => b.BattleOrdinal == 6 ? b with { CardRewards =
             [new(1, true, [targetCard], b.EvidenceCode), new(2, false, [absentCard with { UpgradeState = NormalCombatCardUpgradeState.Upgraded }], b.EvidenceCode)] } : b).ToArray() };
         Check(Match(condition, sixthHit, null) == SearchDisposition.NoMatch, "sixth battle additional reward hits even upgraded and identity catalogue unknown");
+        Check(Match(allowTarget, sixthHit, null) == SearchDisposition.NoMatch, "whitelist rejects known outside identity in extra sixth reward group");
+        Check(Match(allowTarget with { BattleCount = 5 }, sixthHit, context.Authority.AvailableCardIdentities) == SearchDisposition.Match,
+            "whitelist has its own exact window");
         Check(Match(new(5, [absent]), sixthHit, context.Authority.AvailableCardIdentities) == SearchDisposition.Match, "N does not inspect later battles");
         Check(Match(new(6, [absent, missing]), sixthHit, context.Authority.AvailableCardIdentities) == SearchDisposition.NoMatch,
             "known hit disproves even with missing collection member");
@@ -103,6 +125,7 @@ internal static class CombatCardExclusionChecks
         var uncertain = clear with { Battles = clear.Battles.Select(b => b.BattleOrdinal == 2 ? b with { CardRewards =
             [new(1, true, [absentCard with { Precision = PredictionPrecision.Unknown }], b.EvidenceCode)] } : b).ToArray() };
         Check(Match(condition, uncertain, context.Authority.AvailableCardIdentities) == SearchDisposition.Unknown, "unknown identity is not absence");
+        Check(Match(allowTarget, uncertain, context.Authority.AvailableCardIdentities) == SearchDisposition.Unknown, "unknown candidate cannot prove whitelist membership");
 
         var positiveAndNegative = Compile(query with { CombatCardRewards = new(1, CombatRewardSequenceOrderMode.Ordered, [target]) });
         var conflicting = sixthHit with { RouteGroupId = "exclusion.A", EquivalentRoutes = original.EquivalentRoutes.Select(d => d with { RouteId = "exclusion.A" }).ToArray() };
@@ -147,11 +170,17 @@ internal static partial class CombinationRegressionChecks
         Assert(!child0.Evaluation.RequiresNormalCombatRewardDomain && child1.Evaluation.CombatCardExclusion?.BattleCount == 6,
             "negative-only condition belongs to selected seat");
         var physical = FamilyExecutionCoordinator.Plan(plan, false);
-        Assert(physical.FilterRemainders.Contains("CombatCardExclusion:slot=1:ProductionExactOnly"), "per-seat Exact remainder is visible");
+        Assert(CombatRewardFamily.TryPrepareParty(child1, FilterExecutionPreferences.From(plan.RunOptions), 0, 0,
+            out var prepared, preferGpu: false) && prepared!.Replay.Plan.CollectionFilterCovered, "per-seat collection has a real Fast filter");
+        Assert(!physical.FilterRemainders.Contains("CombatCardExclusion:slot=1:ProductionExactOnly"), "per-seat covered collection is not Exact-only");
         var unknownPlayers = players.Select((p, i) => i == 1 ? p.WithAvailableCardIdentities(null) : p).ToArray();
         var unknownParty = new OrderedPartyAuthority(unknownPlayers, rawParty.UnlockProvenance, rawParty.World, rawParty.UnlockSources);
         Assert(compiled.SemanticFingerprint != SearchCompiler.Compile(q, context with { Party = unknownParty }).SemanticFingerprint,
             "table fingerprint includes relevant seat's global identity authority");
+        var unknownCompiled = SearchCompiler.Compile(q, context with { Party = unknownParty });
+        var unknownChild = SearchPreparationCompiler.ForPlayer(plan.Model with { CompiledSearch = unknownCompiled }, unknownCompiled.PlayerSearches[1]);
+        Assert(!CombatRewardFamily.TryPrepareParty(unknownChild, FilterExecutionPreferences.From(plan.RunOptions), 0, 0,
+            out _, preferGpu: false), "collection-only without identity authority cannot claim a numerical filter");
         var result = ProductionExactSearchEvaluator.Evaluate(plan.Model, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, plan.CanonicalStartSeed));
         Assert(result.IsMatch, "negative-only seat participates in joint Exact: " + result.FailureCode);
         return checks;

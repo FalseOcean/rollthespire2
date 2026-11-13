@@ -1,3 +1,4 @@
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Rng;
 using RolltheSpire2.Core.World.Beta109;
@@ -16,7 +17,11 @@ public sealed record Beta111EventOptionResult(
 /// </summary>
 public static class Beta111EventOptionResultProjector
 {
-    public static IReadOnlyList<Beta111EventOptionResult> Project(ulong root, int slot, string eventEntry)
+    public static IReadOnlyList<Beta111EventOptionResult> Project(ulong root, int slot, string eventEntry) =>
+        Project(root, slot, eventEntry, RngSemanticProfileId.Modern110);
+
+    public static IReadOnlyList<Beta111EventOptionResult> Project(ulong root, int slot, string eventEntry,
+        RngSemanticProfileId semanticProfile)
     {
         if (slot < 0) throw new ArgumentOutOfRangeException(nameof(slot));
         if (eventEntry is not ("DENSE_VEGETATION" or "JUNGLE_MAZE_ADVENTURE" or "LOST_WISP" or
@@ -47,17 +52,17 @@ public static class Beta111EventOptionResultProjector
             "SUNKEN_STATUE" => [Gold("DIVE_INTO_WATER", Beta111EventRules.SunkenStatueGold(rng))],
             "THIS_OR_THAT" => [Gold("PLAIN", Beta111EventRules.ThisOrThatGold(rng))],
             "WHISPERING_HOLLOW" => [Gold("GOLD", Beta111EventRules.WhisperingHollowGold(rng))],
-            "DOLL_ROOM" => Dolls(rng),
+            "DOLL_ROOM" => Dolls(rng, semanticProfile),
             _ => []
         };
     }
 
     private static Beta111EventOptionResult Gold(string option, int amount) => new(option, amount, []);
 
-    private static IReadOnlyList<Beta111EventOptionResult> Dolls(Xoshiro256StarStar rng) =>
+    private static IReadOnlyList<Beta111EventOptionResult> Dolls(Xoshiro256StarStar rng, RngSemanticProfileId semanticProfile) =>
     [
         // Each alternative owns its own copy of the caller's entry checkpoint.
         new("RANDOM", null, [Beta111EventRules.RandomDoll(rng.Clone())]),
-        new("TAKE_SOME_TIME", null, Beta111EventRules.DollOffers(rng.Clone(), 2))
+        new("TAKE_SOME_TIME", null, Beta111EventRules.DollOffers(rng.Clone(), 2, semanticProfile))
     ];
 }

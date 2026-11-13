@@ -2,6 +2,12 @@
 
 # Standalone Production Search
 
+## First-Elite floor-seven research
+
+The host CLI accepts `--elite-floor-seven-research --research-begin 0 --research-count 1000000 --research-target 10 --research-workers 4` with `--output <directory>`. This standalone research entry uses the Beta111 solo A10 standard Act 1 map for Silent candidates. Every opening path must first reach an Elite on floor 7, with only Monster/Unknown icons on floors 2–6. Counts and order are unrestricted per path. Each complete 8192-root batch is retained, so the final batch can exceed the requested target.
+
+Bounded full-map replay supplies candidates. Every hit is independently regenerated with Reference replay, compared by full graph and RNG calls, and verified by enumerating all first-Elite prefixes. `summary.json` records the scanned interval and configuration; `candidates.jsonl` contains each full map and its verified paths. Reward analysis is a subsequent research step. The ordinary production research switch retains its separately authored count condition.
+
 ## Capsule Niche continuation comparison
 
 `Run.ps1 -BonesHiddenUpgradeChecks -BonesHiddenUpgradeWindow 65539 -Headless`

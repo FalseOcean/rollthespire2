@@ -75,7 +75,7 @@ internal sealed partial class PredictorRun
                 BeginEventCardSelection(SymbioteCandidates(), 1, token);
                 return PredictorInputResult.Accepted;
             case ("TINKER_TIME", "CHOOSE_CARD_TYPE"):
-                EventOptions = Beta111EventRules.TinkerTypeOffers(_eventRng!)
+                EventOptions = Beta111EventRules.TinkerTypeOffers(_eventRng!, Context.VersionResolution.SemanticProfileId)
                     .Select(t => new PredictorEventOption(Beta111EventRules.TinkerTypes[t])).ToImmutableArray();
                 _requestId++;
                 return PredictorInputResult.Accepted;
@@ -126,7 +126,8 @@ internal sealed partial class PredictorRun
             case ("TRIAL", "NONDESCRIPT_GUILTY"):
                 AddTrialCurse(FixedEventCardProduct(choice.OptionKey).Entry);
                 var trialRewards = PredictorRewardGeneration.Generate(Context, Working,
-                    [new(PredictorRewardKind.Card), new(PredictorRewardKind.Card)], cancellationToken: token);
+                    [new(PredictorRewardKind.Card, NoUpgradeRoll: true), new(PredictorRewardKind.Card, NoUpgradeRoll: true)],
+                    cancellationToken: token);
                 _eventRewardContinuation = true;
                 var trialInputs = _inputs;
                 Phase = PredictorPhase.Complete;
@@ -141,7 +142,7 @@ internal sealed partial class PredictorRun
                     new[] { EffectCardRarity.Common, EffectCardRarity.Uncommon, EffectCardRarity.Rare }
                         .Select(r => new PredictorRewardPlan(PredictorRewardKind.Card, CardCount: 3,
                             Odds: PredictorCardOdds.Uniform, Rarity: r,
-                            CardPoolOverride: chosenPool.Cards, NoCardPoolModifications: true)),
+                            CardPoolOverride: chosenPool.Cards, NoCardPoolModifications: true, NoRarityModification: true)),
                     cancellationToken: token);
                 _eventRewardContinuation = true;
                 var colorfulInputs = _inputs;
@@ -157,7 +158,7 @@ internal sealed partial class PredictorRun
                 _tinkerType = choice.OptionKey switch { "ATTACK" => EffectCardType.Attack,
                     "SKILL" => EffectCardType.Skill, _ => EffectCardType.Power };
                 int typeIndex = _tinkerType switch { EffectCardType.Attack => 0, EffectCardType.Skill => 1, _ => 2 };
-                EventOptions = Beta111EventRules.TinkerRiderOffers(_eventRng!, typeIndex)
+                EventOptions = Beta111EventRules.TinkerRiderOffers(_eventRng!, typeIndex, Context.VersionResolution.SemanticProfileId)
                     .Select(r => new PredictorEventOption(Beta111EventRules.TinkerRiders[r])).ToImmutableArray();
                 _requestId++;
                 return PredictorInputResult.Accepted;
@@ -181,7 +182,7 @@ internal sealed partial class PredictorRun
     {
         var catalog = Context.Catalog ?? throw new InvalidOperationException("PredictorCatalogMissing");
         return Beta111EventRules.ColorfulOffers(_eventRng!, Context.Character,
-                catalog.CharacterPools.Select(pool => pool.Character))
+                catalog.CharacterPools.Select(pool => pool.Character), Context.VersionResolution.SemanticProfileId)
             .Select(key => new PredictorEventOption(key.Entry)).ToImmutableArray();
     }
 

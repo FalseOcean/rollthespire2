@@ -109,6 +109,30 @@ internal static partial class PredictorOperationEventChecks
         Require(Groups(reversePreview).Select(g => g.Cards.Single().Id).SequenceEqual(reverseTargets.Select(id =>
             reverseChanges.Single(change => change.OriginalId == id).ReplacementId)),
             "Event transformation slots followed deck reinsert order instead of actual selection order");
+        foreach (var (eventKey, branch) in new[] { ("MORPHIC_GROVE", "GROUP"), ("TRIAL", "NONDESCRIPT_INNOCENT") })
+        {
+            var input = morphic with { Scene = ((PredictorOperationEventScene)morphic.Scene) with
+                { Event = new("EVENT", eventKey), Branch = branch } };
+            foreach (bool copy in new[] { false, true })
+            {
+                var entry = input.State;
+                if (copy) entry = entry with { Relics = [new(entry.NextInstanceId, new("RELIC", "BING_BONG"), entry.Position.Floor)],
+                    NextInstanceId = entry.NextInstanceId + 1 };
+                var result = PredictorOperation.Preview(input with { State = entry }, new SelectEventCards(reverseTargets));
+                var changes = result.Effects.SelectMany(effect => effect.Transformations).ToArray();
+                Require(result.Disposition == PredictorInputResult.Accepted && changes.Select(change => change.OriginalId).SequenceEqual(reverseTargets) &&
+                    result.State.Streams.SequenceEqual(entry.Streams), $"{eventKey} preserves ordered OriginalId mapping and uses the event RNG");
+                var unchanged = entry.Deck.Where(id => !reverseTargets.Contains(id)).ToArray();
+                int stride = copy ? 2 : 1;
+                var suffix = result.State.Deck.Skip(unchanged.Length).ToArray();
+                Require(result.State.Deck.Take(unchanged.Length).SequenceEqual(unchanged) && suffix.Length == 2 * stride &&
+                    suffix[0] == changes[0].ReplacementId && suffix[stride] == changes[1].ReplacementId &&
+                    (!copy || suffix[1] != suffix[0] && suffix[3] != suffix[2] &&
+                        result.State.Card(suffix[1]).Key == result.State.Card(suffix[0]).Key &&
+                        result.State.Card(suffix[3]).Key == result.State.Card(suffix[2]).Key),
+                    $"{eventKey} must append each replacement and its hooks before processing the next selected card");
+            }
+        }
         var morphicOverview = EventOperationPreview.Build(Snapshot("MORPHIC_GROVE", new PredictorEventOption("GROUP")), "GROUP");
         var overviewSlots = Groups(morphicOverview).ToArray();
         Require(morphicOverview.Faults.IsEmpty && morphicOverview.Branches.Length == 1 && overviewSlots.Length == 2 &&

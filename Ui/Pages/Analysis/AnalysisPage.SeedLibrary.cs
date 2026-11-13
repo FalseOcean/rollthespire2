@@ -8,12 +8,13 @@ internal sealed partial class AnalysisPage
     private Button? _favoriteSeed;
     private Label? _favoriteReceipt;
     private Action? _favoriteSeedRequested;
+    private bool _capturedRunParty;
     internal event Action? FavoriteSeedRequested
     {
         add { _favoriteSeedRequested += value; RefreshFavoriteSeed(); }
         remove { _favoriteSeedRequested -= value; RefreshFavoriteSeed(); }
     }
-    internal bool CanFavoriteVisibleSeed => _wbHasResult && _requestBar.HasValidVisibleSeed && LastFacts is not null &&
+    internal bool CanFavoriteVisibleSeed => !_capturedRunParty && _wbHasResult && _requestBar.HasValidVisibleSeed && LastFacts is not null &&
         ProfileSeedRules.TryCanonicalizePredictionSeed(_runtime.Profile, CurrentDraft.RawSeed, out var canonical, out _) && LastFacts.CanonicalSeed == canonical;
 
     private void BuildFavoriteSeed(Control rail)
@@ -28,7 +29,7 @@ internal sealed partial class AnalysisPage
     private void RefreshFavoriteSeed()
     {
         if (_favoriteSeed is null) return;
-        _favoriteSeed.Visible = _favoriteSeedRequested is not null;
+        _favoriteSeed.Visible = !_capturedRunParty && _favoriteSeedRequested is not null;
         _favoriteSeed.Text = _uiText?.LanguageCode == "en" ? "Favorite seed" : "收藏种子";
         _favoriteSeed.Disabled = !CanFavoriteVisibleSeed;
     }

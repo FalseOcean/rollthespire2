@@ -100,7 +100,7 @@ internal static class MerchantShopColorlessExpectedFilteringCost
 
         for (int merchant = 1; merchant <= maximumOrdinal; merchant++)
         {
-            Add($"S.MerchantReplay[{merchant}].RngAdvance", FamilyAnalyticalOperation.RngAdvance, 26d, currentReach);
+            Add($"S.MerchantReplay[{merchant}].RngAdvance", FamilyAnalyticalOperation.RngAdvance, authority.Calls.Total - 2, currentReach);
             Add($"S.MerchantReplay[{merchant}].HistoricalNextInt", FamilyAnalyticalOperation.HistoricalNextInt, 2d, currentReach);
             Add($"S.MerchantReplay[{merchant}].Observations", FamilyAnalyticalOperation.ObservationWrite, 2d, currentReach);
 

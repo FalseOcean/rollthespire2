@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Search.Contracts;
 
@@ -19,7 +20,11 @@ internal sealed record EventEditorStateSnapshot(
     int TrialCase,
     int TinkerType,
     string? TinkerEffect,
-    IReadOnlyList<string> InactiveResultEvents);
+    IReadOnlyList<string> InactiveResultEvents)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ModelKey? CharacterColorKey { get; init; }
+}
 
 internal sealed record TransformationSourceSnapshot(string Id, ModelKey Identity, int ResultCount,
     ModelKey? OtherRelic = null);

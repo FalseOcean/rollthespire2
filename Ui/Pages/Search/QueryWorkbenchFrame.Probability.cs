@@ -112,15 +112,15 @@ internal sealed partial class QueryWorkbenchFrame
             _previewEta=null;_familyEntries.Clear();
             var q=draft.Query;
             void Pending(string id,bool present) {if(present)_familyEntries.Add(new(id,FamilyTitle(id),null,"—",""));}
-            Pending("N",q.OpeningRoute is not null || q.StructuredOpeningEffects.Count>0);
+            Pending("N",q.OpeningRoute is not null || q.StructuredOpeningEffects.Count>0 ||
+                q.NeowOfferWhitelist is not null || !q.LegacyNeow.NeowRelics.IsEmpty);
             Pending("T",q.TransformationAggregate is not null);Pending("C",q.HasCombatRewardConstraints);
             Pending("A",q.AncientBranches.Any(b=>b.OptionAny.Count>0||b.SeaGlassTargetAny.Count>0)||q.LegacyWorld.AncientOptionFilters.Count>0);
-            Pending("V",q.VariantBossBranches.Count>0||q.FirstActUnknownEventPrefixCount>0||
-                q.Players.Any(p=>p.Conditions.FirstActUnknownEventPrefixCount>0));
+            Pending("V",q.VariantBossBranches.Count>0 || UnknownRoomPrefixRequirements.HasConditions(q));
             Pending("W",HasWorldObservations(q));
             Pending("R",q.TreasureRelics is { IsEmpty: false }||q.RelicSequenceConstraints.Count>0||q.RelicShopSequenceConditions.Count>0||q.StructuredOpeningEffects.Any(NeowReplayPlan.IsCapsule));
             Pending("E",q.EventResultConditions.Count>0);
-            Pending("M",q.StandardMaps.Count>0 || q.StandardMapRoutes.Count>0);Pending("S",q.MerchantColorlessSequenceConditions.Count>0);
+            Pending("M",q.StandardMaps.Count>0 || q.StandardMapRoutes.Count>0 || q.ElitePrefixResearch is not null);Pending("S",q.MerchantColorlessSequenceConditions.Count>0);
             ApplyFamilySources(q); RenderFamilyDashboard();PresentExpectations(null,null,null);
             return false;
         }
@@ -217,9 +217,10 @@ internal sealed partial class QueryWorkbenchFrame
                         string.Join(" / ", owners.Select(p => $"P{p.Slot + 1}"))));
                 }
             }
-            if (compiled.NormalizedQuery.StandardMaps.Count > 0 || compiled.NormalizedQuery.StandardMapRoutes.Count > 0)
+            if (compiled.NormalizedQuery.StandardMaps.Count > 0 || compiled.NormalizedQuery.StandardMapRoutes.Count > 0 || compiled.NormalizedQuery.ElitePrefixResearch is not null)
                 _familyEntries.Add(new("M", FamilyTitle("M"), partyProbability.KnownComponents.FirstOrDefault(c => c.Id == "party:map")?.Probability,
-                    PartyCost("M"), compiled.NormalizedQuery.StandardMapRoutes.Count > 0
+                    PartyCost("M"), compiled.NormalizedQuery.ElitePrefixResearch is not null
+                        ? _text.Get("query.map.elite_research.probability") : compiled.NormalizedQuery.StandardMapRoutes.Count > 0
                         ? (_language == "zh" ? "共用地图；绘画路线概率未知" : "Shared maps; drawn route probability unknown")
                         : (_language == "zh" ? "共用开局地图" : "Shared initial maps")));
             string premise = _language == "zh" ? "共享事实只计一次；个人条件采用独立近似。" : "Shared facts counted once; personal conditions use an independence approximation.";
@@ -265,6 +266,7 @@ internal sealed partial class QueryWorkbenchFrame
             if(row.Kind is SearchProbabilityRowKind.EventResult or SearchProbabilityRowKind.FirstActUnknownEventPrefix) continue;
             var (title,detail,cost)=row.Kind switch {
                 SearchProbabilityRowKind.Neow => (_text.Get("query.domain.neow"),Keys((q.OpeningRoute is { } n?new[]{n.RouteRelicKey}:q.LegacyNeow.NeowRelics.Any.Concat(q.LegacyNeow.NeowRelics.All))
+                    .Concat(q.LegacyNeow.NeowRelics.Ban).Concat(q.NeowOfferWhitelist?.AllowedKeys??[])
                     .Concat(q.OpeningRouteRelicRequirement?.RequiredRelicKeys??[]).Concat(q.StructuredOpeningEffects.SelectMany(c=>c.OutputKeys))),
                     q.StructuredOpeningEffects.Any(c=>c.OutputKind==NeowStructuredOutputKind.Relic)?Cost("N.Neow","R.Relic"):Cost("N.Neow")),
                 SearchProbabilityRowKind.Relic => (_text.Get("query.domain.relics"),Keys(relicKeys),Cost("R.Relic")),
@@ -293,10 +295,11 @@ internal sealed partial class QueryWorkbenchFrame
                     costs.FirstOrDefault(k=>k.Key.StartsWith(id+".")).Value??"—",detail));
             output.Add(title+(detail.Length>0?"\n"+detail:"")+"\n"+_text.Get("workflow.rarity")+" "+Probability(row.Probability)+"\n"+cost);
         }
-        if(q.StandardMaps.Count>0 || q.StandardMapRoutes.Count>0)
+        if(q.StandardMaps.Count>0 || q.StandardMapRoutes.Count>0 || q.ElitePrefixResearch is not null)
         {
             var mapEstimate = preview.Map!;
-            string detail = MapProbabilityExplanation(mapEstimate.EvidenceCode, mapEstimate.Probability.HasValue, _language=="zh");
+            string detail = q.ElitePrefixResearch is not null ? _text.Get("query.map.elite_research.probability") :
+                MapProbabilityExplanation(mapEstimate.EvidenceCode, mapEstimate.Probability.HasValue, _language=="zh");
             string rarity = mapEstimate.Probability.HasValue ? Probability(mapEstimate.Probability) : (_language=="zh" ? "未知" : "Unknown");
             output.Add(_text.Get("coverage.map")+"\n"+_text.Get("workflow.rarity")+" "+rarity+"\n"+detail+"\n"+Cost("M.StandardMap"));
             _familyEntries.Add(new("M",_text.Get("coverage.map"),mapEstimate.Probability,Cost("M.StandardMap"),detail));
@@ -320,10 +323,12 @@ internal sealed partial class QueryWorkbenchFrame
             eventDetails.Add(Name(new("EVENT",entry))+"\n"+detail+"\n"+Probability(estimate.Probability)+"\n"+eventSpeed);
             output.Add(Name(new("EVENT",entry))+"\n"+detail+"\n"+_text.Get("workflow.rarity")+" "+Probability(estimate.Probability)+"\n"+eventSpeed);
         }
-        if (q.FirstActUnknownEventPrefixCount > 0)
+        if (q.FirstActUnknownEventPrefixCount > 0 || q.FirstActUnknownMonsterPrefixCount > 0)
         {
+            bool monster = q.FirstActUnknownMonsterPrefixCount > 0;
             string detail = _text.Get("query.event.unknown.title") + " · " +
-                _text.Get("query.event.unknown.option_" + q.FirstActUnknownEventPrefixCount) + "\n" +
+                _text.Get(monster ? "query.unknown.monster.option_" + q.FirstActUnknownMonsterPrefixCount :
+                    "query.event.unknown.option_" + q.FirstActUnknownEventPrefixCount) + "\n" +
                 Probability(view.Rows.FirstOrDefault(row => row.Kind == SearchProbabilityRowKind.FirstActUnknownEventPrefix)?.Probability) +
                 "\n" + _text.Get("query.event.unknown.probability_assumption");
             output.Add(detail);

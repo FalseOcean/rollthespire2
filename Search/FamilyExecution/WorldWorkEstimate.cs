@@ -7,19 +7,32 @@ internal static class WorldWorkEstimate
         var p = replay.Plan;
         if (p.MaxRequiredAct == 0)
             return (true, p.ActSelectionGroups.Count(g => g.EligibleActIds.Length > 1), p.PredicateCount);
-        double work = replay.BucketLengths.Sum(n => Math.Max(0, (double)n - 1)) + Math.Max(0, p.SharedAncients.Length - 1);
+        double work = (p.UsesChildShuffle ? replay.BucketLengths.Length : replay.BucketLengths.Sum(n => Math.Max(0, (double)n - 1))) +
+            Math.Max(0, p.SharedAncients.Length - 1) + (p.UsesChildShuffle ? 5 : 0);
         // One selected variant per Act, not the sum of every possible variant.
         foreach (var act in p.Acts.Where(a => a.Act <= p.MaxRequiredAct).GroupBy(a => a.Act))
             work += act.Max(a => {
                 // Materialized predicates shuffle candidates; other observations
                 // still advance the same stream through the eligible event pool.
                 int eventCount = a.HasEventPredicate ? a.EventCandidates.Length : a.EligibleEventCount;
-                double events = Math.Max(0, eventCount - 1);
+                double events = p.UsesChildShuffle
+                    ? a.HasEventPredicate ? 5 + Math.Max(0, eventCount - 1) : 1
+                    : Math.Max(0, eventCount - 1);
                 bool stopsAtEvents = a.Act == p.MaxRequiredAct && !p.RequiresSecondBoss &&
-                    !a.HasBossPredicate && !a.HasAncientIdentityPredicate;
+                    !a.HasBossPredicate && !a.HasAncientIdentityPredicate && !a.HasEncounterPredicate;
                 double queues = stopsAtEvents ? 0 : a.WeakEncounterSlots + a.RegularEncounterSlots + a.EliteEncounterSlots +
                     a.WeakEncounters.Length + a.RegularEncounters.Length + a.EliteEncounters.Length +
                     .25 * a.EncounterConflictSourceOrdinals.Length;
+                if (a.HasEncounterPredicate && a.Act == p.MaxRequiredAct && !p.RequiresSecondBoss && !a.HasBossPredicate && !a.HasAncientPredicate)
+                {
+                    int Horizon(Contracts.EncounterQueueKind kind) => a.EncounterPredicates.Where(c => c.Kind == kind).Select(c => c.RangeValue).DefaultIfEmpty(0).Max();
+                    int weak = Horizon(Contracts.EncounterQueueKind.Weak), strong = Horizon(Contracts.EncounterQueueKind.Strong), elite = Horizon(Contracts.EncounterQueueKind.Elite);
+                    if (elite > 0 || a.EncounterDiscoveryMode != 0 && weak + strong > 0) { weak = a.WeakEncounterSlots; strong = a.RegularEncounterSlots; }
+                    else if (strong > 0) weak = a.WeakEncounterSlots;
+                    if (a.EncounterDiscoveryMode != 0 && elite > 0) elite = a.EliteEncounterSlots;
+                    queues = weak + strong + elite + (weak > 0 ? a.WeakEncounters.Length : 0) +
+                        (strong > 0 ? a.RegularEncounters.Length : 0) + (elite > 0 ? a.EliteEncounters.Length : 0) + .25 * a.EncounterConflictSourceOrdinals.Length;
+                }
                 return events + queues;
             });
         return (false, work, p.PredicateCount);

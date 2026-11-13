@@ -11,6 +11,14 @@ internal readonly record struct NeowReplayObservation(byte First, byte Second, b
 internal static class NeowFamilyReplay
 {
     internal static readonly ulong RewardsHash = NeowSingleplayerReplay.RewardsHash;
+    internal static readonly ulong NonCombatHash = XxHash64.Hash("non_combat_generation"u8, 0);
+
+    internal static Beta110FastRng NonCombatRng(ulong playerRoot, NeowReplayPlan plan)
+    {
+        var rng = new Beta110FastRng(unchecked(playerRoot + NonCombatHash));
+        if (plan.Bones) rng.ConsumeShuffleSeed();
+        return rng;
+    }
     internal static Func<ulong, bool> Bind(NeowReplayPlan plan)
     {
         plan.ValidateExecutionScope();

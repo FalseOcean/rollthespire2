@@ -67,7 +67,7 @@ public sealed record RequestSupportAssessment(
         if (!context.ExactGameVersionIdentity.IsExact) Unknown("GameVersionUnknown");
         else if (context.ExactGameVersionIdentity != GameVersionIdentity.V0_111_0) Outside("GameVersionOutsideDeclaredBaseline");
         if (!context.Character.IsValid) Unknown("CharacterUnknown");
-        else if (!context.Character.IsKnownVanilla) Outside("CharacterOutsideDeclaredBaseline");
+        else if (!BaseGameModelKeys.Characters.All.Contains(context.Character.CharacterKey)) Outside("CharacterOutsideDeclaredBaseline");
         if (context.PlayersCount < 1 || context.PlayerSlotIndex < 0 || context.PlayerSlotIndex >= context.PlayersCount) Unknown("PlayerContextUnknown");
         else if (context.PlayersCount != 1 || context.PlayerSlotIndex != 0 || context.PredictionGameMode == WorldGameMode.Multiplayer) Outside("PartyOutsideDeclaredBaseline");
         if (context.NoRunModifiers == false) Outside("RunModifiersOutsideDeclaredBaseline");

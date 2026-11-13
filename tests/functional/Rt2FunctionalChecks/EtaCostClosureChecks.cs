@@ -322,8 +322,9 @@ internal static class EtaCostClosureChecks
                     unchangedCombat with { OpeningRoute = new(BaseGameModelKeys.Relics.NeowsBones) },
                     unchangedCombat with { OpeningRoute = new(BaseGameModelKeys.Relics.SmallCapsule) } })
                 {
-                    // Real table compilation and CPU realizations, without GPU
-                    // dispatch or manufactured timing evidence for the new body.
+                    // FT03 replaced partial-Bones/Capsule's query-literal
+                    // placeholder with actual observed held-effect replay. This
+                    // checks both realizations without dispatching a GPU body.
                     var combatQuery = SearchQuery.Empty with { Players = party.Party.Players.Select(owner =>
                         new PlayerOfferQuery(owner.PlayerSlotIndex, ModelKeySetFilter.Empty) { Conditions = opening }).ToArray() };
                     var combatRequest = Request(combatQuery, window, source: party);
@@ -333,21 +334,28 @@ internal static class EtaCostClosureChecks
                     foreach (var wrapperCombat in new[] { gpuCombat, cpuCombat })
                     foreach (bool compact in new[] { false, true })
                     {
-                        Check(wrapperCombat.PhysicalBodies.All(child => child.Cost.PartyChild.QueryLiteralCombatOpening),
-                            "party opening body identity survives the configured CPU realization");
-                        Check(wrapperCombat.ResolveConditionPerformance(compact).PhysicalImplementationRevision.Contains(
-                            ".PartyQueryLiteralOpening.20261027.v1", StringComparison.Ordinal) &&
-                            wrapperCombat.ResolveConditionPerformance(compact).Evidence.Contains(
-                                "NoHistoricalOpeningQuote", StringComparison.Ordinal),
-                            "changed party opening wrapper records the new body and missing reference scope");
-                        Check(wrapperCombat.Cost.CompleteCallQuote?.Invoke(new(compact, false, window), new HashSet<string>()) is { } openingQuote &&
+                        var openingQuote = wrapperCombat.Cost.CompleteCallQuote?.Invoke(new(compact, false, window), new HashSet<string>());
+                        Console.WriteLine($"EtaObservedOpening players={players};opening={opening.OpeningRoute!.RouteRelicKey};gpu={wrapperCombat.UsesGpu};compact={compact};" +
+                            $"children={string.Join('|', wrapperCombat.PhysicalBodies.Select(child => child.ResolveConditionPerformance(compact).PhysicalImplementationRevision))};" +
+                            $"historicalAllowed={string.Join(',', wrapperCombat.PhysicalBodies.Select(child => child.Cost.PartyChild.AllowsHistoricalEnvelope))};" +
+                            $"queryLiteral={string.Join(',', wrapperCombat.PhysicalBodies.Select(child => child.Cost.PartyChild.QueryLiteralCombatOpening))};quoteEvidence={openingQuote?.Evidence}");
+                        Check(wrapperCombat.PhysicalBodies.Count == players && wrapperCombat.PhysicalBodies.All(child => !child.Cost.PartyChild.QueryLiteralCombatOpening &&
+                            !child.Cost.PartyChild.AllowsHistoricalEnvelope),
+                            "actual observed party opening bodies do not borrow query-literal or historical wrapper identities");
+                        Check(!wrapperCombat.ResolveConditionPerformance(compact).PhysicalImplementationRevision.Contains(
+                            ".PartyQueryLiteralOpening.20261027.v1", StringComparison.Ordinal),
+                            "observed party wrapper does not claim the superseded query-literal opening body");
+                        Check(openingQuote is not null &&
                             openingQuote.Evidence.Contains("WeightedOwnChildren", StringComparison.Ordinal) &&
+                            openingQuote.Evidence.Contains("ObservedOpeningShuffleDraws=", StringComparison.Ordinal) &&
+                            openingQuote.Evidence.Contains("ObservedOpeningNotMeasured", StringComparison.Ordinal) &&
+                            !openingQuote.Evidence.Contains("HistoricalWrapperCoefficients", StringComparison.Ordinal) &&
                             FamilyCoarsePricing.IsEstimate(wrapperCombat.QuotePhysicalWork(new(compact, false, window))),
-                            "new partial-Bones/Capsule CPU and GPU wrappers cannot borrow old opening measurements");
+                            "observed partial-Bones/Capsule CPU and GPU wrappers compose their own unmeasured child work");
                         Check(wrapperCombat.PhysicalBodies.All(child =>
                             child.ResolveConditionPerformance(compact).PhysicalImplementationRevision.Contains(
-                                ".PartyQueryLiteralOpening.20261027.v1", StringComparison.Ordinal)),
-                            "each underlying C body carries the same opening revision as its wrapper");
+                                CombatRewardObservedOpening.Revision, StringComparison.Ordinal)),
+                            "each configured CPU/GPU child retains its actual observed-opening numerical revision");
                     }
                 }
             }

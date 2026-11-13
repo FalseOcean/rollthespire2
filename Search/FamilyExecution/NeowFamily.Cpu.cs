@@ -15,6 +15,8 @@ internal sealed partial class NeowFamily
         string revision=capsuleNiche ? CpuRevision : (local is not null ? local.Revision :
             (gate is not null ? "N.Neow.Cpu.IdentityPreGate.20261015.v3" : pair is null ? "N.Neow.Cpu.LocalReplay.20261015.v3" : "N.Neow.Cpu.IdentityPair.20260912.v1")+
             (_cpuPositiveIdentity is null ? "" : NeowCpuPositiveIdentityPlan.Revision))+NeowIdentityOfferFacts.Revision;
+        if (_plan.Authority.UsesChildShuffle) revision += ".Modern113";
+        revision += _plan.CapsuleNonCombatRevision;
         int workers=Math.Clamp(workerBudget,1,32);
         if(capsuleNiche) prepared=prepared with {
             AnalyticalCost=new(FamilyId,65536,[],"SoloCapsuleNicheCpuFullWorkUnpriced"),

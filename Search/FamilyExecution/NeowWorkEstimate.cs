@@ -12,17 +12,17 @@ internal static class NeowWorkEstimate
     internal static Work Describe(NeowReplayPlan p)
     {
         if (p.StructuredConditions.Length == 0 && !p.HasFinalCurseFastProjection) return default;
-        bool rewards = (p.EnabledDomains & ~(Beta110FastDomain.FinalCurse | Beta110FastDomain.NewLeafTransform |
-            Beta110FastDomain.LeafyPoulticeTransforms | Beta110FastDomain.PhialHolsterPotions)) != 0;
-        bool niche = rewards || p.HasFinalCurseFastProjection || (p.EnabledDomains & Beta110FastDomain.NewLeafTransform) != 0;
-        bool transform = (p.EnabledDomains & Beta110FastDomain.LeafyPoulticeTransforms) != 0;
-        bool potion = (p.EnabledDomains & Beta110FastDomain.PhialHolsterPotions) != 0;
+        bool rewards = p.NeedsRewards;
+        bool niche = p.NeedsNicheOrKaleidoscopePools;
+        bool transform = p.NeedsTransformations;
+        bool potion = p.Authority.UsesChildShuffle ? p.NeedsPotions : (p.EnabledDomains & Beta110FastDomain.PhialHolsterPotions) != 0;
         var sources = p.Bones ? p.First != byte.MaxValue && p.Second != byte.MaxValue
             ? new[] { p.First, p.Second } : p.Authority.BonesEligibleRelicIds
             : new[] { p.Selected };
         // An unpinned Bones route executes two acquired sources, not the whole
         // eligible pool. Bound by the two heaviest possible local operations.
-        var work = sources.Select(id => Source(id, p.Authority.EffectCatalog, rewards, niche, transform, potion))
+        var work = sources.Select(id => Source(id, p.Authority.EffectCatalog, rewards,
+            id == Beta110FastRelicCatalog.NewLeaf && p.Authority.UsesChildShuffle ? transform : niche, transform, potion))
             .OrderByDescending(w => w.Draws + w.Visits / 16).Take(p.Bones ? 2 : 1).ToArray();
         double advances = p.AuthoredUpgrades is { } upgrades
             ? upgrades.Advances.Select(a => (double)Math.Max(0, a)).DefaultIfEmpty().Max() * (p.Bones ? 2 : 1) : 0;

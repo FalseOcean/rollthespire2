@@ -174,6 +174,10 @@ internal static class CapsuleRelicProbabilityEstimator
                 SearchSelectivityDependencyClass.StructuralDependence);
         }
 
+        if (CapsuleBagProbabilityEstimator.LastingCandyAffectsCapsule(plan, lanes))
+            return SearchSelectivityEstimate.Unpriced("Probability.CapsuleRelic.LastingCandyEligibilityChangesCapsulePull",
+                "The Capsule draw can skip Lasting Candy in a lane whose raw order remains observable.");
+
         var laneByKey = new Dictionary<ModelKey, int>(ModelKeyComparer.Instance);
         for (int lane = 0; lane < lanes.Length; lane++)
         {

@@ -119,8 +119,10 @@ internal sealed partial class QueryWorkbenchFrame
         if (_clearCategory is not null)
         {
             _clearCategory.Visible = !_showResults;
-            _clearCategory.Disabled = !CanChangeConditions;
-            SearchTooltip.Set(_clearCategory, _text.Get(_multiplayer && _selectedDomain is "ancient" or "events" or "boss" or "map"
+            bool research = _selectedDomain == ResearchDomain;
+            _clearCategory.Disabled = !CanChangeConditions || research && !HasResearchDraft;
+            _clearCategory.Text = _text.Get(research ? "query.dead_seed.clear" : "workflow.conditions.clear_category");
+            SearchTooltip.Set(_clearCategory, research ? string.Empty : _text.Get(_multiplayer && _selectedDomain is "ancient" or "events" or "boss" or "map"
                 ? "workflow.conditions.clear_category.shared" : "workflow.conditions.clear_category.personal"));
         }
         if (_restoreClearedConditions is not null &&
@@ -171,16 +173,29 @@ internal sealed partial class QueryWorkbenchFrame
             "combat" => _combatEditor.ClearConditions(_multiplayer, slot),
             "shop" => _shopEditor.ClearConditions(_multiplayer, slot),
             "relics" => _relicEditor.ClearConditions(_multiplayer, slot),
-            "ancient" => _ancientEditor.ClearConditions(_multiplayer),
+            "ancient" => _ancientEditor.ClearConditions(_multiplayer, keepResearch: true),
             "events" => _eventEditor.ClearConditions(_multiplayer),
             "map" => _actInformationEditor.ClearPageConditions(_multiplayer, true),
             "boss" => _actInformationEditor.ClearPageConditions(_multiplayer, false),
+            ResearchDomain => ClearResearchConditions(),
             "transform" => _transformationEditor.ClearConditions(),
             _ => null
         };
         if (restoreTransformation is not null && restoreCategory is { } restorePage)
             restoreCategory = () => { restorePage(); restoreTransformation(); };
+        if (_selectedDomain == "map" && restoreCategory is { } restoreMap)
+        {
+            var restorePrefix = _eventEditor.ClearUnknownRoomPrefixes(_multiplayer);
+            restoreCategory = () => { restoreMap(); restorePrefix(); };
+        }
         RefreshAfterConditionChange(restoreCategory);
+    }
+
+    private Action ClearResearchConditions()
+    {
+        var neow = _ancientEditor.ClearResearchConditions(_multiplayer);
+        var map = _actInformationEditor.ClearResearchConditions(_multiplayer);
+        return () => { neow(); map(); };
     }
 
     private void RefreshAfterConditionChange(Action? restoreCleared = null)

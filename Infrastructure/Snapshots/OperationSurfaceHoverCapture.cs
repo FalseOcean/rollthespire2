@@ -39,14 +39,15 @@ internal static class OperationSurfaceHoverCapture
         typeof(OldCoin), typeof(GoldenPearl), typeof(SignetRing),
         typeof(PotionBelt), typeof(PumpkinCandle)];
 
-    internal static bool EventMayDisplay(EventModel ev, PredictorEventOption option)
+    internal static bool EventMayDisplay(EventModel ev, PredictorEventOption option, bool modern = false)
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
         return OperationPreviewEligibility.EventMayDisplay(ev.Id.Entry, option.Key,
             ev.Id.Entry == "TINKER_TIME" && ev.Description?.LocEntryKey.Contains("CHOOSE_RIDER", StringComparison.Ordinal) == true,
             ev.Id.Entry == "TABLET_OF_TRUTH" && option.Key == "DECIPHER"
                 ? PredictorOperationCapture.Read<int>(ev, "_decipherCount") : 0,
-            option.OfferedRelic != null);
+            option.OfferedRelic != null, modern,
+            option.HasHiddenObtain);
     }
 
     // Native RelicCmd.Obtain calls AfterObtained; Player.AddRelicInternal also
@@ -85,7 +86,7 @@ internal static class OperationSurfaceHoverCapture
         var inventoryNode = Ancestor<NMerchantInventory>(owner);
         if (inventoryNode is not { IsOpen: true, Inventory: { } inventory } || !owner.Entry.IsStocked ||
             inventory.Player.RunState is not RunState actual || !ReferenceEquals(LocalContext.GetMe(actual), inventory.Player) ||
-            actual.CurrentRoom is not MerchantRoom merchant || !ReferenceEquals(merchant.GetLocalInventory(), inventory)) return false;
+            actual.CurrentRoom is not MerchantRoom merchant || !ReferenceEquals(MerchantRuntimeBinding.LocalInventory(actual, merchant), inventory)) return false;
         var entry = owner.Entry;
         AbstractModel? model = entry switch
         {

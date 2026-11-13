@@ -4,6 +4,14 @@
   "Blocks": [
     {
       "Type": "Heading",
+      "Text": "RolltheSpire2 1.4.2"
+    },
+    {
+      "Type": "Callout",
+      "Text": "Adapted RT2 to Slay the Spire 2 v0.113.0 and updated as many seed search conditions as possible. Search accuracy still needs further verification, and performance needs more work."
+    },
+    {
+      "Type": "Heading",
       "Text": "RolltheSpire2 1.4.1"
     },
     {

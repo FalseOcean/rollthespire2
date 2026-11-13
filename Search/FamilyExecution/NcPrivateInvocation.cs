@@ -12,6 +12,7 @@ internal static class NcPrivateInvocation
         string revision = (mode.EndsWith("-nc", StringComparison.Ordinal) ? "N.Neow.Composite.C.CombatReward." : "C.CombatReward.Composite.N.Neow.") + "PrivateOrdinal.CanonicalAbi1Ready.20260908.v2.C=" + c.Revision(mode.EndsWith("-nc", StringComparison.Ordinal));
         var preparation = new PreparedFilter(id) {
             Coverage = ["C.CombatReward", "N.Neow"],
+            Obligations = c.ChecksCardCollection ? [new("C.CombatReward"), new("N.Neow"), new("CombatCardExclusion")] : [],
             Remainders = remainders,
             AnalyticalCost = new(id, PrivateOrdinalBuffer.Capacity, [], "NcPrivateInvocation.ExistingWholeKernelUnpriced"),
             Survival = FamilySurvivalProjection.Unresolved(id, "NcPrivateInvocation.JointUnpriced")

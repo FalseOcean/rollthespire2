@@ -119,6 +119,12 @@ bool merchant_observation_matches(uint ordinal, uint lane, uint observed[5], uin
 }
 #endif
 
+#ifndef RT2_S_BEFORE_U
+#define RT2_S_BEFORE_U 12u
+#define RT2_S_BETWEEN 1u
+#define RT2_S_AFTER_R 13u
+#endif
+
 bool evaluate_merchant_colorless(uint64_t root) {
     uint slot_count = merchant_plan_buffer.values[0u];
     uint sequence_count = merchant_plan_buffer.values[1u];
@@ -138,7 +144,7 @@ bool evaluate_merchant_colorless(uint64_t root) {
     for (uint index = 0u; index < sequence_count; ++index)
         max_ordinal = max(max_ordinal, merchant_plan_buffer.values[sequence_base + index * 5u + 1u]);
     for (uint ordinal = 1u; ordinal <= max_ordinal; ++ordinal) {
-        for (uint call = 0u; call < 12u; ++call) consume_rng();
+        for (uint call = 0u; call < RT2_S_BEFORE_U; ++call) consume_rng();
         uncommon[ordinal - 1u] = next_int(uncommon_pool_count);
 #ifdef RT2_S_CANONICAL_UNCOMMON_OFFSET
         uncommon[ordinal - 1u] = merchant_target_buffer.ids[RT2_S_CANONICAL_UNCOMMON_OFFSET + uncommon[ordinal - 1u]];
@@ -146,7 +152,7 @@ bool evaluate_merchant_colorless(uint64_t root) {
 #if RT2_S_EARLY_REJECTION
         if (!merchant_observation_matches(ordinal, 0u, uncommon, slot_count, sequence_count)) return false;
 #endif
-        consume_rng();
+        for (uint call = 0u; call < RT2_S_BETWEEN; ++call) consume_rng();
         rare[ordinal - 1u] = next_int(rare_pool_count);
 #ifdef RT2_S_CANONICAL_RARE_OFFSET
         rare[ordinal - 1u] = merchant_target_buffer.ids[RT2_S_CANONICAL_RARE_OFFSET + rare[ordinal - 1u]];
@@ -154,7 +160,7 @@ bool evaluate_merchant_colorless(uint64_t root) {
 #if RT2_S_EARLY_REJECTION
         if (!merchant_observation_matches(ordinal, 1u, rare, slot_count, sequence_count)) return false;
 #endif
-        for (uint call = 0u; call < 13u; ++call) consume_rng();
+        for (uint call = 0u; call < RT2_S_AFTER_R; ++call) consume_rng();
 #if !RT2_S_EARLY_REJECTION
         for (uint index = 0u; index < slot_count; ++index) {
             uint base = 7u + index * 3u;

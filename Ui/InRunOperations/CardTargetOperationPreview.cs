@@ -10,7 +10,8 @@ internal static class CardTargetOperationPreview
         if (snapshot.Scene is PredictorOperationEventScene { AwaitingCards:true } scene &&
             !OperationPreviewEligibility.EventMayDisplay(scene.Event.Entry, scene.Branch ?? "",
                 scene.TinkerType != null, scene.TabletCount,
-                scene.Options.Any(o => o.Key == scene.Branch && o.OfferedRelic != null)))
+                scene.Options.Any(o => o.Key == scene.Branch && o.OfferedRelic != null),
+                snapshot.Context.UsesNonCombatGeneration, scene.Options.Any(o => o.Key == scene.Branch && o.HasHiddenObtain)))
             return new(scene.Event, [], [], false, [], []);
         return OperationForecastProjection.Project(CardTargetOperationForecast.Build(snapshot,hoveredCardId,token,includeContinuation,includeCombat));
     }

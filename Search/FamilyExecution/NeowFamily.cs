@@ -39,6 +39,7 @@ internal sealed partial class NeowFamily
     internal bool UsesCompatibilityGpu => _gpuPlan?.NumericalVariant == NeowGpuNumericalVariant.IntegerUnitFloat;
     private string CpuRevision => "N.Neow.Cpu.LocalReplay.20261015.v3" +
         (_cpuPositiveIdentity is null ? "" : NeowCpuPositiveIdentityPlan.Revision) + NeowIdentityOfferFacts.Revision +
+        (_plan.Authority.UsesChildShuffle ? ".Modern113" : "") + _plan.CapsuleNonCombatRevision +
         (HasCapsuleNicheContinuation ? NeowCapsuleNicheContinuation.Revision : "") +
         (_sparseRefinement is null ? "" : NeowCapsuleSparseRefinement.Revision);
     private NeowGpuOptimizations OptimizationsFor(bool compact) => _gpuPlan is null ? default : _gpuOptimizations.Applicable(_gpuPlan, compact,
@@ -50,7 +51,7 @@ internal sealed partial class NeowFamily
     {
         _profile = RuntimeProfileRegistry.Select(request.Detection); _inputIdentity = request.SnapshotFingerprint;
         _pricingAuthority = FilterPricingAuthority.From(request);
-        _canonicalScope = request.Authority.PlayersCount==1 && request.CompiledSearch.Context.Party is null &&
+        _canonicalScope = !plan.Authority.UsesChildShuffle && request.Authority.PlayersCount==1 && request.CompiledSearch.Context.Party is null &&
             request.CompiledSearch.NormalizedQuery.StandardMaps.Count==0 && request.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count==0;
         _sharedNeow = Search.Semantics.TransformationAggregateCondition.HasSharedNeow(request.Evaluation);
         _sharedIdentityOnly = Search.Semantics.TransformationAggregateCondition.SharedNeowIdentityOnly(request.Evaluation);
@@ -168,6 +169,8 @@ internal sealed partial class NeowFamily
         if (_gpuPlan.IsMultiplayer && _plan.StructuredConditions.Any(c => c.OrderedKaleidoscope))
             revision += PartyOrderedKRevision;
         if (UsesCompatibilityGpu) revision += ".IntegerUnitFloat.Rne.20261025.v1";
+        if (_gpuPlan.UsesChildShuffle) revision += ".Modern113";
+        revision += _plan.CapsuleNonCombatRevision;
         revision += OptimizationsFor(compactAbi1Input).Revision;
         revision += _gpuPlan.EntryIdentityRevision;
         revision += NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision;
@@ -192,7 +195,7 @@ internal sealed partial class NeowFamily
             else if (_gpuPlan is null)
                 quote = NeowWorkEstimate.Cpu(this, _workEstimate, request, 1, capacity: CpuFilterExecution.Capacity);
             else
-                quote = (UsesCompatibilityGpu || OptimizationsFor(request.CompactInput).Revision.Length != 0 ? null :
+                quote = (UsesCompatibilityGpu || _plan.Authority.UsesChildShuffle || OptimizationsFor(request.CompactInput).Revision.Length != 0 ? null :
                     NeowPhysicalPricing.Quote(this, request)) ?? NeowWorkEstimate.Gpu(this, _workEstimate, request);
         }
         return request.PrivateOutput && UsesSmallPrivateOutput && quote is not null

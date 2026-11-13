@@ -206,13 +206,7 @@ public static class Beta109WorldPredictionProvider
                     out eventIssue) && preparedEvents is not null)
             {
                 upFront.UnstableShuffle(preparedEvents.Candidates, $"act{act.Act}:event-shuffle");
-                var immutableEventContext = new EventImmutableEligibilityContext(
-                    snapshot.GameMode,
-                    snapshot.ModeFactsExact,
-                    snapshot.PlayerCount,
-                    snapshot.ModeFactsExact && snapshot.IsMultiplayerExact,
-                    snapshot.EventAuthority.CharacterCardPoolCount,
-                    snapshot.EventAuthority.CharacterCardPoolCountExact);
+                var immutableEventContext = EventImmutableEligibilityContext.From(snapshot);
                 eventSequences.Add(EventPoolSequenceProjector.Complete(
                     snapshot.Profile,
                     preparedEvents,
@@ -464,10 +458,10 @@ public static class Beta109WorldPredictionProvider
         if (snapshot.UpFrontPrefix.Kind == Beta109UpFrontPrefixAuthorityKind.ExactCheckpoint &&
             snapshot.UpFrontPrefix.Checkpoint is not null)
         {
-            return Beta109WorldRng.FromCheckpoint(snapshot.UpFrontPrefix.Checkpoint);
+            return Beta109WorldRng.FromCheckpoint(snapshot.UpFrontPrefix.Checkpoint, semantics: snapshot.RngSemantics);
         }
 
-        Beta109WorldRng rng = Beta109WorldRng.CreateNamed(snapshot.RunSeedRoot, "up_front");
+        Beta109WorldRng rng = Beta109WorldRng.CreateNamed(snapshot.RunSeedRoot, "up_front", snapshot.RngSemantics);
         foreach (Beta109RelicBucketSnapshot bucket in snapshot.SharedRelicBuckets)
         {
             List<ModelKey> items = bucket.OrderedRelics.ToList();
@@ -560,7 +554,8 @@ public static class Beta109WorldPredictionProvider
         };
         return new[]
         {
-            new PredictionDiagnostic(prefix + "source-audit", RuntimeProfilePolicies.AuditFingerprint(snapshot.Profile)),
+            new PredictionDiagnostic(prefix + "source-audit", snapshot.RngSemantics == RngSemanticProfileId.Modern113
+                ? Beta109AcceptedRuntimeValidationAuthority.Beta113WorldFixture : RuntimeProfilePolicies.AuditFingerprint(snapshot.Profile)),
             new PredictionDiagnostic(prefix + "snapshot", snapshot.SnapshotFingerprint),
             new PredictionDiagnostic(prefix + "catalog", snapshot.CatalogFingerprint),
             new PredictionDiagnostic(prefix + "unlock", snapshot.UnlockFingerprint),
@@ -577,7 +572,7 @@ public static class Beta109WorldPredictionProvider
 
     private static string Evidence(Beta109WorldGenerationSnapshot snapshot, string suffix) => snapshot.Profile switch
     {
-        RuntimeProfileId.Beta111 => "beta111." + suffix,
+        RuntimeProfileId.Beta111 => (snapshot.RngSemantics == RngSemanticProfileId.Modern113 ? "beta113." : "beta111.") + suffix,
         RuntimeProfileId.Beta110 => "beta110." + suffix,
         _ => "beta109-historical-donor." + suffix
     };

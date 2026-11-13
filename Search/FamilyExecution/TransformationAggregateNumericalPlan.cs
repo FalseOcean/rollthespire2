@@ -1,3 +1,4 @@
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Seed;
@@ -20,16 +21,22 @@ internal sealed partial class TransformationAggregateNumericalPlan
     private readonly (ulong Hash, int Prefix, int[][] Pools)[] _events;
     private readonly bool _closedNeow;
     private readonly bool _probabilityClosedNeow;
+    internal bool UsesModern113 { get; }
+    internal bool HasTwoSharedTransformOrders => UsesModern113 && _condition.Opening == TransformationOpening.BonesLeafyNewLeaf &&
+        _condition.PickupOrder == TransformationPickupOrder.Any;
+    internal string RuleRevision => UsesModern113 ? ".Modern113" : "";
     // Probability may use the captured marginal pools under the Owner's neutral
     // unspecified-output premise. Runtime Closed/Matches keep their stricter
     // continuation proof and are deliberately not widened by this projection.
-    internal bool ProbabilityClosed => (_neow is null || _probabilityClosedNeow) && _events.All(group => group.Pools.All(pool => pool.Length > 0));
+    internal bool ProbabilityClosed => !HasTwoSharedTransformOrders &&
+        (_neow is null || _probabilityClosedNeow) && _events.All(group => group.Pools.All(pool => pool.Length > 0));
     private static readonly ulong TransformationsHash = XxHash64.Hash("transformations"u8, 0);
     private static readonly ulong NicheHash = XxHash64.Hash("niche"u8, 0);
 
     internal TransformationAggregateNumericalPlan(SearchModel request)
     {
         _condition = request.Evaluation.TransformationAggregate ?? throw new ArgumentException("MissingAggregate");
+        UsesModern113 = request.Authority.VersionResolution.SemanticProfileId == RngSemanticProfileId.Modern113;
         var keys = new Dictionary<ModelKey, int>();
         int Key(ModelKey key, bool rare)
         {
@@ -101,30 +108,34 @@ internal sealed partial class TransformationAggregateNumericalPlan
     internal bool Matches(ulong root) => _streamingMatches is { } matches ? matches(root) : MatchesCollected(root);
 
     // Retain the complete collector as the non-closed path and direct numerical oracle.
-    internal bool MatchesCollected(ulong root)
+    internal bool MatchesCollected(ulong root) => MatchesCollectedOrder(root, _condition.PickupOrder == TransformationPickupOrder.NewLeafThenLeafy) ||
+        HasTwoSharedTransformOrders && MatchesCollectedOrder(root, true);
+
+    private bool MatchesCollectedOrder(ulong root, bool newLeafFirst)
     {
         Span<int> outputs = stackalloc int[10]; int count = 0;
         if (_neow is { } n)
         {
-            // T consumes identity only; its transforms use independent local streams.
+            // The opening replay supplies identity. Each order starts at the same
+            // personal Transformations checkpoint and advances through its pickups.
             if (!(_neowIdentity?.Matches(root) ?? _neowIdentityOnly?.Matches(root) ?? NeowFamilyReplay.Observe(root, n).IdentityPass)) return false;
             int nc = _condition.Opening == TransformationOpening.BonesLeafyNewLeaf ? 3 : _condition.Opening is TransformationOpening.LeafyPoultice or TransformationOpening.BonesLeafyOther ? 2 : 1;
             if (!_closedNeow) { outputs[..nc].Fill(-1); count = nc; }
             else
             {
                 var catalog = n.Authority.EffectCatalog;
-                // The closed Leafy/NewLeaf pair has separate streams and equal
-                // remaining Basic pools in either order; no route union of cards.
+                var transformations = new Beta110FastRng(unchecked(root + (ulong)n.Authority.PlayerSlotIndex + TransformationsHash));
+                if (UsesModern113 && newLeafFirst)
+                    outputs[count++] = _neowIds[NeowLocalOperators.DrawNewLeafTransform(catalog, ref transformations)];
                 if (_condition.Opening != TransformationOpening.NewLeaf)
                 {
-                    var rng = new Beta110FastRng(unchecked(root + (ulong)n.Authority.PlayerSlotIndex + TransformationsHash));
-                    Span<ushort> pair = stackalloc ushort[2]; NeowLocalOperators.DrawLeafyTransforms(catalog, ref rng, pair);
+                    Span<ushort> pair = stackalloc ushort[2]; NeowLocalOperators.DrawLeafyTransforms(catalog, ref transformations, pair);
                     outputs[count++] = _neowIds[pair[0]]; outputs[count++] = _neowIds[pair[1]];
                 }
-                if (_condition.Opening is TransformationOpening.NewLeaf or TransformationOpening.BonesLeafyNewLeaf)
+                if ((!UsesModern113 || !newLeafFirst) && _condition.Opening is TransformationOpening.NewLeaf or TransformationOpening.BonesLeafyNewLeaf)
                 {
                     var rng = new Beta110FastRng(unchecked(root + NicheHash));
-                    outputs[count++] = _neowIds[NeowLocalOperators.DrawNewLeafTransform(catalog, ref rng)];
+                    outputs[count++] = _neowIds[NeowLocalOperators.DrawNewLeafTransform(catalog, ref (UsesModern113 ? ref transformations : ref rng))];
                 }
             }
         }

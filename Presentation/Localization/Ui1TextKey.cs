@@ -814,6 +814,7 @@ public static class Ui1TextKey
     public const string SaveStatusFingerprintSchema = "ui1.save_status.fingerprint_schema";
     public const string SaveStatusModelKnown = "ui1.save_status.model.known";
     public const string SaveStatusModelBestEffort = "ui1.save_status.model.best_effort";
+    public const string SaveStatusModelProvisionalVersioned = "ui1.save_status.model.provisional_versioned";
     public const string SaveStatusModelUnverified = "ui1.save_status.model.unverified";
     public const string SaveStatusSemanticTitle = "ui1.save_status.semantic.title";
     public const string SaveStatusSemanticVerified = "ui1.save_status.semantic.verified";

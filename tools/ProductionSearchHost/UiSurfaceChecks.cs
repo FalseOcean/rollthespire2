@@ -47,6 +47,10 @@ internal static partial class UiSurfaceChecks
                 MegaCrit.Sts2.Core.Modding.ModManagerState.Initialized);
         MegaCrit.Sts2.Core.Models.ModelDb.Init();
         MegaCrit.Sts2.Core.Modding.AssemblyInfo.Init();
+        if (args.Contains("--hextech-forge-ui"))
+            LoadHextechForgeCheckModels(output);
+        if (args.Contains("--hextech-reroll-ui"))
+            LoadHextechRerollCheckModels(output);
         MegaCrit.Sts2.Core.Multiplayer.Serialization.ModelIdSerializationCache.Init();
         MegaCrit.Sts2.Core.Models.ModelDb.InitIds();
         var mockSave = earlySave ?? PrepareSave();
@@ -64,6 +68,16 @@ internal static partial class UiSurfaceChecks
         var args = OS.GetCmdlineUserArgs();
         var runtime = ModRuntimeSnapshot.NotInitialized with { Profile = Beta111Profile.Instance,
             Detection = new("0.111.0", "0.111.0", "beta", "WorkspaceSurface", true, "") };
+        if (args.Contains("--elite-research-ui"))
+        {
+            await RunEliteResearchUiAsync(root, output, runtime);
+            return;
+        }
+        if (args.Contains("--semantic-editors-ui"))
+        {
+            await RunSemanticEditorsUiAsync(root, output, runtime);
+            return;
+        }
         if (args.Contains("--card-picker-refresh-ui"))
         {
             await RunCardPickerRefreshChecks(root, output);
@@ -140,7 +154,7 @@ internal static partial class UiSurfaceChecks
             await RunInRunConsoleChecks(root, output, runtime);
             return;
         }
-        if (args.Contains("--neow-operation-ui") || args.Contains("--operation-ui") || args.Contains("--operation-surfaces-only"))
+        if (args.Contains("--courier-hover-ui") || args.Contains("--hextech-reroll-ui") || args.Contains("--hextech-forge-ui") || args.Contains("--neow-operation-ui") || args.Contains("--operation-ui") || args.Contains("--operation-surfaces-only"))
         {
             await RunNeowOperationChecks(root, output, runtime);
             return;

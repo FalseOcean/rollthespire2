@@ -26,11 +26,36 @@ internal static class JointSelectivityEstimator
 
     private static JointSelectivityResult EstimateQueryUnchecked(SearchSelectivityInput plan)
     {
+        var executable = Compilation.SearchRuleRemainders.For(plan.CompiledSearch);
+        if (executable.Causes.Length > 0 && plan.CompiledSearch.Status != QueryNormalizationStatus.Impossible)
+        {
+            var available = EstimateQuery(SearchSelectivityInput.From(executable.Compiled));
+            if (available.ExactlyImpossible) return available;
+            return JointSelectivityResult.Partial("Probability.VersionedRulesIncomplete",
+                "Some authored conditions require game rules that have not been migrated.",
+                "The reported components describe only the currently modeled conditions.", available.KnownComponents,
+                available.UnknownComponents.Concat(executable.Causes).ToArray(), assumptions: available.Assumptions);
+        }
         var query = plan.CompiledSearch.NormalizedQuery;
+        if (query.ElitePrefixResearch is not null || query.Players.Any(p => p.Conditions.ElitePrefixResearch is not null))
+        {
+            if (plan.CompiledSearch.Status == QueryNormalizationStatus.Impossible)
+                return JointSelectivityResult.Exact(0, JointSelectivityCombinationMethod.ExactImpossible,
+                    "Probability.ElitePrefixResearch.NormalizationImpossible", "Canonical query is impossible.", "P=0");
+            var withoutResearch = query with { ElitePrefixResearch = null,
+                Players = query.Players.Select(p => p with { Conditions = p.Conditions with { ElitePrefixResearch = null } }).ToArray() };
+            var baseline = EstimateQuery(SearchSelectivityInput.From(SearchCompiler.Compile(withoutResearch, plan.CompiledSearch.Context)));
+            if (baseline.ExactlyImpossible) return baseline;
+            return JointSelectivityResult.Partial("Probability.ElitePrefixResearch.Unmodeled",
+                "No probability model is provided for the universal first-Elite research predicate.",
+                "The research predicate remains a Production Exact obligation.", baseline.KnownComponents,
+                baseline.UnknownComponents.Append("ElitePrefixResearch:AllPathsPrefixJointMissing").ToArray(),
+                assumptions: baseline.Assumptions);
+        }
         static bool HasExactOnlyConditions(SearchQuery q) => q.TreasureRelics is { IsEmpty: false };
         if (HasExactOnlyConditions(query) || query.Players.Any(p => HasExactOnlyConditions(p.Conditions)))
             return TreasureRelicProbability.Compose(plan, EstimateQuery);
-        if (query.FirstActUnknownEventPrefixCount > 0 || query.Players.Any(p => p.Conditions.FirstActUnknownEventPrefixCount > 0))
+        if (UnknownRoomPrefixRequirements.HasConditions(query))
             return FirstActUnknownEventProbability.Compose(plan, EstimateQuery);
         if (plan.CompiledSearch.Context.Party is not null)
         {

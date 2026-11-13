@@ -193,6 +193,7 @@ public sealed record SearchQuery(
     LegacyNeowSemanticConstraints LegacyNeow,
     LegacyWorldSemanticConstraints LegacyWorld)
 {
+    public IReadOnlyList<EncounterQueueSearchCondition> EncounterQueues { get; init; } = [];
     public IReadOnlyList<PlayerOfferQuery> Players { get; init; } = Array.Empty<PlayerOfferQuery>();
     public static SearchQuery Empty { get; } = new(
         null,
@@ -207,9 +208,15 @@ public sealed record SearchQuery(
         LegacyWorldSemanticConstraints.Empty);
 
     public TreasureRelicSearchCondition? TreasureRelics { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public NeowOfferWhitelistSearchCondition? NeowOfferWhitelist { get; init; }
     public int FirstActUnknownEventPrefixCount { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public int FirstActUnknownMonsterPrefixCount { get; init; }
     public IReadOnlyList<StandardMapSearchCondition> StandardMaps { get; init; } = Array.Empty<StandardMapSearchCondition>();
     public IReadOnlyList<StandardMapRouteCondition> StandardMapRoutes { get; init; } = Array.Empty<StandardMapRouteCondition>();
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public ElitePrefixResearchCondition? ElitePrefixResearch { get; init; }
 
     public CombatCardRewardSequenceSearchCondition? CombatCardRewards { get; init; }
     public CombatCardExclusionSearchCondition? CombatCardExclusion { get; init; }

@@ -27,16 +27,28 @@ internal sealed partial class ActInformationSearchEditor
         }, party ? -1 : 0, (previous, current) => { if (ReferenceEquals(_draft, previous)) _draft = current; });
     }
 
+    internal Action ClearResearchConditions(bool party) =>
+        WorkbenchConditionReset.Swap(_drafts, saved =>
+        {
+            var cleared = CopyForConditionReset(saved);
+            cleared.EliteResearchEnabled = false;
+            cleared.EliteResearchCounts = ElitePrefixResearchCondition.FloorSeven;
+            cleared.EncounterQueues.Clear();
+            return cleared;
+        }, party ? -1 : 0, (previous, current) => { if (ReferenceEquals(_draft, previous)) _draft = current; });
+
     private static SeatDraft CopyForConditionReset(SeatDraft saved)
     {
         var copy = new SeatDraft { Context = saved.Context, Players = saved.Players, Ascension = saved.Ascension,
-            Catalog = saved.Catalog, MapMode = saved.MapMode, AdvancedProperties = saved.AdvancedProperties, Scope = saved.Scope };
+            Catalog = saved.Catalog, AdvancedProperties = saved.AdvancedProperties, Scope = saved.Scope,
+            EliteResearchEnabled = saved.EliteResearchEnabled, EliteResearchCounts = saved.EliteResearchCounts };
         for (int index = 0; index < saved.SelectedVariants.Length; index++)
         {
             copy.SelectedVariants[index].UnionWith(saved.SelectedVariants[index]);
             copy.SelectedBosses[index].UnionWith(saved.SelectedBosses[index]);
             copy.SelectedSecondBosses[index].UnionWith(saved.SelectedSecondBosses[index]);
         }
+        copy.EncounterQueues.AddRange(saved.EncounterQueues);
         saved.IncludesSecondBoss.CopyTo(copy.IncludesSecondBoss, 0);
         saved.DrawingModes.CopyTo(copy.DrawingModes, 0);
         foreach (var pair in saved.Properties) copy.Properties[pair.Key] = pair.Value.ToList();
@@ -47,7 +59,7 @@ internal sealed partial class ActInformationSearchEditor
     }
 
     internal bool HasConditions(bool party) => _drafts.TryGetValue(party ? -1 : 0, out var d) &&
-        (Enumerable.Range(0, 4).Any(scope => ScopeConditionCount(d, scope) > 0) ||
+        (HasResearch(d) || Enumerable.Range(0, 4).Any(scope => ScopeConditionCount(d, scope) > 0) ||
          d.SelectedVariants.Concat(d.SelectedBosses).Concat(d.SelectedSecondBosses).Any(keys => keys.Count > 0) ||
          d.IncludesSecondBoss.Any(required => required));
     internal Action ClearConditions(bool party) => WorkbenchConditionReset.Swap(_drafts, _ => new SeatDraft(), party ? -1 : 0,
@@ -57,5 +69,15 @@ internal sealed partial class ActInformationSearchEditor
         (_draft.SelectedVariants[act].Count > 0 ? 1 : 0) + (_draft.SelectedBosses[act].Count > 0 ? 1 : 0) +
         (_draft.IncludesSecondBoss[act] ? 1 : 0));
 
-    internal int MapConditionCount() => Enumerable.Range(0, 4).Sum(scope => ScopeConditionCount(_draft, scope));
+    internal int MapConditionCount() => Enumerable.Range(0, 4).Sum(scope => ScopeConditionCount(_draft, scope)) +
+        (_draft.Players == 1 && _unknownRoomPrefix?.HasConditions == true ? 1 : 0);
+
+    internal int EliteResearchConditionCount => _draft.EliteResearchEnabled ? 1 : 0;
+    internal ElitePrefixResearchCondition? EliteResearchDraft => _draft.EliteResearchEnabled ||
+        _draft.EliteResearchCounts != ElitePrefixResearchCondition.FloorSeven ? _draft.EliteResearchCounts : null;
+    internal int EncounterResearchConditionCount => _draft.EncounterQueues.Count(q => q.AllowedKeys.Count > 0);
+    internal bool HasResearchDraft => HasResearch(_draft);
+    private static bool HasResearch(SeatDraft draft) => draft.EliteResearchEnabled ||
+        draft.EliteResearchCounts != ElitePrefixResearchCondition.FloorSeven || draft.EncounterQueues.Count > 0;
+    internal IReadOnlyList<EncounterQueueSearchCondition> EncounterResearchDraft => _draft.EncounterQueues;
 }

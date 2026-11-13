@@ -15,7 +15,7 @@ internal static class MerchantShopColorlessPhysicalPricing
     {
         if (!FamilyPhysicalQuote.AdmittedRequest(geometry) || !FamilyPhysicalQuote.HasReferenceBackend() ||
             request.ProfileId != Compatibility.RuntimeProfileId.Beta111 || request.Authority.PlayersCount != 1 ||
-            request.PricingAuthority.CanUseCurrentModel != true) return null;
+            request.PricingAuthority.CanUseCurrentModel != true || request.Authority.UsesModern113) return null;
         var e = request.Evaluation;
         var slots = e.MerchantColorlessConditions.OrderBy(c => c.MerchantOrdinal).ToArray();
         bool singleRare = slots is [{ MerchantOrdinal: 1, Slot: MerchantColorlessSlot.Rare }];
@@ -41,7 +41,7 @@ internal static class MerchantShopColorlessPhysicalPricing
     {
         var a=request.Authority;
         return request.ProfileId==Compatibility.RuntimeProfileId.Beta111 && request.PricingAuthority.CanUseCurrentModel &&
-            request.Authority.PlayersCount==1 && a.HasExactV1Inputs && a.UncommonPool.Count==32 && a.RarePool.Count==21;
+            request.Authority.PlayersCount==1 && !a.UsesModern113 && a.HasExactV1Inputs && a.UncommonPool.Count==32 && a.RarePool.Count==21;
     }
 
     private static FamilyPhysicalQuote? QuoteModel(MerchantShopColorlessPreparation request,

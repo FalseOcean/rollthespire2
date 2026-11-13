@@ -12,12 +12,14 @@ internal sealed class VariantOpeningGpuPlan
     internal int ScratchWords => 0;
     internal GpuNumericalVariant NumericalVariant { get; }
     internal GpuNumericRequirements NumericRequirements => GpuIntegerNumerics.Requirements(NumericalVariant);
+    private readonly bool _unknownMonster;
     internal uint[][] Buffers { get; }
     internal VariantOpeningGpuPlan(VariantOpeningPlan plan, GpuNumericalVariant numericalVariant)
     {
         if (numericalVariant is not (GpuNumericalVariant.NativeFloat64 or GpuNumericalVariant.IntegerRne))
             throw new ArgumentOutOfRangeException(nameof(numericalVariant));
         NumericalVariant = numericalVariant;
+        _unknownMonster = plan.UnknownMonster;
         var groups = new List<uint>(); var allows = new List<uint>();
         foreach (var group in plan.Groups)
         {
@@ -34,7 +36,8 @@ internal sealed class VariantOpeningGpuPlan
         Buffers[3] = groups.ToArray(); Buffers[4] = allows.ToArray();
     }
     internal string Revision(bool compact) => "V.VariantOpening.Gpu" + (compact ? ".CompactAbi1" : ".Dense") +
-        ".K4.CanonicalAbi1Ready.20261029.v2" + (NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne" : ".NativeFloat64") + GpuRngRotation.Revision;
+        ".K4.CanonicalAbi1Ready.20261029.v2" + (_unknownMonster ? ".MonsterPrefix.20261105.v1" : "") +
+        (NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne" : ".NativeFloat64") + GpuRngRotation.Revision;
     internal string ShaderSource()
     {
         // The same numerical donor and compatibility adapter as InitialRooms:
@@ -44,6 +47,7 @@ internal sealed class VariantOpeningGpuPlan
             donor.IndexOf("bool evaluate_event_results", StringComparison.Ordinal)];
         string source = FamilyGpuComputeUtility.LoadEmbeddedShader("VariantOpeningFamily.comp.glsl")
             .Replace("/*__RNG_HASH__*/", rngAndHash, StringComparison.Ordinal);
+        if (_unknownMonster) source = UnknownRoomPrefixGpuSource.RequireMonster(source, 7);
         return NumericalVariant == GpuNumericalVariant.NativeFloat64 ? source : InitialRoomsGpuNumericalSource.Adapt(source);
     }
 }

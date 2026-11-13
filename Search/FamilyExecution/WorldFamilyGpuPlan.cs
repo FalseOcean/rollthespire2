@@ -17,7 +17,11 @@ internal sealed class WorldFamilyGpuPlan
     internal GpuNumericalVariant NumericalVariant { get; }
     internal GpuNumericRequirements NumericRequirements => GpuIntegerNumerics.Requirements(NumericalVariant);
     private readonly bool _soloConstants;
+    private readonly bool _encounters;
+    private readonly int _normalSlots;
+    private readonly int _eliteSlots;
     private readonly bool _variantFilterMigrated;
+    private readonly bool _childShuffle;
     internal long ScratchBytes => Math.Max(4, Capacity * ScratchWords * 4L);
     internal long WorkspaceBytes => Capacity * 8L + ScratchBytes + 64 + GroupingWorkspaceBytes +
         Buffers.Where((_, i) => i is not (0 or 12 or 16 or 17 or 18)).Sum(b => Math.Max(4, b.Length * 4L));
@@ -25,7 +29,8 @@ internal sealed class WorldFamilyGpuPlan
         (compact ? ".CompactAbi1" : ".Dense") + $".K{GroupingK}." +
         (_soloConstants ? "SoloConstants.CanonicalAbi1Ready.20260929.v3" : "CanonicalAbi1Ready.20260907.v2") +
         (NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "") +
-        (_variantFilterMigrated ? ".VariantFilterMovedToV.20261028.v1" : "") + GpuRngRotation.Revision;
+        (_variantFilterMigrated ? ".VariantFilterMovedToV.20261028.v1" : "") + (_encounters ? ".EncounterQueues.20261105.v1" : "") +
+        (_childShuffle ? ".Modern113" : "") + GpuRngRotation.Revision;
     internal bool VariantOnly { get; }
     internal WorldFamilyGpuPlan(WorldFamilyReplay replay, bool specializeSolo = false,
         GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
@@ -35,6 +40,10 @@ internal sealed class WorldFamilyGpuPlan
         NumericalVariant = numericalVariant;
         _variantFilterMigrated = replay.VariantFilterMigrated;
         var w = replay.Plan;
+        _childShuffle = w.UsesChildShuffle;
+        _encounters = w.Acts.Any(a => a.HasEncounterPredicate);
+        _normalSlots = Math.Max(1, w.Acts.Max(a => a.WeakEncounterSlots + a.RegularEncounterSlots));
+        _eliteSlots = Math.Max(1, w.Acts.Max(a => a.EliteEncounterSlots));
         VariantOnly = w.MaxRequiredAct == 0;
         _soloConstants = specializeSolo && !VariantOnly;
         WorldFamilyGpuPacking.PackWorldPlan(w, out var sm, out var si, out var map,
@@ -65,7 +74,7 @@ internal sealed class WorldFamilyGpuPlan
         }
         uint sharedOffset = Store(w.SharedAncients.Select(i => (uint)i));
         bool needsEncounters = w.Acts.Any(a => a.Act <= w.MaxRequiredAct &&
-            (a.Act < w.MaxRequiredAct || a.HasBossPredicate || a.HasAncientPredicate || w.RequiresSecondBoss));
+            (a.HasEncounterPredicate || a.Act < w.MaxRequiredAct || a.HasBossPredicate || a.HasAncientPredicate || w.RequiresSecondBoss));
         int encounterStride = needsEncounters ? w.MaxEncounterPoolCount : 0;
         int eventStride = w.Acts.Max(a => a.EventCandidates.Length);
         ScratchWords = encounterStride + eventStride;
@@ -76,7 +85,7 @@ internal sealed class WorldFamilyGpuPlan
             (uint)encounterStride,(uint)(ps.Count/7),0,w.Act1OverrideId==ushort.MaxValue?uint.MaxValue:w.Act1OverrideId,
             (uint)w.Ascension,(uint)eventStride,sharedOffset];
         // Bindings 0/12/16/17/18 are private dynamic batch/scratch/header/output/input.
-        Buffers = [[],replay.BucketLengths,meta,sm,si,map,acts,encounters,conflicts,bosses,ps.ToArray(),ids.ToArray(),[],extra.ToArray(),data.ToArray(),[],[],[],[]];
+        Buffers = [[],replay.BucketLengths,meta,sm,si,map,acts,encounters,conflicts,bosses,ps.ToArray(),ids.ToArray(),[],extra.ToArray(),data.ToArray(),_encounters ? WorldEncounterGpuSource.Pack(w) : [],[],[],[]];
     }
 
     internal string ShaderSource()
@@ -87,8 +96,10 @@ internal sealed class WorldFamilyGpuPlan
         string numerical = donor[donor.IndexOf("bool encounter_eligible",StringComparison.Ordinal)..donor.IndexOf("void main()",StringComparison.Ordinal)];
         string body=FamilyGpuComputeUtility.LoadFamilyShaderWithVisibleSeedRootHash("WorldFamily.comp.glsl")
             .Replace("/*__W_DONOR__*/",rng+numerical,StringComparison.Ordinal)
+            .Replace("#define RT2_W_CHILD_SHUFFLE 0", "#define RT2_W_CHILD_SHUFFLE " + (_childShuffle ? "1" : "0"), StringComparison.Ordinal)
             .Replace("uint sharedIds[512]",$"uint sharedIds[{Math.Max(1,Buffers[2][5])}]",StringComparison.Ordinal)
             .Replace("uint maxAct=plan_meta_buffer.values[6u];", VariantOnly ? "return true; uint maxAct=0u;" : "uint maxAct=plan_meta_buffer.values[6u];",StringComparison.Ordinal);
+        if (_encounters) body = WorldEncounterGpuSource.Extend(body, numerical, _normalSlots, _eliteSlots);
         if (_soloConstants)
         {
             // These packed values cannot change during an executor's lifetime.

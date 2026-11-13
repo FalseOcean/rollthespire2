@@ -34,7 +34,7 @@ internal static class PredictorPotionEffects
             while (state.PotionSlots.Any(p => p == null))
             {
                 token.ThrowIfCancellationRequested();
-                var key = PredictorRewardGeneration.GeneratePotions(context, ref state, 1, PredictorStream.CombatPotionGeneration)[0];
+                var key = PredictorRewardGeneration.GeneratePotions(context, ref state, 1, context.NonCombatStream(PredictorStream.CombatPotionGeneration))[0];
                 var result = Procure(state, key, relic.Id, "BeforeCombatStart");
                 state = result.State;
                 attempts.Add(result.Attempt);
@@ -55,7 +55,7 @@ internal static class PredictorPotionEffects
     {
         int originalCapacity = state.PotionSlots.Length;
         state = state with { PotionSlots = state.PotionSlots.AddRange(new PredictorPotion?[4]) };
-        var keys = PredictorRewardGeneration.GeneratePotions(context, ref state, 4, PredictorStream.CombatPotionGeneration);
+        var keys = PredictorRewardGeneration.GeneratePotions(context, ref state, 4, context.NonCombatStream(PredictorStream.CombatPotionGeneration));
         var attempts = ImmutableArray.CreateBuilder<PredictorPotionAttempt>();
         for (int i = 0; i < keys.Length; i++)
         {

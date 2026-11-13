@@ -180,7 +180,7 @@ internal sealed partial class EventSearchEditor
 
     private bool QueuePickerHasCondition(EventSearchUiCandidate candidate) =>
         Beta111EventPresentationKnowledge.ShouldShowRuntimeConditionMarker(
-            _runtime.Profile.ProfileId, candidate.EventKey, _queuePickerPlayers);
+            _runtime.Profile.ProfileId, candidate.EventKey, _queuePickerPlayers, SemanticProfile);
 
     private void RebuildQueuePickerGrid()
     {
@@ -247,7 +247,7 @@ internal sealed partial class EventSearchEditor
     private string QueuePickerCondition(EventSearchUiCandidate candidate)
     {
         string key = Beta111EventPresentationKnowledge.RuntimeConditionLocalizationKey(
-            _runtime.Profile.ProfileId, candidate.EventKey, _queuePickerPlayers);
+            _runtime.Profile.ProfileId, candidate.EventKey, _queuePickerPlayers, SemanticProfile);
         return string.IsNullOrWhiteSpace(key) ? string.Empty : _queuePickerTooltipText.Get(key);
     }
 

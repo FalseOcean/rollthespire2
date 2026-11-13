@@ -266,7 +266,7 @@ internal sealed partial class PredictorRun
             if (card.Key.Entry != "DOWSING") continue;
             card = card with { RoomsEntered = card.RoomsEntered + 1 };
             Working = Working.WithCard(card);
-            if (card.RoomsEntered >= 5) Working = PredictorCardChanges.TransformTo(Context, Working, id, new("CARD", "ABUNDANCE"));
+            if (card.RoomsEntered >= 5) Working = PredictorCardChanges.TransformTo(Context, Working, id, new ModelKey("CARD", "ABUNDANCE")).State;
         }
     }
 

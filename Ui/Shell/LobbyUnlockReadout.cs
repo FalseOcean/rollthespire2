@@ -1,4 +1,5 @@
 using Godot;
+using HarmonyLib;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
@@ -11,6 +12,10 @@ namespace RolltheSpire2.Ui.Shell;
 /// <summary>UI-only, main-thread reading of connected pre-run lobby data. Never synthesizes remote unlocks.</summary>
 internal static class LobbyUnlockReadout
 {
+    private static readonly Func<StartRunLobby, bool>? ReadIsCustom = AccessTools.DeclaredPropertyGetter(typeof(StartRunLobby), "IsCustom")
+        ?.CreateDelegate<Func<StartRunLobby, bool>>();
+    private static readonly GameMode? LegacyCustomMode = Enum.TryParse<GameMode>("Custom", out var custom) ? custom : null;
+
     internal static StartRunLobby? ConnectedLobby(Node screen)
     {
         var lobby = screen switch
@@ -23,7 +28,8 @@ internal static class LobbyUnlockReadout
             lobby.NetService.Type is NetGameType.Host or NetGameType.Client ? lobby : null;
     }
 
-    public static bool IsCustomMultiplayerLobby(Node screen) => ConnectedLobby(screen)?.GameMode == GameMode.Custom;
+    public static bool IsCustomMultiplayerLobby(Node screen) => ConnectedLobby(screen) is { } lobby &&
+        (ReadIsCustom?.Invoke(lobby) ?? lobby.GameMode == LegacyCustomMode);
 
     public static StartRunLobby? Find(Node root)
     {

@@ -157,7 +157,12 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
         Beta111MerchantColorlessAuthority authority, string identity)
     {
         uint[] plan = PackPlan(evaluation, authority, out var targets, out var defines);
-        return new(plan, targets, defines, PartyEarlyRejectionRevision(evaluation, authority.PlayersCount),
+        if (authority.UsesModern113)
+        {
+            var calls = authority.Calls;
+            defines += FormattableString.Invariant($"\n#define RT2_S_BEFORE_U {calls.Uncommon - 1}u\n#define RT2_S_BETWEEN {calls.Rare - calls.Uncommon - 1}u\n#define RT2_S_AFTER_R {calls.Total - calls.Rare}u\n");
+        }
+        return new(plan, targets, defines, PartyEarlyRejectionRevision(evaluation, authority.PlayersCount) + authority.RuleRevision,
             identity, HasEarlyRejectionOpportunity(evaluation, authority.PlayersCount));
     }
 

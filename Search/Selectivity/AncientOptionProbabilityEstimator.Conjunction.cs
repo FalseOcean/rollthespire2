@@ -122,6 +122,9 @@ internal static partial class AncientOptionProbabilityEstimator
         bool needsSea = rows.Any(b => b.SeaGlassTargetAny.Count > 0) || seaFilters.Any(f => !f.IsEmpty);
         ModelKey[] characters = context.UnlockedCharacters.Where(k => k.IsValid &&
             k.Category == BaseGameModelKeys.Categories.Character && k != context.CharacterKey).ToArray();
+        if (characters.Length == 0 && context.CharacterKey.IsValid &&
+            plan.Authority.WorldAuthority?.Beta109Generation?.RngSemantics == Compatibility.RngSemanticProfileId.Modern113)
+            characters = [context.CharacterKey];
         if (needsSea && outcomes.Any(x => x.Value > 0 && (x.Key & Mask(sea)) != 0) &&
             (!context.UnlockedCharacterSourceOrderExact || characters.Length == 0)) return Missing("SeaGlassTargetAuthorityMissing");
         bool Accept(BigInteger mask, ModelKey target)

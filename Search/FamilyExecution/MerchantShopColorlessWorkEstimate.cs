@@ -13,7 +13,7 @@ internal static class MerchantShopColorlessWorkEstimate
         var e = request.Evaluation;
         int horizon = e.MerchantColorlessConditions.Select(c => c.MerchantOrdinal)
             .Concat(e.MerchantColorlessSequenceConditions.Select(c => c.Count)).DefaultIfEmpty(0).Max();
-        double calls = horizon * Beta111NormalMerchantShopsContinuation.CallsPerMerchant;
+        double calls = horizon * request.Authority.Calls.Total;
         double observations = horizon * 2d;
         double probes = e.MerchantColorlessConditions.Count + e.MerchantColorlessSequenceConditions.Sum(c =>
             c.OrderMode == CombatRewardSequenceOrderMode.Ordered ? (double)c.Count : c.Count * (double)c.Slots.Count(k => k.HasValue));

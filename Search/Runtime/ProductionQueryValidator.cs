@@ -405,10 +405,12 @@ public static partial class ProductionQueryValidator
         {
             return SearchQueryEvaluation.NoMatch("NeowIdentityFilterRejectedColdPath");
         }
+        if (!NeowOfferWhitelist.Matches(plan.Evaluation.NeowOfferWhitelist, choiceKeys))
+            return SearchQueryEvaluation.NoMatch("NeowOfferWhitelistRejected");
 
         IReadOnlyList<NeowChoiceResult> routeChoices = choices;
         var globalEvidence = new List<SearchMatchEvidence>();
-        if (!plan.Evaluation.NeowRelics.IsEmpty)
+        if (!plan.Evaluation.NeowRelics.IsEmpty || plan.Evaluation.NeowOfferWhitelist is not null)
         {
             globalEvidence.Add(new SearchMatchEvidence(
                 "NeowIdentityFilterMatched",
@@ -942,6 +944,17 @@ public static partial class ProductionQueryValidator
         boss.SearchIdentityReplayable;
 
     private static SearchQueryEvaluation EvaluateWorld(
+        SearchModel plan,
+        SeedPredictionFacts document,
+        RuntimeContextAuthoritySnapshot authority)
+    {
+        var existing = EvaluateWorldIdentities(plan, document, authority);
+        if (plan.Evaluation.EncounterQueues.Count == 0) return existing;
+        return ProductionExactSearchEvaluator.CombineIndependentEvaluations(existing,
+            EncounterQueueMatcher.Evaluate(plan.Evaluation.EncounterQueues, document.World, authority.WorldAuthority));
+    }
+
+    private static SearchQueryEvaluation EvaluateWorldIdentities(
         SearchModel plan,
         SeedPredictionFacts document,
         RuntimeContextAuthoritySnapshot authority)

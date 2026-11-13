@@ -1,4 +1,3 @@
-using System.Reflection;
 using Godot;
 using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Bindings.MegaSpine;
@@ -7,6 +6,7 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Screens.Map;
 using MegaCrit.Sts2.Core.Random;
 using RolltheSpire2.Core.Prediction.Maps;
+using RolltheSpire2.Ui.Icons;
 using MapType = RolltheSpire2.Core.Prediction.Maps.MapPointType;
 using GameMapType = MegaCrit.Sts2.Core.Map.MapPointType;
 
@@ -123,11 +123,9 @@ internal sealed partial class InRunMapDisplay : Control
     };
     private static Control Normal(MapType type, ShaderMaterial material)
     {
-        var resolver = typeof(NNormalMapPoint).GetMethod("IconName", BindingFlags.Static | BindingFlags.NonPublic)
-            ?? throw new MissingMethodException("Native map icon resolver unavailable");
-        string name = (string)resolver.Invoke(null, [(GameMapType)(int)type])!;
+        var path = NativeMapRoomIcons.PathFor((GameMapType)(int)type);
         var node = new Control { Size = new(56, 56), PivotOffset = new(28, 28), MouseFilter = MouseFilterEnum.Ignore };
-        var icon = Texture(ResourceLoader.Load<Texture2D>(ImageHelper.GetImagePath($"atlases/ui_atlas.sprites/map/icons/{name}.tres")), new(92, 92));
+        var icon = Texture(ResourceLoader.Load<Texture2D>(path), new(92, 92));
         icon.Position = new(-18, -18); icon.PivotOffset = new(46, 46);
         icon.SelfModulate = StsColors.halfTransparentWhite; icon.Material = material; node.AddChild(icon);
         return node;

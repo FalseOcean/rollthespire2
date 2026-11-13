@@ -35,11 +35,12 @@ internal sealed record TransformationAggregateProbability(double? QueryHitProbab
 
     internal static TransformationAggregateProbability Build(TransformationAggregateNumericalPlan plan)
     {
-        const string policy = "T.LocalWithReplacementDistributions;NFiniteOfferAndUnorderedPair;NamedStreamsModeledIndependent;NoEmpiricalFit;BonesRoutesSameClosedOutputs_NotDoubleMass";
+        const string policy = "T.LocalWithReplacementDistributions;NFiniteOfferAndUnorderedPair;NoEmpiricalFit";
         double identity = plan.Neow is { } n ? NeowFamilyProjections.IdentityProbability(n, n.Filter) : 1;
         var groups = plan.DrawGroups;
         if (!plan.ProbabilityClosed)
-            return new(null, null, identity, plan.Condition.OpportunityCount, [], "T.ObservationAuthorityUnclosed");
+            return new(null, null, identity, plan.Condition.OpportunityCount, [],
+                plan.HasTwoSharedTransformOrders ? "T.SharedTransformOrderJointProbabilityUnavailable" : "T.ObservationAuthorityUnclosed");
         var local = groups.Select(g => RareDistribution(g.Pools.Select(pool => pool.Count(i => plan.IsRare(i)) / (double)pool.Length))).ToArray();
         var c = plan.Condition;
         double[] states = new double[1 << c.OpportunityCount]; states[0] = 1;
@@ -90,7 +91,7 @@ internal sealed record TransformationAggregateProbability(double? QueryHitProbab
         var states = new Dictionary<int,double> { [0] = 1 };
         foreach (var group in plan.DrawGroups)
         {
-            var relevant = conditions.Where(x => plan.OwnsGroup(group.Hash,x.SourceRelicKey)).ToArray();
+            var relevant = conditions.Where(x => plan.OwnsGroup(group,x.SourceRelicKey)).ToArray();
             if (relevant.Any(x => x.Scope != RolltheSpire2.Search.Contracts.NeowStructuredEffectScope.TransformResults ||
                 x.OutputKind != RolltheSpire2.Search.Contracts.NeowStructuredOutputKind.Card ||
                 x.Kind is not (RolltheSpire2.Search.Contracts.NeowStructuredConditionKind.ExactSingle or RolltheSpire2.Search.Contracts.NeowStructuredConditionKind.ExactUnorderedPair))) return null;

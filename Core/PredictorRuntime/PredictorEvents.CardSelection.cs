@@ -3,7 +3,6 @@ using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Identity;
-using RolltheSpire2.Core.Rng;
 
 namespace RolltheSpire2.Core.PredictorRuntime;
 
@@ -30,6 +29,12 @@ internal sealed partial class PredictorRun
             }
             Accept(new(_eventKey.Value.Entry == "BRAIN_LEECH" ? "BrainLeechGridCard" : "CheeseGorgeCards",
                 0, selection.CardIds, null, null));
+        }
+        else if (_eventKey?.Entry == "DOORS_OF_LIGHT_AND_DARK" && _eventBranch == "LIGHT" && Context.UsesNonCombatGeneration)
+        {
+            var card = Working.Card(selection.CardIds[0]);
+            Working = Working.WithCard(PredictorCardLevelEffects.Reconcile(Context, card with { UpgradeLevel = card.UpgradeLevel + 1 }));
+            Accept(new("DoorsLightUpgrade", 0, selection.CardIds, null, null));
         }
         else if (_eventKey?.Entry == "DOORS_OF_LIGHT_AND_DARK" && _eventBranch == "DARK")
         {
@@ -71,9 +76,10 @@ internal sealed partial class PredictorRun
             long original = selection.CardIds[0];
             var replacement = new ModelKey("CARD", _eventBranch == "BIRD" ? "PECK" : "TORIC_TOUGHNESS");
             PredictorSettlementEffects.RequireImplementedCard(PredictorCardChanges.Definition(Context, replacement).Prototype, context: Context);
-            Working = PredictorCardChanges.TransformTo(Context, Working, original, replacement);
+            var changed = PredictorCardChanges.TransformTo(Context, Working, original, replacement);
+            Working = changed.State;
             Accept(new("WoodCarvingsTransform", 0, selection.CardIds, null, null)
-                { Transformations = [new(original, Working.Deck[^1])] });
+                { Transformations = [changed.Change] });
         }
         else if (_eventKey?.Entry == "WOOD_CARVINGS" && _eventBranch == "SNAKE")
         {
@@ -118,19 +124,8 @@ internal sealed partial class PredictorRun
         }
         else if (_eventKey?.Entry == "ENDLESS_CONVEYOR" && _conveyorDish == "JELLY_LIVER")
         {
-            var traceReads = _preview.EventTrace?.TransformInputs(this, selection.CardIds) ?? [];
-            var niche = Working.Streams.Single(s => s.Stream == PredictorStream.Niche);
-            var substituted = Working with { Streams = Working.Streams.SetItem(
-                Working.Streams.FindIndex(s => s.Stream == PredictorStream.Niche),
-                PredictorStreamState.Capture(PredictorStream.Niche, _eventRng!)) };
-            var transformed = PredictorCardChanges.Transform(Context, substituted, selection.CardIds,
-                PredictorStream.Niche, token);
-            _eventRng = transformed.State.Streams.Single(s => s.Stream == PredictorStream.Niche).Restore();
-            Working = transformed.State with { Streams = transformed.State.Streams.SetItem(
-                transformed.State.Streams.FindIndex(s => s.Stream == PredictorStream.Niche), niche) };
-            _preview.EventTrace?.TransformWrite(this, traceReads);
             Accept(new("ConveyorJellyTransform", 0, selection.CardIds, null, null)
-                { Transformations = transformed.Changes });
+                { Transformations = TransformEventCards(selection.CardIds, token) });
             AdvanceConveyor();
             return PredictorInputResult.Accepted;
         }
@@ -158,23 +153,24 @@ internal sealed partial class PredictorRun
         }
         else
         {
-            var niche = Working.Streams.Single(s => s.Stream == PredictorStream.Niche);
-            var traceReads = _preview.EventTrace?.TransformInputs(this, selection.CardIds) ?? [];
-            var substituted = Working with { Streams = Working.Streams.SetItem(
-                Working.Streams.FindIndex(s => s.Stream == PredictorStream.Niche),
-                PredictorStreamState.Capture(PredictorStream.Niche, _eventRng!)) };
-            var transformed = PredictorCardChanges.Transform(Context, substituted, selection.CardIds, PredictorStream.Niche, token);
-            _eventRng = transformed.State.Streams.Single(s => s.Stream == PredictorStream.Niche).Restore();
-            Working = transformed.State with { Streams = transformed.State.Streams.SetItem(
-                transformed.State.Streams.FindIndex(s => s.Stream == PredictorStream.Niche), niche) };
-            _preview.EventTrace?.TransformWrite(this, traceReads);
-            Accept(new("EventTransform", 0, selection.CardIds, null, null) { Transformations = transformed.Changes });
+            Accept(new("EventTransform", 0, selection.CardIds, null, null)
+                { Transformations = TransformEventCards(selection.CardIds, token) });
         }
         if (_eventKey!.Value.Entry == "WHISPERING_HOLLOW") ApplyFixedEventHealth(_eventBranch!);
         if (Phase == PredictorPhase.Complete) return PredictorInputResult.Accepted;
         if (_eventKey.Value.Entry == "SPIRIT_GRAFTER" && _eventBranch == "REJECTION") ApplyFixedEventHealth(_eventBranch);
         if (Phase != PredictorPhase.Complete) FinishEvent();
         return PredictorInputResult.Accepted;
+    }
+
+    private ImmutableArray<PredictorTransformation> TransformEventCards(ImmutableArray<long> selected, CancellationToken token)
+    {
+        var reads = _preview.EventTrace?.TransformInputs(this, selected) ?? [];
+        var transformed = PredictorCardChanges.TransformInOrder(Context, Working, selected, _eventRng!, token);
+        Working = transformed.State;
+        _eventRng = transformed.Rng;
+        _preview.EventTrace?.TransformWrite(this, reads);
+        return transformed.Changes;
     }
 
     private void BeginEventCardSelection(ImmutableArray<long> candidates, int count, CancellationToken token)

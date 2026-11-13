@@ -24,6 +24,24 @@ layout(set=0,binding=17,std430) buffer Output {uint v[];} output_ids;
 layout(set=0,binding=18,std430) readonly buffer Input {uint v[];} input_ids;
 /*__W_DONOR__*/
 /*__RT2_VISIBLE_SEED_ROOT_HASH__*/
+#define RT2_W_CHILD_SHUFFLE 0
+
+#if RT2_W_CHILD_SHUFFLE
+u64vec4 fork_world_shuffle(){
+    uint64_t seed=next_u64();
+    u64vec4 parent=u64vec4(s0,s1,s2,s3);
+    rng_initialize(seed);
+    return parent;
+}
+void restore_world_parent(u64vec4 p){s0=p.x;s1=p.y;s2=p.z;s3=p.w;}
+#endif
+void consume_world_shuffle(uint length){
+#if RT2_W_CHILD_SHUFFLE
+    next_u64();
+#else
+    consume_shuffle(length);
+#endif
+}
 
 bool fault(uint code){atomicOr(header.v[3],code);return false;}
 bool branch_match(uint x,uint first,uint second,bool both){
@@ -50,9 +68,15 @@ bool events_match(uint invocation,uint x){
     // Separate, bounded raw scratch after the reusable encounter scratch.
     uint base=batch.v[5]*plan_meta_buffer.values[8u]+invocation*plan_meta_buffer.values[13u];
     for(uint i=0u;i<count;++i)encounter_scratch_buffer.entries[base+i]=data.v[offset+i];
+#if RT2_W_CHILD_SHUFFLE
+    u64vec4 parent=fork_world_shuffle();
+#endif
     for(uint n=count;n>1u;--n){uint i=next_int(n),a=encounter_scratch_buffer.entries[base+i];
         encounter_scratch_buffer.entries[base+i]=encounter_scratch_buffer.entries[base+n-1u];
         encounter_scratch_buffer.entries[base+n-1u]=a;}
+#if RT2_W_CHILD_SHUFFLE
+    restore_world_parent(parent);
+#endif
     uint effective=0u;
     // RAW skip precedes cleaning. In-place compaction cannot overwrite unread raw entries.
     for(uint i=1u;i<count&&effective<horizon;++i){uint v=encounter_scratch_buffer.entries[base+i];
@@ -83,10 +107,16 @@ bool world_match(uint invocation,uint64_t root){
     uint maxAct=plan_meta_buffer.values[6u];
     if(maxAct==0u)return true;
     rng_initialize(root+make_u64(0xda243e80u,0x1a8a7b60u));
-    for(uint i=0u;i<plan_meta_buffer.values[1u];++i)consume_shuffle(relic_bucket_length_buffer.lengths[i]);
+    for(uint i=0u;i<plan_meta_buffer.values[1u];++i)consume_world_shuffle(relic_bucket_length_buffer.lengths[i]);
     uint sharedIds[512],sharedCount=plan_meta_buffer.values[5u];
     for(uint i=0u;i<sharedCount;++i)sharedIds[i]=data.v[plan_meta_buffer.values[14u]+i];
+#if RT2_W_CHILD_SHUFFLE
+    u64vec4 parent=fork_world_shuffle();
+#endif
     for(uint n=sharedCount;n>1u;--n){uint i=next_int(n),v=sharedIds[i];sharedIds[i]=sharedIds[n-1u];sharedIds[n-1u]=v;}
+#if RT2_W_CHILD_SHUFFLE
+    restore_world_parent(parent);
+#endif
     uint used=0u;
     for(uint i=1u;i<groups;++i){uint n=next_int(sharedCount-used+1u);assignedOffset[i]=used;assignedCount[i]=n;used+=n;}
     bool second=plan_meta_buffer.values[7u]!=0u;
@@ -95,7 +125,7 @@ bool world_match(uint invocation,uint64_t root){
         if(extra.v[x+5u]>0u){
             if(act_meta_buffer.values[b+20u]+assignedCount[i]==0u)return fault(4u);
             if(!events_match(invocation,x))return false;
-        }else consume_shuffle(act_meta_buffer.values[b+2u]);
+        }else consume_world_shuffle(act_meta_buffer.values[b+2u]);
         bool hasBoss=extra.v[x+11u]!=0u,hasAncient=extra.v[x+8u]>0u;
         if(!(act<maxAct||hasBoss||hasAncient||second))continue;
         bool previous=false;uint source=0u,reference=0u;

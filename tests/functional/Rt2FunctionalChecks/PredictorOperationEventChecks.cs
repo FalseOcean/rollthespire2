@@ -81,14 +81,19 @@ internal static partial class PredictorOperationEventChecks
         Require(futureRun.Submit(futureRun.Request!, new ChooseEventOption("POTION:" + potionId)) == PredictorInputResult.Accepted,
             "Future token potion could not use its captured actual rarity");
         var cardReward = futureRun.Rewards.Single(r => r.Kind == PredictorRewardKind.Card);
-        Require(cardReward.Cards.All(c => c.UpgradeLevel > 0) && cardReward.RerollRecipe?.UpgradeAfterGeneration == true,
-            "Future first generation lost source upgrade recipe");
+        Require(cardReward.Cards.All(c => c.UpgradeLevel > 0) &&
+            cardReward.RerollRecipe is { NoUpgradeRoll: true, NoRarityModification: true, UpgradeAfterGeneration: true } &&
+            futureRun.Working.Streams.Single(s => s.Stream == PredictorStream.Rewards).Calls ==
+                futureState.Streams.Single(s => s.Stream == PredictorStream.Rewards).Calls + 3,
+            "Future first generation must spend three identity draws and upgrade through the event recipe");
         var selection = futureRun.Submit(futureRun.Request!, new EnterCardSelection(cardReward.Id));
         Require(selection == PredictorInputResult.Accepted, "Future picker entry: " + selection);
         var reroll = futureRun.Submit(futureRun.Request!, new RerollCardReward(cardReward.Id));
         Require(reroll == PredictorInputResult.Accepted, "Future Driftwood reroll disposition: " + reroll);
-        Require(futureRun.Rewards.Single(r => r.Id == cardReward.Id).Cards.All(c => c.UpgradeLevel > 0),
-            "Future Driftwood reroll lost event forced upgrade");
+        Require(futureRun.Rewards.Single(r => r.Id == cardReward.Id).Cards.All(c => c.UpgradeLevel > 0) &&
+            futureRun.Working.Streams.Single(s => s.Stream == PredictorStream.Rewards).Calls ==
+                futureState.Streams.Single(s => s.Stream == PredictorStream.Rewards).Calls + 6,
+            "Future Driftwood reroll must spend three further identity draws and keep the event upgrade");
         var condition = new PredictorCombatFacts(false) { Potions = PredictorCombatPotionFacts.NoAdditional };
         var combatState = state with { Relics = [], PotionSlots = [null, null] };
         var dummyScene = new PredictorOperationEventScene(new("EVENT", "BATTLEWORN_DUMMY"), eventRng,

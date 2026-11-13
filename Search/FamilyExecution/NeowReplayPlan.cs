@@ -24,23 +24,35 @@ internal sealed record NeowReplayPlan(
 {
     // Physical applicability fact from existing immutable authority, not condition ownership.
     internal bool DirectNestedVanilla111 { get; init; }
+    internal bool AuditedModern113IdentityReplay { get; init; }
+    internal bool AuditedIdentityReplay => DirectNestedVanilla111 || AuditedModern113IdentityReplay;
     internal int SharedNicheDraws { get; init; }
     internal int SharedPotionDraws { get; init; }
     internal (int Niche, int Potions)[] SharedArrivals { get; init; } = [];
     internal int CapsuleUpgradeUpperBound { get; init; } = -1;
     internal NeowAuthoredUpgradeContinuation? AuthoredUpgrades { get; init; }
     internal NeowCapsuleNicheContinuation? CapsuleNicheContinuation { get; init; }
+    internal uint CapsulesWithKnownZeroNonCombatAdvance { get; init; }
+    internal string CapsuleNonCombatRevision => CapsulesWithKnownZeroNonCombatAdvance == 0
+        ? "" : NeowCapsuleNonCombatContinuation.Revision;
     internal string[] FilterRemainders => ExactOnly.Concat(CapsuleNicheContinuation?.Remainders ?? [])
         .Select(cause => "N.Neow:" + cause).ToArray();
     internal bool HasFinalCurseFastProjection => (EnabledDomains & Beta110FastDomain.FinalCurse) != 0;
+    internal bool NeedsRewards => (EnabledDomains & ~(Beta110FastDomain.FinalCurse | Beta110FastDomain.NewLeafTransform |
+        Beta110FastDomain.LeafyPoulticeTransforms | Beta110FastDomain.PhialHolsterPotions)) != 0;
+    internal bool NeedsNicheOrKaleidoscopePools => NeedsRewards || HasFinalCurseFastProjection ||
+        (EnabledDomains & (Authority.UsesChildShuffle ? Beta110FastDomain.PhialHolsterPotions : Beta110FastDomain.NewLeafTransform)) != 0;
+    internal bool NeedsTransformations => (EnabledDomains & (Beta110FastDomain.LeafyPoulticeTransforms |
+        (Authority.UsesChildShuffle ? Beta110FastDomain.NewLeafTransform : 0))) != 0;
+    internal bool NeedsPotions => (EnabledDomains & Beta110FastDomain.PhialHolsterPotions) != 0 ||
+        Authority.UsesChildShuffle && (HasFinalCurseFastProjection || (EnabledDomains & Beta110FastDomain.KaleidoscopeOffers) != 0);
 
     internal string ContinuationIssue(bool capsule = false)
     {
-        bool rewards = capsule || (EnabledDomains & ~(Beta110FastDomain.FinalCurse | Beta110FastDomain.NewLeafTransform |
-            Beta110FastDomain.LeafyPoulticeTransforms | Beta110FastDomain.PhialHolsterPotions)) != 0;
-        bool niche = capsule || rewards || HasFinalCurseFastProjection || (EnabledDomains & Beta110FastDomain.NewLeafTransform) != 0;
-        bool transform = !capsule && (EnabledDomains & Beta110FastDomain.LeafyPoulticeTransforms) != 0;
-        bool potion = !capsule && (EnabledDomains & Beta110FastDomain.PhialHolsterPotions) != 0;
+        bool rewards = capsule || NeedsRewards;
+        bool niche = capsule || NeedsNicheOrKaleidoscopePools;
+        bool transform = !capsule && NeedsTransformations;
+        bool potion = !capsule && NeedsPotions;
         var c = Authority.EffectCatalog;
         byte[] sources = !Bones ? [Selected] : First != 255 && Second != 255 ? [First, Second] : Authority.BonesEligibleRelicIds.Where(id =>
             (BonesBan & Beta110FastRelicCatalog.Bit(id)) == 0 && (System.Numerics.BitOperations.PopCount(BonesAll) != 2 ||
@@ -56,7 +68,7 @@ internal sealed record NeowReplayPlan(
                 Beta110FastRelicCatalog.LostCoffer when rewards => c.CharacterRewardAuthorityExact && c.CharacterRewardPool.TotalCount >= 3 && c.PotionAuthorityExact && c.PotionPool.HasAtLeastPerRarity(1),
                 Beta110FastRelicCatalog.ScrollBoxes when rewards => c.CharacterCardAuthorityExact && c.CharacterRewardPool.Common.Length >= 4 && c.CharacterRewardPool.Uncommon.Length >= 2,
                 Beta110FastRelicCatalog.Kaleidoscope when rewards || niche => c.OtherCharacterCardAuthorityExact && c.OtherCharacterPools.Length >= 3 && (!rewards || c.OtherCharacterPools.All(pool => pool.TotalCount > 0)),
-                Beta110FastRelicCatalog.NewLeaf when niche => c.NewLeafTransformAuthorityExact && c.NewLeafTransformPool.Length > 0,
+                Beta110FastRelicCatalog.NewLeaf when (Authority.UsesChildShuffle ? transform : niche) => c.NewLeafTransformAuthorityExact && c.NewLeafTransformPool.Length > 0,
                 Beta110FastRelicCatalog.LeafyPoultice when transform => c.LeafyTransformAuthorityExact && c.LeafyStrikeTransformPool.Length > 0 && c.LeafyDefendTransformPool.Length > 0,
                 Beta110FastRelicCatalog.PhialHolster when potion => c.PotionAuthorityExact && c.PotionPool.HasAtLeastPerRarity(2),
                 _ => true
@@ -113,11 +125,15 @@ internal sealed record NeowReplayPlan(
     internal static NeowReplayPlan Compile(SearchModel request, bool capsule)
     {
         NeowSearchFilter filter = NeowFilter(request, capsule);
+        bool newOpeningStreams = request.Authority.VersionResolution.SemanticProfileId == RngSemanticProfileId.Modern113;
         if (!capsule) filter = filter with { StructuredNeowEffects = filter.StructuredNeowEffects
             .Concat(NeowChoiceCommitment.CombinedConditions(filter.StructuredNeowEffects)).ToArray() };
         if (capsule && filter.NeowRoute is null)
             throw new InvalidOperationException("RFamilyUnboundCapsuleRoute_ExactOnly");
         var exactOnly = new List<string>();
+        if (!capsule && !NeowOfferWhitelist.TryProject(request.Evaluation.NeowOfferWhitelist,
+                request.Authority, filter.NeowRelics, out _))
+            exactOnly.Add("OfferWhitelistAuthorityUnavailable");
         if (request.Evaluation.Preset != NeowSearchPreset.None) exactOnly.Add("LegacyPreset");
         if (request.Evaluation.EffectOutputConditions.Any(c => !c.IsEmpty)) exactOnly.Add("LegacyEffectOutputConditions");
         // Legacy unbound Capsule presence can be satisfied by a Bones route too;
@@ -215,6 +231,8 @@ internal sealed record NeowReplayPlan(
                     filter.RequireSmallCapsule ? BaseGameModelKeys.Relics.SmallCapsule : default,
                     filter.RequireLargeCapsule ? BaseGameModelKeys.Relics.LargeCapsule : default }.Where(k => k.IsValid))
                     .Distinct().ToArray(), filter.BonesRelics.Ban), RequireSmallCapsule = false, RequireLargeCapsule = false };
+        ulong requiredBones = Mask(filter.BonesRelics.All.Concat(filter.RequiredBonesCombination)) | sourceMask | (bones ? requiredCapsules : 0);
+        ulong bannedBones = Mask(filter.BonesRelics.Ban);
         bool leafyBonesInitialTransformInvariant = false;
         var effectAuthority = request.Authority.EffectAuthority;
         bool hasLeafyPredicate = conditions.Any(condition =>
@@ -234,23 +252,29 @@ internal sealed record NeowReplayPlan(
             NeowEffectCardSnapshot[] defends = effectAuthority.OrderedDeck.Where(card => card.IsBasic && card.IsDefend).ToArray();
             leafyBonesInitialTransformInvariant = SameBasicSource(strikes, strikeKey) && SameBasicSource(defends, defendKey);
         }
-        return new(authority, filter, domains, conditions.ToArray(), required, banned,
+        bool vanillaCapture = request.Authority.CanUseCurrentModel && request.Authority.NoRunModifiers == true &&
+            effectAuthority?.CapturedProfileId == RuntimeProfileId.Beta111;
+        bool directNestedVanilla111 = vanillaCapture && request.Authority.IsAuditedBeta111SourceContext;
+        bool modernBones = !capsule && newOpeningStreams && bones;
+        var plan = new NeowReplayPlan(authority, filter, domains, conditions.ToArray(), required, banned,
             Mask(filter.NeowRelics.Any), Mask(filter.NeowRelics.All) | (!bones ? requiredCapsules : 0), Mask(filter.NeowRelics.Ban),
-            Mask(filter.BonesRelics.Any), Mask(filter.BonesRelics.All.Concat(filter.RequiredBonesCombination)) | sourceMask | (bones ? requiredCapsules : 0),
-            Mask(filter.BonesRelics.Ban), selected,
+            Mask(filter.BonesRelics.Any), requiredBones, bannedBones, selected,
             Id(filter.RequiredBonesAcquisitionOrder.ElementAtOrDefault(0)), Id(filter.RequiredBonesAcquisitionOrder.ElementAtOrDefault(1)),
             bones, filter.RequireNeowsBones, leafyBonesInitialTransformInvariant, exactOnly.ToArray())
         {
-            AuthoredUpgrades = capsule ? null : NeowAuthoredUpgradeContinuation.Compile(request),
-            CapsuleNicheContinuation = capsule ? null : NeowCapsuleNicheContinuation.Compile(request, authority, bones, selected,
+            AuthoredUpgrades = capsule || newOpeningStreams ? null : NeowAuthoredUpgradeContinuation.Compile(request),
+            CapsulesWithKnownZeroNonCombatAdvance = modernBones ? NeowCapsuleNonCombatContinuation.Compile(request) : 0,
+            CapsuleNicheContinuation = capsule || newOpeningStreams ? null : NeowCapsuleNicheContinuation.Compile(request, authority, bones, selected,
                 Id(filter.RequiredBonesAcquisitionOrder.ElementAtOrDefault(0)), Id(filter.RequiredBonesAcquisitionOrder.ElementAtOrDefault(1)),
-                Mask(filter.BonesRelics.All.Concat(filter.RequiredBonesCombination)) | sourceMask | (bones ? requiredCapsules : 0),
-                Mask(filter.BonesRelics.Ban), conditions, finalCurse),
+                requiredBones, bannedBones, conditions, finalCurse),
             CapsuleUpgradeUpperBound = request.Authority.PlayersCount > 1 && effectAuthority?.HasExactDeck == true
                 ? checked(2 * (effectAuthority.OrderedDeck!.Count + 6)) : -1,
-            DirectNestedVanilla111 = request.Authority.CanUseCurrentModel && request.Authority.NoRunModifiers == true &&
-                request.Authority.IsAuditedBeta111SourceContext && effectAuthority?.CapturedProfileId == RuntimeProfileId.Beta111
+            DirectNestedVanilla111 = directNestedVanilla111,
+            AuditedModern113IdentityReplay = vanillaCapture && newOpeningStreams
         };
+        if (modernBones && NeowCapsuleNonCombatContinuation.NeedsRemainder(plan))
+            plan = plan with { ExactOnly = [..plan.ExactOnly, NeowCapsuleNonCombatContinuation.Remainder] };
+        return plan;
 
         static bool SameBasicSource(NeowEffectCardSnapshot[] cards, ModelKey expectedKey) =>
             cards.Length >= 3 && cards.All(card => card.CardKey == expectedKey &&

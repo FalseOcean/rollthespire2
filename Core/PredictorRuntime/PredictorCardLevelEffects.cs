@@ -4,13 +4,25 @@ namespace RolltheSpire2.Core.PredictorRuntime;
 // upgrades only select a captured level and replay persistent local enchantments.
 internal static class PredictorCardLevelEffects
 {
+    // Native Dingy Dagger can gain hundreds of millions of levels. OnUpgrade
+    // changes damage only, so the captured cost and keyword facts are constant.
+    internal static bool HasInvariantLevelMetadata(RolltheSpire2.Core.Identity.ModelKey key) =>
+        key.Category == "CARD" && key.Entry == "DINGY_DAGGER";
+
+    internal static PredictorCardLevelMetadata ResolveLevel(PredictorCardDefinition definition, int upgradeLevel)
+    {
+        if (definition.Levels.IsDefaultOrEmpty)
+            throw new InvalidOperationException("PredictorCardLevelsMissing:" + definition.Prototype.Key);
+        int capturedLevel = HasInvariantLevelMetadata(definition.Prototype.Key) ? 0 : upgradeLevel;
+        var level = definition.Levels.FirstOrDefault(l => l.UpgradeLevel == capturedLevel)
+            ?? throw new InvalidOperationException("PredictorCardLevelMissing:" + definition.Prototype.Key + ":" + upgradeLevel);
+        return level with { UpgradeLevel = upgradeLevel };
+    }
+
     internal static PredictorCardLevelMetadata Resolve(PredictorContext context, PredictorCard card)
     {
         var definition = PredictorCardChanges.Definition(context, card.Key);
-        if (definition.Levels.IsDefaultOrEmpty)
-            throw new InvalidOperationException("PredictorCardLevelsMissing:" + card.Key);
-        var level = definition.Levels.FirstOrDefault(l => l.UpgradeLevel == card.UpgradeLevel)
-            ?? throw new InvalidOperationException("PredictorCardLevelMissing:" + card.Key + ":" + card.UpgradeLevel);
+        var level = ResolveLevel(definition, card.UpgradeLevel);
         string? enchantment = card.Enchantment?.Entry;
         return level with
         {

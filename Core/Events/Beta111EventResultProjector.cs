@@ -17,6 +17,9 @@ public sealed record Beta111EventResultAuthority(
     string AuthorityFingerprint)
 {
     public bool IsBeta111 => RuntimeProfilePolicies.SupportsEventResultModel(ProfileId);
+    public RngSemanticProfileId RngSemantics { get; init; } = RngSemanticProfileId.Modern110;
+    internal bool UsesChildShuffle => RuntimeProfilePolicies.UsesChildStreamShuffle(RngSemantics);
+    internal IReadOnlyList<ModelKey> ColorfulOrder => Beta111EventResultCatalog.ColorfulOrder(RngSemantics);
 
     public static Beta111EventResultAuthority From(
         RuntimeContextAuthoritySnapshot authority)
@@ -29,7 +32,8 @@ public sealed record Beta111EventResultAuthority(
             effects?.EventResultStaticCatalogExact == true,
             effects?.EventColorfulCharacterPoolsExact == true || authority.UsesBestEffortModel && effects?.UnlockedCharacterCardPoolKeys is { Count: > 0 },
             authority.ProfileId,
-            effects?.SnapshotFingerprint ?? authority.CatalogFingerprint);
+            effects?.SnapshotFingerprint ?? authority.CatalogFingerprint)
+        { RngSemantics = authority.VersionResolution.SemanticProfileId };
     }
 }
 
@@ -61,6 +65,8 @@ public sealed record Beta111EventResultProjection(
 /// </summary>
 public static class Beta111EventResultProjector
 {
+    internal const string StaticCatalogIncomplete = "EventResultV1StaticCatalogAuthorityIncomplete";
+
     public static Beta111EventResultProjection Project(
         ulong rootHash,
         int playerSlotIndex,
@@ -69,16 +75,20 @@ public static class Beta111EventResultProjector
         ArgumentNullException.ThrowIfNull(authority);
         if (!authority.IsBeta111)
             return Beta111EventResultProjection.Unsupported("EventResultV1RequiresBeta111");
-        if (!authority.StaticCatalogAuthorityExact)
-            return Beta111EventResultProjection.Unsupported("EventResultV1StaticCatalogAuthorityIncomplete");
-
-        // Grab and Dive are alternative choices from the same entry checkpoint.
-        Xoshiro256StarStar trashRng = EventRng(rootHash, playerSlotIndex, false,
-            Beta111EventResultCatalog.TrashHeapEventEntry);
-        ModelKey grab = Beta111EventRules.TrashHeapGrab(trashRng.Clone());
-        ModelKey dive = Beta111EventRules.TrashHeapDive(trashRng.Clone());
-        ModelKey[] fakeSix = Beta111EventRules.FakeMerchantInventory(EventRng(
-            rootHash, playerSlotIndex, true, Beta111EventResultCatalog.FakeMerchantEventEntry));
+        ModelKey grab = default, dive = default;
+        ModelKey[] fakeSix = [];
+        var staticPrecision = PredictionPrecision.Unsupported;
+        if (authority.StaticCatalogAuthorityExact)
+        {
+            // Grab and Dive are alternative choices from the same entry checkpoint.
+            Xoshiro256StarStar trashRng = EventRng(rootHash, playerSlotIndex, false,
+                Beta111EventResultCatalog.TrashHeapEventEntry);
+            grab = Beta111EventRules.TrashHeapGrab(trashRng.Clone());
+            dive = Beta111EventRules.TrashHeapDive(trashRng.Clone());
+            fakeSix = Beta111EventRules.FakeMerchantInventory(EventRng(
+                rootHash, playerSlotIndex, true, Beta111EventResultCatalog.FakeMerchantEventEntry), authority.RngSemantics);
+            staticPrecision = PredictionPrecision.Exact;
+        }
 
         ModelKey[] colorful = Array.Empty<ModelKey>();
         PredictionPrecision colorfulPrecision = PredictionPrecision.Unknown;
@@ -86,7 +96,7 @@ public static class Beta111EventResultProjector
         {
             colorful = Beta111EventRules.ColorfulOffers(EventRng(rootHash, playerSlotIndex, false,
                 Beta111EventResultCatalog.ColorfulPhilosophersEventEntry),
-                authority.OwnerCharacterKey, authority.UnlockedCharacterCardPoolKeys);
+                authority.OwnerCharacterKey, authority.UnlockedCharacterCardPoolKeys, authority.RngSemantics);
             colorfulPrecision = PredictionPrecision.Exact;
         }
 
@@ -95,10 +105,10 @@ public static class Beta111EventResultProjector
             dive,
             colorful,
             fakeSix,
-            PredictionPrecision.Exact,
+            staticPrecision,
             colorfulPrecision,
-            PredictionPrecision.Exact,
-            "beta111.event-result-v1.source-audited");
+            staticPrecision,
+            authority.UsesChildShuffle ? "beta113.event-result.source-audited" : "beta111.event-result-v1.source-audited");
     }
 
     private static Xoshiro256StarStar EventRng(ulong rootHash, int playerSlotIndex,

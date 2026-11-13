@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Effects.Snapshots;
 
@@ -45,7 +46,8 @@ internal static partial class PredictorObtainSources
         return PredictorCardLevelEffects.Reconcile(context, card);
     }
 
-    internal static PredictorState AddExistingCard(PredictorContext context, PredictorState state, PredictorCard offered)
+    internal static PredictorState AddExistingCard(PredictorContext context, PredictorState state, PredictorCard offered,
+        bool isTransformation = false)
     {
         var card = offered with { FloorAdded = state.Position.Floor };
         foreach (var relic in state.Relics.Where(r => !r.Melted))
@@ -63,13 +65,14 @@ internal static partial class PredictorObtainSources
         card = PredictorCardLevelEffects.Reconcile(context, card);
         state = state.WithCard(card);
         state = state with { Deck = state.Deck.Add(card.Id) };
-        return AfterCardAddedToDeck(context, state, card.Id);
+        return AfterCardAddedToDeck(context, state, card.Id, isTransformation: isTransformation);
     }
 
-    internal static PredictorState AfterCardAddedToDeck(PredictorContext context, PredictorState state, long cardId,
-        bool clonedByListener = false)
+    private static PredictorState AfterCardAddedToDeck(PredictorContext context, PredictorState state, long cardId,
+        bool clonedByListener = false, bool isTransformation = false)
     {
         var added = state.Card(cardId);
+        bool trackCopyExclusions = RuntimeProfilePolicies.RetainsDeckCopyExclusions(context.VersionResolution.SemanticProfileId);
         // Hook listeners run in relic inventory order, then run modifiers.
         // Clones still notify LuckyFysh, while clonedBy suppresses another
         // BingBong/Hoarder copy.
@@ -77,20 +80,20 @@ internal static partial class PredictorObtainSources
         {
             if (relic.Key.Entry == "BING_BONG" && !clonedByListener)
             {
-                int index = state.Relics.FindIndex(r => r.Id == relic.Id);
-                var listener = state.Relics[index];
-                if (listener.BingBongCardsToSkip.Contains(cardId))
-                    state = state with { Relics = state.Relics.SetItem(index,
-                        listener with { BingBongCardsToSkip = listener.BingBongCardsToSkip.Remove(cardId) }) };
-                else
+                if (trackCopyExclusions)
                 {
-                    // CloneCard registers the original instance before Add; the
-                    // clonedBy callback leaves this skip intact until re-entry.
-                    long cloneId = state.NextInstanceId;
+                    int index = state.Relics.FindIndex(r => r.Id == relic.Id);
+                    var listener = state.Relics[index];
+                    if (listener.BingBongCardsToSkip.Contains(cardId))
+                    {
+                        state = state with { Relics = state.Relics.SetItem(index,
+                            listener with { BingBongCardsToSkip = listener.BingBongCardsToSkip.Remove(cardId) }) };
+                        continue;
+                    }
                     state = state with { Relics = state.Relics.SetItem(index,
-                        listener with { BingBongCardsToSkip = listener.BingBongCardsToSkip.Add(cloneId) }) };
-                    state = AddNewCardCore(context, state, added, preserveFloorAdded: true, suppressCopies: true);
+                        listener with { BingBongCardsToSkip = listener.BingBongCardsToSkip.Add(state.NextInstanceId) }) };
                 }
+                state = AddNewCardCore(context, state, added, preserveFloorAdded: true, suppressCopies: true);
             }
             if (relic.Key.Entry == "LUCKY_FYSH")
                 state = PredictorSettlementEffects.TakeGold(state, 15);
@@ -109,14 +112,17 @@ internal static partial class PredictorObtainSources
                         new(relic.Key, relic.Id, 0, 20)) };
             }
         }
-        if (!clonedByListener && context.HasRunModifier("HOARDER"))
+        // CardCmd.Transform passes Deck as the old pile. Hoarder only copies
+        // cards whose old pile was None, while Bing Bong also copies transforms.
+        if (!clonedByListener && !isTransformation && context.HasRunModifier("HOARDER"))
         {
-            if (state.HoarderCardsToSkip.Contains(cardId))
+            if (trackCopyExclusions && state.HoarderCardsToSkip.Contains(cardId))
                 state = state with { HoarderCardsToSkip = state.HoarderCardsToSkip.Remove(cardId) };
             else
                 for (int i = 0; i < 2; i++)
                 {
-                    state = state with { HoarderCardsToSkip = state.HoarderCardsToSkip.Add(state.NextInstanceId) };
+                    if (trackCopyExclusions)
+                        state = state with { HoarderCardsToSkip = state.HoarderCardsToSkip.Add(state.NextInstanceId) };
                     state = AddNewCardCore(context, state, added, preserveFloorAdded: true, suppressCopies: true);
                 }
         }

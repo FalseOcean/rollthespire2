@@ -161,7 +161,8 @@ public static class RelicSequencePredictor
             RuntimeProfileId.Beta111 => Beta111ValidationAuthority.RuntimeAccepted,
             _ => false
         };
-        string evidenceCode = profile.ProfileId switch
+        string evidenceCode = modern.RngSemantics == RngSemanticProfileId.Modern113
+            ? "beta113.relic-grab-bag.child-stream-shuffle" : profile.ProfileId switch
         {
             RuntimeProfileId.Beta111 => "beta111.relic-grab-bag.shared-modern-semantic-compatible",
             RuntimeProfileId.Beta110 => "beta110.relic-grab-bag.shared-modern-source-audit",
@@ -192,9 +193,10 @@ public static class RelicSequencePredictor
     {
         ulong root = rootOverride ?? profile.ComputeRootSeed(canonicalSeed);
         var rng = new Xoshiro256StarStar(profile.DeriveNamedStreamSeed(root, UpFrontStream));
+        var semantics = world.Beta109Generation?.RngSemantics ?? RngSemanticProfileId.Modern110;
         foreach (RelicBucket bucket in sharedBuckets)
         {
-            rng.UnstableShuffle(bucket.Entries);
+            rng.UnstableShuffle(bucket.Entries, semantics);
         }
         if (world.Beta109Generation is { IsMultiplayer: true } party)
         {
@@ -203,13 +205,13 @@ public static class RelicSequencePredictor
             for (int slot = 0; slot < party.PersonalPlayerSlot; slot++)
                 foreach (var bucket in party.PartyRelicBuckets[slot])
                 {
-                    var preceding = bucket.OrderedRelics.ToList();
-                    rng.UnstableShuffle(preceding);
+                    if (RuntimeProfilePolicies.UsesChildStreamShuffle(semantics)) _ = rng.NextUInt64();
+                    else for (int count = bucket.OrderedRelics.Count; count > 1; count--) _ = rng.NextInt(count);
                 }
         }
         foreach (RelicBucket bucket in playerBuckets)
         {
-            rng.UnstableShuffle(bucket.Entries);
+            rng.UnstableShuffle(bucket.Entries, semantics);
         }
 
         PredictionPrecision precision = productionValidated
@@ -348,7 +350,10 @@ public static class RelicSequencePredictor
                         : Beta110ValidationAuthority.RuntimeSupportStatus)
             })
         {
-            TreasureRoomLanes = treasureRoomLanes
+            TreasureRoomLanes = treasureRoomLanes,
+            EarlyLastingCandyEligible = RuntimeProfilePolicies.UsesChildStreamShuffle(semantics)
+                ? StandardOpeningRelicEligibility.AllowsLastingCandy(world.Beta109Generation!.CharacterKey, world.EncounterNumberOfRuns)
+                : true
         };
     }
 

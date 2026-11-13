@@ -22,6 +22,15 @@ internal sealed record PredictorContext(
     public RuntimeVersionResolution VersionResolution => RuntimeProfileRegistry.Resolve(GameVersion);
     [JsonIgnore]
     public IRuntimeProfile RuntimeProfile => RuntimeProfileRegistry.Select(VersionResolution);
+    [JsonIgnore]
+    internal bool UsesNonCombatGeneration => VersionResolution.SemanticProfileId == RngSemanticProfileId.Modern113;
+
+    internal PredictorStream NonCombatStream(PredictorStream legacyStream) =>
+        UsesNonCombatGeneration ? PredictorStream.NonCombatGeneration : legacyStream;
+
+    [JsonIgnore]
+    internal PredictorStream RelicTransformStream => UsesNonCombatGeneration
+        ? PredictorStream.Transformations : PredictorStream.Niche;
 
     // Captured character pool followed by shared unlocked pool, in source order.
     // Empty while this dependency has not yet been initialized, never "all unlocked".
@@ -46,7 +55,11 @@ internal sealed record PredictorHealthEffect(ModelKey SourceKey, long SourceInst
 internal enum PredictorPotionRarity { Common, Uncommon, Rare, Event }
 internal sealed record PredictorPotionOption(ModelKey Key, PredictorPotionRarity Rarity, bool CanBeGeneratedInCombat = true);
 
-internal enum PredictorStream { UpFront, Rewards, Transformations, Shops, Niche, CombatPotionGeneration, UnknownMapPoint, TreasureRoomRelics }
+internal enum PredictorStream
+{
+    UpFront, Rewards, Transformations, Shops, Niche, CombatPotionGeneration, UnknownMapPoint, TreasureRoomRelics,
+    NonCombatGeneration
+}
 
 internal sealed record PredictorStreamState(PredictorStream Stream, ulong S0, ulong S1, ulong S2, ulong S3, int Calls)
 {
@@ -71,6 +84,13 @@ internal sealed record PredictorCard(
     public bool HasExhaustKeyword { get; init; }
     public bool HasInnateKeyword { get; init; }
     public bool HasRetainKeyword { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ModelKey? Affliction { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public PredictorObservedCardSort? ObservedSort { get; init; }
+    // Null leaves canonical display behavior intact for producers that have
+    // not captured local Ethereal state.
+    public bool? HasEtherealKeyword { get; init; }
     public int SpoilsActIndex { get; init; } = -1;
     public RolltheSpire2.Core.Prediction.Maps.MapPosition? SpoilsCoord { get; init; }
 }
@@ -160,6 +180,15 @@ internal sealed record PredictorState(
     internal PredictorState WithRng(PredictorStream stream, Xoshiro256StarStar rng) =>
         this with { Streams = Streams.SetItem(Streams.FindIndex(s => s.Stream == stream), PredictorStreamState.Capture(stream, rng)) };
 
+    internal PredictorState Shuffle<T>(PredictorContext? context, PredictorStream legacyStream, IList<T> values)
+    {
+        var stream = context?.NonCombatStream(legacyStream) ?? legacyStream;
+        var rng = Streams.Single(s => s.Stream == stream).Restore();
+        if (context == null) rng.UnstableShuffle(values);
+        else rng.UnstableShuffle(values, context.VersionResolution.SemanticProfileId);
+        return WithRng(stream, rng);
+    }
+
     internal void Validate()
     {
         if (Position == null || Odds == null || PersonalBag == null || SharedBag == null ||
@@ -179,7 +208,7 @@ internal sealed record PredictorState(
             Relics.Any(r => r.Key.Category != "RELIC" || !r.Key.IsValid || r.CombatRewardsSeen < 0 || r.CombatsFinished < 0 || r.RewardUpgradeUses < 0 || r.TimesLifted < 0) || PotionSlots.OfType<PredictorPotion>().Any(p => p.Key.Category != "POTION" || !p.Key.IsValid) ||
             Deck.Distinct().Count() != Deck.Length || Deck.Any(id => !Cards.Any(c => c.Id == id && !c.Removed)))
             throw new InvalidDataException("PredictorInstanceInvariant");
-        if (Streams.Length != Enum.GetValues<PredictorStream>().Length ||
+        if (Streams.Count(s => s.Stream != PredictorStream.NonCombatGeneration) != PredictorSeedState.LegacyStreams.Length ||
             Streams.Select(s => s.Stream).Distinct().Count() != Streams.Length ||
             Streams.Any(s => !Enum.IsDefined(s.Stream) || s.Calls < 0 || (s.S0 | s.S1 | s.S2 | s.S3) == 0))
             throw new InvalidDataException("PredictorRngInvariant");
@@ -206,6 +235,12 @@ internal sealed record PredictorState(
 
 internal static class PredictorSeedState
 {
+    internal static readonly ImmutableArray<PredictorStream> LegacyStreams = Enum.GetValues<PredictorStream>()
+        .Where(s => s != PredictorStream.NonCombatGeneration).ToImmutableArray();
+
+    internal static ImmutableArray<PredictorStream> Streams(PredictorContext context) => context.UsesNonCombatGeneration
+        ? LegacyStreams.Add(PredictorStream.NonCombatGeneration) : LegacyStreams;
+
     // Creates the pre-initialization state. World generation, bag population,
     // modifiers and starting-relic obtains MUST precede an Opening checkpoint.
     internal static PredictorState Create(PredictorContext context, IEnumerable<PredictorCard> startingDeck,
@@ -218,7 +253,7 @@ internal static class PredictorSeedState
         var relics = startingRelics.Select(key => new PredictorRelic(id++, key, 1)).ToImmutableArray();
         var profile = context.RuntimeProfile;
         ulong root = profile.ComputeRootSeed(context.Seed);
-        var streams = Enum.GetValues<PredictorStream>().Select(stream => PredictorStreamState.Capture(stream,
+        var streams = Streams(context).Select(stream => PredictorStreamState.Capture(stream,
             new Xoshiro256StarStar(profile.DeriveNamedStreamSeed(root, Name(stream))))).ToImmutableArray();
         var result = new PredictorState(id, new(0, 0, "seed-initialization"), initialGold, cards,
             cards.Select(c => c.Id).ToImmutableArray(), relics,
@@ -264,6 +299,7 @@ internal static class PredictorSeedState
         PredictorStream.Transformations => "transformations", PredictorStream.Shops => "shops",
         PredictorStream.Niche => "niche", PredictorStream.CombatPotionGeneration => "combat_potion_generation",
         PredictorStream.UnknownMapPoint => "unknown_map_point", PredictorStream.TreasureRoomRelics => "treasure_room_relics",
+        PredictorStream.NonCombatGeneration => "non_combat_generation",
         _ => throw new ArgumentOutOfRangeException(nameof(stream))
     };
 }

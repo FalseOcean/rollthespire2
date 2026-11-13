@@ -9,7 +9,7 @@ internal enum OperationTextMode { GroupRows, CardRows, Complex, None }
 internal enum OperationCardLayout { Parallel, Stack, Groups, Branches, Spread }
 internal sealed record OperationDisplayStyle(OperationTextMode Text, OperationCardLayout Cards);
 
-internal enum OperationPreviewAction { ObtainRelic, AddCard, UpgradeCard, TransformCard, GeneratePotion, EnchantCard, RemoveCard, DowngradeCard, Restock, Choose }
+internal enum OperationPreviewAction { ObtainRelic, AddCard, UpgradeCard, TransformCard, GeneratePotion, EnchantCard, RemoveCard, DowngradeCard, Restock, Choose, Result }
 internal sealed record OperationPreviewRow(OperationPreviewAction Action, ImmutableArray<ModelKey> Models,
     ImmutableArray<PredictorCard> Cards, bool Possible)
 {

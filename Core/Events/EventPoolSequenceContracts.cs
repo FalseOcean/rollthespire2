@@ -48,8 +48,20 @@ public sealed record EventImmutableEligibilityContext(
     int CharacterCardPoolCount,
     bool CharacterCardPoolCountExact)
 {
+    internal RngSemanticProfileId RngSemantics { get; init; } = RngSemanticProfileId.Modern110;
     public static EventImmutableEligibilityContext Unknown { get; } = new(
         WorldGameMode.Unknown, false, 0, false, 0, false);
+
+    internal static EventImmutableEligibilityContext From(Beta109WorldGenerationSnapshot snapshot)
+    {
+        var authority = snapshot.EventAuthority;
+        bool modern = snapshot.RngSemantics == RngSemanticProfileId.Modern113;
+        return new(snapshot.GameMode, snapshot.ModeFactsExact, snapshot.PlayerCount,
+            snapshot.ModeFactsExact && snapshot.IsMultiplayerExact,
+            modern ? authority.NonFoolCharacterCardPoolCount : authority.CharacterCardPoolCount,
+            modern ? authority.NonFoolCharacterCardPoolCountExact : authority.CharacterCardPoolCountExact)
+        { RngSemantics = snapshot.RngSemantics };
+    }
 
     public bool IsSinglePlayerExact =>
         GameModeExact && PlayerCountExact &&

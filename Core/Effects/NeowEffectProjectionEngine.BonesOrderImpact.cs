@@ -41,7 +41,7 @@ internal sealed partial class NeowEffectProjectionEngine
             return Unknown(relicKey, "bones-relic-pool-too-small");
         }
 
-        state.Rng.Rewards.UnstableShuffle(valid);
+        (state.Rng.NonCombatGeneration ?? state.Rng.Rewards).UnstableShuffle(valid, _rngSemantics);
         ModelKey[] offered = valid.Take(2).ToArray();
         IReadOnlyList<ModelKey>[] acquisitionOrders =
         {
@@ -275,6 +275,7 @@ internal sealed partial class NeowEffectProjectionEngine
                     new[] { routeEvidence, continuation.EvidenceCode },
                     ExtractNestedRelicKeys(branch.RelicScopedResults.SelectMany(result => result.EffectGroups)),
                     sharedStateExact: branch.Continuity.CanProjectFinalCurse,
+                    nonCombatStateExact: branch.Continuity.CanProjectVersionedFinalCurse(usesNonCombat: true),
                     executedNestedObtainRelics: branch.RelicScopedResults.SelectMany(result =>
                         ExecutedNestedObtainRelics(result.SourceRelicKey, result.EffectGroups)).Distinct().ToArray())));
         }
@@ -423,7 +424,7 @@ internal sealed partial class NeowEffectProjectionEngine
                             EffectDependencyImpact.FiniteChoiceNotEvaluated(
                                 _profileId,
                                 selected,
-                                Evidence(selected, "cross-relic-player-choice-continuation-disabled"))),
+                                Evidence(selected, "cross-relic-player-choice-continuation-disabled"), UsesNonCombatGeneration)),
                         branch.PlayerChoiceSelections)
                 };
             }
@@ -478,7 +479,7 @@ internal sealed partial class NeowEffectProjectionEngine
                             EffectDependencyImpact.FiniteChoiceNotEvaluated(
                                 _profileId,
                                 selected,
-                                Evidence(selected, "player-choice-route-partial"))),
+                                Evidence(selected, "player-choice-route-partial"), UsesNonCombatGeneration)),
                     branch.PlayerChoiceSelections.Concat(new[] { trace }).ToArray()));
             }
             return output;
@@ -488,12 +489,16 @@ internal sealed partial class NeowEffectProjectionEngine
         bool objectiveOnlyCapsule =
             branch.ProductRelevantProjectionStatus == ProductRelevantProjectionStatus.NotEvaluatedByPolicy &&
             (selected == BaseGameModelKeys.Relics.SmallCapsule || selected == BaseGameModelKeys.Relics.LargeCapsule);
-        NeowEffectProjection nested = selected == BaseGameModelKeys.Relics.SmallCapsule
+        bool nonCombatUnknown = UsesNonCombatGeneration && branch.Continuity.NonCombatGenerationRng?.IsExact == false;
+        bool nonCombatDependent = nonCombatUnknown &&
+            (selected == BaseGameModelKeys.Relics.Kaleidoscope || selected == BaseGameModelKeys.Relics.PhialHolster);
+        NeowEffectProjection nested = nonCombatDependent ? Unknown(selected, "non-combat-generation-continuation-unavailable")
+            : selected == BaseGameModelKeys.Relics.SmallCapsule
             ? ProjectCapsule(selected, working, count: 1, includeFixedCards: false, recursionDepth: recursionDepth + 1,
-                executeNestedAutomaticEffects: !objectiveOnlyCapsule)
+                executeNestedAutomaticEffects: !objectiveOnlyCapsule, nonCombatStateKnown: !nonCombatUnknown)
             : selected == BaseGameModelKeys.Relics.LargeCapsule
                 ? ProjectCapsule(selected, working, count: 2, includeFixedCards: true, recursionDepth: recursionDepth + 1,
-                    executeNestedAutomaticEffects: !objectiveOnlyCapsule)
+                    executeNestedAutomaticEffects: !objectiveOnlyCapsule, nonCombatStateKnown: !nonCombatUnknown)
                 : ProjectInternal(selected, working, recursionDepth + 1);
         string nestedRouteId = branch.RouteId + "." + selected.Entry.ToLowerInvariant();
         BonesRelicScopedResult nestedScoped = BuildBonesRelicScopedResult(
@@ -778,9 +783,11 @@ internal sealed partial class NeowEffectProjectionEngine
         PredictionWarningCode warning = projection.Warnings.Count > 0
             ? projection.Warnings[0].Code
             : PredictionWarningCode.EffectAuthorityIncomplete;
-        return EffectDependencyImpact.ConservativeUnknownImmediateHook(
-            warning,
-            Evidence(relicKey, "bones-continuation-unclassified-product-impact"));
+        evidence = Evidence(relicKey, "bones-continuation-unclassified-product-impact");
+        return EffectDependencyImpact.ConservativeUnknownImmediateHook(warning, evidence) with
+        {
+            NonCombatGenerationRng = UsesNonCombatGeneration ? BonesContinuationDomainState.Unknown(warning, evidence) : null
+        };
     }
 
     private BonesSharedContinuationResult BuildBonesSharedContinuation(
@@ -790,10 +797,11 @@ internal sealed partial class NeowEffectProjectionEngine
         out string finalDeckFingerprint)
     {
         bool cursePoolPresent = branch.State.Authority.GeneratedCursePool is { Count: > 0 };
+        var continuationWarnings = branch.Continuity.VersionedContinuationWarnings(UsesNonCombatGeneration);
         bool policySkipped = branch.ProductRelevantProjectionStatus == ProductRelevantProjectionStatus.NotEvaluatedByPolicy ||
-                             branch.Continuity.ContinuationWarningCodes.Contains(
+                             continuationWarnings.Contains(
                                  PredictionWarningCode.ComplexResultNotEvaluatedByPolicy);
-        bool canProjectCurse = !policySkipped && branch.Continuity.CanProjectFinalCurse && cursePoolPresent;
+        bool canProjectCurse = !policySkipped && branch.Continuity.CanProjectVersionedFinalCurse(UsesNonCombatGeneration) && cursePoolPresent;
         var warnings = new List<PredictionWarningCode>();
         ModelKey? curse = null;
         PredictedEffectGroup group;
@@ -803,7 +811,7 @@ internal sealed partial class NeowEffectProjectionEngine
         if (canProjectCurse)
         {
             IReadOnlyList<ModelKey> curses = branch.State.Authority.GeneratedCursePool!;
-            curse = curses[branch.State.Rng.Niche.NextInt(curses.Count)];
+            curse = curses[(branch.State.Rng.NonCombatGeneration ?? branch.State.Rng.Niche).NextInt(curses.Count)];
             AddSyntheticCardToDeck(branch.State.Deck, curse.Value, branch.RouteId + ".bones-curse", EffectCardType.Curse);
             string groupId = branch.RouteId + ".shared-continuation";
             EvidenceCode curseEvidence = Evidence(bonesKey, "bones-final-curse-product-continuity-exact");
@@ -837,7 +845,7 @@ internal sealed partial class NeowEffectProjectionEngine
                 SourceRelicKey: bonesKey,
                 SourceEffectGroupId: groupId,
                 Phase: PredictedEffectPhase.SharedContinuation,
-                RngEvidenceCode: "niche:route-specific-final-curse",
+                RngEvidenceCode: UsesNonCombatGeneration ? "non-combat-generation:route-specific-final-curse" : "niche:route-specific-final-curse",
                 IsProductRelevant: true);
         }
         else
@@ -856,7 +864,7 @@ internal sealed partial class NeowEffectProjectionEngine
             }
             else
             {
-                warnings.AddRange(branch.Continuity.ContinuationWarningCodes);
+                warnings.AddRange(continuationWarnings);
                 if (warnings.Count == 0)
                 {
                     warnings.Add(PredictionWarningCode.EffectAuthorityIncomplete);
@@ -1318,7 +1326,8 @@ internal sealed partial class NeowEffectProjectionEngine
                 FormatContinuityDomain("unknown-hook", continuity.UnknownHook),
                 FormatContinuityDomain("nested-obtain", continuity.NestedObtain),
                 FormatContinuityDomain("player-choice", continuity.PlayerChoice)
-            });
+            }.Concat(continuity.NonCombatGenerationRng is { } nonCombat
+                ? new[] { FormatContinuityDomain("non-combat-generation", nonCombat) } : Array.Empty<string>()));
 
     private static string FormatContinuityDomain(
         string name,
@@ -1358,7 +1367,8 @@ internal sealed partial class NeowEffectProjectionEngine
                 RngFingerprint("niche", state.Rng.Niche),
                 RngFingerprint("combat-potion", state.Rng.CombatPotionGeneration),
                 observableFingerprint
-            });
+            }.Concat(state.Rng.NonCombatGeneration is { } nonCombat
+                ? [RngFingerprint("non-combat-generation", nonCombat)] : []));
 
     private static string RngFingerprint(string name, RolltheSpire2.Core.Rng.Xoshiro256StarStar rng)
     {

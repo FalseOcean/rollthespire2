@@ -24,19 +24,40 @@ namespace RolltheSpire2.Ui.Pages.Search.Editors;
 
 internal sealed partial class EventSearchEditor
 {
-    internal bool HasConditions(bool party) => party && _partyQueue.Count > 0 || (party ? _partyDrafts : _drafts).Values.Any(d =>
+    // Positional values from existing workbench files and presets.
+    private static readonly ModelKey[] LegacyColorChoices =
+    [
+        BaseGameModelKeys.Characters.Ironclad, BaseGameModelKeys.Characters.Silent,
+        BaseGameModelKeys.Characters.Defect, BaseGameModelKeys.Characters.Necrobinder,
+        BaseGameModelKeys.Characters.Regent
+    ];
+
+    internal bool HasConditions(bool party) => party && (_partyQueue.Count > 0 || _partyUnknownPrefix.HasConditions) || (party ? _partyDrafts : _drafts).Values.Any(d =>
         d.QueueConditions.Count > 0 || d.Results.Values.Any(keys => keys.Any(k => k.HasValue)) ||
-        d.CharacterColor >= 0 || d.TrialCase >= 0 || d.TinkerType >= 0 || d.PrototypeTargets.Count > 0 || d.UnknownEventPrefixCount > 0);
+        d.CharacterColor.HasValue || d.TrialCase >= 0 || d.TinkerType >= 0 || d.PrototypeTargets.Count > 0 || d.UnknownPrefix.HasConditions);
     internal Action ClearConditions(bool party)
     {
+        var prefix = (_partyUnknownPrefix.EventCount, _partyUnknownPrefix.MonsterCount);
+        if (party) _partyUnknownPrefix.Select(0);
         var restore = WorkbenchConditionReset.Swap(party ? _partyDrafts : _drafts, _ => new SeatDraft(),
             replaceActive: (previous, current) => { if (ReferenceEquals(_draft, previous)) _draft = current; });
         var queue = _partyQueue.ToArray();
         if (party) _partyQueue.Clear();
-        return () => { restore(); if (party) { _partyQueue.Clear(); _partyQueue.AddRange(queue); } };
+        return () => { restore(); if (party) { _partyQueue.Clear(); _partyQueue.AddRange(queue);
+            (_partyUnknownPrefix.EventCount, _partyUnknownPrefix.MonsterCount) = prefix; } };
     }
 
-    internal int AuthoredConditionCount() => QueueConditions.Count + AuthoredResultEvents().Count + (_draft.UnknownEventPrefixCount > 0 ? 1 : 0);
+    internal Action ClearUnknownRoomPrefixes(bool party)
+    {
+        var states = (party ? _partyDrafts : _drafts).Values.Select(d => d.UnknownPrefix)
+            .Concat(party ? new[] { _partyUnknownPrefix } : []).ToArray();
+        var saved = states.Select(s => (s.EventCount, s.MonsterCount)).ToArray();
+        foreach (var state in states) state.Select(0);
+        return () => { for (int i = 0; i < states.Length; i++)
+            (states[i].EventCount, states[i].MonsterCount) = saved[i]; };
+    }
+
+    internal int AuthoredConditionCount() => QueueConditions.Count + AuthoredResultEvents().Count + (_draft.UnknownPrefix.HasConditions ? 1 : 0);
 
     private HashSet<string> AuthoredResultEvents()
     {
@@ -47,7 +68,7 @@ internal sealed partial class EventSearchEditor
             string eventId = ResultEventId(kind);
             if (IsResultActive(eventId) && TransformTakenOver?.Invoke(_activeSeat, "E." + eventId) != true) resultEvents.Add(eventId);
         }
-        if (IsResultActive("COLORFUL_PHILOSOPHERS") && _draft.CharacterColor >= 0) resultEvents.Add("COLORFUL_PHILOSOPHERS");
+        if (IsResultActive("COLORFUL_PHILOSOPHERS") && _draft.CharacterColor.HasValue) resultEvents.Add("COLORFUL_PHILOSOPHERS");
         if (IsResultActive("TRIAL") && _draft.TrialCase >= 0 && TransformTakenOver?.Invoke(_activeSeat, "E.TRIAL") != true)
             resultEvents.Add("TRIAL");
         if (IsResultActive("TINKER_TIME") && _draft.TinkerType >= 0) resultEvents.Add("TINKER_TIME");
@@ -63,8 +84,10 @@ internal sealed partial class EventSearchEditor
 
     internal EventEditorStateSnapshot ExportEditorState() => new(
         _draft.Results.ToDictionary(pair => pair.Key, pair => pair.Value.ToArray()),
-        _draft.CharacterColor, _draft.TrialCase, _draft.TinkerType, _draft.TinkerEffect,
-        _draft.InactiveResultEvents.Order(StringComparer.Ordinal).ToArray());
+        _draft.CharacterColor is { } color ? Array.IndexOf(LegacyColorChoices, color) : -1,
+        _draft.TrialCase, _draft.TinkerType, _draft.TinkerEffect,
+        _draft.InactiveResultEvents.Order(StringComparer.Ordinal).ToArray())
+    { CharacterColorKey = _draft.CharacterColor is { } key && !LegacyColorChoices.Contains(key) ? key : null };
 
     internal EventEditorStateSnapshot? ExportPartyEditorState(int slot)
     {
@@ -76,13 +99,19 @@ internal sealed partial class EventSearchEditor
 
     internal void ImportEditorState(EventEditorStateSnapshot state)
     {
-        if (state.CharacterColor is < -1 or > 4 || state.TrialCase is < -1 or > 2 ||
+        if (state.CharacterColor < -1 || state.CharacterColor >= LegacyColorChoices.Length || state.TrialCase is < -1 or > 2 ||
             state.TinkerType is < -1 or > 2 || state.Results.Any(pair =>
                 pair.Value.Length != ResultSlotCount(pair.Key)))
             throw new InvalidOperationException("integration.load_shape");
+        ModelKey? legacyColor = state.CharacterColor < 0 ? null : LegacyColorChoices[state.CharacterColor];
+        ModelKey? storedColor = state.CharacterColorKey ?? legacyColor;
+        if (storedColor is { } color && (!color.IsValid || color.Category != BaseGameModelKeys.Categories.Character ||
+            legacyColor is { } legacy && legacy != color || _draft.CharacterColor is { } authored && authored != color))
+            throw new InvalidOperationException("integration.load_shape");
         _draft.Results.Clear();
         foreach (var (kind, slots) in state.Results) _draft.Results[kind] = slots.ToArray();
-        _draft.CharacterColor = state.CharacterColor;
+        // Legacy editor state may carry -1 after an unrepresentable query import.
+        _draft.CharacterColor = storedColor ?? _draft.CharacterColor;
         _draft.TrialCase = state.TrialCase;
         _draft.TinkerType = state.TinkerType;
         _draft.TinkerEffect = state.TinkerEffect;

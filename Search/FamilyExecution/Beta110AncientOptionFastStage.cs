@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Seed;
 using RolltheSpire2.Core.World;
@@ -76,6 +77,7 @@ internal sealed record WorldFastAncientOptionPlan(
     string AuthorityFingerprint)
 {
     public bool IsExact => Generator != WorldFastAncientOptionGeneratorKind.None;
+    internal RngSemanticProfileId RngSemantics { get; init; } = RngSemanticProfileId.Modern110;
 }
 
 internal readonly record struct WorldFastAncientBranchOptionPredicate(
@@ -365,7 +367,8 @@ internal static class Beta110AncientOptionFastPlanCompiler
                 Beta110WorldFastPlan.InvalidDenseId,
                 false,
                 0,
-                Fingerprint(new[] { context.ContextFingerprint, deniedCatalog.CatalogFingerprint, "HookDeniedProceed" }));
+                Fingerprint(new[] { context.ContextFingerprint, deniedCatalog.CatalogFingerprint, "HookDeniedProceed" }))
+                { RngSemantics = generation.RngSemantics };
         }
 
         bool simpleConditionAuthority = normalized is "PAEL" or "OROBAS" or "TEZCATARA" or
@@ -494,9 +497,9 @@ internal static class Beta110AncientOptionFastPlanCompiler
             generator == WorldFastAncientOptionGeneratorKind.Orobas &&
                 generation.HasExactOrobasSeaGlassTargetAuthority &&
                 context.UnlockedCharacterSourceOrderExact &&
-                otherCharacters.Length > 0,
+                (otherCharacters.Length > 0 || generation.RngSemantics == RngSemanticProfileId.Modern113 && context.CharacterKey.IsValid),
             maxScratch,
-            authorityFingerprint);
+            authorityFingerprint) { RngSemantics = generation.RngSemantics };
     }
 
     private static bool CompileDarvPools(
@@ -768,7 +771,7 @@ internal static class Beta110AncientOptionFastStage
                         if (pool.Values.Length == 0 || count >= scratch.Length) return false;
                         scratch[count++] = pool.Values[rng.NextInt(pool.Values.Length)];
                     }
-                    rng.UnstableShuffle(scratch[..count]);
+                    rng.UnstableShuffle(scratch[..count], plan.RngSemantics);
                     bool dusty = rng.NextBool();
                     int take = Math.Min(dusty ? 2 : 3, count);
                     for (int index = 0; index < take; index++) output[outputCount++] = scratch[index];
@@ -786,6 +789,11 @@ internal static class Beta110AncientOptionFastStage
                     {
                         target = plan.OtherUnlockedCharacters[rng.NextInt(plan.OtherUnlockedCharacters.Length)];
                         targetExact = plan.SeaGlassTargetAuthorityExact;
+                    }
+                    else if (plan.RngSemantics == RngSemanticProfileId.Modern113 && plan.SeaGlassTargetAuthorityExact)
+                    {
+                        target = plan.CurrentCharacterId;
+                        targetExact = true;
                     }
                     bool special = rng.NextFloat() < 0.3333333f;
                     ReadOnlySpan<ushort> firstPool = Pool(plan, special
@@ -845,7 +853,7 @@ internal static class Beta110AncientOptionFastStage
                         WorldFastAncientOptionPoolRole.NonupeipeBase,
                         WorldFastAncientOptionPoolRole.NonupeipeSwift);
                     if (count == 0) return false;
-                    rng.UnstableShuffle(scratch[..count]);
+                    rng.UnstableShuffle(scratch[..count], plan.RngSemantics);
                     outputCount = Math.Min(3, count);
                     scratch[..outputCount].CopyTo(output);
                     break;
@@ -856,7 +864,7 @@ internal static class Beta110AncientOptionFastStage
                         WorldFastAncientOptionPoolRole.TanxBase,
                         WorldFastAncientOptionPoolRole.TanxInstinct);
                     if (count == 0) return false;
-                    rng.UnstableShuffle(scratch[..count]);
+                    rng.UnstableShuffle(scratch[..count], plan.RngSemantics);
                     outputCount = Math.Min(3, count);
                     scratch[..outputCount].CopyTo(output);
                     break;
@@ -949,8 +957,13 @@ internal static class Beta110AncientOptionFastStage
         ReadOnlySpan<ushort> source = Pool(plan, role);
         if (source.Length == 0 || source.Length > scratch.Length) return false;
         source.CopyTo(scratch);
-        rng.UnstableShuffle(scratch[..source.Length]);
-        value = scratch[0];
+        if (plan.RngSemantics == RngSemanticProfileId.Modern113)
+            value = source[rng.NextInt(source.Length)];
+        else
+        {
+            rng.UnstableShuffle(scratch[..source.Length]);
+            value = scratch[0];
+        }
         return true;
     }
 

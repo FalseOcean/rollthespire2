@@ -14,8 +14,9 @@ internal static class NeowRewardGenerator
         IRuntimeProfile profile, ulong rootHash, Core.Authority.RuntimeContextAuthoritySnapshot owner)
     {
         var effects = owner.EffectAuthority ?? throw new InvalidOperationException("RelicBag.EffectAuthorityMissing");
+        var semanticProfile = owner.VersionResolution.SemanticProfileId;
         if (owner.PlayersCount == 1)
-            return BuildOrderedRelicBag(profile, rootHash, effects.SharedRelicPoolSource!, effects.CharacterRelicPoolSource!);
+            return BuildOrderedRelicBag(profile, rootHash, effects.SharedRelicPoolSource!, effects.CharacterRelicPoolSource!, semanticProfile);
         var party = owner.WorldAuthority?.Beta109Generation;
         if (party is not { HasExactPartyRelicBags: true } || party.PersonalPlayerSlot != owner.PlayerSlotIndex)
             throw new InvalidOperationException("RelicBag.OrderedPartyAuthorityMissing");
@@ -25,14 +26,14 @@ internal static class NeowRewardGenerator
         foreach (var bucket in party.SharedRelicBuckets)
         {
             var shared = bucket.OrderedRelics.ToList();
-            rng.UnstableShuffle(shared);
+            rng.UnstableShuffle(shared, semanticProfile);
         }
         var result = new List<NeowEffectRelicSnapshot>();
         for (int slot = 0; slot <= owner.PlayerSlotIndex; slot++)
             foreach (var bucket in party.PartyRelicBuckets[slot])
             {
                 var keys = bucket.OrderedRelics.ToList();
-                rng.UnstableShuffle(keys);
+                rng.UnstableShuffle(keys, semanticProfile);
                 if (slot == owner.PlayerSlotIndex)
                     foreach (var key in keys) result.Add(catalog[key] with { BagOrder = result.Count });
             }
@@ -44,14 +45,15 @@ internal static class NeowRewardGenerator
         IRuntimeProfile profile,
         ulong rootHash,
         IReadOnlyList<NeowEffectRelicSnapshot> shared,
-        IReadOnlyList<NeowEffectRelicSnapshot> character)
+        IReadOnlyList<NeowEffectRelicSnapshot> character,
+        RngSemanticProfileId semanticProfile = RngSemanticProfileId.Modern110)
     {
         var rng = new Xoshiro256StarStar(profile.DeriveNamedStreamSeed(rootHash, "up_front"));
 
         foreach (IGrouping<string, NeowEffectRelicSnapshot> bucket in GroupInSourceRarityOrder(shared))
         {
             List<NeowEffectRelicSnapshot> consumed = bucket.ToList();
-            rng.UnstableShuffle(consumed);
+            rng.UnstableShuffle(consumed, semanticProfile);
         }
 
         var seen = new HashSet<ModelKey>(ModelKeyComparer.Instance);
@@ -72,7 +74,7 @@ internal static class NeowRewardGenerator
         foreach (IGrouping<string, NeowEffectRelicSnapshot> bucket in GroupInSourceRarityOrder(playerRelics))
         {
             List<NeowEffectRelicSnapshot> shuffled = bucket.ToList();
-            rng.UnstableShuffle(shuffled);
+            rng.UnstableShuffle(shuffled, semanticProfile);
             foreach (NeowEffectRelicSnapshot relic in shuffled)
             {
                 output.Add(relic with { BagOrder = output.Count });
@@ -177,7 +179,8 @@ internal static class NeowRewardGenerator
 
     public static NeowEffectRelicSnapshot? PullRelicWithFallback(
         List<NeowEffectRelicSnapshot> bag,
-        EffectRelicRarity rarity)
+        EffectRelicRarity rarity,
+        Func<NeowEffectRelicSnapshot, bool?>? isEligible = null)
     {
         EffectRelicRarity[] order = rarity switch
         {
@@ -189,11 +192,14 @@ internal static class NeowRewardGenerator
         foreach (EffectRelicRarity candidate in order)
         {
             int index = bag.FindIndex(item => item.Rarity == candidate);
-            if (index >= 0)
+            while (index >= 0)
             {
                 NeowEffectRelicSnapshot result = bag[index];
+                bool? eligible = isEligible is null ? true : isEligible(result);
+                if (!eligible.HasValue) return null;
                 bag.RemoveAt(index);
-                return result;
+                if (eligible.Value) return result;
+                index = bag.FindIndex(index, item => item.Rarity == candidate);
             }
         }
 

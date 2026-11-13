@@ -61,17 +61,17 @@ internal static class WorldFamilyGpuPacking
             actMeta[meta + 1] = act.ActId;
             actMeta[meta + 2] = checked((uint)act.EligibleEventCount);
             PackEncounterPool(act.WeakEncounters, act.EncounterConflictSourceOrdinals,
-                encounterList, conflictList, out int weakOffset);
+                encounterList, conflictList, out int weakOffset, world.Acts.Any(a => a.HasEncounterPredicate));
             actMeta[meta + 3] = checked((uint)weakOffset);
             actMeta[meta + 4] = checked((uint)act.WeakEncounters.Length);
             actMeta[meta + 5] = checked((uint)act.WeakEncounterSlots);
             PackEncounterPool(act.RegularEncounters, act.EncounterConflictSourceOrdinals,
-                encounterList, conflictList, out int regularOffset);
+                encounterList, conflictList, out int regularOffset, world.Acts.Any(a => a.HasEncounterPredicate));
             actMeta[meta + 6] = checked((uint)regularOffset);
             actMeta[meta + 7] = checked((uint)act.RegularEncounters.Length);
             actMeta[meta + 8] = checked((uint)act.RegularEncounterSlots);
             PackEncounterPool(act.EliteEncounters, act.EncounterConflictSourceOrdinals,
-                encounterList, conflictList, out int eliteOffset);
+                encounterList, conflictList, out int eliteOffset, world.Acts.Any(a => a.HasEncounterPredicate));
             actMeta[meta + 9] = checked((uint)eliteOffset);
             actMeta[meta + 10] = checked((uint)act.EliteEncounters.Length);
             actMeta[meta + 11] = checked((uint)act.EliteEncounterSlots);
@@ -107,9 +107,9 @@ internal static class WorldFamilyGpuPacking
         int[] sourceConflicts,
         List<uint> encounters,
         List<uint> conflicts,
-        out int entryOffset)
+        out int entryOffset, bool identities)
     {
-        entryOffset = encounters.Count / EncounterStrideUInts;
+        entryOffset = encounters.Count / (identities ? 5 : EncounterStrideUInts);
         foreach (WorldFastEncounterEntry entry in source)
         {
             int conflictOffset = conflicts.Count;
@@ -119,6 +119,7 @@ internal static class WorldFamilyGpuPacking
             encounters.Add(entry.ReferenceIdentityId < 0 ? 0u : checked((uint)entry.ReferenceIdentityId + 1u));
             encounters.Add(checked((uint)conflictOffset));
             encounters.Add(entry.ConflictCount);
+            if (identities) encounters.Add(entry.EncounterId);
         }
     }
 

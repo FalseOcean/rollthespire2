@@ -62,7 +62,9 @@ internal static class TransformationAggregateValidator
         var identity = ModernNeowIdentityPredictor.PredictModernCore(root, authority, profile, true);
         if (identity.UnknownEligibilityAffectedPool) return SearchQueryEvaluation.Unknown("TransformationAggregate.NeowEligibilityUnknown");
         if (!identity.RelicKeys.Contains(selected)) return SearchQueryEvaluation.NoMatch("TransformationAggregate.OpeningNotOffered");
-        var n = new NeowEffectProjectionEngine(profile, "TransformationAggregate.Neow", root, authority).Project(selected);
+        var engine = new NeowEffectProjectionEngine(profile, "TransformationAggregate.Neow", root, authority,
+            request.CompiledSearch.RequiresComplexBonesDeckInteractionEvaluation);
+        var n = engine.Project(selected);
         if (!c.IsBones)
         {
             var outputs = NeowOutputs(n.EffectGroups, c.Opening == TransformationOpening.LeafyPoultice ? 2 : 1, authority).Concat(events).ToArray();
@@ -73,6 +75,7 @@ internal static class TransformationAggregateValidator
             return SearchQueryEvaluation.NoMatch("TransformationAggregate.BonesPairNotOffered");
         bool unknown = bones.OriginalRoutes.Count == 0;
         var matched = new List<SearchMatchEvidence>();
+        var unresolved = new List<SearchRouteRejection>();
         foreach (var route in bones.OriginalRoutes)
         {
             if (c.PickupOrder != TransformationPickupOrder.Any && route.AcquisitionOrder[0] !=
@@ -82,8 +85,10 @@ internal static class TransformationAggregateValidator
             var verdict = EvaluateOutputs(c, outputs);
             if (verdict == SearchDisposition.Match) matched.AddRange(Result(verdict, outputs, route.RouteId, route.AcquisitionOrder).Evidence);
             unknown |= verdict == SearchDisposition.Unknown;
+            if (verdict == SearchDisposition.Unknown)
+                unresolved.Add(new(route.RouteId, route.AcquisitionOrder, verdict, "TransformationAggregate.RouteOutputUnknown"));
         }
-        if (matched.Count>0) return SearchQueryEvaluation.Match(matched);
+        if (matched.Count>0) return SearchQueryEvaluation.Match(matched) with { RouteRejections = unresolved.ToArray() };
         return unknown ? SearchQueryEvaluation.Unknown("TransformationAggregate.RouteOutputUnknown") :
             SearchQueryEvaluation.NoMatch("TransformationAggregate.AllRoutesRejected");
     }

@@ -29,6 +29,7 @@ internal static class TransformationAggregateWorkEstimate
         // linear walk through its source pool.
         double ns = 25 + opening + (c.TrialNondescript ? 20 : 0) + Reach(probability) *
             (4d * work.Draws + 4d * work.Streams + 2d * work.Targets) + (g.CompactInput ? 17 : 0);
+        if (plan.HasTwoSharedTransformOrders) ns *= 2;
         return FamilyCoarsePricing.Cpu(TransformationAggregateFamily.Id, "T.StreamingAggregate", ns, workers, g,
             Basis(work) + ";CpuAnchors=T.OwnedWork.20260914.v1;IdentityReachOrFullBound;NoPoolSizeMultiplierForDirectIndex");
     }
@@ -74,10 +75,11 @@ internal static class TransformationAggregateWorkEstimate
         // Its exact curves still take priority at the family entry point.
         if (physical.PrefixReuse) kind += ".Prefix";
         double integerFactor = physical.NumericalVariant == GpuNumericalVariant.IntegerRne ? 1.5 : 1;
-        ns *= integerFactor;
+        int orderCount = plan.HasTwoSharedTransformOrders ? 2 : 1;
+        ns *= integerFactor * orderCount;
         return FamilyCoarsePricing.Gpu(TransformationAggregateFamily.Id, "T." + kind, ns, physical.Capacity, g,
             Basis(work) + $";GpuAnchors=T.OwnedWork.20260914.v1+IndependentT.BonesTracked.20261001;NumericalVariant={physical.NumericalVariant};" +
-            $"IntegerArithmeticFactorEstimated={integerFactor};NoAssumedPrefixSpeedRatio;UnknownDrawReachUsesFullWork;DeviceEmissionIncluded;NoHostTransportOrJointFit",
+            $"IntegerArithmeticFactorEstimated={integerFactor};MaxOrderEvaluations={orderCount};NoAssumedPrefixSpeedRatio;UnknownDrawReachUsesFullWork;DeviceEmissionIncluded;NoHostTransportOrJointFit",
             setupMilliseconds: physical.BonesOptimized ? 250 : 200);
     }
 

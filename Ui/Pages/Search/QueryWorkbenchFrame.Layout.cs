@@ -73,7 +73,7 @@ internal sealed partial class QueryWorkbenchFrame
             HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
             VerticalScrollMode = ScrollContainer.ScrollMode.Auto
         };
-        Place(_domainScroll, ColumnInset, DomainTop, RailContentWidth, PresetActionsTop - 48 - DomainTop);
+        Place(_domainScroll, ColumnInset, DomainTop, RailContentWidth, CategoryHeight);
 
         (string id, string key)[] domains =
         [
@@ -117,18 +117,14 @@ internal sealed partial class QueryWorkbenchFrame
         _shopEditor.Size = _neowEditor.Size;
         _relicEditor.Position = _neowEditor.Position;
         _relicEditor.Size = _neowEditor.Size;
-        _ancientEditor.Position = _neowEditor.Position;
-        _ancientEditor.Size = _neowEditor.Size;
         _eventEditor.Position = _neowEditor.Position;
         _eventEditor.Size = _neowEditor.Size;
-        _actInformationEditor.Position = _neowEditor.Position;
-        _actInformationEditor.Size = _neowEditor.Size;
         _transformationEditor.Position = _neowEditor.Position;
         _transformationEditor.Size = _neowEditor.Size;
         // Restore already bound every semantic context after importing the draft.
         // Preferences and final sizes above only select which controls to present.
-        if (restoredDraft) RenderEditorDomain(_selectedDomain);
-        else RefreshEditorContexts();
+        if (!restoredDraft) RefreshEditorContexts(render: false);
+        BuildResearchNavigation();
         ApplyDomainSelection(_selectedDomain);
         UpdateDomainCounts();
 
@@ -204,10 +200,11 @@ internal sealed partial class QueryWorkbenchFrame
 
     private void ApplyDomainSelection(string id)
     {
+        if (id == ResearchDomain && !ResearchVisible) id = _lastRegularDomain;
         if (_multiplayer && id == "transform") id = "neow";
         RenderEditorDomain(id);
-        if (id is "boss" or "map") _actInformationEditor.SelectPage(id == "map");
         _selectedDomain = id;
+        if (id != ResearchDomain) _lastRegularDomain = id;
         if (_domainScroll is not null && _domainButtons.TryGetValue(id, out var selectedButton))
             _domainScroll.CallDeferred(ScrollContainer.MethodName.EnsureControlVisible, selectedButton);
         foreach (var (key, button) in _domainButtons)
@@ -251,13 +248,22 @@ internal sealed partial class QueryWorkbenchFrame
             };
             _currentDomain.Visible = !_showResults;
         }
+        UpdateEditorVisibility();
+        StyleResearchTabs();
+        UpdateResearchNavigation();
+    }
+
+    private void UpdateEditorVisibility()
+    {
+        string id = _showResults ? "" : _selectedDomain;
         _neowEditor.Visible = id == "neow";
         _combatEditor.Visible = id == "combat";
         _shopEditor.Visible = id == "shop";
         _relicEditor.Visible = id == "relics";
-        _ancientEditor.Visible = id == "ancient";
+        bool editResearch = id == ResearchDomain && _persistence.Preferences.ShowDeadSeedResearch;
+        _ancientEditor.Visible = id == "ancient" || editResearch && _researchPage == ResearchPage.Neow;
         _eventEditor.Visible = id == "events";
-        _actInformationEditor.Visible = id is "boss" or "map";
+        _actInformationEditor.Visible = id is "boss" or "map" || editResearch && _researchPage != ResearchPage.Neow;
         _transformationEditor.Visible = id == "transform";
     }
 

@@ -4,7 +4,7 @@
 
 - Windows
 - .NET 9 SDK
-- Slay the Spire 2 Beta111 / 0.111.0 runtime assemblies
+- Slay the Spire 2 v0.113.0 runtime assemblies for this release
 - `sts2.dll` and `0Harmony.dll`
 
 The project uses `Godot.NET.Sdk/4.5.1` and targets `net9.0`. The NuGet SDK builds

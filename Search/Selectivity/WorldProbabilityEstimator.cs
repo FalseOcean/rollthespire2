@@ -420,9 +420,10 @@ internal static class WorldProbabilityEstimator
             return TrySolveEventPool(Array.Empty<EventPoolSequenceProjector.Candidate>(), conditions, out probability, out reason);
         }
 
+        var eligibility = EventImmutableEligibilityContext.From(generation);
         EventPoolSequenceProjector.Candidate[] staticallyEligible = raw
             .Where(candidate => !EventStaticEligibilityCatalog.Evaluate(
-                candidate.EventKey, variant.Act, generation.Profile, candidate.Source, Eligibility()).ShouldReject)
+                candidate.EventKey, variant.Act, generation.Profile, candidate.Source, eligibility).ShouldReject)
             .ToArray();
         if (staticallyEligible.GroupBy(item => item.EventKey, ModelKeyComparer.Instance).Any(group => group.Count() > 1))
         {
@@ -441,7 +442,7 @@ internal static class WorldProbabilityEstimator
             EventPoolSequenceProjector.Candidate[] effectivePool = raw
                 .Where((candidate, index) => index != skippedIndex)
                 .Where(candidate => !EventStaticEligibilityCatalog.Evaluate(
-                    candidate.EventKey, variant.Act, generation.Profile, candidate.Source, Eligibility()).ShouldReject)
+                    candidate.EventKey, variant.Act, generation.Profile, candidate.Source, eligibility).ShouldReject)
                 .ToArray();
             if (!TrySolveEventPool(effectivePool, conditions, out double branchP, out string branchReason))
             {
@@ -456,10 +457,6 @@ internal static class WorldProbabilityEstimator
         probability = Math.Clamp(total, 0d, 1d);
         reason = $"CleanedEventQueue;raw={raw.Length};staticEligible={staticallyEligible.Length};openingSkipMixture={raw.Length};sampleBranches={string.Join(',', branchNotes)}";
         return true;
-
-        EventImmutableEligibilityContext Eligibility() => new(generation.GameMode, generation.ModeFactsExact,
-            generation.PlayerCount, generation.ModeFactsExact && generation.IsMultiplayerExact,
-            generation.EventAuthority.CharacterCardPoolCount, generation.EventAuthority.CharacterCardPoolCountExact);
     }
 
     private static bool TrySolveEventPool(

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Authority;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Prediction;
@@ -18,6 +19,8 @@ internal static class PartyInitialQuery
             Modifiers = { info =>
             {
                 if (info.Type != typeof(SearchQuery)) return;
+                var encounterProperty = info.Properties.First(p => p.Name == nameof(SearchQuery.EncounterQueues));
+                encounterProperty.ShouldSerialize = (_, value) => value is not IReadOnlyList<EncounterQueueSearchCondition> { Count: 0 };
                 var property = info.Properties.First(p => p.Name == nameof(SearchQuery.StandardMapRoutes));
                 property.ShouldSerialize = (_, value) => value is not IReadOnlyList<StandardMapRouteCondition> { Count: 0 };
             } }
@@ -39,7 +42,7 @@ internal static class PartyInitialQuery
             .ToHashSet());
     }
 
-    internal static bool HasWorld(SearchQuery q) => q.VariantBossBranches.Count > 0 || q.LegacyWorld.BossFilters.Count > 0 || q.LegacyWorld.BossOrdinalFilters.Count > 0;
+    internal static bool HasWorld(SearchQuery q) => q.EncounterQueues.Count > 0 || q.VariantBossBranches.Count > 0 || q.LegacyWorld.BossFilters.Count > 0 || q.LegacyWorld.BossOrdinalFilters.Count > 0;
     internal static CompiledSearch Compile(SearchQuery query, SearchContext context)
     {
         var authored = query;
@@ -55,10 +58,12 @@ internal static class PartyInitialQuery
             throw new ArgumentException("Party.TransformationAggregateNotInScope");
         if (query.Players.Where((p, index) => p.Slot != index || p.Conditions.Players.Count > 0).Any())
             throw new ArgumentException("Party.InvalidOrderedSlotPredicate");
+        bool elitePrefixConflict = ConjoinEliteResearch(query).Conflict;
         query = BindSharedConditions(query);
         string empty = JsonSerializer.Serialize(SearchQuery.Empty);
-        var personalAtSharedLevel = query with { Players = [], VariantBossBranches = [], StandardMaps = [], StandardMapRoutes = [], EventSequenceConstraints = [],
+        var personalAtSharedLevel = query with { Players = [], VariantBossBranches = [], EncounterQueues = [], StandardMaps = [], StandardMapRoutes = [], ElitePrefixResearch = null, EventSequenceConstraints = [],
             FirstActUnknownEventPrefixCount = 0,
+            FirstActUnknownMonsterPrefixCount = 0,
             LegacyWorld = query.LegacyWorld with { BossFilters = [], BossOrdinalFilters = [], AncientIdentityFilters = [] } };
         if (JsonSerializer.Serialize(personalAtSharedLevel) != empty)
             throw new ArgumentException("Party.PersonalConditionsRequirePlayerSlot");
@@ -88,9 +93,12 @@ internal static class PartyInitialQuery
             keys.Ban.Distinct().OrderBy(k => k.Serialized).ToArray());
         var normalized = query with
         {
+            EncounterQueues = shared.NormalizedQuery.EncounterQueues,
             StandardMapRoutes = shared.NormalizedQuery.StandardMapRoutes,
+            ElitePrefixResearch = shared.NormalizedQuery.ElitePrefixResearch,
             Players = query.Players.Select(p => p with { Offers = Canonical(p.Offers),
-                Conditions = p.Conditions with { CombatCardExclusion = personal[p.Slot].NormalizedQuery.CombatCardExclusion },
+                Conditions = p.Conditions with { CombatCardExclusion = personal[p.Slot].NormalizedQuery.CombatCardExclusion,
+                    NeowOfferWhitelist = personal[p.Slot].NormalizedQuery.NeowOfferWhitelist },
                 SelectedOption = p.SelectedOption is { } plan ? plan with { Choices = plan.Choices.OrderBy(c => c.GroupId, StringComparer.Ordinal).ToArray() } : null,
                 Results = p.Results.DistinctBy(c => JsonSerializer.Serialize(c)).OrderBy(c => JsonSerializer.Serialize(c), StringComparer.Ordinal).ToArray() }).ToArray(),
             VariantBossBranches = query.VariantBossBranches.Select(b => b with { FirstBoss = Canonical(b.FirstBoss), SecondBoss = Canonical(b.SecondBoss) })
@@ -105,7 +113,8 @@ internal static class PartyInitialQuery
             throw new ArgumentException("Party.SecondBossPredicateWithoutOrdinal");
         var acts = normalized.VariantBossBranches.Select(b => b.Act).Concat(normalized.LegacyWorld.BossFilters.Select(b => b.Act))
             .Concat(normalized.LegacyWorld.BossOrdinalFilters.Select(b => b.Act)).Distinct();
-        bool impossible = party.World.Beta109Generation is { CanReplayBossIdentityForSearch: true } generation &&
+        bool impossible = context.Authority.VersionResolution.SemanticProfileId != RngSemanticProfileId.Modern113 &&
+            party.World.Beta109Generation is { CanReplayBossIdentityForSearch: true } generation &&
             acts.Any(number => !generation.OrderedActCatalog.Where(a => a.Act == number).Any(act =>
         {
             var branches = normalized.VariantBossBranches.Where(b => b.Act == number).ToArray();
@@ -127,8 +136,12 @@ internal static class PartyInitialQuery
                 });
             });
         }));
-        impossible |= personal.Any(p => p.Status == QueryNormalizationStatus.Impossible) || shared.Status == QueryNormalizationStatus.Impossible;
-        return new CompiledSearch(authored, context, new(normalized, impossible ? QueryNormalizationStatus.Impossible : QueryNormalizationStatus.Legal, [], [], [], []),
+        bool unknownPrefixConflict = UnknownRoomPrefixRequirements.HasConflict(normalized);
+        impossible |= unknownPrefixConflict || elitePrefixConflict ||
+            personal.Any(p => p.Status == QueryNormalizationStatus.Impossible) || shared.Status == QueryNormalizationStatus.Impossible;
+        return new CompiledSearch(authored, context, new(normalized, impossible ? QueryNormalizationStatus.Impossible : QueryNormalizationStatus.Legal, [], [], [],
+                (unknownPrefixConflict ? new[] { "UnknownRoomPrefix:EventMonsterConflict" } : [])
+                    .Concat(elitePrefixConflict ? ["ElitePrefixResearch:SharedCountsConflict"] : []).ToArray()),
             new(new(ResolvedCombatRewardRouteKind.NotApplicable, null, false, OrderedPartyAuthority.ObservationVersion)), false,
             OrderedPartyAuthority.Hash(party.Fingerprint + "|" + OpeningPremiseId + "|" + (PartyNeowQuery.HasTransactions(normalized) ? Core.Effects.PartyNeowAdmission.ObservationVersion : "") + "|" + JsonSerializer.Serialize(normalized, FingerprintJsonOptions) +
                 string.Concat(personal.Where(p => p.NormalizedQuery.CombatCardExclusion is { IsEmpty: false })
@@ -142,6 +155,7 @@ internal static class PartyInitialQuery
     {
         var sources = new[] { query }.Concat(query.Players.Select(p => p.Conditions)).ToArray();
         foreach (var source in sources) SearchCompiler.ValidateStandardMapConditions(source);
+        var research = ConjoinEliteResearch(query);
         static T[] Unique<T>(IEnumerable<T> values) => values.DistinctBy(v => JsonSerializer.Serialize(v)).ToArray();
         var variants = new List<VariantScopedBossBranch>();
         foreach (int act in sources.SelectMany(q => q.VariantBossBranches).Select(b => b.Act).Distinct())
@@ -176,8 +190,10 @@ internal static class PartyInitialQuery
         {
             VariantBossBranches = Unique(variants),
             StandardMaps = Unique(sources.SelectMany(q => q.StandardMaps)),
+            ElitePrefixResearch = research.Condition,
             StandardMapRoutes = sources.SelectMany(q => q.StandardMapRoutes).Where(c => !c.IsEmpty)
                 .Select(c => c.Normalize()).DistinctBy(c => c.Fingerprint).OrderBy(c => c.Act).ToArray(),
+            EncounterQueues = Unique(sources.SelectMany(q => q.EncounterQueues)),
             EventSequenceConstraints = Unique(sources.SelectMany(q => q.EventSequenceConstraints)),
             LegacyWorld = query.LegacyWorld with
             {
@@ -187,13 +203,31 @@ internal static class PartyInitialQuery
             },
             Players = query.Players.Select(p => p with { Conditions = p.Conditions with
             {
-                VariantBossBranches = [], StandardMaps = [], StandardMapRoutes = [], EventSequenceConstraints = [],
+                VariantBossBranches = [], EncounterQueues = [], StandardMaps = [], StandardMapRoutes = [],
+                // A conflicting authored conjunction remains inspectable even
+                // though normalization already proves it impossible.
+                ElitePrefixResearch = research.Conflict ? p.Conditions.ElitePrefixResearch : null, EventSequenceConstraints = [],
                 AncientBranches = p.Conditions.AncientBranches.GroupBy(b => b.Act)
                     .Where(g => g.Any(b => b.OptionAny.Count > 0 || b.SeaGlassTargetAny.Count > 0)).SelectMany(g => g).ToArray(),
                 LegacyWorld = p.Conditions.LegacyWorld with { BossFilters = [], BossOrdinalFilters = [], AncientIdentityFilters = [] }
             } }).ToArray()
         };
     }
+
+    private static (ElitePrefixResearchCondition? Condition, bool Conflict) ConjoinEliteResearch(SearchQuery query)
+    {
+        var conditions = new[] { query }.Concat(query.Players.Select(p => p.Conditions))
+            .Select(q => q.ElitePrefixResearch).OfType<ElitePrefixResearchCondition>().Distinct().ToArray();
+        var fixedCounts = conditions.Where(c => c.Mode == ElitePrefixResearchMode.FixedCounts).ToArray();
+        // Complete standard maps advance exactly one row per room. Four rooms
+        // after the fixed first Monster put the first Elite on row 6, so that
+        // legacy condition already implies FloorSeven without losing an obligation.
+        bool conflict = fixedCounts.Length > 1 ||
+            conditions.Any(c => c.Mode == ElitePrefixResearchMode.FloorSeven) &&
+            fixedCounts.Any(c => (long)c.ExtraMonsters + c.Unknowns != 4);
+        return (fixedCounts.FirstOrDefault() ?? conditions.FirstOrDefault(), conflict);
+    }
+
     private static ModelKeySetFilter Conjoin(ModelKeySetFilter left, ModelKeySetFilter right)
     {
         ModelKey[] any = left.Any.Count == 0 ? right.Any.ToArray() : right.Any.Count == 0 ? left.Any.ToArray() : left.Any.Intersect(right.Any).ToArray();

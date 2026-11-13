@@ -9,6 +9,55 @@ using RolltheSpire2.Search.Runtime;
 
 internal static class MapLossyChecks
 {
+    internal static async Task RunEliteResearchAsync(PreparedSearch basis, string output)
+    {
+        int checks = 0;
+        void Check(bool passed, string reason)
+        {
+            checks++;
+            if (!passed) throw new InvalidDataException("MapEliteResearchGpu:" + reason);
+        }
+        var ordinary = SearchQuery.Empty with
+        {
+            StandardMaps = [new(1, StandardMapMetric.GuaranteedMonster, StandardMapComparison.AtLeast, 0)]
+        };
+        await using var services = new FilterRuntimeServices(requiresGpu: true);
+        foreach (var query in new[] { ordinary, ordinary with { ElitePrefixResearch = new(0, 4) } })
+        {
+            var request = SearchPreparationCompiler.Compile(SearchCompiler.Compile(query, basis.Model.CompiledSearch.Context),
+                basis.RunOptions with { MapLossy = new(true) }).Plan!;
+            var preferences = FilterExecutionPreferences.From(request.RunOptions);
+            var gpuBody = StandardMapFamily.Prepare(request.Model, preferences, preferGpu: true);
+            var cpuBody = StandardMapFamily.Prepare(request.Model, preferences, preferGpu: false);
+            Check(gpuBody.UsesGpu, "native GPU proposal selected");
+            var gpu = (StandardMapExecution)HostFilterBindings.Bind(gpuBody, services);
+            var cpu = (StandardMapExecution)HostFilterBindings.Bind(cpuBody, services);
+            try
+            {
+                var batch = new SearchBatch(0, 129);
+                foreach (var input in new[] { FamilyCandidateSet.Dense(batch), FamilyCandidateSet.FromAbi1(batch, [0, 3, 17, 66, 128]) })
+                {
+                    var expected = await cpu.FilterAsync(services, input, default);
+                    var actual = await gpu.FilterAsync(services, input, default);
+                    Check(actual.EnumerateLogicalOrdinals().SequenceEqual(expected.EnumerateLogicalOrdinals()), "ordered CPU/GPU plus full-M parity");
+                    foreach (ulong ordinal in input.EnumerateLogicalOrdinals())
+                    {
+                        string seed = VisibleSeedCandidateCodec.FormatOrdinal(Beta111Profile.Instance, batch.GlobalCandidate(ordinal));
+                        bool exact = StandardMapExactEvaluator.Evaluate(request.Model, seed).Disposition == SearchDisposition.Match;
+                        Check(actual.EnumerateLogicalOrdinals().Contains(ordinal) == exact, "wide proposal then research agrees with independent map Exact");
+                    }
+                    if (query.ElitePrefixResearch is null) Check(actual.Count == input.Count, "positive ordinary-map control");
+                }
+                Check(gpu.ActualProposalCalls > 0 && gpu.ActualProposalInputs > 0, "device proposal actually executed");
+                if (query.ElitePrefixResearch is not null)
+                    Check(gpu.LossyDescription.FullFinalRemainders.Contains("ElitePrefixResearch:FullFinalOnly"), "research full-map scope disclosed");
+            }
+            finally { await gpu.DisposeAsync(services); await cpu.DisposeAsync(services); }
+        }
+        File.WriteAllText(Path.Combine(output, "map-elite-research-gpu.json"), JsonSerializer.Serialize(new { passed = true, checks }));
+        Console.WriteLine($"MAP_ELITE_RESEARCH_GPU=PASS;checks={checks}");
+    }
+
     internal static async Task RunAsync(PreparedSearch basis, string output)
     {
         string? previous = Environment.GetEnvironmentVariable("RT2_MAP_GPU_PIPELINE");

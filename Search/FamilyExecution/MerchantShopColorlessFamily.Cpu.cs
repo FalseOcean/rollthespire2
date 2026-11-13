@@ -15,9 +15,10 @@ internal static partial class MerchantShopColorlessFamily
             inputs.Evaluation.MerchantColorlessConditions.Count == 3 &&
             inputs.Evaluation.MerchantColorlessConditions.All(c => c.Slot == MerchantColorlessSlot.Uncommon) &&
             inputs.Evaluation.MerchantColorlessConditions.Select(c => c.MerchantOrdinal).Order().SequenceEqual(new[] { 1, 2, 3 });
-        bool priced = slotWorkers && inputs.PricingAuthority.AdmitsCpuReference(true);
+        bool priced = slotWorkers && !inputs.Authority.UsesModern113 && inputs.PricingAuthority.AdmitsCpuReference(true);
         string revision = plan is null ? "S.MerchantShopColorless.Cpu.Reference.20260912.v1" :
             sequence ? "S.MerchantShopColorless.Cpu.Sequence.20261013.v2" : "S.MerchantShopColorless.Cpu.Slot.20261013.v2";
+        revision += inputs.Authority.RuleRevision;
         bool numericalRoots = profile.ProfileId == RuntimeProfileId.Beta111;
         var costs = FamilyAuxiliaryEvidence.Read<CpuCostSnapshot?>(Id, "CpuCostSnapshot", CpuCostCalibration.Capture, null);
         FamilyPhysicalQuote? Raw(FamilyPhysicalQuoteRequest geometry) =>
@@ -30,7 +31,7 @@ internal static partial class MerchantShopColorlessFamily
             WindowCapacity = 65536, CpuChunkCapacity = CpuFilterExecution.Capacity, CpuWorkers = workers,
             PerformanceProjection = compact => CpuFilterExecution.Describe(Id, revision, workers, 65536, numericalRoots, false, compact),
             Cost = new() {
-                CanonicalScope = inputs.Authority.PlayersCount == 1,
+                CanonicalScope = inputs.Authority.PlayersCount == 1 && !inputs.Authority.UsesModern113,
                 CanonicalWorkShape = _ => FamilyCanonicalCostShape.DescribeShop(inputs.Evaluation, inputs.Authority),
                 CalibrationQuote = Raw,
                 Quote = (selected, geometry, _) => FamilyCanonicalMeasuredCost.TryDenseQuote(selected, geometry) ??

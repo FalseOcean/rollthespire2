@@ -2,6 +2,7 @@ using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Cards;
 using MegaCrit.Sts2.Core.Models.Events;
+using MegaCrit.Sts2.Core.Saves.Runs;
 using RolltheSpire2.Core.PredictorRuntime;
 using RolltheSpire2.Core.Effects.Snapshots;
 
@@ -33,7 +34,15 @@ internal static class OperationPreviewCardModel
         }
         else if (snapshot.TinkerTimeRider != PredictorMadScienceRider.None)
             throw new InvalidOperationException("Mad Science rider belongs to a different display card");
-        for (int level = 0; level < snapshot.UpgradeLevel; level++)
+        if (snapshot.UpgradeLevel > model.MaxUpgradeLevel &&
+            model.GetType().Assembly == typeof(CardModel).Assembly)
+        {
+            // Native save reconstruction also honors optional-mod support for
+            // saved higher upgrade levels, while keeping this model unowned.
+            model = CardModel.FromSerializable(new SerializableCard
+            { Id = canonicalCard.Id, CurrentUpgradeLevel = snapshot.UpgradeLevel });
+        }
+        else for (int level = 0; level < snapshot.UpgradeLevel; level++)
         {
             model.UpgradeInternal();
             model.FinalizeUpgradeInternal();
@@ -54,6 +63,8 @@ internal static class OperationPreviewCardModel
         SetKeyword(model, CardKeyword.Exhaust, snapshot.HasExhaustKeyword);
         SetKeyword(model, CardKeyword.Innate, snapshot.HasInnateKeyword);
         SetKeyword(model, CardKeyword.Retain, snapshot.HasRetainKeyword);
+        if (snapshot.HasEtherealKeyword is { } ethereal)
+            SetKeyword(model, CardKeyword.Ethereal, ethereal);
         // Never attach the display model to a player/run or use a live deck card here.
         if (model.RunState != null || model.CombatState != null)
             throw new InvalidOperationException("Operation preview card must be detached");

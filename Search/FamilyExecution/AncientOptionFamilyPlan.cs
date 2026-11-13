@@ -37,6 +37,7 @@ internal sealed class AncientOptionFamilyPlan
     internal ushort PricingDenseId(ModelKey key) => _ids.TryGetValue(key, out ushort id) ? id : ushort.MaxValue;
     internal bool GpuSupported { get; }
     internal GpuNumericalVariant NumericalVariant { get; }
+    internal string RuleRevision => _generation.RngSemantics == RolltheSpire2.Compatibility.RngSemanticProfileId.Modern113 ? ".Modern113" : "";
     internal GpuNumericRequirements GpuNumericRequirements => GpuSupported
         ? GpuIntegerNumerics.Requirements(NumericalVariant) : GpuNumericRequirements.None;
     internal string GpuPreparationIssue { get; }
@@ -298,6 +299,8 @@ internal sealed class AncientOptionFamilyPlan
     {
         string donor = FamilyGpuComputeUtility.LoadEmbeddedShader("Beta110GpuAncientOptionPreGateP3A.comp.glsl");
         string numerical = donor[donor.IndexOf("struct RngState", StringComparison.Ordinal)..donor.IndexOf("void main()", StringComparison.Ordinal)];
+        if (_generation.RngSemantics == RolltheSpire2.Compatibility.RngSemanticProfileId.Modern113)
+            numerical = "#define RT2_A_MODERN113 1\n" + numerical;
         string source = FamilyGpuComputeUtility.LoadEmbeddedShader("AncientOptionFamily.comp.glsl").Replace("/*__DONOR__*/", numerical, StringComparison.Ordinal);
         if (NumericalVariant == GpuNumericalVariant.NativeFloat64) return source;
         if (NumericalVariant != GpuNumericalVariant.IntegerRne) throw new InvalidOperationException("A.UnknownGpuNumericalVariant");

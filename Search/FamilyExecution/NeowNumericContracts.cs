@@ -131,6 +131,10 @@ internal sealed record Beta110FastNeowAuthority(
     Beta110FastEffectCatalog EffectCatalog,
     string AuthorityFingerprint)
 {
+    internal RolltheSpire2.Compatibility.RngSemanticProfileId RngSemantics { get; init; } =
+        RolltheSpire2.Compatibility.RngSemanticProfileId.Modern110;
+    internal bool UsesChildShuffle => RolltheSpire2.Compatibility.RuntimeProfilePolicies.UsesChildStreamShuffle(RngSemantics);
+
     internal NeowIdentityOfferFacts Identity => NeowIdentityOfferFacts.For(PlayersCount,
         AllCharacterCardPoolsUnlocked, ScrollBoxesAllowed);
 }

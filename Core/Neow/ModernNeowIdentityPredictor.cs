@@ -62,7 +62,7 @@ internal static class ModernNeowIdentityPredictor
         var positives = pool.FixedCandidates.ToList();
         foreach (ModernNeowBinaryChoice choice in pool.AppendChoices)
             positives.Add(rng.NextBool() ? choice.TrueCandidate : choice.FalseCandidate);
-        rng.UnstableShuffle(positives);
+        rng.UnstableShuffle(positives, authority.VersionResolution.SemanticProfileId);
 
         return new ModernNeowIdentityResult(
             new[] { positives[0], positives[1], curse },

@@ -20,7 +20,13 @@ using RolltheSpire2.Tests.FastSearch;
 using RolltheSpire2.Ui.Pages.Search.Neow;
 
 int count = ReadInt(args, "--count", 10_000);
+if (args.Contains("--encounter-schema", StringComparer.Ordinal)) return EncounterQueueChecks.RunSchema();
+if (args.Contains("--encounter-queues", StringComparer.Ordinal)) return EncounterQueueChecks.Run(ReadInt(args, "--count", 129));
 if (args.Contains("--neow-identity-rules", StringComparer.Ordinal)) return NeowIdentityRulesChecks.Run();
+if (args.Contains("--neow-offer-relations", StringComparer.Ordinal)) return NeowOfferRelationChecks.Run();
+if (args.Contains("--neow-offer-editor", StringComparer.Ordinal)) return NeowOfferEditorChecks.Run();
+if (args.Contains("--unknown-prefix-relations", StringComparer.Ordinal)) return UnknownPrefixRelationChecks.Run();
+if (args.Contains("--unknown-prefix-editor", StringComparer.Ordinal)) return UnknownPrefixEditorChecks.Run();
 if (args.Contains("--c-assignment-early", StringComparer.Ordinal)) return CAssignmentEarlyChecks.Run(ReadInt(args, "--count", 256));
 if (args.Contains("--neow-entry-identity", StringComparer.Ordinal)) return NeowEntryIdentityChecks.Run();
 if (args.Contains("--shion-neow-optimization", StringComparer.Ordinal)) return ShionNeowOptimizationChecks.Run();
@@ -101,7 +107,9 @@ if (args.Contains("--transformation-relic")) return TransformationRelicContinuat
 if (args.Contains("--runtime-version-profile", StringComparer.Ordinal)) return RuntimeVersionProfileChecks.Run();
 if (args.Contains("--event-prediction", StringComparer.Ordinal)) return PredictorClosureChecks.CheckEventResults();
 if (args.Contains("--silken-tress-order")) return FamilyCombatRewardChecks.CheckSilkenTressOpeningOrder();
+if (args.Contains("--combat-neutral-witness", StringComparer.Ordinal)) return FamilyCombatRewardChecks.Run(0, neutralWitnessOnly: true);
 if (args.Contains("--capsule-obtain-policy")) return FamilyNeowChecks.CheckCapsuleObtainPolicy();
+if (args.Contains("--capsule-noncombat-continuation")) return NeowCapsuleNonCombatChecks.Run();
 if (args.Contains("--combination-regressions", StringComparer.Ordinal)) return CombinationRegressionChecks.Run();
 if (args.Contains("--persistence", StringComparer.Ordinal)) return PersistenceChecks.Run();
 if (args.Contains("--in-run-feature-defaults", StringComparer.Ordinal)) return PersistenceChecks.Run(featurePreferencesOnly: true);
@@ -126,6 +134,7 @@ if (args.Contains("--unknown-room", StringComparer.Ordinal)) return UnknownRoomC
 if (args.Contains("--treasure-room", StringComparer.Ordinal)) { Console.WriteLine("TREASURE_ROOM_PASS " + RelicCpuChecks.CheckTreasureProjection()); return 0; }
 if (args.Contains("--initial-room-exact", StringComparer.Ordinal)) return InitialRoomExactChecks.Run();
 if (args.Contains("--map-route", StringComparer.Ordinal)) return MapRouteChecks.Run();
+if (args.Contains("--elite-prefix-research", StringComparer.Ordinal)) return ElitePrefixResearchChecks.Run();
 if (args.Contains("--map-drawing-integration", StringComparer.Ordinal)) return MapDrawingIntegrationChecks.Run();
 if (args.Contains("--map-lossy-integration", StringComparer.Ordinal)) return MapLossyIntegrationChecks.Run();
 if (args.Contains("--map-route-sequence", StringComparer.Ordinal)) return MapRouteSequenceChecks.Run();

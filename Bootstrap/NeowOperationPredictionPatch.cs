@@ -28,7 +28,16 @@ internal static class NeowOperationPredictionPatch
         foreach (var type in new[] { typeof(NEventOptionButton), typeof(NRestSiteButton), typeof(NRewardButton), typeof(NPotionHolder) })
             Observe(type, "OnRelease", nameof(Left));
         Observe(typeof(NCardRewardAlternativeButton), "OnPress", nameof(Left));
-        Observe(typeof(NMerchantSlot), "OnMouseReleased", nameof(Left));
+        // The native merchant reuses a stocked slot after a Courier purchase.
+        // OnSelected restores its hover tip after awaiting settlement, without
+        // another OnFocus. Retire the old query before purchase starts, then
+        // follow that native restoration for the replacement offer. A release
+        // postfix could clear it again when settlement completes synchronously.
+        harmony.Patch(AccessTools.Method(typeof(NMerchantSlot), "OnSelected")
+            ?? throw new MissingMethodException(typeof(NMerchantSlot).FullName, "OnSelected"),
+            prefix: new HarmonyMethod(typeof(NeowOperationPredictionPatch), nameof(Left)));
+        foreach (var type in new[] { typeof(NMerchantCard), typeof(NMerchantPotion), typeof(NMerchantRelic) })
+            Observe(type, "CreateHoverTip", nameof(Focused));
         Observe(typeof(NCardHolder), "OnMouseReleased", nameof(Left));
         // Observe the concrete native entry as well as the base observer. This
         // records admission without starting a second prediction or selection.

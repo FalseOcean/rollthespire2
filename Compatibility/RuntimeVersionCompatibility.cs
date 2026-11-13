@@ -10,7 +10,8 @@ public enum RuntimeVersionSupportKind
     ArchivedStableReference,
     HistoricalBetaDonor,
     ArchivedBetaReference,
-    Unsupported
+    Unsupported,
+    ProvisionalVersionedRules
 }
 
 /// <summary>
@@ -142,6 +143,7 @@ public static class RuntimeVersionCompatibility
     public const string Beta110PriorVersion = "0.110.0";
     public const string Beta110Version = "0.110.1";
     public const string Beta111Version = "0.111.0";
+    public const string Beta113Version = "0.113.0";
 
     public const string LatestAuditedVersion = Beta111Version;
     public const string LatestProductionCompatibleVersion = Beta111Version;
@@ -215,6 +217,20 @@ public static class RuntimeVersionCompatibility
                 normalized,
                 Beta111Version,
                 "semantic-compatible-patch:source-audited+compile-load+authority-smoke:" + Beta111Version);
+        }
+
+        if (string.Equals(normalized, Beta113Version, StringComparison.Ordinal))
+        {
+            return new RuntimeVersionResolution(
+                identity,
+                RuntimeProfileId.Beta111,
+                RngSemanticProfileId.Modern113,
+                CompatibilityConfidence.ProvisionalUnverified,
+                CompatibilityDomainMask.None,
+                RuntimeVersionSupportKind.ProvisionalVersionedRules,
+                normalized,
+                Beta113Version,
+                "provisional-versioned-rng:" + Beta113Version);
         }
 
         if (TryParseSemanticVersion(normalized, out Version detected) &&

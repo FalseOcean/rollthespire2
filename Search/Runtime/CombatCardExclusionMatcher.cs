@@ -11,7 +11,7 @@ internal static class CombatCardExclusionMatcher
     internal static SearchQueryEvaluation Evaluate(CombatCardExclusionSearchCondition condition,
         NormalCombatRewardRoutePredictionResult route, IReadOnlyList<ModelKey>? availableCardIdentities)
     {
-        var banned = condition.CardKeys.ToHashSet(ModelKeyComparer.Instance);
+        var members = condition.CardKeys.ToHashSet(ModelKeyComparer.Instance);
         bool unknown = false;
         for (int ordinal = 1; ordinal <= condition.BattleCount; ordinal++)
         {
@@ -30,8 +30,10 @@ internal static class CombatCardExclusionMatcher
             {
                 if (card.Precision is PredictionPrecision.Unknown or PredictionPrecision.Unsupported || !card.CardKey.IsValid)
                     unknown = true;
-                else if (banned.Contains(card.CardKey))
-                    return SearchQueryEvaluation.NoMatch("CombatCardExclusion.Hit:Battle" + ordinal + ":" + card.CardKey.Serialized);
+                else if (condition.Mode == CombatCardCollectionMode.Whitelist
+                    ? !members.Contains(card.CardKey) : members.Contains(card.CardKey))
+                    return SearchQueryEvaluation.NoMatch((condition.Mode == CombatCardCollectionMode.Whitelist
+                        ? "CombatCardCollection.OutsideWhitelist:Battle" : "CombatCardExclusion.Hit:Battle") + ordinal + ":" + card.CardKey.Serialized);
             }
             // Known potion/gold limitations stay in their own precision/status
             // fields; the current producer emits evaluated battles as Partial.
@@ -42,9 +44,12 @@ internal static class CombatCardExclusionMatcher
         if (unknown) return SearchQueryEvaluation.Unknown("CombatCardExclusion.RewardsIncomplete");
         if (availableCardIdentities is null)
             return SearchQueryEvaluation.Unknown("CombatCardExclusion.IdentityAuthorityUnavailable");
-        var available = availableCardIdentities.ToHashSet(ModelKeyComparer.Instance);
-        if (condition.CardKeys.Any(key => !available.Contains(key)))
-            return SearchQueryEvaluation.Unknown("CombatCardExclusion.MemberUnavailable");
+        if (condition.Mode == CombatCardCollectionMode.Blacklist)
+        {
+            var available = availableCardIdentities.ToHashSet(ModelKeyComparer.Instance);
+            if (condition.CardKeys.Any(key => !available.Contains(key)))
+                return SearchQueryEvaluation.Unknown("CombatCardExclusion.MemberUnavailable");
+        }
         return SearchQueryEvaluation.Match();
     }
 }

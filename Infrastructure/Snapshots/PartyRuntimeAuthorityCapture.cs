@@ -48,6 +48,8 @@ public static class PartyRuntimeAuthorityCapture
             PlayerRelicBuckets = bags[0],
             PartyBossDiscoveryOverrides = new System.Collections.ObjectModel.ReadOnlyDictionary<string, ModelKey>(discovery),
             PartyBossDiscoveryExact = true,
+            PartyHasFirstRunIronclad = characters.Select((character, slot) =>
+                character == BaseGameModelKeys.Characters.Ironclad && states[slot].NumberOfRuns == 0).Any(first => first),
             TutorialBossOverrideAuthorityExact = true,
             TutorialBossOverrideWillApply = discovery.Count > 0,
             SnapshotFingerprint = OrderedPartyAuthority.Hash(generation.SnapshotFingerprint + "|" + string.Join("|", provenance) + "|" +
@@ -64,6 +66,13 @@ public static class PartyRuntimeAuthorityCapture
         {
             var personalWorld = players[slot].WorldAuthority!;
             var personal = personalWorld.Beta109Generation!;
+            // The union determines which Ancient can appear. That Ancient's
+            // options are evaluated against this player's deck, pools and slot.
+            var contexts = ReflectionNeowEffectSnapshotAdapter.BuildBeta109AncientEventContexts(
+                profile.ProfileId, generation.OrderedActCatalog, generation.SharedAncients, generation.IsVanilla,
+                players[slot].EffectAuthority, personalWorld.AncientOptionRelicCatalog ?? [],
+                personalWorld.AncientOptionRelicCatalogExact, generation.RunSeedRoot, generation.RunSeedRootExact,
+                players[slot].Character, slot, true, personal.UnlockedCharacters, personal.UnlockedCharactersExact);
             var bound = generation with
             {
                 PersonalPlayerSlot = slot,
@@ -71,8 +80,9 @@ public static class PartyRuntimeAuthorityCapture
                 UnlockedCharacters = personal.UnlockedCharacters,
                 UnlockedCharactersExact = personal.UnlockedCharactersExact,
                 PlayerRelicBuckets = bags[slot],
-                AncientEventContexts = personal.AncientEventContexts,
-                SnapshotFingerprint = OrderedPartyAuthority.Hash(generation.SnapshotFingerprint + "|owner=" + slot + "|" + personal.SnapshotFingerprint)
+                AncientEventContexts = contexts,
+                SnapshotFingerprint = OrderedPartyAuthority.Hash(generation.SnapshotFingerprint + "|owner=" + slot + "|" +
+                    personal.SnapshotFingerprint + "|" + string.Join("|", contexts.Select(context => context.ContextFingerprint)))
             };
             players[slot] = players[slot].WithWorldAuthority(personalWorld with
             {

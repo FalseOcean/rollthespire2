@@ -8,10 +8,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
-    <Version>1.4.1</Version>
-    <AssemblyVersion>1.4.1.0</AssemblyVersion>
-    <FileVersion>1.4.1.0</FileVersion>
-    <InformationalVersion>1.4.1+$(Configuration)</InformationalVersion>
+    <Version>1.4.2</Version>
+    <AssemblyVersion>1.4.2.0</AssemblyVersion>
+    <FileVersion>1.4.2.0</FileVersion>
+    <InformationalVersion>1.4.2+$(Configuration)</InformationalVersion>
     <NoWarn>$(NoWarn);MSB3270;STS002</NoWarn>
   </PropertyGroup>
 
@@ -58,8 +58,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <AssemblyMetadata Include="Rt2BuildIdentity" Value="RolltheSpire2-1.4.1-Production" />
-    <AssemblyMetadata Include="Rt2CompatibilityTarget" Value="Beta110-0.110.1-AuditedExact_Beta111-0.111.0-AcceptedCompatible-Modern110Semantic" />
+    <AssemblyMetadata Include="Rt2BuildIdentity" Value="RolltheSpire2-1.4.2-Production" />
+    <AssemblyMetadata Include="Rt2CompatibilityTarget" Value="Beta110-0.110.1-AuditedExact_Beta111-0.111.0-AcceptedCompatible-Modern110Semantic_Beta113-0.113.0-Provisional-Modern113Semantic" />
     <AssemblyMetadata Include="Rt2BuildConfiguration" Value="$(Configuration)" />
   </ItemGroup>
 

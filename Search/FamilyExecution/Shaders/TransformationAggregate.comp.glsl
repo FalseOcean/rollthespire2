@@ -14,6 +14,9 @@ layout(set=0,binding=5,std430) buffer Output {uint v[];} output_ids;
 #ifdef T_BONES_TRACKED
 bool tracked_bones_pair(uint64_t root) {
  rng_initialize(root+make_u64(plan.v[15],plan.v[16]));
+#ifdef T_MODERN113
+ rng_initialize(next_u64());
+#endif
  uint count=plan.v[9],p=32u,q=32u;
 #ifdef T_BONES_ENTRY_PREPARED
  p=plan.v[28];q=plan.v[29];
@@ -42,6 +45,9 @@ bool tracked_newleaf_offer(uint ci,uint curse) {
  if(curse!=RT2_NEOW_OPTIONAL_APPEND_CURSE){next_int(2u);count++;}
  next_int(2u);count++;next_int(2u);count++;
  if(p==0xffffffffu)return false;
+#ifdef T_MODERN113
+ rng_initialize(next_u64());
+#endif
  for(uint n=count;n>1u;n--){
   uint j=next_int(n),tail=n-1u;
   if(p==tail)p=j;else if(p==j)p=tail;
@@ -78,20 +84,24 @@ bool opening(uint64_t root){
   a[count++]=next_int(2u)==0u?RT2_NEOW_APPEND1_TRUE:RT2_NEOW_APPEND1_FALSE;
   a[count++]=next_int(2u)==0u?RT2_NEOW_APPEND2_TRUE:RT2_NEOW_APPEND2_FALSE;
  }
+#ifdef T_MODERN113
+ rng_initialize(next_u64());
+#endif
  for(uint n=count;n>1u;n--){uint j=next_int(n),t=a[j];a[j]=a[n-1u];a[n-1u]=t;}
  return mode==3u ? ((a[0]==plan.v[18]&&a[1]==plan.v[20])||(a[1]==plan.v[18]&&a[0]==plan.v[20]))
                  : a[0]==plan.v[20]||a[1]==plan.v[20];
 #endif
 }
-bool aggregate(uint64_t root){
+bool aggregate_order(uint64_t root,uint group_offset){
 #ifdef T_FULL_TARGET
  // Full multiset: each draw must fill one unused target slot. No assignment
  // of a specific pair to Leafy; any target identities and duplicates are legal.
  uint matched=0u;
  for(uint g=0u;g<plan.v[5];g++){
-  uint at=plan.v[6]+g*8u;rng_initialize(root+make_u64(plan.v[at],plan.v[at+1u]));
+  uint at=group_offset+g*8u;rng_initialize(root+make_u64(plan.v[at],plan.v[at+1u]));
   if(plan.v[at+2u]==1u)next_int(19u);
   if(plan.v[at+2u]==2u && next_int(3u)!=2u)return false;
+  for(uint i=2u;i<plan.v[at+2u];i++)next_u64();
   for(uint j=0u;j<plan.v[at+3u];j++){
    uint pi=at+4u+j*2u;
    uint value=pools.v[plan.v[pi]+next_int(plan.v[pi+1u])];
@@ -110,9 +120,10 @@ bool aggregate(uint64_t root){
  if(!opening(root))return false;
  uint rare=0u,matched=0u,consumed=0u,total=plan.v[3];
  for(uint g=0u;g<plan.v[5];g++){
-  uint at=plan.v[6]+g*8u;rng_initialize(root+make_u64(plan.v[at],plan.v[at+1u]));
+  uint at=group_offset+g*8u;rng_initialize(root+make_u64(plan.v[at],plan.v[at+1u]));
   if(plan.v[at+2u]==1u)next_int(19u);
   if(plan.v[at+2u]==2u && next_int(3u)!=2u)return false;
+  for(uint i=2u;i<plan.v[at+2u];i++)next_u64();
   for(uint j=0u;j<plan.v[at+3u];j++){
    uint pi=at+4u+j*2u;uint value=pools.v[plan.v[pi]+next_int(plan.v[pi+1u])];consumed++;
    if(plan.v[1]==0u){rare+=value;if(rare+total-consumed<plan.v[2])return false;}
@@ -122,6 +133,14 @@ bool aggregate(uint64_t root){
   }
  }
  return plan.v[1]==0u?rare>=plan.v[2]:uint(bitCount(matched))>=plan.v[4];
+#endif
+}
+bool aggregate(uint64_t root){
+ if(aggregate_order(root,plan.v[6]))return true;
+#ifdef T_TWO_TRANSFORM_ORDERS
+ return aggregate_order(root,plan.v[30]);
+#else
+ return false;
 #endif
 }
 uint ordinal_at(uint i){return batch.v[4]==0u?batch.v[6]+i:input_ids.v[i];}

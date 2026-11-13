@@ -188,7 +188,7 @@ internal static partial class PotionOperationForecast
             {
                 var pool = observation.Context.PotionPool;
                 if (pool.IsDefaultOrEmpty) throw new InvalidOperationException("PredictorPotionPoolNotInitialized");
-                var rng = observation.CombatPotionRng.Restore();
+                var rng = observation.PotionGenerationRng.Restore();
                 int empty = inventory.Slots.Count(p => p == null);
                 int brews = demand.IncludeOrder ? Math.Min(2, inventory.Slots.Count(p => p?.Key == potion)) : 1;
                 for (int ordinal = 1; ordinal <= brews; ordinal++)
@@ -241,7 +241,7 @@ internal static partial class PotionOperationForecast
             if (potion.Entry != "ENTROPIC_BREW")
                 return Build(observation.Context, potion, token) with { Notices = notices };
             var model = PredictorSettlementEffects.GenerateEntropicPotion(observation.Context.PotionPool,
-                observation.CombatPotionRng.Restore());
+                observation.PotionGenerationRng.Restore());
             var row = new OperationOutcome(OperationOutcomeAction.GeneratePotion, [model], [], false)
             { Kind = "EntropicCurrentSlots:1:" + (observation.HasSozu ? 0 : 1) };
             var section = new OperationOutcomeSource(potion, [row], []) { FeatureId = PotionFeature(potion) };

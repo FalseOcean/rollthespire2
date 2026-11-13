@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Rng;
 
 namespace RolltheSpire2.Core.PredictorRuntime;
@@ -10,6 +11,7 @@ internal sealed record PredictorOperationTreasurePartyScene(ImmutableArray<ulong
 {
     internal PredictorOperationTreasureVote? OptimisticLocalVote { get; init; }
     internal bool LocalTreasureAllowed { get; init; } = true;
+    internal RngSemanticProfileId SemanticProfile { get; init; } = RngSemanticProfileId.Modern110;
     internal bool AllocationActive { get; init; } = true;
     internal override void Restore(PredictorRun run) => run.RestoreOperationTreasureParty(this);
 }
@@ -111,13 +113,14 @@ internal static class PredictorOperationTreasureParty
                 new(voters, rounds.ToImmutable())));
         }
         var losers = effective.Where(v => v.RelicIndex != null && !awards.Any(a => a.PlayerId == v.PlayerId)).Select(v => v.PlayerId).ToArray();
-        unclaimed.Sort((left, right) =>
+        if (scene.SemanticProfile == RngSemanticProfileId.Modern113) unclaimed.Sort();
+        else unclaimed.Sort((left, right) =>
         {
             var a = scene.Relics[left].Key; var b = scene.Relics[right].Key;
             int category = string.Compare(a.Category, b.Category, StringComparison.Ordinal);
             return category != 0 ? category : string.Compare(a.Entry, b.Entry, StringComparison.Ordinal);
         });
-        rng.UnstableShuffle(unclaimed);
+        rng.UnstableShuffle(unclaimed, scene.SemanticProfile);
         for (int i = 0; i < unclaimed.Count; i++)
             awards.Add(new(unclaimed[i], scene.Relics[unclaimed[i]], i < losers.Length ? losers[i] : null,
                 i < losers.Length ? PredictorOperationTreasureAwardKind.ConsolationPrize : PredictorOperationTreasureAwardKind.Skipped));

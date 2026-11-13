@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Merchant;
@@ -36,11 +37,14 @@ internal static class EventResultNumericPredicate
         internal Target[] TrashTargets { get; }
         internal Target[] InventoryTargets { get; }
         internal int[] ColorfulPool { get; }
+        internal RngSemanticProfileId RngSemantics { get; }
 
         internal Compiled(IReadOnlyList<EventResultSearchCondition> conditions, Beta111EventResultAuthority? authority)
         {
             CanReject = authority is { IsBeta111: true, StaticCatalogAuthorityExact: true };
             ColorfulPoolKnown = authority?.ColorfulPoolAuthorityExact == true;
+            RngSemantics = authority?.RngSemantics ?? RngSemanticProfileId.Modern110;
+            var colors = Beta111EventResultCatalog.ColorfulOrder(RngSemantics);
             CheapConditions = conditions.Where(c => c.Kind is EventResultConditionKind.TrialCase or
                 EventResultConditionKind.TinkerTimeTypeAndRider).ToArray();
             var trash = new List<Target>();
@@ -63,7 +67,7 @@ internal static class EventResultNumericPredicate
                         break;
                     case EventResultConditionKind.ColorfulPhilosophersOfferedColor:
                         NeedsColorful = true;
-                        inventory.Add(new(condition.Kind, IndexOf(Beta111EventResultCatalog.ColorfulCharacterOrder, condition.TargetKey)));
+                        inventory.Add(new(condition.Kind, IndexOf(colors, condition.TargetKey)));
                         break;
                 }
             }
@@ -71,8 +75,8 @@ internal static class EventResultNumericPredicate
             InventoryTargets = inventory.ToArray();
             ColorfulPool = NeedsColorful && CanReject && ColorfulPoolKnown
                 ? Beta111EventRules.ColorfulCandidates(authority!.OwnerCharacterKey,
-                        authority.UnlockedCharacterCardPoolKeys)
-                    .Select(key => IndexOf(Beta111EventResultCatalog.ColorfulCharacterOrder, key)).ToArray()
+                        authority.UnlockedCharacterCardPoolKeys, RngSemantics)
+                    .Select(key => IndexOf(colors, key)).ToArray()
                 : [];
         }
     }
@@ -95,13 +99,13 @@ internal static class EventResultNumericPredicate
                 {
                     var rng = new Beta110FastRng(EventSeed(rootHash, playerSlot, false, TinkerTimeHash));
                     Span<int> types = stackalloc int[] { 0, 1, 2 };
-                    rng.UnstableShuffle(types);
+                    rng.UnstableShuffle(types, compiled.RngSemantics);
                     int type = (int)condition.TinkerCardType!;
                     if (types[0] != type && types[1] != type) return true;
                     if (condition.TinkerRider is { } rider)
                     {
                         Span<int> riders = stackalloc int[] { type * 3, type * 3 + 1, type * 3 + 2 };
-                        rng.UnstableShuffle(riders);
+                        rng.UnstableShuffle(riders, compiled.RngSemantics);
                         if (riders[0] != (int)rider && riders[1] != (int)rider) return true;
                     }
                     break;
@@ -132,7 +136,7 @@ internal static class EventResultNumericPredicate
         {
             for (int i = 0; i < fakeOrder.Length; i++) fakeOrder[i] = i;
             var rng = new Beta110FastRng(EventSeed(rootHash, playerSlot, shared: true, FakeMerchantHash));
-            rng.UnstableShuffle(fakeOrder);
+            rng.UnstableShuffle(fakeOrder, compiled.RngSemantics);
         }
         if (compiled.NeedsColorful && compiled.ColorfulPoolKnown)
         {

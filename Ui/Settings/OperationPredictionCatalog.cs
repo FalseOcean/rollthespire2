@@ -49,6 +49,7 @@ internal static class OperationPredictionCatalog
             "TOY_BOX", "WAR_PAINT", "WHETSTONE", "SILKEN_TRESS", "WING_CHARM", "FRESNEL_LENS",
             "GLITTER", "LAVA_LAMP", "MOLTEN_EGG", "TOXIC_EGG", "FROZEN_EGG", "SILVER_CRUCIBLE",
             "DREAM_CATCHER", "TINY_MAILBOX", "SHOVEL");
+        entries.AddRange(RolltheSpire2.Compatibility.ModPrediction.ModOperationPredictions.Settings);
         Named("extra:obtain-chain", OperationPredictionCategory.RelicEffect, true);
         Sources("EVENT", OperationPredictionCategory.EventOption,
             "BRAIN_LEECH", "COLORFUL_PHILOSOPHERS", "INFESTED_AUTOMATON", "ROOM_FULL_OF_CHEESE",
@@ -57,11 +58,13 @@ internal static class OperationPredictionCatalog
             "UNREST_SITE", "WAR_HISTORIAN_REPY", "WELLSPRING", "DOORS_OF_LIGHT_AND_DARK", "REFLECTIONS",
             "TABLET_OF_TRUTH", "SLIPPERY_BRIDGE", "AROMA_OF_CHAOS", "MORPHIC_GROVE", "SYMBIOTE",
             "WHISPERING_HOLLOW", "ENDLESS_CONVEYOR", "TRIAL", "WELCOME_TO_WONGOS", "DENSE_VEGETATION",
-            "BATTLEWORN_DUMMY", "PUNCH_OFF", "RELIC_TRADER", "HUNGRY_FOR_MUSHROOMS", "THE_LANTERN_KEY");
+            "BATTLEWORN_DUMMY", "PUNCH_OFF", "RELIC_TRADER", "HUNGRY_FOR_MUSHROOMS", "THE_LANTERN_KEY",
+            "MUSEUM_OF_TORTURE", "WATERFALL_OF_OBVIOUS_SECRETS", "WUPPY_IN_TROUBLE", "THERMAE_NONUPEIPE");
         Named("extra:event-continuation", OperationPredictionCategory.EventOption, true);
         Named("extra:event-combat", OperationPredictionCategory.EventOption, true);
         Sources("POTION", OperationPredictionCategory.PotionResult,
-            "ATTACK_POTION", "SKILL_POTION", "POWER_POTION", "COLORLESS_POTION", "COSMIC_CONCOCTION", "OROBIC_ACID", "ENTROPIC_BREW");
+            "ATTACK_POTION", "SKILL_POTION", "POWER_POTION", "COLORLESS_POTION", "COSMIC_CONCOCTION", "OROBIC_ACID", "ENTROPIC_BREW",
+            "BOTTLED_SONG");
         Named("extra:potion-order", OperationPredictionCategory.PotionResult, true);
         Named("extra:potion-inventory", OperationPredictionCategory.PotionResult, true);
         return entries.ToImmutable();

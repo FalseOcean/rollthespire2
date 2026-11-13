@@ -1,3 +1,4 @@
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Identity;
 
 namespace RolltheSpire2.Core.Events;
@@ -58,6 +59,15 @@ public static class Beta111EventResultCatalog
         BaseGameModelKeys.Characters.Silent,
         BaseGameModelKeys.Characters.Defect
     };
+    private static readonly IReadOnlyList<ModelKey> Modern113ColorfulCharacterOrder =
+    [
+        BaseGameModelKeys.Characters.Necrobinder, BaseGameModelKeys.Characters.Ironclad,
+        BaseGameModelKeys.Characters.Regent, BaseGameModelKeys.Characters.Fool,
+        BaseGameModelKeys.Characters.Silent, BaseGameModelKeys.Characters.Defect
+    ];
+
+    internal static IReadOnlyList<ModelKey> ColorfulOrder(RngSemanticProfileId semantics) =>
+        semantics == RngSemanticProfileId.Modern113 ? Modern113ColorfulCharacterOrder : ColorfulCharacterOrder;
 
     private static ModelKey Card(string entry) => new(BaseGameModelKeys.Categories.Card, entry);
     private static ModelKey Relic(string entry) => new(BaseGameModelKeys.Categories.Relic, entry);

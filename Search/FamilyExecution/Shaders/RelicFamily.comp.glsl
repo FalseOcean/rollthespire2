@@ -66,7 +66,13 @@ uint next_int(uint bound) {
     uint64_t upper_limb = uint64_t(mantissa_high) * uint64_t(bound) + (low_product >> 32u);
     return uint(upper_limb >> 21u);
 }
-void consume_shuffle(uint length) { for (uint count = length; count > 1u; --count) next_int(count); }
+void consume_shuffle(uint length) {
+#ifdef RT2_R_CHILD_SHUFFLE
+    next_u64();
+#else
+    for (uint count = length; count > 1u; --count) next_int(count);
+#endif
+}
 
 /*__RT2_RFULL_FUNCTIONS__*/
 
@@ -197,6 +203,12 @@ void process_candidate_with_root(uint logical, uint64_t root) {
         uint target_depth = max(positive_depth, exclusion_depth);
         if (lane == 0xffffffffu || target_depth == 0u) { consume_shuffle(length); continue; }
 
+#ifdef RT2_R_CHILD_SHUFFLE
+        uint64_t seed = next_u64();
+        u64vec4 parent = u64vec4(s0, s1, s2, s3);
+        rng_initialize(seed);
+#endif
+
         if (lane == 3u) {
             for (uint index = 0u; index < length; ++index) state[index] = offset + index;
             uint remaining = length;
@@ -222,7 +234,9 @@ void process_candidate_with_root(uint logical, uint64_t root) {
             if (observed < target_depth) return;
             if (!evaluate_shop_lane(state, remaining, length)) return;
             if (!evaluate_shop_sequences(state, remaining, length)) return;
+#ifndef RT2_R_CHILD_SHUFFLE
             if (bucket_index < plan_meta.values[1u]) consume_shuffle(remaining);
+#endif
         } else {
             uint tracked_offset = plan_meta.values[16u + lane];
             uint tracked_count = plan_meta.values[20u + lane];
@@ -239,6 +253,9 @@ void process_candidate_with_root(uint logical, uint64_t root) {
             }
             if (!evaluate_tracked_lane(lane, state)) return;
         }
+#ifdef RT2_R_CHILD_SHUFFLE
+        s0=parent.x; s1=parent.y; s2=parent.z; s3=parent.w;
+#endif
     }
     /*__RT2_RFULL_SEQUENCE_END__*/
     /*__RT2_RFULL_FILTER__*/

@@ -42,7 +42,8 @@ internal static partial class EventResultFamily
         var cpu = compiled is null ? ordinary : PrepareCpu(preparation, plan, compiled, authority, profile, identity, workers);
         if (!plan.GpuSupported) { result = new(plan, cpu); return true; }
         bool finalHeader = plan.NumericalVariant == GpuNumericalVariant.NativeFloat64;
-        var body = new FilterBodyDescription(preparation, "E.EventResult.Gpu.Whitelist", model.ProfileId) {
+        string ruleRevision = plan.Authority.UsesChildShuffle ? ".Modern113" : "";
+        var body = new FilterBodyDescription(preparation, "E.EventResult.Gpu.Whitelist" + ruleRevision, model.ProfileId) {
             UsesGpu = true, InputIdentity = identity, PlayersCount = model.Authority.PlayersCount,
             CpuWorkers = preferences.WorkerCount, WindowCapacity = plan.Capacity,
             NumericRequirements = plan.GpuNumericRequirements,
@@ -50,20 +51,22 @@ internal static partial class EventResultFamily
             PerformanceProjection = compact => new(Id,
                 $"E.EventResult.Gpu.Whitelist.{(compact ? "CompactAbi1" : "Dense")}.CanonicalAbi1Ready.20260919.v1" +
                     (plan.NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "") +
-                    (plan.UsesPreparedGroups ? ".RequestGroups.20261030.v1" : "") + GpuRngRotation.Revision,
+                    (plan.UsesPreparedGroups ? ".RequestGroups.20261030.v1" : "") + ruleRevision + GpuRngRotation.Revision,
                 "E.EventResult.Neutral.20260907.v1", 1, plan.NumericalVariant == GpuNumericalVariant.IntegerRne
                     ? "NoAcceptedWithinPathCurve;CanonicalAbi1Ready;PhysicalQuoteUnavailable=UnmeasuredIntegerRneVariant"
                     : "NoAcceptedWithinPathCurve;CanonicalAbi1Ready", true),
             Cost = new() {
                 MinimumComparableInput = compactInput => plan.Capacity,
-                PartyChild = new(Math.Max(1, plan.Conditions.Sum(c => c.Kind is EventResultConditionKind.MorphicGroveGroupInitialBasicsContains ? 5 : c.Kind > EventResultConditionKind.MorphicGroveGroupInitialBasicsContains ? 3 : 1)), plan.NumericalVariant != GpuNumericalVariant.IntegerRne, plan.NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : ""),
-                CanonicalScope = authority.PlayersCount == 1,
+                PartyChild = new(Math.Max(1, plan.Conditions.Sum(c => c.Kind is EventResultConditionKind.MorphicGroveGroupInitialBasicsContains ? 5 : c.Kind > EventResultConditionKind.MorphicGroveGroupInitialBasicsContains ? 3 : 1)),
+                    !plan.Authority.UsesChildShuffle && plan.NumericalVariant != GpuNumericalVariant.IntegerRne,
+                    plan.NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : ""),
+                CanonicalScope = authority.PlayersCount == 1 && !plan.Authority.UsesChildShuffle,
                 CanonicalWorkShape = _ => FamilyCanonicalCostShape.DescribeEvent(plan),
                 PrivateOutputRevision = finalHeader ? EventResultFamilyGpuExecutor.FinalPrivateHeaderRevision : "",
                 PrivateOutputPathSuffix = finalHeader ? ".PrivateFinalHeaderReadback" : "",
                 Quote = (selected, geometry, _) => {
                     var quote = FamilyCanonicalMeasuredCost.TryDenseQuote(selected, geometry) ??
-                        EventResultPhysicalPricing.Quote(plan, geometry) ?? EventResultWorkEstimate.Gpu(plan, geometry);
+                        (plan.Authority.UsesChildShuffle ? null : EventResultPhysicalPricing.Quote(plan, geometry)) ?? EventResultWorkEstimate.Gpu(plan, geometry);
                     if (plan.UsesPreparedGroups && quote is not null)
                         quote = quote with { Evidence = quote.Evidence + ";RequestGroupsRetainedNumericalReference;NoNewGroupBodyMeasurement" };
                     return FamilyGpuReadback.Reference(selected, geometry.PrivateOutput && finalHeader && quote is not null

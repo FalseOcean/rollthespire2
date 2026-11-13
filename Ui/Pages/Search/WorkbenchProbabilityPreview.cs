@@ -107,10 +107,11 @@ internal sealed record WorkbenchProbabilityPreview(
             issues.Add("workbenchCostUnavailable=" + ex.Message);
             if (!orderResolved) orderIssue = ex.Message;
         }
-        JointSelectivityResult? map = q.StandardMaps.Count == 0 && q.StandardMapRoutes.Count == 0 ? null :
+        JointSelectivityResult? map = q.StandardMaps.Count == 0 && q.StandardMapRoutes.Count == 0 && q.ElitePrefixResearch is null ? null :
             compiled.Context.Party is not null ? StandardMapProbabilityEstimator.EstimateParty(input) :
                 JointSelectivityEstimator.EstimateQuery(SearchSelectivityInput.From(SearchCompiler.Compile(
-                    SearchQuery.Empty with { StandardMaps = q.StandardMaps, StandardMapRoutes = q.StandardMapRoutes }, compiled.Context)));
+                    SearchQuery.Empty with { StandardMaps = q.StandardMaps, StandardMapRoutes = q.StandardMapRoutes,
+                        ElitePrefixResearch = q.ElitePrefixResearch }, compiled.Context)));
         foreach (var c in q.EventResultConditions)
         {
             var estimate = EventResultProbabilityEstimator.EstimateSingle(input, c);

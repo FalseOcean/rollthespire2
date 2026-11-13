@@ -30,6 +30,7 @@ internal sealed partial class WorkspaceShell
 
     private CheckButton _operationPrediction = null!;
     private CheckButton _mapPrediction = null!;
+    private CheckButton _deadSeedResearch = null!;
     private SpinBox _workerBudget = null!;
     private Label _workerStatus = null!;
     private readonly List<(Button Button, ScrollContainer? Page)> _settingsCategories = [];
@@ -52,6 +53,7 @@ internal sealed partial class WorkspaceShell
         var heading = new HBoxContainer(); body.AddChild(heading);
         var title = SettingsLabel("shell.settings", 30); title.SizeFlagsHorizontal = SizeFlags.ExpandFill; heading.AddChild(title);
         _settingsBack = SettingsButton("settings.back", CloseSettings); heading.AddChild(_settingsBack);
+        _settingsBack.Name = "SettingsBack";
         body.AddChild(SettingsLabel("settings.subtitle", 18, true));
         var workspace = new HBoxContainer { SizeFlagsVertical = SizeFlags.ExpandFill };
         workspace.AddThemeConstantOverride("separation", 28); body.AddChild(workspace);
@@ -89,6 +91,7 @@ internal sealed partial class WorkspaceShell
     {
         _operationPrediction = new() { Name = "SettingsOperationPrediction" };
         _mapPrediction = new() { Name = "SettingsMapPrediction" };
+        _deadSeedResearch = new() { Name = "SettingsDeadSeedResearch" };
         _runPredictionEntry = new() { Name = "SettingsRunPredictionEntry", CustomMinimumSize = new(360, 44),
             SizeFlagsHorizontal = SizeFlags.ShrinkBegin };
         _consoleEnabled = new() { Name = "SettingsConsoleEnabled" };
@@ -110,6 +113,13 @@ internal sealed partial class WorkspaceShell
         yield return null;
         Feature(features, "settings.map.title", "settings.map.help", _mapPrediction,
             "settings.map.enable", enabled => _persistence!.SetMapPredictionEnabled(enabled));
+        yield return null;
+        Feature(features, "settings.dead_seed.title", "settings.dead_seed.help", _deadSeedResearch,
+            "settings.dead_seed.show", enabled =>
+            {
+                _persistence!.SetShowDeadSeedResearch(enabled);
+                _references?.RefreshResearchVisibility();
+            });
         yield return null;
 
         var prediction = SettingsSection(features, "settings.run_prediction.title", "settings.run_prediction.help");
@@ -359,6 +369,7 @@ internal sealed partial class WorkspaceShell
             persistence.SyncFeaturePreferences();
             _operationPrediction.SetPressedNoSignal(persistence.Preferences.OperationPredictionEnabled);
             _mapPrediction.SetPressedNoSignal(persistence.Preferences.MapPredictionEnabled);
+            _deadSeedResearch.SetPressedNoSignal(persistence.Preferences.ShowDeadSeedResearch);
             _runPredictionEntry.SetPressedNoSignal(persistence.Preferences.ShowInRunPredictionEntry);
             _consoleEnabled.SetPressedNoSignal(persistence.Preferences.ShowInRunConsole);
             _consolePosition.Editable = _consoleScale.Editable = persistence.Preferences.ShowInRunConsole;

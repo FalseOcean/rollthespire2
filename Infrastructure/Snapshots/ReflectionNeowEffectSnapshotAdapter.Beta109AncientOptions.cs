@@ -28,9 +28,11 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
     /// Route-dependent predicates are represented as an explicit opening-state
     /// projection and therefore remain Partial until route-state authority exists.
     /// </summary>
-    private static IReadOnlyList<Beta109AncientEventContextSnapshot> BuildBeta109AncientEventContexts(
+    internal static IReadOnlyList<Beta109AncientEventContextSnapshot> BuildBeta109AncientEventContexts(
         RuntimeProfileId profileId,
-        Beta109StaticAuthorityCapture authority,
+        IReadOnlyList<Beta109ActGenerationSnapshot> orderedActs,
+        IReadOnlyList<ModelKey> sharedAncients,
+        bool isVanilla,
         NeowEffectAuthoritySnapshot? effects,
         IReadOnlyList<ModelKey> runtimeRelicCatalog,
         bool runtimeRelicCatalogExact,
@@ -45,7 +47,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         var output = new List<Beta109AncientEventContextSnapshot>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (Beta109ActGenerationSnapshot act in authority.OrderedActs.OrderBy(item => item.Act))
+        foreach (Beta109ActGenerationSnapshot act in orderedActs.OrderBy(item => item.Act))
         {
             foreach (ModelKey ancient in act.OrderedAncients)
             {
@@ -56,7 +58,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             // It is NOT EventModel.IsShared. Vanilla Beta109/Beta110 Ancient EventModels
             // audited below retain EventModel.IsShared == false, so their event-local RNG
             // still includes the player slot even when identity came from SharedAncients.
-            foreach (ModelKey ancient in authority.UnlockedSharedAncients)
+            foreach (ModelKey ancient in sharedAncients)
             {
                 AddContext(act.Act, ancient, fromSharedAncientAllocation: true);
             }
@@ -84,7 +86,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                 out string projectionEvidence);
 
             bool modifierFactsExact = noRunModifiers == true;
-            Beta109HookDecision hookDecision = modifierFactsExact && authority.IsVanilla
+            Beta109HookDecision hookDecision = modifierFactsExact && isVanilla
                 ? Beta109HookDecision.Allow
                 : Beta109HookDecision.Unknown;
             bool eventContextExact = runSeedRootExact &&

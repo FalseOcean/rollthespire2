@@ -12,7 +12,7 @@ namespace RolltheSpire2.Search.Runtime;
 public static partial class ProductionQueryValidator
 {
     internal static bool HasInitialRoomConditions(ExactSearchEvaluationProjection criteria) =>
-        criteria.TreasureRelics is { IsEmpty: false } || criteria.FirstActUnknownEventPrefixCount > 0;
+        criteria.TreasureRelics is { IsEmpty: false } || criteria.FirstActUnknownEventPrefixCount > 0 || criteria.FirstActUnknownMonsterPrefixCount > 0;
 
     // Treasure uses actual opening pickups. Unknown-room prefixes instead use
     // the declared opening premise independently of generated acquisitions.
@@ -29,20 +29,24 @@ public static partial class ProductionQueryValidator
 
     private static SearchQueryEvaluation EvaluateDeclaredUnknownRooms(SearchModel plan, ulong rootHash)
     {
-        int count = plan.Evaluation.FirstActUnknownEventPrefixCount;
+        int count = Math.Max(plan.Evaluation.FirstActUnknownEventPrefixCount, plan.Evaluation.FirstActUnknownMonsterPrefixCount);
         if (count == 0) return SearchQueryEvaluation.Match();
         if (plan.Authority.PlayersCount != 1)
             return SearchQueryEvaluation.Unsupported("InitialRooms.SinglePlayerOnly");
         if (plan.ProfileId != RuntimeProfileId.Beta111)
             return SearchQueryEvaluation.Unsupported("InitialRooms.ProfileUnsupported");
+        if (plan.Evaluation.FirstActUnknownEventPrefixCount > 0 && plan.Evaluation.FirstActUnknownMonsterPrefixCount > 0)
+            return SearchQueryEvaluation.NoMatch("UnknownRoomPrefix.EventMonsterConflict");
+        bool monster = plan.Evaluation.FirstActUnknownMonsterPrefixCount > 0;
+        string id = monster ? "FirstActUnknownMonsterPrefix" : "FirstActUnknownEventPrefix";
         bool juzu = ExplicitOpeningRelicFacts.HasDeclaredJuzuForUnknownRooms(plan.CompiledSearch.NormalizedQuery);
         var sequence = OrdinaryUnknownRoomPredictor.ForAct1Filter(rootHash, count, juzu);
-        return sequence.Steps.All(step => step.Room == UnknownRoomCategory.Event)
-            ? SearchQueryEvaluation.Match([new SearchMatchEvidence("FirstActUnknownEventPrefixMatched",
+        return sequence.Steps.All(step => step.Room == (monster ? UnknownRoomCategory.Monster : UnknownRoomCategory.Event))
+            ? SearchQueryEvaluation.Match([new SearchMatchEvidence(id + "Matched",
                 juzu ? new ModelKey("RELIC", "JUZU_BRACELET") : null,
                 EvidenceCode: "search.initial-rooms.standard-singleplayer", ProfileId: plan.ProfileId,
-                Ordinal: count, ConditionId: "FirstActUnknownEventPrefix")])
-            : SearchQueryEvaluation.NoMatch("FirstActUnknownEventPrefix.NonEventEncounter");
+                Ordinal: count, ConditionId: id)])
+            : SearchQueryEvaluation.NoMatch(id + (monster ? ".NonMonsterEncounter" : ".NonEventEncounter"));
     }
 
     private static SearchQueryEvaluation EvaluateOpeningInitialRooms(SearchModel plan,

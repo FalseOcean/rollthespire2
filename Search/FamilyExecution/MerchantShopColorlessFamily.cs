@@ -31,7 +31,7 @@ internal static partial class MerchantShopColorlessFamily
             .Concat(model.Evaluation.MerchantColorlessSequenceConditions.Select(c => c.Count)).DefaultIfEmpty(0).Max();
         if (maximum is < 1 or > Beta111NormalMerchantColorlessSequenceProjector.MerchantCount) return false;
         var inputs = MerchantShopColorlessPreparation.Prepare(model, preferGpu);
-        var fullCost = MerchantShopColorlessAnalyticalCost.Project(inputs.Evaluation);
+        var fullCost = MerchantShopColorlessAnalyticalCost.Project(inputs.Evaluation, authority.Calls.Total);
         var survival = MerchantShopColorlessSurvival.Project(model);
         var decision = MerchantShopColorlessCompactionPolicy.Select(survival);
         var expected = MerchantShopColorlessExpectedFilteringCost.Project(inputs.Evaluation, fullCost, authority, survival);
@@ -60,7 +60,7 @@ internal static partial class MerchantShopColorlessFamily
             Cost = new() {
                 MinimumComparableInput = compactInput => compactInput ? FamilyPerformanceEvidenceEligibility.MinimumDurableCompactInput(MerchantShopColorlessGpuExecutor.CompactInputCapacity) : MerchantShopColorlessGpuExecutor.Capacity,
                 PartyChild = new(ShopPrefixChanged: suffix.Length > 0),
-                CanonicalScope = authority.PlayersCount == 1,
+                CanonicalScope = authority.PlayersCount == 1 && !authority.UsesModern113,
                 CanonicalWorkShape = _ => FamilyCanonicalCostShape.DescribeShop(inputs.Evaluation, authority),
                 PrivatePhysicalRevision = privateInput => (privateInput
                     ? FamilyPhysicalImplementationRevisions.MerchantShopColorlessCompactPerformance

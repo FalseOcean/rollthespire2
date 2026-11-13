@@ -266,6 +266,7 @@ internal static class PredictorRewardGeneration
     {
         if (context.Crystal is { } crystal) return crystal.EligibleRelics.Contains(key);
         if (context.Operation?.IgnoresBehavior(key) == true) return true;
+        if (context.Operation?.EligibleRelics is { } eligible) return eligible.Contains(key);
         if (key.Entry == "MASSIVE_SCROLL") return context.Operation?.PlayerCount > 1;
         if (key.Entry == "LASTING_CANDY" && context.Character.Entry == "IRONCLAD" && context.NumberOfRuns == 0) return false;
         return key.Entry is not ("AMETHYST_AUBERGINE" or "BOOK_OF_FIVE_RINGS" or "BOWLER_HAT" or "DRAGON_FRUIT" or
@@ -285,12 +286,11 @@ internal static class PredictorRewardGeneration
                 .DistinctBy(c => c.CardKey).ToDictionary(c => c.CardKey);
             pool = plan.CardPoolOverride.Select(k => cardsByKey[k]).ToImmutableArray();
         }
-        bool hasColorless = plan.Colorless;
         if (isCardReward && !plan.NoCardPoolModifications)
             foreach (var relic in state.Relics.Where(r => !r.Melted))
             {
-                if (relic.Key.Entry == "DINGY_RUG" && !hasColorless)
-                { pool = pool.AddRange(catalog.ColorlessCards); hasColorless = true; }
+                if (relic.Key.Entry == "DINGY_RUG" && !plan.Colorless)
+                    pool = pool.Concat(catalog.ColorlessCards).DistinctBy(c => c.CardKey).ToImmutableArray();
                 if (relic.Key.Entry == "PRISMATIC_GEM" && !plan.Colorless)
                 {
                     if (catalog.AllCharacterCards.IsDefaultOrEmpty) throw new InvalidOperationException("PredictorUnlockedCharacterPoolsMissing");
@@ -315,7 +315,7 @@ internal static class PredictorRewardGeneration
             }
         var rarity = plan.Rarity;
         pool = pool.Where(c => (context.Crystal?.PlayerCount > 1 || context.Operation?.PlayerCount > 1 || !c.IsMultiplayerOnly) && c.IsUnlockedInCapturedPool &&
-            (rarity == null || c.Rarity == rarity)).ToImmutableArray();
+            (rarity == null || c.Rarity == rarity)).DistinctBy(c => c.CardKey).ToImmutableArray();
         return pool;
     }
 
@@ -411,7 +411,8 @@ internal static class PredictorRewardGeneration
                 PredictorCardOdds.Elite => CardBaseOddsType.Elite, _ => CardBaseOddsType.Regular };
             bool changesFutureOdds = plan.EncounterSource || plan.ForceRarityOddsChange;
             float offset = changesFutureOdds && plan.Odds != PredictorCardOdds.Boss ? state.Odds.CardRarityOffset : 0;
-            float roll = rng.NextFloat();
+            var rarityRng = context.UsesNonCombatGeneration ? rngOverride ?? rng : rng;
+            float roll = rarityRng.NextFloat();
             // This consumer has always used cumulative thresholds, including
             // base-only cards. Its supported modern profiles share that formula.
             var rolled = CardRarityRules.EvaluateWithOffset(roll, oddsType, context.Ascension, offset).Rarity;

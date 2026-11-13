@@ -162,7 +162,7 @@ internal static class PredictorObtainChecks
         var native = Native(captured.Working.Streams.Single(s => s.Stream == PredictorStream.Niche));
         var expected = eligible.ToList();
         expected.UnstableShuffle(native);
-        var actual = PredictorObtainSources.RoyalStampCandidates(captured.Working, eligible);
+        var actual = PredictorObtainSources.RoyalStampCandidates(captured.Context, captured.Working, eligible);
         if (!actual.Candidates.SequenceEqual(expected))
             throw new InvalidOperationException("RoyalStamp native Niche candidate order mismatch");
         Compare(actual.State.Streams.Single(s => s.Stream == PredictorStream.Niche), native,

@@ -20,6 +20,7 @@ internal sealed partial class MapLossyGpuExecutor : IDisposable
     private MapLossyPlan? _uploadedPlan;
     private PackedPlan? _packedPlan;
     private int _shaderWords, _configBytes = 256, _transitionBytes = MaxStates * RoomTypes * sizeof(uint);
+    private bool _shaderUsesChildShuffle;
     private bool _pending, _recorded, _disposed;
     private int _queuedDispatches, _pendingDispatches;
     private sealed class Slot { internal Rid Input, Output, Config, Set; }
@@ -194,14 +195,16 @@ internal sealed partial class MapLossyGpuExecutor : IDisposable
         int configBytes = checked(packed.Config.Length * sizeof(uint));
         int transitionBytes = checked(packed.Transitions.Length * sizeof(uint));
         bool growConfig = configBytes > _configBytes, growTransitions = transitionBytes > _transitionBytes;
-        if (packed.WordCount > _shaderWords || growConfig || growTransitions)
+        bool childShuffle = Compatibility.RuntimeProfilePolicies.UsesChildStreamShuffle(plan.RngSemantics);
+        if (packed.WordCount > _shaderWords || growConfig || growTransitions || childShuffle != _shaderUsesChildShuffle)
         {
             const string marker = "#define STATE_WORDS 16";
             string source = FamilyGpuComputeUtility.LoadEmbeddedShader("MapLossyAssignment.comp.glsl");
             if (!source.Contains(marker, StringComparison.Ordinal))
                 throw new InvalidDataException("MapLossy.DrawingShaderStorageMarkerMissing");
             int words = Math.Max(packed.WordCount, _shaderWords);
-            source = source.Replace(marker, "#define STATE_WORDS " + words, StringComparison.Ordinal);
+            source = source.Replace(marker, "#define STATE_WORDS " + words, StringComparison.Ordinal)
+                .Replace("#define RT2_MAP_CHILD_SHUFFLE 0", "#define RT2_MAP_CHILD_SHUFFLE " + (childShuffle ? "1" : "0"), StringComparison.Ordinal);
             Rid shader = default, pipeline = default, transitions = growTransitions ? default : _transitions;
             var configs = _slots.Select(s => growConfig ? default(Rid) : s.Config).ToArray();
             var sets = new Rid[_slots.Length];
@@ -231,6 +234,7 @@ internal sealed partial class MapLossyGpuExecutor : IDisposable
             (_shader, _pipeline, _transitions) = (shader, pipeline, transitions);
             for (int i = 0; i < _slots.Length; i++) { _slots[i].Set = sets[i]; _slots[i].Config = configs[i]; }
             _shaderWords = words;
+            _shaderUsesChildShuffle = childShuffle;
             _configBytes = Math.Max(configBytes, _configBytes); _transitionBytes = Math.Max(transitionBytes, _transitionBytes);
             _uploadedPlan = null; _packedPlan = null;
             FreeResources(old);

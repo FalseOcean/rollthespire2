@@ -48,6 +48,9 @@ internal static class SearchContinuationIdentity
     private static JsonNode? QueryPayload(SearchQuery query)
     {
         var node = JsonSerializer.SerializeToNode(query)!;
+        // This field was added after v1 resume identities shipped. Its absent
+        // historical value is an empty condition list; retain every authored row.
+        if (query.EncounterQueues.Count == 0) node.AsObject().Remove(nameof(SearchQuery.EncounterQueues));
         for (int i = 0; i < query.EventResultConditions.Count; i++)
             if (query.EventResultConditions[i].MorphicGroveScenario is { } scenario)
                 node["EventResultConditions"]![i]!["MorphicGroveScenario"]!["Authority"] =

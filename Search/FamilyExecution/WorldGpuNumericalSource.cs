@@ -20,10 +20,18 @@ internal static class WorldGpuNumericalSource
             "    uint64_t draw = next_u64();\n" +
             "    return rt2_next_int_rne_raw32(uint(draw), uint(draw >> 32u), bound);\n" +
             "}", "W.NextInt");
-        source = GpuIntegerNumerics.ReplaceUnique(source,
+        string ReplaceEncounterSeam(string value, string needle, string replacement, string seam)
+        {
+            int expected = value.Contains("bool consume_checked_queue(", StringComparison.Ordinal) ? 2 : 1;
+            int count = 0, offset = 0;
+            while ((offset = value.IndexOf(needle, offset, StringComparison.Ordinal)) >= 0) { count++; offset += needle.Length; }
+            if (count != expected) throw new InvalidOperationException(seam + ":ExpectedCopies=" + expected + ":ActualCopies=" + count);
+            return value.Replace(needle, replacement, StringComparison.Ordinal);
+        }
+        source = ReplaceEncounterSeam(source,
             "uint candidate_index = uint(next_double() * double(count));",
             "uint candidate_index = next_int(count);", "W.EncounterRetry");
-        source = GpuIntegerNumerics.ReplaceUnique(source,
+        source = ReplaceEncounterSeam(source,
             "double draw_value = next_double();\n" +
             "            if (count > 0u) selected_bag_index = int(draw_value * double(count));",
             "uint64_t draw_value = next_u64();\n" +

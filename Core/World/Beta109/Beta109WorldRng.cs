@@ -10,22 +10,25 @@ public sealed class Beta109WorldRng
 {
     private readonly Xoshiro256StarStar _rng;
     private readonly string _streamDomain;
+    private readonly RngSemanticProfileId _semantics;
     private readonly List<WorldRngTraceEntry> _trace = new();
 
-    private Beta109WorldRng(Xoshiro256StarStar rng, string streamDomain)
+    private Beta109WorldRng(Xoshiro256StarStar rng, string streamDomain, RngSemanticProfileId semantics = RngSemanticProfileId.Modern110)
     {
         _rng = rng;
         _streamDomain = streamDomain;
+        _semantics = semantics;
     }
 
     public int CallCount => _rng.CallCount;
     public IReadOnlyList<WorldRngTraceEntry> Trace => _trace;
 
-    public static Beta109WorldRng CreateNamed(ulong runSeedRoot, string streamName)
+    public static Beta109WorldRng CreateNamed(ulong runSeedRoot, string streamName,
+        RngSemanticProfileId semantics = RngSemanticProfileId.Modern110)
     {
         string normalizedStreamName = streamName ?? string.Empty;
         ulong seed = unchecked(runSeedRoot + XxHash64.HashUtf8(normalizedStreamName, 0UL));
-        return new Beta109WorldRng(new Xoshiro256StarStar(seed), normalizedStreamName);
+        return new Beta109WorldRng(new Xoshiro256StarStar(seed), normalizedStreamName, semantics);
     }
 
     /// <summary>
@@ -43,22 +46,23 @@ public sealed class Beta109WorldRng
         ulong runSeedRoot,
         int playerSlot,
         bool isShared,
-        string eventEntry)
+        string eventEntry,
+        RngSemanticProfileId semantics = RngSemanticProfileId.Modern110)
     {
         ulong eventSeed = DeriveEventLocalSeed(runSeedRoot, playerSlot, isShared, eventEntry);
-        return new Beta109WorldRng(new Xoshiro256StarStar(eventSeed), "event-local");
+        return new Beta109WorldRng(new Xoshiro256StarStar(eventSeed), "event-local", semantics);
     }
 
     public static Beta109WorldRng FromCheckpoint(
         Beta109RngStateSnapshot checkpoint,
-        string streamDomain = "up_front") => new(
+        string streamDomain = "up_front", RngSemanticProfileId semantics = RngSemanticProfileId.Modern110) => new(
         Xoshiro256StarStar.FromState(
             checkpoint.S0,
             checkpoint.S1,
             checkpoint.S2,
             checkpoint.S3,
             checkpoint.CallCount),
-        streamDomain);
+        streamDomain, semantics);
 
     public static ulong DeriveEventLocalSeed(
         ulong runSeedRoot,
@@ -145,6 +149,13 @@ public sealed class Beta109WorldRng
     public void UnstableShuffle<T>(IList<T> values, string sourceStage)
     {
         ArgumentNullException.ThrowIfNull(values);
+        if (RuntimeProfilePolicies.UsesChildStreamShuffle(_semantics))
+        {
+            _rng.UnstableShuffle(values, _semantics);
+            _trace.Add(new WorldRngTraceEntry(_trace.Count, _streamDomain, sourceStage, "NextUnsignedLong",
+                _rng.CallCount, WorldRngConsumptionShape.Shuffle));
+            return;
+        }
         for (int count = values.Count; count > 1; count--)
         {
             int selected = NextInt(

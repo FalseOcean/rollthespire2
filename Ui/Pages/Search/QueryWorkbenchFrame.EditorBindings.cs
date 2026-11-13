@@ -63,6 +63,12 @@ internal sealed partial class QueryWorkbenchFrame
 
     private void RenderEditorDomain(string domain)
     {
+        if (domain == ResearchDomain)
+        {
+            if (_persistence.Preferences.ShowDeadSeedResearch) RenderEditorDomain(ResearchCacheKey);
+            else BuildSavedResearchSummary();
+            return;
+        }
         if (_renderedEditorDomains.Contains(domain)) return;
         using var observation = _editorInputs.Observe(_runtime);
         switch (domain)
@@ -75,24 +81,49 @@ internal sealed partial class QueryWorkbenchFrame
             case "combat": RefreshCombatContext(); break;
             case "shop": RefreshShopContext(); break;
             case "relics": RefreshRelicContext(); break;
-            case "ancient": RefreshAncientContext(); break;
+            case "ancient":
+                PositionDomainEditor(_ancientEditor, research: false);
+                _ancientEditor.SetNeowResearchPage(false);
+                RefreshAncientContext();
+                _renderedEditorDomains.Remove(ResearchNeowDomain);
+                break;
             case "events": RefreshEventContext(); break;
             case "transform": RefreshTransformationContext(); break;
             case "boss": case "map":
-                if (_multiplayer)
-                {
-                    if (!TryEditorParty(out var party)) return;
-                    var union = _lobbyUnlocks.Take(_playerCount).All(u => u is not null)
-                        ? new MegaCrit.Sts2.Core.Unlocks.UnlockState(_lobbyUnlocks.Take(_playerCount)
-                            .Select(u => MegaCrit.Sts2.Core.Unlocks.UnlockState.FromSerializable(u!))).ToSerializable() : null;
-                    _actInformationEditor.Refresh(_language, _text, _seatCharacters[0], _partyAscension,
-                        _playerCount, 0, union, partyWorld: party?.World);
-                }
-                else RefreshActInformationContext();
-                _renderedEditorDomains.Add("boss"); _renderedEditorDomains.Add("map");
+                RenderActInformationPage(domain == "map" ? ActInformationPage.Map : ActInformationPage.Boss, research: false);
+                break;
+            case ResearchNeowDomain:
+                PositionDomainEditor(_ancientEditor, research: true);
+                _ancientEditor.SetNeowResearchPage(true);
+                RefreshAncientContext();
+                _renderedEditorDomains.Remove("ancient");
+                break;
+            case ResearchEliteDomain: case ResearchEncounterDomain:
+                RenderActInformationPage(domain == ResearchEliteDomain ? ActInformationPage.EliteResearch : ActInformationPage.EncounterResearch, research: true);
                 break;
         }
         _renderedEditorDomains.Add(domain);
+    }
+
+    private void RenderActInformationPage(ActInformationPage page, bool research)
+    {
+        PositionDomainEditor(_actInformationEditor, research);
+        _actInformationEditor.SetPage(page);
+        _renderedEditorDomains.Remove("boss");
+        _renderedEditorDomains.Remove("map");
+        _renderedEditorDomains.Remove(ResearchEliteDomain);
+        _renderedEditorDomains.Remove(ResearchEncounterDomain);
+        if (!_multiplayer)
+        {
+            RefreshActInformationContext();
+            return;
+        }
+        if (!TryEditorParty(out var party)) return;
+        var union = _lobbyUnlocks.Take(_playerCount).All(u => u is not null)
+            ? new MegaCrit.Sts2.Core.Unlocks.UnlockState(_lobbyUnlocks.Take(_playerCount)
+                .Select(u => MegaCrit.Sts2.Core.Unlocks.UnlockState.FromSerializable(u!))).ToSerializable() : null;
+        _actInformationEditor.Refresh(_language, _text, _seatCharacters[0], _partyAscension,
+            _playerCount, 0, union, partyWorld: party?.World);
     }
 
     private bool RefreshAllEditorContexts(bool render)
@@ -167,6 +198,7 @@ internal sealed partial class QueryWorkbenchFrame
             _multiplayer ? _partyAscension : _soloAscension, _multiplayer ? _playerCount : 1,
             _multiplayer ? _seat : 0, _multiplayer ? _lobbyUnlocks[_seat] : null, render: render,
                 partyAuthority: party?.Players[_seat], sharedContext: ActiveEditorContext());
+        _actInformationEditor.BindUnknownRoomPrefix(_eventEditor.UnknownRoomPrefix);
     }
 
     private void RefreshActInformationContext(bool render = true)

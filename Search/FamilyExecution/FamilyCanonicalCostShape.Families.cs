@@ -46,8 +46,15 @@ internal static partial class FamilyCanonicalCostShape
     internal static string DescribeCombat(CombatRewardReplay replay, CombatRewardGpuPlan? gpu) =>
         Shape("C.CombatReward", CombatStructure(replay, gpu), replay.UsesQueryLiteralPartyOpening
             ? "20261027.v4" : CombatCostStructureVersion(replay.Plan));
-    internal static string DescribeWorld(WorldFamilyReplay replay, WorldFamilyGpuPlan? gpu) =>
-        Shape("W.World", WorldStructure(replay, gpu), WorldUsesLocalEventCostRoles(replay.Plan) ? "20261021.v3" : "20261021.v2");
+    internal static string DescribeWorld(WorldFamilyReplay replay, WorldFamilyGpuPlan? gpu) => replay.Plan.Acts.Any(a => a.HasEncounterPredicate)
+        ? Shape("W.World", new { Previous = WorldStructure(replay, gpu), EncounterQueues = replay.Plan.Acts.Select(a => new
+        {
+            a.EncounterDiscoveryMode, a.EncounterWeakHorizon, a.EncounterStrongHorizon, a.EncounterEliteHorizon,
+            Predicates = a.EncounterPredicates.Select(p => new { p.Kind, p.RangeMode, p.RangeValue, p.VariantMismatch,
+                AllowedCount = p.Allowed.Length,
+                Membership = a.WeakEncounters.Concat(a.RegularEncounters).Concat(a.EliteEncounters).Select(e => p.Allowed.Contains(e.EncounterId)).ToArray() }).ToArray()
+        }).ToArray() }, "20261105.v1")
+        : Shape("W.World", WorldStructure(replay, gpu), WorldUsesLocalEventCostRoles(replay.Plan) ? "20261021.v3" : "20261021.v2");
     internal static string? DescribeAncient(ExactSearchEvaluationProjection evaluation, AncientOptionFamilyPlan plan) =>
         AncientStructure(evaluation, plan) is { } data ? Shape("A.AncientOption", data) : null;
     internal static string? DescribeTransform(TransformationAggregateNumericalPlan plan, TransformationAggregateGpuPlan? gpu) =>
@@ -153,9 +160,9 @@ internal static partial class FamilyCanonicalCostShape
             c.Count, c.Slot, c.OrderMode, Targets = c.Slots.Select(k => roles.Role(k)).ToArray() }).ToArray();
         return new { Fixed = fixedSlots, Sequences = sequences,
             Uncommon = roles.Membership(authority.UncommonPool), Rare = roles.Membership(authority.RarePool),
-            CallsPerMerchant = Beta111NormalMerchantShopsContinuation.CallsPerMerchant,
-            UncommonCall = Beta111NormalMerchantShopsContinuation.UncommonCallWithinMerchant,
-            RareCall = Beta111NormalMerchantShopsContinuation.RareCallWithinMerchant };
+            CallsPerMerchant = authority.Calls.Total,
+            UncommonCall = authority.Calls.Uncommon,
+            RareCall = authority.Calls.Rare };
     }
 
     private static object RelicStructure(RelicFamilyPlan plan)

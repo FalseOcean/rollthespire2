@@ -36,7 +36,7 @@
     },
     {
       "Type": "Paragraph",
-      "Text": "This is RT2 1.4.1. It includes seed search, analysis, the Library and card collections, Crystal Sphere, in-run operation prediction and current-Act map routes. Each capability has its own assumptions and settings. Prediction and search use model simulation without advancing the real run; explicit game actions in the Test Console do modify the real run."
+      "Text": "This is RT2 1.4.2. It includes seed search, analysis, the Library and card collections, Crystal Sphere, in-run operation prediction and current-Act map routes (live route drawing remains limited to game version 0.111.0). Each capability has its own assumptions and settings. Prediction and search use model simulation without advancing the real run; explicit game actions in the Test Console do modify the real run."
     },
     {
       "Type": "Paragraph",

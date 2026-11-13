@@ -14,9 +14,8 @@ public sealed record Beta111NormalMerchantProjection(
     int RareAbsoluteCall);
 
 /// <summary>
-/// Exact Beta111 vanilla successful-initial-normal-merchant Shops continuation.
-/// One merchant consumes exactly 28 xoshiro outputs; Colorless U/R identities are
-/// calls 13/15 of that merchant. Burn-only operations deliberately discard values.
+/// Versioned Shops continuation for the first five successful initial normal
+/// merchant inventories. Only the colorless identity calls consume draw values.
 /// </summary>
 public static class Beta111NormalMerchantShopsContinuation
 {
@@ -24,11 +23,25 @@ public static class Beta111NormalMerchantShopsContinuation
     public const int UncommonCallWithinMerchant = 13;
     public const int RareCallWithinMerchant = 15;
 
+    // 0.113 constructs relics/potions first (14), then five character
+    // cards (rarity, identity, upgrade, price each), U/R and the sale.
+    internal readonly record struct Calls(int Total, int Uncommon, int Rare)
+    {
+        internal int At(int ordinal, bool uncommon) => (ordinal - 1) * Total + (uncommon ? Uncommon : Rare);
+    }
+
+    internal static Calls For(bool modern) => modern ? new(42, 35, 38) :
+        new(CallsPerMerchant, UncommonCallWithinMerchant, RareCallWithinMerchant);
+
     public static Beta111NormalMerchantProjection AdvanceOne(
         Beta109WorldRng shops,
         int merchantOrdinal,
         IReadOnlyList<ModelKey> uncommonPool,
-        IReadOnlyList<ModelKey> rarePool)
+        IReadOnlyList<ModelKey> rarePool) =>
+        AdvanceOne(shops, merchantOrdinal, uncommonPool, rarePool, For(false));
+
+    internal static Beta111NormalMerchantProjection AdvanceOne(Beta109WorldRng shops, int merchantOrdinal,
+        IReadOnlyList<ModelKey> uncommonPool, IReadOnlyList<ModelKey> rarePool, Calls calls)
     {
         ArgumentNullException.ThrowIfNull(shops);
         ArgumentNullException.ThrowIfNull(uncommonPool);
@@ -40,16 +53,14 @@ public static class Beta111NormalMerchantShopsContinuation
         Beta109RngStateSnapshot incoming = shops.CaptureState();
         int baseCall = shops.CallCount;
 
-        // 1: sale index; 2..11: five character picks/prices; 12: sale recalc.
-        Burn(shops, 12, merchantOrdinal, "pre-colorless");
+        Burn(shops, calls.Uncommon - 1, merchantOrdinal, "pre-colorless");
         ModelKey uncommon = shops.NextModelKey(uncommonPool, $"merchant-{merchantOrdinal}:colorless-uncommon");
-        _ = shops.NextFloat($"merchant-{merchantOrdinal}:colorless-uncommon-price"); // call 14
+        Burn(shops, calls.Rare - calls.Uncommon - 1, merchantOrdinal, "between-colorless");
         ModelKey rare = shops.NextModelKey(rarePool, $"merchant-{merchantOrdinal}:colorless-rare");
 
-        // call 16 Rare price + 17..19 relic prices + 20..28 potion rarity/pick/price.
-        Burn(shops, 13, merchantOrdinal, "post-colorless");
+        Burn(shops, calls.Total - calls.Rare, merchantOrdinal, "post-colorless");
 
-        if (shops.CallCount - baseCall != CallsPerMerchant)
+        if (shops.CallCount - baseCall != calls.Total)
             throw new InvalidOperationException("MerchantShopsContinuationCallCountInvariant");
 
         return new Beta111NormalMerchantProjection(
@@ -58,8 +69,8 @@ public static class Beta111NormalMerchantShopsContinuation
             rare,
             incoming,
             shops.CaptureState(),
-            baseCall + UncommonCallWithinMerchant,
-            baseCall + RareCallWithinMerchant);
+            baseCall + calls.Uncommon,
+            baseCall + calls.Rare);
     }
 
     private static void Burn(Beta109WorldRng shops, int count, int ordinal, string stage)

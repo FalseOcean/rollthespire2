@@ -425,6 +425,8 @@ internal static partial class UiSurfaceChecks
         await Frames(4);
         await RunOperationAdmissionChecks(root, output, runtime, game, viewport, hoverRoot, run, player,
             inventory, shop, slot, Signature, Check);
+        await RunCourierHoverChecks(root, output, runtime, game, viewport, hoverRoot, run, player,
+            inventory, shop, global, Signature, Check, set);
         long shopId = PredictorLiveRunCapture.Id(slot.Entry);
         await Exercise("shop-courier-card", slot, slot.GetNode<Control>("%Hitbox"), "THE_COURIER",
             scene => scene is PredictorOperationShopScene s && s.Entries.Any(e => e.Id == shopId),

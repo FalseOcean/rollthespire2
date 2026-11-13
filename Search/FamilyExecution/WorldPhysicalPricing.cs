@@ -11,6 +11,7 @@ internal static class WorldPhysicalPricing
         if (plan is null || plan.NumericalVariant != GpuNumericalVariant.NativeFloat64 ||
             !FamilyPhysicalQuote.AdmittedRequest(geometry) || !FamilyPhysicalQuote.HasReferenceBackend()) return null;
         var p = replay.Plan;
+        if (p.UsesChildShuffle || p.Acts.Any(a => a.HasEncounterPredicate)) return null;
         int events = p.Acts.Sum(a => a.EventPredicates.Length);
         int ancients = p.Acts.Count(a => a.HasAncientPredicate);
         int bosses = p.Acts.Count(a => a.HasBossPredicate);
@@ -62,6 +63,7 @@ internal static class WorldPhysicalPricing
             g.PrivateOutput || g.MeanInputPopulation < 4096 || !request.CanUseCurrentModel ||
             request.PlayersCount != 1 || request.ProfileId != Compatibility.RuntimeProfileId.Beta111) return null;
         var p = replay.Plan;
+        if (p.UsesChildShuffle || p.Acts.Any(a => a.HasEncounterPredicate)) return null;
         double? ns = null;
         string shape = "";
         if (plan.VariantOnly && p.ActSelectionGroups.Length <= 4 &&

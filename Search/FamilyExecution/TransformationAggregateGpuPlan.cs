@@ -41,6 +41,7 @@ internal sealed class TransformationAggregateGpuPlan
         var mode => throw new InvalidOperationException("T.UnknownEntryIdentityExperiment:" + mode)
     };
     internal bool FullTarget { get; }
+    internal bool UsesModern113 { get; }
     internal bool PrefixReuse { get; }
     internal const string PrefixReuseRevision = ".DensePrefixReuse.20261027.v1";
     private static bool CapturePrefixReuse() => Environment.GetEnvironmentVariable("RT2_T_GPU_PLAN_EXPERIMENT") switch {
@@ -53,7 +54,8 @@ internal sealed class TransformationAggregateGpuPlan
     internal string NumericalRevision => NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "";
     internal string Revision(bool compact) => (BonesOptimized ? "T.Gpu.BonesTracked."+(FullTarget?"TransformFirst.Carry8.AllRequired":"OpeningFirst.Generic")+".20261001.v1" :
         FullTarget?FullTargetRevision:GenericRevision)+"."+(compact?"CompactAbi1":"Dense")+".CanonicalAbi1Ready" + NumericalRevision +
-        (EntryIdentityTracked ? EntryIdentityRevision : "") + (PrefixReuse ? PrefixReuseRevision : "") + NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision;
+        (EntryIdentityTracked ? EntryIdentityRevision : "") + (PrefixReuse ? PrefixReuseRevision : "") +
+        (UsesModern113 ? ".Modern113" : "") + NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision;
     internal int SeedsPerInvocation => FullTarget ? 8 : 1;
     internal int Capacity { get; } = WindowCapacity;
     internal uint[][] Buffers { get; }
@@ -65,6 +67,7 @@ internal sealed class TransformationAggregateGpuPlan
         if (numericalVariant is not (GpuNumericalVariant.NativeFloat64 or GpuNumericalVariant.IntegerRne))
             throw new ArgumentOutOfRangeException(nameof(numericalVariant));
         NumericalVariant = numericalVariant;
+        UsesModern113 = p.UsesModern113;
         var n=p.Neow; var groups=p.DrawGroups;
         BonesOptimized = UsesBonesOptimization(p);
         FullTarget = UsesFullTarget(p);
@@ -83,7 +86,7 @@ internal sealed class TransformationAggregateGpuPlan
         meta[0]=p.Condition.IsBones ? 3u : (uint)p.Condition.Opening; meta[1]=(uint)p.Condition.Predicate; meta[2]=(uint)p.Condition.MinimumRareCount;
         meta[3]=(uint)p.Condition.OpportunityCount; meta[4]=(uint)p.Condition.TargetMultiset.Count;
         meta[5]=(uint)groups.Length; meta[6]=32;
-        Hash(13,XxHash64.Hash("NEOW"u8,0)); Hash(15,NeowFamilyReplay.RewardsHash);
+        Hash(13,XxHash64.Hash("NEOW"u8,0)); Hash(15,UsesModern113 ? NeowFamilyReplay.NonCombatHash : NeowFamilyReplay.RewardsHash);
         meta[18]=Beta110FastRelicCatalog.LeafyPoultice;
         meta[19]=Beta110FastRelicCatalog.NeowsBones;meta[20]=p.Condition.IsBones && Beta110FastRelicCatalog.TryGetId(p.Condition.BonesCompanion,out byte companion) ? companion : Beta110FastRelicCatalog.NewLeaf;
         if(n is not null)
@@ -102,17 +105,26 @@ internal sealed class TransformationAggregateGpuPlan
                 newLeafPositions.Add(position < 0 ? uint.MaxValue : (uint)position);
             }
         }
-        meta[6]=(uint)meta.Count;
-        foreach(var group in groups)
+        void PackGroups((ulong Hash, int Prefix, int[][] Pools)[] draws)
         {
-            meta.Add((uint)group.Hash);meta.Add((uint)(group.Hash>>32));meta.Add((uint)group.Prefix);meta.Add((uint)group.Pools.Length);
-            foreach(var pool in group.Pools)
+            foreach(var group in draws)
             {
-                // Low bits identify target instances; bit 31 marks a legal Rare remainder.
-                meta.Add(Add(pool.Select(id=>p.Condition.Predicate==TransformationAggregatePredicate.RareCountAtLeast
-                    ? (p.IsRare(id)?1u:0u) : p.TargetBits(id) | (p.Condition.RequiresRareRemainder && p.IsRare(id) ? 0x80000000u : 0u))));meta.Add((uint)pool.Length);
+                meta.Add((uint)group.Hash);meta.Add((uint)(group.Hash>>32));meta.Add((uint)group.Prefix);meta.Add((uint)group.Pools.Length);
+                foreach(var pool in group.Pools)
+                {
+                    // Low bits identify target instances; bit 31 marks a legal Rare remainder.
+                    meta.Add(Add(pool.Select(id=>p.Condition.Predicate==TransformationAggregatePredicate.RareCountAtLeast
+                        ? (p.IsRare(id)?1u:0u) : p.TargetBits(id) | (p.Condition.RequiresRareRemainder && p.IsRare(id) ? 0x80000000u : 0u))));meta.Add((uint)pool.Length);
+                }
+                for(int i=group.Pools.Length;i<2;i++){meta.Add(0);meta.Add(0);}
             }
-            for(int i=group.Pools.Length;i<2;i++){meta.Add(0);meta.Add(0);}
+        }
+        meta[6]=(uint)meta.Count;
+        PackGroups(groups);
+        if (p.HasTwoSharedTransformOrders)
+        {
+            meta[30]=(uint)meta.Count;
+            PackGroups(p.Groups(true));
         }
         NewLeafTracked = entryTracking && Supported && p.Condition.Opening == TransformationOpening.NewLeaf && newLeafUnique;
         if (NewLeafTracked)
@@ -162,6 +174,8 @@ internal sealed class TransformationAggregateGpuPlan
         if (ClosedBonesTracked) defines += "\n#define T_BONES_ENTRY_PREPARED";
         if (NewLeafTracked) defines += "\n#define T_NEWLEAF_TRACKED";
         if (BonesOptimized && FullTarget && Buffers[0][1] == 0) defines += "\n#define T_ALL_RARE";
+        if (UsesModern113) defines += "\n#define T_MODERN113";
+        if (Buffers[0][30] != 0) defines += "\n#define T_TWO_TRANSFORM_ORDERS";
         body = body.Replace("#version 450", "#version 450" + defines, StringComparison.Ordinal);
         string assembled = body.Replace("/*__RNG__*/",rng,StringComparison.Ordinal);
         if (PrefixReuse) assembled = TransformationAggregateGpuPrefixSource.Apply(assembled);

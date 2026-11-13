@@ -142,7 +142,7 @@ internal sealed partial class WorkspaceResultTile : Control
 
         void UpdateRemove()
         {
-            if (!GodotObject.IsInstanceValid(tile) || tile.IsQueuedForDeletion()) return;
+            if (!GodotObject.IsInstanceValid(tile) || !tile.IsInsideTree() || tile.IsQueuedForDeletion()) return;
             removeHost.Visible = tile.GetGlobalRect().HasPoint(tile.GetGlobalMousePosition()) || tile.HasFocus() || remove.HasFocus();
         }
         void DeferUpdate() => Callable.From(UpdateRemove).CallDeferred();

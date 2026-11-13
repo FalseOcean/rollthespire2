@@ -627,12 +627,12 @@ internal static class PersistenceChecks
             var intent = reopened.Workbench!;
             Check(intent.Version == 5 && intent.GameVersion.Length == 0 && intent.Profile is null &&
                 intent.Players.All(p => p.Unlocks is null && p.UnlockSource == "CurrentContext"), "Preset persists unlock policy, not old game authority or slot snapshots");
-            var missing = SearchPresetCompatibilityResolver.ResolveWorkbench(reopened, Authority);
+            var missing = SearchPresetCompatibilityResolver.ResolveWorkbench(reopened, Authority, new([], true, "fixture"));
             Check(!missing.CanLoad && missing.Unresolved.Any(r => r.StableIdentity == modCharacter.Serialized) &&
                 reopened.Workbench!.Character == modCharacter, "Missing mod character is reported without replacing the saved character");
             var modAuthority = Authority with { SemanticUniverse = Authority.SemanticUniverse.Select(d => d.Domain == RuntimeAuthorityDomains.Characters
                 ? d with { Items = d.Items.Append(new RuntimeSemanticItem(modCharacter.Serialized, [])).ToArray() } : d).ToArray() };
-            Check(SearchPresetCompatibilityResolver.ResolveWorkbench(reopened, modAuthority).CanLoad, "Registered mod character resolves by stable identity in the current catalog");
+            Check(SearchPresetCompatibilityResolver.ResolveWorkbench(reopened, modAuthority, new([], true, "fixture")).CanLoad, "Registered mod character resolves by stable identity in the current catalog");
             var current = new[] { new MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState(), new MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState() };
             var slots = new List<int>();
             var bound = intent.BindPresetIntent(RolltheSpire2.Bootstrap.ModRuntimeSnapshot.NotInitialized, slot => { slots.Add(slot); return current[slot]; });
@@ -1954,7 +1954,7 @@ internal static class PersistenceChecks
             Check(!Resolve(groupPreset).CanLoad && groupPreset.Workbench!.Query.LegacyNeow.NeowRelics.Any.Contains(Relic) &&
                 groupPreset.Workbench.Query.LegacyNeow.NeowRelics.Ban.Contains(Missing),
                 "Any/All/Ban intent remains whole instead of removing a missing member or condition");
-            Check(SearchPresetCompatibilityResolver.ResolveWorkbench(Definition(Intent), RuntimeAuthoritySnapshot.Unavailable("fixture", "fixture")).Issue == "CurrentSemanticAuthorityIncomplete",
+            Check(SearchPresetCompatibilityResolver.ResolveWorkbench(Definition(Intent), RuntimeAuthoritySnapshot.Unavailable("fixture", "fixture"), new([], false, "fixture")).Issue == "CurrentSemanticAuthorityIncomplete",
                 "Incomplete authority remains explicit unavailable");
             var legacy = Intent with { RelicSequenceConditions = "COMMON FIRST 2 ANY " + Relic.Serialized,
                 EventSequenceConditions = "A2 SHARED FIRST 3 ALL " + Event.Serialized };
@@ -2091,6 +2091,6 @@ internal static class PersistenceChecks
       QuerySnapshot = JsonSerializer.SerializeToElement(draft, Json), CreatedAtUtc = Captured }, SearchPresetSource.User, Json);
     private static SearchPresetDefinition Normalize(JsonNode query) => SearchPresetStore.Normalize(new SearchPresetStore.PersistedSearchPreset
     { SchemaVersion = 2, Id = "user:fixture", Title = "fixture", CharacterKey = Character.Serialized, ConditionCount = 1, QuerySnapshot = JsonSerializer.SerializeToElement(query) }, SearchPresetSource.User, Json);
-    private static SearchPresetWorkbenchLoadResolution Resolve(SearchPresetDefinition preset) => SearchPresetCompatibilityResolver.ResolveWorkbench(preset, Authority);
+    private static SearchPresetWorkbenchLoadResolution Resolve(SearchPresetDefinition preset) => SearchPresetCompatibilityResolver.ResolveWorkbench(preset, Authority, new([], true, "fixture"));
     private static bool Same<T>(T a, T b) => JsonNode.DeepEquals(JsonSerializer.SerializeToNode(a, Json), JsonSerializer.SerializeToNode(b, Json));
 }

@@ -21,6 +21,7 @@ public enum RelicOnObtainRewardEffects
     RuntimeConditional = 1 << 11,
     OtherDomainOnly = 1 << 12,
     Unknown = 1 << 13,
+    ConsumesNonCombatGenerationRng = 1 << 14,
 }
 
 public enum HeldNormalCombatRewardImpactClass
@@ -429,7 +430,11 @@ public static class VanillaRelicRewardEffects
     public static bool TryGet(
         RuntimeProfileId profileId,
         ModelKey relicKey,
-        out VanillaRelicRewardEffect capability)
+        out VanillaRelicRewardEffect capability) =>
+        TryGet(profileId, relicKey, out capability, RngSemanticProfileId.Modern110);
+
+    internal static bool TryGet(RuntimeProfileId profileId, ModelKey relicKey,
+        out VanillaRelicRewardEffect capability, RngSemanticProfileId semantics)
     {
         capability = default!;
         if (!relicKey.IsValid || relicKey.Category != BaseGameModelKeys.Categories.Relic)
@@ -443,7 +448,12 @@ public static class VanillaRelicRewardEffects
             RuntimeProfileId.Beta109 or RuntimeProfileId.Beta110 or RuntimeProfileId.Beta111 => Beta109Entries,
             _ => null
         };
-        if (entries is null || !entries.Contains(relicKey.Entry))
+        bool modern = semantics == RngSemanticProfileId.Modern113;
+        // These new vanilla relics have combat-only hooks and no on-obtain
+        // effect on the continuing normal reward stream or reward topology.
+        bool newNeutral = modern && relicKey.Entry is "CONDUCTORS_BATON" or "WHITTLING_KNIFE" or
+            "TWINE" or "OCARINA" or "FERTILIZER" or "EXERCISE_MAT" or "BIZARRE_LAMP";
+        if (entries is null || !entries.Contains(relicKey.Entry) && !newNeutral)
         {
             return false;
         }
@@ -459,6 +469,21 @@ public static class VanillaRelicRewardEffects
             : new HeldImpactOverride(
                 HeldNormalCombatRewardImpactClass.Neutral,
                 HeldNormalCombatRewardEffects.None);
+        if (modern)
+        {
+            if (relicKey.Entry == "NEOWS_BONES")
+                onObtain = (onObtain & ~(RelicOnObtainRewardEffects.ConsumesNicheRng | RelicOnObtainRewardEffects.ConsumesRewardsRng)) |
+                    RelicOnObtainRewardEffects.ConsumesNonCombatGenerationRng;
+            if (relicKey.Entry is "KALEIDOSCOPE" or "WAR_PAINT" or "WHETSTONE")
+                onObtain = (onObtain & ~RelicOnObtainRewardEffects.ConsumesNicheRng) |
+                    RelicOnObtainRewardEffects.ConsumesNonCombatGenerationRng;
+            if (relicKey.Entry == "NEW_LEAF")
+                onObtain = (onObtain & ~RelicOnObtainRewardEffects.ConsumesNicheRng) |
+                    RelicOnObtainRewardEffects.ConsumesTransformationsRng;
+            if (relicKey.Entry == "WING_CHARM")
+                held = held with { Capabilities = (held.Capabilities & ~HeldNormalCombatRewardEffects.ConsumesNicheRng) |
+                    HeldNormalCombatRewardEffects.ConsumesAdditionalRewardsRng };
+        }
         IReadOnlyList<string> dependencies = RuntimeDependencyOverrides.TryGetValue(relicKey.Entry, out IReadOnlyList<string>? dependencyOverride)
             ? dependencyOverride
             : Array.Empty<string>();
@@ -476,7 +501,7 @@ public static class VanillaRelicRewardEffects
             held.Capabilities,
             dependencies,
             support,
-            $"vanilla-relic-reward-capability-audit:{profileId}:{relicKey.Entry}");
+            $"vanilla-relic-reward-capability-audit:{(modern ? "Modern113" : profileId)}:{relicKey.Entry}");
         return true;
     }
 

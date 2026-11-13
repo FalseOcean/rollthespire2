@@ -161,7 +161,12 @@ internal sealed partial class WorkspaceShell : Control
     private void NavigateSearch(string page)
     {
         _references?.CloseModal();
-        if (page == "encyclopedia" || page.StartsWith("encyclopedia:", StringComparison.Ordinal))
+        if (page == "settings:features")
+        {
+            _settingsCategory = 0;
+            OpenSettings();
+        }
+        else if (page == "encyclopedia" || page.StartsWith("encyclopedia:", StringComparison.Ordinal))
             SelectTask(Workspace.Encyclopedia, page == "encyclopedia" ? null : page["encyclopedia:".Length..]);
         else SelectTask(Workspace.Search);
     }
@@ -358,11 +363,19 @@ internal sealed partial class WorkspaceShell : Control
             // observation and the current seed/roster/unlock input comparison.
             RuntimeAuthorityEnvironment.CaptureOnMainThread(_runtime);
             var context = CaptureRunPredictionContext(_liveRun!, _runtime.Detection.NormalizedVersion,
-                _runtime.Profile.ProfileId, MegaCrit.Sts2.Core.Context.LocalContext.NetId, _persistence!.PredictorContext);
-            string key = System.Text.Json.JsonSerializer.Serialize(new { Seed = _liveRun!.Rng.StringSeed, Context = context,
+                _runtime.Profile.ProfileId, MegaCrit.Sts2.Core.Context.LocalContext.NetId, _persistence!.PredictorContext,
+                _predictorController?.CurrentRunPredictionContext);
+            // Session choices already drive the displayed document. Reopening an
+            // unchanged expanded run must not reset them to the local player's slot.
+            var observed = context.Players.Count > Core.Prediction.SeedPredictionInputLimits.MaximumPlayers
+                ? context with { SelectedSlot = 0, Players = context.Players.Select(p => p with { Selection = null }).ToArray() }
+                : context;
+            string key = System.Text.Json.JsonSerializer.Serialize(new { Seed = _liveRun!.Rng.StringSeed, Context = observed,
                 RuntimeAuthorityEnvironment.Current.Authority.Fingerprint,
                 RuntimeAuthorityEnvironment.Current.Authority.CaptureIssues });
             if (!_runPredictionLoaded || key != _livePredictionBinding || _predictor?.LastFacts is null ||
+                (context.Players.Count > Core.Prediction.SeedPredictionInputLimits.MaximumPlayers &&
+                    _predictorController?.CurrentRunPredictionContext is null) ||
                 _predictor.LastRequest?.OriginalSeed != _liveRun.Rng.StringSeed ||
                 !RuntimeAuthorityEnvironment.Current.Authority.Fingerprint.Complete)
             {

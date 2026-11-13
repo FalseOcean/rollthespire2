@@ -14,6 +14,7 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
     internal bool UsesOpeningPrefixHotLoop { get; init; }
     internal bool UsesDenseCarry8 { get; init; }
     internal bool NeedsCompleteMatchingReference { get; init; }
+    internal bool ChecksCardCollection { get; init; }
     // Historical MP-C2 metadata retained for old evidence formatters. The
     // query-literal body allocates no Capsule bag and has no capacity variant.
     internal const bool FactoryExactBagCapacity = true;
@@ -28,6 +29,7 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
     internal bool UsesObservedOpening => ObservedOpeningData.Length > 0;
     internal bool UsesObservedOpeningHotLoop => UsesObservedOpening && UsesHotLoop;
     internal bool UsesNeutralWitness { get; init; }
+    internal bool UsesChildShuffle { get; init; }
     internal string TerminalCardGateSource { get; init; } = "";
     internal bool UsesTerminalCardGate => TerminalCardGateSource.Length != 0;
     internal string Revision(bool compact) => "C.CombatReward.Gpu." + (UsesHotLoop ? "NeutralHotLoop" : "GenericStreaming.EmptyExclusionDirect.20261013.v1") +
@@ -36,6 +38,7 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
         (UsesObservedOpeningHotLoop ? ".ActualHotOrExact.20261102.v1" : "") +
         (UsesTerminalCardGate ? ".TerminalCardCapacity.20261015.v1" : "") +
         (NeedsCompleteMatchingReference ? ".CompletePositiveMatching.20261026.v1" : "") +
+        (ChecksCardCollection ? ".CardCollection.20261105.v1" : "") +
         (UsesQueryLiteralPartyOpening ? ".PartyQueryLiteralOpening.20261027.v1" : "") +
         (UsesOpeningPrefixHotLoop ? ".QueryLiteralPrefixHotLoop.20261029.v1" : "") +
         (HotLoop.RareOnlyIdentityElisionEnabled ? ".RareOnlyIdentityBurn.20261030.v2" : "") +
@@ -44,7 +47,8 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
         (!compact && UsesDenseCarry8 ? ".DenseCarry8.20261030.v1" : "") +
         BagCapacityRevision +
         (compact ? ".CompactAbi1" : ".Dense") + ".CanonicalAbi1Ready.20260907.v1" +
-        (NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "") + NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision;
+        (NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "") +
+        (UsesChildShuffle ? ".Modern113" : "") + NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision;
 
     internal static CombatRewardGpuPlan? TryCreate(SearchModel request, CombatRewardReplay replay, out string issue,
         bool? openingPrefixHotLoop = null, bool? rareOnlyIdentityElision = null, bool? assignmentEarlyRejection = null,
@@ -86,6 +90,11 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
             request.Authority.EffectAuthority?.BonesEligibleRelics?.Count(k => k != BaseGameModelKeys.Relics.NeowsBones) ?? 0,
             reward, 0x43463031, catalog, policy, 255, 255, 255, hot, replay.PrecedingNicheDraws,
             replay.CapsuleNicheAdvances, replay.KaleidoscopeCountOnly, replay.ConservativelyKeeps);
+        if (replay.UsesChildShuffle)
+        {
+            meta[16] = (uint)NeowFamilyReplay.NonCombatHash;
+            meta[17] = (uint)(NeowFamilyReplay.NonCombatHash >> 32);
+        }
         if (replay.NeutralWitness is { } proof)
         {
             meta[51] = proof.Available ? proof.RequiresAllOffers ? 2u : 1u : 3u;
@@ -95,9 +104,11 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
         uint[] predicates = CombatRewardGpuPacking.BuildPredicates(reward, out uint[] targets);
         return new(meta, pools, ids, predicates, targets, hot, replay.RouteCount) {
             UsesNeutralWitness = replay.UsesNeutralWitness,
+            UsesChildShuffle = replay.UsesChildShuffle,
             ObservedOpeningData = replay.UsesObservedOpening ? replay.ObservedOpening!.GpuData : [],
             ObservedBonesIds = replay.UsesObservedOpening ? replay.ObservedOpening!.BonesIds.Select(id => (uint)id).ToArray() : [],
             NeedsCompleteMatchingReference = reward.NeedsCompleteMatchingReference,
+            ChecksCardCollection = reward.CollectionFilterCovered,
             UsesQueryLiteralPartyOpening = replay.UsesQueryLiteralPartyOpening,
             UsesOpeningPrefixHotLoop = hot.Enabled && !replay.UsesObservedOpening && reward.OpeningConsumption.HasReplay && prefixTrial,
             UsesDenseCarry8 = denseCarry8,
@@ -183,7 +194,9 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
             "uint64_t rotl64(uint64_t x,uint n){return cr_rotl64(x,n);}\n" +
             FamilyGpuComputeUtility.LoadEmbeddedShader("VisibleSeedRootHashCommon.glsl") : "", StringComparison.Ordinal)
         .Replace("/*__C_TERMINAL_CARD_GATE__*/", TerminalCardGateSource, StringComparison.Ordinal)
-        .Replace("/*__C_CAPSULE_DEFINES__*/", "#define RT2_C_ASSIGNMENT " + (Meta[56] + Meta[59] > 0 ? "1\n" : "0\n") + "#define RT2_C_MULTIPLAYER " + (Meta[3] > 1 ? "1" : "0"), StringComparison.Ordinal)
+        .Replace("/*__C_CAPSULE_DEFINES__*/", "#define RT2_C_ASSIGNMENT " + (Meta[56] + Meta[59] > 0 ? "1\n" : "0\n") +
+            "#define RT2_C_MULTIPLAYER " + (Meta[3] > 1 ? "1\n" : "0\n") +
+            "#define RT2_C_MODERN113 " + (UsesChildShuffle ? "1" : "0"), StringComparison.Ordinal)
         .Replace("/*__C_HOT_DEFINES__*/", "#define RT2_C_DENSE_CARRY8 " + (UsesDenseCarry8 ? "1\n" : "0\n") +
             "#define RT2_C_HOT_OPENING_PREFIX " + (UsesOpeningPrefixHotLoop ? "1\n" : "0\n") +
             Beta110GpuCombatRewardHotLoopCompiler.BuildShaderDefines(HotLoop,

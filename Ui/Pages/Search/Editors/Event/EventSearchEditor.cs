@@ -17,6 +17,7 @@ using RolltheSpire2.Presentation.Localization;
 using RolltheSpire2.Ui.Icons;
 using RolltheSpire2.Ui.Pages.Search.Event;
 using RolltheSpire2.Ui.Theme;
+using RolltheSpire2.Ui.Workspace;
 
 namespace RolltheSpire2.Ui.Pages.Search.Editors;
 
@@ -38,6 +39,8 @@ internal sealed partial class EventSearchEditor : Control
     private IGameContentNameResolver _names = RuntimeGameContentNameResolver.Create("zh");
     private bool _guideExpanded;
     private int _activeSeat;
+    private readonly UnknownRoomPrefixEditorState _partyUnknownPrefix = new();
+    internal UnknownRoomPrefixEditorState UnknownRoomPrefix => _draft.UnknownPrefix;
 
     private sealed record QueueCondition(int Act, int Position, bool Exact, bool Excluded, ModelKey Event);
 
@@ -52,10 +55,12 @@ internal sealed partial class EventSearchEditor : Control
         public bool QueueAdvanced;
         public bool QueueExact;
         public bool QueueExcluded;
-        public int UnknownEventPrefixCount;
+        public UnknownRoomPrefixEditorState UnknownPrefix { get; } = new();
+        public int UnknownEventPrefixCount { get => UnknownPrefix.EventCount; set => UnknownPrefix.EventCount = value; }
+        public int UnknownMonsterPrefixCount { get => UnknownPrefix.MonsterCount; set => UnknownPrefix.MonsterCount = value; }
         public List<QueueCondition> QueueConditions { get; } = [];
         public ModelKey? SelectedEvent;
-        public int CharacterColor = -1;
+        public ModelKey? CharacterColor;
         public int TrialCase = -1;
         public int TinkerType = -1;
         public string? TinkerEffect;
@@ -78,6 +83,7 @@ internal sealed partial class EventSearchEditor : Control
 
     public event Action? GuideRequested;
     public event Action? QueueChanged;
+    public event Action? UnknownRoomPrefixChanged;
     public event Action<string>? TransformationRequested;
     internal Func<int, string, bool>? TransformTakenOver { get; set; }
     internal IEnumerable<string> DeclaredTransformationSourceIds(int seat) =>
@@ -179,10 +185,10 @@ internal sealed partial class EventSearchEditor : Control
         float queueTop = 0;
         if (_queuePickerPlayers == 1)
         {
-            Text(content, _text.Get("query.event.unknown.title"), 16, 4, 240, 16, true);
-            QueueOptions(content, Enumerable.Range(0, 4).Select(i => _text.Get("query.event.unknown.option_" + i)).ToArray(),
-                _draft.UnknownEventPrefixCount, 270, 0, 300, index =>
-                { _draft.UnknownEventPrefixCount = index; Render(); }).Name = "FirstActUnknownEventPrefix";
+            Text(content, _text.Get("query.unknown.prefix.title"), 16, 4, 240, 16, true);
+            QueueOptions(content, _draft.UnknownPrefix.Options(_text),
+                _draft.UnknownPrefix.Selection, 270, 0, Math.Max(180, Math.Min(360, width - 286)), index =>
+                { _draft.UnknownPrefix.Select(index); UnknownRoomPrefixChanged?.Invoke(); Render(); }).Name = "FirstActUnknownEventPrefix";
             queueTop = 60;
         }
         float bottom = RenderQueue(content, width, queueTop);
@@ -289,20 +295,26 @@ internal sealed partial class EventSearchEditor : Control
     private float RenderCharacterColorEditor(Control content, float x, float y)
     {
         Text(content, _text.Get("query.event.results.character_color"), x, y, 180, 16, true);
-        ModelKey[] characters =
-        [
-            BaseGameModelKeys.Characters.Ironclad, BaseGameModelKeys.Characters.Silent,
-            BaseGameModelKeys.Characters.Defect, BaseGameModelKeys.Characters.Necrobinder,
-            BaseGameModelKeys.Characters.Regent
-        ];
+        var characters = ColorChoices();
         for (int index = 0; index < characters.Length; index++)
         {
-            int captured = index;
             ModelKey key = characters[index];
+            string name = _names.Resolve(key, GameContentKind.Character);
             var button = Button(content, string.Empty, x + index * 62, y + 32, 54,
-                () => { _draft.CharacterColor = _draft.CharacterColor == captured ? -1 : captured; Render(); },
-                _draft.CharacterColor == index, 54);
+                () => { _draft.CharacterColor = _draft.CharacterColor == key ? null : key; Render(); },
+                _draft.CharacterColor == key, 54);
+            button.Name = "EventColor_" + key.Entry;
+            button.AccessibilityName = name;
             AddPicture(button, key, GameContentKind.Character, IconVariant.CharacterPortrait, 7, 7, 40);
+            if (button.GetChildCount() == 0) { button.Text = name; button.ClipText = true; }
+        }
+        if (_draft.CharacterColor is { } retained && !characters.Contains(retained))
+        {
+            string name = _names.Resolve(retained, GameContentKind.Character);
+            var button = Button(content, _text.Format("query.event.results.retained_color", name), x, y + 96, 360,
+                () => { _draft.CharacterColor = null; Render(); }, true, 38);
+            button.Name = "EventRetainedColor";
+            return y + 148;
         }
         return y + 100;
     }

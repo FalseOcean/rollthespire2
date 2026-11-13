@@ -42,6 +42,9 @@ internal sealed class SearchCategoryTabIconProvider : ISearchCategoryTabIconProv
         "res://images/ui/game_over_screen/score_boss.png";
 
     private const string AncientBlueFlameFrame0Path =
+        "res://images/atlases/compressed_atlas.sprites/ancient_card_flame_0.tres";
+
+    private const string LegacyAncientBlueFlameFrame0Path =
         "res://images/atlases/compressed.sprites/card_template/ancient_flame/ancient_card_flame_0.tres";
 
     private const string NetScreenTypeExtensionsTypeName =
@@ -140,20 +143,21 @@ internal sealed class SearchCategoryTabIconProvider : ISearchCategoryTabIconProv
 
         try
         {
-            if (!ResourceLoader.Exists(AncientBlueFlameFrame0Path))
+            var path = ResourceLoader.Exists(AncientBlueFlameFrame0Path) ? AncientBlueFlameFrame0Path : LegacyAncientBlueFlameFrame0Path;
+            if (!ResourceLoader.Exists(path))
             {
                 return SearchCategoryTabIconAsset.Missing(
-                    $"{evidencePrefix}:ancient-blue-flame-resource-missing:{AncientBlueFlameFrame0Path}");
+                    $"{evidencePrefix}:ancient-blue-flame-resource-missing:{AncientBlueFlameFrame0Path}|{LegacyAncientBlueFlameFrame0Path}");
             }
 
             Texture2D? texture = ResourceLoader.Load<Texture2D>(
-                AncientBlueFlameFrame0Path,
+                path,
                 null,
                 ResourceLoader.CacheMode.Reuse);
             if (texture is null || !GodotObject.IsInstanceValid(texture))
             {
                 return SearchCategoryTabIconAsset.Missing(
-                    $"{evidencePrefix}:ancient-blue-flame-resource-type-mismatch:{AncientBlueFlameFrame0Path}");
+                    $"{evidencePrefix}:ancient-blue-flame-resource-type-mismatch:{path}");
             }
 
             return new SearchCategoryTabIconAsset(

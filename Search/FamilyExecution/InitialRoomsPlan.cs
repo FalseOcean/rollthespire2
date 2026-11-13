@@ -18,7 +18,9 @@ internal sealed partial class InitialRoomsPlan
     internal const string Revision = "InitialRooms.DeclaredUnknownJuzu.TrackedSharedFront.20261029.v2";
     internal const int Capacity = 1 << 20;
     internal GpuNumericalVariant NumericalVariant { get; private init; }
-    internal string ActualRevision => Revision + (NumericalVariant == GpuNumericalVariant.NativeFloat64 ? "" : ".IntegerRne.20261025.v1");
+    internal string ActualRevision => Revision + (UnknownMonster ? ".MonsterPrefix.20261105.v1" : "") +
+        (NumericalVariant == GpuNumericalVariant.NativeFloat64 ? "" : ".IntegerRne.20261025.v1") +
+        (_childShuffle ? ".Modern113" : "");
     internal GpuNumericRequirements NumericRequirements => GpuIntegerNumerics.Requirements(NumericalVariant);
     private static readonly ulong UnknownHash = XxHash64.Hash("unknown_map_point"u8, 0);
     private static readonly ulong TreasureHash = XxHash64.Hash("treasure_room_relics"u8, 0);
@@ -26,12 +28,14 @@ internal sealed partial class InitialRoomsPlan
     private readonly IRuntimeProfile _referenceProfile;
     private readonly RolltheSpire2.Core.World.Snapshots.WorldAuthoritySnapshot? _referenceWorld;
     private readonly bool _isParty;
+    private readonly bool _childShuffle;
     private readonly int _players;
     private readonly TreasureRelicSearchCondition? _treasure;
     private readonly int[] _lengths, _bucketLanes, _effectiveLengths, _targetLanes, _targetPositions, _removedPositions;
     private readonly bool[] _circlet;
     private readonly int _lastBucket;
     internal int UnknownPrefixCount { get; }
+    internal bool UnknownMonster { get; }
     internal bool UnknownJuzuAcquired { get; }
     internal bool CoversUnknownPrefix => UnknownPrefixCount > 0;
     internal bool CoversTreasure => _treasure is not null;
@@ -44,8 +48,10 @@ internal sealed partial class InitialRoomsPlan
     {
         _referenceProfile = RuntimeProfileRegistry.Select(request.Detection);
         _referenceWorld = request.Authority.WorldAuthority;
+        _childShuffle = treasure is not null && RuntimeProfilePolicies.UsesChildStreamShuffle(request.Authority.VersionResolution.SemanticProfileId);
         _isParty = request.CompiledSearch.Context.Party is not null; _players = request.Authority.PlayersCount;
         UnknownPrefixCount = unknown; _treasure = treasure;
+        UnknownMonster = UnknownRoomPrefixRequirements.MonsterCount(request.CompiledSearch.NormalizedQuery) > 0;
         UnknownJuzuAcquired = unknown > 0 && ExplicitOpeningRelicFacts.HasDeclaredJuzuForUnknownRooms(request.CompiledSearch.NormalizedQuery);
         _lengths = lengths; _bucketLanes = lanes; _effectiveLengths = effectiveLengths;
         _targetLanes = targetLanes; _targetPositions = targetPositions; _removedPositions = removedPositions;
@@ -85,7 +91,8 @@ internal sealed partial class InitialRoomsPlan
                 PartyInitialRooms.HasTreasure(request) ? "InitialRooms.SinglePlayerOnly" : "") { NumericalVariant = numericalVariant };
         }
         if (request.ProfileId != RuntimeProfileId.Beta111 || request.Authority.PlayersCount != 1) return null;
-        int unknown = includeUnknown ? request.Evaluation.FirstActUnknownEventPrefixCount : 0;
+        int unknown = includeUnknown ? Math.Max(request.Evaluation.FirstActUnknownEventPrefixCount,
+            request.Evaluation.FirstActUnknownMonsterPrefixCount) : 0;
         var treasure = includeTreasure && request.Evaluation.TreasureRelics is { IsEmpty: false } condition ? condition : null;
         if (unknown == 0 && treasure is null) return null;
         int[] lengths = [], lanes = [], effective = new int[3], targetLanes = [4, 4], targets = [-1, -1], removed = [-1, -1, -1];
@@ -118,8 +125,9 @@ internal sealed partial class InitialRoomsPlan
             if (lanes.Count(value => value == lane) != 1)
             { issue = "InitialRooms.SharedLaneMissingOrAmbiguous"; return false; }
         var seen = new HashSet<ushort>();
-        dense.TryGetValue(new("RELIC", "MASSIVE_SCROLL"), out ushort massive);
-        bool hasMassive = dense.ContainsKey(new("RELIC", "MASSIVE_SCROLL"));
+        var massive = new ModelKey("RELIC", "MASSIVE_SCROLL");
+        var candy = StandardOpeningRelicEligibility.LastingCandy;
+        bool? allowsCandy = pool.UsesChildShuffle ? StandardOpeningRelicEligibility.AllowsLastingCandy(request.Authority) : true;
         for (int index = 0; index < shared.Length; index++)
         {
             int bucket = shared[index], lane = lanes[index];
@@ -131,9 +139,18 @@ internal sealed partial class InitialRoomsPlan
                 // One tracked position represents one identity. Keep duplicate
                 // source identities on Exact rather than silently collapsing them.
                 if (!seen.Add(id)) { issue = "InitialRooms.SharedIdentityNotUnique"; return false; }
-                if (hasMassive && id == massive) { removed[lane] = position; effective[lane]--; }
+                bool isCandy = dense.TryGetValue(candy, out ushort candyId) && id == candyId;
+                if (isCandy && allowsCandy is null)
+                { issue = "InitialRooms.LastingCandyEligibilityUnavailable"; return false; }
+                if (isCandy && allowsCandy == false || dense.TryGetValue(massive, out ushort massiveId) && id == massiveId)
+                {
+                    if (removed[lane] >= 0)
+                    { issue = "InitialRooms.MultipleIneligibleRelicsInLane"; return false; }
+                    removed[lane] = position; effective[lane]--;
+                    continue;
+                }
                 for (int slot = 0; slot < condition.Count; slot++)
-                    if (condition.Slots[slot] is { } target && target.Entry != "MASSIVE_SCROLL" &&
+                    if (condition.Slots[slot] is { } target &&
                         dense.TryGetValue(target, out ushort targetId) && id == targetId)
                     { targetLanes[slot] = lane; targets[slot] = position; last = Math.Max(last, index); }
             }
@@ -144,7 +161,7 @@ internal sealed partial class InitialRoomsPlan
 
     internal bool Matches(ulong root)
     {
-        if (!MatchesUnknown(root, UnknownPrefixCount, UnknownJuzuAcquired)) return false;
+        if (!MatchesUnknownCategory(root, UnknownPrefixCount, UnknownJuzuAcquired, UnknownMonster)) return false;
         if (_treasure is null) return true;
         var rarity = new Beta110FastRng(unchecked(root + TreasureHash));
         Span<int> encounterLanes = stackalloc int[2], ranks = stackalloc int[2], taken = stackalloc int[3];
@@ -172,10 +189,17 @@ internal sealed partial class InitialRoomsPlan
         {
             int lane = _bucketLanes[bucket], removal = lane < 3 ? _removedPositions[lane] : -1;
             bool tracks = _targetLanes.Contains(lane) && lane < 3;
-            if (!tracks) { rng.ConsumeUnstableShuffle(_lengths[bucket]); continue; }
+            if (!tracks)
+            {
+                if (_childShuffle) rng.ConsumeShuffleSeed();
+                else rng.ConsumeUnstableShuffle(_lengths[bucket]);
+                continue;
+            }
+            var child = _childShuffle ? rng.ForkShuffle() : default;
+            ref var shuffle = ref (_childShuffle ? ref child : ref rng);
             for (int count = _lengths[bucket]; count > 1; count--)
             {
-                int selected = rng.NextInt(count), tail = count - 1;
+                int selected = shuffle.NextInt(count), tail = count - 1;
                 for (int slot = 0; slot < 2; slot++)
                     if (_targetLanes[slot] == lane) positions[slot] = SwapPosition(positions[slot], selected, tail);
                 removal = SwapPosition(removal, selected, tail);
@@ -200,6 +224,18 @@ internal sealed partial class InitialRoomsPlan
     }
     private static int SwapPosition(int position, int selected, int tail) => position == selected ? tail : position == tail ? selected : position;
 
+    internal static bool MatchesUnknownCategory(ulong root, int count, bool juzuAcquired, bool requireMonster) =>
+        requireMonster ? MatchesUnknownMonster(root, count, juzuAcquired) : MatchesUnknown(root, count, juzuAcquired);
+
+    private static bool MatchesUnknownMonster(ulong root, int count, bool juzuAcquired)
+    {
+        if (count == 0) return true;
+        if (juzuAcquired) return false;
+        var rng = new Beta110FastRng(unchecked(root + UnknownHash));
+        for (int i = 0; i < count; i++) if (rng.NextFloat() > .1f) return false;
+        return true;
+    }
+
     internal static bool MatchesUnknown(ulong root, int count, bool juzuAcquired = false)
     {
         if (count == 0) return true;
@@ -218,7 +254,7 @@ internal sealed partial class InitialRoomsPlan
     internal bool Reference(ulong root)
     {
         if (CoversUnknownPrefix && !OrdinaryUnknownRoomPredictor.ForAct1Filter(root, UnknownPrefixCount, UnknownJuzuAcquired)
-                .Steps.All(s => s.Room == UnknownRoomCategory.Event)) return false;
+                .Steps.All(s => s.Room == (UnknownMonster ? UnknownRoomCategory.Monster : UnknownRoomCategory.Event))) return false;
         if (_treasure is null) return true;
         var profile = _referenceProfile;
         var bags = RelicSequencePredictor.PredictFromRootHash(profile, root, "root-hash:" + root, _referenceWorld);
@@ -244,6 +280,8 @@ internal sealed partial class InitialRoomsPlan
         string donor = FamilyGpuComputeUtility.LoadEmbeddedShader("Beta111GpuEventResult.comp.glsl");
         string numerical = donor[donor.IndexOf("uint64_t s0;", StringComparison.Ordinal)..donor.IndexOf("bool evaluate_event_results", StringComparison.Ordinal)];
         string source = FamilyGpuComputeUtility.LoadEmbeddedShader("InitialRoomsFamily.comp.glsl").Replace("/*__RNG_HASH__*/", numerical, StringComparison.Ordinal);
+        if (_childShuffle) source = source.Replace("#version 450", "#version 450\n#define RT2_TREASURE_CHILD_SHUFFLE 1", StringComparison.Ordinal);
+        if (UnknownMonster) source = UnknownRoomPrefixGpuSource.RequireMonster(source, 27);
         return NumericalVariant == GpuNumericalVariant.NativeFloat64 ? source : InitialRoomsGpuNumericalSource.Adapt(source);
     }
 }

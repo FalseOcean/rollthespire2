@@ -124,7 +124,7 @@ internal sealed partial class PredictorRun
         var beforeAfterRelic = Working;
         if (ApplyLiveDeckRandomObtainBoundary(key, destination, sourceId)) return true;
         _preview.Partial?.Synchronize(Working);
-        Working = PredictorSettlementEffects.AfterRelicAdded(Working, key);
+        Working = PredictorSettlementEffects.AfterRelicAdded(Working, key, Context);
         if (key.Entry is "WHETSTONE" or "WAR_PAINT")
         {
             foreach (long cardId in Working.Deck)
@@ -246,8 +246,9 @@ internal sealed partial class PredictorRun
                 var eggChanges = ImmutableArray.CreateBuilder<PredictorTransformation>();
                 foreach (long egg in eggs)
                 {
-                    Working = PredictorCardChanges.TransformTo(Context, Working, egg, new ModelKey("CARD", "BYRD_SWOOP"));
-                    eggChanges.Add(new(egg, Working.Deck[^1]));
+                    var changed = PredictorCardChanges.TransformTo(Context, Working, egg, new ModelKey("CARD", "BYRD_SWOOP"));
+                    Working = changed.State;
+                    eggChanges.Add(changed.Change);
                 }
                 Accept(new("ByrdpipHatch", Working.Relics[petIndex].Id,
                     eggChanges.Select(c => c.ReplacementId).ToImmutableArray(), null, null)
@@ -300,7 +301,7 @@ internal sealed partial class PredictorRun
                 var basicTargets = Working.Deck.Where(id => Working.Card(id).Removable &&
                     PredictorCardChanges.Definition(Context, Working.Card(id).Key) is { Rarity: "Basic" } d &&
                     (d.IsStrike || d.IsDefend)).ToImmutableArray();
-                var pandora = PredictorCardChanges.Transform(Context, Working, basicTargets, PredictorStream.Niche, token);
+                var pandora = PredictorCardChanges.TransformBatch(Context, Working, basicTargets, Context.RelicTransformStream, token);
                 Working = pandora.State;
                 Accept(new("PandorasBoxTransform", Working.Relics[^1].Id,
                     pandora.Changes.Select(c => c.ReplacementId).ToImmutableArray(), null, null)
@@ -313,7 +314,7 @@ internal sealed partial class PredictorRun
                 var capeCardIds = ImmutableArray.CreateBuilder<long>();
                 for (int i = 0; i < 2; i++)
                 {
-                    var draw = Working.Draw(PredictorStream.Niche, 0, availableCurses.Count);
+                    var draw = Working.Draw(Context.NonCombatStream(PredictorStream.Niche), 0, availableCurses.Count);
                     Working = draw.State;
                     var curse = availableCurses[draw.Value];
                     availableCurses.RemoveAt(draw.Value);
@@ -389,7 +390,7 @@ internal sealed partial class PredictorRun
             case "PHIAL_HOLSTER":
                 Working = Working with { PotionSlots = Working.PotionSlots.Add(null) };
                 state = Working;
-                var generated = PredictorRewardGeneration.GeneratePotions(Context, ref state, 2, PredictorStream.CombatPotionGeneration);
+                var generated = PredictorRewardGeneration.GeneratePotions(Context, ref state, 2, Context.NonCombatStream(PredictorStream.CombatPotionGeneration));
                 Working = state;
                 var holsterGenerated = ImmutableArray.CreateBuilder<PredictorPotion>();
                 foreach (var potion in generated)
@@ -1062,7 +1063,7 @@ internal sealed partial class PredictorRun
         var candidates = ObtainDeckCandidates;
         if (source.Entry == "ROYAL_STAMP")
         {
-            var royal = PredictorObtainSources.RoyalStampCandidates(Working, candidates);
+            var royal = PredictorObtainSources.RoyalStampCandidates(Context, Working, candidates);
             Working = royal.State;
             _obtainDeckCandidateOrder = royal.Candidates;
             candidates = _obtainDeckCandidateOrder;
@@ -1161,7 +1162,7 @@ internal sealed partial class PredictorRun
             foreach (var replacement in replacements)
             {
                 int insertion = Working.Deck.Length;
-                Working = PredictorObtainSources.AddExistingCard(Context, Working, replacement.Card);
+                Working = PredictorObtainSources.AddExistingCard(Context, Working, replacement.Card, isTransformation: true);
                 changes.Add(new(replacement.OriginalId, Working.Deck[insertion]));
             }
             Accept(new("ClawsTransform", _obtainDeckPending!.SourceId, ids, null, null)
@@ -1173,7 +1174,7 @@ internal sealed partial class PredictorRun
             var changes = ImmutableArray.CreateBuilder<PredictorTransformation>();
             foreach (long id in ids)
             {
-                var changed = PredictorCardChanges.Transform(Context, Working, [id], PredictorStream.Niche,
+                var changed = PredictorCardChanges.TransformBatch(Context, Working, [id], Context.RelicTransformStream,
                     upgradeReplacementBeforeAdd: true);
                 Working = changed.State;
                 changes.AddRange(changed.Changes);
@@ -1230,12 +1231,10 @@ internal sealed partial class PredictorRun
 internal static partial class PredictorObtainSources
 {
     internal static (PredictorState State, ImmutableArray<long> Candidates) RoyalStampCandidates(
-        PredictorState state, ImmutableArray<long> eligible)
+        PredictorContext context, PredictorState state, ImmutableArray<long> eligible)
     {
         var shuffled = eligible.ToList();
-        var rng = state.Streams.Single(s => s.Stream == PredictorStream.Niche).Restore();
-        rng.UnstableShuffle(shuffled);
-        return (state.WithRng(PredictorStream.Niche, rng), shuffled.ToImmutableArray());
+        return (state.Shuffle(context, PredictorStream.Niche, shuffled), shuffled.ToImmutableArray());
     }
 
     internal static PredictorCard MaulFromOriginal(PredictorContext context, PredictorCard original)
@@ -1266,16 +1265,8 @@ internal static partial class PredictorObtainSources
     {
         var candidates = entry.Deck.Select(entry.Card)
             .Where(c => c.UpgradeLevel < c.MaxUpgradeLevel).ToList();
-        candidates.Sort((a, b) =>
-        {
-            int category = string.Compare(a.Key.Category, b.Key.Category, StringComparison.Ordinal);
-            if (category != 0) return category;
-            int key = string.Compare(a.Key.Entry, b.Key.Entry, StringComparison.Ordinal);
-            return key != 0 ? key : a.UpgradeLevel.CompareTo(b.UpgradeLevel);
-        });
-        var rng = entry.Streams.Single(s => s.Stream == PredictorStream.Niche).Restore();
-        rng.UnstableShuffle(candidates);
-        var state = entry.WithRng(PredictorStream.Niche, rng);
+        PredictorCardStableOrder.Sort(candidates, context);
+        var state = entry.Shuffle(context, PredictorStream.Niche, candidates);
         var selected = candidates.Take(count).ToArray();
         foreach (var card in selected) state = state.WithCard(PredictorCardLevelEffects.Reconcile(context,
             card with { UpgradeLevel = card.UpgradeLevel + 1 }));
@@ -1286,9 +1277,7 @@ internal static partial class PredictorObtainSources
     {
         if (context.OpeningEligibleRelics.IsDefaultOrEmpty) throw new InvalidOperationException("PredictorBonesEligibleRelicsMissing");
         var options = context.OpeningEligibleRelics.Where(k => k.Entry != "NEOWS_BONES").ToList();
-        var rng = state.Streams.Single(s => s.Stream == PredictorStream.Rewards).Restore();
-        rng.UnstableShuffle(options);
-        state = state.WithRng(PredictorStream.Rewards, rng);
+        state = state.Shuffle(context, PredictorStream.Rewards, options);
         if (options.Count < 2) throw new InvalidOperationException("PredictorBonesRelicsDepleted");
         return new(state, options.Take(2).Select(k => new PredictorReward(0, PredictorRewardKind.Relic,
             PredictorRewardOrigin.BonesInternal, k, [])).ToImmutableArray(), []);
@@ -1299,7 +1288,7 @@ internal static partial class PredictorObtainSources
         var curses = (context.Catalog ?? throw new InvalidOperationException("PredictorCatalogMissing"))
             .UnlockedCurseCards.ToArray();
         if (curses.Length == 0) throw new InvalidOperationException("PredictorBonesCursePoolMissing");
-        var drawn = state.Draw(PredictorStream.Niche, 0, curses.Length);
+        var drawn = state.Draw(context.NonCombatStream(PredictorStream.Niche), 0, curses.Length);
         return AddCard(context, drawn.State, curses[drawn.Value]);
     }
 
@@ -1332,9 +1321,7 @@ internal static partial class PredictorObtainSources
         {
             token.ThrowIfCancellationRequested();
             var order = Enumerable.Range(0, pools.Count).ToList();
-            var rng = state.Streams.Single(s => s.Stream == PredictorStream.Niche).Restore();
-            rng.UnstableShuffle(order);
-            state = state.WithRng(PredictorStream.Niche, rng);
+            state = state.Shuffle(context, PredictorStream.Niche, order);
             var cards = ImmutableArray.CreateBuilder<PredictorCard>();
             foreach (int pool in order.Take(3))
             {
@@ -1417,17 +1404,12 @@ internal static partial class PredictorObtainSources
         var replacements = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["BASH"] = "BREAK", ["NEUTRALIZE"] = "SUPPRESS", ["UNLEASH"] = "PROTECTOR",
-            ["FALLING_STAR"] = "METEOR_SHOWER", ["DUALCAST"] = "QUADCAST"
+            ["FALLING_STAR"] = "METEOR_SHOWER", ["DUALCAST"] = "QUADCAST", ["FOOLISH_SHOT"] = "DIVINE_SHOT"
         };
         // AfterObtained looks up the first qualifying CURRENT Deck instance.
         var original = state.Deck.Select(state.Card).FirstOrDefault(c => replacements.ContainsKey(c.Key.Entry))
             ?? throw new InvalidOperationException("PredictorArchaicStarterMissingAtObtain");
-        var replacement = ArchaicToothReplacement(context, original) with { FloorAdded = state.Position.Floor };
-        state = state with { Deck = state.Deck.Remove(original.Id) };
-        state = state.WithCard(original with { Removed = true });
-        long newId = state.NextInstanceId;
-        state = AddCard(context, state, replacement);
-        return (state, new(original.Id, newId));
+        return PredictorCardChanges.TransformTo(context, state, original.Id, ArchaicToothReplacement(context, original));
     }
 
     internal static PredictorCard ArchaicToothReplacement(PredictorContext context, PredictorCard original)
@@ -1435,7 +1417,7 @@ internal static partial class PredictorObtainSources
         var target = original.Key.Entry switch
         {
             "BASH" => "BREAK", "NEUTRALIZE" => "SUPPRESS", "UNLEASH" => "PROTECTOR",
-            "FALLING_STAR" => "METEOR_SHOWER", "DUALCAST" => "QUADCAST",
+            "FALLING_STAR" => "METEOR_SHOWER", "DUALCAST" => "QUADCAST", "FOOLISH_SHOT" => "DIVINE_SHOT",
             _ => throw new InvalidOperationException("PredictorArchaicStarterMissingAtObtain")
         };
         var prototype = PredictorCardChanges.Definition(context, new ModelKey("CARD", target)).Prototype;
@@ -1455,7 +1437,7 @@ internal static partial class PredictorObtainSources
         {
             ["BURNING_BLOOD"] = "BLACK_BLOOD", ["RING_OF_THE_SNAKE"] = "RING_OF_THE_DRAKE",
             ["DIVINE_RIGHT"] = "DIVINE_DESTINY", ["BOUND_PHYLACTERY"] = "PHYLACTERY_UNBOUND",
-            ["CRACKED_CORE"] = "INFUSED_CORE"
+            ["CRACKED_CORE"] = "INFUSED_CORE", ["SONG_BOW"] = "STORYTELLER"
         };
         var touch = state.Relics.Last(r => r.Key.Entry == "TOUCH_OF_OROBAS");
         PredictorRelic? starter = touch.StarterRelicId is long bound
@@ -1469,7 +1451,7 @@ internal static partial class PredictorObtainSources
     {
         "BURNING_BLOOD" => "BLACK_BLOOD", "RING_OF_THE_SNAKE" => "RING_OF_THE_DRAKE",
         "DIVINE_RIGHT" => "DIVINE_DESTINY", "BOUND_PHYLACTERY" => "PHYLACTERY_UNBOUND",
-        "CRACKED_CORE" => "INFUSED_CORE", _ => "CIRCLET"
+        "CRACKED_CORE" => "INFUSED_CORE", "SONG_BOW" => "STORYTELLER", _ => "CIRCLET"
     });
 
     internal static (PredictorState State, ImmutableArray<PredictorTransformation> Changes) Leafy(
@@ -1479,7 +1461,7 @@ internal static partial class PredictorObtainSources
         var strike = defs.FirstOrDefault(c => PredictorCardChanges.Definition(context, c.Key).IsStrike);
         var defend = defs.FirstOrDefault(c => PredictorCardChanges.Definition(context, c.Key).IsDefend);
         var ids = new[] { strike?.Id, defend?.Id }.OfType<long>().ToImmutableArray();
-        return PredictorCardChanges.Transform(context, state, ids, PredictorStream.Transformations, token);
+        return PredictorCardChanges.TransformBatch(context, state, ids, PredictorStream.Transformations, token);
     }
 
     internal static (PredictorState State, ImmutableArray<ImmutableArray<PredictorCard>> Bundles) ScrollBoxes(
@@ -1583,9 +1565,7 @@ internal static partial class PredictorObtainSources
     internal static PredictorState BeautifulBracelet(PredictorContext context, PredictorState state)
     {
         var eligible = state.Deck.Select(state.Card).Where(c => CanEnchant(context, c)).ToList();
-        var rng = state.Streams.Single(s => s.Stream == PredictorStream.Niche).Restore();
-        rng.UnstableShuffle(eligible);
-        state = state.WithRng(PredictorStream.Niche, rng);
+        state = state.Shuffle(context, PredictorStream.Niche, eligible);
         foreach (var card in eligible.Take(4))
             state = state.WithCard(PredictorCardLevelEffects.Reconcile(context,
                 card with { Enchantment = new("ENCHANTMENT", "SWIFT"), EnchantmentAmount = 2 }));

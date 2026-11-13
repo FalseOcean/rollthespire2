@@ -21,7 +21,9 @@ bool c_observed_metadata_valid(){
 uint c_observed_apply(uint identity,uint packed,uint gold,inout uint seen[6],inout uint seen_count,
     inout bool niche_known,inout RewardRouteState state){
     if(identity>=c_observed_cap_count())return C_OPENING_FAULT;
+#if !RT2_C_MODERN113
     if((packed&4u)!=0u)niche_known=false;
+#endif
     // An unsupported obtain cannot establish a continuation for rejecting this
     // root, even when the same identity was already acquired elsewhere.
     if((packed&3u)!=3u||(((packed>>8u)&(64u|128u))!=0u))return C_OPENING_UNKNOWN;
@@ -63,11 +65,29 @@ uint c_observed_initialize_bag(uint64_t root,out uint prefixes[12],out uint leng
             if(identity>=c_observed_cap_count())return C_OPENING_FAULT;
             permutation[i]=identity;
         }
+#if RT2_C_MODERN113
+        RngState shuffle=cr_rng_initialize(cr_next_u64(rng));
+#define RT2_C_BAG_RNG shuffle
+#else
+#define RT2_C_BAG_RNG rng
+#endif
         for(uint n=count;n>1u;--n){
-            uint selected=cr_next_int(rng,n),tail=n-1u,value=permutation[selected];
+            uint selected=cr_next_int(RT2_C_BAG_RNG,n),tail=n-1u,value=permutation[selected];
             permutation[selected]=permutation[tail];permutation[tail]=value;
         }
+#undef RT2_C_BAG_RNG
+#if RT2_C_MODERN113
+        uint eligible=0u;
+        for(uint i=0u;i<count;++i){
+            uint identity=permutation[i];
+            if(identity==capability_meta.values[4])continue;
+            if(eligible<4u)prefixes[lane*4u+eligible]=identity;
+            ++eligible;
+        }
+        lengths[lane]=eligible;
+#else
         for(uint i=0u;i<min(count,4u);++i)prefixes[lane*4u+i]=permutation[i];
+#endif
     }
     return C_OPENING_EXACT;
 }
@@ -95,7 +115,7 @@ uint c_observed_non_capsule(uint relic,uint64_t root,bool unlisted,bool niche_kn
         if(count<3u)return unlisted?C_OPENING_UNKNOWN:C_OPENING_FAULT;
         if(plan_meta.values[49]!=0u){
             for(uint group=0u;group<2u;++group){
-                if(niche_known)for(uint n=count;n>1u;--n)cr_next_double(state.niche);
+                if(niche_known)cr_consume_shuffle(count,state.niche);
                 for(uint draw=0u;draw<9u;++draw)cr_next_double(state.rewards);
             }
             return C_OPENING_EXACT;
@@ -118,7 +138,9 @@ uint c_observed_non_capsule(uint relic,uint64_t root,bool unlisted,bool niche_kn
     }
     if(status!=C_OPENING_EXACT)return status;
     if(!cr_replay_query_literal_relic_consumption(relic,root,state))return C_OPENING_FAULT;
+#if !RT2_C_MODERN113
     if(relic==19u&&niche_known)cr_next_double(state.niche);
+#endif
     return C_OPENING_EXACT;
 }
 
@@ -127,8 +149,12 @@ bool c_observed_route(uint64_t root,uint route,out uint keep_reason){
     if(!c_observed_metadata_valid())return cr_family_numeric_failure();
     RngState unused=cr_rng_initialize(uint64_t(0));
     RewardRouteState state=cr_initialize_route(root,false,unused);
+#if RT2_C_MODERN113
+    bool niche_known=true;
+#else
     bool niche_known=plan_meta.values[44]!=0xffffffffu;
     if(niche_known)for(uint draw=0u;draw<plan_meta.values[44];++draw)cr_next_double(state.niche);
+#endif
     uint first=plan_meta.values[42],second=plan_meta.values[43],count=plan_meta.values[41];
     bool dynamic_bones=capability_meta.values[1]!=0u;
     if(count>2u||dynamic_bones&&plan_meta.values[40]==0u)return cr_family_numeric_failure();
@@ -138,7 +164,12 @@ bool c_observed_route(uint64_t root,uint route,out uint keep_reason){
         if(dynamic_bones){
             if(!cr_replay_bones(root,first,second,state.rewards))return cr_family_numeric_failure();
             count=2u;
-        }else cr_consume_shuffle(bones_count,state.rewards);
+        }
+#if RT2_C_MODERN113
+        cr_consume_shuffle(bones_count,state.niche);
+#else
+        else cr_consume_shuffle(bones_count,state.rewards);
+#endif
     }
     uint prefixes[12],lengths[3],consumed[3],seen[6],seen_count=0u;
     for(uint i=0u;i<3u;++i)consumed[i]=0u;
@@ -176,12 +207,16 @@ bool c_observed_route(uint64_t root,uint route,out uint keep_reason){
             if(status==C_OPENING_UNKNOWN){keep_reason=1u;return true;}
             if(status==C_OPENING_FAULT)return cr_family_numeric_failure();
         }
+#if !RT2_C_MODERN113
         uint advance=capability_meta.values[capability_meta.values[7]+relic*31u+previous];
         if(advance==0xffffffffu)niche_known=false;
         else if(niche_known)for(uint draw=0u;draw<advance;++draw)cr_next_double(state.niche);
         previous=relic;
+#endif
     }
+#if !RT2_C_MODERN113
     if(plan_meta.values[40]!=0u&&niche_known)cr_next_double(state.niche);
+#endif
     if(!state.continuation_exact||!state.influence_exact){keep_reason=1u;return true;}
 #if RT2_C_OBSERVED_HOT == 1
     // Static admission proves the existing hot suffix's pools and predicates.

@@ -198,7 +198,7 @@ internal static class SearchProbabilityPresentationBuilder
                 eventBlock?.IsPriced == true ? eventBlock.Probability : null));
         }
 
-        if (compiled.NormalizedQuery.FirstActUnknownEventPrefixCount > 0)
+        if (UnknownRoomPrefixRequirements.HasConditions(compiled.NormalizedQuery))
             rows.Add(new(SearchProbabilityRowKind.FirstActUnknownEventPrefix,
                 FirstActUnknownEventProbability.EstimateComponent(input).Probability));
 

@@ -13,18 +13,27 @@ internal static class Beta110CombatRewardFastPlanCompiler
     {
         var cards = request.Evaluation.CombatCardRewardSequence;
         var potions = request.Evaluation.CombatPotionRewardSequence;
+        var collection = request.Evaluation.CombatCardExclusion;
+        var collectionRows = CombatCardCollectionFastProjection.Build(request, catalog, out string collectionIssue);
         // The compatibility projection preserves row order: legacy, cards, potions.
         // Keep each typed domain's window rather than borrowing the longest domain.
         int[] windows = request.CompiledSearch.NormalizedQuery.LegacyCombatRewardConstraints.Where(c => !c.IsEmpty)
             .Select(c => c.BattleOrdinal == 0 ? 3 : c.BattleOrdinal)
             .Concat(cards?.Slots.Where(k => k.HasValue).Select(_ => cards!.Count) ?? [])
-            .Concat(potions?.Slots.Where(p => !p.IsNeutral).Select(_ => potions!.Count) ?? []).ToArray();
+            .Concat(potions?.Slots.Where(p => !p.IsNeutral).Select(_ => potions!.Count) ?? [])
+            .Concat(collectionRows.Select(c => c.BattleOrdinal)).ToArray();
         var plan = CompileCore(
-            request.Evaluation.NormalCombatRewardConditions.Where(c => !c.IsEmpty).ToArray(), windows,
+            request.Evaluation.NormalCombatRewardConditions.Where(c => !c.IsEmpty).Concat(collectionRows).ToArray(), windows,
             CombatRewardFastRoutePolicy.UnpinnedAssumeUnperturbed,
             Beta110CombatRewardExplicitContextProjector.Project(request.CompiledSearch),
             Beta110CombatRewardOpeningConsumptionProjector.Project(request.CompiledSearch), catalog, false,
-            Math.Max(request.Evaluation.CombatCardRewardSequence?.Count ?? 0, request.Evaluation.CombatPotionRewardSequence?.Count ?? 0));
+            Math.Max(collectionRows.Length, Math.Max(request.Evaluation.CombatCardRewardSequence?.Count ?? 0, request.Evaluation.CombatPotionRewardSequence?.Count ?? 0)));
+        if (collection is { IsEmpty: false })
+            plan = plan with { CollectionFilterRequested = true, CollectionFilterCovered = collectionRows.Length > 0,
+                CollectionFilterIssue = collectionIssue,
+                DisableReason = !plan.Enabled && collectionIssue.Length > 0 ? "Collection:" + collectionIssue : plan.DisableReason,
+                Fingerprint = plan.Fingerprint + ":Collection:" + collection.Mode + ":" + collection.BattleCount + ":" +
+                    string.Join(',', collection.CardKeys.Select(k => k.Serialized).Distinct().Order()) + ":" + collectionIssue };
         if (!plan.Enabled) return plan;
         bool cardUnordered = cards is { IsEmpty: false, OrderMode: CombatRewardSequenceOrderMode.Unordered };
         bool potionUnordered = potions is { IsEmpty: false, OrderMode: CombatRewardSequenceOrderMode.Unordered };
@@ -45,7 +54,7 @@ internal static class Beta110CombatRewardFastPlanCompiler
             (p.AnyBattleWindow == 0 ? plan.MaximumBattleOrdinal : p.AnyBattleWindow) != oldAnyWindow);
         bool changedLegacyWindow = plan.MaximumBattleOrdinal > 3 &&
             request.CompiledSearch.NormalizedQuery.LegacyCombatRewardConstraints.Any(c => c.BattleOrdinal == 0);
-        bool newReference = !multiplayer && (cardAssignment || potionAssignment || changedSoloWindow) || changedLegacyWindow;
+        bool newReference = collectionRows.Length > 0 || !multiplayer && (cardAssignment || potionAssignment || changedSoloWindow) || changedLegacyWindow;
         if (!multiplayer && !cardAssignment && !potionAssignment)
             return plan with { NeedsCompleteMatchingReference = newReference };
         return plan with

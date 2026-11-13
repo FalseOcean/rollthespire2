@@ -273,7 +273,7 @@ internal sealed partial class NeowOperationOverlay
             {
                 float firstY = render.Stacks.Values.Min(index => dock.Stacks[index].Position.Y);
                 heading.Position = new(0, Math.Max(0, firstY - 30));
-                SizeHuntLabel(heading, new(render.Size.X, 28));
+                SizeWrappedLabel(heading, new(render.Size.X, 28));
             }
             foreach (var pair in render.Ends)
             {
@@ -281,7 +281,7 @@ internal sealed partial class NeowOperationOverlay
                     new Vector2(dock.Stacks[render.Stacks[pair.Key]].Size.X, HuntEndHeight);
                 pair.Value.Position = pair.Key == 0 ? new Vector2(0, render.RootPosition.Y - HuntEndHeight / 2) :
                     dock.Stacks[render.Stacks[pair.Key]].Position + new Vector2(0, dock.Stacks[render.Stacks[pair.Key]].Size.Y);
-                SizeHuntLabel(pair.Value, size);
+                SizeWrappedLabel(pair.Value, size);
             }
             foreach (var pair in render.Edges)
             {
@@ -302,7 +302,7 @@ internal sealed partial class NeowOperationOverlay
             HorizontalAlignment.Left, Math.Max(1, width), 18, -1,
             TextServer.LineBreakFlag.Mandatory | TextServer.LineBreakFlag.WordBound | TextServer.LineBreakFlag.Adaptive).Y) + 10;
 
-    private static void SizeHuntLabel(Label label, Vector2 size)
+    private static void SizeWrappedLabel(Label label, Vector2 size)
     {
         // A fresh wrapping Label may retain the minimum height from its old
         // zero-width line layout. Resolve the new width before setting height.

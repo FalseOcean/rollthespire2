@@ -4,6 +4,7 @@ using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Cards;
 using RolltheSpire2.Core.Identity;
+using RolltheSpire2.Ui.Icons;
 
 namespace RolltheSpire2.Ui.Controls.Pickers;
 
@@ -23,6 +24,7 @@ internal sealed partial class ObjectPickerPanel
         };
         tile.AddChild(crop);
         var model = ModelDb.GetById<CardModel>(new ModelId(key.Category, key.Entry)).ToMutable();
+        NativeCardPortraits.BindDisplayModel(model);
         // Instantiate the donor scene directly: no dependency on the combat NodePool,
         // no holder/input, no live card model and therefore no "mark as seen" mutation.
         var card = PreloadManager.Cache.GetScene("res://scenes/cards/card.tscn").Instantiate<NCard>();

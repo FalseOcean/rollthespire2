@@ -129,11 +129,8 @@ internal sealed partial class AncientSearchEditor
                 if (together && row.Options.Count > 0) all.Add(new(act, new([], row.Options.ToArray(), [])));
             }
         }
-        ModelKeySetFilter neow = _draft.Mode == 0 || !_draft.NeowEnabled ? ModelKeySetFilter.Empty : _draft.OfferedTogether
-            ? new([], _draft.NeowOptions.ToArray(), []) : new(_draft.NeowOptions.ToArray(), [], []);
-        return q with { AncientBranches = branches.ToArray(),
-            LegacyWorld = q.LegacyWorld with { AncientOptionFilters = all.ToArray() },
-            LegacyNeow = q.LegacyNeow with { NeowRelics = neow } };
+        return ExportNeowOffers(q with { AncientBranches = branches.ToArray(),
+            LegacyWorld = q.LegacyWorld with { AncientOptionFilters = all.ToArray() } }, _draft);
     }
     internal void ImportQuery(SearchQuery q, AncientOptionConditionProfile premises,
         AncientEditorStateSnapshot? saved = null)
@@ -166,6 +163,7 @@ internal sealed partial class AncientSearchEditor
             }
             _draft.Mode = saved.ActiveMode;
             _draft.LastAdvancedMode = saved.LastAdvancedMode;
+            ImportNeowOffers(q, saved);
             // UI sidecars retain inactive preferences; they may not replace the
             // active personal requirements declared by the saved query, including
             // the Neow offers authored on this page. This also
@@ -195,6 +193,7 @@ internal sealed partial class AncientSearchEditor
             }
             target.NeowOptions.AddRange(q.LegacyNeow.NeowRelics.Any.Concat(q.LegacyNeow.NeowRelics.All));
             target.NeowEnabled = target.NeowOptions.Count > 0;
+            ImportNeowOffers(q, null);
         }
         _draft.Context = "";
     }
@@ -216,6 +215,7 @@ internal sealed partial class AncientSearchEditor
             .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
         var neow = query.LegacyNeow.NeowRelics;
         return System.Text.Json.JsonSerializer.Serialize(new { Rows = rows, Groups = groups,
-            Neow = new { Any = Keys(neow.Any), All = Keys(neow.All), Ban = Keys(neow.Ban) } });
+            Neow = new { Any = Keys(neow.Any), All = Keys(neow.All), Ban = Keys(neow.Ban),
+                Allowed = query.NeowOfferWhitelist is { } allowed ? Keys(allowed.AllowedKeys) : null } });
     }
 }

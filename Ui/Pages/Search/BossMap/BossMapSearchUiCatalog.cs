@@ -1,3 +1,4 @@
+using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.World.Snapshots;
@@ -9,7 +10,10 @@ internal sealed record BossMapVariantDefinition(
     ModelKey ActKey,
     IReadOnlyList<ModelKey> Bosses,
     bool IdentityAvailable,
-    string EvidenceCode);
+    string EvidenceCode)
+{
+    internal IReadOnlyDictionary<EncounterQueueKind, IReadOnlyList<ModelKey>> EncounterPools { get; init; } = new Dictionary<EncounterQueueKind, IReadOnlyList<ModelKey>>();
+}
 
 internal sealed record BossMapActSectionDefinition(
     int Act,
@@ -44,6 +48,17 @@ internal sealed record BossMapSearchUiCatalog(
             RuntimeProfilePolicies.IsModernCore(profileId)
                 ? BuildModern(world.Beta109Generation)
                 : BuildLegacy(world);
+
+        variants = variants.Select(variant =>
+        {
+            var act = world.Beta109Generation?.OrderedActCatalog.FirstOrDefault(a => a.Act == variant.Act && a.ActKey == variant.ActKey);
+            return variant with { EncounterPools = new Dictionary<EncounterQueueKind, IReadOnlyList<ModelKey>>
+            {
+                [EncounterQueueKind.Weak] = act?.WeakEncounters.Select(e => e.EncounterKey).ToArray() ?? [],
+                [EncounterQueueKind.Strong] = act?.RegularEncounters.Select(e => e.EncounterKey).ToArray() ?? [],
+                [EncounterQueueKind.Elite] = act?.EliteEncounters.Select(e => e.EncounterKey).ToArray() ?? []
+            } };
+        }).ToArray();
 
         BossMapActSectionDefinition[] sections = variants
             .GroupBy(variant => variant.Act)

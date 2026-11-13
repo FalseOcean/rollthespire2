@@ -71,7 +71,8 @@ internal sealed partial class AnalysisPage
         string seed = LastFacts!.CanonicalSeed;
         try
         {
-            var map = await Task.Run(() => MapRouteWitnessProjection.CreateMap(seed, act, request.Ascension, request.PlayersCount, cancel.Token), cancel.Token);
+            var map = await Task.Run(() => MapRouteWitnessProjection.CreateMap(seed, act, request.Ascension,
+                request.PlayersCount, request.Authority.VersionResolution.SemanticProfileId, cancel.Token), cancel.Token);
             if (!cancel.IsCancellationRequested && IsInstanceValid(_mapWorkspace) && _mapWorkspace.IsInsideTree() &&
                 _mapWorkspace.Visible && _mapWorkspace.SelectedAct == act && ReferenceEquals(LastRequest, request) && ReferenceEquals(_mapWitnessRequest, request))
                 _mapWorkspace.ShowMap(map, [], null);

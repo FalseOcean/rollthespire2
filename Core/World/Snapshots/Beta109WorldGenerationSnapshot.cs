@@ -188,6 +188,8 @@ public sealed record Beta109EventCatalogAuthoritySnapshot(
 
     public int CharacterCardPoolCount { get; init; }
     public bool CharacterCardPoolCountExact { get; init; }
+    public int NonFoolCharacterCardPoolCount { get; init; }
+    public bool NonFoolCharacterCardPoolCountExact { get; init; }
 
     public bool HasExactFilteringAuthority =>
         SharedRawOrderExact &&
@@ -423,6 +425,7 @@ public sealed record Beta109WorldGenerationSnapshot(
     string SnapshotFingerprint,
     string CaptureDiagnosticCode)
 {
+    public RngSemanticProfileId RngSemantics { get; init; } = RngSemanticProfileId.Modern110;
     public WorldGameMode RequestedGameMode { get; init; } = WorldGameMode.Unknown;
     // Owner of personal projections; shared generation still visits the entire ordered party.
     public int PersonalPlayerSlot { get; init; }
@@ -430,6 +433,7 @@ public sealed record Beta109WorldGenerationSnapshot(
         Array.Empty<IReadOnlyList<Beta109RelicBucketSnapshot>>();
     public IReadOnlyDictionary<string, ModelKey> PartyBossDiscoveryOverrides { get; init; } = new Dictionary<string, ModelKey>();
     public bool PartyBossDiscoveryExact { get; init; }
+    public bool? PartyHasFirstRunIronclad { get; init; }
     public bool HasExactPartyRoster => GameMode == WorldGameMode.Multiplayer && IsMultiplayer &&
         PlayerCount >= 2 && LobbyPlayers.Count == PlayerCount &&
         LobbyPlayers.Select((p, slot) => p.Exact && !p.IsRandomCharacter && p.Slot == slot).All(x => x);

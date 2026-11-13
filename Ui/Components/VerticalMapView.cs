@@ -1,9 +1,8 @@
 using Godot;
-using System.Reflection;
 using RolltheSpire2.Core.Prediction.Maps;
 using RolltheSpire2.Presentation.Localization;
+using RolltheSpire2.Ui.Icons;
 using RolltheSpire2.Ui.Theme;
-using GameNormalPoint = MegaCrit.Sts2.Core.Nodes.Screens.Map.NNormalMapPoint;
 using GamePointType = MegaCrit.Sts2.Core.Map.MapPointType;
 
 namespace RolltheSpire2.Ui.Components;
@@ -20,7 +19,6 @@ internal sealed partial class VerticalMapView : Control
     private Color _backgroundColor = PaperColor;
     private MapPointType? _pointTypeHighlight;
     private MapPosition? _currentPosition;
-    private static readonly MethodInfo? IconName = typeof(GameNormalPoint).GetMethod("IconName", BindingFlags.NonPublic | BindingFlags.Static);
 
     public VerticalMapView()
     {
@@ -144,12 +142,7 @@ internal sealed partial class VerticalMapView : Control
         AddChild(_strokeLine);
         UpdateStrokeLine();
     }
-    internal static Texture2D? ResolveRoomIcon(MapPointType type)
-    {
-        string name = (string?)IconName?.Invoke(null, new object[] { (GamePointType)(int)type })
-            ?? throw new InvalidOperationException("Vanilla map icon resolver unavailable");
-        return ResourceLoader.Load<Texture2D>("res://images/atlases/ui_atlas.sprites/map/icons/" + name + ".tres");
-    }
+    internal static Texture2D? ResolveRoomIcon(MapPointType type) => NativeMapRoomIcons.Resolve((GamePointType)(int)type);
 
     internal static ShaderMaterial CreateIconMaterial(Color backgroundColor)
     {

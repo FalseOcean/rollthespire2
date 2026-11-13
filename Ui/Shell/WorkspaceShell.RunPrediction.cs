@@ -14,10 +14,10 @@ internal sealed partial class WorkspaceShell
     internal void OpenRunPrediction(IRunState run, SeedLibraryContext? observedContext = null)
     {
         var context = observedContext ?? CaptureRunPredictionContext(run, _runtime.Detection.NormalizedVersion, _runtime.Profile.ProfileId,
-            LocalContext.NetId, _persistence!.PredictorContext);
+            LocalContext.NetId, _persistence!.PredictorContext, _predictorController?.CurrentRunPredictionContext);
         if (_predictor is null) CreatePredictor();
         _predictorController!.ClearSeedLibraryOverrides();
-        _predictorController.OpenPredictionContext(run.Rng.StringSeed, context);
+        _predictorController.OpenRunPredictionContext(run.Rng.StringSeed, context);
         SelectTask(Workspace.Analysis);
         _predictor!.ShowLibraryReceipt(_languageCode == "zh"
             ? "当前对局的开局预测；领取顺序请与实机保持一致。"
@@ -26,7 +26,8 @@ internal sealed partial class WorkspaceShell
 
     // Copy context only. Never use or advance the real run's RNG, deck or reward state.
     internal static SeedLibraryContext CaptureRunPredictionContext(IRunState run, string version,
-        Compatibility.RuntimeProfileId profile, ulong? localPlayer, PredictorContextDocument saved)
+        Compatibility.RuntimeProfileId profile, ulong? localPlayer, PredictorContextDocument saved,
+        (string Seed, SeedLibraryContext Context)? liveSelections = null)
     {
         var mode = run.Players.Count > 1 ? WorldGameMode.Multiplayer : WorldGameMode.Singleplayer;
         var players = run.Players.Select((p, slot) => new SeedLibraryPlayer(slot,
@@ -35,13 +36,18 @@ internal sealed partial class WorkspaceShell
         int selected = Math.Max(0, run.Players.ToList().FindIndex(p => p.NetId == localPlayer));
         // Preserve intentional opening selections only for this exact seed/roster/unlock context.
         // A prediction left open for another seed must never overwrite the live run's context.
-        if (mode == WorldGameMode.Multiplayer && saved.PartySeed == run.Rng.StringSeed && saved.Party is { } previous &&
+        var previous = liveSelections?.Context ?? saved.Party;
+        string previousSeed = liveSelections?.Seed ?? saved.PartySeed;
+        if (mode == WorldGameMode.Multiplayer && previousSeed == run.Rng.StringSeed && previous is not null &&
             previous.Mode == mode && previous.GameVersion == version && previous.Profile == profile &&
             previous.Ascension == run.AscensionLevel && previous.Players.Count == players.Length &&
             previous.Players.Where((p, i) => p.Slot != i || p.Character != players[i].Character ||
                 System.Text.Json.JsonSerializer.Serialize(p.Unlocks) != System.Text.Json.JsonSerializer.Serialize(players[i].Unlocks)).Any() == false)
+        {
             players = players.Select((p,i) => p with { AncientPremises = previous.Players[i].AncientPremises,
                 OpeningPremise = previous.Players[i].OpeningPremise, Selection = previous.Players[i].Selection }).ToArray();
+            if (liveSelections is not null) selected = previous.SelectedSlot;
+        }
         else if (mode == WorldGameMode.Singleplayer && saved.PlayersCount == 1 && saved.Seed == run.Rng.StringSeed &&
             saved.CharacterKey == players[0].Character.Serialized && saved.Ascension == run.AscensionLevel)
             players[0] = players[0] with { AncientPremises = saved.AncientOptionConditions,

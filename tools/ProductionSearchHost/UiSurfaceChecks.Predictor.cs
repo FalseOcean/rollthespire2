@@ -120,7 +120,8 @@ internal static partial class UiSurfaceChecks
                     Call(page, "RenderEventDetails", center, template with { EventDisplay = display });
                     for (int frame = 0; frame < 4; frame++) await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
                     var expected = RolltheSpire2.Core.Events.Beta111EventOptionResultProjector.Project(
-                        Beta111Profile.Instance.ComputeRootSeed(document.CanonicalSeed), request!.PlayerSlotIndex, entry);
+                        Beta111Profile.Instance.ComputeRootSeed(document.CanonicalSeed), request!.PlayerSlotIndex, entry,
+                        request.Authority.VersionResolution.SemanticProfileId);
                     var options = center.FindChild("StableEventOptions", true, false);
                     if (options is null || options.GetChildCount() != expected.Count)
                         throw new Exception("Seed event options missing: " + entry);

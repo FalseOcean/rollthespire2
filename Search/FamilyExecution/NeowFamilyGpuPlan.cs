@@ -27,6 +27,7 @@ internal sealed record NeowFamilyGpuPlan(uint[] Meta, uint[] PoolMeta, uint[] Ca
         ((EntryIdentityMode & NeowEntryIdentityMode.TrackSingleRequired) != 0 ? ".EntrySingleIdentityTrack.20261030.v1" : "");
     internal int JointTransformMetaOffset { get; init; } = -1;
     internal bool IsMultiplayer => Meta[6] > 1;
+    internal bool UsesChildShuffle => (Meta[56] & 64u) != 0;
     internal bool HasLocalResults => Meta[83] != 0 || Meta[84] != 0;
     internal const string DenseRevision = "N.Neow.Gpu.LocalDonor.DenseCarry8.CanonicalAbi1Ready.20260905.v2";
     internal const string CompactRevision = "N.Neow.Gpu.LocalDonor.CompactFullDecode.CanonicalAbi1Ready.20260905.v2";

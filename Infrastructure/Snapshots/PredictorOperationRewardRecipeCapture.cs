@@ -83,6 +83,7 @@ internal static class PredictorOperationRewardRecipeCapture
         };
         if (odds == null) return null;
         return new(PredictorRewardKind.Card, CardCount: Read<int>(reward, "<OptionCount>k__BackingField"), Odds: odds.Value,
+            Colorless: options.CardPools.All(pool => pool.IsColorless),
             EncounterSource: options.Source == CardCreationSource.Encounter,
             IsFromCombat: options.Flags.HasFlag(CardCreationFlags.IsFromCombat),
             NoUpgradeRoll: options.Flags.HasFlag(CardCreationFlags.NoUpgradeRoll), CardPoolOverride: pool,

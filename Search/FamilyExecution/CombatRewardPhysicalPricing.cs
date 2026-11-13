@@ -5,7 +5,7 @@ namespace RolltheSpire2.Search.FamilyExecution;
 internal static class CombatRewardPhysicalPricing
 {
     internal static FamilyPhysicalQuote? Quote(CombatRewardPricingInput request, CombatRewardReplay replay,
-        CombatRewardGpuPlan? gpu, FamilyPhysicalQuoteRequest geometry) => replay.UsesNeutralWitness || replay.UsesObservedOpening || replay.UsesQueryLiteralPartyOpening || replay.Plan.NeedsCompleteMatchingReference ? null : gpu?.NumericalVariant == GpuNumericalVariant.IntegerRne ? null :
+        CombatRewardGpuPlan? gpu, FamilyPhysicalQuoteRequest geometry) => replay.UsesChildShuffle || replay.UsesNeutralWitness || replay.UsesObservedOpening || replay.UsesQueryLiteralPartyOpening || replay.Plan.NeedsCompleteMatchingReference ? null : gpu?.NumericalVariant == GpuNumericalVariant.IntegerRne ? null :
         QuoteSixBattleModel(request,replay,gpu,geometry,cpu:false) ?? QuoteMeasured(request,replay,gpu,geometry) ?? QuoteNeutralModel(request,replay,gpu,geometry,cpu:false) ??
         QuoteGenericCardModel(request,replay,gpu,geometry) ?? QuoteGenericScalarModelOnKnownDevice(request,replay,gpu,geometry);
 

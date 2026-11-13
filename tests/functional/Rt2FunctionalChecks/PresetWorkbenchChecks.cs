@@ -62,6 +62,7 @@ internal static class PresetWorkbenchChecks
         CheckAutomaticRestorePreservesSource(runtime, directory, solo);
         CheckUnvisitedPartyAncientSeat(runtime, directory);
         CheckBossOnlyPreset(runtime, frame, store, solo);
+        CheckEncounterPresets(runtime, frame, store, directory);
         WorkbenchSearchDraft? lastParty = null;
         foreach (int count in new[] { 2, 4 })
         {
@@ -93,6 +94,60 @@ internal static class PresetWorkbenchChecks
         Console.WriteLine($"PRESET_WORKBENCH checks={_checks};failures=0;fixtures={directory};seedScans=0");
         frame.Free();
         return 0;
+    }
+
+    private static void CheckEncounterPresets(ModRuntimeSnapshot runtime, QueryWorkbenchFrame frame,
+        SearchPresetStore store, string directory)
+    {
+        var authority = RuntimeAuthorityEnvironment.Current.Authority;
+        var catalog = RuntimeEncounterCatalogCapture.Capture();
+        var gardener = new ModelKey("ENCOUNTER", "PHANTASMAL_GARDENERS_ELITE");
+        Check(catalog.IdentityCaptureComplete && catalog.EncounterKeys.Contains(gardener), "Live encounter catalog includes the reported Elite");
+        Check(!authority.SemanticUniverse.Single(d => d.Domain == RuntimeAuthorityDomains.Bosses)
+            .Items.Any(i => i.StableIdentity == gardener.Serialized), "Reported Elite is outside the Boss fingerprint domain");
+        var basis = new WorkbenchSearchDraft(BaseGameModelKeys.Characters.Silent, 10, SearchQuery.Empty,
+            AncientOptionConditionProfile.BroadDefault);
+        frame.RestoreDraft(basis, render: false);
+        basis = frame.CaptureDraft();
+        foreach (var (kind, id) in new[] { (EncounterQueueKind.Weak, "SEAPUNK_WEAK"),
+            (EncounterQueueKind.Strong, "TWO_TAILED_RATS_NORMAL"), (EncounterQueueKind.Elite, gardener.Entry) })
+        {
+            var draft = basis with { Query = SearchQuery.Empty with { EncounterQueues = [new(1, kind,
+                SearchSequenceRangeMode.FirstN, 1, [new("ENCOUNTER", id)]) { VariantKey = new("ACT", "UNDERDOCKS") }] } };
+            var preset = RoundTrip(runtime, frame, store, directory, draft, "encounter-" + kind);
+            Check(SearchPresetCompatibilityResolver.ResolveWorkbench(preset, authority, catalog).CanLoad,
+                "Complete encounter identity resolves " + kind);
+            Check(SearchPresetCompatibilityResolver.ResolveWorkbench(preset, authority, new([], false, "fixture-incomplete"))
+                .Issue == "CurrentSemanticAuthorityIncomplete", "Incomplete encounter capture stays explicit " + kind);
+        }
+        var missingDraft = basis with { Query = SearchQuery.Empty with { EncounterQueues = [new(1, EncounterQueueKind.Elite,
+            SearchSequenceRangeMode.FirstN, 1, [new("ENCOUNTER", "MISSING_PRESET_ENCOUNTER")])] } };
+        var missing = SearchPresetStore.BuildFromCapture("user:missing-encounter", SearchPresetSource.User,
+            "missing encounter", "", [], Capture(missingDraft), Json);
+        var unresolved = SearchPresetCompatibilityResolver.ResolveWorkbench(missing, authority, catalog);
+        Check(!unresolved.CanLoad && unresolved.Unresolved.Single().StableIdentity == "ENCOUNTER:MISSING_PRESET_ENCOUNTER",
+            "Unknown encounter remains authored and prevents loading");
+
+        // Optional read-only reproduction input, copied into isolated evidence by the caller.
+        if (Environment.GetEnvironmentVariable("RT2_PRESET_CHECK_FILE") is not { Length: > 0 } path) return;
+        string original = File.ReadAllText(path);
+        var reported = SearchPresetStore.Normalize(JsonSerializer.Deserialize<SearchPresetStore.PersistedSearchPreset>(original, Json)!,
+            SearchPresetSource.User, Json);
+        Check(SearchPresetCompatibilityResolver.ResolveWorkbench(reported, authority, catalog).CanLoad,
+            "Reported preset resolves with the native complete identity catalog");
+        var library = new SeedLibraryCanvas(new SeedLibraryStore(Path.Combine(directory, "reported-library")));
+        try
+        {
+            object?[] arguments = [reported, null];
+            bool usable = (bool)typeof(SeedLibraryCanvas).GetMethod("CanUse", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(library, arguments)!;
+            Check(usable, "Library Use action accepts the reported preset");
+        }
+        finally { library.Free(); }
+        frame.ApplyPreset(reported, render: false);
+        AssertSameIntent(runtime, reported.Workbench!, frame.CaptureDraft(), "Reported preset normal Use transaction");
+        Check(File.ReadAllText(path) == original && !frame.HasActiveSearch, "Reported input stays intact and applying leaves Search stopped");
+        Console.WriteLine("PRESET_ENCOUNTER_REPORTED=PASS;id=" + reported.Id);
     }
 
     private static void CheckSharedEditorInputs(ModRuntimeSnapshot runtime, string directory, WorkbenchSearchDraft authored)

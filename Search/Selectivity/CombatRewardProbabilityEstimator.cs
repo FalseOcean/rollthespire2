@@ -65,14 +65,22 @@ internal static partial class CombatRewardProbabilityEstimator
         }
     }
 
-    private readonly record struct CardPoolEntry(ModelKey Key, EffectCardRarity Rarity, EffectCardType Type, int TargetIndex);
+    private readonly record struct CardPoolEntry(ModelKey Key, EffectCardRarity Rarity, EffectCardType Type, int TargetIndex)
+    {
+        internal bool CollectionSafe { get; init; } = true;
+    }
 
     private sealed record CardPoolModel(
         CardPoolEntry[] Entries,
         int[] TotalByRarity,
         int[] PowerByRarity,
         IReadOnlyDictionary<ModelKey, int> TargetIndexByKey,
-        int TargetCount);
+        int TargetCount)
+    {
+        internal int CollectionWindow { get; init; }
+        internal int[]? SafeTotalByRarity { get; init; }
+        internal int[]? SafePowerByRarity { get; init; }
+    }
 
     private sealed record PotionPoolModel(
         int[] TotalByRarity,
@@ -121,19 +129,7 @@ internal static partial class CombatRewardProbabilityEstimator
     public static SearchSelectivityEstimate Estimate(SearchSelectivityInput plan)
     {
         ArgumentNullException.ThrowIfNull(plan);
-        if (plan.CompiledSearch.NormalizedQuery.CombatCardExclusion is not { IsEmpty: false })
-            return EstimateCore(plan);
-        var positive = EstimateOptimizedConditions(plan);
-        var exclusion = EstimateCardExclusion(plan);
-        if (positive.Probability is not { } p || exclusion.Probability is not { } e)
-            return SearchSelectivityEstimate.Unpriced("Probability.CombatReward.ExclusionPartial",
-                positive.Probability.HasValue ? exclusion.EvidenceCode + ";" + exclusion.Notes : positive.EvidenceCode + ";" + positive.Notes);
-        return positive with { Probability = p * e, EstimatedSurvivalRate = p * e,
-            EvidenceCode = "Probability.CombatReward.PositiveAndExclusionIndependent",
-            Notes = $"Positive={p:G17};Exclusion={e:G17};ExclusionRemainsExactOnly",
-            Confidence = SearchSelectivityConfidence.Medium,
-            Assumptions = positive.Assumptions.Concat(exclusion.Assumptions).Append(
-                "PositiveAndExclusionDependenceUnproved=OwnerApprovedIndependentProduct").Distinct().ToArray() };
+        return EstimateCore(plan);
     }
 
     internal static SearchSelectivityEstimate EstimateOptimizedConditions(SearchSelectivityInput input)
@@ -145,7 +141,7 @@ internal static partial class CombatRewardProbabilityEstimator
             return SearchSelectivityEstimate.Exact(1, SearchSelectivityMethod.ConditionalChain,
                 SearchSelectivityCoverage.ExactRequestedPredicate, SearchSelectivityDependencyClass.AssumedIndependent,
                 "Probability.CombatReward.NoOptimizedPredicate", "No positive C predicate participates in the optimized sieve.",
-                ["ExactOnlyExclusionNotCheckedBySieve=true"]);
+                ["CardCollectionNotIncludedInThisPositiveOnlyProjection=true"]);
         return EstimateCore(SearchSelectivityInput.From(compiled));
     }
 
@@ -195,9 +191,17 @@ internal static partial class CombatRewardProbabilityEstimator
         NormalCombatRewardSearchCondition[] conditions = semantic.NormalizedQuery.LegacyCombatRewardConstraints
             .Where(condition => !condition.IsEmpty)
             .ToArray();
+        var collection = semantic.NormalizedQuery.CombatCardExclusion;
+        if (collection is { IsEmpty: false })
+        {
+            if (plan.Authority.AvailableCardIdentities is not { } identities)
+                return SearchSelectivityEstimate.Unpriced("Probability.CombatReward.CollectionIdentityAuthorityUnavailable", "The authored collection is retained.");
+            if (collection.Mode == CombatCardCollectionMode.Blacklist && collection.CardKeys.Except(identities, ModelKeyComparer.Instance).Any())
+                return SearchSelectivityEstimate.Unpriced("Probability.CombatReward.CollectionMemberUnavailable", "The authored blacklist is retained.");
+        }
         if (conditions.Length == 0 &&
             semantic.NormalizedQuery.CombatCardRewards is not { IsEmpty: false } &&
-            semantic.NormalizedQuery.CombatPotionRewards is not { IsEmpty: false })
+            semantic.NormalizedQuery.CombatPotionRewards is not { IsEmpty: false } && collection is not { IsEmpty: false })
             return SearchSelectivityEstimate.Exact(1d, SearchSelectivityMethod.ConditionalChain,
                 SearchSelectivityCoverage.ExactRequestedPredicate, SearchSelectivityDependencyClass.AssumedIndependent,
                 "Probability.CombatReward.Empty", "No active Combat Reward condition remains after normalization.");
@@ -227,6 +231,8 @@ internal static partial class CombatRewardProbabilityEstimator
                 SearchSelectivityCoverage.PartialRequestedConjunction,
                 SearchSelectivityDependencyClass.RouteDependent);
         }
+        if (collection is { IsEmpty: false }) matcher = matcher with {
+            UsesCards = true, MaximumBattleOrdinal = Math.Max(matcher.MaximumBattleOrdinal, collection.BattleCount) };
 
         CardPoolModel cards = new(
             Array.Empty<CardPoolEntry>(),
@@ -255,6 +261,15 @@ internal static partial class CombatRewardProbabilityEstimator
                     SearchSelectivityMethod.ConditionalChain,
                     SearchSelectivityCoverage.PartialRequestedConjunction,
                     SearchSelectivityDependencyClass.RouteDependent);
+            }
+            if (collection is { IsEmpty: false })
+            {
+                var members = collection.CardKeys.ToHashSet(ModelKeyComparer.Instance);
+                var entries = cards.Entries.Select(card => card with { CollectionSafe = collection.Mode == CombatCardCollectionMode.Whitelist
+                    ? members.Contains(card.Key) : !members.Contains(card.Key) }).ToArray();
+                cards = cards with { Entries = entries, CollectionWindow = collection.BattleCount,
+                    SafeTotalByRarity = Enumerable.Range(0, 3).Select(r => entries.Count(c => c.CollectionSafe && RarityIndex(c.Rarity) == r)).ToArray(),
+                    SafePowerByRarity = Enumerable.Range(0, 3).Select(r => entries.Count(c => c.CollectionSafe && c.Type == EffectCardType.Power && RarityIndex(c.Rarity) == r)).ToArray() };
             }
         }
 
@@ -298,6 +313,8 @@ internal static partial class CombatRewardProbabilityEstimator
         string notes = $"ChronologicalNormalCombatReward;context={projectedProfile.Label};" +
             $"{openingEvidence};" +
             $"rewardSurvival={rewardSurvival:G17};Influence={influenceDetail}";
+        if (collection is { IsEmpty: false }) notes += ";CardCollection=" + collection.Mode +
+            ";CollectionWindow=" + collection.BattleCount + ";TargetsAndCollectionShareGeneratedRewards=true";
         var estimate = SearchSelectivityEstimate.Exact(rewardSurvival, SearchSelectivityMethod.ConditionalChain,
             SearchSelectivityCoverage.ExactRequestedConjunction, dependencyClass, "Probability.Authority.CombatRewardProductProjected", notes,
             [
@@ -565,12 +582,13 @@ internal static partial class CombatRewardProbabilityEstimator
         int candyCounter = battleOrdinal - 1;
         bool candy = profile.LastingCandy && CardRewardRelicRules.CandyExtraCardCount(
             LastingCandyCounterPolicy.RewardOfferingOdd, candyCounter, true, true, true) > 0;
-        states = GenerateCardRewardGroup(states, pool, ascension, candy);
+        bool enforceCollection = battleOrdinal <= pool.CollectionWindow;
+        states = GenerateCardRewardGroup(states, pool, ascension, candy, enforceCollection);
         var addition = profile.AdditionalCardReward;
         for (int extra = 0; extra < profile.AdditionalCardRewardCount; extra++)
             states = GenerateCardRewardGroup(states, pool, ascension, includeTrailingPowerCard: profile.LastingCandy &&
                 CardRewardRelicRules.CandyExtraCardCount(LastingCandyCounterPolicy.RewardOfferingOdd,
-                    candyCounter, true, addition.EncounterSource, addition.IsFromCombat) > 0);
+                    candyCounter, true, addition.EncounterSource, addition.IsFromCombat) > 0, enforceCollection: enforceCollection);
 
         return states.Select(pair => (pair.Key, pair.Value)).ToArray();
     }
@@ -579,7 +597,7 @@ internal static partial class CombatRewardProbabilityEstimator
         IReadOnlyDictionary<CardBattleState, double> incoming,
         CardPoolModel pool,
         int ascension,
-        bool includeTrailingPowerCard)
+        bool includeTrailingPowerCard, bool enforceCollection = false)
     {
         var sequence = new Dictionary<CardSequenceState, double>();
         foreach ((CardBattleState state, double mass) in incoming)
@@ -607,7 +625,7 @@ internal static partial class CombatRewardProbabilityEstimator
                     int available = AvailableCount(pool, selectionGroup, selectedRarity, requiredPower);
                     if (available <= 0) continue;
 
-                    foreach ((int TargetIndex, bool IsPower, int Count) candidate in CandidateCategories(pool, selectionGroup, selectedRarity, requiredPower))
+                    foreach ((int TargetIndex, bool IsPower, int Count) candidate in CandidateCategories(pool, selectionGroup, selectedRarity, requiredPower, enforceCollection))
                     {
                         if (candidate.Count <= 0) continue;
                         double candidateMass = (double)candidate.Count / available;
@@ -681,13 +699,14 @@ internal static partial class CombatRewardProbabilityEstimator
         CardPoolModel pool,
         CardGroupState group,
         int rarity,
-        bool requiredPower)
+        bool requiredPower, bool enforceCollection = false)
     {
         int targetCount = 0;
         int targetPowerCount = 0;
         foreach (CardPoolEntry entry in pool.Entries)
         {
             if (entry.TargetIndex < 0 || RarityIndex(entry.Rarity) != rarity) continue;
+            if (enforceCollection && !entry.CollectionSafe) continue;
             if (requiredPower && entry.Type != EffectCardType.Power) continue;
             if ((group.UsedTargetMask & (BigInteger.One << entry.TargetIndex)) != 0) continue;
             targetCount++;
@@ -695,8 +714,10 @@ internal static partial class CombatRewardProbabilityEstimator
             yield return (entry.TargetIndex, entry.Type == EffectCardType.Power, 1);
         }
 
-        int totalAvailable = pool.TotalByRarity[rarity] - UsedTotal(group, rarity);
-        int powerAvailable = pool.PowerByRarity[rarity] - UsedPower(group, rarity);
+        // Keep the original full-pool denominator and rarity fallback. Removing
+        // unsafe outcomes loses probability mass; it never redraws a safe card.
+        int totalAvailable = (enforceCollection ? pool.SafeTotalByRarity! : pool.TotalByRarity)[rarity] - UsedTotal(group, rarity);
+        int powerAvailable = (enforceCollection ? pool.SafePowerByRarity! : pool.PowerByRarity)[rarity] - UsedPower(group, rarity);
         if (requiredPower)
         {
             int otherPower = powerAvailable - targetPowerCount;

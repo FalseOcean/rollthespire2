@@ -42,6 +42,9 @@ internal sealed partial class PredictorRun
     private int _operationHealthEffectsSeen;
     private bool _operationHealthStarted;
     private bool _operationHealthKnown = true;
+    private PredictorOperationEventRng? _completedOperationEventRng;
+    private PredictorOperationEventRng? OperationEventRng() => _eventRng is { } rng
+        ? new(rng.State.S0, rng.State.S1, rng.State.S2, rng.State.S3, rng.CallCount) : _completedOperationEventRng;
     private ImmutableArray<PredictorOperationRandomUpgrade> _operationRandomUpgrades = [];
 
     private void ObserveOperationRandomUpgrade(long sourceId, RolltheSpire2.Core.Identity.ModelKey source,
@@ -135,7 +138,8 @@ internal sealed partial class PredictorRun
                 MendTargetPending = OperationMendTargetPending, MendTargets = OperationMendTargets,
                 OpaqueRestOptions = OperationOpaqueRestOptions },
             Rewards, CompletedChildRewards, _inputs, ShopOffers)
-        { CrystalBoard = ExportOperationCrystalBoard(), TreasureParty = ExportOperationTreasureParty(),
+        { EventRngAfter = OperationEventRng(),
+            CrystalBoard = ExportOperationCrystalBoard(), TreasureParty = ExportOperationTreasureParty(),
             LinkedRewardGroups = OperationLinkedGroups, HealthKnown = _operationHealthKnown,
             MendOutcome = OperationMendOutcome, RandomUpgrades = _operationRandomUpgrades };
     }

@@ -57,13 +57,13 @@ internal static partial class AncientOptionFamily
             Quote = (selected, geometry, _) => FamilyGpuReadback.Reference(selected,
                 FamilyCanonicalMeasuredCost.TryDenseQuote(selected, geometry) ?? AncientOptionPhysicalPricing.Quote(pricing, plan, geometry))
         };
-        var body = new FilterBodyDescription(preparation, "A.AncientOption.Gpu.EventLocal", model.ProfileId) {
+        var body = new FilterBodyDescription(preparation, "A.AncientOption.Gpu.EventLocal" + plan.RuleRevision, model.ProfileId) {
             UsesGpu = true, InputIdentity = identity, PlayersCount = model.Authority.PlayersCount,
             CpuWorkers = preferences.WorkerCount, WindowCapacity = plan.Capacity,
             NumericRequirements = plan.GpuNumericRequirements, Cost = cost, CpuAlternatives = [cpu],
             PerformanceProjection = compact => new(Id,
                 $"A.AncientOption.Gpu.EventLocal.{(compact ? "CompactAbi1" : "Dense")}.CanonicalAbi1Ready.20260922.v2" +
-                    (plan.NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "") + GpuRngRotation.Revision,
+                    (plan.NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "") + GpuRngRotation.Revision + plan.RuleRevision,
                 "A.AncientOption.Neutral.20260907.v1", 1, plan.NumericalVariant == GpuNumericalVariant.IntegerRne
                     ? "NoAcceptedWithinPathCurve;CanonicalAbi1Ready;IntegerRneOperationEstimateAvailable;NoIntegerBodyMeasurement"
                     : "NoAcceptedWithinPathCurve;CanonicalAbi1Ready", true),

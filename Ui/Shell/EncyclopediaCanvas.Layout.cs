@@ -1,6 +1,6 @@
 using Godot;
-using System.Reflection;
 using RolltheSpire2.Presentation.ContentNames;
+using RolltheSpire2.Ui.Icons;
 using RolltheSpire2.Ui.Theme;
 
 namespace RolltheSpire2.Ui.Shell;
@@ -322,10 +322,7 @@ internal sealed partial class EncyclopediaCanvas
     {
         try
         {
-            string? name = typeof(MegaCrit.Sts2.Core.Nodes.Screens.Map.NNormalMapPoint)
-                .GetMethod("IconName", BindingFlags.NonPublic | BindingFlags.Static)?
-                .Invoke(null, [MegaCrit.Sts2.Core.Map.MapPointType.Unknown]) as string;
-            return string.IsNullOrWhiteSpace(name) ? null : ResourceLoader.Load<Texture2D>($"res://images/atlases/ui_atlas.sprites/map/icons/{name}.tres");
+            return NativeMapRoomIcons.Resolve(MegaCrit.Sts2.Core.Map.MapPointType.Unknown);
         }
         catch { return null; }
     }

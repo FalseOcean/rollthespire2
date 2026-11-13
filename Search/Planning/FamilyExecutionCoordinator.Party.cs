@@ -1,4 +1,5 @@
 using RolltheSpire2.Bootstrap;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Search.Compilation;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.Semantics;
@@ -55,9 +56,10 @@ public static partial class FamilyExecutionCoordinator
 
         bool CreateShop(SearchModel child, out FilterBodyDescription? body) =>
             MerchantShopColorlessFamily.TryCreate(child, preferences, out body, gpu);
-        bool CreateRelic(SearchModel child, out FilterBodyDescription? body) => NeowReplayPlan.HasCapsule(child)
-            ? CapsuleRelicFamily.TryCreate(child, preferences, out body, gpu, numerical)
-            : RelicFamily.TryCreate(child, preferences, out body, gpu, numerical);
+        bool CreateRelic(SearchModel child, out FilterBodyDescription? body) =>
+            NeowReplayPlan.HasCapsule(child) && child.Authority.VersionResolution.SemanticProfileId != RngSemanticProfileId.Modern113
+                ? CapsuleRelicFamily.TryCreate(child, preferences, out body, gpu, numerical)
+                : RelicFamily.TryCreate(child, preferences, out body, gpu, numerical);
         bool CreateAncient(SearchModel child, out FilterBodyDescription? body) =>
             AncientOptionFamily.TryCreate(child, preferences, out body, gpu, numerical);
         bool CreateWorld(SearchModel child, out FilterBodyDescription? body) =>

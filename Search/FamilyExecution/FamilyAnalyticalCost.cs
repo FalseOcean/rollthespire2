@@ -272,7 +272,8 @@ public static class FamilyExpectedWorkFold
 
 internal static class MerchantShopColorlessAnalyticalCost
 {
-    internal static FamilyAnalyticalCostProjection Project(ExactSearchEvaluationProjection evaluation)
+    internal static FamilyAnalyticalCostProjection Project(ExactSearchEvaluationProjection evaluation,
+        int callsPerMerchant = RolltheSpire2.Core.Merchant.Beta111NormalMerchantShopsContinuation.CallsPerMerchant)
     {
         ArgumentNullException.ThrowIfNull(evaluation);
         MerchantColorlessSlotCondition[] slots = evaluation.MerchantColorlessConditions.ToArray();
@@ -303,8 +304,8 @@ internal static class MerchantShopColorlessAnalyticalCost
                 "ABI1 ordinal uses two uint words in S"),
             Input(FamilyAnalyticalOperation.RngInitialization, maximumOrdinal > 0 ? 1d : 0d,
                 FamilyAnalyticalWorkVariability.Query, "Named shops stream"),
-            Input(FamilyAnalyticalOperation.RngAdvance, 26d * maximumOrdinal,
-                FamilyAnalyticalWorkVariability.Query, "26 consumed NextUInt64 draws per Merchant"),
+            Input(FamilyAnalyticalOperation.RngAdvance, (callsPerMerchant - 2d) * maximumOrdinal,
+                FamilyAnalyticalWorkVariability.Query, $"{callsPerMerchant - 2} consumed NextUInt64 draws per Merchant"),
             Input(FamilyAnalyticalOperation.HistoricalNextInt, 2d * maximumOrdinal,
                 FamilyAnalyticalWorkVariability.Query, "Two approved integer-limb range reductions per Merchant"),
             Input(FamilyAnalyticalOperation.ObservationWrite, 2d * maximumOrdinal,

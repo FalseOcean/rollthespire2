@@ -1,6 +1,7 @@
 using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Identity;
+using RolltheSpire2.Core.World.Beta109;
 using RolltheSpire2.Core.World.Snapshots;
 
 namespace RolltheSpire2.Ui.Pages.Search.Ancient;
@@ -97,12 +98,10 @@ internal sealed record AncientSearchUiCatalog(
             sections.Add(new AncientActSectionDefinition(act, rows));
         }
 
-        IReadOnlyList<ModelKey> targets = (world.UnlockedCharacters ?? Array.Empty<ModelKey>())
-            .Where(key => key.IsValid &&
-                          key.Category == BaseGameModelKeys.Categories.Character &&
-                          key != characterKey)
-            .Distinct(ModelKeyComparer.Instance)
-            .ToArray();
+        IReadOnlyList<ModelKey> targets = Beta109AncientOptionProvider.OrobasOtherCharacters(characterKey,
+            world.UnlockedCharacters ?? []).Distinct(ModelKeyComparer.Instance).ToArray();
+        if (targets.Count == 0 && world.Beta109Generation is not null && world.UnlockedCharactersExact)
+            targets = [characterKey];
 
         AncientRowDefinition[] allRows = sections.SelectMany(section => section.Rows).ToArray();
         foreach (AncientRowDefinition row in allRows.Where(row =>

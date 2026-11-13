@@ -109,6 +109,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             canonicalSeed,
             sharedRelics,
             characterRelics,
+            RuntimeVersionCompatibility.Resolve(capturedGameVersion).SemanticProfileId,
             out bool relicBagExact,
             out bool nestedRelicHooksExact);
 
@@ -177,6 +178,24 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             merchantColorlessOrderedPool is not null &&
             merchantColorlessOrderedPool.Any(card => card.Rarity == EffectCardRarity.Uncommon) &&
             merchantColorlessOrderedPool.Any(card => card.Rarity == EffectCardRarity.Rare);
+        if (merchantInitialInventoryShapeExact &&
+            RuntimeVersionCompatibility.Resolve(capturedGameVersion).SemanticProfileId == RngSemanticProfileId.Modern113)
+        {
+            // Five different canonical identities are picked before colorless.
+            // Disjoint pools mean the full-inventory blacklist cannot shift U/R
+            // indexes. Three of each potion rarity make every initial stock
+            // draw consume an identity draw even after two earlier removals.
+            var colored = selectedCards.Cards!.Where(c => c.Rarity is EffectCardRarity.Common or EffectCardRarity.Uncommon or EffectCardRarity.Rare)
+                .DistinctBy(c => c.CardKey).ToArray();
+            merchantInitialInventoryShapeExact = colored.Count(c => c.CardType == EffectCardType.Attack) >= 2 &&
+                colored.Count(c => c.CardType == EffectCardType.Skill) >= 2 &&
+                colored.Any(c => c.CardType == EffectCardType.Power) &&
+                !colored.Select(c => c.CardKey).Intersect(merchantColorlessOrderedPool!.Select(c => c.CardKey)).Any() &&
+                merchantColorlessOrderedPool!.Select(c => c.CardKey).Distinct().Count() == merchantColorlessOrderedPool!.Count &&
+                potionExact && potionProcurementHooksExact &&
+                new[] { EffectPotionRarity.Common, EffectPotionRarity.Uncommon, EffectPotionRarity.Rare }.All(r =>
+                    potionPool!.Where(p => p.Rarity == r).Select(p => p.PotionKey).Distinct().Take(3).Count() == 3);
+        }
 
         ModelKey? strikeKey = UniqueDeckKey(deck, card => card.IsBasic && card.IsStrike);
         ModelKey? defendKey = UniqueDeckKey(deck, card => card.IsBasic && card.IsDefend);
@@ -416,7 +435,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         bool events = RuntimeProfilePolicies.SupportsEventResultModel(profile.ProfileId) &&
             ModelDbContainsAll(assembly,"AllCards",Core.Events.Beta111EventResultCatalog.TrashHeapGrabCards) &&
             ModelDbContainsAll(assembly,"AllRelics",Core.Events.Beta111EventResultCatalog.TrashHeapDiveRelics.Concat(Core.Events.Beta111EventResultCatalog.FakeMerchantRelics)) &&
-            ModelDbContainsAll(assembly,"AllCharacters",Core.Events.Beta111EventResultCatalog.ColorfulCharacterOrder);
+            ModelDbContainsAll(assembly,"AllCharacters",Core.Events.Beta111EventResultCatalog.ColorfulOrder(
+                RuntimeVersionCompatibility.Resolve(gameVersion).SemanticProfileId));
         var descriptors = new List<string>();
         foreach (string descriptor in EnumerateModelKeys(unlockState))
         {

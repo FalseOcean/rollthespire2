@@ -1,4 +1,5 @@
 using RolltheSpire2.Bootstrap;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Seed;
 using RolltheSpire2.Core.Rewards;
@@ -24,13 +25,17 @@ internal sealed partial class CombatRewardReplay
     internal CombatRewardNeutralWitness? NeutralWitness { get; }
     internal bool UsesNeutralWitness => NeutralWitness is not null;
     internal bool IsMultiplayer => _players > 1;
+    internal RngSemanticProfileId RngSemantics { get; }
+    internal bool UsesChildShuffle => RuntimeProfilePolicies.UsesChildStreamShuffle(RngSemantics);
+    internal string RuleRevision => UsesChildShuffle ? ".Modern113" : "";
     internal bool UsesCpuAssignmentEarly => _assignmentEarly is not null;
     internal string CpuAssignmentRevision => UsesCpuAssignmentEarly ? ".StreamingAssignmentEarly.20261031.v1" : "";
     internal string CpuRevision => "C.CombatReward.Cpu.AuthoredPrefix.20261013.v2" +
         (UsesNeutralWitness ? CombatRewardNeutralWitness.Revision : "") +
         (UsesObservedOpening ? CombatRewardObservedOpening.Revision : "") +
         (UsesQueryLiteralPartyOpening ? ".PartyQueryLiteralOpening.20261027.v1" : "") +
-        (Plan.NeedsCompleteMatchingReference ? ".CompletePositiveMatching.20261026.v1" : "") + CpuAssignmentRevision;
+        (Plan.NeedsCompleteMatchingReference ? ".CompletePositiveMatching.20261026.v1" : "") +
+        (Plan.CollectionFilterCovered ? ".CardCollection.20261105.v1" : "") + CpuAssignmentRevision + RuleRevision;
     internal int RouteCount { get; }
     internal bool CanUsePotionPrefix { get; }
     internal int? PrecedingNicheDraws { get; }
@@ -45,6 +50,7 @@ internal sealed partial class CombatRewardReplay
     {
         var keys = request.Evaluation.NormalCombatRewardConditions.SelectMany(c => c.Cards.Any.Concat(c.Cards.All)
             .Concat(c.Cards.Ban).Concat(c.Potions.Any).Concat(c.Potions.All).Concat(c.Potions.Ban));
+        if (request.Evaluation.CombatCardExclusion is { IsEmpty: false } collection) keys = keys.Concat(collection.CardKeys);
         catalog = Beta110FastEffectCatalogCompiler.Compile(request.Authority.EffectAuthority, keys);
         if (request.Authority.PlayersCount > 1) catalog = CombatRewardPartyCatalog.Project(request, catalog);
         plan = Beta110CombatRewardFastPlanCompiler.CompileForFamily(request, catalog);
@@ -63,6 +69,7 @@ internal sealed partial class CombatRewardReplay
     {
         if (precedingNicheDraws < 0) throw new ArgumentOutOfRangeException(nameof(precedingNicheDraws));
         PrecedingNicheDraws = precedingNicheDraws;
+        RngSemantics = request.Authority.VersionResolution.SemanticProfileId;
         if (catalog is null || plan is null) TryCompile(request, out catalog, out plan, out _);
         Catalog = catalog;
         _cardSelection = new(Catalog);
@@ -134,12 +141,12 @@ internal sealed partial class CombatRewardReplay
             // nested requirements. Alternatives do not become held facts.
             var nested = heldFacts.Except(grants, ModelKeyComparer.Instance);
             foreach (var key in nested)
-                if (!VanillaRelicRewardEffects.TryGet(request.ProfileId, key, out var effects) ||
+                if (!VanillaRelicRewardEffects.TryGet(request.ProfileId, key, out var effects, RngSemantics) ||
                     !effects.NestedOnObtainPreservesRewardContinuation ||
                     !effects.IsHeldNeutralForNormalCombatReward && !OpeningCombatRewardImpactAdapterRegistry.TryResolve(request.ProfileId, key, out _))
                 { ConservativeOpeningReason = "AuthoredNestedRewardEffectUnresolved:" + key; break; }
         }
-        if (!KaleidoscopeCountOnly && children.Contains(Beta110FastRelicCatalog.Kaleidoscope) &&
+        if (!UsesChildShuffle && !KaleidoscopeCountOnly && children.Contains(Beta110FastRelicCatalog.Kaleidoscope) &&
             (!PrecedingNicheDraws.HasValue || CapsuleNicheAdvances.Any(n => n < 0) || _authoredNicheUnbound))
             ConservativeOpeningReason = "KaleidoscopeUnknownArrivalWithoutFixedDrawProof";
         foreach (byte source in children.Distinct())
@@ -166,7 +173,7 @@ internal sealed partial class CombatRewardReplay
         }
         CanUsePotionPrefix = request.Authority.CanUseCurrentModel && request.Authority.PlayersCount == 1 &&
             request.ProfileId == Compatibility.RuntimeProfileId.Beta111 && Plan.CardPoolAuthorityExact && Plan.PotionPoolAuthorityExact &&
-            Plan.Predicates.Length > 0 && Plan.Predicates.All(p => !p.IsAnyBattle && !p.HasCardPredicate);
+            !Plan.CollectionFilterRequested && Plan.Predicates.Length > 0 && Plan.Predicates.All(p => !p.IsAnyBattle && !p.HasCardPredicate);
     }
 
     // Capture once for this immutable replay; per-candidate calls only read the
@@ -197,22 +204,31 @@ internal sealed partial class CombatRewardReplay
         var rewards = new Beta110FastRng(unchecked(root + RewardsHash));
         var niche = new Beta110FastRng(unchecked(root + NicheHash));
         bool nicheKnown = true;
-        if (Plan.OpeningConsumption.ReplayBonesOffer) rewards.ConsumeUnstableShuffle(_bonesPoolCount);
+        if (Plan.OpeningConsumption.ReplayBonesOffer && !UsesChildShuffle) rewards.ConsumeUnstableShuffle(_bonesPoolCount);
+        var nonCombat = UsesChildShuffle ? CreateNonCombat(root) : default;
         ReadOnlySpan<byte> children = Plan.OpeningConsumption.OrderedRelicIds;
         for (int i = 0; i < children.Length; i++)
         {
             byte id = children[route == 0 ? i : children.Length - 1 - i];
             if (!CombatRewardOpeningReplay.TryReplayQueryLiteralRelicRewardsConsumption(
-                    id, Catalog, _ascension, _defect, ref rewards, ref niche, requireAuthority: false,
-                    multiplayer: false, nicheKnown: nicheKnown))
+                    id, Catalog, _ascension, _defect, ref rewards, ref (UsesChildShuffle ? ref nonCombat : ref niche), requireAuthority: false,
+                    multiplayer: false, nicheKnown: UsesChildShuffle || nicheKnown, semantics: RngSemantics))
                 throw new InvalidOperationException("C.CombatReward.OpeningConsumptionFailed:" + id);
             int advance = CapsuleNicheAdvances[route * 2 + i];
+            if (UsesChildShuffle) continue;
             if (advance < 0) nicheKnown = false;
             else if (nicheKnown) for (int draw = 0; draw < advance; draw++) _ = niche.NextDouble();
         }
-        if (Plan.OpeningConsumption.ReplayBonesOffer && nicheKnown) _ = niche.NextDouble();
+        if (Plan.OpeningConsumption.ReplayBonesOffer && !UsesChildShuffle && nicheKnown) _ = niche.NextDouble();
         nicheState = nicheKnown ? niche.CaptureCheckpoint() : null;
         return CompleteOpening(rewards, new Beta110OpeningRewardState { RewardInfluenceAuthorityExact = true });
+    }
+
+    private Beta110FastRng CreateNonCombat(ulong root)
+    {
+        var rng = new Beta110FastRng(unchecked(root + (ulong)_playerSlot + NeowFamilyReplay.NonCombatHash));
+        if (Plan.OpeningConsumption.ReplayBonesOffer) rng.ConsumeShuffleSeed();
+        return rng;
     }
 
     private Beta110OpeningRewardState CompleteOpening(Beta110FastRng rewards, Beta110OpeningRewardState held)

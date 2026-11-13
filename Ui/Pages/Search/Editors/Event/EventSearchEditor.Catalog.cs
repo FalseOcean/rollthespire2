@@ -1,4 +1,5 @@
 using RolltheSpire2.Ui.Workspace;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Ui.Controls.Pickers;
 using RolltheSpire2.Ui.Shell;
 using RolltheSpire2.Core.Events;
@@ -46,6 +47,14 @@ internal sealed partial class EventSearchEditor
         EventResultConditionKind.TrashHeapGrabCard => Beta111EventResultCatalog.TrashHeapGrabCards,
         EventResultConditionKind.TrashHeapDiveRelic => Beta111EventResultCatalog.TrashHeapDiveRelics,
         _ when EventResultTransformSemantics.IsTransform(kind) => _draft.TransformCards,
-        _ => Beta111EventResultCatalog.ColorfulCharacterOrder
+        _ => throw new InvalidOperationException("EventResult.ObjectPickerOutsideWhitelist:" + kind)
     };
+
+    private ModelKey[] ColorChoices()
+    {
+        var supported = Beta111EventResultCatalog.ColorfulOrder(SemanticProfile);
+        return LegacyColorChoices.Intersect(supported).Concat(supported.Except(LegacyColorChoices)).ToArray();
+    }
+
+    private RngSemanticProfileId SemanticProfile => RuntimeVersionCompatibility.Resolve(_runtime.Detection.DisplayVersion).SemanticProfileId;
 }

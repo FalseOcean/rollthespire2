@@ -62,6 +62,17 @@ internal sealed partial class SearchWorkspace
         // A crash between the workspace and mirror writes must resume its checkpoint.
         if (_workspace.CommittedCursor is { } committed)
             _cursor = CopyCursor(committed);
+        if (_cursor.Initialized && !GameVersionIdentity.From(_cursor.GameVersionIdentity).IsExact)
+        {
+            // Pre-versioned cursor files were paired with the saved environment.
+            // Bind that evidence before a Workbench refresh replaces it.
+            var saved = GameVersionIdentity.From(_environment.GameVersionIdentity);
+            if (saved.IsExact)
+            {
+                _cursor.GameVersionIdentity = saved.ExactVersion;
+                MarkCursorDirty();
+            }
+        }
         NormalizeDocuments();
         ClearLegacyAppearance();
         InitializeFeaturePreferences();
@@ -133,6 +144,14 @@ internal sealed partial class SearchWorkspace
         _workspace = prepared.Workspace;
         InstallBatch(prepared.Batch);
         start ??= prepared.Batch.Start?.Resolution;
+        if (start is { CursorEntrance: { } entrance } && _cursor.GameVersionIdentity != start.CursorGameVersion)
+        {
+            if (GameVersionIdentity.From(_cursor.GameVersionIdentity).IsExact)
+                _cursor.WrapCount = 0;
+            _cursor.GameVersionIdentity = start.CursorGameVersion;
+            _cursor.NextCursor = entrance;
+            MarkCursorDirty();
+        }
         if (start is { InitialContinuation: { } initial, ExplicitOriginChangeId.Length: > 0 } &&
             _cursor.PendingOriginChangeId == start.ExplicitOriginChangeId)
         {
@@ -327,7 +346,7 @@ internal sealed partial class SearchWorkspace
     private static SearchCursorDocument CopyCursor(SearchCursorDocument cursor) => new()
     { Initialized = cursor.Initialized, PersistentOrigin = cursor.PersistentOrigin,
         NextCursor = cursor.NextCursor, WrapCount = cursor.WrapCount,
-        PendingOriginChangeId = cursor.PendingOriginChangeId };
+        PendingOriginChangeId = cursor.PendingOriginChangeId, GameVersionIdentity = cursor.GameVersionIdentity };
 
     private void SetPersistentOriginOrdinal(ulong ordinal, string source)
     {

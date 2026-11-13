@@ -81,7 +81,9 @@ internal sealed partial class NeowOperationOverlay
         {
             stack.CaptionWidth = width;
             stack.CaptionLanguage = RolltheSpire2.Ui.Settings.UiLanguagePreferences.LanguageCode;
-            stack.CaptionHeightValue = stack.HuntTree != null ? HuntCaptionHeight(stack.Caption, width) : CaptionHeight(stack.Caption, width);
+            stack.CaptionHeightValue = stack.HuntTree != null ? HuntCaptionHeight(stack.Caption, width) :
+                CaptionHeight(stack.Caption, stack.Price.HasValue ? Math.Max(1, width - 12) : width) +
+                (stack.Price.HasValue && stack.Caption.Length > 0 ? 6 : 0);
         }
         return IconPathsSize(stack).Y + stack.CaptionHeightValue;
     }
@@ -89,7 +91,7 @@ internal sealed partial class NeowOperationOverlay
     private (Vector2 Size, float Scale, int Columns) GroupMetrics(CardStack stack, float width, float scale)
     {
         int count = stack.Cards.Length;
-        float footer = stack.Price.HasValue ? 40 : 0;
+        float footer = stack.Price.HasValue ? 46 : 0;
         if (stack.Stacked)
         {
             int layers = stack.SingleStack ? count : Math.Min(count, StackLayers);
@@ -220,6 +222,7 @@ internal sealed partial class NeowOperationOverlay
                 stack.Host.AddChild(stack.IconPathsView);
             }
             stack.Label = ArtLabel(stack.Caption); stack.Host.AddChild(stack.Label);
+            if (stack.Price.HasValue) stack.Label.AddThemeStyleboxOverride("normal", AnnotationStyle());
             if (stack.Highlighted) stack.Label.AddThemeColorOverride("font_color", GoldInk);
             foreach (var snapshot in stack.Cards)
             {
@@ -228,7 +231,7 @@ internal sealed partial class NeowOperationOverlay
             }
             if (stack.Price is { } price)
             {
-                stack.PriceView = PriceDisplay(price);
+                stack.PriceView = PriceBadge(price);
                 stack.Host.AddChild(stack.PriceView);
             }
         }
@@ -323,7 +326,10 @@ internal sealed partial class NeowOperationOverlay
                 orderHeight = pathTop + pathSize.Y;
             }
             stack.Label.Position = new(0, orderHeight);
-            if (stack.HuntTree != null) SizeHuntLabel(stack.Label, new(size.X, caption - orderHeight));
+            if (stack.Price.HasValue)
+                SizeWrappedLabel(stack.Label, new(Math.Min(size.X, MainPanelTheme.Regular.GetStringSize(stack.Caption, fontSize: 18).X + 12),
+                    Math.Max(0, caption - orderHeight - 4)));
+            else if (stack.HuntTree != null) SizeWrappedLabel(stack.Label, new(size.X, caption - orderHeight));
             else stack.Label.Size = new(size.X, caption - orderHeight);
             int layers = stack.SingleStack ? stack.Cards.Length : Math.Min(stack.Cards.Length, StackLayers);
             for (int i = 0; i < stack.Tiles.Count; i++)
@@ -348,7 +354,7 @@ internal sealed partial class NeowOperationOverlay
             if (stack.PriceView is { } priceView)
             {
                 var priceSize = priceView.GetCombinedMinimumSize();
-                priceView.Position = new((size.X - priceSize.X) / 2, size.Y - 34);
+                priceView.Position = new((size.X - priceSize.X) / 2, size.Y - priceSize.Y);
                 priceView.Size = priceSize;
             }
         }

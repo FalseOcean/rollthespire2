@@ -1,3 +1,4 @@
+using RolltheSpire2.Compatibility;
 using System.Collections.Immutable;
 using Godot;
 using MegaCrit.Sts2.Core.Entities.Players;
@@ -12,12 +13,13 @@ namespace RolltheSpire2.Infrastructure.Snapshots;
 
 internal static partial class PredictorOperationCapture
 {
-    private static PredictorOperationScene CaptureTreasure(RunState run, Player player, PredictorCatalog catalog, Node? root)
+    private static PredictorOperationScene CaptureTreasure(RunState run, Player player, PredictorCatalog catalog, Node? root,
+        RngSemanticProfileId semanticProfile)
     {
         var sync = RunManager.Instance.TreasureRoomRelicSynchronizer;
         var node = Nodes<NTreasureRoom>(root).LastOrDefault()
             ?? throw new InvalidOperationException("OperationTreasurePresentationMissing");
-        bool opened = Read<bool>(node, "_hasChestBeenOpened");
+        bool opened = TreasureChestOpened(node, semanticProfile);
         var origin = ObservedObtainOrigin(player, root);
         var set = CurrentNativeRewards(run, player, root);
         // Distribution has already assigned the relic and native Obtain has
@@ -43,6 +45,7 @@ internal static partial class PredictorOperationCapture
                     i < votes.Count && votes[i].voteReceived, i < votes.Count ? votes[i].index : null)).ToImmutableArray(),
                 new(rng.state0, rng.state1, rng.state2, rng.state3, rng.counter), opened)
             {
+                SemanticProfile = semanticProfile,
                 AllocationActive = sync.CurrentRelics != null, LocalTreasureAllowed = allowed,
                 OptimisticLocalVote = optimistic == null ? null : new(player.NetId, optimistic.voteReceived, optimistic.index)
             };
@@ -52,5 +55,15 @@ internal static partial class PredictorOperationCapture
         var relic = skipped ? null : sync.CurrentRelics?.FirstOrDefault();
         if (sync.CurrentRelics == null && !opened) throw new InvalidOperationException("OperationTreasureGenerationInProgress");
         return new PredictorOperationTreasureScene(relic == null ? null : Relic(relic, catalog, Id), relic != null, opened);
+    }
+
+    private static bool TreasureChestOpened(NTreasureRoom node, RngSemanticProfileId semanticProfile)
+    {
+        if (semanticProfile != RngSemanticProfileId.Modern113)
+            return Read<bool>(node, "_hasChestBeenOpened");
+        // OpenChest shows the collection after normal and extra rewards,
+        // then closes it and sets Proceed when relic allocation finishes.
+        return Read<bool>(node, "_isRelicCollectionOpen") ||
+            Read<Enum>(node, "_proceedButtonState").ToString() == "Proceed";
     }
 }

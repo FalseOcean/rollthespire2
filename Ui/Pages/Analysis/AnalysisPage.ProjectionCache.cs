@@ -43,7 +43,8 @@ internal sealed partial class AnalysisPage
         var request = LastRequest!;
         string seed = LastFacts!.CanonicalSeed;
         var task = Task.Run(() => Beta111MapPredictor.Predict(seed, request.Authority.ProfileId,
-            actKey, act - 1, request.Ascension, request.PlayersCount, secondBoss, cancellation), cancellation);
+            actKey, act - 1, request.Ascension, request.PlayersCount, secondBoss, cancellation,
+            request.Authority.VersionResolution.SemanticProfileId), cancellation);
         _overviewMaps[act] = task;
         return task;
     }

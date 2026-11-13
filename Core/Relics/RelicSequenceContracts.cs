@@ -81,6 +81,7 @@ public sealed record RelicSequencePredictionResult(
     /// are not a prediction of the relic awarded by each Act's chest.
     /// </summary>
     public IReadOnlyList<RelicSequenceLaneResult> TreasureRoomLanes { get; init; } = [];
+    internal bool? EarlyLastingCandyEligible { get; init; } = true;
 
     public static RelicSequencePredictionResult Unknown(
         RuntimeProfileId profileId,

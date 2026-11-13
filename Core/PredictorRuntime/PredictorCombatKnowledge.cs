@@ -36,7 +36,8 @@ internal enum PredictorCombatDomain
     CardRarityOdds = 1 << 25,
     PotionDropOdds = 1 << 26,
     RewardAlternativeState = 1 << 27,
-    CardRewardHookState = 1 << 28
+    CardRewardHookState = 1 << 28,
+    NonCombatGenerationRng = 1 << 29
 }
 
 internal sealed record PredictorCombatPendingCause(string Code, string Description,

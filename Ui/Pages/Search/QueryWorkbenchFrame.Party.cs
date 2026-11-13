@@ -102,13 +102,17 @@ internal sealed partial class QueryWorkbenchFrame
         if (draft.Players.Count is < 2 or > MaximumPreviewPlayers || draft.Query.Players.Count != draft.Players.Count ||
             draft.Players.Where((p, i) => p.Slot != i || draft.Query.Players[i].Slot != i).Any())
             throw new InvalidOperationException("Party.InvalidDraftSlots");
+        // The fully-unlocked option describes the current game. An older
+        // captured lobby roster needs its actual unlock data to be read again.
+        draft = draft.RefreshAssumedPartyUnlocks(_runtime);
         // Validate the entire authored grammar before touching editor state.
         _editorInputs.Compile(draft, _runtime);
         // Map predicates on a saved player are shared facts at compilation too.
         // Import that same bound map intent instead of losing it in personal editors.
         var boundMaps = PartyInitialQuery.BindSharedConditions(draft.Query);
         var mapQuery = draft.Query with { StandardMaps = boundMaps.StandardMaps,
-            StandardMapRoutes = boundMaps.StandardMapRoutes };
+            StandardMapRoutes = boundMaps.StandardMapRoutes, ElitePrefixResearch = boundMaps.ElitePrefixResearch,
+            EncounterQueues = boundMaps.EncounterQueues };
         ValidateRepresentable(mapQuery with { Players = [] }, allowSharedAncientIdentity: true);
         foreach (var p in draft.Query.Players) ValidateRepresentable(p.Offers.IsEmpty ? p.Conditions :
             p.Conditions with { LegacyNeow = p.Conditions.LegacyNeow with { NeowRelics = p.Offers } });

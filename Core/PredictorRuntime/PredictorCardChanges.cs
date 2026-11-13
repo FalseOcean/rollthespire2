@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using RolltheSpire2.Core.Identity;
+using RolltheSpire2.Core.Rng;
 
 namespace RolltheSpire2.Core.PredictorRuntime;
 
@@ -14,42 +15,39 @@ internal static class PredictorCardChanges
     internal static ImmutableArray<long> TransformCandidates(PredictorContext context, PredictorState state) =>
         state.Deck.Where(id => state.Card(id).Removable && !Definition(context, state.Card(id).Key).IsQuest).ToImmutableArray();
 
-    internal static PredictorState TransformTo(PredictorContext context, PredictorState state, long originalId, ModelKey key)
+    internal static (PredictorState State, PredictorTransformation Change) TransformTo(
+        PredictorContext context, PredictorState state, long originalId, ModelKey key) =>
+        TransformTo(context, state, originalId, Definition(context, key).Prototype);
+
+    internal static (PredictorState State, PredictorTransformation Change) TransformTo(
+        PredictorContext context, PredictorState state, long originalId, PredictorCard replacement)
     {
         if (!state.Deck.Contains(originalId)) throw new ArgumentException("PredictorTransformInstanceMissing");
-        var replacement = Definition(context, key).Prototype;
-        state = state.WithCard(state.Card(originalId) with { Removed = true, SpoilsCoord = null }) with { Deck = state.Deck.Remove(originalId) };
-        return PredictorObtainSources.AddCard(context, state, replacement);
+        replacement = replacement with { Id = state.NextInstanceId };
+        state = state with { NextInstanceId = state.NextInstanceId + 1, Deck = state.Deck.Remove(originalId) };
+        int insertion = state.Deck.Length;
+        state = AddReplacement(context, state, originalId, replacement);
+        return (state, new(originalId, state.Deck[insertion]));
     }
 
-    internal static (PredictorState State, ImmutableArray<PredictorTransformation> Changes) Transform(
+    internal static (PredictorState State, ImmutableArray<PredictorTransformation> Changes) TransformBatch(
         PredictorContext context, PredictorState entry, ImmutableArray<long> targets, PredictorStream stream, CancellationToken token = default,
         bool upgradeReplacementBeforeAdd = false)
     {
-        if (targets.IsDefault || targets.Distinct().Count() != targets.Length ||
-            targets.Any(id => !entry.Deck.Contains(id) || !entry.Card(id).Removable))
-            throw new ArgumentException("PredictorTransformTargetsInvalid");
+        ValidateTargets(entry, targets);
         var catalog = context.Catalog ?? throw new InvalidOperationException("PredictorCatalogMissing");
         var definitions = catalog.CardDefinitions.ToDictionary(d => d.Prototype.Key);
+        var rng = entry.Streams.Single(s => s.Stream == stream).Restore();
         var state = entry;
         var replacements = new List<(int Index, long OriginalId, PredictorCard Replacement)>();
         foreach (long id in targets)
         {
             token.ThrowIfCancellationRequested();
-            var original = state.Card(id);
-            var definition = definitions[original.Key];
-            var pool = catalog.TransformationPools.Single(p => p.Key == definition.TransformationPool).Cards
-                .Where(k => k != original.Key && (definition.Rarity is "Curse" or "Status" || definitions[k].Rarity is "Common" or "Uncommon" or "Rare")).ToArray();
-            if (pool.Length == 0) throw new InvalidOperationException("PredictorTransformPoolDepleted");
-            var draw = state.Draw(stream, 0, pool.Length);
-            state = draw.State;
-            var replacement = definitions[pool[draw.Value]].Prototype with { Id = state.NextInstanceId, FloorAdded = state.Position.Floor };
-            if (upgradeReplacementBeforeAdd && replacement.UpgradeLevel < replacement.MaxUpgradeLevel)
-                replacement = PredictorCardLevelEffects.Reconcile(context, replacement with { UpgradeLevel = replacement.UpgradeLevel + 1 });
-            PredictorSettlementEffects.RequireImplementedCard(replacement, context: context);
+            var replacement = DrawReplacement(context, state, id, rng, catalog, definitions, upgradeReplacementBeforeAdd);
             replacements.Add((state.Deck.IndexOf(id), id, replacement));
             state = state with { NextInstanceId = state.NextInstanceId + 1, Deck = state.Deck.Remove(id) };
         }
+        state = state.WithRng(stream, rng);
         // Vanilla records each index AFTER earlier removals, then List.Sort by
         // that index. Replacements append to Deck; originals are never re-keyed.
         replacements.Sort((a, b) => a.Index.CompareTo(b.Index));
@@ -57,15 +55,64 @@ internal static class PredictorCardChanges
         foreach (var item in replacements)
         {
             token.ThrowIfCancellationRequested();
-            var card = item.Replacement;
-            state = state.WithCard(state.Card(item.OriginalId) with { Removed = true, SpoilsCoord = null });
-            state = state with { Cards = state.Cards.Add(card) };
             int nextDeckIndex = state.Deck.Length;
-            state = PredictorObtainSources.AddExistingCard(context, state, card);
+            state = AddReplacement(context, state, item.OriginalId, item.Replacement);
             changes.Add(new(item.OriginalId, state.Deck[nextDeckIndex]));
         }
         state.Validate();
         return (state, changes.ToImmutable());
+    }
+
+    internal static (PredictorState State, ImmutableArray<PredictorTransformation> Changes, Xoshiro256StarStar Rng) TransformInOrder(
+        PredictorContext context, PredictorState entry, ImmutableArray<long> targets, Xoshiro256StarStar eventRng, CancellationToken token)
+    {
+        ValidateTargets(entry, targets);
+        var catalog = context.Catalog ?? throw new InvalidOperationException("PredictorCatalogMissing");
+        var definitions = catalog.CardDefinitions.ToDictionary(d => d.Prototype.Key);
+        var rng = eventRng.Clone();
+        var state = entry;
+        var changes = ImmutableArray.CreateBuilder<PredictorTransformation>(targets.Length);
+        // Each native TransformToRandom finishes removal, deck add and copy hooks
+        // before the next card is drawn from the same event-local RNG.
+        foreach (long id in targets)
+        {
+            token.ThrowIfCancellationRequested();
+            var replacement = DrawReplacement(context, state, id, rng, catalog, definitions, upgradeBeforeAdd: false);
+            state = state with { NextInstanceId = state.NextInstanceId + 1, Deck = state.Deck.Remove(id) };
+            int insertion = state.Deck.Length;
+            state = AddReplacement(context, state, id, replacement);
+            changes.Add(new(id, state.Deck[insertion]));
+        }
+        state.Validate();
+        return (state, changes.MoveToImmutable(), rng);
+    }
+
+    private static void ValidateTargets(PredictorState state, ImmutableArray<long> targets)
+    {
+        if (targets.IsDefault || targets.Distinct().Count() != targets.Length ||
+            targets.Any(id => !state.Deck.Contains(id) || !state.Card(id).Removable))
+            throw new ArgumentException("PredictorTransformTargetsInvalid");
+    }
+
+    private static PredictorCard DrawReplacement(PredictorContext context, PredictorState state, long originalId,
+        Xoshiro256StarStar rng, PredictorCatalog catalog, Dictionary<ModelKey, PredictorCardDefinition> definitions, bool upgradeBeforeAdd)
+    {
+        var original = state.Card(originalId);
+        var definition = definitions[original.Key];
+        var pool = catalog.TransformationPools.Single(p => p.Key == definition.TransformationPool).Cards
+            .Where(k => k != original.Key && (definition.Rarity is "Curse" or "Status" || definitions[k].Rarity is "Common" or "Uncommon" or "Rare")).ToArray();
+        if (pool.Length == 0) throw new InvalidOperationException("PredictorTransformPoolDepleted");
+        var replacement = definitions[pool[rng.NextInt(pool.Length)]].Prototype with { Id = state.NextInstanceId, FloorAdded = state.Position.Floor };
+        if (upgradeBeforeAdd && replacement.UpgradeLevel < replacement.MaxUpgradeLevel)
+            replacement = PredictorCardLevelEffects.Reconcile(context, replacement with { UpgradeLevel = replacement.UpgradeLevel + 1 });
+        PredictorSettlementEffects.RequireImplementedCard(replacement, context: context);
+        return replacement;
+    }
+
+    private static PredictorState AddReplacement(PredictorContext context, PredictorState state, long originalId, PredictorCard replacement)
+    {
+        state = state.WithCard(state.Card(originalId) with { Removed = true, SpoilsCoord = null });
+        return PredictorObtainSources.AddExistingCard(context, state with { Cards = state.Cards.Add(replacement) }, replacement, isTransformation: true);
     }
 
     internal static PredictorState NeowsTalisman(PredictorContext context, PredictorState state)
@@ -95,7 +142,7 @@ internal sealed partial class PredictorRun
     private PredictorInputResult ApplyNewLeaf(long id, CancellationToken token)
     {
         if (!OperationTransformCandidates().Contains(id)) return PredictorInputResult.Invalid;
-        var result = PredictorCardChanges.Transform(Context, Working, [id], PredictorStream.Niche, token);
+        var result = PredictorCardChanges.TransformBatch(Context, Working, [id], Context.RelicTransformStream, token);
         token.ThrowIfCancellationRequested();
         Working = result.State;
         Accept(new("NewLeafTransform", id, result.Changes.Select(c => c.ReplacementId).ToImmutableArray(), null, null)

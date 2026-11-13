@@ -111,7 +111,9 @@ internal sealed partial class QueryWorkbenchFrame
             q.RelicSequenceConstraints.Any(c => c.Keys.Any.Count > 1) ||
             q.EventSequenceConstraints.Any(c => c.Source is not null || c.Keys.Any.Count > 1) ||
             q.TransformationAggregate is { UsesNeow: true, Opening: TransformationOpening.None };
+        unsupported |= q.EncounterQueues is null || q.EncounterQueues.Any(c => c is null || !c.IsValid);
         unsupported |= q.TreasureRelics is { IsValid: false } || q.FirstActUnknownEventPrefixCount is < 0 or > 3 ||
+            q.FirstActUnknownMonsterPrefixCount is < 0 or > 3 ||
             q.AncientBranches.Any(b => !b.IsValid) ||
             q.VariantBossBranches.Any(b => !b.IsValid) ||
             q.EventSequenceConstraints.Any(c => c.Act is < 1 or > 3 || c.RangeValue < 1) ||
@@ -120,7 +122,8 @@ internal sealed partial class QueryWorkbenchFrame
             q.OpeningRouteRelicRequirement is { RequiredRelicKeys.Count: > 2 } ||
             q.LegacyWorld.AncientOptionFilters.Any(c => c.Act is not (2 or 3) || c.Keys.Any.Count > 0 || c.Keys.Ban.Count > 0 ||
                 q.AncientBranches.Count(b => b.Act == c.Act) != 1) ||
-            q.LegacyNeow.NeowRelics.Any.Count > 0 && q.LegacyNeow.NeowRelics.All.Count > 0;
+            new[] { q.LegacyNeow.NeowRelics.Any.Count, q.LegacyNeow.NeowRelics.All.Count,
+                q.LegacyNeow.NeowRelics.Ban.Count, q.NeowOfferWhitelist is null ? 0 : 1 }.Count(count => count > 0) > 1;
         unsupported |= q.EventResultConditions.GroupBy(c=>c.Kind).Any(g=>g.Count()>1) ||
             q.EventResultConditions.Any(c=>!Enum.IsDefined(c.Kind));
         unsupported |= q.EventResultConditions.Any(c => c.Kind == EventResultConditionKind.TrialNondescriptInitialBasicsContains) &&
@@ -145,9 +148,9 @@ internal sealed partial class QueryWorkbenchFrame
             bool Queued(string id) => q.EventSequenceConstraints.Any(c=>c.Keys.Any.Concat(c.Keys.All).Any(k=>k.Entry==id));
             unsupported |= t.MorphicGrove && !Queued("MORPHIC_GROVE") || t.AromaOfChaos && !Queued("AROMA_OF_CHAOS") || t.WhisperingHollow && !Queued("WHISPERING_HOLLOW") || t.Symbiote && !Queued("SYMBIOTE") || t.TrialNondescript && !Queued("TRIAL");
         }
-        // Legacy Neow sidecar is only used for A's Neow offer set in this editor.
+        // The legacy Neow filter still carries authored menu relations.
         var n = q.LegacyNeow;
-        unsupported |= n.NeowRelics.Ban.Count > 0 || n.RequireNeowsBones || !n.BonesRelics.IsEmpty || n.RequiredBonesCombination.Count > 0 ||
+        unsupported |= n.RequireNeowsBones || !n.BonesRelics.IsEmpty || n.RequiredBonesCombination.Count > 0 ||
             n.RequireSmallCapsule || n.RequireLargeCapsule || !n.CapsuleContainedRelics.IsEmpty || n.RequireWhetstone || n.RequireWarPaint ||
             n.RequiredFinalCurse.HasValue || n.BannedFinalCurses.Count > 0 || n.RequiredBonesAcquisitionOrder.Count > 0 || n.EffectOutputConditions.Count > 0 || n.Preset != NeowSearchPreset.None;
         if (unsupported) throw new InvalidOperationException("integration.load_shape");
@@ -157,7 +160,7 @@ internal sealed partial class QueryWorkbenchFrame
     {
         ["n.guide"]=_neowEditor.GuideOpen,["c.guide"]=_combatEditor.GuideOpen,["r.guide"]=_relicEditor.GuideOpen,
         ["a.guide"]=_ancientEditor.GuideOpen,["e.guide"]=_eventEditor.GuideOpen,["t.guide"]=_transformationEditor.GuideOpen,
-        ["s.guide"]=_shopEditor.GuideOpen,["r.advanced"]=_relicEditor.AdvancedOpen,["a.advanced"]=_ancientEditor.AdvancedOpen,
+        ["s.guide"]=_shopEditor.GuideOpen,["r.advanced"]=_relicEditor.AdvancedOpen,
         ["e.advanced"]=_eventEditor.AdvancedOpen,["m.advanced"]=_actInformationEditor.AdvancedOpen
     };
     private void RestoreUiPreferences()
@@ -172,7 +175,7 @@ internal sealed partial class QueryWorkbenchFrame
         _actInformationEditor.AdvancedOpen=f.GetValueOrDefault("m.advanced");
         string page = _persistence.Preferences.WorkbenchPage;
         if (page == "act") page = "map"; // Older Workbench preference used one combined entry.
-        if (_domainButtons.ContainsKey(page)) _selectedDomain=page;
+        if (_domainButtons.ContainsKey(page) || page == ResearchDomain && ResearchVisible) _selectedDomain=page;
     }
 
     private void BuildProductionDock()
@@ -360,7 +363,8 @@ internal sealed partial class QueryWorkbenchFrame
         if(_planSelector is not null) _planSelector.Disabled=running;
         if(_start is not null) { if(running) _start.Disabled=false; _start.Text=_text.Get(running?"integration.stop":"query.action.start"); }
         if(_runtimeSurface is not null) _runtimeSurface.Visible=_showResults;
-        if(_showResults) foreach(var editor in new Control[] {_neowEditor,_combatEditor,_relicEditor,_ancientEditor,_eventEditor,_actInformationEditor,_transformationEditor,_shopEditor}) editor.Hide();
+        UpdateEditorVisibility();
+        UpdateResearchNavigation();
         UpdateResultNavigation();
     }
 

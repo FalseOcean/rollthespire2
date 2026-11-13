@@ -103,14 +103,14 @@ internal sealed partial class PredictorRun
         var ids = input.DeckCards.Select(target => target.InstanceId).ToImmutableArray();
         if (source.Entry == "NEW_LEAF")
         {
-            var transformed = PredictorCardChanges.Transform(Context, Working, ids, PredictorStream.Niche);
+            var transformed = PredictorCardChanges.TransformBatch(Context, Working, ids, PredictorStream.Niche);
             Working = transformed.State;
             Accept(new("NewLeafTransform", ids[0], transformed.Changes.Select(change => change.ReplacementId).ToImmutableArray(), null, null)
                 { Transformations = transformed.Changes });
             return;
         }
         if (source.Entry == "ROYAL_STAMP")
-            Working = PredictorObtainSources.RoyalStampCandidates(Working,
+            Working = PredictorObtainSources.RoyalStampCandidates(Context, Working,
                 Working.Deck.Where(id => PredictorObtainSources.CanEnchant(Context, Working.Card(id)) &&
                     Working.Card(id).Type is RolltheSpire2.Core.Effects.Snapshots.EffectCardType.Attack or RolltheSpire2.Core.Effects.Snapshots.EffectCardType.Skill).ToImmutableArray()).State;
         var previous = (_obtainDeckSource, _obtainDeckOperation, _obtainDeckPending);

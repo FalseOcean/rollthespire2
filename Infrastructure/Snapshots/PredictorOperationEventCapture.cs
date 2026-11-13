@@ -100,7 +100,8 @@ internal static class PredictorOperationEventCapture
         "UNREST_SITE", "WAR_HISTORIAN_REPY", "WELLSPRING", "DOORS_OF_LIGHT_AND_DARK", "REFLECTIONS",
         "TABLET_OF_TRUTH", "SLIPPERY_BRIDGE", "AROMA_OF_CHAOS", "MORPHIC_GROVE", "SYMBIOTE",
         "WHISPERING_HOLLOW", "ENDLESS_CONVEYOR", "TRIAL", "WELCOME_TO_WONGOS", "DENSE_VEGETATION",
-        "BATTLEWORN_DUMMY", "PUNCH_OFF", "RELIC_TRADER", "HUNGRY_FOR_MUSHROOMS", "THE_LANTERN_KEY"
+        "BATTLEWORN_DUMMY", "PUNCH_OFF", "RELIC_TRADER", "HUNGRY_FOR_MUSHROOMS", "THE_LANTERN_KEY",
+        "MUSEUM_OF_TORTURE", "WATERFALL_OF_OBVIOUS_SECRETS", "WUPPY_IN_TROUBLE", "THERMAE_NONUPEIPE"
     }.ToImmutableHashSet(StringComparer.Ordinal);
 
     internal static PredictorOperationScene Capture(RunState run, EventModel ev, PredictorCatalog catalog, Node? root = null)
@@ -156,7 +157,7 @@ internal static class PredictorOperationEventCapture
         if (ev.Id.Entry == "WAR_HISTORIAN_REPY" && ev.Description?.LocEntryKey == "WAR_HISTORIAN_REPY.pages.EXTRA_UNLOCK_CHEST.description")
             branch = "SECOND_UNLOCK_CHEST";
         if (rewards != null && rootOrigin?.ParentReward == null && (ev.Id.Entry, branch) is not (
-            ("THE_FUTURE_OF_POTIONS", _) or ("COLORFUL_PHILOSOPHERS", _) or
+            ("THE_FUTURE_OF_POTIONS", _) or ("COLORFUL_PHILOSOPHERS", _) or ("WUPPY_IN_TROUBLE", "IGNORE") or
             ("BRAIN_LEECH", "RIP") or ("POTION_COURIER", "GRAB_POTIONS" or "RANSACK") or
             ("THE_LEGENDS_WERE_TRUE", "SLOWLY_FIND_AN_EXIT") or ("WELLSPRING", "BOTTLE") or
             ("WHISPERING_HOLLOW", "GOLD") or ("TRIAL", "NONDESCRIPT_GUILTY") or
@@ -169,6 +170,12 @@ internal static class PredictorOperationEventCapture
             options, new(owner.Creature.CurrentHp, owner.Creature.MaxHp))
         {
             Branch = branch,
+            FixedCurseCount = ev.Id.Entry switch
+            {
+                "WATERFALL_OF_OBVIOUS_SECRETS" => ev.DynamicVars["BeatUpCurseCount"].IntValue,
+                "THERMAE_NONUPEIPE" => ev.DynamicVars["DrinkGuiltyCount"].IntValue,
+                _ => 0
+            },
             RewardScene = rewards,
             TrialAbandonPending = trialConfirmation,
             MimicRestRewards = ev.Id.Entry == "DENSE_VEGETATION" && branch == "REST" && rewards != null,
@@ -252,7 +259,7 @@ internal static class PredictorOperationEventCapture
                 ("MORPHIC_GROVE", "GROUP") or ("WHISPERING_HOLLOW", "HUG") or
                 ("SYMBIOTE", "APPROACH" or "KILL_WITH_FIRE") or
                 ("TRIAL", "MERCHANT_INNOCENT" or "NONDESCRIPT_INNOCENT") or
-                ("DOORS_OF_LIGHT_AND_DARK", "DARK") or ("WELLSPRING", "BATHE") or
+                ("DOORS_OF_LIGHT_AND_DARK", "DARK" or "LIGHT") or ("WELLSPRING", "BATHE") or
                 ("LUMINOUS_CHOIR", "REACH_INTO_THE_FLESH") or
                 ("ROOM_FULL_OF_CHEESE", "GORGE") or ("BRAIN_LEECH", "SHARE_KNOWLEDGE") or
                 ("ENDLESS_CONVEYOR", "GRAB_JELLY_LIVER")))
@@ -278,6 +285,9 @@ internal static class PredictorOperationEventCapture
 
     private static long EventObtainSource(EventModel ev, string? branch, RelicModel obtained) => (ev.Id.Entry, branch) switch
     {
+        ("MUSEUM_OF_TORTURE", "TAKE") => PredictorRun.MuseumRelicSource,
+        ("WATERFALL_OF_OBVIOUS_SECRETS", "BEAT_UP") => PredictorRun.WaterfallRelicSource,
+        ("THERMAE_NONUPEIPE", "DRINK_WATERS") => PredictorRun.ThermaeRelicSource,
         ("TRASH_HEAP", "DIVE_IN") => 1, ("THIS_OR_THAT", "ORNATE") => 4, ("UNREST_SITE", "KILL") => 5,
         ("ROUND_TEA_PARTY", "CONTINUE_FIGHT") => 10, ("ROUND_TEA_PARTY", "ENJOY_TEA") => 11,
         ("LUMINOUS_CHOIR", "OFFER_TRIBUTE") => 13,
@@ -367,9 +377,18 @@ internal static class PredictorOperationEventCapture
                 CardType: Enum.Parse<EffectCardType>(types[potion]!.ToString()!));
         }
         if (ev.Id.Entry == "ENDLESS_CONVEYOR" && key is not ("LEAVE" or "OBSERVE_CHEF" or "LOCKED")) key = "GRAB_" + key;
+        if ((ev.Id.Entry, key) == ("MUSEUM_OF_TORTURE", "TAKE"))
+            return new(key, !option.IsLocked, OfferedRelic: Key(Read<RelicModel>(ev, "_offeredRelic")));
+        if ((ev.Id.Entry, key) == ("THERMAE_NONUPEIPE", "DRINK_WATERS"))
+        {
+            var relic = Read<RelicModel>(ev, "_drinkRelic");
+            return new(key, !option.IsLocked, OfferedRelic: Key(relic), HealthDamage: ev.DynamicVars["DrinkHpLoss"].IntValue)
+            { HasHiddenObtain = OperationSurfaceHoverCapture.MayDisplayRelicObtain(relic) };
+        }
         int? goldCost = (ev.Id.Entry, key) switch
         {
             ("WHISPERING_HOLLOW", "GOLD") or ("LUMINOUS_CHOIR", "OFFER_TRIBUTE") => ev.DynamicVars.Gold.IntValue,
+            ("WATERFALL_OF_OBVIOUS_SECRETS", "NEGOTIATE") => ev.DynamicVars["NegotiateCostKey"].IntValue,
             ("WELCOME_TO_WONGOS", "BARGAIN_BIN") => 100, ("WELCOME_TO_WONGOS", "FEATURED_ITEM") => 200,
             ("WELCOME_TO_WONGOS", "MYSTERY_BOX") => 300, ("RANWID_THE_ELDER", "GOLD") => 100,
             _ => null

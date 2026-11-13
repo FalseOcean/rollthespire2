@@ -28,7 +28,7 @@ internal sealed class NeowSingleplayerLocalCpuPlan
     internal static NeowSingleplayerLocalCpuPlan? TryCompile(NeowReplayPlan plan, NeowCpuPositiveIdentityPlan? identity = null)
     {
         var a = plan.Authority;
-        if (a.PlayersCount != 1 || a.PlayerSlotIndex != 0 || !plan.DirectNestedVanilla111 ||
+        if (a.PlayersCount != 1 || a.PlayerSlotIndex != 0 || !plan.AuditedIdentityReplay ||
             !a.IdentityAuthorityExact || a.EligibleCurseRelicIds.Length == 0 || !a.AllCharacterCardPoolsUnlocked ||
             plan.Bones || plan.RequireBones || plan.HasFinalCurseFastProjection || plan.ExactOnly.Length != 0 ||
             plan.StructuredConditions is not [var condition] || condition.SourceRelicId != plan.Selected)
@@ -57,7 +57,7 @@ internal sealed class NeowSingleplayerLocalCpuPlan
         else if (plan.Selected == Beta110FastRelicCatalog.NewLeaf &&
             condition.Kind == Beta110FastStructuredConditionKind.NewLeafTransform &&
             plan.EnabledDomains == Beta110FastDomain.NewLeafTransform && c.NewLeafTransformAuthorityExact)
-        { pool = c.NewLeafTransformPool; hash = XxHash64.Hash("niche"u8, 0); }
+        { pool = c.NewLeafTransformPool; hash = XxHash64.Hash(a.UsesChildShuffle ? "transformations"u8 : "niche"u8, 0); }
         else return null;
         // The original empty-used draw is exactly one index in the original
         // array, including its duplicate weight. Invalid outputs retain replay.
@@ -98,15 +98,19 @@ internal sealed class NeowSingleplayerLocalCpuPlan
             // complete two-group operation is claimed by the Lost-only change.
             if (!IdentityPass(root)) return false;
             var rewards = new Beta110FastRng(unchecked(root + NeowSingleplayerReplay.RewardsHash));
-            var niche = new Beta110FastRng(unchecked(root + XxHash64.Hash("niche"u8, 0)));
+            var semanticProfile = _plan.Authority.RngSemantics;
+            ulong shuffleHash = _plan.Authority.UsesChildShuffle ? NeowFamilyReplay.NonCombatHash : XxHash64.Hash("niche"u8, 0);
+            var shuffle = new Beta110FastRng(unchecked(root + shuffleHash));
             Span<ushort> offers = stackalloc ushort[6];
             var catalog = _plan.Authority.EffectCatalog;
-            if (!NeowLocalOperators.GenerateKaleidoscopeOffers(_plan.Authority.Ascension, catalog, ref rewards, ref niche, offers[..3], groups: 1))
+            if (!NeowLocalOperators.GenerateKaleidoscopeOffers(_plan.Authority.Ascension, catalog, ref rewards, ref shuffle,
+                    offers[..3], groups: 1, semanticProfile: semanticProfile))
                 throw new InvalidOperationException("NFamilyContinuationAuthorityUnavailable");
             ushort other = _plan.StructuredConditions[0].Target1;
             bool first0 = offers[..3].Contains(_target), first1 = offers[..3].Contains(other);
             if (!first0 && !first1) return false;
-            if (!NeowLocalOperators.GenerateKaleidoscopeOffers(_plan.Authority.Ascension, catalog, ref rewards, ref niche, offers[3..], groups: 1))
+            if (!NeowLocalOperators.GenerateKaleidoscopeOffers(_plan.Authority.Ascension, catalog, ref rewards, ref shuffle,
+                    offers[3..], groups: 1, semanticProfile: semanticProfile))
                 throw new InvalidOperationException("NFamilyContinuationAuthorityUnavailable");
             return first0 && offers[3..].Contains(other) || first1 && offers[3..].Contains(_target);
         }

@@ -126,6 +126,7 @@ internal sealed record VariantOpeningWorldSurvival(
     {
         if (!act.FamilyVariantAllowed) { evidence = "W.ActualVariantReject"; return 0; }
         if (!plan.RequiresSecondBoss && act.Act > plan.MaxRequiredAct) { evidence = "W.NoObservationAtAct"; return 1; }
+        if (act.HasEncounterPredicate) { evidence = "W.EncounterQueueProbabilityUnpriced"; return null; }
         double? events = EstimateEvents(act, out string eventEvidence);
         double? bosses = EstimateBosses(plan, act, finalAct, out string bossEvidence);
         double? other = act.HasAncientPredicate ? null : 1;

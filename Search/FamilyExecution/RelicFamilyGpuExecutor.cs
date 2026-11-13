@@ -207,7 +207,7 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
 
             string source = ShaderSource(fullPlan is not null, fullPlan?.UsesBonesKBoundary == true, bonesKRouteMask,
                 fullPlan?.GenericReplay == true, plan.LocalStateCapacity, fullPlan?.NumericalVariant ?? GpuNumericalVariant.NativeFloat64,
-                fullPlan?.UsesOpeningPrefix == true);
+                fullPlan?.UsesOpeningPrefix == true, plan.Pool.UsesChildShuffle);
             if (fullPlan?.GenericReplay == true)
                 source = source.Replace("#version 450", "#version 450\n#define RT2_R_GENERIC_BAG_CAPACITY " +
                     fullPlan.ConfiguredGenericBagCapacity.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
@@ -248,9 +248,10 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
 
     internal static string ShaderSource(bool rfull, bool bonesKBoundary = false, bool bonesKRouteMask = false,
         bool genericReplay = false, int localStateCapacity = 64,
-        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64, bool openingPrefix = false)
+        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64, bool openingPrefix = false, bool childShuffle = false)
     {
         string source = FamilyGpuComputeUtility.LoadFamilyShaderWithVisibleSeedRootHash(ShaderSuffix);
+        if (childShuffle) source = source.Replace("#version 450", "#version 450\n#define RT2_R_CHILD_SHUFFLE 1", StringComparison.Ordinal);
         source = source.Replace("const int MAX_LOCAL_STATE = 64;", $"const int MAX_LOCAL_STATE = {localStateCapacity};", StringComparison.Ordinal);
         if (bonesKRouteMask) source = source.Replace(
             "uint logical = batch_meta.values[4u] == 0u ? invocation : input_ordinals.values[invocation];",

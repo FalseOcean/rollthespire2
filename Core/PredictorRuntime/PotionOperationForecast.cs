@@ -64,7 +64,7 @@ internal static partial class PotionOperationForecast
         PredictorInput input = new UseOutOfCombatPotion(slot, actual.Id);
         try
         {
-            var result = PredictorSettlementEffects.UseEntropicBrew(hypothetical, snapshot.Context.PotionPool, slot);
+            var result = PredictorSettlementEffects.UseEntropicBrew(snapshot.Context, hypothetical, slot);
             token.ThrowIfCancellationRequested();
             var generated = result.Generated.Select(p => p.Key).ToImmutableArray();
             int obtained = result.State.PotionSlots.Count(p => p != null &&

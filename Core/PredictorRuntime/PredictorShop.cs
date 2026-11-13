@@ -402,7 +402,8 @@ internal sealed partial class PredictorRun
                 replacement = old with { Key = card.Key, Card = card, BaseCost = cardPrice, IsOnSale = false, Revision = _shopRevision + 1 };
                 break;
             case PredictorShopEntryKind.Relic:
-                (string relicRarity, state) = RollRelicRarity(state);
+                (string relicRarity, state) = RollRelicRarity(state, Context.UsesNonCombatGeneration
+                    ? PredictorStream.Shops : PredictorStream.Rewards);
                 var blacklist = _shopEntries.Where(e => e.Kind == PredictorShopEntryKind.Relic && e.Key != null).Select(e => e.Key!.Value).ToImmutableHashSet();
                 (var key, state) = ShopRelic(state, relicRarity, blacklist);
                 (int relicPrice, state) = PriceRelic(state, key);
@@ -450,7 +451,8 @@ internal sealed partial class PredictorRun
         EffectCardType? type, EffectCardRarity? fixedRarity)
     {
         var excluded = current.Where(e => e.Card != null).Select(e => e.Card!.Key).ToImmutableHashSet();
-        var pool = initialPool.Where(c => !excluded.Contains(c.CardKey)).ToList();
+        bool modern = Context.UsesNonCombatGeneration;
+        var pool = (modern ? initialPool : initialPool.Where(c => !excluded.Contains(c.CardKey))).ToList();
         var currentCharacterCards = Context.Catalog!.CharacterCards.Select(c => c.CardKey).ToImmutableHashSet();
         foreach (var modifier in Context.Modifiers.Where(m => m.Key.Entry == "CHARACTER_CARDS"))
         {
@@ -461,16 +463,17 @@ internal sealed partial class PredictorRun
             foreach (var key in target)
                 pool.Add(Context.Catalog.AllCharacterCards.First(c => c.CardKey == key));
         }
+        if (modern) pool = pool.Where(c => !excluded.Contains(c.CardKey)).DistinctBy(c => c.CardKey).ToList();
         pool = pool.Where(c => c.Rarity is not (EffectCardRarity.Basic or EffectCardRarity.Ancient) &&
-            c.IsUnlockedInCapturedPool && !c.IsMultiplayerOnly).ToList();
+            c.IsUnlockedInCapturedPool && (Context.Operation?.PlayerCount > 1 || !c.IsMultiplayerOnly)).ToList();
         var rng = state.Streams.Single(s => s.Stream == PredictorStream.Shops).Restore();
         EffectCardRarity rarity;
         if (fixedRarity is { } fixedValue) rarity = fixedValue;
         else
         {
-            var rarityRng = state.Streams.Single(s => s.Stream == PredictorStream.Rewards).Restore();
+            var rarityRng = modern ? rng : state.Streams.Single(s => s.Stream == PredictorStream.Rewards).Restore();
             float roll = rarityRng.NextFloat();
-            state = state.WithRng(PredictorStream.Rewards, rarityRng);
+            if (!modern) state = state.WithRng(PredictorStream.Rewards, rarityRng);
             rarity = CardRarityRules.EvaluateWithOffset(roll, CardBaseOddsType.Shop,
                 Context.Ascension, state.Odds.CardRarityOffset).Rarity;
             var first = rarity;
@@ -484,10 +487,10 @@ internal sealed partial class PredictorRun
         var options = pool.Where(c => c.Rarity == rarity && (type == null || c.CardType == type)).ToArray();
         if (options.Length == 0) throw new InvalidOperationException("PredictorShopCardPoolDepleted");
         var selected = options[rng.NextInt(options.Length)];
+        var upgradeRng = modern ? rng : state.Streams.Single(s => s.Stream == PredictorStream.Rewards).Restore();
+        upgradeRng.NextFloat();
         state = state.WithRng(PredictorStream.Shops, rng);
-        var rewards = state.Streams.Single(s => s.Stream == PredictorStream.Rewards).Restore();
-        rewards.NextFloat();
-        state = state.WithRng(PredictorStream.Rewards, rewards);
+        if (!modern) state = state.WithRng(PredictorStream.Rewards, upgradeRng);
         var card = ApplyMerchantCardResults(PredictorInitialization.ToCard(selected));
         return (card, state);
     }
@@ -513,11 +516,12 @@ internal sealed partial class PredictorRun
         return (price, state.WithRng(PredictorStream.Shops, rng));
     }
 
-    private static (string Rarity, PredictorState State) RollRelicRarity(PredictorState state)
+    private static (string Rarity, PredictorState State) RollRelicRarity(PredictorState state,
+        PredictorStream stream = PredictorStream.Rewards)
     {
-        var rng = state.Streams.Single(s => s.Stream == PredictorStream.Rewards).Restore();
+        var rng = state.Streams.Single(s => s.Stream == stream).Restore();
         float roll = rng.NextFloat();
-        return (roll < .5f ? "Common" : roll < .83f ? "Uncommon" : "Rare", state.WithRng(PredictorStream.Rewards, rng));
+        return (roll < .5f ? "Common" : roll < .83f ? "Uncommon" : "Rare", state.WithRng(stream, rng));
     }
 
     private (ModelKey Key, PredictorState State) ShopRelic(PredictorState state, string rarity, ImmutableHashSet<ModelKey> blacklist)

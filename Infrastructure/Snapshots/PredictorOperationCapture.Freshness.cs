@@ -1,3 +1,4 @@
+using RolltheSpire2.Compatibility;
 using Godot;
 using System.Collections.Immutable;
 using MegaCrit.Sts2.Core.Context;
@@ -97,18 +98,19 @@ internal static partial class PredictorOperationCapture
             // Retain the actual parent reward/shop/Ancient continuation and
             // source observation. Reusing definitions never certifies a parent
             // whose generated options, pending task or source has changed.
-            Scene = (object)(captured ? snapshot.Scene : CaptureScene(run, player, catalog, sceneRoot)),
+            Scene = (object)(captured ? snapshot.Scene : CaptureScene(run, player, catalog, sceneRoot, snapshot.Context.VersionResolution.SemanticProfileId)),
             Completion = Id(ReadNullable(selector, "_completionSource")!), Source = Id(source.Relic), SourceTask = Id(source.Task),
             source.ChildrenStarted, source.Ordinal, SourceReward = source.Reward == null ? 0 : Id(source.Reward),
             Modifiers = run.Modifiers.Select(Id).ToArray(),
             // Relic-owned removed cards are represented by the relic DTO; only
             // actual ordered deck cards are selectable transform inputs.
-            Cards = captured ? state.Deck.Select(state.Card).ToArray() : player.Deck.Cards.Select(c => Card(c, catalog)).ToArray(),
+            Cards = captured ? state.Deck.Select(state.Card).ToArray() :
+                player.Deck.Cards.Select(c => Card(c, catalog, snapshot.Context.UsesNonCombatGeneration)).ToArray(),
             Relics = captured ? state.Relics : player.Relics.Select(r => Relic(r, catalog, Id)).ToImmutableArray(),
             Potions = captured ? state.PotionSlots : player.PotionSlots.Select(p => p == null ? null : new PredictorPotion(Id(p), Key(p))).ToImmutableArray(),
             Gold = captured ? state.GoldBudget : player.Gold,
             Hp = captured ? snapshot.CurrentHp : player.Creature.CurrentHp, MaxHp = captured ? snapshot.MaximumHp : player.Creature.MaxHp,
-            Rng = captured ? state.Streams : Streams(run, player),
+            Rng = captured ? state.Streams : CaptureStreams(run, player, snapshot.Context),
             PersonalBag = captured ? state.PersonalBag : Bag(player.RelicGrabBag), SharedBag = captured ? state.SharedBag : Bag(run.SharedRelicGrabBag),
             Odds = captured ? state.Odds : new PredictorOdds(odds.CardRarityOddsValue, odds.PotionRewardOddsValue),
             Candidates = Read<IReadOnlyList<MegaCrit.Sts2.Core.Models.CardModel>>(selector, "_cards").Select(Id).ToArray(),
@@ -121,11 +123,13 @@ internal static partial class PredictorOperationCapture
         ImmutableArray<RolltheSpire2.Core.Identity.ModelKey> Cards);
 
     // Reuses the captured catalog; scene/native observation does not rebuild it.
-    internal static string ObservationStamp(RunState run, PredictorCatalog catalog, Node? root)
+    internal static string ObservationStamp(RunState run, PredictorCatalog catalog, Node? root,
+        RngSemanticProfileId semanticProfile = RngSemanticProfileId.Modern110)
     {
         RuntimeSnapshotThreadGuard.RequireMainThread();
         var player = LocalContext.GetMe(run) ?? throw new InvalidOperationException("OperationLocalPlayerMissing");
-        return Hash(new { Native = NativeStamp(run, player, root), Scene = (object)CaptureScene(run, player, catalog, root) });
+        return Hash(new { Native = NativeStamp(run, player, root, semanticProfile == RngSemanticProfileId.Modern113),
+            Scene = (object)CaptureScene(run, player, catalog, root, semanticProfile) });
     }
 
     // A cheap observation check for the active Neow hover, not a replacement for
@@ -137,7 +141,7 @@ internal static partial class PredictorOperationCapture
         var player = LocalContext.GetMe(run) ?? throw new InvalidOperationException("OperationLocalPlayerMissing");
         return Hash(new
         {
-            Native = NativeStamp(run, player, root),
+            Native = NativeStamp(run, player, root, captureSort: TryNonCombatGeneration(player) is not null),
             Scene = (object)PredictorOperationAncientCapture.Capture(run, neow, catalog, root)
         });
     }

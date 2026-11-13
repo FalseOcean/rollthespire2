@@ -42,7 +42,7 @@ internal static class Beta111CanonicalEventShopSearchEvaluator
 
         SearchQueryEvaluation combined = ProductionExactSearchEvaluator.CombineIndependentEvaluations(aggregate, eventResult, merchant);
         return combined.Disposition == SearchDisposition.Match
-            ? SearchQueryEvaluation.Match(evidence.Distinct().ToArray())
+            ? SearchQueryEvaluation.Match(evidence.Distinct().ToArray()) with { RouteRejections = aggregate.RouteRejections }
             : combined;
     }
 
@@ -58,25 +58,34 @@ internal static class Beta111CanonicalEventShopSearchEvaluator
         Beta111EventResultProjection? projection = null;
 
         var evidence = new List<SearchMatchEvidence>();
+        SearchQueryEvaluation? unresolved = null;
         foreach ((EventResultSearchCondition condition, int index) in
                  plan.Evaluation.EventResultConditions.Select((condition, index) => (condition, index)))
         {
             if (condition.Kind > EventResultConditionKind.MorphicGroveGroupInitialBasicsContains)
             {
-                if (!condition.IsValid) return SearchQueryEvaluation.Unsupported("EventResult.InvalidWhitelistCondition");
-                if (!eventAuthority.IsBeta111) return SearchQueryEvaluation.Unsupported("EventResult.Beta111Required");
+                if (!condition.IsValid || !eventAuthority.IsBeta111)
+                {
+                    unresolved ??= SearchQueryEvaluation.Unsupported(!condition.IsValid
+                        ? "EventResult.InvalidWhitelistCondition" : "EventResult.Beta111Required");
+                    continue;
+                }
                 bool match;
                 if (EventResultTransformSemantics.IsTransform(condition.Kind))
                 {
                     MorphicGrovePredictor.ValidateAuthority(plan.Detection, authority, condition.MorphicGroveScenario!);
                     var result = EventResultTransformSemantics.Evaluate(rootHash, condition);
-                    if (result == MorphicGrovePredicateResult.Unknown) return SearchQueryEvaluation.Unknown("EventResult.InitialBasicPoolUnknown");
+                    if (result == MorphicGrovePredicateResult.Unknown)
+                    {
+                        unresolved ??= SearchQueryEvaluation.Unknown("EventResult.InitialBasicPoolUnknown");
+                        continue;
+                    }
                     match = result == MorphicGrovePredicateResult.Match;
                 }
                 else match = condition.Kind switch {
                     EventResultConditionKind.TrialCase => Beta111TrialTinkerProjector.TrialCase(rootHash, authority.PlayerSlotIndex) == (int)condition.TrialCase!,
                     EventResultConditionKind.TinkerTimeTypeAndRider => Beta111TrialTinkerProjector.TinkerContains(rootHash, authority.PlayerSlotIndex,
-                        (int)condition.TinkerCardType!, (int?)condition.TinkerRider),
+                        (int)condition.TinkerCardType!, (int?)condition.TinkerRider, eventAuthority.RngSemantics),
                     _ => throw new InvalidOperationException("EventResult.UnrecognizedWhitelistKind") };
                 if (!match) return SearchQueryEvaluation.NoMatch("EventResult.WhitelistRejected:" + condition.Kind);
                 evidence.Add(new SearchMatchEvidence("EventResultConditionMatched", condition.TargetKey,
@@ -88,22 +97,36 @@ internal static class Beta111CanonicalEventShopSearchEvaluator
             }
             if (condition.Kind == EventResultConditionKind.MorphicGroveGroupInitialBasicsContains)
             {
-                if (!condition.IsValid) return SearchQueryEvaluation.Unsupported("MorphicGrove.InvalidInitialBasicsScenario");
+                if (!condition.IsValid)
+                {
+                    unresolved ??= SearchQueryEvaluation.Unsupported("MorphicGrove.InvalidInitialBasicsScenario");
+                    continue;
+                }
                 var root = TrustedRootHashInput.RootOnly(rootHash);
                 if (!SeedPredictionRequest.TryCreateFromRootHash(root, authority.Character, plan.Ascension,
                     authority.PlayersCount, authority.PlayerSlotIndex, authority, plan.Evaluation.AncientOptionConditions, SeedPredictionDomainSelection.None,
                     SeedPredictionInputLimits.DefaultRelicSequencePreviewCount, plan.IncludeDiagnostics,
                     out var request, out var error))
-                    return SearchQueryEvaluation.Unknown("MorphicGrove.RequestRejected:" + error);
+                {
+                    unresolved ??= SearchQueryEvaluation.Unknown("MorphicGrove.RequestRejected:" + error);
+                    continue;
+                }
                 var prediction = RuntimeProfileRegistry.PredictMorphicGrove(plan.Detection, request!,
                     condition.MorphicGroveScenario!, MorphicGroveCommitment.InitialBasics);
                 if (prediction.Projection is null)
-                    return prediction.Precision == PredictionPrecision.Unsupported
+                {
+                    unresolved ??= prediction.Precision == PredictionPrecision.Unsupported
                         ? SearchQueryEvaluation.Unsupported(prediction.Evidence) : SearchQueryEvaluation.Unknown(prediction.Evidence);
+                    continue;
+                }
                 var result = condition.MorphicGroveSecondCard is { } second
                     ? Beta111MorphicGroveProjector.ContainsPair(prediction.Projection, condition.TargetKey, second, finalDeckCard: false)
                     : Beta111MorphicGroveProjector.Contains(prediction.Projection, condition.TargetKey, finalDeckCard: false);
-                if (result == MorphicGrovePredicateResult.Unknown) return SearchQueryEvaluation.Unknown(prediction.Evidence);
+                if (result == MorphicGrovePredicateResult.Unknown)
+                {
+                    unresolved ??= SearchQueryEvaluation.Unknown(prediction.Evidence);
+                    continue;
+                }
                 if (result == MorphicGrovePredicateResult.NoMatch) return SearchQueryEvaluation.NoMatch("MorphicGrove.ContainsRejected");
                 evidence.Add(new SearchMatchEvidence("EventResultConditionMatched", condition.TargetKey,
                     "event-result:morphic-grove:group:initial-basics:raw-contains" +
@@ -115,8 +138,6 @@ internal static class Beta111CanonicalEventShopSearchEvaluator
                 continue;
             }
             projection ??= Beta111EventResultProjector.Project(rootHash, authority.PlayerSlotIndex, eventAuthority);
-            if (projection.TrashHeapPrecision == PredictionPrecision.Unsupported || projection.FakeMerchantPrecision == PredictionPrecision.Unsupported)
-                return SearchQueryEvaluation.Unsupported(projection.EvidenceCode);
             bool matched;
             ModelKey? relatedKey = condition.TargetKey;
             PredictionPrecision precision;
@@ -144,13 +165,18 @@ internal static class Beta111CanonicalEventShopSearchEvaluator
                     source = "event-result:fake-merchant:inventory";
                     break;
                 default:
-                    return SearchQueryEvaluation.Unsupported("EventResultConditionKindUnsupported");
+                    unresolved ??= SearchQueryEvaluation.Unsupported("EventResultConditionKindUnsupported");
+                    continue;
             }
 
-            if (precision == PredictionPrecision.Unsupported)
-                return SearchQueryEvaluation.Unsupported($"EventResultObservableUnsupported:{condition.Kind}");
             if (precision != PredictionPrecision.Exact)
-                return SearchQueryEvaluation.Unknown($"EventResultObservableNotExact:{condition.Kind}");
+            {
+                unresolved ??= precision == PredictionPrecision.Unsupported
+                    ? SearchQueryEvaluation.Unsupported(eventAuthority.IsBeta111
+                        ? Beta111EventResultProjector.StaticCatalogIncomplete : projection.EvidenceCode)
+                    : SearchQueryEvaluation.Unknown($"EventResultObservableNotExact:{condition.Kind}");
+                continue;
+            }
             if (!matched)
                 return SearchQueryEvaluation.NoMatch($"EventResultConditionRejected:{condition.Kind}:{index}");
 
@@ -166,7 +192,7 @@ internal static class Beta111CanonicalEventShopSearchEvaluator
                 ConditionId: "event-result-" + index));
         }
 
-        return SearchQueryEvaluation.Match(evidence);
+        return unresolved ?? SearchQueryEvaluation.Match(evidence);
     }
 
 }

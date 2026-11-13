@@ -19,7 +19,7 @@ internal static class NeowSingleplayerReplay
         int count = identity.FixedCandidates.Length;
         foreach (var choice in identity.AppendChoices)
             positive[count++] = rng.NextBool() ? choice.TrueCandidate : choice.FalseCandidate;
-        rng.UnstableShuffle(positive[..count]);
+        rng.UnstableShuffle(positive[..count], authority.RngSemantics);
         ulong top = Bit(positive[0]) | Bit(positive[1]) | Bit(curse);
         bool pass = (plan.TopAny == 0 || (top & plan.TopAny) != 0) & ((top & plan.TopAll) == plan.TopAll) &
             ((top & plan.TopBan) == 0) & (plan.Selected == Beta110FastRelicCatalog.InvalidId || (top & Bit(plan.Selected)) != 0) &
@@ -31,7 +31,12 @@ internal static class NeowSingleplayerReplay
         {
             Span<byte> pool = stackalloc byte[authority.BonesEligibleRelicIds.Length];
             authority.BonesEligibleRelicIds.CopyTo(pool);
-            rewards.UnstableShuffle(pool);
+            if (authority.UsesChildShuffle)
+            {
+                var nonCombat = new Beta110FastRng(unchecked(root + NeowFamilyReplay.NonCombatHash));
+                nonCombat.UnstableShuffle(pool, authority.RngSemantics);
+            }
+            else rewards.UnstableShuffle(pool);
             first = pool[0]; second = pool[1];
             ulong pair = Bit(first) | Bit(second);
             pass &= (plan.BonesAny == 0 || (pair & plan.BonesAny) != 0) & ((pair & plan.BonesAll) == plan.BonesAll) & ((pair & plan.BonesBan) == 0);
@@ -100,11 +105,10 @@ internal static class NeowSingleplayerReplay
     internal static bool RouteAtArrival(ulong root, NeowReplayPlan plan, byte first, byte second,
         Beta110FastRng afterBones, int firstAdvance, int secondAdvance)
     {
-        bool rewardsNeeded = (plan.EnabledDomains & ~(Beta110FastDomain.FinalCurse | Beta110FastDomain.NewLeafTransform |
-            Beta110FastDomain.LeafyPoulticeTransforms | Beta110FastDomain.PhialHolsterPotions)) != 0;
-        bool nicheNeeded = plan.HasFinalCurseFastProjection || (plan.EnabledDomains & Beta110FastDomain.NewLeafTransform) != 0 || rewardsNeeded;
-        bool transformationsNeeded = (plan.EnabledDomains & Beta110FastDomain.LeafyPoulticeTransforms) != 0;
-        bool potionsNeeded = (plan.EnabledDomains & Beta110FastDomain.PhialHolsterPotions) != 0;
+        bool rewardsNeeded = plan.NeedsRewards;
+        bool nicheNeeded = plan.NeedsNicheOrKaleidoscopePools;
+        bool transformationsNeeded = plan.NeedsTransformations;
+        bool potionsNeeded = plan.NeedsPotions;
         // Unconsumed route-local streams need no SplitMix setup. Preserve every
         // authored burn and the observation's Rewards continuation unchanged.
         var rewards = plan.Bones ? afterBones
@@ -113,16 +117,19 @@ internal static class NeowSingleplayerReplay
             ? new Beta110FastRng(unchecked(root + NicheHash)) : default;
         var transformations = transformationsNeeded ? new Beta110FastRng(unchecked(root + TransformationsHash)) : default;
         var potions = potionsNeeded ? new Beta110FastRng(unchecked(root + PotionHash)) : default;
+        var nonCombat = plan.Authority.UsesChildShuffle ? NeowFamilyReplay.NonCombatRng(root, plan) : default;
         Span<byte> matched = stackalloc byte[plan.StructuredConditions.Length]; matched.Clear();
         bool nicheUnknown = false;
         for (int pickup = 0; pickup < 2; pickup++)
         {
             byte relic = pickup == 0 ? first : second;
             if (relic == Beta110FastRelicCatalog.InvalidId) continue;
-            if (nicheUnknown && NeowCapsuleNicheContinuation.ReadsNiche(relic))
+            if (nicheUnknown && (plan.Authority.UsesChildShuffle
+                    ? relic is Beta110FastRelicCatalog.Kaleidoscope or Beta110FastRelicCatalog.PhialHolster
+                    : NeowCapsuleNicheContinuation.ReadsNiche(relic)))
             {
-                // Unknown only affects dependent Niche identities. K's Rewards
-                // consumption is fixed; independent later predicates still run.
+                // Keep dependent identities for Exact while retaining K's fixed
+                // Rewards consumption and the independent checks.
                 if(relic==Beta110FastRelicCatalog.Kaleidoscope && rewardsNeeded)
                     for(int i=0;i<18;i++) rewards.NextFloat();
                 for(int i=0;i<plan.StructuredConditions.Length;i++)
@@ -132,11 +139,11 @@ internal static class NeowSingleplayerReplay
             {
                 if (!NeowSingleplayerOperators.ExecuteRelic(relic, true, plan, plan.Authority.EffectCatalog, rewardsNeeded, nicheNeeded,
                     transformationsNeeded, potionsNeeded,
-                    ref rewards, ref niche, ref transformations, ref potions, matched))
+                    ref rewards, ref niche, ref transformations, ref potions, ref nonCombat, matched))
                     throw new InvalidOperationException("NFamilyContinuationAuthorityUnavailable");
             }
             int advance = relic == first ? firstAdvance : secondAdvance;
-            if(advance<0) nicheUnknown=true;
+            if(advance<0 || NeowCapsuleNonCombatContinuation.IsUnknown(plan, relic)) nicheUnknown=true;
             else for (int i = 0; i < advance; i++) niche.NextInt(2);
         }
         bool allMatched = true;
@@ -146,7 +153,7 @@ internal static class NeowSingleplayerReplay
         {
             if(nicheUnknown) return true;
             var pool = plan.Authority.EffectCatalog.GeneratedCurseIds;
-            ushort curse = pool[niche.NextInt(pool.Length)];
+            ushort curse = pool[(plan.Authority.UsesChildShuffle ? ref nonCombat : ref niche).NextInt(pool.Length)];
             bool curseMatches = true;
             foreach (ushort target in plan.RequiredFinalCurseIds) curseMatches &= target == curse;
             foreach (ushort target in plan.BannedFinalCurseIds) curseMatches &= target != curse;

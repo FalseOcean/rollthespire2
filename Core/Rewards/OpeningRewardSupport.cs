@@ -56,7 +56,12 @@ public static class OpeningRewardSupport
         RuntimeProfileId profileId,
         IEnumerable<ModelKey> obtainedRelicKeys,
         IEnumerable<ModelKey> nestedRelicKeys,
-        Func<ModelKey, bool?> isKnownModdedRelic)
+        Func<ModelKey, bool?> isKnownModdedRelic) =>
+        EvaluateRoute(profileId, obtainedRelicKeys, nestedRelicKeys, isKnownModdedRelic, RngSemanticProfileId.Modern110);
+
+    internal static OpeningRewardSupportEvaluation EvaluateRoute(RuntimeProfileId profileId,
+        IEnumerable<ModelKey> obtainedRelicKeys, IEnumerable<ModelKey> nestedRelicKeys,
+        Func<ModelKey, bool?> isKnownModdedRelic, RngSemanticProfileId semantics)
     {
         ArgumentNullException.ThrowIfNull(obtainedRelicKeys);
         ArgumentNullException.ThrowIfNull(nestedRelicKeys);
@@ -82,7 +87,7 @@ public static class OpeningRewardSupport
             if (!VanillaRelicRewardEffects.TryGet(
                     profileId,
                     relicKey,
-                    out VanillaRelicRewardEffect record))
+                    out VanillaRelicRewardEffect record, semantics))
             {
                 rewardDomainResolved = false;
                 bool knownModded = isKnownModdedRelic(relicKey) == true;

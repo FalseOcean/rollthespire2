@@ -33,8 +33,7 @@ internal sealed record VariantOpeningPreparation(
         var generation = compiled.Context.Authority.WorldAuthority?.Beta109Generation;
         var evidence = new List<string>();
         var rows = new List<VariantOpeningActAllowance>();
-        int prefix = Math.Max(query.FirstActUnknownEventPrefixCount,
-            query.Players.Select(player => player.Conditions.FirstActUnknownEventPrefixCount).DefaultIfEmpty(0).Max());
+        int prefix = UnknownRoomPrefixRequirements.Count(query);
         var requestedActs = query.VariantBossBranches.Select(branch => branch.Act)
             .Concat(query.EventSequenceConstraints.Where(condition => !condition.IsEmpty &&
                 condition.Keys.All.Count + condition.Keys.Any.Count > 0).Select(condition => condition.Act))
@@ -70,9 +69,7 @@ internal sealed record VariantOpeningPreparation(
                         variant.OrderedRawEvents, generation.EventAuthority.OrderedSharedEventsRaw,
                         generation.EventAuthority, variant.OrderedEligibleEvents, out var prepared, out _) && prepared is not null)
                 {
-                    var immutable = new EventImmutableEligibilityContext(generation.GameMode, generation.ModeFactsExact,
-                        generation.PlayerCount, generation.ModeFactsExact && generation.IsMultiplayerExact,
-                        generation.EventAuthority.CharacterCardPoolCount, generation.EventAuthority.CharacterCardPoolCountExact);
+                    var immutable = EventImmutableEligibilityContext.From(generation);
                     var candidates = prepared.Candidates.Where(candidate => !EventStaticEligibilityCatalog.Evaluate(
                         candidate.EventKey, act, compiled.Context.ProfileId, candidate.Source, immutable).ShouldReject).ToArray();
                     foreach (var condition in events)

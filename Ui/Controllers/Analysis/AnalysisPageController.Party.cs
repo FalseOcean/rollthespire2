@@ -16,6 +16,7 @@ internal sealed partial class AnalysisPageController
     private (int? Choice, string Route) _soloSelection;
     private void SelectPartyMode(bool multiplayer)
     {
+        if (_capturedRunInformation is not null) return;
         if (multiplayer == (_partyDraft is not null)) return;
         if (!multiplayer)
         {
@@ -59,6 +60,9 @@ internal sealed partial class AnalysisPageController
 
     internal void SetPartyDraft(WorkbenchSearchDraft? draft, string? seed = null, PartySeedInformation? witness = null)
     {
+        _capturedRunInformation = null;
+        _capturedRunInformationSeed = "";
+        _page.SetCapturedRunParty(0);
         string sourceKey = System.Text.Json.JsonSerializer.Serialize(draft);
         bool changed = _sourcePartyDraftKey != sourceKey || witness is not null || (draft is null) != (_partyDraft is null);
         _sourcePartyDraftKey = sourceKey;
@@ -112,10 +116,17 @@ internal sealed partial class AnalysisPageController
         for (int slot = 0; slot <= draft.PlayerSlotIndex; slot++)
         {
             var owner = party.Players[slot];
-            if (!SeedPredictionRequest.TryCreate(draft.RawSeed, owner.Character, owner.Ascension, owner.PlayersCount, slot,
-                owner, slot == draft.PlayerSlotIndex ? draft.AncientOptionConditions : configured.Query.Players[slot].AncientPremises,
-                SeedPredictionDomainSelection.All, SeedPredictionInputLimits.MaximumRelicSequencePreviewCount, false,
-                out var request, out var error)) throw new InvalidOperationException("Party.InformationRequest:" + error);
+            var premises = slot == draft.PlayerSlotIndex ? draft.AncientOptionConditions : configured.Query.Players[slot].AncientPremises;
+            SeedPredictionRequest? request;
+            SeedPredictionRequestError error;
+            bool created = _capturedRunInformation is not null
+                ? SeedPredictionRequest.TryCreateCapturedPartyInformation(draft.RawSeed, party, slot, premises,
+                    SeedPredictionDomainSelection.All, SeedPredictionInputLimits.MaximumRelicSequencePreviewCount, false,
+                    out request, out error)
+                : SeedPredictionRequest.TryCreate(draft.RawSeed, owner.Character, owner.Ascension, owner.PlayersCount, slot,
+                    owner, premises, SeedPredictionDomainSelection.All, SeedPredictionInputLimits.MaximumRelicSequencePreviewCount, false,
+                    out request, out error);
+            if (!created) throw new InvalidOperationException("Party.InformationRequest:" + error);
             var choices = PartyNeowProjection.ProjectChoices(request!, root, rng.Niche, rng.CombatPotionGeneration, sharedRngKnown,
                 Search.Semantics.PartyInitialQuery.CapsuleEffectPremise(configured.Query.Players[slot].Conditions));
             var selection = _partySelections.GetValueOrDefault(slot);

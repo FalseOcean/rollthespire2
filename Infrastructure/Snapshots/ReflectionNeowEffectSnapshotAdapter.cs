@@ -23,11 +23,6 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
 {
     private const BindingFlags PublicInstance = BindingFlags.Public | BindingFlags.Instance;
     private const BindingFlags PublicStatic = BindingFlags.Public | BindingFlags.Static;
-    private static readonly string[] AuditedVanillaCharacters =
-    {
-        "IRONCLAD", "SILENT", "DEFECT", "REGENT", "NECROBINDER"
-    };
-
     public static RuntimeEffectSnapshotCaptureResult Capture(
         IRuntimeProfile profile,
         string rawSeed,
@@ -133,8 +128,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
 
     private static bool IsAuditedVanillaCharacterModel(object model)
     {
-        if (!TryModelKey(model, out ModelKey key) ||
-            !AuditedVanillaCharacters.Contains(key.Entry, StringComparer.Ordinal))
+        if (!TryModelKey(model, out ModelKey key) || !CharacterIdentity.FromKey(key).IsKnownVanilla)
         {
             return false;
         }
@@ -365,6 +359,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         string canonicalSeed,
         PoolCapture shared,
         PoolCapture character,
+        RngSemanticProfileId semanticProfile,
         out bool exact,
         out bool nestedHooksExact)
     {
@@ -381,7 +376,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         // shuffle must be consumed first or the player-bag order is wrong.
         ulong root = profile.ComputeRootSeed(canonicalSeed);
         var rng = new Xoshiro256StarStar(profile.DeriveNamedStreamSeed(root, "up_front"));
-        if (!ConsumeRelicBagShuffle(shared.Relics, rng, filterPlayerGrabBagRarities: false))
+        if (!ConsumeRelicBagShuffle(shared.Relics, rng, semanticProfile, filterPlayerGrabBagRarities: false))
         {
             exact = false;
         }
@@ -405,7 +400,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         foreach (IGrouping<string, NeowEffectRelicSnapshot> bucket in GroupRelicsInSourceRarityOrder(playerRelics))
         {
             List<NeowEffectRelicSnapshot> shuffled = bucket.ToList();
-            rng.UnstableShuffle(shuffled);
+            rng.UnstableShuffle(shuffled, semanticProfile);
             foreach (NeowEffectRelicSnapshot relic in shuffled)
             {
                 output.Add(relic with { BagOrder = output.Count });
@@ -417,6 +412,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
     private static bool ConsumeRelicBagShuffle(
         IReadOnlyList<NeowEffectRelicSnapshot> relics,
         Xoshiro256StarStar rng,
+        RngSemanticProfileId semanticProfile,
         bool filterPlayerGrabBagRarities)
     {
         bool exact = true;
@@ -431,7 +427,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
                 exact = false;
             }
             List<NeowEffectRelicSnapshot> shuffled = bucket.ToList();
-            rng.UnstableShuffle(shuffled);
+            rng.UnstableShuffle(shuffled, semanticProfile);
         }
         return exact;
     }

@@ -1,4 +1,5 @@
 using System.Globalization;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Prediction.Maps;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Search.Contracts;
@@ -9,12 +10,13 @@ namespace RolltheSpire2.Ui.Workspace;
 
 internal static class MapRouteWitnessProjection
 {
-    internal static MapPrediction CreateMap(string seed, int act, int ascension, int players, CancellationToken token)
+    internal static MapPrediction CreateMap(string seed, int act, int ascension, int players,
+        RngSemanticProfileId rngSemantics, CancellationToken token)
     {
         // Use precisely the independent pre-hook graph observed by Exact. The
         // ordinary Analysis map can contain another Act variant or second Boss.
         var generated = Beta111StandardMapGenerator.GenerateStandardMap(seed,
-            StandardMapFamily.Context(act, ascension) with { IsMultiplayer = players > 1 }, token);
+            StandardMapFamily.Context(act, ascension, rngSemantics) with { IsMultiplayer = players > 1 }, token);
         MapPosition Position(MapNode node) => new(node.FinalCol, node.FinalRow);
         var points = generated.AllNodes().Select(node => new MapPredictionPoint(Position(node), node.PointType,
             node.CanBeModified, Array.AsReadOnly(node.Children.Select(Position).ToArray()))).ToArray();

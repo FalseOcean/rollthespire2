@@ -11,6 +11,10 @@ internal static partial class StandardMapProbabilityEstimator
 
     internal static JointSelectivityResult EstimateParty(SearchSelectivityInput input)
     {
+        if (input.CompiledSearch.NormalizedQuery.ElitePrefixResearch is not null)
+            return JointSelectivityResult.Unpriced("Probability.ElitePrefixResearch.Unmodeled",
+                "No probability model is provided for the universal first-Elite research predicate.",
+                "The research predicate remains a Production Exact obligation.", ["ElitePrefixResearch:AllPathsPrefixJointMissing"]);
         if (input.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count > 0)
             return JointSelectivityResult.Unpriced("Probability.StandardMap.Party.RouteSequenceJointMissing",
                 "The paired scalar corpus does not observe ordered route groups.",

@@ -940,7 +940,7 @@ internal static class PredictorRuntimeSourceChecks
                 var originals = new[] { player.Deck.Cards[4], player.Deck.Cards[0] };
                 var ids = ImmutableArray.Create(state.Deck[4], state.Deck[0]);
                 MegaCrit.Sts2.Core.Commands.CardCmd.Transform(originals.Select(c => new MegaCrit.Sts2.Core.Entities.Cards.CardTransformation(c)), native.Rng.Niche).GetAwaiter().GetResult();
-                var transformed = PredictorCardChanges.Transform(run.Context, state, ids, PredictorStream.Niche);
+                var transformed = PredictorCardChanges.TransformBatch(run.Context, state, ids, PredictorStream.Niche);
                 Check(transformed.State.Deck.Select(id => transformed.State.Card(id).Key.Entry).SequenceEqual(player.Deck.Cards.Select(c => c.Id.Entry)), "Native transform deck append/index order");
                 Check(transformed.State.Deck.Select(id => transformed.State.Card(id).UpgradeLevel).SequenceEqual(player.Deck.Cards.Select(c => c.CurrentUpgradeLevel)), "Native transform add-to-deck egg modifications");
                 var a = transformed.State.Streams.Single(s => s.Stream == PredictorStream.Niche); var b = native.Rng.Niche.ToSerializable();

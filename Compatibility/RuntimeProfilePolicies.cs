@@ -26,7 +26,8 @@ public enum RngSemanticProfileId
     Unsupported = 0,
     Stable107Legacy = 1,
     Modern109 = 2,
-    Modern110 = 3
+    Modern110 = 3,
+    Modern113 = 4
 }
 
 /// <summary>
@@ -36,6 +37,12 @@ public enum RngSemanticProfileId
 /// </summary>
 public static class RuntimeProfilePolicies
 {
+    public static bool UsesChildStreamShuffle(RngSemanticProfileId semanticProfile) =>
+        semanticProfile == RngSemanticProfileId.Modern113;
+
+    internal static bool RetainsDeckCopyExclusions(RngSemanticProfileId semanticProfile) =>
+        semanticProfile != RngSemanticProfileId.Modern113;
+
     public static LastingCandyCounterPolicy LastingCandyCounter(RuntimeProfileId profileId) => profileId switch
     {
         RuntimeProfileId.Stable107 => LastingCandyCounterPolicy.CombatEndEven,
@@ -96,9 +103,14 @@ public static class RuntimeProfilePolicies
     };
 
     public static string RngSemanticFingerprint(RuntimeProfileId profileId) =>
-        RngSemanticProfile(profileId) == RngSemanticProfileId.Modern110
-            ? Modern110SemanticFingerprint
-            : "rng-semantic-profile:" + RngSemanticProfile(profileId).ToString().ToLowerInvariant();
+        RngSemanticFingerprint(RngSemanticProfile(profileId));
+
+    public static string RngSemanticFingerprint(RngSemanticProfileId semanticProfile) => semanticProfile switch
+    {
+        RngSemanticProfileId.Modern110 => Modern110SemanticFingerprint,
+        RngSemanticProfileId.Modern113 => "rng-semantic-profile:modern113:v1",
+        _ => "rng-semantic-profile:" + semanticProfile.ToString().ToLowerInvariant()
+    };
 
     /// <summary>
     /// Source-audited shared algorithm family. Beta110 and Beta111 have distinct

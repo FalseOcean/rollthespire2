@@ -13,7 +13,7 @@ internal static class AncientOptionPhysicalPricing
 
     internal static FamilyPhysicalQuote? Quote(AncientOptionPricingInput request,
         AncientOptionFamilyPlan plan, FamilyPhysicalQuoteRequest geometry) =>
-        (plan.NumericalVariant == GpuNumericalVariant.NativeFloat64 ? QuoteMeasured(request, plan, geometry) : null) ??
+        (plan.RuleRevision.Length == 0 && plan.NumericalVariant == GpuNumericalVariant.NativeFloat64 ? QuoteMeasured(request, plan, geometry) : null) ??
             AncientOptionWorkEstimate.Quote(request, plan, geometry, cpu: false);
 
     private static FamilyPhysicalQuote? QuoteSeaGlass(AncientOptionPricingInput request,

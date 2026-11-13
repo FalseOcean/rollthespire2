@@ -214,6 +214,55 @@ public sealed class SeedPredictionRequest
         int relicSequencePreviewCount,
         bool includeDiagnostics,
         out SeedPredictionRequest? request,
+        out SeedPredictionRequestError error) =>
+        TryCreateCore(originalSeed, character, ascension, playersCount, playerSlotIndex, authority,
+            ancientOptionConditions, domains, relicSequencePreviewCount, includeDiagnostics,
+            enforceOfflinePlayerLimit: true, out request, out error);
+
+    // Only the captured-run information entry uses this factory. The complete
+    // validated party supplies the owner context; offline requests keep their
+    // existing limit, including Search's root-hash construction below.
+    internal static bool TryCreateCapturedPartyInformation(
+        string? originalSeed,
+        OrderedPartyAuthority? party,
+        int playerSlotIndex,
+        AncientOptionConditionProfile? ancientOptionConditions,
+        SeedPredictionDomainSelection domains,
+        int relicSequencePreviewCount,
+        bool includeDiagnostics,
+        out SeedPredictionRequest? request,
+        out SeedPredictionRequestError error)
+    {
+        request = null;
+        if (party is null)
+        {
+            error = SeedPredictionRequestError.MissingAuthority;
+            return false;
+        }
+        if (playerSlotIndex < 0 || playerSlotIndex >= party.Players.Count)
+        {
+            error = SeedPredictionRequestError.PlayerSlotOutOfRange;
+            return false;
+        }
+        var owner = party.Players[playerSlotIndex];
+        return TryCreateCore(originalSeed, owner.Character, owner.Ascension, party.Players.Count,
+            playerSlotIndex, owner, ancientOptionConditions, domains, relicSequencePreviewCount,
+            includeDiagnostics, enforceOfflinePlayerLimit: false, out request, out error);
+    }
+
+    private static bool TryCreateCore(
+        string? originalSeed,
+        CharacterIdentity character,
+        int ascension,
+        int playersCount,
+        int playerSlotIndex,
+        RuntimeContextAuthoritySnapshot? authority,
+        AncientOptionConditionProfile? ancientOptionConditions,
+        SeedPredictionDomainSelection domains,
+        int relicSequencePreviewCount,
+        bool includeDiagnostics,
+        bool enforceOfflinePlayerLimit,
+        out SeedPredictionRequest? request,
         out SeedPredictionRequestError error)
     {
         string seed = originalSeed?.Trim() ?? string.Empty;
@@ -238,7 +287,8 @@ public sealed class SeedPredictionRequest
             return false;
         }
 
-        if (playersCount is < SeedPredictionInputLimits.MinimumPlayers or > SeedPredictionInputLimits.MaximumPlayers)
+        if (playersCount < SeedPredictionInputLimits.MinimumPlayers ||
+            (enforceOfflinePlayerLimit && playersCount > SeedPredictionInputLimits.MaximumPlayers))
         {
             request = null;
             error = SeedPredictionRequestError.PlayersCountOutOfRange;

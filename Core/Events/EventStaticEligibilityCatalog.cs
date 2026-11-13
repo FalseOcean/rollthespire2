@@ -44,6 +44,8 @@ public static class EventStaticEligibilityCatalog
     private static readonly IReadOnlyDictionary<string, Rule> Stable107Rules = BuildStable107Rules();
     private static readonly IReadOnlyDictionary<string, Rule> Beta110Rules = BuildBeta110Rules();
     private static readonly IReadOnlyDictionary<string, Rule> Beta111Rules = BuildBeta111Rules();
+    private static readonly Rule Beta113MuseumRule = new(EventStaticEligibilityDecision.RejectByActIndex,
+        "Act2Only:MuseumOfTorture", [2]);
 
     private static readonly IReadOnlySet<string> Beta111RuntimeDependentEvents = new HashSet<string>(
         new[]
@@ -127,6 +129,10 @@ public static class EventStaticEligibilityCatalog
 
         string normalized = Normalize(eventKey.Entry);
         Rule? rule = normalized.Length > 0 && rules.TryGetValue(normalized, out Rule? found) ? found : null;
+        EventImmutableEligibilityContext context = immutableContext ?? EventImmutableEligibilityContext.Unknown;
+        bool modern113 = context.RngSemantics == RngSemanticProfileId.Modern113;
+        if (modern113 && normalized == "MUSEUMOFTORTURE")
+            rule = Beta113MuseumRule;
 
         if (rule?.Decision == EventStaticEligibilityDecision.RejectAlwaysDisallowed)
         {
@@ -150,7 +156,6 @@ public static class EventStaticEligibilityCatalog
                 EventCandidateEligibilityKind.StaticEligible);
         }
 
-        EventImmutableEligibilityContext context = immutableContext ?? EventImmutableEligibilityContext.Unknown;
         if (profileId == RuntimeProfileId.Beta111)
         {
             EventStaticEligibilityResult? immutableDecision = EvaluateBeta111ImmutableContext(
@@ -170,6 +175,8 @@ public static class EventStaticEligibilityCatalog
         EventCandidateEligibilityKind eligibility = profileId == RuntimeProfileId.Beta111
             ? ClassifyBeta111Retained(normalized, context)
             : EventCandidateEligibilityKind.RuntimeDependent;
+        if (modern113 && normalized is "MUSEUMOFTORTURE" or "WATERFALLOFOBVIOUSSECRETS")
+            eligibility = EventCandidateEligibilityKind.StaticEligible;
         string ruleId = rule?.RuleId ?? "NoAuditedStaticExclusion";
         IReadOnlyList<int> allowedActs = rule?.AllowedActs ?? Array.Empty<int>();
         return new EventStaticEligibilityResult(
@@ -215,11 +222,13 @@ public static class EventStaticEligibilityCatalog
         if (normalized == Normalize("ColorfulPhilosophers") &&
             context.IsSinglePlayerExact && context.CharacterCardPoolCountExact)
         {
+            string unlockRule = context.RngSemantics == RngSemanticProfileId.Modern113
+                ? "NonFoolCharacterCardPools>1:ColorfulPhilosophers" : "CharacterCardPools>1:ColorfulPhilosophers";
             if (context.CharacterCardPoolCount <= 1)
             {
                 return new EventStaticEligibilityResult(
                     EventStaticEligibilityDecision.RejectByUnlockState,
-                    "CharacterCardPools>1:ColorfulPhilosophers",
+                    unlockRule,
                     Array.Empty<int>(),
                     precision,
                     $"event-pool-sequence.static-rule.unlock-reject.{profileEvidence}",
@@ -228,7 +237,7 @@ public static class EventStaticEligibilityCatalog
 
             return new EventStaticEligibilityResult(
                 EventStaticEligibilityDecision.KeepConservatively,
-                "CharacterCardPools>1:ColorfulPhilosophers",
+                unlockRule,
                 Array.Empty<int>(),
                 precision,
                 $"event-pool-sequence.static-rule.unlock-static-eligible.{profileEvidence}",

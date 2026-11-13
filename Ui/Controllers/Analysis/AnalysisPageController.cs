@@ -92,6 +92,11 @@ internal sealed partial class AnalysisPageController
                     ? p with { AncientPremises = draft.AncientOptionConditions } : p).ToArray()
             } };
         }
+        if (_capturedRunInformation is not null)
+        {
+            RefreshResultOrigin();
+            return;
+        }
         _persistence.SavePredictorContext(
             draft.RawSeed,
             draft.CharacterKey,

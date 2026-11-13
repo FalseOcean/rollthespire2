@@ -49,7 +49,7 @@ internal sealed class NeowCpuPreGate
 
     internal static NeowCpuPreGate? TryCompile(NeowReplayPlan p)
     {
-        if (!p.DirectNestedVanilla111 || !p.Authority.IdentityAuthorityExact || p.Authority.EligibleCurseRelicIds.Length == 0) return null;
+        if (!p.AuditedIdentityReplay || !p.Authority.IdentityAuthorityExact || p.Authority.EligibleCurseRelicIds.Length == 0) return null;
         ulong curses = 0;
         foreach (byte id in p.Authority.EligibleCurseRelicIds)
         {
@@ -145,7 +145,7 @@ internal sealed class NeowCpuPositiveIdentityPlan
     internal static NeowCpuPositiveIdentityPlan? TryCompile(NeowReplayPlan plan, bool enabled)
     {
         var a = plan.Authority;
-        if (!enabled || !plan.DirectNestedVanilla111 || a.PlayersCount != 1 || a.PlayerSlotIndex != 0 ||
+        if (!enabled || !plan.AuditedIdentityReplay || a.PlayersCount != 1 || a.PlayerSlotIndex != 0 ||
             !a.IdentityAuthorityExact || a.EligibleCurseRelicIds.Length == 0 || a.EligibleCurseRelicIds.Any(id => id >= 10) ||
             a.EligibleCurseRelicIds.Distinct().Count() != a.EligibleCurseRelicIds.Length ||
             plan.Bones || plan.RequireBones || plan.TopBan != 0 ||
@@ -222,14 +222,15 @@ internal sealed class NeowCpuPositiveIdentityPlan
             count++;
         }
         if (position < 0) return false;
+        var shuffle = _plan.Authority.UsesChildShuffle ? rng.ForkShuffle() : rng;
         for (int remaining = count; remaining > 1; remaining--)
         {
-            int selected = rng.NextInt(remaining), tail = remaining - 1;
+            int selected = shuffle.NextInt(remaining), tail = remaining - 1;
             if (position == selected) position = tail;
             else if (position == tail) position = selected;
             if (remaining > 2 && position == tail) return false;
         }
-        afterIdentity = rng.CaptureCheckpoint();
+        afterIdentity = (_plan.Authority.UsesChildShuffle ? rng : shuffle).CaptureCheckpoint();
         return true;
     }
 

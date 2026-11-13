@@ -114,6 +114,12 @@ internal sealed partial class AnalysisPage : MarginContainer, IAppPage, IRespons
         remove => _requestBar.PartyModeSelected -= value;
     }
     internal void ConfigureParty(int count) => _requestBar.ConfigureParty(count);
+    internal void SetCapturedRunParty(int count)
+    {
+        _capturedRunParty = count > 0;
+        _requestBar.SetCapturedRunParty(count);
+        RefreshFavoriteSeed();
+    }
     internal event Action? PartyConfigurationRequested
     {
         add => _requestBar.PartyConfigurationRequested += value;

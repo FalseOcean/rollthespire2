@@ -74,7 +74,9 @@ public static class SearchPreparationCompiler
         }
         else
         {
-            SearchFeasibilityResult feasibility = SearchFeasibilityAnalyzer.Analyze(compiled);
+            var runnable = SearchRuleRemainders.For(compiled).Compiled;
+            SearchFeasibilityResult feasibility = SearchFeasibilityAnalyzer.Analyze(
+                compiled.Status == QueryNormalizationStatus.Impossible ? compiled : runnable);
             if (feasibility.IsImpossible)
                 return Reject(SearchDisposition.NoMatch, "SearchImpossible:" + feasibility.Proof!.ReasonCode + ":" + feasibility.Proof.Diagnostic);
         }
@@ -144,7 +146,8 @@ public static class SearchPreparationCompiler
         // Fixed-pool reuse is bounded to solo modern Exact. Party ForPlayer runs
         // per candidate and must not allocate a new preparation on each visit.
         if (!request.Evaluation.RequiresNormalCombatRewardDomain || request.CompiledSearch.Context.Party is not null ||
-            request.Authority.PlayersCount != 1 || request.ProfileId is not (RuntimeProfileId.Beta110 or RuntimeProfileId.Beta111))
+            request.Authority.PlayersCount != 1 || request.ProfileId is not (RuntimeProfileId.Beta110 or RuntimeProfileId.Beta111) ||
+            SearchRuleRemainders.For(request.CompiledSearch).Causes.Length != 0)
             return request;
         string? mode = Environment.GetEnvironmentVariable("RT2_C_PREPARED_REWARD_POOLS")?.Trim().ToLowerInvariant();
         if (mode is not (null or "" or "on" or "off"))

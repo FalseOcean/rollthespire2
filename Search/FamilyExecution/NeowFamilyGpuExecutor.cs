@@ -94,7 +94,8 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
         bool localResults = true, bool multiplayer = false, int jointTransformMetaOffset = -1,
         NeowGpuNumericalVariant numericalVariant = NeowGpuNumericalVariant.NativeFloat64,
         bool leafyLazy = false, int entryIdentityMetaOffset = -1, byte entryIdentityTarget = 255,
-        int bonesHiddenUpgradeMode = 0, int bonesHiddenUpgradeOffset = 0, int capsuleNicheMetaOffset = -1)
+        int bonesHiddenUpgradeMode = 0, int bonesHiddenUpgradeOffset = 0, int capsuleNicheMetaOffset = -1,
+        bool childShuffle = false)
     {
         if (numericalVariant != NeowGpuNumericalVariant.NativeFloat64 &&
             (capsuleComposite || bonesCapsuleComposite || bonesArcaneComposite ||
@@ -122,7 +123,8 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
         .Replace("/*__RT2_CAPSULE_COMPOSITE__*/", bonesArcaneComposite ? BonesCapsuleShader(true) : bonesCapsuleComposite ? BonesCapsuleShader() : capsuleComposite ? CapsuleShader() : "", StringComparison.Ordinal)
         .Replace("__RT2_N_STAGE__", stage.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
         .Replace("/*__RT2_NEOW_LOCAL_DONOR__*/", FamilyGpuComputeUtility.LoadEmbeddedShader(
-            multiplayer ? "NeowPartyDonor.glsl" : "NeowSingleplayerDonor.glsl"), StringComparison.Ordinal);
+            multiplayer ? "NeowPartyDonor.glsl" : "NeowSingleplayerDonor.glsl"), StringComparison.Ordinal)
+        .Replace("__RT2_N_CHILD_SHUFFLE__", childShuffle ? "true" : "false", StringComparison.Ordinal);
         return numericalVariant switch
         {
             NeowGpuNumericalVariant.NativeFloat64 => source,
@@ -237,7 +239,7 @@ internal sealed partial class NeowFamilyGpuExecutor : IDisposable
             // Their W/WP advances already live in N's authored continuation.
             bonesHiddenUpgradeMode: _bonesHiddenUpgrades is { KnownFull: true } ? 4 : _bonesHiddenUpgrades?.Mode ?? 0,
             bonesHiddenUpgradeOffset: _bonesHiddenUpgrades?.MetadataOffset ?? 0,
-            capsuleNicheMetaOffset: _plan.CapsuleNicheMetaOffset);
+            capsuleNicheMetaOffset: _plan.CapsuleNicheMetaOffset, childShuffle: _plan.UsesChildShuffle);
         source = ApplyOptimizations(source, stage);
         if (leafyLocalPrefix)
             source = source.Replace("#define RT2_N_LEAFY_LOCAL_PREFIX 0", "#define RT2_N_LEAFY_LOCAL_PREFIX 1", StringComparison.Ordinal);

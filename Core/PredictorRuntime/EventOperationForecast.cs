@@ -547,7 +547,7 @@ internal static class EventOperationForecast
             // extra relics, etc.) in the prediction surface.
             ModelKey? publicRelic = scene.Event.Entry switch
             {
-                "RELIC_TRADER" => scene.Options.FirstOrDefault(o => o.Key == optionKey)?.OfferedRelic,
+                "RELIC_TRADER" or "MUSEUM_OF_TORTURE" or "THERMAE_NONUPEIPE" => scene.Options.FirstOrDefault(o => o.Key == optionKey)?.OfferedRelic,
                 "HUNGRY_FOR_MUSHROOMS" => new("RELIC", optionKey),
                 _ => null
             };
@@ -583,7 +583,7 @@ internal static class EventOperationForecast
                     "ReflectionsUpgrade" or "TabletUpgrade" or "DoorsLightUpgrade" or "ConveyorSpicyUpgrade" or
                         "ConveyorChefUpgrade" or "BattlewornDummyUpgrade" => OperationOutcomeAction.UpgradeCard,
                     "AutomatonStudyCard" or "AutomatonCoreCard" or "TinkerTimeCard" or "TrashHeapGrab" or
-                        "ConveyorFriedEel" => OperationOutcomeAction.AddCard,
+                        "ConveyorFriedEel" or "MuseumRandomCurse" or "WaterfallNegotiatedCard" => OperationOutcomeAction.AddCard,
                     _ => (OperationOutcomeAction?)null
                 };
                 if (action == null) continue;

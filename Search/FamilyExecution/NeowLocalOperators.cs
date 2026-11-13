@@ -22,11 +22,14 @@ internal static class NeowLocalOperators
         ref Beta110FastRng combatPotionGeneration,
         Span<byte> matched)
     {
+        if (plan.Authority.UsesChildShuffle)
+            throw new InvalidOperationException("R.Capsule.VersionedNonCombatContinuationRequired");
+        Beta110FastRng nonCombat = default;
         return plan.Authority.PlayersCount == 1
             ? NeowSingleplayerOperators.ExecuteRelic(relicId, isActive, plan, catalog, needsRewards, needsNiche,
-                needsTransformations, needsCombatPotionGeneration, ref rewards, ref niche, ref transformations, ref combatPotionGeneration, matched)
+                needsTransformations, needsCombatPotionGeneration, ref rewards, ref niche, ref transformations, ref combatPotionGeneration, ref nonCombat, matched)
             : NeowPartyOperators.ExecuteRelic(relicId, isActive, plan, catalog, needsRewards, needsNiche,
-                needsTransformations, needsCombatPotionGeneration, ref rewards, ref niche, ref transformations, ref combatPotionGeneration, matched);
+                needsTransformations, needsCombatPotionGeneration, ref rewards, ref niche, ref transformations, ref combatPotionGeneration, ref nonCombat, matched);
     }
 
     // Shared bounded numerical donors; pool authority remains compiled by N.
@@ -139,7 +142,8 @@ internal static class NeowLocalOperators
         ref Beta110FastRng rewards,
         ref Beta110FastRng niche,
         Span<ushort> offers,
-        int groups = 2)
+        int groups = 2,
+        RolltheSpire2.Compatibility.RngSemanticProfileId semanticProfile = RolltheSpire2.Compatibility.RngSemanticProfileId.Modern110)
     {
         int poolCount = catalog.OtherCharacterPools.Length;
         if (!catalog.OtherCharacterCardAuthorityExact || poolCount < 3 || groups is < 1 or > 2 || offers.Length < 3 * groups) return false;
@@ -149,7 +153,7 @@ internal static class NeowLocalOperators
         for (int group = 0; group < groups; group++)
         {
             for (ushort index = 0; index < poolOrder.Length; index++) poolOrder[index] = index;
-            niche.UnstableShuffle(poolOrder);
+            niche.UnstableShuffle(poolOrder, semanticProfile);
             for (int item = 0; item < 3; item++)
             {
                 ushort poolIndex = poolOrder[item];

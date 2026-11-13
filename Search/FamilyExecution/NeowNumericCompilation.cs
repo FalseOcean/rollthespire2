@@ -359,7 +359,8 @@ internal static class NeowNumericCompilation
             bonesExact.ToString(),
             string.Join(",", eligibleCurseIds),
             string.Join(",", bones)
-        });
+        }.Concat(context.Authority.VersionResolution.SemanticProfileId == RngSemanticProfileId.Modern113
+            ? [nameof(RngSemanticProfileId.Modern113)] : []));
         return new Beta110FastNeowAuthority(
             context.Authority.PlayerSlotIndex,
             context.Authority.PlayersCount,
@@ -373,7 +374,10 @@ internal static class NeowNumericCompilation
             identityExact,
             bonesExact,
             effectCatalog,
-            fingerprint);
+            fingerprint)
+        {
+            RngSemantics = context.Authority.VersionResolution.SemanticProfileId
+        };
     }
 
     internal static Beta110CurseFirstDrawGateP9 BuildCurseFirstDrawGateP9(
