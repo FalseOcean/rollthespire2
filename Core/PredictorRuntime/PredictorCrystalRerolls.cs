@@ -49,7 +49,7 @@ internal sealed record CrystalSuffixNode(PredictorRun Run, ImmutableArray<Predic
 
 // Exact ordered subsets of the AVAILABLE reward instances at one fixed endpoint.
 // Takes are checked afterwards. Crystal's supported card-insertion hooks do not
-// alter the fixed-rarity pools, event/Niche streams or later reward modifications.
+// alter the fixed-rarity pools, event or Wing Charm streams, or later reward modifications.
 // This normalization concerns acquired card identities/levels; it does not move
 // native operations or claim every interleaving has an identical complete state.
 internal static class PredictorCrystalRerolls

@@ -10,6 +10,7 @@ internal sealed record CrystalRewardGuideFrame(ImmutableArray<PredictorReward> R
 {
     internal ImmutableArray<int> Sacrificed { get; init; } = [];
     internal PredictorStreamState? RewardsRng { get; init; }
+    internal PredictorStreamState? WingCharmRewardsRng { get; init; }
     internal ImmutableArray<int> WingCounters { get; init; } = [];
     internal ImmutableArray<ModelKey> Gifts { get; init; } = [];
     internal ImmutableArray<PredictorRelic> Relics { get; init; } = [];
@@ -55,11 +56,16 @@ internal static class PredictorCrystalRewardGuide
         ImmutableArray<PredictorCard> acquired=[];
         var takenCardIds=ImmutableDictionary<int,long>.Empty;
         bool wingTrace=!solution.RewardActions.IsEmpty;
+        bool observeWingCharmRewards = solution.Takes.Any(t => t.Enchantment != null) &&
+            PredictorCardRewardRelicHooks.WingCharmStream(source.Context) == PredictorStream.Rewards &&
+            CrystalRewardOption.UsesWingCharmRng(source.State);
         CrystalRewardGuideFrame Frame()=>new(run.Rewards,taken,run.ExportCrystal().EventRng,
             run.Working.Streams.Single(s=>s.Stream==PredictorStream.Niche))
         {
             Sacrificed=sacrificed,
             RewardsRng=wingTrace?run.Working.Streams.Single(s=>s.Stream==PredictorStream.Rewards):null,
+            WingCharmRewardsRng = observeWingCharmRewards
+                ? run.Working.Streams.Single(s => s.Stream == PredictorStream.Rewards) : null,
             WingCounters=wingTrace?run.Working.Relics.Where(r=>!r.Melted && r.Key.Entry=="PAELS_WING")
                 .Select(r=>r.RewardsSacrificed).ToImmutableArray():[],
             Gifts=gifts,Relics=wingTrace?run.Working.Relics:[],

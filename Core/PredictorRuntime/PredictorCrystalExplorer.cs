@@ -24,15 +24,10 @@ internal sealed record CrystalRewardOption(PredictorRewardKind Kind, ModelKey Ke
         new(PredictorRewardKind.Card,card.Key,card.UpgradeLevel,exactEnchantments?CrystalCardEnchantment.Of(card):null);
     internal static bool UsesEnchantments(PredictorState state)=>state.Relics.Any(r=>!r.Melted &&
         r.Key.Entry is "WING_CHARM" or "FRESNEL_LENS" or "GLITTER" or "SILKEN_TRESS");
-    internal static bool UsesNicheEnchantments(PredictorState state)
-    {
-        foreach(var relic in state.Relics.Where(r=>!r.Melted))
-        {
-            if(relic.Key.Entry=="WING_CHARM") return true;
-            if(relic.Key.Entry=="GLITTER") return false;
-        }
-        return false;
-    }
+    internal static bool UsesWingCharmRng(PredictorState state) =>
+        state.Relics.FirstOrDefault(r => !r.Melted && r.Key.Entry is "WING_CHARM" or "GLITTER")?.Key.Entry == "WING_CHARM";
+    internal static bool UsesNicheEnchantments(PredictorCrystalSnapshot source) =>
+        PredictorCardRewardRelicHooks.WingCharmStream(source.Context) == PredictorStream.Niche && UsesWingCharmRng(source.State);
     internal string CacheKey=>$"{Kind}:{Key.Serialized}:{UpgradeLevel?.ToString()??"*"}:{Enchantment?.CacheKey??"*"}";
     internal bool MatchesCard(PredictorCard card) => Kind==PredictorRewardKind.Card && card.Key==Key &&
         (UpgradeLevel==null || card.UpgradeLevel==UpgradeLevel) && (Enchantment==null || Enchantment.Value.Matches(card));

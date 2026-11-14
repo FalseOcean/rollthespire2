@@ -83,7 +83,7 @@ internal sealed partial class CrystalReachabilityTable
                     var cards=PredictorRewardGeneration.GenerateCards(source.Context,ref state,plan,true,rng);
                     // Current Crystal creation is three fixed-rarity draws plus
                     // three upgrade draws. All subsequent inventory hooks preserve
-                    // card identity; Niche/counter changes remain in final replay.
+                    // card identity; player RNG and counter changes remain in final replay.
                     if(rng.CallCount-cursor.CallCount!=6) throw new InvalidOperationException("CrystalCardOffsetContractChanged");
                     foreach(var card in cards)
                     {

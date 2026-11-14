@@ -12,7 +12,13 @@ internal sealed partial class PredictorCrystalOffsetBound
     {
         var key=(bag,count);
         if(_modeledWingGiftAvailability.TryGetValue(key,out var known)) return known;
-        var result=PredictorCrystalWing.ModeledGiftAvailability(_source.Context,_source.State with {PersonalBag=_bags[bag]},count);
+        var state = _source.State with { PersonalBag = _bags[bag] };
+        // Card rewards can advance the personal Rewards stream before any
+        // sacrifice. The exact cursor belongs to endpoint replay.
+        var result = PredictorCardRewardRelicHooks.WingCharmStream(_source.Context) == PredictorStream.Rewards &&
+            CrystalRewardOption.UsesWingCharmRng(state)
+            ? PredictorCrystalWing.GiftUpper(_source.Context, state, count)
+            : PredictorCrystalWing.ModeledGiftAvailability(_source.Context, state, count);
         if(_modeledWingGiftAvailability.Count<16_384) _modeledWingGiftAvailability.Add(key,result);
         return result;
     }

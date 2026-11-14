@@ -4,6 +4,14 @@
   "Blocks": [
     {
       "Type": "Heading",
+      "Text": "RolltheSpire2 1.4.3"
+    },
+    {
+      "Type": "Callout",
+      "Text": "适配游戏 0.113.0 的水晶球功能。"
+    },
+    {
+      "Type": "Heading",
       "Text": "RolltheSpire2 1.4.2"
     },
     {

@@ -118,19 +118,19 @@ internal sealed partial class PredictorCrystalOffsetBound
                     if((cards&(1<<g))!=0 && _table.CardAt(kind,goals[g],offset,offset)) hit|=1<<g;
                 hits.Add((kind,offset),hit);return hit;
             }
-            var exactHits=new Dictionary<(string Kind,int Offset,int Niche,int Groups),(int Hits,int Niche,int Groups)>();
-            (int Hits,int Niche,int Groups) CardStep(string kind,int offset,int niche,int groups)
+            var exactHits=new Dictionary<(string Kind,int Offset,int WingCharmCalls,int Groups),(int Hits,int WingCharmCalls,int Groups)>();
+            (int Hits,int WingCharmCalls,int Groups) CardStep(string kind,int offset,int wingCharmCalls,int groups)
             {
                 // Ordinary predicates preserve the existing optimistic key/level
-                // table and do not generate or visit any Niche layers.
+                // table and do not generate or visit any Wing Charm draws.
                 if(!exactEnchantments) return (CardHits(kind,offset),0,0);
-                var key=(kind,offset,niche,groups);
+                var key=(kind,offset,wingCharmCalls,groups);
                 if(exactHits.TryGetValue(key,out var known)) return known;
-                if(!_table.TryCardRow(kind,offset,niche,groups,out var row))
-                {limited=true;return (0,niche,groups);}
+                if(!_table.TryCardRow(kind,offset,wingCharmCalls,groups,out var row))
+                {limited=true;return (0,wingCharmCalls,groups);}
                 int hit=0;for(int g=0;g<goals.Length;g++)
                     if((cards&(1<<g))!=0 && row.Cards.Any(goals[g].MatchesCard)) hit|=1<<g;
-                var next=(hit,niche+row.NicheConsumed,_table.CanonicalCardGroups(groups+1));
+                var next=(hit,wingCharmCalls+row.WingCharmCalls,_table.CanonicalCardGroups(groups+1));
                 exactHits.Add(key,next);return next;
             }
             IEnumerable<int> NonCard(string kind,int offset,int matched,ModelKey relic=default)
@@ -151,9 +151,9 @@ internal sealed partial class PredictorCrystalOffsetBound
                 using var measurement=profile?.MeasureSummary();
                 return new(slots);
             }
-            var terminalMemo=new Dictionary<(int Offset,int Niche,int Groups,LanguageSlots Slots,int Matched,int Bag),bool>();
+            var terminalMemo=new Dictionary<(int Offset,int WingCharmCalls,int Groups,LanguageSlots Slots,int Matched,int Bag),bool>();
             var singleCardRerolls=new Dictionary<(string Kind,int Offset,int Slots),bool>();
-            bool Finish(int offset,int niche,int groups,ImmutableArray<RerollSlot> input,int matched,int bag)
+            bool Finish(int offset,int wingCharmCalls,int groups,ImmutableArray<RerollSlot> input,int matched,int bag)
             {
                 using var measurement=profile?.MeasureFinish();
                 if(_table.IncludesSacrifices)
@@ -174,7 +174,7 @@ internal sealed partial class PredictorCrystalOffsetBound
                 // slot can occupy any of the N reroll positions: the other
                 // N-1 slots provide its preceding rerolls. They need not be
                 // claimed, but each still occupies its own physical slot.
-                // Exact enchantments retain the ordered Niche/group machine.
+                // Exact enchantments retain the order of Wing Charm draws and card groups.
                 if(cardCount==1 && !exactEnchantments)
                 {
                     foreach(var slot in input) if((slot.InitialHits&cards)!=0) return true;
@@ -192,7 +192,7 @@ internal sealed partial class PredictorCrystalOffsetBound
                     }
                     return false;
                 }
-                var key=(offset,niche,groups,Summary(input),_table.IncludesSacrifices?matched:0,_table.IncludesSacrifices?bag:0);if(terminalMemo.TryGetValue(key,out bool known))
+                var key=(offset,wingCharmCalls,groups,Summary(input),_table.IncludesSacrifices?matched:0,_table.IncludesSacrifices?bag:0);if(terminalMemo.TryGetValue(key,out bool known))
                 {if(profile!=null) profile.FinishCacheHits++;return known;}
                 var slots=input.ToArray();
                 var visited=new HashSet<string>();
@@ -207,39 +207,39 @@ internal sealed partial class PredictorCrystalOffsetBound
                     }
                     return Enumerable.Range(0,goals.Length).Where(g=>(cards&(1<<g))!=0).All(g=>Assign(g,new bool[offers.Length]));
                 }
-                bool Suffix(int used,int currentNiche,int currentGroups,int[] offers)
+                bool Suffix(int used,int currentWingCharmCalls,int currentGroups,int[] offers)
                 {
                     if(profile!=null) profile.SuffixCalls++;
                     if(Matches(offers)) return true;
-                    string suffixKey=exactEnchantments?$"{used}:{currentNiche}:{currentGroups}:"+string.Join(',',offers):used+":"+string.Join(',',offers);
+                    string suffixKey=exactEnchantments?$"{used}:{currentWingCharmCalls}:{currentGroups}:"+string.Join(',',offers):used+":"+string.Join(',',offers);
                     if(limited || !visited.Add(suffixKey) || !Admit()) return false;
                     int nextOffset=offset+6*BitOperations.PopCount((uint)used);
                     for(int i=0;i<slots.Length;i++) if((used&(1<<i))==0)
                     {
-                        var step=CardStep(slots[i].Kind,nextOffset,currentNiche,currentGroups);
+                        var step=CardStep(slots[i].Kind,nextOffset,currentWingCharmCalls,currentGroups);
                         var next=(int[])offers.Clone();next[i]=step.Hits;
-                        if(Suffix(used|(1<<i),step.Niche,step.Groups,next)) return true;
+                        if(Suffix(used|(1<<i),step.WingCharmCalls,step.Groups,next)) return true;
                     }
                     return false;
                 }
-                var offers=slots.Select(s=>s.InitialHits).ToArray();bool result=_table.IncludesRerolls?Suffix(0,niche,groups,offers):Matches(offers);
+                var offers=slots.Select(s=>s.InitialHits).ToArray();bool result=_table.IncludesRerolls?Suffix(0,wingCharmCalls,groups,offers):Matches(offers);
                 if(!limited) terminalMemo.Add(key,result);return result;
             }
-            IEnumerable<(int Matched,int Bag,int Niche,int Groups,ImmutableArray<RerollSlot> Cards)> Apply(string kind,int calls,int offset,int matched,int bag,int niche,int groups,ImmutableArray<RerollSlot> slots)
+            IEnumerable<(int Matched,int Bag,int WingCharmCalls,int Groups,ImmutableArray<RerollSlot> Cards)> Apply(string kind,int calls,int offset,int matched,int bag,int wingCharmCalls,int groups,ImmutableArray<RerollSlot> slots)
             {
                 if(kind.StartsWith("CARD_",StringComparison.Ordinal))
                 {
                     for(int n=0;n<calls;n++)
                     {
-                        var step=CardStep(kind,offset+6*n,niche,groups);slots=AddLanguageSlot(slots,new(kind,step.Hits));
-                        niche=step.Niche;groups=step.Groups;
+                        var step=CardStep(kind,offset+6*n,wingCharmCalls,groups);slots=AddLanguageSlot(slots,new(kind,step.Hits));
+                        wingCharmCalls=step.WingCharmCalls;groups=step.Groups;
                     }
-                    yield return (matched,bag,niche,groups,slots);yield break;
+                    yield return (matched,bag,wingCharmCalls,groups,slots);yield break;
                 }
                 var matches=new HashSet<int>{matched};int nextBag=bag;ImmutableArray<ModelKey> keys=[];
                 if(kind=="RELIC") (nextBag,keys)=Pull(bag,offset,calls);
                 for(int n=0;n<calls;n++) matches=matches.SelectMany(m=>NonCard(kind,offset+n,m,kind=="RELIC"?keys[n]:default)).ToHashSet();
-                foreach(int m in matches) yield return (m,nextBag,niche,groups,slots);
+                foreach(int m in matches) yield return (m,nextBag,wingCharmCalls,groups,slots);
             }
             var prefixPotions=_source.Revealed.Where(i=>_source.Items[i].Kind.StartsWith("POTION_",StringComparison.Ordinal)).ToArray();
             var prefixCore=_source.Revealed.Where(i=>!_source.Items[i].Kind.StartsWith("POTION_",StringComparison.Ordinal) && _source.Items[i].Kind!="CURSE").ToArray();
@@ -272,7 +272,7 @@ internal sealed partial class PredictorCrystalOffsetBound
             var cardKindIds=cardKinds.Select((kind,index)=>(kind,index)).ToDictionary(k=>k.kind,k=>k.index,StringComparer.Ordinal);
             var cardTargets=cardKinds.Select(kind=>goals.Select(g=>g.Kind==PredictorRewardKind.Card?_table.CardOffsets(kind,g):BigInteger.Zero).ToArray()).ToArray();
             var coreCardKinds=_core.Select(b=>cardKindIds.TryGetValue(b.Kind,out int kind)?kind:-1).ToArray();
-            // Bag, Niche and prior groups remain in Core's exact state; this
+            // Bag, Wing Charm draws and prior card groups remain in Core's exact state; this
             // necessary offset test already unions over those possibilities.
             // Slot kind multiplicity matters here only through total slot count.
             var futureMemo=new Dictionary<(int Remaining,int Offset,int Slots,int Initial,int Kinds),bool>();
@@ -375,8 +375,8 @@ internal sealed partial class PredictorCrystalOffsetBound
                 }
                 var potionRoots=prefixMatches.Select(m=>Potion(0,m)).Where(id=>id>=0).Distinct().ToArray();
                 if(potionRoots.Length==0 || limited) continue;
-                var coreMemo=new Dictionary<(int Used,int Matched,int Bag,int Niche,int Groups,bool CardSatisfied,LanguageSlots Cards),int>();
-                int Core(int used,int matched,int bag,int niche,int groups,ImmutableArray<RerollSlot> slots)
+                var coreMemo=new Dictionary<(int Used,int Matched,int Bag,int WingCharmCalls,int Groups,bool CardSatisfied,LanguageSlots Cards),int>();
+                int Core(int used,int matched,int bag,int wingCharmCalls,int groups,ImmutableArray<RerollSlot> slots)
                 {
                     if(profile!=null) profile.CoreCalls++;
                     // With no sacrifices, one initially offered ordinary goal
@@ -386,7 +386,7 @@ internal sealed partial class PredictorCrystalOffsetBound
                     // card obligation across reward orders.
                     bool cardSatisfied=cardCount==1 && !exactEnchantments && !_table.IncludesSacrifices &&
                         slots.Any(slot=>(slot.InitialHits&cards)!=0);
-                    var key=(used,matched,bag,niche,groups,cardSatisfied,Summary(cardSatisfied?[]:slots));if(coreMemo.TryGetValue(key,out int known))
+                    var key=(used,matched,bag,wingCharmCalls,groups,cardSatisfied,Summary(cardSatisfied?[]:slots));if(coreMemo.TryGetValue(key,out int known))
                     {if(profile!=null) profile.CoreCacheHits++;return known;}
                     if(limited || !Admit()) return -1;
                     if(minimumGold>0)
@@ -409,23 +409,23 @@ internal sealed partial class PredictorCrystalOffsetBound
                     if(!CanStillMatch((_coreDraws.Length-1)&~used,offset,matched,bag,slots,need|_coreNeeds[used]))
                     {pruned++;coreMemo.Add(key,-1);return -1;}
                     bool terminal=(minimumGold==0 || checked(prefixGold+goldSums[used])>=minimumGold) &&
-                        (matched|cards|(_table.IncludesSacrifices?relicGoals:0))==all && Finish(offset,niche,groups,slots,matched,bag);
+                        (matched|cards|(_table.IncludesSacrifices?relicGoals:0))==all && Finish(offset,wingCharmCalls,groups,slots,matched,bag);
                     var edges=new List<(int Item,int Next)>();
                     for(int remaining=(_coreDraws.Length-1)&~used;remaining!=0 && !limited;remaining &= remaining-1)
                     {
                         int bit=BitOperations.TrailingZeroCount((uint)remaining),next=used|(1<<bit);var block=_core[bit];
                         if(!CompilerCanCover(need|_coreNeeds[next])) continue;
-                        foreach(var r in Apply(block.Kind,block.Calls,offset,matched,bag,niche,groups,slots))
-                        {int target=Core(next,r.Matched,r.Bag,r.Niche,r.Groups,r.Cards);if(target>=0) edges.Add((block.Item,target));}
+                        foreach(var r in Apply(block.Kind,block.Calls,offset,matched,bag,wingCharmCalls,groups,slots))
+                        {int target=Core(next,r.Matched,r.Bag,r.WingCharmCalls,r.Groups,r.Cards);if(target>=0) edges.Add((block.Item,target));}
                     }
                     int id=Node(terminal,edges);coreMemo.Add(key,id);return id;
                 }
-                var current=new List<(int Matched,int Bag,int Niche,int Groups,ImmutableArray<RerollSlot> Cards)>{(potions,0,0,0,[])};int prefixOffset=finalPotions;
+                var current=new List<(int Matched,int Bag,int WingCharmCalls,int Groups,ImmutableArray<RerollSlot> Cards)>{(potions,0,0,0,[])};int prefixOffset=finalPotions;
                 foreach(int i in prefixCore)
-                {string kind=_source.Items[i].Kind;current=current.SelectMany(s=>Apply(kind,1,prefixOffset,s.Matched,s.Bag,s.Niche,s.Groups,s.Cards)).ToList();prefixOffset+=CrystalReachabilityTable.Draws(kind);}
+                {string kind=_source.Items[i].Kind;current=current.SelectMany(s=>Apply(kind,1,prefixOffset,s.Matched,s.Bag,s.WingCharmCalls,s.Groups,s.Cards)).ToList();prefixOffset+=CrystalReachabilityTable.Draws(kind);}
                 foreach(var start in current)
                 {
-                    int core=Core(0,start.Matched,start.Bag,start.Niche,start.Groups,start.Cards);
+                    int core=Core(0,start.Matched,start.Bag,start.WingCharmCalls,start.Groups,start.Cards);
                     if(core>=0) foreach(int potion in potionRoots) roots.Add((potion,core));
                 }
                 // Query existence incrementally; compiling other potion sets

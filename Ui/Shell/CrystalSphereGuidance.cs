@@ -83,7 +83,7 @@ internal sealed partial class CrystalSphereGuidance : Control
         _solution = solution;
         _exactEnchantments=solution.Takes.Any(t=>t.Enchantment!=null);
         var source = snapshot.Branches.Single(b => b.Mode == mode).Snapshot;
-        _observeNiche=_exactEnchantments && CrystalRewardOption.UsesNicheEnchantments(source.State);
+        _observeNiche=_exactEnchantments && CrystalRewardOption.UsesNicheEnchantments(source);
         _rewardGuide=PredictorCrystalRewardGuide.BuildRerollGuide(source,solution);
         _player=CrystalSphereLiveCapture.CurrentPlayer(run);
         if(source.Context.Crystal is { } captured && captured.PlayerNetId!=_player.NetId)
@@ -122,10 +122,10 @@ internal sealed partial class CrystalSphereGuidance : Control
             !expected.Items.SequenceEqual(actual.Items) || !expected.Revealed.SequenceEqual(actual.Revealed)) return false;
         if (terminal) return true; // native reward materialization follows its completion delay
         string State(PredictorState state) => JsonSerializer.Serialize(new {
-            state.GoldBudget, cards = state.Deck.Select(id => state.Card(id) with { Id = 0 }),
+            state.GoldBudget, cards = state.Deck.Select(id => state.Card(id) with { Id = 0, ObservedSort = null }),
             relics = state.Relics.Select(r => r with { Id = 0 }),
             potions = state.PotionSlots.Select(p => p == null ? null : p with { Id = 0 }),
-            Streams=state.Streams.Where(s=>s.Stream is PredictorStream.Rewards or PredictorStream.Shops or PredictorStream.Transformations ||
+            Streams=state.Streams.Where(s=>s.Stream is PredictorStream.Rewards or PredictorStream.Shops or PredictorStream.Transformations or PredictorStream.NonCombatGeneration ||
                 observeNiche && s.Stream==PredictorStream.Niche), state.Odds, state.PersonalBag });
         return expected.EventRng == actual.EventRng && State(expected.State) == State(actual.State);
     }
@@ -196,10 +196,12 @@ internal sealed partial class CrystalSphereGuidance : Control
             var niche=CrystalSphereLiveCapture.RngState(PredictorStream.Niche,_run.Rng.Niche);
             var wing=_rewardGuide.Frames[0].RewardsRng!=null?
                 CrystalSphereRewardObservation.CaptureWing(_player,localSnapshot:!_exactEnchantments):null;
+            var playerRewards = _rewardGuide.Frames[0].WingCharmRewardsRng != null
+                ? wing?.RewardsRng ?? CrystalSphereLiveCapture.RngState(PredictorStream.Rewards, _player.PlayerRng.Rewards) : null;
             int matched=-1;
             for(int i=_rewardGuide.Frames.Length-1;i>=_rewardProgress;i--)
                 if(CrystalSphereRewardObservation.Matches(_rewardGuide.Frames[i],_rewardBinding,eventRng,niche,
-                    localSnapshot:!_exactEnchantments,observeNiche:_observeNiche,wing:wing)) { matched=i;break; }
+                    localSnapshot:!_exactEnchantments,observeNiche:_observeNiche,wing:wing,playerRewards:playerRewards)) { matched=i;break; }
             if(matched<0)
             {
                 // Native card insertion may await animations/hooks before setting

@@ -147,9 +147,21 @@ internal static class CrystalSphereLiveCapture
             m is MegaCrit.Sts2.Core.Models.Modifiers.CharacterCards characterCards
                 ? new ModelKey(characterCards.CharacterModel.Category, characterCards.CharacterModel.Entry) : null)).ToImmutableArray() };
         long id = 1;
-        var cards = player.Deck.Cards.Select(c => new PredictorCard(id++, Key(c),
-            Enum.TryParse<RolltheSpire2.Core.Effects.Snapshots.EffectCardType>(c.Type.ToString(), out var cardType) ? cardType : RolltheSpire2.Core.Effects.Snapshots.EffectCardType.Other, c.CurrentUpgradeLevel,
-            c.MaxUpgradeLevel, c.IsRemovable, c.FloorAddedToDeck ?? 0, c.Enchantment == null ? null : Key(c.Enchantment), c.Enchantment?.Amount ?? 0)).ToImmutableArray();
+        var cards = player.Deck.Cards.Select(c =>
+        {
+            var card = new PredictorCard(id++, Key(c),
+                Enum.TryParse<RolltheSpire2.Core.Effects.Snapshots.EffectCardType>(c.Type.ToString(), out var cardType) ? cardType : RolltheSpire2.Core.Effects.Snapshots.EffectCardType.Other,
+                c.CurrentUpgradeLevel, c.MaxUpgradeLevel, c.IsRemovable, c.FloorAddedToDeck ?? 0,
+                c.Enchantment == null ? null : Key(c.Enchantment), c.Enchantment?.Amount ?? 0);
+            if (!context.UsesNonCombatGeneration || c.GetType().Assembly != typeof(CardModel).Assembly) return card;
+            var observed = PredictorLiveRunCapture.Card(c, catalog, captureSort: true);
+            return card with
+            {
+                Affliction = observed.Affliction, ObservedSort = observed.ObservedSort,
+                PermanentCostOverride = observed.PermanentCostOverride,
+                IncreasedBlock = observed.IncreasedBlock, IncreasedDamage = observed.IncreasedDamage
+            };
+        }).ToImmutableArray();
         var relics = player.Relics.Select(r => new PredictorRelic(id++, Key(r), r.FloorAddedToDeck, r.IsMelted)
         {
             IsWax = r.IsWax,

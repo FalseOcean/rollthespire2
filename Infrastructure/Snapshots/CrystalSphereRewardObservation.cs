@@ -53,9 +53,11 @@ internal static class CrystalSphereRewardObservation
 
     internal static bool Matches(CrystalRewardGuideFrame frame,IReadOnlyDictionary<int,CardReward> binding,
         PredictorStreamState eventRng,PredictorStreamState niche,bool localSnapshot=false,bool observeNiche=true,
-        CrystalSphereWingRewardObservation? wing=null)
+        CrystalSphereWingRewardObservation? wing=null,PredictorStreamState? playerRewards=null)
     {
         if(frame.EventRng!=eventRng || !localSnapshot && observeNiche && frame.Niche!=niche) return false;
+        if(!localSnapshot && frame.WingCharmRewardsRng is { } charmRewards &&
+            charmRewards!=(playerRewards ?? wing?.RewardsRng)) return false;
         if(frame.RewardsRng is { } expectedRewards)
         {
             if(wing==null || wing.RewardsRng!=expectedRewards || !frame.WingCounters.SequenceEqual(wing.WingCounters)) return false;

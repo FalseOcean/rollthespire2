@@ -271,7 +271,8 @@ internal static class PredictorSeedState
             throw new NotSupportedException("PredictorRuntimeVersionUnavailable:" + context.GameVersion +
                 ";evidence=" + resolution.EvidenceCode);
         if (!ProfileSeedRules.TryCanonicalizePredictionSeed(context.RuntimeProfile, context.Seed, out string canonical, out _) || canonical != context.Seed ||
-            (context.Live == null && context.Operation == null && !RuntimeProfilePolicies.SupportsPredictorSeedInitialization(context.VersionResolution)) ||
+            (context.Live == null && context.Operation == null && context.Crystal == null &&
+                !RuntimeProfilePolicies.SupportsPredictorSeedInitialization(resolution)) ||
             !context.Character.IsValid || context.Ascension is < 0 or > 10 ||
             string.IsNullOrWhiteSpace(context.CatalogFingerprint) || string.IsNullOrWhiteSpace(context.UnlockFingerprint) ||
             context.RevealedEpochs.IsDefault || context.SeenEncounters.IsDefault || context.DiscoveredActs.IsDefault || context.Modifiers.IsDefault ||

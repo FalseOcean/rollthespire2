@@ -80,6 +80,7 @@ internal static class PredictorRuntimeChecks
 
     private static void VersionedContexts()
     {
+        PredictorCrystalContextChecks.Run();
         Require(Context.RuntimeProfile.ProfileId == RuntimeProfileId.Beta111, "Current seed context profile");
         // Read the source property before copying: a cached field would carry
         // Beta111 into the changed identity and silently validate wrong rules.

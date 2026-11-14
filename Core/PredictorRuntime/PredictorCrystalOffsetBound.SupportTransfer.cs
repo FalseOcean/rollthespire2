@@ -20,7 +20,7 @@ internal sealed partial class PredictorCrystalOffsetBound
     {
         lock(_sync)
         {
-            // Scalar offset inclusion loses the Niche/creation-stage coordinate.
+            // Scalar offset inclusion loses the Wing Charm draw and card-group coordinates.
             // It cannot transfer a negative proved for one exact enchantment.
             if(carrier.Kind!=PredictorRewardKind.Card || carrier.Enchantment!=null) return [];
             _supportMapLookups++;

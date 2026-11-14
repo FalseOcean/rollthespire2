@@ -5,6 +5,9 @@ namespace RolltheSpire2.Core.PredictorRuntime;
 
 internal static class PredictorCardRewardRelicHooks
 {
+    internal static PredictorStream WingCharmStream(PredictorContext context) =>
+        context.UsesNonCombatGeneration ? PredictorStream.Rewards : PredictorStream.Niche;
+
     // One late listener at a time, in inventory order. CardReward's live
     // RelicObtained subscription calls the same listener for already open
     // options, after the newly acquired relic has joined the inventory.
@@ -22,8 +25,7 @@ internal static class PredictorCardRewardRelicHooks
                     .Where(i => PredictorObtainSources.CanEnchant(context, cards[i])).ToArray();
                 wingCharmEligibility?.Add(eligible.ToImmutableArray());
                 if (eligible.Length == 0) break;
-                var stream = context.UsesNonCombatGeneration ? PredictorStream.Rewards : PredictorStream.Niche;
-                (int selected, state) = state.Draw(stream, 0, eligible.Length);
+                (int selected, state) = state.Draw(WingCharmStream(context), 0, eligible.Length);
                 int index = eligible[selected];
                 cards[index] = CloneIfNeeded(state, cards[index] with
                 { Enchantment = new("ENCHANTMENT", "SWIFT"), EnchantmentAmount = 1 }, cloneOnChange, out state);

@@ -115,7 +115,7 @@ internal sealed partial class CrystalSphereAssistantPanel
         Invalidate();return false;
     }
     private void Invalidate() { InvalidatePresentation();Calculation.Invalidate();Render(); }
-    private bool RequiresNiche()=>Calculation.Selected.Any(g=>g.Enchantment!=null) && CrystalRewardOption.UsesNicheEnchantments(Source.State);
+    private bool RequiresNiche()=>Calculation.Selected.Any(g=>g.Enchantment!=null) && CrystalRewardOption.UsesNicheEnchantments(Source);
     public override void _Notification(int what)
     {
         if(what!=NotificationVisibilityChanged || !IsInsideTree()) return;

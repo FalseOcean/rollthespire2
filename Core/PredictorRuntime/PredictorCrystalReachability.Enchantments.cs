@@ -5,17 +5,17 @@ using RolltheSpire2.Core.Effects.Snapshots;
 namespace RolltheSpire2.Core.PredictorRuntime;
 
 // A row is exact for its generation coordinates, not a reachable board claim.
-internal sealed record CrystalEnchantmentRow(ImmutableArray<PredictorCard> Cards,int NicheConsumed);
+internal sealed record CrystalEnchantmentRow(ImmutableArray<PredictorCard> Cards,int WingCharmCalls);
 
 internal sealed partial class CrystalReachabilityTable
 {
     private sealed record EnchantmentRows(
-        ImmutableDictionary<(string Kind,int Offset,int Niche,int Groups),CrystalEnchantmentRow> Rows,
+        ImmutableDictionary<(string Kind,int Offset,int WingCharmCalls,int Groups),CrystalEnchantmentRow> Rows,
         ImmutableDictionary<(string Kind,CrystalRewardOption Option),BigInteger> Offsets,
         ImmutableArray<CrystalRewardOption> Candidates);
     private Lazy<EnchantmentRows> _enchantmentRows=null!;
     private int _cardGroupCounterLimit;
-    internal int MaximumNicheCalls { get; private set; }
+    private int _maximumWingCharmCalls;
     internal int CanonicalCardGroups(int groups)=>Math.Min(groups,_cardGroupCounterLimit);
 
     private void ConfigureEnchantmentRows(PredictorCrystalSnapshot source,CancellationToken token)
@@ -28,7 +28,7 @@ internal sealed partial class CrystalReachabilityTable
                 p.item.Kind.StartsWith("CARD_",StringComparison.Ordinal)).Sum(p=>p.item.Subscriptions);
         // Multiple Wing instances compete for the three legal card positions.
         // Revealed entries count callbacks; future subscriptions count instances.
-        MaximumNicheCalls=checked(instances*(IncludesRerolls?2:1)*Math.Min(3,active.Count(r=>r.Key.Entry=="WING_CHARM")));
+        _maximumWingCharmCalls=checked(instances*(IncludesRerolls?2:1)*Math.Min(3,active.Count(r=>r.Key.Entry=="WING_CHARM")));
         // Relevant inventories materialize this during construction. A plain
         // inventory may first receive an explicit-none query in a later slice;
         // do not retain that earlier slice's cancelled token in its lazy table.
@@ -38,10 +38,11 @@ internal sealed partial class CrystalReachabilityTable
 
     private EnchantmentRows BuildEnchantmentRows(PredictorCrystalSnapshot source,CancellationToken token)
     {
-        var rows=ImmutableDictionary.CreateBuilder<(string Kind,int Offset,int Niche,int Groups),CrystalEnchantmentRow>();
+        var rows=ImmutableDictionary.CreateBuilder<(string Kind,int Offset,int WingCharmCalls,int Groups),CrystalEnchantmentRow>();
         var offsets=ImmutableDictionary.CreateBuilder<(string Kind,CrystalRewardOption Option),BigInteger>();
         var candidates=new HashSet<CrystalRewardOption>();
-        var initialNiche=source.State.Streams.Single(s=>s.Stream==PredictorStream.Niche);
+        var wingCharmStream = PredictorCardRewardRelicHooks.WingCharmStream(source.Context);
+        var initialWingCharmRng = source.State.Streams.Single(s => s.Stream == wingCharmStream);
         foreach(string kind in source.Items.Where(i=>i.X>=0 && i.Kind.StartsWith("CARD_",StringComparison.Ordinal)).Select(i=>i.Kind).Distinct())
         {
             var plan=new PredictorRewardPlan(PredictorRewardKind.Card,CardCount:3,Odds:PredictorCardOdds.Uniform,
@@ -50,17 +51,17 @@ internal sealed partial class CrystalReachabilityTable
             for(int offset=0;offset+6<=MaximumDraws;offset++,cursor.Advance(1))
                 for(int groups=0;groups<=_cardGroupCounterLimit;groups++)
                 {
-                    var niche=initialNiche.Restore();
-                    for(int layer=0;layer<=MaximumNicheCalls;layer++,niche.Advance(1))
+                    var wingCharmRng = initialWingCharmRng.Restore();
+                    for(int layer=0;layer<=_maximumWingCharmCalls;layer++,wingCharmRng.Advance(1))
                     {
                         token.ThrowIfCancellationRequested();
-                        var rng=cursor.Clone();var state=source.State.WithRng(PredictorStream.Niche,niche);
+                        var rng=cursor.Clone();var state=source.State.WithRng(wingCharmStream,wingCharmRng);
                         state=state with { Relics=state.Relics.Select(r=>r.Key.Entry switch {
                             "SILVER_CRUCIBLE"=>r with { RewardUpgradeUses=Math.Min(3,r.RewardUpgradeUses+groups) },
                             "SILKEN_TRESS"=>r with { SilkenUsed=r.SilkenUsed || groups>0 },_=>r }).ToImmutableArray() };
                         var cards=PredictorRewardGeneration.GenerateCards(source.Context,ref state,plan,true,rng);
                         if(rng.CallCount-cursor.CallCount!=6) throw new InvalidOperationException("CrystalCardOffsetContractChanged");
-                        int consumed=state.Streams.Single(s=>s.Stream==PredictorStream.Niche).Calls-niche.CallCount;
+                        int consumed=state.Streams.Single(s=>s.Stream==wingCharmStream).Calls-wingCharmRng.CallCount;
                         rows.Add((kind,offset,layer,groups),new(cards,consumed));
                         foreach(var card in cards)
                         {
@@ -76,13 +77,13 @@ internal sealed partial class CrystalReachabilityTable
         return new(rows.ToImmutable(),offsets.ToImmutable(),candidates.ToImmutableArray());
     }
 
-    internal bool TryCardRow(string kind,int offset,int nicheCalls,int generatedGroups,out CrystalEnchantmentRow row)
+    internal bool TryCardRow(string kind,int offset,int wingCharmCalls,int generatedGroups,out CrystalEnchantmentRow row)
     {
         row=null!;
-        if(nicheCalls<0 || nicheCalls>MaximumNicheCalls) return false;
+        if(wingCharmCalls<0 || wingCharmCalls>_maximumWingCharmCalls) return false;
         var rows=_enchantmentRows.Value.Rows;int groups=CanonicalCardGroups(generatedGroups);
-        if(rows.TryGetValue((kind,offset,nicheCalls,groups),out row!)) return true;
-        return rows.TryGetValue((kind,offset,0,groups),out row!) && row.NicheConsumed==0;
+        if(rows.TryGetValue((kind,offset,wingCharmCalls,groups),out row!)) return true;
+        return rows.TryGetValue((kind,offset,0,groups),out row!) && row.WingCharmCalls==0;
     }
 
     private BigInteger EnchantmentOffsets(string kind,CrystalRewardOption option)
