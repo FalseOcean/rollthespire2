@@ -62,7 +62,7 @@ internal sealed class NeowCapsuleSparseRefinementRun(NeowCapsuleSparseRefinement
         }
         finally { services.ExitCpu(); milliseconds=watch.Elapsed.TotalMilliseconds; }
     }
-    internal void Report() => RuntimeLog.TryBackgroundInfo($"capsuleSparseRefinementSummary=true;revision={NeowCapsuleSparseRefinement.Revision};scope=PublicN;input={_inputs};primaryPass={_primary};primaryUnknown={_primaryUnknown};actualChecks={_observations};rejected={_rejected};nonzeroRetained={_nonzero};unknownRetained={_unknown};zeroPass={_zero};cpuRefineMs={_ticks*1000d/Stopwatch.Frequency};ready={plan.Ready};issue={plan.Issue};faulted={_faulted!=0};privateOrCoupledRefinement=false;originalUnionParityPreserved=true");
+    internal void Report() => RuntimeLog.TryBackgroundInfo($"capsuleSparseRefinementSummary=true;revision={plan.PhysicalRevision};scope=PublicN;input={_inputs};primaryPass={_primary};primaryUnknown={_primaryUnknown};actualChecks={_observations};rejected={_rejected};nonzeroRetained={_nonzero};unknownRetained={_unknown};zeroPass={_zero};cpuRefineMs={_ticks*1000d/Stopwatch.Frequency};ready={plan.Ready};issue={plan.Issue};faulted={_faulted!=0};privateOrCoupledRefinement=false;originalUnionParityPreserved=true");
 
     internal static IFilterExecution WrapCpu(FilterBodyDescription body,IRuntimeProfile profile,Func<ulong,bool> union,
         bool numericalRoots,bool packedRoots,NeowCpuFourWayPreGate? gate,NeowCapsuleSparseRefinement? plan)

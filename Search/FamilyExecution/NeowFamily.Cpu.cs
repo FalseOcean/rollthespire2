@@ -7,16 +7,23 @@ internal sealed partial class NeowFamily
         if(_composite is not null || _transformations is not null || _profile.ProfileId!=RuntimeProfileId.Beta111)yield break;
         bool capsuleNiche=HasCapsuleNicheContinuation;
         var pair=capsuleNiche ? null : NeowIdentityCpuPlan.TryCompile(_plan);
-        var local=capsuleNiche || pair is not null ? null : NeowSingleplayerLocalCpuPlan.TryCompile(_plan,_cpuPositiveIdentity);
-        var gate=pair is null && local is null ? NeowCpuPreGate.TryCompile(_plan) : null;
+        var local=capsuleNiche || pair is not null ? null : _cpuLocalPlan;
+        // The selected fast matcher gets the rarity check once, including when
+        // the pre-gate delegates back to ordinary replay.
+        var ungatedPlan = _plan.HasCapsuleRarityGate ? _plan with { HasCapsuleRarityGate = false } : _plan;
+        var gate=pair is null && local is null ? NeowCpuPreGate.TryCompile(ungatedPlan) : null;
         var fourWay=NeowCpuFourWayPreGate.TryCompile(_plan);
-        Func<ulong,bool> matcher=capsuleNiche ? _cpuMatcher : local is not null ? local.Matches : pair is not null ? pair.Matches :
-            _cpuPositiveIdentity is not null ? _cpuPositiveIdentity.Matches : gate is not null ? gate.Matches : _cpuMatcher;
+        Func<ulong,bool>? fastMatcher = capsuleNiche ? null : local is not null ? local.Matches : pair is not null ? pair.Matches :
+            _cpuPositiveIdentity is not null ? _cpuPositiveIdentity.Matches : gate is not null ? gate.Matches : null;
+        Func<ulong,bool> matcher = fastMatcher is null ? _cpuMatcher : NeowCapsuleRarityGate.Refine(_plan, fastMatcher);
         string revision=capsuleNiche ? CpuRevision : (local is not null ? local.Revision :
             (gate is not null ? "N.Neow.Cpu.IdentityPreGate.20261015.v3" : pair is null ? "N.Neow.Cpu.LocalReplay.20261015.v3" : "N.Neow.Cpu.IdentityPair.20260912.v1")+
             (_cpuPositiveIdentity is null ? "" : NeowCpuPositiveIdentityPlan.Revision))+NeowIdentityOfferFacts.Revision;
         if (_plan.Authority.UsesChildShuffle) revision += ".Modern113";
         revision += _plan.CapsuleNonCombatRevision;
+        revision += _plan.CapsuleRarityRevision;
+        if (_plan.UnobservedRewardsDraws.Length != 0) revision += NeowUnobservedRewards.Revision;
+        if (_plan.Authority.UsesChildShuffle) revision += _sparseRefinement?.PhysicalRevision ?? "";
         int workers=Math.Clamp(workerBudget,1,32);
         if(capsuleNiche) prepared=prepared with {
             AnalyticalCost=new(FamilyId,65536,[],"SoloCapsuleNicheCpuFullWorkUnpriced"),

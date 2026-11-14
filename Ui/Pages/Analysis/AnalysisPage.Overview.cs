@@ -16,6 +16,10 @@ internal sealed partial class AnalysisPage
     private readonly EventThumbnailProvider _eventThumbnails = new();
     private readonly EncounterPortraitProvider _encounterPortraits = new();
 
+    private ModelKey OverviewActKey(int act) =>
+        _viewModel?.EncounterSequences.FirstOrDefault(a => a.Act == act)?.ActKey ??
+        _viewModel?.EventPoolSequenceDomain.Items.FirstOrDefault(a => a.Act == act)?.ActKey ?? default;
+
     private void RenderActTab(int index)
     {
         var button = _wbTabs[index]; WClear(button); button.Text = "";
@@ -24,8 +28,8 @@ internal sealed partial class AnalysisPage
         row.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         row.OffsetLeft = 9; row.OffsetRight = -9;
         string title = Text(PageKeys[index]);
-        var actInfo = _wbHasResult ? _viewModel?.EventPoolSequenceDomain.Items.FirstOrDefault(a => a.Act == index + 1) : null;
-        if (index < 3 && actInfo is not null) title += " · " + _contentNames!.Resolve(actInfo.ActKey, GameContentKind.Act);
+        if (index < 3 && _wbHasResult && OverviewActKey(index + 1) is { IsValid: true } actKey)
+            title += " · " + _contentNames!.Resolve(actKey, GameContentKind.Act);
         var caption = _palette.Label(title, 16);
         caption.ClipText = true;
         caption.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;

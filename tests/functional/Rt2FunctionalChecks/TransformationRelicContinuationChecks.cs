@@ -212,7 +212,7 @@ internal static class TransformationRelicContinuationChecks
             }
             finally { session.Cancel(); session.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
         }
-        var unsupported = query with { OpeningRoute = new(leaf), OpeningRouteRelicRequirement = null,
+        var unsupported = query with { OpeningRoute = null, OpeningRouteRelicRequirement = null,
             TransformationAggregate = query.TransformationAggregate! with { Opening = TransformationOpening.NewLeaf, TargetMultiset = [cards[0]] } };
         foreach (var q in new[] { unsupported, unsupported with { RelicShopSequenceConditions = [], CombatCardRewards = new(1, CombatRewardSequenceOrderMode.Ordered, [combatTarget]) },
             unsupported with { CombatCardRewards = new(1, CombatRewardSequenceOrderMode.Ordered, [combatTarget]) } })
@@ -234,7 +234,16 @@ internal static class TransformationRelicContinuationChecks
         var eventScenario = new MorphicGroveScenario(context.Authority, new("Fixed initial-Basic event fixture; occurrence assumed", true, false, null), eventTargets);
         foreach (var q in new[] {
             positive with { TransformationAggregate = positive.TransformationAggregate! with { MorphicGrove = true, EventScenario = eventScenario } },
-            positive with { TransformationAggregate = positive.TransformationAggregate! with { Predicate = TransformationAggregatePredicate.RareCountAtLeast, MinimumRareCount = 1, TargetMultiset = [] } },
+            positive with { TransformationAggregate = positive.TransformationAggregate! with { Predicate = TransformationAggregatePredicate.RareCountAtLeast, MinimumRareCount = 1, TargetMultiset = [] } }
+        })
+        {
+            var widened = Compile(q);
+            var exact = ProductionExactSearchEvaluator.Evaluate(widened.Model, root);
+            Check(!TransformationAggregateCondition.HasUnresolvedRelicContinuation(widened.Model.CompiledSearch.NormalizedQuery) &&
+                exact.IsMatch && exact.Evaluation.Witnesses.Count == 2,
+                "Fixed pair remains closed with a conditional event or a rarity objective: " + exact.FailureCode);
+        }
+        foreach (var q in new[] {
             positive with { OpeningRoute = null, OpeningRouteRelicRequirement = null },
             positive with { OpeningRouteRelicRequirement = new(bones, [leafy, BaseGameModelKeys.Relics.SmallCapsule]),
                 TransformationAggregate = positive.TransformationAggregate! with { Opening = TransformationOpening.BonesLeafyOther,
@@ -243,7 +252,7 @@ internal static class TransformationRelicContinuationChecks
         {
             var unresolved = SearchCompiler.Compile(q, context);
             Check(TransformationAggregateCondition.HasUnresolvedRelicContinuation(unresolved.NormalizedQuery),
-                "Event contributors, pure rare-count, unbound opening and other companions retain unresolved R obligations");
+                "Unbound opening and other companions retain unresolved R obligations");
         }
         ProductionSearchReplay.Write(".build-evidence/transformation-relic/reported-workload.json", new ProductionSearchReplayWorkload(1, query, options));
         ProductionSearchReplay.Write(".build-evidence/transformation-relic/positive-workload.json", new ProductionSearchReplayWorkload(1, positive, options));

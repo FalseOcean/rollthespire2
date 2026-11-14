@@ -22,6 +22,7 @@ internal sealed class WorldFamilyGpuPlan
     private readonly int _eliteSlots;
     private readonly bool _variantFilterMigrated;
     private readonly bool _childShuffle;
+    private readonly bool _needsSharedAncientIds;
     internal long ScratchBytes => Math.Max(4, Capacity * ScratchWords * 4L);
     internal long WorkspaceBytes => Capacity * 8L + ScratchBytes + 64 + GroupingWorkspaceBytes +
         Buffers.Where((_, i) => i is not (0 or 12 or 16 or 17 or 18)).Sum(b => Math.Max(4, b.Length * 4L));
@@ -30,10 +31,12 @@ internal sealed class WorldFamilyGpuPlan
         (_soloConstants ? "SoloConstants.CanonicalAbi1Ready.20260929.v3" : "CanonicalAbi1Ready.20260907.v2") +
         (NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "") +
         (_variantFilterMigrated ? ".VariantFilterMovedToV.20261028.v1" : "") + (_encounters ? ".EncounterQueues.20261105.v1" : "") +
-        (_childShuffle ? ".Modern113" : "") + GpuRngRotation.Revision;
+        (_childShuffle ? ".Modern113" : "") +
+        (UsesSharedAncientCountOnly ? ".SharedAncientsCountOnly.20261114.v1" : "") + GpuRngRotation.Revision;
     internal bool VariantOnly { get; }
+    internal bool UsesSharedAncientCountOnly => _childShuffle && !VariantOnly && !_needsSharedAncientIds;
     internal WorldFamilyGpuPlan(WorldFamilyReplay replay, bool specializeSolo = false,
-        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
+        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64, bool elideSharedAncientPermutation = true)
     {
         if (numericalVariant is not (GpuNumericalVariant.NativeFloat64 or GpuNumericalVariant.IntegerRne))
             throw new ArgumentOutOfRangeException(nameof(numericalVariant));
@@ -41,6 +44,7 @@ internal sealed class WorldFamilyGpuPlan
         _variantFilterMigrated = replay.VariantFilterMigrated;
         var w = replay.Plan;
         _childShuffle = w.UsesChildShuffle;
+        _needsSharedAncientIds = !elideSharedAncientPermutation || !_childShuffle || w.Acts.Any(a => a.HasAncientIdentityPredicate);
         _encounters = w.Acts.Any(a => a.HasEncounterPredicate);
         _normalSlots = Math.Max(1, w.Acts.Max(a => a.WeakEncounterSlots + a.RegularEncounterSlots));
         _eliteSlots = Math.Max(1, w.Acts.Max(a => a.EliteEncounterSlots));
@@ -97,6 +101,8 @@ internal sealed class WorldFamilyGpuPlan
         string body=FamilyGpuComputeUtility.LoadFamilyShaderWithVisibleSeedRootHash("WorldFamily.comp.glsl")
             .Replace("/*__W_DONOR__*/",rng+numerical,StringComparison.Ordinal)
             .Replace("#define RT2_W_CHILD_SHUFFLE 0", "#define RT2_W_CHILD_SHUFFLE " + (_childShuffle ? "1" : "0"), StringComparison.Ordinal)
+            .Replace("#define RT2_W_SHARED_ANCIENT_IDS 1", "#define RT2_W_SHARED_ANCIENT_IDS " +
+                (_needsSharedAncientIds ? "1" : "0"), StringComparison.Ordinal)
             .Replace("uint sharedIds[512]",$"uint sharedIds[{Math.Max(1,Buffers[2][5])}]",StringComparison.Ordinal)
             .Replace("uint maxAct=plan_meta_buffer.values[6u];", VariantOnly ? "return true; uint maxAct=0u;" : "uint maxAct=plan_meta_buffer.values[6u];",StringComparison.Ordinal);
         if (_encounters) body = WorldEncounterGpuSource.Extend(body, numerical, _normalSlots, _eliteSlots);

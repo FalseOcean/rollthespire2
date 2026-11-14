@@ -30,7 +30,8 @@ internal sealed partial class AnalysisPage
     {
         if (_favoriteSeed is null) return;
         _favoriteSeed.Visible = !_capturedRunParty && _favoriteSeedRequested is not null;
-        _favoriteSeed.Text = _uiText?.LanguageCode == "en" ? "Favorite seed" : "收藏种子";
+        _favoriteSeed.Text = Text(_liveRunPremises?.IsStandardReference == true
+            ? "predictor.live.favorite_reference" : "predictor.favorite_seed");
         _favoriteSeed.Disabled = !CanFavoriteVisibleSeed;
     }
 

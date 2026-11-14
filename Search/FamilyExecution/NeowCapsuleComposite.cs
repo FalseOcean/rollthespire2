@@ -26,6 +26,9 @@ internal sealed record NeowCapsuleComposite(uint[] Metadata, CapsuleRelicReplay 
     internal static bool TryCreate(SearchModel request, NeowReplayPlan n, out NeowCapsuleComposite? composite)
     {
         composite = null;
+        // These fused bodies replay the legacy inline bag shuffle and opening
+        // Rewards checkpoint. Modern independent R does not make that ABI valid.
+        if (n.Authority.UsesChildShuffle) return false;
         if (TryCreateBonesArcane(request, n, out composite)) return true;
         if (n.StructuredConditions.Length != 0 || n.HasFinalCurseFastProjection || n.ExactOnly.Length != 0 ||
             request.Evaluation.RelicSequenceConditions.Any(c => !c.IsEmpty) || request.Evaluation.RelicShopSequenceConditions.Any(c => !c.IsEmpty) ||

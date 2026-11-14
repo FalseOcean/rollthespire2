@@ -102,36 +102,45 @@ public sealed record TransformationAggregateCondition(
             condition.Symbiote && query.EventResultConditions.Any(c => c.Kind == EventResultConditionKind.SymbioteInitialBasicTransform) ||
             condition.TrialNondescript && query.EventResultConditions.Any(c => c.Kind is EventResultConditionKind.TrialNondescriptInitialBasicsContains or EventResultConditionKind.TrialCase))
             throw new ArgumentException("TransformationAggregate.EventResultOwnershipConflict");
-        // Fixed Bones Leafy+NewLeaf has the same Rewards continuation in bound and
-        // aggregate authoring: Bones offer shuffle, then no child Rewards consumption.
-        // Other aggregate openings/continuations retain their existing boundary.
-        // Unimplemented continuation remains an authored obligation. The final
-        // evaluator reports it as Unknown without evaluating an initial-bag or
-        // unrelated Rewards continuation as though it satisfied that obligation.
     }
 
     internal static bool HasUnresolvedRewardContinuation(SearchQuery query) =>
-        query.TransformationAggregate is { UsesNeow: true } && query.HasCombatRewardConstraints && !HasFixedBonesRewardContinuation(query);
+        query.TransformationAggregate is { UsesNeow: true } && query.HasCombatRewardConstraints && !HasBoundOpeningContinuation(query);
+
     internal static bool HasUnresolvedRelicContinuation(SearchQuery query) =>
-        query.TransformationAggregate is { UsesNeow: true } &&
-        (query.RelicSequenceConstraints.Any(c => !c.IsEmpty) || query.RelicShopSequenceConditions.Any(c => !c.IsEmpty)) && !HasFixedBonesRelicContinuation(query);
+        query.TransformationAggregate is { UsesNeow: true } && HasRelicSequenceConditions(query) && !HasBoundOpeningContinuation(query);
 
-    internal static bool HasFixedBonesRewardContinuation(SearchQuery query) =>
-        query.TransformationAggregate is { Opening: TransformationOpening.BonesLeafyNewLeaf, UsesEvents: false,
-            Predicate: TransformationAggregatePredicate.ContainsMultiset or TransformationAggregatePredicate.ContainsMultisetAndRemainingRare } &&
-        query.OpeningRoute?.RouteRelicKey == BaseGameModelKeys.Relics.NeowsBones &&
-        query.OpeningRouteRelicRequirement is { RequiredRelicKeys.Count: 2 } pair &&
-        pair.RequiredRelicKeys.Contains(BaseGameModelKeys.Relics.LeafyPoultice) &&
-        pair.RequiredRelicKeys.Contains(BaseGameModelKeys.Relics.NewLeaf);
+    internal static bool HasBoundDirectRelicContinuation(SearchQuery query) =>
+        query.TransformationAggregate is { Opening: TransformationOpening.LeafyPoultice or TransformationOpening.NewLeaf } &&
+        HasRelicSequenceConditions(query) && HasBoundOpeningContinuation(query);
 
-    // Bounded R closure for the same authored fixed pair. Bones shuffles Rewards
-    // or NonCombatGeneration, and the transformations and curse consume their
-    // versioned streams. None
-    // advances UpFront or draws/removes an entry from the observed personal
-    // Common/Uncommon/Rare/Shop bags: all three obtained relics are Ancient.
-    // R therefore reuses its initial-bag replay in either pickup order. Exact
-    // still intersects T with the N witness carrying the already-proven R facts.
-    internal static bool HasFixedBonesRelicContinuation(SearchQuery query) => HasFixedBonesRewardContinuation(query);
+    internal static bool HasFixedBonesRelicContinuation(SearchQuery query) =>
+        query.TransformationAggregate is { Opening: TransformationOpening.BonesLeafyNewLeaf } && HasBoundOpeningContinuation(query);
+
+    private static bool HasRelicSequenceConditions(SearchQuery query) =>
+        query.RelicSequenceConstraints.Any(c => !c.IsEmpty) || query.RelicShopSequenceConditions.Any(c => !c.IsEmpty);
+
+    private static bool HasBoundOpeningContinuation(SearchQuery query)
+    {
+        if (query.TransformationAggregate is not { UsesNeow: true } aggregate ||
+            query.OpeningRoute?.RouteRelicKey != aggregate.RequiredOpeningKey)
+            return false;
+
+        // These Ancient pickups preserve the observed personal relic bags and
+        // UpFront. C already replays the versioned Bones offer and actual route;
+        // Leafy and New Leaf change no Rewards draws or held reward effects.
+        // Conditional event contributors read their own initial-Basic premises
+        // and event streams. The aggregation predicate cannot change a pickup.
+        return aggregate.Opening switch
+        {
+            TransformationOpening.LeafyPoultice or TransformationOpening.NewLeaf => true,
+            TransformationOpening.BonesLeafyNewLeaf =>
+                query.OpeningRouteRelicRequirement is { RequiredRelicKeys.Count: 2 } pair &&
+                pair.RequiredRelicKeys.Contains(BaseGameModelKeys.Relics.LeafyPoultice) &&
+                pair.RequiredRelicKeys.Contains(BaseGameModelKeys.Relics.NewLeaf),
+            _ => false
+        };
+    }
 
     internal ModelKey RequiredOpeningKey => Opening switch {
         TransformationOpening.LeafyPoultice => BaseGameModelKeys.Relics.LeafyPoultice,

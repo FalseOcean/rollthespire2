@@ -4,6 +4,9 @@
 #ifndef RT2_C_TERMINAL_CARD_GATE
 #define RT2_C_TERMINAL_CARD_GATE 0
 #endif
+#ifndef RT2_C_CARD_FREE_TERMINAL
+#define RT2_C_CARD_FREE_TERMINAL 0
+#endif
 // P10-A Runtime-Accepted donor: streaming predicate evaluation + current-battle-only materialization.
 // P10-RP1 production GPU Reward uses this as the retained single-route evaluator;
 // the historical BaselineCurrent variant remains diagnostic-only.
@@ -73,6 +76,11 @@ bool cr_evaluate_rewards(inout RewardRouteState state){
             potion=dense_ids.ids[off+cr_next_int(state.rewards,len)];
         }
         uint cards[12];for(uint i=0u;i<12u;++i)cards[i]=0xffffffffu;uint count=0u;
+#if RT2_C_CARD_FREE_TERMINAL
+        // Earlier cards still advance Rewards and rarity pity for later potions.
+        // A terminal extra reward or Candy retains the full fault boundary.
+        if(battle+1u<maxBattle||state.additional_card_rewards!=0u||(state.influence_flags&4u)!=0u){
+#endif
         uint group_selected[12];for(uint i=0u;i<12u;++i)group_selected[i]=0xffffffffu;uint group_count=0u;
 #if RT2_C_TERMINAL_CARD_GATE
         // Potion/gold and every previous battle have already executed. Only a
@@ -102,6 +110,9 @@ bool cr_evaluate_rewards(inout RewardRouteState state){
             for(uint i=0u;i<3u;++i){uint v=cr_generate_combat_card(false,asc,group_selected,group_count,state);if(v==0xffffffffu||count>=12u)return RT2_CR_NUMERIC_FAILURE();group_selected[group_count++]=v;cards[count++]=v;}
         }
         if((state.influence_flags&4u)!=0u)state.lasting_candy_counter++;
+#if RT2_C_CARD_FREE_TERMINAL
+        }
+#endif
 
         uint battle_ordinal=battle+1u;
 #if RT2_C_ASSIGNMENT
@@ -326,9 +337,16 @@ bool cr_evaluate_rewards_unpinned_hot_state(RewardRouteState state){
         }
 
         uint c0,m0,i0,c1,m1,i1,c2,m2,i2;
+#if RT2_C_CARD_FREE_TERMINAL
+        c0=0xffffffffu;c1=0xffffffffu;c2=0xffffffffu;
+        if(battle+1u<RT2_CR_HOT_MAX_BATTLE){
+#endif
         if(!cr_hot_generate_card(rewards,asc,card_offset,card_state,0xffffffffu,0xffffffffu,0xffffffffu,0xffffffffu,0xffffffffu,0xffffffffu,0u,c0,m0,i0))return RT2_CR_NUMERIC_FAILURE();
         if(!cr_hot_generate_card(rewards,asc,card_offset,card_state,c0,m0,i0,0xffffffffu,0xffffffffu,0xffffffffu,1u,c1,m1,i1))return RT2_CR_NUMERIC_FAILURE();
         if(!cr_hot_generate_card(rewards,asc,card_offset,card_state,c0,m0,i0,c1,m1,i1,2u,c2,m2,i2))return RT2_CR_NUMERIC_FAILURE();
+#if RT2_C_CARD_FREE_TERMINAL
+        }
+#endif
 
         uint battle_ordinal=battle+1u;
 #if RT2_C_ASSIGNMENT

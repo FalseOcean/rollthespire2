@@ -74,6 +74,7 @@ internal static class SearchEnvironmentIdentity
             ("PotionCatalogChanged", false) => "药水属性、池或顺序",
             ("WorldCatalogChanged", false) => "世界内容、属性或顺序",
             ("UnlockStateChanged", false) => "解锁状态",
+            ("TreasureClaimRuleChanged", false) => "宝箱领取规则（旧结果仅保留作历史记录）",
             ("GameVersionChanged", true) => "game version",
             ("CharacterCatalogChanged", true) => "character content or order",
             ("CardCatalogChanged", true) => "card properties, pools or order",
@@ -81,6 +82,7 @@ internal static class SearchEnvironmentIdentity
             ("PotionCatalogChanged", true) => "potion properties, pools or order",
             ("WorldCatalogChanged", true) => "world content, properties or order",
             ("UnlockStateChanged", true) => "unlock state",
+            ("TreasureClaimRuleChanged", true) => "treasure claim rules (old results are retained as history)",
             _ => english ? "game content" : "游戏内容"
         };
         string reasons = string.Join(english ? ", " : "、", comparison.Reasons

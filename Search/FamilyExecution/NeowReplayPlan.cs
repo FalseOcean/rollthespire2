@@ -26,6 +26,10 @@ internal sealed record NeowReplayPlan(
     internal bool DirectNestedVanilla111 { get; init; }
     internal bool AuditedModern113IdentityReplay { get; init; }
     internal bool AuditedIdentityReplay => DirectNestedVanilla111 || AuditedModern113IdentityReplay;
+    internal int[] UnobservedRewardsDraws { get; init; } = [];
+    internal NeowModernTransformGate? ModernTransformGate { get; init; }
+    internal bool HasCapsuleRarityGate { get; init; }
+    internal string CapsuleRarityRevision => HasCapsuleRarityGate ? NeowCapsuleRarityGate.Revision : "";
     internal int SharedNicheDraws { get; init; }
     internal int SharedPotionDraws { get; init; }
     internal (int Niche, int Potions)[] SharedArrivals { get; init; } = [];
@@ -33,8 +37,14 @@ internal sealed record NeowReplayPlan(
     internal NeowAuthoredUpgradeContinuation? AuthoredUpgrades { get; init; }
     internal NeowCapsuleNicheContinuation? CapsuleNicheContinuation { get; init; }
     internal uint CapsulesWithKnownZeroNonCombatAdvance { get; init; }
-    internal string CapsuleNonCombatRevision => CapsulesWithKnownZeroNonCombatAdvance == 0
-        ? "" : NeowCapsuleNonCombatContinuation.Revision;
+    internal uint SmallCapsuleNonCombatAdvances { get; init; }
+    internal uint LargeCapsuleNonCombatAdvances { get; init; }
+    internal uint DualCapsuleNonCombatAdvances { get; init; }
+    internal bool HasCapsuleNonCombatAlternatives =>
+        (SmallCapsuleNonCombatAdvances | LargeCapsuleNonCombatAdvances | DualCapsuleNonCombatAdvances) != 0;
+    internal string CapsuleNonCombatRevision => HasCapsuleNonCombatAlternatives
+        ? NeowCapsuleNonCombatContinuation.AlternativesRevision
+        : CapsulesWithKnownZeroNonCombatAdvance == 0 ? "" : NeowCapsuleNonCombatContinuation.Revision;
     internal string[] FilterRemainders => ExactOnly.Concat(CapsuleNicheContinuation?.Remainders ?? [])
         .Select(cause => "N.Neow:" + cause).ToArray();
     internal bool HasFinalCurseFastProjection => (EnabledDomains & Beta110FastDomain.FinalCurse) != 0;
@@ -147,6 +157,7 @@ internal sealed record NeowReplayPlan(
         }
         var conditions = new List<Beta110FastStructuredCondition>();
         var supported = new List<NeowStructuredEffectSearchCondition>();
+        var offeredBones = new List<ModelKey>();
         Beta110FastEffectCatalog catalog = Beta110FastEffectCatalogCompiler.Compile(request.Authority.EffectAuthority,
             filter.StructuredNeowEffects.SelectMany(c => c.OutputKeys)
                 .Concat(NeowNumericCompilation.EnumerateFinalCurseRequiredKeys(filter)).Concat(filter.BannedFinalCurses)
@@ -155,6 +166,19 @@ internal sealed record NeowReplayPlan(
         foreach (var condition in filter.StructuredNeowEffects)
         {
             if (condition.Scope == NeowStructuredEffectScope.FinalCurse) { supported.Add(condition); continue; }
+            // Exact checks this scope as membership of the two offered relics
+            // before interpreting the row's Kind. A unique target set is the
+            // same identity observation as OpeningRouteRelicRequirement.
+            if (!capsule && condition.SourceRelicKey == BaseGameModelKeys.Relics.NeowsBones &&
+                condition.Scope == NeowStructuredEffectScope.BonesOfferedRelics &&
+                condition.OutputKind == NeowStructuredOutputKind.Relic && condition.OutputKeys.Count is 1 or 2 &&
+                condition.OutputKeys.Distinct(ModelKeyComparer.Instance).Count() == condition.OutputKeys.Count &&
+                condition.OutputKeys.All(key => Beta110FastRelicCatalog.TryGetId(key, out _)))
+            {
+                offeredBones.AddRange(condition.OutputKeys);
+                supported.Add(condition);
+                continue;
+            }
             if (capsule && IsGroupedCapsule(condition))
             {
                 supported.Add(condition);
@@ -205,7 +229,8 @@ internal sealed record NeowReplayPlan(
         }
         byte selected = Id(filter.NeowRoute?.RouteRelicKey);
         bool bones = selected == Beta110FastRelicCatalog.NeowsBones || filter.RequireNeowsBones ||
-            filter.RequiredBonesCombination.Count != 0 || !filter.BonesRelics.IsEmpty || finalCurse || filter.RequiredBonesAcquisitionOrder.Count != 0;
+            filter.RequiredBonesCombination.Count != 0 || !filter.BonesRelics.IsEmpty || finalCurse ||
+            filter.RequiredBonesAcquisitionOrder.Count != 0 || offeredBones.Count != 0;
         if (!capsule && !bones && selected == Beta110FastRelicCatalog.InvalidId && conditions.Count > 0)
         {
             // Current UI authors result conditions only under a selected route.
@@ -227,7 +252,7 @@ internal sealed record NeowReplayPlan(
             filter.RequireLargeCapsule ? BaseGameModelKeys.Relics.LargeCapsule : default }.Where(k => k.IsValid)) : 0;
         if (!capsule && bones)
             filter = filter with { BonesRelics = new ModelKeySetFilter(filter.BonesRelics.Any,
-                filter.BonesRelics.All.Concat(sources).Concat(new[] {
+                filter.BonesRelics.All.Concat(sources).Concat(offeredBones).Concat(new[] {
                     filter.RequireSmallCapsule ? BaseGameModelKeys.Relics.SmallCapsule : default,
                     filter.RequireLargeCapsule ? BaseGameModelKeys.Relics.LargeCapsule : default }.Where(k => k.IsValid))
                     .Distinct().ToArray(), filter.BonesRelics.Ban), RequireSmallCapsule = false, RequireLargeCapsule = false };
@@ -252,10 +277,32 @@ internal sealed record NeowReplayPlan(
             NeowEffectCardSnapshot[] defends = effectAuthority.OrderedDeck.Where(card => card.IsBasic && card.IsDefend).ToArray();
             leafyBonesInitialTransformInvariant = SameBasicSource(strikes, strikeKey) && SameBasicSource(defends, defendKey);
         }
+        uint knownCapsules = !capsule && newOpeningStreams && bones
+            ? NeowCapsuleNonCombatContinuation.Compile(request) : 0;
+        if (!leafyBonesInitialTransformInvariant && hasLeafyPredicate && newOpeningStreams && bones &&
+            request.Authority.PlayersCount == 1 && request.Authority.IsVanilla && !request.Authority.UsesBestEffortModel &&
+            request.Authority.NoRunModifiers == true && request.Authority.IsBeta111NeowIdentityAuthorityExact &&
+            authority.BonesAuthorityExact &&
+            effectAuthority?.CapturedProfileId == RuntimeProfileId.Beta111 && effectAuthority.HasExactDeck &&
+            effectAuthority.OrderedDeck is not null && effectAuthority.CharacterStrikeKey is { } modernStrike &&
+            effectAuthority.CharacterDefendKey is { } modernDefend && PreservesModernLeafyInput())
+        {
+            var strikes = effectAuthority.OrderedDeck.Where(card => card.IsBasic && card.IsStrike).ToArray();
+            var defends = effectAuthority.OrderedDeck.Where(card => card.IsBasic && card.IsDefend).ToArray();
+            leafyBonesInitialTransformInvariant = SameBasicSource(strikes, modernStrike) && SameBasicSource(defends, modernDefend);
+        }
         bool vanillaCapture = request.Authority.CanUseCurrentModel && request.Authority.NoRunModifiers == true &&
             effectAuthority?.CapturedProfileId == RuntimeProfileId.Beta111;
         bool directNestedVanilla111 = vanillaCapture && request.Authority.IsAuditedBeta111SourceContext;
         bool modernBones = !capsule && newOpeningStreams && bones;
+        ulong capsules = Beta110FastRelicCatalog.Bit(Beta110FastRelicCatalog.SmallCapsule) |
+            Beta110FastRelicCatalog.Bit(Beta110FastRelicCatalog.LargeCapsule);
+        bool capsuleRoutePossible = (bannedBones & capsules) != capsules &&
+            (System.Numerics.BitOperations.PopCount(requiredBones) < 2 || (requiredBones & capsules) != 0);
+        bool observesNonCombat = required.Length != 0 || banned.Length != 0 ||
+            (domains & (Beta110FastDomain.KaleidoscopeOffers | Beta110FastDomain.PhialHolsterPotions)) != 0;
+        var (smallAdvances, largeAdvances, dualAdvances) = modernBones && capsuleRoutePossible && observesNonCombat
+            ? NeowCapsuleNonCombatContinuation.CompileSoloAlternatives(request) : (0u, 0u, 0u);
         var plan = new NeowReplayPlan(authority, filter, domains, conditions.ToArray(), required, banned,
             Mask(filter.NeowRelics.Any), Mask(filter.NeowRelics.All) | (!bones ? requiredCapsules : 0), Mask(filter.NeowRelics.Ban),
             Mask(filter.BonesRelics.Any), requiredBones, bannedBones, selected,
@@ -263,7 +310,10 @@ internal sealed record NeowReplayPlan(
             bones, filter.RequireNeowsBones, leafyBonesInitialTransformInvariant, exactOnly.ToArray())
         {
             AuthoredUpgrades = capsule || newOpeningStreams ? null : NeowAuthoredUpgradeContinuation.Compile(request),
-            CapsulesWithKnownZeroNonCombatAdvance = modernBones ? NeowCapsuleNonCombatContinuation.Compile(request) : 0,
+            CapsulesWithKnownZeroNonCombatAdvance = modernBones ? knownCapsules : 0,
+            SmallCapsuleNonCombatAdvances = smallAdvances,
+            LargeCapsuleNonCombatAdvances = largeAdvances,
+            DualCapsuleNonCombatAdvances = dualAdvances,
             CapsuleNicheContinuation = capsule || newOpeningStreams ? null : NeowCapsuleNicheContinuation.Compile(request, authority, bones, selected,
                 Id(filter.RequiredBonesAcquisitionOrder.ElementAtOrDefault(0)), Id(filter.RequiredBonesAcquisitionOrder.ElementAtOrDefault(1)),
                 requiredBones, bannedBones, conditions, finalCurse),
@@ -274,7 +324,49 @@ internal sealed record NeowReplayPlan(
         };
         if (modernBones && NeowCapsuleNonCombatContinuation.NeedsRemainder(plan))
             plan = plan with { ExactOnly = [..plan.ExactOnly, NeowCapsuleNonCombatContinuation.Remainder] };
+        if (modernBones && NeowModernTransformGate.TryCreate(plan, request.Authority) is { } transformGate)
+            plan = plan with { ModernTransformGate = transformGate };
+        if (!capsule && NeowCapsuleRarityGate.CanApply(request, plan))
+            plan = plan with { HasCapsuleRarityGate = true };
+        if (!capsule) plan = plan with { UnobservedRewardsDraws = NeowUnobservedRewards.Compile(plan) };
         return plan;
+
+        bool PreservesModernLeafyInput()
+        {
+            ulong leafy = Beta110FastRelicCatalog.Bit(Beta110FastRelicCatalog.LeafyPoultice);
+            ulong other = requiredBones & ~leafy;
+            if ((requiredBones & leafy) == 0 || !System.Numerics.BitOperations.IsPow2(other)) return false;
+            byte companion = (byte)System.Numerics.BitOperations.TrailingZeroCount(other);
+            if (companion is Beta110FastRelicCatalog.SmallCapsule or Beta110FastRelicCatalog.LargeCapsule)
+            {
+                var snapshots = (effectAuthority!.SharedRelicPoolSource ?? [])
+                    .Concat(effectAuthority.CharacterRelicPoolSource ?? []).ToLookup(relic => relic.RelicKey);
+                int slots = companion == Beta110FastRelicCatalog.SmallCapsule ? 1 : 2;
+                // Full bindings prove identity separately from the NC count.
+                // These hooks leave the initial Basic sources and pool intact.
+                return (knownCapsules & (uint)other) != 0 &&
+                    request.Evaluation.StructuredNeowEffects.Any(condition =>
+                    !IsGroupedCapsule(condition) && condition.SourceRelicKey == Beta110FastRelicCatalog.KeyOf(companion) &&
+                    condition.Kind == (slots == 1 ? NeowStructuredConditionKind.ExactSingle : NeowStructuredConditionKind.ExactUnorderedPair) &&
+                    condition.OutputKeys.Count == slots && condition.OutputKeys.Distinct().Count() == slots &&
+                    condition.OutputKeys.All(key => snapshots.Contains(key) &&
+                        snapshots[key].All(relic => NeowCapsuleNonCombatContinuation.NativeAdvance(relic) == 0)));
+            }
+            // 0.113 pickup code: deterministic resources, non-Basic card
+            // additions, or in-place upgrades. None uses Transformations.
+            // Removals and New Leaf keep their respective route models.
+            return companion is Beta110FastRelicCatalog.CursedPearl or Beta110FastRelicCatalog.DowsingRod or
+                Beta110FastRelicCatalog.HeftyTablet or Beta110FastRelicCatalog.NeowsSacrifice or
+                Beta110FastRelicCatalog.SilkenTress or Beta110FastRelicCatalog.SilverCrucible or
+                Beta110FastRelicCatalog.ArcaneScroll or Beta110FastRelicCatalog.BoomingConch or
+                Beta110FastRelicCatalog.FishingRod or Beta110FastRelicCatalog.GoldenPearl or
+                Beta110FastRelicCatalog.Kaleidoscope or Beta110FastRelicCatalog.LeadPaperweight or
+                Beta110FastRelicCatalog.LostCoffer or Beta110FastRelicCatalog.NeowsTorment or
+                Beta110FastRelicCatalog.PhialHolster or Beta110FastRelicCatalog.ScrollBoxes or
+                Beta110FastRelicCatalog.WingedBoots or Beta110FastRelicCatalog.LavaRock or
+                Beta110FastRelicCatalog.NeowsTalisman or Beta110FastRelicCatalog.NutritiousOyster or
+                Beta110FastRelicCatalog.Pomander or Beta110FastRelicCatalog.StoneHumidifier;
+        }
 
         static bool SameBasicSource(NeowEffectCardSnapshot[] cards, ModelKey expectedKey) =>
             cards.Length >= 3 && cards.All(card => card.CardKey == expectedKey &&

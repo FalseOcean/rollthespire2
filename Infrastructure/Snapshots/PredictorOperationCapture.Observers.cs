@@ -215,7 +215,11 @@ internal static partial class PredictorOperationCapture
             RestRewardSources.Add(set, rest);
             foreach (var reward in rewards) RewardRestSources.Add(reward, rest);
         }
-        if (Obtaining.Value is not { } source) return;
+        if (Obtaining.Value is not { } source)
+        {
+            if (Resting.Value is null && SelectingReward.Value is null) PredictorOperationEventCapture.ObserveEventRewardSet(set);
+            return;
+        }
         RewardSetSources.Add(set, source);
         foreach (var reward in rewards) RewardObtainSources.Add(reward, source);
     }

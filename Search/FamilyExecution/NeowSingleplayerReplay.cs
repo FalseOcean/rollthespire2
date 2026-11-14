@@ -58,6 +58,7 @@ internal static class NeowSingleplayerReplay
     {
         NeowReplayObservation observation = Observe(root, plan);
         if (!observation.IdentityPass) return false;
+        if (plan.HasCapsuleRarityGate && !NeowCapsuleRarityGate.Passes(observation.RewardsAfterBones)) return false;
         if (plan.StructuredConditions.Length == 0 && !plan.HasFinalCurseFastProjection) return true;
         if (!plan.Bones) return Route(root, plan, plan.Selected, Beta110FastRelicCatalog.InvalidId, observation.RewardsAfterBones);
         if (plan.First != Beta110FastRelicCatalog.InvalidId && plan.Second != Beta110FastRelicCatalog.InvalidId)
@@ -83,6 +84,28 @@ internal static class NeowSingleplayerReplay
     internal static bool Route(ulong root, NeowReplayPlan plan, byte first, byte second, Beta110FastRng afterBones)
     {
         if (!NeowLocalOperators.RequiredStructuredSourcesPresent(plan.StructuredConditions, first, second)) return false;
+        if (plan.Authority.UsesChildShuffle &&
+            (first is NeowCapsuleNonCombatContinuation.Small or NeowCapsuleNonCombatContinuation.Large ||
+             second is NeowCapsuleNonCombatContinuation.Small or NeowCapsuleNonCombatContinuation.Large))
+        {
+            if (plan.HasFinalCurseFastProjection && NeowCapsuleNonCombatContinuation.IsDual(first, second) &&
+                plan.DualCapsuleNonCombatAdvances != 0)
+            {
+                // No supported predicate between two Capsule pickups reads
+                // NonCombat. Its total advances may be applied at the tail.
+                foreach (int total in NeowCapsuleNonCombatContinuation.Advances(plan.DualCapsuleNonCombatAdvances))
+                    if (RouteAtArrival(root, plan, first, second, afterBones, 0, total)) return true;
+                return false;
+            }
+            int[] firstAdvances = NeowCapsuleNonCombatContinuation.ReadsAfterFirst(plan, second)
+                ? NeowCapsuleNonCombatContinuation.Advances(plan, first) : NeowCapsuleNonCombatContinuation.Zero;
+            int[] secondAdvances = plan.HasFinalCurseFastProjection
+                ? NeowCapsuleNonCombatContinuation.Advances(plan, second) : NeowCapsuleNonCombatContinuation.Zero;
+            foreach (int da in firstAdvances)
+            foreach (int db in secondAdvances)
+                if (RouteAtArrival(root, plan, first, second, afterBones, da, db)) return true;
+            return false;
+        }
         if (plan.CapsuleNicheContinuation is { } continuation)
         {
             int[] firstAdvances = NeowCapsuleNicheContinuation.ObservedAfterFirst(plan,second)
@@ -113,11 +136,12 @@ internal static class NeowSingleplayerReplay
         // authored burn and the observation's Rewards continuation unchanged.
         var rewards = plan.Bones ? afterBones
             : rewardsNeeded ? new Beta110FastRng(unchecked(root + RewardsHash)) : default;
-        var niche = nicheNeeded || firstAdvance > 0 || secondAdvance > 0
+        bool childShuffle = plan.Authority.UsesChildShuffle;
+        var niche = !childShuffle && (nicheNeeded || firstAdvance > 0 || secondAdvance > 0)
             ? new Beta110FastRng(unchecked(root + NicheHash)) : default;
         var transformations = transformationsNeeded ? new Beta110FastRng(unchecked(root + TransformationsHash)) : default;
-        var potions = potionsNeeded ? new Beta110FastRng(unchecked(root + PotionHash)) : default;
-        var nonCombat = plan.Authority.UsesChildShuffle ? NeowFamilyReplay.NonCombatRng(root, plan) : default;
+        var potions = !childShuffle && potionsNeeded ? new Beta110FastRng(unchecked(root + PotionHash)) : default;
+        var nonCombat = childShuffle ? NeowFamilyReplay.NonCombatRng(root, plan) : default;
         Span<byte> matched = stackalloc byte[plan.StructuredConditions.Length]; matched.Clear();
         bool nicheUnknown = false;
         for (int pickup = 0; pickup < 2; pickup++)
@@ -143,8 +167,11 @@ internal static class NeowSingleplayerReplay
                     throw new InvalidOperationException("NFamilyContinuationAuthorityUnavailable");
             }
             int advance = relic == first ? firstAdvance : secondAdvance;
-            if(advance<0 || NeowCapsuleNonCombatContinuation.IsUnknown(plan, relic)) nicheUnknown=true;
-            else for (int i = 0; i < advance; i++) niche.NextInt(2);
+            if (advance < 0) nicheUnknown = true;
+            else if (childShuffle)
+                for (int i = 0; i < advance; i++) nonCombat.ConsumeShuffleSeed();
+            else
+                for (int i = 0; i < advance; i++) niche.NextInt(2);
         }
         bool allMatched = true;
         foreach (byte match in matched) allMatched &= match != 0;

@@ -11,17 +11,14 @@ namespace RolltheSpire2.Ui.Shell;
 internal sealed partial class WorkspaceShell
 {
     private string? _livePredictionBinding;
-    internal void OpenRunPrediction(IRunState run, SeedLibraryContext? observedContext = null)
+    internal void OpenRunPrediction(IRunState run, SeedLibraryContext? observedContext = null, LiveRunPredictionPremises? premises = null)
     {
         var context = observedContext ?? CaptureRunPredictionContext(run, _runtime.Detection.NormalizedVersion, _runtime.Profile.ProfileId,
             LocalContext.NetId, _persistence!.PredictorContext, _predictorController?.CurrentRunPredictionContext);
         if (_predictor is null) CreatePredictor();
-        _predictorController!.ClearSeedLibraryOverrides();
-        _predictorController.OpenRunPredictionContext(run.Rng.StringSeed, context);
+        _predictorController!.OpenRunPredictionContext(run.Rng.StringSeed, context, premises ?? LiveRunPredictionPremises.Capture(run));
+        _predictor!.ShowLibraryReceipt("");
         SelectTask(Workspace.Analysis);
-        _predictor!.ShowLibraryReceipt(_languageCode == "zh"
-            ? "当前对局的开局预测；领取顺序请与实机保持一致。"
-            : "Opening prediction for the current run. Match pickup order to your actual play.");
     }
 
     // Copy context only. Never use or advance the real run's RNG, deck or reward state.

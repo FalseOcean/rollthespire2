@@ -28,6 +28,7 @@ internal static partial class PartyPhase1Checks
             runtime.Profile.ProfileId,LocalContext.NetId,store.PredictorContext);
         var environment = RuntimeAuthorityEnvironment.Current.Authority;
         string key = JsonSerializer.Serialize(new { Seed=run.Rng.StringSeed, Context=context,
+            Premises=LiveRunPredictionPremises.Capture(run),
             environment.Fingerprint, environment.CaptureIssues });
         var page = (AnalysisPage?)Field("_predictor");
         string? effective = null, effectiveIssue = null;

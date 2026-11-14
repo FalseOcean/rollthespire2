@@ -437,6 +437,7 @@ internal sealed partial class QueryWorkbenchFrame
             var warning = _p.Label(_text.Get(key), 16, true);
             warning.AutowrapMode = TextServer.AutowrapMode.WordSmart; _resultRows.AddChild(warning);
         }
+        if (_persistence.DisplaysPreviousTreasureRules) AddWarning("workflow.treasure_history_warning");
         if (_persistence.DisplayResults.Any(r => r.IsUnfiltered)) AddWarning("workflow.unfiltered_warning");
         if (_persistence.DisplayResults.Any(r => r.HasIncompleteValidation)) AddWarning("workflow.incomplete_warning");
         if (unverifiedMode && !_persistence.DisplayResults.Any(r => r.IsUnfiltered || r.HasIncompleteValidation))

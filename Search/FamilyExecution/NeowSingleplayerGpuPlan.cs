@@ -83,6 +83,7 @@ internal static class NeowSingleplayerGpuPlan
         meta[5] = 0; meta[6] = 1; meta[7] = (uint)a.Ascension;
         meta[8] = (uint)a.BonesEligibleRelicIds.Length; meta[9] = (uint)c.OtherCharacterPools.Length;
         meta[12] = plan.First; meta[13] = plan.Second;
+        meta[NeowCapsuleRarityGate.GpuMetadataIndex] = plan.HasCapsuleRarityGate ? 1u : 0u;
         // Adopt P9's immutable first-draw proof. A top-only acceptance skips
         // positives, never the independent Bones/local continuation below it.
         var topGate = NeowNumericCompilation.BuildCurseFirstDrawGateP9(a,
@@ -104,7 +105,7 @@ internal static class NeowSingleplayerGpuPlan
             int bonesOrdinal = Array.IndexOf(a.EligibleCurseRelicIds, Beta110FastRelicCatalog.NeowsBones);
             // Tiny synthetic/unusual pools are dense at the pair checkpoint;
             // use the full-capacity fused physical instead of predictable overflow.
-            if (!a.UsesChildShuffle && a.BonesEligibleRelicIds.Length >= 16 && bonesOrdinal >= 0 && topGate.AcceptedCurseOrdinalMask == (1u << bonesOrdinal) &&
+            if (a.BonesEligibleRelicIds.Length >= 16 && bonesOrdinal >= 0 && topGate.AcceptedCurseOrdinalMask == (1u << bonesOrdinal) &&
                 (topGate.AcceptedCurseOrdinalMask | topGate.RejectedCurseOrdinalMask) == (1u << a.EligibleCurseRelicIds.Length) - 1u)
                 meta[66] = 1;
         }
@@ -120,6 +121,9 @@ internal static class NeowSingleplayerGpuPlan
         meta[56] = (plan.RequireBones ? 1u : 0) | (plan.Bones ? 2u : 0) | (a.AllCharacterCardPoolsUnlocked ? 4u : 0) |
             (a.ScrollBoxesAllowed ? 8u : 0) | (a.UsesDefectScrollBoxesRule ? 32u : 0) | (a.UsesChildShuffle ? 64u : 0);
         meta[NeowCapsuleNonCombatContinuation.GpuMetadataIndex] = plan.CapsulesWithKnownZeroNonCombatAdvance;
+        meta[NeowCapsuleNonCombatContinuation.GpuSmallAdvancesIndex] = plan.SmallCapsuleNonCombatAdvances;
+        meta[NeowCapsuleNonCombatContinuation.GpuLargeAdvancesIndex] = plan.LargeCapsuleNonCombatAdvances;
+        meta[NeowCapsuleNonCombatContinuation.GpuDualAdvancesIndex] = plan.DualCapsuleNonCombatAdvances;
         meta[58] = (uint)c.LeafyStrikeTransformPool.Length; meta[59] = meta[60] = (uint)c.LeafyDefendTransformPool.Length;
         meta[61] = (uint)c.NewLeafTransformPool.Length;
         for (int i = 0; i < a.EligibleCurseRelicIds.Length; i++) meta[71 + i] = a.EligibleCurseRelicIds[i];
@@ -142,7 +146,7 @@ internal static class NeowSingleplayerGpuPlan
         // starter multiplicity survives every mapped vanilla companion, or for
         // a direct Leafy-first / proven deck-neutral GoldenPearl route.
         // 1/1024 is a private physical heuristic, not semantic probability authority.
-        if (c.LeafyTransformAuthorityExact && leafy.Length == 1 && leafy[0].TargetCount == 2 && routeSafe)
+        if (plan.ModernTransformGate is null && c.LeafyTransformAuthorityExact && leafy.Length == 1 && leafy[0].TargetCount == 2 && routeSafe)
         {
             long matching = 0;
             foreach (ushort strike in c.LeafyStrikeTransformPool)
@@ -162,10 +166,12 @@ internal static class NeowSingleplayerGpuPlan
         for (int i = 0; i < c.OtherCharacterPools.Length; i++) Pool(c.OtherCharacterPools[i], 20 + i * 6);
         Append(plan.RequiredFinalCurseIds, trailer + 6); Append(plan.BannedFinalCurseIds, trailer + 8);
         Append(c.GeneratedCurseIds, trailer + 12);
+        rows = NeowLocalObservationPacking.Apply(plan, sources, meta, rows);
         gpu = new(meta, poolMeta, cards.ToArray(), c.LeafyStrikeTransformPool.Select(x => (uint)x).ToArray(),
             c.LeafyDefendTransformPool.Concat(c.NewLeafTransformPool).Select(x => (uint)x).ToArray(),
             a.BonesEligibleRelicIds.Select(x => (uint)x).ToArray(), rows) {
                 HasAuthoredUpgrades = plan.AuthoredUpgrades is not null,
+                ModernTransformGate = plan.ModernTransformGate,
                 CapsuleNicheMetaOffset = continuationData.Length==0 ? -1 : continuationOffset };
         string mode = Environment.GetEnvironmentVariable("RT2_N_DIRECT_EXPERIMENT") ?? "default";
         int selectedMode = mode switch { "default" => -1, "baseline" => 0, "replay" => 1, "continue" => 2, "both" => 3, "local" => 4,
@@ -176,13 +182,29 @@ internal static class NeowSingleplayerGpuPlan
             "arcane-first" => 30, "arcane-index-first" => 31, "arcane-direct" => 32, "arcane-index-local" => 33,
             "phial-first" => 40, "phial-local" => 41, "phial-direct" => 42,
             _ => throw new InvalidOperationException("UnknownNDirectExperiment:" + mode) };
-        bool direct = plan.DirectNestedVanilla111 && !plan.Bones && !plan.RequireBones && !plan.HasFinalCurseFastProjection  &&
-            a.AllCharacterCardPoolsUnlocked && plan.ExactOnly.Length == 0 && !plan.StructuredConditions.Any(c => c.OrderedKaleidoscope);
-        if (direct &&
+        // Entry identity already uses the captured unlock-dependent pool. Local
+        // operators need only their own exact pools checked above; unrelated
+        // locked characters do not change Arcane, New Leaf, or potion draws.
+        bool direct = plan.AuditedIdentityReplay && !plan.Bones && !plan.RequireBones && !plan.HasFinalCurseFastProjection &&
+            plan.ExactOnly.Length == 0 && !plan.StructuredConditions.Any(c => c.OrderedKaleidoscope);
+        // Common falls through to Uncommon before Rare. A sufficient
+        // Uncommon pool keeps either initial lower rarity from reaching Rare,
+        // including in the colorless pool that starts at Uncommon.
+        static bool PreventsRareFallback(Beta110FastCardPool pool, int draws) =>
+            pool.Uncommon.Distinct().Count() >= draws;
+        if (direct && a.AllCharacterCardPoolsUnlocked &&
             plan.Selected == Beta110FastRelicCatalog.Kaleidoscope && plan.StructuredConditions.Length == 1 &&
             plan.StructuredConditions[0] is var k && k.Kind == Beta110FastStructuredConditionKind.KaleidoscopeIndependentOfferTargets &&
             k.TargetCount == 2 && c.CardRarityByDenseId[k.Target0] == 3 && c.CardRarityByDenseId[k.Target1] == 3)
-            gpu = gpu with { DirectNestedMode = selectedMode == -1 ? 3 : selectedMode <= 4 || selectedMode == 9 ? selectedMode : 0 };
+        {
+            bool canGateRare = !a.UsesChildShuffle || c.OtherCharacterPools.All(pool => PreventsRareFallback(pool, 1));
+            gpu = gpu with { DirectNestedMode = selectedMode switch {
+                -1 => canGateRare ? 3 : 9,
+                >= 1 and <= 3 when canGateRare => selectedMode,
+                4 or 9 => selectedMode,
+                _ => 0
+            } };
+        }
         if (direct && plan.StructuredConditions.Length == 1)
         {
             var condition=plan.StructuredConditions[0];
@@ -199,7 +221,8 @@ internal static class NeowSingleplayerGpuPlan
             if (plan.Selected == Beta110FastRelicCatalog.LostCoffer && conditions.Length is 1 or 2 &&
                 conditions.All(x => x.Kind is Beta110FastStructuredConditionKind.LostCofferCardOffer or Beta110FastStructuredConditionKind.LostCofferPotion))
             {
-                bool rareCard = conditions.Any(x => x.Kind == Beta110FastStructuredConditionKind.LostCofferCardOffer && c.CardRarityByDenseId[x.Target0] == 3);
+                bool rareCard = (!a.UsesChildShuffle || PreventsRareFallback(c.CharacterRewardPool, 3)) &&
+                    conditions.Any(x => x.Kind == Beta110FastStructuredConditionKind.LostCofferCardOffer && c.CardRarityByDenseId[x.Target0] == 3);
                 bool rarePotionOnly = conditions.Length == 1 && conditions[0].Kind == Beta110FastStructuredConditionKind.LostCofferPotion && c.PotionPool.Rare.Contains(conditions[0].Target0);
                 if (selectedMode == -1)
                     gpu = gpu with { DirectNestedMode = rareCard ? 11 : 10 };
@@ -209,17 +232,20 @@ internal static class NeowSingleplayerGpuPlan
             if (conditions.Length == 1)
             {
                 var condition = conditions[0];
+                bool leadRare = condition.Kind == Beta110FastStructuredConditionKind.LeadPaperweightColorlessOffer &&
+                    c.CardRarityByDenseId[condition.Target0] == 3 &&
+                    (!a.UsesChildShuffle || PreventsRareFallback(c.ColorlessRewardPool, 2));
                 if (selectedMode == -1)
                 {
                     if (plan.Selected == Beta110FastRelicCatalog.LeadPaperweight && condition.Kind == Beta110FastStructuredConditionKind.LeadPaperweightColorlessOffer)
-                        gpu = gpu with { DirectNestedMode = c.CardRarityByDenseId[condition.Target0] == 3 ? 21 : 22 };
+                        gpu = gpu with { DirectNestedMode = leadRare ? 21 : 22 };
                     if (plan.Selected == Beta110FastRelicCatalog.ArcaneScroll && condition.Kind == Beta110FastStructuredConditionKind.ArcaneScrollGeneratedCard)
                         gpu = gpu with { DirectNestedMode = 31 };
                     if (plan.Selected == Beta110FastRelicCatalog.PhialHolster && condition.Kind == Beta110FastStructuredConditionKind.PhialHolsterPotions)
                         gpu = gpu with { DirectNestedMode = condition.TargetCount == 2 && c.PotionPool.Rare.Contains(condition.Target0) && c.PotionPool.Rare.Contains(condition.Target1) ? 40 : 42 };
                 }
                 if (plan.Selected == Beta110FastRelicCatalog.LeadPaperweight && condition.Kind == Beta110FastStructuredConditionKind.LeadPaperweightColorlessOffer &&
-                    (selectedMode == 22 || c.CardRarityByDenseId[condition.Target0] == 3 && selectedMode is 20 or 21))
+                    (selectedMode == 22 || leadRare && selectedMode is 20 or 21))
                     gpu = gpu with { DirectNestedMode = selectedMode };
                 if (plan.Selected == Beta110FastRelicCatalog.ArcaneScroll && condition.Kind == Beta110FastStructuredConditionKind.ArcaneScrollGeneratedCard && selectedMode is >= 30 and <= 33)
                     gpu = gpu with { DirectNestedMode = selectedMode };
@@ -232,9 +258,18 @@ internal static class NeowSingleplayerGpuPlan
         string bonesMode = Environment.GetEnvironmentVariable("RT2_N_BONES_EXPERIMENT") ?? "";
         if (bonesMode is not ("" or "baseline" or "early-accept" or "rare-local" or "pair-local"))
             throw new InvalidOperationException("UnknownNBonesExperiment:" + bonesMode);
+        // The measured staged pair keeps Stage 0 optimizations and shortens cold setup.
+        if ((bonesMode == "pair-local" || bonesMode.Length == 0 && meta[66] != 0) &&
+            plan.AuditedModern113IdentityReplay && a.UsesChildShuffle && a.AllCharacterCardPoolsUnlocked &&
+            meta[67] == 1 && tracked.Contains(Beta110FastRelicCatalog.Kaleidoscope) &&
+            tracked.Contains(Beta110FastRelicCatalog.PhialHolster) && plan.ExactOnly.Length == 0 &&
+            plan.StructuredConditions.Length > 0 && !plan.HasCapsuleRarityGate && !plan.HasFinalCurseFastProjection &&
+            plan.StructuredConditions.All(x => x.Kind is Beta110FastStructuredConditionKind.KaleidoscopeIndependentOfferTargets or
+                Beta110FastStructuredConditionKind.PhialHolsterPotions))
+            gpu = gpu with { DirectNestedMode = 103 };
         // Fixed-pair controls; only independent K + Phial concrete operators are
         // a default. No stateful pickup, Capsule, Final Curse or identity-only tax.
-        if ((bonesMode is "" or "early-accept" or "rare-local" or "pair-local") && plan.DirectNestedVanilla111 &&
+        if ((bonesMode is "" or "early-accept" or "rare-local" or "pair-local") && !a.UsesChildShuffle && plan.DirectNestedVanilla111 &&
             plan.Bones  && a.AllCharacterCardPoolsUnlocked &&
             !plan.StructuredConditions.Any(c => c.OrderedKaleidoscope) &&
             plan.ExactOnly.Length == 0 && plan.StructuredConditions.Length > 0 && !plan.HasFinalCurseFastProjection && meta[67] == 1 &&

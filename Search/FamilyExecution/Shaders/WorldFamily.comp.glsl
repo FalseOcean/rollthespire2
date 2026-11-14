@@ -25,6 +25,7 @@ layout(set=0,binding=18,std430) readonly buffer Input {uint v[];} input_ids;
 /*__W_DONOR__*/
 /*__RT2_VISIBLE_SEED_ROOT_HASH__*/
 #define RT2_W_CHILD_SHUFFLE 0
+#define RT2_W_SHARED_ANCIENT_IDS 1
 
 #if RT2_W_CHILD_SHUFFLE
 u64vec4 fork_world_shuffle(){
@@ -108,7 +109,9 @@ bool world_match(uint invocation,uint64_t root){
     if(maxAct==0u)return true;
     rng_initialize(root+make_u64(0xda243e80u,0x1a8a7b60u));
     for(uint i=0u;i<plan_meta_buffer.values[1u];++i)consume_world_shuffle(relic_bucket_length_buffer.lengths[i]);
-    uint sharedIds[512],sharedCount=plan_meta_buffer.values[5u];
+    uint sharedCount=plan_meta_buffer.values[5u];
+#if RT2_W_SHARED_ANCIENT_IDS
+    uint sharedIds[512];
     for(uint i=0u;i<sharedCount;++i)sharedIds[i]=data.v[plan_meta_buffer.values[14u]+i];
 #if RT2_W_CHILD_SHUFFLE
     u64vec4 parent=fork_world_shuffle();
@@ -116,6 +119,11 @@ bool world_match(uint invocation,uint64_t root){
     for(uint n=sharedCount;n>1u;--n){uint i=next_int(n),v=sharedIds[i];sharedIds[i]=sharedIds[n-1u];sharedIds[n-1u]=v;}
 #if RT2_W_CHILD_SHUFFLE
     restore_world_parent(parent);
+#endif
+#else
+    // No identity is observed. The independent child's permutation cannot
+    // affect the shared counts or any later parent draw.
+    consume_world_shuffle(sharedCount);
 #endif
     uint used=0u;
     for(uint i=1u;i<groups;++i){uint n=next_int(sharedCount-used+1u);assignedOffset[i]=used;assignedCount[i]=n;used+=n;}
@@ -141,8 +149,12 @@ bool world_match(uint invocation,uint64_t root){
         if(!(plan_meta_buffer.values[12u]>=10u&&act==3u)&&!evaluate_predicate_range(act_meta_buffer.values[b+14u],act_meta_buffer.values[b+15u],first,INVALID_ID,1u))return false;
         if(!(act<maxAct||hasAncient||second))continue;
         uint localCount=act_meta_buffer.values[b+20u],total=localCount+assignedCount[i];if(total==0u)return fault(16u);
+#if RT2_W_SHARED_ANCIENT_IDS
         uint rank=next_int(total),ancient=rank<localCount?data.v[extra.v[x+6u]+rank]:sharedIds[assignedOffset[i]+rank-localCount];
         if(!evaluate_predicate_range(extra.v[x+7u],extra.v[x+8u],ancient,INVALID_ID,1u))return false;
+#else
+        next_int(total);
+#endif
     }
     if(second){uint i=groups-1u,a=selected[i],b=a*24u,x=a*12u,count=act_meta_buffer.values[b+13u],first=firstBoss[i];
         if(first==INVALID_ID)return fault(32u);

@@ -12,7 +12,7 @@ namespace RolltheSpire2.Search.FamilyExecution;
 // matcher. The caller additionally excludes composites and private input.
 // Applicable fixed footprints select this order; the family owns its local price.
 internal sealed record NeowInternalFilterOrderPlan(
-    bool Enabled, uint[] NicheAdvances, bool HasAcceptedCurse, string Reason)
+    bool Enabled, uint[] StreamAdvances, bool HasAcceptedCurse, string Reason, bool UsesNonCombat = false)
 {
     // This is only a necessary predicate. It neither supplies nor changes the
     // continuation state used by the original pair/local matchers.
@@ -22,10 +22,12 @@ internal sealed record NeowInternalFilterOrderPlan(
         {
             if (!Enabled) return "bool internal_final_curse_gate(uint64_t root) { return true; }\n";
             if (!HasAcceptedCurse) return "bool internal_final_curse_gate(uint64_t root) { return false; }\n";
+            if (UsesNonCombat) return ModernSource();
             var source = new StringBuilder("bool internal_final_curse_gate(uint64_t root) {\n");
-            foreach (uint advance in NicheAdvances)
+            foreach (uint advance in StreamAdvances)
             {
-                source.Append("    {\n        RngState projected_niche=rng_initialize(root+plan_u64(35u));\n");
+                source.Append("    {\n        RngState projected_niche=rng_initialize(root+plan_u64(")
+                    .Append("35u));\n");
                 if (advance != 0)
                     source.Append("        for(uint i=0u;i<")
                         .Append(advance.ToString(CultureInfo.InvariantCulture))
@@ -36,12 +38,30 @@ internal sealed record NeowInternalFilterOrderPlan(
             return source.Append("    return false;\n}\n").ToString();
         }
     }
+
+    private string ModernSource()
+    {
+        var source = new StringBuilder("bool internal_final_curse_gate(uint64_t root) {\n" +
+            "    RngState projected_non_combat=rng_initialize(root+plan_u64(54u));\n");
+        uint consumed = 0;
+        foreach (uint advance in StreamAdvances)
+        {
+            uint gap = advance - consumed;
+            if (gap != 0)
+                source.Append("    for(uint i=0u;i<").Append(gap.ToString(CultureInfo.InvariantCulture))
+                    .Append("u;++i) next_u64(projected_non_combat);\n");
+            source.Append("    if(final_curse_matches(other_card_ids.ids[n1c_meta(12u)+")
+                .Append("next_int(projected_non_combat,n1c_meta(13u))])) return true;\n");
+            consumed = advance + 1;
+        }
+        return source.Append("    return false;\n}\n").ToString();
+    }
 }
 
 internal static class NeowInternalFilterOrder
 {
     internal const uint MaximumNicheAdvance = 128;
-    internal const string Revision = "FinalCurseBeforeFixedPair.ExplicitAblation.20261027.v1";
+    internal const string Revision = "FinalCurseBeforeFixedPair.ModernNonCombat.20261114.v3";
 
     internal static NeowInternalFilterOrderPlan Compile(NeowFamilyGpuPlan plan)
     {
@@ -73,8 +93,17 @@ internal static class NeowInternalFilterOrder
         for (uint i = 0; i < meta[84]; ++i)
             if (meta[85 + i] != a && meta[85 + i] != b)
                 return Fallback("StructuredSourceOutsideTrackedPair");
-        if (!TryNicheFootprint(a, meta[9], out uint aDraws) ||
-            !TryNicheFootprint(b, meta[9], out uint bDraws))
+        uint dual = plan.UsesChildShuffle && a < 255 && b < 255 &&
+            NeowCapsuleNonCombatContinuation.IsDual((byte)a, (byte)b)
+            ? meta[NeowCapsuleNonCombatContinuation.GpuDualAdvancesIndex] : 0;
+        uint[] aDraws, bDraws;
+        if (dual != 0)
+        {
+            if ((dual & ~7u) != 0) return Fallback("UnknownNicheFootprint");
+            aDraws = [0];
+            bDraws = NeowCapsuleNonCombatContinuation.Advances(dual).Select(advance => (uint)advance).ToArray();
+        }
+        else if (!TryFootprint(plan, a, out aDraws) || !TryFootprint(plan, b, out bDraws))
             return Fallback("UnknownNicheFootprint");
 
         (uint First, uint Second)[] routes;
@@ -95,9 +124,16 @@ internal static class NeowInternalFilterOrder
             // when an authored advance is unknown. This gate must do the same.
             if (firstAdvance == uint.MaxValue || secondAdvance == uint.MaxValue)
                 return Fallback("UnknownAuthoredAdvance");
-            ulong total = (ulong)aDraws + bDraws + firstAdvance + secondAdvance;
-            if (total > MaximumNicheAdvance) return Fallback("AdvanceBudgetExceeded");
-            advances.Add((uint)total);
+            // Modern Bones consumes one parent draw to seed the shuffle child.
+            // Authored upgrades below are legacy Niche metadata, never a proof
+            // of a modern Capsule's NonCombat consumption.
+            foreach (uint fromA in aDraws)
+            foreach (uint fromB in bDraws)
+            {
+                ulong total = (ulong)fromA + fromB + (plan.UsesChildShuffle ? 1u : firstAdvance + secondAdvance);
+                if (total > MaximumNicheAdvance) return Fallback("AdvanceBudgetExceeded");
+                advances.Add((uint)total);
+            }
         }
 
         // This is the donor n1c_meta layout: required at +6/+7, banned at +8/+9,
@@ -127,7 +163,51 @@ internal static class NeowInternalFilterOrder
                 accepted &= plan.Cards[bannedOffset + i] != id;
             if (accepted) { hasAcceptedCurse = true; break; }
         }
-        return new(true, advances.ToArray(), hasAcceptedCurse, "ExplicitTrial.FixedNicheFinalCurseBeforePair");
+        return new(true, advances.ToArray(), hasAcceptedCurse,
+            plan.UsesChildShuffle ? "FixedNonCombatFinalCurseBeforePair" : "ExplicitTrial.FixedNicheFinalCurseBeforePair", plan.UsesChildShuffle);
+    }
+
+    private static bool TryFootprint(NeowFamilyGpuPlan plan, uint source, out uint[] draws)
+    {
+        draws = [];
+        if (!plan.UsesChildShuffle)
+        {
+            if (!TryNicheFootprint(source, plan.Meta[9], out uint legacyDraws)) return false;
+            draws = [legacyDraws];
+            return true;
+        }
+        if (source is Beta110FastRelicCatalog.SmallCapsule or Beta110FastRelicCatalog.LargeCapsule)
+        {
+            uint mask = plan.Meta[source == Beta110FastRelicCatalog.SmallCapsule
+                ? NeowCapsuleNonCombatContinuation.GpuSmallAdvancesIndex
+                : NeowCapsuleNonCombatContinuation.GpuLargeAdvancesIndex];
+            if (mask == 0 && (plan.Meta[NeowCapsuleNonCombatContinuation.GpuMetadataIndex] & (1u << (int)source)) != 0)
+                mask = 1;
+            uint allowedMask = source == Beta110FastRelicCatalog.SmallCapsule ? 3u : 7u;
+            if (mask == 0 || (mask & ~allowedMask) != 0) return false;
+            draws = Enumerable.Range(0, 3).Where(advance => (mask & (1u << advance)) != 0)
+                .Select(advance => (uint)advance).ToArray();
+            return true;
+        }
+        if (source == Beta110FastRelicCatalog.Kaleidoscope)
+        {
+            if (plan.Meta[9] is < 3 or > 16) return false;
+            draws = [2]; // One parent draw for each group's child shuffle.
+            return true;
+        }
+        if (source == Beta110FastRelicCatalog.PhialHolster)
+        {
+            // Each bottle consumes rarity + identity. Two members per rarity
+            // guarantee the second draw still exists after excluding the first.
+            if (plan.PoolMeta.Length < 18 || plan.PoolMeta[13] < 2 ||
+                plan.PoolMeta[15] < 2 || plan.PoolMeta[17] < 2) return false;
+            draws = [4];
+            return true;
+        }
+        // All remaining audited operators use other streams; modern New Leaf
+        // now shares Transformations with Leafy, not the final curse stream.
+        draws = [0];
+        return TryNicheFootprint(source, plan.Meta[9], out _);
     }
 
     private static uint AuthoredAdvance(NeowFamilyGpuPlan plan, uint source, uint prior)

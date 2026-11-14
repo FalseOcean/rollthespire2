@@ -6,9 +6,16 @@ English | [简体中文](README.zh-CN.md)
 
 RolltheSpire2 (RT2) is an in-game seed search and analysis mod for **Slay the Spire 2**. Combine your desired conditions, search for matching seeds, and inspect their predicted openings, rewards, maps and more.
 
-This source tree is **1.4.3**. The new compatibility work targets **Slay the Spire 2 v0.113.0 on Windows**.
+This source tree is **1.4.4**. The new compatibility work targets **Slay the Spire 2 v0.113.0 on Windows**.
 
-Updated Crystal Sphere support for Slay the Spire 2 v0.113.0.
+Improved performance under the new random number generation rules.
+
+Corrected treasure room relic sequences and second-chest filtering.
+
+## Future Plans
+
+- Keep adapting to new game content and add reliably predictable outcomes as seed search conditions.
+- Explore new filters made possible by the updated RNG rules, including Pandora’s Box outcomes and the rarity of relics awarded by events.
 
 ## What you can do
 

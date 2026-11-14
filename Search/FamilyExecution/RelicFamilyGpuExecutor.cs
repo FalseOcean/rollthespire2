@@ -140,13 +140,21 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
         RelicFullGpuPlan fullPlan, PrivateOrdinalBuffer? privateInput, bool bonesKRouteMask, PrivateOrdinalBuffer? privateOutput) =>
         Create(rd, inputIdentity, fullPlan.SequencePlan, fullPlan, privateInput, bonesKRouteMask, privateOutput);
 
+    internal static RelicFamilyGpuExecutor Create(RenderingDevice rd, string inputIdentity,
+        RelicFamilyPlan sequence, ModernCapsuleGpuPlan capsule,
+        PrivateOrdinalBuffer? privateInput = null, PrivateOrdinalBuffer? privateOutput = null) =>
+        Create(rd, inputIdentity, sequence, fullPlan: null, privateInput: privateInput, privateOutput: privateOutput,
+            modernCapsule: capsule);
+
     private static RelicFamilyGpuExecutor Create(
         RenderingDevice rd,
         string inputIdentity,
         RelicFamilyPlan plan,
-        RelicFullGpuPlan? fullPlan, PrivateOrdinalBuffer? privateInput = null, bool bonesKRouteMask = false, PrivateOrdinalBuffer? privateOutput = null)
+        RelicFullGpuPlan? fullPlan, PrivateOrdinalBuffer? privateInput = null, bool bonesKRouteMask = false,
+        PrivateOrdinalBuffer? privateOutput = null, ModernCapsuleGpuPlan? modernCapsule = null)
     {
-        if (fullPlan?.NumericalVariant == GpuNumericalVariant.IntegerRne &&
+        var numerical = modernCapsule?.NumericalVariant ?? fullPlan?.NumericalVariant ?? GpuNumericalVariant.NativeFloat64;
+        if ((fullPlan is not null || modernCapsule is not null) && numerical == GpuNumericalVariant.IntegerRne &&
             (privateInput is not null || privateOutput is not null || bonesKRouteMask))
             throw new InvalidOperationException("Rfull.IntegerRne.PublicTransportOnly");
         if (privateInput is not null && ReferenceEquals(privateInput, privateOutput)) throw new ArgumentException("R.PrivateBuffersAlias");
@@ -161,7 +169,7 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
             Rid Add(Rid rid) { owned.Add(rid); return rid; }
             uint planTag = StableTag(
                 inputIdentity + "|" +
-                (fullPlan is null ? FamilyPhysicalImplementationRevisions.Relic : fullPlan.ActualAlgorithmRevision));
+                (modernCapsule?.Revision(false) ?? fullPlan?.ActualAlgorithmRevision ?? FamilyPhysicalImplementationRevisions.Relic));
             uint[] planMeta = PackPlanMeta(plan);
             uint[] bucketMeta = PackBuckets(plan.Pool);
             uint[] predicates = PackPredicates(plan.Predicates);
@@ -201,12 +209,13 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
                 batchMeta, inputOrdinals, poolIds, entryFlags, buckets, planBuffer, predicateBuffer,
                 predicateIds, trackedInitialPositions, outputHeader, outputOrdinals, shopPredicateBuffer, shopTargetBuffer
             };
-            if (fullPlan is not null)
+            if ((modernCapsule?.Metadata ?? fullPlan?.CapsuleMetadata) is { } capsuleMetadata)
                 buffers.Add(Add(FamilyGpuComputeUtility.CreateStorageBuffer(
-                    rd, FamilyGpuComputeUtility.ToBytesNonEmpty(fullPlan.CapsuleMetadata))));
+                    rd, FamilyGpuComputeUtility.ToBytesNonEmpty(capsuleMetadata))));
 
-            string source = ShaderSource(fullPlan is not null, fullPlan?.UsesBonesKBoundary == true, bonesKRouteMask,
-                fullPlan?.GenericReplay == true, plan.LocalStateCapacity, fullPlan?.NumericalVariant ?? GpuNumericalVariant.NativeFloat64,
+            string source = modernCapsule?.ShaderSource(plan.LocalStateCapacity) ??
+                ShaderSource(fullPlan is not null, fullPlan?.UsesBonesKBoundary == true, bonesKRouteMask,
+                fullPlan?.GenericReplay == true, plan.LocalStateCapacity, numerical,
                 fullPlan?.UsesOpeningPrefix == true, plan.Pool.UsesChildShuffle);
             if (fullPlan?.GenericReplay == true)
                 source = source.Replace("#version 450", "#version 450\n#define RT2_R_GENERIC_BAG_CAPACITY " +
@@ -221,7 +230,8 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
                 source = source.Replace(reject, string.Empty, StringComparison.Ordinal)
                     .Replace(bounds, "if (logical >= batch_meta.values[2u]) { atomicExchange(output_header.values[3u],2u); return; } " + reject, StringComparison.Ordinal);
             }
-            Rid shader = Add(FamilyGpuComputeUtility.CompileShader(rd, source, fullPlan is null ? "RelicFamilyR" : "RelicFamilyRfull"));
+            Rid shader = Add(FamilyGpuComputeUtility.CompileShader(rd, source,
+                modernCapsule is not null ? "RelicFamilyModernCapsule" : fullPlan is null ? "RelicFamilyR" : "RelicFamilyRfull"));
             Rid pipeline = Add(FamilyGpuComputeUtility.CreateComputePipeline(rd, shader, fullPlan is null ? "R.Relic" : "R.RelicFull"));
             if (!rd.ComputePipelineIsValid(pipeline)) throw new InvalidOperationException("RFamilyGpuPipelineInvalid");
             Rid uniformSet = Add(FamilyGpuComputeUtility.CreateUniformSet(rd, shader, buffers));
@@ -231,7 +241,7 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
                 rd, pipeline, batchMeta, inputOrdinals, outputHeader, outputOrdinals, uniformSet,
                 planTag, Thread.CurrentThread.ManagedThreadId, timer.Elapsed.TotalMilliseconds,
                 rd.GetDeviceName()?.Trim() ?? "unknown", workspaceBytes,
-                fullPlan?.NumericalVariant ?? GpuNumericalVariant.NativeFloat64);
+                numerical);
             result._privateInput = privateInput; result._privateOutput = privateOutput;
             result._bonesKBoundary = fullPlan?.UsesBonesKBoundary == true;
             result._owned.AddRange(owned);

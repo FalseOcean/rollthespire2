@@ -10,10 +10,13 @@ using MegaCrit.Sts2.Core.CardSelection;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Events;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Models.Encounters;
+using MegaCrit.Sts2.Core.Models.Events;
 using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Rewards;
+using MegaCrit.Sts2.Core.Rooms;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.PredictorRuntime;
@@ -35,6 +38,14 @@ internal static class PredictorOperationEventCapture
     private static readonly AsyncLocal<EventTransaction?> CurrentTransaction = new();
     private static readonly AsyncLocal<int> ObtainDepth = new();
     private static readonly ConditionalWeakTable<RelicModel, EventObtainMarker> ObtainMarkers = new();
+    private sealed class DummyVictory(BattlewornDummy owner)
+    {
+        internal BattlewornDummy Event { get; } = owner;
+        internal bool Offered { get; set; }
+    }
+    private static readonly AsyncLocal<DummyVictory?> CurrentDummyVictory = new();
+    private static readonly ConditionalWeakTable<RewardsSet, BattlewornDummy> DummyVictoryRewards = new();
+    private const string DummyVictoryDescription = "BATTLEWORN_DUMMY.pages.VICTORY.description";
 
     internal static void Install(Harmony harmony)
     {
@@ -46,6 +57,27 @@ internal static class PredictorOperationEventCapture
             prefix: new(typeof(PredictorOperationEventCapture), nameof(BeforeEventObtain)),
             postfix: new(typeof(PredictorOperationEventCapture), nameof(AfterEventObtain)),
             finalizer: new(typeof(PredictorOperationEventCapture), nameof(FinalizeEventObtain)));
+        harmony.Patch(AccessTools.Method(typeof(BattlewornDummy), nameof(BattlewornDummy.Resume)),
+            prefix: new(typeof(PredictorOperationEventCapture), nameof(BeforeDummyResume)),
+            finalizer: new(typeof(PredictorOperationEventCapture), nameof(FinalizeDummyResume)));
+    }
+
+    private static void BeforeDummyResume(BattlewornDummy __instance, AbstractRoom __0, out DummyVictory? __state)
+    {
+        __state = CurrentDummyVictory.Value;
+        CurrentDummyVictory.Value = __0 is CombatRoom { Encounter: BattlewornDummyEventEncounter { RanOutOfTime: false } }
+            ? new(__instance) : null;
+    }
+
+    private static void FinalizeDummyResume(DummyVictory? __state) => CurrentDummyVictory.Value = __state;
+
+    internal static void ObserveEventRewardSet(RewardsSet set)
+    {
+        if (CurrentDummyVictory.Value is not { Offered: false } victory || set.Room != null ||
+            !ReferenceEquals(set.Player, victory.Event.Owner) || !victory.Event.IsFinished ||
+            victory.Event.Description?.LocEntryKey != DummyVictoryDescription) return;
+        victory.Offered = true;
+        DummyVictoryRewards.Add(set, victory.Event);
     }
 
     private static void BeforeEventOption(EventOption __instance, out EventTransaction? __state)
@@ -132,11 +164,13 @@ internal static class PredictorOperationEventCapture
         obtainOrigin ??= rewardOrigin;
         var rootOrigin = obtainOrigin == null ? null : OutermostObtainOrigin(obtainOrigin);
         var childRewards = childRewardScreen ? rewards : null;
+        var eventRewards = currentSet;
         if (rootOrigin?.ParentReward is { } sourceReward)
         {
             var parentSet = NativeRewardSets(run, owner, root).SingleOrDefault(s => NativeContainsReward(s, sourceReward));
             if (parentSet == null || ReferenceEquals(parentSet, currentSet) && childRewards != null)
                 throw new InvalidOperationException("OperationEventObtainRewardParentMissing");
+            eventRewards = parentSet;
             rewards = CaptureRewardsSet(parentSet, owner, catalog);
         }
         else if (obtainOrigin != null) rewards = null;
@@ -156,7 +190,9 @@ internal static class PredictorOperationEventCapture
         string? branch = chosen.Length == 1 ? Option(ev, chosen[0]).Key : null;
         if (ev.Id.Entry == "WAR_HISTORIAN_REPY" && ev.Description?.LocEntryKey == "WAR_HISTORIAN_REPY.pages.EXTRA_UNLOCK_CHEST.description")
             branch = "SECOND_UNLOCK_CHEST";
-        if (rewards != null && rootOrigin?.ParentReward == null && (ev.Id.Entry, branch) is not (
+        bool dummyVictoryRewards = ev is BattlewornDummy && eventRewards != null &&
+            DummyVictoryRewards.TryGetValue(eventRewards, out var observedDummy) && ReferenceEquals(ev, observedDummy);
+        if (rewards != null && (ev is BattlewornDummy ? !dummyVictoryRewards : rootOrigin?.ParentReward == null && (ev.Id.Entry, branch) is not (
             ("THE_FUTURE_OF_POTIONS", _) or ("COLORFUL_PHILOSOPHERS", _) or ("WUPPY_IN_TROUBLE", "IGNORE") or
             ("BRAIN_LEECH", "RIP") or ("POTION_COURIER", "GRAB_POTIONS" or "RANSACK") or
             ("THE_LEGENDS_WERE_TRUE", "SLOWLY_FIND_AN_EXIT") or ("WELLSPRING", "BOTTLE") or
@@ -164,7 +200,7 @@ internal static class PredictorOperationEventCapture
             ("PUNCH_OFF", "NAB") or
             ("DENSE_VEGETATION", "REST") or
             ("WAR_HISTORIAN_REPY", "INITIAL_UNLOCK_CHEST" or "SECOND_UNLOCK_CHEST") or
-            ("ENDLESS_CONVEYOR", "GRAB_SUSPICIOUS_CONDIMENT")))
+            ("ENDLESS_CONVEYOR", "GRAB_SUSPICIOUS_CONDIMENT"))))
             throw new NotSupportedException("OperationEventRewardObtainParentPending:" + ev.Id + ":" + branch);
         var scene = new PredictorOperationEventScene(Key(ev), CrystalSphereLiveCapture.RngState(PredictorStream.Niche, ev.Rng),
             options, new(owner.Creature.CurrentHp, owner.Creature.MaxHp))

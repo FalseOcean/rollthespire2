@@ -40,6 +40,11 @@ public static class RuntimeProfilePolicies
     public static bool UsesChildStreamShuffle(RngSemanticProfileId semanticProfile) =>
         semanticProfile == RngSemanticProfileId.Modern113;
 
+    // A solo relic claim shuffles the empty unclaimed list. Skips and chests
+    // without a generated relic do not reach allocation.
+    internal static int SingleplayerTreasureAwardShuffleCalls(RngSemanticProfileId semanticProfile) =>
+        UsesChildStreamShuffle(semanticProfile) ? 1 : 0;
+
     internal static bool RetainsDeckCopyExclusions(RngSemanticProfileId semanticProfile) =>
         semanticProfile != RngSemanticProfileId.Modern113;
 

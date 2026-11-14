@@ -26,6 +26,11 @@ internal sealed record NeowFamilyGpuPlan(uint[] Meta, uint[] PoolMeta, uint[] Ca
         ((EntryIdentityMode & NeowEntryIdentityMode.RejectUnavailable) != 0 ? ".EntryUnavailableReject.20261030.v1" : "") +
         ((EntryIdentityMode & NeowEntryIdentityMode.TrackSingleRequired) != 0 ? ".EntrySingleIdentityTrack.20261030.v1" : "");
     internal int JointTransformMetaOffset { get; init; } = -1;
+    internal NeowModernTransformGate? ModernTransformGate { get; init; }
+    internal string ModernTransformGateRevision =>
+        ModernTransformGate?.PhysicalRevision ?? "";
+    internal string LocalObservationRevision => Meta[NeowLocalObservationPacking.UniquePools] != 0 && !IsMultiplayer
+        ? NeowLocalObservationPacking.Revision : "";
     internal bool IsMultiplayer => Meta[6] > 1;
     internal bool UsesChildShuffle => (Meta[56] & 64u) != 0;
     internal bool HasLocalResults => Meta[83] != 0 || Meta[84] != 0;
@@ -37,9 +42,36 @@ internal sealed record NeowFamilyGpuPlan(uint[] Meta, uint[] PoolMeta, uint[] Ca
     internal const string LeafyStagedDenseRevision = "N.Neow.Gpu.LocalDonor.LeafyPreGate.DensePreBonesCarry8.CanonicalAbi1Ready.20260906.v1";
     internal bool UsesStagedDense => Meta[66] != 0;
     internal bool UsesLeafyPreGate => Meta[70] != 0;
+    // Stage 1 checkpoints the proven pair and Stage 3 runs the same pair_identity
+    // before local replay. The modern joint transform gate reads only its own
+    // Transformations prefix; it cannot replace or change either pickup source.
+    internal long FixedPairLocalSourceMask
+    {
+        get
+        {
+            if (!UsesChildShuffle || IsMultiplayer || !HasLocalResults || (Meta[56] & 2u) == 0 ||
+                Meta[67] != 1 || Meta[27] >= 32 || Meta[28] >= 32 || DirectNestedMode != 0) return -1;
+            long mask = (1L << (int)Meta[27]) | (1L << (int)Meta[28]);
+            const long leafPair = (1L << Beta110FastRelicCatalog.LeafyPoultice) | (1L << Beta110FastRelicCatalog.NewLeaf);
+            return JointTransformMetaOffset < 0 || mask == leafPair ? mask : -1;
+        }
+    }
+    internal string FixedPairLocalSourceRevision(int stage) => FixedPairLocalSourceMask < 0 ? "" : stage switch
+    {
+        2 => ".FixedPairLocalSources.20261114.v1",
+        3 => ".FixedPairLocalSources.Ordinary.20261114.v1",
+        _ => ""
+    };
+    // Ordinary direct replay starts pair_identity with the authored selected
+    // source and a missing second slot. No route can acquire a companion.
+    internal long DirectLocalSourceMask => UsesChildShuffle && !IsMultiplayer && HasLocalResults &&
+        (Meta[56] & 2u) == 0 && Meta[81] < 32 && DirectNestedMode == 0 && JointTransformMetaOffset < 0
+        ? 1L << (int)Meta[81] : -1;
+    internal string LocalSourceRevision(int stage) => stage == 3 && DirectLocalSourceMask >= 0
+        ? ".DirectLocalSource.20261114.v1" : FixedPairLocalSourceRevision(stage);
     // Bounded N-private scheduling; explicit controls retain the same-build oracle.
     internal int DirectNestedMode { get; init; }
-    internal string DirectNestedRevision(bool compact) => $"N.Neow.Gpu.DirectNested.{DirectNestedName}.{(compact ? "Compact" : UsesStagedDense ? "DensePreBones" : "DenseCarry8")}.CanonicalAbi1Ready.20260909.v1";
+    internal string DirectNestedRevision(bool compact) => $"N.Neow.Gpu.DirectNested.{DirectNestedName}.{(compact ? "Compact" : UsesStagedDense ? "DensePreBones" : "DenseCarry8")}.CanonicalAbi1Ready.20260909.v1.LocalPoolAuthority.20261114.v1";
     private string DirectNestedName => DirectNestedMode switch {
         1 => "KaleidoscopeFirstReplay", 2 => "KaleidoscopeFirstContinue", 3 => "KaleidoscopeBothReplay",
         4 => "KaleidoscopeLocalReject", 5 => "NewLeafReplay", 6 => "NewLeafPredicateFirst",
@@ -50,6 +82,7 @@ internal sealed record NeowFamilyGpuPlan(uint[] Meta, uint[] PoolMeta, uint[] Ca
         40 => "PhialRareReplay", 41 => "PhialRareLocal", 42 => "PhialIdentityDirect",
         100 => "BonesEarlyAcceptControl", 101 => "BonesKaleidoscopeRareLocalControl",
         102 => "BonesIndependentPairLocal",
+        103 => "BonesSharedNonCombatPairLocal",
         _ => throw new InvalidOperationException("NDirectModeInvalid") };
     internal const int CurseCapacity = 1 << 22;
     internal const int PairCapacity = 1 << 16;

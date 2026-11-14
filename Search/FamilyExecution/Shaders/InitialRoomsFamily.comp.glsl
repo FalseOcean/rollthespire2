@@ -33,6 +33,7 @@ bool matches(uint64_t root){
   float roll=next_float();uint lane=roll<.5?0u:roll<.83?1u:2u;
   while(lane<3u&&taken[lane]==plan.v[14u+lane])lane++;
   lanes[i]=lane;ranks[i]=lane==3u?0u:taken[lane]++;
+  if(i+1u<end)for(uint draw=0u;draw<plan.v[28];draw++)next_u64();
  }
  for(uint slot=0u;slot<plan.v[3];slot++){
   if((mask&(1u<<slot))==0u)continue;

@@ -4,6 +4,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using RolltheSpire2.Compatibility;
+using RolltheSpire2.Core.World.Snapshots;
 using RolltheSpire2.Search.Semantics;
 using RolltheSpire2.Ui.Shell;
 using RolltheSpire2.Ui.Workspace;
@@ -40,6 +42,21 @@ internal static class QueryHistoryIdentity
         return Hash(new { IntentVersion = 2, clean.Character, clean.Ascension, clean.Mode, Query = query, clean.AncientPremises,
             Players = clean.Players.Select(p => new { p.Slot, p.Character, UnlockPolicy = p.UnlockSource }).ToArray() });
     }
+
+    internal static string EnvironmentKey(WorkbenchSearchDraft draft, SearchEnvironmentSignature signature)
+    {
+        string key = EnvironmentKey(draft, signature.Fingerprint);
+        return UsesRevisedTreasureClaims(draft, signature.GameVersionIdentity)
+            ? key + TreasureRelicSearchCondition.ClaimSequenceRevision : key;
+    }
+
+    internal static bool UsesPreviousTreasureRules(QueryHistoryEntry record) => record.EnvironmentKnown &&
+        UsesRevisedTreasureClaims(record.Draft, record.EnvironmentSignature?.GameVersionIdentity) &&
+        !record.EnvironmentFingerprint.EndsWith(TreasureRelicSearchCondition.ClaimSequenceRevision, StringComparison.Ordinal);
+
+    private static bool UsesRevisedTreasureClaims(WorkbenchSearchDraft draft, string? version) =>
+        draft.Mode == WorldGameMode.Singleplayer && draft.Players.Count == 0 && draft.Query.Players.Count == 0 &&
+        draft.Query.TreasureRelics?.UsesPriorClaim(RuntimeVersionCompatibility.Resolve(version).SemanticProfileId) == true;
 
     internal static string EnvironmentKey(WorkbenchSearchDraft draft, string runtimeFingerprint) => Hash(new
     {

@@ -378,11 +378,16 @@ public static class SearchCompiler
                 : $"|elitePrefixResearch=Act1:AllPaths:FixedMonster1:ExtraMonsters{research.ExtraMonsters}:Unknowns{research.Unknowns}";
         if (query.TreasureRelics is { } treasure) identity +=
             $"|treasureRelics={treasure.StartOrdinal}:{treasure.Count}:{treasure.OrderMode}:{string.Join(">", treasure.Slots.Select(key => key?.Serialized ?? "*"))}";
+        if (UsesRevisedTreasureClaims(context, query)) identity += TreasureRelicSearchCondition.ClaimSequenceRevision;
         if (query.FirstActUnknownEventPrefixCount > 0) identity += "|unknownEventPrefix=" + query.FirstActUnknownEventPrefixCount;
         if (query.FirstActUnknownMonsterPrefixCount > 0) identity += "|unknownMonsterPrefix=" + query.FirstActUnknownMonsterPrefixCount;
         return query.TransformationAggregate is { } aggregate
             ? identity + "|transformationAggregate=" + aggregate.SemanticIdentity : identity;
     }
+
+    internal static bool UsesRevisedTreasureClaims(SearchContext context, SearchQuery query) =>
+        context.Authority.PlayersCount == 1 && context.Party is null &&
+        query.TreasureRelics?.UsesPriorClaim(context.Authority.VersionResolution.SemanticProfileId) == true;
 }
 
 internal static class SearchQueryNormalizer

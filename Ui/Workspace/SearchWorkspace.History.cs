@@ -18,9 +18,14 @@ internal sealed partial class SearchWorkspace
     internal string QueryHistoryIssue { get; private set; } = "";
     internal IReadOnlyList<PersistedSearchResult> DisplayResults => _resultBatch?.Results ?? _workspace.Results;
     internal string CurrentEnvironmentFingerprint => SearchEnvironmentIdentity.IsComparable(_environment) ? _environment.Fingerprint : "";
-    internal SearchEnvironmentComparison EnvironmentComparison(QueryHistoryEntry? record) =>
-        SearchEnvironmentIdentity.Compare(record?.EnvironmentSignature ?? (record is null ? null :
+    internal SearchEnvironmentComparison EnvironmentComparison(QueryHistoryEntry? record)
+    {
+        var comparison = SearchEnvironmentIdentity.Compare(record?.EnvironmentSignature ?? (record is null ? null :
             new SearchEnvironmentSignature(0) { GameVersionIdentity = record.Context?.GameVersion ?? record.Draft.GameVersion }), _environment);
+        return record is not null && QueryHistoryIdentity.UsesPreviousTreasureRules(record)
+            ? comparison with { Status = SearchEnvironmentComparisonStatus.Changed, Reasons = [.. comparison.Reasons, "TreasureClaimRuleChanged"] }
+            : comparison;
+    }
     internal SeedQueryAssociation? ResultAssociation(string seed, QueryHistoryEntry? record = null)
     {
         record ??= ActiveHistory;
@@ -37,6 +42,7 @@ internal sealed partial class SearchWorkspace
                 ? SeedQueryAssociationKind.VerifiedFromSearch : SeedQueryAssociationKind.LegacyUnspecified,
             record.EnvironmentFingerprint, record.Id);
     private QueryHistoryEntry? ActiveHistory => _workspace.QueryHistory.FirstOrDefault(q => q.Id == _workspace.ActiveHistoryId);
+    internal bool DisplaysPreviousTreasureRules => ActiveHistory is { } history && QueryHistoryIdentity.UsesPreviousTreasureRules(history);
 
     internal IReadOnlyList<QueryHistoryEntry> RecentQueries => _workspace.QueryHistory.Where(q => q.RunCount > 0)
         .OrderByDescending(q => q.LastUsedAtUtc).Take(_preferences.QueryHistoryLimit).ToArray();
@@ -78,7 +84,7 @@ internal sealed partial class SearchWorkspace
         string key = QueryHistoryIdentity.Key(draft);
         bool known = SearchEnvironmentIdentity.IsComparable(_environment);
         string environment = known
-            ? QueryHistoryIdentity.EnvironmentKey(draft, _environment.Fingerprint)
+            ? QueryHistoryIdentity.EnvironmentKey(draft, _environment)
             : "unknown:" + _workspace.ResultBatchId;
         var record = SearchQueryProjection.Find(_workspace.QueryHistory, key, environment, _environment, known);
         if (record is not null) return record;
@@ -96,7 +102,7 @@ internal sealed partial class SearchWorkspace
     private QueryHistoryEntry? FindCurrentQuery(WorkbenchSearchDraft draft)
     {
         if (!SearchEnvironmentIdentity.IsComparable(_environment)) return null;
-        string key = QueryHistoryIdentity.Key(draft), environment = QueryHistoryIdentity.EnvironmentKey(draft, _environment.Fingerprint);
+        string key = QueryHistoryIdentity.Key(draft), environment = QueryHistoryIdentity.EnvironmentKey(draft, _environment);
         return SearchQueryProjection.Find(_workspace.QueryHistory.Where(record => record.IdentityVersion == 2), key, environment, _environment, known: true);
     }
 
@@ -111,7 +117,7 @@ internal sealed partial class SearchWorkspace
         if (Runtime.HasSearchInFlight) return;
         var record = FindCurrentQuery(draft);
         string selection = record?.Id ?? "empty:" + QueryHistoryIdentity.RecordId(QueryHistoryIdentity.Key(draft),
-            QueryHistoryIdentity.EnvironmentKey(draft, _environment.Fingerprint));
+            QueryHistoryIdentity.EnvironmentKey(draft, _environment));
         if (_workspace.ResultBatchId == selection || record is not null && record.Id == _workspace.ActiveHistoryId) return;
         ProjectActiveHistory(_workspace, record);
         _workspace.ResultBatchId = selection;

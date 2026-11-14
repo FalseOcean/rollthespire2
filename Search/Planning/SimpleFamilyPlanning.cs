@@ -12,6 +12,7 @@ public static partial class FamilyExecutionCoordinator
         var preferences = FilterExecutionPreferences.From(request.RunOptions);
         IReadOnlyList<FilterBodyDescription> bodies = gpuAvailable ? registered : CpuAllocation(registered);
         FilterBodyDescription? denseEntry = null;
+        FilterBodyDescription? measuredLocal = null;
         var fused = new List<FilterBodyDescription>(2);
         if (gpuAvailable && allowFloat64Units)
         {
@@ -26,7 +27,7 @@ public static partial class FamilyExecutionCoordinator
         // Reuse the existing whole numerical bodies. Their complete logical
         // Coverage competes in the same greedy walk as the independent units.
         // Restricted/integer registration must never reconstruct a native body.
-        if (denseEntry is null && gpuAvailable && allowFloat64Units && bodies.Any(body => body.FamilyId == "N.Neow" && body.UsesGpu))
+        if (denseEntry is null && gpuAvailable && bodies.Any(body => body.FamilyId == "N.Neow" && body.UsesGpu))
         {
             var replay = FamilyAuxiliaryEvidence.Read<NeowReplayPlan?>(nameof(FamilyExecutionCoordinator),
                 "SimpleNeowReplayPreparation", () => NeowReplayPlan.Compile(model, false), null, request.SnapshotFingerprint);
@@ -38,9 +39,29 @@ public static partial class FamilyExecutionCoordinator
             }
             if (replay is not null && bodies.Any(family => family.FamilyId == TransformationAggregateFamily.Id))
                 AddUnit("SimpleNeowTransformationUnit", () =>
-                    NeowTransformationComposite.TryCreate(model, replay, out var composite) && composite is not null
+                    NeowTransformationComposite.TryCreate(model, replay, out var composite,
+                        allowFloat64Units ? NeowGpuNumericalVariant.NativeFloat64 : NeowGpuNumericalVariant.IntegerUnitFloat) && composite is not null
                         ? new NeowFamily(model, replay, transformations: composite).Describe(preferences) : null);
-            if (replay is not null && bodies.Any(family => family.FamilyId == "R.Relic") && NeowReplayPlan.HasCapsule(model))
+            if (replay is not null && bodies.FirstOrDefault(family => family.FamilyId == "N.Neow") is { } nBody &&
+                bodies.FirstOrDefault(family => family.FamilyId == RelicFamily.Id) is { } rBody)
+            {
+                var local = FamilyAuxiliaryEvidence.Read<FilterBodyDescription?>(nameof(FamilyExecutionCoordinator),
+                    "SimpleModernNeowCapsuleLocalUnit", () =>
+                        ModernNeowCapsuleComposite.TryCreate(model, replay, nBody, rBody, allowFloat64Units, out var unit) ? unit : null,
+                    null, request.SnapshotFingerprint);
+                if (local is not null)
+                {
+                    fused.Add(local);
+                    if (bodies.Count == 2 && request.RunOptions.ManualFamilyOrder is not { Count: > 0 } &&
+                        ModernNeowCapsuleComposite.PreferMeasuredWholeSearch(model, replay, local,
+                            FamilyDeviceProfileFoundation.Initialization.Capture()))
+                        measuredLocal = local;
+                }
+                AddUnit("SimpleModernNeowCapsuleIdentityUnit", () =>
+                    ModernCapsuleRelicFamily.TryCreateIdentityComposite(model, replay, nBody, rBody, out var composite)
+                        ? composite : null);
+            }
+            if (allowFloat64Units && replay is not null && bodies.Any(family => family.FamilyId == "R.Relic") && NeowReplayPlan.HasCapsule(model))
                 AddUnit("SimpleNeowCapsuleUnit", () =>
                     NeowCapsuleComposite.TryCreate(model, replay, out var composite) && composite is not null
                         ? new NeowFamily(model, replay, composite: composite).Describe(preferences) : null);
@@ -48,10 +69,13 @@ public static partial class FamilyExecutionCoordinator
         FamilyExecutionPlan selected = request.RunOptions.ManualFamilyOrder is { Count: > 0 } manual
             ? FamilyPlanner.InManualOrder(denseEntry is null ? [..fused, ..bodies] : [denseEntry, ..fused, ..bodies],
                 bodies, manual, denseEntry)
+            : measuredLocal is not null
+                ? FamilyPlanner.PlanSimple([measuredLocal])
             : FamilyPlanner.PlanSimple(bodies, fused, includeCpuAlternatives: gpuAvailable, denseEntry: denseEntry);
+        if (measuredLocal is not null)
+            selected = selected with { DecisionEvidence = [..selected.DecisionEvidence, "MeasuredWholeSearchModernLocalCapsule;SteadyState;JointQuoteUnavailable"] };
         var order = selected.OrderedFamilies;
-        int privatePrefixCount = order.TakeWhile(family => family.CanBindPrivateSerial &&
-            family.Coverage.Count == 1 && family.Coverage[0] == family.FamilyId).Count();
+        int privatePrefixCount = order.TakeWhile(AutomaticPrivateSerialInvocation.CanBindWholeFamily).Count();
         bool completePrivateOrder = privatePrefixCount == order.Count;
         // This diagnostic control disables only the new partial-prefix transport;
         // the existing complete-order default remains unchanged.

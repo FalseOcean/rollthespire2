@@ -27,6 +27,7 @@ internal static partial class PartyPhase1Checks
             if (!condition) throw new Exception("Party W: " + message);
             checks++;
         }
+        CheckSharedEncounterUnlocks(detection, seed, Check);
         await using var execution = new FilterRuntimeServices(requiresGpu: true, failOnPhysicalRecovery: true);
         foreach (int count in new[] { 2, 3, 4 })
         {
@@ -122,5 +123,29 @@ internal static partial class PartyPhase1Checks
             }
         }
         GD.Print($"PARTY_WORLD_FAST_PASS checks={checks}");
+    }
+
+    internal static void CheckSharedEncounterUnlocks(GameVersionDetection detection, string seed, Action<bool, string> check)
+    {
+        var newcomer = UnlockState.none.ToSerializable();
+        var veteran = new UnlockState(["NEOW_EPOCH", "SILENT1_EPOCH"], [], 3).ToSerializable();
+        foreach (bool newcomerFirst in new[] { true, false })
+        {
+            var characters = newcomerFirst
+                ? new[] { BaseGameModelKeys.Characters.Ironclad, BaseGameModelKeys.Characters.Silent }
+                : new[] { BaseGameModelKeys.Characters.Silent, BaseGameModelKeys.Characters.Ironclad };
+            var unlocks = newcomerFirst ? new[] { newcomer, veteran } : new[] { veteran, newcomer };
+            var party = PartyRuntimeAuthorityCapture.Capture(Beta111Profile.Instance, seed, characters, unlocks, 0,
+                detection.NormalizedVersion);
+            check(party.World.EncounterNumberOfRuns == veteran.NumberOfRuns &&
+                party.Players.All(seat => seat.WorldAuthority!.EncounterNumberOfRuns == veteran.NumberOfRuns),
+                "every seat sees the maximum run count for shared encounters");
+            check(party.Players.Select(seat => seat.SupportEvidence.Unlock.NumberOfRuns)
+                .SequenceEqual(unlocks.Select(unlock => (int?)unlock.NumberOfRuns)), "request unlock evidence retains seat order and run counts");
+            var world = Beta109WorldPredictionProvider.Predict(seed, 0, 0, characters[0], party.World,
+                AncientOptionConditionProfile.BroadDefault);
+            check(world.EncounterSequences.Any(queue => queue.Act == 1 && queue.ActKey.Entry == "OVERGROWTH" &&
+                queue.Precision == PredictionPrecision.Exact), "mixed-experience Overgrowth queue is exact in either seat order");
+        }
     }
 }

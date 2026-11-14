@@ -47,6 +47,13 @@ internal static class ShionNeowOptimizationChecks
             && duplicates!.Intervals.Count == 3, "DuplicatePoolPositions");
         Require(!NeowStaticDrawGateCompiler.TryCompilePool([9, 3, 9, 4, 9], 5, [9u], 2, out _), "ExplicitIntervalBudget");
 
+        Require(Math.Abs(TransformationAggregateProbability.SharedNamedThreeMass([1, 2, 4, 0], [1, 2, 4, 0], [1, 2, 4, 0])
+            - 6d / 64) < 1e-15, "SharedTransformIdenticalOrdersCountOnce");
+        Require(Math.Abs(TransformationAggregateProbability.SharedNamedThreeMass([3, 4], [3, 4], [3, 4]) - 3d / 8) < 1e-15,
+            "SharedTransformRepeatedIdentityConsumesTwoTargetBits");
+        Require(Math.Abs(TransformationAggregateProbability.SharedNamedThreeMass([1], [0, 2], [0, 0, 0, 4]) - 7d / 32) < 1e-15,
+            "SharedTransformDifferentRankPartitionsCountOverlapOnce");
+
         foreach (ulong start in new[] { 0UL, 1UL, NeowPrefixHashCache.BlockSize - 7UL,
             NeowPrefixHashCache.BlockSize - 1UL, NeowPrefixHashCache.SpaceSize - (1UL << 24) })
         {
@@ -95,7 +102,7 @@ internal static class ShionNeowOptimizationChecks
             Require(combinedPrefix.Applicable(excludedPlan, false) == NeowGpuOptimizations.Production.Applicable(excludedPlan, false), "LocalPrefixExcludedIdentity." + excluded);
         }
         var order = NeowInternalFilterOrder.Compile(plan);
-        Require(order.Enabled && order.NicheAdvances.SequenceEqual(new uint[] { 1 }), "FinalCurseFixedFootprint");
+        Require(order.Enabled && order.StreamAdvances.SequenceEqual(new uint[] { 1 }), "FinalCurseFixedFootprint");
         Require(order.Source.Contains("final_curse_matches", StringComparison.Ordinal), "CanonicalFinalPredicate");
         var unknown = plan with { Bones = [250, meta[28]], Meta = (uint[])meta.Clone() };
         unknown.Meta[27] = 250;
@@ -104,6 +111,45 @@ internal static class ShionNeowOptimizationChecks
         upgrades.Meta[27] = Beta110FastRelicCatalog.SmallCapsule;
         upgrades.Conditions[192] = uint.MaxValue;
         Require(!NeowInternalFilterOrder.Compile(upgrades).Enabled, "UnknownAuthoredAdvanceRetainsCanonical");
+        var modern = plan with { Meta = (uint[])meta.Clone() };
+        modern.Meta[56] |= 64;
+        var modernOrder = NeowInternalFilterOrder.Compile(modern);
+        Require(modernOrder.Enabled && modernOrder.UsesNonCombat && modernOrder.StreamAdvances.SequenceEqual(new uint[] { 1 }),
+            "ModernNewLeafUsesTransformationsAndBonesForksOnce");
+        var modernCapsule = modern with { Meta = (uint[])modern.Meta.Clone(), Bones = [Beta110FastRelicCatalog.SmallCapsule, meta[28]] };
+        modernCapsule.Meta[27] = Beta110FastRelicCatalog.SmallCapsule;
+        Require(!NeowInternalFilterOrder.Compile(modernCapsule).Enabled, "UnknownModernCapsuleCannotGateFinalCurse");
+        modernCapsule.Meta[57] = 1u << Beta110FastRelicCatalog.SmallCapsule;
+        Require(NeowInternalFilterOrder.Compile(modernCapsule).Enabled, "ProvenNeutralModernCapsuleCanGateFinalCurse");
+        var modernPhial = modern with { Meta = (uint[])modern.Meta.Clone(), PoolMeta = (uint[])pools.Clone(),
+            Bones = [Beta110FastRelicCatalog.PhialHolster, meta[28]] };
+        modernPhial.Meta[27] = Beta110FastRelicCatalog.PhialHolster;
+        Require(!NeowInternalFilterOrder.Compile(modernPhial).Enabled, "IncompletePotionPoolsHaveNoFixedFootprint");
+        modernPhial.PoolMeta[13] = modernPhial.PoolMeta[15] = modernPhial.PoolMeta[17] = 2;
+        Require(NeowInternalFilterOrder.Compile(modernPhial).StreamAdvances.SequenceEqual(new uint[] { 5 }),
+            "ModernPhialConsumesRarityAndIdentityTwiceAfterBones");
+        var modernK = modern with { Meta = (uint[])modern.Meta.Clone(), PoolMeta = new uint[52],
+            Bones = [Beta110FastRelicCatalog.Kaleidoscope, meta[28]] };
+        modernK.Meta[27] = Beta110FastRelicCatalog.Kaleidoscope;
+        modernK.Meta[9] = 3;
+        Array.Copy(pools, 20, modernK.PoolMeta, 38, 14);
+        Require(NeowInternalFilterOrder.Compile(modernK).StreamAdvances.SequenceEqual(new uint[] { 3 }),
+            "ModernKaleidoscopeForksEachGroupRatherThanConsumingChildShuffle");
+        Require(NeowLocalObservationPacking.Unique([1, 2], [], [3]), "LocalRankReadAllowsEmptyDisjointLanes");
+        Require(!NeowLocalObservationPacking.Unique([1, Beta110FastDenseId.Invalid], [], [3]), "LocalRankReadRejectsInvalidIdentity");
+        Require(!NeowLocalObservationPacking.Unique([1, 1], [2], []), "LocalRankReadRejectsRepeatedIdentityWithinLane");
+        Require(!NeowLocalObservationPacking.Unique([1, 2], [], [1]), "LocalRankReadRejectsRepeatedIdentityAcrossLanes");
+        var directLocal = modern with { Meta = (uint[])modern.Meta.Clone() };
+        directLocal.Meta[56] = 64;
+        directLocal.Meta[66] = directLocal.Meta[67] = 0;
+        directLocal.Meta[81] = Beta110FastRelicCatalog.HeftyTablet;
+        Require(directLocal.DirectLocalSourceMask == 1L << Beta110FastRelicCatalog.HeftyTablet &&
+            directLocal.LocalSourceRevision(2).Length == 0 && directLocal.LocalSourceRevision(3).Contains("DirectLocalSource", StringComparison.Ordinal),
+            "LocalSourceMaskKeepsOnlyDirectSelectedStage3Source");
+        Require(modern.DirectLocalSourceMask < 0 && modern.FixedPairLocalSourceMask ==
+            ((1L << Beta110FastRelicCatalog.LeafyPoultice) | (1L << Beta110FastRelicCatalog.NewLeaf)), "DirectSourceMaskDoesNotNarrowBonesPair");
+        Require((directLocal with { JointTransformMetaOffset = 90 }).DirectLocalSourceMask < 0,
+            "DirectSourceMaskDoesNotNarrowJointTransforms");
         Require(NeowGpuOptimizations.Parse("n-curse-first").Applicable(plan, true).Revision.Length == 0, "CompactCanonicalIdentity");
         Console.WriteLine($"ShionNeowOptimization=PASS;checks={checks};gpuMappingOnly=true;nativeGpuNotRun=true");
         return 0;

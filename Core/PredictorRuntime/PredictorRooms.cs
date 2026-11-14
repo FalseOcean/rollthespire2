@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Identity;
 
 namespace RolltheSpire2.Core.PredictorRuntime;
@@ -111,6 +112,17 @@ internal sealed partial class PredictorRun
         if (Phase != PredictorPhase.TreasureRelic || input is not TakeTreasureRelic take || TreasureRelic?.Id != take.InstanceId || _treasureObtaining)
             return PredictorInputResult.Invalid;
         trace?.TreasureTake(this);
+        // The native solo AwardRelics shuffles unclaimed indices before obtaining the chosen relic.
+        int awardCalls = RuntimeProfilePolicies.SingleplayerTreasureAwardShuffleCalls(Context.VersionResolution.SemanticProfileId);
+        if (awardCalls != 0)
+        {
+            const PredictorStream stream = PredictorStream.TreasureRoomRelics;
+            trace?.ReadStream(this, stream);
+            var rng = Working.Streams.Single(s => s.Stream == stream).Restore();
+            rng.Advance(awardCalls);
+            Working = Working.WithRng(stream, rng);
+            trace?.StreamAfter(this, stream);
+        }
         trace?.Write("obtain.invoked", true, alias: "obtain",
             proof: "The validated TakeTreasureRelic branch invokes BeginObtainRelic for this offered model. Child effect internals are recorded by their own owner, not inferred here.");
         _treasureObtaining = true;

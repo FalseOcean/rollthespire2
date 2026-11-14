@@ -8,7 +8,9 @@ internal sealed partial class NeowFamilyGpuExecutor
     private readonly NeowInternalFilterOrderPlan _curseFirstPlan;
     private bool CurseFirstEnabled => _optimizations.CurseFirst && !_privateInput;
     private int StagedDispatchCount => CurseFirstEnabled ? 4 : 3;
-    internal string OptimizationRevisionFor(bool compact) => _optimizations.Applicable(_plan, compact || _privateInput).Revision +
+    internal string OptimizationRevisionFor(bool compact) => (_plan.DirectNestedMode == 103
+        ? _optimizations.ForStagedSharedPhial(_plan, compact || _privateInput)
+        : _optimizations.Applicable(_plan, compact || _privateInput)).Revision + _plan.ModernTransformGateRevision +
         _plan.EntryIdentityRevision + NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision;
 
     internal static bool SupportsDrawIntervals(NeowFamilyGpuPlan plan, bool compact)
@@ -17,6 +19,8 @@ internal sealed partial class NeowFamilyGpuExecutor
         if (!compact && plan.UsesStagedDense && plan.Meta[39] is > 0 and <= 10 &&
             NeowStaticDrawGateCompiler.TryCompileRanks((int)plan.Meta[39],
                 i => (plan.Meta[69] & (1u << i)) == 0 && plan.Meta[71 + i] != uint.MaxValue, 2, out _)) return true;
+        if (plan.ModernTransformGate is not null)
+            return NeowModernTransformGate.CompileIntervals(plan) is not null;
         return plan.UsesLeafyPreGate && plan.Conditions[20] == 2 &&
             NeowStaticDrawGateCompiler.TryCompilePool(plan.Strike, (int)plan.Meta[58], [plan.Conditions[21]], 2, out _) &&
             NeowStaticDrawGateCompiler.TryCompilePool(plan.Strike, (int)plan.Meta[58], [plan.Conditions[22]], 2, out _) &&
@@ -27,12 +31,28 @@ internal sealed partial class NeowFamilyGpuExecutor
     private string ApplyOptimizations(string source, int stage)
     {
         if (_plan.IsMultiplayer) return source;
+        if (stage is 2 or 3 && _plan.LocalObservationRevision.Length != 0)
+            source = source.Replace("#define N_LOCAL_OBSERVATIONS 0", FormattableString.Invariant(
+                $"#define N_LOCAL_OBSERVATIONS {_plan.Meta[NeowLocalObservationPacking.UniquePools]}"), StringComparison.Ordinal);
         if (_optimizations.GpuPrefix && stage == 0)
             source = source.Replace("#define RT2_PREFIX_HASH_CACHE 0", "#define RT2_PREFIX_HASH_CACHE 1", StringComparison.Ordinal);
         if (CurseFirstEnabled)
             source = source.Replace("#define N_INTERNAL_ORDER 0", "#define N_INTERNAL_ORDER 1", StringComparison.Ordinal);
         source = source.Replace("/*__RT2_N_INTERNAL_FILTER_ORDER__*/", _curseFirstPlan.Source, StringComparison.Ordinal);
-        return _optimizations.DrawIntervals ? ApplyDrawIntervals(source, stage, _plan) : source;
+        if (stage is 0 or 3 && _plan.ModernTransformGate is { } gate)
+            source = ApplyModernTransformGate(source, gate.ShaderSource(_plan, UsesLeafyLazy, _optimizations.DrawIntervals));
+        return _optimizations.DrawIntervals && (_plan.DirectNestedMode != 103 || stage == 0)
+            ? ApplyDrawIntervals(source, stage, _plan) : source;
+    }
+
+    private static string ApplyModernTransformGate(string source, string helperSource)
+    {
+        const string flag = "#define N_MODERN_TRANSFORM_GATE 0";
+        const string helper = "/*__RT2_N_MODERN_TRANSFORM_GATE__*/";
+        if (!source.Contains(flag, StringComparison.Ordinal) || !source.Contains(helper, StringComparison.Ordinal))
+            throw new InvalidOperationException("N.ModernTransformGateShaderSeam");
+        return source.Replace(flag, "#define N_MODERN_TRANSFORM_GATE 1", StringComparison.Ordinal)
+            .Replace(helper, helperSource, StringComparison.Ordinal);
     }
 
     // Compile exactly the existing GPU floor(mantissa * bound / 2^53) map.

@@ -33,8 +33,8 @@ internal sealed partial class AnalysisPage
             await LoadWitnessMapAct(act, request);
             return;
         }
-        var actInfo = _viewModel.EventPoolSequenceDomain.Items.FirstOrDefault(item => item.Act == act);
-        if (actInfo is null) { _mapWorkspace.SetStatus(_uiText.Get("ui1.map.unavailable")); return; }
+        var actKey = OverviewActKey(act);
+        if (!actKey.IsValid) { _mapWorkspace.SetStatus(_uiText.Get("ui1.map.unavailable")); return; }
         var bosses = _viewModel.BossDomain.Items.Where(item => item.Act == act).OrderBy(item => item.Ordinal).ToArray();
         var bossIcons = bosses.Select(b => _icons.Resolve(b.BossDisplay.ModelKey, GameContentKind.Encounter,
             IconVariant.WorldCompendiumBossIcon).Texture).ToArray();
@@ -47,7 +47,7 @@ internal sealed partial class AnalysisPage
         try
         {
             var lifetime = (_overviewLifetime ??= new CancellationTokenSource()).Token;
-            var map = await GetOverviewMap(act, actInfo.ActKey, bosses.Length > 1, lifetime).WaitAsync(cancel.Token);
+            var map = await GetOverviewMap(act, actKey, bosses.Length > 1, lifetime).WaitAsync(cancel.Token);
             // Resumes on Godot's UI synchronization context. Never publish a stale request's map.
             if (!cancel.IsCancellationRequested && IsInstanceValid(_mapWorkspace) && _mapWorkspace.IsInsideTree() && _mapWorkspace.Visible && _mapWorkspace.SelectedAct == act && LastRequest == request)
                 _mapWorkspace.ShowMap(map, bossIcons, ancientIcon);

@@ -130,6 +130,12 @@ internal static class NeowPartyGpuPlan
         for (int i = 0; i < a.EligibleCurseRelicIds.Length; i++) meta[71 + i] = a.EligibleCurseRelicIds[i];
         meta[81] = plan.Selected; meta[82] = (rewards ? 1u : 0) | (niche ? 2u : 0) | (transform ? 4u : 0) | (potion ? 8u : 0);
         meta[83] = plan.HasFinalCurseFastProjection ? 1u : 0; meta[84] = (uint)plan.StructuredConditions.Length;
+        if (string.Equals(Environment.GetEnvironmentVariable("RT2_N_OBSERVE_LOCAL"), "off", StringComparison.OrdinalIgnoreCase))
+            meta[NeowLocalObservationPacking.UniquePools] = uint.MaxValue;
+        else if (a.UsesChildShuffle && plan.AuditedModern113IdentityReplay && rewards && sources.Contains(Beta110FastRelicCatalog.MassiveScroll) &&
+            c.MultiplayerRewardPool.TotalCount >= 3 && NeowLocalObservationPacking.Unique(c.MultiplayerRewardPool.Common,
+                c.MultiplayerRewardPool.Uncommon, c.MultiplayerRewardPool.Rare))
+            meta[NeowLocalObservationPacking.UniquePools] = NeowLocalObservationPacking.Massive;
         for (int i = 0; i < plan.StructuredConditions.Length; i++) meta[85 + i] = plan.StructuredConditions[i].SourceRelicId;
         Beta110FastStructuredCondition[] leafy = plan.StructuredConditions.Where(x =>
             x.SourceRelicId == Beta110FastRelicCatalog.LeafyPoultice &&

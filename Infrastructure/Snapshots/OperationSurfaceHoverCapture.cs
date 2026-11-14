@@ -242,8 +242,15 @@ internal static class OperationSurfaceHoverCapture
         // Transform targets may originate in a shop/reward/ancient obtain.
         // Other deck selectors belong here only while an event owns the choice.
         reason = "SelectorNotOwnedByEvent";
-        if (screen is not NDeckTransformSelectScreen &&
-            (actual.CurrentRoom is not EventRoom eventRoom || !ReferenceEquals(eventRoom.LocalMutableEvent.Owner, player))) return false;
+        if (screen is not NDeckTransformSelectScreen)
+        {
+            if (actual.CurrentRoom is not EventRoom eventRoom || !ReferenceEquals(eventRoom.LocalMutableEvent.Owner, player)) return false;
+            // The native enchantment picker already shows the fixed effect. A
+            // captured obtain can still own a separate continuation on it.
+            reason = "NativeEnchantmentSelection";
+            if (screen is NDeckEnchantSelectScreen && !PredictorOperationEventCapture.Supports(eventRoom.LocalMutableEvent) &&
+                PredictorOperationCapture.ObservedObtainOrigin(player, NRun.Instance) is null) return false;
+        }
         var candidates = PredictorOperationCapture.Read<IReadOnlyList<CardModel>>(screen, "_cards");
         reason = "CardNotInSelector";
         if (!candidates.Any(c => ReferenceEquals(c, card))) return false;

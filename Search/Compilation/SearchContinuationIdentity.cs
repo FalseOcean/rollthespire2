@@ -42,7 +42,9 @@ internal static class SearchContinuationIdentity
             compiled.ResolvedRouteSemantics, compiled.RequiresComplexBonesDeckInteractionEvaluation,
             Policy = policy
         });
-        return "v1:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Canonical(payload))));
+        string identity = "v1:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Canonical(payload))));
+        return SearchCompiler.UsesRevisedTreasureClaims(context, compiled.NormalizedQuery)
+            ? identity + TreasureRelicSearchCondition.ClaimSequenceRevision : identity;
     }
 
     private static JsonNode? QueryPayload(SearchQuery query)

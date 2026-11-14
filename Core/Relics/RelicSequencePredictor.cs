@@ -351,8 +351,9 @@ public static class RelicSequencePredictor
             })
         {
             TreasureRoomLanes = treasureRoomLanes,
+            RngSemantics = semantics,
             EarlyLastingCandyEligible = RuntimeProfilePolicies.UsesChildStreamShuffle(semantics)
-                ? StandardOpeningRelicEligibility.AllowsLastingCandy(world.Beta109Generation!.CharacterKey, world.EncounterNumberOfRuns)
+                ? StandardOpeningRelicEligibility.AllowsLastingCandy(world)
                 : true
         };
     }

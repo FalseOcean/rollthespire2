@@ -82,6 +82,7 @@ public sealed record RelicSequencePredictionResult(
     /// </summary>
     public IReadOnlyList<RelicSequenceLaneResult> TreasureRoomLanes { get; init; } = [];
     internal bool? EarlyLastingCandyEligible { get; init; } = true;
+    internal RngSemanticProfileId RngSemantics { get; init; } = RngSemanticProfileId.Modern110;
 
     public static RelicSequencePredictionResult Unknown(
         RuntimeProfileId profileId,

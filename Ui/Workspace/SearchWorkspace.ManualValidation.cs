@@ -34,7 +34,7 @@ internal sealed partial class SearchWorkspace
         else if (environment.Status != SearchEnvironmentComparisonStatus.Same)
             issue = "ManualValidationOriginalEnvironment" + environment.Status + ":" + string.Join(";", environment.Reasons);
         else if (history is null || history.Draft is null || history.IdentityVersion != 2 || !history.EnvironmentKnown ||
-            history.EnvironmentFingerprint != QueryHistoryIdentity.EnvironmentKey(history.Draft, _environment.Fingerprint))
+            history.EnvironmentFingerprint != QueryHistoryIdentity.EnvironmentKey(history.Draft, _environment))
             issue = "ManualValidationOriginalEnvironmentUnavailable";
         else if (result is null || string.IsNullOrWhiteSpace(result.QueryFingerprint) || history.Draft is null ||
             (result.Context ?? history.Context) is null)

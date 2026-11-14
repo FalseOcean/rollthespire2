@@ -24,6 +24,9 @@ internal static class NeowSingleplayerOperators
         if (!isActive)
             return true;
 
+        if (needsRewards && NeowUnobservedRewards.TryAdvance(relicId, plan, ref rewards, ref nonCombat))
+            return true;
+
         if (relicId == Beta110FastRelicCatalog.LargeCapsule || relicId == Beta110FastRelicCatalog.SmallCapsule)
         {
             if (needsRewards) {

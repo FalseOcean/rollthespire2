@@ -12,6 +12,7 @@ using RolltheSpire2.Core.World;
 using RolltheSpire2.Core.World.Snapshots;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.Compilation;
+using RolltheSpire2.Search.FamilyExecution;
 using RolltheSpire2.Search.Semantics;
 using RolltheSpire2.Search.Runtime;
 using RolltheSpire2.Ui.Pages.Search;
@@ -1176,6 +1177,80 @@ internal static class PersistenceChecks
             Check(!store.HasPendingWorkspaceCommit && Workspace(directory).Workspace.AuxiliaryIssues.Any(detail =>
                 detail.Contains("original-batch", StringComparison.Ordinal) && detail.EndsWith(failure.ToString(), StringComparison.Ordinal)),
                 "A final auxiliary cleanup cause commits without a page or previous progress snapshot");
+        });
+
+        Case("treasure-claim-rule-history-and-frontier", directory =>
+        {
+            const string version = RuntimeVersionCompatibility.Beta113Version;
+            var authority = RolltheSpire2.Tests.FastSearch.Beta110FastSearchFixtureAuthority.CreateBeta111(Character, 10, 0, 1, version);
+            var context = SearchContextFactory.From(RuntimeProfileId.Beta111, Character, 10, authority,
+                new(version, version, "beta", "fixture", true, ""), AncientOptionConditionProfile.BroadDefault);
+            var environment = new SearchEnvironmentSignature { Fingerprint = "same-runtime", GameVersionIdentity = version, CaptureComplete = true };
+            var store = Workspace(directory);
+            store.EnsureEnvironment(environment);
+            Check(store.TrySetPersistentOrigin("000000000003", out var origin, out _), "Set the original entrance");
+            WorkbenchSearchDraft Draft(SearchQuery query) => new(Character, 10, query, AncientOptionConditionProfile.BroadDefault);
+            PreparedSearch Plan(WorkbenchSearchDraft draft, string start) => SearchPreparationCompiler.Compile(
+                SearchCompiler.Compile(draft.Query, context), new(start, 1, 1, 1)).Plan!;
+            var unrelated = Draft(SearchQuery.Empty);
+            store.BindPreparedResultWorkspace(store.PrepareSearchStart(unrelated, Plan(unrelated, origin), null));
+
+            var second = Draft(SearchQuery.Empty with { TreasureRelics = new(2, 1, TreasureRelicOrderMode.Ordered, [Relic, null]) });
+            var first = second with { Query = second.Query with { TreasureRelics = new(1, 2, TreasureRelicOrderMode.Ordered, [Relic, null]) } };
+            string oldEnvironment = QueryHistoryIdentity.EnvironmentKey(second, environment.Fingerprint);
+            Check(QueryHistoryIdentity.EnvironmentKey(first, environment) == oldEnvironment &&
+                QueryHistoryIdentity.EnvironmentKey(second, new SearchEnvironmentSignature { Fingerprint = environment.Fingerprint,
+                    GameVersionIdentity = RuntimeVersionCompatibility.Beta111Version }) == oldEnvironment,
+                "First-only ordered requests and legacy versions retain their history identity");
+            var secondPlan = Plan(second, origin);
+            var old = store.PrepareResultWorkspace("old-semantic", second);
+            old.History!.EnvironmentFingerprint = oldEnvironment;
+            old.History.Id = QueryHistoryIdentity.RecordId(old.History.QueryKey, oldEnvironment);
+            old.Workspace.ActiveHistoryId = old.History.Id;
+            store.BindPreparedResultWorkspace(old);
+            store.AppendResult(PersistableCandidate("000000000011"), "old-semantic");
+            var pending = new SearchPendingCandidate(5, "000000000005", "Exact", "ExactFailed", "original exception",
+                "old-semantic", "old-snapshot", Captured);
+            var oldFrontier = new SearchContinuationSnapshot("old-semantic", "old-snapshot", 17, [pending], [11UL])
+            {
+                ContinuationFingerprint = SearchContinuationIdentity.For(secondPlan)
+                    .Replace(TreasureRelicSearchCondition.ClaimSequenceRevision, "", StringComparison.Ordinal)
+            };
+            var progress = new SearchProgressSnapshot(SearchRunState.Completed, 14, 1, 14, 1, 0, 0, SearchDisposition.Match, "", false);
+            store.SaveCheckpoint(progress, oldFrontier, 17);
+            var firstRun = store.PrepareResultWorkspace("first-semantic", first);
+            store.BindPreparedResultWorkspace(firstRun);
+            var firstFrontier = oldFrontier with { NextOrdinal = 21, PendingCandidates = [], PublishedOrdinals = [],
+                ContinuationFingerprint = SearchContinuationIdentity.For(Plan(first, origin)) };
+            store.SaveCheckpoint(progress, firstFrontier, 21);
+            store.FlushAll();
+
+            store = Workspace(directory);
+            var firstStart = store.ResolveSearchStart(first, Plan(first, store.CurrentNextCursorSeed));
+            Check(firstStart.Continuation?.NextOrdinal == 21 && firstStart.Plan.CanonicalStartSeed == Beta110SeedCodec.FormatOrdinal(21),
+                "The first-only window still resumes its own frontier");
+            var redo = store.PrepareSearchStart(second, Plan(second, store.CurrentNextCursorSeed), null);
+            var resolution = redo.Batch.Start!.Resolution;
+            Check(resolution is { Continuation: null, ExplicitOriginChangeId.Length: 0, InitialContinuation.NextOrdinal: 3 } &&
+                resolution.Plan.CanonicalStartSeed == origin && !SearchContinuationIdentity.Matches(oldFrontier, resolution.Plan, SearchContinuationIdentity.For(resolution.Plan)),
+                "An old second-chest frontier is incompatible and the corrected scan starts at the persistent origin");
+            var history = store.Workspace.QueryHistory.Single(entry => entry.Id == old.History.Id);
+            Check(redo.History?.Id != history.Id && redo.History?.QueryKey == history.QueryKey && redo.Batch.Results.Count == 0 &&
+                store.ResultCountForQuery(second) == 0 && history.Results.Single().EffectiveValidationDisposition == SearchDisposition.Match &&
+                history.Progress?.MatchCount == 1 && store.EnvironmentComparison(history).Reasons.Contains("TreasureClaimRuleChanged") &&
+                store.PendingHistories.Single().Continuation!.PendingCandidates.Single() == pending,
+                "Old result, progress and pending cause remain in their original record with a rule-change notice");
+            store.BindPreparedResultWorkspace(redo);
+            store.FlushAll();
+            store = Workspace(directory);
+            Check(store.ContinuationFor(second, secondPlan)?.NextOrdinal == 3,
+                "Cancellation before the first new checkpoint can resume the corrected entrance");
+            store.SaveCheckpoint(progress with { MatchCount = 0 }, resolution.InitialContinuation! with { NextOrdinal = 8 }, 8);
+            store.FlushAll();
+            store = Workspace(directory);
+            Check(store.ResolveSearchStart(second, Plan(second, store.CurrentNextCursorSeed)).Plan.CanonicalStartSeed == Beta110SeedCodec.FormatOrdinal(8) &&
+                store.ResultCountForQuery(second) == 0 && store.PendingHistories.Single().Id == history.Id,
+                "Later resumes use the corrected checkpoint and retain the old pending record");
         });
 
         Case("pending-atomic-result-cursor-handoff", directory =>

@@ -7,12 +7,43 @@ namespace RolltheSpire2.Search.FamilyExecution;
 internal sealed record RelicOpeningPrefixPlan(uint[] Rules)
 {
     internal const uint BranchRule = 0x80000000u;
+    internal const int DefectScrollBoxes = -2;
 
     internal bool TryFixedRewardsDraws(byte source, out uint draws)
     {
         uint rule = source < Rules.Length ? Rules[source] : 0;
         draws = rule is > 0 and < BranchRule ? rule - 1 : 0;
         return rule is > 0 and < BranchRule;
+    }
+
+    internal static bool TryProveCompanionRewardsDraws(NeowReplayPlan route, byte source, out int draws)
+    {
+        draws = 0;
+        if (source == Beta110FastRelicCatalog.MassiveScroll && route.Authority.PlayersCount > 1)
+        {
+            var catalog = route.Authority.EffectCatalog;
+            if (!catalog.CharacterRewardAuthorityExact || !catalog.ColorlessRewardAuthorityExact ||
+                !Valid(catalog.MultiplayerRewardPool, 3)) return false;
+            // The native three-card offer always consumes rarity, one eligible
+            // identity and an upgrade roll. Card choice follows generation.
+            draws = 9;
+            return true;
+        }
+        if (!TryRule(route, source, out uint rule) || rule == 0) return false;
+        draws = rule == BranchRule ? DefectScrollBoxes : checked((int)rule - 1);
+        return true;
+    }
+
+    internal static void AdvanceObservedRewards(int draws, ref Beta110FastRng rewards)
+    {
+        if (draws == DefectScrollBoxes)
+        {
+            for (int bundle = 0; bundle < 2; bundle++)
+                if (rewards.NextInt(100) != 0)
+                    for (int card = 0; card < 3; card++) _ = rewards.NextDouble();
+        }
+        else
+            for (int draw = 0; draw < draws; draw++) _ = rewards.NextDouble();
     }
 
     internal static bool TryCompile(NeowReplayPlan route, out RelicOpeningPrefixPlan? plan, out string issue)

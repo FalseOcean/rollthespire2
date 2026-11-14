@@ -29,15 +29,20 @@ internal readonly record struct NeowGpuOptimizations(bool LeafyLazy = false, boo
 
     internal NeowGpuOptimizations Applicable(NeowFamilyGpuPlan plan, bool compact, bool ordinary = true) =>
         !ordinary || plan.IsMultiplayer ? default : this with {
-            LeafyLazy = LeafyLazy && plan.UsesLeafyPreGate,
+            LeafyLazy = LeafyLazy && NeowFamilyGpuExecutor.SupportsLeafyLazy(plan),
             DrawIntervals = DrawIntervals && NeowFamilyGpuExecutor.SupportsDrawIntervals(plan, compact),
             GpuPrefix = GpuPrefix && !compact && plan.UsesStagedDense,
-            CurseFirst = CurseFirst && !compact && !plan.UsesChildShuffle && NeowInternalFilterOrder.Compile(plan).Enabled,
+            CurseFirst = CurseFirst && !compact && NeowInternalFilterOrder.Compile(plan).Enabled,
             LeafyLocalPrefix = LeafyLocalPrefix && !compact && plan.UsesLeafyPreGate && !plan.UsesStagedDense
         };
+
+    internal NeowGpuOptimizations ForStagedSharedPhial(NeowFamilyGpuPlan plan, bool compact) =>
+        compact || !plan.UsesStagedDense ? default : new(
+            DrawIntervals: DrawIntervals && NeowFamilyGpuExecutor.SupportsDrawIntervals(plan, compact: false),
+            GpuPrefix: GpuPrefix);
     internal string Revision => (LeafyLazy ? ".ShionLeafyLazy.v1" : "") +
         (DrawIntervals ? ".ShionDrawIntervals53.v1" : "") + (GpuPrefix ? ".ShionGpuPrefix.v1" : "") +
-        (CurseFirst ? ".ShionCurseFirst.v1" : "") +
+        (CurseFirst ? ".ShionCurseFirst.v2" : "") +
         (LeafyLocalPrefix ? ".LeafyDenseLocalPrefix.20261027.v1" : "");
 
     // Generated operation structure, not target IDs or bucket positions. Old
@@ -59,9 +64,13 @@ internal readonly record struct NeowGpuOptimizations(bool LeafyLazy = false, boo
             NeowStaticDrawGateCompiler.TryCompilePool(plan.Defend, (int)plan.Meta[59], [plan.Conditions[22]], 2, out var d1))
             leafy = [Arity(s0!), Arity(s1!), Arity(d0!), Arity(d1!)];
         var finalCurse = CurseFirst ? NeowInternalFilterOrder.Compile(plan) : null;
-        return ";N.GeneratedWork.20261027.v1:" + System.Text.Json.JsonSerializer.Serialize(new {
+        string work = ";N.GeneratedWork.20261027.v1:" + System.Text.Json.JsonSerializer.Serialize(new {
             CurseIntervalComparisons = curse, LeafyIntervalComparisons = leafy,
-            FinalCurseAdvances = finalCurse?.NicheAdvances, FinalCurseAccepts = finalCurse?.HasAcceptedCurse
+            FinalCurseAdvances = finalCurse?.StreamAdvances, FinalCurseAccepts = finalCurse?.HasAcceptedCurse,
+            FinalCurseStream = finalCurse is null ? null : finalCurse.UsesNonCombat ? "NonCombatGeneration" : "Niche"
         });
+        return DrawIntervals && NeowModernTransformGate.CompileIntervals(plan) is { } shared
+            ? work + ";N.SharedTransformIntervalComparisons:" + System.Text.Json.JsonSerializer.Serialize(shared.Select(Arity))
+            : work;
     }
 }

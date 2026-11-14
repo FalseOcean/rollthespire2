@@ -3,6 +3,13 @@
   "Title": "Future Directions",
   "Blocks": [
     {
+      "Type": "BulletList",
+      "Items": [
+        "Keep adapting to new game content and add reliably predictable outcomes as seed search conditions.",
+        "Explore new filters made possible by the updated RNG rules, including Pandora’s Box outcomes and the rarity of relics awarded by events."
+      ]
+    },
+    {
       "Type": "Paragraph",
       "Text": "With this round of development, RT2 has gradually come closer to doing what I originally hoped it would do. Next, I will follow updates to the game, continue maintaining the existing features, and welcome and explore new ideas for performance optimization."
     },

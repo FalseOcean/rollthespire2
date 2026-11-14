@@ -20,7 +20,7 @@ internal sealed partial class InitialRoomsPlan
     internal GpuNumericalVariant NumericalVariant { get; private init; }
     internal string ActualRevision => Revision + (UnknownMonster ? ".MonsterPrefix.20261105.v1" : "") +
         (NumericalVariant == GpuNumericalVariant.NativeFloat64 ? "" : ".IntegerRne.20261025.v1") +
-        (_childShuffle ? ".Modern113" : "");
+        (_childShuffle ? ".Modern113" : "") + (_treasureAwardCalls > 0 ? ".TreasureClaimShuffle.v1" : "");
     internal GpuNumericRequirements NumericRequirements => GpuIntegerNumerics.Requirements(NumericalVariant);
     private static readonly ulong UnknownHash = XxHash64.Hash("unknown_map_point"u8, 0);
     private static readonly ulong TreasureHash = XxHash64.Hash("treasure_room_relics"u8, 0);
@@ -29,6 +29,7 @@ internal sealed partial class InitialRoomsPlan
     private readonly RolltheSpire2.Core.World.Snapshots.WorldAuthoritySnapshot? _referenceWorld;
     private readonly bool _isParty;
     private readonly bool _childShuffle;
+    private readonly int _treasureAwardCalls;
     private readonly int _players;
     private readonly TreasureRelicSearchCondition? _treasure;
     private readonly int[] _lengths, _bucketLanes, _effectiveLengths, _targetLanes, _targetPositions, _removedPositions;
@@ -49,6 +50,8 @@ internal sealed partial class InitialRoomsPlan
         _referenceProfile = RuntimeProfileRegistry.Select(request.Detection);
         _referenceWorld = request.Authority.WorldAuthority;
         _childShuffle = treasure is not null && RuntimeProfilePolicies.UsesChildStreamShuffle(request.Authority.VersionResolution.SemanticProfileId);
+        _treasureAwardCalls = treasure is null ? 0 :
+            RuntimeProfilePolicies.SingleplayerTreasureAwardShuffleCalls(request.Authority.VersionResolution.SemanticProfileId);
         _isParty = request.CompiledSearch.Context.Party is not null; _players = request.Authority.PlayersCount;
         UnknownPrefixCount = unknown; _treasure = treasure;
         UnknownMonster = UnknownRoomPrefixRequirements.MonsterCount(request.CompiledSearch.NormalizedQuery) > 0;
@@ -73,6 +76,7 @@ internal sealed partial class InitialRoomsPlan
         }
         for (int i = 0; i < lengths.Length; i++) { meta[32 + i * 2] = (uint)lengths[i]; meta[33 + i * 2] = (uint)lanes[i]; }
         meta[27] = UnknownJuzuAcquired ? 1u : 0u;
+        meta[28] = (uint)_treasureAwardCalls;
         Buffers = [meta, []];
     }
 
@@ -172,6 +176,7 @@ internal sealed partial class InitialRoomsPlan
             float roll = rarity.NextFloat(); int lane = roll < .5f ? 0 : roll < .83f ? 1 : 2;
             while (lane < 3 && taken[lane] == _effectiveLengths[lane]) lane++;
             encounterLanes[i] = lane; ranks[i] = lane == 3 ? 0 : taken[lane]++;
+            if (i + 1 < end && _treasureAwardCalls != 0) rarity.ConsumeShuffleSeed();
         }
         // Rarity is independent of the shared shuffle. Impossible lanes need no UpFront replay.
         for (int slot = 0; slot < _treasure.Count; slot++)

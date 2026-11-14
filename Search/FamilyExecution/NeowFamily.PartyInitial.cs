@@ -404,6 +404,7 @@ internal sealed partial class NeowFamily
         public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compact) => _gpuStages.Count == 0 ? CpuCondition(compact) :
             new(FamilyId, "N.Neow.PartyEffects.Gpu.v6." + (UsesFused ? "Fused." : UsesPrivate ? "PrivateOrdinal." : "Public.") + (compact ? "CompactAbi1" : "Dense") +
                 (UsesPrivate && compact ? ".DirectCompactCast.20261016.v1" : "") + (HasOrderedKBody ? PartyOrderedKRevision : "") +
+                (string.Equals(Environment.GetEnvironmentVariable("RT2_N_OBSERVE_LOCAL"), "off", StringComparison.OrdinalIgnoreCase) ? "" : ".PartyLocalObservations.20261114.v1") +
                 (UsesCompatibilityGpu ? ".IntegerUnitFloat.Rne.20261025.v1" : "") + NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision + _rulesRevision,
                 "OrderedSlotInitialOffers", 1, "InitialOffersAndResolvedEffects;SharedArrival=AuthoredDrawUnion;Remainder=WholeTableExact;" +
                     (UsesCompatibilityGpu ? "GpuNumericalVariant=IntegerUnitFloat;PhysicalQuoteUnavailable=UnmeasuredVariant" : "BoundedLocalPhysicalQuote"),

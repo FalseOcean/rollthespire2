@@ -1,6 +1,7 @@
 // Single-player core: no party state or multiplayer effect implementation.
 // Adopted numeric functions from Beta110GpuNeowP1Common.glsl.
 // HistoricalNextInt retained; route state is strictly Neow-local. No Relic Bag.
+#define N_LOCAL_OBSERVATIONS 0
 /*__RT2_NEOW_IDENTITY_FACTS__*/
 struct RngState { uint64_t s0; uint64_t s1; uint64_t s2; uint64_t s3; };
 struct RouteRngState { RngState rewards; RngState niche; RngState transformations; RngState combat_potions; RngState non_combat; };
@@ -541,6 +542,42 @@ uint permutation_value(uint64_t packed, uint index) {
     return uint((packed >> (index * 4u)) & uint64_t(0x0fu));
 }
 
+#if (N_LOCAL_OBSERVATIONS & 16) && (N_DIRECT_NESTED <= 9 && N_DIRECT_NESTED != 2 || N_DIRECT_NESTED == 103)
+uint observed_kaleidoscope_group(uint targets, inout RouteRngState state) {
+    uint table = plan_value(14u);
+    float rare = plan_value(7u) >= 7u ? 0.0149f : 0.03f;
+    uint64_t order = shuffled_opening_pool_order(plan_value(9u), state);
+    uint found = 0u;
+    for (uint item = 0u; item < 3u; ++item) {
+        float value = next_float(state.rewards);
+        uint rarity = value < rare ? 2u : (value < rare + 0.37f ? 1u : 0u);
+        uint at = table + permutation_value(order, item) * 9u + rarity * 3u;
+        // Every prepared effective lane is nonempty. Compare its rank directly;
+        // absent targets use a sentinel outside the sampled range.
+        uint selected = next_int(state.rewards, conditions.values[at]);
+        found |= uint(selected == conditions.values[at + 1u]);
+        found |= uint(selected == conditions.values[at + 2u]) << 1u;
+        next_u64(state.rewards); // Mandatory upgrade roll, even when its value is unobserved.
+    }
+    return found & targets;
+}
+
+bool observed_kaleidoscope_route(uint targets, inout RouteRngState state) {
+    uint first = observed_kaleidoscope_group(targets, state);
+    if (targets == 3u && first == 0u) return false;
+    if (targets == 1u && first != 0u) {
+        // Keep the second group's parent fork and all Rewards words for the
+        // next pickup (including a capsule or the final curse).
+        next_u64(state.non_combat);
+        for (uint burn = 0u; burn < 9u; ++burn) next_u64(state.rewards);
+        return true;
+    }
+    uint second = observed_kaleidoscope_group(targets == 3u && first != 3u ? targets & ~first : targets, state);
+    return targets == 1u ? second != 0u : ((first & 1u) != 0u && (second & 2u) != 0u) ||
+        ((first & 2u) != 0u && (second & 1u) != 0u);
+}
+#endif
+
 #if N_DIRECT_NESTED == 2
 bool execute_kaleidoscope_body(
 #else
@@ -556,6 +593,18 @@ bool execute_kaleidoscope_route(
 #endif
     )
 {
+#if N_LOCAL_OBSERVATIONS & 4096
+    if (!predicate_enabled) {
+        next_u64(state.non_combat);
+        next_u64(state.non_combat);
+        for (uint burn = 0u; burn < 18u; ++burn) next_u64(state.rewards);
+        return true;
+    }
+#endif
+#if (N_LOCAL_OBSERVATIONS & 16) && (N_DIRECT_NESTED <= 9 && N_DIRECT_NESTED != 2 || N_DIRECT_NESTED == 103)
+    if (predicate_enabled)
+        return observed_kaleidoscope_route(target_count == 1u ? 1u : 3u, state);
+#endif
     uint pool_count = plan_value(9u);
     uint ascension = plan_value(7u);
     bool group0_target0 = false;
@@ -591,6 +640,20 @@ bool execute_kaleidoscope_route(
 }
 
 bool execute_kaleidoscope_ordered_route(uint first, uint second, inout RouteRngState state) {
+#if (N_LOCAL_OBSERVATIONS & 16) && (N_DIRECT_NESTED <= 9 && N_DIRECT_NESTED != 2 || N_DIRECT_NESTED == 103)
+    {
+        if (first == 0xffffffffu) {
+            next_u64(state.non_combat);
+            for (uint burn = 0u; burn < 9u; ++burn) next_u64(state.rewards);
+        } else if (observed_kaleidoscope_group(1u, state) == 0u) return false;
+        if (second == 0xffffffffu) {
+            next_u64(state.non_combat);
+            for (uint burn = 0u; burn < 9u; ++burn) next_u64(state.rewards);
+            return true;
+        }
+        return observed_kaleidoscope_group(2u, state) != 0u;
+    }
+#endif
     for (uint group = 0u; group < 2u; ++group) {
         uint target = group == 0u ? first : second;
         bool found = target == 0xffffffffu;
@@ -620,7 +683,20 @@ bool execute_leafy_route(
     uint strike_length = plan_value(58u);
     uint defend_length = plan_value(59u);
     if (strike_length == 0u || defend_length == 0u) return false;
+#if N_LOCAL_OBSERVATIONS & 8
+    if (!predicate_enabled) {
+        next_u64(state.transformations);
+        next_u64(state.transformations);
+        return true;
+    }
+#endif
     uint first = leafy_strike.ids[next_int(state.transformations, strike_length)];
+#if N_LOCAL_OBSERVATIONS & 8
+    if (target_count == 1u && first == target0) {
+        next_u64(state.transformations);
+        return true;
+    }
+#endif
     uint second = leafy_defend.ids[next_int(state.transformations, defend_length)];
     if (!predicate_enabled) return true;
     if (target_count == 1u) return first == target0 || second == target0;
@@ -633,6 +709,29 @@ bool used_value(uint candidate, uint used0, uint used1, uint used2, uint used_co
     if (used_count > 1u && candidate == used1) return true;
     return used_count > 2u && candidate == used2;
 }
+
+#if N_LOCAL_OBSERVATIONS & 7
+// Selected indexes are relative to a rarity lane before exclusion. Each
+// earlier selection comes with its original lane and rank; across proven
+// disjoint lanes the other picks cannot remove a position here.
+uint select_unused_rank(uint lane, uint length, uvec3 first, uvec3 second, inout RngState rng) {
+    uint a = first.x == lane ? first.y : 0xffffffffu;
+    uint b = second.x == lane ? second.y : 0xffffffffu;
+    uint excluded = uint(a != 0xffffffffu) + uint(b != 0xffffffffu);
+    if (length <= excluded) return 0xffffffffu;
+    uint rank = next_int(rng, length - excluded);
+    if (rank >= min(a, b)) rank++;
+    if (rank >= max(a, b)) rank++;
+    return rank;
+}
+
+uvec3 observed_unique_rank(uint lane, uvec3 first, uvec3 second, inout RngState rng) {
+    uint length = other_pool_meta.values[lane + 1u];
+    uint rank = select_unused_rank(lane, length, first, second, rng);
+    return rank == 0xffffffffu ? uvec3(0xffffffffu) :
+        uvec3(lane, rank, other_card_ids.ids[other_pool_meta.values[lane] + rank]);
+}
+#endif
 
 uint select_unused_meta(
     uint meta_index,
@@ -662,12 +761,39 @@ uint select_unused_meta(
 }
 
 bool execute_arcane_scroll_route(uint target, bool predicate_enabled, inout RouteRngState state) {
+#if N_LOCAL_OBSERVATIONS & 1024
+    if (!predicate_enabled) {
+        next_u64(state.rewards);
+        return true;
+    }
+#endif
     uint selected = select_unused_meta(
         4u, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0u, state.rewards);
     return selected != 0xffffffffu && (!predicate_enabled || selected == target);
 }
 
 bool execute_hefty_tablet_route(uint target, bool predicate_enabled, inout RouteRngState state) {
+#if N_LOCAL_OBSERVATIONS & 1
+    if (other_pool_meta.values[5u] >= 3u) {
+        uvec3 none = uvec3(0xffffffffu);
+        if (!predicate_enabled) {
+            for (uint i = 0u; i < 3u; ++i) next_u64(state.rewards);
+            return true;
+        }
+        uvec3 first = observed_unique_rank(4u, none, none, state.rewards);
+        if (first.z == target) {
+            next_u64(state.rewards);
+            next_u64(state.rewards);
+            return true;
+        }
+        uvec3 second = observed_unique_rank(4u, first, none, state.rewards);
+        if (second.z == target) {
+            next_u64(state.rewards);
+            return true;
+        }
+        return observed_unique_rank(4u, first, second, state.rewards).z == target;
+    }
+#endif
     uint first = select_unused_meta(
         4u, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0u, state.rewards);
     if (first == 0xffffffffu) return false;
@@ -687,6 +813,22 @@ uint card_rarity_meta_index(uint pool_meta_base, uint requested, uint fallback_i
     else rarity = fallback_index == 0u ? 3u : (fallback_index == 1u ? 1u : 2u);
     return pool_meta_base + (rarity - 1u) * 2u;
 }
+
+#if N_LOCAL_OBSERVATIONS & 3
+uvec3 observed_unique_card(uint pool_meta_base, uint ascension, uvec3 first, uvec3 second, inout RngState rewards) {
+    float rare = ascension >= 7u ? 0.0149f : 0.03f;
+    float roll = next_float(rewards);
+    uint rarity = roll < rare ? 3u : (roll < rare + 0.37f ? 2u : 1u);
+    for (uint fallback_index = 0u; fallback_index < 3u; ++fallback_index) {
+        uvec3 selected = observed_unique_rank(card_rarity_meta_index(pool_meta_base, rarity, fallback_index), first, second, rewards);
+        if (selected.z != 0xffffffffu) {
+            next_u64(rewards);
+            return selected;
+        }
+    }
+    return uvec3(0xffffffffu);
+}
+#endif
 
 #if N_DIRECT_NESTED == 12
 uint roll_card_from_meta_selected(uint requested,
@@ -746,12 +888,32 @@ bool phial_rare_opportunity(RngState potions, uint count) {
 
 bool execute_lead_paperweight_route(uint target, bool predicate_enabled, inout RouteRngState state) {
     uint ascension = plan_value(7u);
+#if N_LOCAL_OBSERVATIONS & 64
+    if (!predicate_enabled) {
+        for (uint i = 0u; i < 6u; ++i) next_u64(state.rewards);
+        return true;
+    }
+#endif
+#if N_LOCAL_OBSERVATIONS & 2
+    uvec3 none = uvec3(0xffffffffu);
+    uvec3 first_rank = observed_unique_card(6u, ascension, none, none, state.rewards);
+    if (first_rank.z == 0xffffffffu) return false;
+#if N_LOCAL_OBSERVATIONS & 64
+    if (first_rank.z == target) {
+        for (uint i = 0u; i < 3u; ++i) next_u64(state.rewards);
+        return true;
+    }
+#endif
+    uvec3 second_rank = observed_unique_card(6u, ascension, first_rank, none, state.rewards);
+    return second_rank.z != 0xffffffffu && (!predicate_enabled || first_rank.z == target || second_rank.z == target);
+#else
     uint first = roll_card_from_meta(
         6u, ascension, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0u, state.rewards);
     if (first == 0xffffffffu) return false;
     uint second = roll_card_from_meta(
         6u, ascension, first, 0xffffffffu, 0xffffffffu, 1u, state.rewards);
     return second != 0xffffffffu && (!predicate_enabled || first == target || second == target);
+#endif
 }
 
 uint roll_potion_from_meta(
@@ -764,6 +926,14 @@ uint roll_potion_from_meta(
     return select_unused_meta(
         requested_meta, used0, 0xffffffffu, 0xffffffffu, used_count, rng);
 }
+
+#if N_LOCAL_OBSERVATIONS & 4
+uvec3 observed_unique_potion(uvec3 first, inout RngState rng) {
+    float roll = next_float(rng);
+    uint lane = roll <= 0.1f ? 16u : (roll <= 0.35f ? 14u : 12u);
+    return observed_unique_rank(lane, first, uvec3(0xffffffffu), rng);
+}
+#endif
 
 #if N_DIRECT_NESTED == 12
 bool execute_lost_coffer_body(
@@ -787,7 +957,29 @@ bool execute_lost_coffer_route(
         return roll_potion_from_meta(0xffffffffu,0u,state.rewards)==potion_target;
     }
 #endif
-#if N_DIRECT_NESTED == 12
+#if N_LOCAL_OBSERVATIONS & 32
+    if (!predicate_enabled || (predicate_mask & 1u) == 0u) {
+        for (uint i = 0u; i < 9u; ++i) next_u64(state.rewards);
+        if (predicate_enabled) return roll_potion_from_meta(0xffffffffu, 0u, state.rewards) == potion_target;
+#if N_LOCAL_OBSERVATIONS & 512
+        next_u64(state.rewards);
+        next_u64(state.rewards);
+        return true;
+#else
+        return roll_potion_from_meta(0xffffffffu, 0u, state.rewards) != 0xffffffffu;
+#endif
+    }
+#endif
+#if (N_LOCAL_OBSERVATIONS & 1) && N_DIRECT_NESTED != 12
+    uvec3 none = uvec3(0xffffffffu);
+    uvec3 first_rank = observed_unique_card(0u, ascension, none, none, state.rewards);
+    if (first_rank.z == 0xffffffffu) return false;
+    uvec3 second_rank = observed_unique_card(0u, ascension, first_rank, none, state.rewards);
+    if (second_rank.z == 0xffffffffu) return false;
+    uvec3 third_rank = observed_unique_card(0u, ascension, first_rank, second_rank, state.rewards);
+    if (third_rank.z == 0xffffffffu) return false;
+    uint first = first_rank.z, second = second_rank.z, third = third_rank.z;
+#elif N_DIRECT_NESTED == 12
     // Skipped cards are non-Rare; their identities cannot exclude a later Rare.
     // Their omitted selections still had their RNG calls consumed by the prefix.
     uint first=0xffffffffu, second=0xffffffffu, third=0xffffffffu;
@@ -813,11 +1005,19 @@ bool execute_lost_coffer_route(
     if(first!=card_target && second!=card_target && third!=card_target) return false;
     if(predicate_mask==1u) return true;
 #endif
+    bool card_pass = (predicate_mask & 1u) == 0u ||
+                     first == card_target || second == card_target || third == card_target;
+#if N_LOCAL_OBSERVATIONS & 512
+    if (predicate_enabled && !card_pass) return false;
+    if ((predicate_mask & 2u) == 0u) {
+        next_u64(state.rewards);
+        next_u64(state.rewards);
+        return true;
+    }
+#endif
     uint potion = roll_potion_from_meta(0xffffffffu, 0u, state.rewards);
     if (potion == 0xffffffffu) return false;
     if (!predicate_enabled) return true;
-    bool card_pass = (predicate_mask & 1u) == 0u ||
-                     first == card_target || second == card_target || third == card_target;
     bool potion_pass = (predicate_mask & 2u) == 0u || potion == potion_target;
     return card_pass && potion_pass;
 }
@@ -835,6 +1035,27 @@ bool execute_phial_holster_route(
     bool predicate_enabled,
     inout RouteRngState state)
 {
+#if N_LOCAL_OBSERVATIONS & 128
+    if (!predicate_enabled) {
+        for (uint i = 0u; i < 4u; ++i) next_u64(state.non_combat);
+        return true;
+    }
+#endif
+#if N_LOCAL_OBSERVATIONS & 4
+    uvec3 first_rank = observed_unique_potion(uvec3(0xffffffffu), state.non_combat);
+    if (first_rank.z == 0xffffffffu) return false;
+#if N_LOCAL_OBSERVATIONS & 128
+    if (target_count == 1u && first_rank.z == target0) {
+        next_u64(state.non_combat);
+        next_u64(state.non_combat);
+        return true;
+    }
+    if (target_count == 2u && first_rank.z != target0 && first_rank.z != target1) return false;
+#endif
+    uvec3 second_rank = observed_unique_potion(first_rank, state.non_combat);
+    if (second_rank.z == 0xffffffffu) return false;
+    uint first = first_rank.z, second = second_rank.z;
+#else
     uint first = uses_child_shuffle()
         ? roll_potion_from_meta(0xffffffffu, 0u, state.non_combat)
         : roll_potion_from_meta(0xffffffffu, 0u, state.combat_potions);
@@ -843,6 +1064,7 @@ bool execute_phial_holster_route(
         ? roll_potion_from_meta(first, 1u, state.non_combat)
         : roll_potion_from_meta(first, 1u, state.combat_potions);
     if (second == 0xffffffffu) return false;
+#endif
     if (!predicate_enabled) return true;
     if (target_count == 1u) return first == target0 || second == target0;
     return (first == target0 && second == target1) ||
@@ -853,6 +1075,12 @@ bool execute_new_leaf_route(uint target, bool predicate_enabled, inout RouteRngS
     uint offset = plan_value(60u);
     uint length = plan_value(61u);
     if (length == 0u) return false;
+#if N_LOCAL_OBSERVATIONS & 8
+    if (!predicate_enabled) {
+        next_u64(state.transformations);
+        return true;
+    }
+#endif
     uint selected = leafy_defend.ids[offset + (uses_child_shuffle()
         ? next_int(state.transformations, length) : next_int(state.niche, length))];
     return !predicate_enabled || selected == target;
@@ -942,6 +1170,43 @@ bool execute_scroll_boxes_route(
     bool card_pass = (predicate_flags & 1u) == 0u;
     bool claw_pass = (predicate_flags & 2u) == 0u;
     bool uses_defect_rule = (plan_value(56u) & 32u) != 0u;
+#if N_LOCAL_OBSERVATIONS & 256
+    uvec3 first_common = uvec3(0xffffffffu), second_common = uvec3(0xffffffffu), first_uncommon = uvec3(0xffffffffu);
+    for (uint bundle = 0u; bundle < 2u; ++bundle) {
+        if (uses_defect_rule && next_int(state.rewards, 100u) < 1u) {
+            claw_pass = true;
+            continue;
+        }
+        if (!predicate_enabled || card_pass) {
+            next_u64(state.rewards);
+            next_u64(state.rewards);
+            next_u64(state.rewards);
+            continue;
+        }
+        uvec3 first = observed_unique_rank(0u, first_common, second_common, state.rewards);
+        uint length = other_pool_meta.values[1u];
+        // A fourth Common excludes the first bundle's two and this bundle's
+        // first draw. Restore its original rank against all three exclusions.
+        uint excluded = bundle == 0u || first_common.y == 0xffffffffu ? 1u : 3u;
+        uint rank = next_int(state.rewards, length - excluded);
+        if (excluded == 1u) rank += uint(rank >= first.y);
+        else {
+            uint a = min(first_common.y, second_common.y);
+            uint b = max(first_common.y, second_common.y);
+            uint low = min(a, first.y), high = max(b, first.y);
+            uint middle = a + b + first.y - low - high;
+            rank += uint(rank >= low);
+            rank += uint(rank >= middle);
+            rank += uint(rank >= high);
+        }
+        uint second = other_card_ids.ids[other_pool_meta.values[0u] + rank];
+        uvec3 uncommon = observed_unique_rank(2u, first_uncommon, uvec3(0xffffffffu), state.rewards);
+        card_pass = scroll_bundle_matches(first.z, second, uncommon.z, target_count, target0, target1, target2);
+        first_common = first;
+        second_common = uvec3(0u, rank, second);
+        first_uncommon = uncommon;
+    }
+#else
     for (uint bundle = 0u; bundle < 2u; ++bundle) {
         bool claw = uses_defect_rule && next_int(state.rewards, 100u) < 1u;
         if (claw) {
@@ -974,5 +1239,6 @@ bool execute_scroll_boxes_route(
             card_pass = true;
         }
     }
+#endif
     return !predicate_enabled || (card_pass && claw_pass);
 }

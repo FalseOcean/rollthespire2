@@ -72,6 +72,63 @@ uint next_int(uint bound) {
 
 /*__RT2_VISIBLE_SEED_ROOT_HASH__*/
 
+#ifdef RT2_S_ABSOLUTE_OBSERVATIONS
+// Header: observation count, player slot and Shops hash. Each observation
+// supplies its gap from the previous observed draw and the bound of this draw.
+// Its predicate uses the first raw index for each identity in the original pool.
+bool evaluate_merchant_colorless(uint64_t root) {
+    uint observation_count = merchant_plan_buffer.values[0u];
+    if (observation_count == 0u) return true;
+    uint player_slot = merchant_plan_buffer.values[1u];
+    uint64_t shops_hash = make_u64(merchant_plan_buffer.values[2u], merchant_plan_buffer.values[3u]);
+    rng_initialize(root + uint64_t(player_slot) + shops_hash);
+#ifdef RT2_S_OBSERVATION_SEQUENCES
+    uint history[10];
+#endif
+#ifdef RT2_S_SINGLE_OBSERVATION_GAP
+    const uint observation = 4u;
+    for (uint burn = 0u; burn < RT2_S_SINGLE_OBSERVATION_GAP; ++burn) consume_rng();
+#else
+    for (uint index = 0u; index < observation_count; ++index) {
+        uint observation = 4u + index * 8u;
+        uint gap = merchant_plan_buffer.values[observation];
+        for (uint burn = 0u; burn < gap; ++burn) consume_rng();
+#endif
+        uint actual = next_int(merchant_plan_buffer.values[observation + 1u]);
+#ifdef RT2_S_OBSERVATION_CANONICAL
+        uint canonical = merchant_plan_buffer.values[observation + 3u];
+        if (canonical != INVALID_ID) actual = merchant_target_buffer.ids[canonical + actual];
+#endif
+        uint fixed_target = merchant_target_buffer.ids[merchant_plan_buffer.values[observation + 2u]];
+        if (fixed_target != INVALID_ID && actual != fixed_target) return false;
+#ifdef RT2_S_OBSERVATION_SEQUENCES
+        uint history_index = merchant_plan_buffer.values[observation + 4u];
+        uint merchant = merchant_plan_buffer.values[observation + 5u];
+        uint first = history_index + 1u - merchant;
+        history[history_index] = actual;
+        uint check_offset = merchant_plan_buffer.values[observation + 6u];
+        uint check_count = merchant_plan_buffer.values[observation + 7u];
+        for (uint check = 0u; check < check_count; ++check) {
+            uint remaining = merchant_target_buffer.ids[check_offset++];
+            uint requirement_count = merchant_target_buffer.ids[check_offset++];
+            uint missing = 0u;
+            for (uint requirement = 0u; requirement < requirement_count; ++requirement) {
+                uint target = merchant_target_buffer.ids[check_offset++];
+                uint required = merchant_target_buffer.ids[check_offset++];
+                uint available = 0u;
+                for (uint probe = first; probe <= history_index; ++probe)
+                    if (history[probe] == target) available++;
+                if (required > available) missing += required - available;
+                if (missing > remaining) return false;
+            }
+        }
+#endif
+#ifndef RT2_S_SINGLE_OBSERVATION_GAP
+    }
+#endif
+    return true;
+}
+#else
 #if RT2_S_EARLY_REJECTION
 // Called only after this lane's current observation is complete. Surviving
 // roots still execute the original merchant cadence below, including the tail.
@@ -201,6 +258,7 @@ bool evaluate_merchant_colorless(uint64_t root) {
     }
     return true;
 }
+#endif
 
 void append_output(uint64_t logical_ordinal) {
     uint slot = atomicAdd(output_header.values[2u], 1u);

@@ -68,7 +68,10 @@ internal static class TransformationAggregateValidator
         if (!c.IsBones)
         {
             var outputs = NeowOutputs(n.EffectGroups, c.Opening == TransformationOpening.LeafyPoultice ? 2 : 1, authority).Concat(events).ToArray();
-            return Result(EvaluateOutputs(c, outputs), outputs, selected.Serialized);
+            bool boundContinuation = request.Evaluation.NeowRoute?.RouteRelicKey == selected &&
+                (request.Evaluation.RequiresNormalCombatRewardDomain ||
+                 TransformationAggregateCondition.HasBoundDirectRelicContinuation(request.CompiledSearch.NormalizedQuery));
+            return Result(EvaluateOutputs(c, outputs), outputs, selected.Serialized, boundContinuation ? [selected] : null);
         }
         if (n.BonesOutcome is not { } bones) return SearchQueryEvaluation.Unknown("TransformationAggregate.BonesOutcomeUnknown");
         if (!bones.OfferedRelics.Contains(BaseGameModelKeys.Relics.LeafyPoultice) || !bones.OfferedRelics.Contains(c.BonesCompanion))

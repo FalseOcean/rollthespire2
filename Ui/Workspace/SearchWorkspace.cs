@@ -115,7 +115,7 @@ internal sealed partial class SearchWorkspace
             string key = QueryHistoryIdentity.Key(savedDraft);
             bool known = SearchEnvironmentIdentity.IsComparable(_environment);
             string environment = known
-                ? QueryHistoryIdentity.EnvironmentKey(savedDraft, _environment.Fingerprint) : "unknown:" + batchId;
+                ? QueryHistoryIdentity.EnvironmentKey(savedDraft, _environment) : "unknown:" + batchId;
             history = SearchQueryProjection.Find(histories, key, environment, _environment, known);
             if (history is null)
             {
@@ -152,14 +152,16 @@ internal sealed partial class SearchWorkspace
             _cursor.NextCursor = entrance;
             MarkCursorDirty();
         }
-        if (start is { InitialContinuation: { } initial, ExplicitOriginChangeId.Length: > 0 } &&
-            _cursor.PendingOriginChangeId == start.ExplicitOriginChangeId)
+        if (start is { InitialContinuation: { } initial } &&
+            (start.ExplicitOriginChangeId.Length == 0 || _cursor.PendingOriginChangeId == start.ExplicitOriginChangeId))
         {
-            // Consume only the intent frozen by this successfully started run.
-            // The cursor copy and receiving workspace are persisted together.
             SetResultContinuation(initial);
-            _cursor.PendingOriginChangeId = "";
-            MarkCursorDirty();
+            if (start.ExplicitOriginChangeId.Length > 0)
+            {
+                // Consume only the origin change frozen by this successfully started run.
+                _cursor.PendingOriginChangeId = "";
+                MarkCursorDirty();
+            }
         }
         _historyRunElapsed = 0;
         if (prepared.History is { } history)

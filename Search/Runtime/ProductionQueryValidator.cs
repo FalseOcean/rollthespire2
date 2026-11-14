@@ -439,7 +439,9 @@ public static partial class ProductionQueryValidator
                 ConditionId: "neow-unconstrained"));
         }
 
-        bool routeScopeRequiredBeforeRewards = HasRouteScopedNeowConstraints(plan.Evaluation) || HasOpeningInitialRoomConditions(plan.Evaluation);
+        bool routeScopeRequiredBeforeRewards = HasRouteScopedNeowConstraints(plan.Evaluation) ||
+            HasOpeningInitialRoomConditions(plan.Evaluation) ||
+            Semantics.TransformationAggregateCondition.HasBoundDirectRelicContinuation(plan.CompiledSearch.NormalizedQuery);
         if (!routeScopeRequiredBeforeRewards && !plan.Evaluation.RequiresNormalCombatRewardDomain)
         {
             return SearchQueryEvaluation.Match(globalEvidence);

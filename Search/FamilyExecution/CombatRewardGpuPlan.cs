@@ -32,11 +32,13 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
     internal bool UsesChildShuffle { get; init; }
     internal string TerminalCardGateSource { get; init; } = "";
     internal bool UsesTerminalCardGate => TerminalCardGateSource.Length != 0;
+    internal bool UsesCardFreeTerminal { get; init; }
     internal string Revision(bool compact) => "C.CombatReward.Gpu." + (UsesHotLoop ? "NeutralHotLoop" : "GenericStreaming.EmptyExclusionDirect.20261013.v1") +
         (UsesNeutralWitness ? CombatRewardNeutralWitness.Revision : "") +
         (UsesObservedOpening ? CombatRewardObservedOpening.Revision + ".BucketCapacity" + ObservedOpeningData[8] : "") +
         (UsesObservedOpeningHotLoop ? ".ActualHotOrExact.20261102.v1" : "") +
         (UsesTerminalCardGate ? ".TerminalCardCapacity.20261015.v1" : "") +
+        (UsesCardFreeTerminal ? ".CardFreeTerminal.20261114.v1" : "") +
         (NeedsCompleteMatchingReference ? ".CompletePositiveMatching.20261026.v1" : "") +
         (ChecksCardCollection ? ".CardCollection.20261105.v1" : "") +
         (UsesQueryLiteralPartyOpening ? ".PartyQueryLiteralOpening.20261027.v1" : "") +
@@ -113,6 +115,8 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
             UsesOpeningPrefixHotLoop = hot.Enabled && !replay.UsesObservedOpening && reward.OpeningConsumption.HasReplay && prefixTrial,
             UsesDenseCarry8 = denseCarry8,
             ExactBagCapacity = FactoryExactBagCapacity,
+            UsesCardFreeTerminal = replay.CanUsePotionPrefix && !replay.ConservativelyKeeps &&
+                reward.CardAssignmentTargets.Length == 0 && HasFaultFreeOrdinaryCardGroup(catalog),
             TerminalCardGateSource = CompileTerminalCardGate(request, replay, hot.Enabled)
         };
     }
@@ -151,12 +155,7 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
         var plan = replay.Plan;
         if (hot || request.Authority.PlayersCount != 1 || replay.ConservativelyKeeps ||
             !plan.CardPoolAuthorityExact) return "";
-        // The gate skips only the terminal battle's remaining ordinary cards.
-        // Three distinct identities across the fallback pools prove those draws
-        // cannot fault, even when a rarity pool is empty or contains duplicates.
-        var pool = replay.Catalog.CombatRewardCardPool;
-        if (pool.Common.Concat(pool.Uncommon).Concat(pool.Rare)
-            .Where(id => id != Beta110FastDenseId.Invalid).Distinct().Take(3).Count() < 3) return "";
+        if (!HasFaultFreeOrdinaryCardGroup(replay.Catalog)) return "";
         var targets = new Dictionary<ushort, ulong>();
         for (int i = 0; i < plan.Predicates.Length; i++)
         {
@@ -181,6 +180,15 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
         return source.Append("return missing;}\n#endif\n").ToString();
     }
 
+    // Three distinct valid identities across the fallback pools guarantee
+    // the ordinary three-card group without constraining the rarity rolls.
+    private static bool HasFaultFreeOrdinaryCardGroup(Beta110FastEffectCatalog catalog)
+    {
+        var pool = catalog.CombatRewardCardPool;
+        ushort[] ids = pool.Common.Concat(pool.Uncommon).Concat(pool.Rare).Distinct().ToArray();
+        return ids.Length >= 3 && !ids.Contains(Beta110FastDenseId.Invalid);
+    }
+
     internal string ShaderSource(bool forceGeneric = false)
     {
         string source = FamilyGpuComputeUtility.LoadEmbeddedShader("CombatRewardFamily.comp.glsl")
@@ -196,6 +204,7 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
         .Replace("/*__C_TERMINAL_CARD_GATE__*/", TerminalCardGateSource, StringComparison.Ordinal)
         .Replace("/*__C_CAPSULE_DEFINES__*/", "#define RT2_C_ASSIGNMENT " + (Meta[56] + Meta[59] > 0 ? "1\n" : "0\n") +
             "#define RT2_C_MULTIPLAYER " + (Meta[3] > 1 ? "1\n" : "0\n") +
+            "#define RT2_C_CARD_FREE_TERMINAL " + (UsesCardFreeTerminal ? "1\n" : "0\n") +
             "#define RT2_C_MODERN113 " + (UsesChildShuffle ? "1" : "0"), StringComparison.Ordinal)
         .Replace("/*__C_HOT_DEFINES__*/", "#define RT2_C_DENSE_CARRY8 " + (UsesDenseCarry8 ? "1\n" : "0\n") +
             "#define RT2_C_HOT_OPENING_PREFIX " + (UsesOpeningPrefixHotLoop ? "1\n" : "0\n") +

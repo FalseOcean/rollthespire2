@@ -18,6 +18,7 @@ internal sealed partial class AnalysisPageController
     {
         if (_capturedRunInformation is not null) return;
         if (multiplayer == (_partyDraft is not null)) return;
+        if (HasLiveRunPredictionBinding) ClearSeedLibraryOverrides();
         if (!multiplayer)
         {
             _lastPartyDraft = _partyDraft;
@@ -60,9 +61,7 @@ internal sealed partial class AnalysisPageController
 
     internal void SetPartyDraft(WorkbenchSearchDraft? draft, string? seed = null, PartySeedInformation? witness = null)
     {
-        _capturedRunInformation = null;
-        _capturedRunInformationSeed = "";
-        _page.SetCapturedRunParty(0);
+        if (HasLiveRunPredictionBinding) ClearSeedLibraryOverrides();
         string sourceKey = System.Text.Json.JsonSerializer.Serialize(draft);
         bool changed = _sourcePartyDraftKey != sourceKey || witness is not null || (draft is null) != (_partyDraft is null);
         _sourcePartyDraftKey = sourceKey;

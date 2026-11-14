@@ -57,9 +57,10 @@ public static partial class FamilyExecutionCoordinator
         bool CreateShop(SearchModel child, out FilterBodyDescription? body) =>
             MerchantShopColorlessFamily.TryCreate(child, preferences, out body, gpu);
         bool CreateRelic(SearchModel child, out FilterBodyDescription? body) =>
-            NeowReplayPlan.HasCapsule(child) && child.Authority.VersionResolution.SemanticProfileId != RngSemanticProfileId.Modern113
+            ModernCapsuleRelicFamily.TryCreate(child, preferences, out body, gpu, numerical) ||
+            (NeowReplayPlan.HasCapsule(child) && child.Authority.VersionResolution.SemanticProfileId != RngSemanticProfileId.Modern113
                 ? CapsuleRelicFamily.TryCreate(child, preferences, out body, gpu, numerical)
-                : RelicFamily.TryCreate(child, preferences, out body, gpu, numerical);
+                : RelicFamily.TryCreate(child, preferences, out body, gpu, numerical));
         bool CreateAncient(SearchModel child, out FilterBodyDescription? body) =>
             AncientOptionFamily.TryCreate(child, preferences, out body, gpu, numerical);
         bool CreateWorld(SearchModel child, out FilterBodyDescription? body) =>

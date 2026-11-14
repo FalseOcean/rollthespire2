@@ -172,7 +172,7 @@ internal static class NeowLocalOperators
         ref Beta110FastRng rewards) =>
         RollCard(pool, ascension, ReadOnlySpan<ushort>.Empty, ref rewards);
 
-    private static ushort RollCard(
+    internal static ushort RollCard(
         Beta110FastCardPool pool,
         int ascension,
         ReadOnlySpan<ushort> used,
@@ -217,27 +217,30 @@ internal static class NeowLocalOperators
         int usedCount = 0;
         for (int bundle = 0; bundle < 2; bundle++)
         {
-            bool claw = usesDefectRule && rewards.NextInt(100) < 1;
-            if (claw)
-            {
-                cards[bundle * 3] = catalog.ClawId;
-                bundleSizes[bundle] = 1;
-                clawBundles[bundle] = 1;
-                continue;
-            }
+            if (!GenerateScrollBoxesBundle(catalog, usesDefectRule, ref rewards,
+                    cards.Slice(bundle * 3, 3), used, ref usedCount, out bool claw)) return false;
+            bundleSizes[bundle] = claw ? (byte)1 : (byte)3;
+            if (claw) clawBundles[bundle] = 1;
+        }
+        return true;
+    }
 
-            for (int index = 0; index < 2; index++)
-            {
-                ushort selected = SelectUnused(catalog.CharacterRewardPool.Common, used[..usedCount], ref rewards);
-                if (selected == Beta110FastDenseId.Invalid) return false;
-                cards[bundle * 3 + index] = selected;
-                used[usedCount++] = selected;
-            }
-            ushort uncommon = SelectUnused(catalog.CharacterRewardPool.Uncommon, used[..usedCount], ref rewards);
-            if (uncommon == Beta110FastDenseId.Invalid) return false;
-            cards[bundle * 3 + 2] = uncommon;
-            used[usedCount++] = uncommon;
-            bundleSizes[bundle] = 3;
+    internal static bool GenerateScrollBoxesBundle(Beta110FastEffectCatalog catalog, bool usesDefectRule,
+        ref Beta110FastRng rewards, Span<ushort> cards, Span<ushort> used, ref int usedCount, out bool claw)
+    {
+        claw = usesDefectRule && rewards.NextInt(100) < 1;
+        if (claw)
+        {
+            cards[0] = catalog.ClawId;
+            return true;
+        }
+        for (int index = 0; index < 3; index++)
+        {
+            ushort[] pool = index == 2 ? catalog.CharacterRewardPool.Uncommon : catalog.CharacterRewardPool.Common;
+            ushort selected = SelectUnused(pool, used[..usedCount], ref rewards);
+            if (selected == Beta110FastDenseId.Invalid) return false;
+            cards[index] = selected;
+            used[usedCount++] = selected;
         }
         return true;
     }
@@ -315,7 +318,7 @@ internal static class NeowLocalOperators
         }
     }
 
-    private static bool ContainsTargets(
+    internal static bool ContainsTargets(
         ReadOnlySpan<ushort> actual,
         Beta110FastStructuredCondition condition)
     {

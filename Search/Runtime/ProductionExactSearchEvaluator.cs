@@ -680,13 +680,12 @@ internal static class ProductionExactSearchEvaluator
         // every matching route, then intersect with the N witness carrying R's
         // proven bag facts before C validates its copied Rewards continuation.
         // Never combine two existential routes or report discarded T alternatives.
-        var aggregateRoutes=canonicalEvaluation.Evidence.Where(e=>e.Code=="TransformationAggregateMatched" && e.AcquisitionOrder is {Count:2}).ToArray();
+        var aggregateRoutes = canonicalEvaluation.Evidence.Where(e =>
+            e.Code == "TransformationAggregateMatched" && e.AcquisitionOrder is { Count: > 0 }).ToArray();
         SearchRouteRejection[] pending = [];
-        if(bindAggregateRoute && aggregateRoutes.Length>0)
+        if (bindAggregateRoute && aggregateRoutes.Length > 0)
         {
-            var compatible=factsEvaluation.Witnesses.Where(w=>aggregateRoutes.Any(e=>
-                w.AcquisitionOrder.SequenceEqual(e.AcquisitionOrder!) &&
-                e.RouteId is { } route && w.OpeningRouteId.EndsWith("."+route["transformation-aggregate:".Length..],StringComparison.Ordinal))).ToArray();
+            var compatible = factsEvaluation.Witnesses.Where(w => aggregateRoutes.Any(e => IsSameAggregateOpeningRoute(w, e))).ToArray();
             pending = canonicalEvaluation.RouteRejections.Where(r =>
                 factsEvaluation.Witnesses.Any(w => IsSameAggregateOpeningRoute(w, r))).ToArray();
             if (compatible.Length == 0)
@@ -697,10 +696,8 @@ internal static class ProductionExactSearchEvaluator
             }
             factsEvaluation=SearchQueryEvaluation.Match(factsEvaluation.Evidence,
                 compatible.Select(w=>w.OpeningRouteId).Distinct(StringComparer.Ordinal).ToArray(),compatible);
-            canonicalEvaluation=SearchQueryEvaluation.Match(canonicalEvaluation.Evidence.Where(e=>
-                e.Code!="TransformationAggregateMatched" || compatible.Any(w=>
-                    w.AcquisitionOrder.SequenceEqual(e.AcquisitionOrder ?? Array.Empty<ModelKey>()) &&
-                    e.RouteId is { } route && w.OpeningRouteId.EndsWith("."+route["transformation-aggregate:".Length..],StringComparison.Ordinal))).ToArray());
+            canonicalEvaluation = SearchQueryEvaluation.Match(canonicalEvaluation.Evidence.Where(e =>
+                e.Code != "TransformationAggregateMatched" || compatible.Any(w => IsSameAggregateOpeningRoute(w, e))).ToArray());
         }
 
         SearchMatchEvidence[] evidence = factsEvaluation.Evidence
@@ -736,4 +733,12 @@ internal static class ProductionExactSearchEvaluator
     private static bool IsSameAggregateOpeningRoute(SearchMatchWitness witness, SearchRouteRejection rejection) =>
         witness.AcquisitionOrder.SequenceEqual(rejection.AcquisitionOrder) &&
         witness.OpeningRouteId.EndsWith("." + rejection.RouteId, StringComparison.Ordinal);
+
+    private static bool IsSameAggregateOpeningRoute(SearchMatchWitness witness, SearchMatchEvidence evidence) =>
+        evidence.AcquisitionOrder is { Count: > 0 } order &&
+        witness.OpeningRouteId.Length > 0 && witness.AcquisitionOrder.SequenceEqual(order) &&
+        // A direct pickup is uniquely identified by its one selected relic. A
+        // Bones order also identifies one original route of the actual offer.
+        (order.Count == 1 || evidence.RouteId is { } route &&
+            witness.OpeningRouteId.EndsWith("." + route["transformation-aggregate:".Length..], StringComparison.Ordinal));
 }

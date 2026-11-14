@@ -8,12 +8,12 @@ namespace RolltheSpire2.Search.FamilyExecution;
 internal readonly record struct NeowCapsuleSparseOutcome(bool Keep, string Reason, int Observations);
 internal readonly record struct NeowCapsuleSparseObservation(bool Available, uint FirstMask, uint SecondMask, string Issue);
 
-// Immutable, optional N observation. This first refinement only proves zero
-// Capsule Niche consumption. Nonzero outcomes retain the validated union; no
-// deck reconstruction, C held-fact premise, or result-confidence authority.
+// Optional N observation. Legacy proves zero Niche consumption. Modern
+// proves actual NonCombat advances without supplying a reconstructed deck.
 internal sealed class NeowCapsuleSparseRefinement
 {
     internal const string Revision = ".CapsuleSparsePublicCpu.20261101.v1";
+    internal const string ModernRevision = ".CapsuleNonCombatSparsePublicCpu.20261114.v1";
     internal const string PrivateRevision = ".SparseRefinementNotApplied.PrivateUnion.20261101.v1";
     private static readonly ulong UpFrontHash = XxHash64.Hash("up_front"u8,0);
     private static readonly ulong NicheHash = XxHash64.Hash("niche"u8,0);
@@ -21,16 +21,20 @@ internal sealed class NeowCapsuleSparseRefinement
     private readonly int[] _lengths, _lanes;
     private readonly int _wBucket, _wpBucket, _wPosition, _wpPosition;
     private readonly uint _wRarity, _wpRarity;
+    private readonly NeowModernCapsuleObservation? _modern;
+    internal string PhysicalRevision => _n.Authority.UsesChildShuffle ? ModernRevision : Revision;
     internal bool Ready { get; }
     internal string Issue { get; }
 
     private NeowCapsuleSparseRefinement(NeowReplayPlan n,string issue,int[] lengths,int[] lanes,
-        int wBucket,int wpBucket,int wPosition,int wpPosition,uint wRarity,uint wpRarity)
+        int wBucket,int wpBucket,int wPosition,int wpPosition,uint wRarity,uint wpRarity,
+        NeowModernCapsuleObservation? modern = null)
     {
         _n=n; _arrival=n with { StructuredConditions=[], EnabledDomains=Beta110FastDomain.None };
         Issue=issue; Ready=issue.Length==0; _lengths=lengths; _lanes=lanes;
         _wBucket=wBucket; _wpBucket=wpBucket; _wPosition=wPosition; _wpPosition=wpPosition;
         _wRarity=wRarity; _wpRarity=wpRarity;
+        _modern=modern;
     }
     internal static string CaptureSelection() => (Environment.GetEnvironmentVariable("RT2_CAPSULE_SPARSE_REFINE") ?? "auto") switch {
         "" or "auto" => "auto", "off" => "off", "on" => "on",
@@ -43,7 +47,10 @@ internal sealed class NeowCapsuleSparseRefinement
     };
     private static bool AutoApplies(NeowReplayPlan plan)
     {
-        if(plan.Authority.PlayersCount!=1 || !plan.Bones || plan.CapsuleNicheContinuation is null) return false;
+        if(plan.Authority.PlayersCount!=1 || !plan.Bones) return false;
+        if (plan.Authority.UsesChildShuffle)
+            return plan.HasCapsuleNonCombatAlternatives && NeowCapsuleNonCombatContinuation.NeedsRemainder(plan);
+        if(plan.CapsuleNicheContinuation is null) return false;
         ulong pair;
         if(plan.First!=255 && plan.Second!=255) {
             if(plan.First==plan.Second) return false;
@@ -60,6 +67,12 @@ internal sealed class NeowCapsuleSparseRefinement
     internal static NeowCapsuleSparseRefinement Compile(SearchModel request,NeowReplayPlan n)
     {
         NeowCapsuleSparseRefinement Unknown(string issue) => new(n,issue,[],[],0,0,0,0,0,0);
+        if (n.Authority.UsesChildShuffle)
+        {
+            if (NeowModernCapsuleObservation.Compile(request,n) is not { } modern)
+                return Unknown("CapsuleNonCombatObservationAuthorityUnavailable");
+            return new(n,"",[],[],0,0,0,0,0,0,modern);
+        }
         if(n.Authority.PlayersCount!=1 || !n.DirectNestedVanilla111 || request.Authority.NoRunModifiers!=true)
             return Unknown("CapsuleObservationModelAuthorityUnavailable");
         if(n.ExactOnly.Length!=0) return Unknown("CapsuleObservationNPrerequisitesIncomplete");
@@ -113,6 +126,7 @@ internal sealed class NeowCapsuleSparseRefinement
     {
         var observation=NeowFamilyReplay.Observe(root,_n);
         if(!observation.IdentityPass) return new(false,"Rejected",0);
+        if (_n.Authority.UsesChildShuffle) return EvaluateModern(root, observation);
         if(Primary(root,observation,out bool unknown)) return new(true,unknown ? "PrimaryUnknown" : "PrimaryPass",0);
         int checks=0;
         foreach(var route in NeowFamilyReplay.Routes(_n,observation)) {
@@ -127,6 +141,31 @@ internal sealed class NeowCapsuleSparseRefinement
                 return new(true,"ZeroPass",checks);
         }
         return new(false,"Rejected",checks);
+    }
+
+    private NeowCapsuleSparseOutcome EvaluateModern(ulong root, NeowReplayObservation observation)
+    {
+        int checks = 0;
+        foreach (var (first, second) in NeowSingleplayerReplay.Routes(_n, observation))
+        {
+            if (!NeowSingleplayerReplay.Route(root, _n, first, second, observation.RewardsAfterBones)) continue;
+            uint firstMask = NeowCapsuleNonCombatContinuation.ReadsAfterFirst(_n, second)
+                ? NeowCapsuleNonCombatContinuation.AdvanceMask(_n, first) : 1u;
+            uint secondMask = _n.HasFinalCurseFastProjection
+                ? NeowCapsuleNonCombatContinuation.AdvanceMask(_n, second) : 1u;
+            uint dual = _n.HasFinalCurseFastProjection && NeowCapsuleNonCombatContinuation.IsDual(first, second)
+                ? _n.DualCapsuleNonCombatAdvances : 0;
+            if (dual != 0 ? BitOperations.PopCount(dual) == 1 :
+                BitOperations.PopCount(firstMask) == 1 && BitOperations.PopCount(secondMask) == 1)
+                return new(true, "PrimaryPass", checks);
+
+            checks++;
+            if (_modern is null || !_modern.TryObserve(root, first, second, observation.RewardsAfterBones, out int da, out int db))
+                return new(true, "ObservationUnavailable", checks);
+            if (NeowSingleplayerReplay.RouteAtArrival(root, _n, first, second, observation.RewardsAfterBones, da, db))
+                return new(true, da + db == 0 ? "ZeroPass" : "NonzeroRetained", checks);
+        }
+        return new(false, "Rejected", checks);
     }
 
     internal NeowCapsuleSparseObservation ObserveRoute(ulong root,byte first,byte second,Beta110FastRng rewardsAfterBones)

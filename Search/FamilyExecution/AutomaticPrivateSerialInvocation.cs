@@ -7,6 +7,12 @@ namespace RolltheSpire2.Search.FamilyExecution;
 
 internal static partial class AutomaticPrivateSerialInvocation
 {
+    internal static bool CanBindWholeFamily(FilterBodyDescription body) => body.CanBindPrivateSerial &&
+        (body.Coverage.Count == 1 && body.Coverage[0] == body.FamilyId ||
+         body.FamilyId == RelicFamily.Id && body.Coverage.Count > 0 &&
+         body.Coverage.Contains(ModernCapsuleRelicFamily.Obligation) &&
+         body.Coverage.All(domain => domain is RelicFamily.Id or ModernCapsuleRelicFamily.Obligation));
+
     internal static bool TrySelectExplicit(PreparedSearch request,
         IReadOnlyList<FilterBodyDescription> registered, out FamilyExecutionPlan? selected)
     {
@@ -37,15 +43,17 @@ internal static partial class AutomaticPrivateSerialInvocation
     {
         var families = orderedFamilies.ToArray();
         if (families.Length is < 2 or > 8 || families.Select(f => f.FamilyId).Distinct().Count() != families.Length ||
-            families.Any(f => !f.CanBindPrivateSerial || f.Coverage.Count != 1 || f.Coverage[0] != f.FamilyId))
+            families.Any(f => !CanBindWholeFamily(f)) ||
+            families.SelectMany(f => f.Coverage).Distinct(StringComparer.Ordinal).Count() != families.Sum(f => f.Coverage.Count))
             throw new ArgumentException("AutomaticPrivateSerial.WholeFamilyApplicability");
         string id = families[0].FamilyId, order = string.Concat(families.Select(f => f.FamilyId[0]));
         bool smallExact = enableSmallCandidateExact && !verify && !preferences.SkipExactValidation;
         var following = followingCoverage?.ToArray() ?? [];
         string revision = "AutomaticPrivateSerial." + order + ".CanonicalAbi1Ready.20260910.v1" + GpuRngRotation.Revision;
         var preparation = new PreparedFilter(id) {
-            Coverage = families.Select(f => f.FamilyId).ToArray(),
+            Coverage = families.SelectMany(f => f.Coverage).ToArray(),
             Obligations = families.SelectMany(f => f.Preparation.EffectiveObligations).ToArray(),
+            Remainders = families.SelectMany(f => f.Preparation.Remainders).Distinct(StringComparer.Ordinal).ToArray(),
             AnalyticalCost = new(id, PrivateOrdinalBuffer.Capacity, [], "AutomaticPrivateSerial.WholeFamilySegment"),
             Survival = FamilySurvivalProjection.Unresolved(id, "CompletePlanOwnsStagePopulationProjection")
         };

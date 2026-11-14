@@ -33,7 +33,7 @@ internal static class SearchQueryProjection
     {
         string key = QueryHistoryIdentity.Key(draft);
         bool known = SearchEnvironmentIdentity.IsComparable(signature);
-        string environment = known ? QueryHistoryIdentity.EnvironmentKey(draft, signature.Fingerprint) : "unknown:" + batchId;
+        string environment = known ? QueryHistoryIdentity.EnvironmentKey(draft, signature) : "unknown:" + batchId;
         return new QueryHistoryEntry
         {
             Id = QueryHistoryIdentity.AvailableRecordId(key, environment, records), QueryKey = key, IdentityVersion = 2,

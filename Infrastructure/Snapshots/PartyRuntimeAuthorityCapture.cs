@@ -92,6 +92,7 @@ public static class PartyRuntimeAuthorityCapture
                 ActGroups = world.ActGroups,
                 SharedEvents = world.SharedEvents,
                 SharedAncients = world.SharedAncients,
+                EncounterNumberOfRuns = world.EncounterNumberOfRuns,
                 CatalogOrderExact = world.CatalogOrderExact,
                 SourceAuthority = world.SourceAuthority,
                 Completeness = world.Completeness,

@@ -117,6 +117,7 @@ internal sealed partial class AnalysisPageController
     private void Analyze(AnalysisRequestDraft draft)
     {
         _libraryPredictionIssue = "";
+        DetachLiveRunPredictionWhenInputsChange(draft);
         PreparePartySelection(draft);
         PersistPredictorContext(
             draft,

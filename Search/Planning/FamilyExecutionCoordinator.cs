@@ -432,14 +432,15 @@ public static partial class FamilyExecutionCoordinator
         bool unresolvedRelic = Semantics.TransformationAggregateCondition.HasUnresolvedRelicContinuation(model.CompiledSearch.NormalizedQuery);
         bool unresolvedReward = Semantics.TransformationAggregateCondition.HasUnresolvedRewardContinuation(model.CompiledSearch.NormalizedQuery);
         FilterBodyDescription? relic = null;
-        if (!unresolvedRelic)
+        if (!ModernCapsuleRelicFamily.TryCreate(model, preferences, out relic, preferGpu, numerical,
+                includeOrdinary: !unresolvedRelic) && !unresolvedRelic)
         {
             if (NeowReplayPlan.HasCapsule(model) &&
                 model.Authority.VersionResolution.SemanticProfileId != RngSemanticProfileId.Modern113)
                 CapsuleRelicFamily.TryCreate(model, preferences, out relic, preferGpu, numerical);
             else RelicFamily.TryCreate(model, preferences, out relic, preferGpu, numerical);
         }
-        else RuntimeLog.TryBackgroundInfo("relicFilterUnavailable=true;cause=TransformationContinuationUnresolved;remainingQueryOwner=ProductionExact;matchClaimed=false");
+        if (unresolvedRelic) RuntimeLog.TryBackgroundInfo("relicFilterUnavailable=true;scope=OrdinaryRelics;cause=TransformationContinuationUnresolved;remainingQueryOwner=ProductionExact;matchClaimed=false");
         // Treasure is an independent bounded predicate. Ordinary-R failure must
         // not discard it or substitute an unrelated continuation.
         if (InitialRoomsPlan.TryCompileTreasure(model, numerical) is { } treasure)

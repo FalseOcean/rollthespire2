@@ -362,6 +362,7 @@ internal sealed partial class WorkspaceShell : Control
             // Reuse the controls and result only after a fresh native content
             // observation and the current seed/roster/unlock input comparison.
             RuntimeAuthorityEnvironment.CaptureOnMainThread(_runtime);
+            var premises = LiveRunPredictionPremises.Capture(_liveRun!);
             var context = CaptureRunPredictionContext(_liveRun!, _runtime.Detection.NormalizedVersion,
                 _runtime.Profile.ProfileId, MegaCrit.Sts2.Core.Context.LocalContext.NetId, _persistence!.PredictorContext,
                 _predictorController?.CurrentRunPredictionContext);
@@ -370,17 +371,16 @@ internal sealed partial class WorkspaceShell : Control
             var observed = context.Players.Count > Core.Prediction.SeedPredictionInputLimits.MaximumPlayers
                 ? context with { SelectedSlot = 0, Players = context.Players.Select(p => p with { Selection = null }).ToArray() }
                 : context;
-            string key = System.Text.Json.JsonSerializer.Serialize(new { Seed = _liveRun!.Rng.StringSeed, Context = observed,
+            string key = System.Text.Json.JsonSerializer.Serialize(new { Seed = _liveRun!.Rng.StringSeed, Context = observed, Premises = premises,
                 RuntimeAuthorityEnvironment.Current.Authority.Fingerprint,
                 RuntimeAuthorityEnvironment.Current.Authority.CaptureIssues });
             if (!_runPredictionLoaded || key != _livePredictionBinding || _predictor?.LastFacts is null ||
-                (context.Players.Count > Core.Prediction.SeedPredictionInputLimits.MaximumPlayers &&
-                    _predictorController?.CurrentRunPredictionContext is null) ||
+                _predictorController?.HasLiveRunPredictionBinding != true ||
                 _predictor.LastRequest?.OriginalSeed != _liveRun.Rng.StringSeed ||
                 !RuntimeAuthorityEnvironment.Current.Authority.Fingerprint.Complete)
             {
                 var priorPage = _workspace;
-                OpenRunPrediction(_liveRun!, context);
+                OpenRunPrediction(_liveRun!, context, premises);
                 _livePredictionBinding = key; _runPredictionLoaded = true;
                 if (!activate) SelectTask(priorPage);
             }
@@ -389,6 +389,7 @@ internal sealed partial class WorkspaceShell : Control
         catch (Exception ex)
         {
             _runPredictionLoaded = false; _livePredictionBinding = null;
+            _predictorController?.ClearSeedLibraryOverrides();
             RolltheSpire2.Infrastructure.Diagnostics.RuntimeIssueLedger.Current.Record(ex,
                 "LivePredictionCaptureFailed", nameof(WorkspaceShell), "CaptureLiveRun", "issues.prediction_failed");
             SelectTask(Workspace.Analysis);

@@ -86,6 +86,10 @@ internal sealed partial class AnalysisPage
         _workbenchRoot.AddChild(_wbMainInset);
         var workspace = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         workspace.AddThemeConstantOverride("separation", 0); _wbMainInset.AddChild(workspace);
+        _liveRunNotice = WNote("");
+        _liveRunNotice.Name = "LiveRunPredictionScope";
+        _liveRunNotice.Visible = false;
+        workspace.AddChild(_liveRunNotice);
         _searchOriginNotice = WLabel("");
         _searchOriginNotice.Name = "UnverifiedSearchOrigin";
         _searchOriginNotice.Visible = false;
@@ -184,6 +188,7 @@ internal sealed partial class AnalysisPage
         RefreshWorkbenchColumns();
         RefreshSearchOrigin();
         RefreshFavoriteSeed();
+        RefreshLiveRunNotice();
         for (int i = 0; i < _wbTabs.Count; i++)
         { RenderActTab(i); _palette.SetActive(_wbTabs[i], _wbPage == i); }
     }
@@ -602,10 +607,12 @@ internal sealed partial class AnalysisPage
         var mapHeader = new HBoxContainer { Name = "PredictorMapHeader", CustomMinimumSize = new Vector2(0, WorkspaceLayout.HeaderHeight) };
         _wbRight.AddChild(mapHeader);
         AddMapWitnessEntry(_wbRight, act);
-        mapHeader.AddChild(WLabel(_uiText!.Format("predictor.map", act), true));
+        mapHeader.AddChild(WLabel(_uiText!.Format(_liveRunPremises?.IsStandardReference == true
+            ? "predictor.live.map_reference" : "predictor.map", act), true));
         var clearRoute = WAction("ui1.map.route.clear"); clearRoute.Name = "ClearMapRoute"; clearRoute.Disabled = true;
         mapHeader.AddChild(clearRoute);
-        if (actInfo is null || LastRequest is null || LastRequest.Authority.ProfileId != RolltheSpire2.Compatibility.RuntimeProfileId.Beta111)
+        var actKey = OverviewActKey(act);
+        if (!actKey.IsValid || LastRequest is null || LastRequest.Authority.ProfileId != RolltheSpire2.Compatibility.RuntimeProfileId.Beta111)
         { WEmpty(_wbRight); return; }
         var routeStatus = WNote(Text("predictor.design.map_draw")); routeStatus.Name = "MapRouteStatus";
         routeStatus.TooltipText = Text("predictor.design.map_ordinary"); _wbRight.AddChild(routeStatus);
@@ -615,14 +622,14 @@ internal sealed partial class AnalysisPage
         _wbRight.AddChild(mapStats);
         var routeBrowser = new HBoxContainer { Name = "MapRouteBrowser", Visible = false };
         _wbRight.AddChild(routeBrowser);
-        var actModel = ModelDb.GetById<ActModel>(new ModelId(actInfo.ActKey.Category, actInfo.ActKey.Entry));
+        var actModel = ModelDb.GetById<ActModel>(new ModelId(actKey.Category, actKey.Entry));
         var mapPanel = new PanelContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, SizeFlagsVertical = SizeFlags.ExpandFill };
         mapPanel.AddThemeStyleboxOverride("panel", new StyleBoxFlat { BgColor = actModel.MapBgColor,
             CornerRadiusTopLeft = 6, CornerRadiusTopRight = 6, CornerRadiusBottomLeft = 6, CornerRadiusBottomRight = 6 });
         _wbRight.AddChild(mapPanel);
         var surface = new VerticalMapView { Name = $"Act{act}OverviewMap" };
         surface.SetBackgroundColor(actModel.MapBgColor);
-        mapPanel.AddChild(surface); LoadOverviewMap(act, actInfo.ActKey, surface, mapStats, clearRoute, routeStatus, routeBrowser);
+        mapPanel.AddChild(surface); LoadOverviewMap(act, actKey, surface, mapStats, clearRoute, routeStatus, routeBrowser);
     }
     private async void LoadOverviewMap(int act, ModelKey actKey, VerticalMapView surface, GridContainer mapStats, Button clearRoute, Label routeStatus, HBoxContainer routeBrowser)
     {

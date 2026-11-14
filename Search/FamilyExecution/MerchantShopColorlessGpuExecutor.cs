@@ -156,6 +156,8 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
     internal static MerchantShopColorlessGpuPreparation PrepareInputs(ExactSearchEvaluationProjection evaluation,
         Beta111MerchantColorlessAuthority authority, string identity)
     {
+        if (authority.UsesModern113 && authority.HasExactV1Inputs)
+            return PrepareObservationInputs(evaluation, authority, identity);
         uint[] plan = PackPlan(evaluation, authority, out var targets, out var defines);
         if (authority.UsesModern113)
         {
@@ -163,6 +165,93 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
             defines += FormattableString.Invariant($"\n#define RT2_S_BEFORE_U {calls.Uncommon - 1}u\n#define RT2_S_BETWEEN {calls.Rare - calls.Uncommon - 1}u\n#define RT2_S_AFTER_R {calls.Total - calls.Rare}u\n");
         }
         return new(plan, targets, defines, PartyEarlyRejectionRevision(evaluation, authority.PlayersCount) + authority.RuleRevision,
+            identity, HasEarlyRejectionOpportunity(evaluation, authority.PlayersCount));
+    }
+
+    private static MerchantShopColorlessGpuPreparation PrepareObservationInputs(ExactSearchEvaluationProjection evaluation,
+        Beta111MerchantColorlessAuthority authority, string identity)
+    {
+        const uint wildcard = uint.MaxValue;
+        const uint absent = uint.MaxValue - 1;
+        // The canonical fixed-slot evaluator treats any non-Uncommon value as Rare.
+        var fixedSlots = evaluation.MerchantColorlessConditions.Select(condition => condition.Slot is MerchantColorlessSlot.Uncommon or MerchantColorlessSlot.Rare
+            ? condition : condition with { Slot = MerchantColorlessSlot.Rare }).ToList();
+        var unordered = new List<MerchantColorlessSequenceSearchCondition>();
+        foreach (var sequence in evaluation.MerchantColorlessSequenceConditions)
+        {
+            if (sequence.IsEmpty) continue;
+            if (sequence.OrderMode == CombatRewardSequenceOrderMode.Unordered && sequence.Count > 1)
+            {
+                unordered.Add(sequence);
+                continue;
+            }
+            // A one-shop unordered sequence has the same single fixed slot.
+            for (int slot = 0; slot < sequence.Count; slot++)
+                if (sequence.Slots[slot] is { } target) fixedSlots.Add(new(slot + 1, sequence.Slot, target));
+        }
+
+        // Keep binding 3 for both shader families, including fixed-only
+        // observations. The plan holds offsets into the target buffer.
+        ulong shopsHash = XxHash64.Hash("shops"u8, 0UL);
+        var plan = new List<uint> { 0u, (uint)authority.PlayerSlotIndex, (uint)shopsHash, (uint)(shopsHash >> 32) };
+        var targets = new List<uint>();
+
+        uint uncommonCanonical = PackCanonicalIndexes(authority.UncommonPool, targets);
+        uint rareCanonical = PackCanonicalIndexes(authority.RarePool, targets);
+        uint TargetIndex(IReadOnlyList<ModelKey> pool, ModelKey key)
+        {
+            int index = IndexOf(pool, key);
+            return index < 0 ? absent : (uint)index;
+        }
+        var packedSequences = unordered.Select(sequence => {
+            var pool = sequence.Slot == MerchantColorlessSlot.Uncommon ? authority.UncommonPool : authority.RarePool;
+            var required = sequence.Slots.Take(sequence.Count).Where(key => key.HasValue)
+                .Select(key => TargetIndex(pool, key.GetValueOrDefault())).ToArray();
+            return (sequence.Slot, sequence.Count, RequiredCount: required.Length,
+                Requirements: required.GroupBy(index => index).Select(group => (Index: group.Key, Count: group.Count())).ToArray());
+        }).ToArray();
+
+        int previousCall = 0;
+        for (int merchant = 1; merchant <= Beta111NormalMerchantColorlessSequenceProjector.MerchantCount; merchant++)
+        foreach (var slot in new[] { MerchantColorlessSlot.Uncommon, MerchantColorlessSlot.Rare })
+        {
+            var slotTargets = fixedSlots.Where(c => c.MerchantOrdinal == merchant && c.Slot == slot)
+                .Select(c => c.TargetCardKey).Distinct().ToArray();
+            var slotSequences = packedSequences.Where(sequence => sequence.Slot == slot && sequence.Count >= merchant).ToArray();
+            if (slotTargets.Length == 0 && slotSequences.Length == 0) continue;
+            bool uncommon = slot == MerchantColorlessSlot.Uncommon;
+            var pool = uncommon ? authority.UncommonPool : authority.RarePool;
+            int call = authority.Calls.At(merchant, uncommon);
+            uint fixedTarget = slotTargets.Length switch { 0 => wildcard, 1 => TargetIndex(pool, slotTargets[0]), _ => absent };
+            uint fixedTargetOffset = (uint)targets.Count;
+            targets.Add(fixedTarget);
+            uint checkStart = (uint)targets.Count;
+            uint checkCount = 0;
+            foreach (var sequence in slotSequences)
+            {
+                int remaining = sequence.Count - merchant;
+                // No observed prefix can disprove this sequence while every
+                // required identity could still fit in the remaining slots.
+                if (remaining >= sequence.RequiredCount) continue;
+                targets.AddRange([(uint)remaining, (uint)sequence.Requirements.Length]);
+                foreach (var requirement in sequence.Requirements)
+                    targets.AddRange([requirement.Index, (uint)requirement.Count]);
+                checkCount++;
+            }
+            int historyIndex = (uncommon ? 0 : Beta111NormalMerchantColorlessSequenceProjector.MerchantCount) + merchant - 1;
+            plan.AddRange([(uint)(call - previousCall - 1), (uint)pool.Count, fixedTargetOffset,
+                uncommon ? uncommonCanonical : rareCanonical, (uint)historyIndex, (uint)merchant, checkStart, checkCount]);
+            plan[0]++;
+            previousCall = call;
+        }
+
+        string defines = "\n#define RT2_S_ABSOLUTE_OBSERVATIONS 1\n";
+        if (uncommonCanonical != wildcard || rareCanonical != wildcard) defines += "#define RT2_S_OBSERVATION_CANONICAL 1\n";
+        if (packedSequences.Length != 0) defines += "#define RT2_S_OBSERVATION_SEQUENCES 1\n";
+        if (plan[0] == 1 && packedSequences.Length == 0)
+            defines += FormattableString.Invariant($"#define RT2_S_SINGLE_OBSERVATION_GAP {plan[4]}u\n");
+        return new(plan.ToArray(), targets.ToArray(), defines,
+            PartyEarlyRejectionRevision(evaluation, authority.PlayersCount) + authority.RuleRevision + ".PreparedObservations.v1",
             identity, HasEarlyRejectionOpportunity(evaluation, authority.PlayersCount));
     }
 
@@ -711,24 +800,13 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
         }
         // Draw from every original occurrence, then compare its ModelKey identity.
         // Unique pools retain the original shader body without an extra lookup.
-        string PackCanonicalIndexes(IReadOnlyList<ModelKey> pool, string macro)
+        string CanonicalDefine(IReadOnlyList<ModelKey> pool, string macro)
         {
-            var first = new Dictionary<ModelKey, uint>(ModelKeyComparer.Instance);
-            var canonical = new uint[pool.Count];
-            bool duplicates = false;
-            for (int i = 0; i < pool.Count; i++)
-            {
-                if (!first.TryGetValue(pool[i], out uint index)) first.Add(pool[i], index = checked((uint)i));
-                else duplicates = true;
-                canonical[i] = index;
-            }
-            if (!duplicates) return string.Empty;
-            int offset = targetValues.Count;
-            targetValues.AddRange(canonical);
-            return "\n#define " + macro + " " + offset.ToString(System.Globalization.CultureInfo.InvariantCulture) + "u\n";
+            uint offset = PackCanonicalIndexes(pool, targetValues);
+            return offset == uint.MaxValue ? string.Empty : FormattableString.Invariant($"\n#define {macro} {offset}u\n");
         }
-        identityDefines = PackCanonicalIndexes(authority.UncommonPool, "RT2_S_CANONICAL_UNCOMMON_OFFSET") +
-            PackCanonicalIndexes(authority.RarePool, "RT2_S_CANONICAL_RARE_OFFSET");
+        identityDefines = CanonicalDefine(authority.UncommonPool, "RT2_S_CANONICAL_UNCOMMON_OFFSET") +
+            CanonicalDefine(authority.RarePool, "RT2_S_CANONICAL_RARE_OFFSET");
         output[0] = checked((uint)evaluation.MerchantColorlessConditions.Count);
         output[1] = checked((uint)evaluation.MerchantColorlessSequenceConditions.Count);
         output[2] = checked((uint)authority.UncommonPool.Count);
@@ -738,6 +816,23 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
         output[6] = unchecked((uint)(shopsHash >> 32));
         targets = targetValues.ToArray();
         return output.ToArray();
+    }
+
+    private static uint PackCanonicalIndexes(IReadOnlyList<ModelKey> pool, List<uint> targets)
+    {
+        var first = new Dictionary<ModelKey, uint>(ModelKeyComparer.Instance);
+        var canonical = new uint[pool.Count];
+        bool duplicates = false;
+        for (int index = 0; index < pool.Count; index++)
+        {
+            if (!first.TryGetValue(pool[index], out uint position)) first.Add(pool[index], position = (uint)index);
+            else duplicates = true;
+            canonical[index] = position;
+        }
+        if (!duplicates) return uint.MaxValue;
+        uint offset = (uint)targets.Count;
+        targets.AddRange(canonical);
+        return offset;
     }
 
     private static int IndexOf(IReadOnlyList<ModelKey> values, ModelKey target)

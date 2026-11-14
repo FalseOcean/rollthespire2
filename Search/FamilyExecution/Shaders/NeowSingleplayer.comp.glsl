@@ -17,6 +17,9 @@
 #define RT2_PREFIX_HASH_CACHE 0
 #define RT2_N_LEAFY_LOCAL_PREFIX 0
 #define N_INTERNAL_ORDER 0
+#define N_MODERN_TRANSFORM_GATE 0
+#define N_LOCAL_SOURCE_MASK -1
+#define N_SMALL_CAPSULE_RARE __RT2_N_SMALL_CAPSULE_RARE__
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_float64 : require
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
@@ -43,6 +46,7 @@ uint plan_value(uint i) { return plan_meta.values[i]; }
 uint64_t plan_u64(uint i) { return uint64_t(plan_value(i)) | (uint64_t(plan_value(i+1u)) << 32u); }
 
 /*__RT2_NEOW_LOCAL_DONOR__*/
+/*__RT2_N_MODERN_TRANSFORM_GATE__*/
 /*__RT2_N_INTERNAL_FILTER_ORDER__*/
 /*__RT2_N_JOINT_TRANSFORMS__*/
 /*__RT2_CAPSULE_COMPOSITE__*/
@@ -70,10 +74,13 @@ bool local_operator(uint source, inout RouteRngState state) {
     bool predicate = (flags & 0x80000000u) != 0u;
     uint streams = plan_value(82u);
     bool rewards = (streams & 1u) != 0u, niche = (streams & 2u) != 0u;
+#if N_LOCAL_SOURCE_MASK & ((1 << 3) | (1 << 28))
     if (source == 3u || source == 28u) {
         if (rewards) { next_float(state.rewards); if (source == 3u) next_float(state.rewards); }
         return true;
     }
+#endif
+#if N_LOCAL_SOURCE_MASK & (1 << 14)
     if (source == 14u) {
 #if N_DIRECT_NESTED == 101
         if(predicate && !bones_kaleidoscope_rarity_gate(state.rewards,count)) return false;
@@ -83,17 +90,35 @@ bool local_operator(uint source, inout RouteRngState state) {
             : execute_kaleidoscope_route(count,t0,t1,predicate,state);
         if (niche) { shuffled_opening_pool_order(plan_value(9u),state); shuffled_opening_pool_order(plan_value(9u),state); }
     }
+#endif
+#if N_LOCAL_SOURCE_MASK & (1 << 19)
     if (source == 19u && (uses_child_shuffle() ? (streams & 4u) != 0u : niche)) return execute_new_leaf_route(t0,predicate,state);
+#endif
+#if N_LOCAL_SOURCE_MASK & (1 << 4)
     if (source == 4u && (streams & 4u) != 0u) return execute_leafy_route(count,t0,t1,predicate,state);
+#endif
+#if N_LOCAL_SOURCE_MASK & (1 << 20)
     if (source == 20u && (streams & 8u) != 0u) return execute_phial_holster_route(count,t0,t1,predicate,state);
+#endif
     if (!rewards) return true;
+#if N_LOCAL_SOURCE_MASK & (1 << 10)
     if (source == 10u) return execute_arcane_scroll_route(t0,predicate,state);
+#endif
+#if N_LOCAL_SOURCE_MASK & (1 << 2)
     if (source == 2u) return execute_hefty_tablet_route(t0,predicate,state);
+#endif
+#if N_LOCAL_SOURCE_MASK & (1 << 15)
     if (source == 15u) return execute_lead_paperweight_route(t0,predicate,state);
+#endif
+#if N_LOCAL_SOURCE_MASK & (1 << 16)
     if (source == 16u) return execute_lost_coffer_route(count,t0,t1,predicate,state);
+#endif
+#if N_LOCAL_SOURCE_MASK & (1 << 22)
     if (source == 22u) return execute_scroll_boxes_route(count,t0,t1,t2,flags & 0x7fffffffu,predicate,state);
+#endif
     return true;
 }
+#endif
 #if RT2_N_LEAFY_LAZY && N_LEAFY_PRE_GATE
 // Independently adapted from shion0528, resource.17 da82f7f:
 // https://github.com/shion0528/rollthespire2/blob/da82f7f9023c3d3598d50b8642e93f2801c37ccc/Search/FamilyExecution/Shaders/NeowSingleplayer.comp.glsl
@@ -118,8 +143,11 @@ bool leafy_lazy_pre_gate(uint64_t seed, uint target0, uint target1) {
     return (strike == target0 && defend == target1) || (strike == target1 && defend == target0);
 }
 #endif
-#if N_LEAFY_PRE_GATE || N_TRANSFORM_META_OFFSET >= 0
+#if N_LEAFY_PRE_GATE || N_TRANSFORM_META_OFFSET >= 0 || N_MODERN_TRANSFORM_GATE
 bool leafy_pre_gate(uint64_t root) {
+#if N_MODERN_TRANSFORM_GATE
+    if (!modern_transform_pre_gate(root)) return false;
+#endif
 #if N_TRANSFORM_META_OFFSET >= 0
     if(!joint_transform_pre_gate(root))return false;
 #endif
@@ -137,6 +165,7 @@ bool leafy_pre_gate(uint64_t root) {
 #endif
 }
 #endif
+#if N_LOCAL_RESULTS
 #if N_AUTHORED_UPGRADES
 uint authored_upgrade_advance(uint source, uint prior) {
     if(source!=3u && source!=28u) return 0u;
@@ -153,17 +182,20 @@ bool route_at_arrival(uint64_t root, RngState rewards, uint a, uint b, uint adva
     }
     RouteRngState state = initialize_route_rng_state(root,rewards);
     if (!local_operator(a,state)) return false;
+    bool child_shuffle = uses_child_shuffle();
+    bool non_combat_unknown = child_shuffle && advance_a == 0xffffffffu;
+    if (child_shuffle && !non_combat_unknown)
+        for (uint i=0u;i<advance_a;i++) next_u64(state.non_combat);
 #if N_AUTHORED_UPGRADES || N_CAPSULE_NICHE_OFFSET >= 0 || (BONES_HIDDEN_UPGRADES != 0 && BONES_HIDDEN_UPGRADES != 4)
-    bool niche_unknown=advance_a==0xffffffffu;
-    if(!niche_unknown) for(uint i=0u;i<advance_a;i++) next_u64(state.niche);
+    bool niche_unknown=!child_shuffle && advance_a==0xffffffffu;
+    if(!child_shuffle && !niche_unknown) for(uint i=0u;i<advance_a;i++) next_u64(state.niche);
 #else
     bool niche_unknown=false;
 #endif
-    bool child_shuffle = uses_child_shuffle();
-    uint neutral_capsules = plan_value(57u);
-    bool non_combat_unknown = child_shuffle && (a==3u || a==28u) && (neutral_capsules & (1u << a)) == 0u;
     if (non_combat_unknown && (b==14u || b==20u)) {
         // R owns the actual Capsule pickup; Exact checks these dependent outputs.
+        if(b==14u && (plan_value(82u)&1u)!=0u)
+            for(uint i=0u;i<18u;i++) next_u64(state.rewards);
     } else if(niche_unknown && (b==14u || b==19u)) {
         // Only the dependent identity is pending. K still consumes its fixed
         // Rewards prefix; other streams and earlier predicates stay checked.
@@ -171,12 +203,15 @@ bool route_at_arrival(uint64_t root, RngState rewards, uint a, uint b, uint adva
             for(uint i=0u;i<18u;i++) next_u64(state.rewards);
     } else if (!local_operator(b,state)) return false;
 #if N_AUTHORED_UPGRADES || N_CAPSULE_NICHE_OFFSET >= 0 || (BONES_HIDDEN_UPGRADES != 0 && BONES_HIDDEN_UPGRADES != 4)
-    niche_unknown=niche_unknown || advance_b==0xffffffffu;
-    if(!niche_unknown) for(uint i=0u;i<advance_b;i++) next_u64(state.niche);
+    if(!child_shuffle) {
+        niche_unknown=niche_unknown || advance_b==0xffffffffu;
+        if(!niche_unknown) for(uint i=0u;i<advance_b;i++) next_u64(state.niche);
+    }
 #endif
     if (plan_value(83u) != 0u) {
-        if(niche_unknown || non_combat_unknown ||
-           (child_shuffle && (b==3u || b==28u) && (neutral_capsules & (1u << b)) == 0u)) return true;
+        if(niche_unknown || non_combat_unknown || (child_shuffle && advance_b==0xffffffffu)) return true;
+        if(child_shuffle)
+            for(uint i=0u;i<advance_b;i++) next_u64(state.non_combat);
         uint offset = n1c_meta(12u), count = n1c_meta(13u);
         if (count == 0u) return false;
         uint chosen = uses_child_shuffle() ? next_int(state.non_combat,count) : next_int(state.niche,count);
@@ -205,8 +240,36 @@ bool route_authored(uint64_t root,RngState rewards,uint a,uint b) {
 #endif
     return route_at_arrival(root,rewards,a,b,da,db);
 }
+uint capsule_non_combat_mask(uint source) {
+    if(source!=3u && source!=28u) return 1u;
+    uint mask=plan_value(source==28u ? 0u : 1u);
+    if(mask!=0u) return mask;
+    if((plan_value(57u)&(1u<<source))!=0u) return 1u;
+    return 8u; // Sentinel for unproved pickup consumption.
+}
 // A complete route shares one advance combination, including its final curse.
 bool route(uint64_t root, RngState rewards, uint a, uint b) {
+    if(uses_child_shuffle() && (a==3u || a==28u || b==3u || b==28u)) {
+        bool tail=plan_value(83u)!=0u;
+        if(tail && ((a==3u && b==28u) || (a==28u && b==3u))) {
+            uint total=plan_value(2u);
+            if(total!=0u) {
+                for(uint mask=total;mask!=0u;mask&=mask-1u)
+                    if(route_at_arrival(root,rewards,a,b,0u,uint(findLSB(mask)))) return true;
+                return false;
+            }
+        }
+        bool after_a=tail || ((b==14u || b==20u) && (conditions.values[b*5u+4u]&0x80000000u)!=0u);
+        uint ma=after_a ? capsule_non_combat_mask(a) : 1u;
+        uint mb=tail ? capsule_non_combat_mask(b) : 1u;
+        for(uint x=ma;x!=0u;x&=x-1u)
+        for(uint y=mb;y!=0u;y&=y-1u) {
+            uint da=uint(findLSB(x)), db=uint(findLSB(y));
+            if(route_at_arrival(root,rewards,a,b,da==3u ? 0xffffffffu : da,db==3u ? 0xffffffffu : db))
+                return true;
+        }
+        return false;
+    }
 #if N_CAPSULE_NICHE_OFFSET >= 0
     bool tail=plan_value(83u)!=0u;
     bool after_a=tail || ((b==14u || b==19u) && (conditions.values[b*5u+4u]&0x80000000u)!=0u);
@@ -242,6 +305,9 @@ bool pair_identity(uint64_t root, inout RngState rewards, out uint a, out uint b
             for (uint count=length;count>1u;count--) {
                 uint j=next_int(shuffle_rng,count);
                 swap_tracked_position(p,j,count-1u); swap_tracked_position(q,j,count-1u);
+                // Fisher-Yates never revisits this tail position. A required
+                // relic fixed outside the first two can no longer be offered.
+                if (count > 2u && (p == count-1u || q == count-1u)) return false;
             }
             if (p>=2u || q>=2u) return false;
             a=plan_value(p==0u ? 27u : 28u); b=plan_value(p==0u ? 28u : 27u);
@@ -264,11 +330,50 @@ bool pair_identity(uint64_t root, inout RngState rewards, out uint a, out uint b
     return identity;
 }
 /*__RT2_BONES_K__*/
+#if N_DIRECT_NESTED == 103 && N_LOCAL_RESULTS
+bool modern_kaleidoscope_phial_route(RngState rewards, RngState non_combat, bool kaleidoscope_first) {
+    RouteRngState state;
+    state.rewards = rewards;
+    state.non_combat = non_combat;
+    const uint k = 14u * 5u, p = 20u * 5u;
+    bool check_k = (conditions.values[k+4u] & 0x80000000u) != 0u;
+    bool check_phial = (conditions.values[p+4u] & 0x80000000u) != 0u;
+    if (!kaleidoscope_first && (check_phial || check_k) &&
+        !execute_phial_holster_route(conditions.values[p],conditions.values[p+1u],conditions.values[p+2u],check_phial,state)) return false;
+
+    if (check_k) {
+        bool matched = (conditions.values[k+4u] & 4u) != 0u
+            ? execute_kaleidoscope_ordered_route(conditions.values[k+1u],conditions.values[k+2u],state)
+            : execute_kaleidoscope_route(conditions.values[k],conditions.values[k+1u],conditions.values[k+2u],true,state);
+        if (!matched) return false;
+    } else if (kaleidoscope_first && check_phial) {
+        // Its two child seeds advance the parent independently of Rewards.
+        next_u64(state.non_combat);
+        next_u64(state.non_combat);
+    }
+    return !kaleidoscope_first || !check_phial ||
+        execute_phial_holster_route(conditions.values[p],conditions.values[p+1u],conditions.values[p+2u],true,state);
+}
+#endif
+/*__RT2_N_MODERN_LOCAL_CAPSULE__*/
 bool local_matches(uint64_t root, RngState rewards, uint a, uint b) {
+#if N_SMALL_CAPSULE_RARE
+    RngState capsule_rewards = rewards;
+    if (next_float(capsule_rewards) < 0.83f) return false;
+#endif
 #if N_LOCAL_RESULTS
+#ifdef RT2_N_MODERN_LOCAL_CAPSULE
+    return modern_local_capsule_matches(root,rewards,a,b);
+#endif
 #if BONES_K_MODE != 0
     return bones_k_matches(root,rewards,a,b);
 #endif
+#if N_DIRECT_NESTED == 103
+    RngState non_combat = non_combat_rng(root);
+    next_u64(non_combat); // Bones has already used one parent word to seed its child shuffle.
+    if (modern_kaleidoscope_phial_route(rewards,non_combat,a == 14u)) return true;
+    return plan_value(12u) == 255u && modern_kaleidoscope_phial_route(rewards,non_combat,b == 14u);
+#else
 #if N_DIRECT_NESTED == 102
     // Fixed K + Phial only, no Final Curse or other stateful pickup. K consumes
     // Rewards/Niche; Phial consumes CombatPotionGeneration. Both pickup orders
@@ -292,10 +397,25 @@ bool local_matches(uint64_t root, RngState rewards, uint a, uint b) {
     if ((plan_value(56u) & 2u)==0u || plan_value(12u)!=255u) return forward;
     bool reverse=route(root,rewards,b,a);
     return forward || reverse;
+#endif
 #else
     return true;
 #endif
 }
+#if N_DIRECT_NESTED == 5 || N_DIRECT_NESTED == 6
+bool direct_new_leaf_matches(uint64_t root) {
+    RouteRngState state;
+    if (uses_child_shuffle()) state.transformations = rng_initialize(root + plan_u64(37u));
+    else state.niche = rng_initialize(root + plan_u64(35u));
+    return execute_new_leaf_route(conditions.values[19u*5u+1u],true,state);
+}
+#endif
+#if N_DIRECT_NESTED >= 40 && N_DIRECT_NESTED <= 42
+RngState direct_phial_rng(uint64_t root) {
+    return uses_child_shuffle() ? non_combat_rng(root) : rng_initialize(root + plan_u64(62u));
+}
+#endif
+
 bool matches(uint64_t root) {
 #if NR_CAPSULE == 1 && CAPSULE_PHYSICAL != 0 && CAPSULE_PHYSICAL != 5 && CAPSULE_PHYSICAL != 6
     // Bounded direct-only physical ordering; semantic R matcher is shared.
@@ -325,12 +445,10 @@ bool matches(uint64_t root) {
     arcane_state.rewards=rng_initialize(root+plan_u64(33u));
     if(!execute_arcane_scroll_route(conditions.values[10u*5u+1u],true,arcane_state)) return false;
 #elif N_DIRECT_NESTED == 40
-    if(!phial_rare_opportunity(rng_initialize(root+plan_u64(62u)),conditions.values[20u*5u])) return false;
+    if(!phial_rare_opportunity(direct_phial_rng(root),conditions.values[20u*5u])) return false;
 #endif
 #if N_DIRECT_NESTED == 5 || N_DIRECT_NESTED == 6
-    RouteRngState new_leaf_state;
-    new_leaf_state.niche=rng_initialize(root+plan_u64(35u));
-    if(!execute_new_leaf_route(conditions.values[19u*5u+1u],true,new_leaf_state)) return false;
+    if(!direct_new_leaf_matches(root)) return false;
 #elif N_DIRECT_NESTED == 7
     RngState special_rewards=rng_initialize(root+plan_u64(33u));
     if(!scroll_special_only(special_rewards)) return false;
@@ -345,7 +463,7 @@ bool matches(uint64_t root) {
     if (!kaleidoscope_rare_prefix(prefix_rewards,prefix_slot)) return false;
 #endif
 #endif
-#if N_LEAFY_PRE_GATE || N_TRANSFORM_META_OFFSET >= 0
+#if N_LEAFY_PRE_GATE || N_TRANSFORM_META_OFFSET >= 0 || N_MODERN_TRANSFORM_GATE
     if (!leafy_pre_gate(root)) return false;
 #endif
     uint route_mask, curse, curse_ordinal;
@@ -392,20 +510,20 @@ bool matches(uint64_t root) {
     arcane_state.rewards=rng_initialize(root+plan_u64(33u));
     return execute_arcane_scroll_route(conditions.values[10u*5u+1u],true,arcane_state);
 #elif N_DIRECT_NESTED >= 40 && N_DIRECT_NESTED <= 42
-    RouteRngState phial_state;
-    phial_state.combat_potions=rng_initialize(root+plan_u64(62u));
     uint o=20u*5u;
+    RngState phial_rng = direct_phial_rng(root);
 #if N_DIRECT_NESTED == 41
-    if(!phial_rare_opportunity(phial_state.combat_potions,conditions.values[o])) return false;
+    if(!phial_rare_opportunity(phial_rng,conditions.values[o])) return false;
 #endif
+    RouteRngState phial_state;
+    if (uses_child_shuffle()) phial_state.non_combat = phial_rng;
+    else phial_state.combat_potions = phial_rng;
     return execute_phial_holster_route(conditions.values[o],conditions.values[o+1u],conditions.values[o+2u],true,phial_state);
 #endif
 #if N_DIRECT_NESTED == 6 || N_DIRECT_NESTED == 7
     return true; // The complete, sole direct nested predicate already passed.
 #elif N_DIRECT_NESTED == 5
-    RouteRngState replay_leaf;
-    replay_leaf.niche=rng_initialize(root+plan_u64(35u));
-    return execute_new_leaf_route(conditions.values[19u*5u+1u],true,replay_leaf);
+    return direct_new_leaf_matches(root);
 #elif N_DIRECT_NESTED == 8
     RngState local_special=rng_initialize(root+plan_u64(33u));
     return scroll_special_only(local_special);
@@ -538,7 +656,7 @@ void main() {
 #endif
 #if N_STAGE == 0
         RngState event_rng; uint curse_ordinal,curse;
-#if N_LEAFY_PRE_GATE || N_TRANSFORM_META_OFFSET >= 0
+#if N_LEAFY_PRE_GATE || N_TRANSFORM_META_OFFSET >= 0 || N_MODERN_TRANSFORM_GATE
         if (leafy_pre_gate(root) && draw_neow_curse(root,event_rng,curse_ordinal,curse) && (plan_value(69u)&(1u<<curse_ordinal))==0u) {
 #else
         if (draw_neow_curse(root,event_rng,curse_ordinal,curse) && (plan_value(69u)&(1u<<curse_ordinal))==0u) {

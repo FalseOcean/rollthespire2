@@ -539,9 +539,8 @@ uint select_unused_meta(
 {
     uint offset = other_pool_meta.values[meta_index];
     uint length = other_pool_meta.values[meta_index + 1u];
-#if N_DIRECT_NESTED == 31 || N_DIRECT_NESTED == 33
-    if (used_count == 0u) return length == 0u ? 0xffffffffu : other_card_ids.ids[offset + next_int(rng,length)];
-#endif
+    if (used_count == 0u && plan_value(15u) != 0xffffffffu)
+        return length == 0u ? 0xffffffffu : other_card_ids.ids[offset + next_int(rng,length)];
     uint available = 0u;
     for (uint index = 0u; index < length; ++index) {
         uint candidate = other_card_ids.ids[offset + index];
@@ -875,8 +874,46 @@ bool execute_scroll_boxes_route(
 }
 
 // Massive Scroll uses the owner's character plus colorless MultiplayerOnly pool.
+uvec3 roll_massive_rank(uint base, uint ascension, uvec3 first, uvec3 second, inout RngState rewards) {
+    float rare = ascension >= 7u ? 0.0149f : 0.03f;
+    float roll = next_float(rewards);
+    uint requested = roll < rare ? 3u : (roll < rare + 0.37f ? 2u : 1u);
+    for (uint fallback_index = 0u; fallback_index < 3u; ++fallback_index) {
+        uint lane = card_rarity_meta_index(base, requested, fallback_index);
+        uint length = other_pool_meta.values[lane + 1u];
+        uint a = first.x == lane ? first.y : 0xffffffffu;
+        uint b = second.x == lane ? second.y : 0xffffffffu;
+        uint excluded = uint(a != 0xffffffffu) + uint(b != 0xffffffffu);
+        if (length <= excluded) continue;
+        uint rank = next_int(rewards, length - excluded);
+        rank += uint(rank >= min(a, b));
+        rank += uint(rank >= max(a, b));
+        next_u64(rewards);
+        return uvec3(lane, rank, other_card_ids.ids[other_pool_meta.values[lane] + rank]);
+    }
+    return uvec3(0xffffffffu);
+}
+
 bool execute_massive_scroll_route(uint target, bool predicate, inout RouteRngState state) {
     uint base = 20u + plan_value(9u)*6u + 15u;
+    if ((plan_value(15u) & 2048u) != 0u && plan_value(15u) != 0xffffffffu) {
+        if (!predicate) {
+            for (uint i = 0u; i < 9u; ++i) next_u64(state.rewards);
+            return true;
+        }
+        uvec3 none = uvec3(0xffffffffu);
+        uvec3 first = roll_massive_rank(base, plan_value(7u), none, none, state.rewards);
+        if (first.z == target) {
+            for (uint i = 0u; i < 6u; ++i) next_u64(state.rewards);
+            return true;
+        }
+        uvec3 second = roll_massive_rank(base, plan_value(7u), first, none, state.rewards);
+        if (second.z == target) {
+            for (uint i = 0u; i < 3u; ++i) next_u64(state.rewards);
+            return true;
+        }
+        return roll_massive_rank(base, plan_value(7u), first, second, state.rewards).z == target;
+    }
     uint a=roll_card_from_meta(base,plan_value(7u),0xffffffffu,0xffffffffu,0xffffffffu,0u,state.rewards);
     uint b=roll_card_from_meta(base,plan_value(7u),a,0xffffffffu,0xffffffffu,1u,state.rewards);
     uint c=roll_card_from_meta(base,plan_value(7u),a,b,0xffffffffu,2u,state.rewards);

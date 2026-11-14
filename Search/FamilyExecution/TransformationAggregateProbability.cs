@@ -15,7 +15,8 @@ internal sealed record TransformationAggregateProbability(double? QueryHitProbab
     internal static double? SharedNeowJoint(RolltheSpire2.Search.Contracts.SearchModel request,
         TransformationAggregateNumericalPlan numerical)
     {
-        if (!TransformationAggregateCondition.HasSharedNeow(request.Evaluation) || !numerical.ProbabilityClosed ||
+        if (!TransformationAggregateCondition.HasSharedNeow(request.Evaluation) ||
+            !(numerical.ProbabilityClosed || SupportsSharedNamedThree(numerical)) ||
             numerical.Neow is null) return null;
         var source = request.CompiledSearch.NormalizedQuery;
         var query = LegacySearchQueryAdapter.FromFilter(NeowReplayPlan.NeowFilter(request, false)) with {
@@ -39,8 +40,18 @@ internal sealed record TransformationAggregateProbability(double? QueryHitProbab
         double identity = plan.Neow is { } n ? NeowFamilyProjections.IdentityProbability(n, n.Filter) : 1;
         var groups = plan.DrawGroups;
         if (!plan.ProbabilityClosed)
+        {
+            if (SupportsSharedNamedThree(plan))
+            {
+                var pools = groups.SelectMany(group => group.Pools).Select(pool => pool.Select(plan.TargetBits).ToArray()).ToArray();
+                double transformMass = SharedNamedThreeMass(pools[0], pools[1], pools[2]);
+                double joint = identity * transformMass;
+                return new(joint, joint, identity, 3, [], policy +
+                    ";T.SharedTransformOrderUnion;SameDrawRanksAcrossBothOrders;UniformIndependentDrawWordsModel");
+            }
             return new(null, null, identity, plan.Condition.OpportunityCount, [],
                 plan.HasTwoSharedTransformOrders ? "T.SharedTransformOrderJointProbabilityUnavailable" : "T.ObservationAuthorityUnclosed");
+        }
         var local = groups.Select(g => RareDistribution(g.Pools.Select(pool => pool.Count(i => plan.IsRare(i)) / (double)pool.Length))).ToArray();
         var c = plan.Condition;
         double[] states = new double[1 << c.OpportunityCount]; states[0] = 1;
@@ -80,6 +91,59 @@ internal sealed record TransformationAggregateProbability(double? QueryHitProbab
             (plan.Closed ? "" : ";RuntimeSurvivalUnmodeled=ConservativeUnknownOutputs"));
         int Score(int state) => c.Predicate == TransformationAggregatePredicate.RareCountAtLeast ? state : System.Numerics.BitOperations.PopCount((uint)state);
         int Goal() => c.Predicate == TransformationAggregatePredicate.RareCountAtLeast ? c.MinimumRareCount : c.TargetMultiset.Count;
+    }
+
+    private static bool SupportsSharedNamedThree(TransformationAggregateNumericalPlan plan) =>
+        plan.HasTwoSharedTransformOrders && plan.Closed && !plan.Condition.UsesEvents &&
+        plan.Condition.Predicate == TransformationAggregatePredicate.ContainsMultiset &&
+        plan.Condition.TargetMultiset.Count == 3 && plan.DrawGroups.SelectMany(group => group.Pools).Count() == 3;
+
+    // Use the same rank interval in both pickup routes for each of the three
+    // independent draw words. The union counts an interval triple once even
+    // when both projections of that same triple satisfy the multiset.
+    internal static double SharedNamedThreeMass(uint[] strike, uint[] defend, uint[] newLeaf)
+    {
+        Dictionary<(uint First, uint Second), ulong> Pairs(uint[] left, uint[] right)
+        {
+            var output = new Dictionary<(uint First, uint Second), ulong>();
+            int i = 0, j = 0;
+            ulong start = 0;
+            while (i < left.Length && j < right.Length)
+            {
+                ulong endLeft = NeowStaticDrawGateCompiler.Boundary(i + 1, left.Length);
+                ulong endRight = NeowStaticDrawGateCompiler.Boundary(j + 1, right.Length);
+                ulong end = Math.Min(endLeft, endRight);
+                var masks = (left[i], right[j]);
+                output[masks] = output.GetValueOrDefault(masks) + end - start;
+                start = end;
+                if (endLeft == end) i++;
+                if (endRight == end) j++;
+            }
+            return output;
+        }
+
+        static bool Matches(uint first, uint second, uint third)
+        {
+            const uint targets = 7u;
+            static uint RemoveMatch(uint remaining, uint card)
+            {
+                uint available = remaining & card;
+                return available == 0 ? remaining : remaining ^ (available & unchecked(0u - available));
+            }
+            return RemoveMatch(RemoveMatch(RemoveMatch(targets, first), second), third) == 0;
+        }
+
+        var pairs0 = Pairs(strike, newLeaf);
+        var pairs1 = Pairs(defend, strike);
+        var pairs2 = Pairs(newLeaf, defend);
+        double space = NeowStaticDrawGateCompiler.MantissaSpace;
+        double mass = 0d;
+        foreach (var (a, countA) in pairs0)
+        foreach (var (b, countB) in pairs1)
+        foreach (var (c, countC) in pairs2)
+            if (Matches(a.First, b.First, c.First) || Matches(a.Second, b.Second, c.Second))
+                mass += (countA / space) * (countB / space) * (countC / space);
+        return Math.Clamp(mass, 0d, 1d);
     }
     // Product probability for extra N predicates over the SAME owned transform draws.
     // GPU T survival stays at the aggregate-only mass; no additional physical filtering is claimed.

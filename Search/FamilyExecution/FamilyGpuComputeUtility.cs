@@ -70,6 +70,25 @@ internal static class FamilyGpuComputeUtility
         long started=System.Diagnostics.Stopwatch.GetTimestamp();
         byte[] sourceBytes = System.Text.Encoding.UTF8.GetBytes(sourceText);
         string sourceHash=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(sourceBytes));
+        FamilyShaderBinaryCache.Key? binaryKey = null;
+        try { binaryKey = FamilyShaderBinaryCache.Identity(rd, sourceText); }
+        catch (Exception cacheError)
+        {
+            RuntimeLog.TryBackgroundWarning($"shaderBinaryCacheUnavailable=true;name={Sanitize(name)};failure={Sanitize(cacheError.ToString())};creation=NormalEnginePath");
+        }
+        if (binaryKey is { } hitKey && FamilyShaderBinaryCache.TryGet(hitKey, out var binary))
+        {
+            Rid restored;
+            try
+            {
+                restored = rd.ShaderCreateFromBytecode(binary);
+                if (!restored.IsValid) throw CreationFailure("ShaderModule", name, "CachedBinaryEmptyRid;seeGodotNativeLog=true");
+            }
+            catch { FamilyShaderBinaryCache.Remove(hitKey); throw; }
+            RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=ShaderModuleReady;name={Sanitize(name)};stage=Compute;ownerThreadId={System.Environment.CurrentManagedThreadId};sourceSha256={sourceHash};binaryBytes={binary.Length};moduleMs={System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:F4};cache=ProcessDriverBinary;engineCacheHit=Unknown");
+            reuse?.Add(sourceText, restored);
+            return restored;
+        }
         RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=ShaderCompileStarted;name={Sanitize(name)};stage=Compute;ownerThreadId={System.Environment.CurrentManagedThreadId};sourceSha256={sourceHash};sourceBytes={sourceBytes.Length};allowCache=true;engineCacheHit=Unknown");
         using var source = new RDShaderSource { SourceCompute = sourceText };
         using RDShaderSpirV spirV = rd.ShaderCompileSpirVFromSource(source, allowCache: true);
@@ -83,10 +102,27 @@ internal static class FamilyGpuComputeUtility
         string spirvHash=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytecode));
         RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=ShaderModuleCreateStarted;name={Sanitize(name)};stage=Compute;ownerThreadId={System.Environment.CurrentManagedThreadId};sourceSha256={sourceHash};spirvSha256={spirvHash};spirvBytes={bytecode.Length};compileSpirvMs={compileMs:F4}");
         started=System.Diagnostics.Stopwatch.GetTimestamp();
-        Rid shader=rd.ShaderCreateFromSpirV(spirV, name);
+        byte[]? compiledBinary = null;
+        if (binaryKey.HasValue)
+        {
+            try
+            {
+                compiledBinary = rd.ShaderCompileBinaryFromSpirV(spirV, name);
+                if (compiledBinary.Length == 0) throw CreationFailure("ShaderBinaryCompile", name, "EmptyBinary");
+            }
+            catch (Exception cacheError)
+            {
+                // Binary reuse is optional preparation. A failure here does not
+                // replace the normal shader creation path or a query obligation.
+                RuntimeLog.TryBackgroundWarning($"shaderBinaryCacheUnavailable=true;name={Sanitize(name)};failure={Sanitize(cacheError.ToString())};creation=NormalEnginePath");
+                compiledBinary = null;
+            }
+        }
+        Rid shader=compiledBinary is null ? rd.ShaderCreateFromSpirV(spirV, name) : rd.ShaderCreateFromBytecode(compiledBinary);
         // The creation API returns an empty RID on failure. IsValid only tests
         // that fresh result; it must never be used to prove a RID is still owned.
         if (!shader.IsValid) throw CreationFailure("ShaderModule", name, "EmptyRid;seeGodotNativeLog=true");
+        if (compiledBinary is not null && binaryKey is { } storeKey) FamilyShaderBinaryCache.Add(storeKey, compiledBinary);
         RuntimeLog.TryBackgroundInfo($"searchStartup=true;phase=ShaderModuleReady;name={Sanitize(name)};stage=Compute;ownerThreadId={System.Environment.CurrentManagedThreadId};sourceSha256={sourceHash};spirvSha256={spirvHash};compileSpirvMs={compileMs:F4};moduleMs={System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:F4};allowCache=true;engineCacheHit=Unknown");
         reuse?.Add(sourceText, shader);
         return shader;

@@ -26,6 +26,9 @@ internal static partial class TransformationAggregateQueryProbability
                 compiled = SearchCompiler.Compile(query,compiled.Context);
                 request = request with { Evaluation=CompiledSearchEvaluationProjector.Project(compiled).Evaluation };
             }
+            else if (numerical.HasTwoSharedTransformOrders)
+                probability = probability with { QueryHitProbability = null,
+                    Evidence = probability.Evidence + ";SharedSourcePredicatesJointUnavailable" };
         }
         // A fixed Leafy/NewLeaf Bones transaction draws its final curse after the
         // owned transforms. Under the named-draw model its conditional pool is uniform;

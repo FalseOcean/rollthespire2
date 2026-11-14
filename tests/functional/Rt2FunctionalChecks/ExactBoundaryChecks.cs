@@ -704,8 +704,6 @@ internal static class ExactBoundaryChecks
         }).Disposition==SearchDisposition.Unknown,"Unknown party offer identity cannot prove its predicate");
 
         var residualQuery=SearchQuery.Empty with {
-            OpeningRoute=new(BaseGameModelKeys.Relics.NeowsBones),
-            OpeningRouteRelicRequirement=new(BaseGameModelKeys.Relics.NeowsBones,[BaseGameModelKeys.Relics.LeafyPoultice,BaseGameModelKeys.Relics.NewLeaf]),
             TransformationAggregate=new(TransformationOpening.BonesLeafyNewLeaf,TransformationPickupOrder.Any,false,false,false,
                 TransformationAggregatePredicate.RareCountAtLeast,1,[]),
             RelicSequenceConstraints=[new(RelicSequenceKind.Common,SearchSequenceRangeMode.ExactSlot,1,

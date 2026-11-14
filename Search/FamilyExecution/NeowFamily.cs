@@ -24,6 +24,7 @@ internal sealed partial class NeowFamily
     private readonly NeowCapsuleSparseRefinement? _sparseRefinement;
     private bool HasCapsuleNicheContinuation => _plan.CapsuleNicheContinuation is not null;
     private readonly NeowCpuPositiveIdentityPlan? _cpuPositiveIdentity;
+    private readonly NeowSingleplayerLocalCpuPlan? _cpuLocalPlan;
     private readonly NeowFamilyProjections _models;
     private readonly bool _conditional;
     private readonly NeowFamilyGpuPlan? _gpuPlan;
@@ -37,13 +38,17 @@ internal sealed partial class NeowFamily
     internal FilterPricingAuthority PricingAuthority => _pricingAuthority;
     internal bool UsesSmallPrivateOutput => _composite is null && _transformations is null && NeowFamilyGpuExecutor.SupportsSmallOutput(_gpuPlan);
     internal bool UsesCompatibilityGpu => _gpuPlan?.NumericalVariant == NeowGpuNumericalVariant.IntegerUnitFloat;
-    private string CpuRevision => "N.Neow.Cpu.LocalReplay.20261015.v3" +
-        (_cpuPositiveIdentity is null ? "" : NeowCpuPositiveIdentityPlan.Revision) + NeowIdentityOfferFacts.Revision +
-        (_plan.Authority.UsesChildShuffle ? ".Modern113" : "") + _plan.CapsuleNonCombatRevision +
+    private string CpuRevision => (_cpuLocalPlan?.Revision ?? "N.Neow.Cpu.LocalReplay.20261015.v3" +
+        (_cpuPositiveIdentity is null ? "" : NeowCpuPositiveIdentityPlan.Revision)) + NeowIdentityOfferFacts.Revision +
+        (_plan.Authority.UsesChildShuffle ? ".Modern113" : "") + _plan.CapsuleNonCombatRevision + _plan.CapsuleRarityRevision +
+        (_plan.UnobservedRewardsDraws.Length == 0 ? "" : NeowUnobservedRewards.Revision) +
         (HasCapsuleNicheContinuation ? NeowCapsuleNicheContinuation.Revision : "") +
-        (_sparseRefinement is null ? "" : NeowCapsuleSparseRefinement.Revision);
-    private NeowGpuOptimizations OptimizationsFor(bool compact) => _gpuPlan is null ? default : _gpuOptimizations.Applicable(_gpuPlan, compact,
-        _composite is null && _transformations is null && _gpuPlan.DirectNestedMode == 0 && _gpuPlan.JointTransformMetaOffset < 0);
+        (_sparseRefinement?.PhysicalRevision ?? "");
+    private NeowGpuOptimizations OptimizationsFor(bool compact) => _gpuPlan is null ? default :
+        _gpuPlan.DirectNestedMode == 103 && _composite is null && _transformations is null
+            ? _gpuOptimizations.ForStagedSharedPhial(_gpuPlan, compact)
+            : _gpuOptimizations.Applicable(_gpuPlan, compact,
+                _composite is null && _transformations is null && _gpuPlan.DirectNestedMode == 0 && _gpuPlan.JointTransformMetaOffset < 0);
     internal NeowGpuOptimizations WorkEstimateOptimizations(bool compact) => OptimizationsFor(compact);
     internal string OptimizationShape(bool compact) => _gpuPlan is null ? "" : OptimizationsFor(compact).DescribeWork(_gpuPlan,compact);
     internal NeowFamily(SearchModel request, NeowReplayPlan plan, bool preferGpu = true, NeowCapsuleComposite? composite = null,
@@ -56,12 +61,13 @@ internal sealed partial class NeowFamily
         _sharedNeow = Search.Semantics.TransformationAggregateCondition.HasSharedNeow(request.Evaluation);
         _sharedIdentityOnly = Search.Semantics.TransformationAggregateCondition.SharedNeowIdentityOnly(request.Evaluation);
         _plan = plan; _transformations = transformations;
-        if(composite is null && transformations is null && plan.CapsuleNicheContinuation is not null)
+        if(composite is null && transformations is null &&
+            (plan.CapsuleNicheContinuation is not null || plan.HasCapsuleNonCombatAlternatives))
         {
             string sparseMode=NeowCapsuleSparseRefinement.CaptureSelection();
             bool selected=NeowCapsuleSparseRefinement.ShouldApply(sparseMode,plan);
             if(selected) _sparseRefinement=NeowCapsuleSparseRefinement.Compile(request,plan);
-            RuntimeLog.TryBackgroundInfo($"capsuleSparseRefinementPrepared={selected};mode={sparseMode};default=auto;selector=FixedSmallNewLeafOrDualCapsuleFinal;scope=PublicNOnly;ready={_sparseRefinement?.Ready==true};issue={_sparseRefinement?.Issue ?? ""};privateOrCoupledRefinement=false");
+            RuntimeLog.TryBackgroundInfo($"capsuleSparseRefinementPrepared={selected};mode={sparseMode};default=auto;selector={(plan.Authority.UsesChildShuffle ? "ObservedNonCombat" : "FixedSmallNewLeafOrDualCapsuleFinal")};scope=PublicNOnly;ready={_sparseRefinement?.Ready==true};issue={_sparseRefinement?.Issue ?? ""};privateOrCoupledRefinement=false");
         }
         _workEstimate = NeowWorkEstimate.Describe(plan);
         var neowMatcher = NeowFamilyReplay.Bind(plan);
@@ -72,6 +78,8 @@ internal sealed partial class NeowFamily
         }
         _cpuPositiveIdentity = !HasCapsuleNicheContinuation && composite is null && transformations is null
             ? NeowCpuPositiveIdentityPlan.TryCompile(plan, NeowCpuPositiveIdentityPlan.Capture()) : null;
+        _cpuLocalPlan = !HasCapsuleNicheContinuation && composite is null && transformations is null
+            ? NeowSingleplayerLocalCpuPlan.TryCompile(plan, _cpuPositiveIdentity) : null;
         _cpuMatcher = transformations is null ? neowMatcher : root => neowMatcher(root) && transformations.Numerical.Matches(root);
         string physicalIssue = "CpuReferenceSelected";
         if (preferGpu && transformations is null)
@@ -92,7 +100,7 @@ internal sealed partial class NeowFamily
         }
         if (composite is not null && _gpuPlan is null) throw new InvalidOperationException("NrRequiresGpuPhysical");
         if (_gpuPlan is { NumericalVariant: not NeowGpuNumericalVariant.NativeFloat64 } &&
-            (composite is not null || transformations is not null || _gpuPlan.JointTransformMetaOffset >= 0))
+            (composite is not null || _gpuPlan.JointTransformMetaOffset >= 0 && !_gpuPlan.UsesChildShuffle))
             throw new InvalidOperationException("N.IntegerUnitFloat.OrdinaryInvocationOnly");
         _composite = composite;
         _models = new(request, plan, false, null, _gpuPlan is null ? CpuFilterExecution.Capacity : NeowFamilyGpuExecutor.Capacity);
@@ -152,7 +160,7 @@ internal sealed partial class NeowFamily
     {
         if (_gpuPlan is null) return CpuFilterExecution.Describe(FamilyId, CpuRevision, 1, CpuFilterExecution.Capacity, false, false, compactAbi1Input);
         string revision = _transformations is not null
-            ? NeowTransformationComposite.Revision + (compactAbi1Input ? ".Compact" : _gpuPlan.UsesStagedDense ? ".StagedDense" : ".Dense")
+            ? _transformations.PhysicalRevision + (compactAbi1Input ? ".Compact" : _gpuPlan.UsesStagedDense ? ".StagedDense" : ".Dense")
             : _composite is not null
             ? _composite.Revision(compactAbi1Input, _gpuPlan.UsesStagedDense)
             : _gpuPlan.DirectNestedMode != 0 ? _gpuPlan.DirectNestedRevision(compactAbi1Input)
@@ -162,6 +170,8 @@ internal sealed partial class NeowFamily
                 : compactAbi1Input ? NeowFamilyGpuPlan.CompactRevision :
                     _gpuPlan.UsesStagedDense ? NeowFamilyGpuPlan.StagedDenseRevision : NeowFamilyGpuPlan.DenseRevision;
         if (!_gpuPlan.IsMultiplayer) revision += ".PackedPublicOrdinals.20260930.v1";
+        if (!_gpuPlan.IsMultiplayer && _gpuPlan.Meta[67] != 0)
+            revision += ".TrackedPairTailReject.20261114.v1";
         if (!_gpuPlan.IsMultiplayer && (_gpuPlan.Meta[82] & 9u) != 0)
             revision += ".ZeroUsedDirectIndex.20260930.v1";
         if (!_gpuPlan.IsMultiplayer && _plan.StructuredConditions.Any(c => c.SourceRelicId == Beta110FastRelicCatalog.Kaleidoscope))
@@ -171,11 +181,16 @@ internal sealed partial class NeowFamily
         if (UsesCompatibilityGpu) revision += ".IntegerUnitFloat.Rne.20261025.v1";
         if (_gpuPlan.UsesChildShuffle) revision += ".Modern113";
         revision += _plan.CapsuleNonCombatRevision;
+        revision += _plan.CapsuleRarityRevision;
+        revision += _gpuPlan.ModernTransformGateRevision;
+        revision += _gpuPlan.LocalObservationRevision;
+        if (_composite is null)
+            revision += _gpuPlan.LocalSourceRevision(!compactAbi1Input && _gpuPlan.UsesStagedDense ? 2 : 3);
         revision += OptimizationsFor(compactAbi1Input).Revision;
         revision += _gpuPlan.EntryIdentityRevision;
         revision += NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision;
         if(HasCapsuleNicheContinuation) revision += NeowCapsuleNicheContinuation.Revision;
-        if(_sparseRefinement is not null) revision += NeowCapsuleSparseRefinement.Revision;
+        revision += _sparseRefinement?.PhysicalRevision ?? "";
         return new(FamilyId, revision, "N.Neutral.20260905.v1", 1, UsesCompatibilityGpu
             ? "NoAcceptedWithinPathCurve;GpuNumericalVariant=IntegerUnitFloat;PhysicalQuoteUnavailable=UnmeasuredVariant"
             : "NoAcceptedWithinPathCurve");
@@ -219,6 +234,9 @@ internal sealed partial class NeowFamily
         };
         var profile = _profile;
         var cpu = DescribeCpu(prepared,profile,preferences.WorkerCount).ToArray();
+        Func<ulong, bool>? optimizedCpu = _cpuLocalPlan is not null ? _cpuLocalPlan.Matches :
+            _cpuPositiveIdentity is not null ? _cpuPositiveIdentity.Matches : null;
+        Func<ulong, bool> cpuMatcher = optimizedCpu is null ? _cpuMatcher : NeowCapsuleRarityGate.Refine(_plan, optimizedCpu);
         var body = new FilterBodyDescription(prepared,ResolveConditionPerformance(false).PhysicalImplementationRevision,_profile.ProfileId)
         {
             InputIdentity = _inputIdentity, UsesGpu = _gpuPlan is not null,
@@ -226,14 +244,14 @@ internal sealed partial class NeowFamily
             WindowCapacity = _gpuPlan is null ? CpuFilterExecution.Capacity : NeowFamilyGpuExecutor.Capacity,
             PreferredRootWindowSize = _gpuPlan is null ? CpuFilterExecution.Capacity : FamilyPhysicalExecutionDefaults.DefaultCandidateBatchSize,
             NumericRequirements = _gpuPlan is null ? NumericRequirements.None : _gpuPlan.GpuNumericRequirements |
-                (_composite is not null || _transformations is not null ? NumericRequirements.Float64 : NumericRequirements.None),
+                (_composite is not null ? NumericRequirements.Float64 : NumericRequirements.None),
             PerformanceProjection = ResolveConditionPerformance,
             Cost = new()
             {
                 CanonicalScope = _canonicalScope && _composite is null && _transformations is null,
                 PrivateCanonicalScope = _canonicalScope && Coverage.Count==1,
                 PrivatePhysicalRevision = _sparseRefinement is null ? null : privateInput=>
-                    ResolveConditionPerformance(privateInput).PhysicalImplementationRevision.Replace(NeowCapsuleSparseRefinement.Revision,"",StringComparison.Ordinal)+NeowCapsuleSparseRefinement.PrivateRevision,
+                    ResolveConditionPerformance(privateInput).PhysicalImplementationRevision.Replace(_sparseRefinement.PhysicalRevision,"",StringComparison.Ordinal)+NeowCapsuleSparseRefinement.PrivateRevision,
                 PrivateOutputRevision = UsesSmallPrivateOutput ? NeowFamilyGpuExecutor.SmallOutputRevision : "",
                 PrivateOutputPathSuffix = UsesSmallPrivateOutput ? ".PrivateSmallHeader8" : "",
                 ObservationRevision = g=>!g.PrivateOutput ? NeowFamilyGpuExecutor.PublicBoundaryRevision : "",
@@ -253,7 +271,7 @@ internal sealed partial class NeowFamily
             UsesSmallPrivateOutput = UsesSmallPrivateOutput,
             SupportsDenseBatchGrouping = _gpuPlan is { DirectNestedMode:0,JointTransformMetaOffset:<0 } && _composite is null && _transformations is null,
             CreateExecution = CreateRuntimeFactory(_plan,_gpuPlan,_composite,_transformations,_gpuOptimizations,
-                preferences.SkipExactValidation,profile,_cpuPositiveIdentity is null ? _cpuMatcher : _cpuPositiveIdentity.Matches,_sparseRefinement)
+                preferences.SkipExactValidation,profile,cpuMatcher,_sparseRefinement)
         };
         return body;
     }

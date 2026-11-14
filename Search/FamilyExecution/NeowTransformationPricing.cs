@@ -17,6 +17,7 @@ internal static class NeowTransformationPricing
 
     internal static FamilyPhysicalQuote? Joint(NeowTransformationComposite p, FamilyPhysicalQuoteRequest g)
     {
+        if (p.Numerical.UsesModern113) return ModernJoint(p, g);
         var c = p.Numerical.Condition;
         if (!Reference(p.Numerical, g) || g.CompactInput || g.PrivateInput || g.PrivateOutput ||
             !p.Gpu.UsesStagedDense || c.Predicate == TransformationAggregatePredicate.RareCountAtLeast ||
@@ -28,6 +29,24 @@ internal static class NeowTransformationPricing
         return new("N.Neow", "NT.Joint.Named3.20261001.v1", .14, NeowFamilyGpuExecutor.Capacity, 2800,
             Evidence + ";NAndTCoverage;DenseOnly;NamedThreeSlots;HostTransportOutside;Setup=2800ms",
             PublicTransportClass: "LargeResidentAppend32");
+    }
+
+    private static FamilyPhysicalQuote? ModernJoint(NeowTransformationComposite p, FamilyPhysicalQuoteRequest g)
+    {
+        var device = Runtime.SearchPerformanceProfileFoundation.CaptureKnownDeviceIdentity();
+        if (!p.MatchesModernReferenceShape || p.Gpu.NumericalVariant != NeowGpuNumericalVariant.NativeFloat64 ||
+            !p.Gpu.UsesStagedDense || p.Gpu.FixedPairLocalSourceMask < 0 || g.CompactInput || g.PrivateInput || g.PrivateOutput ||
+            !FamilyPhysicalQuote.AdmittedRequest(g) || g.MeanInputPopulation != NeowFamilyGpuExecutor.Capacity ||
+            device.RenderingBackend != "d3d12" || device.GpuIdentity != "NVIDIA GeForce RTX 4060 Laptop GPU") return null;
+
+        // P07c Native D3D12, two 512-full-window runs, 8,589,934,592 roots each.
+        // Largest warm dispatch+sync total 1230.9124ms less .15ms per call
+        // gives .13435ns/root. Cold GPU owner ready to first submit was 741ms.
+        return new("N.Neow", "NT.Modern113.Named3.SharedOrders.Dense.20261114.v1", .135, NeowFamilyGpuExecutor.Capacity, 800,
+            "NT.OwnedWork.20261114.v1;Source=p07c-joint-fused;Reference=RTX4060Laptop_D3D12;Modern113FoolA10AllUnlocks;" +
+            "NAndTCoverage;ActualRankMaps;NamedThree;StagedDenseFullWindow;PublicOnly;ColdFamilySetup=800ms;HostTransportOutside;" +
+            "CurrentGpuRotationRevision=" + GpuRngRotation.Revision,
+            PublicTransportClass: "LargeResidentAppend32") { LocalCostSource = "LocalMeasurement" };
     }
 
     internal static FamilyPhysicalQuote? Transform(TransformationAggregateNumericalPlan p,

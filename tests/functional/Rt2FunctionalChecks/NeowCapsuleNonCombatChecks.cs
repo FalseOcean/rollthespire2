@@ -50,6 +50,27 @@ internal static class NeowCapsuleNonCombatChecks
         Check(HasRemainder(unspecified) && HasRemainder(upgrade) && HasRemainder(incomplete),
             "unbound contents, upgrade pickup and missing bag authority stay conservative");
 
+        var leafyResult = new NeowStructuredEffectSearchCondition(Relics.LeafyPoultice,
+            NeowStructuredConditionKind.ExactUnorderedPair, NeowStructuredEffectScope.TransformResults,
+            NeowStructuredOutputKind.Card, [new ModelKey("CARD", "BENCH_CHARACTER_0"), new ModelKey("CARD", "BENCH_CHARACTER_1")]);
+        var leafyQuery = query with { StructuredOpeningEffects = [curse, coin, leafyResult] };
+        var leafyCoin = Compile(leafyQuery, authority);
+        var leafyUnknown = Compile(leafyQuery with { StructuredOpeningEffects = [curse, leafyResult] }, authority);
+        var leafyUpgrade = Compile(leafyQuery with { StructuredOpeningEffects = [curse, leafyResult,
+            coin with { OutputKeys = [Ordinary.Whetstone] }] }, authority);
+        var leafyMissing = Compile(leafyQuery, missingSources);
+        Check(leafyCoin.LeafyBonesInitialTransformInvariant, "Old Coin preserves Leafy inputs in both orders");
+        Check(!leafyUnknown.LeafyBonesInitialTransformInvariant && !leafyUpgrade.LeafyBonesInitialTransformInvariant &&
+            !leafyMissing.LeafyBonesInitialTransformInvariant, "unproved capsule contents cannot hoist Leafy");
+        foreach (var order in new[] { new[] { Relics.LeafyPoultice, Relics.SmallCapsule },
+                     new[] { Relics.SmallCapsule, Relics.LeafyPoultice } })
+        {
+            var ordered = leafyQuery with { OpeningRouteRelicRequirement =
+                new(Relics.NeowsBones, order, BonesRouteOrderMode.ExactOrder) };
+            Check(Compile(ordered, authority).LeafyBonesInitialTransformInvariant,
+                "fully bound exact order preserves Leafy inputs");
+        }
+
         byte leafy = Beta110FastRelicCatalog.LeafyPoultice, small = Beta110FastRelicCatalog.SmallCapsule;
         int rejected = 0;
         for (ulong root = 0; root < 64; root++)

@@ -1,4 +1,5 @@
 using RolltheSpire2.Core.Identity;
+using RolltheSpire2.Compatibility;
 
 namespace RolltheSpire2.Search.Contracts;
 
@@ -12,8 +13,12 @@ public sealed record TreasureRelicSearchCondition(
     IReadOnlyList<ModelKey?> Slots)
 {
     public const int MaximumOrdinal = 2;
+    internal const string ClaimSequenceRevision = ":treasure-claim-v1";
     public static TreasureRelicSearchCondition Empty { get; } = new(1, 1, TreasureRelicOrderMode.Ordered, [null, null]);
     public bool IsEmpty => !Slots.Take(Count).Any(key => key.HasValue);
+    internal bool UsesPriorClaim(RngSemanticProfileId profile) =>
+        RuntimeProfilePolicies.SingleplayerTreasureAwardShuffleCalls(profile) != 0 && IsValid && !IsEmpty &&
+        (StartOrdinal == 2 || Count == 2 && (OrderMode == TreasureRelicOrderMode.Unordered || Slots[1].HasValue));
     public bool IsValid => StartOrdinal is >= 1 and <= MaximumOrdinal && Count is >= 1 and <= MaximumOrdinal &&
         StartOrdinal + Count - 1 <= MaximumOrdinal && Enum.IsDefined(OrderMode) &&
         Slots is not null && Slots.Count >= Count && Slots.Count <= MaximumOrdinal &&

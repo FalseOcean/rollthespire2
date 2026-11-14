@@ -92,6 +92,7 @@ public static class TreasureRelicPredictor
 
         PredictionPrecision precision = exact ? PredictionPrecision.Exact : PredictionPrecision.Partial;
         var rng = new Xoshiro256StarStar(profile.DeriveNamedStreamSeed(rootHash, TreasureRelicPredictionResult.RngStream));
+        int awardCalls = RuntimeProfilePolicies.SingleplayerTreasureAwardShuffleCalls(initialSequences.RngSemantics);
         bool silverCrucible = acquiredOpeningRelics.Contains(new ModelKey("RELIC", "SILVER_CRUCIBLE"));
         var output = new TreasureRelicEntryResult[count];
         for (int position = 0; position < count; position++)
@@ -106,6 +107,8 @@ public static class TreasureRelicPredictor
             int rolledLane = roll < .5f ? 0 : roll < .83f ? 1 : 2;
             int actualLane = rolledLane;
             while (actualLane < bags.Length && bags[actualLane].Count == 0) actualLane++;
+            // Every generated reward in this reference is claimed, including Circlet.
+            rng.Advance(awardCalls);
             if (actualLane == bags.Length)
             {
                 output[position] = new(position + 1, new ModelKey("RELIC", "CIRCLET"), Kinds[rolledLane].ToString(),

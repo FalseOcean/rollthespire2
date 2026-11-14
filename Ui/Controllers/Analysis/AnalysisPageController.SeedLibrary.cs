@@ -26,6 +26,7 @@ internal sealed partial class AnalysisPageController
 
     internal void ClearSeedLibraryOverrides(bool preserveResultOrigin = false)
     {
+        ClearLiveRunPredictionBinding();
         _capturedRunInformation = null;
         _capturedRunInformationSeed = "";
         _page.SetCapturedRunParty(0);
@@ -78,14 +79,14 @@ internal sealed partial class AnalysisPageController
     }
 
     internal void OpenPredictionContext(string rawSeed, SeedLibraryContext context)
-        => OpenPredictionContext(rawSeed, context, capturedRun: false);
+        => OpenPredictionContext(rawSeed, context, null);
 
-    internal void OpenRunPredictionContext(string rawSeed, SeedLibraryContext context)
-        => OpenPredictionContext(rawSeed, context, capturedRun: true);
+    internal void OpenRunPredictionContext(string rawSeed, SeedLibraryContext context, LiveRunPredictionPremises premises)
+        => OpenPredictionContext(rawSeed, context, premises);
 
-    private void OpenPredictionContext(string rawSeed, SeedLibraryContext context, bool capturedRun)
+    private void OpenPredictionContext(string rawSeed, SeedLibraryContext context, LiveRunPredictionPremises? premises)
     {
-        if (capturedRun)
+        if (premises is not null)
             SeedLibraryStore.ValidateCapturedRunContext(context, Bootstrap.RuntimeAuthorityEnvironment.Current.Authority);
         else
             SeedLibraryStore.ValidateRuntimeReferences(context, Bootstrap.RuntimeAuthorityEnvironment.Current.Authority);
@@ -95,7 +96,9 @@ internal sealed partial class AnalysisPageController
         var characters = RuntimeCharacterCatalogCapture.Capture().EffectiveCharacters;
         if (context.Players.Any(p => !characters.Contains(p.Character))) throw new InvalidOperationException("SeedLibrary.CharacterUnavailable");
         ClearSeedLibraryOverrides();
-        if (capturedRun && context.Players.Count > SeedPredictionInputLimits.MaximumPlayers)
+        if (context.Mode == WorldGameMode.Singleplayer) SetPartyDraft(null);
+        if (premises is not null) SetLiveRunPredictionBinding(seed, context, premises);
+        if (premises is not null && context.Players.Count > SeedPredictionInputLimits.MaximumPlayers)
         {
             _capturedRunInformation = context;
             _capturedRunInformationSeed = seed;
@@ -107,7 +110,6 @@ internal sealed partial class AnalysisPageController
         _strictLibrarySeed = seed;
         if (context.Mode == WorldGameMode.Singleplayer)
         {
-            SetPartyDraft(null);
             var player = context.Players[0];
             _librarySoloUnlocks = LobbyUnlockReadout.Copy(player.Unlocks);
             _librarySoloUnlockSource = player.UnlockSource;

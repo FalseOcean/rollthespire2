@@ -29,6 +29,7 @@ public sealed record TreasureRelicEntryResult(
 /// Ordinary non-tutorial single-player chest opportunities, before floor 41,
 /// with no intervening shared-bag consumers beyond the supplied actual opening
 /// acquisitions. Ordinals count encountered treasure rooms, including ? chests.
+/// Every generated chest relic is claimed. RngCallCount includes allocation.
 /// Opening acquisitions remain separate evidence; they are never chest awards.
 /// </summary>
 public sealed record TreasureRelicPredictionResult(
@@ -48,7 +49,8 @@ public sealed record TreasureRelicPredictionResult(
 
 /// <summary>
 /// Initial-order reference only: nine ordinary non-tutorial solo chest draws,
-/// holding eligibility before floor 41 and ignoring opening/earlier acquisitions.
+/// claiming each generated chest relic, holding eligibility before floor 41,
+/// and ignoring acquisitions from opening and other rooms.
 /// This is separate from the first-two-chest search/prediction contract.
 /// </summary>
 public sealed record InitialTreasureRelicPreviewResult(
