@@ -16,6 +16,20 @@ internal sealed record SearchEnvironmentComparison(SearchEnvironmentComparisonSt
 internal static class SearchEnvironmentIdentity
 {
     internal const int CurrentVersion = 3;
+    internal const string RngRulesChanged = "RngRulesChanged";
+
+    internal static string RngRuleIdentity(RuntimeVersionResolution resolution)
+    {
+        // Before rule identity was saved, .113.0 used Modern113 and other
+        // searchable versions used Modern110. Preserve those stored identities.
+        var previous = resolution.GameVersionIdentity.ExactVersion == RuntimeVersionCompatibility.Beta113Version
+            ? RngSemanticProfileId.Modern113 : RngSemanticProfileId.Modern110;
+        return resolution.AllowsProductionSearch && resolution.SemanticProfileId != previous
+            ? resolution.SemanticProfileId.ToString() : "";
+    }
+
+    internal static bool RngRulesDiffer(string? first, string? second) => (first ?? "") != (second ?? "");
+
     internal static bool IsComparable(SearchEnvironmentSignature? signature) => signature is
         { IdentityVersion: CurrentVersion, CaptureComplete: true, Fingerprint.Length: > 0 };
 
@@ -24,13 +38,18 @@ internal static class SearchEnvironmentIdentity
         var reasons = new List<string>();
         var beforeVersion = GameVersionIdentity.From(previous?.GameVersionIdentity);
         var afterVersion = GameVersionIdentity.From(current?.GameVersionIdentity);
-        if (beforeVersion.IsExact && afterVersion.IsExact && beforeVersion != afterVersion)
-            reasons.Add("GameVersionChanged");
+        if (beforeVersion.IsExact && afterVersion.IsExact)
+        {
+            if (beforeVersion != afterVersion) reasons.Add("GameVersionChanged");
+            else if (previous is { IdentityVersion: CurrentVersion } && current is { IdentityVersion: CurrentVersion } &&
+                RngRulesDiffer(previous.RngRuleIdentity, current.RngRuleIdentity)) reasons.Add(RngRulesChanged);
+        }
         if (!IsComparable(previous) || !IsComparable(current))
         {
             if (!IsComparable(current)) reasons.Add("CurrentEnvironmentUnavailable");
             if (!IsComparable(previous)) reasons.Add("HistoricalEnvironmentUnavailable");
-            return new(reasons.Contains("GameVersionChanged") ? SearchEnvironmentComparisonStatus.Changed : SearchEnvironmentComparisonStatus.Unknown,
+            bool knownDifference = reasons.Contains("GameVersionChanged") || reasons.Contains(RngRulesChanged);
+            return new(knownDifference ? SearchEnvironmentComparisonStatus.Changed : SearchEnvironmentComparisonStatus.Unknown,
                 [..reasons, "EnvironmentComponentsUnavailable"], current?.CaptureIssue ?? "");
         }
         void Difference(string before, string after, string reason)
@@ -74,6 +93,7 @@ internal static class SearchEnvironmentIdentity
             ("PotionCatalogChanged", false) => "药水属性、池或顺序",
             ("WorldCatalogChanged", false) => "世界内容、属性或顺序",
             ("UnlockStateChanged", false) => "解锁状态",
+            (RngRulesChanged, false) => "随机规则（旧结果仅保留作历史记录）",
             ("TreasureClaimRuleChanged", false) => "宝箱领取规则（旧结果仅保留作历史记录）",
             ("GameVersionChanged", true) => "game version",
             ("CharacterCatalogChanged", true) => "character content or order",
@@ -82,6 +102,7 @@ internal static class SearchEnvironmentIdentity
             ("PotionCatalogChanged", true) => "potion properties, pools or order",
             ("WorldCatalogChanged", true) => "world content, properties or order",
             ("UnlockStateChanged", true) => "unlock state",
+            (RngRulesChanged, true) => "RNG rules (old results are retained as history)",
             ("TreasureClaimRuleChanged", true) => "treasure claim rules (old results are retained as history)",
             _ => english ? "game content" : "游戏内容"
         };
@@ -100,8 +121,8 @@ internal static class SearchEnvironmentIdentity
 
 internal static partial class SearchEnvironmentSignatureBuilder
 {
-    // Only captured prediction inputs participate. Module/build identities and
-    // confidence/evidence labels remain diagnostics, never environment identity.
+    // Captured prediction inputs and their RNG rules participate. Module/build
+    // identities and confidence/evidence labels remain diagnostics.
     internal static SearchEnvironmentSignature FromCapturedInputs(string gameVersion, RuntimeAuthoritySnapshot runtime,
         NeowEffectAuthoritySnapshot? effect, Beta109WorldGenerationSnapshot? world, SerializableUnlockState unlocks,
         string moduleDiagnostics = "", IReadOnlyList<CharacterStartingDeckSnapshot>? startingDecks = null)
@@ -172,11 +193,16 @@ internal static partial class SearchEnvironmentSignatureBuilder
             startingDecks.Select(d => d.CharacterKey).ToHashSet().SetEquals(world.AllCharactersInSourceOrder);
         bool complete = GameVersionIdentity.From(gameVersion).IsExact && semantic.Complete && effect is not null && world is not null && decksComplete &&
             runtime.CurrentUnlockState.Count > 0 && runtime.CurrentUnlockState.All(d => d.StateComplete);
+        string rngRuleIdentity = SearchEnvironmentIdentity.RngRuleIdentity(RuntimeVersionCompatibility.Resolve(gameVersion));
+        string fingerprint = !complete ? "" : rngRuleIdentity.Length == 0
+            ? IdentityHash(new { IdentityVersion = SearchEnvironmentIdentity.CurrentVersion, gameVersion, catalog, unlock })
+            : IdentityHash(new { IdentityVersion = SearchEnvironmentIdentity.CurrentVersion, gameVersion, catalog, unlock, rngRuleIdentity });
         return new SearchEnvironmentSignature {
-            GameVersionIdentity = gameVersion, CharacterCatalogFingerprint = characters, CardCatalogFingerprint = cards,
+            GameVersionIdentity = gameVersion, RngRuleIdentity = rngRuleIdentity,
+            CharacterCatalogFingerprint = characters, CardCatalogFingerprint = cards,
             RelicCatalogFingerprint = relics, PotionCatalogFingerprint = potions, WorldCatalogFingerprint = worldCatalog,
             UnlockFingerprint = unlock, CatalogFingerprint = catalog, RuntimeContentFingerprint = content,
-            Fingerprint = complete ? IdentityHash(new { IdentityVersion = SearchEnvironmentIdentity.CurrentVersion, gameVersion, catalog, unlock }) : "",
+            Fingerprint = fingerprint,
             RuntimeModuleDiagnostics = moduleDiagnostics, CaptureComplete = complete,
             CaptureIssue = complete ? "" : !decksComplete ? "CharacterStartingDecksIncomplete" :
                 semantic.Complete ? "CapturedEnvironmentInputsIncomplete" : semantic.EvidenceCode

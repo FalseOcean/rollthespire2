@@ -1109,6 +1109,7 @@
   "ui1.preset.references_unavailable": "Currently unavailable:",
   "workflow.unfiltered_warning": "These are raw seeds: no filter was available and candidate checking was skipped. None of the selected conditions participated in filtering. These seeds are not confirmed matches.",
   "workflow.treasure_history_warning": "This search used the previous treasure claim rule. Its results and progress are historical. Start the query again to check with the corrected rule.",
+  "workflow.rng_history_warning": "This search used the previous RNG rules. Its results and progress are historical. Start the query again to check with the updated rules.",
   "workflow.verified": "Confirmed",
   "workflow.validate": "Validate",
   "workflow.validation_passed": "Confirmed: this candidate meets the selected conditions under this query's premises.",

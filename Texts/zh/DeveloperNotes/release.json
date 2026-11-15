@@ -4,6 +4,14 @@
   "Blocks": [
     {
       "Type": "Heading",
+      "Text": "RolltheSpire2 1.4.5"
+    },
+    {
+      "Type": "Callout",
+      "Text": "修复新游戏版本误用旧随机数规则导致的预测与筛选偏差。"
+    },
+    {
+      "Type": "Heading",
       "Text": "RolltheSpire2 1.4.4"
     },
     {

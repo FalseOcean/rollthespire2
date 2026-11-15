@@ -1109,6 +1109,7 @@
   "ui1.preset.references_unavailable": "当前缺少：",
   "workflow.unfiltered_warning": "这些是原始种子：本次没有可用的过滤实现，且已跳过候选检查。所有已选条件都未参与筛选，不能据此认为种子符合需求。",
   "workflow.treasure_history_warning": "这次搜索使用了旧的宝箱领取规则。结果和进度仅供回顾，重新启动搜索即可按修正后的规则检查。",
+  "workflow.rng_history_warning": "这次搜索使用了旧的随机规则。结果和进度仅供回顾，重新启动搜索即可按更新后的规则检查。",
   "workflow.verified": "已确认",
   "workflow.validate": "校验",
   "workflow.validation_passed": "已确认：此候选在本次查询前提下满足所选条件。",

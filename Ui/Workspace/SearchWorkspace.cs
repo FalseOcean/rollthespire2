@@ -144,11 +144,13 @@ internal sealed partial class SearchWorkspace
         _workspace = prepared.Workspace;
         InstallBatch(prepared.Batch);
         start ??= prepared.Batch.Start?.Resolution;
-        if (start is { CursorEntrance: { } entrance } && _cursor.GameVersionIdentity != start.CursorGameVersion)
+        if (start is { CursorEntrance: { } entrance } && (_cursor.GameVersionIdentity != start.CursorGameVersion ||
+            SearchEnvironmentIdentity.RngRulesDiffer(_cursor.RngRuleIdentity, start.CursorRngRuleIdentity)))
         {
             if (GameVersionIdentity.From(_cursor.GameVersionIdentity).IsExact)
                 _cursor.WrapCount = 0;
             _cursor.GameVersionIdentity = start.CursorGameVersion;
+            _cursor.RngRuleIdentity = start.CursorRngRuleIdentity;
             _cursor.NextCursor = entrance;
             MarkCursorDirty();
         }
@@ -348,7 +350,8 @@ internal sealed partial class SearchWorkspace
     private static SearchCursorDocument CopyCursor(SearchCursorDocument cursor) => new()
     { Initialized = cursor.Initialized, PersistentOrigin = cursor.PersistentOrigin,
         NextCursor = cursor.NextCursor, WrapCount = cursor.WrapCount,
-        PendingOriginChangeId = cursor.PendingOriginChangeId, GameVersionIdentity = cursor.GameVersionIdentity };
+        PendingOriginChangeId = cursor.PendingOriginChangeId, GameVersionIdentity = cursor.GameVersionIdentity,
+        RngRuleIdentity = cursor.RngRuleIdentity };
 
     private void SetPersistentOriginOrdinal(ulong ordinal, string source)
     {

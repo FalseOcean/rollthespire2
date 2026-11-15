@@ -176,6 +176,9 @@ internal static class PersistenceChecks
                 "Identity normalization does not mutate captured unlock data");
             Check(SearchEnvironmentIdentity.Compare(original, Capture("same-modules", "0.112.0")).Reasons.Contains("GameVersionChanged"),
                 "The actual game version remains an environment component");
+            Check(new[] { "0.111.0", "0.112.0", "0.113.0" }.All(version => Capture("same-modules", version).RngRuleIdentity.Length == 0) &&
+                new[] { "0.113.1", "0.114.0" }.All(version => Capture("same-modules", version).RngRuleIdentity == nameof(RngSemanticProfileId.Modern113)),
+                "Only versions whose RNG mapping differs from its unstamped mapping acquire a new environment identity");
             var oldJson = JsonSerializer.SerializeToNode(original)!.AsObject(); oldJson.Remove("IdentityVersion");
             var legacy = oldJson.Deserialize<SearchEnvironmentSignature>()!;
             Check(legacy.IdentityVersion == 0 && SearchEnvironmentIdentity.Compare(legacy, original).Status == SearchEnvironmentComparisonStatus.Unknown,
@@ -1251,6 +1254,69 @@ internal static class PersistenceChecks
             Check(store.ResolveSearchStart(second, Plan(second, store.CurrentNextCursorSeed)).Plan.CanonicalStartSeed == Beta110SeedCodec.FormatOrdinal(8) &&
                 store.ResultCountForQuery(second) == 0 && store.PendingHistories.Single().Id == history.Id,
                 "Later resumes use the corrected checkpoint and retain the old pending record");
+        });
+
+        Case("same-version-rng-rule-history-and-cursor", directory =>
+        {
+            const string version = "0.113.1";
+            var authority = RolltheSpire2.Tests.FastSearch.Beta110FastSearchFixtureAuthority.CreateBeta111(Character, 10, 0, 1, version);
+            var context = SearchContextFactory.From(RuntimeProfileId.Beta111, Character, 10, authority,
+                new(version, version, "beta", "fixture", true, ""), AncientOptionConditionProfile.BroadDefault);
+            var environment = new SearchEnvironmentSignature { Fingerprint = "same-runtime", GameVersionIdentity = version, CaptureComplete = true };
+            var corrected = environment.Snapshot();
+            corrected.RngRuleIdentity = nameof(RngSemanticProfileId.Modern113);
+            var previousQuery = Workbench();
+            var unrelated = previousQuery with { Query = SearchQuery.Empty };
+            PreparedSearch Plan(WorkbenchSearchDraft draft, string seed) => SearchPreparationCompiler.Compile(
+                SearchCompiler.Compile(draft.Query, context), new(seed, 1, 1, 1)).Plan!;
+
+            var store = Workspace(directory);
+            store.EnsureEnvironment(environment);
+            Check(store.TrySetPersistentOrigin("000000000003", out var origin, out _), "Set the original entrance");
+            store.Cursor.PendingOriginChangeId = "";
+            var old = store.PrepareResultWorkspace("old-semantic", previousQuery);
+            store.BindPreparedResultWorkspace(old);
+            store.AppendResult(PersistableCandidate("000000000011"), "old-semantic");
+            var pending = new SearchPendingCandidate(5, "000000000005", "Exact", "ExactFailed", "original exception",
+                "old-semantic", "old-snapshot", Captured);
+            var oldFrontier = new SearchContinuationSnapshot("old-semantic", "old-snapshot", 17, [pending], [11UL])
+                { ContinuationFingerprint = "v1:old-rules" };
+            var progress = new SearchProgressSnapshot(SearchRunState.Completed, 14, 1, 14, 1, 0, 0, SearchDisposition.Match, "", false);
+            store.SaveCheckpoint(progress, oldFrontier, 17);
+            store.FlushAll();
+
+            store = Workspace(directory);
+            store.EnsureEnvironment(corrected);
+            var history = store.RecentQueries.Single();
+            Check(store.Cursor.GameVersionIdentity == version && store.Cursor.RngRuleIdentity.Length == 0 &&
+                store.EnvironmentResetReason == SearchEnvironmentIdentity.RngRulesChanged && store.DisplaysPreviousRngRules &&
+                store.ResultCountForQuery(previousQuery) == 0 && store.PendingHistories.Single().Id == history.Id,
+                "A same-game rules change preserves the old result and recovery record under historical authority");
+            var first = store.PrepareSearchStart(unrelated, Plan(unrelated, store.CurrentNextCursorSeed), null);
+            var firstStart = first.Batch.Start!.Resolution;
+            Check(firstStart.Continuation is null && firstStart.Plan.CanonicalStartSeed == origin && firstStart.CursorEntrance == 3,
+                "Even an unsaved query cannot reuse the previous RNG rules' global cursor");
+            store.BindPreparedResultWorkspace(first);
+            Check(store.CurrentNextCursorOrdinal == 3 && store.Cursor.RngRuleIdentity == corrected.RngRuleIdentity,
+                "The corrected cursor starts at the user's saved origin and adopts the selected rules");
+            store.SaveCheckpoint(progress, firstStart.InitialContinuation! with { NextOrdinal = 31 }, 31);
+            store.FlushAll();
+
+            store = Workspace(directory);
+            Check(store.Cursor.RngRuleIdentity == corrected.RngRuleIdentity && store.CurrentNextCursorOrdinal == 31,
+                "Reload keeps the rules and completed global cursor together");
+            var redo = store.PrepareSearchStart(previousQuery, Plan(previousQuery, store.CurrentNextCursorSeed), null);
+            var redoStart = redo.Batch.Start!.Resolution;
+            Check(redoStart.Continuation is null && redoStart.Plan.CanonicalStartSeed == origin && redoStart.InitialContinuation?.NextOrdinal == 3 &&
+                redo.History?.Id != history.Id && redo.Batch.Results.Count == 0 && history.Results.Single().EffectiveValidationDisposition == SearchDisposition.Match &&
+                history.Continuation?.PendingCandidates.Single() == pending,
+                "The affected query scans from the origin with an empty result batch while its old result and pending cause remain available");
+            store.BindPreparedResultWorkspace(redo);
+            store.FlushAll();
+            store = Workspace(directory);
+            var resume = store.ContinuationFor(previousQuery, Plan(previousQuery, store.CurrentNextCursorSeed));
+            Check(resume?.NextOrdinal == 3 && resume.PendingCandidates.Count == 0 && resume.PublishedOrdinals.Count == 0,
+                "Cancellation before the first corrected checkpoint preserves its entrance without old ACKs or pending work");
         });
 
         Case("pending-atomic-result-cursor-handoff", directory =>

@@ -149,7 +149,12 @@ public static class RuntimeVersionCompatibility
     public const string LatestProductionCompatibleVersion = Beta111Version;
     public const string LatestSourceAuditedVersion = Beta111Version;
     public const string LatestSemanticProfileBaseVersion = Beta110Version;
-    public const string LatestKnownProfileVersion = Beta111Version;
+    public const string LatestKnownProfileVersion = Beta113Version;
+
+    // Newer unknown builds inherit the newest known rule set that predates them.
+    // This does not upgrade compatibility confidence or the verified baseline.
+    private static readonly string[] ProvisionalRuleReferences =
+        [LatestKnownProfileVersion, Beta111Version];
 
     public static bool IsStable107(string? normalizedGameVersion) =>
         string.Equals(normalizedGameVersion, Stable107Version, StringComparison.Ordinal);
@@ -233,20 +238,23 @@ public static class RuntimeVersionCompatibility
                 "provisional-versioned-rng:" + Beta113Version);
         }
 
-        if (TryParseSemanticVersion(normalized, out Version detected) &&
-            TryParseSemanticVersion(LatestKnownProfileVersion, out Version latest) &&
-            detected > latest)
+        if (TryParseSemanticVersion(normalized, out Version detected))
         {
-            return new RuntimeVersionResolution(
-                identity,
-                RuntimeProfileId.Beta111,
-                RngSemanticProfileId.Modern110,
-                CompatibilityConfidence.ProvisionalUnverified,
-                CompatibilityDomainMask.None,
-                RuntimeVersionSupportKind.LatestKnownFallback,
-                normalized,
-                LatestKnownProfileVersion,
-                $"provisional-latest-known-semantic-reuse:{normalized}->{LatestKnownProfileVersion};semantic={RngSemanticProfileId.Modern110}");
+            foreach (string referenceVersion in ProvisionalRuleReferences)
+            {
+                if (!TryParseSemanticVersion(referenceVersion, out Version reference) || detected <= reference)
+                    continue;
+                RuntimeVersionResolution known = Resolve(referenceVersion);
+                return known with
+                {
+                    GameVersionIdentity = identity,
+                    Confidence = CompatibilityConfidence.ProvisionalUnverified,
+                    SupportKind = RuntimeVersionSupportKind.LatestKnownFallback,
+                    DetectedVersion = normalized,
+                    ReferenceVersion = referenceVersion,
+                    EvidenceCode = $"provisional-latest-known-semantic-reuse:{normalized}->{referenceVersion};semantic={known.SemanticProfileId}"
+                };
+            }
         }
 
         return RuntimeVersionResolution.Unsupported(normalized, "unsupported-version:" + normalized);

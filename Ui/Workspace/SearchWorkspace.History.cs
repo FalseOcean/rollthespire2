@@ -42,6 +42,8 @@ internal sealed partial class SearchWorkspace
                 ? SeedQueryAssociationKind.VerifiedFromSearch : SeedQueryAssociationKind.LegacyUnspecified,
             record.EnvironmentFingerprint, record.Id);
     private QueryHistoryEntry? ActiveHistory => _workspace.QueryHistory.FirstOrDefault(q => q.Id == _workspace.ActiveHistoryId);
+    internal bool DisplaysPreviousRngRules => ActiveHistory is { } history &&
+        EnvironmentComparison(history).Reasons.Contains(SearchEnvironmentIdentity.RngRulesChanged);
     internal bool DisplaysPreviousTreasureRules => ActiveHistory is { } history && QueryHistoryIdentity.UsesPreviousTreasureRules(history);
 
     internal IReadOnlyList<QueryHistoryEntry> RecentQueries => _workspace.QueryHistory.Where(q => q.RunCount > 0)

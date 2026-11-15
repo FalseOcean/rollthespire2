@@ -85,23 +85,31 @@ internal sealed partial class SearchWorkspace
 
     internal sealed record SearchStartResolution(PreparedSearch Plan,
         SearchContinuationSnapshot? Continuation, string ExplicitOriginChangeId,
-        SearchContinuationSnapshot? InitialContinuation = null, string CursorGameVersion = "", ulong? CursorEntrance = null);
+        SearchContinuationSnapshot? InitialContinuation = null, string CursorGameVersion = "", string CursorRngRuleIdentity = "",
+        ulong? CursorEntrance = null);
 
     internal SearchStartResolution ResolveSearchStart(global::RolltheSpire2.Ui.Workspace.WorkbenchSearchDraft draft, PreparedSearch plan)
     {
         var continuation = ContinuationFor(draft, plan);
         var version = GameVersionIdentity.From(plan.Model.Detection.NormalizedVersion);
         var cursorVersion = GameVersionIdentity.From(_cursor.GameVersionIdentity);
+        string rngRuleIdentity = SearchEnvironmentIdentity.RngRuleIdentity(plan.Model.Authority.VersionResolution);
+        bool cursorRngRulesChanged = _cursor.Initialized && SearchEnvironmentIdentity.RngRulesDiffer(_cursor.RngRuleIdentity, rngRuleIdentity);
         bool cursorVersionChanged = _cursor.Initialized && version.IsExact && cursorVersion.IsExact && version != cursorVersion;
-        bool bindCursorVersion = version.IsExact && version != cursorVersion;
+        bool bindCursorIdentity = version.IsExact && (version != cursorVersion || cursorRngRulesChanged);
         string explicitOrigin = _cursor.PendingOriginChangeId ?? "";
         var compiled = plan.Model.CompiledSearch;
+        bool restartForRngRules = continuation is null && (cursorRngRulesChanged || HasPreviousScan(draft, record =>
+            record.EnvironmentSignature is { IdentityVersion: SearchEnvironmentIdentity.CurrentVersion } previous &&
+            GameVersionIdentity.From(previous.GameVersionIdentity) == version &&
+            SearchEnvironmentIdentity.RngRulesDiffer(previous.RngRuleIdentity, rngRuleIdentity)));
         bool restartForTreasure = continuation is null && SearchCompiler.UsesRevisedTreasureClaims(compiled.Context, compiled.NormalizedQuery) &&
-            HasPreviousTreasureScan(draft);
+            HasPreviousScan(draft, QueryHistoryIdentity.UsesPreviousTreasureRules);
+        bool restartForRules = restartForRngRules || restartForTreasure;
         string start = explicitOrigin.Length > 0 ? CurrentPersistentOriginSeed :
             continuation is not null && continuation.NextOrdinal < Beta110SeedCodec.SpaceSize
                 ? Beta110SeedCodec.FormatOrdinal(continuation.NextOrdinal)
-                : cursorVersionChanged || restartForTreasure ? CurrentPersistentOriginSeed : plan.CanonicalStartSeed;
+                : cursorVersionChanged || restartForRules ? CurrentPersistentOriginSeed : plan.CanonicalStartSeed;
         if (plan.CanonicalStartSeed != start)
         {
             // A query resumes its own durable frontier unless the player has
@@ -113,7 +121,7 @@ internal sealed partial class SearchWorkspace
             plan = execution.Plan;
         }
         SearchContinuationSnapshot? initial = null;
-        if (explicitOrigin.Length > 0 || restartForTreasure)
+        if (explicitOrigin.Length > 0 || restartForRules)
         {
             // Persist the new scan's entrance together with consuming the setting,
             // even if the worker has not produced its first checkpoint yet.
@@ -124,16 +132,16 @@ internal sealed partial class SearchWorkspace
                 UnreceivedOrdinals = continuation?.UnreceivedOrdinals ?? []
             };
         }
-        ulong? entrance = bindCursorVersion && Beta110SeedCodec.TryParseOrdinal(start, out ulong ordinal, out _, out _) ? ordinal : null;
-        return new(plan, continuation, explicitOrigin, initial, version.ExactVersion, entrance);
+        ulong? entrance = bindCursorIdentity && Beta110SeedCodec.TryParseOrdinal(start, out ulong ordinal, out _, out _) ? ordinal : null;
+        return new(plan, continuation, explicitOrigin, initial, version.ExactVersion, rngRuleIdentity, entrance);
     }
 
-    private bool HasPreviousTreasureScan(WorkbenchSearchDraft draft)
+    private bool HasPreviousScan(WorkbenchSearchDraft draft, Func<QueryHistoryEntry, bool> usesPreviousRules)
     {
         string key = QueryHistoryIdentity.Key(draft);
         return _workspace.QueryHistory.Any(record => record.QueryKey == key &&
             (record.RunCount > 0 || record.Continuation is not null || record.Results.Count > 0) &&
-            QueryHistoryIdentity.UsesPreviousTreasureRules(record));
+            usesPreviousRules(record));
     }
 
     internal SearchContinuationSnapshot? ContinuationFor(global::RolltheSpire2.Ui.Workspace.WorkbenchSearchDraft draft,

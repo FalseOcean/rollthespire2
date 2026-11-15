@@ -21,6 +21,7 @@ internal static partial class SearchEnvironmentSignatureBuilder
             return new SearchEnvironmentSignature
             {
                 GameVersionIdentity = runtime.Detection.DisplayVersion,
+                RngRuleIdentity = SearchEnvironmentIdentity.RngRuleIdentity(RuntimeVersionCompatibility.Resolve(runtime.Detection)),
                 CaptureComplete = false,
                 CaptureIssue = issue + ";versionEvidence=" + runtime.Detection.Evidence
             };
@@ -51,6 +52,7 @@ internal static partial class SearchEnvironmentSignatureBuilder
     internal static SearchEnvironmentSignature CaptureFailure(ModRuntimeSnapshot runtime, Exception ex) => new()
     {
         GameVersionIdentity = GameVersionIdentity.From(runtime.Detection.DisplayVersion).ToString(),
+        RngRuleIdentity = SearchEnvironmentIdentity.RngRuleIdentity(RuntimeVersionCompatibility.Resolve(runtime.Detection)),
         CaptureComplete = false, CaptureIssue = ex.ToString(), Fingerprint = string.Empty
     };
 

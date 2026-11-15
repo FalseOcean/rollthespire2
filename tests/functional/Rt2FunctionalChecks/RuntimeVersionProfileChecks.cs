@@ -78,6 +78,20 @@ internal static class RuntimeVersionProfileChecks
             opening113.SemanticProfileId == RngSemanticProfileId.Modern113 &&
             opening113.SemanticProfileId != RuntimeVersionCompatibility.Resolve("0.111.0").SemanticProfileId,
             "0.113 uses its own opening rules while remaining provisional");
+        foreach (string futureVersion in new[] { "0.113.1", "0.113.9", "0.114.0", "1.0.0" })
+        {
+            var future = RuntimeVersionCompatibility.Resolve(futureVersion);
+            Check(future.IsProvisional && future.AllowsProductionSearch && !future.RuntimeAccepted &&
+                future.SupportKind == RuntimeVersionSupportKind.LatestKnownFallback &&
+                future.GameVersionIdentity.ExactVersion == futureVersion &&
+                future.ReferenceVersion == RuntimeVersionCompatibility.LatestKnownProfileVersion &&
+                future.SemanticProfileId == opening113.SemanticProfileId &&
+                RuntimeProfilePolicies.UsesChildStreamShuffle(future.SemanticProfileId),
+                $"Unknown later version {futureVersion} inherits the latest known rules without claiming validation");
+        }
+        Check(resolution.SemanticProfileId == RngSemanticProfileId.Modern110 &&
+            resolution.ReferenceVersion == RuntimeVersionCompatibility.Beta111Version,
+            "An unknown version before the 0.113 rule change retains the earlier rules");
         Check(Base34SeedEnumerator.ZeroSeed(Beta111Profile.Instance) == "000000000000" &&
               new Base34SeedEnumerator(Beta111Profile.Instance, "000000000000").SeedAt(1) == "000000000001",
             "Supported seed enumeration is unchanged");

@@ -4,6 +4,14 @@
   "Blocks": [
     {
       "Type": "Heading",
+      "Text": "RolltheSpire2 1.4.5"
+    },
+    {
+      "Type": "Callout",
+      "Text": "Fixed incorrect predictions and seed filtering caused by newer game versions using older RNG rules."
+    },
+    {
+      "Type": "Heading",
       "Text": "RolltheSpire2 1.4.4"
     },
     {

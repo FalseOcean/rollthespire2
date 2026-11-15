@@ -163,6 +163,7 @@ internal sealed class SearchCursorDocument
     public long WrapCount { get; set; }
     public string PendingOriginChangeId { get; set; } = "";
     public string GameVersionIdentity { get; set; } = "";
+    public string RngRuleIdentity { get; set; } = "";
 }
 
 internal sealed class SearchEnvironmentSignature
@@ -175,6 +176,7 @@ internal sealed class SearchEnvironmentSignature
     public int IdentityVersion { get; set; }
     public int SchemaVersion { get; set; } = SearchWorkspace.SchemaVersion;
     public string GameVersionIdentity { get; set; } = string.Empty;
+    public string RngRuleIdentity { get; set; } = string.Empty;
     public string CharacterCatalogFingerprint { get; set; } = string.Empty;
     public string CardCatalogFingerprint { get; set; } = string.Empty;
     public string RelicCatalogFingerprint { get; set; } = string.Empty;
@@ -197,6 +199,7 @@ internal sealed class SearchEnvironmentSignature
         IdentityVersion == other.IdentityVersion &&
         SchemaVersion == other.SchemaVersion &&
         GameVersionIdentity == other.GameVersionIdentity &&
+        RngRuleIdentity == other.RngRuleIdentity &&
         CharacterCatalogFingerprint == other.CharacterCatalogFingerprint &&
         CardCatalogFingerprint == other.CardCatalogFingerprint &&
         RelicCatalogFingerprint == other.RelicCatalogFingerprint &&
