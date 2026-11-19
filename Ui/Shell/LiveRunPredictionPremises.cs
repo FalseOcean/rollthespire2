@@ -14,8 +14,13 @@ internal sealed record LiveRunPredictionPremises(
     private static readonly Func<IRunState, bool>? ReadIsCustom = typeof(IRunState).GetProperty("IsCustomGame")
         ?.GetMethod?.CreateDelegate<Func<IRunState, bool>>();
 
+    // This also labels maps and saved contexts, which still use Standard's
+    // discovery ordering. Shared RNG initialization alone does not change that.
     internal bool IsStandardReference =>
         GameMode != "Standard" || IsCustomGame || !StartedWithNeow || !Modifiers.IsEmpty;
+
+    internal bool IsOrdinaryDreadOpening =>
+        GameMode == "Dread" && !IsCustomGame && StartedWithNeow && Modifiers.IsEmpty;
 
     internal static LiveRunPredictionPremises Capture(IRunState run)
     {

@@ -6,24 +6,24 @@ English | [简体中文](README.zh-CN.md)
 
 RolltheSpire2 (RT2) is an in-game seed search and analysis mod for **Slay the Spire 2**. Combine your desired conditions, search for matching seeds, and inspect their predicted openings, rewards, maps and more.
 
-This source tree is **1.4.5**. The new compatibility work targets **Slay the Spire 2 v0.113.0 on Windows**.
+This source tree is **1.4.6**. On Windows, the same RT2 installation selects the rules for stable **0.111.1** and beta **0.113.1**.
 
-Fixed incorrect predictions and seed filtering caused by newer game versions using older RNG rules.
+In 0.113, search for ordinary relics in the first 1 to 3 shops, the relic tier rolled by an event, or named transformation results. Click Astrolabe or Pandora’s Box in Seed Information to see the cards in order. Several GPU searches combining Neow, events or multiplayer openings are faster.
 
 ## Future Plans
 
 - Keep adapting to new game content and add reliably predictable outcomes as seed search conditions.
-- Explore new filters made possible by the updated RNG rules, including Pandora’s Box outcomes and the rarity of relics awarded by events.
+- Continue improving commonly used filter combinations to shorten the wait for search results.
 
 ## What you can do
 
 - Search for Neow starts, shop contents, Bosses, Ancient options, events, relics, combat rewards, map conditions and transformation combinations.
 - Configure single-player or **2–4 player** searches, with personal conditions and shared party conditions.
 - Inspect a seed's predicted results, preview maps, draw routes and browse routes tied for the best value of a selected metric.
-- In single-player runs, draw a route on the current Act's map to forecast events, encounters and rewards from the live state, then adjust choices along the route.
+- In single-player on game 0.111.0, draw a route on the current Act's map to forecast events, encounters and rewards, then adjust choices along the route.
 - See condition rarity, search speed and the estimated time for **one result**, with CPU/GPU search selected automatically where supported.
 - Keep favorite seeds with titles and notes, reuse search presets and revisit persistent search history in the Library. Create card collections across characters to exclude unwanted combat card rewards or highlight cards in route forecasts. Developer picks provide ready-to-use seeds.
-- Click supported events in Seed Analysis to see their predicted outcomes. Read the reorganized in-game encyclopedia in English or Chinese.
+- Click supported events in Seed Analysis to see their predicted outcomes. The in-game encyclopedia is available in English and Chinese. It opens the 0.111 or 0.113 edition for your game version and lets you switch manually.
 - At Crystal Sphere, use the optional in-run shortcut to read the current event state, explore compatible rewards and get reveal guidance, including Driftwood rerolls and optional enchantment targets.
 
 ## Download and get started
@@ -48,7 +48,7 @@ The in-game encyclopedia explains individual conditions and prediction assumptio
 
 Multiplayer assumes full unlocks by default; you can explicitly read the actual lobby context. Seed Analysis has its own multiplayer configuration. Its Neow pickups follow **P1 → P2 → P3 → P4**, including the displayed default choices, so earlier choices can affect later players' predictions.
 
-Multiplayer transformation combinations are not included. Live route forecasting and in-run route drawing remain limited to v0.111.0, for the current Act in single-player. Blitz and Dread modes are outside the v0.113.0 adaptation.
+Multiplayer transformation combinations are not included. In-run route forecasting covers the current Act, follows vanilla rules and ignores mod-added relics and effects. Drawing a route does not simulate every action in a complete run.
 
 Map filtering uses full evaluation by default. An optional lossy prefilter on the map page supports CPU/GPU execution for standard vanilla single-player maps: lower and upper bounds for all nine map properties, multiple properties together, and combinations with grouped Monster, Unknown-room, Shop, Elite and Rest-Site route requirements. Supported three-Act daily totals retain their original meaning. It can miss matching seeds; surviving candidates still receive full map evaluation, and the Exact-validation setting remains independent. Other conditions retain full evaluation. Advanced parameters are in Settings.
 

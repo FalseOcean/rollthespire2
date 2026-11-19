@@ -12,6 +12,7 @@ internal static class SearchQueryProjection
         q.RelicSequenceConstraints.Count + (q.TreasureRelics is { } treasure ? treasure.Slots.Take(treasure.Count).Count(k => k.HasValue) : 0) +
         (q.FirstActUnknownEventPrefixCount > 0 ? 1 : 0) + (q.FirstActUnknownMonsterPrefixCount > 0 ? 1 : 0) +
         (q.ElitePrefixResearch is null ? 0 : 1) +
+        (q.FishingRodDrawResearch ? 1 : 0) +
         q.EncounterQueues.Count +
         (q.CombatCardRewards is null ? 0 : 1) + (q.CombatPotionRewards is null ? 0 : 1) +
         (q.CombatCardExclusion is null ? 0 : 1) +
@@ -19,7 +20,7 @@ internal static class SearchQueryProjection
         q.LegacyNeow.NeowRelics.Ban.Count + (q.NeowOfferWhitelist is null ? 0 : 1) +
         q.LegacyWorld.AncientIdentityFilters.Count + q.LegacyWorld.AncientOptionFilters.Count + q.EventResultConditions.Count +
         q.EventSequenceConstraints.Count + q.VariantBossBranches.Count + q.LegacyWorld.BossOrdinalFilters.Count + q.StandardMaps.Count + q.StandardMapRoutes.Count +
-        q.MerchantColorlessSequenceConditions.Count + q.RelicShopSequenceConditions.Count + (q.TransformationAggregate is null ? 0 : 1) +
+        q.MerchantRelicConditions.Count + q.MerchantColorlessSequenceConditions.Count + q.RelicShopSequenceConditions.Count + (q.TransformationAggregate is null ? 0 : 1) +
         q.Players.Sum(p => CountConditions(p.Conditions) + (p.Offers.IsEmpty ? 0 : 1));
 
     internal static QueryHistoryEntry? Find(IEnumerable<QueryHistoryEntry> records, string key, string environment,

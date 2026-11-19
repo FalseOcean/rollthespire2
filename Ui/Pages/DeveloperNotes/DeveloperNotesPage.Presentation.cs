@@ -37,6 +37,7 @@ internal sealed partial class DeveloperNotesPage
         _restoringPosition = true;
         _articleComplete = _presentationReady = _usefulContentReady = _readerMoved = _hasReadableBlock = false;
         _presentationFailure = null;
+        _acknowledgement.Hide();
         _renderer.ClearBlocks();
         _acknowledge.Disabled = true;
         _articlePreparation.Text = Local("本篇内容正在准备，已显示的段落可以阅读。", "Preparing this chapter. Completed paragraphs are available to read.");
@@ -92,6 +93,8 @@ internal sealed partial class DeveloperNotesPage
 
     private void CompleteArticleBuild()
     {
+        if (_buildingChapter is { RequiresAcknowledgement: true } chapter)
+            _renderer.PlaceAcknowledgement(chapter.AcknowledgementBlockIndex(_readVersion(chapter.Id)));
         _buildingChapter = null;
         _articleComplete = true;
         _articlePreparation.Hide();

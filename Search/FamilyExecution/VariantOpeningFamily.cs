@@ -77,6 +77,9 @@ internal static class VariantOpeningFamily
         {
             UsesGpu = true, WindowCapacity = gpu.Capacity * gpu.GroupingK, CpuWorkers = workers,
             PlayersCount = players, InputIdentity = identity, NumericRequirements = gpu.NumericRequirements,
+            FirstDraw = numericalVariant == GpuNumericalVariant.NativeFloat64 &&
+                model.Evaluation.FirstActUnknownEventPrefixCount == 0 && model.Evaluation.FirstActUnknownMonsterPrefixCount == 0
+                ? FamilyAuxiliaryEvidence.Read<FamilyFirstDraw?>(Id, "FirstDraw", plan.CompileFirstDraw, null, identity) : null,
             CpuAlternatives = cpus,
             PerformanceProjection = compact => new(Id, gpu.Revision(compact), "V.Neutral.20261028.v1", 1,
                 "ActualNecessaryVariantAndAdmittedOrdinaryUnknown;CanonicalAbi1Ready;EstimateOnly", true),

@@ -11,6 +11,7 @@ internal sealed partial class MapQuantityInput : HBoxContainer
     private readonly Button _plus;
     private readonly WorkspacePalette _palette;
     private int _value;
+    private bool _hasValue;
     private bool _enabled;
     private bool _updating;
 
@@ -21,7 +22,7 @@ internal sealed partial class MapQuantityInput : HBoxContainer
     }
     internal event Action<int>? ValueChanged;
 
-    internal MapQuantityInput(WorkspacePalette palette, int value, bool enabled)
+    internal MapQuantityInput(WorkspacePalette palette, int? value, bool enabled)
     {
         _palette = palette;
         AddThemeConstantOverride("separation", 4);
@@ -42,7 +43,12 @@ internal sealed partial class MapQuantityInput : HBoxContainer
         AddChild(_input);
         _plus = StepButton("Plus", "+"); AddChild(_plus);
         _enabled = enabled;
-        SetValue(value, notify: false);
+        if (value is { } initial) SetValue(initial, notify: false);
+        else
+        {
+            _input.PlaceholderText = "—";
+            RefreshEnabled();
+        }
         _minus.Pressed += () => { if (_enabled && _value > 0) SetValue(_value - 1); };
         _plus.Pressed += () => { if (_enabled && _value < int.MaxValue) SetValue(_value + 1); };
         _input.TextChanged += OnTextChanged;
@@ -73,7 +79,8 @@ internal sealed partial class MapQuantityInput : HBoxContainer
         bool valid = int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out int parsed);
         SetInputValidity(valid);
         if (!valid) return; // Empty or unfinished text does not rewrite the condition.
-        bool changed = _value != parsed;
+        bool changed = !_hasValue || _value != parsed;
+        _hasValue = true;
         _value = parsed;
         RefreshEnabled();
         if (changed) ValueChanged?.Invoke(_value);
@@ -83,7 +90,7 @@ internal sealed partial class MapQuantityInput : HBoxContainer
     {
         // Keep the last valid value. Invalid transient input is visibly marked while editing.
         _updating = true;
-        _input.Text = _value.ToString(CultureInfo.InvariantCulture);
+        _input.Text = _hasValue ? _value.ToString(CultureInfo.InvariantCulture) : string.Empty;
         _updating = false;
         SetInputValidity(true);
     }
@@ -91,7 +98,8 @@ internal sealed partial class MapQuantityInput : HBoxContainer
     private void SetValue(int value, bool notify = true)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(value);
-        bool changed = _value != value;
+        bool changed = !_hasValue || _value != value;
+        _hasValue = true;
         _value = value;
         CommitText(); RefreshEnabled();
         if (changed && notify) ValueChanged?.Invoke(value);

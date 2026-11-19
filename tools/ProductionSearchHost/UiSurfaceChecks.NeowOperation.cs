@@ -290,6 +290,12 @@ internal static partial class UiSurfaceChecks
                 await SettleNativeLayout();
             }
             await SettleNativeLayout();
+            if (OS.GetCmdlineUserArgs().Contains("--held-relic-hover-ui"))
+            {
+                File.WriteAllText(receipt, "{\"passed\":false,\"state\":\"not-run\",\"reason\":\"held-relic-hover-ui\"}");
+                await RunHeldRelicHoverChecks(root, output, runtime, game, nativeViewport, hoverRoot, run, player, global, Set);
+                return;
+            }
             if (OS.GetCmdlineUserArgs().Contains("--courier-hover-ui"))
             {
                 File.WriteAllText(receipt, "{\"passed\":false,\"state\":\"not-run\",\"reason\":\"courier-hover-ui\"}");

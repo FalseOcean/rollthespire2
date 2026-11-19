@@ -111,7 +111,8 @@ internal sealed partial class CombatRewardSearchEditor
                 () => SelectExcludedCollection(current), false, 36);
             update.Disabled = current.Cards.Count == 0;
         }
-        var notes = new List<string> { _text.Get("query.combat.exclusion.scope") };
+        var notes = new List<string>();
+        if (_draft.Exclusion is not null) notes.Add(_text.Get("query.combat.exclusion.scope"));
         if (_collections is null || snapshots.Length == 0) notes.Add(_text.Get("query.combat.exclusion.no_collections"));
         if (_collections?.LoadIssues.Count > 0) notes.Add(_text.Get("query.combat.exclusion.load_issues") + " " + string.Join("; ", _collections.LoadIssues));
         if (selected is not null && !currentAvailable) notes.Add(_text.Get("query.combat.exclusion.source_missing"));
@@ -122,11 +123,16 @@ internal sealed partial class CombatRewardSearchEditor
             if (missing is null) notes.Add(_text.Get("query.combat.exclusion.catalog_unknown"));
             else if (missing.Count > 0) notes.Add(_text.Get("query.combat.exclusion.members_missing") + " " + string.Join(", ", missing.Select(k => k.Serialized)));
         }
+        if (notes.Count == 0)
+        {
+            content.CustomMinimumSize = new(width, top + 184);
+            return;
+        }
         var note = Text(content, string.Join("\n", notes), 16, top + 184, width - 32, 16, true);
         note.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         note.ClipText = false;
         note.Size = new(width - 32, 1);
-        float height = Math.Max(52, note.GetMinimumSize().Y);
+        float height = Math.Max(24, note.GetMinimumSize().Y);
         note.Size = new(width - 32, height);
         content.CustomMinimumSize = new(width, top + 184 + height + 16);
     }

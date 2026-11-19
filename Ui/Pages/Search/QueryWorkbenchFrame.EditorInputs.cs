@@ -30,6 +30,7 @@ internal sealed partial class QueryWorkbenchFrame
         private EditorRefreshContext? _solo;
         private OrderedPartyAuthority? _party;
         private SerializableUnlockState _unlocks = null!;
+        private IReadOnlyList<CharacterStartingDeckSnapshot>? _startingDecks;
         private PreparedInputs? _prepared;
         private sealed record PreparedInputs(EditorEnvironmentObservedInputs Input, string Freshness,
             RuntimeContextAuthoritySnapshot? Solo, ModelKey Character, int Ascension);
@@ -59,6 +60,7 @@ internal sealed partial class QueryWorkbenchFrame
                 var prepared = _prepared; _prepared = null;
                 var input = prepared?.Input ?? EditorEnvironmentObservation.Capture();
                 _unlocks = input.Unlocks;
+                _startingDecks = input.StartingDecks;
                 string freshness = prepared?.Freshness ?? input.Freshness(runtime, RuntimeAuthorityEnvironment.Current.Authority);
                 if (_freshness != freshness)
                 {
@@ -94,6 +96,10 @@ internal sealed partial class QueryWorkbenchFrame
             }
             return _solo;
         }
+
+        internal int? StartingStrikeDefendCount(ModelKey character) => _startingDecks?
+            .FirstOrDefault(deck => deck.CharacterKey == character)?.OrderedDeck
+            .Count(card => card.IsBasic && (card.IsStrike || card.IsDefend) && card.CanRemove);
 
         internal OrderedPartyAuthority Party(ModRuntimeSnapshot runtime, IReadOnlyList<ModelKey> characters,
             IReadOnlyList<SerializableUnlockState> unlocks, int ascension, IReadOnlyList<string> sources)

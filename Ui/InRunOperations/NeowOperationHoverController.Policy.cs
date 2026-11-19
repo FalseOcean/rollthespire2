@@ -174,6 +174,11 @@ internal sealed partial class NeowOperationHoverController
                 Show(primary, basic); Show("extra:potion-order", order); Show("extra:potion-inventory", inventory);
                 break;
             }
+            case Kind.HeldRelic:
+                // These held effects have their own surface even when RF
+                // simulates one internally for a different prediction.
+                may = showPrimary = sourceEnabled;
+                break;
             case Kind.CardTarget:
             {
                 var obtain = PredictorOperationCapture.ObservedObtainOrigin(player, NGame.Instance);

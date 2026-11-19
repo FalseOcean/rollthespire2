@@ -10,7 +10,7 @@ internal static partial class AutomaticPrivateSerialInvocation
         private long _groupedPrefixRoots;
         private int _prefixGroups;
         private int _lastDensePrefixCount = -1;
-        bool IDenseFamilyBatchGrouping.CanGroupDenseBatches => !_disposed && !_faulted && !_verify &&
+        bool IDenseFamilyBatchGrouping.CanGroupDenseBatches => !_disposed && !_faulted && !_verify && _families.Length > 1 &&
             _families[0].SupportsDenseBatchGrouping;
         bool IDenseFamilyBatchGrouping.PreferDenseBatchGrouping =>
             ((IDenseFamilyBatchGrouping)this).CanGroupDenseBatches && _smallCandidateExact is not null &&

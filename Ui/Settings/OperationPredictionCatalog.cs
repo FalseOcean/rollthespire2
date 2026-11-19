@@ -48,6 +48,7 @@ internal static class OperationPredictionCatalog
             "ORRERY", "PHIAL_HOLSTER", "SAND_CASTLE", "SCROLL_BOXES", "SEA_GLASS", "SMALL_CAPSULE",
             "TOY_BOX", "WAR_PAINT", "WHETSTONE", "SILKEN_TRESS", "WING_CHARM", "FRESNEL_LENS",
             "GLITTER", "LAVA_LAMP", "MOLTEN_EGG", "TOXIC_EGG", "FROZEN_EGG", "SILVER_CRUCIBLE",
+            "WAR_HAMMER", "FISHING_ROD", "PAELS_TOOTH",
             "DREAM_CATCHER", "TINY_MAILBOX", "SHOVEL");
         entries.AddRange(RolltheSpire2.Compatibility.ModPrediction.ModOperationPredictions.Settings);
         Named("extra:obtain-chain", OperationPredictionCategory.RelicEffect, true);

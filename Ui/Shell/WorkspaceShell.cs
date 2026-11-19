@@ -204,7 +204,7 @@ internal sealed partial class WorkspaceShell : Control
                 _encyclopediaCanvas.OpenSeedRequested += OpenEncyclopediaSeed;
                 _content.AddChild(_encyclopediaCanvas);
                 _encyclopediaCanvas.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-                _encyclopediaCanvas.Refresh(_languageCode);
+                _encyclopediaCanvas.Refresh(_languageCode, _runtime.Detection);
             }
             _encyclopediaCanvas.Open(encyclopediaTopic);
         }
@@ -290,7 +290,7 @@ internal sealed partial class WorkspaceShell : Control
         SetWorkspaceActive();
         _references?.CloseModal();
         _references?.Refresh(_languageCode, JsonUiTextProvider.CreateUi13(_languageCode));
-        _encyclopediaCanvas?.Refresh(_languageCode);
+        _encyclopediaCanvas?.Refresh(_languageCode, _runtime.Detection);
         _predictor?.ApplyLocalization(JsonUiTextProvider.CreatePredictorUi13(_languageCode),
             RolltheSpire2.Infrastructure.ContentNames.RuntimeGameContentNameResolver.Create(_languageCode));
         RefreshStatus();

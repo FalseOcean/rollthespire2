@@ -426,6 +426,8 @@ internal sealed partial class AnalysisPage : MarginContainer, IAppPage, IRespons
             return;
         }
 
+        if (_preferredOpeningChoiceSlotIndex != choice.SlotIndex || _preferredOpeningRouteId != openingRouteId)
+            _pandoraCountOverride = null;
         _selectedNeowRelicKey = rootRelicKey;
         _preferredOpeningChoiceSlotIndex = choice.SlotIndex;
         _openingPreselectionProvided = false;

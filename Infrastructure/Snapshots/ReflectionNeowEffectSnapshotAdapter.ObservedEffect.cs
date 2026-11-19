@@ -29,6 +29,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         public PoolCapture CharacterRelics { get; init; } = new(null, false, false, "unobserved");
         public PoolCapture SharedRelics { get; init; } = new(null, false, false, "unobserved");
         public IReadOnlyList<CharacterCardPoolSnapshot>? OtherCharacterPools { get; init; }
+        public IReadOnlyList<ModelKey>? NativeCharacterPoolOrder { get; init; }
         public bool OtherPoolsExact { get; init; }
         public IReadOnlyList<NeowEffectCardSnapshot>? Deck { get; init; }
         public bool DeckExact { get; init; }
@@ -238,7 +239,10 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         string unlockFingerprint = Fingerprint("unlock-runtime-v1", observed.UnlockDescriptors);
         string cardPoolFingerprint = Fingerprint(
             RuntimeProfilePolicies.CatalogFingerprintPrefix(profile.ProfileId) + "-cards-v2",
-            EnumerateCardDescriptors(selectedCards.Cards, colorlessCards.Cards, otherCharacterPools));
+            EnumerateCardDescriptors(selectedCards.Cards, colorlessCards.Cards, otherCharacterPools)
+                .Concat(observed.NativeCharacterPoolOrder is { } nativeOrder
+                    ? new[] { "native-character-pool-order=" + string.Join(">", nativeOrder.Select(key => key.Serialized)) }
+                    : new[] { "native-character-pool-order=unobserved" }));
         string deckFingerprint = Fingerprint("effect-deck-v1", deck?.Select(CardDescriptor));
         string relicBagFingerprint = Fingerprint("effect-relic-bag-v1", orderedRelicBag?.Select(RelicDescriptor));
         string potionFingerprint = Fingerprint("effect-potions-v1", potionPool?.Select(PotionDescriptor));
@@ -329,7 +333,8 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
             MerchantColorlessOrderedPoolExact: merchantColorlessOrderedPoolExact,
             MerchantColorlessPoolIdentityHooksExact: merchantColorlessPoolIdentityHooksExact,
             MerchantColorlessRarityIdentityHooksExact: merchantColorlessRarityIdentityHooksExact,
-            MerchantInitialInventoryShapeExact: merchantInitialInventoryShapeExact);
+            MerchantInitialInventoryShapeExact: merchantInitialInventoryShapeExact,
+            NativeCharacterPoolOrder: observed.NativeCharacterPoolOrder);
 
         return new RuntimeEffectSnapshotCaptureResult(
             effectAuthority,
@@ -425,6 +430,7 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         var curses = await Pool(StaticPool("CardPool","CardPools","CurseCardPool"), "curse", ConvertCardModel).ConfigureAwait(false);
         var (others, otherExact) = await ObserveOtherCharacterPools(unlockState, character.CharacterKey, playersCount,
             rules, schedule).ConfigureAwait(false);
+        var nativeOrder = ObserveNativeCharacterPoolOrder(unlockState);
         var (deck, deckExact) = await ObserveStartingDeck(model, character.CharacterKey, audited, schedule).ConfigureAwait(false);
         var characterPotions = await Pool(PropertyPool("PotionPool","CharacterPotionPool","Potions"), "potion-character", ConvertPotionModel).ConfigureAwait(false);
         var sharedPotions = await Pool(StaticPool("PotionPool","PotionPools","SharedPotionPool"), "potion-shared", ConvertPotionModel).ConfigureAwait(false);
@@ -445,11 +451,24 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         }
         return new() { Rules=rules, ObservedAtUtc=DateTimeOffset.UtcNow, CanonicalSeed=canonicalSeed, IsAuditedVanilla=audited, SelectedCharacterUnlocked=unlocked,
             SelectedCards=selected, ColorlessCards=colorless, CurseCards=curses, OtherCharacterPools=others,
+            NativeCharacterPoolOrder=nativeOrder,
             OtherPoolsExact=otherExact, Deck=deck, DeckExact=deckExact, CharacterPotions=characterPotions,
             SharedPotions=sharedPotions, SharedRelics=sharedRelics, CharacterRelics=characterRelics,
             AllCharacterCardPoolsUnlocked=allUnlocked, AllCharacterPoolsAuthorityExact=allExact,
             EventResultStaticCatalogExact=events, UnlockDescriptors=descriptors.ToArray(), UnlockSource=unlockSource };
     }
+    private static IReadOnlyList<ModelKey>? ObserveNativeCharacterPoolOrder(object unlockState)
+    {
+        if (ReadProperty(unlockState, "Characters") is not { } characters) return null;
+        var keys = new List<ModelKey>();
+        foreach (object character in Enumerate(characters))
+        {
+            if (!TryModelKey(character, out var key) || keys.Contains(key)) return null;
+            keys.Add(key);
+        }
+        return keys.ToArray();
+    }
+
     private static async Task<PoolCapture> ObservePoolObject(
         object? pool,
         object unlockState,

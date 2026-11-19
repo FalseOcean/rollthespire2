@@ -52,14 +52,31 @@ internal static class SearchContinuationIdentity
         var node = JsonSerializer.SerializeToNode(query)!;
         // This field was added after v1 resume identities shipped. Its absent
         // historical value is an empty condition list; retain every authored row.
+        if (query.MerchantRelicConditions.Count == 0) node.AsObject().Remove(nameof(SearchQuery.MerchantRelicConditions));
         if (query.EncounterQueues.Count == 0) node.AsObject().Remove(nameof(SearchQuery.EncounterQueues));
         for (int i = 0; i < query.EventResultConditions.Count; i++)
             if (query.EventResultConditions[i].MorphicGroveScenario is { } scenario)
                 node["EventResultConditions"]![i]!["MorphicGroveScenario"]!["Authority"] =
                     RuntimePredictionInputIdentity.AuthorityPayload(scenario.Authority);
-        if (query.TransformationAggregate?.EventScenario is { } aggregate)
-            node["TransformationAggregate"]!["EventScenario"]!["Authority"] =
-                RuntimePredictionInputIdentity.AuthorityPayload(aggregate.Authority);
+        if (query.TransformationAggregate is { } aggregate)
+        {
+            var transform = node[nameof(SearchQuery.TransformationAggregate)]!.AsObject();
+            transform.Remove(nameof(TransformationAggregateCondition.UsesAncient));
+            transform.Remove(nameof(TransformationAggregateCondition.UsesExtendedRequirements));
+            transform.Remove(nameof(TransformationAggregateCondition.AncientOpportunityCount));
+            if (!aggregate.UsesExtendedRequirements)
+            {
+                // Preserve the v1 identity of aggregate searches saved before source scopes.
+                transform.Remove(nameof(TransformationAggregateCondition.AncientSource));
+                transform.Remove(nameof(TransformationAggregateCondition.AncientAct));
+                transform.Remove(nameof(TransformationAggregateCondition.PandoraCountOverride));
+                transform.Remove(nameof(TransformationAggregateCondition.PandoraAutomaticCount));
+                transform.Remove(nameof(TransformationAggregateCondition.ResultRequirements));
+            }
+            if (aggregate.EventScenario is { } eventScenario)
+                transform[nameof(TransformationAggregateCondition.EventScenario)]!["Authority"] =
+                    RuntimePredictionInputIdentity.AuthorityPayload(eventScenario.Authority);
+        }
         for (int i = 0; i < query.Players.Count; i++)
             node["Players"]![i]!["Conditions"] = QueryPayload(query.Players[i].Conditions);
         return node;

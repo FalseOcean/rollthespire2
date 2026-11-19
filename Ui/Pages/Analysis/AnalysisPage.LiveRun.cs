@@ -18,6 +18,7 @@ internal sealed partial class AnalysisPage
     private string LiveRunNotice()
     {
         if (_liveRunPremises is not { } premises || _uiText is null) return "";
+        if (premises.IsOrdinaryDreadOpening) return Text("predictor.live.dread_current");
         if (!premises.IsStandardReference) return Text("predictor.live.standard_current");
         string mode = premises.GameMode switch
         {

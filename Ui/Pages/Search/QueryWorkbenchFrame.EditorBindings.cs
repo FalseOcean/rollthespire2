@@ -26,6 +26,7 @@ internal sealed partial class QueryWorkbenchFrame
         using var observation = _editorInputs.Observe(_runtime);
         _renderedEditorDomains.Remove("combat");
         _renderedEditorDomains.Remove("transform");
+        _renderedEditorDomains.Remove("ancient");
         RefreshCombatContext(render: _selectedDomain == "combat");
         if (!_multiplayer) RefreshTransformationContext(render: _selectedDomain == "transform");
     }
@@ -35,8 +36,16 @@ internal sealed partial class QueryWorkbenchFrame
         if (!_refreshingEditorContexts)
         {
             _renderedEditorDomains.Remove("transform");
+            _renderedEditorDomains.Remove("ancient");
             RefreshTransformationContext(render: _selectedDomain == "transform");
         }
+    }
+
+    private void AncientTransformationContextChanged()
+    {
+        if (_multiplayer || _refreshingEditorContexts) return;
+        _renderedEditorDomains.Remove("transform");
+        RefreshTransformationContext(render: _selectedDomain == "transform");
     }
 
     private bool RefreshEditorContexts(bool render = true)
@@ -225,12 +234,22 @@ internal sealed partial class QueryWorkbenchFrame
     private void RefreshTransformationContext(int? targetSeat = null, bool render = true)
     {
         int seat = targetSeat ?? (_multiplayer ? _seat : 0);
-        TransformationSearchSource[] sources = _neowEditor.TransformationSources(seat)
-            .Concat(_eventEditor.TransformationSources(seat)).ToArray();
+        var neow = _neowEditor.TransformationSources(seat);
+        TransformationSearchSource[] sources = neow.Concat(_eventEditor.TransformationSources(seat))
+            .Concat(_ancientEditor.TransformationSources()).ToArray();
         _transformationEditor.Refresh(_language, _text, seat, sources,
             _neowEditor.TransformationCardCandidates(seat).Concat(_eventEditor.TransformationCardCandidates).ToArray(), render,
-            _neowEditor.TransformationSources(seat).Select(source => source.Id)
-                .Concat(_eventEditor.DeclaredTransformationSourceIds(seat)).ToHashSet(StringComparer.Ordinal));
+            neow.Select(source => source.Id).Concat(_eventEditor.DeclaredTransformationSourceIds(seat))
+                .Concat(_ancientEditor.DeclaredTransformationSourceIds()).ToHashSet(StringComparer.Ordinal),
+            _editorInputs.StartingStrikeDefendCount(_soloCharacter), _neowEditor.ExplicitOpeningRelics(seat));
+    }
+
+    private void OpenTransformationSource(string sourceId)
+    {
+        if (_multiplayer) return;
+        RefreshTransformationContext(render: false);
+        _transformationEditor.OpenSource(sourceId);
+        SelectDomain("transform");
     }
 
 }

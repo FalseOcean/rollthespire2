@@ -441,6 +441,7 @@ public static partial class ProductionQueryValidator
 
         bool routeScopeRequiredBeforeRewards = HasRouteScopedNeowConstraints(plan.Evaluation) ||
             HasOpeningInitialRoomConditions(plan.Evaluation) ||
+            (plan.Evaluation.TransformationAggregate is { UsesAncient: true } && plan.Evaluation.NeowRoute is not null) ||
             Semantics.TransformationAggregateCondition.HasBoundDirectRelicContinuation(plan.CompiledSearch.NormalizedQuery);
         if (!routeScopeRequiredBeforeRewards && !plan.Evaluation.RequiresNormalCombatRewardDomain)
         {
@@ -456,7 +457,8 @@ public static partial class ProductionQueryValidator
         {
             // Only identity observations can be decided from the retained offer.
             // Do not invent continuation or a successful nested-result witness.
-            bool identityOnly = !HasOpeningInitialRoomConditions(criteria) && !criteria.RequiresNormalCombatRewardDomain &&
+            bool identityOnly = criteria.TransformationAggregate is not { UsesAncient: true } &&
+                !HasOpeningInitialRoomConditions(criteria) && !criteria.RequiresNormalCombatRewardDomain &&
                 criteria.StructuredNeowEffects.Count == 0 && criteria.EffectOutputConditions.Count == 0 &&
                 criteria.CapsuleContainedRelics.IsEmpty && !criteria.RequireWhetstone && !criteria.RequireWarPaint &&
                 !criteria.RequireSmallCapsule && !criteria.RequireLargeCapsule &&
@@ -2268,6 +2270,7 @@ public static partial class ProductionQueryValidator
     }
 
     private static bool RequiresBonesRoute(ExactSearchEvaluationProjection filter) =>
+        (filter.TransformationAggregate is { UsesAncient: true } && filter.NeowRoute?.RouteRelicKey == BaseGameModelKeys.Relics.NeowsBones) ||
         (filter.NeowRoute?.RouteRelicKey == BaseGameModelKeys.Relics.NeowsBones &&
          filter.StructuredNeowEffects.Count > 0) ||
         filter.RequireNeowsBones ||

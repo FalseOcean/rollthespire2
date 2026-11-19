@@ -4,6 +4,41 @@
   "Blocks": [
     {
       "Type": "Heading",
+      "ReleaseVersion": "1.4.6",
+      "Text": "RT2 1.4.6 Release Notes"
+    },
+    {
+      "Type": "Callout",
+      "Text": "One RT2 installation now supports stable [b]0.111.1[/b] and beta [b]0.113.1[/b]. RT2 detects your game version at startup."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[b]New seed filters for 0.113[/b]"
+    },
+    {
+      "Type": "BulletList",
+      "Items": [
+        "[b]Ordinary shop relics[/b]  In solo search, choose the ordinary relics you want to buy in the first 1 to 3 shops. They can appear across different shops, in either ordinary relic slot.",
+        "[b]Event relic rewards[/b]  Filter seeds by the rarity of the relic an event option awards.",
+        "[b]Astrolabe and Pandora’s Box[/b]  Choose the cards you want to get from transforming starter cards and how many copies of each. Astrolabe assumes you transform three of your character’s starter cards. Pandora’s Box uses the Strikes and Defends left in your deck.",
+        "[b]Crystal Sphere[/b]  Set the relics you hold on entering the event and how many tiles you will reveal. Then choose a relic rarity and the cards you want. All selected rewards must be obtainable on a single reveal path."
+      ]
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[b]In-run predictions[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Hover over War Hammer or Fishing Rod to see which cards will be upgraded next. Hover over Pael’s Tooth to see the order in which your cards will return."
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "Searches with certain combinations of filters are also faster."
+    },
+    {
+      "Type": "Heading",
+      "ReleaseVersion": "1.4.5",
       "Text": "RolltheSpire2 1.4.5"
     },
     {
@@ -12,6 +47,7 @@
     },
     {
       "Type": "Heading",
+      "ReleaseVersion": "1.4.4",
       "Text": "RolltheSpire2 1.4.4"
     },
     {
@@ -24,6 +60,7 @@
     },
     {
       "Type": "Heading",
+      "ReleaseVersion": "1.4.3",
       "Text": "RolltheSpire2 1.4.3"
     },
     {
@@ -32,6 +69,7 @@
     },
     {
       "Type": "Heading",
+      "ReleaseVersion": "1.4.2",
       "Text": "RolltheSpire2 1.4.2"
     },
     {

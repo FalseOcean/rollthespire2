@@ -39,7 +39,8 @@ internal static partial class AutomaticPrivateSerialInvocation
 
     internal static FilterBodyDescription Prepare(SearchModel model, FilterExecutionPreferences preferences,
         IReadOnlyList<FilterBodyDescription> orderedFamilies, bool verify = false, bool enableSmallCandidateExact = false,
-        IReadOnlyList<FamilyExecutionPlanStage>? estimationStages = null, IReadOnlyList<string>? followingCoverage = null)
+        IReadOnlyList<FamilyExecutionPlanStage>? estimationStages = null, IReadOnlyList<string>? followingCoverage = null,
+        NeowEventFirstDrawGate.OrderedFusion? preparedSharedRoot = null)
     {
         var families = orderedFamilies.ToArray();
         if (families.Length is < 2 or > 8 || families.Select(f => f.FamilyId).Distinct().Count() != families.Length ||
@@ -50,6 +51,24 @@ internal static partial class AutomaticPrivateSerialInvocation
         bool smallExact = enableSmallCandidateExact && !verify && !preferences.SkipExactValidation;
         var following = followingCoverage?.ToArray() ?? [];
         string revision = "AutomaticPrivateSerial." + order + ".CanonicalAbi1Ready.20260910.v1" + GpuRngRotation.Revision;
+        FilterBodyDescription[] dispatches = families;
+        var estimates = estimationStages?.ToArray() ?? [];
+        // The logical order is final. Only one N can occur in this segment.
+        int neowIndex = Array.FindIndex(families, family => family.FamilyId == "N.Neow");
+        if (neowIndex >= 0 && neowIndex + 1 < families.Length &&
+            NeowEventFirstDrawGate.TryFuseOrdered(model, families[neowIndex..], preparedSharedRoot, neowIndex > 0) is { } fusion)
+        {
+            var sharedRoot = fusion.Body;
+            int end = neowIndex + fusion.FamilyCount;
+            dispatches = [..families[..neowIndex], sharedRoot, ..families[end..]];
+            revision += fusion.RevisionSuffix;
+            if (estimates.Length != 0)
+                estimates = FamilyAuxiliaryEvidence.Read<FamilyExecutionPlanStage[]>(nameof(AutomaticPrivateSerialInvocation),
+                    "SharedRootEstimation", () => FamilyPlanner.InOrder(dispatches).Stages.ToArray(),
+                    [], model.SnapshotFingerprint);
+            string role = neowIndex == 0 ? "denseBody" : "compactBody";
+            RuntimeLog.TryBackgroundInfo($"sharedRootNeow{fusion.EventGroup}=true;logicalOrder={order};{role}={sharedRoot.PhysicalRevision};coverage={string.Join(',', sharedRoot.Coverage)};independentEventStream=true");
+        }
         var preparation = new PreparedFilter(id) {
             Coverage = families.SelectMany(f => f.Coverage).ToArray(),
             Obligations = families.SelectMany(f => f.Preparation.EffectiveObligations).ToArray(),
@@ -62,10 +81,10 @@ internal static partial class AutomaticPrivateSerialInvocation
             PlayersCount = model.Authority.PlayersCount, CpuWorkers = preferences.WorkerCount,
             WindowCapacity = PrivateOrdinalBuffer.Capacity,
             NumericRequirements = families.Aggregate(GpuNumericRequirements.None, (requirements, family) => requirements | family.NumericRequirements),
-            PhysicalBodies = families, IsPrivateTransport = true, EstimationStages = estimationStages?.ToArray() ?? [],
+            PhysicalBodies = families, IsPrivateTransport = true, EstimationStages = estimates,
             RequiresBonesCapsuleDiagnostics = families.Any(f => f.RequiresBonesCapsuleDiagnostics),
             PerformanceProjection = _ => new(id, revision, "AutomaticPrivateSerial.Neutral", 1, "WholeFamilyOrdinalComposition", true),
-            CreateExecution = (body, services) => new Runtime(body, families, verify, smallExact, following, services)
+            CreateExecution = (body, services) => new Runtime(body, dispatches, verify, smallExact, following, services)
         };
     }
 
@@ -84,13 +103,13 @@ internal static partial class AutomaticPrivateSerialInvocation
         private int _batches;
         private long _inputs, _outputs;
         private double _ms;
-        private string Order => string.Concat(_families.Select(f => f.FamilyId[0]));
+        private string Order => string.Concat(Body.PhysicalBodies.Select(f => f.FamilyId[0]));
         internal Runtime(FilterBodyDescription body, FilterBodyDescription[] families, bool verify,
             bool smallExact, string[] followingCoverage, FilterRuntimeServices services)
         {
             Body = body; _families = families; _verify = verify; FollowingCoverage = followingCoverage;
             _smallCandidateExact = smallExact ? new SmallCandidateExactPolicy() : null;
-            if (verify) _references = families.Select(f =>
+            if (verify) _references = body.PhysicalBodies.Select(f =>
                 (f.CreateExecution ?? throw new InvalidOperationException("AutomaticPrivateSerial.ReferenceFactoryMissing"))(f, services)).ToArray();
         }
         public async ValueTask<FamilyCandidateSet> FilterAsync(FilterRuntimeServices services, FamilyCandidateSet input, CancellationToken token)
@@ -103,11 +122,18 @@ internal static partial class AutomaticPrivateSerialInvocation
                 Volatile.Write(ref _lastDensePrefixCount, _gpu.LastDensePrefixCount);
                 if (_verify) {
                     var expected = input;
-                    for (int i = 0; i < _references!.Length; i++) {
-                        expected = await _references[i].FilterAsync(services, expected, token).ConfigureAwait(false);
+                    int nextReference = 0;
+                    for (int i = 0; i < _families.Length; i++) {
+                        // Ordinary reference bodies can themselves own multiple obligations.
+                        // Advance exactly the adjacent logical bodies covered by this dispatch.
+                        while (nextReference < _references!.Length &&
+                            Body.PhysicalBodies[nextReference].Coverage.All(_families[i].Coverage.Contains))
+                            expected = await _references![nextReference++].FilterAsync(services, expected, token).ConfigureAwait(false);
                         if (!expected.EnumerateLogicalOrdinals().SequenceEqual(run.Snapshots[i].EnumerateLogicalOrdinals()))
                             throw new InvalidDataException("AutomaticPrivateSerial.FullPopulationMismatch:" + _families[i].FamilyId);
                     }
+                    if (nextReference != _references!.Length)
+                        throw new InvalidDataException("AutomaticPrivateSerial.UnverifiedLogicalTail:" + _references[nextReference].Body.FamilyId);
                 }
                 _batches++; _inputs += input.Count; _outputs += run.Output.Count; _ms += run.Ms;
                 // The transport wrapper has no single-stage calibration scope;
@@ -191,7 +217,7 @@ internal static partial class AutomaticPrivateSerialInvocation
                     _observer.ObserveGpuCompleted(_families[i], new(i != 0, i != _executors.Length - 1, before, i != 0), before, result.Count, result.DispatchSyncMs, result.CanonicalMs, result.ReportedReadbackMs, result.ReadbackBytes, verify);
                 count = result.Count; final = result.PublicOutput; smallOutput = result.SmallOutput;
                 if (i == 0) LastDensePrefixCount = result.Count;
-                if (Bootstrap.RuntimeLog.DetailEnabled) Bootstrap.RuntimeLog.TryBackgroundDetail($"automaticPrivateSerialStage=true;order={order};stage={order[i]};input={before};output={count};dispatches={result.Dispatches};dispatchSyncMs={result.DispatchSyncMs};reportedReadbackMs={result.ReportedReadbackMs};readbackBytes={result.ReadbackBytes};canonicalMs={result.CanonicalMs};boundary={(i == _executors.Length - 1 ? "CanonicalAbi1Ready" : "PrivateOrdinalCountReady")};smallOutputAbi1Ready={result.SmallOutput is not null};intermediatePayloadBytes=0;verification={verify}");
+                if (Bootstrap.RuntimeLog.DetailEnabled) Bootstrap.RuntimeLog.TryBackgroundDetail($"automaticPrivateSerialStage=true;order={order};stage={_families[i].FamilyId.Split('.')[0]};input={before};output={count};dispatches={result.Dispatches};dispatchSyncMs={result.DispatchSyncMs};reportedReadbackMs={result.ReportedReadbackMs};readbackBytes={result.ReadbackBytes};canonicalMs={result.CanonicalMs};boundary={(i == _executors.Length - 1 ? "CanonicalAbi1Ready" : "PrivateOrdinalCountReady")};smallOutputAbi1Ready={result.SmallOutput is not null};intermediatePayloadBytes=0;verification={verify}");
                 if (verify)
                 {
                     timer.Stop();

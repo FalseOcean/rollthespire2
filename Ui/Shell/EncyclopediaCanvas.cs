@@ -1,5 +1,6 @@
 using Godot;
 using System.Reflection;
+using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Infrastructure.ContentNames;
 using RolltheSpire2.Presentation.ContentNames;
@@ -61,8 +62,6 @@ internal sealed partial class EncyclopediaCanvas : Control
     private const string TransformEventResultsId = "event-transform-results";
     private const string TransformEventResultsTitle = "变牌事件：默认变化初始牌";
     private const string MultiplayerSharedId = "multiplayer-shared";
-    private const string PathPredictionId = "path-prediction";
-    private const string PathPredictionTitle = "绘线预测：沿途收益与选择";
     private const string MapRoutesId = "map-routes";
     private const string MapRoutesTitle = "地图路线：最好与最坏能到什么程度？";
     private const string MapGenerationId = "map-generation";
@@ -80,9 +79,13 @@ internal sealed partial class EncyclopediaCanvas : Control
     private sealed record ArticleDefinition(
         string Id, string ResourceStem, string ZhName, string EnName,
         string? ParentId, string? NextId, string[] RelatedIds,
-        bool ReturnToSearch = true, string? GameVersion = null);
+        bool ReturnToSearch = true);
 
-    private const string EncyclopediaGameVersion = "0.111.0";
+    private enum Edition { Auto, Beta111, Beta113 }
+    private Edition _edition = Edition.Auto;
+    private Edition? _detectedEdition;
+    private string _detectedVersion = string.Empty;
+    private bool ReadBeta113 => (_edition == Edition.Auto ? _detectedEdition : _edition) == Edition.Beta113;
     private static readonly ArticleDefinition[] Articles =
     [
         new(ReadingGuideId, "reading_guide", "阅读引导", "Reading guide", null, DefaultEnvironmentId,
@@ -152,9 +155,7 @@ internal sealed partial class EncyclopediaCanvas : Control
         new("boss", "boss", "首领 / 变体", "Bosses & Act variants", DefaultEnvironmentId, null,
             ["map", IntroductionId, "ancient", "events"]),
         new("map", "map", "地图节点", "Map nodes", DefaultEnvironmentId, null,
-            [PathPredictionId, MapRoutesId, MapGenerationId, "boss", "events", EventAppearanceId]),
-        new(PathPredictionId, "path_prediction", "绘线预测", "Route forecast", "map", null,
-            ["map", EventAppearanceId, "events", "combat", "shop"], ReturnToSearch: false),
+            [MapRoutesId, MapGenerationId, "boss", "events", EventAppearanceId]),
         new(MapRoutesId, "map_routes", "地图路线", "Map routes", "map", null,
             ["map", MapGenerationId, EventAppearanceId]),
         new(MapGenerationId, "map_generation", "地图生成", "Map generation", "map", null,
@@ -258,8 +259,6 @@ internal sealed partial class EncyclopediaCanvas : Control
 
     private static readonly ArticleChild[] MapChildren =
     [
-        new(PathPredictionId, "绘线预测", "Route forecast", PathPredictionTitle,
-            "路径预测 局内 画线 接续 历史 事件选择 Niche 当前幕 地图 path prediction live route history continuation", []),
         new(MapRoutesId, "地图路线", "Map routes", MapRoutesTitle,
             "Guaranteed Reachable Max Forced Monster Prefix 精英 火堆 问号 最好 最坏", []),
         new(MapGenerationId, "地图生成", "Map generation", MapGenerationTitle,
@@ -342,8 +341,16 @@ internal sealed partial class EncyclopediaCanvas : Control
         Render();
     }
 
-    public void Refresh(string language)
+    public void Refresh(string language, GameVersionDetection detection)
     {
+        _detectedVersion = detection.NormalizedVersion;
+        _detectedEdition = detection.IsExact && Version.TryParse(_detectedVersion, out var version)
+            ? version switch
+            {
+                { Major: 0, Minor: 111 } => Edition.Beta111,
+                { Major: 0, Minor: 113 } => Edition.Beta113,
+                _ => null
+            } : null;
         _language = language == "en" ? "en" : "zh";
         _contentNames = RuntimeGameContentNameResolver.Create(_language);
         Render();

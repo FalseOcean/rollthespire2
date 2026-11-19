@@ -94,13 +94,14 @@ internal static class FamilyPlanner
 {
     internal const string SelectionPolicyId = "FamilyPlanner.GreedyUnitEliminationCost.20261026.v2";
 
-    // Fixed construction is reserved for explicit physical trials and transport
-    // wrappers. It does not compare complete plans or enable early Exact.
-    internal static FamilyExecutionPlan InOrder(IReadOnlyList<FilterBodyDescription> families)
+    // Project the cost and survival of an order the caller has already chosen.
+    // Conditional input references use the coverage passed at each position.
+    internal static FamilyExecutionPlan InOrder(IReadOnlyList<FilterBodyDescription> families,
+        bool resolveInputReferences = false)
     {
         var costs = FamilyAuxiliaryEvidence.Read<GpuCostSnapshot?>(nameof(FamilyPlanner), "CostSnapshot", GpuCostCalibration.Capture, null);
         return BuildPlan(BuildCandidates(families, costs), FamilyPlannerRankingAuthority.FixedExecutionOrder,
-            ["SpecifiedExecutionOrder"]);
+            ["SpecifiedExecutionOrder"], resolveInputReferences: resolveInputReferences, costs: costs);
     }
 
     internal static FamilyExecutionPlan InManualOrder(IReadOnlyList<FilterBodyDescription> available,

@@ -2,6 +2,7 @@ using Godot;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Events;
 using RolltheSpire2.Presentation.ContentNames;
+using RolltheSpire2.Presentation.Ui1;
 
 namespace RolltheSpire2.Ui.Pages.Analysis;
 
@@ -24,7 +25,10 @@ internal sealed partial class AnalysisPage
         var options = WResponsiveGrid(detail, "StableEventOptions", 240, 2);
         foreach (var result in results)
         {
-            var branch = WCard(options, Text($"predictor.event.stable.{entry}.{result.OptionKey}"));
+            var rarityBranch = result.RarityBranch;
+            var branch = WCard(options, rarityBranch is { } choice
+                ? EventOpportunityPresentation.Branch(_uiText!, choice)
+                : Text($"predictor.event.stable.{entry}.{result.OptionKey}"));
             branch.Name = "StableEventOption_" + result.OptionKey;
             if (result.GoldAmount is { } gold)
             {
@@ -37,8 +41,29 @@ internal sealed partial class AnalysisPage
                 if (result.Relics.Count > 1) branch.AddChild(WNote(Text("predictor.event.stable.choose_one")));
                 foreach (var relic in result.Relics)
                     branch.AddChild(WObject(relic, GameContentKind.Relic, size: 40));
+                string? premise = entry switch
+                {
+                    EventOpportunityCatalog.MuseumOfTorture => "query.event.opportunity.premise.MuseumOfTortureOfferedRelic",
+                    EventOpportunityCatalog.ThermaeNonupeipe => "query.event.opportunity.premise.ThermaeNonupeipeDrinkRelic",
+                    _ => null
+                };
+                if (premise is not null) branch.AddChild(WNote(Text(premise)));
+            }
+            if (rarityBranch is not { } rolledBranch) continue;
+            for (int i = 0; i < result.RelicRarityRolls.Count; i++)
+            {
+                string rarity = EventOpportunityPresentation.Rarity(_uiText!, result.RelicRarityRolls[i]);
+                string label = result.RelicRarityRolls.Count == 1
+                    ? Text("query.event.opportunity.rolls")
+                    : EventOpportunityPresentation.RollSelection(_uiText!, rolledBranch,
+                        (EventRelicRaritySelection)i);
+                var roll = WLabel(_uiText!.Format("predictor.event.rarity_roll", label, rarity), true);
+                roll.Name = "RelicRarityRoll" + (i + 1);
+                branch.AddChild(roll);
             }
         }
+        if (results.Any(result => result.RarityBranch.HasValue))
+            detail.AddChild(WNote(Text("predictor.event.rarity_scope")));
         return true;
     }
 }

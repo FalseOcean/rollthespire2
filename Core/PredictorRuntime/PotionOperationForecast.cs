@@ -52,39 +52,18 @@ internal static partial class PotionOperationForecast
         if (PredictorOperationPotionQueries.Supports(potion))
             return Build(snapshot.Context, potion, token, demand);
         if (potion.Entry != "ENTROPIC_BREW") return new(potion, [], [], false, [], []);
-        if (!demand.IncludeBasicResult && !demand.IncludeInventory) return EmptyPotion(potion);
-
-        // The legacy inventory supplement explicitly empties other detached
-        // slots. Without it, even this context-only overload uses the actual
-        // captured inventory; turning a supplement off never invents capacity.
-        var hypothetical = !demand.IncludeInventory ? snapshot.State : snapshot.State with
-        {
-            PotionSlots = snapshot.State.PotionSlots.Select((p, i) => i == slot ? p : null).ToImmutableArray()
-        };
-        PredictorInput input = new UseOutOfCombatPotion(slot, actual.Id);
+        if (!demand.IncludeBasicResult && !demand.IncludeInventory && !demand.IncludeOrder) return EmptyPotion(potion);
         try
         {
-            var result = PredictorSettlementEffects.UseEntropicBrew(snapshot.Context, hypothetical, slot);
-            token.ThrowIfCancellationRequested();
-            var generated = result.Generated.Select(p => p.Key).ToImmutableArray();
-            int obtained = result.State.PotionSlots.Count(p => p != null &&
-                !snapshot.State.PotionSlots.Any(original => original?.Id == p.Id));
-            ImmutableArray<OperationOutcome> rows = generated.IsEmpty ? [] :
-                [new(OperationOutcomeAction.GeneratePotion, generated, [], false)
-                    { Kind = demand.IncludeInventory
-                        ? obtained == generated.Length ? "EntropicOtherSlotsEmpty" : $"EntropicOtherSlotsEmpty:{generated.Length}:{obtained}"
-                        : $"EntropicCurrentSlots:{generated.Length}:{obtained}" }];
-            return new(potion, [], [], false,
-                [new([], rows.IsEmpty ? [] : [new(potion, rows, [])
-                    { FeatureId = demand.IncludeInventory ? "extra:potion-inventory" : PotionFeature(potion) }], [], 1, true)], [])
-            {
-                Activity = OperationForecastActivity.PotionUse
-            };
+            var stream = snapshot.Context.NonCombatStream(PredictorStream.CombatPotionGeneration);
+            var cursor = snapshot.State.Streams.Single(s => s.Stream == stream);
+            return BuildCore(new PredictorOperationPotionObservation(snapshot.Context, new(actual, slot), snapshot.State.PotionSlots,
+                cursor, false, PredictorSettlementEffects.Has(snapshot.State, "SOZU"), snapshot.Fingerprint), token, demand);
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
-            return new(potion, [], [], false, [], [])
-            { Faults = [new(demand.IncludeInventory ? "EntropicBrewEmptyOtherSlots" : "EntropicCurrentSlots", [input], error)] };
+            return EmptyPotion(potion) with
+            { Faults = [new("EntropicCurrentSlots", [new UseOutOfCombatPotion(slot, actual.Id)], error)] };
         }
     }
 

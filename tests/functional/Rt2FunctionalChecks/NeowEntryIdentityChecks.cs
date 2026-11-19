@@ -32,6 +32,25 @@ internal static class NeowEntryIdentityChecks
             ?? throw new InvalidDataException("NEntry.FixtureCompile");
         var fixtures = NeowEntryIdentityFixtures.Build(NeowReplayPlan.Compile(request.Model, false));
         CheckProductionEntry();
+        var identity = fixtures[0].Replay;
+        var bones = identity with {
+            Filter = NeowSearchFilter.Empty with { NeowRoute = new(BaseGameModelKeys.Relics.NeowsBones) },
+            Authority = identity.Authority with { RngSemantics = RolltheSpire2.Compatibility.RngSemanticProfileId.Modern113 },
+            AuditedModern113IdentityReplay = true, DirectNestedVanilla111 = false,
+            Selected = Beta110FastRelicCatalog.NeowsBones, Bones = true
+        };
+        bool EndsAtFirstDraw(NeowReplayPlan replay) =>
+            NeowEntryIdentityFixtures.Compile(replay, "track").TryCompileTerminalCurseGate(out _);
+        Check(EndsAtFirstDraw(bones), "SelectedBonesWithoutObservedContentsEndsAtOffer");
+        ulong pearl = Beta110FastRelicCatalog.Bit(Beta110FastRelicCatalog.GoldenPearl);
+        Check(!EndsAtFirstDraw(bones with { BonesAny = pearl }) &&
+            !EndsAtFirstDraw(bones with { BonesAll = pearl }) &&
+            !EndsAtFirstDraw(bones with { BonesBan = pearl }), "ObservedBonesContentsRequireReplay");
+        var authoredOrder = bones.Filter with {
+            RequiredBonesAcquisitionOrder = [new ModelKey("RELIC", "UNMAPPED_FIRST"), new ModelKey("RELIC", "UNMAPPED_SECOND")]
+        };
+        Check(!EndsAtFirstDraw(bones with { Filter = authoredOrder }),
+            "UnmappedAcquisitionOrderCannotBecomeOfferOnly");
         int additions = 0, tracked = 0, fallback = 0;
         foreach (var fixture in fixtures)
         {

@@ -4,8 +4,7 @@ using RolltheSpire2.Search.Semantics;
 
 namespace RolltheSpire2.Search.FamilyExecution;
 
-// One N physical invocation covers the pure opening aggregate as well as N.
-// Query ownership and Exact's source-free multiset validation remain unchanged.
+// One N physical invocation covers the legacy opening aggregate as well as N.
 internal sealed class NeowTransformationComposite
 {
     internal const string Revision = "N.Neow.JointLeafyNewLeaf.TransformFirst.Carry8.CanonicalAbi1Ready.20261001.v1";
@@ -34,7 +33,7 @@ internal sealed class NeowTransformationComposite
             e.RequiredBonesCombination.Count != 2 ||
             !e.RequiredBonesCombination.Contains(BaseGameModelKeys.Relics.LeafyPoultice) ||
             !e.RequiredBonesCombination.Contains(BaseGameModelKeys.Relics.NewLeaf) ||
-            e.TransformationAggregate is not { Opening: TransformationOpening.BonesLeafyNewLeaf, UsesEvents: false } c ||
+            e.TransformationAggregate is not { Opening: TransformationOpening.BonesLeafyNewLeaf, UsesEvents: false, UsesExtendedRequirements: false } c ||
             c.OpportunityCount != 3 ||
             e.StructuredNeowEffects.Any(x => !x.IsEmpty && x.Scope != NeowStructuredEffectScope.FinalCurse) ||
             !NeowFamilyGpuPlan.TryCreate(neow, out var gpu, out _) || gpu is null)

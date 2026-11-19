@@ -64,8 +64,12 @@ bool event_contains(uint base,uint count,uint mode,uint limit,uint source,uint t
             (value&65535u)==target)return true;
     }return false;
 }
+/*__W_EVENT_PAIR__*/
 bool events_match(uint invocation,uint x){
     uint count=extra.v[x+2u],offset=extra.v[x+1u],horizon=extra.v[x+3u];
+#ifdef RT2_W_EFFECTIVE_EVENT_PAIR
+    if ((offset & 0x80000000u) != 0u) return effective_event_pair(offset & 0x7fffffffu, count);
+#endif
     // Separate, bounded raw scratch after the reusable encounter scratch.
     uint base=batch.v[5]*plan_meta_buffer.values[8u]+invocation*plan_meta_buffer.values[13u];
     for(uint i=0u;i<count;++i)encounter_scratch_buffer.entries[base+i]=data.v[offset+i];

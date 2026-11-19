@@ -28,6 +28,11 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
     internal uint[] ObservedBonesIds { get; init; } = [];
     internal bool UsesObservedOpening => ObservedOpeningData.Length > 0;
     internal bool UsesObservedOpeningHotLoop => UsesObservedOpening && UsesHotLoop;
+    internal bool UsesLazyObservedBag => ObservedOpeningData.Length > 10 && ObservedOpeningData[10] != 0;
+    private OpeningReplay? OpeningReplayMask { get; init; }
+    internal bool UsesOpeningReplayCrop => OpeningReplayMask.HasValue;
+    internal bool UsesGenericDirectCardPool { get; init; }
+    internal bool UsesUnobservedCardBurn { get; init; }
     internal bool UsesNeutralWitness { get; init; }
     internal bool UsesChildShuffle { get; init; }
     internal string TerminalCardGateSource { get; init; } = "";
@@ -37,6 +42,10 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
         (UsesNeutralWitness ? CombatRewardNeutralWitness.Revision : "") +
         (UsesObservedOpening ? CombatRewardObservedOpening.Revision + ".BucketCapacity" + ObservedOpeningData[8] : "") +
         (UsesObservedOpeningHotLoop ? ".ActualHotOrExact.20261102.v1" : "") +
+        (UsesLazyObservedBag ? ".LazyObservedCapsuleLanes.20261115.v1" : "") +
+        (OpeningReplayMask is { } opening ? ".OpeningReplayCrop.20261115.v1.Group" + (int)opening : "") +
+        (UsesGenericDirectCardPool ? ".GenericDirectOrdinaryCards.20261115.v1" : "") +
+        (UsesUnobservedCardBurn ? ".UnobservedCardBurn.20261115.v1" : "") +
         (UsesTerminalCardGate ? ".TerminalCardCapacity.20261015.v1" : "") +
         (UsesCardFreeTerminal ? ".CardFreeTerminal.20261114.v1" : "") +
         (NeedsCompleteMatchingReference ? ".CompletePositiveMatching.20261026.v1" : "") +
@@ -54,7 +63,8 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
 
     internal static CombatRewardGpuPlan? TryCreate(SearchModel request, CombatRewardReplay replay, out string issue,
         bool? openingPrefixHotLoop = null, bool? rareOnlyIdentityElision = null, bool? assignmentEarlyRejection = null,
-        bool? unobservedFixedGold = null)
+        bool? unobservedFixedGold = null, bool? genericDirectCardPool = null, bool? openingReplayCrop = null,
+        bool? unobservedCardBurn = null)
     {
         issue = "";
         var reward = replay.Plan;
@@ -104,11 +114,22 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
         }
         uint[] pools = CombatRewardGpuPacking.BuildPoolMeta(catalog, out uint[] ids);
         uint[] predicates = CombatRewardGpuPacking.BuildPredicates(reward, out uint[] targets);
+        bool canUseDirectCardPools = replay.UsesChildShuffle && !hot.Enabled && !replay.ConservativelyKeeps &&
+            reward.CardPoolAuthorityExact && HasDirectOrdinaryCardPools(catalog.CombatRewardCardPool);
         return new(meta, pools, ids, predicates, targets, hot, replay.RouteCount) {
             UsesNeutralWitness = replay.UsesNeutralWitness,
             UsesChildShuffle = replay.UsesChildShuffle,
+            UsesGenericDirectCardPool = canUseDirectCardPools &&
+                (genericDirectCardPool ?? CaptureFollowupTrial("RT2_C_GENERIC_DIRECT_CARD_POOL")),
+            UsesUnobservedCardBurn = canUseDirectCardPools && !reward.CollectionFilterRequested &&
+                reward.CardAssignmentTargets.Length == 0 && reward.Predicates.All(predicate => !predicate.HasCardPredicate) &&
+                (unobservedCardBurn ?? CaptureFollowupTrial("RT2_C_UNOBSERVED_CARD_BURN")),
             ObservedOpeningData = replay.UsesObservedOpening ? replay.ObservedOpening!.GpuData : [],
             ObservedBonesIds = replay.UsesObservedOpening ? replay.ObservedOpening!.BonesIds.Select(id => (uint)id).ToArray() : [],
+            OpeningReplayMask = replay.UsesChildShuffle && !replay.ConservativelyKeeps &&
+                replay.ObservedOpening is { Available: true, DynamicBones: false } &&
+                (openingReplayCrop ?? CaptureFollowupTrial("RT2_C_OPENING_REPLAY_CROP"))
+                    ? FixedOpeningReplayMask(reward.OpeningConsumption.OrderedRelicIds, replay.IsMultiplayer) : null,
             NeedsCompleteMatchingReference = reward.NeedsCompleteMatchingReference,
             ChecksCardCollection = reward.CollectionFilterCovered,
             UsesQueryLiteralPartyOpening = replay.UsesQueryLiteralPartyOpening,
@@ -120,6 +141,48 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
             TerminalCardGateSource = CompileTerminalCardGate(request, replay, hot.Enabled)
         };
     }
+
+    [Flags]
+    private enum OpeningReplay
+    {
+        None = 0,
+        RareCards = 1,
+        Kaleidoscope = 2,
+        Paperweight = 4,
+        Coffer = 8,
+        MultiplayerScroll = 16,
+        ScrollBoxes = 32
+    }
+
+    // Fixed observed routes contain at most two top-level grants. Their order
+    // stays in the plan buffer. Nested Capsule pickups use capability data and
+    // never dispatch a top-level replay opcode. Dynamic Bones retains the donor.
+    private static OpeningReplay FixedOpeningReplayMask(byte[] relics, bool multiplayer)
+    {
+        OpeningReplay mask = OpeningReplay.None;
+        foreach (byte relic in relics)
+            mask |= relic switch
+            {
+                Beta110FastRelicCatalog.HeftyTablet or Beta110FastRelicCatalog.ArcaneScroll => OpeningReplay.RareCards,
+                Beta110FastRelicCatalog.Kaleidoscope => OpeningReplay.Kaleidoscope,
+                Beta110FastRelicCatalog.LeadPaperweight => OpeningReplay.Paperweight,
+                Beta110FastRelicCatalog.LostCoffer => OpeningReplay.Coffer,
+                Beta110FastRelicCatalog.MassiveScroll when multiplayer => OpeningReplay.MultiplayerScroll,
+                Beta110FastRelicCatalog.ScrollBoxes => OpeningReplay.ScrollBoxes,
+                _ => OpeningReplay.None
+            };
+        return mask;
+    }
+
+    private string OpeningReplayDefines() => OpeningReplayMask is { } mask
+        ? "\n#define RT2_C_OPENING_REPLAY_CROP 1\n" +
+          ((mask & OpeningReplay.RareCards) != 0 ? "#define RT2_C_OPENING_RARE_CARDS 1\n" : "") +
+          ((mask & OpeningReplay.Kaleidoscope) != 0 ? "#define RT2_C_OPENING_KALEIDOSCOPE 1\n" : "") +
+          ((mask & OpeningReplay.Paperweight) != 0 ? "#define RT2_C_OPENING_PAPERWEIGHT 1\n" : "") +
+          ((mask & OpeningReplay.Coffer) != 0 ? "#define RT2_C_OPENING_COFFER 1\n" : "") +
+          ((mask & OpeningReplay.MultiplayerScroll) != 0 ? "#define RT2_C_OPENING_MULTIPLAYER_SCROLL 1\n" : "") +
+          ((mask & OpeningReplay.ScrollBoxes) != 0 ? "#define RT2_C_OPENING_SCROLL_BOXES 1\n" : "")
+        : "";
 
     // Bounded FT02 experiment; it is not the selected production default.
     private static bool CaptureObservedHotTrial() => Environment.GetEnvironmentVariable("RT2_C_OBSERVED_HOT_EXPERIMENT") switch {
@@ -189,11 +252,21 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
         return ids.Length >= 3 && !ids.Contains(Beta110FastDenseId.Invalid);
     }
 
+    private static bool HasDirectOrdinaryCardPools(Beta110FastCardPool pool)
+    {
+        // A three-card group excludes at most two original ranks. Each lane
+        // can always supply the next card, and a pick excludes only its own lane.
+        var ids = new HashSet<ushort> { Beta110FastDenseId.Invalid };
+        return pool.Common.Length >= 3 && pool.Uncommon.Length >= 3 && pool.Rare.Length >= 3 &&
+            pool.Common.Concat(pool.Uncommon).Concat(pool.Rare).All(ids.Add);
+    }
+
     internal string ShaderSource(bool forceGeneric = false)
     {
         string source = FamilyGpuComputeUtility.LoadEmbeddedShader("CombatRewardFamily.comp.glsl")
         .Replace("/*__C_OBSERVED_OPENING__*/", UsesObservedOpening
             ? "#define RT2_C_OBSERVED_OPENING 1\n#define RT2_C_OBSERVED_HOT " + (UsesObservedOpeningHotLoop ? "1\n" : "0\n") +
+              "#define RT2_C_LAZY_OBSERVED_BAG " + (UsesLazyObservedBag ? "1\n" : "0\n") +
               "#define RT2_C_BAG_CAPACITY " + Math.Max(1, ObservedOpeningData[8]) + "\n" +
               FamilyGpuComputeUtility.LoadEmbeddedShader("CombatRewardOpening.glsl")
             : "#define RT2_C_OBSERVED_OPENING 0\n", StringComparison.Ordinal)
@@ -205,7 +278,10 @@ internal sealed record CombatRewardGpuPlan(uint[] Meta, uint[] Pools, uint[] Ids
         .Replace("/*__C_CAPSULE_DEFINES__*/", "#define RT2_C_ASSIGNMENT " + (Meta[56] + Meta[59] > 0 ? "1\n" : "0\n") +
             "#define RT2_C_MULTIPLAYER " + (Meta[3] > 1 ? "1\n" : "0\n") +
             "#define RT2_C_CARD_FREE_TERMINAL " + (UsesCardFreeTerminal ? "1\n" : "0\n") +
-            "#define RT2_C_MODERN113 " + (UsesChildShuffle ? "1" : "0"), StringComparison.Ordinal)
+            (UsesGenericDirectCardPool && !forceGeneric ? "#define RT2_C_GENERIC_DIRECT_CARD_POOL 1\n" : "") +
+            (UsesUnobservedCardBurn && !forceGeneric ? "#define RT2_C_UNOBSERVED_CARD_BURN 1\n" : "") +
+            "#define RT2_C_MODERN113 " + (UsesChildShuffle ? "1" : "0") +
+            (forceGeneric ? "" : OpeningReplayDefines()), StringComparison.Ordinal)
         .Replace("/*__C_HOT_DEFINES__*/", "#define RT2_C_DENSE_CARRY8 " + (UsesDenseCarry8 ? "1\n" : "0\n") +
             "#define RT2_C_HOT_OPENING_PREFIX " + (UsesOpeningPrefixHotLoop ? "1\n" : "0\n") +
             Beta110GpuCombatRewardHotLoopCompiler.BuildShaderDefines(HotLoop,

@@ -20,7 +20,7 @@ internal static class QueryHistoryIdentity
     {
         "Any", "All", "Ban", "AllowedKeys", "OptionAny", "SeaGlassTargetAny", "EventSequenceConstraints",
         "EventResultConditions", "VariantBossBranches", "AncientBranches", "RelicSequenceConstraints",
-        "RelicShopSequenceConditions", "MerchantColorlessSequenceConditions", "StandardMaps",
+        "RelicShopSequenceConditions", "MerchantRelicConditions", "MerchantColorlessSequenceConditions", "StandardMaps",
         "BossFilters", "BossOrdinalFilters", "AncientIdentityFilters", "AncientOptionFilters",
         "AncientSeaGlassTargetFilters", "StructuredOpeningEffects", "unlocked_epochs", "encounters_seen", "CardKeys"
     };
@@ -39,6 +39,13 @@ internal static class QueryHistoryIdentity
         if (query.StandardMapRoutes.All(route => route is { IsValid: true }) &&
             query.StandardMapRoutes.Select(route => route.Act).Distinct().Count() == query.StandardMapRoutes.Count)
             query = query with { StandardMapRoutes = query.StandardMapRoutes.Select(route => route.Normalize()).OrderBy(route => route.Act).ToArray() };
+        if (query.FishingRodDrawRequirements is { } draws)
+        {
+            if (!query.FishingRodDrawResearch)
+                query = query with { FishingRodDrawRequirements = null };
+            else if (draws.Count > 0 && draws.All(row => row is { DrawOrdinal: > 0, PoolSize: > 0 }))
+                query = query with { FishingRodDrawRequirements = FishingRodDrawResearch.NormalizeRequirements(draws) };
+        }
         return Hash(new { IntentVersion = 2, clean.Character, clean.Ascension, clean.Mode, Query = query, clean.AncientPremises,
             Players = clean.Players.Select(p => new { p.Slot, p.Character, UnlockPolicy = p.UnlockSource }).ToArray() });
     }
@@ -86,7 +93,7 @@ internal static class QueryHistoryIdentity
     private static string Canonical(JsonNode? node, string name)
     {
         if (node is JsonObject obj)
-            return "{" + string.Join(",", obj.Where(p => p.Key != "StandardMapRoutes" || p.Value is not JsonArray { Count: 0 })
+            return "{" + string.Join(",", obj.Where(p => p.Key is not ("StandardMapRoutes" or "MerchantRelicConditions") || p.Value is not JsonArray { Count: 0 })
                 .OrderBy(p => p.Key, StringComparer.Ordinal)
                 .Select(p => JsonSerializer.Serialize(p.Key) + ":" + Canonical(p.Value, p.Key))) + "}";
         if (node is JsonArray array)

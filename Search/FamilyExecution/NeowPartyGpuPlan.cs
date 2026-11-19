@@ -177,6 +177,7 @@ internal static class NeowPartyGpuPlan
         gpu = new(meta, poolMeta, cards.ToArray(), c.LeafyStrikeTransformPool.Select(x => (uint)x).ToArray(),
             c.LeafyDefendTransformPool.Concat(c.NewLeafTransformPool).Select(x => (uint)x).ToArray(),
             a.BonesEligibleRelicIds.Select(x => (uint)x).ToArray(), rows) { HasAuthoredUpgrades = plan.AuthoredUpgrades is not null };
+        gpu = gpu with { PartyDirectDraw = NeowPartyDirectDraw.Compile(plan, gpu) };
         return true;
     }
 }

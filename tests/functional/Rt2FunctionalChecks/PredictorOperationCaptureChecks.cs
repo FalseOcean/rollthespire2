@@ -45,6 +45,8 @@ internal static class PredictorOperationCaptureChecks
         var ascensionProperty = typeof(RunManager).GetProperty("AscensionManager", members)!;
         var previousState = stateProperty.GetValue(manager);
         var previousAscension = ascensionProperty.GetValue(manager);
+        var merchantSync = typeof(RunManager).GetProperty("MerchantSynchronizer", members);
+        var previousMerchantSync = merchantSync?.GetValue(manager);
         ulong? previousLocal = LocalContext.NetId;
         try
         {
@@ -54,7 +56,7 @@ internal static class PredictorOperationCaptureChecks
                 .Select(a => ModelDb.GetById<ActModel>(new(a.Key.Category, a.Key.Entry))).ToArray(),
                 seed: baseline.Context.Seed, ascensionLevel: baseline.Context.Ascension);
             stateProperty.SetValue(manager, native);
-            ascensionProperty.SetValue(manager, new AscensionManager(native.AscensionLevel));
+            ascensionProperty.SetValue(manager, NativeGameFixture.StandardAscension(native.AscensionLevel));
             LocalContext.NetId = player.NetId;
             native.SharedRelicGrabBag.Populate(ModelDb.RelicPool<SharedRelicPool>().GetUnlockedRelics(player.UnlockState), native.Rng.UpFront);
             foreach (var owner in native.Players) owner.PopulateRelicGrabBagIfNecessary(native.Rng.UpFront);
@@ -68,9 +70,9 @@ internal static class PredictorOperationCaptureChecks
             wing.RewardsSacrificed = 1; player.AddRelicInternal(wing);
             var inventory = new MerchantInventory(player);
             var relicEntry = new MerchantRelicEntry(ModelDb.Relic<Whetstone>().ToMutable(), player);
-            inventory.AddRelicEntry(relicEntry);
+            PredictorOperationCapture.Read<List<MerchantRelicEntry>>(inventory, "_relicEntries").Add(relicEntry);
             var room = new MerchantRoom();
-            room.Inventories.Add(inventory);
+            NativeGameFixture.SetRoomInventory(native, room, inventory);
             typeof(MerchantRoom).GetField("_runState", members)!.SetValue(room, native);
             native.PushRoom(room);
 
@@ -126,7 +128,7 @@ internal static class PredictorOperationCaptureChecks
                 { EventRng = new(1, 2, 3, 4, 0) }), "internal phase/RNG fields participate in freshness");
             CheckOpaqueReward(captured, player);
             var actualPool = new List<CardModel> { ModelDb.Card<DefendIronclad>(), ModelDb.Card<StrikeIronclad>() };
-            var actualCardEntry = new MerchantCardEntry(player, inventory, actualPool, MegaCrit.Sts2.Core.Entities.Cards.CardType.Attack);
+            var actualCardEntry = NativeGameFixture.MerchantCard(player, inventory, actualPool, MegaCrit.Sts2.Core.Entities.Cards.CardType.Attack);
             var cardEntries = PredictorOperationCapture.Read<List<MerchantCardEntry>>(inventory, "_characterCardEntries");
             cardEntries.Add(actualCardEntry);
             try
@@ -172,7 +174,7 @@ internal static class PredictorOperationCaptureChecks
             player.AddRelicInternal(cage);
             var paidEntry = new MerchantRelicEntry(cage, player);
             var paidState = PredictorOperationCapture.Capture(native, "0.111.0");
-            inventory.AddRelicEntry(paidEntry);
+            PredictorOperationCapture.Read<List<MerchantRelicEntry>>(inventory, "_relicEntries").Add(paidEntry);
             var ids = player.Deck.Cards.Select(PredictorLiveRunCapture.Id).Take(2).ToImmutableArray();
             var residue = PredictorOperationCapture.CaptureDeckObtainChoice(cage,
                 new CardSelectorPrefs(CardSelectorPrefs.RemoveSelectionPrompt, 2), ids);
@@ -194,6 +196,7 @@ internal static class PredictorOperationCaptureChecks
         }
         finally
         {
+            merchantSync?.SetValue(manager, previousMerchantSync);
             stateProperty.SetValue(manager, previousState);
             ascensionProperty.SetValue(manager, previousAscension);
             LocalContext.NetId = previousLocal;
@@ -257,7 +260,7 @@ internal static class PredictorOperationCaptureChecks
         }
         player.Gold = 1000;
         var entry = new MerchantRelicEntry(ModelDb.Relic<DollysMirror>().ToMutable(), player);
-        inventory.AddRelicEntry(entry);
+        PredictorOperationCapture.Read<List<MerchantRelicEntry>>(inventory, "_relicEntries").Add(entry);
         var screen = new NDeckCardSelectScreen();
         var tree = (SceneTree)Engine.GetMainLoop();
         var harmony = new Harmony("rt2.operation.capture.fixture." + Guid.NewGuid().ToString("N"));
@@ -273,9 +276,9 @@ internal static class PredictorOperationCaptureChecks
                 ?? throw new InvalidOperationException("OPERATION_CAPTURE fixture host missing");
             host.AddChild(screen);
             Check(screen.IsInsideTree(), "native picker attached below current host while root prepares its children");
-            using var selected = CardSelectCmd.UseSelector(new SuspendedNativeSelector(screen));
+            using var selected = NativeGameFixture.UseSelector(new SuspendedNativeSelector(screen));
             int goldBefore = player.Gold;
-            purchase = entry.OnTryPurchaseWrapper(inventory);
+            purchase = (Task<bool>)MerchantRuntimeBinding.Purchase.Invoke(entry, BindingFlags.DoNotWrapExceptions, null, [inventory, false], null)!;
             if (purchase.IsFaulted)
                 throw new InvalidOperationException("OPERATION_CAPTURE original merchant purchase failed", purchase.Exception);
             Check(!purchase.IsCompleted && player.Relics.Any(r => ReferenceEquals(r, entry.Model)) && player.Gold < goldBefore,
@@ -355,7 +358,7 @@ internal static class PredictorOperationCaptureChecks
                 prefix: new(typeof(PredictorOperationCaptureChecks), nameof(SuspendFixtureParent)) { priority = Priority.Last });
             harmony.Patch(AccessTools.Method(typeof(RewardsSetSynchronizer), nameof(RewardsSetSynchronizer.BeginRewardsSet)),
                 prefix: new(typeof(PredictorOperationCaptureChecks), nameof(SuspendFixtureRewards)) { priority = Priority.Last });
-            using var selected = CardSelectCmd.UseSelector(new SuspendedNativeSelector(screen));
+            using var selected = NativeGameFixture.UseSelector(new SuspendedNativeSelector(screen));
             var cleanCallback = ExecutionContext.Capture()!;
             parent = RelicCmd.Obtain(_fixtureParent, player);
             if (parent.IsFaulted) throw new InvalidOperationException("OPERATION_CAPTURE fixture parent failed", parent.Exception);

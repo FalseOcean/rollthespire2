@@ -389,21 +389,12 @@ internal sealed partial class AnalysisActPredictionCard : PanelContainer
             return;
         }
 
-        string conditionKey = Beta111EventPresentationKnowledge.RuntimeConditionLocalizationKey(
-            _profileId,
-            entry.EventDisplay.ModelKey,
-            _playersCount, _semantics);
-        if (_uiText is null || string.IsNullOrWhiteSpace(conditionKey))
-        {
-            _tooltipHost.ShowText(artworkHost, title);
-            return;
-        }
-
-        string condition = _uiText.Get(conditionKey);
-        if (string.IsNullOrWhiteSpace(condition))
-            _tooltipHost.ShowText(artworkHost, title);
+        var occurrence = _uiText is null ? null : EventEligibilityPresentation.Describe(
+            _uiText, _profileId, _semantics, entry.EventDisplay.ModelKey, _playersCount);
+        if (_uiText is not null && occurrence is { HasAdditionalCondition: true })
+            _tooltipHost.ShowStructuredText(artworkHost, title, _uiText.Get(Ui1TextKey.SearchEventTooltipConditionsTitle), occurrence.Text);
         else
-            _tooltipHost.ShowStructuredText(artworkHost, title, _uiText.Get(Ui1TextKey.SearchEventTooltipConditionsTitle), condition);
+            _tooltipHost.ShowText(artworkHost, title);
     }
 
     private string BuildEventResultText(ModelKey eventKey)

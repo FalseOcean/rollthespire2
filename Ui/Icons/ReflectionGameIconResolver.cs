@@ -597,6 +597,15 @@ internal sealed class ReflectionGameIconResolver : IGameIconResolver
         IReadOnlyList<string> preferredNames,
         out string source)
     {
+        // Some event relics ship a standalone image without an atlas entry.
+        // Use the game's large-image lookup before invoking the atlas getter.
+        if (model is RelicModel relic && !ResourceLoader.Exists(relic.PackedIconPath) &&
+            TryReadTextureMember(model.GetType(), model, "BigIcon", out var image, out string imageSource) &&
+            image is not null && IsTextureUsable(image) && image.ResourcePath != "res://images/powers/missing_power.png")
+        {
+            source = imageSource;
+            return image;
+        }
         if (model is CardModel card && NativeCardPortraits.ResolvePackagedBetaPortrait(card) is { } portrait)
         {
             source = "packaged-beta-card-portrait";

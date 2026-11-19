@@ -16,4 +16,4 @@ There are many excellent seed finders online. My aim is to include as much of wh
 
 The encyclopedia explains the thinking behind these choices; the filtering interface explains the controls. Start with the [[default-environment|Default environment]] to find your entry. [[multiplayer|Multiplayer]], [[mods|Mods]], and [[faq|FAQ]] have further explanations. For background, read [[seed-history|Seeds & search]] and [[why-predictable|Why prediction works]].
 
-Seed Information inspects results for one seed. During play, operation prediction previews the current option in its live context. For information along your current Act's route, see [[path-prediction|In-run path prediction]]; for the Crystal Sphere board and reward guide, see [[crystal-sphere|Crystal Sphere]].
+Seed Information inspects results for one seed. During play, operation prediction previews the choice in front of you, and the [[crystal-sphere|Crystal Sphere assistant]] helps with the board and reward plans.

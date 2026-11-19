@@ -170,6 +170,13 @@ internal static class NeowSingleplayerGpuPlan
         gpu = new(meta, poolMeta, cards.ToArray(), c.LeafyStrikeTransformPool.Select(x => (uint)x).ToArray(),
             c.LeafyDefendTransformPool.Concat(c.NewLeafTransformPool).Select(x => (uint)x).ToArray(),
             a.BonesEligibleRelicIds.Select(x => (uint)x).ToArray(), rows) {
+                DirectFirstDrawRequested = !string.Equals(Environment.GetEnvironmentVariable(NeowFamilyGpuPlan.DirectFirstDrawVariable), "off", StringComparison.OrdinalIgnoreCase),
+                // Choosing Bones requires its offer. Only predicates on the acquired
+                // items or their effects need the subsequent shuffle.
+                BonesDrawUnobserved = plan.Bones && plan.AuditedModern113IdentityReplay &&
+                    (plan.BonesAny | plan.BonesAll | plan.BonesBan) == 0 && plan.Filter.RequiredBonesAcquisitionOrder.Count == 0 &&
+                    plan.First == Beta110FastRelicCatalog.InvalidId && plan.Second == Beta110FastRelicCatalog.InvalidId &&
+                    plan.EnabledDomains == Beta110FastDomain.None && plan.StructuredConditions.Length == 0 && plan.FilterRemainders.Length == 0,
                 HasAuthoredUpgrades = plan.AuthoredUpgrades is not null,
                 ModernTransformGate = plan.ModernTransformGate,
                 CapsuleNicheMetaOffset = continuationData.Length==0 ? -1 : continuationOffset };

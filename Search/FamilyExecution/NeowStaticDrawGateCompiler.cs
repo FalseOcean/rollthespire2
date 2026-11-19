@@ -7,8 +7,8 @@ using System.Globalization;
 
 namespace RolltheSpire2.Search.FamilyExecution;
 
-// A query-fixed pool predicate over the exact integer mantissa consumed by
-// next_int_current_shortcut_from_mantissa. No random distribution approximation.
+// Query-fixed rank intervals for the historical integer map and the game's
+// binary64 bounded draw. Both use the same 53-bit RNG mantissa.
 internal static class NeowStaticDrawGateCompiler
 {
     internal const ulong MantissaSpace = 1UL << 53;
@@ -40,6 +40,19 @@ internal static class NeowStaticDrawGateCompiler
         return checked((ulong)((((UInt128)(uint)rank << 53) + (uint)bound - 1u) / (uint)bound));
     }
 
+    internal static ulong Binary64Boundary(int rank, int bound)
+    {
+        if (bound <= 0 || rank < 0 || rank > bound) throw new ArgumentOutOfRangeException(nameof(rank));
+        ulong low = 0, high = MantissaSpace;
+        while (low < high)
+        {
+            ulong mid = low + (high - low) / 2;
+            if ((int)((mid * (1.0 / MantissaSpace)) * bound) < rank) low = mid + 1;
+            else high = mid;
+        }
+        return low;
+    }
+
     internal static bool TryCompilePool(IReadOnlyList<uint> pool, int length,
         IReadOnlyCollection<uint> targets, int maximumIntervals, out Gate? gate)
     {
@@ -52,7 +65,7 @@ internal static class NeowStaticDrawGateCompiler
     }
 
     internal static bool TryCompileRanks(int bound, Func<int, bool> accepted,
-        int maximumIntervals, out Gate? gate)
+        int maximumIntervals, out Gate? gate, bool binary64 = false)
     {
         ArgumentNullException.ThrowIfNull(accepted);
         gate = null;
@@ -66,7 +79,9 @@ internal static class NeowStaticDrawGateCompiler
             if (first >= 0 && (!match || rank == bound - 1))
             {
                 int end = match ? rank + 1 : rank;
-                intervals.Add(new(Boundary(first, bound), Boundary(end, bound)));
+                intervals.Add(binary64
+                    ? new(Binary64Boundary(first, bound), Binary64Boundary(end, bound))
+                    : new(Boundary(first, bound), Boundary(end, bound)));
                 if (intervals.Count > maximumIntervals) return false;
                 first = -1;
             }

@@ -294,7 +294,7 @@ internal static class PredictorObtainChecks
                 ModelDb.GetById<ActModel>(new(a.Key.Category, a.Key.Entry))).ToArray(),
                 seed: captured.Context.Seed, ascensionLevel: captured.Context.Ascension);
             stateProperty.SetValue(manager, native);
-            ascensionProperty.SetValue(manager, new AscensionManager(captured.Context.Ascension));
+            ascensionProperty.SetValue(manager, NativeGameFixture.StandardAscension(captured.Context.Ascension));
             native.SharedRelicGrabBag.Populate(ModelDb.RelicPool<SharedRelicPool>().GetUnlockedRelics(UnlockState.all), native.Rng.UpFront);
             player.PopulateRelicGrabBagIfNecessary(native.Rng.UpFront);
             var nativeToy = ModelDb.Relic<ToyBox>().ToMutable();
@@ -304,7 +304,7 @@ internal static class PredictorObtainChecks
             var actual = new PredictorRun(captured.Context, captured.Working);
             if (actual.BeginObtainRelic(new("RELIC", "TOY_BOX"), null, PredictorObtainReturn.Ancient, 910))
                 throw new InvalidOperationException("ToyBox did not suspend for five relic rewards");
-            var expected = Enumerable.Range(0, 5).Select(_ => RelicFactory.PullNextRelicFromFront(player).Id.Entry).ToArray();
+            var expected = Enumerable.Range(0, 5).Select(_ => NativeGameFixture.PullRewardRelic(player).Id.Entry).ToArray();
             if (!actual.Rewards.Select(r => r.Key.Entry).SequenceEqual(expected) ||
                 actual.Rewards.Length != 5 || actual.Rewards.Any(r => !r.IsWaxRelic))
                 throw new InvalidOperationException("ToyBox native five-front offers/wax metadata mismatch");

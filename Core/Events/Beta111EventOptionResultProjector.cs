@@ -1,4 +1,5 @@
 using RolltheSpire2.Compatibility;
+using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Rng;
 using RolltheSpire2.Core.World.Beta109;
@@ -8,11 +9,15 @@ namespace RolltheSpire2.Core.Events;
 public sealed record Beta111EventOptionResult(
     string OptionKey,
     int? GoldAmount,
-    IReadOnlyList<ModelKey> Relics);
+    IReadOnlyList<ModelKey> Relics)
+{
+    public EventRelicRarityBranch? RarityBranch { get; init; }
+    public IReadOnlyList<EffectRelicRarity> RelicRarityRolls { get; init; } = [];
+}
 
 /// <summary>
-/// Seed-local base amounts and Doll Room alternatives, conditional on entering the
-/// event and choosing the option. Does not simulate eligibility, settlement hooks,
+/// Seed-local base amounts, relic alternatives and rarity rolls, conditional on
+/// normal eligible entry and choosing the option. Does not simulate settlement hooks,
 /// future rewards, or the player's deck. No run state or continuation is consumed.
 /// </summary>
 public static class Beta111EventOptionResultProjector
@@ -24,9 +29,34 @@ public static class Beta111EventOptionResultProjector
         RngSemanticProfileId semanticProfile)
     {
         if (slot < 0) throw new ArgumentOutOfRangeException(nameof(slot));
+        var stable = ProjectBaseOptions(root, slot, eventEntry, semanticProfile);
+        if (semanticProfile != RngSemanticProfileId.Modern113) return stable;
+
+        List<Beta111EventOptionResult>? options = null;
+        foreach (var opportunity in EventOpportunityCatalog.RarityBranches)
+        {
+            if (opportunity.EventKey.Entry != eventEntry) continue;
+            var rolls = new EffectRelicRarity[opportunity.RollCount];
+            if (!EventRelicRarityProjector.Project(root, slot, opportunity, rolls)) continue;
+
+            options ??= stable.ToList();
+            var branch = opportunity.Branch;
+            // Offer Tribute already shows the same option's seed-local gold cost.
+            if (branch == EventRelicRarityBranch.OfferTribute)
+                options[0] = options[0] with { RarityBranch = branch, RelicRarityRolls = rolls };
+            else
+                options.Add(new(branch.ToString(), null, []) { RarityBranch = branch, RelicRarityRolls = rolls });
+        }
+        return options is null ? stable : options;
+    }
+
+    private static IReadOnlyList<Beta111EventOptionResult> ProjectBaseOptions(ulong root, int slot, string eventEntry,
+        RngSemanticProfileId semanticProfile)
+    {
         if (eventEntry is not ("DENSE_VEGETATION" or "JUNGLE_MAZE_ADVENTURE" or "LOST_WISP" or
             "LUMINOUS_CHOIR" or "CRYSTAL_SPHERE" or "SUNKEN_TREASURY" or "SUNKEN_STATUE" or
-            "THIS_OR_THAT" or "WHISPERING_HOLLOW" or "DOLL_ROOM"))
+            "THIS_OR_THAT" or "WHISPERING_HOLLOW" or EventOpportunityCatalog.DollRoom or
+            EventOpportunityCatalog.MuseumOfTorture or EventOpportunityCatalog.ThermaeNonupeipe))
             return [];
 
         var rng = new Xoshiro256StarStar(Beta109WorldRng.DeriveEventLocalSeed(root, slot,
@@ -52,7 +82,11 @@ public static class Beta111EventOptionResultProjector
             "SUNKEN_STATUE" => [Gold("DIVE_INTO_WATER", Beta111EventRules.SunkenStatueGold(rng))],
             "THIS_OR_THAT" => [Gold("PLAIN", Beta111EventRules.ThisOrThatGold(rng))],
             "WHISPERING_HOLLOW" => [Gold("GOLD", Beta111EventRules.WhisperingHollowGold(rng))],
-            "DOLL_ROOM" => Dolls(rng, semanticProfile),
+            EventOpportunityCatalog.DollRoom => Dolls(rng, semanticProfile),
+            EventOpportunityCatalog.MuseumOfTorture when semanticProfile == RngSemanticProfileId.Modern113 =>
+                [new("TAKE", null, [Beta111EventRules.MuseumOfferedRelic(rng)])],
+            EventOpportunityCatalog.ThermaeNonupeipe when semanticProfile == RngSemanticProfileId.Modern113 =>
+                [new("DRINK_WATERS", null, [Beta111EventRules.ThermaeDrinkRelic(rng)])],
             _ => []
         };
     }

@@ -74,7 +74,7 @@ internal static class PredictorMapChecks
         ActMap nativeBigGameSpoils;
         try
         {
-            ascensionProperty.SetValue(RunManager.Instance, new AscensionManager(context.Ascension));
+            ascensionProperty.SetValue(RunManager.Instance, NativeGameFixture.StandardAscension(context.Ascension));
             stateProperty.SetValue(RunManager.Instance, native);
             Check(RunManager.Instance.HasAscension(AscensionLevel.SwarmingElites) == (context.Ascension >= 1),
                 "native Spoils AscensionManager setup");
@@ -159,7 +159,7 @@ internal static class PredictorMapChecks
         try
         {
             stateProperty.SetValue(RunManager.Instance, native);
-            ascensionProperty.SetValue(RunManager.Instance, new AscensionManager(context.Ascension));
+            ascensionProperty.SetValue(RunManager.Instance, NativeGameFixture.StandardAscension(context.Ascension));
             native.Map = nativeSpoils;
             nativePlayer.AddRelicInternal(furRelic);
             furRelic.AfterObtained().GetAwaiter().GetResult();
@@ -269,7 +269,7 @@ internal static class PredictorMapChecks
                     owner.Deck.AddInternal(spoils, silent: true);
                 }
                 stateProperty.SetValue(manager, native);
-                ascensionProperty.SetValue(manager, new AscensionManager(ascension));
+                ascensionProperty.SetValue(manager, NativeGameFixture.StandardAscension(ascension));
                 var standard = native.Act.CreateMap(native, false);
                 ActMap oracle = standard;
                 if (compass != null) oracle = compass.ModifyGeneratedMap(native, oracle, 1);

@@ -28,6 +28,7 @@ internal sealed partial class NeowFamily
     private readonly NeowFamilyProjections _models;
     private readonly bool _conditional;
     private readonly NeowFamilyGpuPlan? _gpuPlan;
+    internal bool UsesDenseFirstDraw { get; }
     private readonly NeowCapsuleComposite? _composite;
     private readonly NeowTransformationComposite? _transformations;
     private readonly double? _transformationJoint, _givenTransformations;
@@ -59,7 +60,8 @@ internal sealed partial class NeowFamily
         _canonicalScope = !plan.Authority.UsesChildShuffle && request.Authority.PlayersCount==1 && request.CompiledSearch.Context.Party is null &&
             request.CompiledSearch.NormalizedQuery.StandardMaps.Count==0 && request.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count==0;
         _sharedNeow = Search.Semantics.TransformationAggregateCondition.HasSharedNeow(request.Evaluation);
-        _sharedIdentityOnly = Search.Semantics.TransformationAggregateCondition.SharedNeowIdentityOnly(request.Evaluation);
+        bool legacyTransform = request.Evaluation.TransformationAggregate is { UsesExtendedRequirements: false };
+        _sharedIdentityOnly = legacyTransform && Search.Semantics.TransformationAggregateCondition.SharedNeowIdentityOnly(request.Evaluation);
         _plan = plan; _transformations = transformations;
         if(composite is null && transformations is null &&
             (plan.CapsuleNicheContinuation is not null || plan.HasCapsuleNonCombatAlternatives))
@@ -103,8 +105,9 @@ internal sealed partial class NeowFamily
             (composite is not null || _gpuPlan.JointTransformMetaOffset >= 0 && !_gpuPlan.UsesChildShuffle))
             throw new InvalidOperationException("N.IntegerUnitFloat.OrdinaryInvocationOnly");
         _composite = composite;
+        UsesDenseFirstDraw = composite is null && transformations is null && _gpuPlan?.UseDirectFirstDraw == true;
         _models = new(request, plan, false, null, _gpuPlan is null ? CpuFilterExecution.Capacity : NeowFamilyGpuExecutor.Capacity);
-        if (Search.Semantics.TransformationAggregateCondition.HasSharedNeow(request.Evaluation))
+        if (_sharedNeow && legacyTransform)
         {
             var numerical = transformations?.Numerical ?? new TransformationAggregateNumericalPlan(request);
             _transformationJoint = plan.ExactOnly.Length == 0 ? TransformationAggregateProbability.SharedNeowJoint(request, numerical) : null;
@@ -169,7 +172,15 @@ internal sealed partial class NeowFamily
                     _gpuPlan.UsesStagedDense ? NeowFamilyGpuPlan.LeafyStagedDenseRevision : NeowFamilyGpuPlan.LeafyDenseRevision
                 : compactAbi1Input ? NeowFamilyGpuPlan.CompactRevision :
                     _gpuPlan.UsesStagedDense ? NeowFamilyGpuPlan.StagedDenseRevision : NeowFamilyGpuPlan.DenseRevision;
+        if (!compactAbi1Input && _composite is null && _transformations is null && _gpuPlan.UseTerminalPair)
+            revision += NeowFamilyGpuPlan.TerminalPairRevision;
+        if (!compactAbi1Input && _composite is null && _transformations is null && _gpuPlan.UsePairMask)
+            revision += NeowFamilyGpuPlan.PairMaskRevision;
+        if (!compactAbi1Input && UsesDenseFirstDraw)
+            revision += NeowFamilyGpuPlan.DirectFirstDrawRevision;
         if (!_gpuPlan.IsMultiplayer) revision += ".PackedPublicOrdinals.20260930.v1";
+        if (_gpuPlan.PartyDirectDraw is not null && _composite is null && _transformations is null)
+            revision += NeowPartyDirectDraw.Revision;
         if (!_gpuPlan.IsMultiplayer && _gpuPlan.Meta[67] != 0)
             revision += ".TrackedPairTailReject.20261114.v1";
         if (!_gpuPlan.IsMultiplayer && (_gpuPlan.Meta[82] & 9u) != 0)
@@ -179,7 +190,7 @@ internal sealed partial class NeowFamily
         if (_gpuPlan.IsMultiplayer && _plan.StructuredConditions.Any(c => c.OrderedKaleidoscope))
             revision += PartyOrderedKRevision;
         if (UsesCompatibilityGpu) revision += ".IntegerUnitFloat.Rne.20261025.v1";
-        if (_gpuPlan.UsesChildShuffle) revision += ".Modern113";
+        if (_gpuPlan.UsesChildShuffle) revision += ".Modern113" + _gpuPlan.CurseFirstDrawRevision;
         revision += _plan.CapsuleNonCombatRevision;
         revision += _plan.CapsuleRarityRevision;
         revision += _gpuPlan.ModernTransformGateRevision;
@@ -210,8 +221,11 @@ internal sealed partial class NeowFamily
             else if (_gpuPlan is null)
                 quote = NeowWorkEstimate.Cpu(this, _workEstimate, request, 1, capacity: CpuFilterExecution.Capacity);
             else
-                quote = (UsesCompatibilityGpu || _plan.Authority.UsesChildShuffle || OptimizationsFor(request.CompactInput).Revision.Length != 0 ? null :
+            {
+                bool changedPairBody = !request.CompactInput && (_gpuPlan.UseTerminalPair || _gpuPlan.UsePairMask);
+                quote = (UsesCompatibilityGpu || _plan.Authority.UsesChildShuffle || changedPairBody || OptimizationsFor(request.CompactInput).Revision.Length != 0 ? null :
                     NeowPhysicalPricing.Quote(this, request)) ?? NeowWorkEstimate.Gpu(this, _workEstimate, request);
+            }
         }
         return request.PrivateOutput && UsesSmallPrivateOutput && quote is not null
             ? quote with { Evidence = quote.Evidence + ";RetainedNumericalEstimate;PrivateSmallHeader8TransportUnmeasured" } : quote;

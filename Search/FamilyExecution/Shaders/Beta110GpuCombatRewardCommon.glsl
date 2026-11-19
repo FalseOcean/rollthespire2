@@ -216,15 +216,29 @@ bool cr_replay_query_literal_relic_consumption(uint relic,uint64_t root_hash,ino
     // Capsule nested outputs are deliberately not executed. The authored Capsule
     // itself consumes one Rewards rarity roll per nested relic; hidden nested relic
     // behavior belongs to Exact unless explicitly represented by Reward context.
+#ifndef RT2_C_OPENING_REPLAY_CROP
     if(relic==3u){cr_next_float(state.rewards);cr_next_float(state.rewards);return true;}
     if(relic==28u){cr_next_float(state.rewards);return true;}
+#endif
+#if !defined(RT2_C_OPENING_REPLAY_CROP) || defined(RT2_C_OPENING_MULTIPLAYER_SCROLL)
     if(relic==17u&&plan_meta.values[3u]>1u){uint base=pool_meta.values[47u];uint a=cr_roll_opening_card(base,asc,0xffffffffu,0xffffffffu,0xffffffffu,0u,state.rewards);uint b=cr_roll_opening_card(base,asc,a,0xffffffffu,0xffffffffu,1u,state.rewards);uint c=cr_roll_opening_card(base,asc,a,b,0xffffffffu,2u,state.rewards);return a!=0xffffffffu&&b!=0xffffffffu&&c!=0xffffffffu;}
+#endif
+#if !defined(RT2_C_OPENING_REPLAY_CROP) || defined(RT2_C_OPENING_RARE_CARDS)
     if(relic==10u){return cr_select_unused(4u,0xffffffffu,0xffffffffu,0xffffffffu,0u,state.rewards)!=0xffffffffu;}
     if(relic==2u){uint a=cr_select_unused(4u,0xffffffffu,0xffffffffu,0xffffffffu,0u,state.rewards);uint b=cr_select_unused(4u,a,0xffffffffu,0xffffffffu,1u,state.rewards);uint c=cr_select_unused(4u,a,b,0xffffffffu,2u,state.rewards);return a!=0xffffffffu&&b!=0xffffffffu&&c!=0xffffffffu;}
+#endif
+#if !defined(RT2_C_OPENING_REPLAY_CROP) || defined(RT2_C_OPENING_PAPERWEIGHT)
     if(relic==15u){uint a=cr_roll_opening_card(6u,asc,0xffffffffu,0xffffffffu,0xffffffffu,0u,state.rewards);uint b=cr_roll_opening_card(6u,asc,a,0xffffffffu,0xffffffffu,1u,state.rewards);return a!=0xffffffffu&&b!=0xffffffffu;}
+#endif
+#if !defined(RT2_C_OPENING_REPLAY_CROP) || defined(RT2_C_OPENING_COFFER)
     if(relic==16u){uint a=cr_roll_opening_card(0u,asc,0xffffffffu,0xffffffffu,0xffffffffu,0u,state.rewards);uint b=cr_roll_opening_card(0u,asc,a,0xffffffffu,0xffffffffu,1u,state.rewards);uint c=cr_roll_opening_card(0u,asc,a,b,0xffffffffu,2u,state.rewards);uint p=cr_roll_opening_potion(0xffffffffu,0u,state.rewards);return a!=0xffffffffu&&b!=0xffffffffu&&c!=0xffffffffu&&p!=0xffffffffu;}
+#endif
+#if !defined(RT2_C_OPENING_REPLAY_CROP) || defined(RT2_C_OPENING_KALEIDOSCOPE)
     if(relic==14u){uint count=pool_meta.values[40u];if(count<3u||count>15u)return false;uint other_base=48u;for(uint group=0u;group<2u;++group){uint64_t order=cr_shuffle_small(count,state.niche);for(uint item=0u;item<3u;++item){uint pool=cr_perm_value(order,item);if(cr_roll_opening_card(other_base+pool*6u,asc,0xffffffffu,0xffffffffu,0xffffffffu,0u,state.rewards)==0xffffffffu)return false;}}return true;}
+#endif
+#if !defined(RT2_C_OPENING_REPLAY_CROP) || defined(RT2_C_OPENING_SCROLL_BOXES)
     if(relic==22u){uint used_values[12];for(uint i=0u;i<12u;++i)used_values[i]=0xffffffffu;uint used=0u;bool defect=(plan_meta.values[6u]&4u)!=0u;for(uint bundle=0u;bundle<2u;++bundle){if(defect&&cr_next_int(state.rewards,100u)<1u)continue;uint x=cr_select_pool_excluding(0u,used_values,used,state.rewards);if(x==0xffffffffu)return false;used_values[used++]=x;uint y=cr_select_pool_excluding(0u,used_values,used,state.rewards);if(y==0xffffffffu)return false;used_values[used++]=y;uint z=cr_select_pool_excluding(2u,used_values,used,state.rewards);if(z==0xffffffffu)return false;used_values[used++]=z;}return true;}
+#endif
     return true;
 }
 

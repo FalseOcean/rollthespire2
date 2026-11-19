@@ -94,13 +94,15 @@ internal static class FamilyComputationWrapperChecks
                             Check(Public(full, geometry, unit.Survival.SurvivalProbability ?? 1) > Computation(compute, computeGeometry),
                                 unit.FamilyId + " public transport remains outside family computation");
                         else
-                            Check(Near(Public(full, geometry, unit.Survival.SurvivalProbability ?? 1), Computation(compute, computeGeometry)),
-                                unit.FamilyId + " complete CPU canonical work remains owned");
+                        {
+                            double windowFloor = unit == neow ? .35 * Math.Ceiling(geometry.MeanInputPopulation / full.WindowCapacity) : 0;
+                            Check(Near(Public(full, geometry, unit.Survival.SurvivalProbability ?? 1),
+                                Computation(compute, computeGeometry) + windowFloor),
+                                unit.FamilyId + " complete CPU call charges its wrapper window floor once");
+                        }
                     }
                     if (!gpu)
                     {
-                        Check(Computation(Need(neow, computeGeometry), computeGeometry) > .35,
-                            "CPU N retains its owned wrapper window floor");
                         continue;
                     }
                     // Real child numerical quotes include device filtering/emission;

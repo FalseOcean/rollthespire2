@@ -52,6 +52,7 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
     private const string RfullBindingMarker = "/*__RT2_RFULL_BINDING__*/";
     private const string RfullFunctionsMarker = "/*__RT2_RFULL_FUNCTIONS__*/";
     private const string RfullFilterMarker = "/*__RT2_RFULL_FILTER__*/";
+    internal const string ShopFirstTailRevision = ".ShopFirstTail.v1";
 
     private readonly RenderingDevice _rd;
     private readonly List<Rid> _owned = new();
@@ -127,8 +128,9 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
     public static RelicFamilyGpuExecutor Create(RenderingDevice rd, string inputIdentity, RelicFamilyPlan plan)
         => Create(rd, inputIdentity, plan, privateInput: null, privateOutput: null);
     internal static RelicFamilyGpuExecutor Create(RenderingDevice rd, string inputIdentity, RelicFamilyPlan plan,
-        PrivateOrdinalBuffer? privateInput, PrivateOrdinalBuffer? privateOutput)
-        => Create(rd, inputIdentity, plan, fullPlan: null, privateInput: privateInput, privateOutput: privateOutput);
+        PrivateOrdinalBuffer? privateInput, PrivateOrdinalBuffer? privateOutput, bool shopFirstTail = false)
+        => Create(rd, inputIdentity, plan, fullPlan: null, privateInput: privateInput, privateOutput: privateOutput,
+            shopFirstTail: shopFirstTail);
 
     internal static RelicFamilyGpuExecutor Create(
         RenderingDevice rd,
@@ -151,7 +153,8 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
         string inputIdentity,
         RelicFamilyPlan plan,
         RelicFullGpuPlan? fullPlan, PrivateOrdinalBuffer? privateInput = null, bool bonesKRouteMask = false,
-        PrivateOrdinalBuffer? privateOutput = null, ModernCapsuleGpuPlan? modernCapsule = null)
+        PrivateOrdinalBuffer? privateOutput = null, ModernCapsuleGpuPlan? modernCapsule = null,
+        bool shopFirstTail = false)
     {
         var numerical = modernCapsule?.NumericalVariant ?? fullPlan?.NumericalVariant ?? GpuNumericalVariant.NativeFloat64;
         if ((fullPlan is not null || modernCapsule is not null) && numerical == GpuNumericalVariant.IntegerRne &&
@@ -169,7 +172,8 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
             Rid Add(Rid rid) { owned.Add(rid); return rid; }
             uint planTag = StableTag(
                 inputIdentity + "|" +
-                (modernCapsule?.Revision(false) ?? fullPlan?.ActualAlgorithmRevision ?? FamilyPhysicalImplementationRevisions.Relic));
+                (modernCapsule?.Revision(false) ?? fullPlan?.ActualAlgorithmRevision ?? FamilyPhysicalImplementationRevisions.Relic) +
+                (shopFirstTail ? ShopFirstTailRevision : ""));
             uint[] planMeta = PackPlanMeta(plan);
             uint[] bucketMeta = PackBuckets(plan.Pool);
             uint[] predicates = PackPredicates(plan.Predicates);
@@ -216,7 +220,7 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
             string source = modernCapsule?.ShaderSource(plan.LocalStateCapacity) ??
                 ShaderSource(fullPlan is not null, fullPlan?.UsesBonesKBoundary == true, bonesKRouteMask,
                 fullPlan?.GenericReplay == true, plan.LocalStateCapacity, numerical,
-                fullPlan?.UsesOpeningPrefix == true, plan.Pool.UsesChildShuffle);
+                fullPlan?.UsesOpeningPrefix == true, plan.Pool.UsesChildShuffle, shopFirstTail);
             if (fullPlan?.GenericReplay == true)
                 source = source.Replace("#version 450", "#version 450\n#define RT2_R_GENERIC_BAG_CAPACITY " +
                     fullPlan.ConfiguredGenericBagCapacity.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
@@ -258,10 +262,12 @@ internal sealed partial class RelicFamilyGpuExecutor : IDisposable
 
     internal static string ShaderSource(bool rfull, bool bonesKBoundary = false, bool bonesKRouteMask = false,
         bool genericReplay = false, int localStateCapacity = 64,
-        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64, bool openingPrefix = false, bool childShuffle = false)
+        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64, bool openingPrefix = false,
+        bool childShuffle = false, bool shopFirstTail = false)
     {
         string source = FamilyGpuComputeUtility.LoadFamilyShaderWithVisibleSeedRootHash(ShaderSuffix);
         if (childShuffle) source = source.Replace("#version 450", "#version 450\n#define RT2_R_CHILD_SHUFFLE 1", StringComparison.Ordinal);
+        if (shopFirstTail) source = source.Replace("#version 450", "#version 450\n#define RT2_R_SHOP_FIRST_TAIL 1", StringComparison.Ordinal);
         source = source.Replace("const int MAX_LOCAL_STATE = 64;", $"const int MAX_LOCAL_STATE = {localStateCapacity};", StringComparison.Ordinal);
         if (bonesKRouteMask) source = source.Replace(
             "uint logical = batch_meta.values[4u] == 0u ? invocation : input_ordinals.values[invocation];",

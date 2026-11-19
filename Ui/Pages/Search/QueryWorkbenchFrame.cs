@@ -115,16 +115,20 @@ internal sealed partial class QueryWorkbenchFrame : Control
         AddChild(_transformationEditor);
         _neowEditor.TransformTakenOver = (slot, source) => !_multiplayer && _transformationEditor.IsTakenOver(slot, source);
         _eventEditor.TransformTakenOver = (slot, source) => !_multiplayer && _transformationEditor.IsTakenOver(slot, source);
+        _ancientEditor.TransformTakenOver = (slot, source) => !_multiplayer && _transformationEditor.IsTakenOver(slot, source);
+        _ancientEditor.AutomaticPandoraCount = _transformationEditor.GetAutomaticPandoraCount;
+        _ancientEditor.PickTransformationTarget = selected => PickTransformationCards(_neowEditor.AncientTransformationCardCandidates(0), selected);
         _transformationEditor.TakeoverChanged += (seat, sourceId) =>
         {
             // Takeover changes the active projection, never the saved source requirements.
             using var observation = _editorInputs.Observe(_runtime);
-            RefreshTransformationContext();
+            RefreshTransformationContext(render: false);
             _neowEditor.Refresh(_language, _multiplayer ? _seatCharacters[_seat] : _soloCharacter,
                 _multiplayer ? _partyAscension : _soloAscension, _multiplayer ? _playerCount : 1,
                 _multiplayer ? _seat : 0, _multiplayer ? _lobbyUnlocks[_seat] : null, sharedContext: ActiveEditorContext());
             RefreshCombatContext();
             RefreshEventContext();
+            _renderedEditorDomains.Remove("ancient");
         };
         _objectPicker.ModalChanged += open => ModalChanged?.Invoke(open);
         _eventEditor.ModalChanged += open => ModalChanged?.Invoke(open);
@@ -141,17 +145,15 @@ internal sealed partial class QueryWorkbenchFrame : Control
         _transformationEditor.SourceEditorRequested += source =>
         {
             bool isEvent = source.Id.StartsWith("E.", StringComparison.Ordinal);
-            SelectDomain(isEvent ? "events" : "neow");
+            SelectDomain(source.IsAncient ? "ancient" : isEvent ? "events" : "neow");
             if (isEvent) _eventEditor.FocusEvent(source.Identity);
+            if (source.IsAncient) _ancientEditor.FocusTransformationSource(source.AncientAct);
         };
-        _eventEditor.TransformationRequested += source =>
-        {
-            if (_multiplayer) return;
-            RefreshTransformationContext();
-            if (_transformationEditor.SetSourceTakenOver(source, true)) SelectDomain("transform");
-        };
+        _eventEditor.TransformationRequested += OpenTransformationSource;
+        _ancientEditor.TransformationRequested += OpenTransformationSource;
         _neowEditor.OpeningChanged += OpeningContextChanged;
         _eventEditor.QueueChanged += EventQueueChanged;
+        _ancientEditor.TransformationContextChanged += AncientTransformationContextChanged;
         _characterIcons = new NativeCharacterPoolIconProvider(_icons);
         Name = "QueryWorkbenchFrame";
         AddChild(_configOverlay);

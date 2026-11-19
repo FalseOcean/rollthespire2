@@ -24,6 +24,7 @@ internal sealed class WorldFamilyGpuExecutor : IDisposable
     private readonly bool _tracePrivate = EwPhysicalExperiment.Mode.Length != 0 || PrivateOrdinalSelection.IsRequested || NwaePhysicalExperiment.Mode.Length != 0;
     private readonly bool _privateInput;
     private readonly PrivateOrdinalBuffer? _privateOutput;
+    private readonly bool _denseCarry8;
     internal int GroupingK { get; }
     internal string Device { get; }
     internal double SetupMs { get; }
@@ -37,13 +38,15 @@ internal sealed class WorldFamilyGpuExecutor : IDisposable
     // own immutable short numerical program. This does not compose W work.
     internal WorldFamilyGpuExecutor(RenderingDevice rd, VariantOpeningGpuPlan plan, Rid? privateInput = null, PrivateOrdinalBuffer? privateOutput = null)
         : this(rd, plan.Buffers, plan.Capacity, plan.GroupingK, plan.ScratchWords, plan.NumericalVariant,
-            plan.ShaderSource(), "V.VariantOpening", privateInput, privateOutput) { }
+            plan.ShaderSource(), "V.VariantOpening", privateInput, privateOutput, plan.DenseCarry8) { }
 
     private WorldFamilyGpuExecutor(RenderingDevice rd, uint[][] packed, int capacity, int groupingK, int scratchWords,
-        GpuNumericalVariant numericalVariant, string source, string familyId, Rid? privateInput, PrivateOrdinalBuffer? privateOutput)
+        GpuNumericalVariant numericalVariant, string source, string familyId, Rid? privateInput, PrivateOrdinalBuffer? privateOutput,
+        bool denseCarry8 = false)
     {
         _rd = rd; Capacity = capacity; GroupingK = groupingK; NumericalVariant = numericalVariant; _familyId = familyId; _scope = familyId[..1];
         _privateInput = privateInput.HasValue; _privateOutput = privateOutput;
+        _denseCarry8 = denseCarry8;
         if (privateInput.HasValue && privateOutput is not null && privateInput.Value == privateOutput.Buffer)
             throw new ArgumentException(_scope + ".PrivateBuffersAlias");
         var watch = Stopwatch.StartNew();
@@ -132,6 +135,7 @@ internal sealed class WorldFamilyGpuExecutor : IDisposable
         long headerBytes = 0, payloadBytes = 0;
         int privateCount = 0;
         bool resident = _privateOutput is not null;
+        int candidatesPerWorkgroup = input.IsDense && !_privateInput && _denseCarry8 ? 512 : 64;
         if (resident) FamilyGpuComputeUtility.UpdateBytes(_rd, _header[0], _headerResetBytes, _scope + ".PrivateHeader");
         for (int offset = 0; offset < inputCount;)
         {
@@ -168,7 +172,7 @@ internal sealed class WorldFamilyGpuExecutor : IDisposable
                     if (slot > 0) _rd.ComputeListAddBarrier(list);
                     _rd.ComputeListBindUniformSet(list, _uniforms[slot], 0);
                     int count = Math.Min(Capacity, inputCount - offset - slot * Capacity);
-                    _rd.ComputeListDispatch(list, (uint)((count + 63) / 64), 1, 1);
+                    _rd.ComputeListDispatch(list, (uint)((count + candidatesPerWorkgroup - 1) / candidatesPerWorkgroup), 1, 1);
                     dispatches++;
                 }
             }

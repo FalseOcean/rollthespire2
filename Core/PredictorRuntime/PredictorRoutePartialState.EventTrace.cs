@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Globalization;
+using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Identity;
 
 namespace RolltheSpire2.Core.PredictorRuntime;
@@ -328,16 +329,16 @@ internal sealed partial class PredictorRun
                 reads: ImmutableArray.Create(queue, cursor, examined, visited).AddRange(_groups.GetValueOrDefault("eligibility", [])));
             Group("occurrence", result); Group("stage", result); Publish();
         }
-        internal void StaticEligibility(PredictorRun run, ModelKey key, string result)
+        internal void StaticEligibility(PredictorRun run, ModelKey key, EventImmutableEligibilityContext context, string result)
         {
-            var source = run.Context.AncientAuthority;
             var model = Value("eligibility.event", key.Serialized, "EventOccurrenceStaticEligibility: candidate identity");
             var act = Value("eligibility.act", run.Working.Position.Act, "EventOccurrenceStaticEligibility: act mask input");
-            var immutable = Value("eligibility.immutableMode", source == null ? "unknown mode context" :
-                "modeExact=" + source.ModeFactsExact + "; mode=" + (source.ModeFactsExact ? source.GameMode.ToString() : "not observed") +
-                "; players=" + (source.ModeFactsExact ? source.PlayerCount.ToString(CultureInfo.InvariantCulture) : "not observed") +
-                "; cardPoolExact=" + source.EventAuthority.CharacterCardPoolCountExact + "; cardPoolCount=" +
-                (source.EventAuthority.CharacterCardPoolCountExact ? source.EventAuthority.CharacterCardPoolCount.ToString(CultureInfo.InvariantCulture) : "not observed"),
+            var immutable = Value("eligibility.immutableMode",
+                "semanticProfile=" + context.RngSemantics + "; modeExact=" + context.GameModeExact +
+                "; mode=" + (context.GameModeExact ? context.GameMode.ToString() : "not observed") +
+                "; players=" + (context.PlayerCountExact ? context.PlayerCount.ToString(CultureInfo.InvariantCulture) : "not observed") +
+                "; cardPoolExact=" + context.CharacterCardPoolCountExact + "; cardPoolCount=" +
+                (context.CharacterCardPoolCountExact ? context.CharacterCardPoolCount.ToString(CultureInfo.InvariantCulture) : "not observed"),
                 "EventOccurrenceStaticEligibility: explicit exactness flags and immutable authority fields");
             var rule = Value("eligibility.rule", result, "EventStaticEligibilityCatalog.Evaluate: Beta111 Shared static predicate", reads: [model, act, immutable]);
             _groups["eligibility"] = _groups.GetValueOrDefault("eligibility", []).Add(rule); Publish();

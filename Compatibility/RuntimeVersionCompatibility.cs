@@ -143,10 +143,11 @@ public static class RuntimeVersionCompatibility
     public const string Beta110PriorVersion = "0.110.0";
     public const string Beta110Version = "0.110.1";
     public const string Beta111Version = "0.111.0";
+    public const string Stable111Version = "0.111.1";
     public const string Beta113Version = "0.113.0";
 
     public const string LatestAuditedVersion = Beta111Version;
-    public const string LatestProductionCompatibleVersion = Beta111Version;
+    public const string LatestProductionCompatibleVersion = Stable111Version;
     public const string LatestSourceAuditedVersion = Beta111Version;
     public const string LatestSemanticProfileBaseVersion = Beta110Version;
     public const string LatestKnownProfileVersion = Beta113Version;
@@ -176,6 +177,9 @@ public static class RuntimeVersionCompatibility
 
     public static bool IsBeta111(string? normalizedGameVersion) =>
         string.Equals(normalizedGameVersion, Beta111Version, StringComparison.Ordinal);
+
+    public static bool UsesAccepted111Rules(string? version) =>
+        version is Beta111Version or Stable111Version;
 
     public static RuntimeVersionResolution Resolve(string? normalizedGameVersion)
     {
@@ -210,7 +214,7 @@ public static class RuntimeVersionCompatibility
                 "audited-exact:" + Beta110Version);
         }
 
-        if (string.Equals(normalized, Beta111Version, StringComparison.Ordinal))
+        if (UsesAccepted111Rules(normalized))
         {
             return new RuntimeVersionResolution(
                 identity,
@@ -221,7 +225,9 @@ public static class RuntimeVersionCompatibility
                 RuntimeVersionSupportKind.AcceptedCompatible,
                 normalized,
                 Beta111Version,
-                "semantic-compatible-patch:source-audited+compile-load+authority-smoke:" + Beta111Version);
+                normalized == Stable111Version
+                    ? "stable-release-inherits-tested-rules:" + Stable111Version + "->" + Beta111Version
+                    : "semantic-compatible-patch:source-audited+compile-load+authority-smoke:" + Beta111Version);
         }
 
         if (string.Equals(normalized, Beta113Version, StringComparison.Ordinal))

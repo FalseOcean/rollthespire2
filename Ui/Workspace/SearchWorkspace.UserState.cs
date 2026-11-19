@@ -5,6 +5,7 @@ using Godot;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.World;
+using RolltheSpire2.Presentation.DeveloperNotes;
 using RolltheSpire2.Ui.Settings;
 using RolltheSpire2.Ui.Workspace;
 
@@ -77,13 +78,13 @@ internal sealed partial class SearchWorkspace
         MarkPreferencesDirty(); FlushPreferences();
     }
 
-    public bool NeedsNotesAcknowledgement(RolltheSpire2.Presentation.DeveloperNotes.DeveloperNotesChapter chapter) =>
-        chapter.RequiresAcknowledgement &&
-        _preferences.ReadNotesVersions.GetValueOrDefault(chapter.Id) != chapter.AcknowledgementVersion;
+    internal string? ReadNotesVersion(string chapterId) => _preferences.ReadNotesVersions.GetValueOrDefault(chapterId);
 
-    public void AcknowledgeNotesChapter(RolltheSpire2.Presentation.DeveloperNotes.DeveloperNotesChapter chapter)
+    public bool NeedsNotesAcknowledgement(DeveloperNotesChapter chapter) => chapter.NeedsAcknowledgement(ReadNotesVersion(chapter.Id));
+
+    public void AcknowledgeNotesChapter(DeveloperNotesChapter chapter)
     {
-        if (!chapter.RequiresAcknowledgement || string.IsNullOrWhiteSpace(chapter.AcknowledgementVersion)) return;
+        if (!NeedsNotesAcknowledgement(chapter) || string.IsNullOrWhiteSpace(chapter.AcknowledgementVersion)) return;
         _preferences.ReadNotesVersions[chapter.Id] = chapter.AcknowledgementVersion;
         MarkPreferencesDirty(); FlushPreferences();
     }

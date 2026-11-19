@@ -2,6 +2,7 @@ using RolltheSpire2.Infrastructure.Snapshots;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Prediction;
+using RolltheSpire2.Core.Rng;
 using RolltheSpire2.Core.Seed;
 using RolltheSpire2.Core.World;
 using RolltheSpire2.Core.World.Beta109;
@@ -169,8 +170,37 @@ internal static class VariantOpeningExecutionChecks
             }
             Check(VariantOpeningFamily.TryCreate(request.Model, FilterExecutionPreferences.From(request.RunOptions), out var native, true) && native!.CanBindPrivateSerial, fixture.Name + ":NativeResidentPorts");
             Check(VariantOpeningFamily.TryCreate(request.Model, FilterExecutionPreferences.From(request.RunOptions), out var integer, true, GpuNumericalVariant.IntegerRne) && !integer!.CanBindPrivateSerial, fixture.Name + ":IntegerPublicOnly");
+            Check((native!.FirstDraw is not null) == (fixture.Name == "Act1") && integer!.FirstDraw is null,
+                fixture.Name + ":NativeFirstDrawCoversWholeVariantBody");
             Check(!declaredJuzu || sawJuzuPositiveWitness, fixture.Name + ":HasIndependentJuzuPositiveWitness");
             Check(!declaredJuzu || sawCompactJuzuPositiveWitness, fixture.Name + ":HasCompactGpuJuzuPositiveWitness");
+        }
+        var act1 = generation.ActSelectionGroups.Single(group => group.Act == 1);
+        foreach (var key in act1.EligibleActsInSourceOrder)
+        {
+            var query = SearchQuery.Empty with { VariantBossBranches = [new(1, key, ModelKeySetFilter.Empty, ModelKeySetFilter.Empty, false)] };
+            FamilyFirstDraw? PrepareFirstDraw(SearchContext fixtureContext)
+            {
+                var request = Request(query, fixtureContext);
+                return VariantOpeningFamily.TryCreate(request.Model, FilterExecutionPreferences.From(request.RunOptions), out var body)
+                    ? body!.FirstDraw : null;
+            }
+            var firstDraw = PrepareFirstDraw(context) ?? throw new InvalidDataException("V.Execution.Act1FirstDrawMissing:" + key);
+            int matched = 0;
+            for (ulong ordinal = 0; ordinal < 64; ordinal++)
+            {
+                string seed = Beta110SeedCodec.FormatOrdinal(ordinal);
+                ulong root = Beta111Profile.Instance.ComputeRootSeed(seed);
+                ulong mantissa = new Xoshiro256StarStar(unchecked(root + firstDraw.StreamOffset)).NextUInt64() >> 11;
+                bool expected = Beta109WorldSnapshotProjector.ProjectForSeed(generation, seed).SelectedActs[0] == key;
+                Check(firstDraw.AcceptedRanks.Contains(mantissa) == expected, $"Act1FirstDraw:{key}:{seed}");
+                if (expected) matched++;
+            }
+            Check(matched is > 0 and < 64, "Act1FirstDrawBothOutcomes:" + key);
+            Check(PrepareFirstDraw(cases.Single(fixture => fixture.Name == "OverrideKeepsSelectionDraw").Context) is null,
+                "OverriddenAct1IndependentOfFirstDraw:" + key);
+            Check(PrepareFirstDraw(cases.Single(fixture => fixture.Name == "DeterministicPredecessor").Context) is null,
+                "DeterministicAct1IndependentOfFirstDraw:" + key);
         }
         var empty = Request(SearchQuery.Empty);
         Check(!VariantOpeningFamily.TryCreate(empty.Model, FilterExecutionPreferences.From(empty.RunOptions), out _, false), "NoEmptyStage");

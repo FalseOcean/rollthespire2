@@ -19,6 +19,7 @@ internal static partial class CombatRewardFamily
                 row.PotionAny.Length + row.PotionAll.Length == 1 && row.PotionBan.Length == 0 && !row.HasGoldPredicate);
         string revision = potionPrefix ? "C.CombatReward.Cpu.PotionPrefix.20261013.v2" +
             (replay.UsesObservedOpening ? CombatRewardObservedOpening.Revision : "") +
+            (replay.ObservedOpening is { UsesLazyCapsuleBag: true } ? CombatRewardObservedOpening.LazyCapsuleBagRevision : "") +
             (replay.UsesNeutralWitness ? CombatRewardNeutralWitness.Revision : "") + replay.RuleRevision : replay.CpuRevision;
         bool numericalRoots = profile.ProfileId == RuntimeProfileId.Beta111;
         var costs = FamilyAuxiliaryEvidence.Read<CpuCostSnapshot?>(Id, "CpuCostSnapshot", CpuCostCalibration.Capture, null);

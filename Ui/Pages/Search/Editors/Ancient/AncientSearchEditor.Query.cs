@@ -136,6 +136,7 @@ internal sealed partial class AncientSearchEditor
         AncientEditorStateSnapshot? saved = null)
     {
         _draft.Eligibility = premises;
+        ImportTransformationEditorState(_draft, saved?.Transformations);
         foreach (ModeDraft mode in _draft.Modes)
         {
             mode.Acts[2].Clear(); mode.Acts[3].Clear(); mode.NeowOptions.Clear();

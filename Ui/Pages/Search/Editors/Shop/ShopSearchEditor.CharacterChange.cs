@@ -19,7 +19,22 @@ internal sealed partial class ShopSearchEditor
         }
         if (_draft.Cards is { AuthorityExact: true } cards)
         { Clear(_draft.Uncommon, cards.UncommonCandidates); Clear(_draft.Rare, cards.RareCandidates); }
-        if (_draft.Relics is { LaneMappingExact: true } relics) Clear(_draft.Relic, relics.CandidatesFor(RelicSequenceKind.Shop));
+        if (_draft.Relics is { LaneMappingExact: true } relics)
+        {
+            Clear(_draft.Relic, relics.CandidatesFor(RelicSequenceKind.Shop));
+            if (SupportsOrdinaryRelics)
+            {
+                bool Unavailable(ModelKey key)
+                {
+                    if (!known.Contains(key) || relics.OrdinaryShopCandidates.Contains(key, ModelKeyComparer.Instance))
+                        return false;
+                    removed.Add(key);
+                    return true;
+                }
+                _draft.OrdinaryShelf.RemoveAll(Unavailable);
+                _draft.OtherShopWindows.RemoveAll(c => Unavailable(c.TargetRelicKey));
+            }
+        }
         return removed;
     }
 }

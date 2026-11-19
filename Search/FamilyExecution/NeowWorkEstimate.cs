@@ -7,6 +7,7 @@ namespace RolltheSpire2.Search.FamilyExecution;
 // reference anchors, not measurements of the current device/optimization.
 internal static class NeowWorkEstimate
 {
+    internal const double DirectGpuDrawNanoseconds = .10;
     internal readonly record struct Work(double Draws, double PoolVisits, double Comparisons, int Routes);
 
     internal static Work Describe(NeowReplayPlan p)
@@ -86,7 +87,7 @@ internal static class NeowWorkEstimate
             BitOperations.PopCount(gpu.Meta[68] | gpu.Meta[69]) >= curses;
         string kind;
         double ns;
-        if (p.Bones)
+        if (p.Bones && (g.CompactInput || !family.UsesDenseFirstDraw))
         {
             kind = pair ? "TrackedPair" : "BonesPoolReplay";
             ns = pair ? (g.CompactInput ? 1 : .14) + .003 * Math.Max(0, bones - 28)
@@ -137,13 +138,57 @@ internal static class NeowWorkEstimate
         if (options.CurseFirst && !g.CompactInput) ns *= .9; // bounded first-gate saving, not a measured variant ratio
         double integerFactor = family.UsesCompatibilityGpu ? 1.5 : 1;
         ns *= integerFactor; // estimated arithmetic work, not FP64 measurement identity reuse
-        int representedPlayers = gpu.IsMultiplayer ? Math.Max(1, p.Authority.PlayersCount) : 1;
-        ns *= representedPlayers; // packed multi-player observations belong to this N body
+        // A party child runs the packed seat's predicate. The party wrapper
+        // already composes every selected stage, including repeated seat work.
         return FamilyCoarsePricing.Gpu(family.FamilyId, "N." + kind, ns, NeowFamilyGpuExecutor.Capacity, g,
             $"N.WorkEstimate.20261028.v1;Anchors=N.WorkShape.20260910.v2;OwnCoverageOnly;Draws={work.Draws:R};PoolVisits={work.PoolVisits:R};Comparisons={work.Comparisons:R};Routes={work.Routes};" +
-            $"NumericalVariant={gpu.NumericalVariant};OptimizationReference={options.Revision};IntegerArithmeticFactorEstimated={integerFactor};RepresentedPlayers={representedPlayers};NoJointPrice;NoNewMeasurement",
+            $"NumericalVariant={gpu.NumericalVariant};OptimizationReference={options.Revision};IntegerArithmeticFactorEstimated={integerFactor};" +
+            (gpu.IsMultiplayer ? "OnePackedSeatPerGpuStage;" : "") + "NoJointPrice;NoNewMeasurement",
             setupMilliseconds: gpu.UsesStagedDense ? 4200 : 2400, publicTransportClass: "LargeResidentAppend32");
     }
+
+    internal static FamilyPhysicalQuote? PartyDirectGpu(string familyId, IReadOnlyList<NeowFamilyGpuPlan> seats,
+        FamilyPhysicalQuoteRequest geometry)
+    {
+        if (seats.Count == 0 || seats.Any(seat => seat.PartyDirectDraw is null)) return null;
+        var firstDraw = NeowPhysicalPricing.ReferenceWork(0);
+        var pairGate = NeowPhysicalPricing.ReferenceWork(2);
+        double reach = 1, ns = 0;
+        void Add(double pass, double denseAnchor, double compactAnchor, double additionalNs)
+        {
+            // The first gate owns the root decode/hash. Subsequent gates pay
+            // only arithmetic in lanes which can still reach that observation.
+            ns += ns == 0 ? (geometry.CompactInput ? compactAnchor : denseAnchor) :
+                (1 - Math.Pow(1 - reach, 32)) * additionalNs;
+            reach *= pass;
+        }
+        foreach (var seat in seats.Where(seat => seat.PartyDirectDraw!.TargetCount == 2))
+            Add(TransformPass(seat), pairGate.DenseNs, pairGate.CompactNs, DirectGpuDrawNanoseconds);
+        foreach (var seat in seats)
+            Add(BitOperations.PopCount(seat.Meta[68]) / (double)seat.Meta[39], firstDraw.DenseNs, firstDraw.CompactNs, DirectGpuDrawNanoseconds);
+        foreach (var seat in seats.Where(seat => seat.PartyDirectDraw!.TargetCount == 1))
+            Add(TransformPass(seat), firstDraw.DenseNs, firstDraw.CompactNs, 2 * DirectGpuDrawNanoseconds);
+
+        return FamilyCoarsePricing.Gpu(familyId, "N.PartyDirectDraw", ns, NeowFamilyGpuExecutor.Capacity, geometry,
+            $"PartyDirectDrawWork;Seats={seats.Count};RootHashOnce;FirstGateAnchors=FirstDrawOrTwoTransformPreGate;" +
+            "FurtherSingleDraw=.10ns;FurtherTwoDraw=.20ns;Reach=OwnedGateMarginalsWith32LaneEnvelope;NoSharedArrivalCredit;NoNewMeasurement",
+            setupMilliseconds: 2400, publicTransportClass: "LargeResidentAppend32");
+    }
+
+    private static double TransformPass(NeowFamilyGpuPlan seat)
+    {
+        const int targetOffset = Beta110FastRelicCatalog.LeafyPoultice * 5 + 1;
+        uint first = seat.Conditions[targetOffset], second = seat.Conditions[targetOffset + 1];
+        double strikeFirst = TargetMass(seat.Strike, seat.Meta[58], first);
+        double defendFirst = TargetMass(seat.Defend, seat.Meta[59], first);
+        if (seat.PartyDirectDraw!.TargetCount == 1) return 1 - (1 - strikeFirst) * (1 - defendFirst);
+        if (first == second) return strikeFirst * defendFirst;
+        return strikeFirst * TargetMass(seat.Defend, seat.Meta[59], second) +
+            TargetMass(seat.Strike, seat.Meta[58], second) * defendFirst;
+    }
+
+    private static double TargetMass(uint[] pool, uint length, uint target) =>
+        pool.Take((int)length).Count(value => value == target) / (double)length;
 
     internal static FamilyPhysicalQuote? Cpu(NeowFamily family, Work work, FamilyPhysicalQuoteRequest g, int workers,
         NeowCpuPreGate? gate = null, bool fixedPair = false, bool directLocal = false, NeowCpuFourWayPreGate? fourWay = null,

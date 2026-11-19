@@ -42,7 +42,21 @@ internal sealed partial class EncyclopediaCanvas
 
         Label(this, T("百科", "Encyclopedia"), 28, 8, 5);
         Label(this, T("理解约定背后的选择。", "Understand the choices behind each convention."), 17, 270, 17, true);
-        Label(this, "BETA " + EncyclopediaGameVersion, 14, 850, 19, true);
+        Label(this, T("游戏版本", "Game version"), 17, 666, 17, true);
+        var edition = new OptionButton { Name = "EncyclopediaEdition", Position = new(788, 4),
+            Size = new(230, 46), FitToLongestItem = false };
+        MainPanelTheme.ApplyOptionButton(edition);
+        edition.AddItem(_detectedEdition.HasValue ? T("自动", "Auto") + " · " + _detectedVersion
+            : T("自动 · 无对应版本", "Auto · No matching edition"), (int)Edition.Auto);
+        edition.AddItem("0.111", (int)Edition.Beta111);
+        edition.AddItem("0.113", (int)Edition.Beta113);
+        edition.Select(edition.GetItemIndex((int)_edition));
+        edition.ItemSelected += index =>
+        {
+            _edition = (Edition)edition.GetItemId((int)index);
+            RenderMain();
+        };
+        AddChild(edition);
         _search = new LineEdit
         {
             Position = new Vector2(1036, 4), Size = new Vector2(500, 46),

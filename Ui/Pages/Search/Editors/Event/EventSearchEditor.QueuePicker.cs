@@ -1,11 +1,7 @@
 using RolltheSpire2.Ui.Shell;
 using Godot;
-using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Identity;
-using RolltheSpire2.Infrastructure.ContentNames;
 using RolltheSpire2.Presentation.ContentNames;
-using RolltheSpire2.Presentation.Localization;
-using RolltheSpire2.Presentation.Ui1;
 using RolltheSpire2.Ui.Pages.Search.Event;
 using RolltheSpire2.Ui.Tooltips;
 using RolltheSpire2.Ui.Theme;
@@ -22,13 +18,13 @@ internal sealed partial class EventSearchEditor
     private ScrollContainer? _queuePickerScroll;
     private LineEdit? _queuePickerSearch;
     private Label? _queuePickerEmpty;
-    private AnchoredTooltipHost? _queuePickerTooltipHost;
+    private Label? _queuePickerOccurrenceName;
+    private Label? _queuePickerOccurrence;
     private ModelKey? _queuePickerVariant;
     private bool _queuePickerShared;
     private int _queuePickerConditionMode;
     private int _queuePickerResultMode;
     private int _queuePickerPlayers = 1;
-    private IUiTextProvider _queuePickerTooltipText = JsonUiTextProvider.CreatePredictorUi13("zh");
 
     public event Action<bool>? ModalChanged;
 
@@ -42,12 +38,7 @@ internal sealed partial class EventSearchEditor
     private void OpenQueuePicker()
     {
         if (_queuePickerOverlay.GetParent() is not Node parent) return;
-        _queuePickerCandidates = _draft.Catalog.CandidatesForAct(_draft.QueueAct)
-            .DistinctBy(candidate => candidate.EventKey, ModelKeyComparer.Instance)
-            .ToArray();
-        _queuePickerTooltipText = JsonUiTextProvider.CreatePredictorUi13(_text.LanguageCode);
-        _queuePickerVariant = null;
-        _queuePickerShared = false;
+        LoadQueuePickerAct();
         _queuePickerConditionMode = 0;
         _queuePickerResultMode = 0;
         _queuePickerBlocked.Clear();
@@ -75,7 +66,9 @@ internal sealed partial class EventSearchEditor
         panel.AddThemeStyleboxOverride("panel", _p.Box(_p.Canvas, _p.Line, 1));
         _queuePickerOverlay.AddChild(panel);
 
-        Text(panel, _text.Format("query.event.picker.title", _draft.QueueAct), 24, 18, 360, 22);
+        Text(panel, _text.Get("query.event.picker.title"), 24, 18, 230, 22);
+        QueueOptions(panel, EventActOptions(), _draft.QueueAct - 1, 268, 16, 168, ChangeQueuePickerAct)
+            .Name = "EventPickerAct";
         Button(panel, "×", 1184, 16, 48, () => CloseQueuePicker(), false, 40);
 
         var filterScroll = new ScrollContainer
@@ -98,9 +91,16 @@ internal sealed partial class EventSearchEditor
         _queuePickerSearch.AddThemeStyleboxOverride("focus", _p.FocusRing());
         panel.AddChild(_queuePickerSearch);
 
+        _queuePickerOccurrenceName = Text(panel, string.Empty, 268, 76, 988, 17);
+        _queuePickerOccurrenceName.Name = "EventPickerOccurrenceName";
+        _queuePickerOccurrence = Text(panel, string.Empty, 268, 104, 988, 15, true);
+        _queuePickerOccurrence.Name = "EventPickerOccurrence";
+        _queuePickerOccurrence.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        _queuePickerOccurrence.Size = new Vector2(988, 48);
+
         _queuePickerScroll = new ScrollContainer
         {
-            Position = new Vector2(268, 76), Size = new Vector2(988, 600),
+            Position = new Vector2(268, 166), Size = new Vector2(988, 510),
             HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled
         };
         panel.AddChild(_queuePickerScroll);
@@ -109,19 +109,32 @@ internal sealed partial class EventSearchEditor
         _queuePickerGrid.AddThemeConstantOverride("v_separation", 12);
         _queuePickerScroll.AddChild(_queuePickerGrid);
         _queuePickerEmpty = _p.Label(_text.Get("query.event.picker.empty"), 16, true);
-        _queuePickerEmpty.Position = new Vector2(268, 86);
+        _queuePickerEmpty.Position = new Vector2(268, 174);
         _queuePickerEmpty.Size = new Vector2(900, 32);
         panel.AddChild(_queuePickerEmpty);
-
-        _queuePickerTooltipHost = new AnchoredTooltipHost(new RuntimeRelicTooltipResolver(),
-            new RuntimePotionTooltipResolver(), new RuntimeCardTooltipResolver());
-        _queuePickerOverlay.AddChild(_queuePickerTooltipHost);
-        _queuePickerTooltipHost.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
 
         _queuePickerSearch.TextChanged += _ => RebuildQueuePickerGrid();
         RebuildQueuePickerFilters();
         RebuildQueuePickerGrid();
         _queuePickerSearch.GrabFocus();
+    }
+
+    private void LoadQueuePickerAct()
+    {
+        _queuePickerCandidates = _draft.Catalog.CandidatesForAct(_draft.QueueAct)
+            .DistinctBy(candidate => candidate.EventKey, ModelKeyComparer.Instance)
+            .ToArray();
+        _queuePickerShared = false;
+        _queuePickerVariant = null;
+    }
+
+    private void ChangeQueuePickerAct(int index)
+    {
+        _draft.QueueAct = index + 1;
+        _queueActControl?.Select(index);
+        LoadQueuePickerAct();
+        RebuildQueuePickerFilters();
+        RebuildQueuePickerGrid();
     }
 
     private void RebuildQueuePickerFilters()
@@ -179,14 +192,12 @@ internal sealed partial class EventSearchEditor
     }
 
     private bool QueuePickerHasCondition(EventSearchUiCandidate candidate) =>
-        Beta111EventPresentationKnowledge.ShouldShowRuntimeConditionMarker(
-            _runtime.Profile.ProfileId, candidate.EventKey, _queuePickerPlayers, SemanticProfile);
+        OccurrenceDescription(candidate.EventKey)?.HasAdditionalCondition == true;
 
     private void RebuildQueuePickerGrid()
     {
         if (_queuePickerGrid is null || _queuePickerSearch is null || _queuePickerEmpty is null || _queuePickerScroll is null)
             return;
-        _queuePickerTooltipHost?.Dismiss();
         Clear(_queuePickerGrid);
         string search = _queuePickerSearch.Text.Trim();
         EventSearchUiCandidate[] visible = _queuePickerCandidates
@@ -196,12 +207,13 @@ internal sealed partial class EventSearchEditor
             .Where(candidate => _queuePickerConditionMode == 0 ||
                 QueuePickerHasCondition(candidate) == (_queuePickerConditionMode == 1))
             .Where(candidate => _queuePickerResultMode == 0 ||
-                (EventResultPrototypeWhitelist.Find(candidate.EventKey) is not null) == (_queuePickerResultMode == 1))
+                (ResultDescriptor(candidate.EventKey) is not null) == (_queuePickerResultMode == 1))
             .Where(candidate => search.Length == 0 || _names.Resolve(candidate.EventKey, GameContentKind.Event)
                 .Contains(search, StringComparison.CurrentCultureIgnoreCase))
             .ToArray();
         _queuePickerEmpty.Visible = visible.Length == 0;
         _queuePickerScroll.Visible = visible.Length > 0;
+        ShowQueuePickerOccurrence(visible.FirstOrDefault());
         foreach (EventSearchUiCandidate candidate in visible)
         {
             ModelKey key = candidate.EventKey;
@@ -209,18 +221,12 @@ internal sealed partial class EventSearchEditor
             const float tileWidth = 174;
             const float artworkSize = 150;
             var tile = _p.Button(string.Empty);
+            tile.Name = "EventChoice_" + key.Entry;
+            tile.AccessibilityName = name;
             tile.CustomMinimumSize = new Vector2(tileWidth, 224);
             tile.ClipContents = true;
-            string condition = QueuePickerCondition(candidate);
-            tile.MouseEntered += () =>
-            {
-                if (_queuePickerTooltipHost is null) return;
-                if (string.IsNullOrWhiteSpace(condition)) _queuePickerTooltipHost.ShowText(tile, name);
-                else _queuePickerTooltipHost.ShowStructuredText(tile, name,
-                    _queuePickerTooltipText.Get(Ui1TextKey.SearchEventTooltipConditionsTitle), condition);
-            };
-            tile.MouseExited += () => _queuePickerTooltipHost?.Dismiss(tile);
-            tile.TreeExiting += () => _queuePickerTooltipHost?.Dismiss(tile);
+            tile.MouseEntered += () => ShowQueuePickerOccurrence(candidate);
+            tile.FocusEntered += () => ShowQueuePickerOccurrence(candidate);
             tile.AddThemeStyleboxOverride("normal", new StyleBoxEmpty());
             tile.AddThemeStyleboxOverride("hover", _p.Box(_p.Hover));
             var label = _p.Label(name, 15);
@@ -244,20 +250,20 @@ internal sealed partial class EventSearchEditor
         _queuePickerScroll.ScrollVertical = 0;
     }
 
-    private string QueuePickerCondition(EventSearchUiCandidate candidate)
+    private void ShowQueuePickerOccurrence(EventSearchUiCandidate? candidate)
     {
-        string key = Beta111EventPresentationKnowledge.RuntimeConditionLocalizationKey(
-            _runtime.Profile.ProfileId, candidate.EventKey, _queuePickerPlayers, SemanticProfile);
-        return string.IsNullOrWhiteSpace(key) ? string.Empty : _queuePickerTooltipText.Get(key);
+        if (_queuePickerOccurrenceName is null || _queuePickerOccurrence is null) return;
+        _queuePickerOccurrenceName.Text = candidate is null
+            ? string.Empty : _names.Resolve(candidate.EventKey, GameContentKind.Event);
+        _queuePickerOccurrence.Text = candidate is null
+            ? string.Empty : OccurrenceDescription(candidate.EventKey)?.Text ?? string.Empty;
     }
 
     public bool CloseQueuePicker()
     {
         if (!_queuePickerOverlay.Visible) return false;
-        _queuePickerTooltipHost?.Dismiss();
         _queuePickerOverlay.Hide();
         Clear(_queuePickerOverlay);
-        _queuePickerTooltipHost = null;
         foreach ((BaseButton button, bool disabled) in _queuePickerBlocked)
             if (GodotObject.IsInstanceValid(button)) button.Disabled = disabled;
         _queuePickerBlocked.Clear();
@@ -267,6 +273,8 @@ internal sealed partial class EventSearchEditor
         _queuePickerScroll = null;
         _queuePickerSearch = null;
         _queuePickerEmpty = null;
+        _queuePickerOccurrenceName = null;
+        _queuePickerOccurrence = null;
         ModalChanged?.Invoke(false);
         return true;
     }

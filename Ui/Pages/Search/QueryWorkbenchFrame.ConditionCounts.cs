@@ -8,6 +8,7 @@ internal sealed partial class QueryWorkbenchFrame
     private void UpdateDomainCounts()
     {
         UpdateResearchNavigation();
+        UpdateResearchIdeasToggle();
         if (_domainCountLabels.Count == 0) return;
         var counts = new (string Id, int Count)[]
         {
@@ -19,7 +20,8 @@ internal sealed partial class QueryWorkbenchFrame
             ("boss", _actInformationEditor.BossVariantConditionCount()),
             ("map", _actInformationEditor.MapConditionCount()),
             ("relics", _relicEditor.AuthoredConditionCount()),
-            ("transform", _multiplayer ? 0 : _transformationEditor.AuthoredConditionCount())
+            ("transform", _multiplayer ? 0 : _transformationEditor.AuthoredConditionCount()),
+            (ResearchIdeasDomain, _fishingRodDrawResearch ? 1 : 0)
         };
         foreach ((string id, int count) in counts)
         {

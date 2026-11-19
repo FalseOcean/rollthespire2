@@ -6,6 +6,7 @@ using RolltheSpire2.Core.Effects.Shadow;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Rng;
+using RolltheSpire2.Core.Transformation;
 
 namespace RolltheSpire2.Core.Effects;
 
@@ -23,6 +24,7 @@ internal sealed partial class NeowEffectProjectionEngine
     // Null means concrete replay. A supplied map is the explicit multiplayer
     // premise: unlisted Capsule obtains have no immediate side effects.
     internal IReadOnlyDictionary<ModelKey, IReadOnlySet<ModelKey>>? AuthoredCapsuleEffects { get; init; }
+    internal bool CaptureTransformationContinuation { get; init; }
 
 
     public NeowEffectProjectionEngine(
@@ -147,10 +149,40 @@ internal sealed partial class NeowEffectProjectionEngine
         }
 
         NeowEffectProjection projection = ProjectInternal(relicKey, state, recursionDepth: 0);
+        if (state is not null && CaptureTransformationContinuation && relicKey != BaseGameModelKeys.Relics.NeowsBones)
+        {
+            EffectDependencyImpact impact = ResolveProjectionDependencyImpact(relicKey, projection);
+            bool unresolvedTransform = relicKey == BaseGameModelKeys.Relics.NewLeaf &&
+                !projection.EffectGroups.SelectMany(group => group.OrderedItems).Any(item => item.Kind == PredictedEffectKind.TransformCard);
+            projection = projection with
+            {
+                TransformationContinuation = ReadTransformationContinuation(state, impact.TransformationsRng,
+                    impact.NicheRng, impact.ShadowDeck,
+                    materialChoiceUnresolved: unresolvedTransform || IsBasicRemovalChoice(relicKey),
+                    transformChoiceUnresolved: unresolvedTransform)
+            };
+        }
         return state is null
             ? projection
             : AttachOpeningRewardContinuations(relicKey, state, projection);
     }
+
+    private OpeningTransformationContinuation ReadTransformationContinuation(NeowEffectWorkingState state,
+        BonesContinuationDomainState transformations, BonesContinuationDomainState niche, BonesContinuationDomainState deck,
+        bool materialChoiceUnresolved, bool transformChoiceUnresolved)
+    {
+        int? offset = null;
+        if (!transformChoiceUnresolved)
+        {
+            if (UsesNonCombatGeneration && transformations.IsExact) offset = state.Rng.Transformations.CallCount;
+            if (!UsesNonCombatGeneration && niche.IsExact) offset = state.Rng.Niche.CallCount;
+        }
+        return OpeningTransformationContinuation.FromDeck(offset,
+            !materialChoiceUnresolved && deck.IsExact && state.Authority.HasExactDeck ? state.Deck?.Cards : null);
+    }
+
+    private static bool IsBasicRemovalChoice(ModelKey relicKey) =>
+        relicKey == BaseGameModelKeys.Relics.PreciseScissors || relicKey == BaseGameModelKeys.Relics.PrecariousShears;
 
     private NeowEffectProjection ProjectInternal(
         ModelKey relicKey,

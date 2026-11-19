@@ -16,6 +16,11 @@ internal static class TransformationAggregateFamily
         out FilterBodyDescription? body, bool preferGpu = true,
         GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
+        if (model.Evaluation.TransformationAggregate is { UsesExtendedRequirements: true })
+        {
+            body = PrepareScoped(model, preferences);
+            return true;
+        }
         bool accepted = TryPrepare(model, preferences, out var prepared, preferGpu, numericalVariant);
         body = prepared?.Body;
         return accepted;
@@ -25,7 +30,7 @@ internal static class TransformationAggregateFamily
         GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
         prepared = null;
-        if (model.Evaluation.TransformationAggregate is null) return false;
+        if (model.Evaluation.TransformationAggregate is null or { UsesExtendedRequirements: true }) return false;
         try { prepared = Prepare(model, preferences, preferGpu, numericalVariant); return true; }
         catch (InvalidOperationException error) when (error.Message is "NeowFamilyReplayAuthorityUnavailable" or "NeowFamilyUnmappedIdentity")
         {
@@ -35,6 +40,41 @@ internal static class TransformationAggregateFamily
                     "Filter.Construction", "issues.filter_incomplete", $"cause={error};predicatesRetained=true;finalValidationSkipped={preferences.SkipExactValidation};matchClaimed=false");
             return false;
         }
+    }
+
+    // Scoped goals share one domain witness. The old numerical/GPU collector has
+    // neither labelled outputs nor Ancient continuation and cannot claim them.
+    private static FilterBodyDescription PrepareScoped(SearchModel model, FilterExecutionPreferences preferences)
+    {
+        var numerical = TransformationAncientNumericalPlan.TryCreate(model);
+        string revision = numerical is null ? "T.Cpu.ScopedTransformations.20261117.v1" :
+            "T.Cpu.AncientInitialBasics.20261117.v1";
+        var profile = RuntimeProfileRegistry.Select(model.Detection);
+        int workers = Math.Clamp(preferences.WorkerCount, 1, 32);
+        bool packed = profile.ProfileId == RuntimeProfileId.Beta111;
+        int window = numerical is null ? 1024 : 65536;
+        Func<ulong, bool> matches = numerical is null ? root => MatchesScoped(model, root) : numerical.Matches;
+        var prepared = new PreparedFilter(Id) {
+            AnalyticalCost = new(Id, window, [], "ScopedTransformations.Unmeasured"),
+            Survival = FamilySurvivalProjection.Unresolved(Id, "ScopedTransformations.JointProbabilityUnavailable"),
+            Obligations = [new(Id, model.Authority.PlayerSlotIndex)]
+        };
+        return new(prepared, revision, profile.ProfileId) {
+            InputIdentity = model.SnapshotFingerprint, PlayersCount = model.Authority.PlayersCount,
+            CpuWorkers = workers, WindowCapacity = window, MaximumRootWindowSize = window, CpuChunkCapacity = CpuFilterExecution.Capacity,
+            PerformanceProjection = compact => CpuFilterExecution.Describe(Id, revision, workers, window, packed, packed, compact),
+            Cost = new() { CanonicalScope = false },
+            CreateExecution = (selected, _) => new CpuFilterExecution(selected, profile, matches, packed, packed)
+        };
+    }
+
+    private static bool MatchesScoped(SearchModel model, ulong root)
+    {
+        // A captured bag belongs to its capture seed. Replay the same copied
+        // per-root authority boundary used by final validation before pruning.
+        if (!Runtime.SearchAuthorityProjector.TryProjectForRootHash(model, root, $"root:{root:X16}",
+                out var authority, out _, out _)) return true;
+        return Runtime.TransformationAggregateValidator.Evaluate(model, root, authority).Disposition != SearchDisposition.NoMatch;
     }
     private static TransformationAggregatePreparation Prepare(SearchModel model, FilterExecutionPreferences preferences,
         bool preferGpu, GpuNumericalVariant numericalVariant)

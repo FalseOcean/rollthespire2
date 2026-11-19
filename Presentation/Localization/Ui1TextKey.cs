@@ -378,6 +378,7 @@ public static class Ui1TextKey
     public const string SearchImpossibleCombatCardTargetAtSlot = "ui1.search.impossible.combat_card_target_at_slot";
     public const string SearchImpossibleCombatPotionTarget = "ui1.search.impossible.combat_potion_target";
     public const string SearchImpossibleCombatPotionTargetAtSlot = "ui1.search.impossible.combat_potion_target_at_slot";
+    public const string SearchImpossibleCrystalRelic = "ui1.search.impossible.crystal_relic";
     public const string SearchProbabilityRowNeow = "ui1.search.probability.row.neow";
     public const string SearchProbabilityRowRelic = "ui1.search.probability.row.relic";
     public const string SearchProbabilityRowCapsuleRelic = "ui1.search.probability.row.capsule_relic";

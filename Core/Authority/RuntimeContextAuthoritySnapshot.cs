@@ -241,7 +241,7 @@ public sealed class RuntimeContextAuthoritySnapshot
 
     public bool IsAuditedBeta111SourceContext =>
         ProfileId == RuntimeProfileId.Beta111 &&
-        RuntimeVersionCompatibility.IsBeta111(GameVersion);
+        RuntimeVersionCompatibility.UsesAccepted111Rules(GameVersion);
 
     public bool CanAnalyzeStable107 =>
         IsStable107Context &&

@@ -453,6 +453,10 @@ internal static class FamilyExactTimingDomains
 {
     internal static string ImplementationRevision(SearchModel request)
     {
+        if (request.CompiledSearch.NormalizedQuery.MerchantRelicConditions.Count > 0)
+            return "ProductionExact.MerchantRelic.Pristine113.v1";
+        if (request.CompiledSearch.NormalizedQuery.FishingRodDrawResearch)
+            return "ProductionExact.FishingRodDrawResearch.v2";
         if (request.Authority.VersionResolution.SemanticProfileId == Compatibility.RngSemanticProfileId.Modern113)
             return "ProductionExact.Modern113.Opening";
         if (request.CompiledSearch.NormalizedQuery.ElitePrefixResearch is { } research)
@@ -525,7 +529,7 @@ internal static class FamilyExactTimingDomains
     internal static ExactTimingDomain[] QueryDomains(SearchModel request)
     {
         var domains = new List<ExactTimingDomain>(4);
-        if (request.Evaluation.HasNeowConstraints || request.Evaluation.TransformationAggregate is { UsesNeow: true }) domains.Add(ExactTimingDomain.Neow);
+        if (request.Evaluation.HasNeowConstraints || request.Evaluation.TransformationAggregate is { UsesNeow: true } or { UsesAncient: true }) domains.Add(ExactTimingDomain.Neow);
         if (request.Evaluation.RequiresRelicSequenceDomain) domains.Add(ExactTimingDomain.Relic);
         if (request.Evaluation.RequiresWorldDomain || request.Evaluation.TransformationAggregate is { UsesEvents: true }) domains.Add(ExactTimingDomain.WorldEvent);
         if (request.Evaluation.RequiresNormalCombatRewardDomain) domains.Add(ExactTimingDomain.CombatReward);

@@ -70,7 +70,7 @@ internal static class PredictorLiveCaptureChecks
                 seed: baseline.Context.Seed, ascensionLevel: baseline.Context.Ascension);
             LocalContext.NetId = player.NetId;
             stateProperty.SetValue(manager, native);
-            ascensionProperty.SetValue(manager, new AscensionManager(native.AscensionLevel));
+            ascensionProperty.SetValue(manager, NativeGameFixture.StandardAscension(native.AscensionLevel));
             native.SharedRelicGrabBag.Populate(ModelDb.RelicPool<SharedRelicPool>().GetUnlockedRelics(player.UnlockState), native.Rng.UpFront);
             player.PopulateRelicGrabBagIfNecessary(native.Rng.UpFront);
             manager.GenerateRooms();
@@ -902,7 +902,7 @@ internal static class PredictorLiveCaptureChecks
 
     private static RunState CostFixture(PredictorRun baseline, bool complex)
     {
-        typeof(RunManager).GetProperty("AscensionManager", Members)!.SetValue(RunManager.Instance, new AscensionManager(baseline.Context.Ascension));
+        typeof(RunManager).GetProperty("AscensionManager", Members)!.SetValue(RunManager.Instance, NativeGameFixture.StandardAscension(baseline.Context.Ascension));
         var native = EntryFixture(baseline, 2);
         native.AddVisitedMapCoord(native.Map.StartingMapPoint.coord);
         native.AppendToMapPointHistory(MegaCrit.Sts2.Core.Map.MapPointType.Ancient, RoomType.Event, native.Act.Ancient.Id);

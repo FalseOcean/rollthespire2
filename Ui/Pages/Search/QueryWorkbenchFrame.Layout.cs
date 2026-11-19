@@ -50,6 +50,12 @@ internal sealed partial class QueryWorkbenchFrame
         { if (child != _objectPicker && child != _searchTooltipLayer && child != _configOverlay && child != _neowEditor && child != _combatEditor && child != _shopEditor && child != _relicEditor && child != _ancientEditor && child != _eventEditor && child != _actInformationEditor && child != _transformationEditor) { RemoveChild(child); child.QueueFree(); } }
         _domainButtons.Clear();
         _domainCountLabels.Clear();
+        _researchIdeasPanel = null;
+        _fishingRodResearchToggle = null;
+        _fishingRodRows = null;
+        _addFishingRodDraw = null;
+        _fishingRodInputs.Clear();
+        _removeFishingRodDraw.Clear();
         _seatButtons.Clear();
         _currentUnlockStatus = null;
         _configButton = null;
@@ -86,7 +92,7 @@ internal sealed partial class QueryWorkbenchFrame
         var domainContent = new Control
         {
             Name = "SearchCategoryNavigation", SizeFlagsHorizontal = SizeFlags.ExpandFill,
-            CustomMinimumSize = new(0, domains.Length * DomainRowHeight + (!_multiplayer ? DomainRowHeight + 8 : 0)),
+            CustomMinimumSize = new(0, domains.Length * DomainRowHeight + (!_multiplayer ? 2 * DomainRowHeight + 8 : 0)),
             MouseFilter = MouseFilterEnum.Pass
         };
         _domainScroll.AddChild(domainContent);
@@ -100,6 +106,8 @@ internal sealed partial class QueryWorkbenchFrame
             separator.SetAnchorsPreset(LayoutPreset.TopWide);
             separator.OffsetTop = compositeTop - 6; separator.OffsetBottom = compositeTop - 5;
             Domain(domainContent, "transform", _text.Get("query.domain.transform"), compositeTop);
+            Domain(domainContent, ResearchIdeasDomain, _text.Get("query.ideas.title"), compositeTop + DomainRowHeight);
+            BuildResearchIdeas();
         }
         if (firstRefresh) RestoreUiPreferences();
 
@@ -146,6 +154,7 @@ internal sealed partial class QueryWorkbenchFrame
             "map" => SearchCategoryKey.BossAndMap,
             "relics" => SearchCategoryKey.Relic,
             "transform" => SearchCategoryKey.Transformation,
+            ResearchIdeasDomain => SearchCategoryKey.ResearchIdeas,
             _ => throw new ArgumentOutOfRangeException(nameof(id), id, "Unknown workbench domain")
         };
         SearchCategoryTabIconAsset icon = _domainIcons.Resolve(category);
@@ -195,13 +204,18 @@ internal sealed partial class QueryWorkbenchFrame
     private void SelectDomain(string id)
     {
         if (!_multiplayer && id == "transform") RefreshTransformationContext();
+        if (!_multiplayer && id == "ancient")
+        {
+            RefreshTransformationContext(render: false);
+            _renderedEditorDomains.Remove("ancient");
+        }
         ApplyDomainSelection(id);
     }
 
     private void ApplyDomainSelection(string id)
     {
         if (id == ResearchDomain && !ResearchVisible) id = _lastRegularDomain;
-        if (_multiplayer && id == "transform") id = "neow";
+        if (_multiplayer && id is ("transform" or ResearchIdeasDomain)) id = "neow";
         RenderEditorDomain(id);
         _selectedDomain = id;
         if (id != ResearchDomain) _lastRegularDomain = id;
@@ -246,6 +260,7 @@ internal sealed partial class QueryWorkbenchFrame
                 "events" => _language == "zh" ? $"出现条件全队共用 · P{_seat + 1} 的结果" : $"Shared event queue · P{_seat + 1}’s results",
                 _ => _language == "zh" ? $"正在编辑 P{_seat + 1} 的条件" : $"Editing P{_seat + 1}'s conditions"
             };
+            if (id == ResearchIdeasDomain) _currentDomain.Text = _text.Get("query.ideas.title");
             _currentDomain.Visible = !_showResults;
         }
         UpdateEditorVisibility();
@@ -265,6 +280,7 @@ internal sealed partial class QueryWorkbenchFrame
         _eventEditor.Visible = id == "events";
         _actInformationEditor.Visible = id is "boss" or "map" || editResearch && _researchPage != ResearchPage.Neow;
         _transformationEditor.Visible = id == "transform";
+        if (_researchIdeasPanel is not null) _researchIdeasPanel.Visible = id == ResearchIdeasDomain;
     }
 
     private Label Text(string text, int fontSize, float x, float y, bool secondary = false, bool heading = false)

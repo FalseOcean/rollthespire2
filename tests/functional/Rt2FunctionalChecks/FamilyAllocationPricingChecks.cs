@@ -1165,9 +1165,10 @@ internal static class FamilyAllocationPricingChecks
         Check(!serial.Preparation.Obligations.Any(o => o.Domain == VariantOpeningFamily.Id) &&
             serial.Preparation.Obligations.Contains(new(InitialRoomsInvocation.UnknownCoverage, ThroughOrdinal: 2)),
             "Partial V keeps its bounded Unknown duty without claiming variant coverage");
-        Check(Describe(request, serial).ToHashSet().SetEquals(["FirstActUnknownEventPrefix:ProductionExactOnly",
+        var serialRemainders = Describe(request, serial).ToHashSet();
+        Check(serialRemainders.SetEquals(["FirstActUnknownEventPrefix:ProductionExactOnly",
             "V.VariantOpening:RealVariantUnavailable", "E.EventResult:RealEventRemainder"]),
-            "Composition retains the real ordinal gap and child causes without attributing them to the transport parent");
+            "Composition retains the real ordinal gap and child causes: " + string.Join(", ", serialRemainders));
         var noVariant = Body(VariantOpeningFamily.Id);
         var noClaim = AutomaticPrivateSerialInvocation.Prepare(request.Model, preferences, [n, noVariant]);
         Check(!noClaim.Preparation.Obligations.Any(o => o.Domain == VariantOpeningFamily.Id),

@@ -7,6 +7,8 @@ namespace RolltheSpire2.Bootstrap;
 public partial class ModEntry : Node
 {
     public const string ModId = "RolltheSpire2";
+    internal const string TargetStableGameVersion = "0.111.1";
+    internal const string TargetBetaGameVersion = "0.113.1";
 
     public static void Initialize()
     {

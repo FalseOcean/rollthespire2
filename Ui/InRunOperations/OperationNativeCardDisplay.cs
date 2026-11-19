@@ -112,9 +112,25 @@ internal static class OperationNativeCardDisplay
         tile.AddChild(label);
     }
 
-    private static string CardName(PredictorCard card) => NameOf(card.Key) +
-        (card.UpgradeLevel > 0 ? "+" + (card.UpgradeLevel > 1 ? card.UpgradeLevel.ToString() : "") : "") +
-        (card.Enchantment is { } enchantment ? " · " + NameOf(enchantment) + " " + card.EnchantmentAmount : "");
+    internal static string CardName(PredictorCard card)
+    {
+        bool dagger = card.Key is { Category: "CARD", Entry: "DINGY_DAGGER" };
+        // DingyDagger.Title in 0.113 uses these fixed upgrade levels.
+        // Older supported game assemblies have no DingyDagger type.
+        const int fineUpgradeLevel = 3;
+        const int pristineUpgradeLevel = 6;
+        string title = dagger
+            ? new LocString("cards", card.UpgradeLevel switch
+            {
+                >= pristineUpgradeLevel => "DINGY_DAGGER.title.pristine",
+                >= fineUpgradeLevel => "DINGY_DAGGER.title.fine",
+                _ => "DINGY_DAGGER.title.dingy"
+            }).GetFormattedText()
+            : NameOf(card.Key);
+        if (card.UpgradeLevel > 0)
+            title += dagger || card.UpgradeLevel > 1 ? "+" + card.UpgradeLevel : "+";
+        return card.Enchantment is { } enchantment ? title + " · " + NameOf(enchantment) + " " + card.EnchantmentAmount : title;
+    }
 
     private static string NameOf(ModelKey key) => string.IsNullOrEmpty(key.Entry)
         ? UiText.Get("operation.operation.result")

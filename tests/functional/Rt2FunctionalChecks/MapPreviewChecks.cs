@@ -47,7 +47,7 @@ internal static class MapPreviewChecks
             var oldState = stateProperty.GetValue(manager); var oldAsc = ascProperty.GetValue(manager);
             try
             {
-                stateProperty.SetValue(manager, run); ascProperty.SetValue(manager, new AscensionManager(level));
+                stateProperty.SetValue(manager, run); ascProperty.SetValue(manager, NativeGameFixture.StandardAscension(level));
                 var oracle = (GameMap.StandardActMap)act.CreateMap(run, false);
                 var nodes = oracle.GetAllMapPoints().Prepend(oracle.StartingMapPoint).Append(oracle.BossMapPoint).ToList();
                 if (oracle.SecondBossMapPoint is { } secondNode) nodes.Add(secondNode);

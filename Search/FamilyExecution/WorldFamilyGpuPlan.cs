@@ -23,6 +23,9 @@ internal sealed class WorldFamilyGpuPlan
     private readonly bool _variantFilterMigrated;
     private readonly bool _childShuffle;
     private readonly bool _needsSharedAncientIds;
+    private readonly bool _trimmedEventScratch;
+    private readonly bool _usesEventPair;
+    internal bool UsesEncounterRankMask { get; }
     internal long ScratchBytes => Math.Max(4, Capacity * ScratchWords * 4L);
     internal long WorkspaceBytes => Capacity * 8L + ScratchBytes + 64 + GroupingWorkspaceBytes +
         Buffers.Where((_, i) => i is not (0 or 12 or 16 or 17 or 18)).Sum(b => Math.Max(4, b.Length * 4L));
@@ -32,11 +35,15 @@ internal sealed class WorldFamilyGpuPlan
         (NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne.20261025.v1" : "") +
         (_variantFilterMigrated ? ".VariantFilterMovedToV.20261028.v1" : "") + (_encounters ? ".EncounterQueues.20261105.v1" : "") +
         (_childShuffle ? ".Modern113" : "") +
-        (UsesSharedAncientCountOnly ? ".SharedAncientsCountOnly.20261114.v1" : "") + GpuRngRotation.Revision;
+        (UsesSharedAncientCountOnly ? ".SharedAncientsCountOnly.20261114.v1" : "") +
+        (_trimmedEventScratch ? ".ObservedEventScratch.20261115.v1" : "") +
+        (UsesEncounterRankMask ? ".EncounterRankMask.20261115.v1" : "") +
+        (_usesEventPair ? ".EffectiveEventPair.20261119.v1" : "") + GpuRngRotation.Revision;
     internal bool VariantOnly { get; }
     internal bool UsesSharedAncientCountOnly => _childShuffle && !VariantOnly && !_needsSharedAncientIds;
     internal WorldFamilyGpuPlan(WorldFamilyReplay replay, bool specializeSolo = false,
-        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64, bool elideSharedAncientPermutation = true)
+        GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64, bool elideSharedAncientPermutation = true,
+        bool? trimEventScratch = null, bool? encounterRankMask = null, bool? effectiveEventPair = null)
     {
         if (numericalVariant is not (GpuNumericalVariant.NativeFloat64 or GpuNumericalVariant.IntegerRne))
             throw new ArgumentOutOfRangeException(nameof(numericalVariant));
@@ -54,6 +61,9 @@ internal sealed class WorldFamilyGpuPlan
             out var acts, out var encounters, out var conflicts, out var bosses, out var predicates, out var targets);
         var ps = predicates.ToList(); var ids = targets.ToList();
         var extra = new List<uint>(); var data = new List<uint>();
+        bool enableEventPair = _childShuffle && (effectiveEventPair ?? !string.Equals(
+            Environment.GetEnvironmentVariable("RT2_W_EVENT_PAIR"), "off", StringComparison.OrdinalIgnoreCase));
+        int fallbackEventStride = 0;
         uint Store(IEnumerable<uint> values) { uint offset = (uint)data.Count; data.AddRange(values); return offset; }
         uint Pred(IEnumerable<WorldFastDenseSetPredicate> values)
         {
@@ -64,7 +74,19 @@ internal sealed class WorldFamilyGpuPlan
         // ancientOffset, ancientPredOffset/count, branchOffset/count, hasBoss.
         foreach (var act in w.Acts)
         {
-            uint events = Store(act.EventCandidates.Select(c => (uint)c.EventId | (uint)c.Source << 16 | (c.StaticEligible ? 1u << 24 : 0)));
+            uint events;
+            if (enableEventPair && TryPackEventPair(act, out uint[] pair))
+            {
+                // A tagged offset refers to the three-word descriptor. Plain offsets
+                // retain the original per-event packed table for all other acts.
+                events = Store(pair) | 0x80000000u;
+                _usesEventPair = true;
+            }
+            else
+            {
+                events = Store(act.EventCandidates.Select(c => (uint)c.EventId | (uint)c.Source << 16 | (c.StaticEligible ? 1u << 24 : 0)));
+                if (act.HasEventPredicate) fallbackEventStride = Math.Max(fallbackEventStride, act.EventCandidates.Length);
+            }
             uint eventPred = (uint)data.Count;
             foreach (var p in act.EventPredicates) data.AddRange([p.RangeMode,p.RangeValue,p.SourceFilter,Pred([p.Keys])]);
             uint ancients = Store(act.Ancients.Select(i => (uint)i));
@@ -79,8 +101,19 @@ internal sealed class WorldFamilyGpuPlan
         uint sharedOffset = Store(w.SharedAncients.Select(i => (uint)i));
         bool needsEncounters = w.Acts.Any(a => a.Act <= w.MaxRequiredAct &&
             (a.HasEncounterPredicate || a.Act < w.MaxRequiredAct || a.HasBossPredicate || a.HasAncientPredicate || w.RequiresSecondBoss));
-        int encounterStride = needsEncounters ? w.MaxEncounterPoolCount : 0;
-        int eventStride = w.Acts.Max(a => a.EventCandidates.Length);
+        bool useRankMask = encounterRankMask ?? !string.Equals(Environment.GetEnvironmentVariable("RT2_W_ENCOUNTER_RANK_MASK"),
+            "off", StringComparison.OrdinalIgnoreCase);
+        UsesEncounterRankMask = useRankMask && _childShuffle && !VariantOnly && !_encounters && needsEncounters &&
+            w.MaxEncounterPoolCount is > 0 and <= WorldEncounterRankGpuSource.MaxPoolCount;
+        uint[] encounterRankTable = UsesEncounterRankMask ? WorldEncounterRankGpuSource.Pack(w.Acts, acts, encounters.Length) : [];
+        int encounterStride = needsEncounters && !UsesEncounterRankMask ? w.MaxEncounterPoolCount : 0;
+        int fullEventStride = w.Acts.Max(a => a.EventCandidates.Length);
+        // Only events_match writes this scratch. Unobserved Modern113 events
+        // consume their parent shuffle seed without using the child permutation.
+        bool trimScratch = trimEventScratch ?? !string.Equals(Environment.GetEnvironmentVariable("RT2_W_TRIM_EVENT_SCRATCH"),
+            "off", StringComparison.OrdinalIgnoreCase);
+        int eventStride = _childShuffle && trimScratch ? fallbackEventStride : fullEventStride;
+        _trimmedEventScratch = eventStride < fullEventStride;
         ScratchWords = encounterStride + eventStride;
         // 32 MiB scratch ceiling independent of the external 2^24 root batch.
         Capacity = Math.Min(1 << 20, Math.Max(64, (32 * 1024 * 1024 / 4 / Math.Max(1, ScratchWords) / 64) * 64));
@@ -89,7 +122,48 @@ internal sealed class WorldFamilyGpuPlan
             (uint)encounterStride,(uint)(ps.Count/7),0,w.Act1OverrideId==ushort.MaxValue?uint.MaxValue:w.Act1OverrideId,
             (uint)w.Ascension,(uint)eventStride,sharedOffset];
         // Bindings 0/12/16/17/18 are private dynamic batch/scratch/header/output/input.
-        Buffers = [[],replay.BucketLengths,meta,sm,si,map,acts,encounters,conflicts,bosses,ps.ToArray(),ids.ToArray(),[],extra.ToArray(),data.ToArray(),_encounters ? WorldEncounterGpuSource.Pack(w) : [],[],[],[]];
+        Buffers = [[],replay.BucketLengths,meta,sm,si,map,acts,encounters,conflicts,bosses,ps.ToArray(),ids.ToArray(),[],extra.ToArray(),data.ToArray(),
+            _encounters ? WorldEncounterGpuSource.Pack(w) : encounterRankTable,[],[],[]];
+    }
+
+    private static bool TryPackEventPair(WorldFastActPlan act, out uint[] descriptor)
+    {
+        descriptor = [];
+        if (act.EventPredicates.Length != 2 || act.EventCandidates.Length is < 2 or > 32) return false;
+        var ordered = act.EventPredicates.OrderBy(p => p.RangeValue).ToArray();
+        ushort[] targets = new ushort[2];
+        for (int i = 0; i < ordered.Length; i++)
+        {
+            var p = ordered[i];
+            if (p.RangeMode != 0 || p.RangeValue != i + 1 || p.SourceFilter != byte.MaxValue ||
+                p.Keys.AlwaysReject || p.Keys.Ban.Length != 0 || p.Keys.Any.Length + p.Keys.All.Length != 1)
+                return false;
+            targets[i] = p.Keys.Any.Length == 1 ? p.Keys.Any[0] : p.Keys.All[0];
+        }
+        if (targets[0] == targets[1]) return false;
+
+        uint eligible = 0;
+        uint first = uint.MaxValue, second = uint.MaxValue;
+        for (int i = 0; i < act.EventCandidates.Length; i++)
+        {
+            var candidate = act.EventCandidates[i];
+            if (!candidate.StaticEligible) continue;
+            eligible |= 1u << i;
+            if (candidate.EventId == targets[0])
+            {
+                if (first != uint.MaxValue) return false;
+                first = (uint)i;
+            }
+            else if (candidate.EventId == targets[1])
+            {
+                if (second != uint.MaxValue) return false;
+                second = (uint)i;
+            }
+        }
+        // A variant whose compiled eligible pool lacks either necessary identity
+        // is already a definite mismatch in the full event-table matcher.
+        descriptor = [eligible, first, second];
+        return true;
     }
 
     internal string ShaderSource()
@@ -100,6 +174,8 @@ internal sealed class WorldFamilyGpuPlan
         string numerical = donor[donor.IndexOf("bool encounter_eligible",StringComparison.Ordinal)..donor.IndexOf("void main()",StringComparison.Ordinal)];
         string body=FamilyGpuComputeUtility.LoadFamilyShaderWithVisibleSeedRootHash("WorldFamily.comp.glsl")
             .Replace("/*__W_DONOR__*/",rng+numerical,StringComparison.Ordinal)
+            .Replace("/*__W_EVENT_PAIR__*/", _usesEventPair
+                ? FamilyGpuComputeUtility.LoadEmbeddedShader("WorldEffectiveEventPair.glsl") : "", StringComparison.Ordinal)
             .Replace("#define RT2_W_CHILD_SHUFFLE 0", "#define RT2_W_CHILD_SHUFFLE " + (_childShuffle ? "1" : "0"), StringComparison.Ordinal)
             .Replace("#define RT2_W_SHARED_ANCIENT_IDS 1", "#define RT2_W_SHARED_ANCIENT_IDS " +
                 (_needsSharedAncientIds ? "1" : "0"), StringComparison.Ordinal)
@@ -118,6 +194,7 @@ internal sealed class WorldFamilyGpuPlan
                 .Replace(second,
                     "bool second="+(Buffers[2][7]!=0 ? "true" : "false")+";",StringComparison.Ordinal);
         }
-        return NumericalVariant == GpuNumericalVariant.IntegerRne ? WorldGpuNumericalSource.IntegerRne(body) : body;
+        if (NumericalVariant == GpuNumericalVariant.IntegerRne) body = WorldGpuNumericalSource.IntegerRne(body);
+        return UsesEncounterRankMask ? WorldEncounterRankGpuSource.ReplaceQueue(body) : body;
     }
 }

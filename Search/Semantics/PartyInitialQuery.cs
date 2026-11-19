@@ -56,6 +56,10 @@ internal static class PartyInitialQuery
             throw new ArgumentException("Party.ContextMismatch");
         if (query.TransformationAggregate is not null || query.Players.Any(p => p.Conditions.TransformationAggregate is not null))
             throw new ArgumentException("Party.TransformationAggregateNotInScope");
+        if (query.MerchantRelicConditions.Count > 0 || query.Players.Any(p => p.Conditions.MerchantRelicConditions.Count > 0))
+            throw new ArgumentException(MerchantRelicCondition.UnsupportedCode);
+        if (query.FishingRodDrawResearch || query.Players.Any(p => p.Conditions.FishingRodDrawResearch))
+            throw new ArgumentException(FishingRodDrawResearch.UnsupportedCode);
         if (query.Players.Where((p, index) => p.Slot != index || p.Conditions.Players.Count > 0).Any())
             throw new ArgumentException("Party.InvalidOrderedSlotPredicate");
         bool elitePrefixConflict = ConjoinEliteResearch(query).Conflict;

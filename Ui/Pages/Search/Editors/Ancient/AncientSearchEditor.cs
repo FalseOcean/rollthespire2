@@ -92,6 +92,7 @@ internal sealed partial class AncientSearchEditor : Control
         public List<ModelKey> NeowBasic { get; } = [];
         public List<ModelKey>[] NeowRelations { get; } = [[], [], [], []];
         public List<ModelKey> ActiveNeowOffers => NeowAdvanced ? NeowRelations[NeowRelation] : NeowBasic;
+        public Dictionary<(int Act, ModelKey Option), AncientTransformationDraft> Transformations { get; } = [];
     }
 
     public AncientSearchEditor(ModRuntimeSnapshot runtime)
@@ -417,7 +418,7 @@ internal sealed partial class AncientSearchEditor : Control
         float height = AddOptionGrid(content, act, row, x, y, width, optionLimit, simpleGrid);
         if (row.Options.Any(IsSeaGlass))
             height += 8 + AddSeaGlassTargetSelector(content, row, x, y + height + 8, width);
-        return height;
+        return AddTransformationSourceActions(content, act, row, x, y + height, width) - y;
     }
 
     private float AddOptionGrid(Control content, int act, AncientDraft row, float x, float y, float width,
@@ -531,7 +532,7 @@ internal sealed partial class AncientSearchEditor : Control
             if (index >= 0) rows.Clear();
             else { rows.Clear(); rows.Add(new AncientDraft(key)); }
         }
-        Render();
+        RenderAfterAncientEdit();
     }
 
     private static AncientDraft GetOrAddAncientRow(ModeDraft mode, int act, ModelKey key)
@@ -561,7 +562,7 @@ internal sealed partial class AncientSearchEditor : Control
             if (!selected) row.Options.Add(key);
         }
         if (!row.Options.Any(IsSeaGlass)) row.SeaGlassTarget = null;
-        Render();
+        RenderAfterAncientEdit();
     }
 
     private void ToggleEligibility(ModelKey option, bool currentlyEligible)
@@ -578,7 +579,7 @@ internal sealed partial class AncientSearchEditor : Control
             }
         if (_draft.Catalog is not null && _draft.NeowCatalog is not null)
             RevalidateOfferedSelections(_draft.Modes[2]);
-        Render();
+        RenderAfterAncientEdit();
     }
 
     private void SelectMode(int mode)
@@ -608,7 +609,7 @@ internal sealed partial class AncientSearchEditor : Control
         if (_draft.Mode == mode) return;
         _draft.Mode = mode;
         if (mode != 0) _draft.LastAdvancedMode = mode;
-        Render();
+        RenderAfterAncientEdit();
     }
 
     private bool CanOfferTogether(int act, AncientDraft row, ModelKey candidate)

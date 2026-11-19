@@ -1,0 +1,15 @@
+# Combined Transformations
+
+Transform a card at the start and another at an event. If all you care about is getting the cards you want between those two transformations, use Combined Transformations. For a target from just one source, you can pick the cards right on the Neow, Event or Ancient page.
+
+To combine sources, first choose the opening relic, event queue conditions or Ancient offer on its own page. Then select the sources to take over in Combined Transformations. Those sources follow the combined target while taken over. Release a source and its original targets are restored. You can put these sources in one combination in single-player. Event conditions check what you'd get from the relevant option once there. During the run, you'll still have to encounter the event and pick that option. See [[event-transform-results|Event transformations]] for the choices.
+
+You can look for **a minimum number of Rare cards**, **specific cards**, or **specific cards with every remaining result Rare**. With Specific cards, you can also set a minimum Rare count. Any Rare cards you named count toward it. The targets can come from any source in the combination. If you name the same card twice, you need two copies.
+
+## Which transformations can you combine?
+
+{{relic:LEAFY_POULTICE}} transforms two cards at the start and {{relic:NEW_LEAF}} transforms one. Some two-relic {{relic:NEOWS_BONES}} openings also work. Follow the pickup order you set for your relics. Symbiote, Aroma of Chaos and Whispering Hollow give one result each, and the relevant options in Morphic Grove and Trial give two each. For which cards to transform, see [[neow-transform|New Leaf]] and [[event-transform-results|Event transformations]].
+
+Once you've selected the {{relic:ASTROLABE}} or {{relic:PANDORAS_BOX}} offer on the Ancient page, you can set targets there or include the relic in your combination. RT2 checks Astrolabe using three removable Basic cards from your character. Each result that can be upgraded is upgraded. Pandora's Box transforms the removable Basic Strikes and Defends still in your deck when you open it. RT2 works out that count from your opening deck changes and earlier selected event transformations. If you plan to remove more Strikes or Defends, enter the number you expect to have left at pickup on the Ancient page. “Restore automatic” brings back the calculated count.
+
+Astrolabe and Pandora's Box both continue from your personal `Transformations` stream. If you take New Leaf at the start, its draw moves the stream forward. Other personal transformations along the way can also change the Ancient's results. Earlier event transformations use their own event streams. They can leave the Box with fewer Strikes and Defends to transform while leaving your personal stream where it was. A manual count only changes how many cards the Box transforms. To reproduce the result, follow your opening choices for relics and cards, keep the Basic cards the relic will need and avoid drawing from your personal transformation stream in between.

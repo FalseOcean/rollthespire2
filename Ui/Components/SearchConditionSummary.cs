@@ -12,6 +12,7 @@ using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.Semantics;
 using RolltheSpire2.Ui.Icons;
 using RolltheSpire2.Ui.Pages.Search;
+using RolltheSpire2.Ui.Pages.Search.Editors;
 using RolltheSpire2.Ui.Persistence;
 using RolltheSpire2.Ui.Shell;
 using RolltheSpire2.Ui.Theme;
@@ -166,6 +167,9 @@ internal sealed partial class SearchConditionSummary : VBoxContainer
                 string.Join(" / ", queue.AllowedKeys.Select(key => _names!.Resolve(key, GameContentKind.Encounter)));
         }
         foreach (string line in query.StandardMaps.Select(FormatMapCondition)) yield return line;
+        if (query.FishingRodDrawResearch)
+            yield return _workbenchText!.Get("query.ideas.fishing_rod.title") + " · " +
+                QueryWorkbenchFrame.FishingRodDrawSummary(_workbenchText, query);
         if (query.ElitePrefixResearch is { } research)
             yield return "M · " + (research.Mode == ElitePrefixResearchMode.FloorSeven
                 ? _workbenchText!.Get("query.map.elite_research.floor_seven.summary")
@@ -187,6 +191,8 @@ internal sealed partial class SearchConditionSummary : VBoxContainer
                 Local("绘画路线", "Drawn route") + " · " + groups + " · " +
                 Local("组内无序，允许间隔；不含固定节点", "Unordered within groups, gaps allowed; fixed rooms excluded");
         }
+        foreach (var condition in query.MerchantRelicConditions)
+            yield return ShopSearchEditor.DescribeOrdinaryRelic(condition, _workbenchText!, _names!);
         foreach (string line in query.RelicShopSequenceConditions.Select(c => "S · " + _text!.Get(Ui1TextKey.SearchRelicLaneShop) + " · " + FormatOrderMode(c.OrderMode) + " · " + FormatSlots(c.Slots.Take(c.Count), GameContentKind.Relic))) yield return line;
         foreach (string line in query.MerchantColorlessSequenceConditions.Select(c => "S · " + _text!.Get(c.Slot == MerchantColorlessSlot.Uncommon ? Ui1TextKey.SearchShopUncommon : Ui1TextKey.SearchShopRare) + " · " + FormatOrderMode(c.OrderMode) + " · " + FormatSlots(c.Slots.Take(c.Count), GameContentKind.Card))) yield return line;
         foreach (string line in query.MerchantColorlessConditions.Select(c => $"S · #{c.MerchantOrdinal} · " + _text!.Get(c.Slot == MerchantColorlessSlot.Uncommon ? Ui1TextKey.SearchShopUncommon : Ui1TextKey.SearchShopRare) + " · " + _names!.Resolve(c.TargetCardKey, GameContentKind.Card))) yield return line;
@@ -205,11 +211,37 @@ internal sealed partial class SearchConditionSummary : VBoxContainer
                     s.Requirement == CombatPotionSlotRequirement.NoDrop ? _text.Get(Ui1TextKey.SearchCombatRewardPotionNoDrop) :
                     s.Requirement == CombatPotionSlotRequirement.DropAny ? _text.Get(Ui1TextKey.SearchCombatRewardPotionDrop) : "—"));
         if (query.TransformationAggregate is { } transform)
-            yield return "T · " + (transform.Predicate == TransformationAggregatePredicate.RareCountAtLeast
-                ? Local("稀有牌至少 ", "Rare cards ≥ ") + transform.MinimumRareCount
-                : string.Join(" + ", transform.TargetMultiset.Select(k => _names!.Resolve(k, GameContentKind.Card))) +
-                  (transform.RequiresRareRemainder ? Local("；其余稀有牌 ×", "; remaining Rare ×") +
-                      (transform.OpportunityCount - transform.TargetMultiset.Count) : ""));
+            foreach (string group in DescribeTransformation(transform, _workbenchText!, _names!)) yield return "T · " + group;
+    }
+
+    internal static IEnumerable<string> DescribeTransformation(TransformationAggregateCondition transform,
+        IUiTextProvider text, IGameContentNameResolver names)
+    {
+        var sourceCounts = transform.SourceCounts();
+        bool scoped = transform.ResultRequirements.Count > 0;
+        var requirements = scoped ? transform.ResultRequirements :
+            [new(sourceCounts.Keys.ToArray(), transform.Predicate, transform.MinimumRareCount, transform.TargetMultiset)];
+        foreach (var requirement in requirements)
+        {
+            var parts = new List<string>();
+            if (scoped || transform.UsesAncient)
+                parts.Add(string.Join(" + ", requirement.Sources.Select(id =>
+                {
+                    var source = TransformationSearchEditor.RetainedSource(id);
+                    var name = names.Resolve(source.Identity, id.StartsWith("E.", StringComparison.Ordinal) ? GameContentKind.Event : GameContentKind.Relic);
+                    return source.IsAncient ? text.Format("query.ancient.act", transform.AncientAct) + " " + name : name;
+                })));
+            if (requirement.TargetMultiset.Count > 0)
+                parts.Add(string.Join(" + ", requirement.TargetMultiset.Select(key => names.Resolve(key, GameContentKind.Card))));
+            if (requirement.MinimumRareCount > 0)
+                parts.Add(text.Format("query.transform.summary.rare_count", requirement.MinimumRareCount));
+            if (requirement.Predicate == TransformationAggregatePredicate.ContainsMultisetAndRemainingRare)
+            {
+                long capacity = requirement.Sources.Sum(id => (long)sourceCounts.GetValueOrDefault(id));
+                parts.Add(text.Format("query.transform.remaining_rare", capacity - requirement.TargetMultiset.Count));
+            }
+            yield return string.Join(" · ", parts);
+        }
     }
 
     private string FormatStructuredEffect(NeowStructuredEffectSearchCondition effect)
@@ -226,6 +258,8 @@ internal sealed partial class SearchConditionSummary : VBoxContainer
 
     private string FormatEventResult(EventResultSearchCondition condition)
     {
+        if (EventOpportunityPresentation.TryDescribe(_workbenchText!, _names!, condition, out string description))
+            return description;
         string eventId = condition.Kind switch
         {
             EventResultConditionKind.TrashHeapGrabCard or EventResultConditionKind.TrashHeapDiveRelic => "TRASH_HEAP",

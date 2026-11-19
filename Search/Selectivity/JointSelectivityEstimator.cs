@@ -37,6 +37,26 @@ internal static class JointSelectivityEstimator
                 available.UnknownComponents.Concat(executable.Causes).ToArray(), assumptions: available.Assumptions);
         }
         var query = plan.CompiledSearch.NormalizedQuery;
+        if (query.MerchantRelicConditions.Count > 0 && plan.CompiledSearch.Status != QueryNormalizationStatus.Impossible)
+        {
+            var baseline = EstimateQuery(SearchSelectivityInput.From(SearchCompiler.Compile(
+                query with { MerchantRelicConditions = [] }, plan.CompiledSearch.Context)));
+            if (baseline.ExactlyImpossible) return baseline;
+            return JointSelectivityResult.Partial("Probability.MerchantRelic.Unmodeled",
+                "No joint probability model for ordinary merchant relics.",
+                "Production Exact checks both ordinary slots in the requested shop windows.", baseline.KnownComponents,
+                baseline.UnknownComponents.Append(MerchantRelicCondition.Domain).ToArray(), assumptions: baseline.Assumptions);
+        }
+        if (query.FishingRodDrawResearch && plan.CompiledSearch.Status != QueryNormalizationStatus.Impossible)
+        {
+            var baseline = EstimateQuery(SearchSelectivityInput.From(SearchCompiler.Compile(
+                query with { FishingRodDrawResearch = false }, plan.CompiledSearch.Context)));
+            if (baseline.ExactlyImpossible) return baseline;
+            return JointSelectivityResult.Partial("Probability.FishingRodDrawResearch.Unmodeled",
+                "No joint probability has been measured for these two draws and the other selected conditions.",
+                "Both draw conditions participate in seed filtering.", baseline.KnownComponents,
+                baseline.UnknownComponents.Append(FishingRodDrawResearch.Id).ToArray(), assumptions: baseline.Assumptions);
+        }
         if (query.ElitePrefixResearch is not null || query.Players.Any(p => p.Conditions.ElitePrefixResearch is not null))
         {
             if (plan.CompiledSearch.Status == QueryNormalizationStatus.Impossible)

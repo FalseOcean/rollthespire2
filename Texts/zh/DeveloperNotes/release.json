@@ -4,6 +4,41 @@
   "Blocks": [
     {
       "Type": "Heading",
+      "ReleaseVersion": "1.4.6",
+      "Text": "RT2 1.4.6 更新说明"
+    },
+    {
+      "Type": "Callout",
+      "Text": "同一份 RT2 现已适配正式版 [b]0.111.1[/b] 和测试版 [b]0.113.1[/b]，启动时会自动识别游戏版本。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[b]0.113 新增筛种条件[/b]"
+    },
+    {
+      "Type": "BulletList",
+      "Items": [
+        "[b]商店普通遗物[/b]　单人筛种时，可以指定想在前 1 至 3 家商店里买到的普通遗物。目标可以分散在几家店，两个普通货位都算。",
+        "[b]事件遗物奖励[/b]　可以按事件选项给出的遗物稀有度筛种。",
+        "[b]星盘和潘多拉魔盒[/b]　可以指定想变出哪些牌、每种几张。星盘按变化三张本角色的初始牌计算，魔盒按牌组里剩余的打击和防御计算。",
+        "[b]水晶球[/b]　可以预设进入事件时持有的遗物和翻格次数，再指定想拿的遗物稀有度和卡牌。所选奖励须能在同一条翻格路线上拿齐。"
+      ]
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "[b]局内预测[/b]"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "鼠标悬停在战锤或钓鱼竿上，可以预览接下来会升级哪些牌。悬停在佩尔之牙上，可以查看卡牌的返还顺序。"
+    },
+    {
+      "Type": "Paragraph",
+      "Text": "此外，部分组合筛种的速度也有所提升。"
+    },
+    {
+      "Type": "Heading",
+      "ReleaseVersion": "1.4.5",
       "Text": "RolltheSpire2 1.4.5"
     },
     {
@@ -12,6 +47,7 @@
     },
     {
       "Type": "Heading",
+      "ReleaseVersion": "1.4.4",
       "Text": "RolltheSpire2 1.4.4"
     },
     {
@@ -24,6 +60,7 @@
     },
     {
       "Type": "Heading",
+      "ReleaseVersion": "1.4.3",
       "Text": "RolltheSpire2 1.4.3"
     },
     {
@@ -32,6 +69,7 @@
     },
     {
       "Type": "Heading",
+      "ReleaseVersion": "1.4.2",
       "Text": "RolltheSpire2 1.4.2"
     },
     {

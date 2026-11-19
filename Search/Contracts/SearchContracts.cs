@@ -1,6 +1,7 @@
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.Authority;
+using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Relics;
@@ -246,12 +247,21 @@ public enum EventResultConditionKind
     WhisperingHollowInitialBasicTransform,
     TrialNondescriptInitialBasicsContains,
     TrialCase,
-    TinkerTimeTypeAndRider
+    TinkerTimeTypeAndRider,
+    DollRoomRandomRelic,
+    DollRoomTakeSomeTimeRelic,
+    MuseumOfTortureOfferedRelic,
+    ThermaeNonupeipeDrinkRelic,
+    EventRelicRarityRoll,
+    CrystalSphereRewards
 }
 
 public enum TrialCaseTarget { Merchant, Noble, Nondescript }
 public enum TinkerCardTypeTarget { Attack, Skill, Power }
 public enum TinkerRiderTarget { Sapping, Violence, Choking, Energized, Wisdom, Chaos, Expertise, Curious, Improvement }
+
+[Flags]
+public enum CrystalSphereSearchRelics { None = 0, Driftwood = 1, PrismaticGem = 2, DingyRug = 4 }
 
 public sealed record EventResultSearchCondition(
     EventResultConditionKind Kind,
@@ -265,10 +275,28 @@ public sealed record EventResultSearchCondition(
     public TrialCaseTarget? TrialCase { get; init; }
     public TinkerCardTypeTarget? TinkerCardType { get; init; }
     public TinkerRiderTarget? TinkerRider { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public EventRelicRarityBranch? RelicRarityBranch { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public EventRelicRaritySelection? RelicRaritySelection { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public EffectRelicRarity? RelicRarity { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public int? CrystalDivinations { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public CrystalSphereSeedCards? CrystalCards { get; init; }
+    // Required acquired identities, not merely offered cards. Repetition means copies.
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<ModelKey>? CrystalTargetCards { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public CrystalSphereSearchRelics? CrystalRelics { get; init; }
 
     public bool IsValid =>
         (TrialCase is null || Kind == EventResultConditionKind.TrialCase) &&
         (TinkerCardType is null && TinkerRider is null || Kind == EventResultConditionKind.TinkerTimeTypeAndRider) &&
+        (RelicRarityBranch is null && RelicRaritySelection is null || Kind == EventResultConditionKind.EventRelicRarityRoll) &&
+        (RelicRarity is null || Kind is EventResultConditionKind.EventRelicRarityRoll or EventResultConditionKind.CrystalSphereRewards) &&
+        (CrystalDivinations is null && CrystalCards is null && CrystalTargetCards is null && CrystalRelics is null || Kind == EventResultConditionKind.CrystalSphereRewards) &&
         (MorphicGroveSecondCard is null || Kind is EventResultConditionKind.MorphicGroveGroupInitialBasicsContains or EventResultConditionKind.TrialNondescriptInitialBasicsContains) && (Kind switch
     {
         EventResultConditionKind.SymbioteInitialBasicTransform or EventResultConditionKind.AromaOfChaosInitialBasicTransform or
@@ -290,6 +318,13 @@ public sealed record EventResultSearchCondition(
             TargetKey.IsValid && TargetKey.Category == BaseGameModelKeys.Categories.Relic,
         EventResultConditionKind.ColorfulPhilosophersOfferedColor =>
             TargetKey.IsValid && TargetKey.Category == BaseGameModelKeys.Categories.Character,
+        EventResultConditionKind.DollRoomRandomRelic or EventResultConditionKind.DollRoomTakeSomeTimeRelic or
+            EventResultConditionKind.MuseumOfTortureOfferedRelic or EventResultConditionKind.ThermaeNonupeipeDrinkRelic =>
+            TargetKey.IsValid && TargetKey.Category == BaseGameModelKeys.Categories.Relic && MorphicGroveScenario is null,
+        EventResultConditionKind.EventRelicRarityRoll =>
+            MorphicGroveScenario is null && EventOpportunitySemantics.IsValidRarityRoll(this),
+        EventResultConditionKind.CrystalSphereRewards =>
+            MorphicGroveScenario is null && EventOpportunitySemantics.IsValidCrystalTarget(this),
         _ => false
     });
 }
@@ -707,6 +742,7 @@ public sealed record ExactSearchEvaluationProjection(
         CombatCardRewardSequence is { IsEmpty: false } || CombatCardExclusion is { IsEmpty: false } || CombatPotionRewardSequence is { IsEmpty: false };
     public bool RequiresWorldAuthority => RequiresWorldDomain || RequiresRelicSequenceDomain || RequiresNormalCombatRewardDomain;
     public bool RequiresEffectColdPath =>
+        (TransformationAggregate is { UsesAncient: true } && NeowRoute is { IsValid: true }) ||
         (NeowRoute is { IsValid: true } && (TreasureRelics is { IsEmpty: false } || FirstActUnknownEventPrefixCount > 0 || FirstActUnknownMonsterPrefixCount > 0)) ||
         RequireNeowsBones || !BonesRelics.IsEmpty || RequiredBonesCombination.Count > 0 ||
         RequiredBonesAcquisitionOrder.Count > 0 || RequireSmallCapsule || RequireLargeCapsule ||

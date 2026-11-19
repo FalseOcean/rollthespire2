@@ -284,7 +284,7 @@ internal static class AuthoredMorphicChecks
             var actualRaw = CardFactory.CreateRandomCardForTransform(selected[i], false, probe);
             Check(Beta111MorphicGroveAuthorityCapture.Snapshot(actualRaw) == projection.Transforms[i].RawReplacement, "Source CardFactory raw metadata parity.");
         }
-        using var selector = CardSelectCmd.UseSelector(new CommittedSelector(selected));
+        using var selector = NativeGameFixture.UseSelector(new CommittedSelector(selected));
         ((Task)typeof(MorphicGrove).GetMethod("Group", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(grove, null)!).GetAwaiter().GetResult();
         var actual = player.Deck.Cards.TakeLast(2).Select(Beta111MorphicGroveAuthorityCapture.Snapshot).ToArray();
         Check(player.Gold == (relic is LuckyFysh ? 30 : 0) && grove.Rng.ToSerializable().counter == 2, "Post-hook gold / two sequential local draws parity.");
@@ -344,7 +344,7 @@ internal static class AuthoredMorphicChecks
         var rng = new MegaCrit.Sts2.Core.Random.Rng(ev.Rng.ToSerializable());
         var raw = CardFactory.CreateRandomCardForTransform(selected, false, rng);
         Check(Beta111MorphicGroveAuthorityCapture.Snapshot(raw) == prediction.RawReplacement, "Actual CardFactory / single event raw projection");
-        using var selector = CardSelectCmd.UseSelector(new CommittedSelector([selected]));
+        using var selector = NativeGameFixture.UseSelector(new CommittedSelector([selected]));
         string method = source == SingleBasicTransformEvent.AromaOfChaos ? "LetGo" : "Hug";
         ((Task)ev.GetType().GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(ev, null)!).GetAwaiter().GetResult();
         var replacement = player.Deck.Cards.Last();

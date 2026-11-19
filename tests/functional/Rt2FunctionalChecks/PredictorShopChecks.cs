@@ -54,7 +54,7 @@ internal static class PredictorShopChecks
                 runtime.Working.Acts.Select(a => ModelDb.GetById<ActModel>(new ModelId(a.Key.Category, a.Key.Entry))).ToArray(),
                 seed: seed, ascensionLevel: context.Ascension);
             stateProperty.SetValue(manager, native);
-            ascensionProperty.SetValue(manager, new AscensionManager(context.Ascension));
+            ascensionProperty.SetValue(manager, NativeGameFixture.StandardAscension(context.Ascension));
             native.SharedRelicGrabBag.Populate(ModelDb.RelicPool<SharedRelicPool>().GetUnlockedRelics(UnlockState.all), native.Rng.UpFront);
             player.PopulateRelicGrabBagIfNecessary(native.Rng.UpFront);
             manager.GenerateRooms();
@@ -397,7 +397,7 @@ internal static class PredictorShopChecks
         var manager = RunManager.Instance;
         typeof(RunManager).GetProperty("State", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(manager, native);
         typeof(RunManager).GetProperty("AscensionManager", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!
-            .SetValue(manager, new AscensionManager(context.Ascension));
+            .SetValue(manager, NativeGameFixture.StandardAscension(context.Ascension));
         native.SharedRelicGrabBag.Populate(ModelDb.RelicPool<SharedRelicPool>().GetUnlockedRelics(UnlockState.none), native.Rng.UpFront);
         player.PopulateRelicGrabBagIfNecessary(native.Rng.UpFront);
         manager.GenerateRooms();

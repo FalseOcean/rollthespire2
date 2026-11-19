@@ -27,7 +27,7 @@ public sealed record EventStaticEligibilityResult(
 
 /// <summary>
 /// Run-start effective-candidate eligibility projection. It never executes live
-/// EventModel.IsAllowed and never fabricates future RunState. Beta111 can reject
+/// EventModel.IsAllowed and never fabricates future RunState. Audited predicates can reject
 /// immutable necessary conditions (Act, player mode/count, unlock facts and the
 /// replacement-only WarHistorianRepy identity); any remaining gold/HP/deck/relic/
 /// potion/route/visited/hook dependency stays RuntimeDependent.
@@ -45,7 +45,14 @@ public static class EventStaticEligibilityCatalog
     private static readonly IReadOnlyDictionary<string, Rule> Beta110Rules = BuildBeta110Rules();
     private static readonly IReadOnlyDictionary<string, Rule> Beta111Rules = BuildBeta111Rules();
     private static readonly Rule Beta113MuseumRule = new(EventStaticEligibilityDecision.RejectByActIndex,
-        "Act2Only:MuseumOfTorture", [2]);
+        "Act2Only:MuseumOfTorture", Array.AsReadOnly(new[] { 2 }));
+    private static readonly IReadOnlyDictionary<ModelKey, IReadOnlyList<int>> Modern113AllowedActs =
+        BuildModern113AllowedActs();
+
+    public static bool IsAuditedModern113(ModelKey eventKey) => Modern113AllowedActs.ContainsKey(eventKey);
+
+    public static IReadOnlyList<int> KnownModern113AllowedActs(ModelKey eventKey) =>
+        Modern113AllowedActs.GetValueOrDefault(eventKey) ?? Array.Empty<int>();
 
     private static readonly IReadOnlySet<string> Beta111RuntimeDependentEvents = new HashSet<string>(
         new[]
@@ -111,11 +118,14 @@ public static class EventStaticEligibilityCatalog
         EventPoolSourceKind source,
         EventImmutableEligibilityContext? immutableContext)
     {
+        EventImmutableEligibilityContext context = immutableContext ?? EventImmutableEligibilityContext.Unknown;
+        bool modern113 = context.RngSemantics == RngSemanticProfileId.Modern113;
         PredictionPrecision precision = ProjectionPrecision(profileId);
         string profileEvidence = profileId switch
         {
             RuntimeProfileId.Stable107 => "stable107-static-candidate-contract",
             RuntimeProfileId.Beta110 => "beta110-static-candidate-contract",
+            RuntimeProfileId.Beta111 when modern113 => "beta113-effective-candidate-source-audited",
             RuntimeProfileId.Beta111 => "beta111-effective-candidate-source-audited",
             RuntimeProfileId.Beta109 => "beta109-historical-donor-provisional",
             _ => "unsupported-profile"
@@ -127,10 +137,9 @@ public static class EventStaticEligibilityCatalog
             _ => Stable107Rules
         };
 
-        string normalized = Normalize(eventKey.Entry);
+        bool audited = !modern113 || IsAuditedModern113(eventKey);
+        string normalized = audited ? Normalize(eventKey.Entry) : string.Empty;
         Rule? rule = normalized.Length > 0 && rules.TryGetValue(normalized, out Rule? found) ? found : null;
-        EventImmutableEligibilityContext context = immutableContext ?? EventImmutableEligibilityContext.Unknown;
-        bool modern113 = context.RngSemantics == RngSemanticProfileId.Modern113;
         if (modern113 && normalized == "MUSEUMOFTORTURE")
             rule = Beta113MuseumRule;
 
@@ -140,10 +149,9 @@ public static class EventStaticEligibilityCatalog
                 $"event-pool-sequence.static-rule.always-disallowed.{profileEvidence}");
         }
 
-        // Act-local membership already encodes the selected Act variant. Shared events
-        // still need their direct CurrentActIndex necessary condition, including mixed
-        // predicates in Beta111.
-        if (source == EventPoolSourceKind.Shared &&
+        // Captured membership determines the Act variant. An audited Modern113
+        // CurrentActIndex predicate belongs to the event regardless of queue source.
+        if ((source == EventPoolSourceKind.Shared || modern113) &&
             rule is { AllowedActs.Count: > 0 } &&
             !rule.AllowedActs.Contains(act))
         {
@@ -269,6 +277,42 @@ public static class EventStaticEligibilityCatalog
         return Beta111KnownStaticEligibleEvents.Contains(normalized)
             ? EventCandidateEligibilityKind.StaticEligible
             : EventCandidateEligibilityKind.RuntimeDependent;
+    }
+
+    private static IReadOnlyDictionary<ModelKey, IReadOnlyList<int>> BuildModern113AllowedActs()
+    {
+        // Native 0.113.1 ActModel.AllEvents and ModelDb.AllSharedEvents. Sunken
+        // Statue is present in both Act 1 variants, which UI obtains from the snapshot.
+        // See .build-evidence/event-transform-expansion/event-eligibility-review.md.
+        var actsByEvent = new Dictionary<ModelKey, IReadOnlyList<int>>(ModelKeyComparer.Instance);
+        AddLocal(1, "AROMA_OF_CHAOS", "BYRDONIS_NEST", "DENSE_VEGETATION", "JUNGLE_MAZE_ADVENTURE",
+            "LUMINOUS_CHOIR", "MORPHIC_GROVE", "SAPPHIRE_SEED", "SUNKEN_STATUE", "TABLET_OF_TRUTH",
+            "UNREST_SITE", "WELLSPRING", "WHISPERING_HOLLOW", "WOOD_CARVINGS", "ABYSSAL_BATHS",
+            "DOORS_OF_LIGHT_AND_DARK", "DROWNING_BEACON", "ENDLESS_CONVEYOR", "PUNCH_OFF", "SPIRALING_WHIRLPOOL",
+            "SUNKEN_TREASURY", "TRASH_HEAP", "WATERFALL_OF_OBVIOUS_SECRETS", "WATERLOGGED_SCRIPTORIUM", "WUPPY_IN_TROUBLE");
+        AddLocal(2, "AMALGAMATOR", "BUGSLAYER", "COLORFUL_PHILOSOPHERS", "COLOSSAL_FLOWER",
+            "FIELD_OF_MAN_SIZED_HOLES", "INFESTED_AUTOMATON", "LOST_WISP", "SPIRIT_GRAFTER", "THE_LANTERN_KEY", "ZEN_WEAVER");
+        AddLocal(3, "BATTLEWORN_DUMMY", "GRAVE_OF_THE_FORGOTTEN", "HUNGRY_FOR_MUSHROOMS", "REFLECTIONS",
+            "ROUND_TEA_PARTY", "SHRINE_OF_THE_WARLORD", "THERMAE_NONUPEIPE", "TINKER_TIME", "TRIAL");
+
+        IReadOnlyList<int> allActs = Array.AsReadOnly(new[] { 1, 2, 3 });
+        string[] sharedEntries = ["BRAIN_LEECH", "CRYSTAL_SPHERE", "DOLL_ROOM", "FAKE_MERCHANT",
+            "MUSEUM_OF_TORTURE", "POTION_COURIER", "RANWID_THE_ELDER", "RELIC_TRADER", "ROOM_FULL_OF_CHEESE",
+            "SELF_HELP_BOOK", "SLIPPERY_BRIDGE", "STONE_OF_ALL_TIME", "SYMBIOTE", "TEA_MASTER", "THE_FUTURE_OF_POTIONS",
+            "THE_LEGENDS_WERE_TRUE", "THIS_OR_THAT", "WAR_HISTORIAN_REPY", "WELCOME_TO_WONGOS"];
+        foreach (string entry in sharedEntries)
+        {
+            Rule? rule = entry == "MUSEUM_OF_TORTURE" ? Beta113MuseumRule : Beta111Rules.GetValueOrDefault(Normalize(entry));
+            actsByEvent.Add(new ModelKey(BaseGameModelKeys.Categories.Event, entry), rule?.AllowedActs ?? allActs);
+        }
+        return actsByEvent;
+
+        void AddLocal(int act, params string[] entries)
+        {
+            IReadOnlyList<int> acts = Array.AsReadOnly(new[] { act });
+            foreach (string entry in entries)
+                actsByEvent.Add(new ModelKey(BaseGameModelKeys.Categories.Event, entry), acts);
+        }
     }
 
     private static EventStaticEligibilityResult Reject(

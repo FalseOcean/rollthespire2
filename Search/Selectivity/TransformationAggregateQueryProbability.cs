@@ -9,6 +9,15 @@ internal static partial class TransformationAggregateQueryProbability
     internal static JointSelectivityResult Compose(SearchSelectivityInput input,Func<SearchSelectivityInput,JointSelectivityResult> estimateOther)
     {
         var compiled=input.CompiledSearch;
+        if (compiled.NormalizedQuery.TransformationAggregate is { UsesExtendedRequirements: true })
+        {
+            var otherConditions = SearchCompiler.Compile(compiled.NormalizedQuery with { TransformationAggregate = null }, compiled.Context);
+            var remaining = estimateOther(SearchSelectivityInput.From(otherConditions));
+            const string cause = "ScopedTransformations.JointProbabilityUnavailable";
+            return JointSelectivityResult.Partial("Probability.TransformationAggregate.Unknown", cause,
+                "Shared source and pickup witnesses are evaluated together; no independent-group probability product",
+                remaining.KnownComponents, remaining.UnknownComponents.Append(cause).ToArray());
+        }
         // Immutable numerical donor inputs only; no session, GPU owner, pricing
         // or execution is created by probability analysis.
         var request=new SearchModel(compiled,CompiledSearchEvaluationProjector.Project(compiled).Evaluation,

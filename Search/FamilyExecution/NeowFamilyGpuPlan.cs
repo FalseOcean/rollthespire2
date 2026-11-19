@@ -18,6 +18,10 @@ internal sealed record NeowFamilyGpuPlan(uint[] Meta, uint[] PoolMeta, uint[] Ca
         _ => NumericRequirements.Unspecified
     };
     internal bool HasAuthoredUpgrades { get; init; }
+    internal bool DirectFirstDrawRequested { get; init; }
+    internal bool BonesDrawUnobserved { get; init; }
+    internal NeowPartyDirectDraw? PartyDirectDraw { get; init; }
+    internal NeowEventFirstDrawGate? EventFirstDraw { get; init; }
     internal int CapsuleNicheMetaOffset { get; init; } = -1;
     internal NeowEntryIdentityMode EntryIdentityMode { get; init; }
     internal byte EntryIdentityTarget { get; init; } = 255;
@@ -33,6 +37,7 @@ internal sealed record NeowFamilyGpuPlan(uint[] Meta, uint[] PoolMeta, uint[] Ca
         ? NeowLocalObservationPacking.Revision : "";
     internal bool IsMultiplayer => Meta[6] > 1;
     internal bool UsesChildShuffle => (Meta[56] & 64u) != 0;
+    internal string CurseFirstDrawRevision => UsesChildShuffle && !IsMultiplayer ? ".CurseFirstDrawRne.20261119.v1" : "";
     internal bool HasLocalResults => Meta[83] != 0 || Meta[84] != 0;
     internal const string DenseRevision = "N.Neow.Gpu.LocalDonor.DenseCarry8.CanonicalAbi1Ready.20260905.v2";
     internal const string CompactRevision = "N.Neow.Gpu.LocalDonor.CompactFullDecode.CanonicalAbi1Ready.20260905.v2";
@@ -41,6 +46,48 @@ internal sealed record NeowFamilyGpuPlan(uint[] Meta, uint[] PoolMeta, uint[] Ca
     internal const string LeafyCompactRevision = "N.Neow.Gpu.LocalDonor.LeafyPreGate.CompactFullDecode.CanonicalAbi1Ready.20260906.v1";
     internal const string LeafyStagedDenseRevision = "N.Neow.Gpu.LocalDonor.LeafyPreGate.DensePreBonesCarry8.CanonicalAbi1Ready.20260906.v1";
     internal bool UsesStagedDense => Meta[66] != 0;
+    internal const string DirectFirstDrawRevision = ".DirectFirstDraw.20261119.v1";
+    internal const string DirectFirstDrawVariable = "RT2_N_DIRECT_FIRST_DRAW";
+    internal bool UseDirectFirstDraw => DirectFirstDrawRequested && TryCompileTerminalCurseGate(out _);
+    private bool UsesOrdinarySoloMenuStage => !IsMultiplayer && UsesChildShuffle && !UsesStagedDense &&
+        DirectNestedMode == 0 && !HasLocalResults && !UsesLeafyPreGate && ModernTransformGate is null &&
+        JointTransformMetaOffset < 0 && !HasAuthoredUpgrades && CapsuleNicheMetaOffset < 0 &&
+        Meta[NeowCapsuleRarityGate.GpuMetadataIndex] == 0;
+    private bool HasBonesConstraint => (Meta[56] & 3u) != 0;
+
+    // The position tracker evaluates the entire menu, including any constraints on the curse slot.
+    internal bool CanShareTrackedPositive => UsesOrdinarySoloMenuStage && !HasBonesConstraint &&
+        DirectFirstDrawRequested && (EntryIdentityMode & NeowEntryIdentityMode.TrackSingleRequired) != 0;
+
+    internal bool TryCompileTerminalCurseGate(out NeowStaticDrawGateCompiler.Gate? gate)
+    {
+        gate = null;
+        if (!UsesOrdinarySoloMenuStage || (HasBonesConstraint && !BonesDrawUnobserved) || Meta[39] is 0 or > 10)
+            return false;
+
+        // The existing P9 masks must resolve every packed curse ordinal.
+        // This predicate has no use for the selected route slot or RNG state.
+        int count = (int)Meta[39];
+        uint accepted = Meta[68], rejected = Meta[69];
+        uint domain = (1u << count) - 1u;
+        if (accepted == 0 || rejected == 0 || (accepted & rejected) != 0 || (accepted | rejected) != domain)
+            return false;
+        return NeowStaticDrawGateCompiler.TryCompileRanks(count,
+            i => (accepted & (1u << i)) != 0 && Meta[71 + i] != uint.MaxValue, 2, out gate, binary64: true);
+    }
+    private readonly bool _terminalPairEnabled = !string.Equals(Environment.GetEnvironmentVariable("RT2_N_TERMINAL_PAIR"),
+        "off", StringComparison.OrdinalIgnoreCase);
+    private readonly bool _pairMaskEnabled = !string.Equals(Environment.GetEnvironmentVariable("RT2_N_PAIR_MASK"),
+        "off", StringComparison.OrdinalIgnoreCase);
+    private bool EndsAtPairIdentity => UsesStagedDense && !IsMultiplayer && !HasLocalResults &&
+        Meta[NeowCapsuleRarityGate.GpuMetadataIndex] == 0 && DirectNestedMode == 0 && JointTransformMetaOffset < 0;
+    internal bool UseTerminalPair => _terminalPairEnabled && EndsAtPairIdentity;
+    internal const string TerminalPairRevision = ".PairIdentityTerminal.20261119.v1";
+    internal bool UsePairMask => _pairMaskEnabled && EndsAtPairIdentity && UsesChildShuffle &&
+        Meta[67] == 1 && Meta[8] is >= 2 and <= 32 && Meta[25] < Meta[8] && Meta[26] < Meta[8] &&
+        Meta[25] != Meta[26] && Meta[27] != Meta[28] && Meta[12] == 255 && Meta[13] == 255 &&
+        !HasAuthoredUpgrades && CapsuleNicheMetaOffset < 0 && ModernTransformGate is null;
+    internal const string PairMaskRevision = ".UnorderedPairMask32.20261119.v1";
     internal bool UsesLeafyPreGate => Meta[70] != 0;
     // Stage 1 checkpoints the proven pair and Stage 3 runs the same pair_identity
     // before local replay. The modern joint transform gate reads only its own

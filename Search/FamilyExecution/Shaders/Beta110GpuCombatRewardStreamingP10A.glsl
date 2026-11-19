@@ -7,6 +7,12 @@
 #ifndef RT2_C_CARD_FREE_TERMINAL
 #define RT2_C_CARD_FREE_TERMINAL 0
 #endif
+#ifndef RT2_C_GENERIC_DIRECT_CARD_POOL
+#define RT2_C_GENERIC_DIRECT_CARD_POOL 0
+#endif
+#ifndef RT2_C_UNOBSERVED_CARD_BURN
+#define RT2_C_UNOBSERVED_CARD_BURN 0
+#endif
 // P10-A Runtime-Accepted donor: streaming predicate evaluation + current-battle-only materialization.
 // P10-RP1 production GPU Reward uses this as the retained single-route evaluator;
 // the historical BaselineCurrent variant remains diagnostic-only.
@@ -54,6 +60,21 @@ uint64_t cr_assignment_step(uint64_t states,uint matches,uint count){
     return next;
 }
 #endif
+#if RT2_C_GENERIC_DIRECT_CARD_POOL
+bool cr_select_ordinary_card_rank(uint meta,uint sm0,uint si0,uint sm1,uint si1,uint selected_count,
+    inout RngState rewards,out uint value,out uint pool_index);
+
+uint cr_generate_ordinary_card_by_rank(uint asc,uint picked,inout uvec4 ranks,inout RewardRouteState state){
+    uint rarity=cr_roll_combat_rarity(cr_next_float(state.rewards),asc,state.card_offset);
+    uint meta=cr_combat_card_meta(rarity),value,index;
+    if(!cr_select_ordinary_card_rank(meta,ranks.x,ranks.y,ranks.z,ranks.w,picked,state.rewards,value,index))return 0xffffffffu;
+    if(value==0xffffffffu)return value;
+    if(picked==0u)ranks.xy=uvec2(meta,index);
+    else if(picked==1u)ranks.zw=uvec2(meta,index);
+    cr_next_float(state.rewards);
+    return value;
+}
+#endif
 bool cr_evaluate_rewards(inout RewardRouteState state){
 #ifndef RT2_CR_FAMILY
     if(!state.continuation_exact||!state.influence_exact||((state.influence_flags&(64u|128u))!=0u))return true;
@@ -76,12 +97,26 @@ bool cr_evaluate_rewards(inout RewardRouteState state){
             potion=dense_ids.ids[off+cr_next_int(state.rewards,len)];
         }
         uint cards[12];for(uint i=0u;i<12u;++i)cards[i]=0xffffffffu;uint count=0u;
+#if RT2_C_UNOBSERVED_CARD_BURN
+        // With no card observation anywhere in this query, rarity pity is dead
+        // state too. The prepared lanes prove that each ordinary group succeeds
+        // with exactly nine draws. Preserve Candy and over-capacity faults on
+        // their original evaluator instead of hiding them with a draw shortcut.
+        if((state.influence_flags&4u)==0u&&state.additional_card_rewards<=3u){
+            if(battle+1u<maxBattle)
+                for(uint draw=0u;draw<9u*(1u+state.additional_card_rewards);++draw)cr_next_u64(state.rewards);
+        }else{
+#endif
 #if RT2_C_CARD_FREE_TERMINAL
         // Earlier cards still advance Rewards and rarity pity for later potions.
         // A terminal extra reward or Candy retains the full fault boundary.
         if(battle+1u<maxBattle||state.additional_card_rewards!=0u||(state.influence_flags&4u)!=0u){
 #endif
+#if RT2_C_GENERIC_DIRECT_CARD_POOL
+        uvec4 group_ranks=uvec4(0xffffffffu);
+#else
         uint group_selected[12];for(uint i=0u;i<12u;++i)group_selected[i]=0xffffffffu;uint group_count=0u;
+#endif
 #if RT2_C_TERMINAL_CARD_GATE
         // Potion/gold and every previous battle have already executed. Only a
         // proven fault-free terminal three-card suffix may be omitted. Additional
@@ -91,9 +126,15 @@ bool cr_evaluate_rewards(inout RewardRouteState state){
         if(terminal_card_gate&&bitCount(terminal_missing)>3)return false;
 #endif
         for(uint i=0u;i<3u;++i){
+#if RT2_C_GENERIC_DIRECT_CARD_POOL
+            uint v=cr_generate_ordinary_card_by_rank(asc,i,group_ranks,state);
+            if(v==0xffffffffu)return RT2_CR_NUMERIC_FAILURE();
+#else
             uint v=cr_generate_combat_card(false,asc,group_selected,group_count,state);
             if(v==0xffffffffu)return RT2_CR_NUMERIC_FAILURE();
-            group_selected[group_count++]=v;cards[count++]=v;
+            group_selected[group_count++]=v;
+#endif
+            cards[count++]=v;
 #if RT2_C_TERMINAL_CARD_GATE
             if(terminal_card_gate){
                 terminal_missing=cr_terminal_card_seen(terminal_missing,v);
@@ -106,11 +147,23 @@ bool cr_evaluate_rewards(inout RewardRouteState state){
             uint v=cr_generate_combat_card(true,asc,excluded,count,state);if(v==0xffffffffu)return RT2_CR_NUMERIC_FAILURE();cards[count++]=v;
         }
         for(uint reward=0u;reward<state.additional_card_rewards;++reward){
+#if RT2_C_GENERIC_DIRECT_CARD_POOL
+            group_ranks=uvec4(0xffffffffu);
+            for(uint i=0u;i<3u;++i){
+                uint v=cr_generate_ordinary_card_by_rank(asc,i,group_ranks,state);
+                if(v==0xffffffffu||count>=12u)return RT2_CR_NUMERIC_FAILURE();
+                cards[count++]=v;
+            }
+#else
             for(uint i=0u;i<12u;++i)group_selected[i]=0xffffffffu;group_count=0u;
             for(uint i=0u;i<3u;++i){uint v=cr_generate_combat_card(false,asc,group_selected,group_count,state);if(v==0xffffffffu||count>=12u)return RT2_CR_NUMERIC_FAILURE();group_selected[group_count++]=v;cards[count++]=v;}
+#endif
         }
         if((state.influence_flags&4u)!=0u)state.lasting_candy_counter++;
 #if RT2_C_CARD_FREE_TERMINAL
+        }
+#endif
+#if RT2_C_UNOBSERVED_CARD_BURN
         }
 #endif
 
@@ -229,7 +282,7 @@ bool cr_hot_select_card_scan(uint meta,uint s0,uint s1,uint selected_count,inout
     value=0xffffffffu;pool_index=0xffffffffu;return false;
 }
 
-bool cr_hot_select_card_direct(uint meta,uint sm0,uint si0,uint sm1,uint si1,uint selected_count,inout RngState rewards,out uint value,out uint pool_index){
+bool cr_select_ordinary_card_rank(uint meta,uint sm0,uint si0,uint sm1,uint si1,uint selected_count,inout RngState rewards,out uint value,out uint pool_index){
     uint off=pool_meta.values[meta],len=pool_meta.values[meta+1u];
     uint e0=0xffffffffu,e1=0xffffffffu,excluded=0u;
     if(selected_count>0u&&sm0==meta){e0=si0;excluded++;}
@@ -259,7 +312,7 @@ bool cr_hot_generate_card(inout RngState rewards,uint asc,inout float card_offse
 #endif
     {
         used_meta=cr_combat_card_meta(requested);
-        if(!cr_hot_select_card_direct(used_meta,sm0,si0,sm1,si1,selected_count,rewards,value,used_index))return false;
+        if(!cr_select_ordinary_card_rank(used_meta,sm0,si0,sm1,si1,selected_count,rewards,value,used_index))return false;
     }
 #else
     bool selected=false;value=0xffffffffu;used_meta=0xffffffffu;used_index=0xffffffffu;

@@ -122,7 +122,12 @@ public static class CompiledSearchEvaluationProjector
             VariantBossBranches = query.VariantBossBranches,
             AncientBranchConditions = query.AncientBranches,
             AncientIdentityFilters = oldWorld.AncientIdentityFilters,
-            AncientOptionFilters = oldWorld.AncientOptionFilters,
+            // Taking over an Ancient relic's outcome commits to that actual
+            // option, even when the authored menu condition also allows others.
+            AncientOptionFilters = query.TransformationAggregate is { UsesAncient: true } transform
+                ? oldWorld.AncientOptionFilters.Append(new ActModelKeySetFilter(transform.AncientAct,
+                    new ModelKeySetFilter([], [transform.RequiredAncientKey], []))).ToArray()
+                : oldWorld.AncientOptionFilters,
             AncientSeaGlassTargetFilters = oldWorld.AncientSeaGlassTargetFilters,
             AncientOptionConditions = context.EvaluationAssumptions.AncientEligibilityAssumptions,
             TreasureRelics = query.TreasureRelics,

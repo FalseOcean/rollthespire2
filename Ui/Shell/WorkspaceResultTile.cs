@@ -133,6 +133,7 @@ internal sealed partial class WorkspaceResultTile : Control
         remove.Resized += () => removeHost.Size = remove.Size;
         remove.Ready += () => Callable.From(() =>
         {
+            if (!GodotObject.IsInstanceValid(remove) || !GodotObject.IsInstanceValid(removeHost)) return;
             remove.Size = remove.GetCombinedMinimumSize().Max(new Vector2(24, 24));
             removeHost.Size = remove.Size;
         }).CallDeferred();

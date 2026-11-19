@@ -36,8 +36,10 @@ internal static partial class UiSurfaceChecks
             var provider = new DeveloperNotesDocumentProvider();
             var resolution = provider.Resolve("zh");
             var document = resolution.Document!;
+            var release = document.Chapters.Single(chapter => chapter.Id == DeveloperNotesChapterIds.Release);
+            var previousRelease = release.Blocks.Where(block => block.ReleaseVersion is not null).Skip(1).FirstOrDefault();
             var names = RuntimeGameContentNameResolver.Create("zh");
-            page = new DeveloperNotesPage(provider);
+            page = new DeveloperNotesPage(provider, chapterId => chapterId == release.Id ? previousRelease?.ReleaseVersion : null);
             surface.AddChild(page); page.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
             page.ApplyLocalization(JsonUiTextProvider.Create("zh"), names, resolution);
             Check(!page.IsPresentationReady && !page.IsUsefulContentReady, "synchronous admission is not article readiness");
@@ -52,8 +54,13 @@ internal static partial class UiSurfaceChecks
                 "hidden initial article does not generate blocks or complete a draw");
             page.Show();
             await Ready(page);
-            Check(Field<DeveloperNotesArticleRenderer>(page, "_renderer").GetChildCount() == document.Chapters[0].Blocks.Count,
+            var renderer = Field<DeveloperNotesArticleRenderer>(page, "_renderer");
+            Node acknowledgement = Field<Button>(page, "_acknowledge").GetParent();
+            Check(renderer.GetChildren().Count(child => child != acknowledgement) == release.Blocks.Count,
                 "every release block appears exactly once");
+            int expectedIndex = previousRelease is null ? release.Blocks.Count : release.Blocks.ToList().IndexOf(previousRelease);
+            Check(acknowledgement.GetParent() == renderer && acknowledgement.GetIndex() == expectedIndex,
+                "acknowledgement follows the latest unread entry before the previously read release");
             Check(page.IsUsefulContentReady, "complete initial viewport is useful");
             root.GetViewport().GetTexture().GetImage().SavePng(Path.Combine(output, "notes-complete-sans.png"));
             int acknowledged = 0;

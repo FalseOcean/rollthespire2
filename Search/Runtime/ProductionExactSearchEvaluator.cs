@@ -76,6 +76,20 @@ internal static class ProductionExactSearchEvaluator
         if ((plan.CompiledSearch.NormalizedQuery.TransformationAggregate is null) != (plan.Evaluation.TransformationAggregate is null))
             throw new InvalidOperationException("TransformationAggregate.MissingExactObligation");
         var query = plan.CompiledSearch.NormalizedQuery;
+        SearchQueryEvaluation drawEvaluation = SearchQueryEvaluation.Match();
+        if (query.FishingRodDrawResearch)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var rows = query.FishingRodDrawRequirements ?? Semantics.FishingRodDrawResearch.DefaultRequirements;
+            if (!Semantics.FishingRodDrawResearch.Matches(input.RootHash, rows))
+            {
+                const string issue = Semantics.FishingRodDrawResearch.Id + ".DrawsRejected";
+                return new(null, null, plan.Authority, SearchQueryEvaluation.NoMatch(issue), issue);
+            }
+            drawEvaluation = SearchQueryEvaluation.Match([
+                new(Semantics.FishingRodDrawResearch.Id, StreamDomain: Semantics.FishingRodDrawResearch.Stream,
+                    ConditionId: Semantics.FishingRodDrawResearch.Id, OutcomeId: Semantics.FishingRodDrawResearch.OutcomeIdentity(rows))]);
+        }
         bool unresolvedRewards = Semantics.TransformationAggregateCondition.HasUnresolvedRewardContinuation(query);
         bool unresolvedRelics = Semantics.TransformationAggregateCondition.HasUnresolvedRelicContinuation(query);
         SearchQueryEvaluation continuationEvaluation = unresolvedRewards || unresolvedRelics
@@ -131,7 +145,8 @@ internal static class ProductionExactSearchEvaluator
         SearchQueryEvaluation canonicalEvaluation = Beta111CanonicalEventShopSearchEvaluator.Evaluate(
             plan,
             input.RootHash,
-            authority);
+            authority,
+            cancellationToken);
         if (canonicalEvaluation.Disposition == SearchDisposition.NoMatch)
         {
             return new ProductionExactSearchResult(
@@ -145,12 +160,21 @@ internal static class ProductionExactSearchEvaluator
         var mapEvaluation = StandardMapExactEvaluator.Evaluate(plan, input.SeedIdentity, cancellationToken);
         if (mapEvaluation.Disposition == SearchDisposition.NoMatch)
             return new(null,null,authority,mapEvaluation,mapEvaluation.FailureCode);
-        canonicalEvaluation = CombineIndependentEvaluations(canonicalEvaluation, mapEvaluation, continuationEvaluation);
+        if (query.MerchantRelicConditions.Count > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var shopRelics = Semantics.MerchantRelicQueryEvaluator.Evaluate(query.MerchantRelicConditions, plan.Authority, input.RootHash);
+            if (shopRelics.Disposition == SearchDisposition.NoMatch)
+                return new(null, null, authority, shopRelics, shopRelics.FailureCode);
+            canonicalEvaluation = CombineIndependentEvaluations(canonicalEvaluation, shopRelics);
+        }
+        canonicalEvaluation = CombineIndependentEvaluations(canonicalEvaluation, mapEvaluation, drawEvaluation, continuationEvaluation);
 
         // These root-local facts already completed the full request. Analysis
         // requests and documents are optional consumers, not Match prerequisites.
         if ((plan.Evaluation.RequiresCanonicalRootLocalDomain || plan.CompiledSearch.NormalizedQuery.StandardMaps.Count > 0 ||
-            plan.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count > 0 || plan.CompiledSearch.NormalizedQuery.ElitePrefixResearch is not null) &&
+            plan.CompiledSearch.NormalizedQuery.StandardMapRoutes.Count > 0 || plan.CompiledSearch.NormalizedQuery.ElitePrefixResearch is not null ||
+            query.FishingRodDrawResearch || query.MerchantRelicConditions.Count > 0) &&
             plan.Evaluation.CheapPredictionDomains == SeedPredictionDomainSelection.None &&
             !plan.Evaluation.RequiresNormalCombatRewardDomain)
         {
@@ -345,7 +369,7 @@ internal static class ProductionExactSearchEvaluator
                     var child = Compilation.SearchPreparationCompiler.ForPlayer(plan, personal);
                     if (!child.Evaluation.RequiresEventResultDomain && !child.Evaluation.RequiresMerchantColorlessDomain) continue;
                     var authority = SearchAuthorityProjector.PreserveSeedIndependentEffectFoundation(child.Authority);
-                    var independent = Beta111CanonicalEventShopSearchEvaluator.Evaluate(child, input.RootHash, authority);
+                    var independent = Beta111CanonicalEventShopSearchEvaluator.Evaluate(child, input.RootHash, authority, cancellationToken);
                     if (independent.Disposition != SearchDisposition.NoMatch) continue;
                     result = new(null, null, authority, independent, independent.FailureCode);
                     break;

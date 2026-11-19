@@ -1,6 +1,7 @@
 using RolltheSpire2.Ui.Shell;
 using RolltheSpire2.Ui.Tooltips;
 using Godot;
+using RolltheSpire2.Search.Semantics;
 using RolltheSpire2.Ui.Theme;
 namespace RolltheSpire2.Ui.Pages.Search;
 
@@ -11,7 +12,13 @@ internal sealed partial class QueryWorkbenchFrame
     private VBoxContainer? _familyRows, _estimateContent;
     private GridContainer? _liveReadings;
     private Label? _liveReadingsHeading;
-    private string FamilyTitle(string id)=>id == "N/R" ? _text.Get("workflow.family.nr_joint") : _text.Get("workflow.family."+id.ToLowerInvariant());
+    private string FamilyTitle(string id) => _text.Get(id switch
+    {
+        "N/R" => "workflow.family.nr_joint",
+        MerchantRelicCondition.Domain => "query.shop.ordinary.title",
+        FishingRodDrawResearch.Id => "query.ideas.fishing_rod.title",
+        _ => "workflow.family." + id.ToLowerInvariant()
+    });
     private static string DashboardRarity(double? probability)=>Rarity(probability);
     private readonly Label?[] _expectationValues = new Label?[3];
     private Label? _expectationNote, _familyHeading;

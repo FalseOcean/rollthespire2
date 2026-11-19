@@ -34,7 +34,8 @@ internal sealed partial class EventSearchEditor
 
     internal bool HasConditions(bool party) => party && (_partyQueue.Count > 0 || _partyUnknownPrefix.HasConditions) || (party ? _partyDrafts : _drafts).Values.Any(d =>
         d.QueueConditions.Count > 0 || d.Results.Values.Any(keys => keys.Any(k => k.HasValue)) ||
-        d.CharacterColor.HasValue || d.TrialCase >= 0 || d.TinkerType >= 0 || d.PrototypeTargets.Count > 0 || d.UnknownPrefix.HasConditions);
+        d.OpportunityResults.Count > 0 || d.CharacterColor.HasValue || d.TrialCase >= 0 || d.TinkerType >= 0 ||
+        d.PrototypeTargets.Count > 0 || d.UnknownPrefix.HasConditions);
     internal Action ClearConditions(bool party)
     {
         var prefix = (_partyUnknownPrefix.EventCount, _partyUnknownPrefix.MonsterCount);
@@ -72,6 +73,9 @@ internal sealed partial class EventSearchEditor
         if (IsResultActive("TRIAL") && _draft.TrialCase >= 0 && TransformTakenOver?.Invoke(_activeSeat, "E.TRIAL") != true)
             resultEvents.Add("TRIAL");
         if (IsResultActive("TINKER_TIME") && _draft.TinkerType >= 0) resultEvents.Add("TINKER_TIME");
+        foreach (var condition in _draft.OpportunityResults)
+            if (EventOpportunitySemantics.TryGetEventKey(condition, out var key) && IsResultActive(key.Entry))
+                resultEvents.Add(key.Entry);
         return resultEvents;
     }
 
@@ -87,7 +91,12 @@ internal sealed partial class EventSearchEditor
         _draft.CharacterColor is { } color ? Array.IndexOf(LegacyColorChoices, color) : -1,
         _draft.TrialCase, _draft.TinkerType, _draft.TinkerEffect,
         _draft.InactiveResultEvents.Order(StringComparer.Ordinal).ToArray())
-    { CharacterColorKey = _draft.CharacterColor is { } key && !LegacyColorChoices.Contains(key) ? key : null };
+    {
+        CharacterColorKey = _draft.CharacterColor is { } key && !LegacyColorChoices.Contains(key) ? key : null,
+        OpportunityResults = _draft.OpportunityResults.ToArray(),
+        CrystalRelics = _draft.CrystalRelics,
+        CrystalDivinations = _draft.CrystalDivinations
+    };
 
     internal EventEditorStateSnapshot? ExportPartyEditorState(int slot)
     {
@@ -99,9 +108,13 @@ internal sealed partial class EventSearchEditor
 
     internal void ImportEditorState(EventEditorStateSnapshot state)
     {
-        if (state.CharacterColor < -1 || state.CharacterColor >= LegacyColorChoices.Length || state.TrialCase is < -1 or > 2 ||
+        if (state.CrystalDivinations is not (3 or 6) ||
+            (state.CrystalRelics & ~(CrystalSphereSearchRelics.Driftwood | CrystalSphereSearchRelics.PrismaticGem | CrystalSphereSearchRelics.DingyRug)) != 0 ||
+            state.CharacterColor < -1 || state.CharacterColor >= LegacyColorChoices.Length || state.TrialCase is < -1 or > 2 ||
             state.TinkerType is < -1 or > 2 || state.Results.Any(pair =>
-                pair.Value.Length != ResultSlotCount(pair.Key)))
+                pair.Value.Length != ResultSlotCount(pair.Key)) ||
+            state.OpportunityResults.Any(condition => condition is null || !condition.IsValid ||
+                !EventOpportunitySemantics.TryGetEventKey(condition, out _)))
             throw new InvalidOperationException("integration.load_shape");
         ModelKey? legacyColor = state.CharacterColor < 0 ? null : LegacyColorChoices[state.CharacterColor];
         ModelKey? storedColor = state.CharacterColorKey ?? legacyColor;
@@ -115,6 +128,18 @@ internal sealed partial class EventSearchEditor
         _draft.TrialCase = state.TrialCase;
         _draft.TinkerType = state.TinkerType;
         _draft.TinkerEffect = state.TinkerEffect;
+        var fromQuery = _draft.OpportunityResults.ToArray();
+        _draft.OpportunityResults.Clear();
+        _draft.OpportunityResults.AddRange(state.OpportunityResults);
+        _draft.OpportunityResults.AddRange(fromQuery.Where(condition => !state.OpportunityResults.Any(saved =>
+            saved with { CrystalTargetCards = condition.CrystalTargetCards } == condition &&
+            (saved.CrystalTargetCards ?? []).SequenceEqual(condition.CrystalTargetCards ?? []))));
+        ResetOpportunityModes();
+        if (!_draft.OpportunityResults.Any(condition => condition.Kind == EventResultConditionKind.CrystalSphereRewards))
+        {
+            _draft.CrystalRelics = state.CrystalRelics;
+            _draft.CrystalDivinations = state.CrystalDivinations;
+        }
         _draft.InactiveResultEvents.Clear();
         _draft.InactiveResultEvents.UnionWith(state.InactiveResultEvents);
         _draft.ExpandedCondition = -1;
@@ -122,4 +147,13 @@ internal sealed partial class EventSearchEditor
     }
 
     internal bool IsResultActive(string eventId) => !_draft.InactiveResultEvents.Contains(eventId);
+
+    private void ResetOpportunityModes()
+    {
+        _draft.DollMode = _draft.OpportunityResults.FirstOrDefault(condition => DollModes.Contains(condition.Kind))?.Kind;
+        _draft.CrystalDivinations = _draft.OpportunityResults.FirstOrDefault(condition =>
+            condition.Kind == EventResultConditionKind.CrystalSphereRewards)?.CrystalDivinations ?? 3;
+        _draft.CrystalRelics = _draft.OpportunityResults.FirstOrDefault(condition =>
+            condition.Kind == EventResultConditionKind.CrystalSphereRewards)?.CrystalRelics ?? CrystalSphereSearchRelics.None;
+    }
 }

@@ -123,6 +123,9 @@ internal sealed class SearchCategoryTabIconProvider : ISearchCategoryTabIconProv
                     GameContentKind.Relic,
                     IconVariant.Small,
                     "search-category-transformation-new-leaf"),
+                SearchCategoryKey.ResearchIdeas => ResolveModelIcon(
+                    BaseGameModelKeys.Relics.FishingRod,
+                    GameContentKind.Relic, IconVariant.Small, "search-category-research-ideas-fishing-rod"),
                 _ => SearchCategoryTabIconAsset.Missing("search-category-unsupported")
             };
         }

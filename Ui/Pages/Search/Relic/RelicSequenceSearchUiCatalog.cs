@@ -17,6 +17,8 @@ internal sealed record RelicSequenceSearchUiCatalog(
     bool CatalogAvailable,
     string EvidenceCode)
 {
+    internal IReadOnlyList<ModelKey> OrdinaryShopCandidates { get; init; } = [];
+
     private static readonly RelicSequenceKind[] LaneOrder =
     {
         RelicSequenceKind.Common,
@@ -110,6 +112,7 @@ internal sealed record RelicSequenceSearchUiCatalog(
         }
 
         var lanes = NewLaneLists();
+        var ordinaryShopCandidates = new List<ModelKey>();
         foreach (Beta109RelicBucketSnapshot bucket in modern.PlayerRelicBuckets)
         {
             if (!TryMapBucket(bucket.BucketId, out RelicSequenceKind lane))
@@ -128,6 +131,8 @@ internal sealed record RelicSequenceSearchUiCatalog(
                         continue;
                     }
                     AddDistinct(lanes[lane], entry.RelicKey);
+                    if (lane != RelicSequenceKind.Shop && entry.IsAllowedInShops)
+                        AddDistinct(ordinaryShopCandidates, entry.RelicKey);
                 }
             }
             else
@@ -155,7 +160,7 @@ internal sealed record RelicSequenceSearchUiCatalog(
             laneMappingExact,
             exact
                 ? "relic-sequence-ui-modern-runtime-catalog"
-                : "relic-sequence-ui-modern-runtime-catalog-partial");
+                : "relic-sequence-ui-modern-runtime-catalog-partial") with { OrdinaryShopCandidates = ordinaryShopCandidates };
     }
 
     private static RelicSequenceSearchUiCatalog Build(

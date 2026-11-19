@@ -203,10 +203,19 @@ internal sealed partial class AnalysisPage
         var offers = new HFlowContainer { Name = "AncientOffers", SizeFlagsHorizontal = SizeFlags.ExpandFill,
             SizeFlagsVertical = SizeFlags.ShrinkCenter };
         offers.AddThemeConstantOverride("h_separation", 20); identityRow.AddChild(offers);
+        var transformResults = WColumn();
+        transformResults.Name = "AncientTransformResults";
+        transformResults.Hide();
+        var openingNote = WNote("");
+        openingNote.Hide();
+        transformResults.AddChild(openingNote);
         foreach (var option in ancient.Options.OrderBy(o => o.Ordinal))
         {
             var tile = WColumn(); offers.AddChild(tile);
-            tile.AddChild(WAncientOption(option.OptionDisplay.ModelKey, option.OptionDisplay.DisplayName));
+            var display = option.OptionDisplay;
+            tile.AddChild(display.ModelKey.Entry is "ASTROLABE" or "PANDORAS_BOX"
+                ? AncientTransformToggle(ancient.Act, display.ModelKey, display.DisplayName, transformResults, openingNote)
+                : WAncientOption(display.ModelKey, display.DisplayName));
             if (option.CharacterTargetDisplay is { } target)
                 tile.AddChild(WCompactIdentity(target.ModelKey, GameContentKind.Character, target.DisplayName, 24));
         }
@@ -217,6 +226,7 @@ internal sealed partial class AnalysisPage
             offers.AddChild(WNote(Text("predictor.ancient_empty_option")));
         if (keys.Length > 0)
             section.AddChild(WNote(Text(excluded == 0 ? "predictor.design.conditions_default" : "predictor.design.conditions_custom")));
+        section.AddChild(transformResults);
         if (!_ancientConditionsOpen || keys.Length == 0) return;
         bool canEdit = _ancientPremiseVariants?.HasVariants(ancient.Act, ancient.AncientDisplay.ModelKey) == true;
         section.AddChild(new HSeparator());
@@ -303,9 +313,14 @@ internal sealed partial class AnalysisPage
     private void RenderEventDetails(Node parent, EventPoolSequenceEntryViewModel entry)
     {
         var detail = WCard(parent, entry.EventDisplay.DisplayName, true);
-        string condition = Beta111EventPresentationKnowledge.RuntimeConditionLocalizationKey(_viewModel!.ProfileId,
-            entry.EventDisplay.ModelKey, _viewModel.PlayersCount, LastRequest!.Authority.VersionResolution.SemanticProfileId);
-        if (!string.IsNullOrWhiteSpace(condition)) detail.AddChild(WNote(Text(condition)));
+        var occurrence = EventEligibilityPresentation.Describe(_uiText!, _viewModel!.ProfileId,
+            LastRequest!.Authority.VersionResolution.SemanticProfileId, entry.EventDisplay.ModelKey, _viewModel.PlayersCount);
+        if (occurrence is not null)
+        {
+            var note = WNote(occurrence.Text);
+            note.Name = "EventOccurrenceNote";
+            detail.AddChild(note);
+        }
         var results = BuildEventResultProjection();
         var resultItems = WResponsiveGrid(detail, "EventResultItems", 240, 3);
         bool shown = false;
@@ -326,9 +341,11 @@ internal sealed partial class AnalysisPage
                 foreach (var key in results.ColorfulOfferedColors) Add(key, GameContentKind.Character);
         }
         resultItems.Visible = shown;
-        bool stableShown = RenderStableEventResults(detail, entry.EventDisplay.ModelKey.Entry);
+        string eventEntry = entry.EventDisplay.ModelKey.Entry;
+        bool conditionalShown = !shown && RenderConditionalEventResults(detail, eventEntry);
+        bool stableShown = RenderStableEventResults(detail, eventEntry);
         if (shown) detail.AddChild(WNote(Text("predictor.design.event_result_scope")));
-        else if (!RenderConditionalEventResults(detail, entry.EventDisplay.ModelKey.Entry) && !stableShown)
+        else if (!conditionalShown && !stableShown)
             detail.AddChild(WNote(Text("predictor.design.event_result_unavailable")));
     }
 

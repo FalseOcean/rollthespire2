@@ -101,10 +101,15 @@ internal sealed partial class RelicSequenceSearchEditor
         var premise = Text(content, _text.Get("query.treasure.premise"), 16, y, width - 32, 15, true);
         premise.ClipText = false;
         premise.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        premise.Size = new(width - 32, 100);
+        float premiseHeight = Math.Max(24, premise.GetMinimumSize().Y);
+        premise.Size = new(width - 32, premiseHeight);
+        y += premiseHeight + 8;
         if (!string.IsNullOrWhiteSpace(_draft.Problem))
-            Text(content, _draft.Problem, 16, y + 108, width - 32, 15, true);
-        content.CustomMinimumSize = new(width, y + 152);
+        {
+            Text(content, _draft.Problem, 16, y, width - 32, 15, true);
+            y += 40;
+        }
+        content.CustomMinimumSize = new(width, y + 12);
     }
 
     private void SetTreasureWindow(int start, int count)

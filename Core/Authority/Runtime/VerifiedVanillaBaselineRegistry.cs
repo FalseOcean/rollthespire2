@@ -22,7 +22,13 @@ internal static class VerifiedVanillaBaselineRegistry
     // for Schema 1 observed RT2-relevant facts; it is not a generic process/mod detector.
     private static readonly IReadOnlyList<VerifiedVanillaBaseline> Entries = new[]
     {
-        VerifiedVanillaBaselineBeta111Schema1.Value
+        VerifiedVanillaBaselineBeta111Schema1.Value,
+        VerifiedVanillaBaselineBeta111Schema1.Value with
+        {
+            GameVersion = "0.111.1",
+            VerificationEvidence = "Stable111Schema1:2026-11-20:captured-seven-domains-and-unlock-universe-match-0.111.0"
+        },
+        VerifiedVanillaBaselineBeta113Schema1.Value
     };
 
     public static IReadOnlyList<VerifiedVanillaBaseline> GetAll() => Entries;
@@ -45,8 +51,7 @@ internal static class RuntimeAuthorityInterpreter
             .ToArray();
         if (schemaBaselines.Length == 0) return SemanticEnvironmentStatus.Unverified;
 
-        VerifiedVanillaBaseline? exact = schemaBaselines.FirstOrDefault(item =>
-            string.Equals(item.OverallSemanticHash, overallSemanticHash, StringComparison.OrdinalIgnoreCase));
+        VerifiedVanillaBaseline? exact = FindFingerprintMatch(schemaBaselines, gameVersion, overallSemanticHash);
         if (exact is not null)
         {
             matchedBaselineGameVersion = exact.GameVersion;
@@ -73,11 +78,8 @@ internal static class RuntimeAuthorityInterpreter
             return RuntimeAuthorityInterpretation.Unverified("NoVerifiedBaselineForFingerprintSchema");
         }
 
-        VerifiedVanillaBaseline? exactSemanticMatch = schemaBaselines.FirstOrDefault(item =>
-            string.Equals(
-                item.OverallSemanticHash,
-                snapshot.Fingerprint.OverallSemanticHash,
-                StringComparison.OrdinalIgnoreCase));
+        VerifiedVanillaBaseline? exactSemanticMatch = FindFingerprintMatch(
+            schemaBaselines, snapshot.GameVersion, snapshot.Fingerprint.OverallSemanticHash);
         VerifiedVanillaBaseline? sameVersion = schemaBaselines.FirstOrDefault(item =>
             string.Equals(item.GameVersion, snapshot.GameVersion, StringComparison.OrdinalIgnoreCase));
 
@@ -132,6 +134,15 @@ internal static class RuntimeAuthorityInterpreter
             BaselineSchemaCompatible: true,
             SameGameVersionBaselineKnown: sameVersion is not null,
             DiffersFromKnownBaselines: exactSemanticMatch is null);
+    }
+
+    // Several patches can have the same observed content. Prefer the player's exact patch.
+    private static VerifiedVanillaBaseline? FindFingerprintMatch(IEnumerable<VerifiedVanillaBaseline> baselines,
+        string gameVersion, string hash)
+    {
+        var matches = baselines.Where(item => string.Equals(item.OverallSemanticHash, hash, StringComparison.OrdinalIgnoreCase));
+        return matches.FirstOrDefault(item => string.Equals(item.GameVersion, gameVersion, StringComparison.OrdinalIgnoreCase))
+            ?? matches.FirstOrDefault();
     }
 
     private static IReadOnlyList<RuntimeAuthorityDomainComparison> BuildDomainComparisons(

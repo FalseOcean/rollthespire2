@@ -19,6 +19,7 @@ internal sealed record EventSequenceSearchUiCatalog(
     bool CatalogAvailable,
     string EvidenceCode)
 {
+    private RngSemanticProfileId RngSemantics { get; init; }
     public RolltheSpire2.Core.Prediction.MorphicGroveScenario? MorphicGroveScenario { get; init; }
     public static EventSequenceSearchUiCatalog Empty(RuntimeProfileId profileId, string evidenceCode) => new(
         profileId,
@@ -43,6 +44,10 @@ internal sealed record EventSequenceSearchUiCatalog(
         var candidates = new Dictionary<int, IReadOnlyList<EventSearchUiCandidate>>();
         bool exact = true;
         HashSet<ModelKey> shared = ResolveSharedEvents(world);
+        Beta109WorldGenerationSnapshot? generation = world.Beta109Generation;
+        EventImmutableEligibilityContext eligibility = generation is null
+            ? EventImmutableEligibilityContext.Unknown
+            : EventImmutableEligibilityContext.From(generation);
 
         for (int act = 1; act <= 3; act++)
         {
@@ -53,7 +58,7 @@ internal sealed record EventSequenceSearchUiCatalog(
             if (RuntimeProfilePolicies.IsModernCore(profileId))
             {
                 Beta109ActGenerationSnapshot[] acts =
-                    (world.Beta109Generation?.OrderedActCatalog ?? Array.Empty<Beta109ActGenerationSnapshot>())
+                    (generation?.OrderedActCatalog ?? Array.Empty<Beta109ActGenerationSnapshot>())
                     .Where(item => item.Act == act)
                     .ToArray();
                 keys = DistinctInOrder(acts.SelectMany(item => item.OrderedEligibleEvents));
@@ -82,13 +87,15 @@ internal sealed record EventSequenceSearchUiCatalog(
 
             exact &= actExact;
             candidates[act] = keys
-                .Where(key => key.IsValid)
-                .Select(key => (Key: key, Rule: EventStaticEligibilityCatalog.Evaluate(key, act, profileId)))
+                .Select(key => (Key: key, IsShared: shared.Contains(key)))
+                .Select(item => (item.Key, item.IsShared, Rule: EventStaticEligibilityCatalog.Evaluate(
+                    item.Key, act, profileId,
+                    item.IsShared ? EventPoolSourceKind.Shared : EventPoolSourceKind.ActLocal, eligibility)))
                 .Where(item => !item.Rule.ShouldReject)
                 .Select(item => BuildCandidate(
                     item.Key,
                     item.Rule,
-                    shared.Contains(item.Key),
+                    item.IsShared,
                     VariantMembership(item.Key, variantSources)))
                 .ToArray();
         }
@@ -100,8 +107,17 @@ internal sealed record EventSequenceSearchUiCatalog(
             available,
             available
                 ? "event-sequence-ui-runtime-catalog:" + (exact ? "exact" : "partial")
-                : "event-sequence-ui-runtime-catalog-empty");
+                : "event-sequence-ui-runtime-catalog-empty")
+            { RngSemantics = eligibility.RngSemantics };
     }
+
+    public bool IsAudited(ModelKey eventKey) => RngSemantics == RngSemanticProfileId.Modern113 &&
+        EventStaticEligibilityCatalog.IsAuditedModern113(eventKey);
+
+    public IReadOnlyList<int> KnownAllowedActs(ModelKey eventKey) => IsAudited(eventKey)
+        ? EventStaticEligibilityCatalog.KnownModern113AllowedActs(eventKey)
+        : CandidatesByAct.Values.SelectMany(list => list)
+            .FirstOrDefault(candidate => candidate.EventKey == eventKey)?.KnownAllowedActs ?? Array.Empty<int>();
 
     public IReadOnlyList<EventSearchUiCandidate> CandidatesForAct(int act) =>
         CandidatesByAct.TryGetValue(act, out IReadOnlyList<EventSearchUiCandidate>? candidates)

@@ -185,7 +185,7 @@ internal static partial class PredictorClosureChecks
                 rng => new[] { rng.NextItem(Beta111EventResultCatalog.TrashHeapGrabCards)! });
             Compare("Trash Dive", rng => new[] { Beta111EventRules.TrashHeapDive(rng) },
                 rng => new[] { rng.NextItem(Beta111EventResultCatalog.TrashHeapDiveRelics)! });
-            Compare("Fake inventory", Beta111EventRules.FakeMerchantInventory,
+            Compare("Fake inventory", rng => Beta111EventRules.FakeMerchantInventory(rng),
                 rng => Beta111EventResultCatalog.FakeMerchantRelics.ToList().UnstableShuffle(rng).Take(6));
             Compare("Trial", rng => new[] { Beta111EventRules.TrialCase(rng) }, rng => new[] { rng.NextInt(3) });
 

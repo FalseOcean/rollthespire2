@@ -27,7 +27,9 @@ internal sealed partial class QueryWorkbenchFrame
                 TreasureRelics = _relicEditor.BuildTreasureCondition(),
                 CombatCardRewards = _combatEditor.ExportCondition(),
                 CombatPotionRewards = _combatEditor.ExportPotionCondition(),
-                CombatCardExclusion = _combatEditor.ExportExclusionCondition()
+                CombatCardExclusion = _combatEditor.ExportExclusionCondition(),
+                FishingRodDrawResearch = _fishingRodDrawResearch,
+                FishingRodDrawRequirements = _fishingRodDrawRequirements
             };
             query = _shopEditor.ExportQuery(_actInformationEditor.ExportQuery(
                 _eventEditor.ExportQuery(_ancientEditor.ExportQuery(query))));
@@ -58,7 +60,7 @@ internal sealed partial class QueryWorkbenchFrame
         _combatEditor.HasConditions(_multiplayer) || _shopEditor.HasConditions(_multiplayer) ||
         _relicEditor.HasConditions(_multiplayer) || _ancientEditor.HasConditions(_multiplayer) ||
         _eventEditor.HasConditions(_multiplayer) || _actInformationEditor.HasConditions(_multiplayer) ||
-        !_multiplayer && _transformationEditor.HasConditions();
+        !_multiplayer && (_transformationEditor.HasConditions() || HasFishingRodResearchDraft);
 
     private bool CanChangeConditions => !_persistence.Runtime.Receiving && _presetBlocked.Count == 0 && _configBlocked.Count == 0;
 
@@ -120,7 +122,8 @@ internal sealed partial class QueryWorkbenchFrame
         {
             _clearCategory.Visible = !_showResults;
             bool research = _selectedDomain == ResearchDomain;
-            _clearCategory.Disabled = !CanChangeConditions || research && !HasResearchDraft;
+            _clearCategory.Disabled = !CanChangeConditions || research && !HasResearchDraft ||
+                _selectedDomain == ResearchIdeasDomain && !HasFishingRodResearchDraft;
             _clearCategory.Text = _text.Get(research ? "query.dead_seed.clear" : "workflow.conditions.clear_category");
             SearchTooltip.Set(_clearCategory, research ? string.Empty : _text.Get(_multiplayer && _selectedDomain is "ancient" or "events" or "boss" or "map"
                 ? "workflow.conditions.clear_category.shared" : "workflow.conditions.clear_category.personal"));
@@ -148,6 +151,7 @@ internal sealed partial class QueryWorkbenchFrame
             _actInformationEditor.ClearConditions(_multiplayer)
         };
         if (!_multiplayer) restores.Add(_transformationEditor.ClearConditions());
+        if (!_multiplayer && ClearResearchIdeasCondition() is { } restoreIdeas) restores.Add(restoreIdeas);
         RefreshAfterConditionChange(() => { foreach (var restore in restores) restore(); });
     }
 
@@ -164,7 +168,7 @@ internal sealed partial class QueryWorkbenchFrame
     internal void ClearCategoryConditions()
     {
         if (!CanChangeConditions) return;
-        var restoreTransformation = !_multiplayer && _selectedDomain is "neow" or "events"
+        var restoreTransformation = !_multiplayer && _selectedDomain is "neow" or "events" or "ancient"
             ? _transformationEditor.PreserveConditionsForUndo() : null;
         int slot = _multiplayer ? _seat : 0;
         Action? restoreCategory = _selectedDomain switch
@@ -178,6 +182,7 @@ internal sealed partial class QueryWorkbenchFrame
             "map" => _actInformationEditor.ClearPageConditions(_multiplayer, true),
             "boss" => _actInformationEditor.ClearPageConditions(_multiplayer, false),
             ResearchDomain => ClearResearchConditions(),
+            ResearchIdeasDomain => ClearResearchIdeasCondition(),
             "transform" => _transformationEditor.ClearConditions(),
             _ => null
         };

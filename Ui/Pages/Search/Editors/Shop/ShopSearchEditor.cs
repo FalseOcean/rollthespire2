@@ -5,6 +5,7 @@ using MegaCrit.Sts2.Core.Saves;
 using MegaCrit.Sts2.Core.Unlocks;
 using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Core.Identity;
+using RolltheSpire2.Search.Semantics;
 using RolltheSpire2.Core.Relics;
 using RolltheSpire2.Infrastructure.ContentNames;
 using RolltheSpire2.Infrastructure.Snapshots;
@@ -20,8 +21,7 @@ using RolltheSpire2.Ui.Theme;
 namespace RolltheSpire2.Ui.Pages.Search.Editors;
 
 /// <summary>
-/// Session-local S authoring surface. Its three independently ranged Merchant rows map
-/// directly to existing typed Shop sequence contracts through its Query partial.
+/// Session-local authoring for shop visits, relics and colorless cards.
 /// </summary>
 internal sealed partial class ShopSearchEditor : Control
 {
@@ -57,6 +57,10 @@ internal sealed partial class ShopSearchEditor : Control
         public string Problem = string.Empty;
         public ShopColorlessSearchUiCatalog? Cards;
         public RelicSequenceSearchUiCatalog? Relics;
+        public int OrdinaryShopCount = DefaultShopRange;
+        public List<ModelKey> OrdinaryShelf { get; } = [];
+        public List<MerchantRelicCondition> OtherShopWindows { get; } = [];
+        public int OrdinaryTargetCount => OrdinaryShelf.Count + OtherShopWindows.Count;
         public RowDraft Relic { get; } = new();
         public RowDraft Uncommon { get; } = new();
         public RowDraft Rare { get; } = new();
@@ -161,8 +165,8 @@ internal sealed partial class ShopSearchEditor : Control
 
     private VBoxContainer FamilyGuide(Control host, float width) => SearchEditorGuide.Build(
         host, _p, width, _text.Get("query.shop.guide.title"),
-        _text.Get("query.shop.guide.summary"),
-        [_text.Get("query.shop.guide.usage")], _guideExpanded,
+        _text.Get(SupportsOrdinaryRelics ? "query.shop.guide.summary_113" : "query.shop.guide.summary"),
+        [_text.Get(SupportsOrdinaryRelics ? "query.shop.guide.usage_113" : "query.shop.guide.usage")], _guideExpanded,
         () => { _guideExpanded = !_guideExpanded; Render(); }, () => GuideRequested?.Invoke());
 
     private void RenderMatrix(Control content, float width)
@@ -173,17 +177,23 @@ internal sealed partial class ShopSearchEditor : Control
             Text(content, _draft.Problem, 16, 0, width - 32, 18, true);
             rowTop = 40;
         }
-        foreach (var (kind, row) in new[]
+        AddRow(RowKind.Relic, _draft.Relic);
+        if (SupportsOrdinaryRelics || _draft.OrdinaryTargetCount > 0)
         {
-            (RowKind.Relic, _draft.Relic), (RowKind.ColorlessUncommon, _draft.Uncommon),
-            (RowKind.ColorlessRare, _draft.Rare)
-        })
-        {
-            float rowStart = rowTop;
-            rowTop += RenderRow(content, kind, row, rowTop, width);
-            _presentation.Section(content, rowStart, rowTop);
+            float start = rowTop;
+            rowTop = RenderOrdinaryRelics(content, rowTop, width);
+            _presentation.Section(content, start, rowTop);
         }
+        AddRow(RowKind.ColorlessUncommon, _draft.Uncommon);
+        AddRow(RowKind.ColorlessRare, _draft.Rare);
         content.CustomMinimumSize = new(width, rowTop);
+
+        void AddRow(RowKind kind, RowDraft row)
+        {
+            float start = rowTop;
+            rowTop += RenderRow(content, kind, row, start, width);
+            _presentation.Section(content, start, rowTop);
+        }
     }
 
     private float RenderRow(Control content, RowKind kind, RowDraft row, float y, float width)

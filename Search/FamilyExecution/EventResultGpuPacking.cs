@@ -30,6 +30,9 @@ internal static class EventResultGpuPacking
         var output = new List<uint> { 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u };
         foreach (EventResultSearchCondition condition in conditions)
         {
+            if (EventOpportunitySemantics.IsEventLocalOpportunity(condition.Kind) ||
+                condition.Kind == EventResultConditionKind.CrystalSphereRewards)
+                throw new NotSupportedException("E.GpuPredicateUnavailable:" + condition.Kind);
             int target = condition.Kind switch
             {
                 EventResultConditionKind.TrashHeapGrabCard => IndexOf(Beta111EventResultCatalog.TrashHeapGrabCards, condition.TargetKey),
@@ -117,6 +120,53 @@ internal static class EventResultGpuPacking
         WriteU64(output, 7, ColorfulHash);
         colorfulPool = colors.ToArray();
         return output.ToArray();
+    }
+
+    // The packed E predicate owns the stream offset, bounded draw and target
+    // mapping. A preceding family may inline it only when this draw completes E.
+    internal static FamilyFirstDraw? CompileFirstDraw(EventResultFamilyPlan plan)
+    {
+        if (!plan.GpuSupported || plan.Conditions.Length != 1) return null;
+        uint[] words = plan.Buffers[0];
+        uint kind = words[9], target = words[10];
+        int count, hashIndex;
+        string group;
+        ulong slot = words[2];
+        Func<int, bool> accepts;
+        switch (kind)
+        {
+            case 0 or 1:
+                count = Beta111EventResultCatalog.TrashHeapGrabCards.Count;
+                int width = kind == 0 ? 1 : 2;
+                if (target >= count / width) return null;
+                group = "TrashHeap";
+                hashIndex = 3;
+                accepts = rank => rank / width == target;
+                break;
+            case 7:
+                group = "Trial";
+                hashIndex = checked((int)target);
+                count = Beta111EventRules.TrialCaseCount;
+                uint requiredCase = words[hashIndex + 2];
+                if (requiredCase >= count) return null;
+                accepts = rank => rank == requiredCase;
+                break;
+            case 6:
+                hashIndex = checked((int)target);
+                if (words[hashIndex + 3] != 0) return null;
+                // This payload's immutable offset already includes its owner
+                // slot. Each matching position, including duplicates, counts.
+                slot = 0;
+                count = checked((int)words[hashIndex + 2]);
+                group = "InitialBasicTransform";
+                accepts = rank => words[hashIndex + 4 + rank] != 0;
+                break;
+            default:
+                return null;
+        }
+
+        ulong offset = unchecked((((ulong)words[hashIndex + 1] << 32) | words[hashIndex]) + slot);
+        return FamilyFirstDraw.Compile(group, offset, count, accepts);
     }
 
     // The unchanged shader has fixed scratch sizes and derives Dive by Grab/2.

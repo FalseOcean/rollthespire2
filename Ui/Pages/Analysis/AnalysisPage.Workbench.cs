@@ -5,6 +5,7 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Cards;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Relics;
+using RolltheSpire2.Core.Merchant;
 using RolltheSpire2.Core.Prediction.Maps;
 using RolltheSpire2.Core.World;
 using RolltheSpire2.Infrastructure.Snapshots;
@@ -355,7 +356,12 @@ internal sealed partial class AnalysisPage
             return;
         }
 
-        _wbCenter.AddChild(WNote(Text("predictor.design.shop_scope")));
+        bool showOrdinaryRelics = LastRequest?.PlayersCount == 1 &&
+            LastRequest.Authority.VersionResolution.SemanticProfileId == RolltheSpire2.Compatibility.RngSemanticProfileId.Modern113;
+        var ordinary = showOrdinaryRelics && LastFacts?.Relics is { } sequences && TryGetProjectionRoot(out ulong root)
+            ? NormalMerchantRelicProjector.Project(root, LastRequest!.Authority, sequences)
+            : null;
+        _wbCenter.AddChild(WNote(Text(showOrdinaryRelics ? "predictor.shop_relics.scope" : "predictor.design.shop_scope")));
         var shop = _viewModel!.RelicSequenceDomain.Items.FirstOrDefault(l => l.Kind == RelicSequenceKind.Shop);
         var colorless = BuildMerchantColorlessProjection();
         var grid = WResponsiveGrid(_wbCenter, "ShopPreviews", 238, 5);
@@ -367,9 +373,26 @@ internal sealed partial class AnalysisPage
             heading.AddThemeFontSizeOverride("font_size", 17);
             heading.Modulate = _palette.Color(_palette.Selected);
             col.AddChild(heading);
+            if (showOrdinaryRelics)
+            {
+                var offers = ordinary?.Merchants.FirstOrDefault(merchant => merchant.MerchantOrdinal == i);
+                AddOrdinaryRelic("Left", "predictor.shop_relics.left", offers?.Left.RelicKey, offers?.Left.Rarity);
+                AddOrdinaryRelic("Middle", "predictor.shop_relics.middle", offers?.Middle.RelicKey, offers?.Middle.Rarity);
+            }
+            void AddOrdinaryRelic(string id, string slotLabel, ModelKey? key, RelicSequenceKind? rarity)
+            {
+                string label = Text(slotLabel);
+                var row = key is { } item
+                    ? WRelicTile(item, _contentNames!.Resolve(item, GameContentKind.Relic), label)
+                    : WNote(label + "  " + (rarity.HasValue ? Text("rarity." + rarity.Value.ToString().ToLowerInvariant()) + " · " : "")
+                        + Text("predictor.unavailable"));
+                row.Name = "ShopRelic" + id;
+                col.AddChild(row);
+            }
             var relic = shop?.Entries.OrderBy(e => e.Position).Skip(i - 1).FirstOrDefault();
             if (relic is not null)
-                col.AddChild(WRelicPreviewTile(relic, showPosition: false));
+                col.AddChild(WRelicTile(relic.RelicDisplay.ModelKey, relic.RelicDisplay.DisplayName,
+                    showOrdinaryRelics ? Text("predictor.shop_relics.right") : null));
             else WEmpty(col);
             var cards = colorless?.Merchants.FirstOrDefault(m => m.MerchantOrdinal == i);
             if (cards is not null)
@@ -507,22 +530,26 @@ internal sealed partial class AnalysisPage
         }
         return section;
     }
-    private Control WRelicPreviewTile(RelicSequenceEntryViewModel entry, bool showPosition = true)
+    private Control WRelicPreviewTile(RelicSequenceEntryViewModel entry, bool showPosition = true) =>
+        WRelicTile(entry.RelicDisplay.ModelKey, entry.RelicDisplay.DisplayName,
+            showPosition ? entry.Position.ToString("D2") : null);
+
+    private Control WRelicTile(ModelKey key, string displayName, string? position)
     {
         var panel = new PanelContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         var box = _palette.Box(_palette.Canvas);
         box.ContentMarginLeft = box.ContentMarginRight = 6;
         box.ContentMarginTop = box.ContentMarginBottom = 4;
         panel.AddThemeStyleboxOverride("panel", box);
-        BindWorkbenchTooltip(panel, entry.RelicDisplay.ModelKey, GameContentKind.Relic, entry.RelicDisplay.DisplayName);
+        BindWorkbenchTooltip(panel, key, GameContentKind.Relic, displayName);
         var tile = new HBoxContainer { CustomMinimumSize = new Vector2(0, 40),
             MouseFilter = MouseFilterEnum.Ignore,
             SizeFlagsHorizontal = SizeFlags.ExpandFill };
         panel.AddChild(tile);
         tile.AddThemeConstantOverride("separation", 6);
-        if (showPosition)
+        if (position is not null)
         {
-            var number = _palette.Label(entry.Position.ToString("D2"), 12, true);
+            var number = _palette.Label(position, 12, true);
             number.CustomMinimumSize = new Vector2(18, 0);
             number.HorizontalAlignment = HorizontalAlignment.Right;
             tile.AddChild(number);
@@ -535,10 +562,10 @@ internal sealed partial class AnalysisPage
             SizeFlagsHorizontal = SizeFlags.ShrinkCenter,
             SizeFlagsVertical = SizeFlags.ShrinkCenter,
             MouseFilter = MouseFilterEnum.Ignore,
-            Texture = _icons.Resolve(entry.RelicDisplay.ModelKey, GameContentKind.Relic, IconVariant.Small).Texture,
+            Texture = _icons.Resolve(key, GameContentKind.Relic, IconVariant.Small).Texture,
         };
         tile.AddChild(icon);
-        var name = WLabel(entry.RelicDisplay.DisplayName, title: true, fontSize: 15);
+        var name = WLabel(displayName, title: true, fontSize: 15);
         name.VerticalAlignment = VerticalAlignment.Center;
         name.MouseFilter = MouseFilterEnum.Ignore;
         tile.AddChild(name);

@@ -43,88 +43,28 @@ internal sealed partial class PredictorRun
                     _crystalHidden[index] || itemIndex < 0 ? null : _crystalItems[itemIndex].Kind);
             })).ToImmutableArray());
 
-    private static int CrystalIndex(int x, int y) => x * 11 + y;
+    private static int CrystalIndex(int x, int y) => PredictorCrystalBoard.Index(x, y);
 
     private void BeginCrystalSphere(int reveals)
     {
         _crystalActive = true;
         _crystalRemaining = reveals;
         _crystalTool = PredictorCrystalTool.Big;
-        Array.Fill(_crystalHidden, true);
-        Array.Fill(_crystalOccupancy, -1);
+        var board = PredictorCrystalBoard.Generate(_eventRng!);
+        _crystalPlacedAllItems = board.PlacedAllItems;
+        for (int cell = 0; cell < _crystalHidden.Length; cell++)
+            _crystalHidden[cell] = (PredictorCrystalBoard.InitialFog & ((UInt128)1 << cell)) != 0;
+        board.WriteOccupancy(_crystalOccupancy);
         _crystalItems.Clear();
+        foreach (var item in board.Items)
+            _crystalItems.Add(new(item.Code, item.Width, item.Height)
+            {
+                X = item.X, Y = item.Y, Subscriptions = item.Subscriptions
+            });
         _crystalRevealed.Clear();
-        var clear = new List<(int X, int Y)> { (0, 0), (10, 0), (10, 10), (0, 10) };
-        for (int round = 0; round < 2; round++)
-        {
-            var expanded = new List<(int X, int Y)>(clear);
-            foreach (var (x, y) in clear)
-                foreach (int dx in new[] { -1, 1 })
-                    if (x + dx is >= 0 and < 11) expanded.Add((x + dx, y));
-            foreach (var (x, y) in clear)
-                foreach (int dy in new[] { -1, 1 })
-                    if (y + dy is >= 0 and < 11) expanded.Add((x, y + dy));
-            clear = expanded;
-        }
-        foreach (var (x, y) in clear) _crystalHidden[CrystalIndex(x, y)] = false;
-        int attempts = 0;
-        do
-        {
-            _crystalPlacedAllItems = PopulateCrystalItems();
-            attempts++;
-        } while (!_crystalPlacedAllItems && attempts < 10);
         EventOptions = [];
         Phase = PredictorPhase.EventChoice;
         _requestId++;
-    }
-
-    private bool PopulateCrystalItems()
-    {
-        bool success = true;
-        var shapes = new List<CrystalItem>
-        {
-            new("RELIC", 4, 4), new("POTION_COMMON", 1, 3), new("POTION_COMMON", 1, 3),
-            new("POTION_RARE", 2, 2), new("CARD_COMMON", 2, 2), new("CARD_UNCOMMON", 2, 2),
-            new("CARD_RARE", 2, 2), new("CURSE", 2, 2)
-        };
-        for (int i = 0; i < 5; i++) shapes.Add(new("GOLD_SMALL", 1, 1));
-        for (int i = 0; i < 2; i++) shapes.Add(new("GOLD_BIG", 2, 1));
-        foreach (var item in shapes)
-        {
-            if (success) success = PlaceCrystalItem(item);
-            _crystalItems.Add(item);
-        }
-        // Vanilla traverses the cumulative list after every attempt, including
-        // unplaced objects and already-subscribed objects from earlier attempts.
-        foreach (var item in _crystalItems) item.Subscriptions++;
-        return success;
-    }
-
-    private bool PlaceCrystalItem(CrystalItem item)
-    {
-        var candidates = new List<(int X, int Y)>();
-        for (int x = 0; x < 11; x++)
-            for (int y = 0; y < 11; y++)
-            {
-                bool valid = true;
-                for (int dx = 0; dx < item.Width && valid; dx++)
-                    for (int dy = 0; dy < item.Height; dy++)
-                    {
-                        int cx = x + dx, cy = y + dy;
-                        if (cx >= 11 || cy >= 11 || !_crystalHidden[CrystalIndex(cx, cy)] ||
-                            _crystalOccupancy[CrystalIndex(cx, cy)] >= 0)
-                        { valid = false; break; }
-                    }
-                if (valid) candidates.Add((x, y));
-            }
-        if (candidates.Count == 0) return false;
-        var chosen = candidates[_eventRng!.NextInt(candidates.Count)];
-        item.X = chosen.X; item.Y = chosen.Y;
-        int index = _crystalItems.Count;
-        for (int dx = 0; dx < item.Width; dx++)
-            for (int dy = 0; dy < item.Height; dy++)
-                _crystalOccupancy[CrystalIndex(item.X + dx, item.Y + dy)] = index;
-        return true;
     }
 
     private PredictorInputResult? TrySubmitCrystal(PredictorInput input, CancellationToken token)

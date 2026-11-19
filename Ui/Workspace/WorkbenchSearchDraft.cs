@@ -32,6 +32,9 @@ internal sealed record AncientEditorStateSnapshot(int ActiveMode, int LastAdvanc
 {
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public NeowOfferEditorStateSnapshot? NeowOffers { get; init; }
+
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<AncientTransformationEditorSnapshot>? Transformations { get; init; }
 }
 
 internal sealed record NeowOfferEditorStateSnapshot(bool Advanced, int Relation,

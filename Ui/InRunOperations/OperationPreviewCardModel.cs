@@ -15,7 +15,7 @@ internal static class OperationPreviewCardModel
     {
         var key = snapshot.Key;
         if (snapshot.IncreasedBlock != 0 || snapshot.IncreasedDamage != 0 || snapshot.PermanentCostOverride != null ||
-            snapshot.RoomsEntered != 0 || snapshot.CombatsSeen != 0 ||
+            snapshot.RoomsEntered != 0 || (snapshot.CombatsSeen != 0 && key.Entry != "GUILTY") ||
             snapshot.SpoilsActIndex >= 0 || snapshot.SpoilsCoord != null)
             throw new InvalidOperationException("Detached native card display cannot reconstruct this card's persistent modifiers");
         var canonicalCard = ModelDb.GetById<CardModel>(new ModelId(key.Category, key.Entry));
@@ -47,6 +47,7 @@ internal static class OperationPreviewCardModel
             model.UpgradeInternal();
             model.FinalizeUpgradeInternal();
         }
+        if (model is Guilty guilty) guilty.CombatsSeen = snapshot.CombatsSeen;
         if (snapshot.Enchantment is { } enchantmentKey)
         {
             var canonical = ModelDb.GetById<EnchantmentModel>(new ModelId(enchantmentKey.Category, enchantmentKey.Entry));

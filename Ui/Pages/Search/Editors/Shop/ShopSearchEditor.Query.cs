@@ -21,11 +21,24 @@ internal sealed partial class ShopSearchEditor
 
     internal SearchQuery ExportQuery(SearchQuery q) => q with
     {
+        MerchantRelicConditions = _draft.OrdinaryShelf.Select(key => new MerchantRelicCondition(1, _draft.OrdinaryShopCount, key))
+            .Concat(_draft.OtherShopWindows).ToArray(),
         MerchantColorlessSequenceConditions = BuildCardConditions(),
         RelicShopSequenceConditions = BuildRelicConditions()
     };
     internal void ImportQuery(SearchQuery q)
     {
+        _draft.OrdinaryShelf.Clear();
+        _draft.OtherShopWindows.Clear();
+        _draft.OrdinaryShopCount = q.MerchantRelicConditions
+            .FirstOrDefault(c => c.FirstMerchant == 1 && c.LastMerchant <= MaximumOrdinaryShops)?.LastMerchant ?? DefaultShopRange;
+        foreach (var condition in q.MerchantRelicConditions)
+        {
+            if (condition.FirstMerchant == 1 && condition.LastMerchant == _draft.OrdinaryShopCount)
+                _draft.OrdinaryShelf.Add(condition.TargetRelicKey);
+            else
+                _draft.OtherShopWindows.Add(condition);
+        }
         foreach (RowDraft row in new[] { _draft.Relic, _draft.Uncommon, _draft.Rare })
         {
             Array.Clear(row.Slots); row.ShopRange = DefaultShopRange;

@@ -2,6 +2,7 @@ using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.Authority;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Rewards;
+using RolltheSpire2.Core.Transformation;
 
 namespace RolltheSpire2.Core.Effects;
 
@@ -107,7 +108,10 @@ public sealed record BonesAcquisitionRouteResult(
     string FinalShadowDeckFingerprint = "",
     RouteProjectionStatus RouteProjectionStatus = RouteProjectionStatus.Unknown,
     EvidenceCode RouteEvidenceCode = default,
-    OpeningRewardContinuation? OpeningRewardContinuation = null);
+    OpeningRewardContinuation? OpeningRewardContinuation = null)
+{
+    internal OpeningTransformationContinuation? TransformationContinuation { get; init; }
+}
 
 /// <summary>
 /// UI-facing grouping evidence. OriginalRoutes remain present even when an exact

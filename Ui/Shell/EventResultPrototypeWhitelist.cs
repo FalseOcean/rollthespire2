@@ -20,7 +20,12 @@ internal enum EventResultPrototypeEditorKind
     TrashHeap,
     CharacterColor,
     Trial,
-    TinkerTime
+    TinkerTime,
+    DollRoom,
+    MuseumOfTorture,
+    ThermaeNonupeipe,
+    CrystalSphere,
+    RelicRarity
 }
 
 internal sealed record EventResultPrototypeDescriptor(
@@ -35,13 +40,25 @@ internal static class EventResultPrototypeWhitelist
     {
         Entry("FAKE_MERCHANT", EventResultPrototypeSource.Shared, EventResultPrototypeEditorKind.FakeMerchantRelic),
         Entry("SYMBIOTE", EventResultPrototypeSource.Shared, EventResultPrototypeEditorKind.SingleTransform),
+        Entry("DOLL_ROOM", EventResultPrototypeSource.Shared, EventResultPrototypeEditorKind.DollRoom),
+        Entry("CRYSTAL_SPHERE", EventResultPrototypeSource.Shared, EventResultPrototypeEditorKind.CrystalSphere),
+        Entry("MUSEUM_OF_TORTURE", EventResultPrototypeSource.Shared, EventResultPrototypeEditorKind.MuseumOfTorture),
+        Entry("RANWID_THE_ELDER", EventResultPrototypeSource.Shared, EventResultPrototypeEditorKind.RelicRarity),
+        Entry("RELIC_TRADER", EventResultPrototypeSource.Shared, EventResultPrototypeEditorKind.RelicRarity),
+        Entry("THIS_OR_THAT", EventResultPrototypeSource.Shared, EventResultPrototypeEditorKind.RelicRarity),
         Entry("AROMA_OF_CHAOS", EventResultPrototypeSource.Act1VariantA, EventResultPrototypeEditorKind.SingleTransform, "OVERGROWTH"),
         Entry("MORPHIC_GROVE", EventResultPrototypeSource.Act1VariantA, EventResultPrototypeEditorKind.DoubleTransform, "OVERGROWTH"),
         Entry("WHISPERING_HOLLOW", EventResultPrototypeSource.Act1VariantA, EventResultPrototypeEditorKind.SingleTransform, "OVERGROWTH"),
+        Entry("LUMINOUS_CHOIR", EventResultPrototypeSource.Act1VariantA, EventResultPrototypeEditorKind.RelicRarity, "OVERGROWTH"),
+        Entry("UNREST_SITE", EventResultPrototypeSource.Act1VariantA, EventResultPrototypeEditorKind.RelicRarity, "OVERGROWTH"),
         Entry("TRASH_HEAP", EventResultPrototypeSource.Act1VariantB, EventResultPrototypeEditorKind.TrashHeap, "UNDERDOCKS"),
+        Entry("WATERFALL_OF_OBVIOUS_SECRETS", EventResultPrototypeSource.Act1VariantB, EventResultPrototypeEditorKind.RelicRarity, "UNDERDOCKS"),
         Entry("COLORFUL_PHILOSOPHERS", EventResultPrototypeSource.Act2, EventResultPrototypeEditorKind.CharacterColor),
         Entry("TRIAL", EventResultPrototypeSource.Act3, EventResultPrototypeEditorKind.Trial),
-        Entry("TINKER_TIME", EventResultPrototypeSource.Act3, EventResultPrototypeEditorKind.TinkerTime)
+        Entry("TINKER_TIME", EventResultPrototypeSource.Act3, EventResultPrototypeEditorKind.TinkerTime),
+        Entry("BATTLEWORN_DUMMY", EventResultPrototypeSource.Act3, EventResultPrototypeEditorKind.RelicRarity),
+        Entry("ROUND_TEA_PARTY", EventResultPrototypeSource.Act3, EventResultPrototypeEditorKind.RelicRarity),
+        Entry("THERMAE_NONUPEIPE", EventResultPrototypeSource.Act3, EventResultPrototypeEditorKind.ThermaeNonupeipe)
     };
 
     public static IReadOnlyList<string> TinkerEffects(int cardType) => cardType switch

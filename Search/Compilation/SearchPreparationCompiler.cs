@@ -71,6 +71,8 @@ public static class SearchPreparationCompiler
                 return Reject(SearchDisposition.Unsupported, "Party.CompiledPredicateMismatch");
             if (compiled.Status == QueryNormalizationStatus.Impossible)
                 return Reject(SearchDisposition.NoMatch, "Party.InitialConjunctionImpossible");
+            if (SearchFeasibilityAnalyzer.CrystalRelicConflict(verified) is { } crystalProof)
+                return Reject(SearchDisposition.NoMatch, "SearchImpossible:" + crystalProof.ReasonCode + ":" + crystalProof.Diagnostic);
         }
         else
         {
@@ -116,6 +118,7 @@ public static class SearchPreparationCompiler
 
         ExactSearchEvaluationProjection evaluation = projection.Evaluation;
         CompatibilityDomainMask requiredDomains = RequiredCompatibilityDomains(evaluation);
+        if (compiled.NormalizedQuery.MerchantRelicConditions.Count > 0) requiredDomains |= CompatibilityDomainMask.RelicSequence;
         if (compatibility.Blocks(requiredDomains))
             return Reject(SearchDisposition.Unknown,
                 $"CompatibilityDomainFailClosed:required={requiredDomains};blocked={compatibility.BlockedDomains};evidence={compatibility.EvidenceCode}");

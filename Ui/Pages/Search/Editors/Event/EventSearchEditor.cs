@@ -36,6 +36,7 @@ internal sealed partial class EventSearchEditor : Control
     private List<QueueCondition> QueueConditions => _queuePickerPlayers > 1 ? _partyQueue : _draft.QueueConditions;
     private SeatDraft _draft = new();
     private IUiTextProvider _text = JsonUiTextProvider.CreateUi13("zh");
+    private IUiTextProvider _occurrenceText = JsonUiTextProvider.CreatePredictorUi13("zh");
     private IGameContentNameResolver _names = RuntimeGameContentNameResolver.Create("zh");
     private bool _guideExpanded;
     private int _activeSeat;
@@ -66,6 +67,12 @@ internal sealed partial class EventSearchEditor : Control
         public string? TinkerEffect;
         public HashSet<string> PrototypeTargets { get; } = [];
         public Dictionary<EventResultConditionKind, ModelKey?[]> Results { get; } = [];
+        public List<EventResultSearchCondition> OpportunityResults { get; } = [];
+        public EventResultConditionKind? DollMode;
+        public int CrystalDivinations = 3;
+        public Core.Effects.Snapshots.NeowEffectAuthoritySnapshot? CrystalEffects;
+        public ModelKey CrystalCharacter;
+        public CrystalSphereSearchRelics CrystalRelics;
         public HashSet<string> InactiveResultEvents { get; } = new(StringComparer.Ordinal);
         public IReadOnlyList<ModelKey> TransformCards = [];
         public IReadOnlyDictionary<ModelKey, CardPickerCandidateMetadata> CardPickerMetadata =
@@ -96,11 +103,16 @@ internal sealed partial class EventSearchEditor : Control
     {
         if (!_drafts.TryGetValue(seat, out var draft)) return [];
         string[] supported = ["MORPHIC_GROVE", "AROMA_OF_CHAOS", "WHISPERING_HOLLOW", "SYMBIOTE", "TRIAL"];
+        var independent = draft.Results.Where(pair => EventResultTransformSemantics.IsTransform(pair.Key) &&
+                pair.Value.Any(key => key.HasValue) && !draft.InactiveResultEvents.Contains(ResultEventId(pair.Key)))
+            .Select(pair => ResultEventId(pair.Key)).ToHashSet(StringComparer.Ordinal);
         return draft.QueueConditions.Where(condition => !condition.Excluded &&
                 supported.Contains(condition.Event.Entry, StringComparer.Ordinal) &&
                 draft.Catalog.CandidatesForAct(condition.Act).Any(candidate => candidate.EventKey == condition.Event))
+            .OrderBy(condition => condition.Act)
             .Select(condition => new TransformationSearchSource("E." + condition.Event.Entry,
-                condition.Event, condition.Event.Entry is "MORPHIC_GROVE" or "TRIAL" ? 2 : 1))
+                condition.Event, condition.Event.Entry is "MORPHIC_GROVE" or "TRIAL" ? 2 : 1)
+            { EventAct = condition.Act, HasIndependentResult = independent.Contains(condition.Event.Entry) })
             .DistinctBy(source => source.Id).ToArray();
     }
 
@@ -110,6 +122,7 @@ internal sealed partial class EventSearchEditor : Control
     {
         CloseQueuePicker();
         _text = text;
+        _occurrenceText = JsonUiTextProvider.CreatePredictorUi13(language);
         _names = RuntimeGameContentNameResolver.Create(language);
         _queuePickerPlayers = players;
         _activeSeat = seat;
@@ -226,7 +239,8 @@ internal sealed partial class EventSearchEditor : Control
         }
 
         float editorTop = top + 2;
-        EventResultPrototypeDescriptor? descriptor = EventResultPrototypeWhitelist.Find(selected);
+        float editorWidth = width - editorLeft - 16;
+        EventResultPrototypeDescriptor? descriptor = ResultDescriptor(selected);
         float editorBottom = descriptor?.EditorKind switch
         {
             EventResultPrototypeEditorKind.FakeMerchantRelic => RenderSingleObjectEditor(content, editorLeft, editorTop,
@@ -235,9 +249,16 @@ internal sealed partial class EventSearchEditor : Control
             EventResultPrototypeEditorKind.DoubleTransform => RenderTransformEditor(content, editorLeft, editorTop, 2),
             EventResultPrototypeEditorKind.TrashHeap => RenderTrashHeapEditor(content, editorLeft, editorTop),
             EventResultPrototypeEditorKind.CharacterColor => RenderCharacterColorEditor(content, editorLeft, editorTop),
-            EventResultPrototypeEditorKind.Trial => RenderTrialEditor(content, editorLeft, editorTop),
+            EventResultPrototypeEditorKind.Trial => RenderTrialResults(content, selected, editorLeft, editorTop, editorWidth),
             EventResultPrototypeEditorKind.TinkerTime => RenderTinkerTimeEditor(content, editorLeft, editorTop),
-            _ => editorTop + 32
+            EventResultPrototypeEditorKind.DollRoom => RenderDollResults(content, editorLeft, editorTop, editorWidth),
+            EventResultPrototypeEditorKind.MuseumOfTorture => RenderOpportunityRelics(content, editorLeft, editorTop, editorWidth,
+                EventResultConditionKind.MuseumOfTortureOfferedRelic),
+            EventResultPrototypeEditorKind.ThermaeNonupeipe => RenderOpportunityRelics(content, editorLeft, editorTop, editorWidth,
+                EventResultConditionKind.ThermaeNonupeipeDrinkRelic),
+            EventResultPrototypeEditorKind.CrystalSphere => RenderCrystalResults(content, selected, editorLeft, editorTop, editorWidth),
+            EventResultPrototypeEditorKind.RelicRarity => RenderRarityResults(content, selected, editorLeft, editorTop, editorWidth),
+            _ => RenderRetainedOpportunities(content, selected, editorLeft, editorTop, editorWidth)
         };
         float bottom = Math.Max(top + (inline ? 32 : 178), editorBottom);
         if (!inline) AddLine(content, identityWidth + 12, top, 1, bottom - top);

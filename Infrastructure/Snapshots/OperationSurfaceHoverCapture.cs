@@ -5,6 +5,7 @@ using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Entities.CardRewardAlternatives;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Relics;
+using MegaCrit.Sts2.Core.Nodes.Relics;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
 using MegaCrit.Sts2.Core.Nodes.Potions;
@@ -166,6 +167,19 @@ internal static class OperationSurfaceHoverCapture
             set.Rewards.Contains(reward) && PredictorOperationCapture.NativeRewardSets(actual, player, NRun.Instance).Length == 1 &&
             PredictorOperationCapture.ObservedRewardSetObtainSource(set) == null) return false;
         run = actual; rewardId = PredictorLiveRunCapture.Id(reward); source = PredictorLiveRunCapture.Key(relic);
+        return true;
+    }
+
+    internal static bool TryHeldRelic(NRelicInventoryHolder holder, out RunState? run, out RelicModel? relic)
+    {
+        run = null;
+        relic = null;
+        if (!Visible(holder) || holder.Relic?.Model is not { IsMelted: false } actual ||
+            actual is not (WarHammer or FishingRod or PaelsTooth) || actual.Owner?.RunState is not RunState current ||
+            !ReferenceEquals(LocalContext.GetMe(current), actual.Owner) ||
+            !actual.Owner.Relics.Any(held => ReferenceEquals(held, actual))) return false;
+        run = current;
+        relic = actual;
         return true;
     }
 

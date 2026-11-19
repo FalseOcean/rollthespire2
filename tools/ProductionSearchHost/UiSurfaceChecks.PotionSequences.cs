@@ -24,7 +24,9 @@ using RolltheSpire2.Bootstrap;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.PredictorRuntime;
 using RolltheSpire2.Infrastructure.Snapshots;
+using RolltheSpire2.Presentation.Localization;
 using RolltheSpire2.Ui.InRunOperations;
+using RolltheSpire2.Ui.Settings;
 
 internal static partial class UiSurfaceChecks
 {
@@ -43,6 +45,7 @@ internal static partial class UiSurfaceChecks
         string original = signature();
         var originalSlots = player.PotionSlots.ToArray();
         var originalRng = run.Rng.ToSerializable();
+        var originalPlayerRng = player.PlayerRng.ToSerializable();
         var turnField = AccessTools.Field(typeof(CombatManager), "_turnState");
         object? originalTurn = turnField.GetValue(CombatManager.Instance);
         var potionContainer = global.TopBar.GetNode<NPotionContainer>("%PotionContainer");
@@ -231,41 +234,69 @@ internal static partial class UiSurfaceChecks
                 }).All(value => value),
                     "each potion stack puts the native first/leftmost candidate bright and foremost at lower-left");
         }
+        Rng BrewRng(PredictorOperationPotionObservation observation) =>
+            observation.PotionGenerationRng.Stream == PredictorStream.NonCombatGeneration
+                ? PredictorOperationCapture.NonCombatGeneration(player) : run.Rng.CombatPotionGeneration;
         void CheckBrew(OperationPreview preview, PredictorOperationPotionObservation observation)
         {
-            var rows = preview.Branches.SelectMany(b => b.Sections).SelectMany(s => s.Rows).ToArray();
-            int empty = observation.Inventory.Count(p => p == null) + (observation.Source.HeldSlot != null ? 1 : 0);
-            // Reward acquisition fills an existing empty slot before use; full
-            // inventory replacement also leaves only its consumed source slot.
-            if (observation.Source.RewardId != null) empty = Math.Max(1, empty);
-            int brews = observation.Inventory.Count(p => p?.Key.Entry == "ENTROPIC_BREW") +
-                (observation.Source.RewardId != null ? 1 : 0);
-            var rng = new Rng(run.Rng.CombatPotionGeneration.ToSerializable());
-            var expected = new List<string[]>();
-            for (int i = 0; i < Math.Min(2, brews); i++)
+            var sections = preview.Branches.Single().Sections;
+            var layers = sections.Where(section => section.Label != "EntropicHeldSecond").ToArray();
+            int empty = observation.Inventory.Count(p => p == null);
+            int immediate = observation.Source.HeldSlot.HasValue ? empty + 1 : Math.Max(1, empty);
+            var cursor = new Rng(BrewRng(observation).ToSerializable());
+            var originalSecond = new Rng(cursor.ToSerializable());
+            string Next(Rng rng) => PotionFactory.CreateRandomPotionOutOfCombat(player, rng).Id.Entry;
+            for (int i = 0; i < (observation.HasSozu ? 1 : immediate); i++) Next(originalSecond);
+            int previous = 0;
+            for (int depth = 0; depth < 3; depth++)
             {
-                int count = i == 0 ? empty : 1;
-                expected.Add(Enumerable.Range(0, count).Select(_ => PotionFactory.CreateRandomPotionOutOfCombat(player, rng).Id.Entry).ToArray());
+                var expanded = new Rng(cursor.ToSerializable());
+                var expected = Enumerable.Range(0, observation.HasSozu ? 1 : observation.Inventory.Length)
+                    .Select(_ => Next(expanded)).ToArray();
+                check(layers.Length > depth && layers[depth].Label == (depth == 0 ? null : $"EntropicChild:{previous}") &&
+                    layers[depth].Rows[0].Models.Length == Math.Min(immediate, expected.Length) &&
+                    layers[depth].Rows.SelectMany(row => row.Models).Select(key => key.Entry).SequenceEqual(expected),
+                    "Entropic layer follows the native factory and marks its immediately obtainable prefix");
+                int brewIndex = Array.IndexOf(expected, "ENTROPIC_BREW");
+                if (brewIndex < 0 || observation.HasSozu || depth == 2)
+                {
+                    check(layers.Length == depth + 1, "Entropic layers end at blocked or absent Brew, or depth three");
+                    break;
+                }
+                previous = Math.Max(immediate, brewIndex + 1);
+                for (int i = 0; i < previous; i++) Next(cursor);
+                immediate = 1;
             }
-            check(preview.Faults.IsEmpty && rows.Length == expected.Count && rows.Select((row, index) =>
-                row.Models.Select(key => key.Entry).SequenceEqual(expected[index])).All(value => value),
-                "Entropic uses native out-of-combat factory per actual empty slot for at most two original bottle ordinals");
-            check(rows.All(row => row.Label != null && !row.Label.Contains("OtherSlotsEmpty", StringComparison.Ordinal)),
-                "Entropic current inventory never carries the superseded all-other-slots-empty hypothetical");
+            bool other = observation.Inventory.Where((_, slot) => slot != observation.Source.HeldSlot).Any(p => p?.Key.Entry == "ENTROPIC_BREW")
+                && observation.Inventory.Length > 1;
+            var held = sections.Where(section => section.Label == "EntropicHeldSecond").ToArray();
+            check(preview.Faults.IsEmpty && held.Length == (other ? 1 : 0) &&
+                (!other || held[0].Rows.Single().Models.Single().Entry == Next(originalSecond)),
+                "held-Brew ordering follows the native immediate fill independently of conditional slot results");
         }
         void InspectBrew(NeowOperationOverlay view, OperationPreview preview)
         {
-            var panel = Descendants(view).OfType<Control>().SingleOrDefault(control => control.Name == "Rt2OperationPrimaryPanel");
-            check(panel is { Visible: true } && panel.IsVisibleInTree() &&
-                panel.GetChildren().OfType<NinePatchRect>().Any(backdrop =>
+            var panels = Descendants(view).OfType<Control>().Where(control => control.Name == "Rt2OperationPrimaryPanel" ||
+                control.Name.ToString().StartsWith("Rt2EntropicChild_", StringComparison.Ordinal)).ToArray();
+            var sections = preview.Branches.Single().Sections;
+            var nested = sections.Where(section => section.Label?.StartsWith("EntropicChild:", StringComparison.Ordinal) == true).ToArray();
+            var uiText = JsonUiTextProvider.CreateUi13(UiLanguagePreferences.LanguageCode);
+            check(panels.Length == nested.Length + 1 && panels.Select((panel, index) =>
+            {
+                var rows = index == 0 ? sections.Except(nested).SelectMany(section => section.Rows) : nested[index - 1].Rows;
+                var labels = Descendants(panel).OfType<Label>().Where(label => label.IsVisibleInTree()).Select(label => label.Text).ToArray();
+                bool hasPremises = (index == 0 || labels.Contains(uiText.Format("operation.potion.entropicChild",
+                    int.Parse(nested[index - 1].Label!.Split(':')[1])))) &&
+                    (!rows.Any(row => row.Label == "UiText:operation.potion.entropicExtraSlots") ||
+                        labels.Contains(uiText.Get("operation.potion.entropicExtraSlots")));
+                return hasPremises && panel.IsVisibleInTree() && panel.GetChildren().OfType<NinePatchRect>().Any(backdrop =>
                     backdrop.Modulate.IsEqualApprox(new Color(.48f, .67f, .94f, 1))) &&
-                preview.Branches.SelectMany(branch => branch.Sections).SelectMany(section => section.Rows)
-                    .SelectMany(row => row.Models).GroupBy(key => key).All(models =>
+                    rows.SelectMany(row => row.Models).GroupBy(key => key).All(models =>
                     {
                         string name = (string)AccessTools.Method(typeof(NeowOperationOverlay), "NameOf").Invoke(null, [models.Key])!;
-                        return Descendants(panel).OfType<Label>().Count(label => label.IsVisibleInTree() && label.Text == name) >= models.Count();
-                    }),
-                "Entropic renders its generated potion names in the night-blue primary text panel");
+                        return labels.Count(label => label == name) >= models.Count();
+                    });
+            }).All(rendered => rendered), "each Entropic fill displays its generated potions in its own night-blue panel");
             check(!Descendants(view).OfType<Control>().Any(control => control.Name.ToString().StartsWith("Rt2OperationIconGroup_", StringComparison.Ordinal)),
                 "Entropic result has no free-standing icon groups");
             check(preview.Style?.Text == OperationTextMode.GroupRows && Groups(preview).Length == 0,
@@ -464,6 +495,22 @@ internal static partial class UiSurfaceChecks
 
             await Leave(); ClearInventory();
             var brew = Add("ENTROPIC_BREW"); Add("ENTROPIC_BREW"); Add("ENTROPIC_BREW");
+            var liveBrewRng = BrewRng(Capture(brew));
+            var candidate = new Rng(liveBrewRng.ToSerializable());
+            bool hasChild = false;
+            for (int i = 0; i < 10000; i++)
+            {
+                var probe = new Rng(candidate.ToSerializable());
+                if (Enumerable.Range(0, player.MaxPotionCount).Any(_ =>
+                    PotionFactory.CreateRandomPotionOutOfCombat(player, probe).Id.Entry == "ENTROPIC_BREW"))
+                {
+                    hasChild = true;
+                    break;
+                }
+                candidate.NextInt();
+            }
+            check(hasChild, "native out-of-combat potion pool can produce another Brew");
+            liveBrewRng.LoadFromSerializable(candidate.ToSerializable());
             var brewHolder = await Mount(brew); var brewObservation = Capture(brew);
             var brewExpected = PotionOperationPreview.Build(brewObservation); CheckBrew(brewExpected, brewObservation);
             await exercise("potion-sequence-entropic", brewHolder, brewHolder, "ENTROPIC_BREW", null,
@@ -481,7 +528,7 @@ internal static partial class UiSurfaceChecks
                     preview => preview.Faults.IsEmpty && preview.Branches.Length > 0, null, true);
                 var old = VisiblePreview();
                 string stamp = PredictorOperationPotionTargetCapture.ObservationStamp(run, player.NetId, source);
-                var relevant = key == "ENTROPIC_BREW" ? run.Rng.CombatPotionGeneration : run.Rng.CombatCardGeneration;
+                var relevant = key == "ENTROPIC_BREW" ? BrewRng(Capture(potion)) : run.Rng.CombatCardGeneration;
                 var unrelated = key == "ENTROPIC_BREW" ? run.Rng.CombatCardGeneration : run.Rng.CombatPotionGeneration;
                 unrelated.NextInt();
                 check(PredictorOperationPotionTargetCapture.ObservationStamp(run, player.NetId, source) == stamp,
@@ -611,6 +658,7 @@ internal static partial class UiSurfaceChecks
             foreach (var (potion, index) in originalSlots.Select((potion, index) => (potion, index)))
                 if (potion != null) check(player.AddPotionInternal(potion, index, silent: true).success, "restore original potion slot");
             run.Rng.LoadFromSerializable(originalRng);
+            player.PlayerRng.LoadFromSerializable(originalPlayerRng);
             turnField.SetValue(CombatManager.Instance, originalTurn);
             overlays.MouseFilter = originalOverlayFilter;
             check(signature() == original, "potion fixture restores exact original live run/inventory/RNG");

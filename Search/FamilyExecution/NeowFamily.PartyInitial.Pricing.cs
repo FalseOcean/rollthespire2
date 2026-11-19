@@ -4,6 +4,9 @@ internal sealed partial class NeowFamily
 {
     internal sealed partial class PartyInitial
     {
+        private bool UsesDirectGpu => UsesFused ? _gpuStages.All(stage => stage.Gpu?.PartyDirectDraw is not null) :
+            _gpuStages.Any(stage => stage.Gpu?.PartyDirectDraw is not null);
+
         private FamilyUnitCost? QuoteCoarseUnit(double inputs, bool compact, double finalOutputRate,
             bool computationOnly = false, GpuCostSnapshot? costs = null)
         {
@@ -11,9 +14,9 @@ internal sealed partial class NeowFamily
                 { ComputationOnly = computationOnly, CostSnapshot = costs };
             if (!FamilyPhysicalQuote.AdmittedRequest(geometry)) return null;
             if (!double.IsFinite(finalOutputRate) || finalOutputRate is < 0 or > 1) finalOutputRate = 1;
-            const string basis = "N.PartyInitial.WorkEstimate.20261028.v1;SameFamilyOnly;PriceQuality=Estimate;" +
-                "NoIndependentPlayerProbabilityProduct;SharedArrivalWitnessUnchanged;FullStageInputEnvelope;" +
-                "FinalOutput=ExistingWholeTableOfferUpperEnvelopeNotResultJointProbability;" +
+            string basis = "N.PartyInitial.WorkEstimate.20261028.v1;SameFamilyOnly;PriceQuality=Estimate;" +
+                "NoIndependentPlayerReachDiscount;SharedArrivalWitnessUnchanged;FullStageInputEnvelope;" +
+                $"FinalOutputEvidence={Survival.Evidence};" +
                 "SharedAndConnectionBoundaryUnmeasured;NotCurrentWrapperMeasurement";
             if (_gpuStages.Count == 0)
             {
@@ -37,14 +40,25 @@ internal sealed partial class NeowFamily
                     basis + $";OfferSlots={_cpuPlayers.Count};PredicateParts={_cpuPlans.Count};ArrivalAlternatives={arrivals};" +
                     "CpuOwnReplayAnchors=25,210ns;WorkerRatioIsFamilyReferenceNotPartyMeasurement", CpuCapacity);
                 if (quote is null) return null;
-                // Historical wrapper floor is a conservative scheduling reference,
-                // not a newly measured v6/B65536 worker/arrival combination.
-                quote = quote with { FixedWindowMilliseconds = .35 };
+                // The historical wrapper floor belongs to complete-call timing.
+                if (!computationOnly) quote = quote with { FixedWindowMilliseconds = .35 };
                 double? milliseconds = computationOnly ? FamilyCoarsePricing.ComputationMilliseconds(quote, geometry)
                     : FamilyCoarsePricing.PublicMilliseconds(quote, geometry, finalOutputRate);
                 return milliseconds is double ms
-                    ? new(ms, 0, quote.Evidence + ";CpuWrapperFloorReference=.35ms;" +
-                        (computationOnly ? "ComputationOnly;CpuOwnedCanonicalWork" : "CompleteCanonicalAbi1")) : null;
+                    ? new(ms, 0, quote.Evidence + (computationOnly
+                        ? ";ComputationOnly;CpuOwnedCanonicalWork"
+                        : ";CpuWrapperFloorReference=.35ms;CompleteCanonicalAbi1")) : null;
+            }
+
+            if (UsesFused && UsesDirectGpu)
+            {
+                var direct = NeowWorkEstimate.PartyDirectGpu(FamilyId, _gpuStages.Select(stage => stage.Gpu!).ToArray(), geometry);
+                if (direct is null) return null;
+                if (computationOnly) direct = FamilyCoarsePricing.LocalComputation(_gpuStages[0].Family, direct, geometry);
+                double? milliseconds = computationOnly ? FamilyCoarsePricing.ComputationMilliseconds(direct, geometry) :
+                    FamilyCoarsePricing.PublicMilliseconds(direct, geometry, finalOutputRate);
+                return milliseconds is double ms ? new(ms, direct.SetupMilliseconds,
+                    direct.Evidence + ";PartyFusedDirect;" + (computationOnly ? "ComputationOnly" : "CompleteCanonicalAbi1")) : null;
             }
 
             bool privateEdges = UsesPrivate || UsesFused;
@@ -52,14 +66,17 @@ internal sealed partial class NeowFamily
             var evidence = new List<string>();
             for (int i = 0; i < _gpuStages.Count; i++)
             {
-                var stage = _gpuStages[i].Family;
+                var child = _gpuStages[i];
+                var stage = child.Family;
                 bool stageCompact = compact || !UsesFused && i > 0;
                 var stageGeometry = new FamilyPhysicalQuoteRequest(stageCompact,
                     privateEdges && (!computationOnly || i < _gpuStages.Count - 1), inputs,
                     PrivateInput: privateEdges && stageCompact) { ComputationOnly = computationOnly, CostSnapshot = costs };
-                var quote = computationOnly ? FamilyPhysicalQuote.Computation(stage, stageGeometry, costs) : stage.QuotePhysicalWork(stageGeometry);
+                bool direct = !UsesFused && child.Gpu?.PartyDirectDraw is not null;
+                var quote = direct ? NeowWorkEstimate.PartyDirectGpu(FamilyId, [child.Gpu!], stageGeometry) :
+                    computationOnly ? FamilyPhysicalQuote.Computation(stage, stageGeometry, costs) : stage.QuotePhysicalWork(stageGeometry);
                 if (quote is null) return null;
-                if (computationOnly && costs is null) quote = FamilyCoarsePricing.LocalComputation(stage, quote, stageGeometry);
+                if (computationOnly && (direct || costs is null)) quote = FamilyCoarsePricing.LocalComputation(stage, quote, stageGeometry);
                 setup += quote.SetupMilliseconds ?? 0;
                 evidence.Add(quote.Evidence);
                 if (computationOnly)
@@ -71,8 +88,8 @@ internal sealed partial class NeowFamily
                 else
                 {
                     // Intermediate populations are unknown jointly. Retain full
-                    // input/output for them, use only the existing whole-N offer
-                    // envelope for final public materialization. Never multiply
+                    // input/output for them, use the prepared physical N
+                    // projection for final public materialization. Never multiply
                     // personal N probabilities to discount later stages.
                     double output = i == _gpuStages.Count - 1 ? finalOutputRate : 1;
                     if (FamilyCoarsePricing.PublicMilliseconds(quote, stageGeometry, output) is not double ms) return null;

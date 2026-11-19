@@ -24,10 +24,46 @@ internal sealed record EventEditorStateSnapshot(
 {
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ModelKey? CharacterColorKey { get; init; }
+    public IReadOnlyList<EventResultSearchCondition> OpportunityResults { get; init; } = [];
+    public CrystalSphereSearchRelics CrystalRelics { get; init; }
+    public int CrystalDivinations { get; init; } = 3;
 }
 
 internal sealed record TransformationSourceSnapshot(string Id, ModelKey Identity, int ResultCount,
-    ModelKey? OtherRelic = null);
+    ModelKey? OtherRelic = null)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int AncientAct { get; init; }
+}
+
+internal sealed record TransformationResultGroupSnapshot(IReadOnlyList<string> TakenOver, int Objective,
+    int RareCount, IReadOnlyList<ModelKey> Cards)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int CardsRareCount { get; init; }
+}
+
+internal sealed record AncientTransformationEditorSnapshot(int Act, ModelKey Option, IReadOnlyList<ModelKey> Cards)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? PandoraCountOverride { get; init; }
+}
 
 internal sealed record TransformationEditorStateSnapshot(IReadOnlyList<string> TakenOver, int Objective, int RareCount,
-    IReadOnlyList<ModelKey> Cards, IReadOnlyList<TransformationSourceSnapshot>? KnownSources = null);
+    IReadOnlyList<ModelKey> Cards, IReadOnlyList<TransformationSourceSnapshot>? KnownSources = null)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<TransformationResultGroupSnapshot>? AdditionalGroups { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? PandoraCountOverride { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int CardsRareCount { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool ExplicitRequirements { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool SingleCombination { get; init; }
+}

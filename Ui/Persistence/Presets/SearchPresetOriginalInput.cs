@@ -26,7 +26,8 @@ internal static class SearchPresetOriginalInput
         draft.MerchantColorlessDraft is not null && draft.MerchantColorlessDraft.All(c => c is not null) &&
         draft.MerchantColorlessSequenceDraft is not null && draft.MerchantColorlessSequenceDraft.All(c => c is { Slots: not null }) &&
         draft.RelicShopSequenceDraft is not null && draft.RelicShopSequenceDraft.All(c => c is { Slots: not null }) &&
-        (draft.TransformationAggregate is null || draft.TransformationAggregate.TargetMultiset is not null);
+        (draft.TransformationAggregate is null || draft.TransformationAggregate is { TargetMultiset: not null, ResultRequirements: not null } aggregate &&
+            aggregate.ResultRequirements.All(requirement => requirement is { Sources: not null, TargetMultiset: not null }));
 
     private static bool CompleteKeys(ModelKeySetFilter? keys) => keys is { Any: not null, All: not null, Ban: not null };
 
@@ -36,7 +37,11 @@ internal static class SearchPresetOriginalInput
         var unresolved = new List<SearchPresetUnresolvedReference>();
         Key(character, "CHARACTER", "Character");
         if (source.TransformationAggregate is { } aggregate)
+        {
             Keys(aggregate.TargetMultiset, "CARD", "TransformationAggregate.Target");
+            for (int index = 0; index < aggregate.ResultRequirements.Count; index++)
+                Keys(aggregate.ResultRequirements[index].TargetMultiset, "CARD", $"TransformationAggregate.ResultRequirements[{index}].Target");
+        }
         if (source.NeowRouteDraft.RouteRelicKey is { } route) Key(route, "RELIC", "Neow.RouteRelic");
         Keys(source.NeowRouteDraft.RequiredBonesRelics, "RELIC", "Neow.RequiredBonesRelics");
         for (int i = 0; i < source.NeowRouteDraft.EffectConditions.Count; i++)

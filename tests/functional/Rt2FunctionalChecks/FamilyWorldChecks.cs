@@ -83,6 +83,8 @@ internal static class FamilyWorldChecks
                 continue; // V numerical oracle/transport is checked by its focused entry.
             }
             var replay=new WorldFamilyReplay(request.Model);var gpu=new WorldFamilyGpuPlan(replay, specializeSolo: true);
+            if (name is "Boss1" or "Mixed") checks += CheckModernEventScratch(request.Model, replay);
+            if (name == "Boss1") checks += CheckEffectiveEventPair(request.Model, replay);
             if(!WorldFamily.TryCreate(request.Model, FilterExecutionPreferences.From(request.RunOptions), out var family)||family!.Coverage.Single()!="W.World")throw new Exception("W registration");
             var executionPlan=FamilyExecutionCoordinator.Plan(request);
             if(!executionPlan.ExecutionOrderUnits.Any(f=>f.FamilyId=="W.World") || executionPlan.ExecutionOrderUnits.Any(f=>f.FamilyId is not ("W.World" or "V.VariantOpening")))throw new Exception("Production residual W/V registration");
@@ -205,6 +207,60 @@ internal static class FamilyWorldChecks
             checks++;
         }
         Console.WriteLine($"W_SHARED_ANCIENT_SLICES_PASS checks={checks}");
+    }
+
+    private static int CheckModernEventScratch(SearchModel model, WorldFamilyReplay replay)
+    {
+        var acts = replay.Plan.Acts.Select(act => act.HasEventPredicate ? act : act with
+        {
+            EventCandidates = Enumerable.Repeat(act.EventCandidates, 8).SelectMany(entries => entries).ToArray()
+        }).ToArray();
+        var modern = new WorldFamilyReplay(model, replay.Plan with { Acts = acts, RngSemantics = RngSemanticProfileId.Modern113 });
+        var plan = new WorldFamilyGpuPlan(modern, specializeSolo: true, encounterRankMask: false);
+        int observedEventStride = replay.Plan.Acts.Where(act => act.HasEventPredicate)
+            .Select(act => act.EventCandidates.Length).DefaultIfEmpty(0).Max();
+        uint encounterStride = new WorldFamilyGpuPlan(replay, encounterRankMask: false).Buffers[2][8];
+        bool trimsEvents = acts.Max(act => act.EventCandidates.Length) > observedEventStride;
+        if (plan.Buffers[2][8] != encounterStride || plan.Buffers[2][13] != (uint)observedEventStride ||
+            plan.ScratchWords != encounterStride + observedEventStride ||
+            plan.Revision(false).Contains(".ObservedEventScratch.", StringComparison.Ordinal) != trimsEvents)
+            throw new Exception($"W Modern113 scratch retains encounters and only observed raw event pools: encounter={plan.Buffers[2][8]}/{encounterStride};events={plan.Buffers[2][13]}/{observedEventStride};words={plan.ScratchWords};revision={plan.Revision(false)}");
+        var selected = new WorldFamilyGpuPlan(modern, specializeSolo: true);
+        bool rankMask = modern.Plan.MaxEncounterPoolCount is > 0 and <= 32 &&
+            !modern.Plan.Acts.Any(act => act.HasEncounterPredicate);
+        if (selected.UsesEncounterRankMask != rankMask ||
+            selected.Buffers[2][8] != (rankMask ? 0u : encounterStride) ||
+            selected.ScratchWords != (rankMask ? 0 : encounterStride) + observedEventStride)
+            throw new Exception("W bounded unobserved encounter mask replaces only encounter scratch");
+        return 2;
+    }
+
+    private static int CheckEffectiveEventPair(SearchModel model, WorldFamilyReplay replay)
+    {
+        var first = new WorldFastEventPredicate(0, 1, byte.MaxValue, new([11], [], [], false));
+        var second = new WorldFastEventPredicate(0, 2, byte.MaxValue, new([], [12], [], false));
+        WorldFastEventCandidate[] pool = [new(12, 0, false), new(11, 0, true), new(13, 0, true), new(12, 1, true)];
+        var sample = replay.Plan.Acts[0] with { EventCandidates = pool, EventPredicates = [second, first] };
+        int checks = 0;
+        void Check(WorldFastActPlan act, bool enabled, bool tagged, uint[]? expected = null)
+        {
+            var modern = new WorldFamilyReplay(model, replay.Plan with { Acts = [act], RngSemantics = RngSemanticProfileId.Modern113 });
+            var gpu = new WorldFamilyGpuPlan(modern, trimEventScratch: true, effectiveEventPair: enabled);
+            uint offset = gpu.Buffers[13][1];
+            if (((offset & 0x80000000u) != 0) != tagged ||
+                gpu.Buffers[2][13] != (tagged ? 0u : (uint)act.EventCandidates.Length) ||
+                gpu.Revision(false).Contains(".EffectiveEventPair.", StringComparison.Ordinal) != tagged ||
+                (expected != null && !gpu.Buffers[14].AsSpan((int)(offset & 0x7fffffffu), expected.Length).SequenceEqual(expected)))
+                throw new Exception("W effective pair admission, descriptor or event scratch");
+            checks++;
+        }
+        Check(sample, true, true, [14, 1, 3]);
+        Check(sample, false, false);
+        Check(sample with { EventCandidates = [.. pool, new(11, 1, true)] }, true, false);
+        Check(sample with { EventPredicates = [first with { SourceFilter = 0 }, second] }, true, false);
+        Check(sample with { EventPredicates = [first, second with { RangeMode = 1 }] }, true, false);
+        Check(sample with { EventCandidates = [.. pool[..3]] }, true, true, [6, 1, uint.MaxValue]);
+        return checks;
     }
 
     private static void CheckScalarBossBranches()

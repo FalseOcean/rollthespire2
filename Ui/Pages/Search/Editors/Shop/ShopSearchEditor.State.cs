@@ -13,12 +13,12 @@ internal sealed partial class ShopSearchEditor
     internal bool GuideOpen { get => _guideExpanded; set => _guideExpanded = value; }
 
     internal bool HasConditions(bool party) => (party ? _partyDrafts : _drafts).Values.Any(d =>
-        d.Relic.Slots.Concat(d.Uncommon.Slots).Concat(d.Rare.Slots).Any(k => k.HasValue));
+        d.OrdinaryTargetCount > 0 || d.Relic.Slots.Concat(d.Uncommon.Slots).Concat(d.Rare.Slots).Any(k => k.HasValue));
     internal Action ClearConditions(bool party, int? slot = null) =>
         WorkbenchConditionReset.Swap(party ? _partyDrafts : _drafts, _ => new SeatDraft(), slot,
             (previous, current) => { if (ReferenceEquals(_draft, previous)) _draft = current; });
 
-    internal int AuthoredConditionCount() => CountRow(_draft.Relic) + CountRow(_draft.Uncommon) + CountRow(_draft.Rare);
+    internal int AuthoredConditionCount() => _draft.OrdinaryTargetCount + CountRow(_draft.Relic) + CountRow(_draft.Uncommon) + CountRow(_draft.Rare);
 
     private int CountRow(RowDraft row)
     {

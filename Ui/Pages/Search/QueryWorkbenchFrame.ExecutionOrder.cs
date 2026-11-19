@@ -1,4 +1,5 @@
 using Godot;
+using RolltheSpire2.Search.Semantics;
 
 namespace RolltheSpire2.Ui.Pages.Search;
 
@@ -73,6 +74,7 @@ internal sealed partial class QueryWorkbenchFrame
 
     private string OrderUnitTitle(string key) => string.Join(" + ", key.Split('+').Select(id =>
     {
+        if (id is FishingRodDrawResearch.Id or MerchantRelicCondition.Domain) return FamilyTitle(id);
         string shortId = id.Split('.')[0];
         string? category = shortId switch { "N" => "neow", "A" => "ancients", "C" => "combat_rewards",
             "E" => "events", "R" => "relics", "S" => "shop", "T" => "transform", _ => null };

@@ -7,6 +7,7 @@ using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Events;
 using MegaCrit.Sts2.Core.Nodes.HoverTips;
 using MegaCrit.Sts2.Core.Nodes.Potions;
+using MegaCrit.Sts2.Core.Nodes.Relics;
 using MegaCrit.Sts2.Core.Nodes.RestSite;
 using MegaCrit.Sts2.Core.Nodes.Rewards;
 using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
@@ -32,7 +33,7 @@ namespace RolltheSpire2.Ui.InRunOperations;
 internal sealed partial class NeowOperationHoverController : Control
 {
     internal const string NodeName = "RolltheSpire2_OperationHover";
-    private enum Kind { Ancient, Event, Shop, ModOperation, Rest, RewardAlternative, Reward, Potion, CardTarget }
+    private enum Kind { Ancient, Event, Shop, ModOperation, Rest, RewardAlternative, Reward, Potion, CardTarget, HeldRelic }
     private sealed record Request(Kind Kind, ModelKey Source, long Id = 0, int Slot = 0,
         string Option = "", long? Wing = null, PredictorRestAction Rest = default,
         PredictorOperationPotionSource? PotionSource = null, IModOperationPrediction? Mod = null);
@@ -73,6 +74,7 @@ internal sealed partial class NeowOperationHoverController : Control
     private PredictorOperationSnapshot? _snapshot;
     private string? _stamp;
     private PredictorOperationPotionObservation? _potionObservation;
+    private HeldRelicOperationObservation? _heldRelicObservation;
     private CancellationTokenSource? _cancellation;
     private Task<OperationPreview>? _work;
     private NeowOperationOverlay? _view;
@@ -177,6 +179,8 @@ internal sealed partial class NeowOperationHoverController : Control
                 request = new(Kind.Potion, offeredPotion!.Potion.Key, PotionSource: offeredPotion); return true;
             case NPotionHolder potion when OperationSurfaceHoverCapture.TryPotion(potion, out run, out var potionSource):
                 request = new(Kind.Potion, potionSource!.Potion.Key, PotionSource: potionSource); return true;
+            case NRelicInventoryHolder holder when OperationSurfaceHoverCapture.TryHeldRelic(holder, out run, out var relic):
+                request = new(Kind.HeldRelic, PredictorLiveRunCapture.Key(relic!), PredictorLiveRunCapture.Id(relic!)); return true;
             case NCardHolder card when OperationSurfaceHoverCapture.TryCardTarget(card, out run, out long cardId):
                 request = new(Kind.CardTarget, default, cardId); return true;
             default: return false;
@@ -218,7 +222,8 @@ internal sealed partial class NeowOperationHoverController : Control
         {
             if (!InRunFeaturePreferences.OperationPredictionEnabled) { Clear(); return; }
             if (_owner == null || !TryCurrent(_owner, _version, out var run, out var request) || !ReferenceEquals(run, _run) || request != _request ||
-                _request?.Kind != Kind.Potion && (NMapScreen.Instance?.IsOpen == true || NCapstoneContainer.Instance?.InUse == true) ||
+                _request?.Kind is not (Kind.Potion or Kind.HeldRelic) &&
+                    (NCapstoneContainer.Instance?.InUse == true || NMapScreen.Instance?.IsOpen == true) ||
                 NModalContainer.Instance?.OpenModal != null)
             {
                 if (_request?.Kind == Kind.CardTarget)
@@ -258,6 +263,8 @@ internal sealed partial class NeowOperationHoverController : Control
                     ? ModOperationObservationStamp() == _stamp
                     : _directTransformSelector != null
                     ? PredictorOperationCapture.DirectTransformObservationStamp(_snapshot!, _run!, _directTransformSelector) == _stamp
+                    : _heldRelicObservation is { } heldRelic
+                    ? PredictorLiveRunCapture.HeldRelicObservationStamp(_run!, heldRelic) == _stamp
                     : _potionObservation is { } potion
                     ? PredictorOperationPotionTargetCapture.ObservationStamp(_run!, potion.Context.Operation!.PlayerId, potion.Source) == _stamp
                     : _snapshot != null && PredictorOperationCapture.IsCurrent(_snapshot, _run!, _version, NGame.Instance, _timing.Publication);
@@ -289,6 +296,7 @@ internal sealed partial class NeowOperationHoverController : Control
                     ? ModOperationObservationStamp()
                     : _directTransformSelector != null
                     ? PredictorOperationCapture.DirectTransformObservationStamp(_snapshot!, _run!, _directTransformSelector)
+                    : _heldRelicObservation is { } heldRelic ? PredictorLiveRunCapture.HeldRelicObservationStamp(_run!, heldRelic)
                     : _potionObservation is { } potion ? PredictorOperationPotionTargetCapture.ObservationStamp(
                         _run!, potion.Context.Operation!.PlayerId, potion.Source) :
                     PredictorOperationCapture.ObservationStamp(_run!, _snapshot!.Context.Catalog!, NGame.Instance, _snapshot.Context.VersionResolution.SemanticProfileId);
@@ -337,6 +345,12 @@ internal sealed partial class NeowOperationHoverController : Control
             _stamp = _potionObservation.Stamp;
             timing.CaptureMs = Elapsed(capture);
         }
+        else if (request.Kind == Kind.HeldRelic)
+        {
+            _heldRelicObservation = PredictorLiveRunCapture.CaptureHeldRelic(_run!, _version, request.Id, _heldRelicObservation);
+            _stamp = _heldRelicObservation.Stamp;
+            timing.CaptureMs = Elapsed(capture);
+        }
         else
         {
             _directTransformSelector = null;
@@ -353,7 +367,9 @@ internal sealed partial class NeowOperationHoverController : Control
         }
         var snapshot = _snapshot;
         var potionObservation = _potionObservation;
+        var heldRelicObservation = _heldRelicObservation;
         var modSnapshot = _modSnapshot;
+        string? fingerprint = modSnapshot?.Fingerprint ?? snapshot?.Fingerprint ?? heldRelicObservation?.Stamp;
         bool playRoyalties = _owner is NEventOptionButton eventButton &&
             RoyaltiesChoices.TryGetValue(eventButton.Option, out var hypothesis) && hypothesis.Played;
         if (request.Kind == Kind.CardTarget) RuntimeLog.Info("operationCardHover=true;stage=capture;scene=" + snapshot?.Scene.GetType().Name +
@@ -375,6 +391,7 @@ internal sealed partial class NeowOperationHoverController : Control
                     Kind.RewardAlternative => SurfaceOperationPreview.BuildRewardAlternative(snapshot!, request.Id, request.Option, request.Wing, token, demand.Surface),
                     Kind.Reward => RelicOperationPreview.Build(snapshot!, [new TakeReward(request.Id)], request.Source, token, demand.IncludeChain),
                     Kind.Potion => PotionOperationPreview.Build(potionObservation!, token, demand.Potion),
+                    Kind.HeldRelic => HeldRelicOperationPreview.Build(request.Source, heldRelicObservation!),
                     Kind.CardTarget => CardTargetOperationPreview.Build(snapshot!, request.Id, token,
                         demand.IncludeEventContinuation, demand.IncludeEventCombat),
                     _ => throw new InvalidOperationException("OperationHoverKindMissing")
@@ -382,14 +399,14 @@ internal sealed partial class NeowOperationHoverController : Control
                 result = OperationPredictionPolicy.Filter(result, demand);
                 foreach (var failure in result.Faults)
                     RuntimeLog.Fault("operationPredictionFailed=true;stage=" + failure.Stage + ";source=" + request.Source +
-                        ";fingerprint=" + (modSnapshot?.Fingerprint ?? snapshot?.Fingerprint) + ";inputs=" + string.Join(" -> ", failure.InputPath), failure.Exception);
+                        ";fingerprint=" + fingerprint + ";inputs=" + string.Join(" -> ", failure.InputPath), failure.Exception);
                 return result;
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
             catch (Exception error)
             {
                 RuntimeLog.Fault("operationPredictionFailed=true;stage=detached-projection;source=" + request.Source +
-                    ";fingerprint=" + (modSnapshot?.Fingerprint ?? snapshot?.Fingerprint), error);
+                    ";fingerprint=" + fingerprint, error);
                 return new OperationPreview(request.Source, [], [], false, [], [])
                     { Faults = [new("DetachedProjection", [], error)] };
             }
@@ -504,6 +521,8 @@ internal sealed partial class NeowOperationHoverController : Control
     {
         HideView();
         _view = new() { Modulate = new Color(1, 1, 1, 0) }; _view.UseCardDisplays(_cardDisplays);
+        if (_request?.Kind == Kind.HeldRelic && _owner is NRelicInventoryHolder { Relic.Model: { } held })
+            preview = preview with { Heading = held.Title.GetFormattedText() };
         AddChild(_view); _view.SetPreview(preview);
         _viewLayoutFrame = _view.SummaryDesiredSize.Y > 0 ? Engine.GetProcessFrames() : null;
     }
@@ -515,7 +534,8 @@ internal sealed partial class NeowOperationHoverController : Control
     private void Clear()
     {
         _cancellation?.Cancel(); _cancellation?.Dispose(); _cancellation = null; _work = null;
-        _snapshot = null; _modSnapshot = null; _stamp = null; _directTransformSelector = null; _captureQueued = false; _potionObservation = null;
+        _snapshot = null; _modSnapshot = null; _stamp = null; _directTransformSelector = null; _captureQueued = false;
+        _potionObservation = null; _heldRelicObservation = null;
         _demand = null; _policyPoll = 0;
         _owner = null; _run = null; _request = null; HideView(); SetProcess(false);
     }

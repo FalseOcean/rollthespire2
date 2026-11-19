@@ -24,11 +24,12 @@ internal static partial class ReflectionNeowEffectSnapshotAdapter
         a with { ObservedAtUtc=b.ObservedAtUtc, SelectedCards=b.SelectedCards, ColorlessCards=b.ColorlessCards, CurseCards=b.CurseCards,
             CharacterPotions=b.CharacterPotions, SharedPotions=b.SharedPotions, CharacterRelics=b.CharacterRelics,
             SharedRelics=b.SharedRelics, OtherCharacterPools=b.OtherCharacterPools, Deck=b.Deck,
-            UnlockDescriptors=b.UnlockDescriptors } == b &&
+            UnlockDescriptors=b.UnlockDescriptors, NativeCharacterPoolOrder=b.NativeCharacterPoolOrder } == b &&
         PoolEqual(a.SelectedCards,b.SelectedCards) && PoolEqual(a.ColorlessCards,b.ColorlessCards) &&
         PoolEqual(a.CurseCards,b.CurseCards) && PoolEqual(a.CharacterPotions,b.CharacterPotions) &&
         PoolEqual(a.SharedPotions,b.SharedPotions) && PoolEqual(a.CharacterRelics,b.CharacterRelics) &&
         PoolEqual(a.SharedRelics,b.SharedRelics) && Same(a.Deck,b.Deck) && Same(a.UnlockDescriptors,b.UnlockDescriptors) &&
+        Same(a.NativeCharacterPoolOrder,b.NativeCharacterPoolOrder) &&
         Same(a.OtherCharacterPools,b.OtherCharacterPools,(x,y) => x with { Cards=y.Cards } == y && Same(x.Cards,y.Cards));
 
     internal static bool WorldInputsEqual(WorldObservedInputs a, WorldObservedInputs b) =>

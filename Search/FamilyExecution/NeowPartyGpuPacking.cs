@@ -41,7 +41,9 @@ internal static class NeowPartyGpuPacking
         source = source.Replace("if (!leafy_pre_gate(root))", "if (plan_value(70u) != 0u && !leafy_pre_gate(root))", StringComparison.Ordinal);
         const string entry = "if (matches(root)) append_ordinal(ordinal);";
         if (!source.Contains(entry, StringComparison.Ordinal)) throw new InvalidOperationException("PartyN.FusedEntryChanged");
-        source = source.Replace(entry, "bool accepted=true;\nfor(party_plan=0u;party_plan<" + plans.Length +
+        if (plans.All(p => p.PartyDirectDraw is not null))
+            source = NeowPartyDirectDraw.Apply(source, plans.Select(p => p.PartyDirectDraw!).ToArray());
+        else source = source.Replace(entry, "bool accepted=true;\nfor(party_plan=0u;party_plan<" + plans.Length +
             "u;party_plan++) { if(!matches(root)) { accepted=false; break; } }\nif(accepted) append_ordinal(ordinal);", StringComparison.Ordinal);
         var hostMeta = (uint[])meta.Clone(); hostMeta[66] = 0;
         return (packed with { Meta = hostMeta }, source);

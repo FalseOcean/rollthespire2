@@ -1,3 +1,4 @@
+using RolltheSpire2.Core.Rng;
 using RolltheSpire2.Core.Seed;
 using RolltheSpire2.Search.FamilyExecution;
 
@@ -46,6 +47,50 @@ internal static class ShionNeowOptimizationChecks
         Require(NeowStaticDrawGateCompiler.TryCompilePool([9, 3, 9, 4, 9], 5, [9u], 3, out var duplicates)
             && duplicates!.Intervals.Count == 3, "DuplicatePoolPositions");
         Require(!NeowStaticDrawGateCompiler.TryCompilePool([9, 3, 9, 4, 9], 5, [9u], 2, out _), "ExplicitIntervalBudget");
+
+        // Compare modern curse admission to game arithmetic at both sides of
+        // every possible cut. Random visible seeds almost never hit these ties.
+        const ulong space = NeowStaticDrawGateCompiler.MantissaSpace;
+        var curseMeta = new uint[85];
+        curseMeta[6] = 1;
+        curseMeta[56] = 64;
+        for (uint i = 0; i < 10; i++) curseMeta[71 + i] = i;
+        var cursePlan = new NeowFamilyGpuPlan(curseMeta, [], [], [], [], [], []);
+        for (int count = 1; count <= 10; count++)
+        {
+            curseMeta[39] = (uint)count;
+            for (int target = 0; target < count; target++)
+            {
+                curseMeta[68] = 1u << target;
+                curseMeta[69] = ((1u << count) - 1u) ^ curseMeta[68];
+                bool direct = cursePlan.TryCompileTerminalCurseGate(out var gate);
+                Require(direct == (count > 1), "DirectCurseRequiresDiscrimination");
+                for (int cut = 0; cut <= count; cut++)
+                {
+                    ulong historical = NeowStaticDrawGateCompiler.Boundary(cut, count);
+                    ulong first = historical > 2 ? historical - 2 : 0;
+                    ulong last = Math.Min(space - 1, historical + 1);
+                    for (ulong m = first; m <= last; m++)
+                    {
+                        int gameRank = (int)((m * (1.0 / space)) * count);
+                        Require((m >= NeowStaticDrawGateCompiler.Binary64Boundary(cut, count)) == (gameRank >= cut),
+                            "GameCurseCut");
+                        if (direct) Require(gate!.Contains(m) == (gameRank == target), "DirectCurseRank");
+                    }
+                }
+            }
+        }
+        ulong boundaryRoot = XxHash64.HashUtf8("16CBXHGL0A66", 0);
+        var boundaryRng = new Xoshiro256StarStar(unchecked(boundaryRoot + XxHash64.HashUtf8("NEOW", 0)));
+        ulong boundaryMantissa = boundaryRng.Clone().NextUInt64() >> 11;
+        Require(boundaryRoot == 0xc57481da5a0c67b4UL && boundaryMantissa == 5404319552844595UL &&
+            boundaryRng.NextInt(10) == Beta110FastRelicCatalog.NeowsSacrifice, "VisibleNeowsSacrificeBoundary");
+        curseMeta[68] = 1u << Beta110FastRelicCatalog.NeowsSacrifice;
+        curseMeta[69] = 1023u ^ curseMeta[68];
+        Require(cursePlan.TryCompileTerminalCurseGate(out var knownGate) && knownGate!.Contains(boundaryMantissa),
+            "VisibleNeowsSacrificeDirectGate");
+        curseMeta[69] &= ~(1u << Beta110FastRelicCatalog.NeowsBones);
+        Require(!cursePlan.TryCompileTerminalCurseGate(out _), "IncompleteCurseGateMustReplay");
 
         Require(Math.Abs(TransformationAggregateProbability.SharedNamedThreeMass([1, 2, 4, 0], [1, 2, 4, 0], [1, 2, 4, 0])
             - 6d / 64) < 1e-15, "SharedTransformIdenticalOrdersCountOnce");
@@ -113,6 +158,24 @@ internal static class ShionNeowOptimizationChecks
         Require(!NeowInternalFilterOrder.Compile(upgrades).Enabled, "UnknownAuthoredAdvanceRetainsCanonical");
         var modern = plan with { Meta = (uint[])meta.Clone() };
         modern.Meta[56] |= 64;
+        // This fixture already has a final curse. Removing it leaves just the fixed pair.
+        Require(!modern.UseTerminalPair && !modern.UsePairMask, "FinalCurseKeepsPairCheckpoint");
+        var identity = modern with { Meta = (uint[])modern.Meta.Clone() };
+        identity.Meta[83] = 0;
+        bool terminal = !string.Equals(Environment.GetEnvironmentVariable("RT2_N_TERMINAL_PAIR"), "off", StringComparison.OrdinalIgnoreCase);
+        bool mask = !string.Equals(Environment.GetEnvironmentVariable("RT2_N_PAIR_MASK"), "off", StringComparison.OrdinalIgnoreCase);
+        Require(identity.UseTerminalPair == terminal && identity.UsePairMask == mask, "PurePairIndependentSwitches");
+        identity.Meta[12] = identity.Meta[27]; identity.Meta[13] = identity.Meta[28];
+        Require(identity.UseTerminalPair == terminal && !identity.UsePairMask, "PinnedAcquisitionUsesOriginalPairOrder");
+        identity.Meta[12] = identity.Meta[13] = 255;
+        identity.Meta[8] = 33;
+        Require(identity.UseTerminalPair == terminal && !identity.UsePairMask, "LargePoolRetainsTrackedPositions");
+        identity.Meta[8] = meta[8];
+        identity.Meta[NeowCapsuleRarityGate.GpuMetadataIndex] = 1;
+        Require(!identity.UseTerminalPair && !identity.UsePairMask, "CapsuleRarityGateKeepsPairCheckpoint");
+        identity.Meta[NeowCapsuleRarityGate.GpuMetadataIndex] = 0;
+        identity.Meta[84] = 1;
+        Require(!identity.UseTerminalPair && !identity.UsePairMask, "LocalEffectKeepsPairCheckpoint");
         var modernOrder = NeowInternalFilterOrder.Compile(modern);
         Require(modernOrder.Enabled && modernOrder.UsesNonCombat && modernOrder.StreamAdvances.SequenceEqual(new uint[] { 1 }),
             "ModernNewLeafUsesTransformationsAndBonesForksOnce");

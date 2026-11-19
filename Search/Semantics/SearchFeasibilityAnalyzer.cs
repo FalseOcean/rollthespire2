@@ -2,6 +2,7 @@ using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.Authority;
 using RolltheSpire2.Core.Effects.Snapshots;
+using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Relics;
 using RolltheSpire2.Core.World.Snapshots;
@@ -27,6 +28,9 @@ internal static class SearchFeasibilityAnalyzer
         {
             return SearchFeasibilityResult.Impossible(NormalizationProof(compiled.Normalization.Diagnostics));
         }
+
+        if (CrystalRelicConflict(compiled) is { } crystalProof)
+            return SearchFeasibilityResult.Impossible(crystalProof);
 
         var query = compiled.NormalizedQuery;
         if (UnknownRoomPrefixRequirements.MonsterCount(query) > 0 && ExplicitOpeningRelicFacts.HasDeclaredJuzuForUnknownRooms(query))
@@ -61,6 +65,22 @@ internal static class SearchFeasibilityAnalyzer
             return SearchFeasibilityResult.Impossible(rewardProof!);
 
         return SearchFeasibilityResult.Possible;
+    }
+
+    internal static SearchImpossibilityProof? CrystalRelicConflict(CompiledSearch compiled)
+    {
+        const EventResultConditionKind kind = EventResultConditionKind.CrystalSphereRewards;
+        if (!EventOpportunitySemantics.SupportsProfile(kind, compiled.Context.ProfileId,
+                compiled.Context.Authority.VersionResolution.SemanticProfileId))
+            return null;
+
+        var conditions = compiled.Context.Party is null ? compiled.NormalizedQuery.EventResultConditions :
+            compiled.PlayerSearches.SelectMany(player => player.NormalizedQuery.EventResultConditions);
+        return conditions.Any(condition => condition.Kind == kind && condition.RelicRarity.HasValue &&
+                condition.CrystalDivinations < CrystalSphereSeedSearch.MinimumRelicDivinations)
+            ? new(SearchImpossibilityReasonCode.CrystalRelicRequiresFourMoves,
+                Diagnostic: "CrystalSphereRelicRequiresFourRevealedCorners")
+            : null;
     }
 
     private static SearchImpossibilityProof NormalizationProof(IReadOnlyList<string> diagnostics)
@@ -678,7 +698,8 @@ internal enum SearchImpossibilityReasonCode : byte
     SequencePositionPrefixConflict = 11,
     IncludeExcludeConflict = 12,
     OpeningRouteResultParentMismatch = 13,
-    CapsuleRelicQueueConflict = 14
+    CapsuleRelicQueueConflict = 14,
+    CrystalRelicRequiresFourMoves = 15
 }
 
 internal sealed record SearchImpossibilityProof(

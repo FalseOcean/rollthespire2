@@ -102,6 +102,8 @@ internal sealed partial class NeowSearchEditor : Control
         return draft.Catalog.InitialBasicTransformCards.Concat(draft.Catalog.NewLeafTransformCards)
             .Distinct(ModelKeyComparer.Instance).ToArray();
     }
+    internal IReadOnlyList<ModelKey> AncientTransformationCardCandidates(int seat) =>
+        _drafts.TryGetValue(seat, out var draft) && draft.Catalog is { } catalog ? catalog.InitialBasicTransformCards : [];
     // T composes its own request from source-owned captured presentation metadata.
     internal bool TryTransformationPickerMetadata(int seat,
         out IReadOnlyDictionary<ModelKey, CardPickerCandidateMetadata> metadata,

@@ -17,7 +17,7 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
     private const float ReadingMinimumSideMargin = 14f;
 
     private readonly DeveloperNotesDocumentProvider _provider;
-    private readonly Func<DeveloperNotesChapter, bool> _needsAcknowledgement;
+    private readonly Func<string, string?> _readVersion;
     private readonly HBoxContainer _acknowledgement = new() { SizeFlagsHorizontal = SizeFlags.ExpandFill };
     private readonly Label _acknowledgementText = MainPanelTheme.Label(string.Empty, Ui1TextRole.Meta, wrap: true);
     private readonly Button _acknowledge = new() { Name = "AcknowledgeChapter", CustomMinimumSize = new Vector2(160, 44) };
@@ -43,11 +43,11 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
     private string _resolvedLocale = string.Empty;
     private bool _compact;
 
-    public DeveloperNotesPage(DeveloperNotesDocumentProvider provider, Func<DeveloperNotesChapter, bool>? needsAcknowledgement = null)
+    public DeveloperNotesPage(DeveloperNotesDocumentProvider provider, Func<string, string?>? readVersion = null)
     {
         _provider = provider;
         Theme = MainPanelTheme.Create();
-        _needsAcknowledgement = needsAcknowledgement ?? (chapter => chapter.RequiresAcknowledgement);
+        _readVersion = readVersion ?? (_ => null);
         PageKey = AppPageKey.DeveloperNotes;
         SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         SizeFlagsVertical = Control.SizeFlags.ExpandFill;
@@ -118,7 +118,7 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
         _articleNotice.Visible = false;
         _articleDivider = new HSeparator();
         MainPanelTheme.ApplySeparator(_articleDivider);
-        _renderer = new DeveloperNotesArticleRenderer();
+        _renderer = new DeveloperNotesArticleRenderer(_acknowledgement);
         _renderer.ExternalLinkRequested += url => ExternalLinkRequested?.Invoke(url);
         articleColumn.AddChild(_articleTitle);
         articleColumn.AddChild(_articleSummary);
@@ -136,10 +136,9 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
         _acknowledge.Pressed += () =>
         {
             var chapter = _document?.Chapters.FirstOrDefault(c => c.Id == _selectedChapterId);
-            if (IsPresentationReady && chapter is not null && _needsAcknowledgement(chapter)) AcknowledgementRequested?.Invoke(chapter);
+            if (IsPresentationReady && chapter is not null && NeedsAcknowledgement(chapter)) AcknowledgementRequested?.Invoke(chapter);
         };
         _acknowledgement.AddChild(_acknowledge);
-        articleColumn.AddChild(_acknowledgement);
         articleColumn.AddChild(_chapterFooter);
         _readingHost.AddChild(articleColumn);
         _articleScroll.AddChild(_readingHost);
@@ -272,13 +271,15 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
         RenderSelectedChapter();
     }
 
+    private bool NeedsAcknowledgement(DeveloperNotesChapter chapter) => chapter.NeedsAcknowledgement(_readVersion(chapter.Id));
+
     private void RefreshChapterButtonStyles()
     {
         foreach ((string id, Button button) in _chapterButtons)
         {
             StyleReadingLink(button, string.Equals(id, _selectedChapterId, StringComparison.Ordinal));
             var chapter = _document!.Chapters.First(c => c.Id == id);
-            bool pending = _needsAcknowledgement(chapter);
+            bool pending = NeedsAcknowledgement(chapter);
             button.Text = chapter.Title + (pending ? "  •" : "");
             if (pending)
                 foreach (string state in new[] { "font_color", "font_hover_color", "font_pressed_color", "font_focus_color" })
@@ -291,13 +292,16 @@ internal sealed partial class DeveloperNotesPage : MarginContainer, IAppPage, IR
         RefreshChapterButtonStyles();
         var chapter = _document?.Chapters.FirstOrDefault(c => c.Id == _selectedChapterId);
         _acknowledgement.Visible = _articleComplete && chapter?.RequiresAcknowledgement == true;
-        bool pending = chapter is not null && _needsAcknowledgement(chapter);
+        bool pending = chapter is not null && NeedsAcknowledgement(chapter);
         _acknowledge.Text = Local("已阅读", "I have read this");
         _acknowledge.Visible = pending;
         _acknowledge.Disabled = !IsPresentationReady;
-        _acknowledgementText.Text = pending
-            ? Local("阅读后，请确认本篇内容。", "Please acknowledge this chapter after reading.")
-            : Local("✓ 已确认阅读", "✓ Reading acknowledged");
+        _acknowledgementText.Text = (pending, chapter?.Id) switch
+        {
+            (true, DeveloperNotesChapterIds.Release) => Local("请确认已阅读以上更新。", "Please acknowledge the updates above after reading."),
+            (true, _) => Local("阅读后，请确认本篇内容。", "Please acknowledge this chapter after reading."),
+            _ => Local("✓ 已确认阅读", "✓ Reading acknowledged")
+        };
     }
 
     private void RenderSelectedChapter()

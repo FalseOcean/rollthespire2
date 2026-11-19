@@ -203,22 +203,12 @@ internal sealed partial class PredictorRun
                     state = state with { Relics = state.Relics.SetItem(i, relic with { KindleCount = Math.Max(0, relic.KindleCount - 1) }) };
                     break;
                 case "TOY_BOX" when relic.ToyBoxCombatsSeen < 15:
-                    int count = relic.ToyBoxCombatsSeen + 1;
-                    state = state with { Relics = state.Relics.SetItem(i, relic with { ToyBoxCombatsSeen = count }) };
-                    if (count % 3 == 0)
-                    {
-                        int wax = state.Relics.FindIndex(r => r.IsWax && !r.Melted);
-                        if (wax >= 0) state = state with { Relics = state.Relics.SetItem(wax, state.Relics[wax] with { Melted = true }) };
-                    }
+                    state = PredictorCombatRelicUpgrade.ToyBoxCombatEnd(state, relic);
                     break;
                 case "PAELS_TOOTH" when ProjectLivePaelsToothReturn(ref state, relic):
                     break;
                 case "PAELS_TOOTH" when !relic.StoredCards.IsEmpty:
-                    (int selected, state) = state.Draw(PredictorStream.Rewards, 0, relic.StoredCards.Length);
-                    var returned = relic.StoredCards[selected];
-                    if (returned.UpgradeLevel < returned.MaxUpgradeLevel) returned = returned with { UpgradeLevel = returned.UpgradeLevel + 1 };
-                    state = PredictorObtainSources.AddCard(Context, state, returned);
-                    state = state with { Relics = state.Relics.SetItem(i, relic with { StoredCards = relic.StoredCards.RemoveAt(selected) }) };
+                    state = PredictorCombatRelicUpgrade.PaelsToothReturn(Context, state, relic).State;
                     break;
             }
         }

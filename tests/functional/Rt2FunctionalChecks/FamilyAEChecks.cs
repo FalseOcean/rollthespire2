@@ -624,7 +624,9 @@ internal static class FamilyAEChecks
     bool oldReject=OriginalEventNumericPredicate.RejectsEventResultForFamily(root,conditions,plan.Authority,0);
     Check(EventResultNumericPredicate.RejectsEventResultForFamily(root,metadata,0)==oldReject,"old numerical oracle");
     bool actual=plan.Matches(root),core=plan.Reference(root);
-    Check(actual==core,"Core projector/Trial/Tinker reference");
+    if(actual!=core)
+     throw new InvalidDataException($"E family/reference disagree: root={root}, conditions={string.Join(", ",conditions.Select(c=>c.Kind+"="+c.TargetKey))}, slot={plan.PlayerSlot}, staticExact={plan.Authority.StaticCatalogAuthorityExact}, colorfulExact={plan.Authority.ColorfulPoolAuthorityExact}, family={actual}, reference={core}, exact={Beta111CanonicalEventShopSearchEvaluator.Evaluate(request.Model,root,authority).Disposition}");
+    checks++;
     if(plan.NumericalSupported)Check(actual==!oldReject,"request plan vs original numerical");
     if(compiledColor is not null)Check(compiledColor.Matches(root)==core,"compiled color remaining");
     var disposition=Beta111CanonicalEventShopSearchEvaluator.Evaluate(request.Model,root,authority).Disposition;

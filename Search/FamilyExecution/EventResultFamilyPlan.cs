@@ -28,15 +28,20 @@ internal sealed class EventResultFamilyPlan
     internal uint[][] Buffers { get; }
     internal FamilySurvivalProjection Survival { get; }
     internal bool HasMorphic => _morphic.Length > 0;
+    internal bool HasLocalOpportunities => _localOpportunities.Length > 0;
     internal bool HasNewWhitelist => Conditions.Any(c => c.Kind > EventResultConditionKind.MorphicGroveGroupInitialBasicsContains);
     private readonly MorphicGroveContainsPlan?[] _morphic;
+    private readonly EventResultSearchCondition[] _localOpportunities;
     private readonly EventResultSearchCondition[] _ordinary;
     private readonly EventResultNumericPredicate.Compiled _ordinaryNumeric;
     internal EventResultFamilyPlan(SearchModel request, bool prepareGpu = true,
         GpuNumericalVariant numericalVariant = GpuNumericalVariant.NativeFloat64)
     {
         NumericalVariant = numericalVariant;
-        Conditions = request.Evaluation.EventResultConditions.Distinct().ToArray();
+        Authority = Beta111EventResultAuthority.From(request.Authority);
+        Conditions = request.Evaluation.EventResultConditions.Where(c =>
+            EventOpportunitySemantics.FilterRemainder(c.Kind, Authority.ProfileId, Authority.RngSemantics) is null)
+            .Distinct().ToArray();
         // The measured shape has cheap scalar + shared Trash rejection before
         // inventory generation. Target identities do not select the algorithm.
         bool preparedDefault = Conditions.Any(c => c.Kind is EventResultConditionKind.TrialCase or EventResultConditionKind.TinkerTimeTypeAndRider) &&
@@ -50,11 +55,12 @@ internal sealed class EventResultFamilyPlan
             "groups" => true,
             var unknown => throw new InvalidOperationException("E.UnknownGpuPreparationMode:" + unknown)
         });
-        _ordinary = Conditions.Where(c => !EventResultTransformSemantics.IsTransform(c.Kind)).ToArray();
-        var morphic = Conditions.Except(_ordinary).ToArray();
+        _localOpportunities = Conditions.Where(c => EventOpportunitySemantics.IsEventLocalOpportunity(c.Kind)).ToArray();
+        _ordinary = Conditions.Where(c => !EventResultTransformSemantics.IsTransform(c.Kind) &&
+            !EventOpportunitySemantics.IsEventLocalOpportunity(c.Kind)).ToArray();
+        var morphic = Conditions.Where(c => EventResultTransformSemantics.IsTransform(c.Kind)).ToArray();
         foreach (var c in morphic) MorphicGrovePredictor.ValidateAuthority(request.Detection, request.Authority, c.MorphicGroveScenario!);
         _morphic = morphic.Select(MorphicGroveContainsPlan.Compile).ToArray();
-        Authority = Beta111EventResultAuthority.From(request.Authority);
         _ordinaryNumeric = new(_ordinary, Authority);
         PlayerSlot = request.Authority.PlayerSlotIndex;
         bool requiresStaticCatalog = _ordinary.Any(c => c.Kind is EventResultConditionKind.TrashHeapGrabCard or
@@ -67,7 +73,7 @@ internal sealed class EventResultFamilyPlan
              Authority.ColorfulPoolAuthorityExact && Authority.OwnerCharacterKey.IsValid);
         NumericalSupported = numericalSupported;
         Buffers = [];
-        if (prepareGpu && numericalSupported)
+        if (prepareGpu && numericalSupported && !HasLocalOpportunities)
         {
             try
             {
@@ -94,6 +100,10 @@ internal sealed class EventResultFamilyPlan
     internal bool Matches(ulong root) => MatchesObserved(root, null);
     internal bool MatchesObserved(ulong root, Action<EventResultConditionKind, string>? onUnresolved)
     {
+        if (NumericalSupported)
+            foreach (var condition in _localOpportunities)
+                if (!EventOpportunitySemantics.Matches(root, PlayerSlot, Authority.RngSemantics, condition))
+                    return false;
         if (!HasMorphic) return NumericalSupported
             ? !EventResultNumericPredicate.RejectsEventResultForFamily(root, _ordinaryNumeric, PlayerSlot) : ReferenceObserved(root, onUnresolved);
         foreach (var plan in _morphic) if (plan is not null && !plan.Matches(root)) return false;
@@ -106,6 +116,11 @@ internal sealed class EventResultFamilyPlan
         Beta111EventResultProjection? p = null;
         foreach (var c in Conditions)
         {
+            if (EventOpportunitySemantics.IsEventLocalOpportunity(c.Kind))
+            {
+                if (!EventOpportunitySemantics.Matches(root, PlayerSlot, Authority.RngSemantics, c)) return false;
+                continue;
+            }
             if (EventResultTransformSemantics.IsTransform(c.Kind) && c.Kind != EventResultConditionKind.MorphicGroveGroupInitialBasicsContains)
             {
                 if (EventResultTransformSemantics.Evaluate(root, c) == MorphicGrovePredicateResult.NoMatch) return false;

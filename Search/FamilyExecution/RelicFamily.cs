@@ -46,7 +46,12 @@ internal static partial class RelicFamily
         string identity = model.SnapshotFingerprint;
         var cpu = PrepareCpu(preparation, plan, reference, authority, profile, identity, workers);
         if (!preferGpu) { prepared = new(plan, cpu); return true; }
+        bool shopFirstTail = plan.Pool.UsesChildShuffle && !plan.AlwaysReject &&
+            plan.ShopPredicates is [{ OrderMode: 0 } shop] && shop.TargetIds[0] != ushort.MaxValue &&
+            !plan.Predicates.Any(predicate => predicate.Lane == 3) &&
+            string.Equals(Environment.GetEnvironmentVariable("RT2_R_SHOP_FIRST_TAIL"), "on", StringComparison.OrdinalIgnoreCase);
         string ruleRevision = plan.Pool.UsesChildShuffle ? ".Modern113" : "";
+        if (shopFirstTail) ruleRevision += RelicFamilyGpuExecutor.ShopFirstTailRevision;
         var dense = RelicConditionPerformance.Project(plan, FamilyPhysicalImplementationRevisions.RelicDensePerformance + ruleRevision);
         var compact = RelicConditionPerformance.Project(plan, FamilyPhysicalImplementationRevisions.RelicCompactPerformance + ruleRevision);
         var body = new FilterBodyDescription(preparation, dense.PhysicalImplementationRevision, profile.ProfileId) {
@@ -64,12 +69,12 @@ internal static partial class RelicFamily
                     FamilyCanonicalMeasuredCost.TryDenseQuote(selected, geometry) ?? RelicPhysicalPricing.Quote(authority, plan, geometry, expected))
             },
             CreateExecution = (selected, _) => new GpuFilterExecution<RelicFamilyGpuExecutor>(selected,
-                device => RelicFamilyGpuExecutor.Create(device, identity, plan), (resource, input, token) => {
+                device => RelicFamilyGpuExecutor.Create(device, identity, plan, null, null, shopFirstTail), (resource, input, token) => {
                     var output = resource.Execute(input, token, out var metrics);
                     return new(output, metrics.CanonicalAbi1ReadyMs, metrics.CommandMs + metrics.SubmitMs + metrics.SyncMs,
                         metrics.ReadbackMs, metrics.ReadbackBytes);
                 }, resource => resource.Dispose(), reference.Reference, profile, resource => (resource.DeviceName, resource.SetupMs), 256),
-            BindPrivate = (device, input, output) => RelicFamilyGpuExecutor.Create(device, identity, plan, input, output).BindPrivateSerial()
+            BindPrivate = (device, input, output) => RelicFamilyGpuExecutor.Create(device, identity, plan, input, output, shopFirstTail).BindPrivateSerial()
         };
         prepared = new(plan, body);
         return true;

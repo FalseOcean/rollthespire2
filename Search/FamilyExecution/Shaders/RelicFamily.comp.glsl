@@ -187,6 +187,18 @@ void process_candidate_with_root(uint logical, uint64_t root) {
     /*__RT2_RFULL_SEQUENCE_BEGIN__*/
     rng_initialize(root + make_u64(0xda243e80u, 0x1a8a7b60u));
 
+#ifdef RT2_R_CAPSULE_SHOP_FIRST
+    // Earlier raw buckets each fork one child. Every entry in this Shop bucket
+    // can be sold, so the very first frozen tail is the requested shop draw.
+    uint shop_bucket = plan_meta.values[1u];
+    for (uint b = 0u; b < shop_bucket; ++b) next_u64();
+    uint64_t shop_seed = next_u64();
+    rng_initialize(shop_seed);
+    uvec4 shop = bucket_meta.values[shop_bucket];
+    uint picked = shop.y > 1u ? mc_next_int(shop.y) : 0u;
+    if (pool_ids.values[shop.x + picked] != shop_targets.values[0u]) return;
+    // No ordinary observations follow. Capsule evaluation starts from root.
+#else
     uint state[MAX_LOCAL_STATE];
     for (uint bucket_index = 0u; bucket_index < plan_meta.values[0u]; ++bucket_index) {
         uvec4 meta = bucket_meta.values[bucket_index];
@@ -210,9 +222,30 @@ void process_candidate_with_root(uint logical, uint64_t root) {
 #endif
 
         if (lane == 3u) {
+#ifdef RT2_R_SHOP_FIRST_TAIL
+            // A single ordered Shop row has a fixed first target. Its first
+            // shuffled tail still points directly into the captured raw pool.
+            uint first_selected = length > 1u ? next_int(length) : 0u;
+            uint first_entry = offset + first_selected;
+            bool first_eligible = (entry_flags.values[first_entry] & 1u) != 0u;
+            if (first_eligible) {
+                if (pool_ids.values[first_entry] != shop_targets.values[0u]) return;
+                if (target_depth == 1u) {
+                    s0=parent.x; s1=parent.y; s2=parent.z; s3=parent.w;
+                    continue;
+                }
+            }
+#endif
             for (uint index = 0u; index < length; ++index) state[index] = offset + index;
             uint remaining = length;
             uint observed = 0u;
+#ifdef RT2_R_SHOP_FIRST_TAIL
+            // Resume from the same first swap even when the raw tail is ineligible.
+            state[first_selected] = offset + length - 1u;
+            state[length - 1u] = first_entry;
+            remaining--;
+            observed = uint(first_eligible);
+#endif
             while (remaining > 1u && observed < target_depth) {
                 uint selected = next_int(remaining);
                 uint tail = remaining - 1u;
@@ -257,6 +290,7 @@ void process_candidate_with_root(uint logical, uint64_t root) {
         s0=parent.x; s1=parent.y; s2=parent.z; s3=parent.w;
 #endif
     }
+#endif
     /*__RT2_RFULL_SEQUENCE_END__*/
     /*__RT2_RFULL_FILTER__*/
     append_output(logical);

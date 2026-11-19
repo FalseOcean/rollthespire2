@@ -21,4 +21,7 @@ public sealed record NeowChoiceResult(
     PredictionPrecision ProductRelevantProjectionPrecision = PredictionPrecision.Unknown,
     FullEffectSemanticsCompleteness FullEffectSemanticsCompleteness = FullEffectSemanticsCompleteness.Unknown,
     ProductRelevantProjectionStatus ProductRelevantProjectionStatus = ProductRelevantProjectionStatus.Unknown,
-    OpeningRewardContinuationAnalysis? OpeningRewardContinuations = null);
+    OpeningRewardContinuationAnalysis? OpeningRewardContinuations = null)
+{
+    internal Transformation.OpeningTransformationContinuation? TransformationContinuation { get; init; }
+}

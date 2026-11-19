@@ -58,11 +58,17 @@ internal static partial class EventResultProbabilityEstimator
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(conditions);
         issue = string.Empty;
+        if (HasUnpricedOpportunityDependence(conditions))
+        {
+            issue = "Probability.EventResult.OpportunitySharedStreamJointUnavailable";
+            return null;
+        }
         // Deduplicate scalar facts before coupling Grab/Dive or Trial case/results.
         var normalized = new List<EventResultSearchCondition>();
         foreach (var group in conditions.GroupBy(c => c.Kind))
         {
-            if (group.Key is EventResultConditionKind.TrashHeapGrabCard or EventResultConditionKind.TrashHeapDiveRelic or EventResultConditionKind.TrialCase)
+            if (group.Key is EventResultConditionKind.TrashHeapGrabCard or EventResultConditionKind.TrashHeapDiveRelic or EventResultConditionKind.TrialCase or
+                EventResultConditionKind.DollRoomRandomRelic or EventResultConditionKind.MuseumOfTortureOfferedRelic or EventResultConditionKind.ThermaeNonupeipeDrinkRelic)
             {
                 var first = group.First();
                 if (group.Any(c => c.TargetKey != first.TargetKey || c.TrialCase != first.TrialCase))
@@ -171,6 +177,13 @@ internal static partial class EventResultProbabilityEstimator
         {
             return EstimateTransformJoint(group);
         }
+        else if (first.Kind == EventResultConditionKind.DollRoomTakeSomeTimeRelic)
+        {
+            var pool = EventOpportunitySemantics.RelicTargets(first.Kind);
+            var required = group.Select(c => c.TargetKey).Distinct().ToArray();
+            p = required.Length > 2 || required.Any(key => !pool.Contains(key)) ? 0 : 1;
+            for (int i = 0; p > 0 && i < required.Length; i++) p *= (double)(2 - i) / (pool.Count - i);
+        }
         else if (first.Kind is EventResultConditionKind.FakeMerchantOfferedFakeRelic or EventResultConditionKind.ColorfulPhilosophersOfferedColor)
         {
             var authority = Beta111EventResultAuthority.From(plan.Authority);
@@ -222,6 +235,8 @@ internal static partial class EventResultProbabilityEstimator
         ArgumentNullException.ThrowIfNull(plan);
         if (!condition.IsValid)
             return SearchSelectivityEstimate.Unpriced("Probability.EventResult.Invalid", "Event Result condition is invalid.");
+
+        if (EstimateOpportunity(plan, condition) is { } opportunity) return opportunity;
 
         double probability;
         string evidence;

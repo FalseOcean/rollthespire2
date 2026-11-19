@@ -20,6 +20,8 @@ internal sealed partial class EventSearchEditor
         MegaCrit.Sts2.Core.Unlocks.UnlockState? unlocks = null)
     {
         _draft.TransformCards = [];
+        _draft.CrystalEffects = null;
+        _draft.CrystalCharacter = character;
         _draft.CardPickerMetadata = new Dictionary<ModelKey, CardPickerCandidateMetadata>(ModelKeyComparer.Instance);
         _draft.MultiplayerOnlyCards = new HashSet<ModelKey>(ModelKeyComparer.Instance);
         var authority = partyAuthority;
@@ -32,6 +34,7 @@ internal sealed partial class EventSearchEditor
         var scenario = Beta111MorphicGroveAuthorityCapture.CaptureAuthoredBasics(authority, 2, unlocks);
         if (authority.EffectAuthority is { } effects)
         {
+            _draft.CrystalEffects = effects;
             _draft.CardPickerMetadata = CardPickerMetadataCapture.FromAuthority(effects, character);
             _draft.MultiplayerOnlyCards = (effects.CharacterRewardPool ?? []).Concat(effects.ColorlessRewardPool ?? [])
                 .Concat(effects.TransformPool ?? []).Concat((effects.OtherCharacterPools ?? []).SelectMany(pool => pool.Cards))

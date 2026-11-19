@@ -59,6 +59,22 @@ void consume_rng() {
     uint64_t temporary = s1 << 17u;
     s2 ^= s0; s3 ^= s1; s1 ^= s2; s0 ^= s3; s2 ^= temporary; s3 = rt2_rotate_left45_split32(s3);
 }
+#ifdef RT2_S_PAIR_BURN
+void consume_rng_pair() {
+    // Compose the xoshiro state transition twice before updating the words.
+    uint64_t b = s1, c = s2, d = s3;
+    uint64_t a_xor_d = s0 ^ d, b_xor_d = b ^ d, c_xor_a = c ^ s0;
+    uint64_t rotated = rt2_rotate_left45_split32(b_xor_d);
+    s0 = c ^ d ^ rotated;
+    s1 = a_xor_d ^ (b << 17u);
+    s2 = c ^ b_xor_d ^ (c_xor_a << 17u);
+    s3 = rt2_rotate_left45_split32(rotated ^ b ^ c_xor_a);
+}
+void consume_observation_gap(uint gap) {
+    for (uint pair = 0u; pair < (gap >> 1u); ++pair) consume_rng_pair();
+    if ((gap & 1u) != 0u) consume_rng();
+}
+#endif
 uint next_int(uint bound) {
     // Owner-approved Family Fast primitive: floor((NextUInt64 >> 11) * bound / 2^53).
     // Production Exact remains responsible for the game's binary64 round-to-nearest behavior.
@@ -87,12 +103,20 @@ bool evaluate_merchant_colorless(uint64_t root) {
 #endif
 #ifdef RT2_S_SINGLE_OBSERVATION_GAP
     const uint observation = 4u;
+#ifdef RT2_S_PAIR_BURN
+    consume_observation_gap(RT2_S_SINGLE_OBSERVATION_GAP);
+#else
     for (uint burn = 0u; burn < RT2_S_SINGLE_OBSERVATION_GAP; ++burn) consume_rng();
+#endif
 #else
     for (uint index = 0u; index < observation_count; ++index) {
         uint observation = 4u + index * 8u;
         uint gap = merchant_plan_buffer.values[observation];
+#ifdef RT2_S_PAIR_BURN
+        consume_observation_gap(gap);
+#else
         for (uint burn = 0u; burn < gap; ++burn) consume_rng();
+#endif
 #endif
         uint actual = next_int(merchant_plan_buffer.values[observation + 1u]);
 #ifdef RT2_S_OBSERVATION_CANONICAL

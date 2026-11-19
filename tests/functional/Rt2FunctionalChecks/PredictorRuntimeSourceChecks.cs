@@ -633,7 +633,7 @@ internal static class PredictorRuntimeSourceChecks
                 };
                 var native = RunState.CreateForTest([player], acts: pure.Working.Acts.Select(a => ModelDb.GetById<ActModel>(new ModelId(a.Key.Category, a.Key.Entry))).ToArray(), modifiers: modifiers, seed: context.Seed, ascensionLevel: context.Ascension);
                 stateProperty.SetValue(manager, native);
-                ascensionProperty.SetValue(manager, new AscensionManager(context.Ascension));
+                ascensionProperty.SetValue(manager, NativeGameFixture.StandardAscension(context.Ascension));
                 native.SharedRelicGrabBag.Populate(ModelDb.RelicPool<SharedRelicPool>().GetUnlockedRelics(UnlockState.all), native.Rng.UpFront);
                 player.PopulateRelicGrabBagIfNecessary(native.Rng.UpFront);
                 if (scenario.Name == "baseline")
@@ -693,7 +693,7 @@ internal static class PredictorRuntimeSourceChecks
                 var player = Player.CreateForNewRun<Ironclad>(UnlockState.all, 1);
                 var native = RunState.CreateForTest([player], seed: context.Seed, ascensionLevel: context.Ascension);
                 stateProperty.SetValue(manager, native);
-                ascensionProperty.SetValue(manager, new AscensionManager(context.Ascension));
+                ascensionProperty.SetValue(manager, NativeGameFixture.StandardAscension(context.Ascension));
                 var encounter = seedRun.Working.Acts[0].NormalEncounters[0];
                 var room = new MegaCrit.Sts2.Core.Rooms.CombatRoom(ModelDb.GetById<EncounterModel>(new ModelId(encounter.Category, encounter.Entry)).ToMutable(), native);
                 var generated = new RewardsSet(player).WithRewardsFromRoom(room);

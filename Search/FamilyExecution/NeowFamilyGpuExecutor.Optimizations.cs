@@ -7,18 +7,42 @@ internal sealed partial class NeowFamilyGpuExecutor
     private Rid _prefixHashTable;
     private readonly NeowInternalFilterOrderPlan _curseFirstPlan;
     private bool CurseFirstEnabled => _optimizations.CurseFirst && !_privateInput;
-    private int StagedDispatchCount => CurseFirstEnabled ? 4 : 3;
+    private readonly int[] _stageOrder;
+    private int StagedDispatchCount => _stageOrder.Length;
     internal string OptimizationRevisionFor(bool compact) => (_plan.DirectNestedMode == 103
         ? _optimizations.ForStagedSharedPhial(_plan, compact || _privateInput)
         : _optimizations.Applicable(_plan, compact || _privateInput)).Revision + _plan.ModernTransformGateRevision +
-        _plan.EntryIdentityRevision + NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision;
+        _plan.EntryIdentityRevision + NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision + _plan.CurseFirstDrawRevision +
+        (!compact && _directFirstDrawGate is not null ? NeowFamilyGpuPlan.DirectFirstDrawRevision : "");
+
+    internal static string TerminalCurseGateShader(NeowFamilyGpuPlan plan, NeowStaticDrawGateCompiler.Gate gate) =>
+        FormattableString.Invariant($$"""
+            bool direct_first_draw_matches(uint64_t root) {
+                // The first xoshiro output reads only the second SplitMix word.
+                uint64_t state = root + make_u64(0x{{plan.Meta[31]:x8}}u,0x{{plan.Meta[32]:x8}}u) + make_u64(0x7f4a7c15u,0x9e3779b9u);
+                uint64_t s1 = splitmix_next(state);
+                uint64_t mantissa = (rotl64(s1 * uint64_t(5u), 7u) * uint64_t(9u)) >> 11u;
+                return {{gate.GlslExpression("mantissa")}};
+            }
+            """);
+
+    private static string ApplyTerminalCurseGate(string source, NeowFamilyGpuPlan plan, NeowStaticDrawGateCompiler.Gate gate)
+    {
+        const string flag = "#define N_DIRECT_FIRST_DRAW 0";
+        const string helper = "/*__RT2_N_DIRECT_FIRST_DRAW__*/";
+        if (!source.Contains(flag, StringComparison.Ordinal) || !source.Contains(helper, StringComparison.Ordinal))
+            throw new InvalidOperationException("N.DirectFirstDrawShaderSeam");
+        return source.Replace(flag, "#define N_DIRECT_FIRST_DRAW 1", StringComparison.Ordinal)
+            .Replace(helper, TerminalCurseGateShader(plan, gate), StringComparison.Ordinal);
+    }
 
     internal static bool SupportsDrawIntervals(NeowFamilyGpuPlan plan, bool compact)
     {
         if (plan.IsMultiplayer) return false;
         if (!compact && plan.UsesStagedDense && plan.Meta[39] is > 0 and <= 10 &&
             NeowStaticDrawGateCompiler.TryCompileRanks((int)plan.Meta[39],
-                i => (plan.Meta[69] & (1u << i)) == 0 && plan.Meta[71 + i] != uint.MaxValue, 2, out _)) return true;
+                i => (plan.Meta[69] & (1u << i)) == 0 && plan.Meta[71 + i] != uint.MaxValue, 2, out _,
+                binary64: plan.UsesChildShuffle)) return true;
         if (plan.ModernTransformGate is not null)
             return NeowModernTransformGate.CompileIntervals(plan) is not null;
         return plan.UsesLeafyPreGate && plan.Conditions[20] == 2 &&
@@ -55,8 +79,8 @@ internal sealed partial class NeowFamilyGpuExecutor
             .Replace(helper, helperSource, StringComparison.Ordinal);
     }
 
-    // Compile exactly the existing GPU floor(mantissa * bound / 2^53) map.
-    // This does not replace CPU/game binary64 behavior or continuation state.
+    // Modern solo curse draws use game binary64. Leafy and historical curse
+    // draws retain the integer map consumed by their corresponding replay.
     internal static string ApplyDrawIntervals(string source, int stage, NeowFamilyGpuPlan plan)
     {
         if (plan.IsMultiplayer || stage is not (0 or 3)) return source;
@@ -64,7 +88,8 @@ internal sealed partial class NeowFamilyGpuExecutor
         var helpers = new System.Text.StringBuilder();
         if (stage == 0 && plan.Meta[39] is > 0 and <= 10 &&
             NeowStaticDrawGateCompiler.TryCompileRanks((int)plan.Meta[39],
-                i => (plan.Meta[69] & (1u << i)) == 0 && plan.Meta[71 + i] != uint.MaxValue, 2, out var curse))
+                i => (plan.Meta[69] & (1u << i)) == 0 && plan.Meta[71 + i] != uint.MaxValue, 2, out var curse,
+                binary64: plan.UsesChildShuffle))
         {
             helpers.Append("bool rt2_interval_curse(uint64_t root) {\n")
                 .Append(" uint64_t s=root+plan_u64(31u)+make_u64(0x7f4a7c15u,0x9e3779b9u);\n")

@@ -383,7 +383,8 @@ internal static class NeowIdentityCpuChecks
             var c = p.Authority.EffectCatalog;
             string expectedRevision = p.Selected == Beta110FastRelicCatalog.LostCoffer
                 ? "N.Neow.Cpu.LostPotionLocalFirst.20261015.v1" : "N.Neow.Cpu.DirectMinimalObservation.20261015.v1";
-            if (fast.Revision != expectedRevision) throw new InvalidDataException("N Lost/K revision scope changed");
+            if (fast.Revision != expectedRevision + ".LocalPoolAuthority.20261114.v1")
+                throw new InvalidDataException("N Lost/K revision scope changed: " + fast.Revision);
             checks++;
             foreach (ulong edge in new[] { ulong.MaxValue, ulong.MaxValue - 1, 1UL << 63 })
             {
@@ -425,12 +426,20 @@ internal static class NeowIdentityCpuChecks
                 p with { EnabledDomains = p.EnabledDomains | Beta110FastDomain.FinalCurse },
                 p with { Authority = p.Authority with { PlayersCount = 2 } },
                 p with { Authority = p.Authority with { IdentityAuthorityExact = false } },
-                p with { Authority = p.Authority with { EligibleCurseRelicIds = [] } },
-                p with { Authority = p.Authority with { AllCharacterCardPoolsUnlocked = false } } })
+                p with { Authority = p.Authority with { EligibleCurseRelicIds = [] } } })
             {
                 if (NeowSingleplayerLocalCpuPlan.TryCompile(excluded) is not null) throw new InvalidDataException("N minimal observation widened route scope");
                 checks++;
             }
+            var locked = p with { Authority = p.Authority with { AllCharacterCardPoolsUnlocked = false } };
+            var lockedFast = NeowSingleplayerLocalCpuPlan.TryCompile(locked);
+            if ((lockedFast is not null) != (p.Selected == Beta110FastRelicCatalog.LostCoffer))
+                throw new InvalidDataException("Only Kaleidoscope relies on other characters' reward pools");
+            if (lockedFast is not null)
+                for (ulong seed = 0; seed < 4096; seed++)
+                    if (lockedFast.Matches(seed) != NeowSingleplayerReplay.Matches(seed, locked))
+                        throw new InvalidDataException("Lost Coffer local-pool parity with locked characters");
+            checks++;
             var empty = c.CharacterRewardPool with { Common = [], Uncommon = [], Rare = [] };
             var brokenCatalog = p.Selected == Beta110FastRelicCatalog.LostCoffer
                 ? c with { CharacterRewardPool = empty }

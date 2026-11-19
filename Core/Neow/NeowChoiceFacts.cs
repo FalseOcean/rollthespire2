@@ -58,6 +58,9 @@ internal static class NeowChoiceFacts
             effectProjection.ProductRelevantProjectionPrecision,
             effectProjection.FullEffectSemanticsCompleteness,
             effectProjection.ProductRelevantProjectionStatus,
-            effectProjection.OpeningRewardContinuations);
+            effectProjection.OpeningRewardContinuations)
+        {
+            TransformationContinuation = effectProjection.TransformationContinuation
+        };
     }
 }

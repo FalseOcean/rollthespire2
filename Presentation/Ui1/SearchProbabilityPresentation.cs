@@ -73,7 +73,8 @@ internal static class SearchProbabilityPresentationBuilder
         var rows = new List<SearchProbabilityQuickViewRow>(6);
 
         var resolved = CompiledSearchEvaluationProjector.Project(compiled).Evaluation;
-        bool sharedOpeningIdentity = TransformationAggregateCondition.SharedNeowIdentityOnly(resolved);
+        bool sharedOpeningIdentity = resolved.TransformationAggregate is { UsesExtendedRequirements: false } &&
+            TransformationAggregateCondition.SharedNeowIdentityOnly(resolved);
         TransformationAggregateProbability? aggregateAttribution = null;
         if(sharedOpeningIdentity) {
             var model = new SearchModel(compiled, resolved,

@@ -30,4 +30,37 @@ internal static class PredictorCombatRelicUpgrade
         return (state.WithCard(PredictorCardLevelEffects.Reconcile(context,
             selected with { UpgradeLevel = selected.UpgradeLevel + 1 })), [selectedId]);
     }
+
+    internal static (PredictorState State, PredictorCard Card) PaelsToothReturn(
+        PredictorContext context, PredictorState state, PredictorRelic relic)
+    {
+        (int selected, state) = state.Draw(PredictorStream.Rewards, 0, relic.StoredCards.Length);
+        var stored = relic.StoredCards[selected];
+        // SerializableCard equality drives native List.Remove. The card drawn
+        // is returned, but an earlier equal copy can be the one removed.
+        int removed = relic.StoredCards.FindIndex(card => card.Key == stored.Key &&
+            card.UpgradeLevel == stored.UpgradeLevel && card.Enchantment == stored.Enchantment &&
+            (!card.Enchantment.HasValue || card.EnchantmentAmount == stored.EnchantmentAmount));
+        long returnedId = state.NextInstanceId;
+        state = PredictorObtainSources.AddCard(context, state, UpgradeStoredCard(stored));
+        int index = state.Relics.FindIndex(candidate => candidate.Id == relic.Id);
+        state = state with { Relics = state.Relics.SetItem(index, state.Relics[index] with
+        {
+            StoredCards = relic.StoredCards.RemoveAt(removed)
+        }) };
+        return (state, state.Card(returnedId));
+    }
+
+    internal static PredictorCard UpgradeStoredCard(PredictorCard card) => card.UpgradeLevel < card.MaxUpgradeLevel
+        ? card with { UpgradeLevel = card.UpgradeLevel + 1 } : card;
+
+    internal static PredictorState ToyBoxCombatEnd(PredictorState state, PredictorRelic relic)
+    {
+        int count = relic.ToyBoxCombatsSeen + 1;
+        int index = state.Relics.FindIndex(candidate => candidate.Id == relic.Id);
+        state = state with { Relics = state.Relics.SetItem(index, relic with { ToyBoxCombatsSeen = count }) };
+        if (count % 3 != 0) return state;
+        int wax = state.Relics.FindIndex(candidate => candidate.IsWax && !candidate.Melted);
+        return wax < 0 ? state : state with { Relics = state.Relics.SetItem(wax, state.Relics[wax] with { Melted = true }) };
+    }
 }

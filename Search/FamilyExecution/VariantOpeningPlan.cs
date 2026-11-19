@@ -24,6 +24,14 @@ internal sealed class VariantOpeningPlan
     // number of primitive draws; this does not impose a global Family order.
     internal bool UnknownFirst => UnknownPrefixCount > 0 && CoversVariants && UnknownPrefixCount < SelectionDraws;
 
+    internal FamilyFirstDraw? CompileFirstDraw()
+    {
+        if (UnknownPrefixCount != 0 || VariantUnavailableReason.Length != 0 ||
+            Groups is not [{ DeterministicFirst: false, OverrideAllowed: null } group] ||
+            group.Allowed is not ([true, false] or [false, true])) return null;
+        return FamilyFirstDraw.Compile("ActSelection", SelectionHash, group.Allowed.Length, rank => group.Allowed[rank]);
+    }
+
     private VariantOpeningPlan(VariantOpeningPreparation preparation, Group[] groups, int unknown, bool juzu, string unavailable, bool monster)
     {
         Preparation = preparation; Groups = groups; UnknownPrefixCount = unknown;

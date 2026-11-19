@@ -2,6 +2,7 @@ using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Effects.Coverage;
 using RolltheSpire2.Core.Rewards;
+using RolltheSpire2.Core.Transformation;
 
 namespace RolltheSpire2.Core.Effects;
 
@@ -23,6 +24,8 @@ public sealed record NeowEffectProjection(
     ProductRelevantProjectionStatus ProductRelevantProjectionStatus = ProductRelevantProjectionStatus.Unknown,
     OpeningRewardContinuationAnalysis? OpeningRewardContinuations = null)
 {
+    internal OpeningTransformationContinuation? TransformationContinuation { get; init; }
+
     public static NeowEffectProjection Exact(
         ModelKey relicKey,
         IReadOnlyList<PredictedEffectGroup> groups,

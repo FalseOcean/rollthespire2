@@ -434,16 +434,17 @@ internal static class NeowOperationPreviewChecks
         };
         var before = snapshot.State;
         var preview = PotionOperationPreview.Build(snapshot, brew, 0);
-        Check(preview.Faults.IsEmpty && Rows(preview).Single().Models.Length == 3 && Rows(preview).Single().Label == "EntropicOtherSlotsEmpty" &&
-            preview.Notices.IsEmpty &&
-            snapshot.State == before && preview.Branches.Single().FullyEnumerated,
-            "Entropic hypothetical did not clear all other detached slots or lost its premise");
+        var primaryRows = preview.Branches.Single().Sections[0].Rows;
+        Check(preview.Faults.IsEmpty && primaryRows.Length == 2 && primaryRows[0].Models.Length == 2 &&
+            primaryRows[1].Models.Length == 1 && primaryRows[1].Label == "UiText:operation.potion.entropicExtraSlots" &&
+            preview.Notices.IsEmpty && snapshot.State == before && preview.Branches.Single().FullyEnumerated,
+            "Entropic preview must distinguish immediately obtained potions from extra slot results");
         Check(snapshot.Scene is PredictorOperationAncientScene &&
             PredictorOperation.Preview(snapshot, new UseOutOfCombatPotion(0, id)).Disposition != PredictorInputResult.Accepted,
             "Brew hypothetical fixture did not independently cover a screen that rejects actual use");
         var sozu = snapshot with { State = snapshot.State with { Relics = [new(id + 2, Relic("SOZU"), 0)], NextInstanceId = id + 3 } };
         var blocked = PotionOperationPreview.Build(sozu, brew, 0);
-        Check(Rows(blocked).Single().Models.Length == 1 && Rows(blocked).Single().Label == "EntropicOtherSlotsEmpty:1:0" &&
+        Check(Rows(blocked).Single().Models.Length == 1 && Rows(blocked).Single().Label == "EntropicBlocked" &&
             blocked.Notices.IsEmpty,
             "Entropic Sozu generation was mistaken for successful acquisition");
 
@@ -476,7 +477,8 @@ internal static class NeowOperationPreviewChecks
         PredictorOperationPotionObservation Observe(ImmutableArray<PredictorPotion?> inventory, int? held = 0,
             PredictorPotion? offered = null, bool inCombat = true, bool hasSozu = false) =>
             new(context, new(offered ?? inventory[held!.Value]!, held, offered == null ? null : 90001), inventory,
-                snapshot.State.Streams.Single(s => s.Stream == PredictorStream.CombatPotionGeneration), inCombat, hasSozu, "detached-potion-fixture");
+                snapshot.State.Streams.Single(s => s.Stream == context.NonCombatStream(PredictorStream.CombatPotionGeneration)),
+                inCombat, hasSozu, "detached-potion-fixture");
         static IEnumerable<OperationPreviewCardGroup> Groups(OperationPreview result) =>
             result.Branches.SelectMany(b => b.Sections).SelectMany(s => s.CardGroups);
         var attack = new ModelKey("POTION", "ATTACK_POTION");
@@ -606,25 +608,57 @@ internal static class NeowOperationPreviewChecks
 
         var actualBrew = PotionOperationPreview.Build(Observe(snapshot.State.PotionSlots));
         var actualExpected = PredictorSettlementEffects.UseEntropicBrew(snapshot.Context, snapshot.State, 0);
-        Check(Rows(actualBrew).Single().Models.SequenceEqual(actualExpected.Generated.Select(p => p.Key)) &&
-            Rows(actualBrew).Single().Label == "EntropicCurrentSlots:2:2",
-            "live Entropic preview cleared actual occupied slots or diverged from settlement");
+        Check(actualBrew.Branches.Single().Sections[0].Rows[0].Models.SequenceEqual(actualExpected.Generated.Select(p => p.Key)),
+            "live Entropic immediate prefix differs from detached settlement");
         var twoBrews = Observe([new(id, brew), new(id + 1, brew), null]);
         var brewSequence = PotionOperationPreview.Build(twoBrews);
         var firstBrew = PredictorSettlementEffects.UseEntropicBrew(context, snapshot.State with { PotionSlots = twoBrews.Inventory }, 0);
         var secondBrew = PredictorSettlementEffects.UseEntropicBrew(context, firstBrew.State, 1);
-        var brewRows = Rows(brewSequence).ToArray();
-        Check(brewRows.Length == 2 && brewRows[0].Label == "EntropicUseStep:1:2:2" && brewRows[1].Label == "EntropicUseStep:2:1:1" &&
-            brewRows[0].Models.SequenceEqual(firstBrew.Generated.Select(p => p.Key)) &&
-            brewRows[1].Models.SequenceEqual(secondBrew.Generated.Select(p => p.Key)),
-            "Entropic sequence lost occupancy/RNG continuation or included newly generated brews");
+        Check(brewSequence.Branches.Single().Sections.Single(s => s.Label == "EntropicHeldSecond").Rows.Single()
+                .Models.SequenceEqual(secondBrew.Generated.Select(p => p.Key)),
+            "other originally held Brew must follow the immediate fill, even when additional slot results are shown");
         var blockedSequence = PotionOperationPreview.Build(twoBrews with { HasSozu = true });
-        Check(Rows(blockedSequence).Select(row => row.Label).SequenceEqual(new[] { "EntropicUseStep:1:1:0", "EntropicUseStep:2:1:0" }),
-            "Sozu preview claimed generated potions were obtained");
+        Check(Rows(blockedSequence).Count() == 2 && Rows(blockedSequence).All(row => row.Models.Length == 1 && row.Label == "EntropicBlocked"),
+            "Sozu must stop each held Brew at its first failed procurement");
         var onlyBrewPool = twoBrews with { Context = context with { PotionPool =
             [new(brew, PredictorPotionRarity.Common), new(brew, PredictorPotionRarity.Uncommon), new(brew, PredictorPotionRarity.Rare)] } };
-        Check(Rows(PotionOperationPreview.Build(onlyBrewPool)).Count() == 2,
-            "newly generated Entropic bottles extended the actual original-bottle sequence");
+        var layers = PotionOperationPreview.Build(onlyBrewPool).Branches.Single().Sections.Where(s => s.Label != "EntropicHeldSecond").ToArray();
+        Check(layers.Length == 3 && layers[1].Label == "EntropicChild:2" && layers[2].Label == "EntropicChild:1" &&
+            layers.All(s => s.Rows.Sum(row => row.Models.Length) == 3) && layers[1].Rows[0].Models.Length == 1,
+            "nested Brew must use the actual parent fill, reset free slots after use and stop after three panels");
+        var actualOnly = PotionOperationPreview.Build(onlyBrewPool, demand: new(true, false, false));
+        Check(Rows(actualOnly).Single().Models.Length == 2, "disabled inventory projection changed immediate Brew results");
+        Check(PotionOperationPreview.Build(onlyBrewPool with { HasSozu = true }).Branches.Single().Sections.All(
+            section => section.Label?.StartsWith("EntropicChild:", StringComparison.Ordinal) != true),
+            "a blocked generated Brew cannot start a nested fill");
+
+        // Seed 52 rolls common, rare (Brew), common, uncommon. In a full belt the
+        // second result requires freeing exactly one extra slot. Verify the child
+        // against settlement of that concrete inventory, including its RNG cursor.
+        var fullInventory = Observe([new(id, brew), new(id + 1, blood), new(id + 2, blood)]);
+        var potionStream = context.NonCombatStream(PredictorStream.CombatPotionGeneration);
+        var startCursor = PredictorStreamState.Capture(potionStream, new RolltheSpire2.Core.Rng.Xoshiro256StarStar(52));
+        fullInventory = fullInventory with { PotionGenerationRng = startCursor };
+        string beforeBrew = JsonSerializer.Serialize(fullInventory);
+        var conditionalLayers = PotionOperationPreview.Build(fullInventory).Branches.Single().Sections;
+        var cleared = snapshot.State with
+        {
+            PotionSlots = fullInventory.Inventory.SetItem(1, null), NextInstanceId = id + 3,
+            Streams = snapshot.State.Streams.Select(state => state.Stream == potionStream ? startCursor : state).ToImmutableArray()
+        };
+        var parent = PredictorSettlementEffects.UseEntropicBrew(context, cleared, 0);
+        var child = PredictorSettlementEffects.UseEntropicBrew(context, parent.State with
+            { PotionSlots = parent.State.PotionSlots.SetItem(0, null).SetItem(2, null) }, 1);
+        Check(parent.Generated.Length == 2 && parent.Generated[1].Key == brew &&
+            conditionalLayers[0].Rows[0].Models.SequenceEqual([blood]) && conditionalLayers[0].Rows[1].Models[0] == brew &&
+            conditionalLayers[1].Label == "EntropicChild:2" && conditionalLayers[1].Rows[0].Models.Length == 1 &&
+            conditionalLayers[1].Rows.SelectMany(row => row.Models).SequenceEqual(child.Generated.Select(p => p.Key)) &&
+            JsonSerializer.Serialize(fullInventory) == beforeBrew, "nested Brew mixed a speculative slot fill with another RNG continuation");
+        var offeredBrew = PotionOperationPreview.Build(Observe([new(id, blood), new(id + 1, blood), new(id + 2, blood)],
+            null, new(id + 3, brew)));
+        var offeredRows = offeredBrew.Branches.Single().Sections[0].Rows;
+        Check(offeredBrew.Notices.Contains("PotionAcquisitionRequiresSlot") && offeredRows[0].Models.Length == 1 &&
+            offeredRows[1].Models.Length == 2, "full-belt offered Brew lost its replacement requirement or conditional results");
         using var canceledPotion = new CancellationTokenSource();
         canceledPotion.Cancel();
         try { PotionOperationPreview.Build(observation, canceledPotion.Token); throw new InvalidOperationException("canceled potion sequence completed"); }

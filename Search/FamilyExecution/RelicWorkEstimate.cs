@@ -7,6 +7,42 @@ namespace RolltheSpire2.Search.FamilyExecution;
 // are retained 20260913 shuffle/tracked/Shop references, not new body timings.
 internal static class RelicWorkEstimate
 {
+    private const double CompactTrackedBase = 1.55;
+    private const double CompactShuffleDraw = .00085;
+    private const double CompactTrackedUpdate = .01175;
+    private const double ShopDraw = .05;
+
+    internal static FamilyPhysicalQuote? ModernShopFirstCapsule(RelicFamilyPlan sequence, ModernCapsuleGpuPlan gpu,
+        FamilyPhysicalQuoteRequest geometry)
+    {
+        if (!geometry.PrivateInput || !geometry.CompactInput || gpu.NumericalVariant != GpuNumericalVariant.NativeFloat64 ||
+            !gpu.UsesShopFirstDraw || !gpu.UsesTrackedRanks || gpu.HasBones || gpu.NeedsPositiveOffer) return null;
+        var pool = sequence.Pool;
+        int bucket = sequence.LastRequiredBucket;
+        int shopLength = pool.BucketLengths[bucket];
+        ushort target = sequence.ShopPredicates[0].TargetIds[0];
+        int targetMass = pool.DenseRelicIds.Skip(pool.BucketOffsets[bucket]).Take(shopLength).Count(id => id == target);
+        double shopReach = 1 - Math.Pow(1 - (double)targetMass / shopLength, 32);
+        var metadata = gpu.Metadata;
+        double shuffle = 0, tracked = 0;
+        for (int lane = 0; lane < 3; lane++)
+        {
+            // The rarity gate may avoid these child writes. Keep the upper work
+            // envelope of reachable lanes once the shop predicate passes.
+            if (metadata[39 + lane * 3] == 0) continue;
+            double draws = Math.Max(0d, metadata[38 + lane * 3] - 1d);
+            shuffle += draws;
+            tracked += draws * (1 + metadata[48 + lane * 3]);
+        }
+        double ns = CompactTrackedBase + CompactShuffleDraw * (bucket + 1) + (shopLength > 1 ? ShopDraw : 0) +
+            shopReach * (NeowWorkEstimate.DirectGpuDrawNanoseconds + ShopDraw * metadata[7] +
+                CompactShuffleDraw * (metadata[6] + 1 + shuffle) + CompactTrackedUpdate * tracked);
+        return FamilyCoarsePricing.Gpu(RelicFamily.Id, "R.ModernShopFirstTrackedCapsule", ns,
+            RelicFamilyGpuExecutor.Capacity, geometry,
+            FormattableString.Invariant($"CompactTrackedBase={CompactTrackedBase};ShopParentForks={bucket + 1};ShopPool={shopLength};ShopActive32={shopReach:G9};CapsuleRarityDraws={metadata[7]};ReachableLaneShuffleDraws={shuffle:G9};TrackedUpdates={tracked:G9};") +
+            "SharedRootDecodeWithinR;ExistingTrackedAndShopWorkReferences;NoCapsuleRarityReachDiscount;NoNameOrPoolFingerprint;NoNewMeasurement");
+    }
+
     internal static FamilyPhysicalQuote? Ordinary(RelicFamilyPlan plan,
         FamilyPhysicalQuoteRequest geometry, FamilyExpectedFilteringCostProjection? expected,
         bool cpu, int workers = 1, bool referenceMatcher = false)
@@ -41,8 +77,8 @@ internal static class RelicWorkEstimate
             tracked = Math.Min(tracked, expected.Segments.Where(s => s.Operation == FamilyAnalyticalOperation.TrackedPositionUpdateAttempt).Sum(s => s.ExpectedContribution));
         }
         double ns = cpu ? 243 + .93 * shuffle + 1.31 * tracked + 15 * shopDraws + 2 * probes :
-            (geometry.CompactInput ? 1.55 + .00085 * shuffle + .01175 * tracked : .98 + .00254 * shuffle + .0101 * tracked) +
-            .05 * shopDraws + .02 * probes;
+            (geometry.CompactInput ? CompactTrackedBase + CompactShuffleDraw * shuffle + CompactTrackedUpdate * tracked :
+                .98 + .00254 * shuffle + .0101 * tracked) + ShopDraw * shopDraws + .02 * probes;
         if (plan.AlwaysReject) ns = cpu ? 22 : .12;
         if (referenceMatcher) ns *= 2;
         string workClass = shopDepth == 0 ? "R.Tracked" : plan.Predicates.Any(p => p.Lane < 3) ? "R.TrackedShop" : "R.ShopPrefix";

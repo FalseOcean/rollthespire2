@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using RolltheSpire2.Core.Identity;
+using RolltheSpire2.Core.Rng;
 
 namespace RolltheSpire2.Core.PredictorRuntime;
 
@@ -178,56 +179,88 @@ internal static partial class PotionOperationForecast
         ImmutableArray<string> notices, CancellationToken token, OperationPotionForecastScope demand)
     {
         var potion = observation.Source.Potion.Key;
-        var results = new SortedDictionary<int, List<(ImmutableArray<ModelKey> Models, int Obtained)>>();
+        var sections = ImmutableArray.CreateBuilder<OperationOutcomeSource>();
         var faults = ImmutableArray.CreateBuilder<OperationForecastFault>();
-        int minimumBrews = inventories.IsEmpty ? 0 : inventories.Min(inventory => inventory.Slots.Count(p => p?.Key == potion));
-        foreach (var inventory in inventories.Take(demand.IncludeOrder ? inventories.Length : 1))
+        if (inventories.IsEmpty) return EmptyPotion(potion) with { Notices = notices };
+
+        // Each legal reward replacement leaves the same number of open slots.
+        // Only the availability of another original Brew can differ.
+        int capacity = observation.Inventory.Length;
+        int immediate = inventories[0].Slots.Count(p => p == null) + 1;
+        var cursor = observation.PotionGenerationRng.Restore();
+        var pool = observation.Context.PotionPool;
+        Xoshiro256StarStar? otherHeldCursor = null;
+        int parentCount = 0;
+        for (int depth = 1; depth <= 3; depth++)
         {
-            token.ThrowIfCancellationRequested();
+            int attempts = observation.HasSozu ? 1 : demand.IncludeInventory ? capacity : immediate;
+            var generated = ImmutableArray.CreateBuilder<ModelKey>(attempts);
+            Xoshiro256StarStar? childCursor = null;
+            int consumed = 0;
+            bool generatedBrew = false;
             try
             {
-                var pool = observation.Context.PotionPool;
-                if (pool.IsDefaultOrEmpty) throw new InvalidOperationException("PredictorPotionPoolNotInitialized");
-                var rng = observation.PotionGenerationRng.Restore();
-                int empty = inventory.Slots.Count(p => p == null);
-                int brews = demand.IncludeOrder ? Math.Min(2, inventory.Slots.Count(p => p?.Key == potion)) : 1;
-                for (int ordinal = 1; ordinal <= brews; ordinal++)
+                for (int i = 1; i <= attempts; i++)
                 {
                     token.ThrowIfCancellationRequested();
-                    // These identical recipes make this the hovered bottle's
-                    // result when it is used at this ordinal: the preceding
-                    // uses belong to other original bottles, not to repeated
-                    // use of the selected instance.
-                    // Only bottles in the original inventory participate.
-                    // Newly generated brews never extend this continuation.
-                    empty++;
-                    int attempts = observation.HasSozu ? 1 : empty;
-                    var generated = ImmutableArray.CreateBuilder<ModelKey>();
-                    for (int i = 0; i < attempts; i++)
+                    var model = PredictorSettlementEffects.GenerateEntropicPotion(pool, cursor);
+                    generated.Add(model);
+                    generatedBrew |= model == potion;
+                    if (depth == 1 && i == (observation.HasSozu ? 1 : immediate)) otherHeldCursor = cursor.Clone();
+                    // Free only enough additional slots to obtain the first generated Brew.
+                    // Its child starts after the *entire* feasible parent fill, even when
+                    // that Brew is rolled before the last already-empty slot.
+                    if (i >= immediate && generatedBrew && childCursor == null && !observation.HasSozu)
                     {
-                        token.ThrowIfCancellationRequested();
-                        generated.Add(PredictorSettlementEffects.GenerateEntropicPotion(pool, rng));
+                        childCursor = cursor.Clone();
+                        consumed = i;
                     }
-                    var models = generated.ToImmutable();
-                    int obtained = observation.HasSozu ? 0 : models.Length;
-                    empty -= obtained;
-                    if (!results.TryGetValue(ordinal, out var alternatives)) results[ordinal] = alternatives = [];
-                    if (!alternatives.Any(result => result.Obtained == obtained && result.Models.SequenceEqual(models)))
-                        alternatives.Add((models, obtained));
                 }
             }
             catch (Exception error) when (error is not OperationCanceledException)
-            { faults.Add(new("EntropicCurrentSlots", [], error)); }
+            { faults.Add(new($"EntropicFill:{depth}", [new UseOutOfCombatPotion(inventories[0].SourceSlot, observation.Source.Potion.Id)], error)); }
+
+            var rows = ImmutableArray.CreateBuilder<OperationOutcome>();
+            if (generated.Count > 0)
+            {
+                var models = generated.ToImmutable();
+                int prefix = Math.Min(immediate, models.Length);
+                rows.Add(new(OperationOutcomeAction.GeneratePotion, models[..prefix], [], false)
+                    { Kind = observation.HasSozu ? "EntropicBlocked" : null });
+                if (models.Length > prefix)
+                    rows.Add(new(OperationOutcomeAction.GeneratePotion, models[prefix..], [], false)
+                        { Kind = "UiText:operation.potion.entropicExtraSlots" });
+                sections.Add(new(potion, rows.ToImmutable(), [])
+                {
+                    Kind = depth == 1 ? null : $"EntropicChild:{parentCount}",
+                    FeatureId = demand.IncludeInventory ? "extra:potion-inventory" :
+                        demand.IncludeBasicResult ? PotionFeature(potion) : "extra:potion-order"
+                });
+            }
+            if (!demand.IncludeInventory || childCursor == null) break;
+            cursor = childCursor;
+            parentCount = consumed;
+            // The parent filled every freed slot. Using its generated Brew opens one.
+            immediate = 1;
         }
-        bool sequence = results.Count > 1;
-        var rows = results.SelectMany(pair => pair.Value.Select(result =>
-            new OperationOutcome(OperationOutcomeAction.GeneratePotion, result.Models, [], pair.Value.Count > 1 || pair.Key > minimumBrews)
-            { Kind = sequence ? $"EntropicUseStep:{pair.Key}:{result.Models.Length}:{result.Obtained}" :
-                $"EntropicCurrentSlots:{result.Models.Length}:{result.Obtained}" })).ToImmutableArray();
-        var featureId = sequence || !demand.IncludeBasicResult && demand.IncludeOrder ? "extra:potion-order" :
-            demand.IncludeInventory ? "extra:potion-inventory" : PotionFeature(potion);
+
+        if (demand.IncludeOrder && otherHeldCursor != null &&
+            inventories.Any(inventory => inventory.Slots.Count(p => p?.Key == potion) > 1))
+        {
+            try
+            {
+                token.ThrowIfCancellationRequested();
+                var other = PredictorSettlementEffects.GenerateEntropicPotion(pool, otherHeldCursor);
+                bool conditional = inventories.Any(inventory => inventory.Slots.Count(p => p?.Key == potion) < 2);
+                var row = new OperationOutcome(OperationOutcomeAction.GeneratePotion, [other], [], conditional)
+                    { Kind = observation.HasSozu ? "EntropicBlocked" : null };
+                sections.Add(new(potion, [row], []) { Kind = "EntropicHeldSecond", FeatureId = "extra:potion-order" });
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            { faults.Add(new("EntropicHeldSecond", [], error)); }
+        }
         return new(potion, [], [], false,
-            [new([], rows.IsEmpty ? [] : [new(potion, rows, []) { FeatureId = featureId }], [], inventories.Length, faults.Count == 0)], [])
+            [new([], sections.ToImmutable(), [], inventories.Length, faults.Count == 0)], [])
         { Notices = notices, Faults = faults.ToImmutable() };
     }
 
@@ -243,7 +276,7 @@ internal static partial class PotionOperationForecast
             var model = PredictorSettlementEffects.GenerateEntropicPotion(observation.Context.PotionPool,
                 observation.PotionGenerationRng.Restore());
             var row = new OperationOutcome(OperationOutcomeAction.GeneratePotion, [model], [], false)
-            { Kind = "EntropicCurrentSlots:1:" + (observation.HasSozu ? 0 : 1) };
+            { Kind = observation.HasSozu ? "EntropicBlocked" : null };
             var section = new OperationOutcomeSource(potion, [row], []) { FeatureId = PotionFeature(potion) };
             return new(potion, [], [], false, [new([], [section], [], 1, true)], [])
             { Activity = OperationForecastActivity.PotionUse, Notices = notices };

@@ -53,9 +53,34 @@ public sealed record DeveloperNotesChapter(
     string? Summary,
     IReadOnlyList<DeveloperNotesBlock> Blocks,
     string AcknowledgementVersion = "",
-    bool RequiresAcknowledgement = false);
+    bool RequiresAcknowledgement = false)
+{
+    internal bool NeedsAcknowledgement(string? lastRead) =>
+        RequiresAcknowledgement && !HasReadVersion(lastRead, AcknowledgementVersion);
+
+    internal int AcknowledgementBlockIndex(string? lastRead)
+    {
+        if (Id == DeveloperNotesChapterIds.Release && lastRead is not null && NeedsAcknowledgement(lastRead))
+        {
+            // Releases are newest first. The first already-read heading follows the oldest unread entry.
+            for (int index = 0; index < Blocks.Count; index++)
+                if (Blocks[index].ReleaseVersion is { } version && HasReadVersion(lastRead, version))
+                    return index;
+        }
+        return Blocks.Count;
+    }
+
+    private bool HasReadVersion(string? lastRead, string required) =>
+        string.Equals(lastRead, required, StringComparison.Ordinal) ||
+        (Id == DeveloperNotesChapterIds.Release &&
+         Version.TryParse(lastRead, out var readRelease) && Version.TryParse(required, out var requiredRelease) &&
+         readRelease >= requiredRelease);
+}
 
 public sealed record DeveloperNotesBlock(
     string Type,
     string? Text,
-    IReadOnlyList<string>? Items);
+    IReadOnlyList<string>? Items)
+{
+    public string? ReleaseVersion { get; init; }
+}

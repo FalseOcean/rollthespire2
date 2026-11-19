@@ -5,6 +5,7 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
 using MegaCrit.Sts2.Core.Nodes.Events;
 using MegaCrit.Sts2.Core.Nodes.Potions;
+using MegaCrit.Sts2.Core.Nodes.Relics;
 using MegaCrit.Sts2.Core.Nodes.RestSite;
 using MegaCrit.Sts2.Core.Nodes.Rewards;
 using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
@@ -20,7 +21,8 @@ internal static class NeowOperationPredictionPatch
     internal static void Install(Harmony harmony)
     {
         foreach (var type in new[] { typeof(NEventOptionButton), typeof(NMerchantSlot), typeof(NRestSiteButton),
-            typeof(NRewardButton), typeof(NCardRewardAlternativeButton), typeof(NPotionHolder), typeof(NCardHolder) })
+            typeof(NRewardButton), typeof(NCardRewardAlternativeButton), typeof(NPotionHolder), typeof(NCardHolder),
+            typeof(NRelicInventoryHolder) })
         {
             Observe(type, "OnFocus", nameof(Focused));
             Observe(type, "OnUnfocus", nameof(Left));
@@ -42,7 +44,8 @@ internal static class NeowOperationPredictionPatch
         // Observe the concrete native entry as well as the base observer. This
         // records admission without starting a second prediction or selection.
         Observe(typeof(NGridCardHolder), "OnFocus", nameof(GridCardFocused));
-        foreach (var type in new[] { typeof(NEventOptionButton), typeof(NRestSiteButton), typeof(NMerchantSlot), typeof(NPotionHolder), typeof(NGridCardHolder) })
+        foreach (var type in new[] { typeof(NEventOptionButton), typeof(NRestSiteButton), typeof(NMerchantSlot), typeof(NPotionHolder),
+            typeof(NGridCardHolder), typeof(NRelicInventoryHolder) })
             Observe(type, "_ExitTree", nameof(Left));
         harmony.Patch(AccessTools.Method(typeof(NTransformPreview), nameof(NTransformPreview.Initialize))
             ?? throw new MissingMethodException(typeof(NTransformPreview).FullName, nameof(NTransformPreview.Initialize)),

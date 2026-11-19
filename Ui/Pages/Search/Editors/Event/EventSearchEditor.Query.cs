@@ -77,6 +77,8 @@ internal sealed partial class EventSearchEditor
         if (IsResultActive("TINKER_TIME") && _draft.TinkerType >= 0) results.Add(new(EventResultConditionKind.TinkerTimeTypeAndRider, new("CARD", "MAD_SCIENCE")) {
             TinkerCardType = (TinkerCardTypeTarget)_draft.TinkerType,
             TinkerRider = _draft.TinkerEffect is { } effect ? Enum.Parse<TinkerRiderTarget>(effect, true) : null });
+        results.AddRange(_draft.OpportunityResults.Where(condition =>
+            EventOpportunitySemantics.TryGetEventKey(condition, out var key) && IsResultActive(key.Entry)));
         return q with { FirstActUnknownEventPrefixCount = _draft.UnknownEventPrefixCount,
             FirstActUnknownMonsterPrefixCount = _draft.UnknownMonsterPrefixCount,
             EventResultConditions = results.ToArray(), EventSequenceConstraints = QueueConditions.Select(c =>
@@ -94,6 +96,7 @@ internal sealed partial class EventSearchEditor
         _draft.TrialCase = _draft.TinkerType = -1;
         _draft.CharacterColor = null;
         _draft.TinkerEffect = null;
+        _draft.OpportunityResults.Clear();
         foreach (var c in importQueue ? q.EventSequenceConstraints : [])
         {
             foreach(var k in c.Keys.Any.Concat(c.Keys.All)) QueueConditions.Add(new(c.Act,c.RangeValue,c.RangeMode == SearchSequenceRangeMode.ExactSlot,false,k));
@@ -107,10 +110,29 @@ internal sealed partial class EventSearchEditor
             else if (c.Kind == EventResultConditionKind.TinkerTimeTypeAndRider) {
                 _draft.TinkerType = (int)c.TinkerCardType!; _draft.TinkerEffect = c.TinkerRider?.ToString().ToLowerInvariant();
             }
+            else if (EventOpportunitySemantics.TryGetEventKey(c, out _))
+                _draft.OpportunityResults.Add(c);
             else _draft.Results[c.Kind] = ResultSlotCount(c.Kind) == 2
                 ? [c.TargetKey,c.MorphicGroveSecondCard] : [c.TargetKey];
         }
+        ResetOpportunityModes();
         if (_draft.Results.ContainsKey(EventResultConditionKind.TrialNondescriptInitialBasicsContains)) _draft.TrialCase = 2;
         _draft.Context = "";
+    }
+
+    internal bool TryRestoreTransformationTargets(string sourceId, IReadOnlyList<ModelKey> cards)
+    {
+        if (!TransformationSources(_activeSeat).Any(source => source.Id == sourceId && cards.Count <= source.ResultCount)) return false;
+        var kind = Enum.GetValues<EventResultConditionKind>().Single(value => EventResultTransformSemantics.IsTransform(value) &&
+            sourceId == "E." + EventResultTransformSemantics.Entry(value));
+        if (!IsResultActive(ResultEventId(kind)) || kind == EventResultConditionKind.TrialNondescriptInitialBasicsContains && _draft.TrialCase is 0 or 1)
+            return false;
+        if (_draft.Results.TryGetValue(kind, out var slots) && slots.OfType<ModelKey>().ToArray() is { Length: > 0 } existing)
+            return AncientSearchEditor.SameTransformationTargets(existing, cards);
+        var targets = new ModelKey?[ResultSlotCount(kind)];
+        for (int index = 0; index < cards.Count; index++) targets[index] = cards[index];
+        _draft.Results[kind] = targets;
+        if (kind == EventResultConditionKind.TrialNondescriptInitialBasicsContains) _draft.TrialCase = 2;
+        return true;
     }
 }

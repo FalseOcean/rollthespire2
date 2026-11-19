@@ -12,6 +12,8 @@ namespace RolltheSpire2.Search.FamilyExecution;
 internal sealed class CombatRewardObservedOpening
 {
     internal const string Revision = ".ObservedOpening.20261102.v1";
+    internal const string LazyCapsuleBagRevision = ".LazyObservedCapsuleLanes.20261115.v1";
+    private static readonly ulong UpFrontHash = XxHash64.Hash("up_front"u8, 0);
     private const int Prefix = 4, SeenCapacity = 6;
     private readonly RelicFamilyPool? _pool;
     private readonly int[] _entries;
@@ -20,11 +22,13 @@ internal sealed class CombatRewardObservedOpening
     private readonly int[] _topIdentity, _advances;
     private readonly int _circlet;
     private readonly int _ineligibleRelic = -1;
+    private readonly int[]? _modernLaneLengths;
     internal byte[] BonesIds { get; }
     internal bool DynamicBones { get; }
     internal string Issue { get; }
     internal bool Available => Issue.Length == 0;
     internal bool HasUnresolvedEffects { get; }
+    internal bool UsesLazyCapsuleBag => _modernLaneLengths is not null;
     internal int BagCapacity { get; }
     internal int ShuffleDraws => _pool is null ? 0 : _pool.BucketLengths.Sum(n => Math.Max(0, n - 1)) +
         (_pool.UsesChildShuffle ? _pool.BucketCount : 0);
@@ -85,6 +89,17 @@ internal sealed class CombatRewardObservedOpening
             }
         }
         else _entries = [];
+        if (modern && pool is { UsesChildShuffle: true } && Environment.GetEnvironmentVariable("RT2_C_LAZY_OBSERVED_BAG") != "off")
+        {
+            _modernLaneLengths = new int[3];
+            for (int bucket = 0; bucket < pool.BucketCount; bucket++)
+            {
+                int kind = pool.BucketKinds[bucket];
+                if (pool.BucketScopes[bucket] != 1 || kind is < 1 or > 3) continue;
+                foreach (int identity in _entries.AsSpan(pool.BucketOffsets[bucket], pool.BucketLengths[bucket]))
+                    if (identity != _ineligibleRelic) _modernLaneLengths[kind - 1]++;
+            }
+        }
         _circlet = Identity(BaseGameModelKeys.OrdinaryRelics.Circlet);
         _top = new Beta110FastRewardRelicCapability[30];
         _topIdentity = new int[30]; _topInvalidatesNiche = new bool[30];
@@ -132,6 +147,7 @@ internal sealed class CombatRewardObservedOpening
         values[0] = 1; values[1] = DynamicBones ? 1u : 0u; values[2] = (uint)buckets;
         values[3] = (uint)table; values[4] = unchecked((uint)_ineligibleRelic); values[5] = (uint)cap; values[6] = (uint)top;
         values[7] = (uint)advance; values[8] = (uint)BagCapacity; values[9] = (uint)_circlet;
+        values[10] = UsesLazyCapsuleBag ? 1u : 0u;
         for (int i = 0; i < buckets; i++)
         {
             values[table + i * 4] = _pool!.BucketScopes[i];
@@ -174,6 +190,8 @@ internal sealed class CombatRewardObservedOpening
         var state = new Beta110OpeningRewardState { PotionOdds = .4f, CardRarityOffset = -.05f,
             RewardsContinuationAuthorityExact = true, RewardInfluenceAuthorityExact = true };
         Span<int> prefixes = stackalloc int[12], lengths = stackalloc int[3], consumed = stackalloc int[3], seen = stackalloc int[SeenCapacity];
+        Span<Beta110FastRng> children = stackalloc Beta110FastRng[UsesLazyCapsuleBag ? 3 : 0];
+        Span<int> laneBuckets = stackalloc int[UsesLazyCapsuleBag ? 3 : 0];
         consumed.Clear(); int seenCount = 0; bool bagReady = false;
         byte previous = 255;
         for (int index = 0; index < count; index++)
@@ -184,12 +202,27 @@ internal sealed class CombatRewardObservedOpening
             if (!Apply(_topIdentity[relic], _top[relic], _topInvalidatesNiche[relic], seen, ref seenCount, ref nicheKnown, ref state)) break;
             if (IsCapsule(relic))
             {
-                if (!bagReady) { InitializeBag(root, prefixes, lengths); bagReady = true; }
+                if (!bagReady)
+                {
+                    if (_modernLaneLengths is null) InitializeBag(root, prefixes, lengths);
+                    else
+                    {
+                        _modernLaneLengths.AsSpan().CopyTo(lengths);
+                        InitializeBagChildren(root, children, laneBuckets);
+                    }
+                    bagReady = true;
+                }
                 for (int draw = 0; draw < (relic == Beta110FastRelicCatalog.LargeCapsule ? 2 : 1); draw++)
                 {
                     float roll = rewards.NextFloat(); int lane = roll < .5f ? 0 : roll < .83f ? 1 : 2;
                     while (lane < 3 && consumed[lane] >= lengths[lane]) lane++;
-                    int identity = lane < 3 ? prefixes[lane * Prefix + consumed[lane]++] : _circlet;
+                    int identity = _circlet;
+                    if (lane < 3)
+                    {
+                        if (UsesLazyCapsuleBag && consumed[lane] == 0)
+                            InitializeBagLane(children[lane], laneBuckets[lane], prefixes.Slice(lane * Prefix, Prefix));
+                        identity = prefixes[lane * Prefix + consumed[lane]++];
+                    }
                     if (!Apply(identity, _caps[identity], _invalidatesNiche[identity], seen, ref seenCount, ref nicheKnown, ref state)) break;
                 }
                 if (!state.ExactProjectionAuthority) break;
@@ -236,7 +269,7 @@ internal sealed class CombatRewardObservedOpening
     private void InitializeBag(ulong root, Span<int> prefixes, Span<int> lengths)
     {
         var pool = _pool ?? throw new InvalidOperationException("C.ObservedOpeningBagMissing");
-        var rng = new Beta110FastRng(unchecked(root + XxHash64.Hash("up_front"u8, 0)));
+        var rng = new Beta110FastRng(unchecked(root + UpFrontHash));
         prefixes.Fill(-1); lengths.Clear();
         Span<int> permutation = stackalloc int[Math.Max(1, BagCapacity)];
         for (int bucket = 0; bucket < pool.BucketCount; bucket++)
@@ -261,6 +294,40 @@ internal sealed class CombatRewardObservedOpening
                 eligible++;
             }
             lengths[lane] = eligible;
+        }
+    }
+
+    private void InitializeBagChildren(ulong root, Span<Beta110FastRng> children, Span<int> laneBuckets)
+    {
+        var pool = _pool ?? throw new InvalidOperationException("C.ObservedOpeningBagMissing");
+        var parent = new Beta110FastRng(unchecked(root + UpFrontHash));
+        // Every bucket owns one parent draw, even when the route uses none of its relics.
+        for (int bucket = 0; bucket < pool.BucketCount; bucket++)
+        {
+            int kind = pool.BucketKinds[bucket];
+            if (pool.BucketScopes[bucket] == 0 || kind == 4) parent.ConsumeShuffleSeed();
+            else
+            {
+                int lane = kind - 1;
+                children[lane] = parent.ForkShuffle();
+                laneBuckets[lane] = bucket;
+            }
+        }
+    }
+
+    private void InitializeBagLane(Beta110FastRng child, int bucket, Span<int> prefix)
+    {
+        var pool = _pool ?? throw new InvalidOperationException("C.ObservedOpeningBagMissing");
+        int count = pool.BucketLengths[bucket];
+        Span<int> permutation = stackalloc int[count];
+        _entries.AsSpan(pool.BucketOffsets[bucket], count).CopyTo(permutation);
+        child.UnstableShuffle(permutation);
+        int eligible = 0;
+        foreach (int identity in permutation)
+        {
+            if (identity == _ineligibleRelic) continue;
+            prefix[eligible++] = identity;
+            if (eligible == prefix.Length) break;
         }
     }
 

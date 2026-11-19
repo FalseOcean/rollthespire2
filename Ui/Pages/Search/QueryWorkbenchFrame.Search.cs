@@ -56,14 +56,19 @@ internal sealed partial class QueryWorkbenchFrame
         q = _eventEditor.ExportQuery(q);
         q = _actInformationEditor.ExportQuery(q);
         q = _shopEditor.ExportQuery(q);
-        q = q with { TransformationAggregate = _transformationEditor.ExportCondition(q) };
+        q = q with
+        {
+            TransformationAggregate = _transformationEditor.ExportCondition(q, _ancientEditor.ExportTransformationResults()),
+            FishingRodDrawResearch = _fishingRodDrawResearch,
+            FishingRodDrawRequirements = _fishingRodDrawRequirements
+        };
         return new(_soloCharacter, _soloAscension, q, _ancientEditor.OptionConditions)
         { ManualFamilyOrder = _manualFamilyOrder?.ToArray(), AncientEditor = _ancientEditor.ExportEditorState(), NeowEditor = _neowEditor.ExportEditorState(),
             EventEditor = _eventEditor.ExportEditorState(), TransformationEditor = _transformationEditor.ExportEditorState(),
             CombatRewardEditor = _combatEditor.ExportEditorState(), MapEditor = _actInformationEditor.ExportMapState() };
     }
 
-    internal void RestoreDraft(WorkbenchSearchDraft draft, bool render = true)
+    internal void RestoreDraft(WorkbenchSearchDraft draft, bool render = true, bool migrateLegacyTransformations = true)
     {
         using var observation = _editorInputs.Observe(_runtime);
         if (draft.Version is not (1 or 2 or 3 or 4)) throw new InvalidOperationException("integration.load_version");
@@ -71,6 +76,9 @@ internal sealed partial class QueryWorkbenchFrame
         if (draft.Players.Count > 0) { RestorePartyDraft(draft, render); return; }
         ValidateRepresentable(draft.Query);
         _multiplayer = false; _seat = 0; _soloCharacter = draft.Character; _soloAscension = draft.Ascension;
+        _fishingRodDrawResearch = draft.Query.FishingRodDrawResearch;
+        _fishingRodDrawRequirements = draft.Query.FishingRodDrawRequirements?.ToArray();
+        RenderFishingRodDrawRequirements();
         RefreshEditorContexts(render: false);
         _neowEditor.ImportQuery(draft.Query);
         if (draft.NeowEditor is { } neowState) _neowEditor.ImportEditorState(neowState);
@@ -84,7 +92,18 @@ internal sealed partial class QueryWorkbenchFrame
         _shopEditor.ImportQuery(draft.Query);
         _transformationEditor.ImportQuery(draft.Query);
         if (draft.TransformationEditor is { } transformState) _transformationEditor.ImportEditorState(transformState);
-        RefreshEditorContexts(render);
+        RefreshEditorContexts(render: false);
+        if (migrateLegacyTransformations)
+        {
+            _transformationEditor.MigrateLegacyRequirements(draft.Query.TransformationAggregate?.AncientAct ?? 0,
+                _ancientEditor.TryRestorePandoraCount, (source, cards) => source.IsAncient
+                    ? _ancientEditor.TryRestoreTransformationTargets(source.Id, source.AncientAct, cards)
+                    : source.Id.StartsWith("E.", StringComparison.Ordinal)
+                        ? _eventEditor.TryRestoreTransformationTargets(source.Id, cards)
+                        : _neowEditor.TryRestoreTransformationTargets(source.Id, cards));
+            RefreshTransformationContext(render: false);
+        }
+        if (render) RenderEditorDomain(_selectedDomain);
         _restoreAdjusted=JsonSerializer.Serialize(draft.WithoutCapturedAuthority().Query)!=
             JsonSerializer.Serialize(CaptureDraft().WithoutCapturedAuthority().Query);
         _restoredCaptureStamp = _restoreAdjusted ? JsonSerializer.Serialize(CaptureDraft().WithoutCapturedAuthority()) : null;
@@ -112,6 +131,7 @@ internal sealed partial class QueryWorkbenchFrame
             q.EventSequenceConstraints.Any(c => c.Source is not null || c.Keys.Any.Count > 1) ||
             q.TransformationAggregate is { UsesNeow: true, Opening: TransformationOpening.None };
         unsupported |= q.EncounterQueues is null || q.EncounterQueues.Any(c => c is null || !c.IsValid);
+        unsupported |= q.FishingRodDrawRequirements?.Any(row => row is null || row.DrawOrdinal <= 0 || row.PoolSize <= 0) == true;
         unsupported |= q.TreasureRelics is { IsValid: false } || q.FirstActUnknownEventPrefixCount is < 0 or > 3 ||
             q.FirstActUnknownMonsterPrefixCount is < 0 or > 3 ||
             q.AncientBranches.Any(b => !b.IsValid) ||
@@ -124,7 +144,8 @@ internal sealed partial class QueryWorkbenchFrame
                 q.AncientBranches.Count(b => b.Act == c.Act) != 1) ||
             new[] { q.LegacyNeow.NeowRelics.Any.Count, q.LegacyNeow.NeowRelics.All.Count,
                 q.LegacyNeow.NeowRelics.Ban.Count, q.NeowOfferWhitelist is null ? 0 : 1 }.Count(count => count > 0) > 1;
-        unsupported |= q.EventResultConditions.GroupBy(c=>c.Kind).Any(g=>g.Count()>1) ||
+        unsupported |= q.EventResultConditions.GroupBy(c=>c.Kind).Any(g=>g.Count()>1 &&
+            !EventOpportunitySemantics.IsEventLocalOpportunity(g.Key) && g.Key != EventResultConditionKind.CrystalSphereRewards) ||
             q.EventResultConditions.Any(c=>!Enum.IsDefined(c.Kind));
         unsupported |= q.EventResultConditions.Any(c => c.Kind == EventResultConditionKind.TrialNondescriptInitialBasicsContains) &&
             q.EventResultConditions.Any(c => c.Kind == EventResultConditionKind.TrialCase && c.TrialCase != TrialCaseTarget.Nondescript);
@@ -137,13 +158,27 @@ internal sealed partial class QueryWorkbenchFrame
             if(!special && !Pages.Search.Neow.NeowEffectCardRegistry.Get(effect.SourceRelicKey).Components.Any(c=>
                 c.Scope==effect.Scope && c.OutputKind==effect.OutputKind && c.ConditionKind==effect.Kind)) unsupported=true;
         }
+        unsupported |= q.MerchantRelicConditions is null || q.MerchantRelicConditions.Any(c => c is null || c.FirstMerchant < 1 ||
+            c.LastMerchant > 5 || c.LastMerchant < c.FirstMerchant);
         var horizons=q.MerchantColorlessSequenceConditions.Select(c=>c.Count).Concat(q.RelicShopSequenceConditions.Select(c=>c.Count)).Distinct().ToArray();
         unsupported |= horizons.Any(n=>n is <1 or >5) || q.RelicShopSequenceConditions.Count>1 ||
             q.MerchantColorlessSequenceConditions.GroupBy(c=>c.Slot).Any(g=>g.Count()>1);
         if (q.TransformationAggregate is { } t)
         {
             unsupported |= !Enum.IsDefined(t.Opening) || !Enum.IsDefined(t.Predicate) || !Enum.IsDefined(t.PickupOrder) ||
-                t.TargetMultiset.Count>t.OpportunityCount || t.MinimumRareCount>t.OpportunityCount;
+                !Enum.IsDefined(t.AncientSource) || t.TargetMultiset is null || t.ResultRequirements is null ||
+                t.TargetMultiset.Count > t.OpportunityCount || t.MinimumRareCount > t.OpportunityCount;
+            var sourceCounts = t.SourceCounts();
+            unsupported |= t.ResultRequirements?.Any(group => group is null || !Enum.IsDefined(group.Predicate) ||
+                group.Sources is not { Count: > 0 } || group.TargetMultiset is null ||
+                group.Sources.Any(id => id is null || !sourceCounts.ContainsKey(id))) == true;
+            if (t.UsesAncient)
+            {
+                var option = new ModelKey("RELIC", t.AncientSource == TransformationAncientSource.Astrolabe ? "ASTROLABE" : "PANDORAS_BOX");
+                unsupported |= t.AncientAct is not (2 or 3) || !q.AncientBranches.Any(branch => branch.Act == t.AncientAct &&
+                    branch.AncientKey.Entry == "DARV" && (branch.OptionAny.Contains(option) || q.LegacyWorld.AncientOptionFilters
+                        .Any(filter => filter.Act == branch.Act && filter.Keys.All.Contains(option))));
+            }
             unsupported |= t.UsesNeow && q.OpeningRoute is null;
             bool Queued(string id) => q.EventSequenceConstraints.Any(c=>c.Keys.Any.Concat(c.Keys.All).Any(k=>k.Entry==id));
             unsupported |= t.MorphicGrove && !Queued("MORPHIC_GROVE") || t.AromaOfChaos && !Queued("AROMA_OF_CHAOS") || t.WhisperingHollow && !Queued("WHISPERING_HOLLOW") || t.Symbiote && !Queued("SYMBIOTE") || t.TrialNondescript && !Queued("TRIAL");
@@ -213,6 +248,10 @@ internal sealed partial class QueryWorkbenchFrame
         if (ex.Message.StartsWith(RolltheSpire2.Compatibility.ProfileSeedGenerator.UnavailableCode, StringComparison.Ordinal))
             return SeedProfileUnavailableMessage();
         if (TransformationContinuationIssueKey(ex.Message) is { } continuationKey) return _text.Get(continuationKey);
+        if (ex.Message == MerchantRelicCondition.UnsupportedCode)
+            return _text.Get("query.shop.ordinary.version");
+        if (ex.Message == FishingRodDrawResearch.UnsupportedCode)
+            return _text.Get("query.ideas.fishing_rod.version");
         if (ex.Message.StartsWith("GpuFloat64UnavailableWithExactSkipped", StringComparison.Ordinal))
             return _text.Get("integration.gpu_numeric_requires_exact");
         if (ex.Message.StartsWith("GpuFloat64PhysicalSelectionUnavailable", StringComparison.Ordinal))
@@ -220,10 +259,12 @@ internal sealed partial class QueryWorkbenchFrame
         if (ex.Message is "FamilyGpuInitializationRetryRequired" or "FamilyGpuInitializationBusy")
             return RolltheSpire2.Presentation.Localization.JsonUiTextProvider.Create(_language).Get(
                 ex.Message == "FamilyGpuInitializationBusy" ? "ui1.devices.creating" : "ui1.devices.creation_failed_help");
-        return ex.Message.StartsWith("integration.",StringComparison.Ordinal) ? _text.Get(ex.Message) : _text.Get("integration.rejected")+"\n"+ex.Message;
+        return ex.Message.StartsWith("integration.",StringComparison.Ordinal) || ex.Message is
+            "query.transform.ancient.exclusive" or "query.transform.pandora.automatic_unavailable"
+            ? _text.Get(ex.Message) : _text.Get("integration.rejected")+"\n"+ex.Message;
     }
     private static bool IsUnfinishedTransformation(Exception exception) =>
-        exception is InvalidOperationException { Message: "integration.transform.capacity" };
+        exception is InvalidOperationException { Message: "integration.transform.capacity" or "query.transform.pandora.automatic_unavailable" };
     private static bool LegacyCaptureFailureFrom(string detail, string outerOperation) =>
         detail.Contains("\n   at RolltheSpire2.Ui.Pages.Search.QueryWorkbenchFrame.CaptureDraft(", StringComparison.Ordinal) &&
         detail.TrimEnd().Split('\n').Last().Contains(
@@ -527,6 +568,8 @@ internal sealed partial class QueryWorkbenchFrame
         // reads only metadata and renders; its lifetime never owns execution.
         if (!IsVisibleInTree()) return;
         var snapshot = _persistence.Runtime.Snapshot;
+        // The final result can arrive a frame before the search finishes.
+        bool resultControlsChanged = _showResults && _observedReceiving != snapshot.Receiving;
         TryAuxiliary(() => ObserveWorkspaceRuntime(snapshot), "ProgressPresentation");
         if (snapshot.Receiving || _showResults)
         {
@@ -534,7 +577,7 @@ internal sealed partial class QueryWorkbenchFrame
             if (snapshot.Receiving || _receiptRemaining <= 0)
                 TryAuxiliary(() => PresentSearchStatus(snapshot.Progress), "RunStatus");
         }
-        if (_observedResultsRevision != _persistence.ResultsRevision)
+        if (resultControlsChanged || _observedResultsRevision != _persistence.ResultsRevision)
             TryAuxiliary(() =>
             {
                 SyncSavedResults();

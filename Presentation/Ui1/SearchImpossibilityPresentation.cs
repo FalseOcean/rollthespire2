@@ -44,6 +44,8 @@ internal static class SearchImpossibilityPresentation
                 text.Format(Ui1TextKey.SearchImpossibleCombatPotionTargetAtSlot, proof.Slot.Value),
             SearchImpossibilityReasonCode.CombatPotionTargetUnavailable =>
                 text.Get(Ui1TextKey.SearchImpossibleCombatPotionTarget),
+            SearchImpossibilityReasonCode.CrystalRelicRequiresFourMoves =>
+                text.Get(Ui1TextKey.SearchImpossibleCrystalRelic),
             _ => text.Get(Ui1TextKey.SearchImpossibleCanonicalConflict)
         };
     }

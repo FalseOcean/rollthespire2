@@ -275,10 +275,13 @@ uint64_t prime4() { return make_u64(0xc2b2ae63u, 0x85ebca77u); }
 
 uint64_t prime3() { return make_u64(0x9e3779f9u, 0x165667b1u); }
 
-uint64_t xxhash64_seed12_packed(uint64_t first8, uint tail4) {
+uint64_t party_seed12_prefix(uint64_t first8) {
     uint64_t hash = prime5() + uint64_t(12u);
     hash ^= xxh_round(uint64_t(0u), first8);
-    hash = rotl64(hash, 27u) * prime1() + prime4();
+    return rotl64(hash, 27u) * prime1() + prime4();
+}
+
+uint64_t party_seed12_tail(uint64_t hash, uint tail4) {
     hash ^= uint64_t(tail4) * prime1();
     hash = rotl64(hash, 23u) * prime2() + prime3();
     hash ^= hash >> 33u;
@@ -287,6 +290,10 @@ uint64_t xxhash64_seed12_packed(uint64_t first8, uint tail4) {
     hash *= prime3();
     hash ^= hash >> 32u;
     return hash;
+}
+
+uint64_t xxhash64_seed12_packed(uint64_t first8, uint tail4) {
+    return party_seed12_tail(party_seed12_prefix(first8), tail4);
 }
 
 uint64_t root_hash_for_ordinal(uint64_t ordinal) {

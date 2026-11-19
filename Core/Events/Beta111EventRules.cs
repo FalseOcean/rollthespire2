@@ -24,10 +24,8 @@ public static class Beta111EventRules
         "EXPERTISE", "CURIOUS", "IMPROVEMENT"
     };
 
-    private static readonly ModelKey[] AuthoredDolls =
-    [
-        new("RELIC", "DAUGHTER_OF_THE_WIND"), new("RELIC", "MR_STRUGGLES"), new("RELIC", "BING_BONG")
-    ];
+    private static readonly ModelKey[] SortedDolls =
+        EventOpportunityCatalog.Dolls.OrderBy(key => key.Entry, StringComparer.Ordinal).ToArray();
 
     public static ModelKey TrashHeapGrab(Xoshiro256StarStar rng) =>
         Beta111EventResultCatalog.TrashHeapGrabCards[rng.NextInt(Beta111EventResultCatalog.TrashHeapGrabCards.Count)];
@@ -80,16 +78,23 @@ public static class Beta111EventRules
         return riders.Take(TinkerOfferCount).ToArray();
     }
 
-    public static ModelKey RandomDoll(Xoshiro256StarStar rng) => AuthoredDolls[rng.NextInt(AuthoredDolls.Length)];
+    public static ModelKey RandomDoll(Xoshiro256StarStar rng) =>
+        EventOpportunityCatalog.Dolls[rng.NextInt(EventOpportunityCatalog.Dolls.Count)];
 
     public static ModelKey[] DollOffers(Xoshiro256StarStar rng, int count,
         RngSemanticProfileId semanticProfile = RngSemanticProfileId.Modern110)
     {
         // Native StableShuffle sorts by RelicModel.CompareTo/ModelId before shuffling.
-        var sorted = AuthoredDolls.OrderBy(key => key.Entry, StringComparer.Ordinal).ToArray();
+        var sorted = (ModelKey[])SortedDolls.Clone();
         rng.UnstableShuffle(sorted, semanticProfile);
         return sorted.Take(count).ToArray();
     }
+
+    internal static ModelKey MuseumOfferedRelic(Xoshiro256StarStar rng) =>
+        EventOpportunityCatalog.MuseumRelics[rng.NextInt(EventOpportunityCatalog.MuseumRelics.Count)];
+
+    internal static ModelKey ThermaeDrinkRelic(Xoshiro256StarStar rng) =>
+        EventOpportunityCatalog.ThermaeRelics[rng.NextInt(EventOpportunityCatalog.ThermaeRelics.Count)];
 
     // Preserve NextFloat(min,max)'s double range arithmetic and float-to-decimal
     // conversion. Consumers truncate only after their own gold settlement hooks.

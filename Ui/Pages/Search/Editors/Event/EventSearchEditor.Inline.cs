@@ -3,7 +3,9 @@ using RolltheSpire2.Ui.Tooltips;
 using Godot;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Presentation.ContentNames;
+using RolltheSpire2.Presentation.Ui1;
 using RolltheSpire2.Search.Contracts;
+using RolltheSpire2.Search.Semantics;
 using RolltheSpire2.Ui.Pages.Search.Event;
 using RolltheSpire2.Ui.Theme;
 
@@ -11,7 +13,26 @@ namespace RolltheSpire2.Ui.Pages.Search.Editors;
 
 internal sealed partial class EventSearchEditor
 {
+    private OptionButton? _queueActControl;
+
     private string InlineText(string key) => _text.Get("query.event.inline." + key);
+
+    private string[] EventActOptions() => Enumerable.Range(1, 3)
+        .Select(act => _text.Format("query.event.act", act)).ToArray();
+
+    private EventEligibilityPresentation.OccurrenceDescription? OccurrenceDescription(ModelKey key, bool includeActScope = true) =>
+        EventEligibilityPresentation.Describe(_occurrenceText, _runtime.Profile.ProfileId, SemanticProfile,
+            key, _queuePickerPlayers, includeActScope);
+
+    private float RenderOccurrenceNote(Control host, string note, float y, float width, string name = "EventOccurrenceNote")
+    {
+        var label = Text(host, note, 88, y, width - 104, 15, true);
+        label.Name = name;
+        label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        float height = Math.Max(28, label.GetLineHeight() * label.GetLineCount() + 6);
+        label.Size = new(width - 104, height);
+        return y + height;
+    }
 
     private float RenderQueue(Control content, float width, float top)
     {
@@ -28,7 +49,8 @@ internal sealed partial class EventSearchEditor
         {
             QueueCondition condition = QueueConditions[index];
             int captured = index;
-            bool supported = !condition.Excluded && EventResultPrototypeWhitelist.Find(condition.Event) is not null;
+            bool supported = !condition.Excluded &&
+                (ResultDescriptor(condition.Event) is not null || OpportunitiesFor(condition.Event).Any());
             bool expanded = supported && _draft.ExpandedCondition == index;
             bool authored = StoredResultEvents().Contains(condition.Event.Entry);
             bool managed = TransformTakenOver?.Invoke(_activeSeat, "E." + condition.Event.Entry) == true;
@@ -50,12 +72,17 @@ internal sealed partial class EventSearchEditor
                     authored || managed, 36);
             }
             var remove = Button(row, "×", width - 52, 22, 36, () => RemoveQueueCondition(captured), false, 36);
+            remove.Name = "EventConditionRemove";
             SearchTooltip.Set(remove, InlineText(_queuePickerPlayers > 1 ? "remove_party_hint" : "remove_hint"));
             float height = 80;
-            if (!_draft.Catalog.CandidatesForAct(condition.Act).Any(candidate => candidate.EventKey == condition.Event))
+            if (expanded && OccurrenceDescription(condition.Event, includeActScope: false) is { } occurrence)
+                height = RenderOccurrenceNote(row, occurrence.Text, height - 8, width) + 8;
+            if (_draft.Catalog.Find(condition.Act, condition.Event) is null)
             {
-                Text(row, InlineText("scope_affected"), 16, height, width - 32, 14, true);
-                height += 36;
+                string unavailable = _draft.Catalog.CatalogAvailable
+                    ? _text.Format("query.event.inline.scope_affected", _text.Format("query.event.act", condition.Act))
+                    : InlineText("catalog_unavailable");
+                height = RenderOccurrenceNote(row, unavailable, height - 8, width, "EventConditionUnavailable") + 8;
             }
             if (expanded)
             {
@@ -74,10 +101,9 @@ internal sealed partial class EventSearchEditor
         var builder = new Control { Name = "EventConditionBuilder", Position = new(0, top),
             Size = new(width, 72) };
         content.AddChild(builder);
-        var act = QueueOptions(builder, Enumerable.Range(1, 3).Select(value => _text.Format("query.event.act", value)).ToArray(),
-            _draft.QueueAct - 1, 16, 16, 112,
+        _queueActControl = QueueOptions(builder, EventActOptions(), _draft.QueueAct - 1, 16, 16, 112,
             index => { CloseQueuePicker(); _draft.QueueAct = index + 1; Render(); });
-        act.Name = "EventQueueAct";
+        _queueActControl.Name = "EventQueueAct";
         RenderQueuePosition(builder, 140, 16);
         Button(builder, _text.Get("query.event.queue.choose"), 504, 16, 174, OpenQueuePicker, false, 40).Name = "EventQueueChoose";
         var advanced = ModeButton(builder, _text.Get("query.event.queue.advanced"), 690, 16, 128,
@@ -164,7 +190,7 @@ internal sealed partial class EventSearchEditor
             var button = ModeButton(host, InlineText(managed ? "open_transform" : "use_transform"), 16, top, 268,
                 () => TransformationRequested?.Invoke("E." + key.Entry), managed, 36);
             SearchTooltip.Set(button, InlineText("transform_hint"));
-            if (managed) return top + 40;
+            if (managed && !OpportunitiesFor(key).Any()) return top + 40;
             top += 50;
         }
         return RenderResultEditor(host, width, top, inline: true);
@@ -202,6 +228,8 @@ internal sealed partial class EventSearchEditor
             Text(content, InlineText(status),
                 16, y + 40, width - 32, 14, true);
             y += 80;
+            if (open && OccurrenceDescription(key, includeActScope: false) is { } occurrence)
+                y = RenderOccurrenceNote(content, occurrence.Text, y - 14, width) + 10;
             if (open) y = RenderResultEditor(content, width, y, inline: true) + 16;
         }
         _presentation.Section(content, top, y);
@@ -222,7 +250,7 @@ internal sealed partial class EventSearchEditor
         int index = QueueConditions.IndexOf(condition);
         if (index < 0) { index = QueueConditions.Count; QueueConditions.Add(condition); }
         SetResultActivity(key.Entry, QueueConditions.Any(row => !row.Excluded && row.Event == key));
-        _draft.ExpandedCondition = !condition.Excluded && EventResultPrototypeWhitelist.Find(key) is not null ? index : -1;
+        _draft.ExpandedCondition = !condition.Excluded && (ResultDescriptor(key) is not null || OpportunitiesFor(key).Any()) ? index : -1;
         _draft.SelectedEvent = _draft.ExpandedCondition >= 0 ? key : null;
         QueueChanged?.Invoke();
         Render();
@@ -263,12 +291,16 @@ internal sealed partial class EventSearchEditor
         if (_draft.CharacterColor.HasValue) events.Add("COLORFUL_PHILOSOPHERS");
         if (_draft.TrialCase >= 0) events.Add("TRIAL");
         if (_draft.TinkerType >= 0) events.Add("TINKER_TIME");
+        foreach (var condition in _draft.OpportunityResults)
+            if (EventOpportunitySemantics.TryGetEventKey(condition, out var key)) events.Add(key.Entry);
         return events;
     }
 
     private void ClearEventResults(ModelKey key)
     {
         foreach (var kind in _draft.Results.Keys.Where(kind => ResultEventId(kind) == key.Entry).ToArray()) _draft.Results.Remove(kind);
+        _draft.OpportunityResults.RemoveAll(condition =>
+            EventOpportunitySemantics.TryGetEventKey(condition, out var eventKey) && key == eventKey);
         if (key.Entry == "TRIAL") _draft.TrialCase = -1;
         if (key.Entry == "COLORFUL_PHILOSOPHERS") _draft.CharacterColor = null;
         if (key.Entry == "TINKER_TIME") { _draft.TinkerType = -1; _draft.TinkerEffect = null; }

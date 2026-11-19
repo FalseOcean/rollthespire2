@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Authority;
 using RolltheSpire2.Core.Effects;
@@ -6,166 +7,362 @@ using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Neow;
 using RolltheSpire2.Core.Prediction;
+using RolltheSpire2.Core.Transformation;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.Semantics;
 
 namespace RolltheSpire2.Search.Runtime;
 
-/// <summary>Search's aggregate validator consumes authoritative domain projections.
-/// It never implements N identity, pool construction, or event RNG rules.</summary>
+/// <summary>Validates every predicate on each independently replayed opening witness.</summary>
 internal static class TransformationAggregateValidator
 {
-    internal readonly record struct Output(ModelKey? Card, bool? Rare);
+    internal readonly record struct Output(ModelKey? Card, bool? Rare, string Source = "");
 
-    internal static SearchQueryEvaluation Evaluate(SearchModel request, ulong root,
-        RuntimeContextAuthoritySnapshot authority)
+    private sealed record RelicPoolCapture(TransformationRelicProjector? Projector);
+    private static readonly ConditionalWeakTable<NeowEffectAuthoritySnapshot, RelicPoolCapture> RelicPoolCaptures = new();
+    private readonly record struct AncientProjectionStatus(string? FailureCode = null, bool OutputCountUnknown = false,
+        bool InsufficientMaterials = false);
+    private static readonly (EventResultConditionKind Kind, Func<TransformationAggregateCondition, bool> Selected)[] EventSources =
+    [
+        (EventResultConditionKind.MorphicGroveGroupInitialBasicsContains, c => c.MorphicGrove),
+        (EventResultConditionKind.AromaOfChaosInitialBasicTransform, c => c.AromaOfChaos),
+        (EventResultConditionKind.WhisperingHollowInitialBasicTransform, c => c.WhisperingHollow),
+        (EventResultConditionKind.SymbioteInitialBasicTransform, c => c.Symbiote),
+        (EventResultConditionKind.TrialNondescriptInitialBasicsContains, c => c.TrialNondescript)
+    ];
+
+    internal static SearchQueryEvaluation Evaluate(SearchModel request, ulong root, RuntimeContextAuthoritySnapshot authority)
     {
-        if (request.Evaluation.TransformationAggregate is not { } c) return SearchQueryEvaluation.Match();
+        if (request.Evaluation.TransformationAggregate is not { } condition) return SearchQueryEvaluation.Match();
         if (authority.ProfileId != RuntimeProfileId.Beta111 || authority.PlayersCount != 1)
             return SearchQueryEvaluation.Unsupported("TransformationAggregate.SinglePlayerBeta111Required");
+
         var events = new List<Output>();
-        if (c.EventScenario is { } scenario)
+        if (condition.EventScenario is { } scenario)
         {
             MorphicGrovePredictor.ValidateAuthority(request.Detection, authority, scenario);
-            if (c.MorphicGrove)
+            foreach (var (kind, selected) in EventSources)
             {
-                var projection = Beta111MorphicGroveProjector.Project(root, MorphicGroveCommitment.InitialBasics,
-                    scenario.Premises, scenario.Targets);
-                events.AddRange(projection.Transforms.Select(t => EventOutput(t.RawReplacement)));
+                if (!selected(condition)) continue;
+                // The combined source capture carries two targets. A one-draw
+                // event consumes only the first captured target.
+                var entry = EventResultTransformSemantics.Entry(kind);
+                string source = "E." + entry;
+                int count = EventResultTransformSemantics.DrawCount(kind);
+                IReadOnlyList<MorphicGroveCard?>? projection = kind switch
+                {
+                    EventResultConditionKind.MorphicGroveGroupInitialBasicsContains =>
+                        Beta111MorphicGroveProjector.Project(root, MorphicGroveCommitment.InitialBasics, scenario.Premises, scenario.Targets)
+                            .Transforms.Select(transform => transform.RawReplacement).ToArray(),
+                    EventResultConditionKind.AromaOfChaosInitialBasicTransform =>
+                        [Beta111SingleBasicTransformProjector.Project(root, authority.PlayerSlotIndex,
+                            SingleBasicTransformEvent.AromaOfChaos, scenario.Premises, scenario.Targets[0]).RawReplacement],
+                    EventResultConditionKind.WhisperingHollowInitialBasicTransform =>
+                        [Beta111SingleBasicTransformProjector.Project(root, authority.PlayerSlotIndex,
+                            SingleBasicTransformEvent.WhisperingHollow, scenario.Premises, scenario.Targets[0]).RawReplacement],
+                    _ => ProjectOtherEvent(root, kind, count, scenario)
+                };
+                if (projection is { Count: 0 }) return SearchQueryEvaluation.NoMatch("TransformationAggregate.TrialCaseNotNondescript");
+                if (projection is null) AddUnknownOutputs(events, count, source);
+                else events.AddRange(projection.Select(card => new Output(card?.CardKey, card is null ? null : card.Rarity == "Rare", source)));
             }
-            if (c.AromaOfChaos) events.Add(EventOutput(Beta111SingleBasicTransformProjector.Project(root,
-                authority.PlayerSlotIndex, SingleBasicTransformEvent.AromaOfChaos, scenario.Premises, scenario.Targets[0]).RawReplacement));
-            if (c.WhisperingHollow) events.Add(EventOutput(Beta111SingleBasicTransformProjector.Project(root,
-                authority.PlayerSlotIndex, SingleBasicTransformEvent.WhisperingHollow, scenario.Premises, scenario.Targets[0]).RawReplacement));
         }
-        if (c.EventScenario is { } extraScenario)
-        {
-            foreach (var kind in new[] { EventResultConditionKind.SymbioteInitialBasicTransform, EventResultConditionKind.TrialNondescriptInitialBasicsContains })
-            {
-                if (kind == EventResultConditionKind.SymbioteInitialBasicTransform ? !c.Symbiote : !c.TrialNondescript) continue;
-                var eventScenario = EventResultTransformSemantics.DrawCount(kind) == 1
-                    ? new MorphicGroveScenario(extraScenario.Authority, extraScenario.Premises, [extraScenario.Targets[0]]) : extraScenario;
-                var projection = EventResultTransformSemantics.Project(root, new(kind, default) { MorphicGroveScenario = eventScenario });
-                if (projection is null) return SearchQueryEvaluation.Unknown("TransformationAggregate.EventAuthorityUnavailable");
-                if (projection.Count == 0) return SearchQueryEvaluation.NoMatch("TransformationAggregate.TrialCaseNotNondescript");
-                events.AddRange(projection.Select(EventOutput));
-            }
-        }
-        if (!c.UsesNeow) return Result(EvaluateOutputs(c, events), events, "events");
-        if (!authority.HasExactModernNeowIdentityInputs || authority.EffectAuthority is null)
-            return SearchQueryEvaluation.Unknown("TransformationAggregate.NeowAuthorityUnavailable");
+
         var profile = RuntimeProfileRegistry.Select(request.Detection);
-        ModelKey selected = c.Opening switch {
-            TransformationOpening.LeafyPoultice => BaseGameModelKeys.Relics.LeafyPoultice,
-            TransformationOpening.NewLeaf => BaseGameModelKeys.Relics.NewLeaf,
-            _ => BaseGameModelKeys.Relics.NeowsBones };
-        var identity = ModernNeowIdentityPredictor.PredictModernCore(root, authority, profile, true);
-        if (identity.UnknownEligibilityAffectedPool) return SearchQueryEvaluation.Unknown("TransformationAggregate.NeowEligibilityUnknown");
-        if (!identity.RelicKeys.Contains(selected)) return SearchQueryEvaluation.NoMatch("TransformationAggregate.OpeningNotOffered");
-        var engine = new NeowEffectProjectionEngine(profile, "TransformationAggregate.Neow", root, authority,
-            request.CompiledSearch.RequiresComplexBonesDeckInteractionEvaluation);
-        var n = engine.Project(selected);
-        if (!c.IsBones)
+        // Per-root reprojection replaces relic bag authority only. The request's
+        // captured card inputs are immutable and can be reused across candidates.
+        var relicPoolAuthority = request.Authority.EffectAuthority ?? authority.EffectAuthority;
+        string? openingSource = condition.UsesNeow
+            ? condition.SourceCounts().Keys.Single(source => source.StartsWith("N.", StringComparison.Ordinal))
+            : null;
+        int openingCount = openingSource is null ? 0 : condition.Opening switch
         {
-            var outputs = NeowOutputs(n.EffectGroups, c.Opening == TransformationOpening.LeafyPoultice ? 2 : 1, authority).Concat(events).ToArray();
-            bool boundContinuation = request.Evaluation.NeowRoute?.RouteRelicKey == selected &&
-                (request.Evaluation.RequiresNormalCombatRewardDomain ||
-                 TransformationAggregateCondition.HasBoundDirectRelicContinuation(request.CompiledSearch.NormalizedQuery));
-            return Result(EvaluateOutputs(c, outputs), outputs, selected.Serialized, boundContinuation ? [selected] : null);
+            TransformationOpening.NewLeaf => 1,
+            TransformationOpening.BonesLeafyNewLeaf => 3,
+            _ => 2
+        };
+        int? priorBasics = condition.UsesAncient && !condition.PandoraCountOverride.HasValue
+            ? CountEarlierEventMaterials(request, condition, authority.EffectAuthority) : 0;
+        ModelKey? boundOpening = request.Evaluation.NeowRoute?.RouteRelicKey;
+        ModelKey? opening = condition.UsesNeow ? condition.RequiredOpeningKey : condition.UsesAncient ? boundOpening : null;
+
+        SearchQueryEvaluation Witness(OpeningTransformationContinuation? continuation, string route,
+            IReadOnlyList<ModelKey>? pickup, IEnumerable<PredictedEffectGroup>? groups, string? pendingOpening = null)
+        {
+            var outputs = new List<Output>();
+            if (openingSource is not null)
+            {
+                if (groups is null) AddUnknownOutputs(outputs, openingCount, openingSource);
+                else outputs.AddRange(NeowOutputs(groups, openingCount, authority, openingSource));
+            }
+            outputs.AddRange(events);
+
+            AncientProjectionStatus ancient = default;
+            string? unboundedSource = null;
+            if (condition.UsesAncient)
+            {
+                string source = condition.AncientSource == TransformationAncientSource.Astrolabe ? "A.ASTROLABE" : "A.PANDORAS_BOX";
+                ancient = AddAncientOutputs(outputs, profile, root, authority, relicPoolAuthority,
+                    condition, continuation, priorBasics, source);
+                if (ancient.InsufficientMaterials)
+                    return SearchQueryEvaluation.NoMatch("TransformationAggregate.AstrolabeBasicMaterialsInsufficient");
+                if (ancient.OutputCountUnknown) unboundedSource = source;
+            }
+
+            SearchDisposition disposition = EvaluateOutputs(condition, outputs, unboundedSource);
+            if (disposition == SearchDisposition.NoMatch)
+                return SearchQueryEvaluation.NoMatch("TransformationAggregate.PredicateRejected");
+            if (pendingOpening is not null || disposition == SearchDisposition.Unknown)
+                return SearchQueryEvaluation.Unknown(pendingOpening ?? ancient.FailureCode ?? "TransformationAggregate.OutputUnknown");
+            return Result(outputs, route, pickup);
         }
-        if (n.BonesOutcome is not { } bones) return SearchQueryEvaluation.Unknown("TransformationAggregate.BonesOutcomeUnknown");
-        if (!bones.OfferedRelics.Contains(BaseGameModelKeys.Relics.LeafyPoultice) || !bones.OfferedRelics.Contains(c.BonesCompanion))
+
+        if (opening is not { } selectedOpening)
+            return Witness(OpeningTransformationContinuation.Initial(authority.EffectAuthority), "events", null, null);
+
+        if (!authority.HasExactModernNeowIdentityInputs || authority.EffectAuthority is null)
+            return Witness(null, selectedOpening.Serialized, null, null, "TransformationAggregate.NeowAuthorityUnavailable");
+        var identity = ModernNeowIdentityPredictor.PredictModernCore(root, authority, profile, true);
+        if (identity.UnknownEligibilityAffectedPool)
+            return Witness(null, selectedOpening.Serialized, null, null, "TransformationAggregate.NeowEligibilityUnknown");
+        if (!identity.RelicKeys.Contains(selectedOpening))
+            return SearchQueryEvaluation.NoMatch("TransformationAggregate.OpeningNotOffered");
+        var engine = new NeowEffectProjectionEngine(profile, "TransformationAggregate.Neow", root, authority,
+            request.CompiledSearch.RequiresComplexBonesDeckInteractionEvaluation)
+            { CaptureTransformationContinuation = condition.UsesAncient };
+        var projectionOfOpening = engine.Project(selectedOpening);
+
+        if (selectedOpening != BaseGameModelKeys.Relics.NeowsBones)
+        {
+            bool boundContinuation = boundOpening == selectedOpening &&
+                (condition.UsesAncient || request.Evaluation.RequiresNormalCombatRewardDomain ||
+                 TransformationAggregateCondition.HasBoundDirectRelicContinuation(request.CompiledSearch.NormalizedQuery));
+            return Witness(projectionOfOpening.TransformationContinuation, selectedOpening.Serialized,
+                boundContinuation ? [selectedOpening] : null, projectionOfOpening.EffectGroups);
+        }
+
+        if (projectionOfOpening.BonesOutcome is not { } bones)
+            return Witness(null, selectedOpening.Serialized, null, null, "TransformationAggregate.BonesOutcomeUnknown");
+        if (condition.IsBones &&
+            (!bones.OfferedRelics.Contains(BaseGameModelKeys.Relics.LeafyPoultice) || !bones.OfferedRelics.Contains(condition.BonesCompanion)))
             return SearchQueryEvaluation.NoMatch("TransformationAggregate.BonesPairNotOffered");
-        bool unknown = bones.OriginalRoutes.Count == 0;
+        if (request.Evaluation.RequiredBonesCombination.Any(key => !bones.OfferedRelics.Contains(key)))
+            return SearchQueryEvaluation.NoMatch("TransformationAggregate.BonesPairNotOffered");
+        if (bones.OriginalRoutes.Count == 0)
+            return Witness(null, selectedOpening.Serialized, null, null, "TransformationAggregate.BonesOutcomeUnknown");
+
         var matched = new List<SearchMatchEvidence>();
         var unresolved = new List<SearchRouteRejection>();
+        var demandedOrder = request.Evaluation.RequiredBonesAcquisitionOrder;
         foreach (var route in bones.OriginalRoutes)
         {
-            if (c.PickupOrder != TransformationPickupOrder.Any && route.AcquisitionOrder[0] !=
-                (c.LeafyFirst ? BaseGameModelKeys.Relics.LeafyPoultice : c.BonesCompanion)) continue;
-            var scoped = c.Opening == TransformationOpening.BonesLeafyOther ? route.RelicScopedResults.Where(r=>r.SourceRelicKey==BaseGameModelKeys.Relics.LeafyPoultice) : route.RelicScopedResults;
-            var outputs = NeowOutputs(scoped.SelectMany(r => r.EffectGroups), c.Opening==TransformationOpening.BonesLeafyOther ? 2 : 3, authority).Concat(events).ToArray();
-            var verdict = EvaluateOutputs(c, outputs);
-            if (verdict == SearchDisposition.Match) matched.AddRange(Result(verdict, outputs, route.RouteId, route.AcquisitionOrder).Evidence);
-            unknown |= verdict == SearchDisposition.Unknown;
-            if (verdict == SearchDisposition.Unknown)
-                unresolved.Add(new(route.RouteId, route.AcquisitionOrder, verdict, "TransformationAggregate.RouteOutputUnknown"));
+            if (demandedOrder.Count > 0 && !demandedOrder.SequenceEqual(route.AcquisitionOrder)) continue;
+            if (condition.IsBones && condition.PickupOrder != TransformationPickupOrder.Any && route.AcquisitionOrder[0] !=
+                (condition.LeafyFirst ? BaseGameModelKeys.Relics.LeafyPoultice : condition.BonesCompanion)) continue;
+            var scoped = condition.Opening == TransformationOpening.BonesLeafyOther
+                ? route.RelicScopedResults.Where(result => result.SourceRelicKey == BaseGameModelKeys.Relics.LeafyPoultice)
+                : route.RelicScopedResults;
+            var verdict = Witness(route.TransformationContinuation, route.RouteId, route.AcquisitionOrder,
+                scoped.SelectMany(result => result.EffectGroups));
+            if (verdict.Disposition == SearchDisposition.Match) matched.AddRange(verdict.Evidence);
+            if (verdict.Disposition == SearchDisposition.Unknown)
+                unresolved.Add(new(route.RouteId, route.AcquisitionOrder, verdict.Disposition, verdict.FailureCode));
         }
-        if (matched.Count>0) return SearchQueryEvaluation.Match(matched) with { RouteRejections = unresolved.ToArray() };
-        return unknown ? SearchQueryEvaluation.Unknown("TransformationAggregate.RouteOutputUnknown") :
-            SearchQueryEvaluation.NoMatch("TransformationAggregate.AllRoutesRejected");
+        if (matched.Count > 0) return SearchQueryEvaluation.Match(matched) with { RouteRejections = unresolved };
+        if (unresolved.Count > 0) return SearchQueryEvaluation.Unknown(unresolved[0].Reason) with { RouteRejections = unresolved };
+        if (projectionOfOpening.Precision == PredictionPrecision.Unknown)
+            return Witness(null, selectedOpening.Serialized, null, null, "TransformationAggregate.BonesOutcomeUnknown");
+        return SearchQueryEvaluation.NoMatch("TransformationAggregate.AllRoutesRejected");
     }
 
-    private static Output EventOutput(MorphicGroveCard? card) => new(card?.CardKey, card is null ? null : card.Rarity == "Rare");
-    private static IEnumerable<Output> NeowOutputs(IEnumerable<PredictedEffectGroup> groups, int expected, RuntimeContextAuthoritySnapshot a)
+    private static IReadOnlyList<MorphicGroveCard?>? ProjectOtherEvent(ulong root, EventResultConditionKind kind,
+        int count, MorphicGroveScenario scenario)
     {
-        var transforms = groups.SelectMany(g => g.OrderedItems).Where(i => i.Kind == PredictedEffectKind.TransformCard).ToArray();
+        var eventScenario = count == 1 && scenario.Targets.Count != 1
+            ? new MorphicGroveScenario(scenario.Authority, scenario.Premises, [scenario.Targets[0]])
+            : scenario;
+        return EventResultTransformSemantics.Project(root, new(kind, default) { MorphicGroveScenario = eventScenario });
+    }
+
+    private static int? CountEarlierEventMaterials(SearchModel request, TransformationAggregateCondition condition,
+        NeowEffectAuthoritySnapshot? authority)
+    {
+        var preceding = request.Evaluation.EventSequenceConditions
+            .Where(queue => !queue.IsEmpty && queue.Act < condition.AncientAct)
+            .SelectMany(queue => queue.Keys.All.Concat(queue.Keys.Any.Count == 1 ? queue.Keys.Any : []))
+            .Select(key => key.Entry)
+            .ToHashSet(StringComparer.Ordinal);
+        if (preceding.Count == 0) return 0;
+
+        int count = 0;
+        foreach (var (kind, selected) in EventSources)
+        {
+            if (!preceding.Contains(EventResultTransformSemantics.Entry(kind))) continue;
+            var scenario = selected(condition) ? condition.EventScenario :
+                request.Evaluation.EventResultConditions.FirstOrDefault(result => result.Kind == kind)?.MorphicGroveScenario;
+            if (scenario is null) continue;
+            foreach (var target in scenario.Targets.Take(EventResultTransformSemantics.DrawCount(kind)))
+            {
+                if (condition.AncientSource == TransformationAncientSource.Astrolabe ||
+                    target.Original.CardKey == authority?.CharacterStrikeKey || target.Original.CardKey == authority?.CharacterDefendKey)
+                    count++;
+                else if (authority is not { HasExactDeck: true }) return null;
+                else if (authority.OrderedDeck!.Any(card => card.CardKey == target.Original.CardKey &&
+                    card.IsBasic && card.CanRemove && (card.IsStrike || card.IsDefend))) count++;
+            }
+        }
+        return count;
+    }
+
+    private static AncientProjectionStatus AddAncientOutputs(List<Output> outputs, IRuntimeProfile profile, ulong root,
+        RuntimeContextAuthoritySnapshot authority, NeowEffectAuthoritySnapshot? relicPoolAuthority, TransformationAggregateCondition condition,
+        OpeningTransformationContinuation? continuation, int? priorBasics, string source)
+    {
+        bool upgrade = condition.AncientSource == TransformationAncientSource.Astrolabe;
+        int? available = upgrade ? continuation?.BasicCount : continuation?.BasicStrikeDefendCount;
+        int? materials = available is { } basic && priorBasics is { } spent
+            ? Math.Max(0, basic - spent) : null;
+        if (upgrade && materials < TransformationRelicProjector.AstrolabeTargetCount)
+            return new(InsufficientMaterials: true);
+        int? count = upgrade ? TransformationRelicProjector.AstrolabeTargetCount : condition.PandoraCountOverride ?? materials;
+        if (count > TransformationRelicProjector.ProjectionDrawBudget) return new("TransformationAggregate.AncientDrawBudgetExceeded", true);
+        if (count is null) return new("TransformationAggregate.AncientMaterialCountUnknown", true);
+        if (count == 0) return default;
+
+        string? pending = authority.VersionResolution.SemanticProfileId != RngSemanticProfileId.Modern113
+            ? "TransformationAggregate.AncientStreamContinuationUnavailableForVersion" :
+            upgrade && materials is null ? "TransformationAggregate.AstrolabeBasicMaterialsUnknown" :
+            continuation?.StreamOffset is null ? "TransformationAggregate.AncientStreamOffsetUnknown" : null;
+        var projector = pending is null && relicPoolAuthority is not null
+            ? RelicPoolCaptures.GetValue(relicPoolAuthority, snapshot => new(TransformationRelicProjector.Capture(snapshot))).Projector
+            : null;
+        if (projector is null)
+        {
+            AddUnknownOutputs(outputs, count.Value, source);
+            return new(pending ?? "TransformationAggregate.AncientTransformPoolUnknown");
+        }
+        foreach (var card in projector.Project(profile, root, authority.PlayerSlotIndex, authority.VersionResolution.SemanticProfileId,
+                     continuation!.StreamOffset!.Value, count.Value, upgrade))
+            outputs.Add(new(card.CardKey, card.Rarity == EffectCardRarity.Rare, source));
+        return default;
+    }
+
+    private static void AddUnknownOutputs(List<Output> outputs, int count, string source)
+    {
+        for (int i = 0; i < count; i++) outputs.Add(new(null, null, source));
+    }
+
+    private static IEnumerable<Output> NeowOutputs(IEnumerable<PredictedEffectGroup> groups, int expected,
+        RuntimeContextAuthoritySnapshot authority, string source)
+    {
+        var transforms = groups.SelectMany(group => group.OrderedItems).Where(item => item.Kind == PredictedEffectKind.TransformCard).ToArray();
         if (transforms.Length > expected) throw new InvalidOperationException("TransformationAggregate.UnexpectedNeowOutputMultiplicity");
         foreach (var item in transforms)
         {
             ModelKey? key = item.Precision == PredictionPrecision.Exact ? item.TargetKey : null;
-            var card = key is null ? null : a.EffectAuthority?.TransformPool?.FirstOrDefault(x => x.CardKey == key);
-            yield return new(key, card is null ? null : card.Rarity == EffectCardRarity.Rare);
+            var card = key is null ? null : authority.EffectAuthority?.TransformPool?.FirstOrDefault(value => value.CardKey == key);
+            yield return new(key, card is null ? null : card.Rarity == EffectCardRarity.Rare, source);
         }
-        for (int i = transforms.Length; i < expected; i++) yield return new(null, null);
+        for (int i = transforms.Length; i < expected; i++) yield return new(null, null, source);
     }
 
-    internal static SearchDisposition EvaluateOutputs(TransformationAggregateCondition c, IReadOnlyList<Output> outputs)
+    internal static SearchDisposition EvaluateOutputs(TransformationAggregateCondition condition, IReadOnlyList<Output> outputs) =>
+        EvaluateOutputs(condition, outputs, null);
+
+    private static SearchDisposition EvaluateOutputs(TransformationAggregateCondition condition, IReadOnlyList<Output> outputs,
+        string? unboundedSource)
     {
-        if (outputs.Count != c.OpportunityCount) throw new InvalidOperationException("TransformationAggregate.OutputCountMismatch");
-        if (c.Predicate == TransformationAggregatePredicate.RareCountAtLeast)
+        if (condition.ResultRequirements.Count == 0)
         {
-            int rare = outputs.Count(x => x.Rare == true), unknown = outputs.Count(x => x.Rare is null);
-            return rare >= c.MinimumRareCount ? SearchDisposition.Match : rare + unknown < c.MinimumRareCount
-                ? SearchDisposition.NoMatch : SearchDisposition.Unknown;
+            if (!condition.UsesAncient && outputs.Count != condition.OpportunityCount)
+                throw new InvalidOperationException("TransformationAggregate.OutputCountMismatch");
+            return EvaluatePredicate(condition.Predicate, condition.MinimumRareCount, condition.TargetMultiset, outputs,
+                unboundedSource is not null);
         }
-        if (c.RequiresRareRemainder) return EvaluateRareRemainder(c, outputs);
-        int missing = c.TargetMultiset.GroupBy(k => k).Sum(g => Math.Max(0, g.Count() - outputs.Count(o => o.Card == g.Key)));
-        return missing == 0 ? SearchDisposition.Match : missing > outputs.Count(o => o.Card is null)
-            ? SearchDisposition.NoMatch : SearchDisposition.Unknown;
+
+        var result = SearchDisposition.Match;
+        foreach (var requirement in condition.ResultRequirements)
+        {
+            var disposition = EvaluatePredicate(requirement.Predicate, requirement.MinimumRareCount, requirement.TargetMultiset,
+                outputs.Where(output => requirement.Sources.Contains(output.Source)).ToArray(),
+                unboundedSource is not null && requirement.Sources.Contains(unboundedSource));
+            if (disposition == SearchDisposition.NoMatch) return disposition;
+            if (disposition == SearchDisposition.Unknown) result = disposition;
+        }
+        return result;
     }
 
-    private static SearchDisposition EvaluateRareRemainder(TransformationAggregateCondition c, IReadOnlyList<Output> outputs)
+    private static SearchDisposition EvaluatePredicate(TransformationAggregatePredicate predicate, int minimumRare,
+        IReadOnlyList<ModelKey> targets, IReadOnlyList<Output> outputs, bool outputCountUnknown)
     {
-        // Assign distinct output instances to the requested multiset. Unassigned
-        // instances must be Rare. Keep possible/proven assignments separate so
-        // partial authority never becomes an Exact match or a false rejection.
-        int size = 1 << c.TargetMultiset.Count;
-        Span<byte> states = stackalloc byte[size], next = stackalloc byte[size];
-        states.Clear(); states[0] = 3; // 1 = possible, 2 = proven
+        if (predicate == TransformationAggregatePredicate.ContainsMultisetAndRemainingRare)
+            return EvaluateRareRemainder(targets, outputs, outputCountUnknown);
+
+        int rare = 0, unknownRarity = 0, unknownIdentity = 0;
+        var needed = targets.GroupBy(key => key).ToDictionary(group => group.Key, group => group.Count());
+        int missing = targets.Count;
         foreach (var output in outputs)
         {
-            next.Clear();
-            for (int mask = 0; mask < size; mask++)
+            if (output.Rare == true) rare++;
+            if (output.Rare is null) unknownRarity++;
+            if (output.Card is not { } card) unknownIdentity++;
+            else if (needed.TryGetValue(card, out int count) && count > 0)
             {
-                byte state = states[mask];
-                if (state == 0) continue;
-                if (output.Rare != false)
-                    next[mask] |= output.Rare == true ? state : (byte)(state & 1);
-                for (int i = 0; i < c.TargetMultiset.Count; i++)
-                {
-                    int bit = 1 << i;
-                    if ((mask & bit) != 0) continue;
-                    if (output.Card == c.TargetMultiset[i]) next[mask | bit] |= state;
-                    else if (output.Card is null) next[mask | bit] |= (byte)(state & 1);
-                }
+                needed[card] = count - 1;
+                missing--;
             }
-            var swap = states; states = next; next = swap;
         }
-        byte result = states[size - 1];
-        return (result & 2) != 0 ? SearchDisposition.Match : (result & 1) != 0 ? SearchDisposition.Unknown : SearchDisposition.NoMatch;
+        if (outputCountUnknown)
+            return rare >= minimumRare && missing == 0 ? SearchDisposition.Match : SearchDisposition.Unknown;
+        if (rare + unknownRarity < minimumRare || missing > unknownIdentity)
+            return SearchDisposition.NoMatch;
+        return rare >= minimumRare && missing == 0 ? SearchDisposition.Match : SearchDisposition.Unknown;
     }
 
-    private static SearchQueryEvaluation Result(SearchDisposition disposition, IReadOnlyList<Output> outputs, string route,
-        IReadOnlyList<ModelKey>? pickup = null) => disposition switch {
-        SearchDisposition.Match => SearchQueryEvaluation.Match([new SearchMatchEvidence("TransformationAggregateMatched", null,
+    private static SearchDisposition EvaluateRareRemainder(IReadOnlyList<ModelKey> targets, IReadOnlyList<Output> outputs,
+        bool outputCountUnknown)
+    {
+        // Every known non-Rare must occupy a matching target slot. The available
+        // copies of an identity can be assigned interchangeably. After the forced
+        // known assignments, unknown identities share the leftover slots.
+        var targetCounts = targets.GroupBy(key => key).ToDictionary(group => group.Key, group => group.Count());
+        var available = new Dictionary<ModelKey, int>();
+        var required = new Dictionary<ModelKey, int>();
+        var requiredForProof = new Dictionary<ModelKey, int>();
+        int unknown = 0, forcedUnknown = 0;
+        bool allUnknownCanProveRemainder = true;
+        foreach (var output in outputs)
+        {
+            if (output.Card is not { } card)
+            {
+                unknown++;
+                if (output.Rare == false) forcedUnknown++;
+                if (output.Rare != true) allUnknownCanProveRemainder = false;
+                continue;
+            }
+            available[card] = available.GetValueOrDefault(card) + 1;
+            if (output.Rare == false) required[card] = required.GetValueOrDefault(card) + 1;
+            if (output.Rare != true) requiredForProof[card] = requiredForProof.GetValueOrDefault(card) + 1;
+        }
+
+        int missing = targetCounts.Sum(pair => Math.Max(0, pair.Value - available.GetValueOrDefault(pair.Key)));
+        if (required.Any(pair => pair.Value > targetCounts.GetValueOrDefault(pair.Key)) ||
+            forcedUnknown > targets.Count - required.Values.Sum())
+            return SearchDisposition.NoMatch;
+        if (outputCountUnknown) return SearchDisposition.Unknown;
+        if (missing > unknown) return SearchDisposition.NoMatch;
+        return missing == 0 && allUnknownCanProveRemainder &&
+            requiredForProof.All(pair => pair.Value <= targetCounts.GetValueOrDefault(pair.Key))
+            ? SearchDisposition.Match : SearchDisposition.Unknown;
+    }
+
+    private static SearchQueryEvaluation Result(IReadOnlyList<Output> outputs, string route, IReadOnlyList<ModelKey>? pickup) =>
+        SearchQueryEvaluation.Match([new SearchMatchEvidence("TransformationAggregateMatched", null,
             "transformation-aggregate:" + route,
             AcquisitionOrder: pickup,
             EvidenceCode: new("TransformationAggregate.ConditionalRawOutputs.v1"),
             ChoicePolicyId: "AuthoredInitialBasicsTransformations.v1",
-            OutcomeId: string.Join(',', outputs.Select(o => o.Card?.Serialized ?? "unknown")),
+            OutcomeId: string.Join(',', outputs.Select(output => output.Card?.Serialized ?? "unknown")),
             ProfileId: RuntimeProfileId.Beta111, StreamDomain: "TransformationAggregate",
-            ConditionId: "transformation-aggregate")]),
-        SearchDisposition.NoMatch => SearchQueryEvaluation.NoMatch("TransformationAggregate.PredicateRejected"),
-        _ => SearchQueryEvaluation.Unknown("TransformationAggregate.OutputUnknown") };
+            ConditionId: "transformation-aggregate")]);
 }

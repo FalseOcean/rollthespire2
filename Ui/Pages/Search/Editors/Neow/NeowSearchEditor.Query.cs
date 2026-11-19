@@ -85,12 +85,35 @@ internal sealed partial class NeowSearchEditor
             for (int i = 0; i < values.Count; i++) if (values[i].HasValue) _slots[$"{effect.SourceRelicKey}/{component}/{i}"] = values[i];
         }
         if (query.TransformationAggregate is { Opening: TransformationOpening.BonesLeafyNewLeaf,
-            Predicate: TransformationAggregatePredicate.ContainsMultiset, UsesEvents: false } joint)
+            Predicate: TransformationAggregatePredicate.ContainsMultiset, UsesEvents: false, UsesExtendedRequirements: false } joint)
         {
             _draft.JointTransforms = true;
             for (int i = 0; i < joint.TargetMultiset.Count; i++) _draft.TransformTargets[i] = joint.TargetMultiset[i];
         }
         InitializeAllocationDraftsFromQuery();
         _draft.Context = ""; // Next refresh binds legality against freshly captured context.
+    }
+
+    internal bool TryRestoreTransformationTargets(string sourceId, IReadOnlyList<ModelKey> cards)
+    {
+        if (!TransformationSources(_activeSeat).Any(source => source.Id == sourceId && cards.Count <= source.ResultCount)) return false;
+        if (sourceId == "N.BonesLeafyNewLeaf")
+        {
+            var original = _draft.TransformTargets.OfType<ModelKey>().ToArray();
+            if (original.Length > 0 && !AncientSearchEditor.SameTransformationTargets(original, cards)) return false;
+            if (original.Length == 0)
+                for (int index = 0; index < cards.Count; index++) _draft.TransformTargets[index] = cards[index];
+            _draft.JointTransforms = _draft.TransformJointInitialized = true;
+            return true;
+        }
+
+        if (sourceId == "N.BonesLeafyOther" && _draft.JointTransforms) return false;
+        ModelKey relic = sourceId == "N.NewLeaf" ? BaseGameModelKeys.Relics.NewLeaf : BaseGameModelKeys.Relics.LeafyPoultice;
+        var component = NeowEffectCardRegistry.Get(relic).Components.Single(c => c.Scope == NeowStructuredEffectScope.TransformResults);
+        var slots = Enumerable.Range(0, component.SlotCount).Select(index => $"{relic}/{component.ComponentId}/{index}").ToArray();
+        var existing = slots.Select(slot => _slots.GetValueOrDefault(slot)).OfType<ModelKey>().ToArray();
+        if (existing.Length > 0) return AncientSearchEditor.SameTransformationTargets(existing, cards);
+        for (int index = 0; index < cards.Count; index++) _slots[slots[index]] = cards[index];
+        return true;
     }
 }

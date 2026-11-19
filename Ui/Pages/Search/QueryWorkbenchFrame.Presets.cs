@@ -311,7 +311,7 @@ internal sealed partial class QueryWorkbenchFrame
         var probe = new QueryWorkbenchFrame(_runtime, _persistence) { _editorInputs = _editorInputs };
         try
         {
-            probe.RestoreDraft(draft, render: false);
+            probe.RestoreDraft(draft, render: false, migrateLegacyTransformations: false);
             var restored = probe.CaptureDraft().WithoutCapturedAuthority();
             if (!SamePresetSemantics(expected, _editorInputs.Compile(restored, _runtime)) ||
                 draft.AncientEditor is not null && JsonSerializer.Serialize(draft.AncientEditor) != JsonSerializer.Serialize(restored.AncientEditor) ||

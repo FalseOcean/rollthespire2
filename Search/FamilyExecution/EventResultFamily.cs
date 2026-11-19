@@ -26,6 +26,7 @@ internal static partial class EventResultFamily
         result = null;
         if (model.Evaluation.EventResultConditions.Count == 0) return false;
         var plan = new EventResultFamilyPlan(model, preferGpu, numericalVariant);
+        if (plan.Conditions.Length == 0) return false;
         var profile = RuntimeProfileRegistry.Select(model.Detection);
         var authority = FilterPricingAuthority.From(model);
         string identity = model.SnapshotFingerprint;
@@ -47,6 +48,8 @@ internal static partial class EventResultFamily
             UsesGpu = true, InputIdentity = identity, PlayersCount = model.Authority.PlayersCount,
             CpuWorkers = preferences.WorkerCount, WindowCapacity = plan.Capacity,
             NumericRequirements = plan.GpuNumericRequirements,
+            FirstDraw = finalHeader ? FamilyAuxiliaryEvidence.Read<FamilyFirstDraw?>(Id, "FirstDraw",
+                () => EventResultGpuPacking.CompileFirstDraw(plan), null, identity) : null,
             CpuAlternatives = compiled is null ? [ordinary] : [cpu, ordinary],
             PerformanceProjection = compact => new(Id,
                 $"E.EventResult.Gpu.Whitelist.{(compact ? "CompactAbi1" : "Dense")}.CanonicalAbi1Ready.20260919.v1" +

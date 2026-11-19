@@ -289,8 +289,9 @@ internal static partial class PredictorLiveRunCapture
     {
         var keywords = card.GetKeywordsWithSources(KeywordSources.Local);
         int localBase = Field<int>(card.EnergyCost, "_base");
+        int metadataLevel = PredictorCardLevelEffects.HasInvariantLevelMetadata(Key(card)) ? 0 : card.CurrentUpgradeLevel;
         int? normalCost = catalog.CardDefinitions.FirstOrDefault(d => d.Prototype.Key == Key(card))?.Levels
-            .FirstOrDefault(l => l.UpgradeLevel == card.CurrentUpgradeLevel)?.LocalCost;
+            .FirstOrDefault(l => l.UpgradeLevel == metadataLevel)?.LocalCost;
         int? costOverride = normalCost == localBase ? null : localBase;
         int increasedBlock = card is GeneticAlgorithm ga ? ga.IncreasedBlock : 0;
         int increasedDamage = card is TheScythe scythe ? scythe.IncreasedDamage : 0;

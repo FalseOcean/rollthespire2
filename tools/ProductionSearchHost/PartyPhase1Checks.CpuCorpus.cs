@@ -12,6 +12,7 @@ using RolltheSpire2.Search.Compilation;
 using RolltheSpire2.Search.Contracts;
 using RolltheSpire2.Search.FamilyExecution;
 using RolltheSpire2.Search.Runtime;
+using RolltheSpire2.Search.Selectivity;
 using RolltheSpire2.Search.Semantics;
 
 internal static partial class PartyPhase1Checks
@@ -66,6 +67,8 @@ internal static partial class PartyPhase1Checks
                         { Conditions = local };
                 }).ToArray();
                 var query = SearchQuery.Empty with { Players = players };
+                if (count == 2)
+                    CheckDirectLeafyPairSurvival(context, slot, players[slot].Conditions, seed);
                 Godot.GD.Print($"PARTY_CPU_N_FIXTURE players={count};slot={slot};seed={seed};producerBaselineAdjusted=true;activeLegacyAny=SelectedLeafyOrObservedPositive1;wholeTableAny=ObservedPositive0OrArcane;passiveAnyGatesUnchanged=true;selectedChildProjectsOneAcquiredChoice=true");
                 var compiled = SearchCompiler.Compile(query, context);
                 var request = SearchPreparationCompiler.Compile(compiled, new(seed, 1, 1, 16)).Plan
@@ -129,5 +132,56 @@ internal static partial class PartyPhase1Checks
         File.WriteAllText(Path.Combine(output, "capture-evidence.json"),
             System.Text.Json.JsonSerializer.Serialize(diagnostics, ProductionSearchReplay.JsonOptions));
         Godot.GD.Print("PARTY_CPU_CORPUS_PASS players=2,3,4;earlyLateSlots=true;nativeCaptured=true;positiveExact=true");
+    }
+
+    private static void CheckDirectLeafyPairSurvival(SearchContext context, int slot, SearchQuery local, string seed)
+    {
+        var pair = local.StructuredOpeningEffects.Single();
+        var single = pair with { OutputKeys = [pair.OutputKeys[0]] };
+        var otherSlot = context.Party!.Players.Single(player => player.PlayerSlotIndex != slot);
+        var otherTargets = Beta111NeowEffectProjector.ProjectFromRootHash(BaseGameModelKeys.Relics.LeafyPoultice,
+                PredictionPrecision.Exact, otherSlot, Beta111Profile.Instance.ComputeRootSeed(seed)).EffectGroups
+            .SelectMany(group => group.OrderedItems).Where(item => item.Kind == PredictedEffectKind.TransformCard && item.TargetKey.HasValue)
+            .Select(item => item.TargetKey!.Value).ToArray();
+        if (otherTargets.Length != 2) throw new InvalidDataException("PartyCpuCorpus.OtherLeafyOutputs");
+        var otherSingle = pair with { OutputKeys = [otherTargets[0]] };
+
+        CompiledSearch Compile(NeowStructuredEffectSearchCondition[] rows, bool other = false, bool bindRoute = true)
+        {
+            var active = SearchQuery.Empty with { OpeningRoute = bindRoute ? local.OpeningRoute : null,
+                StructuredOpeningEffects = rows };
+            var companion = !other ? SearchQuery.Empty : SearchQuery.Empty with { OpeningRoute = local.OpeningRoute,
+                StructuredOpeningEffects = rows.Length > 0 ? [otherSingle] : [] };
+            var players = context.Party!.Players.Select(p => new PlayerOfferQuery(p.PlayerSlotIndex, ModelKeySetFilter.Empty)
+                { Conditions = p.PlayerSlotIndex == slot ? active : companion }).ToArray();
+            return SearchCompiler.Compile(SearchQuery.Empty with { Players = players }, context);
+        }
+        FamilySurvivalProjection Survival(CompiledSearch search, bool gpu)
+        {
+            var request = SearchPreparationCompiler.Compile(search, new(seed, 1, 1, 1)).Plan!;
+            return FamilyExecutionCoordinator.CreateRegisteredFamilies(request, gpuAvailable: gpu, gpuFloat64Available: true)
+                .Single(f => f.FamilyId == "N.Neow").Survival;
+        }
+
+        var duplicate = pair with { OutputKeys = [pair.OutputKeys[0], pair.OutputKeys[0]] };
+        foreach (var (rows, other) in new[] { (new[] { pair }, false), (new[] { duplicate }, false),
+            (new[] { single }, false), (new[] { single }, true), (new[] { pair }, true) })
+        {
+            var search = Compile(rows, other);
+            var expected = PartyQueryProbability.Estimate(search).Probability;
+            foreach (bool gpu in new[] { false, true })
+            {
+                var result = Survival(search, gpu);
+                if (expected is null || result.SurvivalProbability != expected ||
+                    !(expected < Survival(Compile([], other), gpu).SurvivalProbability) ||
+                    !result.Evidence.Contains($"CheckedLeafySeats={(other ? 2 : 1)};", StringComparison.Ordinal))
+                    throw new InvalidDataException($"PartyCpuCorpus.DirectLeafySurvival:slot={slot};other={other};gpu={gpu}");
+            }
+        }
+        var remainder = pair with { OutputKeys = [new("CARD", "NO_SUCH_CARD")] };
+        foreach (var search in new[] { Compile([pair], bindRoute: false), Compile([pair, remainder], other: true) })
+        foreach (bool gpu in new[] { false, true })
+            if (!Survival(search, gpu).Evidence.StartsWith("PartyN.OfferGateUpperEnvelope;", StringComparison.Ordinal))
+                throw new InvalidDataException($"PartyCpuCorpus.DirectLeafyRemainder:slot={slot};gpu={gpu}");
     }
 }

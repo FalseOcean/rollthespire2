@@ -475,6 +475,18 @@ internal static partial class UiSurfaceChecks
                 label.Text.Contains(text.Get("workflow.source.neow_capsule"), StringComparison.Ordinal)),
                 "family estimates are read-only and connect back to the Capsule source");
             await Snapshot("authoring-zh-family-joint-source", frame);
+
+            // Execution costs may include a family without a dotted ID or a dedicated probability row.
+            var costs = preview.Costs.ToDictionary(pair => pair.Key, pair => pair.Value);
+            costs[FishingRodDrawResearch.Id] = (2000d, null);
+            frame.DescribeProbability(compiled, preview with { Costs = costs });
+            Call(frame, "RenderFamilyDashboard");
+            var researchRow = rows.GetNode<VBoxContainer>("ConditionEstimate_" + FishingRodDrawResearch.Id);
+            Check(researchRow.GetChild<Label>(0).Text == text.Get("query.ideas.fishing_rod.title") &&
+                researchRow.FindChild("FamilyCheckSpeed", true, false) is Label speed &&
+                speed.Text == text.Format("workflow.quote.cpu", QueryWorkbenchFrame.CompactNumber(1e9 / 2000d)) &&
+                rows.HasNode("ConditionEstimate_N_R"),
+                "an undotted family keeps its own quote and coexists with a joint probability row");
             Restore(SearchQuery.Empty, "neow");
         }
         var dense = empty with { Query = SearchQuery.Empty with

@@ -72,6 +72,14 @@ internal static partial class MorphicFilterChecks
                 var query=SearchQuery.Empty with {EventResultConditions=cases[ci]};
                 var request=Request(query); var plan=new EventResultFamilyPlan(request.Model);
                 check(plan.GpuSupported,"Whitelist GPU closure");
+                var firstDraw = EventResultGpuPacking.CompileFirstDraw(plan);
+                string? expectedGroup = plan.Conditions is [var only] ? only.Kind switch {
+                    EventResultConditionKind.TrashHeapGrabCard or EventResultConditionKind.TrashHeapDiveRelic => "TrashHeap",
+                    EventResultConditionKind.TrialCase => "Trial",
+                    EventResultConditionKind.SymbioteInitialBasicTransform or EventResultConditionKind.AromaOfChaosInitialBasicTransform => "InitialBasicTransform",
+                    _ => null
+                } : null;
+                check(firstDraw?.Group == expectedGroup, "Only complete first-draw event predicates can share the Neow dispatch");
                 CheckEventPreparationSnapshots(request, check, expectedDefault: ci is 27 or 28);
                 check(fingerprints.Add(request.SnapshotFingerprint),"Distinct typed event fingerprint");
                 var json=JsonSerializer.Serialize(query,ProductionSearchReplay.JsonOptions);

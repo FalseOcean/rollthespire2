@@ -14,4 +14,4 @@ This condition covers normal, non-tutorial single-player runs and counts questio
 
 This answers which room type a question mark becomes first. You still need to consider whether the map has enough question marks, and whether your route and event eligibility allow the particular event you want.
 
-See [[events|Events]] for filtering and [[map|Map]] for out-of-run map information. For information along your current Act's route during play, see [[path-prediction|In-run path prediction]].
+See [[events|Events]] for filtering and [[map|Map]] for using the map in Seed Information.

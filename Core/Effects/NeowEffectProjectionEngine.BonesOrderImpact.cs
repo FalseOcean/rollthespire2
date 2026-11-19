@@ -5,6 +5,7 @@ using RolltheSpire2.Core.Effects.Shadow;
 using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Rewards;
+using RolltheSpire2.Core.Transformation;
 
 namespace RolltheSpire2.Core.Effects;
 
@@ -277,10 +278,28 @@ internal sealed partial class NeowEffectProjectionEngine
                     sharedStateExact: branch.Continuity.CanProjectFinalCurse,
                     nonCombatStateExact: branch.Continuity.CanProjectVersionedFinalCurse(usesNonCombat: true),
                     executedNestedObtainRelics: branch.RelicScopedResults.SelectMany(result =>
-                        ExecutedNestedObtainRelics(result.SourceRelicKey, result.EffectGroups)).Distinct().ToArray())));
+                        ExecutedNestedObtainRelics(result.SourceRelicKey, result.EffectGroups)).Distinct().ToArray()))
+            {
+                TransformationContinuation = CaptureTransformationContinuation
+                    ? ReadBonesTransformationContinuation(branch)
+                    : null
+            });
         }
 
         return results;
+    }
+
+    private OpeningTransformationContinuation ReadBonesTransformationContinuation(BonesRouteBranchState branch)
+    {
+        bool unresolvedTransform = branch.RelicScopedResults.Any(result =>
+            result.SourceRelicKey == BaseGameModelKeys.Relics.NewLeaf &&
+            !result.EffectGroups.SelectMany(group => group.OrderedItems).Any(item => item.Kind == PredictedEffectKind.TransformCard) &&
+            !branch.PlayerChoiceSelections.Any(selection => selection.ChoiceRelicKey == result.SourceRelicKey));
+        bool unresolvedRemoval = branch.RelicScopedResults.Any(result =>
+            IsBasicRemovalChoice(result.SourceRelicKey) &&
+            !branch.PlayerChoiceSelections.Any(selection => selection.ChoiceRelicKey == result.SourceRelicKey));
+        return ReadTransformationContinuation(branch.State, branch.Continuity.TransformationsRng,
+            branch.Continuity.NicheRng, branch.Continuity.ShadowDeck, unresolvedTransform || unresolvedRemoval, unresolvedTransform);
     }
 
 

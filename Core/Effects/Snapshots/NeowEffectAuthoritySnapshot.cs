@@ -176,7 +176,9 @@ public sealed record NeowEffectAuthoritySnapshot(
     bool MerchantColorlessOrderedPoolExact = false,
     bool MerchantColorlessPoolIdentityHooksExact = false,
     bool MerchantColorlessRarityIdentityHooksExact = false,
-    bool MerchantInitialInventoryShapeExact = false)
+    bool MerchantInitialInventoryShapeExact = false,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<ModelKey>? NativeCharacterPoolOrder = null)
 {
     /// <summary>
     /// Immutable runtime-capture foundation. This proves that copied catalog inputs exist

@@ -217,6 +217,10 @@ public sealed record SearchQuery(
     public IReadOnlyList<StandardMapRouteCondition> StandardMapRoutes { get; init; } = Array.Empty<StandardMapRouteCondition>();
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public ElitePrefixResearchCondition? ElitePrefixResearch { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool FishingRodDrawResearch { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<FishingRodDrawRequirement>? FishingRodDrawRequirements { get; init; }
 
     public CombatCardRewardSequenceSearchCondition? CombatCardRewards { get; init; }
     public CombatCardExclusionSearchCondition? CombatCardExclusion { get; init; }
@@ -224,6 +228,7 @@ public sealed record SearchQuery(
     public CombatPotionRewardSequenceSearchCondition? CombatPotionRewards { get; init; }
     public IReadOnlyList<EventResultSearchCondition> EventResultConditions { get; init; } =
         Array.Empty<EventResultSearchCondition>();
+    public IReadOnlyList<MerchantRelicCondition> MerchantRelicConditions { get; init; } = [];
     public IReadOnlyList<MerchantColorlessSlotCondition> MerchantColorlessConditions { get; init; } =
         Array.Empty<MerchantColorlessSlotCondition>();
     public IReadOnlyList<MerchantColorlessSequenceSearchCondition> MerchantColorlessSequenceConditions { get; init; } =

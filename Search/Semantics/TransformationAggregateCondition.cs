@@ -6,7 +6,12 @@ namespace RolltheSpire2.Search.Semantics;
 
 public enum TransformationOpening { None, LeafyPoultice, NewLeaf, BonesLeafyNewLeaf, BonesLeafyOther }
 public enum TransformationPickupOrder { Any, LeafyThenNewLeaf, NewLeafThenLeafy, LeafyThenCompanion, CompanionThenLeafy }
-public enum TransformationAggregatePredicate { RareCountAtLeast, ContainsMultiset, ContainsMultisetAndRemainingRare }
+public enum TransformationAggregatePredicate { RareCountAtLeast, ContainsMultiset, ContainsMultisetAndRemainingRare, ContainsMultisetAndRareCount }
+public enum TransformationAncientSource { None, Astrolabe, PandorasBox }
+
+/// <summary>One predicate over the selected sources of the same generated outcome.</summary>
+public sealed record TransformationResultRequirement(IReadOnlyList<string> Sources,
+    TransformationAggregatePredicate Predicate, int MinimumRareCount, IReadOnlyList<ModelKey> TargetMultiset);
 
 /// <summary>One indivisible Query obligation. Event inputs are captured conditional
 /// initial-Basic premises, never an assertion that an event occurs on a route.</summary>
@@ -26,36 +31,81 @@ public sealed record TransformationAggregateCondition(
     public bool Symbiote { get; init; }
     public bool TrialNondescript { get; init; }
     public ModelKey? CompanionRelic { get; init; }
+    public TransformationAncientSource AncientSource { get; init; }
+    public int AncientAct { get; init; }
+    public int? PandoraCountOverride { get; init; }
+    public int PandoraAutomaticCount { get; init; }
+    public IReadOnlyList<TransformationResultRequirement> ResultRequirements { get; init; } = [];
+    public bool UsesAncient => AncientSource != TransformationAncientSource.None;
+    internal ModelKey RequiredAncientKey => new("RELIC", AncientSource == TransformationAncientSource.Astrolabe ? "ASTROLABE" : "PANDORAS_BOX");
+    public bool UsesExtendedRequirements => UsesAncient || ResultRequirements.Count > 0 || Predicate == TransformationAggregatePredicate.ContainsMultisetAndRareCount;
+    public int AncientOpportunityCount => AncientSource switch {
+        TransformationAncientSource.Astrolabe => 3,
+        TransformationAncientSource.PandorasBox => PandoraCountOverride ?? PandoraAutomaticCount, _ => 0 };
     internal bool RequiresRareRemainder => Predicate == TransformationAggregatePredicate.ContainsMultisetAndRemainingRare;
     internal bool IsBones => Opening is TransformationOpening.BonesLeafyNewLeaf or TransformationOpening.BonesLeafyOther;
     internal ModelKey BonesCompanion => Opening == TransformationOpening.BonesLeafyOther ? CompanionRelic!.Value : BaseGameModelKeys.Relics.NewLeaf;
     internal bool LeafyFirst => PickupOrder is TransformationPickupOrder.LeafyThenNewLeaf or TransformationPickupOrder.LeafyThenCompanion;
     public bool UsesNeow => Opening != TransformationOpening.None;
     public bool UsesEvents => MorphicGrove || AromaOfChaos || WhisperingHollow || Symbiote || TrialNondescript;
-    public int OpportunityCount => (Opening switch {
+    public int OpportunityCount => (int)Math.Min(int.MaxValue, (long)(Opening switch {
         TransformationOpening.LeafyPoultice => 2, TransformationOpening.NewLeaf => 1,
         TransformationOpening.BonesLeafyNewLeaf => 3, TransformationOpening.BonesLeafyOther => 2, _ => 0 }) +
-        (MorphicGrove ? 2 : 0) + (AromaOfChaos ? 1 : 0) + (WhisperingHollow ? 1 : 0) + (Symbiote ? 1 : 0) + (TrialNondescript ? 2 : 0);
+        (MorphicGrove ? 2 : 0) + (AromaOfChaos ? 1 : 0) + (WhisperingHollow ? 1 : 0) + (Symbiote ? 1 : 0) + (TrialNondescript ? 2 : 0) + AncientOpportunityCount);
+
+    public IReadOnlyDictionary<string, int> SourceCounts()
+    {
+        var result = new Dictionary<string, int>(StringComparer.Ordinal);
+        if (UsesNeow) result[Opening switch {
+            TransformationOpening.LeafyPoultice => "N.LeafyPoultice", TransformationOpening.NewLeaf => "N.NewLeaf",
+            TransformationOpening.BonesLeafyOther => "N.BonesLeafyOther", _ => "N.BonesLeafyNewLeaf" }] =
+            Opening switch { TransformationOpening.NewLeaf => 1, TransformationOpening.BonesLeafyNewLeaf => 3, _ => 2 };
+        if (MorphicGrove) result["E.MORPHIC_GROVE"] = 2;
+        if (AromaOfChaos) result["E.AROMA_OF_CHAOS"] = 1;
+        if (WhisperingHollow) result["E.WHISPERING_HOLLOW"] = 1;
+        if (Symbiote) result["E.SYMBIOTE"] = 1;
+        if (TrialNondescript) result["E.TRIAL"] = 2;
+        if (UsesAncient) result[AncientSource == TransformationAncientSource.Astrolabe ? "A.ASTROLABE" : "A.PANDORAS_BOX"] = AncientOpportunityCount;
+        return result;
+    }
 
     internal TransformationAggregateCondition Normalize()
     {
         if (!Enum.IsDefined(Opening) || !Enum.IsDefined(PickupOrder) || !Enum.IsDefined(Predicate) ||
             !IsBones && PickupOrder != TransformationPickupOrder.Any ||
-            OpportunityCount == 0 || TargetMultiset is null)
+            !Enum.IsDefined(AncientSource) || OpportunityCount <= 0 || TargetMultiset is null || ResultRequirements is null ||
+            (UsesAncient ? AncientAct is not (2 or 3) : AncientAct != 0) || PandoraCountOverride is < 0 || PandoraAutomaticCount < 0 ||
+            AncientSource != TransformationAncientSource.PandorasBox && (PandoraCountOverride.HasValue || PandoraAutomaticCount != 0))
             throw new ArgumentException("TransformationAggregate.InvalidContributors");
         if (Opening == TransformationOpening.BonesLeafyOther
             ? CompanionRelic is not { IsValid: true } k || k.Category != "RELIC" || k == BaseGameModelKeys.Relics.LeafyPoultice || k == BaseGameModelKeys.Relics.NeowsBones || k == BaseGameModelKeys.Relics.NewLeaf || PickupOrder is TransformationPickupOrder.LeafyThenNewLeaf or TransformationPickupOrder.NewLeafThenLeafy
             : CompanionRelic.HasValue || PickupOrder is TransformationPickupOrder.LeafyThenCompanion or TransformationPickupOrder.CompanionThenLeafy)
             throw new ArgumentException("TransformationAggregate.InvalidBonesCompanion");
-        if (Predicate == TransformationAggregatePredicate.RareCountAtLeast
-            ? MinimumRareCount < 1 || MinimumRareCount > OpportunityCount || TargetMultiset.Count != 0
-            : MinimumRareCount != 0 || TargetMultiset.Count < 1 || TargetMultiset.Count > OpportunityCount ||
-              TargetMultiset.Any(k => !k.IsValid || k.Category != "CARD"))
-            throw new ArgumentException("TransformationAggregate.InvalidPredicate");
+        var counts = SourceCounts();
+        var requirements = ResultRequirements.Select(r => {
+            if (r is null || r.Sources is null || r.Sources.Count == 0 || r.Sources.Any(s => s is null || !counts.ContainsKey(s)))
+                throw new ArgumentException("TransformationAggregate.InvalidRequirementSources");
+            var sources = r.Sources.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+            ValidatePredicate(r.Predicate, r.MinimumRareCount, r.TargetMultiset, sources.Sum(s => (long)counts[s]));
+            return r with { Sources = Array.AsReadOnly(sources), TargetMultiset = SortedTargets(r.TargetMultiset) };
+        }).ToArray();
+        if (requirements.Length == 0) ValidatePredicate(Predicate, MinimumRareCount, TargetMultiset, OpportunityCount);
         if (UsesEvents && !ValidEventPremises())
             throw new ArgumentException("TransformationAggregate.InitialBasicEventPremisesRequired");
-        return this with { TargetMultiset = Array.AsReadOnly(TargetMultiset.OrderBy(k => k.Serialized, StringComparer.Ordinal).ToArray()),
+        return this with { TargetMultiset = SortedTargets(TargetMultiset), ResultRequirements = Array.AsReadOnly(requirements),
             EventScenario = UsesEvents ? EventScenario : null };
+    }
+
+    private static IReadOnlyList<ModelKey> SortedTargets(IReadOnlyList<ModelKey> targets) =>
+        Array.AsReadOnly(targets.OrderBy(k => k.Serialized, StringComparer.Ordinal).ToArray());
+
+    private static void ValidatePredicate(TransformationAggregatePredicate predicate, int rare, IReadOnlyList<ModelKey> targets, long capacity)
+    {
+        if (!Enum.IsDefined(predicate) || targets is null || targets.Any(k => !k.IsValid || k.Category != "CARD") ||
+            (predicate == TransformationAggregatePredicate.RareCountAtLeast ? rare < 1 || rare > capacity || targets.Count != 0 :
+                targets.Count < 1 || targets.Count > capacity ||
+                (predicate == TransformationAggregatePredicate.ContainsMultisetAndRareCount ? rare < 1 || rare > capacity : rare != 0)))
+            throw new ArgumentException("TransformationAggregate.InvalidPredicate");
     }
 
     private bool ValidEventPremises()
@@ -70,7 +120,9 @@ public sealed record TransformationAggregateCondition(
 
     internal string SemanticIdentity => string.Join("|", Opening, PickupOrder, MorphicGrove, AromaOfChaos,
         WhisperingHollow, Symbiote, TrialNondescript, CompanionRelic, Predicate, MinimumRareCount,
-        string.Join(',', TargetMultiset.Select(k => k.Serialized)), EventScenario?.Fingerprint ?? "none");
+        string.Join(',', TargetMultiset.Select(k => k.Serialized)), EventScenario?.Fingerprint ?? "none") +
+        (UsesExtendedRequirements ? "|scoped.v1|" + string.Join('|', AncientSource, AncientAct, PandoraCountOverride, PandoraAutomaticCount,
+            System.Text.Json.JsonSerializer.Serialize(ResultRequirements)) : "");
 
     internal static void ValidateExclusiveOwnership(SearchQuery query)
     {
@@ -148,7 +200,7 @@ public sealed record TransformationAggregateCondition(
         _ => BaseGameModelKeys.Relics.NeowsBones };
 
     internal static bool HasSharedNeow(ExactSearchEvaluationProjection e) =>
-        e.TransformationAggregate is { UsesNeow: true } && e.NeowRoute is not null;
+        e.TransformationAggregate is { } aggregate && (aggregate.UsesNeow || aggregate.UsesAncient) && e.NeowRoute is not null;
 
     // Identity/pickup commitment is already necessary for T. More authored N
     // predicates can inspect these same outputs; their joint must not be multiplied.

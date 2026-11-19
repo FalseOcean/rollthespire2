@@ -53,6 +53,9 @@ internal sealed record FilterBodyDescription(PreparedFilter Preparation, string 
     internal int CpuChunkCapacity { get; init; } = 65536;
     // Public root-batch preference differs from the body's internal chunk/group capacity.
     internal int? PreferredRootWindowSize { get; init; }
+    // Expensive CPU replay must be able to return a completed public batch
+    // promptly even in a mixed GPU plan. This is not its private chunk size.
+    internal int? MaximumRootWindowSize { get; init; }
     internal int CpuWorkers { get; init; } = 1;
     internal int PlayersCount { get; init; } = 1;
     internal string InputIdentity { get; init; } = "";
@@ -71,6 +74,7 @@ internal sealed record FilterBodyDescription(PreparedFilter Preparation, string 
     internal Func<FilterBodyDescription, FilterRuntimeServices, IFilterExecution>? CreateExecution { get; init; }
     internal Func<Godot.RenderingDevice, PrivateOrdinalBuffer?, PrivateOrdinalBuffer?, FamilyPrivateGpuExecution>? BindPrivate { get; init; }
     internal Func<Godot.RenderingDevice, PrivateOrdinalBuffer?, PrivateOrdinalBuffer?, IPrivateGpuScratchLease, FamilyPrivateGpuExecution>? BindPrivateShared { get; init; }
+    internal FamilyFirstDraw? FirstDraw { get; init; }
     internal bool SupportsDenseBatchGrouping { get; init; }
     internal bool UsesSmallPrivateOutput { get; init; }
     internal bool RequiresBonesCapsuleDiagnostics { get; init; }

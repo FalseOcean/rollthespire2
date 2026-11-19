@@ -2,6 +2,7 @@
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_float64 : require
 layout(local_size_x=64) in;
+#define RT2_V_DENSE_CARRY8 0
 const uint SEED_LENGTH=12u,RADIX=34u;
 layout(set=0,binding=0,std430) readonly buffer Batch {uint v[];} batch;
 layout(set=0,binding=1,std430) readonly buffer Reserved1 {uint v[];} reserved1;
@@ -54,13 +55,33 @@ bool matches(uint64_t root){
  if(plan.v[2]!=0u)return unknown_match(root)&&variant_match(root);
  return variant_match(root)&&unknown_match(root);
 }
-void main(){
- uint i=gl_GlobalInvocationID.x;if(i>=batch.v[3])return;
- atomicAdd(header.v[4],1u);
- uint ordinal=batch.v[4]==0u?batch.v[6]+i:input_ids.v[i];
- if(ordinal>=batch.v[2]){atomicOr(header.v[3],128u);return;}
- if(matches(root_hash_for_ordinal(make_u64(batch.v[0],batch.v[1])+uint64_t(ordinal)))){
+void process_candidate(uint ordinal,uint64_t root){
+ if(matches(root)){
   uint p=atomicAdd(header.v[2],1u);
   if(p>=batch.v[5]){atomicOr(header.v[3],256u);return;}output_ids.v[p]=ordinal;
  }
+}
+void main(){
+ uint i=gl_GlobalInvocationID.x;if(i>=batch.v[3])return;
+#if RT2_V_DENSE_CARRY8
+ if(batch.v[4]==0u){
+  uint first=i*8u;
+  if(first>=batch.v[3])return;
+  uint count=min(8u,batch.v[3]-first),ordinal=batch.v[6]+first;
+  atomicAdd(header.v[4],count);
+  if(ordinal+count>batch.v[2]){atomicOr(header.v[3],128u);return;}
+  uint64_t packed_first;
+  uint packed_tail;
+  encode_seed12_packed(make_u64(batch.v[0],batch.v[1])+uint64_t(ordinal),packed_first,packed_tail);
+  for(uint offset=0u;offset<count;++offset){
+   process_candidate(ordinal+offset,root_hash_for_seed12_packed(packed_first,packed_tail));
+   if(offset+1u<count)advance_seed12_packed(packed_first,packed_tail);
+  }
+  return;
+ }
+#endif
+ atomicAdd(header.v[4],1u);
+ uint ordinal=batch.v[4]==0u?batch.v[6]+i:input_ids.v[i];
+ if(ordinal>=batch.v[2]){atomicOr(header.v[3],128u);return;}
+ process_candidate(ordinal,root_hash_for_ordinal(make_u64(batch.v[0],batch.v[1])+uint64_t(ordinal)));
 }

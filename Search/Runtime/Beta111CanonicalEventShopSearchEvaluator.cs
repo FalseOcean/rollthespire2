@@ -1,6 +1,7 @@
 using RolltheSpire2.Compatibility;
 using RolltheSpire2.Core.Prediction;
 using RolltheSpire2.Core.Authority;
+using RolltheSpire2.Core.Effects.Snapshots;
 using RolltheSpire2.Core.Events;
 using RolltheSpire2.Core.Identity;
 using RolltheSpire2.Core.Merchant;
@@ -10,16 +11,16 @@ using RolltheSpire2.Search.Semantics;
 namespace RolltheSpire2.Search.Runtime;
 
 /// <summary>
-/// Production-Exact proof for the two canonical root-local v1 search surfaces.
-/// Event Result is conditional event-local identity only; Merchant Colorless is the
-/// canonical pristine Shops continuation only. Neither proof owns route/occurrence truth.
+/// Production-Exact proof for conditional event results and pristine merchant stock.
+/// These projections do not determine route or event occurrence.
 /// </summary>
 internal static class Beta111CanonicalEventShopSearchEvaluator
 {
     public static SearchQueryEvaluation Evaluate(
         SearchModel plan,
         ulong rootHash,
-        RuntimeContextAuthoritySnapshot authority)
+        RuntimeContextAuthoritySnapshot authority,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(authority);
@@ -30,7 +31,7 @@ internal static class Beta111CanonicalEventShopSearchEvaluator
         if (aggregate.Disposition == SearchDisposition.NoMatch) return aggregate;
         evidence.AddRange(aggregate.Evidence);
 
-        SearchQueryEvaluation eventResult = EvaluateEventResult(plan, rootHash, authority);
+        SearchQueryEvaluation eventResult = EvaluateEventResult(plan, rootHash, authority, cancellationToken);
         if (eventResult.Disposition == SearchDisposition.NoMatch)
             return eventResult;
         evidence.AddRange(eventResult.Evidence);
@@ -40,7 +41,10 @@ internal static class Beta111CanonicalEventShopSearchEvaluator
             return merchant;
         evidence.AddRange(merchant.Evidence);
 
-        SearchQueryEvaluation combined = ProductionExactSearchEvaluator.CombineIndependentEvaluations(aggregate, eventResult, merchant);
+        SearchQueryEvaluation crystal = CrystalSphereSearchEvaluator.Evaluate(plan, rootHash, authority, cancellationToken);
+        if (crystal.Disposition == SearchDisposition.NoMatch) return crystal;
+        evidence.AddRange(crystal.Evidence);
+        SearchQueryEvaluation combined = ProductionExactSearchEvaluator.CombineIndependentEvaluations(aggregate, eventResult, merchant, crystal);
         return combined.Disposition == SearchDisposition.Match
             ? SearchQueryEvaluation.Match(evidence.Distinct().ToArray()) with { RouteRejections = aggregate.RouteRejections }
             : combined;
@@ -49,7 +53,8 @@ internal static class Beta111CanonicalEventShopSearchEvaluator
     private static SearchQueryEvaluation EvaluateEventResult(
         SearchModel plan,
         ulong rootHash,
-        RuntimeContextAuthoritySnapshot authority)
+        RuntimeContextAuthoritySnapshot authority,
+        CancellationToken cancellationToken)
     {
         if (!plan.Evaluation.RequiresEventResultDomain)
             return SearchQueryEvaluation.Match();
@@ -62,6 +67,31 @@ internal static class Beta111CanonicalEventShopSearchEvaluator
         foreach ((EventResultSearchCondition condition, int index) in
                  plan.Evaluation.EventResultConditions.Select((condition, index) => (condition, index)))
         {
+            if (condition.Kind == EventResultConditionKind.CrystalSphereRewards) continue;
+            if (EventOpportunitySemantics.IsEventLocalOpportunity(condition.Kind))
+            {
+                if (!condition.IsValid || !EventOpportunitySemantics.SupportsProfile(condition.Kind,
+                    authority.ProfileId, eventAuthority.RngSemantics))
+                {
+                    unresolved ??= SearchQueryEvaluation.Unsupported(condition.IsValid
+                        ? EventOpportunitySemantics.ProfileUnavailable(condition.Kind)
+                        : "EventResult.InvalidOpportunityCondition");
+                    continue;
+                }
+                if (!EventOpportunitySemantics.Matches(rootHash, authority.PlayerSlotIndex,
+                    eventAuthority.RngSemantics, condition))
+                    return SearchQueryEvaluation.NoMatch("EventResult.OpportunityRejected:" + condition.Kind);
+
+                string opportunitySource = "event-result:" + condition.Kind;
+                if (condition.Kind == EventResultConditionKind.EventRelicRarityRoll)
+                    opportunitySource += $":rolled-rarity:{condition.RelicRarityBranch}:{condition.RelicRaritySelection}:{condition.RelicRarity}";
+                evidence.Add(new SearchMatchEvidence("EventResultConditionMatched", condition.TargetKey, opportunitySource,
+                    EvidenceCode: new(EventOpportunitySemantics.EvidenceCode), ProfileId: authority.ProfileId,
+                    StreamDomain: "EventLocal", Authority: SourceAuthority.OfficialRuntimeExact,
+                    AuthorityFingerprint: eventAuthority.AuthorityFingerprint, ConditionId: "event-result-" + index));
+                continue;
+            }
+
             if (condition.Kind > EventResultConditionKind.MorphicGroveGroupInitialBasicsContains)
             {
                 if (!condition.IsValid || !eventAuthority.IsBeta111)
@@ -194,5 +224,4 @@ internal static class Beta111CanonicalEventShopSearchEvaluator
 
         return unresolved ?? SearchQueryEvaluation.Match(evidence);
     }
-
 }

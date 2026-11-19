@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Relics;
 using MegaCrit.Sts2.Core.Extensions;
 using MegaCrit.Sts2.Core.Models;
@@ -291,8 +292,13 @@ internal static class PredictorRuntimeChecks
         internal RelicRarity TestRarity;
         internal bool Allowed = true;
         public override RelicRarity Rarity => TestRarity;
-        public override bool IsAllowed(IRunState runState) => Allowed;
         public override bool IsMock => true;
+    }
+    private static bool ReadBagEligibility(RelicModel __instance, ref bool __result)
+    {
+        if (__instance is not BagRelic relic) return true;
+        __result = relic.Allowed;
+        return false;
     }
     private static BagRelic BagModel(string name, RelicRarity rarity)
     {
@@ -304,6 +310,20 @@ internal static class PredictorRuntimeChecks
         return model;
     }
     private static void NativeBags()
+    {
+        // 0.113 made the public eligibility method nonvirtual. Inject only the mock
+        // relic's answer at the same input boundary on both game versions.
+        var harmony = new Harmony("rt2.functional.native-bag-eligibility");
+        try
+        {
+            harmony.Patch(AccessTools.Method(typeof(RelicModel), nameof(RelicModel.IsAllowed)),
+                prefix: new HarmonyMethod(typeof(PredictorRuntimeChecks), nameof(ReadBagEligibility)));
+            CompareNativeBagOperations();
+        }
+        finally { harmony.UnpatchAll(harmony.Id); }
+    }
+
+    private static void CompareNativeBagOperations()
     {
         foreach (bool refresh in new[] { false, true })
         for (ulong seed = 0; seed < 12; seed++)

@@ -180,8 +180,10 @@ internal sealed partial class NeowOperationOverlay : Control
             {
                 if (limited && AboveHuntDisplayLimit(section)) continue;
                 var style = OperationDisplayPolicy.Resolve(preview, section);
-                bool separateEffect = preview.Branches.Length == 1 && section.Source != preview.Source &&
-                    section.Source.Entry is "WHETSTONE" or "WAR_PAINT";
+                bool nestedBrew = section.Source.Entry == "ENTROPIC_BREW" &&
+                    section.Label?.StartsWith("EntropicChild:", StringComparison.Ordinal) == true;
+                bool separateEffect = nestedBrew || (preview.Branches.Length == 1 && section.Source != preview.Source &&
+                    section.Source.Entry is "WHETSTONE" or "WAR_PAINT");
                 bool mapNeedsCardNames = MapCardPresentation && (MapSummaryCardNames ||
                     section.Rows.Any(row => row.Action != OperationPreviewAction.AddCard && !row.Cards.IsEmpty) ||
                     section.Rows.Any(row => row.Cards.Any(card => !MapUsesCardFace(card))) ||
@@ -214,7 +216,8 @@ internal sealed partial class NeowOperationOverlay : Control
                             (shared with { Id = 0 }) == (c with { Id = 0 }))).ToImmutableArray() };
                     if (row.Models.IsDefaultOrEmpty && row.Cards.IsDefaultOrEmpty) continue;
                     string rowName = LocalizedLabel(section.Source, row.Label);
-                    string action = (row.Possible ? UiText.Get("operation.possiblePrefix") : "") + ActionName(row.Action);
+                    string action = (row.Possible ? UiText.Get("operation.possiblePrefix") : "") +
+                        (row.Label == "EntropicBlocked" ? UiText.Get("operation.potion.entropicNoProcure") : ActionName(row.Action));
                     if (text)
                     {
                         if (rowName.Length > 0) sectionBlock.AddChild(WrappedText(rowName));
@@ -368,11 +371,15 @@ internal sealed partial class NeowOperationOverlay : Control
     {
         if (!MapCardPresentation || !primary)
         {
-            Control title = source.IsValid ? Identity(source, NameOf(source), 32, true)
+            string? heading = primary ? _preview?.Heading : null;
+            Control title = source.IsValid ? Identity(source, heading ?? NameOf(source), 32, true)
                 : Text(UiText.Get("operation.operation.prediction"), 22, true);
             details.AddChild(title); details.MoveChild(title, 0);
         }
-        _summaryNaturalWidth = Math.Max(_summaryNaturalWidth, NaturalWidth(details));
+        // Three Brew panels share vertical space with the native tooltip. Let the
+        // slot and continuation premises use available width before wrapping.
+        int wrapWidth = source.Entry == "ENTROPIC_BREW" ? 578 : 318;
+        _summaryNaturalWidth = Math.Max(_summaryNaturalWidth, NaturalWidth(details, wrapWidth));
         details.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         var scroll = new ScrollContainer { Name = primary ? "Rt2NeowSummaryScroll" : "Rt2OperationEffectScroll_" + source.Entry,
             HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
@@ -382,7 +389,9 @@ internal sealed partial class NeowOperationOverlay : Control
         scroll.GetHScrollBar().MouseFilter = MouseFilterEnum.Ignore;
         scroll.AddChild(details);
         details.MinimumSizeChanged += () => Callable.From(LayoutSummaryAfterResize).CallDeferred();
-        var shell = Surface(scroll); shell.Name = primary ? "Rt2OperationPrimaryPanel" : "Rt2OperationEffectPanel_" + source.Entry;
+        var shell = Surface(scroll);
+        shell.Name = primary ? "Rt2OperationPrimaryPanel" : source.Entry == "ENTROPIC_BREW"
+            ? "Rt2EntropicChild_" + (_summaryPanels.Count + 1) : "Rt2OperationEffectPanel_" + source.Entry;
         _summary!.AddChild(shell); _summaryPanels.Add((shell, details));
     }
 
@@ -410,7 +419,7 @@ internal sealed partial class NeowOperationOverlay : Control
         block.AddChild(line);
     }
 
-    private static float NaturalWidth(Control control)
+    private static float NaturalWidth(Control control, int wrapWidth = 318)
     {
         if (control is Label label)
         {
@@ -419,11 +428,12 @@ internal sealed partial class NeowOperationOverlay : Control
             // Explanations and card-name lists already wrap. They should grow
             // vertically, not force every otherwise compact panel to 620px.
             return label.AutowrapMode != TextServer.AutowrapMode.Off && label.CustomMinimumSize.X == 0
-                ? Math.Min(318, width) : width;
+                ? Math.Min(wrapWidth, width) : width;
         }
         var children = control.GetChildren().OfType<Control>().ToArray();
-        if (control is HBoxContainer or HFlowContainer) return children.Sum(NaturalWidth) + Math.Max(0, children.Length - 1) * 9;
-        return Math.Max(control.CustomMinimumSize.X, children.Select(NaturalWidth).DefaultIfEmpty().Max());
+        var widths = children.Select(child => NaturalWidth(child, wrapWidth));
+        if (control is HBoxContainer or HFlowContainer) return widths.Sum() + Math.Max(0, children.Length - 1) * 9;
+        return Math.Max(control.CustomMinimumSize.X, widths.DefaultIfEmpty().Max());
     }
 
     private static IEnumerable<string> DisplayNotices(OperationPreview preview) => preview.Notices.Where(notice =>
@@ -502,25 +512,25 @@ internal sealed partial class NeowOperationOverlay : Control
 
     private static string LocalizedLabel(ModelKey source, string? value)
     {
+        if (value == "HeldRelicThisVictory") return UiText.Get("operation.heldRelic.thisVictory");
+        if (value == "HeldRelicEliteVictory") return UiText.Get("operation.heldRelic.eliteVictory");
+        if (value == "HeldRelicNoUpgradeTarget") return UiText.Get("operation.heldRelic.noUpgradeTarget");
+        if (value == "HeldRelicNextReturn") return UiText.Get("operation.heldRelic.nextReturn");
+        if (value == "HeldRelicLastReturn") return UiText.Get("operation.heldRelic.lastReturn");
+        const string fishingWait = "HeldRelicFishingWait:";
+        if (value?.StartsWith(fishingWait, StringComparison.Ordinal) == true &&
+            int.TryParse(value.AsSpan(fishingWait.Length), out int remaining))
+            return UiText.Format("operation.heldRelic.fishingWait", remaining);
         if (string.IsNullOrWhiteSpace(value)) return "";
         if (value.StartsWith("UiText:", StringComparison.Ordinal)) return UiText.Get(value[7..]);
         if (value == "PotionCombatUse") return UiText.Get("operation.combat.use");
         if (value == "PotionUseOrdinal") return "";
         if (value.StartsWith("PotionUseStep:", StringComparison.Ordinal) && int.TryParse(value[14..], out int potionStep))
             return UiText.Format("operation.potion.useStep", potionStep);
-        if (value.StartsWith("EntropicCurrentSlots:", StringComparison.Ordinal) || value.StartsWith("EntropicUseStep:", StringComparison.Ordinal))
-        {
-            var parts = value.Split(':');
-            bool sequence = parts[0] == "EntropicUseStep";
-            int offset = sequence ? 2 : 1;
-            if (parts.Length == offset + 2 && int.TryParse(parts[offset], out int generated) &&
-                int.TryParse(parts[offset + 1], out int obtained))
-            {
-                string label = sequence && int.TryParse(parts[1], out int ordinal)
-                    ? UiText.Format("operation.potion.entropicStep", ordinal) : "";
-                return generated == obtained ? label : JoinCaption(label, UiText.Format("operation.generatedObtained", generated, obtained));
-            }
-        }
+        if (value == "EntropicBlocked") return "";
+        if (value == "EntropicHeldSecond") return UiText.Get("operation.potion.entropicStep");
+        if (value.StartsWith("EntropicChild:", StringComparison.Ordinal) && int.TryParse(value["EntropicChild:".Length..], out int parentCount))
+            return UiText.Format("operation.potion.entropicChild", parentCount);
         if (value == "CardTargetConditional") return UiText.Get("operation.current.selection.order");
         if (value == "RewardRerollSameRecipe") return UiText.Get("operation.label.sameRewardRerolls");
         if (value == "RewardRerollOrdinal") return UiText.Get("operation.place.this.group");
@@ -541,14 +551,7 @@ internal sealed partial class NeowOperationOverlay : Control
             if (counts.Length == 3 && int.TryParse(counts[1], out int generated) && int.TryParse(counts[2], out int obtained))
                 return UiText.Format("operation.generatedObtained", generated, obtained);
         }
-        if (value == "EntropicOtherSlotsEmpty") return UiText.Get("operation.other.slots.empty");
-        if (value.StartsWith("EntropicOtherSlotsEmpty:", StringComparison.Ordinal))
-        {
-            var counts = value.Split(':');
-            return UiText.Get("operation.other.slots.empty") +
-                (counts.Length == 3 && int.TryParse(counts[1], out int generated) && int.TryParse(counts[2], out int obtained)
-                    && generated != obtained ? UiText.Format("operation.entropicCountsSuffix", generated, obtained) : "");
-        }
+
         if (value == "EventRestRewards") return UiText.Get("operation.rest.rewards");
         if (value == "EventCombatRewards") return UiText.Get("operation.combat.rewards");
         if (value == "EventCombatNoHunt") return UiText.Get("operation.label.noHunt");
@@ -598,6 +601,7 @@ internal sealed partial class NeowOperationOverlay : Control
         OperationPreviewAction.EnchantCard => UiText.Get("operation.enchant"), OperationPreviewAction.RemoveCard => UiText.Get("operation.remove"),
         OperationPreviewAction.DowngradeCard => UiText.Get("operation.downgrade"),
         OperationPreviewAction.GeneratePotion => UiText.Get("operation.obtain"),
+        OperationPreviewAction.ReturnCard => UiText.Get("operation.heldRelic.return"),
         OperationPreviewAction.Choose => UiText.Get("operation.choose"), _ => UiText.Get("operation.result")
     };
     private static string NameOf(ModelKey key)
@@ -606,7 +610,5 @@ internal sealed partial class NeowOperationOverlay : Control
         string table = key.Category switch { "CARD" => "cards", "POTION" => "potions", "EVENT" or "ANCIENT" => "events", "ENCHANTMENT" => "enchantments", _ => "relics" };
         return new LocString(table, key.Entry + ".title").GetFormattedText();
     }
-    private static string CardName(PredictorCard card) => NameOf(card.Key) +
-        (card.UpgradeLevel > 0 ? "+" + (card.UpgradeLevel > 1 ? card.UpgradeLevel.ToString() : "") : "") +
-        (card.Enchantment is { } enchantment ? " · " + NameOf(enchantment) + " " + card.EnchantmentAmount : "");
+    private static string CardName(PredictorCard card) => OperationNativeCardDisplay.CardName(card);
 }

@@ -87,25 +87,7 @@ internal static class CrystalSphereCatalogCapture
         {
             bool modded = Modded(c);
             if (modded) unmodeled.Add(Key(c));
-            var type = Enum.TryParse<EffectCardType>(c.Type.ToString(), out var t) ? t : EffectCardType.Other;
-            var prototype = new PredictorCard(0, Key(c), type, c.CurrentUpgradeLevel, c.MaxUpgradeLevel, c.IsRemovable, 1);
-            // Mod upgrade implementations may require a live Owner. Preserve
-            // readable base metadata without calling arbitrary lifecycle code.
-            var levels = modded
-                ? Enumerable.Range(0, c.MaxUpgradeLevel + 1).Select(level => new PredictorCardLevelMetadata(level,
-                    c.EnergyCost.Canonical, c.EnergyCost.CostsX, c.Keywords.Contains(CardKeyword.Unplayable),
-                    c.Keywords.Contains(CardKeyword.Exhaust), c.Keywords.Contains(CardKeyword.Innate),
-                    c.Keywords.Contains(CardKeyword.Retain), c.Keywords.Contains(CardKeyword.Eternal))).ToImmutableArray()
-                : (captureLevels ?? PredictorSeedCapture.CaptureLevels)(c);
-            var pool = c.Type == CardType.Quest || c.Rarity is CardRarity.Event or CardRarity.Ancient or CardRarity.Token
-                ? ModelDb.CardPool<ColorlessCardPool>() : c.Pool;
-            return new PredictorCardDefinition(prototype, c.Rarity.ToString(), Key(pool),
-                c.Type == CardType.Quest, c.Tags.Contains(CardTag.Strike), c.Tags.Contains(CardTag.Defend))
-            {
-                Unplayable = c.Keywords.Contains(CardKeyword.Unplayable), CostsX = c.EnergyCost.CostsX,
-                HasLocalExhaust = c.GetKeywordsWithSources(KeywordSources.Local).Contains(CardKeyword.Exhaust),
-                CanonicalCost = c.EnergyCost.Canonical, Levels = levels
-            };
+            return CaptureCardDefinition(c, captureLevels ?? PredictorSeedCapture.CaptureLevels);
         }).ToImmutableArray();
         var catalog = new PredictorCatalog(own, colorless)
         {
@@ -114,5 +96,28 @@ internal static class CrystalSphereCatalogCapture
             ShopGainsBlock = cardModels.Where(c => c.Id.Entry is not ("SOVEREIGN_BLADE" or "MAD_SCIENCE") && c.GainsBlock).Select(Key).ToImmutableArray()
         };
         return (catalog, unmodeled.OrderBy(k => k.Serialized, StringComparer.Ordinal).ToImmutableArray());
+    }
+
+    internal static PredictorCardDefinition CaptureCardDefinition(CardModel card,
+        Func<CardModel, ImmutableArray<PredictorCardLevelMetadata>> captureLevels)
+    {
+        var type = Enum.TryParse<EffectCardType>(card.Type.ToString(), out var parsed) ? parsed : EffectCardType.Other;
+        var prototype = new PredictorCard(0, Key(card), type, card.CurrentUpgradeLevel, card.MaxUpgradeLevel, card.IsRemovable, 1);
+        // Custom upgrade implementations can require a live Owner.
+        var levels = Modded(card)
+            ? Enumerable.Range(0, card.MaxUpgradeLevel + 1).Select(level => new PredictorCardLevelMetadata(level,
+                card.EnergyCost.Canonical, card.EnergyCost.CostsX, card.Keywords.Contains(CardKeyword.Unplayable),
+                card.Keywords.Contains(CardKeyword.Exhaust), card.Keywords.Contains(CardKeyword.Innate),
+                card.Keywords.Contains(CardKeyword.Retain), card.Keywords.Contains(CardKeyword.Eternal))).ToImmutableArray()
+            : captureLevels(card);
+        var pool = card.Type == CardType.Quest || card.Rarity is CardRarity.Event or CardRarity.Ancient or CardRarity.Token
+            ? ModelDb.CardPool<ColorlessCardPool>() : card.Pool;
+        return new(prototype, card.Rarity.ToString(), Key(pool), card.Type == CardType.Quest,
+            card.Tags.Contains(CardTag.Strike), card.Tags.Contains(CardTag.Defend))
+        {
+            Unplayable = card.Keywords.Contains(CardKeyword.Unplayable), CostsX = card.EnergyCost.CostsX,
+            HasLocalExhaust = card.GetKeywordsWithSources(KeywordSources.Local).Contains(CardKeyword.Exhaust),
+            CanonicalCost = card.EnergyCost.Canonical, Levels = levels
+        };
     }
 }

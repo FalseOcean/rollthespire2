@@ -69,10 +69,6 @@ internal sealed partial class NeowFamily
             _workers = Math.Clamp(preferences.WorkerCount, 1, 32); _requestedWorkers = preferences.WorkerCount;
             _skipExactValidation = preferences.SkipExactValidation;
             _playersCount = request.CompiledSearch.NormalizedQuery.Players.Count;
-            var offers = PartyStageSurvival.Project(request, FamilyId);
-            _survival = offers.SurvivalProbability is double p ? FamilySurvivalProjection.Resolved(FamilyId, p,
-                "PartyN.OfferGateUpperEnvelope;ResultArrivalUnionsAndExactRemaindersNotPaid;" + offers.Evidence) :
-                FamilySurvivalProjection.Unresolved(FamilyId, "PartyN.OfferProbabilityUnavailable;" + offers.Evidence);
             var preparations = new List<PlayerPreparation>();
             {
                 (int Niche, int Potions)[]? arrivals = [(0, 0)];
@@ -165,6 +161,9 @@ internal sealed partial class NeowFamily
             }
             if (_cpuPlans.Any(plan => plan.CapsulesWithKnownZeroNonCombatAdvance != 0))
                 _rulesRevision += NeowCapsuleNonCombatContinuation.Revision;
+            // All realizations execute the prepared predicates. Other seats may
+            // have independent non-N conditions which never enter this stage.
+            _survival = PartyStageSurvival.ProjectNeow(request, _remainders.Count == 0 ? _cpuPlans : []);
             if (preferGpu) PrepareGpuStages(request, preferences, preparations, gpuPlanFactory);
             _program = new(_cpuPlayers.ToArray(), _cpuPlans.ToArray(), optimize);
         }
@@ -382,7 +381,7 @@ internal sealed partial class NeowFamily
             }
             FilterBodyDescription[] children = _gpuStages.Select(s => s.Family).ToArray();
             bool privateEdges = UsesPrivate || UsesFused;
-            if (_rulesRevision.Length == 0 && !UsesCompatibilityGpu && privateEdges)
+            if (_rulesRevision.Length == 0 && !UsesCompatibilityGpu && !UsesDirectGpu && privateEdges)
             {
                 double work = _gpuStages.Sum(stage => 1 + stage.Replay.StructuredConditions.Length * 3 + (stage.Replay.HasFinalCurseFastProjection ? 1 : 0));
                 var gpuMeasured = PartyMeasuredCost.Price(FamilyId, inputs, children.Length,
@@ -404,6 +403,7 @@ internal sealed partial class NeowFamily
         public FamilyConditionPerformanceProjection ResolveConditionPerformance(bool compact) => _gpuStages.Count == 0 ? CpuCondition(compact) :
             new(FamilyId, "N.Neow.PartyEffects.Gpu.v6." + (UsesFused ? "Fused." : UsesPrivate ? "PrivateOrdinal." : "Public.") + (compact ? "CompactAbi1" : "Dense") +
                 (UsesPrivate && compact ? ".DirectCompactCast.20261016.v1" : "") + (HasOrderedKBody ? PartyOrderedKRevision : "") +
+                (UsesDirectGpu ? NeowPartyDirectDraw.Revision : "") +
                 (string.Equals(Environment.GetEnvironmentVariable("RT2_N_OBSERVE_LOCAL"), "off", StringComparison.OrdinalIgnoreCase) ? "" : ".PartyLocalObservations.20261114.v1") +
                 (UsesCompatibilityGpu ? ".IntegerUnitFloat.Rne.20261025.v1" : "") + NeowIdentityOfferFacts.Revision + GpuRngRotation.Revision + _rulesRevision,
                 "OrderedSlotInitialOffers", 1, "InitialOffersAndResolvedEffects;SharedArrival=AuthoredDrawUnion;Remainder=WholeTableExact;" +

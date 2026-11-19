@@ -81,9 +81,9 @@ public static class Beta109AcceptedRuntimeValidationAuthority
         // the Modern110 world/Ancient implementation. The official 0.110.1 ->
         // 0.111.0 source audit found no Ancient deterministic semantic delta.
         // Reuse the already accepted Beta110 Boss/Ancient fixture IDs only for
-        // this audited runtime identity. The separate provisional branch below
+        // the accepted 0.111 runtime identities. The separate provisional branch below
         // retains explicit unverified reference provenance.
-        if (RuntimeVersionCompatibility.IsBeta111(normalized) &&
+        if (RuntimeVersionCompatibility.UsesAccepted111Rules(normalized) &&
             Beta111ValidationAuthority.RuntimeAccepted &&
             Beta111ValidationAuthority.WorldAncientSourceAccepted &&
             Beta110ValidationAuthority.BossAncientAccepted)
@@ -91,7 +91,9 @@ public static class Beta109AcceptedRuntimeValidationAuthority
             return new Beta109RuntimeValidationAuthorityDecision(
                 Beta109FixtureValidationStatus.AssumedCompatibleLatestKnown,
                 AcceptedBeta110FixtureIds,
-                "beta111-world-ancient-no-semantic-delta-audited-compatible-v1:" + normalized);
+                normalized == RuntimeVersionCompatibility.Stable111Version
+                    ? "stable111-world-ancient-inherits-beta111:" + normalized
+                    : "beta111-world-ancient-no-semantic-delta-audited-compatible-v1:" + normalized);
         }
 
         var compatibility = RuntimeVersionCompatibility.Resolve(normalized);

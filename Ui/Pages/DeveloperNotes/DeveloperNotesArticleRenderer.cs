@@ -9,14 +9,19 @@ internal sealed partial class DeveloperNotesArticleRenderer : VBoxContainer
     internal sealed record Section(string Title, Control Anchor);
     public IReadOnlyList<Section> Sections => _sections;
     private readonly List<Section> _sections = [];
+    private readonly Control _acknowledgement;
     public event Action<string>? ExternalLinkRequested;
 
-    public DeveloperNotesArticleRenderer()
+    public DeveloperNotesArticleRenderer(Control acknowledgement)
     {
         Theme = MainPanelTheme.Create();
         SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         AddThemeConstantOverride("separation", 18);
+        _acknowledgement = acknowledgement;
+        AddChild(acknowledgement);
     }
+
+    internal void PlaceAcknowledgement(int blockIndex) => MoveChild(_acknowledgement, blockIndex);
 
     internal void AppendBlock(DeveloperNotesBlock block)
     {
@@ -47,6 +52,7 @@ internal sealed partial class DeveloperNotesArticleRenderer : VBoxContainer
         _sections.Clear();
         foreach (Node child in GetChildren())
         {
+            if (child == _acknowledgement) continue;
             RemoveChild(child);
             child.QueueFree();
         }
@@ -57,7 +63,7 @@ internal sealed partial class DeveloperNotesArticleRenderer : VBoxContainer
         var margin = new MarginContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         try
         {
-            margin.AddThemeConstantOverride("margin_top", GetChildCount() == 0 ? 4 : 20);
+            margin.AddThemeConstantOverride("margin_top", GetChildCount() == 1 ? 4 : 20);
             var label = CreateRichText(text, 24);
             margin.AddChild(label);
             MainPanelTheme.SetColor(label, "default_color", WorkspacePalette.MainPanel.Selected);

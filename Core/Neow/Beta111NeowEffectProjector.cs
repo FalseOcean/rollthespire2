@@ -14,7 +14,8 @@ public static class Beta111NeowEffectProjector
         PredictionPrecision identityPrecision,
         RuntimeContextAuthoritySnapshot authority,
         ulong rootHash,
-        bool enableComplexBonesDeckInteractions = false)
+        bool enableComplexBonesDeckInteractions = false,
+        bool captureTransformationContinuation = false)
     {
         if (identityPrecision is PredictionPrecision.Unknown or PredictionPrecision.Unsupported ||
             !authority.IsBeta111NeowIdentityAuthorityExact)
@@ -34,7 +35,10 @@ public static class Beta111NeowEffectProjector
             "beta111.neow-effect",
             rootHash,
             authority,
-            enableComplexBonesDeckInteractions);
+            enableComplexBonesDeckInteractions)
+        {
+            CaptureTransformationContinuation = captureTransformationContinuation
+        };
         return engine.Project(relicKey);
     }
 }

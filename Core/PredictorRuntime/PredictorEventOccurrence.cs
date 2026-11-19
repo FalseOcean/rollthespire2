@@ -51,14 +51,14 @@ internal sealed partial class PredictorRun
     private EventStaticEligibilityResult EventOccurrenceStaticEligibility(ModelKey key)
     {
         var source = Context.AncientAuthority;
-        var immutable = source == null ? EventImmutableEligibilityContext.Unknown : new(
-            source.GameMode, source.ModeFactsExact, source.PlayerCount, source.ModeFactsExact,
-            source.EventAuthority.CharacterCardPoolCount, source.EventAuthority.CharacterCardPoolCountExact);
+        var immutable = source == null ? EventImmutableEligibilityContext.Unknown
+            : EventImmutableEligibilityContext.From(source);
         // Runtime initialization admits Beta111 only. Shared evaluates every
         // audited act mask; RawEvents already owns act-local pool membership.
         var result = EventStaticEligibilityCatalog.Evaluate(key, Working.Position.Act, RuntimeProfileId.Beta111,
             EventPoolSourceKind.Shared, immutable);
-        EventTrace()?.StaticEligibility(this, key, result.EligibilityKind + ":precision=" + result.Precision + ":reject=" + result.ShouldReject);
+        EventTrace()?.StaticEligibility(this, key, immutable,
+            result.EligibilityKind + ":precision=" + result.Precision + ":reject=" + result.ShouldReject);
         return result;
     }
 

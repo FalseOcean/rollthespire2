@@ -135,7 +135,7 @@ public static class SearchAuthorityProjector
 
         if (filter.RequireSmallCapsule || filter.RequireLargeCapsule || !filter.CapsuleContainedRelics.IsEmpty)
             return true;
-        if (ProductionQueryValidator.HasOpeningInitialRoomConditions(filter) &&
+        if ((ProductionQueryValidator.HasOpeningInitialRoomConditions(filter) || filter.TransformationAggregate is { UsesAncient: true }) &&
             (filter.NeowRoute?.RouteRelicKey == BaseGameModelKeys.Relics.SmallCapsule ||
              filter.NeowRoute?.RouteRelicKey == BaseGameModelKeys.Relics.LargeCapsule)) return true;
 

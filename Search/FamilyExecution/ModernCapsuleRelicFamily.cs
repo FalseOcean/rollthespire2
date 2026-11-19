@@ -61,6 +61,7 @@ internal static partial class ModernCapsuleRelicFamily
     {
         var sequence = ordinary ?? new RelicFamilyPlan(plan.Pool, [], [], [], new byte[4], new byte[4], [],
             new int[4], new byte[4], 0, false);
+        gpu = gpu.WithOrdinarySequence(sequence);
         string identity = model.SnapshotFingerprint;
         bool native = gpu.NumericalVariant == GpuNumericalVariant.NativeFloat64;
         return new(cpu.Preparation, gpu.Revision(false), profile.ProfileId)
@@ -73,9 +74,13 @@ internal static partial class ModernCapsuleRelicFamily
             CpuWorkers = cpu.CpuWorkers,
             InputIdentity = identity,
             CpuAlternatives = [cpu],
-            Cost = new() { PartyChild = new(AllowsHistoricalEnvelope: false) },
+            Cost = new()
+            {
+                PartyChild = new(AllowsHistoricalEnvelope: false),
+                Quote = (_, geometry, _) => RelicWorkEstimate.ModernShopFirstCapsule(sequence, gpu, geometry)
+            },
             PerformanceProjection = compact => new(RelicFamily.Id, gpu.Revision(compact),
-                "ModernCapsule.EligibleLaneHeads", 1, "IndependentAbi1;Unpriced", true),
+                "ModernCapsule.EligibleLaneHeads", 1, "IndependentAbi1;PublicWorkUnpriced", true),
             CreateExecution = (self, _) => new GpuFilterExecution<RelicFamilyGpuExecutor>(self,
                 device => RelicFamilyGpuExecutor.Create(device, identity, sequence, gpu),
                 (resource, input, token) =>

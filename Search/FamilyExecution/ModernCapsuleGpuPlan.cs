@@ -6,8 +6,29 @@ namespace RolltheSpire2.Search.FamilyExecution;
 internal sealed record ModernCapsuleGpuPlan(uint[] Metadata, GpuNumericalVariant NumericalVariant, int MaxLaneLength,
     bool UsesTrackedRanks, bool HasBones, bool NeedsPositiveOffer)
 {
+    internal bool UsesShopFirstDraw { get; init; }
+    internal const string ShopFirstDrawRevision = ".ShopFirstDraw.20261119.v1";
+
+    internal ModernCapsuleGpuPlan WithOrdinarySequence(RelicFamilyPlan sequence)
+    {
+        if (string.Equals(Environment.GetEnvironmentVariable("RT2_R_CAPSULE_SHOP_FIRST"), "off",
+                StringComparison.OrdinalIgnoreCase) || sequence.AlwaysReject || sequence.Predicates.Length != 0 ||
+            sequence.ShopPredicates is not [{ Count: 1, TargetIds: [var target] }] || target == ushort.MaxValue)
+            return this;
+
+        // A single named slot has the same meaning for ordered and unordered rows.
+        // The plan compiler resolves one personal Shop bucket and verifies membership.
+        int bucket = sequence.LastRequiredBucket;
+        var pool = sequence.Pool;
+        if (!pool.UsesChildShuffle || pool.BucketScopes[bucket] != 1 || pool.BucketKinds[bucket] != 4 ||
+            pool.EntryFlags.AsSpan(pool.BucketOffsets[bucket], pool.BucketLengths[bucket]).Contains((byte)0))
+            return this;
+        return this with { UsesShopFirstDraw = true };
+    }
+
     internal string Revision(bool compact) => "R.Relic.Gpu.ModernCapsuleHeads.20261114.v1" +
         (UsesTrackedRanks ? ".TrackedRanks" : "") +
+        (UsesShopFirstDraw ? ShopFirstDrawRevision : "") +
         (NumericalVariant == GpuNumericalVariant.IntegerRne ? ".IntegerRne" : ".NativeFloat64") +
         (compact ? ".CompactAbi1" : ".DenseCarry8");
 
@@ -41,6 +62,8 @@ internal sealed record ModernCapsuleGpuPlan(uint[] Metadata, GpuNumericalVariant
         string functions = flags + numerics + "\n" +
             FamilyGpuComputeUtility.LoadEmbeddedShader("ModernCapsuleRelic.glsl");
         string source = RelicFamilyGpuExecutor.ShaderSource(false, localStateCapacity: localStateCapacity, childShuffle: true);
+        if (UsesShopFirstDraw) source = source.Replace("#version 450",
+            "#version 450\n#define RT2_R_CAPSULE_SHOP_FIRST 1", StringComparison.Ordinal);
         // Attach the modern observation to ordinary R candidate dispatch.
         const string append = "    append_output(logical);";
         const string helpers = "uint lane_from_kind";

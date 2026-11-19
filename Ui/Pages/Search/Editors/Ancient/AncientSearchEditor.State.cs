@@ -35,7 +35,10 @@ internal sealed partial class AncientSearchEditor
             mode.Acts.SelectMany(pair => pair.Value.Select(row => new AncientEditorRowSnapshot(
                 pair.Key, row.Ancient, row.Options.ToArray(), row.SeaGlassTarget))).ToArray(),
             mode.NeowEnabled, mode.NeowOptions.ToArray(), mode.SelectedAct)).ToArray())
-        { NeowOffers = draft.NeowStateExplicit ? ExportNeowOfferState(draft) : null };
+        {
+            NeowOffers = draft.NeowStateExplicit ? ExportNeowOfferState(draft) : null,
+            Transformations = ExportTransformationEditorState(draft)
+        };
 
     private static bool HasNeowResearchDraft(SeatDraft draft) =>
         draft.NeowBasic.Count > 0 || draft.NeowEmptyWhitelist || draft.NeowRelations.Any(keys => keys.Count > 0);
@@ -48,7 +51,8 @@ internal sealed partial class AncientSearchEditor
     internal int NeowResearchConditionCount(bool party) => (party ? _partyDrafts : _drafts).Values.Count(HasActiveNeowResearch);
 
     internal bool HasConditions(bool party) => (party ? _partyDrafts : _drafts).Values.Any(d =>
-        HasNeowResearchDraft(d) || d.Modes.Any(m => m.Acts.Values.Any(rows => rows.Count > 0))) ||
+        HasNeowResearchDraft(d) || d.Transformations.Values.Any(HasTransformationDraft) ||
+        d.Modes.Any(m => m.Acts.Values.Any(rows => rows.Count > 0))) ||
         party && _partyIdentities.Any(mode => mode.Values.Any(keys => keys.Count > 0));
 
     internal Action ClearResearchConditions(bool party) => WorkbenchConditionReset.Swap(party ? _partyDrafts : _drafts,
@@ -85,6 +89,8 @@ internal sealed partial class AncientSearchEditor
             NeowAdvanced = draft.NeowAdvanced, NeowRelation = draft.NeowRelation
         };
         if (keepAncients)
+        {
+            ImportTransformationEditorState(copy, ExportTransformationEditorState(draft));
             for (int i = 0; i < draft.Modes.Length; i++)
             {
                 var old = draft.Modes[i];
@@ -98,6 +104,7 @@ internal sealed partial class AncientSearchEditor
                         current.Acts[act].Add(clone);
                     }
             }
+        }
         if (keepResearch)
         {
             copy.NeowStateExplicit = draft.NeowStateExplicit;
@@ -132,6 +139,6 @@ internal sealed partial class AncientSearchEditor
             if (rows.Count > 0)
                 count += 1 + (rows.Any(row => row.Options.Count > 0) ? 1 : 0) +
                     (rows.Any(row => row.SeaGlassTarget.HasValue) ? 1 : 0);
-        return count;
+        return count + ExportTransformationResults().Count;
     }
 }

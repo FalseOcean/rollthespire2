@@ -15,6 +15,22 @@
   <ItemGroup>
     <CompilerVisibleProperty Include="GodotProjectDir" />
     <Compile Include="Program.cs" />
+    <Compile Include="NativeGameFixture.cs" />
+    <Compile Include="EncyclopediaEditionChecks.cs" />
+    <Compile Include="LiveRunSeedPremisesChecks.cs" />
+    <Compile Include="AncientTransformationLocalEditorChecks.cs" />
+    <Compile Include="TransformationAncientPrefilterChecks.cs" />
+    <Compile Include="NeowCapsuleNonCombatChecks.cs" />
+    <Compile Include="PredictorCrystalContextChecks.cs" />
+    <Compile Include="EventOpportunityPersistenceChecks.cs" />
+    <Compile Include="EventOpportunityChecks.cs" />
+    <Compile Include="EventEligibilityCatalogChecks.cs" />
+    <Compile Include="EventEligibilityEditorChecks.cs" />
+    <Compile Include="CrystalSeedCardChecks.cs" />
+    <Compile Include="CrystalSearchIntegrationChecks.cs" />
+    <Compile Include="CrystalNativePoolChecks.cs" />
+    <Compile Include="CrystalSeedGoalChecks.cs" />
+    <Compile Include="EventOpportunityEditorChecks.cs" />
     <Compile Include="NeowEntryIdentityChecks.cs" />
     <Compile Include="NeowIdentityRulesChecks.cs" />
     <Compile Include="NeowOfferRelationChecks.cs" />
@@ -69,6 +85,8 @@
     <Compile Include="MapFullIntegrationChecks.cs" />
     <Compile Include="MapRouteChecks.cs" />
     <Compile Include="ElitePrefixResearchChecks.cs" />
+    <Compile Include="MerchantRelicSearchChecks.cs" />
+    <Compile Include="FishingRodDrawResearchChecks.cs" />
     <Compile Include="MapRouteSequenceChecks.cs" />
     <Compile Include="MapDrawingIntegrationChecks.cs" />
     <Compile Include="MapLossyIntegrationChecks.cs" />
@@ -77,6 +95,9 @@
     <Compile Include="InitialRoomExactChecks.cs" />
     <Compile Include="MorphicFilterChecks.cs" />
     <Compile Include="TransformationAggregateChecks.cs" />
+    <Compile Include="TransformationScopeChecks.cs" />
+    <Compile Include="TransformationAncientChecks.cs" />
+    <Compile Include="TransformationTakeoverEditorChecks.cs" />
     <Compile Include="TransformationRelicContinuationChecks.cs" />
     <Compile Include="MorphicFilterChecks.EventClosure.cs" />
     <Compile Include="MorphicFilterChecks.Whitelist.cs" />

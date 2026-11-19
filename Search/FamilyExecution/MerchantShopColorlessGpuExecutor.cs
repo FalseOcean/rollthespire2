@@ -250,8 +250,11 @@ internal sealed partial class MerchantShopColorlessGpuExecutor : IDisposable
         if (packedSequences.Length != 0) defines += "#define RT2_S_OBSERVATION_SEQUENCES 1\n";
         if (plan[0] == 1 && packedSequences.Length == 0)
             defines += FormattableString.Invariant($"#define RT2_S_SINGLE_OBSERVATION_GAP {plan[4]}u\n");
+        bool pairBurn = string.Equals(System.Environment.GetEnvironmentVariable("RT2_S_PAIR_BURN"), "on", StringComparison.OrdinalIgnoreCase);
+        if (pairBurn) defines += "#define RT2_S_PAIR_BURN 1\n";
         return new(plan.ToArray(), targets.ToArray(), defines,
-            PartyEarlyRejectionRevision(evaluation, authority.PlayersCount) + authority.RuleRevision + ".PreparedObservations.v1",
+            PartyEarlyRejectionRevision(evaluation, authority.PlayersCount) + authority.RuleRevision +
+            (pairBurn ? ".PairedBurn.v1" : "") + ".PreparedObservations.v1",
             identity, HasEarlyRejectionOpportunity(evaluation, authority.PlayersCount));
     }
 

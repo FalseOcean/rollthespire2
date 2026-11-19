@@ -18,16 +18,17 @@ internal static class EventResultWorkEstimate
         int transforms = rows.Count(c => EventResultTransformSemantics.IsTransform(c.Kind));
         int scalar = rows.Select(c => c.Kind).Distinct().Count(k => k is EventResultConditionKind.TrialCase or
             EventResultConditionKind.TinkerTimeTypeAndRider);
+        int opportunities = rows.Count(c => EventOpportunitySemantics.IsEventLocalOpportunity(c.Kind));
         // Trash shares one fact; Fake shuffles once; Color processes its actual
         // inventory. Transform predicates retain their own numerical generation.
         double cpu = 30 + (trash ? 45 : 0) + (fake ? 120 : 0) + 90 * colors +
             rows.Where(c => EventResultTransformSemantics.IsTransform(c.Kind)).Sum(c =>
                 c.Kind == EventResultConditionKind.MorphicGroveGroupInitialBasicsContains ? 35 : 20) +
-            20 * scalar + 4 * Math.Max(0, rows.Length - 1);
+            20 * scalar + 160 * opportunities + 4 * Math.Max(0, rows.Length - 1);
         double gpu = .35 + (trash ? .3 : 0) + (fake ? .7 : 0) + .08 * colors +
             .25 * transforms + .15 * scalar + .04 * Math.Max(0, rows.Length - 1);
         return (cpu, gpu, $"E.OperatorGroupAndWhitelistAnchors;TrashFacts={(trash ? 1 : 0)};FakeFacts={(fake ? 1 : 0)};" +
-            $"ColorInventory={colors};TransformCalls={transforms};ScalarGroups={scalar};Comparisons={rows.Length};" +
+            $"ColorInventory={colors};TransformCalls={transforms};ScalarGroups={scalar};ConditionalOpportunities={opportunities};Comparisons={rows.Length};" +
             "SharedFactsOnce;NoTargetOrFullPredicateOrderKey;NoEarlyRejectDiscount");
     }
 

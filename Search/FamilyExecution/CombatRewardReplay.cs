@@ -33,6 +33,7 @@ internal sealed partial class CombatRewardReplay
     internal string CpuRevision => "C.CombatReward.Cpu.AuthoredPrefix.20261013.v2" +
         (UsesNeutralWitness ? CombatRewardNeutralWitness.Revision : "") +
         (UsesObservedOpening ? CombatRewardObservedOpening.Revision : "") +
+        (ObservedOpening is { UsesLazyCapsuleBag: true } ? CombatRewardObservedOpening.LazyCapsuleBagRevision : "") +
         (UsesQueryLiteralPartyOpening ? ".PartyQueryLiteralOpening.20261027.v1" : "") +
         (Plan.NeedsCompleteMatchingReference ? ".CompletePositiveMatching.20261026.v1" : "") +
         (Plan.CollectionFilterCovered ? ".CardCollection.20261105.v1" : "") + CpuAssignmentRevision + RuleRevision;

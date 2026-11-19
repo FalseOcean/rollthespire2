@@ -91,7 +91,7 @@ internal static class ShionNeowOptimizationChecks
                     {
                         const BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
                         Rid canonical = (Rid)typeof(NeowFamilyGpuExecutor).GetField("_pipeline", instance)!.GetValue(on)!;
-                        Rid densePrefix = (Rid)typeof(NeowFamilyGpuExecutor).GetField("_leafyPrefixPipeline", instance)!.GetValue(on)!;
+                        Rid densePrefix = (Rid)typeof(NeowFamilyGpuExecutor).GetField("_densePipeline", instance)!.GetValue(on)!;
                         if (!canonical.IsValid || !densePrefix.IsValid || canonical == densePrefix ||
                             compactPipeline.IsValid && compactPipeline != canonical)
                             throw new InvalidDataException("ShionN.LocalPrefixCompactPipelineNotRetained");

@@ -33,7 +33,8 @@ public sealed class Beta111PredictionProfile : ISeedPredictionProfile
             return Fail(request, detection, string.Empty, PredictionWarningCode.InvalidRequestContext, SeedPredictionInputStatus.Unknown);
         if (!ProfileSeedRules.TryCanonicalizePredictionSeed(Beta111Profile.Instance, request.OriginalSeed, out string canonicalSeed, out string issue))
             return SeedPredictionFacts.Invalid(detection.DisplayVersion, ProfileId, PredictorId, request, issue);
-        return ObserveCore(request, detection, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, canonicalSeed));
+        return ObserveCore(request, detection, TrustedRootHashInput.FromCanonicalSeed(Beta111Profile.Instance, canonicalSeed),
+            captureTransformationContinuation: request.PlayersCount == 1);
     }
 
     internal SeedPredictionFacts ObserveFromRootHash(SeedPredictionRequest request, GameVersionDetection detection, TrustedRootHashInput input,
@@ -51,7 +52,8 @@ public sealed class Beta111PredictionProfile : ISeedPredictionProfile
     }
 
     private SeedPredictionFacts ObserveCore(SeedPredictionRequest request, GameVersionDetection detection, TrustedRootHashInput input,
-        IReadOnlyList<NeowChoiceResult>? preparedOpeningChoices = null, Beta111NeowIdentityReuse? identityReuse = null)
+        IReadOnlyList<NeowChoiceResult>? preparedOpeningChoices = null, Beta111NeowIdentityReuse? identityReuse = null,
+        bool captureTransformationContinuation = false)
     {
         if (!ContextMatches(request, detection))
             return Fail(request, detection, input.SeedIdentity, PredictionWarningCode.InvalidRequestContext, SeedPredictionInputStatus.Unknown);
@@ -119,7 +121,8 @@ public sealed class Beta111PredictionProfile : ISeedPredictionProfile
                     identityPrecision,
                     "beta111.shared-modern-neow-identity",
                     request.ShouldProjectNeowEffects(key)
-                        ? Beta111NeowEffectProjector.ProjectFromRootHash(key, identityPrecision, request.Authority, input.RootHash, request.EnableComplexBonesDeckInteractions)
+                        ? Beta111NeowEffectProjector.ProjectFromRootHash(key, identityPrecision, request.Authority, input.RootHash,
+                            request.EnableComplexBonesDeckInteractions, captureTransformationContinuation)
                         : NeowChoiceFacts.UnrequestedNeowEffects))
                 .ToArray();
 

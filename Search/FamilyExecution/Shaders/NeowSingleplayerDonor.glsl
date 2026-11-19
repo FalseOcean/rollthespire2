@@ -70,7 +70,18 @@ bool draw_neow_curse(
         curse_id = 0xffffffffu;
         return false;
     }
-    curse_ordinal = next_int(event_rng, curse_count);
+    uint64_t mantissa = next_u64(event_rng) >> 11u;
+    if (__RT2_N_CHILD_SHUFFLE__) {
+        // For a pool of at most ten, the exact product fits in 57 bits.
+        // At rank >= 1 its binary64 half-ULP is 2^floor(log2(rank))
+        // product units. A tie at the next integer rounds to that even value.
+        uint64_t product = mantissa * uint64_t(curse_count);
+        uint rank = uint(product >> 53u);
+        if (rank != 0u) product += uint64_t(1u << uint(findMSB(rank)));
+        curse_ordinal = uint(product >> 53u);
+    } else {
+        curse_ordinal = next_int_current_shortcut_from_mantissa(mantissa, curse_count);
+    }
     curse_id = plan_value(71u + curse_ordinal);
     return curse_id != 0xffffffffu;
 }

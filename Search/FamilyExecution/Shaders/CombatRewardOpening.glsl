@@ -9,6 +9,9 @@ uint c_observed_cap_count(){return(capability_meta.values[6]-capability_meta.val
 bool c_observed_metadata_valid(){
     uint length=uint(capability_meta.values.length());
     if(length<10u||capability_meta.values[0]!=1u||capability_meta.values[1]>1u)return false;
+#ifdef RT2_C_OPENING_REPLAY_CROP
+    if(capability_meta.values[1]!=0u)return false;
+#endif
     uint cap=capability_meta.values[5],top=capability_meta.values[6];
     if(cap<10u||top<cap||((top-cap)&1u)!=0u||!c_observed_span(top,90u,length))return false;
     if(!c_observed_span(capability_meta.values[7],31u*31u,length))return false;
@@ -42,6 +45,53 @@ uint c_observed_apply_cap(uint identity,inout uint seen[6],inout uint seen_count
     return c_observed_apply(identity,capability_meta.values[at],capability_meta.values[at+1u],seen,seen_count,niche_known,state);
 }
 
+#if RT2_C_MODERN113 && RT2_C_LAZY_OBSERVED_BAG
+uint c_observed_initialize_bag(uint64_t root,out uint64_t seeds[3],out uvec2 ranges[3],out uint lengths[3]){
+    for(uint i=0u;i<3u;++i)lengths[i]=0u;
+    RngState parent=cr_rng_initialize(root+cr_plan_u64(18u));
+    uint table=capability_meta.values[3],length=uint(capability_meta.values.length()),lanes=0u;
+    uint ineligible=capability_meta.values[4],cap_count=c_observed_cap_count();
+    for(uint bucket=0u;bucket<capability_meta.values[2];++bucket){
+        uint at=table+bucket*4u,scope=capability_meta.values[at],kind=capability_meta.values[at+1u];
+        uint entries=capability_meta.values[at+2u],count=capability_meta.values[at+3u];
+        if(scope>1u||!c_observed_span(entries,count,length))return C_OPENING_FAULT;
+        // The parent advances for shared, preceding-player and Shop buckets too.
+        uint64_t seed=cr_next_u64(parent);
+        if(scope==0u||kind==4u)continue;
+        if(kind<1u||kind>3u)return C_OPENING_FAULT;
+        uint lane=kind-1u;
+        if((lanes&(1u<<lane))!=0u||count>uint(RT2_C_BAG_CAPACITY)||count>capability_meta.values[8])return C_OPENING_FAULT;
+        lanes|=1u<<lane;
+        // Validate even untouched lanes, as the eager bag does. Eligibility
+        // changes the fallback length but never changes the raw permutation.
+        uint eligible=count;
+        for(uint i=0u;i<count;++i){
+            uint identity=capability_meta.values[entries+i];
+            if(identity>=cap_count)return C_OPENING_FAULT;
+            if(identity==ineligible)--eligible;
+        }
+        seeds[lane]=seed;
+        ranges[lane]=uvec2(entries,count);
+        lengths[lane]=eligible;
+    }
+    return C_OPENING_EXACT;
+}
+
+void c_observed_initialize_lane(uint64_t seed,uvec2 range,uint lane,inout uint prefixes[12]){
+    uint permutation[RT2_C_BAG_CAPACITY];
+    for(uint i=0u;i<range.y;++i)permutation[i]=capability_meta.values[range.x+i];
+    RngState child=cr_rng_initialize(seed);
+    for(uint n=range.y;n>1u;--n){
+        uint selected=cr_next_int(child,n),tail=n-1u,value=permutation[selected];
+        permutation[selected]=permutation[tail];permutation[tail]=value;
+    }
+    uint eligible=0u;
+    for(uint i=0u;i<range.y&&eligible<4u;++i){
+        uint identity=permutation[i];
+        if(identity!=capability_meta.values[4])prefixes[lane*4u+eligible++]=identity;
+    }
+}
+#else
 uint c_observed_initialize_bag(uint64_t root,out uint prefixes[12],out uint lengths[3]){
     for(uint i=0u;i<12u;++i)prefixes[i]=0xffffffffu;
     for(uint i=0u;i<3u;++i)lengths[i]=0u;
@@ -91,6 +141,7 @@ uint c_observed_initialize_bag(uint64_t root,out uint prefixes[12],out uint leng
     }
     return C_OPENING_EXACT;
 }
+#endif
 
 // Validate resources before the shared numeric donor reads them. A missing
 // observation for an unlisted Bones companion is an explicit replay remainder;
@@ -109,6 +160,7 @@ uint c_observed_pool(uint meta,uint pairs,bool unlisted){
 
 uint c_observed_non_capsule(uint relic,uint64_t root,bool unlisted,bool niche_known,inout RewardRouteState state){
     uint status=C_OPENING_EXACT;
+#if !defined(RT2_C_OPENING_REPLAY_CROP) || defined(RT2_C_OPENING_KALEIDOSCOPE)
     if(relic==14u){
         if(uint(pool_meta.values.length())<=40u)return C_OPENING_FAULT;
         uint count=pool_meta.values[40];
@@ -122,20 +174,37 @@ uint c_observed_non_capsule(uint relic,uint64_t root,bool unlisted,bool niche_kn
         }
         if(!niche_known||count>15u)return C_OPENING_UNKNOWN;
         for(uint i=0u;i<count;++i){status=c_observed_pool(48u+i*6u,3u,unlisted);if(status!=C_OPENING_EXACT)return status;}
-    }else if(relic==17u&&plan_meta.values[3]>1u){
+    }else
+#endif
+#if !defined(RT2_C_OPENING_REPLAY_CROP) || defined(RT2_C_OPENING_MULTIPLAYER_SCROLL)
+    if(relic==17u&&plan_meta.values[3]>1u){
         if(uint(pool_meta.values.length())<=47u)return C_OPENING_FAULT;
         status=c_observed_pool(pool_meta.values[47],3u,unlisted);
-    }else if(relic==2u||relic==10u){
+    }else
+#endif
+#if !defined(RT2_C_OPENING_REPLAY_CROP) || defined(RT2_C_OPENING_RARE_CARDS)
+    if(relic==2u||relic==10u){
         status=c_observed_pool(4u,1u,unlisted);
-    }else if(relic==15u){
+    }else
+#endif
+#if !defined(RT2_C_OPENING_REPLAY_CROP) || defined(RT2_C_OPENING_PAPERWEIGHT)
+    if(relic==15u){
         status=c_observed_pool(6u,3u,unlisted);
-    }else if(relic==16u){
+    }else
+#endif
+#if !defined(RT2_C_OPENING_REPLAY_CROP) || defined(RT2_C_OPENING_COFFER)
+    if(relic==16u){
         status=c_observed_pool(0u,3u,unlisted);
         if(status==C_OPENING_EXACT)status=c_observed_pool(12u,3u,unlisted);
-    }else if(relic==22u){
+    }else
+#endif
+#if !defined(RT2_C_OPENING_REPLAY_CROP) || defined(RT2_C_OPENING_SCROLL_BOXES)
+    if(relic==22u){
         status=c_observed_pool(0u,1u,unlisted);
         if(status==C_OPENING_EXACT)status=c_observed_pool(2u,1u,unlisted);
-    }
+    }else
+#endif
+    {}
     if(status!=C_OPENING_EXACT)return status;
     if(!cr_replay_query_literal_relic_consumption(relic,root,state))return C_OPENING_FAULT;
 #if !RT2_C_MODERN113
@@ -156,15 +225,21 @@ bool c_observed_route(uint64_t root,uint route,out uint keep_reason){
     if(niche_known)for(uint draw=0u;draw<plan_meta.values[44];++draw)cr_next_double(state.niche);
 #endif
     uint first=plan_meta.values[42],second=plan_meta.values[43],count=plan_meta.values[41];
+#ifdef RT2_C_OPENING_REPLAY_CROP
+    const bool dynamic_bones=false;
+#else
     bool dynamic_bones=capability_meta.values[1]!=0u;
+#endif
     if(count>2u||dynamic_bones&&plan_meta.values[40]==0u)return cr_family_numeric_failure();
     if(plan_meta.values[40]!=0u){
         uint bones_count=plan_meta.values[7];
         if(bones_count<2u||bones_count>64u||bones_count>uint(bones_ids.ids.length()))return cr_family_numeric_failure();
+#ifndef RT2_C_OPENING_REPLAY_CROP
         if(dynamic_bones){
             if(!cr_replay_bones(root,first,second,state.rewards))return cr_family_numeric_failure();
             count=2u;
         }
+#endif
 #if RT2_C_MODERN113
         cr_consume_shuffle(bones_count,state.niche);
 #else
@@ -172,6 +247,9 @@ bool c_observed_route(uint64_t root,uint route,out uint keep_reason){
 #endif
     }
     uint prefixes[12],lengths[3],consumed[3],seen[6],seen_count=0u;
+#if RT2_C_MODERN113 && RT2_C_LAZY_OBSERVED_BAG
+    uint64_t seeds[3];uvec2 ranges[3];
+#endif
     for(uint i=0u;i<3u;++i)consumed[i]=0u;
     bool bag_ready=false;uint previous=30u;
     for(uint i=0u;i<count;++i){
@@ -185,7 +263,11 @@ bool c_observed_route(uint64_t root,uint route,out uint keep_reason){
         if(status==C_OPENING_FAULT)return cr_family_numeric_failure();
         if(cr_is_capsule(relic)){
             if(!bag_ready){
+#if RT2_C_MODERN113 && RT2_C_LAZY_OBSERVED_BAG
+                if(c_observed_initialize_bag(root,seeds,ranges,lengths)!=C_OPENING_EXACT)return cr_family_numeric_failure();
+#else
                 if(c_observed_initialize_bag(root,prefixes,lengths)!=C_OPENING_EXACT)return cr_family_numeric_failure();
+#endif
                 bag_ready=true;
             }
             uint draws=relic==3u?2u:1u;
@@ -195,6 +277,9 @@ bool c_observed_route(uint64_t root,uint route,out uint keep_reason){
                 uint identity=capability_meta.values[9];
                 if(lane<3u){
                     if(consumed[lane]>=4u)return cr_family_numeric_failure();
+#if RT2_C_MODERN113 && RT2_C_LAZY_OBSERVED_BAG
+                    if(consumed[lane]==0u)c_observed_initialize_lane(seeds[lane],ranges[lane],lane,prefixes);
+#endif
                     identity=prefixes[lane*4u+consumed[lane]++];
                 }
                 status=c_observed_apply_cap(identity,seen,seen_count,niche_known,state);

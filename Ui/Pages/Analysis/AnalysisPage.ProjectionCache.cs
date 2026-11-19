@@ -27,6 +27,8 @@ internal sealed partial class AnalysisPage
         _overviewRoutes.Clear();
         _overviewRouteMetrics.Clear();
         _ancientPremiseVariants = null;
+        _expandedAncientTransforms.Clear();
+        _pandoraCountOverride = null;
         _merchantProjection = null;
         _eventProjection = null;
         _eventTransformUnlocks = null;

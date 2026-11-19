@@ -10,5 +10,6 @@ internal enum SearchCategoryKey
     CombatReward,
     Event,
     Shop,
-    Transformation
+    Transformation,
+    ResearchIdeas
 }

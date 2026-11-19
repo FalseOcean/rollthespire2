@@ -330,15 +330,18 @@ internal static class WorkbenchContractChecks
         }, json);
         try
         {
-            // Literal payloads from the existing nested-state format: this must
-            // remain a type move, with the same names, numeric values and nulls.
+            // Keep literal saved payloads so renaming a property or dropping its
+            // authored value cannot pass by round-tripping through the same type.
             var strict = new JsonSerializerOptions(json) { RespectRequiredConstructorParameters = true,
                 RespectNullableAnnotations = true, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
-            void CheckSavedShape<T>(string saved)
+            void CheckSavedShape<T>(string saved, string addedDefaults = "{}")
             {
                 var snapshot = JsonSerializer.Deserialize<T>(saved, strict)!;
-                check(JsonNode.DeepEquals(JsonNode.Parse(saved), JsonSerializer.SerializeToNode(snapshot, json)),
-                    typeof(T).Name + " retains the existing persisted JSON shape");
+                var expected = JsonNode.Parse(saved)!.AsObject();
+                foreach (var addition in JsonNode.Parse(addedDefaults)!.AsObject())
+                    expected.Add(addition.Key, addition.Value?.DeepClone());
+                check(JsonNode.DeepEquals(expected, JsonSerializer.SerializeToNode(snapshot, json)),
+                    typeof(T).Name + " retains all authored fields and writes the current defaults");
             }
             CheckSavedShape<NeowEditorStateSnapshot>("""
                 {"Source":null,"Bones":[],"Ordered":true,"KaleidoscopeOrder":1,"ScrollOffer":1,
@@ -352,7 +355,7 @@ internal static class WorkbenchContractChecks
                 {"Results":{"MorphicGroveGroupInitialBasicsContains":["CARD:CLAW",null]},
                  "CharacterColor":4,"TrialCase":2,"TinkerType":1,"TinkerEffect":null,
                  "InactiveResultEvents":["MORPHIC_GROVE"]}
-                """);
+                """, """{"OpportunityResults":[],"CrystalRelics":0,"CrystalDivinations":3}""");
             CheckSavedShape<TransformationEditorStateSnapshot>("""
                 {"TakenOver":[],"Objective":2,"RareCount":1,"Cards":["CARD:CLAW","CARD:CLAW"],
                  "KnownSources":[{"Id":"N.KALEIDOSCOPE","Identity":"RELIC:KALEIDOSCOPE","ResultCount":2,"OtherRelic":null}]}

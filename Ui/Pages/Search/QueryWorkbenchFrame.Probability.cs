@@ -13,6 +13,7 @@ using RolltheSpire2.Search.FamilyExecution;
 using RolltheSpire2.Search.Selectivity;
 using RolltheSpire2.Search.Semantics;
 using RolltheSpire2.Ui.Persistence;
+using RolltheSpire2.Ui.Components;
 
 namespace RolltheSpire2.Ui.Pages.Search;
 
@@ -119,6 +120,8 @@ internal sealed partial class QueryWorkbenchFrame
             Pending("V",q.VariantBossBranches.Count>0 || UnknownRoomPrefixRequirements.HasConditions(q));
             Pending("W",HasWorldObservations(q));
             Pending("R",q.TreasureRelics is { IsEmpty: false }||q.RelicSequenceConstraints.Count>0||q.RelicShopSequenceConditions.Count>0||q.StructuredOpeningEffects.Any(NeowReplayPlan.IsCapsule));
+            Pending(MerchantRelicCondition.Domain, q.MerchantRelicConditions.Count > 0);
+            Pending(FishingRodDrawResearch.Id, q.FishingRodDrawResearch);
             Pending("E",q.EventResultConditions.Count>0);
             Pending("M",q.StandardMaps.Count>0 || q.StandardMapRoutes.Count>0 || q.ElitePrefixResearch is not null);Pending("S",q.MerchantColorlessSequenceConditions.Count>0);
             ApplyFamilySources(q); RenderFamilyDashboard();PresentExpectations(null,null,null);
@@ -277,11 +280,10 @@ internal sealed partial class QueryWorkbenchFrame
                 SearchProbabilityRowKind.CombatReward => (_text.Get("query.domain.combat_rewards"),Keys((q.CombatCardRewards?.Slots.Where(k=>k.HasValue).Select(k=>k!.Value)??[])
                     .Concat(q.CombatPotionRewards?.Slots.Where(p=>p.PotionKey.HasValue).Select(p=>p.PotionKey!.Value)??[])
                     .Concat(q.CombatCardExclusion?.CardKeys??[])),Cost("C.CombatReward")),
-                SearchProbabilityRowKind.TransformationAggregate => (_text.Get("query.summary.transform_aggregate"),Keys(q.TransformationAggregate!.TargetMultiset),Cost("T.TransformationAggregate")),
+                SearchProbabilityRowKind.TransformationAggregate => (_text.Get("query.summary.transform_aggregate"),
+                    string.Join("\n", SearchConditionSummary.DescribeTransformation(q.TransformationAggregate!, _text, names)), Cost("T.TransformationAggregate")),
                 _ => (_text.Get("coverage.shop"),Keys(q.MerchantColorlessSequenceConditions.SelectMany(c=>c.Slots).Where(k=>k.HasValue).Select(k=>k!.Value)),Cost("S.MerchantShopColorless"))
             };
-            if(row.Kind==SearchProbabilityRowKind.TransformationAggregate && q.TransformationAggregate is { RequiresRareRemainder: true } mixed)
-                detail += "\n" + _text.Format("query.transform.remaining_rare", mixed.OpportunityCount - mixed.TargetMultiset.Count);
             if(row.Kind==SearchProbabilityRowKind.TransformationAggregate && row.Probability is null)
                 detail += (detail.Length>0 ? "\n" : "") + (_language=="zh"
                     ? "概率未知：这组来源或开局副作用的联合模型尚未闭合；不会用独立相乘代替。"
@@ -306,6 +308,15 @@ internal sealed partial class QueryWorkbenchFrame
         }
         var eventDetails=new List<string>();
         foreach(var c in q.EventResultConditions) {
+            if (EventOpportunityPresentation.TryDescribe(_text, names, c, out string opportunityDetail))
+            {
+                var opportunityPreview = preview.Events[c];
+                string opportunitySpeed = BestQuotedSpeed(opportunityPreview.Cpu, opportunityPreview.Gpu);
+                string opportunityProbability = Probability(opportunityPreview.Estimate.Probability);
+                eventDetails.Add(opportunityDetail + "\n" + opportunityProbability + "\n" + opportunitySpeed);
+                output.Add(opportunityDetail + "\n" + _text.Get("workflow.rarity") + " " + opportunityProbability + "\n" + opportunitySpeed);
+                continue;
+            }
             string entry=c.Kind switch {
                 EventResultConditionKind.FakeMerchantOfferedFakeRelic=>"FAKE_MERCHANT",
                 EventResultConditionKind.TrashHeapDiveRelic or EventResultConditionKind.TrashHeapGrabCard=>"TRASH_HEAP",
@@ -340,9 +351,23 @@ internal sealed partial class QueryWorkbenchFrame
                 Cost("E.EventResult"),string.Join("\n\n",eventDetails)));
         }
         ApplyVariantOpeningPreview(preview);
-        // Execution Families remain visible even when their probability is priced in a shared block.
-        foreach(var id in costs.Keys.Select(k=>k.Split('.')[0]))
-            if(!_familyEntries.Any(e=>e.Id.Split('/').Contains(id))) _familyEntries.Add(new(id,FamilyTitle(id),null,costs.First(k=>k.Key.StartsWith(id+".")).Value,_text.Get("workflow.shared")));
+        if (q.MerchantRelicConditions.Count > 0)
+        {
+            string detail = string.Join("\n", q.MerchantRelicConditions.Select(c =>
+                Editors.ShopSearchEditor.DescribeOrdinaryRelic(c, _text, names)));
+            _familyEntries.Add(new(MerchantRelicCondition.Domain, FamilyTitle(MerchantRelicCondition.Domain), null, Cost(MerchantRelicCondition.Domain), detail));
+            output.Add(FamilyTitle(MerchantRelicCondition.Domain) + "\n" + detail);
+        }
+        if (q.FishingRodDrawResearch)
+            _familyEntries.Add(new(FishingRodDrawResearch.Id, FamilyTitle(FishingRodDrawResearch.Id), null,
+                Cost(FishingRodDrawResearch.Id), FishingRodDrawSummary(_text, q)));
+        // Execution families remain visible even when their probability is priced in a shared block.
+        foreach (var (familyId, speed) in costs)
+        {
+            string id = familyId.Split('.')[0];
+            if (!_familyEntries.Any(entry => entry.Id.Split('/').Contains(id)))
+                _familyEntries.Add(new(id, FamilyTitle(id), null, speed, _text.Get("workflow.shared")));
+        }
         double? rate=EtaRate(_previewEta);
         _expectationText=ExpectationText(_previewEta?.FirstResultSearchMeanMs,view.Status==SearchProbabilityQuickViewStatus.Impossible?0:view.TotalProbability,rate);
         _expectationContext = compiled.Context.Authority.UsesBestEffortModel
@@ -421,6 +446,7 @@ internal sealed partial class QueryWorkbenchFrame
             var labels = new List<string>();
             if (sources.Any(q => q.TransformationAggregate?.UsesNeow == true)) labels.Add(Source("neow"));
             if (sources.Any(q => q.TransformationAggregate?.UsesEvents == true)) labels.Add(Source("events"));
+            if (sources.Any(q => q.TransformationAggregate?.UsesAncient == true)) labels.Add(Source("ancients"));
             return string.Join(" / ", labels);
         }
         for (int i = 0; i < _familyEntries.Count; i++)
@@ -465,7 +491,7 @@ internal sealed partial class QueryWorkbenchFrame
                 : (zh ? "概率未知：现有样本未覆盖这组地图条件的联合分布。" : "Probability unknown: the existing samples do not cover this combination of map conditions.");
 
     private string ExpectationText(double? time,double? probability,double? rate) =>
-        _text.Get("workflow.total_rarity")+"   "+(probability is null && _familyEntries.Any(e=>e.Id is "T" or "M") ? (_language=="zh"?"未知":"Unknown") : DashboardRarity(probability))+"\n"+
+        _text.Get("workflow.total_rarity")+"   "+(probability is null && _familyEntries.Any(e=>e.Id is "T" or "M" or MerchantRelicCondition.Domain or FishingRodDrawResearch.Id) ? (_language=="zh"?"未知":"Unknown") : DashboardRarity(probability))+"\n"+
         _text.Get("workflow.expected_speed")+"   "+Rate(rate)+"\n"+
         _text.Get("workflow.eta")+"   "+Duration(time);
 }

@@ -23,7 +23,7 @@ internal sealed partial class WorkspaceShell
         _notesHost = new VBoxContainer { Name = "DeveloperNotesHost" };
         _content.AddChild(_notesHost);
         _notesHost.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-        _notesPage = new DeveloperNotesPage(_notesProvider, chapter => _persistence!.NeedsNotesAcknowledgement(chapter))
+        _notesPage = new DeveloperNotesPage(_notesProvider, _persistence!.ReadNotesVersion)
             { Name = "DeveloperNotesPage" };
         _notesPage.AcknowledgementRequested += chapter =>
         {

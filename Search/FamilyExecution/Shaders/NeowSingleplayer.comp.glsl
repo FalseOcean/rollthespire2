@@ -17,7 +17,10 @@
 #define RT2_PREFIX_HASH_CACHE 0
 #define RT2_N_LEAFY_LOCAL_PREFIX 0
 #define N_INTERNAL_ORDER 0
+#define N_TERMINAL_PAIR 0
+#define N_PAIR_MASK 0
 #define N_MODERN_TRANSFORM_GATE 0
+#define N_DIRECT_FIRST_DRAW 0
 #define N_LOCAL_SOURCE_MASK -1
 #define N_SMALL_CAPSULE_RARE __RT2_N_SMALL_CAPSULE_RARE__
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
@@ -46,6 +49,8 @@ uint plan_value(uint i) { return plan_meta.values[i]; }
 uint64_t plan_u64(uint i) { return uint64_t(plan_value(i)) | (uint64_t(plan_value(i+1u)) << 32u); }
 
 /*__RT2_NEOW_LOCAL_DONOR__*/
+/*__RT2_N_DIRECT_FIRST_DRAW__*/
+/*__RT2_NE_SHARED_EVENT__*/
 /*__RT2_N_MODERN_TRANSFORM_GATE__*/
 /*__RT2_N_INTERNAL_FILTER_ORDER__*/
 /*__RT2_N_JOINT_TRANSFORMS__*/
@@ -302,6 +307,30 @@ bool pair_identity(uint64_t root, inout RngState rewards, out uint a, out uint b
         uint length=plan_value(8u);
         if (plan_value(67u) != 0u) {
             uint p=plan_value(25u), q=plan_value(26u);
+#if N_PAIR_MASK
+            uint required=(1u<<p)|(1u<<q);
+            for (uint count=length; count>2u; count--) {
+                uint j=next_int(shuffle_rng,count);
+                uint tail=count-1u;
+                // The item at j is frozen in the tail. Otherwise move a required
+                // tail bit down to j. Future draws never inspect the old tail bit.
+                if (((required>>j)&1u)!=0u) return false;
+                required|=((required>>tail)&1u)<<j;
+#if !N_TERMINAL_PAIR
+                if (p==tail) p=j;
+#endif
+            }
+#if N_TERMINAL_PAIR
+            // Only the unordered set below is observed before appending the ordinal.
+            // The private child state and the final two-slot orientation are discarded.
+            a=plan_value(27u); b=plan_value(28u);
+#else
+            // Keep actual offer order in the three-stage checkpoint. On the final
+            // swap, the item at the selected slot lands at index 1.
+            bool first_at_zero=p!=next_int(shuffle_rng,2u);
+            a=plan_value(first_at_zero ? 27u : 28u); b=plan_value(first_at_zero ? 28u : 27u);
+#endif
+#else
             for (uint count=length;count>1u;count--) {
                 uint j=next_int(shuffle_rng,count);
                 swap_tracked_position(p,j,count-1u); swap_tracked_position(q,j,count-1u);
@@ -311,6 +340,7 @@ bool pair_identity(uint64_t root, inout RngState rewards, out uint a, out uint b
             }
             if (p>=2u || q>=2u) return false;
             a=plan_value(p==0u ? 27u : 28u); b=plan_value(p==0u ? 28u : 27u);
+#endif
         } else {
             uint pool[64];
             for (uint i=0u;i<length;i++) pool[i]=bones.values[i];
@@ -417,6 +447,9 @@ RngState direct_phial_rng(uint64_t root) {
 #endif
 
 bool matches(uint64_t root) {
+#if N_DIRECT_FIRST_DRAW
+    return direct_first_draw_matches(root);
+#else
 #if NR_CAPSULE == 1 && CAPSULE_PHYSICAL != 0 && CAPSULE_PHYSICAL != 5 && CAPSULE_PHYSICAL != 6
     // Bounded direct-only physical ordering; semantic R matcher is shared.
     RngState capsule_rewards=rng_initialize(root+plan_u64(33u));
@@ -542,6 +575,7 @@ bool matches(uint64_t root) {
     RngState rewards = rng_initialize(root + plan_u64(33u));
     uint a,b;
     return pair_identity(root,rewards,a,b) && local_matches(root,rewards,a,b);
+#endif
 }
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -601,6 +635,10 @@ void main() {
         if (!pair_identity(root,rewards,a,b)) continue;
         uint slot=atomicAdd(header.values[7u],1u);
         if(slot>=batch.values[7u]) { atomicExchange(header.values[3u],1u); continue; }
+#if N_TERMINAL_PAIR
+        // With no remaining local predicate or continuation, the pair is the output.
+        append_ordinal(ordinal);
+#else
         uint dst=slot*12u;
         pair_survivors.values[dst]=ordinal;
         pair_survivors.values[dst+1u]=uint(root); pair_survivors.values[dst+2u]=uint(root>>32u);
@@ -609,6 +647,7 @@ void main() {
         pair_survivors.values[dst+6u]=uint(rewards.s1); pair_survivors.values[dst+7u]=uint(rewards.s1>>32u);
         pair_survivors.values[dst+8u]=uint(rewards.s2); pair_survivors.values[dst+9u]=uint(rewards.s2>>32u);
         pair_survivors.values[dst+10u]=uint(rewards.s3); pair_survivors.values[dst+11u]=uint(rewards.s3>>32u);
+#endif
 #else
         uint src=(first+lane)*12u;
         uint64_t root=make_u64(pair_survivors.values[src+1u],pair_survivors.values[src+2u]);
@@ -669,7 +708,11 @@ void main() {
             } else atomicExchange(header.values[3u],1u);
         }
 #else
+#ifdef RT2_NE_SHARED_EVENT
+        if (matches(root) && shared_event_matches(root)) append_ordinal(ordinal);
+#else
         if (matches(root)) append_ordinal(ordinal);
+#endif
 #endif
         if(batch.values[4u]==0u && lane<7u) {
 #if RT2_PREFIX_HASH_CACHE && N_STAGE == 0

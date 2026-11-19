@@ -11,13 +11,14 @@ internal sealed partial class EncyclopediaCanvas
 {
     private ScrollContainer? _articleScroll;
     private string? _readingId;
-    private readonly Dictionary<string, int> _readingPositions = new(StringComparer.Ordinal);
+    private Edition _readingEdition;
+    private readonly Dictionary<(string, Edition), int> _readingPositions = new();
     private sealed record Chapter(string Title, Control Anchor, int Level);
 
     private void RememberReadingPosition()
     {
         if (_readingId is { } id && GodotObject.IsInstanceValid(_articleScroll))
-            _readingPositions[id] = _articleScroll!.ScrollVertical;
+            _readingPositions[(id, _readingEdition)] = _articleScroll!.ScrollVertical;
     }
 
     private void RenderMarkdownArticle(ArticleDefinition definition)
@@ -49,19 +50,19 @@ internal sealed partial class EncyclopediaCanvas
         content.AddThemeConstantOverride("separation", 10);
         margin.AddChild(content);
 
-        using Stream? localized = typeof(EncyclopediaCanvas).Assembly.GetManifestResourceStream(ResourceName(definition, _language));
-        using Stream? fallback = localized is null ? typeof(EncyclopediaCanvas).Assembly.GetManifestResourceStream(ResourceName(definition, "zh")) : null;
-        Stream? source = localized ?? fallback;
+        using Stream? source = OpenArticle(definition, out _readingEdition, out string textLanguage);
         if (source is null) { content.AddChild(ArticleText(T("百科正文暂不可读取。", "Article text is unavailable."))); return; }
         using var reader = new StreamReader(source);
         string[] lines = reader.ReadToEnd().Replace("\r\n", "\n").Split('\n');
         int firstHeading = Array.FindIndex(lines, line => Regex.IsMatch(line, @"^#{1,3}\s"));
         string title = firstHeading >= 0 ? lines[firstHeading].TrimStart('#', ' ') : ArticleName(definition);
-        var eyebrow = ArticleText(T("约定与设计说明", "CONVENTIONS & DESIGN") + "   /   BETA " + (definition.GameVersion ?? EncyclopediaGameVersion), 14, _palette.Secondary);
+        string sourceVersion = _readingEdition == Edition.Beta113 ? "0.113" : "0.111.0";
+        var eyebrow = ArticleText(T("约定与设计说明", "CONVENTIONS & DESIGN") + "   /   BETA " + sourceVersion,
+            14, _palette.Secondary);
         content.AddChild(eyebrow);
         var heading = ArticleText(title, 30, _palette.Selected, firstRelicIcons: false);
         content.AddChild(heading);
-        if (_language != "zh" && localized is null)
+        if (_language != textLanguage)
             content.AddChild(ArticleText("English translation pending · Showing the Chinese article.", 16, _palette.Secondary));
         string? takeaway = Takeaway(definition.Id);
         if (takeaway is not null) AddCallout(content, takeaway, T("阅读提示", "AT A GLANCE"));
@@ -70,7 +71,7 @@ internal sealed partial class EncyclopediaCanvas
         RenderDocumentBlocks(content, lines, firstHeading, chapters);
         AddArticleFooter(content, definition);
         RenderTableOfContents(chapters, scroll);
-        int saved = _readingPositions.GetValueOrDefault(definition.Id);
+        int saved = _readingPositions.GetValueOrDefault((definition.Id, _readingEdition));
         Callable.From(() =>
         {
             if (GodotObject.IsInstanceValid(scroll) && scroll.IsInsideTree()) scroll.ScrollVertical = saved;
@@ -309,7 +310,27 @@ internal sealed partial class EncyclopediaCanvas
         }
     }
 
-    private static string ResourceName(ArticleDefinition definition, string language) => $"RolltheSpire2.Texts.{language}.Encyclopedia.{definition.ResourceStem}.md";
+    private Stream? OpenArticle(ArticleDefinition definition, out Edition edition, out string language)
+    {
+        Stream? Open(string folder, out string usedLanguage)
+        {
+            Stream? Read(string lang) => typeof(EncyclopediaCanvas).Assembly.GetManifestResourceStream(
+                $"RolltheSpire2.Texts.{lang}.Encyclopedia.{folder}{definition.ResourceStem}.md");
+            usedLanguage = _language;
+            var stream = Read(usedLanguage);
+            if (stream is not null || usedLanguage == "zh") return stream;
+            usedLanguage = "zh";
+            return Read(usedLanguage);
+        }
+
+        if (ReadBeta113 && Open("v113.", out language) is { } modern)
+        {
+            edition = Edition.Beta113;
+            return modern;
+        }
+        edition = Edition.Beta111;
+        return Open(string.Empty, out language);
+    }
 
     private string InlinePlainText(string text) => InlineToken.Replace(text, match =>
     {

@@ -284,7 +284,7 @@ internal static class CombatRarityAuditChecks
                 var run = MegaCrit.Sts2.Core.Runs.RunState.CreateForTest([player], seed: seed.ToString(), ascensionLevel: asc);
                 stateProperty.SetValue(MegaCrit.Sts2.Core.Runs.RunManager.Instance, run);
                 typeof(MegaCrit.Sts2.Core.Runs.RunManager).GetProperty("AscensionManager", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
-                    .SetValue(MegaCrit.Sts2.Core.Runs.RunManager.Instance, new MegaCrit.Sts2.Core.Entities.Ascension.AscensionManager(asc));
+                    .SetValue(MegaCrit.Sts2.Core.Runs.RunManager.Instance, NativeGameFixture.StandardAscension(asc));
                 var options = MegaCrit.Sts2.Core.Runs.CardCreationOptions.ForRoom(player, MegaCrit.Sts2.Core.Rooms.RoomType.Monster)
                     .WithFlags(MegaCrit.Sts2.Core.Runs.CardCreationFlags.IsCardReward | MegaCrit.Sts2.Core.Runs.CardCreationFlags.IsFromCombat);
                 _ = MegaCrit.Sts2.Core.Factories.CardFactory.CreateForReward(player, 3, options).ToArray();

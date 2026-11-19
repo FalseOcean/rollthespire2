@@ -57,6 +57,16 @@ public static class SearchCompiler
         ValidateAuthoredShape(query);
 
         ValidateStandardMapConditions(query);
+        if (query.FishingRodDrawResearch && !FishingRodDrawResearch.AreValidRequirements(query.FishingRodDrawRequirements))
+            throw new ArgumentException(FishingRodDrawResearch.InvalidRequirementsCode);
+        if (query.FishingRodDrawResearch && (context.Authority.PlayersCount != 1 ||
+            context.Authority.PlayerSlotIndex != 0 || context.ProfileId != RuntimeProfileId.Beta111 ||
+            context.Authority.VersionResolution.SemanticProfileId != RngSemanticProfileId.Modern113))
+            throw new ArgumentException(FishingRodDrawResearch.UnsupportedCode);
+        if (query.MerchantRelicConditions.Count > 0 && (context.Authority.PlayersCount != 1 ||
+            context.Authority.PlayerSlotIndex != 0 || context.ProfileId != RuntimeProfileId.Beta111 ||
+            context.Authority.VersionResolution.SemanticProfileId != RngSemanticProfileId.Modern113))
+            throw new ArgumentException(MerchantRelicCondition.UnsupportedCode);
         TransformationAggregateCondition.ValidateExclusiveOwnership(query);
         if (query.TransformationAggregate is not null && (context.ProfileId != RuntimeProfileId.Beta111 || context.Authority.PlayersCount != 1))
             throw new ArgumentException("TransformationAggregate.SinglePlayerBeta111Required");
@@ -176,6 +186,13 @@ public static class SearchCompiler
                 (item.Source is null || Enum.IsDefined(item.Source.Value)), "EventSequence:InvalidShape");
         }
         foreach (var item in query.EventResultConditions) Require(item.IsValid, "EventResultConditionInvalid");
+        Require(query.MerchantRelicConditions is not null, "MerchantRelic:MissingConditions");
+        foreach (var item in query.MerchantRelicConditions!)
+        {
+            Require(item is { FirstMerchant: >= 1, LastMerchant: <= 5 } && item.FirstMerchant <= item.LastMerchant,
+                "MerchantRelic:InvalidWindow");
+            Keys([item.TargetRelicKey], "MerchantRelic", BaseGameModelKeys.Categories.Relic);
+        }
         foreach (var item in query.MerchantColorlessConditions) Require(item.IsValid, "MerchantColorlessConditionInvalid");
         foreach (var item in query.RelicShopSequenceConditions)
         {
@@ -328,6 +345,14 @@ public static class SearchCompiler
             "eventResult=" + Sorted(query.EventResultConditions.Select(item =>
                 $"{item.Kind}:{item.TargetKey.Serialized}" + (item.TrialCase is { } trial ? ":case=" + trial : "") +
                 (item.TinkerCardType is { } type ? ":type=" + type + ":rider=" + item.TinkerRider : "") +
+                (item.RelicRarityBranch is { } rarityBranch ? ":rarityBranch=" + rarityBranch : "") +
+                (item.RelicRaritySelection is { } raritySelection ? ":raritySelection=" + raritySelection : "") +
+                (item.RelicRarity is { } rarity ? ":relicRarity=" + rarity : "") +
+                (item.CrystalDivinations is { } divinations ? ":crystalDivinations=" + divinations : "") +
+                (item.CrystalCards is { } crystalCards ? ":crystalCards=" + crystalCards : "") +
+                (item.CrystalRelics is { } crystalRelics ? ":crystalRelics=" + crystalRelics : "") +
+                (item.CrystalTargetCards is { } crystalTargets ? ":crystalTargets=" +
+                    string.Join(",", crystalTargets.Select(key => key.Serialized).Order(StringComparer.Ordinal)) : "") +
                 (item.MorphicGroveSecondCard is { } second ? ":second=" + second.Serialized : "") + (item.MorphicGroveScenario is null ? "" :
                     ":scenario=" + MorphicGroveQuerySemantics.Fingerprint(item.MorphicGroveScenario)))),
             "merchantColorless=" + Sorted(query.MerchantColorlessConditions.Select(item =>
@@ -370,12 +395,17 @@ public static class SearchCompiler
         string identity = string.Join("|", parts);
         if (query.EncounterQueues.Count > 0) identity += "|encounter=" + Sorted(query.EncounterQueues.Select(item =>
             $"{item.Act}:{item.VariantKey}:{item.Kind}:{item.RangeMode}:{item.RangeValue}:{StableKeys(item.AllowedKeys)}"));
+        if (query.MerchantRelicConditions.Count > 0)
+            identity += "|merchantRelic:Pristine113:v1=" + Sorted(query.MerchantRelicConditions.Select(row =>
+                FormattableString.Invariant($"{row.FirstMerchant}:{row.LastMerchant}:{row.TargetRelicKey.Serialized}")));
         if (query.NeowOfferWhitelist is { } whitelist) identity += "|neowOfferWhitelist=" + StableKeys(whitelist.AllowedKeys);
         if (query.StandardMapRoutes.Count > 0) identity += "|standardMapRoutes=" + Sorted(query.StandardMapRoutes.Select(c => c.Fingerprint));
         if (query.ElitePrefixResearch is { } research)
             identity += research.Mode == ElitePrefixResearchMode.FloorSeven
                 ? "|elitePrefixResearch=Act1:AllPaths:FirstEliteFloor7:PrefixMonsterOrUnknown:UnrestrictedCounts"
                 : $"|elitePrefixResearch=Act1:AllPaths:FixedMonster1:ExtraMonsters{research.ExtraMonsters}:Unknowns{research.Unknowns}";
+        if (query.FishingRodDrawResearch)
+            identity += "|" + FishingRodDrawResearch.SemanticIdentity(query.FishingRodDrawRequirements);
         if (query.TreasureRelics is { } treasure) identity +=
             $"|treasureRelics={treasure.StartOrdinal}:{treasure.Count}:{treasure.OrderMode}:{string.Join(">", treasure.Slots.Select(key => key?.Serialized ?? "*"))}";
         if (UsesRevisedTreasureClaims(context, query)) identity += TreasureRelicSearchCondition.ClaimSequenceRevision;
@@ -676,11 +706,15 @@ internal static class SearchQueryNormalizer
                 .DistinctBy(item => System.Text.Json.JsonSerializer.Serialize(item)).OrderBy(item => item.Act).ThenBy(item => item.Kind).ThenBy(item => item.RangeMode).ThenBy(item => item.RangeValue).ToArray(),
             EventSequenceConstraints = events,
             EventResultConditions = eventResults,
+            MerchantRelicConditions = query.MerchantRelicConditions.Distinct().OrderBy(c => c.FirstMerchant)
+                .ThenBy(c => c.LastMerchant).ThenBy(c => c.TargetRelicKey.Serialized, StringComparer.Ordinal).ToArray(),
             MerchantColorlessConditions = merchantColorless.ToArray(),
             MerchantColorlessSequenceConditions = merchantColorlessSequences,
             LegacyCombatRewardConstraints = legacyRewards,
             StandardMaps = query.StandardMaps.Distinct().OrderBy(c=>c.Scope).ThenBy(c=>c.Metric).ThenBy(c=>c.Comparison).ThenBy(c=>c.Value).ThenBy(c=>c.RouteObjective).ToArray(),
             StandardMapRoutes = query.StandardMapRoutes.Where(c => !c.IsEmpty).Select(c => c.Normalize()).OrderBy(c => c.Act).ToArray(),
+            FishingRodDrawRequirements = query.FishingRodDrawResearch
+                ? FishingRodDrawResearch.NormalizeRequirements(query.FishingRodDrawRequirements) : null,
             CombatCardExclusion = query.CombatCardExclusion is { IsEmpty: false } exclusion
                 ? exclusion with { CardKeys = StableKeys(exclusion.CardKeys) } : null,
             CombatCardRewards = combatCards,

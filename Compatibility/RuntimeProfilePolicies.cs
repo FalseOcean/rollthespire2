@@ -77,7 +77,7 @@ public static class RuntimeProfilePolicies
     // scope. A newer provisional version may run other independent models.
     public static bool SupportsPredictorSeedInitialization(RuntimeVersionResolution resolution) =>
         resolution.IsUsable && resolution.ProfileId == RuntimeProfileId.Beta111 &&
-        resolution.GameVersionIdentity.ExactVersion == RuntimeVersionCompatibility.Beta111Version;
+        RuntimeVersionCompatibility.UsesAccepted111Rules(resolution.GameVersionIdentity.ExactVersion);
 
     public const string Stable107AuthorityId = "runtime-authority:stable107:accepted";
     public const string Beta109HistoricalAuthorityId = "runtime-authority:beta109:historical-donor-only";

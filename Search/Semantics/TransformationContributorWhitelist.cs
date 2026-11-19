@@ -1,6 +1,6 @@
 namespace RolltheSpire2.Search.Semantics;
 
-/// <summary>Owner approvals 2026-09-14 / 2026-09-22. Documentation of explicit source switches,
+/// <summary>Owner approvals 2026-09-14 / 2026-09-22 / 2026-11-17. Documentation of explicit source switches,
 /// not discovery metadata and not a registration/reflection framework.</summary>
 internal static class TransformationContributorWhitelist
 {
@@ -20,7 +20,11 @@ internal static class TransformationContributorWhitelist
         new Entry("E.WhisperingHollow", 1, "Hug; one legal initial Basic; replay CalculateVars gold draw",
             "Beta111SingleBasicTransformProjector.WhisperingHollow", "TransformationAggregateNumericalPlan.WHISPERING_HOLLOW"),
         new Entry("E.Symbiote", 1, "One legal initial Basic at authored entry", "EventResultTransformSemantics.Project", "TransformationAggregateNumericalPlan.SYMBIOTE"),
-        new Entry("E.TrialNondescript", 2, "Require Nondescript case, then transform two initial Basics", "EventResultTransformSemantics.Project", "TransformationAggregateNumericalPlan.TRIAL")
+        new Entry("E.TrialNondescript", 2, "Require Nondescript case, then transform two initial Basics", "EventResultTransformSemantics.Project", "TransformationAggregateNumericalPlan.TRIAL"),
+        new Entry("A.ASTROLABE", 3, "Selected Ancient offer; three removable same-pool initial Basics; declared preceding Transformations only",
+            "TransformationRelicProjector", "Scoped CPU projection; upgrade results"),
+        new Entry("A.PANDORAS_BOX", 0, "Variable count: actual opening Basic Strike/Defend materials minus earlier authored transforms, or explicit manual count",
+            "TransformationRelicProjector", "Scoped CPU projection; zero descriptor count denotes variable, not zero outputs")
     });
     // N openings are alternatives. Bones admits exactly Leafy + NewLeaf, with
     // either or pinned pickup order. BonesLeafyOther owns Leafy alone; companion
